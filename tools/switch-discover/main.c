@@ -210,13 +210,21 @@ int main(int argc, char **argv) {
         logline("RESULT: 共发现 %d 台主机 —— M2 发现链路验证成功", host_count);
     }
 
-    /* libnx 上 worker 线程会卡在阻塞 recv，优雅拆除会死锁（真机实测）。
-     * 探针直接 exit 由系统回收；正式客户端需在 IHSlib 侧解决 recv 超时问题。 */
-    logline("完成，3 秒后退出");
+    /* libnx 实测两条退出约束：
+     * 1) applet 模式（netloader/hbmenu 共进程）禁止 exit()，会连 hbmenu 一起杀 → 必须 return；
+     * 2) IHS worker 阻塞在 recv 且 libnx 无 SO_RCVTIMEO，ThreadedJoin 会死锁 → 跳过。
+     * 故只停定时器和标记中断，泄漏一个阻塞线程，直接 return 交还 hbmenu。 */
+    IHS_ClientStopDiscovery(client);
+    IHS_ClientStop(client);
+
+    logline("完成，3 秒后返回 hbmenu");
     for (int i = 0; i < 180; i++) {
         logq_drain();
         consoleUpdate(NULL);
         svcSleepThread(16 * 1000 * 1000);
     }
-    exit(0);
+    socketExit();
+    appletReleaseSleepLock();
+    consoleExit(NULL);
+    return 0;
 }
