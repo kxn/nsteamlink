@@ -29,8 +29,7 @@
 - [ ] USB-C 数据线（连 Switch 与 Linux 开发机，必须支持数据传输，不能是纯充电线）
 - [ ] **USB-PD 充电器（本机必备）**：官方充电器，或任何 30W+ 支持 PD 15V 档的头 + C to C 线；
       注意普通 5V 充电宝/电脑 USB 口功率不够，机器会关机
-- [ ] （强烈建议）RCM 注入器 U 盘（NS-Atmosphere / RCM Loader 等，十几块）：
-      免电脑注入 payload，本机电池老化后是刚需
+- [x] RCM 注入器：已有 RCM Loader（用法见 §3.3.3）
 - [ ] （可选）Y00 三角 + PH00 十字螺丝刀：电池彻底报废时可拆电池，纯 PD 供电运行
 
 > **专用调试机简化路线（本项目实际情况）**：本机已是未打补丁初代机、且用户明确表示
@@ -135,6 +134,31 @@ sudo python3 fusee-launcher.py hekate_ctcaer_xxx.bin   # 注入 Hekate
 - 电池**鼓包迹象**（后盖/屏幕被顶起）立即停用并拆电池：Switch 拔掉电池后可纯 PD 运行，
   恰好适合当常插电的台式调试机（开盖：Y00 拆四角螺丝、拔电池排线，动手前先彻底关机放电）。
 - 装好 AutoRCM + 注入器后，"换插"环节只剩"断电后插一下注入器"。
+
+### 3.3.3 RCM Loader 使用方法（本机已备）
+
+RCM Loader 是自带电池的 payload 注入器：插到处于 RCM 状态的 Switch 上，
+约 2 秒内自动把内置 payload 发进去，不需要电脑。
+
+**一次性设置（在电脑上做）**
+
+1. 把 RCM Loader 的**注入棒**从底座里拔出来，插到电脑 USB 口上；
+2. 它会识别成 U 盘，里面有一个 payload 文件（通常叫 `payload.bin`，以你机器实际为准）；
+   部分型号带按键/多槽位，每个槽位对应一个文件；
+3. 下载最新版 Hekate（`hekate_ctcaer_x.x.x.bin`），**改名覆盖**原 payload 文件——
+   保持原文件名不变，机器只认这个名字；出厂自带的 payload 版本太老，务必更新；
+4. 注入棒插回底座充电（底座随便找个 USB 口充电，LED 亮即充电中）。
+
+**第一次使用（还没开 AutoRCM 时）**
+
+1. 拨片顶住右 Joy-Con 轨道针脚，按住 音量+ 再按 电源 → 黑屏即 RCM；
+2. 把注入棒插进 Switch 的 USB-C 口 → LED 闪烁约 2 秒 → Hekate 启动；
+3. Hekate → Options → 开启 **AutoRCM**（从此不再需要拨片）。
+
+**日常（开了 AutoRCM 之后）**
+
+断电重启 → 机器自动进入 RCM（黑屏）→ 插一下注入棒 → Hekate 启动 →
+选 Launch → Atmosphère → 拔回充电器完事。全程不需要电脑和拨片。
 
 ### 3.4 防封号设置（emumnc 模式下）
 
