@@ -202,6 +202,7 @@ $DEVKITPRO/tools/bin/nxlink -a $SWITCH_IP -s "$NRO"
 
 | 现象 | 原因 / 处理 |
 |---|---|
+| 注入后屏幕显示 `Missing LP0 <sleep>lib! / Missing Minerva lib! / Update bootloader folder!` | 这是 **Hekate** 的提示：SD 卡上 `bootloader/` 文件夹缺失或与注入的 Hekate 版本不配套（Minerva=内存训练库，LP0=睡眠库，均在 `bootloader/sys/` 下）。处理：下载最新 Hekate，把 zip 里的 `bootloader` 文件夹整体拷到 SD 卡根目录，并同步更新 RCM Loader 槽位里的 payload 为同一版本——**payload 与文件夹必须同发行包**。**不要无视报错继续启动**，缺 Minerva 时内存参数未训练，不稳定 |
 | 应用秒退或初始化失败 | 大概率 applet 模式内存不足——回到 §4.2 用 Title Redirection 启动 |
 | nxlink 找不到机器 | hbmenu 里没按 L 开 netloader；或防火墙拦 UDP 43653 |
 | RCM 拨片插了没反应 | 针脚没顶到位；换拨片姿势重试；确认是未打补丁机型 |
