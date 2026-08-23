@@ -47,6 +47,7 @@ int main(int argc, char **argv) {
 
     consoleInit(NULL);
     cons_fd = dup(1);
+    appletRequestToAcquireSleepLock(); /* 运行期间禁止休眠（applet 模式失败也无妨） */
 
     padConfigureInput(1, HidNpadStyleSet_NpadStandard);
     PadState pad;
@@ -115,6 +116,7 @@ int main(int argc, char **argv) {
     }
 
     socketExit();
+    appletReleaseSleepLock();
     consoleExit(NULL);
     return 0;
 }
