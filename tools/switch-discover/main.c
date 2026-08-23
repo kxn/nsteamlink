@@ -78,6 +78,8 @@ int main(int argc, char **argv) {
     logline("nsteamlink M2 主机发现探针");
     logline("网络就绪，开始发现（30 秒，按 PLUS 退出）");
 
+    IHS_Init(); /* 必须：创建任何 IHS 客户端前做全局初始化（plume main.c 同款顺序） */
+
     uint8_t secret[32] = {0};
     IHS_ClientConfig config = {
         .deviceId = 0x53574E5357590053ULL,
