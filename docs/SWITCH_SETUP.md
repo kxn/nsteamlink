@@ -12,6 +12,7 @@
 ```
 sd-root/                        → 拷到 SD 卡根目录
 ├── bootloader/                 ← Hekate 配套文件（含 Minerva/LP0 库，就是上次报错缺的）
+│   └── hekate_ipl.ini          ← Launch 菜单的启动项定义（Hekate 6.x 用 pkg3= 键，老教程的 fss0 已废弃）
 ├── atmosphere/                 ← Atmosphère CFW 本体
 ├── hbmenu.nro                  ← 自制软件启动器（必须在卡根目录）
 └── switch/                     ← 自制软件目录（含 daybreak/haze 等系统工具，nsteamlink 以后放这）
@@ -35,7 +36,8 @@ sd-root/                        → 拷到 SD 卡根目录
 2. 关机，拆右 Joy-Con，拨片顶住轨道顶部针脚；
 3. 按住 **音量+** 不放 → 按 **电源** 1 秒 → 松开电源 → 屏幕全黑 = 进入 RCM；
 4. 拔充电器，插上 RCM Loader 注入棒 → LED 闪约 2 秒 → Hekate 启动（蓝色菜单）；
-5. **Launch → Atmosphère**（第一次若列出多个选项，选带 emummc 字样之外的 CFW 入口）；
+5. **Launch → Atmosphere (sysNAND)**（启动项由 `bootloader/hekate_ipl.ini` 提供；
+   若显示 no main boot entries found，说明 SD 卡缺这个文件）；
 6. 拔回充电器。
 
 ## 第 4 步：验证与一次性设置
