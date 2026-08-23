@@ -12,7 +12,9 @@
 ```
 sd-root/                        → 拷到 SD 卡根目录
 ├── bootloader/                 ← Hekate 配套文件（含 Minerva/LP0 库，就是上次报错缺的）
-│   └── hekate_ipl.ini          ← Launch 菜单的启动项定义（Hekate 6.x 用 pkg3= 键，老教程的 fss0 已废弃）
+│   └── hekate_ipl.ini          ← Launch 菜单的启动项定义（Hekate 6.x 用 pkg3= 键，老教程的 fss0 已废弃）。
+│                                 注意：Hekate 会在此文件里自动生成 [config] 设置段——
+│                                 加启动项时在文件**末尾追加**新段，不要整文件覆盖
 ├── atmosphere/                 ← Atmosphère CFW 本体
 ├── hbmenu.nro                  ← 自制软件启动器（必须在卡根目录）
 └── switch/                     ← 自制软件目录（含 daybreak/haze 等系统工具，nsteamlink 以后放这）
