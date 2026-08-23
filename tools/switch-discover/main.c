@@ -14,6 +14,7 @@
 static int cons_fd = -1;
 static volatile int host_count = 0;
 
+/* 仅主线程调用：console + 网络双通道。libnx console 非线程安全。 */
 static void logline(const char *fmt, ...) {
     char buf[512];
     va_list ap;
@@ -28,15 +29,29 @@ static void logline(const char *fmt, ...) {
     fflush(stdout);
 }
 
+/* IHSlib 回调线程调用：只 write() 到网络 fd，绕开 stdio 锁与 console 驱动。 */
+static void logline_net(const char *fmt, ...) {
+    char buf[600];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(buf, sizeof buf - 1, fmt, ap);
+    va_end(ap);
+    if (n < 0) return;
+    if (n > (int) sizeof buf - 2) n = sizeof buf - 2;
+    buf[n] = '\n';
+    buf[n + 1] = '\0';
+    if (write(STDOUT_FILENO, buf, n + 1) < 0) { /* 忽略 */ }
+}
+
 static void ihs_log(IHS_LogLevel level, const char *tag, const char *message) {
-    logline("[IHS:%d][%s] %s", (int) level, tag, message);
+    logline_net("[IHS:%d][%s] %s", (int) level, tag, message);
 }
 
 static void on_discovered(IHS_Client *client, const IHS_HostInfo *host, void *context) {
     (void) client;
     (void) context;
     char *ip = IHS_IPAddressToString(&host->address.ip);
-    logline(">>> 发现主机: %s (%s) gamesRunning=%d", host->hostname, ip ? ip : "?", (int) host->gamesRunning);
+    logline_net(">>> 发现主机: %s (%s) gamesRunning=%d", host->hostname, ip ? ip : "?", (int) host->gamesRunning);
     free(ip);
     host_count++;
 }
@@ -70,8 +85,8 @@ int main(int argc, char **argv) {
         .deviceName = "nsteamlink-switch",
     };
     IHS_Client *client = IHS_ClientCreate(&config);
+    logline("步骤1: IHS_ClientCreate -> %p", (void *) client);
     if (client == NULL) {
-        logline("IHS_ClientCreate 失败");
         socketExit();
         consoleExit(NULL);
         return 1;
@@ -81,14 +96,21 @@ int main(int argc, char **argv) {
         .discovered = on_discovered,
     };
     IHS_ClientSetDiscoveryCallbacks(client, &callbacks, NULL);
+    logline("步骤2: 回调注册完成");
 
-    if (!IHS_ClientStartDiscovery(client, 500)) {
-        logline("IHS_ClientStartDiscovery 失败");
-    }
+    bool started = IHS_ClientStartDiscovery(client, 500);
+    logline("步骤3: StartDiscovery -> %d", (int) started);
+
+    logline("步骤4: 进入主循环");
+    consoleUpdate(NULL);
 
     for (int i = 0; i < 60 * 30; i++) {
+        if (i == 0) {
+            logline("步骤5: 循环第 0 帧");
+        }
         padUpdate(&pad);
         if (padGetButtonsDown(&pad) & HidNpadButton_Plus) {
+            logline("用户按了 PLUS，退出");
             break;
         }
         if (i == 60 * 15) {
