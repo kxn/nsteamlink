@@ -90,6 +90,7 @@ $DEVKITPRO/tools/bin/nxlink -a <Switch的IP> -s build/switch/app/nsteamlink.nro 
 | nxlink 找不到机器 | hbmenu 没按 L；或路由器隔离/防火墙拦 UDP |
 | 进不了 RCM | 拨片没顶到位（多试姿势）；确认机器是未打补丁型号 |
 | 机器用一会儿就关机 | 没挂 PD 充电器，或充电器只有 5V 档——换支持 PD 15V 的头 |
+| 机器已被任天堂 ban（eShop 打不开） | **不影响本项目**：Title Takeover 不真正启动 eShop、不联网；串流走局域网。若按 R 无反应，先确认当前系统是 Atmosphère（设置→系统版本行带 `\|AMS` 字样），再检查 R 是否全程按住 |
 | SD 卡在电脑上读写异常 | 文件系统损坏（`wipefs -a` 后重建 FAT32 分区）/ 假卡（`f3write`+`f3read` 验容量）/ 主控报废（写操作报 I/O 错，换卡） |
 
 ## 已跳过项（不用做，留档说明）
