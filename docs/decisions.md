@@ -13,12 +13,21 @@
 - 理由：跨目标 API 一致是薄 HAL 策略的前提；SDL3 在 Switch 上无维护的 portlib。
 - 影响：桌面端放弃 SDL3 新特性；plume 的 SDL3 用法仅作参考，不能照抄。
 
-## D-002 IHSlib 用上游还是 beudbeud fork —— M1 开工时对比补丁后定
+## D-002 IHSlib 选定 beudbeud fork（取代"待定"，M1 对比后落定）
 
-- 日期：2026-08-23（挂起）
-- 背景：plume 使用其自有 fork `beudbeud/ihslib`（`plume` 分支带补丁），fork 是否含关键修复未知。
-- 决定：M1 克隆 plume 时先 `diff` 上游与 fork 的补丁差异再定；结论回填本条。
-- 影响：在结论出来前，`third_party/` 不引入 IHSlib。
+- 日期：2026-08-23
+- 背景：plume 使用其自有 fork `beudbeud/ihslib`（`plume` 分支），kickoff §3.1 要求先 diff 补丁差异再定。
+- 考察结果（fork @ `8c5a17c` vs 上游 `mariotaku/IHSlib@master`）：
+  - fork 是上游的**严格超集**：上游没有 fork 缺失的提交；
+  - fork 额外带 25+ 个实战修复，覆盖串流稳定性关键路径：重传队列死锁/
+    孤儿分片、控制通道发送序列化（否则 host 静默丢消息）、HID 悬挂指针与
+    delta 缓冲区溢出、session 停止前等待 host ACK、protobuf 与 Valve 现行
+    定义重新同步、按调用方分辨率/帧率/码率上限协商等；
+  - fork 去除了 SDL2 依赖（纯 POSIX 线程后端）→ 降低 Switch（libnx）移植成本；
+  - 有 plume 在树莓派5 上 1080p60 的端到端实测背书。
+- 决定：以 `https://github.com/beudbeud/ihslib.git` 分支 `plume`（pin `8c5a17c`）
+  作为本项目协议层依赖，M2 起 submodule 引入。
+- 影响：若上游日后吸收这些补丁，可评估切回；切换需重跑配对与串流回归。
 
 ## D-003 环境变量策略：bashrc 只放路径，交叉编译变量按需加载
 
