@@ -210,21 +210,13 @@ int main(int argc, char **argv) {
         logline("RESULT: 共发现 %d 台主机 —— M2 发现链路验证成功", host_count);
     }
 
-    logq_drain();
-    IHS_ClientStop(client);
-    IHS_ClientThreadedJoin(client);
-    IHS_ClientStopDiscovery(client);
-    IHS_ClientDestroy(client);
-
-    logline("3 秒后退出");
+    /* libnx 上 worker 线程会卡在阻塞 recv，优雅拆除会死锁（真机实测）。
+     * 探针直接 exit 由系统回收；正式客户端需在 IHSlib 侧解决 recv 超时问题。 */
+    logline("完成，3 秒后退出");
     for (int i = 0; i < 180; i++) {
         logq_drain();
         consoleUpdate(NULL);
         svcSleepThread(16 * 1000 * 1000);
     }
-
-    socketExit();
-    appletReleaseSleepLock();
-    consoleExit(NULL);
-    return 0;
+    exit(0);
 }
