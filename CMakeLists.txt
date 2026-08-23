@@ -12,9 +12,15 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # devkitPro 的 Switch.cmake 工具链会把 CMAKE_SYSTEM_NAME 置为 NintendoSwitch
 if(CMAKE_SYSTEM_NAME STREQUAL "NintendoSwitch")
     set(NSL_PLATFORM "switch")
+    # 自定义系统名不会自动置 UNIX；ihslib 平台层靠它选 POSIX 后端（decisions D-002/D-007）
+    set(UNIX ON)
 else()
     set(NSL_PLATFORM "desktop")
 endif()
 message(STATUS "nsteamlink target platform: ${NSL_PLATFORM}")
 
 add_subdirectory(app)
+
+if(NSL_PLATFORM STREQUAL "switch")
+    add_subdirectory(tools/switch-discover)
+endif()

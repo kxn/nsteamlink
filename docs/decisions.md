@@ -52,6 +52,28 @@
 - 决定：M3/M4 验收一律以 720p 为准；1080p/超频相关优化推迟到 M5（kickoff §6）。
 - 影响：代码必须在默认频率下达成 720p60，不得把超频当前提条件。
 
+## D-007 protobuf-c 交叉编译安装方式与 ihslib vendoring 策略
+
+- 日期：2026-08-23
+- 背景：devkitPro 无 protobuf-c 包；其自带 CMake 强依赖宿主 C++ Protobuf，交叉编译走不通；
+  IHSlib 需以 submodule 形式引入并带补丁。
+- 决定：
+  1. protobuf-c（v1.5.0）不走其 CMake，直接 `switchvars.sh` 环境下编译 `protobuf-c.c`
+     成静态库，手工安装到 `$DEVKITPRO/portlibs/switch`（含 `protobuf-c/` 子目录布局的
+     头文件与手写 `libprotobuf-c.pc`）；
+  2. IHSlib 以 submodule 固定 `beudbeud/ihslib@8c5a17c`（plume 分支），平台层靠
+     顶层 CMake 在 NintendoSwitch 下强制 `set(UNIX ON)` 选中 POSIX 后端；
+  3. 对 ihslib 的修改一律走 `third_party/patches/ihslib/*.patch`，克隆/submodule 更新后
+     `git -C third_party/ihslib apply ../patches/ihslib/*.patch`（暂为手工步骤，
+     待自动化）。
+- 补丁清单：
+  - `0001-libnx-portability.patch`：守卫 Linux 专有的 `SO_RCVBUFFORCE`；
+    `ihs_ip_posix.c` 补 `<sys/socket.h>`（libnx 的 `arpa/inet.h` 不带出 `AF_*`）。
+- 影响：SDK 侧构建失败时优先怀疑 portlibs 里的手工安装件；升级 protobuf-c 或 ihslib
+  时需重放补丁并重跑 M2 探针回归。
+
+---
+
 ## D-006 骨架中 platforms/switch/hal.c 是"M1 前不写 Switch 代码"的例外
 
 - 日期：2026-08-23

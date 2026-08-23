@@ -3,7 +3,7 @@
 # 依赖：DEVKITPRO 指向 devkitPro 安装目录（本机 /opt/devkitpro）。
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-: "${DEVKITPRO:?'未设置 DEVKITPRO，请先执行: export DEVKITPRO=/opt/devkitpro'}"
+export DEVKITPRO="${DEVKITPRO:-/opt/devkitpro}"
 BUILD_TYPE="${NSL_BUILD_TYPE:-Release}"
 TOOLCHAIN="${DEVKITPRO}/cmake/Switch.cmake"
 
