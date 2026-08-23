@@ -42,7 +42,9 @@ sd-root/                        → 拷到 SD 卡根目录
 
 - **验证 hbmenu**：系统里**按住 R 不放，再启动任意一个已安装的官方游戏** → hbmenu 弹出即成功
   （这就是全内存 Title Redirection 模式，串流应用以后必须这样启动）；
-- **开 AutoRCM**：回 Hekate（重启注入一次）→ Options → AutoRCM 开启。
+- **开 AutoRCM**：回 Hekate（重启注入一次）→ **Tools** → 页面最底部一行
+  "Arch Bit • AutoRCM • Touch • Pkg1/2" → 点 **AutoRCM**，显示 ON 即开启。
+  （注意：不在 Options 菜单里。）
   从此断电重启自动进 RCM，拨片永久退休，插一下注入棒即恢复系统；
 - **连 WiFi**：系统设置里连上家里路由器（串流必需；不飞行模式，ban 随它去）。
 
