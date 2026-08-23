@@ -44,8 +44,11 @@ sd-root/                        → 拷到 SD 卡根目录
 
 ## 第 4 步：验证与一次性设置
 
-- **验证 hbmenu**：系统里**按住 R 不放，再启动任意一个已安装的官方游戏** → hbmenu 弹出即成功
-  （这就是全内存 Title Redirection 模式，串流应用以后必须这样启动）；
+- **验证 hbmenu**：系统里**按住 R 不放，再按 A 启动任意应用图标** → hbmenu 弹出即成功
+  （这就是全内存 Title Takeover 模式，串流应用以后必须这样启动）。
+  **机器没装游戏也能用**：eShop 图标本身就是 Application 类型 title，按住 R 启动它即可，
+  且 takeover 时不会真的进商店、不联网。注意相册相反：不带 R 开相册 = applet 版 hbmenu（内存受限）；
+  按住 R 开相册 = 打开真相册；
 - **开 AutoRCM**：回 Hekate（重启注入一次）→ **Tools** → 页面最底部一行
   "Arch Bit • AutoRCM • Touch • Pkg1/2" → 点 **AutoRCM**，显示 ON 即开启。
   （注意：不在 Options 菜单里。）
@@ -76,14 +79,14 @@ $DEVKITPRO/tools/bin/nxlink -a <Switch的IP> -s build/switch/app/nsteamlink.nro 
 ```
 
 - nxlink 用法：hbmenu 界面按 **L** 开网络接收，屏幕显示 IP 填到 `-a`；
-- nro 一律用 **Title Redirection**（按住 R 启动游戏）方式运行，applet 模式内存不足秒退。
+- nro 一律用 **Title Takeover**（按住 R 启动 eShop 或任意游戏）方式运行，applet 模式内存不足秒退。
 
 ## 排错速查
 
 | 现象 | 处理 |
 |---|---|
 | `Missing Minerva/LP0 / Update bootloader folder!` | Hekate 报的：SD 卡 `bootloader/` 缺失或版本不配套。重做第 1、2 步，两处必须同版本。别无视报错硬启动 |
-| 应用秒退/初始化失败 | applet 模式内存不足，改 Title Redirection 启动 |
+| 应用秒退/初始化失败 | applet 模式内存不足，改 Title Takeover（按住 R 启动 eShop/游戏） |
 | nxlink 找不到机器 | hbmenu 没按 L；或路由器隔离/防火墙拦 UDP |
 | 进不了 RCM | 拨片没顶到位（多试姿势）；确认机器是未打补丁型号 |
 | 机器用一会儿就关机 | 没挂 PD 充电器，或充电器只有 5V 档——换支持 PD 15V 的头 |
