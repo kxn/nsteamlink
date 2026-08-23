@@ -1,8 +1,13 @@
 // M2 探针：在 Switch 上跑 IHSlib 主机发现，验证交叉编译产物在真机上可用。
 // 输出双通道：本机屏幕（libnx console）+ nxlink 网络（开发机终端）。
+#include <arpa/inet.h>
+#include <errno.h>
+#include <netinet/in.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 #include <switch.h> /* 聚合头，已含 runtime/nxlink.h */
@@ -10,6 +15,11 @@
 #include <ihslib/client.h>
 #include <ihslib/common.h>
 #include <ihslib/net.h>
+
+/* IHSlib 内部件（探针专用直连诊断，正式客户端会做正式抽象） */
+#include "client_pri.h"
+#include "discovery.pb-c.h"
+#include "pb_utils.h"
 
 static int cons_fd = -1;
 static volatile int host_count = 0;
@@ -103,12 +113,50 @@ int main(int argc, char **argv) {
     bool started = IHS_ClientStartDiscovery(client, 500);
     logline("步骤3: StartDiscovery -> %d", (int) started);
 
+    /* 诊断 A：裸 socket 广播能力（区分 libnx 发送失败 vs 路由器丢弃） */
+    {
+        int dfd = socket(AF_INET, SOCK_DGRAM, 0);
+        if (dfd >= 0) {
+            int on = 1;
+            setsockopt(dfd, SOL_SOCKET, SO_BROADCAST, &on, sizeof on);
+            struct sockaddr_in dst;
+            memset(&dst, 0, sizeof dst);
+            dst.sin_family = AF_INET;
+            dst.sin_port = htons(27036);
+            dst.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+            ssize_t r1 = sendto(dfd, "T", 1, 0, (struct sockaddr *) &dst, sizeof dst);
+            logline("诊断: sendto(255.255.255.255) ret=%d errno=%d", (int) r1, r1 < 0 ? errno : 0);
+            dst.sin_addr.s_addr = inet_addr("10.10.10.255");
+            ssize_t r2 = sendto(dfd, "T", 1, 0, (struct sockaddr *) &dst, sizeof dst);
+            logline("诊断: sendto(10.10.10.255)  ret=%d errno=%d", (int) r2, r2 < 0 ? errno : 0);
+            close(dfd);
+        } else {
+            logline("诊断: 诊断 socket 创建失败 errno=%d", errno);
+        }
+    }
+
+    /* 诊断 B：向 kxn-pc 单播真正的发现请求（绕过广播，kickoff §7.4 路线） */
+    static const IHS_SocketAddress kxn_pc = {
+        .ip = {.v4 = {IHS_IPAddressFamilyIPv4, {10, 10, 10, 166}}},
+        .port = 27036,
+    };
+    uint32_t unicast_seq = 0;
+
     logline("步骤4: 进入主循环");
     consoleUpdate(NULL);
 
     for (int i = 0; i < 60 * 30; i++) {
         if (i == 0) {
             logline("步骤5: 循环第 0 帧");
+        }
+        if (i % 120 == 0) { /* 每 2 秒向 kxn-pc 重发一次单播发现 */
+            CMsgRemoteClientBroadcastDiscovery msg = CMSG_REMOTE_CLIENT_BROADCAST_DISCOVERY__INIT;
+            PROTOBUF_C_SET_VALUE(msg, seq_num, ++unicast_seq);
+            bool sent = IHS_ClientSend(client, kxn_pc, k_ERemoteClientBroadcastMsgDiscovery,
+                                       (ProtobufCMessage *) &msg);
+            if (i == 0) {
+                logline("单播发现请求已发往 10.10.10.166:27036 (ret=%d)", (int) sent);
+            }
         }
         padUpdate(&pad);
         if (padGetButtonsDown(&pad) & HidNpadButton_Plus) {
