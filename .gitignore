@@ -1,0 +1,13 @@
+# 构建产物统一放 build/ 下
+build/
+
+# 编译中间物（防止有人手工在源码树里跑编译器）
+*.o
+*.obj
+
+# 编辑器 / 工具本地配置
+.vscode/
+.idea/
+*.swp
+compile_commands.json
+.cache/
