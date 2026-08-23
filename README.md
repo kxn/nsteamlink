@@ -12,6 +12,7 @@ Switch 自制软件（homebrew）版 Steam Link 客户端：通过 Steam Remote 
 | `SWITCH_STEAMLINK_KICKOFF.md` | 调研结论、总体架构、里程碑定义、已知坑 |
 | `DEVELOPMENT.md` | 开发规范（目录结构、命名、构建、Git、许可证、调试） |
 | `docs/decisions.md` | 工程决策记录（ADR-lite） |
+| `docs/SWITCH_SETUP.md` | Switch 真机环境准备指南（刷自制系统 / hbmenu / nxlink） |
 | `third_party/README.md` | 第三方依赖引入计划 |
 
 ## 快速开始

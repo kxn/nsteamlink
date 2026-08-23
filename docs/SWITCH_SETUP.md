@@ -1,0 +1,147 @@
+# Switch 真机环境准备指南（自制系统 / homebrew）
+
+> 目的：让一台**未刷自制系统的原版 Switch** 达到能运行本项目 `.nro`（含 hbmenu 全内存模式、
+> nxlink 网络调试）的状态。对应 kickoff §4.3 / §7.3。
+> 风险自担声明：修改游戏机可能违反当地法规与 Nintendo 用户协议，可能失去官方网络服务资格；
+> 请只用在自己拥有的机器上。本指南不提供任何盗版资源。
+
+---
+
+## 0. 先搞清楚你的机器属于哪一类（决定走哪条路）
+
+看 Switch 底部（或包装盒）的**序列号**（形如 `XAW10000000000`）：
+
+| 机器类型 | 判断方法 | 入口成本 |
+|---|---|---|
+| **未打补丁的初代机（Erista，2018 年中以前生产）** | 序列号在 https://ismyswitchpatched.com 查询显示 "Unpatched" | **免费**，只需一个 RCM 拨片（几块钱）+ USB-C 线 |
+| 已打补丁的初代机（"Patched"） | 同上查询显示 "Patched" | 需要早期低系统版本或硬改（modchip），成本高 |
+| Mariko 机型（2019 年后的初代 / Lite / OLED） | 查询显示 "Possibly patched" 或确定 Mariko | **只能 modchip 硬改**（焊接，风险与门槛高） |
+
+- 查询网站打不开就搜序列号前缀对照表，或直接试 RCM（见 §2，试了没反应基本就是 patched）。
+- **如果是 Mariko/Lite/OLED 且不想焊接**：不建议硬改。替代方案是收一台二手未打补丁初代机
+  （买前让卖家报序列号查一下），这是自制软件圈最常规的做法。
+- 本项目只需要"能进 hbmenu"这一件事；**不需要**破解系统、不需要装盗版游戏。
+
+## 1. 需要准备的硬件（未打补丁初代机路线）
+
+- [ ] microSD 卡：≥32GB，**FAT32 格式**（exFAT 在自制环境下问题多）
+- [ ] RCM 拨片（jig，几块钱）；应急可用回形针自制，但有短路风险，不推荐常用
+- [ ] USB-C 数据线（连 Switch 与 Linux 开发机，必须支持数据传输，不能是纯充电线）
+
+## 2. 系统与自制的总体架构（心里有数再动手）
+
+```
+RCM 漏洞（硬件入口，机器每次冷启动都要重新进入）
+  └─ 注入 payload：Hekate（引导器，负责启动选择/备份/emummc 管理）
+       └─ Atmosphère（自制系统 CFW，本体；每次重启后消失，不留在机器里）
+            └─ hbmenu（自制软件启动器）
+                 └─ sd:/switch/nsteamlink.nro  ← 我们的项目
+```
+
+关键认知：
+
+1. **CFW 不刷进机身存储**——每次开机临时加载，原系统分区不动。拔掉 SD 卡、不注入 payload
+   就恢复纯原版，这是 RCM 路线最大的安全垫。
+2. **emummc（强烈推荐）**：把 SD 卡划一个分区当"虚拟机身存储"，自制软件的一切痕迹都留在
+   emummc 里；真实 sysnand 保持干净继续正常玩正版 + 联网。只要不把 CFW 痕迹带进 sysnand，
+   ban 机风险极低。
+3. 系统版本**不用降级**，Atmosphère 支持现行最新版本。
+
+## 3. 操作步骤（未打补丁初代机）
+
+详细图文以官方 NH 指南为准：**https://nh-server.github.io/switch-guide/**（本节是速览 + 我们的补充）。
+
+### 3.1 备份 NAND（做任何事之前）
+
+Hekate 里 `Tools → Backup eMMC` 完整备份，存到电脑。这是唯一后悔药。
+
+### 3.2 SD 卡准备
+
+1. SD 卡 FAT32 格式化。
+2. 从 GitHub 下载两样（Release 页，均选最新版）：
+   - **Atmosphère**（`AMS-…-RELEASE.zip`，内含 CFW 与 `hbmenu.nro`）
+   - **Hekate**（`hekate_ctcaer_…\.zip`）
+3. 按 NH 指南把文件摆到 SD 卡对应位置；`hbmenu.nro` 放 SD 卡**根目录**。
+4. 建 `sd:/switch/` 目录（放我们的 nro）。
+5. （推荐）用 Hekate 创建 **emummc 分区**，之后所有自制活动都在 emummc 里进行。
+
+### 3.3 进入 RCM 并注入（Linux 开发机上）
+
+```bash
+# 一次性安装注入工具（Python 版 fusee-launcher）
+sudo apt install python3-pip libusb-1.0-0-dev
+pip3 install --user pyusb
+git clone https://github.com/reSwitched/fusee-launcher.git
+```
+
+进 RCM 的手法（第一次多试几次）：
+
+1. 主机完全关机，Joy-Con 拆下；
+2. 拨片插入**右 Joy-Con 轨道顶部**（顶住第 9、10 针脚）；
+3. 按住 **音量+** 不放，再按 **电源** 1 秒，松开电源——屏幕全程黑屏 = 成功进入 RCM；
+4. USB-C 连电脑：
+
+```bash
+cd fusee-launcher
+sudo python3 fusee-launcher.py hekate_ctcaer_xxx.bin   # 注入 Hekate
+# 也可直接注入 Atmosphère 的 fusee.bin，跳过 Hekate；但 Hekate 有备份/启动菜单，推荐
+```
+
+5. Hekate 里选 `Launch → Atmosphere`（或 emummc）。进系统后按住 **R + 打开相册** 即可验证
+   hbmenu 能否弹出。
+
+> 手机党：Android 装 "NX Loader" App 也能发 payload，免电脑。
+
+### 3.4 防封号设置（emumnc 模式下）
+
+- 系统设置开**飞行模式**（本项目是局域网串流，不需要任天堂网络）；
+- Atmosphère `atmosphere/config/system_settings.ini` 可开 `incognito`（隐藏证书序列号）；
+  或安装官方工具 "Incognito_RCM"。
+
+## 4. 本项目的部署与调试（每次开发迭代）
+
+### 4.1 手动部署（最朴素）
+
+```bash
+./scripts/build-switch.sh
+cp build/switch/app/nsteamlink.nro /media/$USER/<SD卡卷标>/switch/
+```
+
+### 4.2 全内存启动（Title Redirection，串流应用必用）
+
+**不要**从相册/hbmenu 直接打开串流应用（那是 applet 模式，只有数百 MB 内存，不够用）。
+正确姿势：
+
+> 在 HOME 菜单**任选一个已安装的官方游戏/软件，按住 R 再按 A 启动** → hbmenu 以
+> 完整内存模式弹出 → 从里面启动 `nsteamlink`。
+
+前提：机器里至少装有一个官方 title（任何免费软件都行）。
+
+### 4.3 nxlink 网络部署 + 日志回传（开发期首选，不用来回拔 SD 卡）
+
+Switch 与开发机在同一局域网，hbmenu 界面按 **L** 打开网络接收，屏幕会显示 IP；然后：
+
+```bash
+NRO=build/switch/app/nsteamlink.nro
+SWITCH_IP=192.168.x.x        # hbmenu 按 L 后屏幕上显示的地址
+$DEVKITPRO/tools/bin/nxlink -a $SWITCH_IP -s "$NRO"
+#        -a 指定机器地址；-s 推送并启动后，把应用的 stdout/stderr 回传到本机终端
+```
+
+我们的 `SL_LOG` 日志走 stdout，配合 `-s` 就能直接在开发机终端看运行日志（DEVELOPMENT.md §8）。
+
+## 5. 常见坑（对应 kickoff §7）
+
+| 现象 | 原因 / 处理 |
+|---|---|
+| 应用秒退或初始化失败 | 大概率 applet 模式内存不足——回到 §4.2 用 Title Redirection 启动 |
+| nxlink 找不到机器 | hbmenu 里没按 L 开 netloader；或防火墙拦 UDP 43653 |
+| RCM 拨片插了没反应 | 针脚没顶到位；换拨片姿势重试；确认是未打补丁机型 |
+| 串流卡顿 | 默认频率下 720p60 是基准；1080p 高码率留到 M5 且涉及超频，风险自担（kickoff §7.6） |
+
+## 6. M2 之前你要完成的事（清单）
+
+- [ ] 确认机器类型（§0 序列号查询），告诉我结果，我们据此定真机计划
+- [ ] 若是未打补丁初代机：备件到位（SD 卡 / jig / 数据线），按 §3 走通到 hbmenu
+- [ ] 真机上验证：按住 R 启动任意游戏能弹出 hbmenu（全内存模式）
+- [ ] 把 hbmenu 显示的 IP 告诉开发机侧（nxlink 用）
