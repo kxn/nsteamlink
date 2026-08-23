@@ -3,6 +3,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netinet/in.h>
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,11 +23,19 @@
 #include "pb_utils.h"
 
 static int cons_fd = -1;
+static bool nxlink_active = false;
 static volatile int host_count = 0;
 
-/* 仅主线程调用：console + 网络双通道。libnx console 非线程安全。 */
+/* 回调线程 → 主线程 的日志队列：libnx console 单写者（主线程） */
+#define LOGQ_LEN 16
+#define LOGQ_MSG 160
+static char logq[LOGQ_LEN][LOGQ_MSG];
+static int logq_head = 0, logq_tail = 0;
+static pthread_mutex_t logq_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/* 仅主线程调用：console（+ nxlink 网络若激活）。 */
 static void logline(const char *fmt, ...) {
-    char buf[512];
+    char buf[LOGQ_MSG];
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(buf, sizeof buf, fmt, ap);
@@ -34,23 +43,47 @@ static void logline(const char *fmt, ...) {
     if (cons_fd >= 0) {
         dprintf(cons_fd, "%s\n", buf);
     }
-    fputs(buf, stdout);
-    fputc('\n', stdout);
-    fflush(stdout);
+    if (nxlink_active) {
+        fputs(buf, stdout);
+        fputc('\n', stdout);
+        fflush(stdout);
+    }
 }
 
-/* IHSlib 回调线程调用：只 write() 到网络 fd，绕开 stdio 锁与 console 驱动。 */
+/* IHSlib 回调线程调用：只入队，不碰任何 IO。主循环里 drain。 */
 static void logline_net(const char *fmt, ...) {
-    char buf[600];
+    pthread_mutex_lock(&logq_lock);
+    char *slot = logq[logq_head];
     va_list ap;
     va_start(ap, fmt);
-    int n = vsnprintf(buf, sizeof buf - 1, fmt, ap);
+    vsnprintf(slot, LOGQ_MSG, fmt, ap);
     va_end(ap);
-    if (n < 0) return;
-    if (n > (int) sizeof buf - 2) n = sizeof buf - 2;
-    buf[n] = '\n';
-    buf[n + 1] = '\0';
-    if (write(STDOUT_FILENO, buf, n + 1) < 0) { /* 忽略 */ }
+    logq_head = (logq_head + 1) % LOGQ_LEN;
+    if (logq_head == logq_tail) logq_tail = (logq_tail + 1) % LOGQ_LEN; /* 满则丢最旧 */
+    pthread_mutex_unlock(&logq_lock);
+}
+
+/* 仅主线程调用：把队列中的回调日志打到屏幕/网络。 */
+static void logq_drain(void) {
+    for (;;) {
+        pthread_mutex_lock(&logq_lock);
+        if (logq_head == logq_tail) {
+            pthread_mutex_unlock(&logq_lock);
+            return;
+        }
+        char local[LOGQ_MSG];
+        strncpy(local, logq[logq_tail], LOGQ_MSG);
+        logq_tail = (logq_tail + 1) % LOGQ_LEN;
+        pthread_mutex_unlock(&logq_lock);
+        if (cons_fd >= 0) {
+            dprintf(cons_fd, "%s\n", local);
+        }
+        if (nxlink_active) {
+            fputs(local, stdout);
+            fputc('\n', stdout);
+            fflush(stdout);
+        }
+    }
 }
 
 static void ihs_log(IHS_LogLevel level, const char *tag, const char *message) {
@@ -83,7 +116,7 @@ int main(int argc, char **argv) {
         consoleExit(NULL);
         return 1;
     }
-    nxlinkStdio(); /* nxlink -s 启动时把 stdout 转发回开发机；普通启动时无副作用 */
+    nxlink_active = (nxlinkStdio() >= 0); /* nxlink -s 启动时把 stdout 转发回开发机 */
 
     logline("nsteamlink M2 主机发现探针");
     logline("网络就绪，开始发现（30 秒，按 PLUS 退出）");
@@ -166,6 +199,7 @@ int main(int argc, char **argv) {
         if (i == 60 * 15) {
             logline("... 15 秒，继续等");
         }
+        logq_drain();
         consoleUpdate(NULL);
         svcSleepThread(16 * 1000 * 1000);
     }
@@ -176,6 +210,7 @@ int main(int argc, char **argv) {
         logline("RESULT: 共发现 %d 台主机 —— M2 发现链路验证成功", host_count);
     }
 
+    logq_drain();
     IHS_ClientStop(client);
     IHS_ClientThreadedJoin(client);
     IHS_ClientStopDiscovery(client);
@@ -183,6 +218,7 @@ int main(int argc, char **argv) {
 
     logline("3 秒后退出");
     for (int i = 0; i < 180; i++) {
+        logq_drain();
         consoleUpdate(NULL);
         svcSleepThread(16 * 1000 * 1000);
     }
