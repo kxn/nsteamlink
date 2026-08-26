@@ -70,6 +70,15 @@ static uint64_t hid_last_full_us;
 static uint64_t hid_last_log_us;
 /* 100ms forced full-state heartbeat; bounded input staleness after packet loss. */
 #define HID_FULL_REFRESH_US 100000ULL
+/* Event-classification counters for locating capture halts; immediate trace budget. */
+#define HID_TRACE_BUDGET_PER_SEC 12U
+static uint32_t hid_pump_calls_since_log;
+static uint32_t hid_axis_since_log;
+static uint32_t hid_button_since_log;
+static uint32_t hid_sensor_since_log;
+static uint32_t hid_other_since_log;
+static uint32_t hid_trace_lines_this_sec;
+static uint32_t hid_trace_suppressed;
 #endif
 static probe_media_log_fn log_cb;
 static probe_media_snapshot snapshot;
@@ -603,6 +612,7 @@ static void pump_sdl_events(void) {
     event_hid_session = hid_session;
     hid_enabled = hid_session_enabled;
     pthread_mutex_unlock(&state_lock);
+    hid_pump_calls_since_log++;
 #endif
 
     while (SDL_PollEvent(&event)) {
@@ -613,6 +623,42 @@ static void pump_sdl_events(void) {
             hid_changed = true;
             hid_events_since_log++;
             hid_events_total++;
+            switch (event.type) {
+                case SDL_CONTROLLERAXISMOTION:
+                    hid_axis_since_log++;
+                    break;
+                case SDL_CONTROLLERBUTTONDOWN:
+                case SDL_CONTROLLERBUTTONUP:
+                    hid_button_since_log++;
+                    break;
+                case SDL_CONTROLLERSENSORUPDATE:
+                    hid_sensor_since_log++;
+                    break;
+                default:
+                    hid_other_since_log++;
+                    break;
+            }
+        }
+        if (event.type == SDL_CONTROLLERBUTTONDOWN ||
+            event.type == SDL_CONTROLLERBUTTONUP ||
+            event.type == SDL_CONTROLLERAXISMOTION ||
+            event.type == SDL_CONTROLLERSENSORUPDATE) {
+            if (hid_trace_lines_this_sec < HID_TRACE_BUDGET_PER_SEC) {
+                const char *kind = event.type == SDL_CONTROLLERAXISMOTION ? "axis" :
+                                   (event.type == SDL_CONTROLLERBUTTONDOWN ? "btn-down" :
+                                   (event.type == SDL_CONTROLLERBUTTONUP ? "btn-up" : "sensor"));
+                int code = event.type == SDL_CONTROLLERAXISMOTION ? (int) event.caxis.axis :
+                           (int) event.cbutton.button;
+                int value = event.type == SDL_CONTROLLERAXISMOTION ? (int) event.caxis.value :
+                            (event.type == SDL_CONTROLLERSENSORUPDATE ? -1 :
+                             (int) event.cbutton.state);
+                media_logf("hid ev %s which=%d code=%d value=%d", kind,
+                           event.type == SDL_CONTROLLERAXISMOTION ? (int) event.caxis.which :
+                           (int) event.cbutton.which, code, value);
+                hid_trace_lines_this_sec++;
+            } else {
+                hid_trace_suppressed++;
+            }
         }
 #endif
         switch (event.type) {
@@ -662,13 +708,24 @@ static void pump_sdl_events(void) {
             hid_last_full_us = now_us;
         }
         if (elapsed_us(hid_last_log_us, now_us) >= 1000000U) {
-            media_logf("hid summary: events=%u send_ok=%u send_fail=%u stateFull=%u",
+            media_logf("hid summary: events=%u send_ok=%u send_fail=%u stateFull=%u"
+                       " pump=%u ax=%u btn=%u sen=%u oth=%u evSup=%u",
                        hid_events_since_log, hid_send_ok_since_log,
-                       hid_send_fail_since_log, hid_state_full_since_log);
+                       hid_send_fail_since_log, hid_state_full_since_log,
+                       hid_pump_calls_since_log, hid_axis_since_log,
+                       hid_button_since_log, hid_sensor_since_log,
+                       hid_other_since_log, hid_trace_suppressed);
             hid_events_since_log = 0;
             hid_send_ok_since_log = 0;
             hid_send_fail_since_log = 0;
             hid_state_full_since_log = 0;
+            hid_pump_calls_since_log = 0;
+            hid_axis_since_log = 0;
+            hid_button_since_log = 0;
+            hid_sensor_since_log = 0;
+            hid_other_since_log = 0;
+            hid_trace_suppressed = 0;
+            hid_trace_lines_this_sec = 0;
             hid_last_log_us = now_us;
         }
     } else {
@@ -676,6 +733,12 @@ static void pump_sdl_events(void) {
         hid_send_ok_since_log = 0;
         hid_send_fail_since_log = 0;
         hid_state_full_since_log = 0;
+        hid_axis_since_log = 0;
+        hid_button_since_log = 0;
+        hid_sensor_since_log = 0;
+        hid_other_since_log = 0;
+        hid_trace_suppressed = 0;
+        hid_trace_lines_this_sec = 0;
         hid_last_log_us = 0;
         hid_last_full_us = 0;
     }
@@ -813,6 +876,13 @@ void probe_media_shutdown(void) {
     hid_events_since_log = 0;
     hid_send_ok_since_log = 0;
     hid_send_fail_since_log = 0;
+    hid_pump_calls_since_log = 0;
+    hid_axis_since_log = 0;
+    hid_button_since_log = 0;
+    hid_sensor_since_log = 0;
+    hid_other_since_log = 0;
+    hid_trace_suppressed = 0;
+    hid_trace_lines_this_sec = 0;
     hid_last_log_us = 0;
 #endif
     pthread_mutex_unlock(&state_lock);
