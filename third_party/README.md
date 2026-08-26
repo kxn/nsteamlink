@@ -38,6 +38,10 @@
 - `0011-video-channel-restart-cleanup.patch`：host 侧重发 `StartVideoData` 时先 remove 再重建 video
   channel（不再静默忽略），并修复 `IHS_SessionChannelRemove()` 删除非末尾 channel 时漏减
   `numChannels` 的确定性 bug。
+- `0012-sdl-hid-full-state-refresh.patch`：实现 `IHS_HIDRefreshSDLGameControllers()`——对主机已启动
+  input reports 的 SDL 设备强制追加一份当前状态 full report 并发送，供 app 以低频心跳重发，
+  在可靠控制通道丢包后有界恢复手柄状态（delta 链本身无法自愈）。动机与证据见 decisions D-030；
+  该 API 的声明与"低频刷新"契约此前已写在公开头文件 `ihslib/hid/sdl.h` 中，本补丁补上实现。
 
 ## 待引入（按里程碑）
 
