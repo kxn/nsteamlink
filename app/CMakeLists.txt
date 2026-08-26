@@ -10,15 +10,15 @@ if(NSL_PLATFORM STREQUAL "switch")
         pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
     endif()
 
-    set(NSL_STREAM_PROBE_MAIN ${CMAKE_SOURCE_DIR}/tools/switch-stream-probe/main.c)
-    set(NSL_STREAM_PROBE_MEDIA ${CMAKE_SOURCE_DIR}/tools/switch-stream-probe/media.c)
-    set_source_files_properties(${NSL_STREAM_PROBE_MAIN}
+    set(NSL_CLIENT_MAIN ${CMAKE_SOURCE_DIR}/client/main.c)
+    set(NSL_CLIENT_MEDIA ${CMAKE_SOURCE_DIR}/client/media.c)
+    set_source_files_properties(${NSL_CLIENT_MAIN}
         PROPERTIES COMPILE_DEFINITIONS "main=nsteamlink_stream_main;NSTREAMLINK_APP=1")
-    set_source_files_properties(${NSL_STREAM_PROBE_MEDIA}
+    set_source_files_properties(${NSL_CLIENT_MEDIA}
         PROPERTIES COMPILE_DEFINITIONS "NSTREAMLINK_APP=1")
     list(APPEND NSL_SOURCES
-        ${NSL_STREAM_PROBE_MAIN}
-        ${NSL_STREAM_PROBE_MEDIA})
+        ${NSL_CLIENT_MAIN}
+        ${NSL_CLIENT_MEDIA})
 else()
     list(APPEND NSL_SOURCES platforms/desktop/hal.c)
 endif()

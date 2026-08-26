@@ -45,8 +45,8 @@ Switch 自制软件（homebrew）版 Steam Link 客户端：通过 Steam Remote 
 # PC 端 debug 命令：state / hosts / select <n> / pair / code / exit
 # pair 不接收 PIN；Switch 会生成 code，并显示在屏幕与 debug state/code 输出里
 
-# M3 串流/session/video probe
-# 产物 build/switch/tools/switch-stream-probe/switch-stream-probe.nro
+# 流程自检 NRO（正式 app 复用同一实现）
+# 产物 build/switch/client/switch-stream-selftest.nro
 # 保留为证据工具；正式 app 现在复用同一条已验证串流链路
 # PC 端 debug 命令：state / hosts / select <n> / stream game / stats / stop / exit
 ```

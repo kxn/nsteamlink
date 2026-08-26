@@ -80,9 +80,9 @@ static uint32_t hid_other_since_log;
 static uint32_t hid_trace_lines_this_sec;
 static uint32_t hid_trace_suppressed;
 #endif
-static probe_media_log_fn log_cb;
-static probe_media_snapshot snapshot;
-static probe_media_ui ui_state;
+static stream_media_log_fn log_cb;
+static stream_media_snapshot snapshot;
+static stream_media_ui ui_state;
 static bool frame_dirty;
 static uint16_t pending_frame_id;
 static bool need_flush;
@@ -250,7 +250,7 @@ static void draw_text(const char *text, int x, int y, int scale, SDL_Color color
 }
 
 static void draw_ui_overlay(void) {
-    probe_media_ui ui;
+    stream_media_ui ui;
     pthread_mutex_lock(&state_lock);
     ui = ui_state;
     pthread_mutex_unlock(&state_lock);
@@ -285,17 +285,17 @@ static void draw_ui_overlay(void) {
         }
 
         int y = 184;
-        for (int i = 0; i < PROBE_MEDIA_UI_LINES; i++) {
+        for (int i = 0; i < STREAM_MEDIA_UI_LINES; i++) {
             if (ui.lines[i][0] == '\0') {
                 continue;
             }
-            SDL_Color color = i >= PROBE_MEDIA_UI_LINES - 2 ? muted : body;
+            SDL_Color color = i >= STREAM_MEDIA_UI_LINES - 2 ? muted : body;
             draw_text(ui.lines[i], 82, y, 3, color);
             y += 44;
         }
     } else {
         int line_count = 0;
-        for (int i = 0; i < PROBE_MEDIA_UI_LINES; i++) {
+        for (int i = 0; i < STREAM_MEDIA_UI_LINES; i++) {
             if (ui.lines[i][0] != '\0') {
                 line_count++;
             }
@@ -315,11 +315,11 @@ static void draw_ui_overlay(void) {
             draw_text(ui.title, 50, 48, 3, title);
         }
         int y = 88;
-        for (int i = 0; i < PROBE_MEDIA_UI_LINES; i++) {
+        for (int i = 0; i < STREAM_MEDIA_UI_LINES; i++) {
             if (ui.lines[i][0] == '\0') {
                 continue;
             }
-            SDL_Color color = i >= PROBE_MEDIA_UI_LINES - 2 ? muted : body;
+            SDL_Color color = i >= STREAM_MEDIA_UI_LINES - 2 ? muted : body;
             draw_text(ui.lines[i], 50, y, 2, color);
             y += 28;
         }
@@ -781,7 +781,7 @@ static void draw_idle_indicator(void) {
     SDL_RenderPresent(sdl_renderer);
 }
 
-bool probe_media_init(probe_media_log_fn log_fn) {
+bool stream_media_init(stream_media_log_fn log_fn) {
     if (sdl_ready) {
         return true;
     }
@@ -796,7 +796,7 @@ bool probe_media_init(probe_media_log_fn log_fn) {
     present_frame = av_frame_alloc();
     if (latched_frame == NULL || present_frame == NULL) {
         media_set_error("media frame allocation failed");
-        probe_media_shutdown();
+        stream_media_shutdown();
         return false;
     }
 
@@ -808,7 +808,7 @@ bool probe_media_init(probe_media_log_fn log_fn) {
 #endif
     if (SDL_Init(init_flags) < 0) {
         media_set_error("SDL_Init: %s", SDL_GetError());
-        probe_media_shutdown();
+        stream_media_shutdown();
         return false;
     }
     sdl_initialized = true;
@@ -816,7 +816,7 @@ bool probe_media_init(probe_media_log_fn log_fn) {
     sdl_window = SDL_CreateWindow("nsteamlink", 0, 0, SDL_WIDTH, SDL_HEIGHT, 0);
     if (sdl_window == NULL) {
         media_set_error("SDL_CreateWindow: %s", SDL_GetError());
-        probe_media_shutdown();
+        stream_media_shutdown();
         return false;
     }
 
@@ -825,13 +825,13 @@ bool probe_media_init(probe_media_log_fn log_fn) {
                                           SDL_RENDERER_PRESENTVSYNC);
     if (sdl_renderer == NULL) {
         media_set_error("SDL_CreateRenderer: %s", SDL_GetError());
-        probe_media_shutdown();
+        stream_media_shutdown();
         return false;
     }
 
 #if NSTREAMLINK_APP
     if (!open_hid_controller()) {
-        probe_media_shutdown();
+        stream_media_shutdown();
         return false;
     }
 #endif
@@ -841,7 +841,7 @@ bool probe_media_init(probe_media_log_fn log_fn) {
         joysticks[i] = SDL_JoystickOpen(i);
         if (joysticks[i] == NULL) {
             media_set_error("SDL_JoystickOpen(%d): %s", i, SDL_GetError());
-            probe_media_shutdown();
+            stream_media_shutdown();
             return false;
         }
     }
@@ -857,9 +857,9 @@ bool probe_media_init(probe_media_log_fn log_fn) {
     return true;
 }
 
-void probe_media_shutdown(void) {
+void stream_media_shutdown(void) {
     media_logf("media shutdown: begin");
-    probe_media_video_stop(NULL);
+    stream_media_video_stop(NULL);
 
     pthread_mutex_lock(&state_lock);
     snapshot.available = false;
@@ -924,15 +924,15 @@ void probe_media_shutdown(void) {
     media_logf("media shutdown: done");
 }
 
-bool probe_media_available(void) {
+bool stream_media_available(void) {
     return sdl_ready;
 }
 
-bool probe_media_exit_requested(void) {
+bool stream_media_exit_requested(void) {
     return sdl_exit_requested;
 }
 
-void probe_media_set_hid_session(IHS_Session *session, bool enabled) {
+void stream_media_set_hid_session(IHS_Session *session, bool enabled) {
 #if NSTREAMLINK_APP
     pthread_mutex_lock(&state_lock);
     hid_session = session;
@@ -963,7 +963,7 @@ void probe_media_set_hid_session(IHS_Session *session, bool enabled) {
 }
 
 #if NSTREAMLINK_APP
-IHS_HIDProvider *probe_media_create_hid_provider(void) {
+IHS_HIDProvider *stream_media_create_hid_provider(void) {
     if (!open_hid_controller()) {
         return NULL;
     }
@@ -977,7 +977,7 @@ IHS_HIDProvider *probe_media_create_hid_provider(void) {
     return provider;
 }
 
-void probe_media_destroy_hid_provider(IHS_HIDProvider *provider) {
+void stream_media_destroy_hid_provider(IHS_HIDProvider *provider) {
     if (provider == NULL) {
         return;
     }
@@ -1075,7 +1075,7 @@ static int open_decoder(const IHS_StreamVideoConfig *config, bool use_hw) {
     return 0;
 }
 
-int probe_media_video_start(IHS_Session *session, const IHS_StreamVideoConfig *config) {
+int stream_media_video_start(IHS_Session *session, const IHS_StreamVideoConfig *config) {
     (void)session;
     if (!sdl_ready) {
         media_set_error("media unavailable at video start");
@@ -1086,13 +1086,13 @@ int probe_media_video_start(IHS_Session *session, const IHS_StreamVideoConfig *c
         return -1;
     }
 
-    probe_media_video_stop(NULL);
+    stream_media_video_stop(NULL);
 
     packet = av_packet_alloc();
     decode_frame = av_frame_alloc();
     if (packet == NULL || decode_frame == NULL) {
         media_set_error("FFmpeg packet/frame allocation failed");
-        probe_media_video_stop(NULL);
+        stream_media_video_stop(NULL);
         return -1;
     }
 
@@ -1105,7 +1105,7 @@ int probe_media_video_start(IHS_Session *session, const IHS_StreamVideoConfig *c
     }
 
     if ((!can_try_hw || open_decoder(config, true) != 0) && open_decoder(config, false) != 0) {
-        probe_media_video_stop(NULL);
+        stream_media_video_stop(NULL);
         return -1;
     }
 
@@ -1258,7 +1258,7 @@ static void receive_frames(uint16_t frame_id) {
     }
 }
 
-IHS_StreamVideoSubmitResult probe_media_video_submit(IHS_Session *session, uint16_t frame_id,
+IHS_StreamVideoSubmitResult stream_media_video_submit(IHS_Session *session, uint16_t frame_id,
                                                      IHS_Buffer *data,
                                                      IHS_StreamVideoFrameFlag flags) {
     if (decoder_ctx == NULL || packet == NULL) {
@@ -1320,7 +1320,7 @@ IHS_StreamVideoSubmitResult probe_media_video_submit(IHS_Session *session, uint1
     return IHS_StreamVideoSubmitReportLost;
 }
 
-void probe_media_video_stop(IHS_Session *session) {
+void stream_media_video_stop(IHS_Session *session) {
     (void)session;
     uint16_t dropped_id = 0;
     bool had_pending = false;
@@ -1549,7 +1549,7 @@ static bool should_draw_idle(void) {
     return idle;
 }
 
-void probe_media_present(void) {
+void stream_media_present(void) {
     if (!sdl_ready) {
         return;
     }
@@ -1594,7 +1594,7 @@ void probe_media_present(void) {
     }
 }
 
-void probe_media_get_snapshot(probe_media_snapshot *out) {
+void stream_media_get_snapshot(stream_media_snapshot *out) {
     if (out == NULL) {
         return;
     }
@@ -1609,7 +1609,7 @@ void probe_media_get_snapshot(probe_media_snapshot *out) {
     pthread_mutex_unlock(&state_lock);
 }
 
-void probe_media_set_ui(const probe_media_ui *ui) {
+void stream_media_set_ui(const stream_media_ui *ui) {
     pthread_mutex_lock(&state_lock);
     if (ui != NULL) {
         ui_state = *ui;

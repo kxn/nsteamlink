@@ -17,7 +17,7 @@ cmake --build "$ROOT/build/switch" -j"$(nproc)"
 NROS=(
     "$ROOT/build/switch/app/nsteamlink.nro"
     "$ROOT/build/switch/tools/switch-discover/switch-discover.nro"
-    "$ROOT/build/switch/tools/switch-stream-probe/switch-stream-probe.nro"
+    "$ROOT/build/switch/client/switch-stream-selftest.nro"
     "$ROOT/build/switch/tools/switch-gfx-probe/switch-gfx-sdl-official.nro"
     "$ROOT/build/switch/tools/switch-gfx-probe/switch-gfx-gl-official.nro"
 )

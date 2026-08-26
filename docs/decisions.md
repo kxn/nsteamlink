@@ -904,3 +904,18 @@
   - 若仍出现长时间完全断流：抓取期间每秒 summary 曲线区分"本地事件停摆"
     （events 停止增长→另查渲染循环/SDL 队列）与"线上持续丢弃"（events/sendOk 正常但
     Steam 无响应→评估加大心跳频率或改用不可靠输入通道的 D-030 第 4 点激进方案）。
+
+## D-031 stream 探针更名：目录 tools/switch-stream-probe → client，独立 NRO → switch-stream-selftest
+
+- 背景：M3.5/M4 之后正式 `nsteamlink.nro` 在编译期直接复用该目录的 main.c/media.c（D-024），
+  它实际是客户端实现本体；"probe"命名低估其角色并暗示临时性。
+- 更名映射（2026-08-27 起）：
+  - 目录：`tools/switch-stream-probe/` → `client/`
+  - 独立证据 NRO 目标与产物：`switch-stream-probe(-core)` → `switch-stream-selftest(-core)`
+  - 函数/类型/宏前缀：`probe_media_* / probe_runtime / probe_mode / PROBE_MEDIA_*`
+    → `stream_media_* / stream_runtime / stream_mode / STREAM_MEDIA_*`
+  - 构建变量：app/CMakeLists.txt `NSL_STREAM_PROBE_MAIN/MEDIA` → `NSL_CLIENT_MAIN/MEDIA`
+  - 运行时横幅："nsteamlink M3 stream probe" → "nsteamlink stream selftest"
+- 历史记录策略：M3_STATUS/M4_STATUS/decisions 早前条目中的旧路径、旧 NRO 名与当日 sha256
+  为当时事实记录，一律不改写；涉及操作命令的段落已就地更新。对照旧日志时按本表翻译。
+- 真 probe 保持原名：`tools/switch-gfx-probe`（图形基准对照工具）语义仍是探针，不动。

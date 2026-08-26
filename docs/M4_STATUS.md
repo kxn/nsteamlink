@@ -50,7 +50,19 @@
 - 2026-08-25 用户真机确认输入已经能被 Steam/game 消费；新问题是 Steam 端看到的 `A/B` 映射反了
   （`X/Y` 待用户确认），以及在 Steam UI 内选定游戏启动时，host 停止当前串流、游戏在 PC 上独立运行，
   Switch 端停在最后一帧但进程未死。
-- 正式 app 不再默认开机自动开始串流；`switch-stream-probe` 仍保留自动 3600 帧长跑行为。
+- 正式 app 不再默认开机自动开始串流；`switch-stream-selftest` 仍保留自动 3600 帧长跑行为。
+- 2026-08-26 第二轮真机：心跳按设计满节奏运行（`stateFull` 稳定 9~10/s），用户反馈卡键
+  "不如之前明显"，但仍有一次 RT 按压后长时间无响应的残留症状。日志分析（见 git log D-030
+  后续消息）：该冻结发生在线路最平静的时段，心跳与 ACK 全程健康——原"丢包黑洞"假设对该
+  症状不成立；结合用户补充（按压集中在静默窗内、事件计数为零、恢复后短暂操作即退出），
+  改判嫌疑为 **Switch 本地 SDL 事件捕获间歇性停摆**。已加入事件级探针（每秒 ax/btn/sen/
+  pump 分类计数 + 按钮轴值即时打点限速 12 行/秒），下一轮复现即可二分定位。
+- 2026-08-27 更名落位后产物：
+  - `build/switch/app/nsteamlink.nro`
+    sha256 `a18280eb6462e0bead54cea5d48bf3766a867622ee76b903f313f1cf4280ff92`；
+  - `build/switch/client/switch-stream-selftest.nro`
+    sha256 `fa2c2ad0358cfd0dd652b073e60d45bff2948343986087cada0b1e9923b73d3d`。
+  - 更名映射见 decisions D-031。
 
 ## 已完成
 

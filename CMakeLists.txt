@@ -31,6 +31,6 @@ add_subdirectory(app)
 
 if(NSL_PLATFORM STREQUAL "switch")
     add_subdirectory(tools/switch-discover)
-    add_subdirectory(tools/switch-stream-probe)
+    add_subdirectory(client)
     add_subdirectory(tools/switch-gfx-probe)
 endif()

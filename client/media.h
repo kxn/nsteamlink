@@ -15,9 +15,9 @@
 #include <ihslib/hid/sdl.h>
 #endif
 
-typedef void (*probe_media_log_fn)(const char *message);
+typedef void (*stream_media_log_fn)(const char *message);
 
-typedef struct probe_media_snapshot {
+typedef struct stream_media_snapshot {
     bool available;
     bool video_active;
     bool first_frame_displayed;
@@ -57,33 +57,33 @@ typedef struct probe_media_snapshot {
     int height;
     char decoder[64];
     char last_error[128];
-} probe_media_snapshot;
+} stream_media_snapshot;
 
-#define PROBE_MEDIA_UI_LINES 8
-#define PROBE_MEDIA_UI_TEXT  96
+#define STREAM_MEDIA_UI_LINES 8
+#define STREAM_MEDIA_UI_TEXT  96
 
-typedef struct probe_media_ui {
+typedef struct stream_media_ui {
     bool visible;
     bool dim_background;
     char title[48];
-    char lines[PROBE_MEDIA_UI_LINES][PROBE_MEDIA_UI_TEXT];
-} probe_media_ui;
+    char lines[STREAM_MEDIA_UI_LINES][STREAM_MEDIA_UI_TEXT];
+} stream_media_ui;
 
-bool probe_media_init(probe_media_log_fn log_fn);
-void probe_media_shutdown(void);
-bool probe_media_available(void);
-bool probe_media_exit_requested(void);
-void probe_media_set_hid_session(IHS_Session *session, bool enabled);
+bool stream_media_init(stream_media_log_fn log_fn);
+void stream_media_shutdown(void);
+bool stream_media_available(void);
+bool stream_media_exit_requested(void);
+void stream_media_set_hid_session(IHS_Session *session, bool enabled);
 #if NSTREAMLINK_APP
-IHS_HIDProvider *probe_media_create_hid_provider(void);
-void probe_media_destroy_hid_provider(IHS_HIDProvider *provider);
+IHS_HIDProvider *stream_media_create_hid_provider(void);
+void stream_media_destroy_hid_provider(IHS_HIDProvider *provider);
 #endif
-void probe_media_present(void);
-void probe_media_get_snapshot(probe_media_snapshot *out);
-void probe_media_set_ui(const probe_media_ui *ui);
+void stream_media_present(void);
+void stream_media_get_snapshot(stream_media_snapshot *out);
+void stream_media_set_ui(const stream_media_ui *ui);
 
-int probe_media_video_start(IHS_Session *session, const IHS_StreamVideoConfig *config);
-IHS_StreamVideoSubmitResult probe_media_video_submit(IHS_Session *session, uint16_t frame_id,
+int stream_media_video_start(IHS_Session *session, const IHS_StreamVideoConfig *config);
+IHS_StreamVideoSubmitResult stream_media_video_submit(IHS_Session *session, uint16_t frame_id,
                                                      IHS_Buffer *data,
                                                      IHS_StreamVideoFrameFlag flags);
-void probe_media_video_stop(IHS_Session *session);
+void stream_media_video_stop(IHS_Session *session);

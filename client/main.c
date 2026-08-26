@@ -84,7 +84,7 @@ typedef struct __attribute__((packed)) sl_auth_file {
     uint8_t reserved[30];
 } sl_auth_file;
 
-typedef enum probe_mode {
+typedef enum stream_mode {
     PROBE_DISCOVERING,
     PROBE_READY,
     PROBE_STREAM_REQUESTING,
@@ -93,7 +93,7 @@ typedef enum probe_mode {
     PROBE_SESSION_ACTIVE,
     PROBE_SESSION_STOPPING,
     PROBE_ERROR,
-} probe_mode;
+} stream_mode;
 
 typedef struct app_state {
     pthread_mutex_t lock;
@@ -106,7 +106,7 @@ typedef struct app_state {
     int discovery_frame;
     uint32_t fallback_seq;
 
-    probe_mode mode;
+    stream_mode mode;
     IHS_StreamingResult stream_result;
     bool stream_desktop;
     bool stream_hold;
@@ -198,7 +198,7 @@ void __libnx_exception_handler(ThreadExceptionDump *ctx) {
     if (fp == NULL) {
         return;
     }
-    fprintf(fp, "nsteamlink switch-stream-probe exception dump\n");
+    fprintf(fp, "nsteamlink switch-stream-selftest exception dump\n");
     fprintf(fp, "error_desc: 0x%x\n", ctx->error_desc);
     for (int i = 0; i < 29; i++) {
         fprintf(fp, "x%d: 0x%016" PRIx64 "\n", i, (uint64_t)ctx->cpu_gprs[i].x);
@@ -503,7 +503,7 @@ static void ihs_log(IHS_LogLevel level, const char *tag, const char *message) {
     logline_net("[IHS:%d][%s] %s", (int)level, tag, message);
 }
 
-static const char *mode_name(probe_mode mode) {
+static const char *mode_name(stream_mode mode) {
     switch (mode) {
     case PROBE_DISCOVERING:
         return "discovering";
@@ -726,7 +726,7 @@ static void on_session_connected(IHS_Session *session, void *context) {
     pthread_mutex_unlock(&state->lock);
     logline_net("session connected");
 #if NSTREAMLINK_APP
-    probe_media_set_hid_session(session, true);
+    stream_media_set_hid_session(session, true);
     bool hid_notified = IHS_SessionHIDNotifyDeviceChange(session);
     logline_net("hid device change notified: %d", (int)hid_notified);
 #else
@@ -771,9 +771,9 @@ static int on_video_start(IHS_Session *session, const IHS_StreamVideoConfig *con
     logline_net("video start: %ux%u codec=%s(%d) codecData=%zu", config->width,
                 config->height, codec_name(config->codec), (int)config->codec,
                 config->codecDataLen);
-    if (probe_media_video_start(session, config) != 0) {
-        probe_media_snapshot media;
-        probe_media_get_snapshot(&media);
+    if (stream_media_video_start(session, config) != 0) {
+        stream_media_snapshot media;
+        stream_media_get_snapshot(&media);
         pthread_mutex_lock(&state->lock);
         snprintf(state->status, sizeof(state->status), "Video decoder start failed: %s",
                  media.last_error[0] ? media.last_error : "unknown");
@@ -838,7 +838,7 @@ static IHS_StreamVideoSubmitResult on_video_submit(IHS_Session *session, uint16_
     }
     pthread_mutex_unlock(&state->lock);
 
-    IHS_StreamVideoSubmitResult result = probe_media_video_submit(session, frame_id, data, flags);
+    IHS_StreamVideoSubmitResult result = stream_media_video_submit(session, frame_id, data, flags);
 
     if (should_log) {
         logline_net("video frame: count=%u id=%u bytes=%zu key=%d", frames, frame_id,
@@ -855,7 +855,7 @@ static IHS_StreamVideoSubmitResult on_video_submit(IHS_Session *session, uint16_
 
 static void on_video_stop(IHS_Session *session, void *context) {
     app_state *state = context;
-    probe_media_video_stop(session);
+    stream_media_video_stop(session);
     pthread_mutex_lock(&state->lock);
     state->video_started = false;
     state->video_stalled = false;
@@ -932,7 +932,7 @@ static const IHS_StreamVideoCallbacks VIDEO_CALLBACKS = {
     .setBitrateOverride = on_video_bitrate_override,
 };
 
-static bool init_socket_for_probe(void) {
+static bool init_socket_for_stream(void) {
     const SocketInitConfig *base = socketGetDefaultInitConfig();
     SocketInitConfig cfg = *base;
     cfg.udp_rx_buf_size = 1024U * 1024U;
@@ -1145,13 +1145,13 @@ typedef struct stream_worker {
     char pin[16];
 } stream_worker;
 
-typedef struct probe_runtime {
+typedef struct stream_runtime {
     IHS_ClientConfig client_config;
     IHS_Client *client;
     stream_worker streamer;
     bool ihs_initialized;
     bool stream_worker_started;
-} probe_runtime;
+} stream_runtime;
 
 static bool ensure_media_started(app_state *state, char *err, size_t err_len);
 
@@ -1279,7 +1279,7 @@ static bool stream_worker_enqueue(stream_worker *worker, app_state *state, bool 
     return true;
 }
 
-static void update_runtime_flags(app_state *state, const probe_runtime *runtime) {
+static void update_runtime_flags(app_state *state, const stream_runtime *runtime) {
     pthread_mutex_lock(&state->lock);
     state->ihs_initialized = runtime->ihs_initialized;
     state->ihs_client_ready = runtime->client != NULL;
@@ -1287,7 +1287,7 @@ static void update_runtime_flags(app_state *state, const probe_runtime *runtime)
     pthread_mutex_unlock(&state->lock);
 }
 
-static bool ensure_ihs_started(app_state *state, probe_runtime *runtime, char *err,
+static bool ensure_ihs_started(app_state *state, stream_runtime *runtime, char *err,
                                size_t err_len) {
     pthread_mutex_lock(&state->lock);
     bool auth_ready = state->auth_loaded && state->auth.steam_id != 0;
@@ -1370,7 +1370,7 @@ static bool wait_for_selected_host(app_state *state, uint64_t timeout_ms) {
     return have_selected_host(state);
 }
 
-static bool prepare_stream_command(app_state *state, probe_runtime *runtime, bool desktop,
+static bool prepare_stream_command(app_state *state, stream_runtime *runtime, bool desktop,
                                    char *err, size_t err_len) {
     (void)desktop;
     if (!ensure_media_started(state, err, err_len)) {
@@ -1420,7 +1420,7 @@ static bool start_session_if_ready(app_state *state, const IHS_ClientConfig *cli
     IHS_SessionStatsSetFullReporting(session, false);
 
 #if NSTREAMLINK_APP
-    IHS_HIDProvider *hid_provider = probe_media_create_hid_provider();
+    IHS_HIDProvider *hid_provider = stream_media_create_hid_provider();
     if (hid_provider != NULL) {
         IHS_SessionHIDAddProvider(session, hid_provider);
         logline("hid provider added: SDL unmanaged app-controller");
@@ -1437,7 +1437,7 @@ static bool start_session_if_ready(app_state *state, const IHS_ClientConfig *cli
     pthread_mutex_unlock(&state->lock);
 
     if (!IHS_SessionConnect(session)) {
-        probe_media_set_hid_session(NULL, false);
+        stream_media_set_hid_session(NULL, false);
         pthread_mutex_lock(&state->lock);
         state->session = NULL;
 #if NSTREAMLINK_APP
@@ -1450,7 +1450,7 @@ static bool start_session_if_ready(app_state *state, const IHS_ClientConfig *cli
         IHS_SessionDestroy(session);
 #if NSTREAMLINK_APP
         if (hid_provider != NULL) {
-            probe_media_destroy_hid_provider(hid_provider);
+            stream_media_destroy_hid_provider(hid_provider);
         }
 #endif
         return false;
@@ -1492,7 +1492,7 @@ static bool join_destroy_session(app_state *state, bool send_stop) {
     pthread_mutex_unlock(&state->lock);
 
 #if NSTREAMLINK_APP
-    probe_media_set_hid_session(NULL, false);
+    stream_media_set_hid_session(NULL, false);
     if (connected && !finished) {
         logline("session stop: reset SDL controllers");
         IHS_HIDResetSDLGameControllers(session);
@@ -1514,7 +1514,7 @@ static bool join_destroy_session(app_state *state, bool send_stop) {
 #if NSTREAMLINK_APP
     if (hid_provider != NULL) {
         logline("session stop: destroy SDL HID provider");
-        probe_media_destroy_hid_provider(hid_provider);
+        stream_media_destroy_hid_provider(hid_provider);
     }
 #endif
 
@@ -1546,7 +1546,7 @@ static bool join_destroy_session(app_state *state, bool send_stop) {
 static void state_line(app_state *state, char *out, size_t out_len) {
     IHS_HostInfo host;
     bool have_host = false;
-    probe_mode mode;
+    stream_mode mode;
     int host_count;
     int selected_host;
     uint64_t steam_id;
@@ -1660,9 +1660,9 @@ static void perf_line(app_state *state, char *out, size_t out_len) {
     uint64_t encoded_bytes, stream_start_ms, first_frame_ms, last_frame_ms;
     uint32_t auto_stop;
     char status[sizeof(state->status)];
-    probe_media_snapshot media;
+    stream_media_snapshot media;
 
-    probe_media_get_snapshot(&media);
+    stream_media_get_snapshot(&media);
 
     pthread_mutex_lock(&state->lock);
     frames = state->frame_count;
@@ -1711,8 +1711,8 @@ static void perf_line(app_state *state, char *out, size_t out_len) {
 }
 
 static void hid_line(char *out, size_t out_len) {
-    probe_media_snapshot media;
-    probe_media_get_snapshot(&media);
+    stream_media_snapshot media;
+    stream_media_get_snapshot(&media);
     snprintf(out, out_len,
              "hidEvents=%u hidSendOk=%u hidSendFail=%u stateFull=%u"
              " providerDevices=%d sdlJoy=%d sdlIndex=%d sdlInstance=%d sdlType=%d"
@@ -1761,7 +1761,7 @@ static void console_draw(app_state *state) {
     int host_count;
     int selected_host;
     sl_auth_file auth;
-    probe_mode mode;
+    stream_mode mode;
     bool session_active, session_connected, video_started;
     uint32_t width, height, frames, keyframes, auto_stop;
     uint32_t decoded, displayed, media_dropped;
@@ -1807,7 +1807,7 @@ static void console_draw(app_state *state) {
     pthread_mutex_unlock(&state->lock);
 
     dprintf(cons_fd, "\x1b[2J\x1b[H");
-    dprintf(cons_fd, "nsteamlink M3 stream probe\n");
+    dprintf(cons_fd, "nsteamlink stream selftest\n");
     dprintf(cons_fd, "auth: %s  deviceId: 0x%016" PRIx64 "  steamId: %" PRIu64 "\n",
             auth.steam_id ? "paired" : "not paired", auth.device_id, auth.steam_id);
     dprintf(cons_fd, "mode: %s  status: %s\n\n", mode_name(mode), status[0] ? status : "-");
@@ -1848,8 +1848,8 @@ static void console_draw(app_state *state) {
 }
 
 static void update_media_snapshot(app_state *state) {
-    probe_media_snapshot media;
-    probe_media_get_snapshot(&media);
+    stream_media_snapshot media;
+    stream_media_get_snapshot(&media);
     atomic_store_explicit(&watchdog_displayed_frames, media.displayed_frames,
                           memory_order_relaxed);
 
@@ -1871,8 +1871,8 @@ static void update_media_snapshot(app_state *state) {
     pthread_mutex_unlock(&state->lock);
 }
 
-static void ui_set_line(probe_media_ui *ui, int *line, const char *fmt, ...) {
-    if (ui == NULL || line == NULL || *line < 0 || *line >= PROBE_MEDIA_UI_LINES) {
+static void ui_set_line(stream_media_ui *ui, int *line, const char *fmt, ...) {
+    if (ui == NULL || line == NULL || *line < 0 || *line >= STREAM_MEDIA_UI_LINES) {
         return;
     }
     va_list ap;
@@ -1916,16 +1916,16 @@ static void note_video_stall_if_needed(app_state *state) {
 }
 
 static void update_screen_ui(app_state *state) {
-    if (!probe_media_available()) {
+    if (!stream_media_available()) {
         return;
     }
 
-    probe_media_ui ui;
+    stream_media_ui ui;
     memset(&ui, 0, sizeof(ui));
 
     IHS_HostInfo host;
     bool have_host = false;
-    probe_mode mode;
+    stream_mode mode;
     IHS_StreamingResult stream_result;
     int host_count;
     int selected_host;
@@ -1980,7 +1980,7 @@ static void update_screen_ui(app_state *state) {
         ui_set_line(&ui, &line, "STATUS: %s", status[0] ? status : "ERROR");
         ui_set_line(&ui, &line, "RUN M2 PAIRING IF AUTH.BIN IS MISSING");
         ui_set_line(&ui, &line, "+ EXIT");
-        probe_media_set_ui(&ui);
+        stream_media_set_ui(&ui);
         return;
     }
 
@@ -2000,7 +2000,7 @@ static void update_screen_ui(app_state *state) {
         ui_set_line(&ui, &line, "PIN: %s", decorated);
         ui_set_line(&ui, &line, "LEFT/RIGHT MOVE  UP/DOWN EDIT");
         ui_set_line(&ui, &line, "A SUBMIT  B CANCEL  + EXIT");
-        probe_media_set_ui(&ui);
+        stream_media_set_ui(&ui);
         return;
     }
 
@@ -2012,7 +2012,7 @@ static void update_screen_ui(app_state *state) {
                     decoder[0] ? decoder : "-");
         ui_set_line(&ui, &line, "STATUS: %s", status[0] ? status : "-");
         ui_set_line(&ui, &line, "MINUS+B STOP  PLUS EXIT");
-        probe_media_set_ui(&ui);
+        stream_media_set_ui(&ui);
         return;
     }
 
@@ -2031,7 +2031,7 @@ static void update_screen_ui(app_state *state) {
     ui_set_line(&ui, &line, "A START  X MODE  Y REFRESH");
     ui_set_line(&ui, &line, "UP/DOWN HOST  B STOP  + EXIT");
     ui_set_line(&ui, &line, "STATUS: %s", status[0] ? status : stream_result_name(stream_result));
-    probe_media_set_ui(&ui);
+    stream_media_set_ui(&ui);
 }
 
 static bool ascii_ieq(const char *a, const char *b) {
@@ -2229,17 +2229,17 @@ static bool debug_select_host(app_state *state, const char *arg, char *err, size
 }
 
 static bool ensure_media_started(app_state *state, char *err, size_t err_len) {
-    if (probe_media_available()) {
+    if (stream_media_available()) {
         update_media_snapshot(state);
         return true;
     }
 
     write_boot_stage("media:init:start");
     logline("media init requested");
-    if (!probe_media_init(media_log)) {
+    if (!stream_media_init(media_log)) {
         write_boot_stage("media:init:failed");
-        probe_media_snapshot media;
-        probe_media_get_snapshot(&media);
+        stream_media_snapshot media;
+        stream_media_get_snapshot(&media);
         pthread_mutex_lock(&state->lock);
         snprintf(state->status, sizeof(state->status), "media init failed: %s",
                  media.last_error[0] ? media.last_error : "unknown");
@@ -2255,7 +2255,7 @@ static bool ensure_media_started(app_state *state, char *err, size_t err_len) {
     return true;
 }
 
-static void handle_input(app_state *state, probe_runtime *runtime, u64 kdown, u64 kheld) {
+static void handle_input(app_state *state, stream_runtime *runtime, u64 kdown, u64 kheld) {
     bool pin_mode = false;
     bool session_active = false;
     pthread_mutex_lock(&state->lock);
@@ -2419,7 +2419,7 @@ static void handle_input(app_state *state, probe_runtime *runtime, u64 kdown, u6
 }
 
 static void debug_handle_command(debug_server *dbg, const struct sockaddr_in *peer, app_state *state,
-                                 probe_runtime *runtime, char *line) {
+                                 stream_runtime *runtime, char *line) {
     char *cmd = trim_ascii(line);
     char *arg = cmd;
     while (*arg != '\0' && !isspace((unsigned char)*arg)) {
@@ -2484,7 +2484,7 @@ static void debug_handle_command(debug_server *dbg, const struct sockaddr_in *pe
         }
         debug_reply_state(dbg, peer, state, "OK");
     } else if (ascii_ieq(cmd, "media-shutdown")) {
-        probe_media_shutdown();
+        stream_media_shutdown();
         update_media_snapshot(state);
         pthread_mutex_lock(&state->lock);
         snprintf(state->status, sizeof(state->status), "Media shut down");
@@ -2597,7 +2597,7 @@ static void debug_server_init(debug_server *dbg) {
             dbg->allowed_host.s_addr ? inet_ntoa(dbg->allowed_host) : "any");
 }
 
-static void debug_server_poll(debug_server *dbg, app_state *state, probe_runtime *runtime) {
+static void debug_server_poll(debug_server *dbg, app_state *state, stream_runtime *runtime) {
     if (dbg->fd < 0) {
         return;
     }
@@ -2736,7 +2736,7 @@ int main(int argc, char **argv) {
     }
     write_boot_stage(state.auth_loaded ? "auth:loaded" : "auth:error");
 
-    logline("nsteamlink M3 stream probe");
+    logline("nsteamlink stream selftest");
     logline("watchdog active=%d mainStall=%ums noFirstFrame=%ums",
             (int)watchdog_started, WATCHDOG_MAIN_STALL_MS, WATCHDOG_STREAM_NO_FRAME_MS);
     logline("applet exit/sleep locks disabled for M3.3 safety");
@@ -2753,7 +2753,7 @@ int main(int argc, char **argv) {
     }
 
     write_boot_stage("socket:init:start");
-    if (!init_socket_for_probe()) {
+    if (!init_socket_for_stream()) {
         write_boot_stage("socket:init:failed");
         atomic_store_explicit(&watchdog_stop, true, memory_order_relaxed);
         if (watchdog_started) {
@@ -2799,7 +2799,7 @@ int main(int argc, char **argv) {
     debug_server_init(&debug);
     write_boot_stage(debug.fd >= 0 ? "debug:ready" : "debug:disabled");
 
-    probe_runtime runtime;
+    stream_runtime runtime;
     memset(&runtime, 0, sizeof(runtime));
     runtime.client_config = (IHS_ClientConfig){
         .deviceId = state.auth.device_id,
@@ -2836,7 +2836,7 @@ int main(int argc, char **argv) {
 
     write_boot_stage("loop:entered");
     for (;;) {
-        bool media_was_available = probe_media_available();
+        bool media_was_available = stream_media_available();
         if (!appletMainLoop()) {
             break;
         }
@@ -2872,11 +2872,11 @@ int main(int argc, char **argv) {
                 write_boot_stage("auto_stream:prepare_failed");
             }
         }
-        if (media_was_available && probe_media_available()) {
+        if (media_was_available && stream_media_available()) {
             note_video_stall_if_needed(&state);
             update_screen_ui(&state);
-            probe_media_present();
-            if (probe_media_exit_requested()) {
+            stream_media_present();
+            if (stream_media_exit_requested()) {
                 pthread_mutex_lock(&state.lock);
                 state.exit_requested = true;
                 state.stop_requested = true;
@@ -2905,7 +2905,7 @@ int main(int argc, char **argv) {
         if (should_stop || session_finished || should_exit) {
             bool auto_exit = join_destroy_session(&state, should_stop || should_exit);
             if (auto_exit) {
-                logline("auto exit requested after probe stream");
+                logline("auto exit requested after selftest stream");
                 write_boot_stage("exit:auto_stop");
                 pthread_mutex_lock(&state.lock);
                 state.exit_requested = true;
@@ -2915,7 +2915,7 @@ int main(int argc, char **argv) {
                 break;
             }
         }
-        if (!probe_media_available()) {
+        if (!stream_media_available()) {
             svcSleepThread(16 * 1000 * 1000);
         }
     }
@@ -2953,7 +2953,7 @@ int main(int argc, char **argv) {
         }
 
         write_exit_stage("cleanup:media_shutdown:start");
-        probe_media_shutdown();
+        stream_media_shutdown();
         logq_drain();
         write_exit_stage("cleanup:media_shutdown:done");
 

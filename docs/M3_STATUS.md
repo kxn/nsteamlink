@@ -400,11 +400,11 @@
 ./scripts/build-switch.sh
 ```
 
-推送 M3 probe：
+推送 selftest（2026-08-27 前 catalog 名为 switch-stream-probe，路径见各历史记录）：
 
 ```bash
 $DEVKITPRO/tools/bin/nxlink -a 10.10.10.77 -s \
-  build/switch/tools/switch-stream-probe/switch-stream-probe.nro
+  build/switch/client/switch-stream-selftest.nro
 ```
 
 当前默认行为：启动后自动执行 `game` stream probe，收到 3600 帧后自动 stop 并退出回 hbmenu。
