@@ -709,12 +709,13 @@ static void pump_sdl_events(void) {
         }
         if (elapsed_us(hid_last_log_us, now_us) >= 1000000U) {
             media_logf("hid summary: events=%u send_ok=%u send_fail=%u stateFull=%u"
-                       " pump=%u ax=%u btn=%u sen=%u oth=%u evSup=%u",
+                       " pump=%u ax=%u btn=%u sen=%u oth=%u evSup=%u sti=%d",
                        hid_events_since_log, hid_send_ok_since_log,
                        hid_send_fail_since_log, hid_state_full_since_log,
                        hid_pump_calls_since_log, hid_axis_since_log,
                        hid_button_since_log, hid_sensor_since_log,
-                       hid_other_since_log, hid_trace_suppressed);
+                       hid_other_since_log, hid_trace_suppressed,
+                       SDL_IsTextInputActive() ? 1 : 0);
             hid_events_since_log = 0;
             hid_send_ok_since_log = 0;
             hid_send_fail_since_log = 0;
