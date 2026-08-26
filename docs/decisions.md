@@ -919,3 +919,13 @@
 - 历史记录策略：M3_STATUS/M4_STATUS/decisions 早前条目中的旧路径、旧 NRO 名与当日 sha256
   为当时事实记录，一律不改写；涉及操作命令的段落已就地更新。对照旧日志时按本表翻译。
 - 真 probe 保持原名：`tools/switch-gfx-probe`（图形基准对照工具）语义仍是探针，不动。
+
+### D-030 追记（2026-08-27）：第 4 点激进方案按预定触发条件落地
+
+事件级探针版真机死窗数据满足既定触发线：连续整秒心跳 100% 放弃（packetId 连号）+
+channelId=2 可靠消息 20 次重试耗尽 + 视频 stall 与输入失灵同窗。可靠通道在此场景下
+"重试+放弃"对自足快照毫无收益，反而放大队头压力。故实现：
+`IHS_SessionChannelControlSendDatagram()`——CHID reports 走 Unreliable 数据报
+（`0013-hid-input-unreliable-datagram.patch`），设备生命周期消息仍走可靠通道；
+加密序列照常推进。本地 SDL 捕获停摆嫌疑（SDL_IsTextInputActive 短路门等）继续以
+每秒 `sti=` 探针并行观测，两条根因链允许并存。
