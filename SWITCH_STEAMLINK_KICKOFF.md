@@ -3,6 +3,8 @@
 > 目标：做一个 Switch 自制软件（homebrew）的 Steam Link 客户端，通过 Steam Remote Play 协议串流 PC 上的 Steam 游戏。
 > 本文档汇总了截至 2026-08-23 的全部调研结论，所有事实均已实际查证过源码仓库，非道听途说。
 > 在新机器上开工时，先让 AI 通读本文档。
+> 状态性结论会随项目推进更新；当前进度以 `README.md`、`docs/M2_STATUS.md` 与 `docs/decisions.md`
+> 的最新条目为准。
 
 ---
 
@@ -27,9 +29,9 @@
 ## 2. 总体架构
 
 ```
-┌─ UI 层：SDL2 界面（主机列表 / 配对 PIN 输入 / 串流中悬浮层）
+┌─ UI 层：SDL2 界面（主机列表 / 配对码显示 / 串流安全码输入 / 串流中悬浮层）
 ├─ 应用层：会话管理、分辨率/码率设置、收藏
-├─ 协议层：IHSlib —— 发现(UDP 广播) → PIN 配对 → 视频音频控制三通道
+├─ 协议层：IHSlib —— 发现(UDP 广播) → 配对授权 → 视频音频控制三通道
 ├─ 媒体层：averne 版 FFmpeg(NVDEC 硬解 H264) → SDL2 渲染
 │          libopus 软解音频 → SDL2 audio / audout 输出
 └─ 平台层：薄抽象层 HAL（socket、手柄、触摸、时钟），桌面版和 Switch 版各实现一份
@@ -58,7 +60,7 @@ void IHS_ClientSetDiscoveryCallbacks(IHS_Client*, const IHS_ClientDiscoveryCallb
 void IHS_ClientSetAuthorizationCallbacks(IHS_Client*, const IHS_ClientAuthorizationCallbacks*, void*);
 void IHS_ClientSetStreamingCallbacks(IHS_Client*, const IHS_ClientStreamingCallbacks*, void*);
 bool IHS_ClientStartDiscovery(IHS_Client*, uint32_t interval);   // UDP 广播发现
-bool IHS_ClientAuthorizationRequest(IHS_Client*, const IHS_HostInfo*, const char *pin); // PIN 配对
+bool IHS_ClientAuthorizationRequest(IHS_Client*, const IHS_HostInfo*, const char *pin); // 首次 pairing code 授权
 bool IHS_ClientStreamingRequest(IHS_Client*, const IHS_HostInfo*, const IHS_StreamingRequest*);
 ```
 
@@ -78,7 +80,7 @@ sudo apt install cmake pkg-config build-essential \
 git clone --recursive https://github.com/beudbeud/plume.git   # --recursive 必须加
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-./build/plume --pair    # 首次：在 Windows 的 Steam 里输 PIN
+./build/plume --pair    # 首次：客户端显示 PIN，在 Windows 的 Steam 里输入该 PIN
 ./build/plume           # 启动 launcher，手柄/键盘选择主机开始串流
 ```
 
@@ -157,7 +159,7 @@ Switch（真机联调阶段加入）
 |---|---|---|
 | **M0** | Linux 装 devkitPro + switch-dev，hello-world 出 `.nro` | hbmenu 里跑起来 |
 | **M1** | Linux 上编译 plume，配对 Windows Steam 并串流 | 桌面窗口看到 PC 画面 ← **最大风险在此消除** |
-| **M2** | 交叉编译 protobuf-c + IHSlib 到 devkitA64，网络层接 libnx | Switch 上完成发现+PIN 配对 |
+| **M2** | 交叉编译 protobuf-c + IHSlib 到 devkitA64，网络层接 libnx | Switch 上完成发现+配对码授权 |
 | **M3** | 接 averne FFmpeg(NVDEC) + SDL2 渲染 | Switch 出第一帧串流画面（720p30 即可） |
 | **M4** | 手柄输入回传 + Opus 音频 + 完整 UI | 可玩性：能正常操作一款游戏 |
 | **M5** | 打磨：延迟统计、断线重连、1080p、NSP forwarder | 对标 Moonlight-Switch 体验 |
@@ -180,4 +182,7 @@ Switch（真机联调阶段加入）
 
 ## 8. 新会话开工指令（拷贝给 Linux 上的 AI）
 
-> 先通读工作目录下的 SWITCH_STEAMLINK_KICKOFF.md，然后按第 6 节里程碑从 M0 开始执行：装好 devkitPro 工具链并编译 hello-world nro，随后进入 M1（编译 plume 并与我的 Windows Steam 配对串流验证）。每完成一步向我汇报结果后再继续。
+> 先通读工作目录下的 `SWITCH_STEAMLINK_KICKOFF.md`、`docs/decisions.md`、`DEVELOPMENT.md`
+> 和 `docs/M2_STATUS.md`。当前先做 Switch 真机配对与退出路径回归验收
+> （广播发现、配对码授权、重启复用 `auth.bin`、PLUS/B 返回 hbmenu），通过后进入 M3 第一帧串流；
+> 不要从 M0/M1 重做。

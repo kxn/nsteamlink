@@ -78,20 +78,773 @@
 
 ---
 
-## D-008 发现策略：广播不可靠，主用单播/直连（真机实测定案）
+## D-008 已撤销：曾误判广播不可靠
 
 - 日期：2026-08-24
-- 背景：Switch 真机实测（探针 v3）：libnx `sendto(255.255.255.255)` 返回成功，但抓包证实
-  广播包根本没穿过路由器到有线侧（WiFi 客户端的受限广播被 AP 丢弃）；同网段单播完全正常。
-  plume 在有线侧广播发现正常，说明是 AP 行为而非 host 问题。
-- 决定：客户端发现流程以"单播发现/手动 HostInfo 直连"为主路径（kickoff §7.4 预案转正），
-  UDP 广播仅作锦上添花；设置里提供固定主机 IP 配置项。
+- 状态：撤销。见 D-009。
+- 背景：该条曾把“发现到运行 Steam 的主机但 `gamesRunning=0`”误判成“广播不可靠”。
+  复盘真机日志后确认，这个推论错误；`gamesRunning=0` 只表示 Steam 当时没有运行游戏。
+- 决定：不采用本条原结论。发现策略以 D-009 为准：广播发现是默认路径，单播/手动 IP 仅作 fallback。
 - 附带发现（M3 待办）：libnx 侧 `SO_RCVBUF` 被压到 ~42KB（IHSlib 想要 4MB）——视频流
   必须在 `socketInitialize` 时调大缓冲配置，否则视频包会丢。
-- 影响：M2 发现验收以单播路径为准；M3 前需验证 socket 大缓冲初始化。
+- 影响：保留本条是为了留下错误决策的修正轨迹；M2 发现验收不再以单播路径为准。
 
 - 日期：2026-08-23
 - 背景：kickoff §6 要求 M1 完成前不碰 Switch 特有代码；M0 需要打通交叉编译管线。
 - 决定：允许一个约 10 行的 HAL stub（仅返回平台名）随骨架提交，用于验证
   devkitA64 + CMake 工具链 + nro 产出全链路；不含任何协议/媒体/UI 逻辑。
 - 影响：真正的 Switch 功能代码仍从 M2 开始。
+
+---
+
+## D-009 取代 D-008：UDP 广播发现可用，单播/手动 IP 作为 fallback
+
+- 日期：2026-08-24
+- 背景：复盘 M2 探针日志后确认，Switch 侧已经通过 UDP 广播发现到运行 Steam 的主机；
+  日志里的 `gamesRunning=0` 只表示 Steam 当前没有正在运行的游戏，不表示发现失败，也不能推出
+  广播包被 AP 丢弃。D-008 将“发现到主机但无游戏运行”误判为“广播不可靠”，该结论撤销。
+- 决定：正式客户端发现流程以 IHSlib 的 UDP 广播发现作为默认路径；保留单播发现/手动
+  `IHS_HostInfo` 直连作为调试与网络异常 fallback，不作为默认主路径。
+- 附带发现（M3 待办）：libnx 侧 `SO_RCVBUF` 被压到约 42KB（IHSlib 想要 4MB）的风险仍需验证；
+  视频流前需要确认 `socketInitialize` 缓冲配置是否足够，否则可能丢视频包。
+- 影响：M2 发现验收以“广播能发现 Steam 主机”为准；后续 UI 仍应提供固定主机 IP 配置项，
+  但它是兜底能力，不是主发现策略。
+
+---
+
+## D-010 M2 配对必须提供 PIN 输入 UI，并持久化客户端身份
+
+- 日期：2026-08-24
+- 背景：IHSlib 的 `IHS_ClientAuthorizationRequest(client, host, pin)` 需要传入本次 Steam
+  配对流程使用的 PIN；该 PIN 不能在客户端固定写死。另一方面，Steam 记住的是客户端身份材料
+  （`deviceId` + `secretKey` 派生出的 `deviceToken`），不是 PIN 本身。若每次启动都使用临时
+  身份，真机测试会反复要求配对，开发体验不可接受。
+- 决定：
+  1. M2 配对探针/客户端必须提供最小可用的 Switch 端 PIN 输入界面；
+  2. 第一次启动时生成并保存稳定的 `deviceId` 与 32 字节 `secretKey`；
+  3. 身份文件默认放在 `sdmc:/switch/nsteamlink/auth.bin`；
+  4. 后续启动优先读取 `auth.bin`，复用同一客户端身份；
+  5. UI 或调试按键需要提供“清除配对/重置身份”能力。
+- 文件格式：二进制小文件，至少包含 magic/version、`deviceId`、`secretKey[32]`、`deviceName`；
+  可选记录最近成功的 `steamId`、主机名与主机 IP，方便下次默认选择与调试。
+- 写入策略：先写临时文件，再 `rename` 覆盖正式文件，避免断电或崩溃留下半截身份文件。
+- 影响：M2 验收不只看“能输入 PIN 并收到授权成功”，还要确认重启后无需再次输入 PIN 即可复用授权；
+  当前阶段使用 SD 卡文件即可，NSP/forwarder 阶段再评估 system save data。
+
+---
+
+## D-011 IHSlib 的 SDL HID provider 在 Switch 目标下可关闭
+
+- 日期：2026-08-24
+- 背景：IHSlib 的核心 HID 源文件属于协议/输入栈的一部分，但 `src/hid/sdl` 是面向 SDL3 的
+  HID provider。Switch portlibs 只有 SDL2，本项目也已在 D-001 决定统一 SDL2；因此全量 Switch
+  构建会在 `SDL3/SDL.h` 等头文件处失败，即使 M2 发现/配对工具并不需要 SDL HID provider。
+- 决定：给 IHSlib 增加 `IHSLIB_HID_SDL` CMake 开关；默认仅在找到 SDL3 时启用，Switch 目标
+  保留核心 HID 源文件但不构建 `ihslib-hid-sdl`。
+- 补丁：`third_party/patches/ihslib/0002-optional-sdl-hid.patch`。
+- 影响：`./scripts/build-switch.sh` 可完成全量构建；后续 M4 输入回传若需要 SDL HID provider，
+  需重新评估 Switch 侧用 SDL2 还是直接走 libnx HID。
+
+---
+
+## D-012 IHSlib 授权请求字符串复制后显式补 NUL
+
+- 日期：2026-08-24
+- 背景：`IHS_ClientAuthorizationRequest()` 把 `deviceName` 和 `pin` 复制进固定长度缓冲区后，
+  原实现没有显式写入结尾 NUL。常见 4 位 PIN 不会触发问题，但长 PIN 或 63 字节设备名会让后续
+  `strlen()` 越过缓冲区边界。
+- 决定：在复制 `deviceName` 与 `pin` 后显式设置最后一个字节为 `'\0'`。
+- 补丁：`third_party/patches/ihslib/0003-authorization-copy-termination.patch`。
+- 影响：不改变正常协议行为，只收紧 M2 PIN 输入路径的内存安全边界。
+
+---
+
+## D-013 PLUS 退出必须做标准资源清理并保留崩溃证据
+
+- 日期：2026-08-24
+- 背景：真机反馈显示旧版 `switch-discover` 按 PLUS 后提示 3 秒返回，倒计时结束后崩溃。
+  本地代码证据显示旧退出路径只调用 `IHS_ClientStop()`，它只设置 worker interrupt 标志，没有
+  等 worker 线程退出；随后立即调用 `socketExit()`。这会让仍在 `recv`/socket 路径里的 IHS worker
+  与主线程 socket 子系统析构发生竞态。该竞态是已证实代码 bug；它是否是唯一崩溃原因需真机新版日志验证。
+- 证据：
+  - libnx `nxlinkConnectToHost()` / `nxlinkStdio()` 文档要求 cleanup 时 `close()` 返回的 socket fd；
+  - libnx `appletLockExit()` 文档说明 `appletMainLoop()` 在 exit request 后返回 false，
+    且使用 lock 后 `main()` 返回前必须 `appletUnlockExit()`；
+  - devkitPro `applet/lockexit` 示例将 cleanup 放在 `appletLockExit()` 与 `appletUnlockExit()` 之间；
+  - IHSlib samples 使用 `IHS_ClientStop()` 后 `IHS_ClientThreadedJoin()`、`IHS_ClientDestroy()` 的顺序；
+  - 本仓 IHSlib worker 初始化设置了 10ms `SO_RCVTIMEO`，libnx BSD header 定义了 `SO_RCVTIMEO`，
+    因此有证据支持先恢复 `ThreadedJoin()`，并用真机日志验证是否会卡住。
+- 决定：
+  1. `switch-discover` 退出路径改为 `StopDiscovery/Stop -> ThreadedJoin -> Destroy -> IHS_Quit`
+     后再 `socketExit()`；
+  2. 第一版保存并关闭 `nxlinkStdio()` 返回的 fd；后续真机 fatal 证明该路径仍需修正，见 D-015；
+  3. `appletLockExit()` / `appletUnlockExit()` 成对使用；
+  4. `appletRequestToAcquireSleepLock()` 只在成功时对应 `appletReleaseSleepLock()`；
+  5. 移除 3 秒倒计时，退出阶段打印 `cleanup:` 分步日志；
+  6. 加入 libnx userland exception handler，崩溃时写 `sdmc:/switch/nsteamlink/exception_dump.txt`。
+- 影响：M2 真机回归新增一项：PLUS/B/取消路径必须能返回 hbmenu；若仍崩溃，使用 exception dump
+  中的 `pc/lr` 配合 `build/switch/tools/switch-discover/switch-discover.elf` 做 `addr2line` 定位。
+- 回归纠正：2026-08-24 使用 PC 端 debug command `press PLUS` 触发同一退出路径，nxlink 日志
+  完整输出 `cleanup: stop discovery`、`cleanup: stop IHS worker`、`cleanup: join IHS worker`、
+  `cleanup: destroy IHS client`、`cleanup: IHS_Quit`、`cleanup: close nxlink fd`、`exiting ...`，
+  且 nxlink 进程正常结束；但用户随后提供的 Switch fatal 截图显示实际已经崩溃：
+  `2144-0001 (0x290)`，`Program: 0100000000001000`，`Firmware: 22.5.0
+  (Atmosphere 1.11.2-master-5388824be)`。因此“未复现/回归通过”是错误结论，必须以截图为准。
+
+---
+
+## D-014 M2 工具提供 PC 端 debug command 通道
+
+- 日期：2026-08-24
+- 背景：M2 真机测试需要反复发现主机、输入 PIN、提交授权、触发退出。完全依赖手柄手动输入
+  会放大沟通误差，也无法让开发机自动判断程序是否仍活着。`nxlink -s` 只提供部署和 stdout/stderr
+  回传，不提供可依赖的运行时输入通道。Atmosphère standalone gdbstub 可用于远程调试，但官方
+  changelog 明确提醒调试使用 socket 的进程可能因 gdbstub 自身使用 socket 而 hang。sys-botbase
+  可以远程模拟手柄，但需要额外安装/启用 sysmodule，不适合作为本项目默认验证路径。
+- 决定：`switch-discover` 内置一个仅用于开发测试的 UDP debug command 入口，默认端口 `28772`。
+  通过 nxlink 启动时，命令来源优先限制为 `__nxlink_host`。PC 端脚本 `tools/switch-debugctl.py`
+  封装命令发送与响应读取。
+- 命令集（D-014 当时）：`ping`、`state`、`hosts`、`select <n>`、`pin <digits>`、`submit`、
+  `pair <digits>`、`press <button>`、`delete-auth`、`exit`。D-017 已修正 pairing 方向：
+  当前 `pair` 不接收 PIN，并新增 `code`；`pin/submit` 只返回 deprecated 错误。
+- 影响：后续 M2 真机验收优先由开发机脚本驱动：NRO 启动后先 `state/hosts` 确认活性与发现结果，
+  再用当前 `pair` 生成 code 做授权，最后 `exit` 验证标准清理。产品化客户端不得把该 debug command 通道
+  带入默认发布构建；M2 之后应改为编译期开关或移除。
+
+---
+
+## D-015 PLUS 退出回归以 Switch fatal 截图为准，并规避 nxlink stdio 重定向
+
+- 日期：2026-08-24
+- 背景：M2 新版通过 `nxlink -s` 部署后，开发机看到 `nxlink` 日志正常结束，但 Switch 屏幕实际进入
+  Atmosphere fatal。该事实推翻“nxlink 进程退出 == NRO 安全退出”的判断。
+- 已证据：
+  - 用户截图显示 `2144-0001 (0x290)`、`Program: 0100000000001000`、`Firmware: 22.5.0
+    (Atmosphere 1.11.2-master-5388824be)`；
+  - libnx applet ID 表标注 `0100000000001000` 为 qlaunch/SystemAppletMenu；
+  - libnx `nxlinkConnectToHost()` 文档说明返回 socket fd，cleanup 时应 close；`nxlinkStdio()` 等价于
+    `nxlinkConnectToHost(true, true)`，即接管 stdout/stderr；
+  - 本仓当时实现会在退出阶段 close 该 fd，但 C runtime / stdio 是否仍会访问被重定向的 stdout/stderr，
+    当前没有直接 dump 证据。
+- 决定：
+  1. 不再把 `nxlink` 进程结束当作“不崩溃”的证据；退出验收必须以 Switch 是否返回 hbmenu、
+     是否出现 fatal screen 为准；
+  2. `switch-discover` 不再使用 `nxlinkStdio()` 重定向 stdout/stderr，改为
+     `nxlinkConnectToHost(false, false)` 只建立 socket，`logline()` 手动 `dprintf()` 到该 socket；
+  3. close nxlink socket 前先把全局 fd 置为不可用，保证后续 `logline()` 不再写已关闭 fd；
+  4. 退出阶段写入 `sdmc:/switch/nsteamlink/exit_stage.txt`，用于证明 fatal 发生在 cleanup 的哪个阶段；
+  5. 根因结论必须等下一版真机回归、`exit_stage.txt` 或 crash report 证据支持后再写。
+- 影响：M2 状态从“退出回归通过”退回“退出 crash 待修复验证”。下一版先验证该最小退出风险修复；
+  如果仍崩溃，再基于 `exit_stage.txt` 精确拆分 `socketExit()`、`consoleExit()`、`appletUnlockExit()`、
+  `main()` return 等阶段。
+
+---
+
+## D-016 取代 D-010 的 PIN 方向：区分 pairing code 与 connect/security PIN
+
+- 日期：2026-08-24
+- 背景：D-010 把 `IHS_ClientAuthorizationRequest(client, host, pin)` 需要的 `pin` 解释成
+  “Switch 端输入 Steam 端 PIN”，导致 M2 UI 只做了输入框。真机反馈显示：用户输入 Steam 端设置的
+  PIN 后，Steam host 继续要求“设备上的四位数授权代码”，而 Switch 没有显示该码。复查上游 plume
+  和 IHSlib/proto 后确认，至少存在两个不能混淆的码。
+- 证据：
+  - 上游 plume README 与源码明确生成四位 pairing PIN，在客户端显示，并让用户输入到 Steam host；
+  - 本仓 IHSlib authorization ticket 把 `IHS_ClientAuthorizationRequest()` 的参数写入 encrypted
+    ticket 的 `password`，同时带上 `deviceId` 与 `secretKey`；
+  - 本仓 IHSlib streaming request 另有独立 `pin` 字段，且 streaming result 有 `PINRequired=11`；
+  - SteamTracking proto 定义了 authorization response 的 `auth_key/device_token`，以及
+    `AuthorizationConfirmed`/`PairingState`/`PairingExclusivity`；D-016 当时 IHSlib 尚未处理 14/15/16。
+- 决定：
+  1. 首次 pairing UI 必须由 Switch 生成并显示四位 authorization code，让用户在 Steam host 输入；
+  2. Switch 数字输入 UI 保留，但语义改为 streaming/connect/security PIN，只能在串流阶段需要时使用；
+  3. `auth.bin` 持久化客户端身份材料（`deviceId`、`secretKey`、可选最近 host/steamId），不保存
+     pairing code；
+  4. 对 `auth_key/device_token` 和 message type 14/15/16 先加日志和抓证据，不得在未验证前写成根因；
+  5. 认证流程的详细证据以 `docs/STEAM_REMOTE_PLAY_AUTH.md` 为准。
+- 影响：D-010 中“M2 必须提供 Switch 端 PIN 输入界面”这一句被修正为：M2 必须提供 Switch 端
+  pairing code 显示界面；输入界面是后续 streaming/security PIN 的能力，不是 authorization
+  request 的主流程。D-017 已按此决定改造 M2 UI；首次配对是否完成仍以真机回归结果为准。
+
+---
+
+## D-017 M2 pairing code UI 与授权日志实现
+
+- 日期：2026-08-24
+- 背景：D-016 已确认首次 pairing code 方向反了；用户在 Steam host 设置/输入的
+  security/connect PIN 不能作为 `IHS_ClientAuthorizationRequest()` 的主流程输入。M2 必须改成
+  Switch 生成 code，并让用户把该 code 输入 Steam host。
+- 证据：
+  - 上游 plume 在客户端生成四位 PIN，显示给用户，并传给 `IHS_ClientAuthorizationRequest()`；
+  - 本仓 IHSlib authorization ticket 把该参数写入 encrypted ticket 的 `password` 字段；
+  - 真机反馈显示，输入 Steam host 侧 PIN 后，Steam 继续要求“设备上的四位数授权代码”，说明旧 UI
+    没显示客户端 pairing code；
+  - proto/source 定义了 `AuthorizationConfirmed`/`PairingState`/`PairingExclusivity`，但目前没有真机
+    抓包证明它们应改变授权状态机。
+- 决定：
+  1. `switch-discover` 发现页按 `A` 直接生成四位 pairing code，并显示英文 ASCII 文案
+     `Enter this code in Steam on the host`；
+  2. PC 端 debug `pair` 命令不再接收 PIN，返回的 `state` 中包含 `code=xxxx`；新增 `code` 命令用于
+     重新读取当前 code/state；
+  3. 旧 `pin`/`submit` debug 命令只返回 deprecated 错误，不再进入 authorization request；
+  4. pairing 发起前保持 discovery worker/socket 服务，并调用 `IHS_ClientStartDiscovery(client, 0)`
+     对齐 plume；
+  5. IHSlib 增加授权日志：response 记录 `result`、`steamid`、`auth_key` 长度、
+     `device_token` 长度；message type 14/15/16 只解码/记录，不改变 success/failure 语义；
+  6. `auth.bin` 继续只保存客户端身份材料和最近 host/steamId，不保存 pairing code。
+- 回归结果：2026-08-24 真机验证通过 M2 主路径。`switch-discover` 加载 `auth.bin`，发现
+  `kxn-pc (10.10.10.166) gamesRunning=1`，生成 pairing code `3383`，authorization response
+  从 `result=5` 进展到 `result=0 steamid=76561198217069647`，保存 `auth.bin`；debug `state`
+  返回 `mode=done paired=1`。debug `exit` 后用户确认退出成功，无 Atmosphere fatal。
+- 影响：M2 的正确配对入口已经从“Switch 输入 PIN”改为“Switch 显示 code”。M2 主路径完成；B 取消授权
+  路径保留为补充回归项，后续进入 M3 串流请求。
+
+---
+
+## D-018 M3 采用分层 streaming probe，FFmpeg 来源改为 devkitPro portlibs
+
+- 日期：2026-08-24
+- 背景：M2 的主要返工来自没有先读透上游流程，尤其是 pairing code / streaming PIN 语义被混淆。
+  M3 进入 streaming request、session、视频解码和 SDL2 渲染，风险面更大，不能再以猜测推进。
+- 证据：
+  - M2 真机已证明 `auth.bin` 身份持久化、host discovery、pairing code 授权、debug exit 主路径成立；
+  - vendored `beudbeud/ihslib` plume 分支已包含 streaming request、proof response、session negotiation、
+    video frame assembly、frame stats 和 StopRequest cleanup；
+  - plume 参考实现把 streaming request、session、media decode/present 分层，并要求 IHSlib callbacks
+    使用 static/长生命周期 storage；
+  - 本机 devkitPro portlibs 已安装 Switch 版 FFmpeg/SDL2，且 FFmpeg 头文件和静态库包含
+    `AV_HWDEVICE_TYPE_NVTEGRA`、`AV_PIX_FMT_NVTEGRA`、`h264_nvtegra`；
+  - devkitPro `switch-ffmpeg` 包脚本使用 `--enable-libnx --enable-nvtegra`；averne 的 FFmpeg patch
+    series 明确目标包含 HorizonOS/Nintendo Switch；
+  - libnx 默认 UDP receive buffer 约 `0xA500`，而 IHSlib 对视频 burst 请求 4MB `SO_RCVBUF`，
+    因此 M3 必须真机实测/调整 socket 初始化配置。
+- 决定：
+  1. M3 先新增独立 `tools/switch-stream-probe`，保护 M2 `switch-discover` 基线；
+  2. M3 分为 streaming request probe、session/video channel probe、FFmpeg/NVTEGRA+SDL2 第一帧、
+     再合入主 app 四步；每步都有真机日志验收；
+  3. M3 默认 H264、audio off、input off、720p；audio/input/HEVC/1080p/零拷贝推迟；
+  4. streaming/security PIN 只在 `IHS_StreamingPINRequired` 时处理，不得和 pairing code 混用；
+  5. FFmpeg 来源改为当前 devkitPro `switch-ffmpeg` portlibs，不再从 Moonlight-Switch 拷预编译库；
+  6. session 退出必须走 `IHS_SessionDisconnect -> IHS_SessionThreadedJoin -> IHS_SessionDestroy`，
+     不能只关闭 socket 或直接 return；
+  7. 具体执行计划以 `docs/M3_RESEARCH_PLAN.md` 为准。
+- 影响：M3 不直接做完整 Steam Link UI，而是先用 debug 命令收集可证伪证据。只有第一帧链路在真机
+  证明后，才把代码迁移到 `app/`。
+
+---
+
+## D-019 M3.3 视频实验探针优先可恢复性，退出不再持有 applet/sleep lock
+
+- 日期：2026-08-25
+- 背景：M3.3 第二次真机测试中，SDL2 初始化成功后屏幕变黑；PC 端 `stream game` 到达程序后没有
+  后续 `stream request:` / video start / decoder 日志，debug UDP 随后无响应。用户随后反馈整机近似
+  hang：`+`、HOME、长按 POWER 起初都无响应，最终通过硬件强制重启恢复。
+- 证据：
+  - 真机日志显示 `media init: SDL2 renderer ready`，证明黑屏只是 SDL 接管画面，不证明已解码；
+  - 同次日志显示 `stream: StartDiscovery(one-shot) -> 1` 后没有 `stream request:`，证明尚未进入
+    Steam streaming response 或 FFmpeg 解码；
+  - `switch-stream-probe` 代码当时在主线程 debug handler 中直接调用 `start_stream_request()`，
+    因此 IHS 任一步阻塞都会停止 `appletMainLoop()`、按键扫描、debug UDP 和 SDL present；
+  - 代码当时先处理 `stop_requested`，再处理 `exit_requested`；`+` 同时设置 stop/exit 时会先进入
+    `IHS_SessionThreadedJoin()`，存在退出前再次阻塞的路径；
+  - libnx `appletLockExit()` 文档说明它会延迟 HOME/关闭触发的退出，且必须在返回前 unlock；
+    `appletRequestToAcquireSleepLock()` 也会主动阻止睡眠。两者适合短清理窗口，不适合可能卡住的
+    M3.3 视频实验路径；
+  - IHS timer worker 持有 `timer->mutex` 执行 task，streaming request 原实现持有
+    `client->base` 锁启动 timer，形成 `base -> timer` 与 `timer -> base` 的 AB-BA 死锁风险。
+- 决定：
+  1. `switch-stream-probe` M3.3 不再调用 `appletLockExit()` 或 `appletRequestToAcquireSleepLock()`；
+  2. debug `stream` 只排队，实际 `IHS_ClientStreamingRequest()` 在独立 worker 线程执行，主线程保持
+     `appletMainLoop()`、debug `state/exit` 和 SDL present；
+  3. `+` / debug `exit` 优先退出主循环，随后从 `main()` 正常返回；只有在没有 stream/session 活动时
+     才走可能阻塞的 cleanup/join；
+  4. watchdog 线程不依赖 `state.lock`，主循环停跳超过 8 秒或 stream 开始 45 秒仍无首帧时，写
+     `sdmc:/switch/nsteamlink/stream_watchdog.txt` 并调用 `appletRequestExitToSelf()`，不再
+     `svcExitProcess()`；
+  5. 无首帧时 SDL 画无文字活动指示，不再纯黑；
+  6. IHSlib `IHS_ClientStreamingRequest()` 启动 timer 时不持有 `client->base` 锁，并给首个 task
+     25ms 延迟，降低 handle 尚未写回时 timer 先执行的竞态。
+- 影响：M3.3 probe 的退出策略和 M3.2 已验证的优雅 cleanup 不同；这是为了避免视频/FFmpeg/GPU
+  实验把整机卡死。第一帧链路稳定后，产品化客户端再分阶段恢复 StopRequest、join 和资源析构，
+  每一步都必须用真机返回 hbmenu/fatal 截图作为证据。
+- 回归纠正：2026-08-25 安全修正版 v1 在只测启动/debug `exit`、未发 stream 的情况下仍出现
+  Switch crash；PC 侧日志到 `fast exit: fast_exit:requested` 和 `exiting ...` 不能证明安全退出。
+  因此 `svcExitProcess()` 作为 NRO/hbmenu 退出手段被撤销，改为主线程 break 后正常 return。
+- 回归结果：2026-08-25 安全修正版 v2 在只测启动/debug `exit`、未发 stream 的情况下通过。
+  用户观察到 SDL idle 画面有底部绿色动画和左上橙色方块；debug `state` 正常回包；debug `exit`
+  后 PC 日志走到 `return path: safe_cleanup=1`、IHS client cleanup、`IHS_Quit`、`exiting ...`，
+  且用户确认 Switch 正常回到 hbmenu。
+- 后续修正：同日随后一次重新推送在未发 `state` / `stream game` 前用户侧 crash，PC 侧没有拿到
+  可用应用日志。该证据不能支持“stream 后 hang”的结论。为拆分启动加载与 SDL 初始化风险，
+  M3.3 probe 改为启动时只初始化网络/debug/IHS，SDL/媒体层延迟到 debug `media-init`；
+  `stream` 在媒体未初始化时拒绝并提示先运行 `media-init`。
+- 继续修正：用户指出不能无证据怀疑 netloader/大 NRO，因为其它项目也能加载更大的 NRO。本地
+  ELF 证据显示媒体版 `.init_array` 有 9 个 pre-main constructor，core 版只有 1 个；额外入口
+  来自 Mesa/Nouveau/C++ runtime（`builtin_functions.cpp`、`glsl_types.cpp`、`ir_to_mesa.cpp`、
+  `nv50_ir_ra.cpp`、`eh_alloc.cc`、`eh_globals.cc` 等），且 Switch SDL2 pkg-config 链接项包含
+  `-lEGL -lstdc++ -lglapi -ldrm_nouveau`。因此下一版增加
+  `sdmc:/switch/nsteamlink/stream_boot_stage.txt`，在 `main()` 极早期和各初始化阶段写入 stage；
+  只有该证据返回后，才能判断 crash 是否发生在进入 `main()` 前、SDL 初始化前或后续阶段。
+
+---
+
+## D-020 修正 M3.3 最新启动现象判断，并把 media 探针改为完全被动启动
+
+- 日期：2026-08-25
+- 背景：boot-stage 版 `switch-stream-probe` 一次真机回归中，PC 侧日志显示进入 discovery 后
+  `exiting ...`，随后 debug `state` 超时；一度被记录为完全 hang。用户随后补充：拔掉充电器时
+  Switch 亮起锁屏界面，并正常进入锁屏/hbmenu，当时机器电量不足。
+- 证据：
+  - 同轮 nxlink 日志显示程序已进入 `main()`，完成 auth、socket、nxlink、debug UDP，并自动创建
+    IHS client 与发起 discovery；
+  - 同轮没有收到 PC 端 `media-init` 或 `stream` 命令，因此不能归因到 SDL/FFmpeg 解码或 Steam
+    streaming/session 路径；
+  - 用户补充的真机观察证明该轮没有 Atmosphere fatal，也不能记为硬 hang；
+  - 代码证据显示当时 media 版默认启动仍会执行 `IHS_Init()`、`IHS_ClientCreate()`，并在主循环里
+    周期性 `StartDiscovery(one-shot)` 与 fallback discovery，导致“启动稳定性”证据被 IHS/discovery
+    行为混入。
+- 结论：
+  - 撤回“该轮硬 hang/crash”的结论；准确表述为：设备曾短时黑屏/无响应，随后从锁屏/hbmenu
+    正常恢复；
+  - “低电量、充电器状态、休眠或 applet lifecycle 导致 `appletMainLoop()` 结束”是待验证假设，
+    不是已证明根因；
+  - 该轮证明不了 pre-main constructor crash，也证明不了 stream/decode crash。
+- 决定：
+  1. M3.3 media 版默认启动只做 auth、socket、nxlink 和 debug UDP；
+  2. SDL/FFmpeg 继续延迟到 debug `media-init`；
+  3. IHS 初始化、client 创建、stream worker 启动延迟到 debug `ihs-init` 或 `discover-once`；
+  4. discovery 不再自动周期触发，改为 debug `discover-once` 单步执行一次 broadcast + 固定 fallback；
+  5. debug `state` 增加 `ihs`、`client`、`worker` 字段，boot stage 增加 `ihs:deferred`、
+     `loop:ready:passive`、`loop:ended`；
+  6. 下一次真机验证必须分步执行：被动启动/退出 -> `ihs-init`/退出 -> `discover-once`/退出 ->
+     `media-init`/退出 -> `stream game`。
+- 影响：M3.3 的第一帧验收继续暂停在安全回归之后。任何新的黑屏、锁屏、fatal、退出或 timeout
+  都必须先归到具体分步阶段，再下结论。
+
+---
+
+## D-021 M3.3 Switch probe 移除 SDL2/EGL/Mesa 链接，改用 libnx framebuffer
+
+- 日期：2026-08-25
+- 背景：D-020 后，同一个完全被动 media 版再次推送。该版本默认不执行 `IHS_Init()`、
+  不创建 IHS client、不发 discovery、不执行 `media-init`，但真机出现 Atmosphere fatal。
+- 证据：
+  - 用户截图显示 `Error Code: 2144-0001 (0x290)`、`Program: 0100000000001000`，PC 为
+    `0x000000103064A27C`，Backtrace Start Address 为 `0x0000001030400000`；
+  - PC 侧 nxlink 日志只到 `server active ...`，没有应用侧 `nxlink log socket active`；
+  - debug `state` 超时；在 fatal 前我们没有发送 `ihs-init`、`discover-once`、`media-init` 或 `stream`；
+  - 本地地址解析：`0x103064A27C - 0x1030400000 = 0x24a27c`，对应
+    Mesa `vbo_exec_VertexAttrib1fARB`；
+  - 当时媒体版 ELF 仍静态链接 SDL2/EGL/Mesa/Nouveau，且此前本地证据显示其 `.init_array`
+    含 Mesa/Nouveau/C++ runtime constructor；
+  - `pkg-config --libs libavcodec libavutil libswscale` 只返回 `-lavcodec -lavutil -lswscale`，
+    因此 FFmpeg 链接本身不要求 SDL2/EGL/Mesa。
+- 结论：
+  - 该 fatal 发生在 Steam 协议、IHS discovery、FFmpeg 解码、SDL `media-init` 和 streaming request
+    之前，不能归因于这些路径；
+  - PC 落点在 Mesa 代码，这是足够强的工程证据，要求 M3.3 probe 先移除 SDL2/EGL/Mesa 链接面；
+  - 这仍不是“SDL2/Mesa 是唯一根因”的最终断言，因为还缺少 crash dump 与可重复对照；但继续带着
+    Mesa 链接推进 M3.3 已不符合证据纪律。
+- 决定：
+  1. `tools/switch-stream-probe` 不再链接 `PkgConfig::SDL2`；
+  2. Switch M3.3 显示层从 SDL2 renderer/texture 改为 libnx
+     `framebufferCreate/framebufferMakeLinear/framebufferBegin/framebufferEnd`；
+  3. 保留 FFmpeg H264 NVTEGRA 优先、software fallback，以及 CPU YUV420P/NV12 -> RGBA framebuffer
+     blit，用于第一帧证据；
+  4. debug `media-init` 语义改为初始化 libnx framebuffer + FFmpeg 日志回调；
+  5. D-001 的“项目统一 SDL2”暂不用于 M3.3 Switch probe；正式 UI/产品化是否回到 SDL2，必须等
+     framebuffer 第一帧链路稳定后重新评估。
+- 本地验证：
+  - 新 media NRO 约 `13M`，sha256
+    `a829eeb1c36dea582a089e3faca4b872cac0e5e7efaeec3e27f86ca697b5c466`；
+  - `nm` 搜索不到 `vbo_exec`、`_mesa_`、`SDL_`、`drm_`、`nouveau`、`glapi`、`EGL`；
+  - `.init_array` 大小为 `0x8`，唯一 constructor 解析为 `frame_dummy`。
+- 影响：下一次真机测试回到最低风险顺序：被动启动/`state`/`exit`，确认无 fatal 后，才依次测试
+  `ihs-init`、`discover-once`、`media-init`、`stream game`。
+
+---
+
+## D-022 full application 对照通过后，M3.3 主线恢复 SDL2/Mesa 正常流程
+
+- 日期：2026-08-25
+- 背景：D-021 的 framebuffer 路线是为了隔离 applet mode 下的 Mesa fatal，而不是最终图形方案。
+  用户随后通过实体卡带 title override 进入 full application hbmenu/netloader，并要求在资源条件满足后
+  不再用 framebuffer 绕过图形栈，而是按官方 SDL 示例逻辑继续 M3。
+- 证据：
+  - Album/PhotoViewer applet 下，同一官方 OpenGL 基准 `switch-gfx-gl-official.nro` fatal 于
+    Mesa/Nouveau buffer allocation/cache flush 路径；
+  - 用户通过实体卡带 title override 进入 hbmenu/netloader 后，推送同一 NRO，用户反馈 `都正常了`；
+  - devkitPro SDL2 示例使用 `SDL_Init(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK)`、1920x1080 flags=0
+    window、`SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC` renderer、SDL 自己的事件循环；
+  - `switch-sdl2` backend 的 `SWITCH_PumpEvents()` 内部调用 `appletMainLoop()` 并在结束时推送
+    `SDL_QUIT`。
+- 结论：
+  - 当前最强结论是 applet/full application 资源差异导致此前 Mesa fatal；
+  - framebuffer 版只作为隔离证据，不再作为 M3 主线；
+  - SDL/Mesa 路径必须要求 full application 环境，applet mode 下后续应禁用或明确提示。
+- 决定：
+  1. `tools/switch-stream-probe` 重新链接 SDL2/EGL/Mesa/Nouveau；
+  2. `media.c` 使用 SDL2 renderer + IYUV texture，`SDL_UpdateYUVTexture` 后
+     `SDL_RenderCopy`/`SDL_RenderPresent`；
+  3. SDL 初始化保持官方示例关键流程：`SDL_INIT_VIDEO | SDL_INIT_JOYSTICK`、1920x1080 flags=0、
+     accelerated+vsync renderer、打开 joystick 0/1；
+  4. media 未启动时主循环仍可直接调用 `appletMainLoop()`；media 启动后由 `SDL_PollEvent()` 驱动
+     SDL Switch backend 的 lifecycle，不在外层再调用 `appletMainLoop()`；
+  5. 保留 debug `media-init`/`discover-once`/`stream game` 分步入口，便于定位协议、解码和显示阶段。
+- 本地验证：
+  - `./scripts/build-switch.sh` 通过；
+  - 新 `switch-stream-probe.nro` 大小约 `19M`，sha256
+    `ef417b826ca1a4c8b2252b8370c643ca90e7227b5187b2a049a09d7edab7d146`；
+  - `nm` 可见 `SDL_Init`、`SDL_CreateWindow`、`SDL_CreateRenderer`、`SDL_PollEvent` 和 Mesa/EGL 符号；
+    不再出现 `framebufferCreate`/`framebufferBegin`。
+- 后续修正：
+  - 首帧真机通过后，用户观察到串流画面明显闪烁；
+  - 代码证据显示没有新 decoded frame 时会绘制 idle indicator，导致视频帧与 idle 画面交替 present；
+  - 已修正为 video active/已显示首帧后无新帧时保持上一帧；
+  - 修正版首次重推时用户观察到 Switch OS 报错关闭软件，该轮无应用日志，不能证明根因；
+  - 已追加 SDL teardown 分步日志，并将退出清理顺序改为先停 IHS client/`IHS_Quit`，
+    再释放 SDL renderer/window；
+  - 证据版 `switch-stream-probe.nro` sha256
+    `04c12d9adc0ac9c5b763c1162e71fa9dd25a4306096d7e9576a55dd7f6501056`。
+- 继续修正：
+  - 闪屏修正版复测中，用户确认“不闪了”；debug `state` 显示
+    `frames=120 keyframes=2 decoded=120 displayed=117 firstFrame=1 mediaDrop=2`，随后 debug `exit`
+    用户确认正确返回 hbmenu。结论：闪屏修正与清理路径在该轮通过；
+  - 同轮暴露出 auto-stop 后仍停留在 probe SDL 画面，已改为默认 120 帧 probe 结束后自动退出；
+  - debug `stream` 命令也改为自动执行 media/IHS/discovery 准备，旧 `media-init`/`discover-once`
+    只保留为排障入口；
+  - 简化版 `0b6020bbe785e079d9ed58fde8414db83bdce309c822547efd10a0ee21435c44` 推送后，
+    用户观察到 OS 报错关闭软件；PC 侧无应用日志，debug `state` 超时，且尚未发送 stream 命令。
+    因此该轮只能记为启动/加载到 debug ready 前 fatal，不能归因于 stream/decode；
+  - 当前版启动后自动排队 `game` stream probe，120 帧后自动退出；启动时会通过 nxlink
+    打印上一轮 boot/exit/watchdog/exception 摘要；sha256
+    `3418640b03711ea7163dadda018113b22912b9fe57a4acfd60f0c0272bafb621`。
+  - 自动 stream 版 PC 侧回归通过：日志出现 `auto stream queued`、`streaming success`、
+    `session connected`、`first frame displayed`、`auto stop requested after 120 frames`、
+    `auto exit requested after probe stream` 与完整 cleanup；是否返回 hbmenu 仍以用户真机观察为准。
+
+---
+
+## D-023 NRO 返回 hbmenu 前必须 join 本程序创建的所有线程
+
+- 日期：2026-08-25
+- 背景：自动 stream 版多次测试中，用户观察到：第一次运行能正常返回 hbmenu，但返回后再次启动同一
+  netloader 残留入口会被 Switch OS 关闭。该模式说明问题发生在“返回 loader 后的进程/loader 状态”，
+  不能只看单次 `nxlink` 正常退出。
+- 证据：
+  - Switchbrew Homebrew ABI 明确要求 application 返回 loader 前必须清理自身，包括“不泄漏 handles”、
+    “重置 MemoryState”以及“不能留下后台线程”；
+  - Switchbrew Homebrew Menu 文档说明 hbmenu 通过 Homebrew ABI 启动应用，通常由 nx-hbloader 实际
+    launch；
+  - nx-hbloader 源码在加载新 NRO 前会先 unmap previous NRO，再 map/load 下一个 NRO；因此若旧 NRO
+    返回前留下线程或未释放 loader 可见资源，会影响下一次 NRO load；
+  - 本地代码证据：`switch-stream-probe` 自己创建的 `stream_worker` 和 watchdog 原先使用
+    `pthread_detach()`，退出时只 signal，不 `pthread_join()`；这直接违反 Homebrew ABI 的
+    “No leftover threads” 要求；
+  - 对照证据：IHSlib 自身线程封装使用 `pthread_join()`，`IHS_ClientThreadedJoin()` /
+    `IHS_SessionThreadedJoin()` 也已经在项目 cleanup 中调用；
+  - 上一轮自动 stream 启动时打印过前一轮遗留 `previous watchdog: reason=main_stall ... stream_start_ms=0`
+    与旧 exception 摘要，支持“上一轮返回前/后仍有清理证据残留”这个调查方向；
+  - 修正版首次运行日志出现 `cleanup: join watchdog`、`cleanup: join stream worker`、
+    `media shutdown: SDL_Quit done` 和完整 cleanup；用户随后连续多次启动验证通过，并确认
+    “没问题了，这就是原因”。
+- 结论：
+  - 已证实根因：probe 返回 loader 前没有 join 本程序创建的 detached 线程，违反 Homebrew ABI
+    “No leftover threads” 要求，导致返回 hbmenu 后下一次 NRO load 被旧状态污染并被 OS 关闭；
+  - 这不是证明 Mesa/SDL 永远没问题，也不是证明 hbmenu/netloader 永远没问题；它证明本轮二次启动
+    崩溃由本项目线程生命周期错误触发。
+- 决定：
+  1. `stream_worker` 不再 detach；退出时 `stream_worker_stop()` 后 `pthread_join()`，再 destroy
+     mutex/cond；
+  2. watchdog 不再 detach；主循环结束后设置 stop 并 `pthread_join()`，早期 socket init 失败路径也 join；
+  3. safe cleanup 中先 join 本程序线程，再清理 IHS client、`IHS_Quit()`、SDL renderer/window、
+     debug socket、nxlink socket、`socketExit()`；
+  4. `probe_media_shutdown()` 后立即 drain log queue，让下一轮日志能看到 `media shutdown: SDL_Quit done`；
+  5. 当前证据版 `switch-stream-probe.nro` sha256
+     `2c3c900504fb4ed434d12db97b96ab4a5103af27a82c0d0d73c502dcedf3e03b`。
+- 验收：
+  - 单次运行日志必须出现 `cleanup: join watchdog`、`cleanup: join stream worker`、
+    `media shutdown: SDL_Quit done` 和完整 cleanup；
+  - 真机必须连续运行至少两次：第一次正常返回 hbmenu 后，第二次启动不被 OS 关闭。
+- 回归结果：
+  - 用户已连续测试确认不再出现“第一次返回 hbmenu 后，第二次启动被 OS 关闭”；
+  - D-023 作为 Switch NRO 生命周期规范长期生效，后续线程/退出路径改动必须按此验收。
+
+---
+
+## D-024 M3.5 正式 app 先复用已验证 probe 链路，避免双份实现漂移
+
+- 日期：2026-08-25
+- 背景：M3.4 已经在 `switch-stream-probe` 中验证了 auth/discovery/stream/session/FFmpeg
+  NVTEGRA/SDL2 NV12 显示和完整 cleanup；而 `app/src/main.c` 仍只是 skeleton。如果立刻复制并大规模
+  重构这些代码，会让正式 app 与刚通过真机回归的 probe 产生两份实现，增加无证据回归风险。
+- 证据：
+  - M3.4 真机 PC 侧日志出现 `socketInitialize custom ... udpRx=1048576 ... sampleRcvbuf=1048576`；
+  - 同轮日志出现 `SDL video texture ready: NV12 1280x720`、`first frame displayed ... fmt=23`、
+    3600 帧 auto-stop、`converted=0`、`return path: safe_cleanup=1`、`media shutdown: SDL_Quit done`；
+  - 用户随后手动二次启动并反馈没问题，满足 D-023 的二次启动验收；
+  - 本地构建证据：`build/switch/app/nsteamlink.elf` 同时存在正式 `main` 与
+    `nsteamlink_stream_main`，并包含 `probe_media_*` 符号；`build/switch/app/nsteamlink.nro`
+    sha256 为 `bf9977cf0e5b8055e38e21b12378285401d0524757498fa4efe2ece8c947e497`。
+- 结论：
+  - M3.5 的最低风险合入方式是让正式 app target 复用同一份已验证 probe 源文件，而不是立即复制成
+    新模块后再调试一轮；
+  - 这不是最终架构，只是把已证实链路变成正式 `nsteamlink.nro` 的第一步。
+- 决定：
+  1. Switch 版 `app` target 编译 `tools/switch-stream-probe/main.c` 和
+     `tools/switch-stream-probe/media.c`；
+  2. 只在 app target 内把 probe `main()` 源级重命名为 `nsteamlink_stream_main()`，由
+     `app/src/main.c` 的正式 `main()` 调用；
+  3. `app` target 链接与 probe 相同的 `ihslib`、FFmpeg、SDL2、`nx`，保持真机已验证的依赖组合；
+  4. `switch-stream-probe` 保留为证据工具，不删除、不改成正式 UI；
+  5. 后续做 UI、音频、输入前，再把共享链路拆成 `app` 内的稳定模块，拆分时必须保持二次启动回归。
+- 待验证：
+  - `nsteamlink.nro` 本身仍需真机跑一轮：首帧、3600 帧 auto-stop、完整 cleanup 返回 hbmenu，
+    然后二次启动成功。不能用 probe 的真机结果直接替代 app target 的最终验收。
+- 首轮回归：
+  - PC 侧确认推送产物为 `nsteamlink.nro`，日志出现 `streaming success`、`session connected`、
+    `video decoder opened: h264 (nvtegra)`、`SDL video texture ready: NV12 1280x720` 与
+    `first frame displayed ... fmt=23`；
+  - 3600 帧摘要为 `frames=3600 decoded=3600 displayed=3598 mediaDrop=1 gaps=0 maxGap=0`
+    `transferFrames=3600 converted=0`；
+  - 退出日志出现 `return path: safe_cleanup=1`、`cleanup: join watchdog`、
+    `cleanup: join stream worker`、`cleanup: IHS_Quit`、`media shutdown: SDL_Quit done` 和
+    `exiting ...`；
+  - 二次启动 PC 侧证据：再次推送 `nsteamlink.nro` 成功进入应用、建立 session、显示首帧；
+    debug `exit` 在 `frames=2105 decoded=2105 displayed=2099 converted=0` 时被接收，随后日志再次
+    出现 `session stop: join`、`session stop: destroy`、`return path: safe_cleanup=1`、
+    `cleanup: join watchdog`、`cleanup: join stream worker`、`media shutdown: SDL_Quit done`；
+  - 用户要求后续不要默认重复测试回 hbmenu。后续若只是普通功能改动，不再默认要求二次启动；
+    若触及线程、SDL/Mesa、socket 或退出生命周期，先说明风险与证据价值，再决定是否测试。
+
+---
+
+## D-025 M4 第一版 UI 使用 SDL2 overlay 与内置 5x7 英文字体
+
+- 日期：2026-08-25
+- 背景：用户已指出 Switch console 没有中文字库，中文输出会乱码；正式 app 需要在不依赖 debug
+  console 的情况下显示 host、状态和 PIN 输入。当前阶段不应为了 UI 引入字体库或复杂渲染栈，
+  以免重新扩大 M3 刚稳定下来的 SDL/Mesa/FFmpeg 风险面。
+- 证据：
+  - 真机观察：console 中文显示乱码，只有英文数字正常；
+  - M3.5 已验证 SDL2 renderer/texture 可稳定显示视频，正式 app 已链接 SDL2；
+  - 当前本地构建通过，`nsteamlink.nro` sha256
+    `e5866b27171af7556e6d11aecdee6b95264840a65e379f6c9f6de78c07ce7d6d`。
+- 决定：
+  1. M4 第一版 UI 全部使用英文 ASCII；
+  2. SDL2 overlay 使用内置 5x7 bitmap 字体，以矩形绘制字形，不引入 TTF/fontconfig 等依赖；
+  3. 菜单/PIN 页面使用暗底大面板，串流中只显示左上小 HUD，避免遮挡主画面；
+  4. 正式 app 默认进入菜单，不再自动开始 stream；`switch-stream-probe` 保留自动 3600 帧长跑；
+  5. PINRequired 进入四位数字输入：`LEFT/RIGHT` 选位，`UP/DOWN` 改数字，`A` 提交，`B` 取消。
+- 待验证：
+  - 真机可读性和按键手感仍需实际体验反馈；这不是线程/退出生命周期改动，不默认要求重复
+    hbmenu/二次启动测试。
+
+---
+
+## D-026 M4 输入回传复用 ihslib SDL HID provider，在 Switch 上用 SDL2 compatibility build
+
+- 日期：2026-08-25
+- 背景：M4 需要把 Switch 手柄输入回传给 Steam host。IHSlib 已有 `src/hid/sdl` provider，若重新在
+  app 里手写 HID report，会绕开上游已有枚举、feature report、delta report 和 event flush 逻辑，
+  增加协议 bug 风险。
+- 证据：
+  - `third_party/ihslib/src/hid/sdl` 已实现 `IHS_HIDProviderSDLCreateManaged()`、
+    `IHS_HIDHandleSDLEvent()`、`IHS_HIDResetSDLGameControllers()` 与 48 字节 SDL HID report；
+  - `third_party/ihslib/src/hid/sdl/include/ihslib/hid/sdl.h` 明确说明 SDL 事件只累计状态，调用方应按帧
+    flush `IHS_SessionHIDSendReport()`，避免 stick/gyro 高频事件淹没可靠控制通道；
+  - Switch target CMake cache 中 `SDL3_FOUND` 为空，`/opt/devkitpro/portlibs/switch/include` 只有
+    `SDL2`，`/opt/devkitpro/portlibs/switch/lib/pkgconfig` 只有 `sdl2.pc` 而没有 `sdl3.pc`；
+  - 本地裸 `pkg-config sdl3` 命中的是宿主机 `/usr/include`，不是 Switch portlibs，不能作为 Switch
+    可链接 SDL3 的证据；
+  - ihslib CMake 注释已记录 SDL2/SDL3 同进程会因相同 `SDL_*` 符号 cross-bind 而破坏线程，因此不能在
+    当前 SDL2 渲染 app 中直接再链接宿主/SDL3 provider；
+  - 用户 2026-08-25 真机反馈：菜单界面按键有效，但进入 stream 后按键对 Steam/game 没有效果；
+  - `third_party/ihslib/src/session/channels/control/control_hid.c` 中
+    `IHS_SessionChannelControlSendHIDMsg()` 与 `IHS_SessionHIDSendReport()` 都会先检查
+    `IHS_SessionInputEnabled()`；
+  - `third_party/ihslib/src/session/channels/ch_control.c` 中 `IHS_SessionInputEnabled()` 返回 host
+    下发的 `streamingInput` 状态；
+  - 旧实现只在 streaming request 里设置 `input=true`/`gamepadCount=1`，但 session negotiation 没有显式
+    发送 `CStreamingClientConfig.enable_input_streaming=true`；
+  - 2026-08-25 真机测试新现象：开始 stream 时画面帧数在走，一旦按键，overlay 帧数马上卡住，
+    随后任意按键和 `+` 都无反应；
+  - 同期 nxlink 日志显示 `hid summary` 有事件且 `send_fail=0`，随后控制通道出现大量
+    `Retransmission Giving up on Packet(channelId=1...)`；
+  - 代码证据：`tools/switch-stream-probe/main.c` 主循环在渲染前同步 `logq_drain()`，`logline()`
+    直接 `dprintf(nxlink_fd, ...)`；因此 nxlink/stdout 背压或高频 IHS 日志会卡住主循环，
+    造成画面不刷新和本地 `+` 无法处理。
+  - 本地 Switch 构建通过：`cmake --build build/switch --target nsteamlink_nro switch-stream-probe_nro -j$(nproc)`。
+- 结论：
+  - 当前 Switch 环境不能直接使用 SDL3 版 provider；
+  - 也不应该在 app 中另写一套 HID report；
+  - 最小证据化路径是复用 ihslib SDL provider 源码，并为 Switch SDL2 portlibs 增加兼容编译层。
+- 决定：
+  1. Switch 根 CMake 强制 `IHSLIB_HID_SDL=ON`、`IHSLIB_HID_SDL_USE_SDL2=ON`；
+  2. `ihslib-hid-sdl` 默认仍走 SDL3；仅在 `IHSLIB_HID_SDL_USE_SDL2` 下启用 SDL2 shim；
+  3. SDL2 shim 只做 API 名称兼容：`SDL_Gamepad`/event/type/function 映射到 SDL2
+     `SDL_GameController`/controller events，不改 ihslib HID 协议逻辑；
+  4. `nsteamlink.nro` streaming request 打开 `input=true` 与 `gamepadCount=1`，session negotiation
+     显式发送 `enable_input_streaming=true`；`switch-stream-probe` 仍保持 input disabled；
+  5. app session connected 后 `IHS_SessionHIDNotifyDeviceChange()`；media present loop 把 SDL controller
+     events 交给 `IHS_HIDHandleSDLEvent()` 并每帧 flush；
+  6. session stop 前调用 `IHS_HIDResetSDLGameControllers()`，再 disconnect/join/destroy session，
+     最后 destroy provider；
+  7. 串流中本地 stop/exit 改为 `MINUS+B` / `+`。当前安全版本暂不把 `+` 转发成 Steam Start/Menu，
+     先确保用户有稳定本地退出路径；普通游戏按键和摇杆不再被 UI 截获。
+  8. stream 中加入低频 `hid summary` 日志，记录 SDL HID event 数、report send 成功数和失败数，
+     避免下一次输入问题只能靠主观观察定位。
+  9. nxlink 日志 fd 设置为 non-blocking，主循环每帧最多 drain 8 条日志，控制通道 retransmission
+     日志按秒抑制；诊断输出不得再阻塞渲染、输入和本地退出路径。
+- 补丁：
+  - `third_party/patches/ihslib/0006-sdl2-hid-provider-compat.patch` 记录本轮 ihslib SDL2 HID provider
+    兼容层改动；该 patch 已验证可应用到当前 ihslib HEAD。旧 `0002` 对当前 HEAD 的可重放性需要后续
+    单独重排补丁栈，不能把它的失败归因到本轮输入回传改动。
+  - `third_party/patches/ihslib/0007-enable-input-streaming-negotiation.patch` 记录 session negotiation
+    的 `enable_input_streaming=true` 修正。
+- 当前产物：
+  - `build/switch/app/nsteamlink.nro` sha256
+    `9d4a46a50eb2178218a95df0441bee45b35575861c10fcc5e41a34cf657c281b`；
+  - `build/switch/tools/switch-stream-probe/switch-stream-probe.nro` sha256
+    `8bf93a53ce469199a61960f4ae2c919e34ba91dbfd1bdb0142ba0b82dac4a6f6`。
+- 待验证：
+  - 真机需要验证 Steam host 能收到按键/摇杆输入；
+  - 若输入仍不可用，第一优先证据是 `hid device change notified` 日志、`streamingInput` 是否为 true、
+    Steam host 是否 open device、SDL controller event 是否进入 `IHS_HIDHandleSDLEvent()`，不直接跳到自写
+    HID report。
+  - 真机需确认按键后 overlay/视频不再卡住，`+` 本地退出仍可用。
+
+---
+
+## D-027 M4 输入问题先加 HID 诊断证据，不继续猜协议根因
+
+- 日期：2026-08-25
+- 背景：`enable_input_streaming=true` 与 nxlink 非阻塞/限流修正后，需要复测 stream 内手柄输入。
+- 证据：
+  - 用户真机观察：本轮“不会卡死”，按 `+` 能退出；但 stream 内普通按键仍“没有任何作用”；
+  - 旧日志证据只能证明 `IHS_HIDHandleSDLEvent()` 有事件且 `IHS_SessionHIDSendReport()` 返回成功，
+    不能证明 Steam host 已经 open 设备、start input reports、ACK/消费 report；
+  - `third_party/ihslib/src/session/channels/control/control_hid.c` 旧实现对 `DeviceOpen` 成功/失败有
+    debug 日志，但 `StartInputReports` / `RequestFullReport` 成功路径没有日志；
+  - 不跑 `nxlink -s` 时仍可用 UDP debug server 查询状态；这是后续减少人工盲测的更稳路径。
+- 结论：
+  - 卡死/本地 `+` 失效问题已由真机观察证实改善；
+  - stream 内输入无效的根因仍待验证，不能直接归因到 report 格式、caps、`active_input` 或设备位置字段。
+- 决定：
+  1. 在 app 侧新增 UDP `hid` 命令，输出 `hidEvents/hidSendOk/hidSendFail` 与
+     `openOk/openFail/start/startLen/full/getFeature/getStrings/noDevice/ctrlRetrans/ctrlWarn`；
+  2. 在 `ihs_log()` 过滤 debug 日志前解析 HID/control 诊断计数，避免依赖 `nxlink -s`；
+  3. 在 ihslib 补 `StartInputReports(id, length)` 与 `RequestFullReport(id)` 成功路径 debug 日志；
+  4. 下一次真机测试若输入仍无效，先采集 `hid` 输出，再按证据决定是改设备枚举字段、report 长度/内容、
+     control reliable packet 还是其他路径。
+- 补丁：
+  - `third_party/patches/ihslib/0008-hid-diagnostic-logs.patch`。
+- 当前产物：
+  - `build/switch/app/nsteamlink.nro` sha256
+    `b14d584da42808b42a9b6f761801e3fd8b123ff64f4bf3c035d8e99b4b2e4f49`；
+  - `build/switch/tools/switch-stream-probe/switch-stream-probe.nro` sha256
+    `525e44f3d75e8eff5e5086f3c453e85bc423ba99c0517b47e1a2b8264bd35859`；
+  - `build/switch/tools/switch-stream-probe/switch-stream-probe-core.nro` sha256
+    `fb0fcaef25c591dd7538c19fc3f89ff4d273b04243f86c7b2e987cf9a8465953`。
+
+---
+
+## D-028 M4 输入回传改用 app-owned single-controller unmanaged SDL HID provider
+
+- 日期：2026-08-25
+- 背景：73 字节 wire report 与 `active_input=true` 后，用户真机观察 stream 内按键仍无效果。
+- 证据：
+  - 真机 UDP `hid` 曾显示 `hidEvents=928 hidSendOk=478 openOk=8 start=8 startLen=73 ctrlWarn=0
+    activeInput=1`，说明本地 SDL event、HID send、host open/start、wire length、control warning 均不能单独解释
+    “没有效果”；
+  - `third_party/ihslib/samples/stream/stream.c` 只创建 session、设置 callbacks 并 connect/join，没有
+    `IHS_SessionHIDAddProvider()`，不能作为真实 HID 输入端到端可用的证据；
+  - `third_party/ihslib/tests/hid/sdl/test_sdl_hid_device_managed.c` 和
+    `test_sdl_hid_device_unmanaged.c` 只验证 SDL provider 本地枚举、open、feature/report 行为，没有真实
+    Steam host；
+  - devkitPro SDL Switch 后端 `/tmp/devkitpro-sdl-switch-2.28-573101/src/joystick/switch/SDL_sysjoystick.c`
+    固定 `JOYSTICK_COUNT=8`，`SWITCH_JoystickGetCount()` 无条件返回 8；index 0 使用
+    `padInitializeDefault()`，1-7 使用 `HidNpadIdType_No1 + i`；
+  - 同一后端设备名固定为 `Switch Controller`，SDL gamecontrollerdb 有对应 mapping；
+  - 本项目 streaming request 只 reserve `gamepadCount=1`，和 managed provider 上报 8 个 SDL game controller
+    存在槽位/绑定不确定性；
+  - `sdl_hid_write.c` 中 `SetPlayerIndex` 会写入 `sdl->playerIndex`，但旧 `DeviceFeatureReport` 只读取
+    SDL player index；Switch SDL 后端 player-index setter 是空实现。
+- 结论：
+  - 撤回“直接使用 managed SDL provider 就足够”的隐含结论；上游 sample/test 没有证明该组合在 Switch
+    + Steam host 上端到端可用；
+  - 当前最小、证据化修正是继续复用 ihslib SDL HID report/event 逻辑，但由 app 打开并只暴露一个默认
+    Switch controller，和 `gamepadCount=1` 对齐。
+- 决定：
+  1. `nsteamlink.nro` 的 media init 打开 `SDL_GameControllerOpen(0)`，记录 SDL joystick count、GUID、
+     mapping、controller type 和 instance id；
+  2. app session 改用 `IHS_HIDProviderSDLCreateUnmanaged()`，device list 只返回这个 app-owned controller；
+  3. session destroy 时只 destroy unmanaged provider，controller 生命周期归 media 层，media shutdown 再 close；
+  4. UDP `hid` 增加 `providerDevices/sdlJoy/sdlIndex/sdlInstance/sdlType/lastEvent/sdlName/sdlGuid`；
+  5. ihslib SDL `DeviceFeatureReport` 优先使用 `sdl->playerIndex`，并输出 `FeatureCaps(...)` debug log。
+- 补丁：
+  - `third_party/patches/ihslib/0010-hid-active-input-player-index.patch` 记录 ihslib 内
+    `active_input=true` 与 player-index feature report 修正；app-owned unmanaged provider 是本项目
+    app 代码改动，不属于 ihslib patch。
+- 本地验证：
+  - `cmake --build build/switch --target nsteamlink_nro switch-stream-probe_nro -j$(nproc)` 通过；
+  - `git diff --check` 与 `git -C third_party/ihslib diff --check` 通过。
+- 当前产物：
+  - `build/switch/app/nsteamlink.nro` sha256
+    `6633ec3bf68163936a5938f31f1d12fb3f8735ba2548ac389f4f2b90937faa4b`；
+  - `build/switch/tools/switch-stream-probe/switch-stream-probe.nro` sha256
+    `346b68dd3839fe2909ff8273965ea2fa2a868e35cf08417c27a95fa11a963b7e`。
+- 待验证：
+  - 真机验证 Steam/game 是否实际响应按键；
+  - 若仍无效，先采集 UDP `hid` 与 `FeatureCaps(...)`，判断是 controller type/caps/report 内容还是 Steam
+    host 绑定策略问题。
+
+---
+
+## D-029 M4 修正 Switch face-button mapping，并让 video channel 支持 host 侧重启
+
+- 日期：2026-08-25
+- 背景：用户真机确认输入已经能被 Steam/game 消费；新观察是 `A/B` 在 Steam/game 中反了
+  （`X/Y` 未完全确认），以及在 Steam UI 内选定游戏启动时，Steam host 停止当前串流、游戏在 PC 上
+  独立运行，Switch 端停在最后一帧但进程未死。
+- 证据：
+  - 用户真机观察：输入有效，但 `A/B` 映射似乎反了；
+  - devkitPro SDL Switch 后端
+    `/tmp/devkitpro-sdl-switch-2.28-573101/src/joystick/switch/SDL_sysjoystick.c` 的
+    `pad_mapping_default[]` raw 顺序是 `HidNpadButton_A, B, X, Y`，即 `b0=A b1=B b2=X b3=Y`；
+  - 同一 SDL 版本的 `SDL_gamecontrollerdb.h` 对 `Switch Controller` 的默认 mapping 是
+    `a:b1,b:b0,x:b3,y:b2`，说明 SDL logical face buttons 按 Xbox/Nintendo 语义交换；
+  - `third_party/ihslib/src/session/channels/ch_control_video.c` 旧代码收到
+    `k_EStreamControlStartVideoData` 时，若已有 `IHS_SessionChannelTypeDataVideo`，直接 `break`，不会记录也不会
+    重建 video channel；
+  - `third_party/ihslib/src/session/channels/channel.c` 旧 `IHS_SessionChannelRemove()` 删除非最后一个动态
+    channel 时只 `memmove`，没有递减 `numChannels`，会让 channel 数组尾部保留已销毁指针；
+  - `CMsgRemoteDeviceStreamingRequest` protobuf 本身有 `gameid` 字段，但当前 `IHS_StreamingRequest` 和 UI
+    没有游戏 ID 来源。
+- 结论：
+  - `A/B` 反向是 SDL Switch 默认 gamecontroller mapping 与本项目希望“Steam 看到 Switch 面壳字母”不一致导致；
+  - `IHS_SessionChannelRemove()` 的计数错误是确定 bug，必须修；
+  - host 侧启动游戏时是否一定通过 `StopVideoData` / 新 `StartVideoData` 切换，还需要真机日志验证；
+    不能把 `gameid` 缺失或某一种 Steam 启动策略直接当作已证根因。
+- 决定：
+  1. app 启动时调用 `SDL_GameControllerAddMapping()` 覆盖 `Switch Controller` 为
+     `a:b0,b:b1,x:b2,y:b3`，并在日志里打印 override 结果和最终 mapping；
+  2. 修正 `IHS_SessionChannelRemove()`：无论删除位置是否在末尾，都递减 `numChannels` 并清空尾槽；
+  3. `StartVideoData` 先解析并记录 channel/codec/size/codecData；若已有 video channel，先 remove 再按新消息
+     create/add，避免 host 侧重启/切换 video channel 被静默丢弃；
+  4. `StopVideoData` 记录当前 video channel，若没有 active channel 也记录 ignored；
+  5. app 侧增加首帧后停帧检测：超过 2500ms 无新帧时，overlay/status 显示 `Video stalled`，UDP `state`
+     输出新增 `lastFrameAgeMs`。
+- 补丁：
+  - `third_party/patches/ihslib/0011-video-channel-restart-cleanup.patch`。
+- 本地验证：
+  - `cmake --build build/switch --target nsteamlink_nro switch-stream-probe_nro -j$(nproc)` 通过；
+  - `git diff --check` 与 `git -C third_party/ihslib diff --check` 通过。
+- 当前产物：
+  - `build/switch/app/nsteamlink.nro` sha256
+    `b3ba34d9debf3ee0d52816681ae2b10ed13621251a1ada1ab4ee8e29f787059a`；
+  - `build/switch/tools/switch-stream-probe/switch-stream-probe.nro` sha256
+    `e602cac58c6e730aa01fe8dded8b59b9d925de3e9b0a109b0b0a240622849b91`。
+- 待验证：
+  - 真机验证 `A/B/X/Y` 是否符合 Switch 面壳字母；
+  - 真机在 Steam UI 内启动游戏，观察日志是否出现 `StopVideoData`、`StartVideoData`、`Replacing active video channel`
+    或 `Video stalled`，再决定是否需要新增按 gameid/appid 直接发起 stream 的功能。

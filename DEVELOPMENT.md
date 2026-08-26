@@ -81,7 +81,7 @@ third_party/        第三方库（submodule / vendored），禁止就地修改
 
 | 库 | 来源/版本 | 许可证 | 用途 | 引入里程碑 |
 |---|---|---|---|---|
-| IHSlib | 上游 mariotaku/IHSlib 或 beudbeud fork（D-002 待定） | LGPL-3.0 | 发现/配对/串流协议 | M1 |
+| IHSlib | `beudbeud/ihslib` plume 分支，pin `8c5a17c`（D-002） | LGPL-3.0 | 发现/配对/串流协议 | M2 |
 | plume | beudbeud/plume | GPL | 参考实现，仅对照学习不链接 | M1 参考 |
 | FFmpeg(Switch) | Moonlight-Switch 预编译（averne NVDEC fork） | LGPL/GPL | H264 硬解 | M3 |
 | SDL2 | 系统 2.32.4 / `switch-sdl2` | zlib | UI / 渲染 / 音频输出 | M3 起 |
@@ -104,6 +104,9 @@ third_party/        第三方库（submodule / vendored），禁止就地修改
 - 发现广播异常时直接手动构造 HostInfo 连 IP（IHSlib 支持），不在发现问题上空转（kickoff §7.4）。
 - 调试期 host 本地与客户端各响一遍音频不是 bug，静音一边即可（kickoff §7.5）。
 - Windows host 流不通先查防火墙端口放行（TCP 27036/27037，UDP 27031–27036）。
+- Switch 固件行为、applet 生命周期、hbmenu/netloader 退出语义等平台结论必须有明确证据：
+  libnx/switchbrew 文档、上游源码、真机日志/错误码、可复现实验或已保存的专家结论。没有证据时
+  只能标成“假设/待验证”，不得当成结论写入实现或汇报。
 
 ## 9. 性能与内存纪律
 
@@ -125,7 +128,72 @@ third_party/        第三方库（submodule / vendored），禁止就地修改
 
 - README 的命令必须始终可直接复制执行；构建步骤变更时同步更新。
 - 所有选型 / 翻案级决定进 `docs/decisions.md`，格式见该文件头部说明。
-- 新会话开工顺序：读 kickoff → 读 decisions → 读本文档 → 从里程碑表取任务。
+- 新会话开工顺序：读 kickoff → 读 decisions → 读本文档 → 读当前里程碑状态文档
+  （如 `docs/M2_STATUS.md`）→ 从状态文档取任务。
+
+## 12. Switch Homebrew 生命周期与退出规范
+
+本节是 2026-08-25 M3.3 二次启动崩溃的复盘规范。背景见 decisions D-023。
+
+### 12.1 退出不是进程重置
+
+- hbmenu 通过 Homebrew ABI / nx-hbloader 启动 NRO。NRO 正常返回 hbmenu，不等价于系统已经把所有
+  进程状态清空。
+- Homebrew ABI 要求应用返回 loader 前必须清理自己：不泄漏 handle、不依赖未重置的 MemoryState、
+  不留下后台线程。
+- 因此 `nxlink` 正常退出、PC 日志出现 `exiting ...`，只能说明 PC 侧连接结束；不能单独证明真机
+  lifecycle 安全。
+
+### 12.2 线程规则
+
+- Switch NRO 代码禁止默认使用 `pthread_detach()`、裸后台线程或“只 signal 不 join”的 worker。
+- 新增线程必须有明确 owner，并实现完整生命周期：`start -> request_stop -> join -> destroy`。
+- 线程依赖的 mutex/cond、socket、SDL/FFmpeg/IHS 对象，必须在线程 join 后再释放。
+- 如果确实需要 detached 线程，必须先写 decisions，证明它会在返回 hbmenu 前终止，且有真机日志或
+  上游源码证据支持。
+
+### 12.3 Cleanup 顺序
+
+Switch 端 probe/client 默认 cleanup 顺序：
+
+1. 停止新的业务请求入口，置退出标志；
+2. 停止并 join 本项目自己创建的线程，例如 stream worker、watchdog；
+3. 停止 active session：`IHS_SessionDisconnect()` -> `IHS_SessionThreadedJoin()` ->
+   `IHS_SessionDestroy()`；
+4. 停止 IHS client/discovery：`IHS_ClientStopDiscovery()` / `IHS_ClientStop()` ->
+   `IHS_ClientThreadedJoin()` -> `IHS_ClientDestroy()`；
+5. `IHS_Quit()`；
+6. 释放媒体/图形资源：FFmpeg decoder/frame/packet、SDL texture/renderer/window、`SDL_Quit()`；
+7. 关闭 debug/nxlink socket；
+8. `socketExit()`；
+9. 销毁主线程仍持有的 mutex/cond/state；
+10. 从 `main()` 正常 return。
+
+顺序如需改变，必须在 decisions 写明证据和风险。
+
+### 12.4 真机验收
+
+- 涉及线程、socket、SDL/Mesa、applet lifecycle、loader ABI 或退出路径的改动，必须至少连续启动两次。
+- 合格标准不是“第一次跑完”，而是：第一次返回 hbmenu 后，第二次从 hbmenu/netloader 启动不被
+  Switch OS 关闭。
+- 退出日志至少应覆盖关键阶段，例如 `join watchdog`、`join stream worker`、`IHS_Quit`、
+  `media shutdown: SDL_Quit done`、`socketExit`。
+- 若 PC 侧日志和 Switch 屏幕矛盾，以 Switch 屏幕、fatal 截图、错误码、SD 卡 stage 文件为准。
+
+### 12.5 已踩坑反模式
+
+- 不能把 PC 侧 `nxlink` 退出、debug command 超时、端口状态当成 Switch 屏幕状态的替代证据。
+- 不能因为第二次启动失败就先怀疑 netloader、NRO 大小或 SD 文件，除非有对应错误码、日志或对照
+  实验。先检查本程序返回 hbmenu 前是否留下线程、handle、socket、SDL/Mesa 或 IHS 状态。
+- 不能默认使用 `pthread_detach()`。本轮已证实的二次启动崩溃就是 detached stream worker/watchdog
+  未 join 导致。
+- 不能把 applet mode 与 full application mode 的图形资源限制混在一起下结论。SDL2/Mesa 路线只在
+  full application 环境作为 M3 主线；applet mode 现象必须单独标注。
+- 不能偏离 devkitPro/SDL 官方示例生命周期后再用碎片化试验补洞。若需要偏离，先写 evidence /
+  conclusion / hypothesis，再写 decisions。
+- 不能混淆 Steam pairing authorization code 和 connect/security PIN。认证流程结论以
+  `docs/STEAM_REMOTE_PLAY_AUTH.md` 为准。
+- 不能把 `gamesRunning=0` 写成广播失败。那只表示 Steam 被发现，但当时没有游戏在跑。
 
 ---
 
