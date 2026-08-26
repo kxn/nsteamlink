@@ -93,6 +93,15 @@ static void sample_raw_npad(void);
 static uint32_t hid_raw_ax_since_log;
 static uint32_t hid_raw_btn_since_log;
 static bool hid_raw_last_moved;
+/* Style/device-type flap odometer: SWITCH_JoystickUpdate early-returns whenever its
+ * freshly read type/style differs from cached values; repeated flips skip processing
+ * repeatedly. We recompute independently here to watch for storms. */
+#if __SWITCH__
+static u32 hid_prev_style;
+static u32 hid_prev_devtype;
+#endif
+static uint32_t hid_style_flips_since_log;
+static char hid_style_last[12];
 #endif
 static stream_media_log_fn log_cb;
 static stream_media_snapshot snapshot;
@@ -623,6 +632,7 @@ static void sample_raw_npad(void) {
     static int16_t prev_x, prev_y;
     static uint64_t prev_buttons;
     static bool have_prev;
+    static bool have_style_prev;
     uint64_t now_us = media_monotonic_us();
     if (last_us != 0 && now_us - last_us < RAW_NPAD_SAMPLE_INTERVAL_MS * 1000ULL) {
         return;
@@ -644,6 +654,16 @@ static void sample_raw_npad(void) {
     prev_y = (int16_t) s->analog_stick_l.y;
     prev_buttons = s->buttons;
     have_prev = true;
+
+    u32 style = hidGetNpadStyleSet(HidNpadIdType_No1);
+    u32 devtype = (u32) hidGetNpadDeviceType((HidNpadIdType) HidNpadIdType_No1);
+    if (!have_style_prev || style != hid_prev_style || devtype != hid_prev_devtype) {
+        hid_style_flips_since_log++;
+        snprintf(hid_style_last, sizeof(hid_style_last), "%x/%x", style, devtype);
+    }
+    hid_prev_style = style;
+    hid_prev_devtype = devtype;
+    have_style_prev = true;
 }
 #endif
 
@@ -758,13 +778,14 @@ static void pump_sdl_events(void) {
         }
         if (elapsed_us(hid_last_log_us, now_us) >= 1000000U) {
             media_logf("hid summary: events=%u send_ok=%u send_fail=%u stateFull=%u"
-                       " pump=%u ax=%u btn=%u sen=%u oth=%u evSup=%u rawAx=%u rawBtn=%u",
+                       " pump=%u ax=%u btn=%u sen=%u oth=%u evSup=%u rawAx=%u rawBtn=%u styFl=%u(%s)",
                        hid_events_since_log, hid_send_ok_since_log,
                        hid_send_fail_since_log, hid_state_full_since_log,
                        hid_pump_calls_since_log, hid_axis_since_log,
                        hid_button_since_log, hid_sensor_since_log,
                        hid_other_since_log, hid_trace_suppressed,
-                       hid_raw_ax_since_log, hid_raw_btn_since_log);
+                       hid_raw_ax_since_log, hid_raw_btn_since_log,
+                       hid_style_flips_since_log, hid_style_last);
             hid_events_since_log = 0;
             hid_send_ok_since_log = 0;
             hid_send_fail_since_log = 0;
@@ -933,6 +954,7 @@ void stream_media_shutdown(void) {
     hid_other_since_log = 0;
     hid_trace_suppressed = 0;
     hid_trace_lines_this_sec = 0;
+    hid_style_flips_since_log = 0;
     hid_last_log_us = 0;
 #endif
     pthread_mutex_unlock(&state_lock);
