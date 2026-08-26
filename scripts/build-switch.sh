@@ -14,8 +14,16 @@ cmake -S "$ROOT" -B "$ROOT/build/switch" \
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE" "$@"
 cmake --build "$ROOT/build/switch" -j"$(nproc)"
 
-NRO="$ROOT/build/switch/app/nsteamlink.nro"
-if [ -f "$NRO" ]; then
-    echo "== 产物: $NRO =="
-    echo "   真机安装: 复制到 SD 卡 sd:/switch/ 下，经 Title Redirection 方式启动 hbmenu 后运行"
-fi
+NROS=(
+    "$ROOT/build/switch/app/nsteamlink.nro"
+    "$ROOT/build/switch/tools/switch-discover/switch-discover.nro"
+    "$ROOT/build/switch/tools/switch-stream-probe/switch-stream-probe.nro"
+    "$ROOT/build/switch/tools/switch-gfx-probe/switch-gfx-sdl-official.nro"
+    "$ROOT/build/switch/tools/switch-gfx-probe/switch-gfx-gl-official.nro"
+)
+for NRO in "${NROS[@]}"; do
+    if [ -f "$NRO" ]; then
+        echo "== 产物: $NRO =="
+    fi
+done
+echo "   真机安装: 复制到 SD 卡 sd:/switch/ 下，经 Title Redirection 方式启动 hbmenu 后运行"
