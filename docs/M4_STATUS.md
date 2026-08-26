@@ -6,6 +6,32 @@
 ## 当前状态
 
 - 2026-08-25 已完成 M4 UI 与第一版手柄输入回传本地实现；真机反馈为菜单按键有效。
+- 2026-08-26 真机验证通过 D-029 两项：用户确认 `A/B/X/Y` 按 Switch 面壳字母方向响应（映射
+  override 生效），且在 Steam UI 内启动游戏不再卡帧（video channel 重启路径工作）。同轮
+  长跑证据：单会话 16409 帧 / 293 秒，全程 `gaps=0`，所有 `hid summary` 行 `send_fail=0`，
+  `+` 退出后完整 cleanup（join watchdog/stream worker、IHS_Quit、SDL teardown、关日志 socket）。
+- 2026-08-26 用户新报告真机症状：串流中时不时输入完全断流——断流期间 Steam 端完全收不到
+  按键事件，此前按住的动作（如奔跑）会一直保持，直到恢复后才由下一次按键跳变纠正。
+- 机制定位（代码证据链，详见 decisions D-030）：输入以 delta 增量链语义发送
+  （`sdl_hid_event.c` 每个 SDL 变化 `AddDelta` 且立即推进 baseline）；报告走可靠控制通道，
+  HID 重试上限仅 3 次×10ms 后放弃不补（`ch_control.c:110`、`retransmission.c:184`）；app 只在
+  有新 SDL 事件的帧才 flush（`media.c` hid_changed 门控），SDL provider 无 poll()，事件间通道
+  完全静默。三者叠加：视频高码率突发期小包持续被丢 → 窗口内全部按下/释放 delta 丢失 → 主机
+  状态停在丢失前（松键丢失=持续奔跑，后续 delta 继续丢=看起来无任何键事件）。
+- 同轮日志证据支持该链：控制通道在激烈画面时段大量 `Giving up on Packet(channelId=1)`
+  （HID 上限 3 次，routine give-up），而全程 `hidSendFail=0`、视频满速——本地提交侧从未失败，
+  丢失发生在网络/主机侧；整场会话主机未发过一次 `DeviceRequestFullReport`（协议内建的
+  全量重同步请求，ihslib 双端已实现），即主机没有自动兜底。
+- 修复（D-030 定案）：实现公开头文件早已预留的 `IHS_HIDRefreshSDLGameControllers()`（强制全量
+  快照入队并发送，等价官方 RequestFullReport 触发的处理逻辑），app 在 streaming present 循环中
+  每 100ms 心跳调用；Moonlight 以 `inputSendPeriodUs` 周期全量重发防 UDP 丢包，为同族协议的
+  战场验证先例。UDP debug `hid` 输出与每秒 summary 新增 `stateFull` 计数用于真机核验。
+- 本地构建产物：
+  - `build/switch/app/nsteamlink.nro`
+    sha256 `bc7ef74b79938c2b4978133730869369660c6b01d3ec041f1b2920b90f38d31e`；
+  - `build/switch/tools/switch-stream-probe/switch-stream-probe.nro`
+    sha256 `845b622d94319358752ea3f14bed1304e9e05591095b250fc63fc3eb0d86b93d`。
+- 正式 app 不再默认开机自动开始串流；`switch-stream-probe` 仍保留自动 3600 帧长跑行为。
 - 2026-08-25 真机复测：按键不再卡死画面和本地 `+` 退出，说明日志背压修正有效；但 stream
   内普通按键仍对 Steam/game 无效果。当前结论只能收敛到“本地事件循环可退出，Steam 端输入消费链路仍未证实”，
   不能断言是 report 格式、设备声明或 host open/start 的哪一环。

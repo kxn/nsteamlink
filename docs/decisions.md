@@ -848,3 +848,59 @@
   - 真机验证 `A/B/X/Y` 是否符合 Switch 面壳字母；
   - 真机在 Steam UI 内启动游戏，观察日志是否出现 `StopVideoData`、`StartVideoData`、`Replacing active video channel`
     或 `Video stalled`，再决定是否需要新增按 gameid/appid 直接发起 stream 的功能。
+
+## D-030 输入报告周期性强制全量心跳，修复可靠通道丢包后的按键状态发散
+
+- 背景（2026-08-26 真机症状）：串流中间歇性输入完全断流；断流前按住的键在 Steam/game 侧
+  保持按下（角色持续奔跑），断流期间新按键也全部无响应。
+- 证据链（均源码/日志级）：
+  - `third_party/ihslib/src/hid/sdl/src/sdl_hid_event.c`：每个 SDL 变化调用
+    `IHS_HIDDeviceReportAddDelta(previous, current)` 且立即推进 `previous=current`——
+    `src/hid/report.c` holder 注释明言 delta 是链式语义："the host applies each to the state
+    the previous one left it in"；链上丢一环即永久缺一环；
+  - `third_party/ihslib/src/session/channels/ch_control.c:110`：HID 报告走可靠控制通道，
+    `maxRetransmit=HID_RETRANSMIT_ATTEMPTS`（3 次×10ms）；`retransmission.c:178-188`
+    放弃后不再补发；
+  - `tools/switch-stream-probe/media.c`：app 仅在有新 SDL 事件的帧调用 flush；SDL provider
+    未实现 poll()，`manager.c HIDPollTick` 对我们空转——事件之间通道完全静默；
+  - 真机日志：激烈画面时段大量 `Giving up on Packet(channelId=1)`（channelId 1 为 control），
+    而全程 `hidSendFail=0`、视频满速（本地提交零失败），证明丢失在网络/主机侧；
+  - 同场会话主机发送 `DeviceRequestFullReport` 次数为 0——协议内建的全量重同步请求
+    （ihslib 双端已实现，见 `control_hid.c HandleDeviceRequestFullReport` 与
+    `sdl_hid_device.c DeviceRequestFullReport`）未被主机自动使用，不能依赖它兜底。
+- 根因定性：ihslib 上游注释假定的模型是"每帧都有新的全量快照在路上，丢了由下一帧纠正"
+  （`ch_control.c:104` 注释、"once per rendered frame is a good rate"，`sdl.h` 注释），
+  而现实是"事件驱动增量 + 无任何状态收敛机制"。缺失的是收敛层，不是某个参数。
+- 同族实践佐证：
+  - Moonlight（GameStream/IHS 同族）：输入走不可靠数据报的同时，以 `inputSendPeriodUs`
+    周期性全量重发手柄状态防 UDP 丢包（moonlight-common-c ControlStream.c）；
+  - 官方客户端形态（ihslib 反汇编镜像注释 `manager.c:207` 引用官方二进制地址）：专用报告
+    线程每 8ms 轮询设备、有变化批量发送；THALIUM 逆向文章证实官方亦用 SDL 类抽象手柄，
+    但未公开传输节奏细节。
+- 决定：
+  1. 实现 ihslib 公开头文件已预留的 `IHS_HIDRefreshSDLGameControllers()`（契约见
+     `ihslib/hid/sdl.h`）：对已 StartInputReports 的 SDL 设备打包当前 wire 状态
+     `AddFullForced` 入队并发送，单次调用原子完成"刷新+flush"；不动 baseline 之外的状态语义
+     （与 RequestFullReport 的处理逻辑一致）；
+  2. app streaming present 循环每 100ms 心跳调用一次（约 90B×10/s ≈ <1KB/s 上行）；
+     事件驱动路径保持不变（正常情况低延迟不受影响）；
+  3. 每秒 hid summary 与 UDP debug `hid` 输出新增 `stateFull` 计数用于真机核验；
+  4. 不采用更激进方案：把 k_EStreamControlRemoteHID 改为不可靠通道+每帧全量（Moonlight 式）
+     需要改变对真实 Steam host 的包序/可靠性语义，未经真机验证，风险不成比例；若 100ms 心跳
+     后仍有可感知卡键再评估。
+- 补丁：`third_party/patches/ihslib/0012-sdl-hid-full-state-refresh.patch`（主题记录），
+  权威重建仍以 `0020-switch-port-cumulative.patch` 为准。
+- 本地验证：
+  - `cmake --build build/switch --target nsteamlink_nro switch-stream-probe_nro -j$(nproc)` 通过；
+  - 补丁簿记：0020 重生成后对 pristine HEAD 应用结果与工作区逐字节一致（脚本 diff 验证通过）；
+  - 产物 sha256：
+    - `nsteamlink.nro` `bc7ef74b79938c2b4978133730869369660c6b01d3ec041f1b2920b90f38d31e`
+    - `switch-stream-probe.nro` `845b622d94319358752ea3f14bed1304e9e05591095b250fc63fc3eb0d86b93d`
+- 待验证（下一轮真机）：
+  - 复现原症状场景：长时间游玩确认卡键是否消失或显著缩短（预期：断流时长被限制在一个
+    心跳周期 + 当前丢包窗尾部之内）;
+  - 心跳有效性核验：`stateFull` 应随时间线性增长（~10/s），丢包窗后第一次落地的心跳应解除
+    键位残留；
+  - 若仍出现长时间完全断流：抓取期间每秒 summary 曲线区分"本地事件停摆"
+    （events 停止增长→另查渲染循环/SDL 队列）与"线上持续丢弃"（events/sendOk 正常但
+    Steam 无响应→评估加大心跳频率或改用不可靠输入通道的 D-030 第 4 点激进方案）。
