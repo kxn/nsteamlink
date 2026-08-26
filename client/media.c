@@ -8,6 +8,9 @@
 #include <ctype.h>
 
 #include <SDL.h>
+#if __SWITCH__
+#include <switch.h>
+#endif
 
 #include <libavcodec/avcodec.h>
 #include <libavutil/error.h>
@@ -79,6 +82,17 @@ static uint32_t hid_sensor_since_log;
 static uint32_t hid_other_since_log;
 static uint32_t hid_trace_lines_this_sec;
 static uint32_t hid_trace_suppressed;
+/* Raw libnx HID sampler: bypasses SDL entirely to bisect capture halts.
+ * rawAx/rawBtn count OS-level stick/button motion in a second; if raw moves while
+ * ax=/btn= stay zero, SDL is swallowing updates — if both are zero while the user
+ * fights the stick, the HID sharedmem pipeline itself went stale. */
+#define RAW_NPAD_SAMPLE_INTERVAL_MS 250
+#if __SWITCH__
+static void sample_raw_npad(void);
+#endif
+static uint32_t hid_raw_ax_since_log;
+static uint32_t hid_raw_btn_since_log;
+static bool hid_raw_last_moved;
 #endif
 static stream_media_log_fn log_cb;
 static stream_media_snapshot snapshot;
@@ -601,6 +615,38 @@ static SDL_Gamepad *hid_device_list_controller(int index, void *context) {
 }
 #endif
 
+#if __SWITCH__
+/* Sample No1 pad straight from HID sharedmem every 250ms, independent of SDL.
+ * Handheld-state layout covers the playing mode used for streaming tests. */
+static void sample_raw_npad(void) {
+    static uint64_t last_us;
+    static int16_t prev_x, prev_y;
+    static uint64_t prev_buttons;
+    static bool have_prev;
+    uint64_t now_us = media_monotonic_us();
+    if (last_us != 0 && now_us - last_us < RAW_NPAD_SAMPLE_INTERVAL_MS * 1000ULL) {
+        return;
+    }
+    last_us = now_us;
+    HidNpadHandheldState st[8];
+    size_t n = hidGetNpadStatesHandheld(HidNpadIdType_No1, st, 8);
+    if (n == 0) {
+        return;
+    }
+    HidNpadHandheldState *s = &st[n - 1];
+    if (!have_prev || s->analog_stick_l.x != prev_x || s->analog_stick_l.y != prev_y) {
+        hid_raw_ax_since_log++;
+    }
+    if (!have_prev || s->buttons != prev_buttons) {
+        hid_raw_btn_since_log++;
+    }
+    prev_x = (int16_t) s->analog_stick_l.x;
+    prev_y = (int16_t) s->analog_stick_l.y;
+    prev_buttons = s->buttons;
+    have_prev = true;
+}
+#endif
+
 static void pump_sdl_events(void) {
     SDL_Event event;
 #if NSTREAMLINK_APP
@@ -613,6 +659,9 @@ static void pump_sdl_events(void) {
     hid_enabled = hid_session_enabled;
     pthread_mutex_unlock(&state_lock);
     hid_pump_calls_since_log++;
+#if __SWITCH__
+    sample_raw_npad();
+#endif
 #endif
 
     while (SDL_PollEvent(&event)) {
@@ -709,13 +758,13 @@ static void pump_sdl_events(void) {
         }
         if (elapsed_us(hid_last_log_us, now_us) >= 1000000U) {
             media_logf("hid summary: events=%u send_ok=%u send_fail=%u stateFull=%u"
-                       " pump=%u ax=%u btn=%u sen=%u oth=%u evSup=%u sti=%d",
+                       " pump=%u ax=%u btn=%u sen=%u oth=%u evSup=%u rawAx=%u rawBtn=%u",
                        hid_events_since_log, hid_send_ok_since_log,
                        hid_send_fail_since_log, hid_state_full_since_log,
                        hid_pump_calls_since_log, hid_axis_since_log,
                        hid_button_since_log, hid_sensor_since_log,
                        hid_other_since_log, hid_trace_suppressed,
-                       SDL_IsTextInputActive() ? 1 : 0);
+                       hid_raw_ax_since_log, hid_raw_btn_since_log);
             hid_events_since_log = 0;
             hid_send_ok_since_log = 0;
             hid_send_fail_since_log = 0;
