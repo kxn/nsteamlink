@@ -64,7 +64,12 @@ static uint32_t hid_send_fail_since_log;
 static uint32_t hid_events_total;
 static uint32_t hid_send_ok_total;
 static uint32_t hid_send_fail_total;
+static uint32_t hid_state_full_since_log;
+static uint32_t hid_state_full_total;
+static uint64_t hid_last_full_us;
 static uint64_t hid_last_log_us;
+/* 100ms forced full-state heartbeat; bounded input staleness after packet loss. */
+#define HID_FULL_REFRESH_US 100000ULL
 #endif
 static probe_media_log_fn log_cb;
 static probe_media_snapshot snapshot;
@@ -643,21 +648,36 @@ static void pump_sdl_events(void) {
         uint64_t now_us = media_monotonic_us();
         if (hid_last_log_us == 0) {
             hid_last_log_us = now_us;
+            hid_last_full_us = 0;
+        }
+        /* Periodic forced full-state snapshot: deltas over the reliable control channel
+         * are a chain — one lost packet keeps the host stale until the next identical
+         * transition (stuck keys). Moonlight guards the same way via inputSendPeriodUs. */
+        if (now_us - hid_last_full_us >= HID_FULL_REFRESH_US) {
+            bool refreshed = IHS_HIDRefreshSDLGameControllers(event_hid_session);
+            if (refreshed) {
+                hid_state_full_since_log++;
+                hid_state_full_total++;
+            }
+            hid_last_full_us = now_us;
         }
         if (elapsed_us(hid_last_log_us, now_us) >= 1000000U) {
-            media_logf("hid summary: events=%u send_ok=%u send_fail=%u",
+            media_logf("hid summary: events=%u send_ok=%u send_fail=%u stateFull=%u",
                        hid_events_since_log, hid_send_ok_since_log,
-                       hid_send_fail_since_log);
+                       hid_send_fail_since_log, hid_state_full_since_log);
             hid_events_since_log = 0;
             hid_send_ok_since_log = 0;
             hid_send_fail_since_log = 0;
+            hid_state_full_since_log = 0;
             hid_last_log_us = now_us;
         }
     } else {
         hid_events_since_log = 0;
         hid_send_ok_since_log = 0;
         hid_send_fail_since_log = 0;
+        hid_state_full_since_log = 0;
         hid_last_log_us = 0;
+        hid_last_full_us = 0;
     }
 #endif
 }
@@ -788,6 +808,8 @@ void probe_media_shutdown(void) {
     hid_events_total = 0;
     hid_send_ok_total = 0;
     hid_send_fail_total = 0;
+    hid_state_full_total = 0;
+    hid_state_full_since_log = 0;
     hid_events_since_log = 0;
     hid_send_ok_since_log = 0;
     hid_send_fail_since_log = 0;
@@ -849,6 +871,8 @@ void probe_media_set_hid_session(IHS_Session *session, bool enabled) {
         hid_events_total = 0;
         hid_send_ok_total = 0;
         hid_send_fail_total = 0;
+        hid_state_full_total = 0;
+        hid_state_full_since_log = 0;
         hid_events_since_log = 0;
         hid_send_ok_since_log = 0;
         hid_send_fail_since_log = 0;
@@ -1509,6 +1533,7 @@ void probe_media_get_snapshot(probe_media_snapshot *out) {
     snapshot.hid_events = hid_events_total;
     snapshot.hid_send_ok = hid_send_ok_total;
     snapshot.hid_send_fail = hid_send_fail_total;
+    snapshot.hid_state_full = hid_state_full_total;
 #endif
     *out = snapshot;
     pthread_mutex_unlock(&state_lock);

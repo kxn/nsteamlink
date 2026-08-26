@@ -1714,13 +1714,13 @@ static void hid_line(char *out, size_t out_len) {
     probe_media_snapshot media;
     probe_media_get_snapshot(&media);
     snprintf(out, out_len,
-             "hidEvents=%u hidSendOk=%u hidSendFail=%u"
+             "hidEvents=%u hidSendOk=%u hidSendFail=%u stateFull=%u"
              " providerDevices=%d sdlJoy=%d sdlIndex=%d sdlInstance=%d sdlType=%d"
              " lastEvent=%d/%d/%d/%d"
              " openOk=%u openFail=%u start=%u startLen=%u full=%u"
              " getFeature=%u getStrings=%u noDevice=%u activeInput=1 ctrlRetrans=%u ctrlWarn=%u"
              " sdlName=\"%s\" sdlGuid=%s",
-             media.hid_events, media.hid_send_ok, media.hid_send_fail,
+             media.hid_events, media.hid_send_ok, media.hid_send_fail, media.hid_state_full,
              media.hid_provider_devices, media.hid_sdl_joystick_count,
              media.hid_sdl_controller_index, media.hid_sdl_instance_id,
              media.hid_sdl_controller_type,

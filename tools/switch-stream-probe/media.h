@@ -41,6 +41,7 @@ typedef struct probe_media_snapshot {
     uint32_t hid_events;
     uint32_t hid_send_ok;
     uint32_t hid_send_fail;
+    uint32_t hid_state_full;
     int hid_sdl_joystick_count;
     int hid_sdl_controller_index;
     int hid_sdl_instance_id;
