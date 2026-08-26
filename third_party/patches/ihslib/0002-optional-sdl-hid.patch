@@ -1,0 +1,30 @@
+[历史分层记录：重建构建请只应用 0020-switch-port-cumulative.patch；本文件内容已并入其中且部分上下文已过时。]
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 8fecfdf..b83759e 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -27,6 +27,12 @@ find_package(PkgConfig REQUIRED)
+ if (NOT SDL3_FOUND)
+     pkg_check_modules(SDL3 sdl3)
+ endif ()
++if (NOT DEFINED IHSLIB_HID_SDL)
++    set(IHSLIB_HID_SDL ${SDL3_FOUND} CACHE BOOL "Build SDL HID provider")
++endif ()
++if (IHSLIB_HID_SDL AND NOT SDL3_FOUND)
++    message(FATAL_ERROR "IHSLIB_HID_SDL requires SDL3")
++endif ()
+ 
+ if (NOT PROTOBUF_C_FOUND)
+     pkg_check_modules(PROTOBUF_C libprotobuf-c REQUIRED)
+diff --git a/src/hid/CMakeLists.txt b/src/hid/CMakeLists.txt
+index 5f53106..41e1b47 100644
+--- a/src/hid/CMakeLists.txt
++++ b/src/hid/CMakeLists.txt
+@@ -4,4 +4,6 @@ target_sources(ihslib PRIVATE
+         manager.c
+         report.c)
+ 
+-add_subdirectory(sdl)
++if (IHSLIB_HID_SDL)
++    add_subdirectory(sdl)
++endif ()

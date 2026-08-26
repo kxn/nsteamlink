@@ -1,0 +1,85 @@
+[历史分层记录：重建构建请只应用 0020-switch-port-cumulative.patch；本文件内容已并入其中且部分上下文已过时。]
+diff --git a/src/hid/sdl/src/sdl_hid_common.h b/src/hid/sdl/src/sdl_hid_common.h
+index e69979a..1e72883 100644
+--- a/src/hid/sdl/src/sdl_hid_common.h
++++ b/src/hid/sdl/src/sdl_hid_common.h
+@@ -31,0 +32 @@
++#include <string.h>
+@@ -38 +39 @@
+-#include "hid/report.h"
++#include "hid/manager.h"
+@@ -53,0 +55,18 @@ typedef struct IHS_HIDDeviceSDL {
++#define IHS_HID_SDL_BASE_REPORT_LEN ((size_t) sizeof(IHS_HIDStateSDL))
++#define IHS_HID_SDL_WIRE_REPORT_MAX 256U
++
++static inline size_t IHS_HIDDeviceSDLWireReportLength(const IHS_HIDManagedDevice *managed) {
++    size_t requested = managed != NULL ? managed->reportHolder.reportLength : 0;
++    if (requested < IHS_HID_SDL_BASE_REPORT_LEN ||
++        requested > IHS_HID_SDL_WIRE_REPORT_MAX) {
++        return IHS_HID_SDL_BASE_REPORT_LEN;
++    }
++    return requested;
++}
++
++static inline void IHS_HIDReportSDLPackWire(uint8_t *dest, size_t len,
++                                            const IHS_HIDStateSDL *state) {
++    memset(dest, 0, len);
++    memcpy(dest, state, IHS_HID_SDL_BASE_REPORT_LEN);
++}
++
+diff --git a/src/hid/sdl/src/sdl_hid_device.c b/src/hid/sdl/src/sdl_hid_device.c
+index 4fbe44d..917bd90 100644
+--- a/src/hid/sdl/src/sdl_hid_device.c
++++ b/src/hid/sdl/src/sdl_hid_device.c
+@@ -158 +158,4 @@ static int DeviceStartInputReports(IHS_HIDDevice *device, size_t length) {
+-    IHS_HIDDeviceReportAddFull(device, (const uint8_t *) &sdl->states.current, 48);
++    uint8_t current[IHS_HID_SDL_WIRE_REPORT_MAX];
++    size_t reportLen = IHS_HIDDeviceSDLWireReportLength(device->managed);
++    IHS_HIDReportSDLPackWire(current, reportLen, &sdl->states.current);
++    IHS_HIDDeviceReportAddFull(device, current, reportLen);
+@@ -167 +170,4 @@ static int DeviceRequestFullReport(IHS_HIDDevice *device) {
+-    IHS_HIDDeviceReportAddFull(device, (const uint8_t *) &sdl->states.current, 48);
++    uint8_t current[IHS_HID_SDL_WIRE_REPORT_MAX];
++    size_t reportLen = IHS_HIDDeviceSDLWireReportLength(device->managed);
++    IHS_HIDReportSDLPackWire(current, reportLen, &sdl->states.current);
++    IHS_HIDDeviceReportAddFull(device, current, reportLen);
+diff --git a/src/hid/sdl/src/sdl_hid_event.c b/src/hid/sdl/src/sdl_hid_event.c
+index a529e64..49a5880 100644
+--- a/src/hid/sdl/src/sdl_hid_event.c
++++ b/src/hid/sdl/src/sdl_hid_event.c
+@@ -84,2 +84,6 @@ bool IHS_HIDResetSDLGameControllers(IHS_Session *session) {
+-            IHS_HIDDeviceReportAddDelta(managed->device, (const uint8_t *) &device->states.previous,
+-                                        (const uint8_t *) &device->states.current, 48);
++            uint8_t previous[IHS_HID_SDL_WIRE_REPORT_MAX];
++            uint8_t current[IHS_HID_SDL_WIRE_REPORT_MAX];
++            size_t reportLen = IHS_HIDDeviceSDLWireReportLength(managed);
++            IHS_HIDReportSDLPackWire(previous, reportLen, &device->states.previous);
++            IHS_HIDReportSDLPackWire(current, reportLen, &device->states.current);
++            IHS_HIDDeviceReportAddDelta(managed->device, previous, current, reportLen);
+@@ -117,2 +121,6 @@ static bool HandleCButtonEvent(IHS_HIDManager *manager, const SDL_GamepadButtonE
+-        IHS_HIDDeviceReportAddDelta(managed->device, (const uint8_t *) &device->states.previous,
+-                                    (const uint8_t *) &device->states.current, 48);
++        uint8_t previous[IHS_HID_SDL_WIRE_REPORT_MAX];
++        uint8_t current[IHS_HID_SDL_WIRE_REPORT_MAX];
++        size_t reportLen = IHS_HIDDeviceSDLWireReportLength(managed);
++        IHS_HIDReportSDLPackWire(previous, reportLen, &device->states.previous);
++        IHS_HIDReportSDLPackWire(current, reportLen, &device->states.current);
++        IHS_HIDDeviceReportAddDelta(managed->device, previous, current, reportLen);
+@@ -135,2 +143,6 @@ static bool HandleCAxisEvent(IHS_HIDManager *manager, const SDL_GamepadAxisEvent
+-        IHS_HIDDeviceReportAddDelta(managed->device, (const uint8_t *) &device->states.previous,
+-                                    (const uint8_t *) &device->states.current, 48);
++        uint8_t previous[IHS_HID_SDL_WIRE_REPORT_MAX];
++        uint8_t current[IHS_HID_SDL_WIRE_REPORT_MAX];
++        size_t reportLen = IHS_HIDDeviceSDLWireReportLength(managed);
++        IHS_HIDReportSDLPackWire(previous, reportLen, &device->states.previous);
++        IHS_HIDReportSDLPackWire(current, reportLen, &device->states.current);
++        IHS_HIDDeviceReportAddDelta(managed->device, previous, current, reportLen);
+@@ -158,2 +170,6 @@ static bool HandleSensorEvent(IHS_HIDManager *manager, const SDL_GamepadSensorEv
+-        IHS_HIDDeviceReportAddDelta(managed->device, (const uint8_t *) &device->states.previous,
+-                                    (const uint8_t *) &device->states.current, 48);
++        uint8_t previous[IHS_HID_SDL_WIRE_REPORT_MAX];
++        uint8_t current[IHS_HID_SDL_WIRE_REPORT_MAX];
++        size_t reportLen = IHS_HIDDeviceSDLWireReportLength(managed);
++        IHS_HIDReportSDLPackWire(previous, reportLen, &device->states.previous);
++        IHS_HIDReportSDLPackWire(current, reportLen, &device->states.current);
++        IHS_HIDDeviceReportAddDelta(managed->device, previous, current, reportLen);

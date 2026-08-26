@@ -1,3 +1,4 @@
+[历史分层记录：重建构建请只应用 0020-switch-port-cumulative.patch；本文件内容已并入其中且部分上下文已过时。]
 diff --git a/src/platforms/ihs_ip_posix.c b/src/platforms/ihs_ip_posix.c
 index d767a87..f71b498 100644
 --- a/src/platforms/ihs_ip_posix.c

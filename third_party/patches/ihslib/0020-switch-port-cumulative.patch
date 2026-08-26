@@ -1,0 +1,962 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 8fecfdf..afed8e8 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -21,11 +21,30 @@ option(IHSLIB_SANITIZE_THREAD "Link Thread Sanitizer (mutually exclusive with ad
+ 
+ find_package(PkgConfig REQUIRED)
+ 
+-# SDL3 only: the SDL2 threading backend was replaced by ihs_thread_posix.c, and
+-# the HID provider is ported to SDL3. Linking both SDLs into one process
+-# cross-binds their identical SDL_* symbols and breaks threads.
+-if (NOT SDL3_FOUND)
+-    pkg_check_modules(SDL3 sdl3)
++option(IHSLIB_HID_SDL_USE_SDL2 "Build SDL HID provider against SDL2 instead of SDL3" OFF)
++
++# Default is SDL3 upstream. Switch portlibs currently provide SDL2 but not SDL3,
++# so the project can opt into an SDL2 compatibility build of the same provider.
++if (IHSLIB_HID_SDL_USE_SDL2)
++    if (NOT SDL2_FOUND)
++        pkg_check_modules(SDL2 sdl2)
++    endif ()
++    if (NOT DEFINED IHSLIB_HID_SDL)
++        set(IHSLIB_HID_SDL ${SDL2_FOUND} CACHE BOOL "Build SDL HID provider")
++    endif ()
++    if (IHSLIB_HID_SDL AND NOT SDL2_FOUND)
++        message(FATAL_ERROR "IHSLIB_HID_SDL_USE_SDL2 requires SDL2")
++    endif ()
++else ()
++    if (NOT SDL3_FOUND)
++        pkg_check_modules(SDL3 sdl3)
++    endif ()
++    if (NOT DEFINED IHSLIB_HID_SDL)
++        set(IHSLIB_HID_SDL ${SDL3_FOUND} CACHE BOOL "Build SDL HID provider")
++    endif ()
++    if (IHSLIB_HID_SDL AND NOT SDL3_FOUND)
++        message(FATAL_ERROR "IHSLIB_HID_SDL requires SDL3")
++    endif ()
+ endif ()
+ 
+ if (NOT PROTOBUF_C_FOUND)
+@@ -107,4 +126,4 @@ endif ()
+ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+     enable_testing()
+     add_subdirectory(tests)
+-endif ()
+\ No newline at end of file
++endif ()
+diff --git a/src/client/authorization.c b/src/client/authorization.c
+index 9e38bef..e4c401d 100644
+--- a/src/client/authorization.c
++++ b/src/client/authorization.c
+@@ -52,7 +52,9 @@ bool IHS_ClientAuthorizationRequest(IHS_Client *client, const IHS_HostInfo *host
+     state->client = client;
+     state->host = *host;
+     strncpy(state->deviceName, client->base.deviceName, sizeof(state->deviceName) - 1);
++    state->deviceName[sizeof(state->deviceName) - 1] = '\0';
+     strncpy(state->pin, pin, sizeof(state->pin) - 1);
++    state->pin[sizeof(state->pin) - 1] = '\0';
+     IHS_BaseLock(&client->base);
+     client->taskHandles.authorization = IHS_TimerTaskStart(client->timers, AuthorizationRequestTimer,
+                                                            AuthorizationRequestCleanup, 0, state);
+@@ -81,11 +83,28 @@ void IHS_ClientAuthorizationCallback(IHS_Client *client, const IHS_SocketAddress
+     IHS_UNUSED(address);
+     IHS_TimerTask *task = client->taskHandles.authorization;
+     if (!task) return;
++    if (header->msg_type == k_ERemoteDeviceAuthorizationConfirmed) {
++        CMsgRemoteDeviceAuthorizationConfirmed *confirmed =
++                (CMsgRemoteDeviceAuthorizationConfirmed *) message;
++        IHS_ClientLog(client, IHS_LogLevelInfo, "Authorization",
++                      "Authorization confirmed result=%d",
++                      confirmed ? (int) confirmed->result : -1);
++        return;
++    }
+     if (header->msg_type != k_ERemoteDeviceAuthorizationResponse) {
+         return;
+     }
+     IHS_AuthorizationState *state = IHS_TimerTaskGetContext(task);
+     CMsgRemoteDeviceAuthorizationResponse *resp = (CMsgRemoteDeviceAuthorizationResponse *) message;
++    if (resp == NULL) {
++        IHS_ClientLog(client, IHS_LogLevelWarn, "Authorization", "Malformed authorization response");
++        return;
++    }
++    IHS_ClientLog(client, IHS_LogLevelInfo, "Authorization",
++                  "Authorization response result=%d steamid=%llu auth_key=%zu device_token=%zu",
++                  (int) resp->result, (unsigned long long) resp->steamid,
++                  resp->has_auth_key ? resp->auth_key.len : 0,
++                  resp->has_device_token ? resp->device_token.len : 0);
+     switch (resp->result) {
+         case k_ERemoteDeviceAuthorizationInProgress:
+             if (client->callbacks.authorization && client->callbacks.authorization->progress) {
+@@ -192,4 +211,4 @@ static void AuthorizationRequestCleanup(void *data) {
+     client->taskHandles.authorization = NULL;
+     IHS_BaseUnlock(&client->base);
+     free(data);
+-}
+\ No newline at end of file
++}
+diff --git a/src/client/client.c b/src/client/client.c
+index 8ec342a..874b8b6 100644
+--- a/src/client/client.c
++++ b/src/client/client.c
+@@ -44,7 +44,7 @@ static const unsigned char PACKET_MAGIC[8] = {0xff, 0xff, 0xff, 0xff, 0x21, 0x4c
+ 
+ static void ClientRecvCallback(IHS_Base *base, const IHS_SocketAddress *address, IHS_Buffer *data);
+ 
+-static const ProtobufCMessageDescriptor *MessageDescriptors[k_ERemoteDeviceStreamingProgress + 1] = {
++static const ProtobufCMessageDescriptor *MessageDescriptors[k_ERemoteClientBroadcastMsgPairingExclusivity + 1] = {
+         &cmsg_remote_client_broadcast_discovery__descriptor,
+         &cmsg_remote_client_broadcast_status__descriptor,
+         NULL,
+@@ -59,6 +59,9 @@ static const ProtobufCMessageDescriptor *MessageDescriptors[k_ERemoteDeviceStrea
+         &cmsg_remote_client_broadcast_client_iddeconflict__descriptor,
+         &cmsg_remote_device_stream_transport_signal__descriptor,
+         &cmsg_remote_device_streaming_progress__descriptor,
++        &cmsg_remote_device_authorization_confirmed__descriptor,
++        &cmsg_remote_client_broadcast_client_pairing_state__descriptor,
++        &cmsg_remote_client_broadcast_client_pairing_exclusivity__descriptor,
+ };
+ 
+ static IHS_BaseRunCallbacks ClientRunCallbacks = {
+@@ -186,7 +189,7 @@ static void ClientRecvCallback(IHS_Base *base, const IHS_SocketAddress *address,
+     }
+ 
+     ERemoteClientBroadcastMsg type = header->msg_type;
+-    // The MessageDescriptors table only covers entries 0 .. k_ERemoteDeviceStreamingProgress.
++    // The MessageDescriptors table only covers entries explicitly known to this client.
+     // Any enum value beyond that (or negative) would read OOB and dereference garbage.
+     const ProtobufCMessageDescriptor *descriptor = NULL;
+     if ((int) type >= 0 && (size_t) type < sizeof(MessageDescriptors) / sizeof(MessageDescriptors[0])) {
+@@ -205,6 +208,7 @@ static void ClientRecvCallback(IHS_Base *base, const IHS_SocketAddress *address,
+         case k_ERemoteDeviceAuthorizationRequest:
+         case k_ERemoteDeviceAuthorizationResponse:
+         case k_ERemoteDeviceAuthorizationCancelRequest:
++        case k_ERemoteDeviceAuthorizationConfirmed:
+             client->privCallbacks.authorization(client, address, header, message);
+             break;
+         case k_ERemoteDeviceStreamingRequest:
+@@ -215,6 +219,12 @@ static void ClientRecvCallback(IHS_Base *base, const IHS_SocketAddress *address,
+         case k_ERemoteDeviceProofResponse:
+             client->privCallbacks.streaming(client, address, header, message);
+             break;
++        case k_ERemoteClientBroadcastMsgPairingState:
++        case k_ERemoteClientBroadcastMsgPairingExclusivity:
++            IHS_BaseLog(base, IHS_LogLevelInfo, "Client",
++                        "Unhandled pairing broadcast msg_type=%d payload_size=%u",
++                        (int) type, payload_size);
++            break;
+         default:
+             break;
+     }
+@@ -232,4 +242,3 @@ static void ClientInitialized(IHS_Base *base, void *context) {
+     IHS_UDPSocketSetBlocking(base->socket, true);
+     IHS_UDPSocketSetRecvTimeout(base->socket, 10000 /* 10ms */);
+ }
+-
+diff --git a/src/client/streaming.c b/src/client/streaming.c
+index 5b69e7e..e2ec74b 100644
+--- a/src/client/streaming.c
++++ b/src/client/streaming.c
+@@ -42,9 +42,13 @@ static uint64_t StreamingRequestTimer(int runCount, void *context);
+ static void StreamingRequestCleanup(void *context);
+ 
+ bool IHS_ClientStreamingRequest(IHS_Client *client, const IHS_HostInfo *host, const IHS_StreamingRequest *request) {
++    IHS_BaseLock(&client->base);
+     if (client->taskHandles.streaming) {
++        IHS_BaseUnlock(&client->base);
+         return false;
+     }
++    IHS_BaseUnlock(&client->base);
++
+     IHS_ClientLog(client, IHS_LogLevelInfo, "Client", "Begin sending streaming request to host %s", host->hostname);
+     IHS_StreamingState *state = malloc(sizeof(IHS_StreamingState));
+     state->client = client;
+@@ -53,9 +57,20 @@ bool IHS_ClientStreamingRequest(IHS_Client *client, const IHS_HostInfo *host, co
+     state->requestId = IHS_CryptoRandomUInt32();
+     state->lastMsgType = k_ERemoteClientBroadcastMsgDiscovery;
+     state->lastMsgTime = IHS_TimerNow();
++    IHS_TimerTask *task = IHS_TimerTaskStart(client->timers, StreamingRequestTimer, StreamingRequestCleanup,
++                                             25, state);
++    if (task == NULL) {
++        free(state);
++        return false;
++    }
++
+     IHS_BaseLock(&client->base);
+-    client->taskHandles.streaming = IHS_TimerTaskStart(client->timers, StreamingRequestTimer, StreamingRequestCleanup,
+-                                                       0, state);
++    if (client->taskHandles.streaming) {
++        IHS_BaseUnlock(&client->base);
++        IHS_TimerTaskStop(task);
++        return false;
++    }
++    client->taskHandles.streaming = task;
+     IHS_BaseUnlock(&client->base);
+     return true;
+ }
+@@ -251,4 +266,4 @@ static void StreamingRequestCleanup(void *context) {
+     client->taskHandles.streaming = NULL;
+     IHS_BaseUnlock(&client->base);
+     free(context);
+-}
+\ No newline at end of file
++}
+diff --git a/src/hid/CMakeLists.txt b/src/hid/CMakeLists.txt
+index 5f53106..41e1b47 100644
+--- a/src/hid/CMakeLists.txt
++++ b/src/hid/CMakeLists.txt
+@@ -4,4 +4,6 @@ target_sources(ihslib PRIVATE
+         manager.c
+         report.c)
+ 
+-add_subdirectory(sdl)
+\ No newline at end of file
++if (IHSLIB_HID_SDL)
++    add_subdirectory(sdl)
++endif ()
+diff --git a/src/hid/device.c b/src/hid/device.c
+index adf987a..96f820f 100644
+--- a/src/hid/device.c
++++ b/src/hid/device.c
+@@ -98,6 +98,10 @@ void IHS_HIDDeviceReportAddFull(IHS_HIDDevice *device, const uint8_t *current, s
+     IHS_HIDReportHolderAddFull(&device->managed->reportHolder, current, len);
+ }
+ 
++void IHS_HIDDeviceReportAddFullForced(IHS_HIDDevice *device, const uint8_t *current, size_t len) {
++    IHS_HIDReportHolderAddFullForced(&device->managed->reportHolder, current, len);
++}
++
+ void IHS_HIDDeviceReportAddDelta(IHS_HIDDevice *device, const uint8_t *previous, const uint8_t *current, size_t len) {
+     IHS_HIDReportHolderAddDelta(&device->managed->reportHolder, previous, current, len);
+ }
+@@ -114,4 +118,4 @@ void IHS_HIDDeviceUnlock(IHS_HIDDevice *device) {
+ 
+ IHS_Session *IHS_HIDDeviceGetSession(IHS_HIDDevice *device) {
+     return device->managed->manager->session;
+-}
+\ No newline at end of file
++}
+diff --git a/src/hid/device.h b/src/hid/device.h
+index 679605b..b852fc8 100644
+--- a/src/hid/device.h
++++ b/src/hid/device.h
+@@ -80,3 +80,10 @@ int IHS_HIDDeviceStartInputReports(IHS_HIDDevice *device, size_t length);
+ int IHS_HIDDeviceRequestFullReport(IHS_HIDDevice *device);
+ 
+ int IHS_HIDDeviceRequestDisconnect(IHS_HIDDevice *device, int method, const uint8_t *data, size_t dataLen);
++
++void IHS_HIDDeviceReportAddFull(IHS_HIDDevice *device, const uint8_t *current, size_t len);
++
++void IHS_HIDDeviceReportAddFullForced(IHS_HIDDevice *device, const uint8_t *current, size_t len);
++
++void IHS_HIDDeviceReportAddDelta(IHS_HIDDevice *device, const uint8_t *previous,
++                                 const uint8_t *current, size_t len);
+diff --git a/src/hid/report.c b/src/hid/report.c
+index b6e738b..8a85781 100644
+--- a/src/hid/report.c
++++ b/src/hid/report.c
+@@ -86,11 +86,12 @@ void IHS_HIDReportHolderSetReportLength(IHS_HIDReportHolder *holder, size_t repo
+     holder->reportLength = reportLen;
+ }
+ 
+-void IHS_HIDReportHolderAddFull(IHS_HIDReportHolder *holder, const uint8_t *current, size_t len) {
++static void AddFull(IHS_HIDReportHolder *holder, const uint8_t *current, size_t len, bool force) {
+     assert(holder->reportLength >= len);
+     /* A full report is self-contained, so one that repeats the last flushed state is
+-     * pure noise. Safe to drop: it breaks no chain. */
+-    if (SameAsLastSent(holder, current, len)) {
++     * normally pure noise. Forced callers use it as an explicit host-requested refresh
++     * or low-rate heartbeat, so those bypass the byte-identical drop. */
++    if (!force && SameAsLastSent(holder, current, len)) {
+         return;
+     }
+     Stash(holder, current, len);
+@@ -109,6 +110,14 @@ void IHS_HIDReportHolderAddFull(IHS_HIDReportHolder *holder, const uint8_t *curr
+     holder->report.n_reports = holder->reportItems.size;
+ }
+ 
++void IHS_HIDReportHolderAddFull(IHS_HIDReportHolder *holder, const uint8_t *current, size_t len) {
++    AddFull(holder, current, len, false);
++}
++
++void IHS_HIDReportHolderAddFullForced(IHS_HIDReportHolder *holder, const uint8_t *current, size_t len) {
++    AddFull(holder, current, len, true);
++}
++
+ void IHS_HIDReportHolderAddDelta(IHS_HIDReportHolder *holder, const uint8_t *previous, const uint8_t *current,
+                                  size_t len) {
+     /* Never drop a delta, even one that lands back on the last flushed state. Deltas
+@@ -198,4 +207,4 @@ static int ComputeDelta(const uint8_t *previous, const uint8_t *current, size_t
+         size++;
+     }
+     return size;
+-}
+\ No newline at end of file
++}
+diff --git a/src/hid/report.h b/src/hid/report.h
+index 420f2ad..45d053b 100644
+--- a/src/hid/report.h
++++ b/src/hid/report.h
+@@ -91,6 +91,8 @@ void IHS_HIDReportHolderSetReportLength(IHS_HIDReportHolder *holder, size_t repo
+ 
+ void IHS_HIDReportHolderAddFull(IHS_HIDReportHolder *holder, const uint8_t *current, size_t len);
+ 
++void IHS_HIDReportHolderAddFullForced(IHS_HIDReportHolder *holder, const uint8_t *current, size_t len);
++
+ void IHS_HIDReportHolderAddDelta(IHS_HIDReportHolder *holder, const uint8_t *previous, const uint8_t *current,
+                                  size_t len);
+ 
+@@ -101,4 +103,4 @@ void IHS_HIDReportHolderAddDelta(IHS_HIDReportHolder *holder, const uint8_t *pre
+  */
+ IHS_HIDDeviceReportMessage *IHS_HIDReportHolderGetMessage(IHS_HIDReportHolder *holder);
+ 
+-void IHS_HIDReportHolderResetMessage(IHS_HIDReportHolder *holder);
+\ No newline at end of file
++void IHS_HIDReportHolderResetMessage(IHS_HIDReportHolder *holder);
+diff --git a/src/hid/sdl/CMakeLists.txt b/src/hid/sdl/CMakeLists.txt
+index fb0f460..31a7f41 100644
+--- a/src/hid/sdl/CMakeLists.txt
++++ b/src/hid/sdl/CMakeLists.txt
+@@ -1,3 +1,13 @@
++if (IHSLIB_HID_SDL_USE_SDL2)
++    set(IHSLIB_SDL_TARGETVERSION "${SDL2_VERSION}")
++    set(IHSLIB_HID_SDL_LIBRARIES ${SDL2_LIBRARIES})
++    set(IHSLIB_HID_SDL_INCLUDE_DIRS ${SDL2_INCLUDE_DIRS})
++else ()
++    set(IHSLIB_SDL_TARGETVERSION "${SDL3_VERSION}")
++    set(IHSLIB_HID_SDL_LIBRARIES ${SDL3_LIBRARIES})
++    set(IHSLIB_HID_SDL_INCLUDE_DIRS ${SDL3_INCLUDE_DIRS})
++endif ()
++
+ string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)$" SDL_SEMVER "${IHSLIB_SDL_TARGETVERSION}")
+ if (SDL_SEMVER)
+     set(IHSLIB_SDL_TARGET_MAJOR ${CMAKE_MATCH_1})
+@@ -12,7 +22,10 @@ endif ()
+ set(GEN_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_include)
+ 
+ add_library(ihslib-hid-sdl STATIC)
+-target_link_libraries(ihslib-hid-sdl PUBLIC ihslib PRIVATE ihs-protobuf ${SDL3_LIBRARIES})
+-target_include_directories(ihslib-hid-sdl PUBLIC include ${GEN_INCLUDE_DIR} SYSTEM PUBLIC ${SDL3_INCLUDE_DIRS} PRIVATE ../..)
++target_link_libraries(ihslib-hid-sdl PUBLIC ihslib PRIVATE ihs-protobuf ${IHSLIB_HID_SDL_LIBRARIES})
++target_include_directories(ihslib-hid-sdl PUBLIC include ${GEN_INCLUDE_DIR} SYSTEM PUBLIC ${IHSLIB_HID_SDL_INCLUDE_DIRS} PRIVATE ../..)
++if (IHSLIB_HID_SDL_USE_SDL2)
++    target_compile_definitions(ihslib-hid-sdl PUBLIC IHSLIB_HID_SDL2=1)
++endif ()
+ 
+-add_subdirectory(src)
+\ No newline at end of file
++add_subdirectory(src)
+diff --git a/src/hid/sdl/include/SDL3/SDL.h b/src/hid/sdl/include/SDL3/SDL.h
+new file mode 100644
+index 0000000..3a1ad3a
+--- /dev/null
++++ b/src/hid/sdl/include/SDL3/SDL.h
+@@ -0,0 +1,8 @@
++#pragma once
++
++#ifdef IHSLIB_HID_SDL2
++#include <SDL.h>
++#include "ihslib/hid/sdl/sdl2_compat.h"
++#else
++#include_next <SDL3/SDL.h>
++#endif
+diff --git a/src/hid/sdl/include/SDL3/SDL_events.h b/src/hid/sdl/include/SDL3/SDL_events.h
+new file mode 100644
+index 0000000..fd10d97
+--- /dev/null
++++ b/src/hid/sdl/include/SDL3/SDL_events.h
+@@ -0,0 +1,8 @@
++#pragma once
++
++#ifdef IHSLIB_HID_SDL2
++#include <SDL.h>
++#include "ihslib/hid/sdl/sdl2_compat.h"
++#else
++#include_next <SDL3/SDL_events.h>
++#endif
+diff --git a/src/hid/sdl/include/SDL3/SDL_gamepad.h b/src/hid/sdl/include/SDL3/SDL_gamepad.h
+new file mode 100644
+index 0000000..9d0d231
+--- /dev/null
++++ b/src/hid/sdl/include/SDL3/SDL_gamepad.h
+@@ -0,0 +1,8 @@
++#pragma once
++
++#ifdef IHSLIB_HID_SDL2
++#include <SDL.h>
++#include "ihslib/hid/sdl/sdl2_compat.h"
++#else
++#include_next <SDL3/SDL_gamepad.h>
++#endif
+diff --git a/src/hid/sdl/include/SDL3/SDL_joystick.h b/src/hid/sdl/include/SDL3/SDL_joystick.h
+new file mode 100644
+index 0000000..43abefe
+--- /dev/null
++++ b/src/hid/sdl/include/SDL3/SDL_joystick.h
+@@ -0,0 +1,8 @@
++#pragma once
++
++#ifdef IHSLIB_HID_SDL2
++#include <SDL.h>
++#include "ihslib/hid/sdl/sdl2_compat.h"
++#else
++#include_next <SDL3/SDL_joystick.h>
++#endif
+diff --git a/src/hid/sdl/include/SDL3/SDL_version.h b/src/hid/sdl/include/SDL3/SDL_version.h
+new file mode 100644
+index 0000000..938f217
+--- /dev/null
++++ b/src/hid/sdl/include/SDL3/SDL_version.h
+@@ -0,0 +1,7 @@
++#pragma once
++
++#ifdef IHSLIB_HID_SDL2
++#include <SDL_version.h>
++#else
++#include_next <SDL3/SDL_version.h>
++#endif
+diff --git a/src/hid/sdl/include/ihslib/hid/sdl.h b/src/hid/sdl/include/ihslib/hid/sdl.h
+index 7f08912..fd9a80e 100644
+--- a/src/hid/sdl/include/ihslib/hid/sdl.h
++++ b/src/hid/sdl/include/ihslib/hid/sdl.h
+@@ -70,9 +70,18 @@ void IHS_HIDProviderSDLDestroy(IHS_HIDProvider *provider);
+  */
+ bool IHS_HIDHandleSDLEvent(IHS_Session *session, const SDL_Event *event);
+ 
++/**
++ * Force-send the current SDL controller state for all open SDL game controllers
++ * whose host has started input reports. Intended for low-rate idle refreshes; do
++ * not call per frame.
++ * @param session
++ * @return true if a report was queued and sent
++ */
++bool IHS_HIDRefreshSDLGameControllers(IHS_Session *session);
++
+ /**
+  * Reset input state for all SDL game controllers
+  * @param session
+  * @return
+  */
+-bool IHS_HIDResetSDLGameControllers(IHS_Session *session);
+\ No newline at end of file
++bool IHS_HIDResetSDLGameControllers(IHS_Session *session);
+diff --git a/src/hid/sdl/include/ihslib/hid/sdl/sdl2_compat.h b/src/hid/sdl/include/ihslib/hid/sdl/sdl2_compat.h
+new file mode 100644
+index 0000000..2c2cbf5
+--- /dev/null
++++ b/src/hid/sdl/include/ihslib/hid/sdl/sdl2_compat.h
+@@ -0,0 +1,147 @@
++#pragma once
++
++#include <SDL.h>
++#include <SDL_gamecontroller.h>
++#include <SDL_joystick.h>
++#include <SDL_power.h>
++#include <SDL_sensor.h>
++
++typedef SDL_GameController SDL_Gamepad;
++typedef SDL_GameControllerAxis SDL_GamepadAxis;
++typedef SDL_GameControllerButton SDL_GamepadButton;
++typedef SDL_ControllerDeviceEvent SDL_GamepadDeviceEvent;
++typedef SDL_ControllerButtonEvent SDL_GamepadButtonEvent;
++typedef SDL_ControllerAxisEvent SDL_GamepadAxisEvent;
++typedef SDL_ControllerSensorEvent SDL_GamepadSensorEvent;
++
++#define SDL_INIT_GAMEPAD SDL_INIT_GAMECONTROLLER
++
++#define SDL_EVENT_GAMEPAD_ADDED SDL_CONTROLLERDEVICEADDED
++#define SDL_EVENT_GAMEPAD_REMOVED SDL_CONTROLLERDEVICEREMOVED
++#define SDL_EVENT_GAMEPAD_BUTTON_DOWN SDL_CONTROLLERBUTTONDOWN
++#define SDL_EVENT_GAMEPAD_BUTTON_UP SDL_CONTROLLERBUTTONUP
++#define SDL_EVENT_GAMEPAD_AXIS_MOTION SDL_CONTROLLERAXISMOTION
++#define SDL_EVENT_GAMEPAD_SENSOR_UPDATE SDL_CONTROLLERSENSORUPDATE
++
++#define gdevice cdevice
++#define gbutton cbutton
++#define gaxis caxis
++#define gsensor csensor
++#define down state
++
++#define SDL_GAMEPAD_TYPE_XBOX360 SDL_CONTROLLER_TYPE_XBOX360
++#define SDL_GAMEPAD_TYPE_XBOXONE SDL_CONTROLLER_TYPE_XBOXONE
++#define SDL_GAMEPAD_TYPE_PS3 SDL_CONTROLLER_TYPE_PS3
++#define SDL_GAMEPAD_TYPE_PS4 SDL_CONTROLLER_TYPE_PS4
++#define SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_PRO
++#define SDL_GAMEPAD_TYPE_PS5 SDL_CONTROLLER_TYPE_PS5
++#define SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_JOYCON_LEFT
++#define SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT
++#define SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_JOYCON_PAIR
++
++#define SDL_GetGamepadJoystick SDL_GameControllerGetJoystick
++#define SDL_GetGamepadSerial SDL_GameControllerGetSerial
++#define SDL_GetGamepadPlayerIndex SDL_GameControllerGetPlayerIndex
++#define SDL_SetGamepadPlayerIndex SDL_GameControllerSetPlayerIndex
++#define SDL_GetGamepadType SDL_GameControllerGetType
++#define SDL_CloseGamepad SDL_GameControllerClose
++#define SDL_RumbleGamepad SDL_GameControllerRumble
++#define SDL_RumbleGamepadTriggers SDL_GameControllerRumbleTriggers
++#define SDL_SetGamepadLED SDL_GameControllerSetLED
++#define SDL_SetGamepadSensorEnabled SDL_GameControllerSetSensorEnabled
++#define SDL_GetJoystickID SDL_JoystickInstanceID
++#define SDL_GetJoystickName SDL_JoystickName
++#define SDL_GetJoystickGUID SDL_JoystickGetGUID
++#define SDL_GetGamepadFromID SDL_GameControllerFromInstanceID
++#define SDL_Swap16LE SDL_SwapLE16
++
++#ifndef SDL_HINT_JOYSTICK_ENHANCED_REPORTS
++#define SDL_HINT_JOYSTICK_ENHANCED_REPORTS "SDL_JOYSTICK_ENHANCED_REPORTS"
++#endif
++
++static inline int IHS_SDL2DeviceIndexFromInstance(SDL_JoystickID instance_id) {
++    int count = SDL_NumJoysticks();
++    for (int i = 0; i < count; i++) {
++        if (SDL_JoystickGetDeviceInstanceID(i) == instance_id) {
++            return i;
++        }
++    }
++    return -1;
++}
++
++static inline SDL_JoystickID *IHS_SDL2GetJoysticks(int *count) {
++    int n = SDL_NumJoysticks();
++    if (count != NULL) {
++        *count = n;
++    }
++    if (n <= 0) {
++        return NULL;
++    }
++    SDL_JoystickID *ids = (SDL_JoystickID *)SDL_malloc(sizeof(SDL_JoystickID) * (size_t)n);
++    if (ids == NULL) {
++        if (count != NULL) {
++            *count = 0;
++        }
++        return NULL;
++    }
++    for (int i = 0; i < n; i++) {
++        ids[i] = SDL_JoystickGetDeviceInstanceID(i);
++    }
++    return ids;
++}
++
++static inline SDL_bool IHS_SDL2IsGamepad(SDL_JoystickID instance_id) {
++    int device_index = IHS_SDL2DeviceIndexFromInstance(instance_id);
++    return device_index >= 0 ? SDL_IsGameController(device_index) : SDL_FALSE;
++}
++
++static inline SDL_Gamepad *IHS_SDL2OpenGamepad(SDL_JoystickID instance_id) {
++    int device_index = IHS_SDL2DeviceIndexFromInstance(instance_id);
++    return device_index >= 0 ? SDL_GameControllerOpen(device_index) : NULL;
++}
++
++static inline const char *IHS_SDL2GetJoystickNameForID(SDL_JoystickID instance_id) {
++    int device_index = IHS_SDL2DeviceIndexFromInstance(instance_id);
++    return device_index >= 0 ? SDL_JoystickNameForIndex(device_index) : NULL;
++}
++
++static inline Uint16 IHS_SDL2GetJoystickVendorForID(SDL_JoystickID instance_id) {
++    int device_index = IHS_SDL2DeviceIndexFromInstance(instance_id);
++    return device_index >= 0 ? SDL_JoystickGetDeviceVendor(device_index) : 0;
++}
++
++static inline Uint16 IHS_SDL2GetJoystickProductForID(SDL_JoystickID instance_id) {
++    int device_index = IHS_SDL2DeviceIndexFromInstance(instance_id);
++    return device_index >= 0 ? SDL_JoystickGetDeviceProduct(device_index) : 0;
++}
++
++static inline Uint16 IHS_SDL2GetJoystickProductVersionForID(SDL_JoystickID instance_id) {
++    int device_index = IHS_SDL2DeviceIndexFromInstance(instance_id);
++    return device_index >= 0 ? SDL_JoystickGetDeviceProductVersion(device_index) : 0;
++}
++
++static inline SDL_PowerState IHS_SDL2GetJoystickPowerInfo(SDL_Joystick *joystick, int *percent) {
++    if (percent != NULL) {
++        *percent = -1;
++    }
++    switch (SDL_JoystickCurrentPowerLevel(joystick)) {
++        case SDL_JOYSTICK_POWER_EMPTY:
++        case SDL_JOYSTICK_POWER_LOW:
++        case SDL_JOYSTICK_POWER_MEDIUM:
++        case SDL_JOYSTICK_POWER_FULL:
++            return SDL_POWERSTATE_ON_BATTERY;
++        case SDL_JOYSTICK_POWER_WIRED:
++            return SDL_POWERSTATE_NO_BATTERY;
++        default:
++            return SDL_POWERSTATE_UNKNOWN;
++    }
++}
++
++#define SDL_GetJoysticks IHS_SDL2GetJoysticks
++#define SDL_IsGamepad IHS_SDL2IsGamepad
++#define SDL_OpenGamepad IHS_SDL2OpenGamepad
++#define SDL_GetJoystickNameForID IHS_SDL2GetJoystickNameForID
++#define SDL_GetJoystickVendorForID IHS_SDL2GetJoystickVendorForID
++#define SDL_GetJoystickProductForID IHS_SDL2GetJoystickProductForID
++#define SDL_GetJoystickProductVersionForID IHS_SDL2GetJoystickProductVersionForID
++#define SDL_GetJoystickPowerInfo IHS_SDL2GetJoystickPowerInfo
+diff --git a/src/hid/sdl/src/config.h.in b/src/hid/sdl/src/config.h.in
+index 3b55f5f..8ecbfe1 100644
+--- a/src/hid/sdl/src/config.h.in
++++ b/src/hid/sdl/src/config.h.in
+@@ -25,8 +25,12 @@
+ 
+ #pragma once
+ 
++#ifdef IHSLIB_HID_SDL2
++#include <SDL_version.h>
++#else
+ #include <SDL3/SDL_version.h>
++#endif
+ 
+ #define IHS_HID_SDL_TARGET_MAJOR @IHSLIB_SDL_TARGET_MAJOR@
+ #define IHS_HID_SDL_TARGET_MINOR @IHSLIB_SDL_TARGET_MINOR@
+-#define IHS_HID_SDL_TARGET_PATCH @IHSLIB_SDL_TARGET_PATCH@
+\ No newline at end of file
++#define IHS_HID_SDL_TARGET_PATCH @IHSLIB_SDL_TARGET_PATCH@
+diff --git a/src/hid/sdl/src/sdl_hid_common.h b/src/hid/sdl/src/sdl_hid_common.h
+index e69979a..e850475 100644
+--- a/src/hid/sdl/src/sdl_hid_common.h
++++ b/src/hid/sdl/src/sdl_hid_common.h
+@@ -29,13 +29,14 @@
+ 
+ #include <stdint.h>
+ #include <stdbool.h>
++#include <string.h>
+ 
+ #include <SDL3/SDL.h>
+ 
+ #include "hid/device.h"
+ 
+ #include "sdl_hid_report.h"
+-#include "hid/report.h"
++#include "hid/manager.h"
+ 
+ typedef struct IHS_HIDDeviceSDL {
+     IHS_HIDDevice base;
+@@ -52,6 +53,24 @@ typedef struct IHS_HIDDeviceSDL {
+     } states;
+ } IHS_HIDDeviceSDL;
+ 
++#define IHS_HID_SDL_BASE_REPORT_LEN ((size_t) sizeof(IHS_HIDStateSDL))
++#define IHS_HID_SDL_WIRE_REPORT_MAX 256U
++
++static inline size_t IHS_HIDDeviceSDLWireReportLength(const IHS_HIDManagedDevice *managed) {
++    size_t requested = managed != NULL ? managed->reportHolder.reportLength : 0;
++    if (requested < IHS_HID_SDL_BASE_REPORT_LEN ||
++        requested > IHS_HID_SDL_WIRE_REPORT_MAX) {
++        return IHS_HID_SDL_BASE_REPORT_LEN;
++    }
++    return requested;
++}
++
++static inline void IHS_HIDReportSDLPackWire(uint8_t *dest, size_t len,
++                                            const IHS_HIDStateSDL *state) {
++    memset(dest, 0, len);
++    memcpy(dest, state, IHS_HID_SDL_BASE_REPORT_LEN);
++}
++
+ IHS_HIDDevice *IHS_HIDDeviceSDLCreate(IHS_HIDProvider *provider, SDL_Gamepad *controller, bool managed);
+ 
+ bool IHS_HIDDeviceIsSDL(const IHS_HIDDevice *device);
+@@ -61,4 +80,4 @@ int IHS_HIDDeviceSDLWrite(IHS_HIDDevice *device, const uint8_t *data, size_t dat
+ int IHS_HIDDeviceSDLGetFeatureReport(IHS_HIDDevice *device, const uint8_t *reportNumber, size_t reportNumberLen,
+                                      IHS_Buffer *dest, size_t length);
+ 
+-IHS_HIDManagedDevice *IHS_HIDManagerDeviceByJoystickID(IHS_HIDManager *manager, SDL_JoystickID joystickId);
+\ No newline at end of file
++IHS_HIDManagedDevice *IHS_HIDManagerDeviceByJoystickID(IHS_HIDManager *manager, SDL_JoystickID joystickId);
+diff --git a/src/hid/sdl/src/sdl_hid_device.c b/src/hid/sdl/src/sdl_hid_device.c
+index 4fbe44d..e2dbac4 100644
+--- a/src/hid/sdl/src/sdl_hid_device.c
++++ b/src/hid/sdl/src/sdl_hid_device.c
+@@ -155,7 +155,10 @@ static int DeviceStartInputReports(IHS_HIDDevice *device, size_t length) {
+     (void) length;
+     IHS_HIDDeviceSDL *sdl = (IHS_HIDDeviceSDL *) device;
+     IHS_HIDDeviceLock(device);
+-    IHS_HIDDeviceReportAddFull(device, (const uint8_t *) &sdl->states.current, 48);
++    uint8_t current[IHS_HID_SDL_WIRE_REPORT_MAX];
++    size_t reportLen = IHS_HIDDeviceSDLWireReportLength(device->managed);
++    IHS_HIDReportSDLPackWire(current, reportLen, &sdl->states.current);
++    IHS_HIDDeviceReportAddFullForced(device, current, reportLen);
+     sdl->states.previous = sdl->states.current;
+     IHS_HIDDeviceUnlock(device);
+     return 0;
+@@ -164,7 +167,10 @@ static int DeviceStartInputReports(IHS_HIDDevice *device, size_t length) {
+ static int DeviceRequestFullReport(IHS_HIDDevice *device) {
+     IHS_HIDDeviceSDL *sdl = (IHS_HIDDeviceSDL *) device;
+     IHS_HIDDeviceLock(device);
+-    IHS_HIDDeviceReportAddFull(device, (const uint8_t *) &sdl->states.current, 48);
++    uint8_t current[IHS_HID_SDL_WIRE_REPORT_MAX];
++    size_t reportLen = IHS_HIDDeviceSDLWireReportLength(device->managed);
++    IHS_HIDReportSDLPackWire(current, reportLen, &sdl->states.current);
++    IHS_HIDDeviceReportAddFullForced(device, current, reportLen);
+     sdl->states.previous = sdl->states.current;
+     IHS_HIDDeviceUnlock(device);
+     return 0;
+@@ -172,4 +178,4 @@ static int DeviceRequestFullReport(IHS_HIDDevice *device) {
+ 
+ static int DeviceRequestDisconnect(IHS_HIDDevice *device, int method, const uint8_t *data, size_t dataLen) {
+     return 0;
+-}
+\ No newline at end of file
++}
+diff --git a/src/hid/sdl/src/sdl_hid_event.c b/src/hid/sdl/src/sdl_hid_event.c
+index a529e64..5032767 100644
+--- a/src/hid/sdl/src/sdl_hid_event.c
++++ b/src/hid/sdl/src/sdl_hid_event.c
+@@ -81,8 +81,12 @@ bool IHS_HIDResetSDLGameControllers(IHS_Session *session) {
+         IHS_HIDDeviceLock(managed->device);
+         if (IHS_HIDReportSDLClear(&device->states.current)) {
+             changed = true;
+-            IHS_HIDDeviceReportAddDelta(managed->device, (const uint8_t *) &device->states.previous,
+-                                        (const uint8_t *) &device->states.current, 48);
++            uint8_t previous[IHS_HID_SDL_WIRE_REPORT_MAX];
++            uint8_t current[IHS_HID_SDL_WIRE_REPORT_MAX];
++            size_t reportLen = IHS_HIDDeviceSDLWireReportLength(managed);
++            IHS_HIDReportSDLPackWire(previous, reportLen, &device->states.previous);
++            IHS_HIDReportSDLPackWire(current, reportLen, &device->states.current);
++            IHS_HIDDeviceReportAddDelta(managed->device, previous, current, reportLen);
+             device->states.previous = device->states.current;
+         }
+         IHS_HIDDeviceUnlock(managed->device);
+@@ -114,8 +118,12 @@ static bool HandleCButtonEvent(IHS_HIDManager *manager, const SDL_GamepadButtonE
+     bool changed = IHS_HIDReportSDLSetButton(&device->states.current, event->button,
+                                              event->down);
+     if (changed) {
+-        IHS_HIDDeviceReportAddDelta(managed->device, (const uint8_t *) &device->states.previous,
+-                                    (const uint8_t *) &device->states.current, 48);
++        uint8_t previous[IHS_HID_SDL_WIRE_REPORT_MAX];
++        uint8_t current[IHS_HID_SDL_WIRE_REPORT_MAX];
++        size_t reportLen = IHS_HIDDeviceSDLWireReportLength(managed);
++        IHS_HIDReportSDLPackWire(previous, reportLen, &device->states.previous);
++        IHS_HIDReportSDLPackWire(current, reportLen, &device->states.current);
++        IHS_HIDDeviceReportAddDelta(managed->device, previous, current, reportLen);
+         device->states.previous = device->states.current;
+     }
+     IHS_HIDDeviceUnlock(managed->device);
+@@ -132,8 +140,12 @@ static bool HandleCAxisEvent(IHS_HIDManager *manager, const SDL_GamepadAxisEvent
+     IHS_HIDDeviceLock(managed->device);
+     bool changed = IHS_HIDReportSDLSetAxis(&device->states.current, event->axis, event->value);
+     if (changed) {
+-        IHS_HIDDeviceReportAddDelta(managed->device, (const uint8_t *) &device->states.previous,
+-                                    (const uint8_t *) &device->states.current, 48);
++        uint8_t previous[IHS_HID_SDL_WIRE_REPORT_MAX];
++        uint8_t current[IHS_HID_SDL_WIRE_REPORT_MAX];
++        size_t reportLen = IHS_HIDDeviceSDLWireReportLength(managed);
++        IHS_HIDReportSDLPackWire(previous, reportLen, &device->states.previous);
++        IHS_HIDReportSDLPackWire(current, reportLen, &device->states.current);
++        IHS_HIDDeviceReportAddDelta(managed->device, previous, current, reportLen);
+         device->states.previous = device->states.current;
+     }
+     IHS_HIDDeviceUnlock(managed->device);
+@@ -155,10 +167,14 @@ static bool HandleSensorEvent(IHS_HIDManager *manager, const SDL_GamepadSensorEv
+         changed = IHS_HIDReportSDLSetGyro(&device->states.current, event->data);
+     }
+     if (changed) {
+-        IHS_HIDDeviceReportAddDelta(managed->device, (const uint8_t *) &device->states.previous,
+-                                    (const uint8_t *) &device->states.current, 48);
++        uint8_t previous[IHS_HID_SDL_WIRE_REPORT_MAX];
++        uint8_t current[IHS_HID_SDL_WIRE_REPORT_MAX];
++        size_t reportLen = IHS_HIDDeviceSDLWireReportLength(managed);
++        IHS_HIDReportSDLPackWire(previous, reportLen, &device->states.previous);
++        IHS_HIDReportSDLPackWire(current, reportLen, &device->states.current);
++        IHS_HIDDeviceReportAddDelta(managed->device, previous, current, reportLen);
+         device->states.previous = device->states.current;
+     }
+     IHS_HIDDeviceUnlock(managed->device);
+     return changed;
+-}
+\ No newline at end of file
++}
+diff --git a/src/hid/sdl/src/sdl_hid_feature_report.c b/src/hid/sdl/src/sdl_hid_feature_report.c
+index 93dc08d..741f0a8 100644
+--- a/src/hid/sdl/src/sdl_hid_feature_report.c
++++ b/src/hid/sdl/src/sdl_hid_feature_report.c
+@@ -24,6 +24,7 @@
+  */
+ #include "sdl_hid_common.h"
+ #include "sdl_hid_utils.h"
++#include "session/session_pri.h"
+ 
+ typedef enum GetFeatureReportCommand {
+     GetFeatureReportGetPowerLevel = 0x02,
+@@ -130,7 +131,8 @@ int IHS_HIDDeviceSDLGetFeatureReport(IHS_HIDDevice *device, const uint8_t *repor
+             // contents through the wire report (DeviceFeatureReport.controllerType below).
+             EControllerType controllerType = k_ControllerTypeUnknown;
+             if (!xinput) {
+-                playerIndex = SDL_GetGamepadPlayerIndex(sdl->controller);
++                playerIndex = sdl->playerIndex >= 0 ? sdl->playerIndex :
++                              SDL_GetGamepadPlayerIndex(sdl->controller);
+                 switch (SDL_GetGamepadType(sdl->controller)) {
+                     case SDL_GAMEPAD_TYPE_XBOX360:
+                         controllerType = k_ControllerTypeXBox360Controller;
+@@ -173,6 +175,11 @@ int IHS_HIDDeviceSDLGetFeatureReport(IHS_HIDDevice *device, const uint8_t *repor
+                     .controllerType = controllerType,
+                     .hid = IsHIDAPIDevice(&guid),
+             };
++            IHS_HIDDeviceLog(device, IHS_LogLevelDebug, "HID.SDL",
++                             "FeatureCaps(xinput=%u, hid=%u, type=%d, player=%d, guid14=0x%02x)",
++                             report.xinput ? 1U : 0U, report.hid ? 1U : 0U,
++                             (int)report.controllerType, (int)report.playerIndex,
++                             (unsigned)guid.data[14]);
+             IHS_BufferWriteMem(dest, 0, reportNumber, 1);
+             IHS_BufferWriteMem(dest, 1, (const unsigned char *) &report, 20);
+             break;
+@@ -192,4 +199,4 @@ bool IsXinputDevice(const SDL_GUID *guid) {
+ 
+ bool IsHIDAPIDevice(const SDL_GUID *guid) {
+     return guid->data[14] == 'h';
+-}
+\ No newline at end of file
++}
+diff --git a/src/platforms/ihs_ip_posix.c b/src/platforms/ihs_ip_posix.c
+index d767a87..f71b498 100644
+--- a/src/platforms/ihs_ip_posix.c
++++ b/src/platforms/ihs_ip_posix.c
+@@ -26,6 +26,7 @@
+ #include "ihslib/net.h"
+ 
+ #include <arpa/inet.h>
++#include <sys/socket.h>
+ #include <string.h>
+ #include <assert.h>
+ 
+diff --git a/src/platforms/ihs_udp_posix.c b/src/platforms/ihs_udp_posix.c
+index 198f528..e6b66f1 100644
+--- a/src/platforms/ihs_udp_posix.c
++++ b/src/platforms/ihs_udp_posix.c
+@@ -58,9 +58,13 @@ IHS_UDPSocket *IHS_UDPSocketOpen(bool broadcast) {
+      * remainder, so frames never reassemble. SO_RCVBUF is clamped to
+      * net.core.rmem_max; SO_RCVBUFFORCE ignores the clamp but needs CAP_NET_ADMIN. */
+     int rcvbuf = 4 * 1024 * 1024;
++#ifdef SO_RCVBUFFORCE
+     if (setsockopt(s->fd, SOL_SOCKET, SO_RCVBUFFORCE, &rcvbuf, sizeof(rcvbuf)) != 0) {
+         setsockopt(s->fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
+     }
++#else
++    setsockopt(s->fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
++#endif
+     int actual = 0;
+     socklen_t actualLen = sizeof(actual);
+     if (getsockopt(s->fd, SOL_SOCKET, SO_RCVBUF, &actual, &actualLen) == 0 && actual < rcvbuf) {
+diff --git a/src/session/channels/ch_control_negotiation.c b/src/session/channels/ch_control_negotiation.c
+index f05d931..adb3df1 100644
+--- a/src/session/channels/ch_control_negotiation.c
++++ b/src/session/channels/ch_control_negotiation.c
+@@ -181,6 +181,7 @@ static void OnNegotiationInit(IHS_SessionChannel *channel, const CNegotiationIni
+ 
+     PROTOBUF_C_SET_VALUE(clientConfig, desired_resolution_x, (int32_t) ihsConf.maxWidth);
+     PROTOBUF_C_SET_VALUE(clientConfig, desired_resolution_y, (int32_t) ihsConf.maxHeight);
++    PROTOBUF_C_SET_VALUE(clientConfig, enable_input_streaming, true);
+     PROTOBUF_C_SET_VALUE(clientConfig, enable_hardware_decoding, true);
+     PROTOBUF_C_SET_VALUE(clientConfig, enable_performance_overlay, true);
+     if (ihsConf.enableAudio) {
+diff --git a/src/session/channels/ch_control_video.c b/src/session/channels/ch_control_video.c
+index 1084078..12b50bb 100644
+--- a/src/session/channels/ch_control_video.c
++++ b/src/session/channels/ch_control_video.c
+@@ -37,14 +37,25 @@ void IHS_SessionChannelControlOnVideo(IHS_SessionChannel *channel, EStreamContro
+     IHS_Session *session = channel->session;
+     switch (type) {
+         case k_EStreamControlStartVideoData: {
+-            IHS_SessionChannel *video = IHS_SessionChannelForType(session, IHS_SessionChannelTypeDataVideo);
+-            if (video) break;
+             CStartVideoDataMsg *message = cstart_video_data_msg__unpack(NULL, payload->size,
+                                                                         IHS_BufferPointer(payload));
+             if (message == NULL) {
+                 IHS_SessionLog(session, IHS_LogLevelWarn, "Video", "Malformed CStartVideoDataMsg");
+                 break;
+             }
++            IHS_SessionLog(session, IHS_LogLevelInfo, "Video",
++                           "StartVideoData(channel=%u, codec=%d, size=%ux%u, codecData=%zu)",
++                           message->channel, message->has_codec ? message->codec : 0,
++                           message->has_width ? message->width : 0,
++                           message->has_height ? message->height : 0,
++                           message->has_codec_data ? message->codec_data.len : 0);
++            IHS_SessionChannel *video = IHS_SessionChannelForType(session, IHS_SessionChannelTypeDataVideo);
++            if (video) {
++                IHS_SessionLog(session, IHS_LogLevelInfo, "Video",
++                               "Replacing active video channel old=%u new=%u",
++                               video->id, message->channel);
++                IHS_SessionChannelRemove(session, video->id);
++            }
+             video = IHS_SessionChannelDataVideoCreate(session, message);
+             IHS_SessionChannelAdd(session, video);
+             cstart_video_data_msg__free_unpacked(message, NULL);
+@@ -52,7 +63,13 @@ void IHS_SessionChannelControlOnVideo(IHS_SessionChannel *channel, EStreamContro
+         }
+         case k_EStreamControlStopVideoData: {
+             IHS_SessionChannel *video = IHS_SessionChannelForType(session, IHS_SessionChannelTypeDataVideo);
+-            if (!video) break;
++            if (!video) {
++                IHS_SessionLog(session, IHS_LogLevelInfo, "Video",
++                               "StopVideoData ignored: no active video channel");
++                break;
++            }
++            IHS_SessionLog(session, IHS_LogLevelInfo, "Video",
++                           "StopVideoData(channel=%u)", video->id);
+             IHS_SessionChannelRemove(session, video->id);
+             break;
+         }
+diff --git a/src/session/channels/channel.c b/src/session/channels/channel.c
+index 89c3eb4..e196c46 100644
+--- a/src/session/channels/channel.c
++++ b/src/session/channels/channel.c
+@@ -119,9 +119,9 @@ void IHS_SessionChannelRemove(IHS_Session *session, IHS_SessionChannelId channel
+     if (remaining > 0) {
+         memmove(&session->channels[channelIndex], &session->channels[channelIndex + 1],
+                 remaining * sizeof(IHS_SessionChannel *));
+-    } else {
+-        session->numChannels--;
+     }
++    session->numChannels--;
++    session->channels[session->numChannels] = NULL;
+ }
+ 
+ void IHS_SessionChannelReceivedPacket(IHS_SessionChannel *channel, IHS_SessionPacket *packet) {
+@@ -253,4 +253,4 @@ static IHS_SessionPacketType FragmentedPacketType(IHS_SessionPacketType type) {
+             abort();
+         }
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/src/session/channels/control/control_hid.c b/src/session/channels/control/control_hid.c
+index 02f93d5..9907fe5 100644
+--- a/src/session/channels/control/control_hid.c
++++ b/src/session/channels/control/control_hid.c
+@@ -281,6 +281,8 @@ bool IHS_SessionHIDSendReport(IHS_Session *session) {
+         wrapped.has_data = true;
+         wrapped.data.data = packed;
+         wrapped.data.len = packedLen;
++        wrapped.has_active_input = true;
++        wrapped.active_input = true;
+         IHS_SessionChannel *channel = IHS_SessionChannelForType(session, IHS_SessionChannelTypeControl);
+         ret = IHS_SessionChannelControlSend(channel, k_EStreamControlRemoteHID,
+                                             (const ProtobufCMessage *) &wrapped, IHS_PACKET_ID_NEXT);
+@@ -516,6 +518,9 @@ static void HandleDeviceStartInputReports(IHS_SessionChannel *channel, IHS_HIDMa
+ 
+     IHS_HIDReportHolderSetReportLength(&managed->reportHolder, cmd->length);
+     if (IHS_HIDDeviceStartInputReports(managed->device, cmd->length) == 0) {
++        IHS_SessionLog(channel->session, IHS_LogLevelDebug, "HID",
++                       "Message %u: StartInputReports(id=%u, length=%u)",
++                       message->request_id, cmd->device, cmd->length);
+         // Here we assume this managed has generated one full report, and send it right away.
+         // This design may require change later...
+         IHS_SessionHIDSendReport(channel->session);
+@@ -535,6 +540,9 @@ static void HandleDeviceRequestFullReport(IHS_SessionChannel *channel, IHS_HIDMa
+     }
+ 
+     if (IHS_HIDDeviceRequestFullReport(managed->device) == 0) {
++        IHS_SessionLog(channel->session, IHS_LogLevelDebug, "HID",
++                       "Message %u: RequestFullReport(id=%u)",
++                       message->request_id, cmd->device);
+         // Here we assume this device has generated one full report, and send it right away.
+         // This design may require change later...
+         IHS_SessionHIDSendReport(channel->session);
+@@ -593,4 +601,4 @@ static void InfoFromHID(CHIDDeviceInfo *info, const IHS_HIDDeviceInfo *hid) {
+                                  IHS_HID_CAP_BACK | IHS_HID_CAP_START | IHS_HID_CAP_GUIDE | IHS_HID_CAP_MISC_1 |
+                                  IHS_HID_CAP_XINPUT_OR_HIDAPI | IHS_HID_CAP_UNK_3 | IHS_HID_CAP_UNK_4;
+     PROTOBUF_C_P_SET_VALUE(info, caps_bits, capsBits);
+-}
+\ No newline at end of file
++}

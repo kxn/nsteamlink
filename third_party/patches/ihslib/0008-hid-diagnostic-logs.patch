@@ -1,0 +1,22 @@
+[历史分层记录：重建构建请只应用 0020-switch-port-cumulative.patch；本文件内容已并入其中且部分上下文已过时。]
+diff --git a/src/session/channels/control/control_hid.c b/src/session/channels/control/control_hid.c
+index 02f93d5..15bb508 100644
+--- a/src/session/channels/control/control_hid.c
++++ b/src/session/channels/control/control_hid.c
+@@ -517,5 +517,8 @@ static void HandleDeviceStartInputReports(IHS_SessionChannel *channel, IHS_HIDMa
+     IHS_HIDReportHolderSetReportLength(&managed->reportHolder, cmd->length);
+     if (IHS_HIDDeviceStartInputReports(managed->device, cmd->length) == 0) {
++        IHS_SessionLog(channel->session, IHS_LogLevelDebug, "HID",
++                       "Message %u: StartInputReports(id=%u, length=%u)",
++                       message->request_id, cmd->device, cmd->length);
+         // Here we assume this managed has generated one full report, and send it right away.
+         // This design may require change later...
+         IHS_SessionHIDSendReport(channel->session);
+@@ -537,4 +540,7 @@ static void HandleDeviceRequestFullReport(IHS_SessionChannel *channel, IHS_HIDMa
+     if (IHS_HIDDeviceRequestFullReport(managed->device) == 0) {
++        IHS_SessionLog(channel->session, IHS_LogLevelDebug, "HID",
++                       "Message %u: RequestFullReport(id=%u)",
++                       message->request_id, cmd->device);
+         // Here we assume this device has generated one full report, and send it right away.
+         // This design may require change later...
+         IHS_SessionHIDSendReport(channel->session);
