@@ -28,7 +28,7 @@ def main() -> int:
         for _ in range(max(args.retries, 1)):
             try:
                 sock.sendto(payload, address)
-                data, _ = sock.recvfrom(4096)
+                data, _ = sock.recvfrom(8192)
                 print(data.decode("utf-8", errors="replace"))
                 return 0
             except socket.timeout as exc:

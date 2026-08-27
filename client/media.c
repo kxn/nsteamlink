@@ -3,11 +3,13 @@
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <ctype.h>
 
 #include <SDL.h>
+#include <opus.h>
 #if __SWITCH__
 #include <switch.h>
 #endif
@@ -33,6 +35,7 @@
 static SDL_Window *sdl_window;
 static SDL_Renderer *sdl_renderer;
 static SDL_Texture *video_texture;
+static SDL_AudioDeviceID audio_device;
 static SDL_Joystick *joysticks[2];
 static bool sdl_initialized;
 static bool sdl_ready;
@@ -44,6 +47,7 @@ static bool nv12_texture_failed;
 
 static pthread_mutex_t frame_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t state_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t audio_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static AVCodecContext *decoder_ctx;
 static AVBufferRef *hw_device_ctx;
@@ -53,6 +57,19 @@ static AVFrame *decode_frame;
 static AVFrame *latched_frame;
 static AVFrame *present_frame;
 static struct SwsContext *sws;
+static OpusDecoder *audio_decoder;
+static int audio_frequency;
+static int audio_channels;
+static IHS_StreamAudioCodec audio_codec;
+static bool audio_active;
+static uint32_t audio_frames_total;
+static uint64_t audio_bytes_total;
+static uint64_t audio_decoded_samples_total;
+static uint32_t audio_queue_drops_total;
+static uint32_t audio_decode_errors_total;
+#define AUDIO_MAX_OPUS_FRAME_SAMPLES 5760
+#define AUDIO_QUEUE_LIMIT_MS 300U
+static opus_int16 audio_decode_buf[AUDIO_MAX_OPUS_FRAME_SAMPLES * 2];
 
 static IHS_Session *stats_session;
 #if NSTREAMLINK_APP
@@ -69,6 +86,9 @@ static uint32_t hid_send_ok_total;
 static uint32_t hid_send_fail_total;
 static uint32_t hid_state_full_since_log;
 static uint32_t hid_state_full_total;
+static uint32_t hid_raw_ax_total;
+static uint32_t hid_raw_btn_total;
+static uint32_t hid_style_flips_total;
 static uint64_t hid_last_full_us;
 static uint64_t hid_last_log_us;
 /* 100ms forced full-state heartbeat; bounded input staleness after packet loss. */
@@ -89,19 +109,35 @@ static uint32_t hid_trace_suppressed;
 #define RAW_NPAD_SAMPLE_INTERVAL_MS 250
 #if __SWITCH__
 static void sample_raw_npad(void);
+static PadState hid_raw_pad;
+static bool hid_raw_pad_initialized;
+static int16_t hid_raw_prev_x;
+static int16_t hid_raw_prev_y;
+static uint64_t hid_raw_prev_buttons;
+static bool hid_raw_have_prev;
+static u32 hid_prev_style;
+static u32 hid_prev_attrs;
+static bool hid_have_style_prev;
+static uint64_t hid_raw_last_sample_us;
 #endif
 static uint32_t hid_raw_ax_since_log;
 static uint32_t hid_raw_btn_since_log;
-static bool hid_raw_last_moved;
-/* Style/device-type flap odometer: SWITCH_JoystickUpdate early-returns whenever its
+static bool hid_marker_minus_sdl_held;
+static bool hid_marker_minus_raw_held;
+static uint32_t hid_marker_minus_sdl_samples_since_log;
+static uint32_t hid_marker_minus_raw_samples_since_log;
+static uint32_t hid_marker_minus_sdl_samples_total;
+static uint32_t hid_marker_minus_raw_samples_total;
+/* Style/attribute flap odometer: SWITCH_JoystickUpdate early-returns whenever its
  * freshly read type/style differs from cached values; repeated flips skip processing
  * repeatedly. We recompute independently here to watch for storms. */
-#if __SWITCH__
-static u32 hid_prev_style;
-static u32 hid_prev_devtype;
-#endif
 static uint32_t hid_style_flips_since_log;
 static char hid_style_last[12];
+#define HID_HISTORY_CAP 60U
+static stream_media_hid_history_entry hid_history[HID_HISTORY_CAP];
+static uint32_t hid_history_next;
+static uint32_t hid_history_count;
+static uint32_t hid_history_seq;
 #endif
 static stream_media_log_fn log_cb;
 static stream_media_snapshot snapshot;
@@ -115,6 +151,10 @@ static bool logged_alignment_fallback;
 static enum AVPixelFormat logged_convert_format = AV_PIX_FMT_NONE;
 
 static void media_logf(const char *fmt, ...);
+static bool opus_rate_supported(uint32_t rate);
+static uint32_t audio_queue_limit_bytes(int frequency, int channels);
+static void audio_stop_locked(void);
+static void update_audio_snapshot(void);
 
 #if NSTREAMLINK_APP
 static bool open_hid_controller(void);
@@ -433,7 +473,182 @@ static void ffmpeg_log_callback(void *ptr, int level, const char *fmt, va_list v
     }
 }
 
+static bool opus_rate_supported(uint32_t rate) {
+    return rate == 8000U || rate == 12000U || rate == 16000U ||
+           rate == 24000U || rate == 48000U;
+}
+
+static uint32_t audio_queue_limit_bytes(int frequency, int channels) {
+    if (frequency <= 0 || channels <= 0) {
+        return 0;
+    }
+    uint64_t bytes = (uint64_t)frequency * (uint64_t)channels *
+                     sizeof(opus_int16) * AUDIO_QUEUE_LIMIT_MS / 1000U;
+    return bytes > UINT32_MAX ? UINT32_MAX : (uint32_t)bytes;
+}
+
+static void audio_stop_locked(void) {
+    if (audio_device != 0) {
+        SDL_PauseAudioDevice(audio_device, 1);
+        SDL_ClearQueuedAudio(audio_device);
+        SDL_CloseAudioDevice(audio_device);
+        audio_device = 0;
+    }
+    if (audio_decoder != NULL) {
+        opus_decoder_destroy(audio_decoder);
+        audio_decoder = NULL;
+    }
+    audio_active = false;
+    audio_frequency = 0;
+    audio_channels = 0;
+    audio_codec = IHS_StreamAudioCodecNone;
+}
+
+static void update_audio_snapshot(void) {
+    bool active;
+    uint32_t queued;
+    uint32_t frames;
+    uint64_t bytes;
+    uint64_t samples;
+    uint32_t drops;
+    uint32_t errors;
+    int codec;
+    int channels;
+    int frequency;
+
+    pthread_mutex_lock(&audio_lock);
+    active = audio_active;
+    queued = audio_device != 0 ? SDL_GetQueuedAudioSize(audio_device) : 0;
+    frames = audio_frames_total;
+    bytes = audio_bytes_total;
+    samples = audio_decoded_samples_total;
+    drops = audio_queue_drops_total;
+    errors = audio_decode_errors_total;
+    codec = (int)audio_codec;
+    channels = audio_channels;
+    frequency = audio_frequency;
+    pthread_mutex_unlock(&audio_lock);
+
+    pthread_mutex_lock(&state_lock);
+    snapshot.audio_active = active;
+    snapshot.audio_queued_bytes = queued;
+    snapshot.audio_frames = frames;
+    snapshot.audio_bytes = bytes;
+    snapshot.audio_decoded_samples = samples;
+    snapshot.audio_queue_drops = drops;
+    snapshot.audio_decode_errors = errors;
+    snapshot.audio_codec = codec;
+    snapshot.audio_channels = channels;
+    snapshot.audio_frequency = frequency;
+    pthread_mutex_unlock(&state_lock);
+}
+
 #if NSTREAMLINK_APP
+static void reset_hid_probe_window(void) {
+    hid_events_since_log = 0;
+    hid_send_ok_since_log = 0;
+    hid_send_fail_since_log = 0;
+    hid_state_full_since_log = 0;
+    hid_pump_calls_since_log = 0;
+    hid_axis_since_log = 0;
+    hid_button_since_log = 0;
+    hid_sensor_since_log = 0;
+    hid_other_since_log = 0;
+    hid_trace_suppressed = 0;
+    hid_trace_lines_this_sec = 0;
+    hid_raw_ax_since_log = 0;
+    hid_raw_btn_since_log = 0;
+    hid_marker_minus_sdl_samples_since_log = 0;
+    hid_marker_minus_raw_samples_since_log = 0;
+    hid_style_flips_since_log = 0;
+}
+
+static void reset_hid_probe_baseline(void) {
+    reset_hid_probe_window();
+    hid_marker_minus_sdl_held = false;
+    hid_marker_minus_raw_held = false;
+    hid_style_last[0] = '-';
+    hid_style_last[1] = '\0';
+    memset(hid_history, 0, sizeof(hid_history));
+    hid_history_next = 0;
+    hid_history_count = 0;
+    hid_history_seq = 0;
+#if __SWITCH__
+    hid_raw_have_prev = false;
+    hid_have_style_prev = false;
+    hid_raw_pad_initialized = false;
+    hid_raw_last_sample_us = 0;
+#endif
+}
+
+static void record_hid_history(uint64_t now_us) {
+    int16_t left_x = 0;
+    int16_t left_y = 0;
+    int16_t right_x = 0;
+    int16_t right_y = 0;
+    uint32_t buttons = 0;
+    if (hid_controller != NULL) {
+        left_x = SDL_GameControllerGetAxis(hid_controller, SDL_CONTROLLER_AXIS_LEFTX);
+        left_y = SDL_GameControllerGetAxis(hid_controller, SDL_CONTROLLER_AXIS_LEFTY);
+        right_x = SDL_GameControllerGetAxis(hid_controller, SDL_CONTROLLER_AXIS_RIGHTX);
+        right_y = SDL_GameControllerGetAxis(hid_controller, SDL_CONTROLLER_AXIS_RIGHTY);
+        for (int i = 0; i < SDL_CONTROLLER_BUTTON_MAX && i < 32; i++) {
+            if (SDL_GameControllerGetButton(hid_controller, (SDL_GameControllerButton)i)) {
+                buttons |= 1U << i;
+            }
+        }
+    }
+    uint32_t marker_minus_sdl_held = 0;
+    if (hid_controller != NULL &&
+        SDL_GameControllerGetButton(hid_controller, SDL_CONTROLLER_BUTTON_BACK)) {
+        marker_minus_sdl_held = 1;
+    }
+
+    pthread_mutex_lock(&state_lock);
+    stream_media_hid_history_entry *entry = &hid_history[hid_history_next];
+    memset(entry, 0, sizeof(*entry));
+    entry->seq = ++hid_history_seq;
+    entry->sec = (uint32_t)(now_us / 1000000ULL);
+    entry->events = hid_events_since_log;
+    entry->send_ok = hid_send_ok_since_log;
+    entry->send_fail = hid_send_fail_since_log;
+    entry->state_full = hid_state_full_since_log;
+    entry->pump = hid_pump_calls_since_log;
+    entry->ax = hid_axis_since_log;
+    entry->btn = hid_button_since_log;
+    entry->sen = hid_sensor_since_log;
+    entry->oth = hid_other_since_log;
+    entry->ev_sup = hid_trace_suppressed;
+    entry->raw_ax = hid_raw_ax_since_log;
+    entry->raw_btn = hid_raw_btn_since_log;
+    entry->sty_fl = hid_style_flips_since_log;
+    entry->events_total = hid_events_total;
+    entry->send_ok_total = hid_send_ok_total;
+    entry->state_full_total = hid_state_full_total;
+    entry->raw_ax_total = hid_raw_ax_total;
+    entry->raw_btn_total = hid_raw_btn_total;
+    entry->last_type = snapshot.hid_last_event_type;
+    entry->last_which = snapshot.hid_last_event_which;
+    entry->last_code = snapshot.hid_last_event_code;
+    entry->last_value = snapshot.hid_last_event_value;
+    entry->left_x = left_x;
+    entry->left_y = left_y;
+    entry->right_x = right_x;
+    entry->right_y = right_y;
+    entry->buttons = buttons;
+    entry->marker_minus_sdl_held = marker_minus_sdl_held;
+    entry->marker_minus_sdl_samples = hid_marker_minus_sdl_samples_since_log;
+    entry->marker_minus_raw_held = hid_marker_minus_raw_held ? 1U : 0U;
+    entry->marker_minus_raw_samples = hid_marker_minus_raw_samples_since_log;
+    strncpy(entry->sty, hid_style_last, sizeof(entry->sty) - 1);
+
+    hid_history_next = (hid_history_next + 1U) % HID_HISTORY_CAP;
+    if (hid_history_count < HID_HISTORY_CAP) {
+        hid_history_count++;
+    }
+    pthread_mutex_unlock(&state_lock);
+}
+
 static void snapshot_hid_controller(int joystick_count, int controller_index,
                                     SDL_JoystickID instance_id,
                                     int controller_type, const char *guid,
@@ -622,48 +837,66 @@ static SDL_Gamepad *hid_device_list_controller(int index, void *context) {
     (void)context;
     return (hid_controller != NULL && index == 0) ? hid_controller : NULL;
 }
+
+static void sample_sdl_marker_minus(void) {
+    bool held = hid_controller != NULL &&
+                SDL_GameControllerGetButton(hid_controller, SDL_CONTROLLER_BUTTON_BACK) != 0;
+    hid_marker_minus_sdl_held = held;
+    if (held) {
+        hid_marker_minus_sdl_samples_since_log++;
+        hid_marker_minus_sdl_samples_total++;
+    }
+}
 #endif
 
-#if __SWITCH__
-/* Sample No1 pad straight from HID sharedmem every 250ms, independent of SDL.
- * Handheld-state layout covers the playing mode used for streaming tests. */
+#if NSTREAMLINK_APP && __SWITCH__
+/* Sample the libnx PadState path every 250ms, independent of SDL. */
 static void sample_raw_npad(void) {
-    static uint64_t last_us;
-    static int16_t prev_x, prev_y;
-    static uint64_t prev_buttons;
-    static bool have_prev;
-    static bool have_style_prev;
     uint64_t now_us = media_monotonic_us();
-    if (last_us != 0 && now_us - last_us < RAW_NPAD_SAMPLE_INTERVAL_MS * 1000ULL) {
+    if (hid_raw_last_sample_us != 0 &&
+        now_us - hid_raw_last_sample_us < RAW_NPAD_SAMPLE_INTERVAL_MS * 1000ULL) {
         return;
     }
-    last_us = now_us;
-    HidNpadHandheldState st[8];
-    size_t n = hidGetNpadStatesHandheld(HidNpadIdType_No1, st, 8);
-    if (n == 0) {
-        return;
-    }
-    HidNpadHandheldState *s = &st[n - 1];
-    if (!have_prev || s->analog_stick_l.x != prev_x || s->analog_stick_l.y != prev_y) {
-        hid_raw_ax_since_log++;
-    }
-    if (!have_prev || s->buttons != prev_buttons) {
-        hid_raw_btn_since_log++;
-    }
-    prev_x = (int16_t) s->analog_stick_l.x;
-    prev_y = (int16_t) s->analog_stick_l.y;
-    prev_buttons = s->buttons;
-    have_prev = true;
+    hid_raw_last_sample_us = now_us;
 
-    u32 style = hidGetNpadStyleSet(HidNpadIdType_No1);
-    u32 devtype = (u32) hidGetNpadDeviceType((HidNpadIdType) HidNpadIdType_No1);
-    if (!have_style_prev || style != hid_prev_style || devtype != hid_prev_devtype) {
+    if (!hid_raw_pad_initialized) {
+        padInitializeDefault(&hid_raw_pad);
+        hid_raw_pad_initialized = true;
+    }
+    padUpdate(&hid_raw_pad);
+
+    u32 style = padGetStyleSet(&hid_raw_pad);
+    u32 attrs = padGetAttributes(&hid_raw_pad);
+    snprintf(hid_style_last, sizeof(hid_style_last), "%x/%x", style, attrs);
+    if (hid_have_style_prev && (style != hid_prev_style || attrs != hid_prev_attrs)) {
         hid_style_flips_since_log++;
-        snprintf(hid_style_last, sizeof(hid_style_last), "%x/%x", style, devtype);
+        hid_style_flips_total++;
     }
     hid_prev_style = style;
-    hid_prev_devtype = devtype;
-    have_style_prev = true;
+    hid_prev_attrs = attrs;
+    hid_have_style_prev = true;
+
+    HidAnalogStickState left = padGetStickPos(&hid_raw_pad, 0);
+    uint64_t buttons = padGetButtons(&hid_raw_pad);
+    bool raw_minus = (buttons & HidNpadButton_Minus) != 0;
+    hid_marker_minus_raw_held = raw_minus;
+    if (raw_minus) {
+        hid_marker_minus_raw_samples_since_log++;
+        hid_marker_minus_raw_samples_total++;
+    }
+    if (hid_raw_have_prev &&
+        (left.x != hid_raw_prev_x || left.y != hid_raw_prev_y)) {
+        hid_raw_ax_since_log++;
+        hid_raw_ax_total++;
+    }
+    if (hid_raw_have_prev && buttons != hid_raw_prev_buttons) {
+        hid_raw_btn_since_log++;
+        hid_raw_btn_total++;
+    }
+    hid_raw_prev_x = (int16_t)left.x;
+    hid_raw_prev_y = (int16_t)left.y;
+    hid_raw_prev_buttons = buttons;
+    hid_raw_have_prev = true;
 }
 #endif
 
@@ -749,8 +982,9 @@ static void pump_sdl_events(void) {
         }
     }
 #if NSTREAMLINK_APP
+    sample_sdl_marker_minus();
     if (hid_changed && event_hid_session != NULL) {
-        bool hid_sent = IHS_SessionHIDSendReport(event_hid_session);
+        bool hid_sent = IHS_HIDRefreshSDLGameControllers(event_hid_session);
         if (hid_sent) {
             hid_send_ok_since_log++;
             hid_send_ok_total++;
@@ -765,9 +999,7 @@ static void pump_sdl_events(void) {
             hid_last_log_us = now_us;
             hid_last_full_us = 0;
         }
-        /* Periodic forced full-state snapshot: deltas over the reliable control channel
-         * are a chain — one lost packet keeps the host stale until the next identical
-         * transition (stuck keys). Moonlight guards the same way via inputSendPeriodUs. */
+        /* Keep a low-rate complete-state heartbeat even when SDL emits no event. */
         if (now_us - hid_last_full_us >= HID_FULL_REFRESH_US) {
             bool refreshed = IHS_HIDRefreshSDLGameControllers(event_hid_session);
             if (refreshed) {
@@ -777,6 +1009,7 @@ static void pump_sdl_events(void) {
             hid_last_full_us = now_us;
         }
         if (elapsed_us(hid_last_log_us, now_us) >= 1000000U) {
+            record_hid_history(now_us);
             media_logf("hid summary: events=%u send_ok=%u send_fail=%u stateFull=%u"
                        " pump=%u ax=%u btn=%u sen=%u oth=%u evSup=%u rawAx=%u rawBtn=%u styFl=%u(%s)",
                        hid_events_since_log, hid_send_ok_since_log,
@@ -786,30 +1019,11 @@ static void pump_sdl_events(void) {
                        hid_other_since_log, hid_trace_suppressed,
                        hid_raw_ax_since_log, hid_raw_btn_since_log,
                        hid_style_flips_since_log, hid_style_last);
-            hid_events_since_log = 0;
-            hid_send_ok_since_log = 0;
-            hid_send_fail_since_log = 0;
-            hid_state_full_since_log = 0;
-            hid_pump_calls_since_log = 0;
-            hid_axis_since_log = 0;
-            hid_button_since_log = 0;
-            hid_sensor_since_log = 0;
-            hid_other_since_log = 0;
-            hid_trace_suppressed = 0;
-            hid_trace_lines_this_sec = 0;
+            reset_hid_probe_window();
             hid_last_log_us = now_us;
         }
     } else {
-        hid_events_since_log = 0;
-        hid_send_ok_since_log = 0;
-        hid_send_fail_since_log = 0;
-        hid_state_full_since_log = 0;
-        hid_axis_since_log = 0;
-        hid_button_since_log = 0;
-        hid_sensor_since_log = 0;
-        hid_other_since_log = 0;
-        hid_trace_suppressed = 0;
-        hid_trace_lines_this_sec = 0;
+        reset_hid_probe_window();
         hid_last_log_us = 0;
         hid_last_full_us = 0;
     }
@@ -873,7 +1087,7 @@ bool stream_media_init(stream_media_log_fn log_fn) {
 
     Uint32 init_flags = SDL_INIT_VIDEO;
 #if NSTREAMLINK_APP
-    init_flags |= SDL_INIT_GAMECONTROLLER;
+    init_flags |= SDL_INIT_GAMECONTROLLER | SDL_INIT_AUDIO;
 #else
     init_flags |= SDL_INIT_JOYSTICK;
 #endif
@@ -931,6 +1145,7 @@ bool stream_media_init(stream_media_log_fn log_fn) {
 void stream_media_shutdown(void) {
     media_logf("media shutdown: begin");
     stream_media_video_stop(NULL);
+    stream_media_audio_stop(NULL);
 
     pthread_mutex_lock(&state_lock);
     snapshot.available = false;
@@ -943,19 +1158,14 @@ void stream_media_shutdown(void) {
     hid_send_ok_total = 0;
     hid_send_fail_total = 0;
     hid_state_full_total = 0;
-    hid_state_full_since_log = 0;
-    hid_events_since_log = 0;
-    hid_send_ok_since_log = 0;
-    hid_send_fail_since_log = 0;
-    hid_pump_calls_since_log = 0;
-    hid_axis_since_log = 0;
-    hid_button_since_log = 0;
-    hid_sensor_since_log = 0;
-    hid_other_since_log = 0;
-    hid_trace_suppressed = 0;
-    hid_trace_lines_this_sec = 0;
-    hid_style_flips_since_log = 0;
+    hid_raw_ax_total = 0;
+    hid_raw_btn_total = 0;
+    hid_style_flips_total = 0;
+    hid_marker_minus_sdl_samples_total = 0;
+    hid_marker_minus_raw_samples_total = 0;
+    reset_hid_probe_baseline();
     hid_last_log_us = 0;
+    hid_last_full_us = 0;
 #endif
     pthread_mutex_unlock(&state_lock);
 
@@ -1014,18 +1224,35 @@ void stream_media_set_hid_session(IHS_Session *session, bool enabled) {
         hid_send_ok_total = 0;
         hid_send_fail_total = 0;
         hid_state_full_total = 0;
-        hid_state_full_since_log = 0;
-        hid_events_since_log = 0;
-        hid_send_ok_since_log = 0;
-        hid_send_fail_since_log = 0;
+        hid_raw_ax_total = 0;
+        hid_raw_btn_total = 0;
+        hid_style_flips_total = 0;
+        hid_marker_minus_sdl_samples_total = 0;
+        hid_marker_minus_raw_samples_total = 0;
+        reset_hid_probe_baseline();
         hid_last_log_us = 0;
+        hid_last_full_us = 0;
         snapshot.hid_events = 0;
         snapshot.hid_send_ok = 0;
         snapshot.hid_send_fail = 0;
+        snapshot.hid_state_full = 0;
+        snapshot.hid_raw_ax_total = 0;
+        snapshot.hid_raw_btn_total = 0;
+        snapshot.hid_style_flips_total = 0;
+        snapshot.hid_marker_minus_sdl_held = false;
+        snapshot.hid_marker_minus_raw_held = false;
+        snapshot.hid_marker_minus_sdl_samples_total = 0;
+        snapshot.hid_marker_minus_raw_samples_total = 0;
+        strncpy(snapshot.hid_style_state, hid_style_last, sizeof(snapshot.hid_style_state) - 1);
+        snapshot.hid_style_state[sizeof(snapshot.hid_style_state) - 1] = '\0';
         snapshot.hid_last_event_type = 0;
         snapshot.hid_last_event_which = -1;
         snapshot.hid_last_event_code = -1;
         snapshot.hid_last_event_value = 0;
+    } else {
+        reset_hid_probe_window();
+        hid_last_log_us = 0;
+        hid_last_full_us = 0;
     }
     pthread_mutex_unlock(&state_lock);
 #else
@@ -1440,6 +1667,153 @@ void stream_media_video_stop(IHS_Session *session) {
     pthread_mutex_unlock(&state_lock);
 }
 
+int stream_media_audio_start(IHS_Session *session, const IHS_StreamAudioConfig *config) {
+    (void)session;
+    if (config == NULL) {
+        media_set_error("audio start missing config");
+        return -1;
+    }
+    if (!sdl_ready) {
+        media_set_error("audio start before SDL media init");
+        return -1;
+    }
+    if (config->codec != IHS_StreamAudioCodecOpus) {
+        media_set_error("unsupported audio codec=%d", (int)config->codec);
+        return -1;
+    }
+    if (config->channels == 0 || config->channels > 2) {
+        media_set_error("unsupported audio channels=%u", config->channels);
+        return -1;
+    }
+    if (!opus_rate_supported(config->frequency)) {
+        media_set_error("unsupported Opus audio frequency=%u", config->frequency);
+        return -1;
+    }
+
+    int opus_err = OPUS_OK;
+    OpusDecoder *decoder =
+        opus_decoder_create((opus_int32)config->frequency, (int)config->channels, &opus_err);
+    if (decoder == NULL || opus_err != OPUS_OK) {
+        media_set_error("opus_decoder_create: %s", opus_strerror(opus_err));
+        return -1;
+    }
+
+    SDL_AudioSpec want;
+    SDL_AudioSpec have;
+    SDL_zero(want);
+    SDL_zero(have);
+    want.freq = (int)config->frequency;
+    want.format = AUDIO_S16LSB;
+    want.channels = (Uint8)config->channels;
+    want.samples = 960;
+    want.callback = NULL;
+
+    SDL_AudioDeviceID device =
+        SDL_OpenAudioDevice(NULL, 0, &want, &have, SDL_AUDIO_ALLOW_SAMPLES_CHANGE);
+    if (device == 0) {
+        media_set_error("SDL_OpenAudioDevice: %s", SDL_GetError());
+        opus_decoder_destroy(decoder);
+        return -1;
+    }
+    if (have.freq != want.freq || have.format != want.format ||
+        have.channels != want.channels) {
+        media_set_error("SDL audio format mismatch: got %dHz fmt=0x%x ch=%u",
+                        have.freq, (unsigned)have.format, (unsigned)have.channels);
+        SDL_CloseAudioDevice(device);
+        opus_decoder_destroy(decoder);
+        return -1;
+    }
+
+    pthread_mutex_lock(&audio_lock);
+    audio_stop_locked();
+    audio_decoder = decoder;
+    audio_device = device;
+    audio_frequency = have.freq;
+    audio_channels = have.channels;
+    audio_codec = config->codec;
+    audio_active = true;
+    audio_frames_total = 0;
+    audio_bytes_total = 0;
+    audio_decoded_samples_total = 0;
+    audio_queue_drops_total = 0;
+    audio_decode_errors_total = 0;
+    SDL_PauseAudioDevice(audio_device, 0);
+    pthread_mutex_unlock(&audio_lock);
+
+    update_audio_snapshot();
+    media_logf("audio start: codec=Opus freq=%d channels=%d samples=%u codecData=%zu",
+               have.freq, have.channels, have.samples, config->codecDataLen);
+    return 0;
+}
+
+int stream_media_audio_submit(IHS_Session *session, IHS_Buffer *data) {
+    (void)session;
+    if (data == NULL) {
+        return -1;
+    }
+
+    char error[128] = "";
+    int ret = 0;
+    pthread_mutex_lock(&audio_lock);
+    if (!audio_active || audio_decoder == NULL || audio_device == 0) {
+        pthread_mutex_unlock(&audio_lock);
+        return 0;
+    }
+
+    uint32_t queue_limit = audio_queue_limit_bytes(audio_frequency, audio_channels);
+    uint32_t queued = SDL_GetQueuedAudioSize(audio_device);
+    if (queue_limit > 0 && queued > queue_limit) {
+        SDL_ClearQueuedAudio(audio_device);
+        audio_queue_drops_total++;
+    }
+
+    const unsigned char *payload =
+        data->size > 0 ? (const unsigned char *)IHS_BufferPointer(data) : NULL;
+    int samples = opus_decode(audio_decoder, payload, (opus_int32)data->size,
+                              audio_decode_buf, AUDIO_MAX_OPUS_FRAME_SAMPLES, 0);
+    if (samples < 0) {
+        audio_decode_errors_total++;
+        ret = -1;
+        if (audio_decode_errors_total <= 3 || (audio_decode_errors_total % 60U) == 0U) {
+            snprintf(error, sizeof(error), "opus_decode: %s", opus_strerror(samples));
+        }
+    } else {
+        uint32_t pcm_bytes =
+            (uint32_t)samples * (uint32_t)audio_channels * (uint32_t)sizeof(opus_int16);
+        if (pcm_bytes > 0 && SDL_QueueAudio(audio_device, audio_decode_buf, pcm_bytes) != 0) {
+            audio_decode_errors_total++;
+            ret = -1;
+            if (audio_decode_errors_total <= 3 || (audio_decode_errors_total % 60U) == 0U) {
+                snprintf(error, sizeof(error), "SDL_QueueAudio: %s", SDL_GetError());
+            }
+        } else {
+            audio_frames_total++;
+            audio_bytes_total += pcm_bytes;
+            audio_decoded_samples_total += (uint32_t)samples;
+        }
+    }
+    pthread_mutex_unlock(&audio_lock);
+
+    if (error[0] != '\0') {
+        media_set_error("%s", error);
+    }
+    update_audio_snapshot();
+    return ret;
+}
+
+void stream_media_audio_stop(IHS_Session *session) {
+    (void)session;
+    pthread_mutex_lock(&audio_lock);
+    bool had_audio = audio_active || audio_device != 0 || audio_decoder != NULL;
+    audio_stop_locked();
+    pthread_mutex_unlock(&audio_lock);
+
+    update_audio_snapshot();
+    if (had_audio) {
+        media_logf("audio stopped");
+    }
+}
+
 static AVFrame *take_frame(uint16_t *frame_id) {
     pthread_mutex_lock(&frame_lock);
     if (!frame_dirty || latched_frame == NULL || latched_frame->width <= 0) {
@@ -1670,15 +2044,139 @@ void stream_media_get_snapshot(stream_media_snapshot *out) {
     if (out == NULL) {
         return;
     }
+    bool audio_snap_active;
+    uint32_t audio_snap_queued;
+    uint32_t audio_snap_frames;
+    uint64_t audio_snap_bytes;
+    uint64_t audio_snap_samples;
+    uint32_t audio_snap_drops;
+    uint32_t audio_snap_errors;
+    int audio_snap_codec;
+    int audio_snap_channels;
+    int audio_snap_frequency;
+
+    pthread_mutex_lock(&audio_lock);
+    audio_snap_active = audio_active;
+    audio_snap_queued = audio_device != 0 ? SDL_GetQueuedAudioSize(audio_device) : 0;
+    audio_snap_frames = audio_frames_total;
+    audio_snap_bytes = audio_bytes_total;
+    audio_snap_samples = audio_decoded_samples_total;
+    audio_snap_drops = audio_queue_drops_total;
+    audio_snap_errors = audio_decode_errors_total;
+    audio_snap_codec = (int)audio_codec;
+    audio_snap_channels = audio_channels;
+    audio_snap_frequency = audio_frequency;
+    pthread_mutex_unlock(&audio_lock);
+
     pthread_mutex_lock(&state_lock);
+    snapshot.audio_active = audio_snap_active;
+    snapshot.audio_queued_bytes = audio_snap_queued;
+    snapshot.audio_frames = audio_snap_frames;
+    snapshot.audio_bytes = audio_snap_bytes;
+    snapshot.audio_decoded_samples = audio_snap_samples;
+    snapshot.audio_queue_drops = audio_snap_drops;
+    snapshot.audio_decode_errors = audio_snap_errors;
+    snapshot.audio_codec = audio_snap_codec;
+    snapshot.audio_channels = audio_snap_channels;
+    snapshot.audio_frequency = audio_snap_frequency;
 #if NSTREAMLINK_APP
     snapshot.hid_events = hid_events_total;
     snapshot.hid_send_ok = hid_send_ok_total;
     snapshot.hid_send_fail = hid_send_fail_total;
     snapshot.hid_state_full = hid_state_full_total;
+    snapshot.hid_raw_ax_total = hid_raw_ax_total;
+    snapshot.hid_raw_btn_total = hid_raw_btn_total;
+    snapshot.hid_style_flips_total = hid_style_flips_total;
+    snapshot.hid_marker_minus_sdl_held = hid_marker_minus_sdl_held;
+    snapshot.hid_marker_minus_raw_held = hid_marker_minus_raw_held;
+    snapshot.hid_marker_minus_sdl_samples_total = hid_marker_minus_sdl_samples_total;
+    snapshot.hid_marker_minus_raw_samples_total = hid_marker_minus_raw_samples_total;
+    IHS_SessionGetReliabilityStats(hid_session, &snapshot.reliability);
+    strncpy(snapshot.hid_style_state, hid_style_last, sizeof(snapshot.hid_style_state) - 1);
+    snapshot.hid_style_state[sizeof(snapshot.hid_style_state) - 1] = '\0';
 #endif
     *out = snapshot;
     pthread_mutex_unlock(&state_lock);
+}
+
+size_t stream_media_copy_hid_history(stream_media_hid_history_entry *out, size_t max_entries) {
+    if (out == NULL || max_entries == 0) {
+        return 0;
+    }
+#if NSTREAMLINK_APP
+    if (max_entries > HID_HISTORY_CAP) {
+        max_entries = HID_HISTORY_CAP;
+    }
+    pthread_mutex_lock(&state_lock);
+    uint32_t count = hid_history_count < max_entries ? hid_history_count : (uint32_t)max_entries;
+    uint32_t start = (hid_history_next + HID_HISTORY_CAP - count) % HID_HISTORY_CAP;
+    for (uint32_t i = 0; i < count; i++) {
+        out[i] = hid_history[(start + i) % HID_HISTORY_CAP];
+    }
+    pthread_mutex_unlock(&state_lock);
+    return count;
+#else
+    (void)out;
+    (void)max_entries;
+    return 0;
+#endif
+}
+
+void stream_media_format_hid_history(char *out, size_t out_len, uint32_t max_entries) {
+    if (out == NULL || out_len == 0) {
+        return;
+    }
+    out[0] = '\0';
+#if NSTREAMLINK_APP
+    if (max_entries == 0 || max_entries > HID_HISTORY_CAP) {
+        max_entries = HID_HISTORY_CAP;
+    }
+    stream_media_hid_history_entry entries[HID_HISTORY_CAP];
+    uint32_t total_count;
+    pthread_mutex_lock(&state_lock);
+    uint32_t count = hid_history_count < max_entries ? hid_history_count : max_entries;
+    uint32_t start = (hid_history_next + HID_HISTORY_CAP - count) % HID_HISTORY_CAP;
+    for (uint32_t i = 0; i < count; i++) {
+        entries[i] = hid_history[(start + i) % HID_HISTORY_CAP];
+    }
+    total_count = hid_history_count;
+    pthread_mutex_unlock(&state_lock);
+
+    size_t used = (size_t)snprintf(out, out_len, "count=%u total=%u", count, total_count);
+    if (used >= out_len) {
+        out[out_len - 1] = '\0';
+        return;
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        const stream_media_hid_history_entry *e = &entries[i];
+        int written = snprintf(out + used, out_len - used,
+                               " | #%u t=%u e=%u ok=%u f=%u h=%u p=%u ax=%u btn=%u sen=%u oth=%u sup=%u raw=%u/%u sty=%u:%s sticks=%d/%d/%d/%d b=0x%x minus=%u/%u/%u/%u tot=%u/%u/%u/%u/%u last=%d/%d/%d/%d",
+                               e->seq, e->sec, e->events, e->send_ok,
+                               e->send_fail, e->state_full, e->pump, e->ax,
+                               e->btn, e->sen, e->oth, e->ev_sup,
+                               e->raw_ax, e->raw_btn, e->sty_fl,
+                               e->sty[0] ? e->sty : "-", e->left_x, e->left_y,
+                               e->right_x, e->right_y, e->buttons,
+                               e->marker_minus_sdl_held,
+                               e->marker_minus_sdl_samples,
+                               e->marker_minus_raw_held,
+                               e->marker_minus_raw_samples, e->events_total,
+                               e->send_ok_total, e->state_full_total,
+                               e->raw_ax_total, e->raw_btn_total,
+                               e->last_type, e->last_which, e->last_code,
+                               e->last_value);
+        if (written < 0) {
+            break;
+        }
+        if ((size_t)written >= out_len - used) {
+            out[out_len - 1] = '\0';
+            break;
+        }
+        used += (size_t)written;
+    }
+#else
+    snprintf(out, out_len, "hidlog disabled");
+#endif
 }
 
 void stream_media_set_ui(const stream_media_ui *ui) {

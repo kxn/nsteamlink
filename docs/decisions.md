@@ -689,8 +689,9 @@
      events 交给 `IHS_HIDHandleSDLEvent()` 并每帧 flush；
   6. session stop 前调用 `IHS_HIDResetSDLGameControllers()`，再 disconnect/join/destroy session，
      最后 destroy provider；
-  7. 串流中本地 stop/exit 改为 `MINUS+B` / `+`。当前安全版本暂不把 `+` 转发成 Steam Start/Menu，
-     先确保用户有稳定本地退出路径；普通游戏按键和摇杆不再被 UI 截获。
+  7. 历史决定：串流中本地 stop/exit 曾改为 `MINUS+B` / `+`，用于先保证有稳定本地退出路径。
+     该热键决定已由 2026-08-27 的 D-033 追记四取代：`+` / `-` 恢复给 Steam/game，本地控制迁移到
+     音量组合键。
   8. stream 中加入低频 `hid summary` 日志，记录 SDL HID event 数、report send 成功数和失败数，
      避免下一次输入问题只能靠主观观察定位。
   9. nxlink 日志 fd 设置为 non-blocking，主循环每帧最多 drain 8 条日志，控制通道 retransmission
@@ -929,3 +930,206 @@ channelId=2 可靠消息 20 次重试耗尽 + 视频 stall 与输入失灵同窗
 （`0013-hid-input-unreliable-datagram.patch`），设备生命周期消息仍走可靠通道；
 加密序列照常推进。本地 SDL 捕获停摆嫌疑（SDL_IsTextInputActive 短路门等）继续以
 每秒 `sti=` 探针并行观测，两条根因链允许并存。
+
+### D-030 追记（2026-08-27 第二条）：取代上一追记的 Unreliable 帧类型决定
+
+- Evidence：提交 `702db14` 记录后续真机结果，Steam host 不接受 `Unreliable` 帧类型承载
+  `k_EStreamControlRemoteHID`，表现为会话秒断；当前源码 `third_party/ihslib/src/session/channels/ch_control.c`
+  仍用 `IHS_SessionPacketTypeReliable` 初始化线缆帧，只在 `IHS_SessionChannelQueueFrame(channel, &frame, reliable)`
+  处对 HID input report 传 `reliable=false`，跳过本地重传队列。
+- Conclusion：上一追记中"CHID reports 走 Unreliable 数据报"已撤回。当前落地方案是
+  **Reliable 类型帧 + fire-and-forget 本地发送 + 100ms full heartbeat 自愈**；设备 open/start/
+  feature/read/write 等生命周期消息仍走完全可靠通道。
+- Hypothesis：若后续仍出现长时间按键静默，不能再直接归因到线上可靠通道重传；需要用每秒
+  `ax/btn/rawAx/rawBtn/styFl` 对照判断 SDL 捕获层、devkitPro SDL Switch 后端 style/attribute
+  早退、或 libnx HID sharedmem 是否停摆。
+
+### D-030 追记（2026-08-27 第三条）：事后轮询不能证明已过去的卡住窗口
+
+- Evidence：用户澄清本次“刚复现一次”指的是发消息之前已经有一段卡住；发消息后再转左摇杆时
+  输入已经恢复。当时 PC 端 nxlink 日志已停止，正在运行的 NRO 也没有保存每秒 HID 历史。
+- Conclusion：发消息后的 UDP `hid/state/stats` 轮询只能说明恢复后窗口里视频、heartbeat、累计
+  HID 计数的状态，不能回放或证明卡住期间 SDL 是否拒收事件。旧版 direct raw 探针曾输出 `sty=0/0`，
+  只能证明该探针路径不可作为本轮 raw HID 证据。
+- Decision：新增 app 内 60 秒 HID history ring，并暴露 UDP `hidlog [n]`；raw 采样改用与主循环同源的
+  libnx `PadState`，`sty` 字段解释为 `style/attrs`。下一次复现后即使用户稍后通知，也先取
+  `hidlog` 再下结论。
+- Additional evidence：随后新版启动时读取到 SD 卡上一条持久 watchdog 记录：
+  `reason=main_stall ... main_stall_ms=8006 ... displayed_frames=9589`。`client/main.c` 只在启动时
+  `read_text_summary(WATCHDOG_PATH, ...)` 并打印 `previous watchdog`，没有清除文件；因此该记录能证明
+  曾有一次主循环停跳超过 8s 并触发 `appletRequestExitToSelf()`，但单独不能证明它就是用户本次口述
+  卡住窗口。若与用户时间线吻合，嫌疑应从“SDL 单独拒收输入”提升为“主循环停摆导致 SDL pump、UDP
+  debug、本地退出处理一起停止”。
+- Smoke evidence：新版启动后 `hidlog` 真机可读；旋左摇杆期间 `e/ax` 与 `raw` 同时增长、
+  `sendFail=0`、`sty=0:2/3` 稳定，说明新版诊断能区分正常输入窗口。期间曾见一次
+  `Frames window overflow` 导致 session 断开后重连；该现象发生在高频输入仍被 SDL/raw 捕获时，
+  先作为 control window 旁支记录，不并入“输入静默”结论。
+
+### D-030 追记（2026-08-27 第四条）：右摇杆保持态问题先挂已知 bug
+
+- Evidence：用户重新澄清本次复现时间线：先观察到游戏输入卡住，随后持续旋转左摇杆约 10+ 秒，
+  再回电脑发消息，之后过一会关闭游戏。用户补充 host/game 侧表现像是持续按住右摇杆某方向，
+  画面不停旋转；此时左摇杆没有动静，A/B 也可能没有动静，但未再试一次右摇杆能否恢复。
+- Evidence：按该时间线重读，本次 `hidlog` 中用户持续旋左摇杆的窗口应对应连续约 10 秒
+  `e/ax/raw/sendOk` 增长，而后续零事件窗口更可能是用户停手并回电脑后的时段。
+- Conclusion：本轮复现不支持“卡住期间 SDL 必然拒收输入”这个结论；它只证明 Switch 侧在诊断性
+  左摇杆输入期间仍能捕获 SDL/raw 事件并排队发送 HID report。Steam Remote Play 当前 protobuf
+  只有传输层 ACK/NACK 与 host 发起的 `DeviceStartInputReports` / `DeviceRequestFullReport`，
+  没有可直接证明 host 已把某个 report 应用到虚拟手柄/game 的应用层确认。
+- Decision：将该残留症状记为 `BUG-M4-HID-001`，暂缓继续根因化，不阻塞音频输出、UI/stream 模块
+  拆分等 M4 主线。以后若顺手复现，优先记录“重新移动/松开右摇杆是否让旋转恢复”，再决定是否增加
+  HID report packetId、ACK/NACK、CRC 与关键轴值摘要诊断。
+
+## D-032 M4 正式 app 开启 Opus 音频输出
+
+- Evidence：ihslib 已实现 audio control/data channel：`StartAudioData` 创建 data audio channel，
+  `ch_data_audio.c` 将 `IHS_StreamAudioConfig` 与 payload 交给应用注册的
+  `IHS_StreamAudioCallbacks`。Negotiation 路径在 `enableAudio=true` 时选择 host 提供的 Opus，
+  并发送 `enable_audio_streaming=true` / `audio_channels=2`。
+- Evidence：Switch portlibs 提供 `opus.pc` 与 SDL2 audio；本地 `pkg-config` 与 Switch CMake
+  configure 均能找到 Opus。
+- Conclusion：M4 第一版音频不需要改 Steam 协议；缺的是应用侧解码/播放回调，以及正式 app
+  request/config 中打开 audio。
+- Decision：
+  1. 正式 `nsteamlink.nro` 的 streaming request 设 `audio=true`、`audioChannelCount=2`；
+  2. session configuring 在正式 app 下启用 audio，selftest 继续 audio off；
+  3. app 注册 audio callbacks，`start` 创建 libopus decoder 和 SDL queued audio device，`submit`
+     解码 Opus 为 S16LE PCM 并 `SDL_QueueAudio`，`stop` 清队列并关闭 decoder/device；
+  4. SDL audio queue 上限约 300ms，超限清队列并累计 drop，第一版优先避免无限延迟；
+  5. `state`/`stats`/streaming overlay 与 UDP `audio` 命令输出音频 active、codec、freq、channels、
+     frames、queued bytes、drops 和 errors。
+- Verification：
+  - `cmake --build build/switch --target nsteamlink_nro switch-stream-selftest_nro -j$(nproc)` 通过；
+  - `cmake --build build/switch --target switch-stream-selftest-core_nro -j$(nproc)` 通过；
+  - 待真机确认：有声、无明显爆音/持续延迟，stop/exit 后音频停止。
+
+## D-033 BUG-M4-HID-001 需要跨退出持久诊断
+
+- Evidence：用户再次复现“host/game 侧输入卡住、画面持续旋转”后，先旋转左摇杆数次，等恢复后
+  退出串流程序，再要求查看日志。旧版只提供进程内 60 秒 `hidlog` ring 和 UDP debug；退出后
+  `state/hid/audio/hidlog` 均无法访问，且当前没有写入 SD 卡的 HID 秒级历史。因此这次复现窗口
+  没有可恢复日志，不能据此得出 SDL、host virtual controller 或协议 ACK 路径的新结论。
+- Conclusion：60 秒内存 ring 只适合 app 仍在运行时取证，不适合真实游玩中“复现、观察、恢复、
+  退出后再复盘”的流程。继续依赖它会系统性丢证据。
+- Decision：
+  1. app 启动时将 `sdmc:/switch/nsteamlink/stream_diag.log` 轮转为
+     `sdmc:/switch/nsteamlink/stream_diag_prev.log`；
+  2. 启动后台 joinable 诊断线程，每秒从内存 snapshot 与 HID history 拷贝摘要，append 到
+     `stream_diag.log` 并 flush/fsync；
+  3. 诊断线程只读快照并写盘，输入事件、渲染、present 路径不直接 fopen/write；
+  4. 退出清理时先 stop/join 该线程，再进入 media/SDL/socket teardown；
+  5. UDP debug 新增 `diag [current|prev|status]`，用于读取当前/上一轮日志尾部或诊断线程状态；
+  6. HID 秒级 history 增加左右摇杆四轴和按钮 mask，供下次判断 Switch 本地右摇杆状态是否已回中。
+- Impact：下一次 BUG-M4-HID-001 复现后，即使用户等到恢复或退出 app，仍可通过下一次启动后的
+  `diag prev` 或直接读 SD 卡文件复盘。该改动仍不是根因修复，只是补齐证据链。
+
+### D-033 追记：`-` / `MINUS` 作为输入故障 marker
+
+- Evidence：用户说明真实复现流程通常是先发现 host/game 输入失灵，再做一段诊断性输入，随后才
+  回电脑通知；因此读取“通知后的当前尾部”仍会错过真正操作窗口。
+- Decision：
+  1. streaming 中将 `-` / `MINUS` 定义为故障 marker：用户发现输入失灵时按住该键；
+  2. HID 秒级 history 增加 `minus=sdlHeld/sdlSamples/rawHeld/rawSamples`；
+  3. 诊断线程只在 marker 出现时额外写 `stream_diag_markers.log`，并随主诊断一起轮转为
+     `stream_diag_markers_prev.log`；
+  4. UDP debug 增加 `diag marker current|prev`，用于直接读取 marker 记录；
+  5. 本小节最初只取消 `MINUS+B` 本地停流；2026-08-27 的 D-033 追记四进一步取代该热键约定：
+     `+` / `-` 都恢复给 Steam/game，`-` marker 只被动记录、不吞键。
+- Evidence rule：如果故障窗口中 marker 出现，说明 Switch 侧对应输入路径至少看到了 `-`；若同秒
+  `sendOk/stateFull` 也正常而 host/game 仍无响应，嫌疑转向 host virtual controller/apply 路径。
+  如果用户明确按住 `-` 但 marker 完全不出现，才把嫌疑收敛到本地 SDL/libnx 输入捕获或 pump 路径。
+
+### D-033 追记二：marker 复现支持下游输入应用问题
+
+- Evidence：用户在一次 BUG-M4-HID-001 复现中，故障时按了几次 `-` 并摇左摇杆，恢复正常后又摇
+  左摇杆；随后退回 hbmenu，经重新 `nxlink` 启动后读取上一轮 `diag marker prev`。
+- Evidence：`stream_diag_markers_prev.log` 返回 `markMinus` seq 365-369/373；其中
+  `minus=sdlHeld/sdlSamples/rawHeld/rawSamples` 均有非零样本，`ax` 在 366/367/368/369/373 非零，
+  `raw` 轴/按钮变化也有非零记录，`ok` 为 3/21/13/17/13/25，`f=0`，`h=9-10/s`。
+- Conclusion：这次故障窗口中，Switch 侧 SDL controller 状态、SDL event/pump、libnx raw sample
+  与 HID report 本地排队发送均未整体停摆。该证据不支持“本地完全没收到输入”或“主循环当秒死锁”
+  作为本次复现结论。
+- Hypothesis：用户观察的 host/game 端无响应更可能在 Switch 本地 send 之后：HID report packet
+  传输/ACK、host virtual controller apply、report delta/full 语义或 Steam/game 侧输入状态。下一轮
+  若继续根因化，应把 packetId/ACK/NACK、report CRC/axis/button摘要和 host apply 线索纳入 marker
+  同窗日志。
+- Limitation：当前 marker 日志只记录按钮事件总数和最终 SDL button mask，不能精确区分用户按的
+  `A/B` 事件；若需要验证 A/B 本身，需新增 per-button sample/count。
+
+### D-033 追记三：Wi-Fi 断流作为待验证假设
+
+- Evidence：同一 marker 复现中，Switch 侧看到 `-` marker、左摇杆变化和 HID send ok；但这些
+  `ok` 计数只来自本地 `IHS_SessionHIDSendReport()` 返回，不是 host 收到或虚拟手柄应用确认。
+  旧 marker 行没有保存同秒视频帧、音频帧、控制通道 retrans/warn 或 last-frame age。
+- Conclusion：这次证据不能证明“Wi-Fi 一定断流”，也不能排除 Wi-Fi/局域网短暂停顿。用户观察到
+  host/game 侧画面持续旋转且左摇杆/A/B 无效，与“本地继续采样，网络或 host 侧暂时没有应用新 report”
+  兼容。
+- Decision：在 marker 诊断中为每个 `markMinus` seq 追加一行 `markNet`，记录同一秒的
+  `frames/displayed/audio` 累计值与每秒增量、`mainAgeMs`、`lastFrameAgeMs`、`gaps/maxGap`、
+  `audioQ/audioDrop/audioErr`、`ctrlRetrans/ctrlWarn` 及其增量。
+- Evidence rule：若下一次故障 marker 同窗里 `markMinus` 显示输入存在，同时 `markNet` 显示
+  视频/音频增量停住、`lastFrameAgeMs` 明显拉长或 control warn/retrans 跳变，则 Wi-Fi/stream
+  断流假设获得直接支持。若媒体增量正常、`mainAgeMs` 正常且 control 计数平稳，而 host/game 仍不响应，
+  嫌疑继续留在 HID report 传输细节、host virtual controller apply 或 Steam/game 输入状态。
+
+### D-033 追记四：`+` / `-` 还给游戏，本地控制迁移到音量组合键
+
+- Evidence：用户确认实际游戏仍需要 `+` 和 `-`；因此之前把 `+` 作为本地退出、把 `-` 组合键作为本地
+  停流/marker 控制，会干扰真实游玩。
+- Evidence：上一轮启动读取到 `previous exit_stage: cleanup:skip_blocking:return`、
+  `previous boot_stage: cleanup:skip:done`，`diag_tail` 末尾出现 `thread_stop` 且状态处在
+  `mode=stream-ready session=0` 附近。该证据说明上一版曾在退出路径跳过完整 cleanup，但不能证明
+  退出源一定是 `+`、debug exit、SDL_QUIT、appletMainLoop 结束或其他路径。
+- Conclusion：`+` / `-` 不应继续作为正式 app 的本地控制键；无论 exit 源是什么，NRO 返回 hbmenu 前
+  都必须走完整 stop/join/destroy cleanup，不能再走 `cleanup:skip_blocking:return` 这种风险分支。
+- Decision：
+  1. `+` / `-` 恢复为普通 Steam/game 输入；`-` marker 只被动写诊断，不吞键、不触发本地动作；
+  2. 本地退出改为按住 `L3+R3` 时点按 `VOL+`；
+  3. 本地停流改为按住 `L3+R3` 时点按 `VOL-`；
+  4. 每次退出请求持久记录 `exit:source:<reason>`，`state/diag` 增加 `stopReq/exitReq/exitReason`；
+  5. 退出 cleanup 去掉 skip 分支，按 `stream worker stop -> watchdog join -> session stop/destroy -> worker join
+     -> IHS client stop/join/destroy -> IHS_Quit -> diag/media/debug/audctl/nxlink/socket` 顺序清理。
+- Limitation：当前 libnx/SDL 路径没有直接暴露物理音量键按下状态；实现通过 audctl 轮询音量值变化
+  判断 `VOL+`/`VOL-`。如果系统音量已经到顶或到底，对应方向可能不触发；日志会记录
+  `local_hotkeys: ... audctl/volumeReady` 以便判定本地热键是否可用。
+
+## D-034 重写 control reliable/HID 发送状态机
+
+- Evidence：旧 `IHS_SessionChannelControlSendDatagram()` 仍创建
+  `IHS_SessionPacketTypeReliable` 并消耗 control packet ID，只是向
+  `IHS_SessionChannelQueueFrame(..., false)` 关闭本地重传登记。该包丢失时，发送端不会补发，却继续
+  发送更大的可靠 packet ID。
+- Evidence：`tests/session/window_head_gap.c` 确定性证明 control 接收窗口缺少 head packet ID 时，
+  后续包即使已经到达也不能被 `Poll()` 交付；control 路径没有 data channel 的超时丢弃机制。
+- Evidence：旧重传登记发生在 send worker 完成首次 `sendto()` 之后，存在 ACK 先到、pending 后登记的
+  竞态；ACK/NACK 共用 cancel 路径，NACK 反而停止重传；`IHS_SessionChannelPacketAck()` 没有回显
+  收包 `fragmentId`。这些都是独立于真机症状、可由源码直接证明的可靠性错误。
+- Evidence：D-033 marker 真机记录证明至少一次故障窗口中 SDL、libnx raw、input pump 和本地 HID
+  submit 均继续工作，但旧 `hidSendOk` 只表示本地入队，不表示 host ACK 或应用。
+- Conclusion：此前 D-030 的“Reliable 类型 + fire-and-forget 可以靠后续 full heartbeat 自愈”结论
+  **撤回**。在可靠有序 packet ID 空间里跳过任意一个包会制造接收窗口无法跨越的缺口；后续 full
+  snapshot 也排在缺口后面，不能承担自愈作用。
+- Limitation：目前没有故障窗口的逐包抓包能直接证明某个具体 HID packet ID 丢失后恰好造成用户观察
+  的每一次约 10 秒卡住。因此该协议错误是当前最强、可验证的根因候选，但“已彻底修复所有真机卡键”
+  仍是待验证命题。
+- Decision：
+  1. 可靠包在初次发送进入 worker 队列前复制进 session pending 表，消除 ACK-before-registration；
+  2. 每 session 只使用一个 5ms 扫描任务；10/20/40/80/100ms 退避后保持 100ms 重发，直到精确
+     `(channelId, packetId, fragmentId)` ACK 或 session 销毁，不再有次数上限、give-up 或 cancelled ring；
+  3. ACK 删除 pending，NACK 将该包立即置为 due；分片 ACK 回显收到的 fragmentId；
+  4. HID report admission 正常只允许一个完整快照在途；等待 ACK 期间的新输入覆盖“最新待发快照”，
+     ACK 后立即发送最新值。退出时可额外提交最终 neutral snapshot，并保证它排在 StopRequest 前；
+  5. SDL event handler 只更新 canonical controller state；每次提交先清除旧 delta 条目，再生成单个
+     forced full report，线上不再依赖 delta 链；
+  6. 删除 `ControlSendDatagram`、HID 三次重试上限、per-packet timer/cancelled ring 与 give-up 日志解析；
+     持久诊断改为直接采样 reliable tracked/acked/retry/failure/outstanding/oldest 和
+     HID submitted/coalesced/sent/acked/pending/in-flight。
+- Verification：
+  - ihslib SDL2 host tests 27/27 通过；新增测试覆盖错误 fragment ACK、NACK 立即重发、超过旧 20 次
+    上限仍保留、重复 ACK、HID 最新值合并及 delta 被 full snapshot 替换；
+  - ASan+UBSan 27/27 通过；TSan 的 timer/destroy/concurrent HID/retransmission/admission 5/5 通过；
+  - Switch `nsteamlink_nro`、`switch-stream-selftest_nro`、`switch-stream-selftest-core_nro` 均构建通过；
+  - 2026-08-27 用户在真机启动新版串流并实际测试，反馈“没有任何问题”；这是新版状态机的首轮
+    真机 smoke evidence，支持当前实现可用，但不替代后续长时间游玩验证；
+  - 待真机：长时间游玩确认 BUG-M4-HID-001 是否消失；若仍复现，用持久日志中的 `relOut/oldest` 与
+    `hidSM` 判断是 host ACK 停止、HID admission 等待，还是故障已移到状态机之外。

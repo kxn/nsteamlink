@@ -14,7 +14,7 @@
 **应用方式（2026-08-26 起）**：在干净的 ihslib 检出上只应用
 `0020-switch-port-cumulative.patch` 一个文件即可，它由 submodule 工作区对 pin `8c5a17c`
 的完整 diff 生成，应用后与当前构建所用代码逐字节一致。
-`0001–0011` 是按主题分层的历史记录，因后续改动共享上下文，单独/顺序重放已不可靠，
+`0001–0013` 是按主题分层的历史记录，因后续改动共享上下文，单独/顺序重放已不可靠，
 仅作查阅用途（文件头部有相同说明）。
 
 - `0020-switch-port-cumulative.patch`：上述全部改动的当前权威快照，含新增的 SDL3 兼容垫片头文件。
@@ -42,6 +42,9 @@
   input reports 的 SDL 设备强制追加一份当前状态 full report 并发送，供 app 以低频心跳重发，
   在可靠控制通道丢包后有界恢复手柄状态（delta 链本身无法自愈）。动机与证据见 decisions D-030；
   该 API 的声明与"低频刷新"契约此前已写在公开头文件 `ihslib/hid/sdl.h` 中，本补丁补上实现。
+- `0013-control-reliability-state-machine.patch`：撤回旧的 HID fire-and-forget 方案；可靠包在初发前
+  登记并保留到精确 ACK，NACK 触发立即重发，分片 ACK 回显 fragmentId。HID 输入使用“单个在途
+  完整快照 + 最新待发快照”合并，SDL 输入线上只发完整状态，避免在可靠有序 packet ID 中制造缺口。
 
 ## 待引入（按里程碑）
 

@@ -1,5 +1,6 @@
 #include "media.h"
 
+#include <stdio.h>
 #include <string.h>
 
 static stream_media_snapshot snapshot;
@@ -51,6 +52,20 @@ void stream_media_get_snapshot(stream_media_snapshot *out) {
     *out = snapshot;
 }
 
+size_t stream_media_copy_hid_history(stream_media_hid_history_entry *out, size_t max_entries) {
+    (void)out;
+    (void)max_entries;
+    return 0;
+}
+
+void stream_media_format_hid_history(char *out, size_t out_len, uint32_t max_entries) {
+    (void)max_entries;
+    if (out == NULL || out_len == 0) {
+        return;
+    }
+    snprintf(out, out_len, "hidlog disabled");
+}
+
 int stream_media_video_start(IHS_Session *session, const IHS_StreamVideoConfig *config) {
     (void)session;
     (void)config;
@@ -69,5 +84,22 @@ IHS_StreamVideoSubmitResult stream_media_video_submit(IHS_Session *session, uint
 }
 
 void stream_media_video_stop(IHS_Session *session) {
+    (void)session;
+}
+
+int stream_media_audio_start(IHS_Session *session, const IHS_StreamAudioConfig *config) {
+    (void)session;
+    (void)config;
+    set_error("media disabled in core selftest");
+    return -1;
+}
+
+int stream_media_audio_submit(IHS_Session *session, IHS_Buffer *data) {
+    (void)session;
+    (void)data;
+    return -1;
+}
+
+void stream_media_audio_stop(IHS_Session *session) {
     (void)session;
 }

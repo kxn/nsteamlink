@@ -1,9 +1,11 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include <ihslib/buffer.h>
+#include <ihslib/audio.h>
 #include <ihslib/session.h>
 #include <ihslib/video.h>
 
@@ -42,6 +44,24 @@ typedef struct stream_media_snapshot {
     uint32_t hid_send_ok;
     uint32_t hid_send_fail;
     uint32_t hid_state_full;
+    uint32_t hid_raw_ax_total;
+    uint32_t hid_raw_btn_total;
+    uint32_t hid_style_flips_total;
+    bool hid_marker_minus_sdl_held;
+    bool hid_marker_minus_raw_held;
+    uint32_t hid_marker_minus_sdl_samples_total;
+    uint32_t hid_marker_minus_raw_samples_total;
+    IHS_SessionReliabilityStats reliability;
+    bool audio_active;
+    uint32_t audio_frames;
+    uint64_t audio_bytes;
+    uint64_t audio_decoded_samples;
+    uint32_t audio_queued_bytes;
+    uint32_t audio_queue_drops;
+    uint32_t audio_decode_errors;
+    int audio_codec;
+    int audio_channels;
+    int audio_frequency;
     int hid_sdl_joystick_count;
     int hid_sdl_controller_index;
     int hid_sdl_instance_id;
@@ -51,6 +71,7 @@ typedef struct stream_media_snapshot {
     int hid_last_event_code;
     int hid_last_event_value;
     int hid_provider_devices;
+    char hid_style_state[12];
     char hid_sdl_guid[40];
     char hid_sdl_name[64];
     int width;
@@ -69,6 +90,43 @@ typedef struct stream_media_ui {
     char lines[STREAM_MEDIA_UI_LINES][STREAM_MEDIA_UI_TEXT];
 } stream_media_ui;
 
+typedef struct stream_media_hid_history_entry {
+    uint32_t seq;
+    uint32_t sec;
+    uint32_t events;
+    uint32_t send_ok;
+    uint32_t send_fail;
+    uint32_t state_full;
+    uint32_t pump;
+    uint32_t ax;
+    uint32_t btn;
+    uint32_t sen;
+    uint32_t oth;
+    uint32_t ev_sup;
+    uint32_t raw_ax;
+    uint32_t raw_btn;
+    uint32_t sty_fl;
+    uint32_t events_total;
+    uint32_t send_ok_total;
+    uint32_t state_full_total;
+    uint32_t raw_ax_total;
+    uint32_t raw_btn_total;
+    int last_type;
+    int last_which;
+    int last_code;
+    int last_value;
+    int16_t left_x;
+    int16_t left_y;
+    int16_t right_x;
+    int16_t right_y;
+    uint32_t buttons;
+    uint32_t marker_minus_sdl_held;
+    uint32_t marker_minus_sdl_samples;
+    uint32_t marker_minus_raw_held;
+    uint32_t marker_minus_raw_samples;
+    char sty[12];
+} stream_media_hid_history_entry;
+
 bool stream_media_init(stream_media_log_fn log_fn);
 void stream_media_shutdown(void);
 bool stream_media_available(void);
@@ -80,6 +138,8 @@ void stream_media_destroy_hid_provider(IHS_HIDProvider *provider);
 #endif
 void stream_media_present(void);
 void stream_media_get_snapshot(stream_media_snapshot *out);
+size_t stream_media_copy_hid_history(stream_media_hid_history_entry *out, size_t max_entries);
+void stream_media_format_hid_history(char *out, size_t out_len, uint32_t max_entries);
 void stream_media_set_ui(const stream_media_ui *ui);
 
 int stream_media_video_start(IHS_Session *session, const IHS_StreamVideoConfig *config);
@@ -87,3 +147,7 @@ IHS_StreamVideoSubmitResult stream_media_video_submit(IHS_Session *session, uint
                                                      IHS_Buffer *data,
                                                      IHS_StreamVideoFrameFlag flags);
 void stream_media_video_stop(IHS_Session *session);
+
+int stream_media_audio_start(IHS_Session *session, const IHS_StreamAudioConfig *config);
+int stream_media_audio_submit(IHS_Session *session, IHS_Buffer *data);
+void stream_media_audio_stop(IHS_Session *session);

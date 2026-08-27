@@ -23,6 +23,7 @@
 #include <switch.h>
 
 #include <ihslib/buffer.h>
+#include <ihslib/audio.h>
 #include <ihslib/client.h>
 #include <ihslib/common.h>
 #include <ihslib/net.h>
@@ -40,12 +41,20 @@
 #define EXCEPTION_PATH       AUTH_DIR "/stream_exception_dump.txt"
 #define EXIT_STAGE_PATH      AUTH_DIR "/stream_exit_stage.txt"
 #define WATCHDOG_PATH        AUTH_DIR "/stream_watchdog.txt"
+#define DIAG_PATH            AUTH_DIR "/stream_diag.log"
+#define DIAG_PREV_PATH       AUTH_DIR "/stream_diag_prev.log"
+#define DIAG_MARKER_PATH     AUTH_DIR "/stream_diag_markers.log"
+#define DIAG_MARKER_PREV_PATH AUTH_DIR "/stream_diag_markers_prev.log"
+#define DIAG_EVENT_PATH      AUTH_DIR "/stream_diag_events.log"
+#define DIAG_EVENT_PREV_PATH AUTH_DIR "/stream_diag_events_prev.log"
+#define DIAG_TAIL_BYTES      3500U
+#define DIAG_CHUNK_BYTES     3000U
 #define AUTH_MAGIC           "NSLAUTH"
 #define AUTH_VERSION         1U
 #define FALLBACK_HOST        "10.10.10.166"
 #define DEBUG_PORT           28772
 #define DEBUG_RX             256
-#define DEBUG_TX             1200
+#define DEBUG_TX             4096
 #define LOGQ_LEN             32
 #define LOGQ_MSG             224
 #define LOGQ_DRAIN_LIMIT     8
@@ -65,6 +74,8 @@
 #define WATCHDOG_STREAM_NO_FRAME_MS 45000U
 #define WATCHDOG_POLL_MS 250U
 #define VIDEO_STALL_NOTICE_MS 2500U
+#define LOCAL_HOTKEY_MASK     (HidNpadButton_StickL | HidNpadButton_StickR)
+#define LOCAL_VOLUME_POLL_MS  80U
 
 #if NSTREAMLINK_APP
 #include <ihslib/hid/sdl.h>
@@ -121,6 +132,11 @@ typedef struct app_state {
     bool session_finished;
     bool stop_requested;
     bool exit_requested;
+    char exit_reason[96];
+    bool local_hotkeys_ready;
+    bool local_volume_ready;
+    int local_volume_target;
+    int local_volume_value;
     bool auto_stop_requested;
     bool exit_after_auto_stop;
 
@@ -186,8 +202,25 @@ static atomic_uint_fast32_t diag_hid_full_reports;
 static atomic_uint_fast32_t diag_hid_get_feature;
 static atomic_uint_fast32_t diag_hid_get_strings;
 static atomic_uint_fast32_t diag_hid_no_device;
-static atomic_uint_fast32_t diag_control_retrans_giveup;
 static atomic_uint_fast32_t diag_control_warn;
+static atomic_bool diag_disk_stop;
+static pthread_t diag_disk_thread;
+static bool diag_disk_started;
+static atomic_bool diag_disk_thread_alive;
+static atomic_uint_fast32_t diag_disk_start_error;
+static atomic_uint_fast32_t diag_disk_thread_error;
+static atomic_uint_fast32_t diag_disk_marker_error;
+static atomic_uint_fast32_t diag_disk_event_error;
+static atomic_uint_fast32_t diag_disk_ticks;
+static pthread_mutex_t diag_recent_lock = PTHREAD_MUTEX_INITIALIZER;
+static char diag_recent[DIAG_TAIL_BYTES + 1U];
+static size_t diag_recent_len;
+static pthread_mutex_t diag_marker_recent_lock = PTHREAD_MUTEX_INITIALIZER;
+static char diag_marker_recent[DIAG_TAIL_BYTES + 1U];
+static size_t diag_marker_recent_len;
+static pthread_mutex_t diag_event_recent_lock = PTHREAD_MUTEX_INITIALIZER;
+static char diag_event_recent[DIAG_TAIL_BYTES + 1U];
+static size_t diag_event_recent_len;
 
 __attribute__((aligned(16))) u8 __nx_exception_stack[0x1000];
 u64 __nx_exception_stack_size = sizeof(__nx_exception_stack);
@@ -316,6 +349,152 @@ static void write_boot_stage(const char *stage) {
     errno = saved_errno;
 }
 
+static void sanitize_text_for_log(char *text) {
+    if (text == NULL) {
+        return;
+    }
+    for (char *p = text; *p != '\0'; p++) {
+        unsigned char ch = (unsigned char)*p;
+        if (ch == '\r' || ch == '\n' || ch == '\t') {
+            *p = ' ';
+        } else if (!isprint(ch)) {
+            *p = '?';
+        }
+    }
+}
+
+static bool read_text_tail(const char *path, char *out, size_t out_len) {
+    if (out == NULL || out_len == 0) {
+        return false;
+    }
+    out[0] = '\0';
+    size_t capacity = out_len - 1;
+    if (capacity == 0) {
+        return false;
+    }
+    FILE *fp = fopen(path, "r");
+    if (fp == NULL) {
+        return false;
+    }
+    size_t n = 0;
+    if (fseek(fp, 0, SEEK_END) == 0) {
+        long end = ftell(fp);
+        if (end >= 0) {
+            long keep = (long)capacity;
+            if (keep > (long)DIAG_TAIL_BYTES) {
+                keep = (long)DIAG_TAIL_BYTES;
+            }
+            long start = end > keep ? end - keep : 0;
+            if (fseek(fp, start, SEEK_SET) == 0) {
+                n = fread(out, 1, capacity, fp);
+            }
+        }
+    }
+    if (n == 0 && ferror(fp)) {
+        clearerr(fp);
+    }
+    if (n == 0) {
+        rewind(fp);
+        char chunk[256];
+        while (true) {
+            size_t got = fread(chunk, 1, sizeof(chunk), fp);
+            if (got == 0) {
+                break;
+            }
+            if (capacity <= sizeof(chunk) && got >= capacity) {
+                memcpy(out, chunk + got - capacity, capacity);
+                n = capacity;
+            } else if (n + got <= capacity) {
+                memcpy(out + n, chunk, got);
+                n += got;
+            } else {
+                size_t drop = n + got - capacity;
+                memmove(out, out + drop, n - drop);
+                n -= drop;
+                memcpy(out + n, chunk, got);
+                n += got;
+            }
+        }
+    }
+    fclose(fp);
+    out[n] = '\0';
+    for (size_t i = 0; i < n; i++) {
+        unsigned char ch = (unsigned char)out[i];
+        if (ch == '\r') {
+            out[i] = '\n';
+        } else if (ch != '\n' && ch != '\t' && !isprint(ch)) {
+            out[i] = '?';
+        }
+    }
+    return n > 0;
+}
+
+static bool read_text_chunk(const char *path, uint32_t offset, uint32_t requested_len,
+                            char *out, size_t out_len, uint32_t *file_size_out,
+                            uint32_t *next_offset_out, bool *eof_out) {
+    if (out == NULL || out_len == 0) {
+        return false;
+    }
+    out[0] = '\0';
+    if (file_size_out != NULL) {
+        *file_size_out = 0;
+    }
+    if (next_offset_out != NULL) {
+        *next_offset_out = offset;
+    }
+    if (eof_out != NULL) {
+        *eof_out = true;
+    }
+
+    FILE *fp = fopen(path, "r");
+    if (fp == NULL) {
+        return false;
+    }
+    uint32_t file_size = 0;
+    if (fseek(fp, 0, SEEK_END) == 0) {
+        long end = ftell(fp);
+        if (end > 0) {
+            file_size = end > UINT32_MAX ? UINT32_MAX : (uint32_t)end;
+        }
+    }
+    if (file_size_out != NULL) {
+        *file_size_out = file_size;
+    }
+    if (offset > file_size || fseek(fp, (long)offset, SEEK_SET) != 0) {
+        fclose(fp);
+        return false;
+    }
+
+    size_t capacity = out_len - 1;
+    if (requested_len == 0 || requested_len > DIAG_CHUNK_BYTES) {
+        requested_len = DIAG_CHUNK_BYTES;
+    }
+    if (requested_len > capacity) {
+        requested_len = (uint32_t)capacity;
+    }
+    size_t n = fread(out, 1, requested_len, fp);
+    fclose(fp);
+
+    out[n] = '\0';
+    for (size_t i = 0; i < n; i++) {
+        unsigned char ch = (unsigned char)out[i];
+        if (ch == '\r') {
+            out[i] = '\n';
+        } else if (ch != '\n' && ch != '\t' && !isprint(ch)) {
+            out[i] = '?';
+        }
+    }
+
+    uint32_t next = offset + (uint32_t)n;
+    if (next_offset_out != NULL) {
+        *next_offset_out = next;
+    }
+    if (eof_out != NULL) {
+        *eof_out = next >= file_size;
+    }
+    return n > 0 || offset == file_size;
+}
+
 static uint64_t monotonic_ms(void) {
     struct timespec ts;
     if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
@@ -393,6 +572,37 @@ static void set_status(app_state *state, const char *fmt, ...) {
     pthread_mutex_unlock(&state->lock);
 }
 
+static void request_app_exit(app_state *state, const char *source) {
+    const char *reason = source != NULL && source[0] != '\0' ? source : "unknown";
+    bool first = false;
+
+    pthread_mutex_lock(&state->lock);
+    first = !state->exit_requested;
+    state->stop_requested = true;
+    state->exit_requested = true;
+    if (state->exit_reason[0] == '\0') {
+        snprintf(state->exit_reason, sizeof(state->exit_reason), "%s", reason);
+    }
+    snprintf(state->ui_notice, sizeof(state->ui_notice), "Exiting");
+    pthread_mutex_unlock(&state->lock);
+
+    if (first) {
+        char stage[128];
+        snprintf(stage, sizeof(stage), "exit:source:%s", reason);
+        write_exit_stage(stage);
+        logline_net("exit requested: source=%s", reason);
+    }
+}
+
+static void request_stream_stop(app_state *state, const char *source) {
+    const char *reason = source != NULL && source[0] != '\0' ? source : "unknown";
+    pthread_mutex_lock(&state->lock);
+    state->stop_requested = true;
+    snprintf(state->ui_notice, sizeof(state->ui_notice), "Stopping stream");
+    pthread_mutex_unlock(&state->lock);
+    logline_net("stop requested: source=%s", reason);
+}
+
 static void diag_reset_input(void) {
     atomic_store_explicit(&diag_hid_open_ok, 0, memory_order_relaxed);
     atomic_store_explicit(&diag_hid_open_fail, 0, memory_order_relaxed);
@@ -402,7 +612,6 @@ static void diag_reset_input(void) {
     atomic_store_explicit(&diag_hid_get_feature, 0, memory_order_relaxed);
     atomic_store_explicit(&diag_hid_get_strings, 0, memory_order_relaxed);
     atomic_store_explicit(&diag_hid_no_device, 0, memory_order_relaxed);
-    atomic_store_explicit(&diag_control_retrans_giveup, 0, memory_order_relaxed);
     atomic_store_explicit(&diag_control_warn, 0, memory_order_relaxed);
 }
 
@@ -476,29 +685,8 @@ static void ihs_log(IHS_LogLevel level, const char *tag, const char *message) {
     } else if (tag != NULL && strcmp(tag, "Control") == 0) {
         diag_note_control_log(message);
     }
-    if (tag != NULL && message != NULL && strcmp(tag, "Retransmission") == 0 &&
-        strstr(message, "Giving up on Packet(channelId=1") != NULL) {
-        atomic_fetch_add_explicit(&diag_control_retrans_giveup, 1, memory_order_relaxed);
-    }
     if (level >= IHS_LogLevelDebug) {
         return;
-    }
-    static uint64_t retransmission_window_ms;
-    static uint32_t retransmission_suppressed;
-    if (tag != NULL && message != NULL && strcmp(tag, "Retransmission") == 0 &&
-        strstr(message, "Giving up on Packet(channelId=1") != NULL) {
-        uint64_t now = monotonic_ms();
-        if (retransmission_window_ms != 0 && now >= retransmission_window_ms &&
-            now - retransmission_window_ms < 1000U) {
-            retransmission_suppressed++;
-            return;
-        }
-        if (retransmission_suppressed > 0) {
-            logline_net("[IHS:%d][Retransmission] suppressed %u control retransmission logs",
-                        (int)level, retransmission_suppressed);
-            retransmission_suppressed = 0;
-        }
-        retransmission_window_ms = now;
     }
     logline_net("[IHS:%d][%s] %s", (int)level, tag, message);
 }
@@ -541,16 +729,57 @@ static const char *codec_name(IHS_StreamVideoCodec codec) {
     }
 }
 
+static const char *audio_codec_name(IHS_StreamAudioCodec codec) {
+    switch (codec) {
+    case IHS_StreamAudioCodecRaw:
+        return "Raw";
+    case IHS_StreamAudioCodecVorbis:
+        return "Vorbis";
+    case IHS_StreamAudioCodecOpus:
+        return "Opus";
+    case IHS_StreamAudioCodecMP3:
+        return "MP3";
+    case IHS_StreamAudioCodecAAC:
+        return "AAC";
+    case IHS_StreamAudioCodecNone:
+        return "none";
+    default:
+        return "other";
+    }
+}
+
 static const char *stream_result_name(IHS_StreamingResult result) {
     switch (result) {
     case IHS_StreamingSuccess:
         return "Success";
     case IHS_StreamingUnauthorized:
         return "Unauthorized";
+    case IHS_StreamingScreenLocked:
+        return "ScreenLocked";
+    case IHS_StreamingFailed:
+        return "Failed";
+    case IHS_StreamingBusy:
+        return "Busy";
     case IHS_StreamingInProgress:
         return "InProgress";
+    case IHS_StreamingCanceled:
+        return "Canceled";
+    case IHS_StreamingDriversNotInstalled:
+        return "DriversNotInstalled";
+    case IHS_StreamingDisabled:
+        return "Disabled";
+    case IHS_StreamingBroadcastingActive:
+        return "BroadcastingActive";
+    case IHS_StreamingVRActive:
+        return "VRActive";
     case IHS_StreamingPINRequired:
         return "PINRequired";
+    case IHS_StreamingTransportUnavailable:
+        return "TransportUnavailable";
+    case IHS_StreamingInvisible:
+        return "Invisible";
+    case IHS_StreamingGameLaunchFailed:
+        return "GameLaunchFailed";
     case IHS_StreamingTimeout:
         return "Timeout";
     default:
@@ -621,6 +850,16 @@ static void on_stream_progress(IHS_Client *client, const IHS_HostInfo *host, voi
     (void)client;
     (void)host;
     app_state *state = context;
+    pthread_mutex_lock(&state->lock);
+    bool exiting = state->exit_requested;
+    if (exiting) {
+        snprintf(state->status, sizeof(state->status), "Streaming progress ignored during exit");
+    }
+    pthread_mutex_unlock(&state->lock);
+    if (exiting) {
+        logline_net("streaming progress ignored: exit requested");
+        return;
+    }
     set_status(state, "Streaming request in progress");
     logline_net("streaming request progress");
 }
@@ -631,6 +870,22 @@ static void on_stream_success(IHS_Client *client, const IHS_HostInfo *host,
     (void)client;
     app_state *state = context;
     char *ip = IHS_IPAddressToString(&address->ip);
+
+    pthread_mutex_lock(&state->lock);
+    bool exiting = state->exit_requested;
+    if (exiting) {
+        state->stream_result = IHS_StreamingCanceled;
+        if (state->session == NULL) {
+            state->mode = PROBE_READY;
+        }
+        snprintf(state->status, sizeof(state->status), "Streaming success ignored during exit");
+    }
+    pthread_mutex_unlock(&state->lock);
+    if (exiting) {
+        logline_net("streaming success ignored during exit: host=%s", host->hostname);
+        free(ip);
+        return;
+    }
 
     if (session_key_len > sizeof(state->session_info.sessionKey)) {
         pthread_mutex_lock(&state->lock);
@@ -670,6 +925,18 @@ static void on_stream_failed(IHS_Client *client, const IHS_HostInfo *host,
     app_state *state = context;
 
     pthread_mutex_lock(&state->lock);
+    bool exiting = state->exit_requested;
+    if (exiting) {
+        state->stream_result = result;
+        if (state->session == NULL) {
+            state->mode = PROBE_READY;
+        }
+        snprintf(state->status, sizeof(state->status), "Streaming failed during exit");
+        pthread_mutex_unlock(&state->lock);
+        logline_net("streaming failed ignored during exit: result=%d (%s)", (int)result,
+                    stream_result_name(result));
+        return;
+    }
     state->stream_result = result;
     state->mode = PROBE_READY;
     if (result == IHS_StreamingPINRequired) {
@@ -707,14 +974,15 @@ static void on_session_connecting(IHS_Session *session, void *context) {
 static void on_session_configuring(IHS_Session *session, IHS_SessionConfig *config, void *context) {
     (void)session;
     (void)context;
-    config->enableAudio = false;
+    config->enableAudio = NSTREAMLINK_APP ? true : false;
     config->enableHevc = false;
     config->maxWidth = PROBE_WIDTH;
     config->maxHeight = PROBE_HEIGHT;
     config->maxFps = PROBE_FPS;
     config->maxBitrateKbps = PROBE_BITRATE_KBPS;
-    logline_net("session configuring: audio=0 hevc=0 max=%ux%u@%u bitrate=%u",
-                PROBE_WIDTH, PROBE_HEIGHT, PROBE_FPS, PROBE_BITRATE_KBPS);
+    logline_net("session configuring: audio=%d hevc=0 max=%ux%u@%u bitrate=%u",
+                config->enableAudio ? 1 : 0, PROBE_WIDTH, PROBE_HEIGHT, PROBE_FPS,
+                PROBE_BITRATE_KBPS);
 }
 
 static void on_session_connected(IHS_Session *session, void *context) {
@@ -902,6 +1170,47 @@ static void on_video_bitrate_override(IHS_Session *session, int32_t value, void 
     logline_net("video bitrate override: %d", value);
 }
 
+static int on_audio_start(IHS_Session *session, const IHS_StreamAudioConfig *config, void *context) {
+    app_state *state = context;
+    logline_net("audio start: codec=%s(%d) freq=%u channels=%u codecData=%zu",
+                audio_codec_name(config ? config->codec : IHS_StreamAudioCodecNone),
+                config ? (int)config->codec : 0,
+                config ? config->frequency : 0,
+                config ? config->channels : 0,
+                config ? config->codecDataLen : 0);
+    int rc = stream_media_audio_start(session, config);
+    if (rc == 0) {
+        pthread_mutex_lock(&state->lock);
+        snprintf(state->status, sizeof(state->status), "Audio started: %uHz %uch",
+                 config->frequency, config->channels);
+        pthread_mutex_unlock(&state->lock);
+    } else {
+        stream_media_snapshot media;
+        stream_media_get_snapshot(&media);
+        pthread_mutex_lock(&state->lock);
+        snprintf(state->status, sizeof(state->status), "Audio start failed: %s",
+                 media.last_error[0] ? media.last_error : "unknown");
+        pthread_mutex_unlock(&state->lock);
+        logline_net("audio start failed: %s",
+                    media.last_error[0] ? media.last_error : "unknown");
+    }
+    return rc;
+}
+
+static int on_audio_submit(IHS_Session *session, IHS_Buffer *data, void *context) {
+    (void)context;
+    return stream_media_audio_submit(session, data);
+}
+
+static void on_audio_stop(IHS_Session *session, void *context) {
+    app_state *state = context;
+    stream_media_audio_stop(session);
+    pthread_mutex_lock(&state->lock);
+    snprintf(state->status, sizeof(state->status), "Audio stopped");
+    pthread_mutex_unlock(&state->lock);
+    logline_net("audio stopped");
+}
+
 static const IHS_ClientDiscoveryCallbacks DISCOVERY_CALLBACKS = {
     .discovered = on_discovered,
 };
@@ -930,6 +1239,12 @@ static const IHS_StreamVideoCallbacks VIDEO_CALLBACKS = {
     .setTargetBitrate = on_video_target_bitrate,
     .setQualityOverride = on_video_quality_override,
     .setBitrateOverride = on_video_bitrate_override,
+};
+
+static const IHS_StreamAudioCallbacks AUDIO_CALLBACKS = {
+    .start = on_audio_start,
+    .submit = on_audio_submit,
+    .stop = on_audio_stop,
 };
 
 static bool init_socket_for_stream(void) {
@@ -1039,6 +1354,11 @@ static bool start_stream_request(app_state *state, IHS_Client *client, bool desk
         pthread_mutex_unlock(&state->lock);
         return false;
     }
+    if (state->exit_requested) {
+        snprintf(err, err_len, "exit requested");
+        pthread_mutex_unlock(&state->lock);
+        return false;
+    }
     if (state->selected_host < 0 || state->selected_host >= state->host_count) {
         snprintf(err, err_len, "no selected host");
         pthread_mutex_unlock(&state->lock);
@@ -1099,11 +1419,11 @@ static bool start_stream_request(app_state *state, IHS_Client *client, bool desk
         strncpy(request.pin, pin, sizeof(request.pin) - 1);
     }
     request.streamingEnable.video = true;
-    request.streamingEnable.audio = false;
+    request.streamingEnable.audio = NSTREAMLINK_APP ? true : false;
     request.streamingEnable.input = NSTREAMLINK_APP ? true : false;
     request.maxResolution.x = (int32_t)PROBE_WIDTH;
     request.maxResolution.y = (int32_t)PROBE_HEIGHT;
-    request.audioChannelCount = 0;
+    request.audioChannelCount = NSTREAMLINK_APP ? 2 : 0;
     request.streamingInterface = desktop ? IHS_StreamInterfaceDesktop : IHS_StreamInterfaceBigPicture;
     request.streamDesktop = desktop;
     request.gamepadCount = NSTREAMLINK_APP ? 1 : 0;
@@ -1152,6 +1472,20 @@ typedef struct stream_runtime {
     bool ihs_initialized;
     bool stream_worker_started;
 } stream_runtime;
+
+typedef enum local_volume_change {
+    LOCAL_VOLUME_NONE = 0,
+    LOCAL_VOLUME_UP = 1,
+    LOCAL_VOLUME_DOWN = -1,
+} local_volume_change;
+
+typedef struct local_controls {
+    bool audctl_ready;
+    bool have_volume;
+    AudioTarget target;
+    s32 volume;
+    uint64_t next_volume_poll_ms;
+} local_controls;
 
 static bool ensure_media_started(app_state *state, char *err, size_t err_len);
 
@@ -1237,21 +1571,19 @@ static void stream_worker_join(stream_worker *worker) {
     memset(worker, 0, sizeof(*worker));
 }
 
-static bool stream_worker_idle(stream_worker *worker) {
-    if (worker == NULL || !worker->started) {
-        return true;
-    }
-    pthread_mutex_lock(&worker->lock);
-    bool idle = !worker->busy && !worker->request_pending;
-    pthread_mutex_unlock(&worker->lock);
-    return idle;
-}
-
 static bool stream_worker_enqueue(stream_worker *worker, app_state *state, bool desktop,
                                   bool hold, uint32_t auto_stop_frames, const char *pin, char *err,
                                   size_t err_len) {
     if (worker == NULL || !worker->started) {
         snprintf(err, err_len, "stream worker unavailable");
+        return false;
+    }
+
+    pthread_mutex_lock(&state->lock);
+    bool exiting = state->exit_requested;
+    pthread_mutex_unlock(&state->lock);
+    if (exiting) {
+        snprintf(err, err_len, "exit requested");
         return false;
     }
 
@@ -1284,6 +1616,83 @@ static void update_runtime_flags(app_state *state, const stream_runtime *runtime
     state->ihs_initialized = runtime->ihs_initialized;
     state->ihs_client_ready = runtime->client != NULL;
     state->stream_worker_active = runtime->stream_worker_started;
+    pthread_mutex_unlock(&state->lock);
+}
+
+static bool local_controls_read_volume(AudioTarget *target_out, s32 *volume_out) {
+    AudioTarget target = AudioTarget_Invalid;
+    Result rc = audctlGetActiveOutputTarget(&target);
+    if (R_FAILED(rc) || target == AudioTarget_Invalid) {
+        target = AudioTarget_Speaker;
+    }
+    s32 volume = 0;
+    rc = audctlGetTargetVolume(&volume, target);
+    if (R_FAILED(rc)) {
+        return false;
+    }
+    if (target_out != NULL) {
+        *target_out = target;
+    }
+    if (volume_out != NULL) {
+        *volume_out = volume;
+    }
+    return true;
+}
+
+static void local_controls_init(local_controls *controls) {
+    memset(controls, 0, sizeof(*controls));
+    Result rc = audctlInitialize();
+    controls->audctl_ready = R_SUCCEEDED(rc);
+    if (!controls->audctl_ready) {
+        logline("local hotkeys: audctl unavailable rc=0x%x; use debug stop/exit",
+                (unsigned int)rc);
+        return;
+    }
+    controls->have_volume = local_controls_read_volume(&controls->target, &controls->volume);
+    logline("local hotkeys: hold LStick+RStick and tap VOL+ to exit, VOL- to stop; "
+            "audctl=1 volumeReady=%d target=%d volume=%d",
+            controls->have_volume ? 1 : 0, (int)controls->target, (int)controls->volume);
+}
+
+static void local_controls_shutdown(local_controls *controls) {
+    if (controls != NULL && controls->audctl_ready) {
+        audctlExit();
+        controls->audctl_ready = false;
+    }
+}
+
+static local_volume_change local_controls_poll_volume(local_controls *controls, uint64_t now_ms) {
+    if (controls == NULL || !controls->audctl_ready || now_ms < controls->next_volume_poll_ms) {
+        return LOCAL_VOLUME_NONE;
+    }
+    controls->next_volume_poll_ms = now_ms + LOCAL_VOLUME_POLL_MS;
+
+    AudioTarget target = AudioTarget_Invalid;
+    s32 volume = 0;
+    if (!local_controls_read_volume(&target, &volume)) {
+        controls->have_volume = false;
+        return LOCAL_VOLUME_NONE;
+    }
+
+    local_volume_change change = LOCAL_VOLUME_NONE;
+    if (controls->have_volume && target == controls->target && volume != controls->volume) {
+        change = volume > controls->volume ? LOCAL_VOLUME_UP : LOCAL_VOLUME_DOWN;
+    }
+    controls->target = target;
+    controls->volume = volume;
+    controls->have_volume = true;
+    return change;
+}
+
+static void local_controls_publish(app_state *state, const local_controls *controls) {
+    if (state == NULL || controls == NULL) {
+        return;
+    }
+    pthread_mutex_lock(&state->lock);
+    state->local_hotkeys_ready = controls->audctl_ready;
+    state->local_volume_ready = controls->have_volume;
+    state->local_volume_target = (int)controls->target;
+    state->local_volume_value = (int)controls->volume;
     pthread_mutex_unlock(&state->lock);
 }
 
@@ -1395,7 +1804,13 @@ static bool start_session_if_ready(app_state *state, const IHS_ClientConfig *cli
     IHS_SessionInfo info;
 
     pthread_mutex_lock(&state->lock);
-    if (state->mode != PROBE_STREAM_READY || state->session != NULL) {
+    if (state->exit_requested || state->mode != PROBE_STREAM_READY || state->session != NULL) {
+        if (state->exit_requested && state->mode == PROBE_STREAM_READY) {
+            state->mode = PROBE_READY;
+            state->stream_result = IHS_StreamingCanceled;
+            snprintf(state->status, sizeof(state->status),
+                     "Session start canceled: exit requested");
+        }
         pthread_mutex_unlock(&state->lock);
         return false;
     }
@@ -1417,6 +1832,7 @@ static bool start_session_if_ready(app_state *state, const IHS_ClientConfig *cli
     IHS_SessionSetLogFunction(session, ihs_log);
     IHS_SessionSetSessionCallbacks(session, &SESSION_CALLBACKS, state);
     IHS_SessionSetVideoCallbacks(session, &VIDEO_CALLBACKS, state);
+    IHS_SessionSetAudioCallbacks(session, &AUDIO_CALLBACKS, state);
     IHS_SessionStatsSetFullReporting(session, false);
 
 #if NSTREAMLINK_APP
@@ -1556,6 +1972,12 @@ static void state_line(app_state *state, char *out, size_t out_len) {
     bool ihs_initialized;
     bool ihs_client_ready;
     bool stream_worker_active;
+    bool stop_requested;
+    bool exit_requested;
+    bool local_hotkeys_ready;
+    bool local_volume_ready;
+    int local_volume_target;
+    int local_volume_value;
     uint32_t width, height, frames, keyframes, auto_stop;
     uint32_t decoded, displayed, media_dropped;
     uint32_t frame_gaps, max_frame_gap;
@@ -1569,9 +1991,13 @@ static void state_line(app_state *state, char *out, size_t out_len) {
     IHS_StreamVideoCodec codec;
     IHS_StreamingResult stream_result;
     bool first_displayed;
+    stream_media_snapshot media;
     char decoder[64];
     char media_error[128];
+    char exit_reason[sizeof(state->exit_reason)];
     char status[sizeof(state->status)];
+
+    stream_media_get_snapshot(&media);
 
     pthread_mutex_lock(&state->lock);
     mode = state->mode;
@@ -1584,6 +2010,12 @@ static void state_line(app_state *state, char *out, size_t out_len) {
     ihs_initialized = state->ihs_initialized;
     ihs_client_ready = state->ihs_client_ready;
     stream_worker_active = state->stream_worker_active;
+    stop_requested = state->stop_requested;
+    exit_requested = state->exit_requested;
+    local_hotkeys_ready = state->local_hotkeys_ready;
+    local_volume_ready = state->local_volume_ready;
+    local_volume_target = state->local_volume_target;
+    local_volume_value = state->local_volume_value;
     width = state->video_width;
     height = state->video_height;
     codec = state->video_codec;
@@ -1608,6 +2040,8 @@ static void state_line(app_state *state, char *out, size_t out_len) {
     decoder[sizeof(decoder) - 1] = '\0';
     strncpy(media_error, state->media_error, sizeof(media_error));
     media_error[sizeof(media_error) - 1] = '\0';
+    strncpy(exit_reason, state->exit_reason, sizeof(exit_reason));
+    exit_reason[sizeof(exit_reason) - 1] = '\0';
     strncpy(status, state->status, sizeof(status));
     status[sizeof(status) - 1] = '\0';
     if (selected_host >= 0 && selected_host < host_count) {
@@ -1631,7 +2065,11 @@ static void state_line(app_state *state, char *out, size_t out_len) {
     snprintf(out, out_len,
              "mode=%s hosts=%d selected=%d host=%s ip=%s games=%d paired=%d steamId=%" PRIu64
              " ihs=%d client=%d worker=%d streamResult=%d/%s session=%d connected=%d"
+             " stopReq=%d exitReq=%d exitReason=\"%s\""
+             " hotkeys=%d volumeReady=%d volumeTarget=%d volume=%d"
              " video=%d codec=%s size=%ux%u"
+             " audio=%d audioCodec=%s(%d) audioHz=%d audioCh=%d audioFrames=%u"
+             " audioQ=%u audioDrops=%u audioErr=%u"
              " frames=%u keyframes=%u decoded=%u displayed=%u firstFrame=%d mediaDrop=%u"
              " gaps=%u maxGap=%u encodedKB=%" PRIu64 " avgKbps=%" PRIu64
              " firstRxMs=%" PRIu64 " elapsedMs=%" PRIu64
@@ -1641,8 +2079,14 @@ static void state_line(app_state *state, char *out, size_t out_len) {
              mode_name(mode), host_count, selected_host + 1, have_host ? host.hostname : "-",
              ip ? ip : "-", have_host ? (int)host.gamesRunning : -1, steam_id != 0, steam_id,
              ihs_initialized, ihs_client_ready, stream_worker_active, (int)stream_result,
-             stream_result_name(stream_result), session_active, session_connected, video_started,
-             codec_name(codec), width, height, frames, keyframes, decoded, displayed,
+             stream_result_name(stream_result), session_active, session_connected, stop_requested,
+             exit_requested, exit_reason[0] ? exit_reason : "-", local_hotkeys_ready,
+             local_volume_ready, local_volume_target, local_volume_value, video_started,
+             codec_name(codec), width, height, media.audio_active ? 1 : 0,
+             audio_codec_name((IHS_StreamAudioCodec)media.audio_codec), media.audio_codec,
+             media.audio_frequency, media.audio_channels, media.audio_frames,
+             media.audio_queued_bytes, media.audio_queue_drops, media.audio_decode_errors,
+             frames, keyframes, decoded, displayed,
              first_displayed, media_dropped, frame_gaps, max_frame_gap, encoded_bytes / 1024U,
              avg_kbps, first_frame_ms > stream_start_ms ? first_frame_ms - stream_start_ms : 0,
              elapsed_ms, last_frame,
@@ -1691,6 +2135,8 @@ static void perf_line(app_state *state, char *out, size_t out_len) {
              " gaps=%u maxGap=%u encodedKB=%" PRIu64 " avgKbps=%" PRIu64
              " elapsedMs=%" PRIu64 " firstRxMs=%" PRIu64 " autoStop=%u"
              " decoder=\"%s\" transferFrames=%u converted=%u"
+             " audio=%d audioFrames=%u audioKB=%" PRIu64
+             " audioSamples=%" PRIu64 " audioQ=%u audioDrops=%u audioErr=%u"
              " decodeAvgUs=%" PRIu64 " decodeMaxUs=%u"
              " transferAvgUs=%" PRIu64 " transferMaxUs=%u"
              " convertAvgUs=%" PRIu64 " convertMaxUs=%u"
@@ -1701,7 +2147,9 @@ static void perf_line(app_state *state, char *out, size_t out_len) {
              media.dropped_frames, frame_gaps, max_frame_gap, encoded_bytes / 1024U,
              avg_kbps, elapsed_ms, first_rx_ms, auto_stop,
              media.decoder[0] ? media.decoder : "-", media.transferred_frames,
-             media.converted_frames,
+             media.converted_frames, media.audio_active ? 1 : 0, media.audio_frames,
+             media.audio_bytes / 1024U, media.audio_decoded_samples,
+             media.audio_queued_bytes, media.audio_queue_drops, media.audio_decode_errors,
              avg_u64(media.decode_us_total, media.decode_samples), media.decode_us_max,
              avg_u64(media.transfer_us_total, media.transferred_frames), media.transfer_us_max,
              avg_u64(media.convert_us_total, media.converted_frames), media.convert_us_max,
@@ -1715,12 +2163,24 @@ static void hid_line(char *out, size_t out_len) {
     stream_media_get_snapshot(&media);
     snprintf(out, out_len,
              "hidEvents=%u hidSendOk=%u hidSendFail=%u stateFull=%u"
+             " rawAxTotal=%u rawBtnTotal=%u styFlTotal=%u sty=%s"
+             " minus=%d/%u/%d/%u"
              " providerDevices=%d sdlJoy=%d sdlIndex=%d sdlInstance=%d sdlType=%d"
              " lastEvent=%d/%d/%d/%d"
              " openOk=%u openFail=%u start=%u startLen=%u full=%u"
-             " getFeature=%u getStrings=%u noDevice=%u activeInput=1 ctrlRetrans=%u ctrlWarn=%u"
+             " getFeature=%u getStrings=%u noDevice=%u activeInput=1 ctrlWarn=%u"
+             " rel=%" PRIu64 "/%" PRIu64 " retry=%" PRIu64 " fail=%" PRIu64
+             " out=%u oldest=%" PRIu64 "ms@%u/%u/%d#%u maxAck=%" PRIu64 "ms"
+             " hidSM=%" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%u/%u@%d"
              " sdlName=\"%s\" sdlGuid=%s",
              media.hid_events, media.hid_send_ok, media.hid_send_fail, media.hid_state_full,
+             media.hid_raw_ax_total, media.hid_raw_btn_total,
+             media.hid_style_flips_total,
+             media.hid_style_state[0] ? media.hid_style_state : "-",
+             media.hid_marker_minus_sdl_held ? 1 : 0,
+             media.hid_marker_minus_sdl_samples_total,
+             media.hid_marker_minus_raw_held ? 1 : 0,
+             media.hid_marker_minus_raw_samples_total,
              media.hid_provider_devices, media.hid_sdl_joystick_count,
              media.hid_sdl_controller_index, media.hid_sdl_instance_id,
              media.hid_sdl_controller_type,
@@ -1734,10 +2194,531 @@ static void hid_line(char *out, size_t out_len) {
              (uint32_t)atomic_load_explicit(&diag_hid_get_feature, memory_order_relaxed),
              (uint32_t)atomic_load_explicit(&diag_hid_get_strings, memory_order_relaxed),
              (uint32_t)atomic_load_explicit(&diag_hid_no_device, memory_order_relaxed),
-             (uint32_t)atomic_load_explicit(&diag_control_retrans_giveup, memory_order_relaxed),
              (uint32_t)atomic_load_explicit(&diag_control_warn, memory_order_relaxed),
+             media.reliability.reliableTracked,
+             media.reliability.reliableAcknowledged,
+             media.reliability.reliableRetries,
+             media.reliability.reliableSendFailures,
+             media.reliability.reliableOutstanding,
+             media.reliability.reliableOldestOutstandingMs,
+             media.reliability.reliableOldestChannelId,
+             media.reliability.reliableOldestPacketId,
+             media.reliability.reliableOldestFragmentId,
+             media.reliability.reliableOldestRetryCount,
+             media.reliability.reliableMaxAckLatencyMs,
+             media.reliability.hidSubmitted,
+             media.reliability.hidCoalesced,
+             media.reliability.hidSent,
+             media.reliability.hidAcknowledged,
+             media.reliability.hidPending,
+             media.reliability.hidInFlight,
+             media.reliability.hidOldestInFlightPacketId,
              media.hid_sdl_name[0] ? media.hid_sdl_name : "-",
              media.hid_sdl_guid[0] ? media.hid_sdl_guid : "-");
+}
+
+static void audio_line(char *out, size_t out_len) {
+    stream_media_snapshot media;
+    stream_media_get_snapshot(&media);
+    snprintf(out, out_len,
+             "audio=%d codec=%s(%d) freq=%d channels=%d frames=%u"
+             " pcmKB=%" PRIu64 " decodedSamples=%" PRIu64
+             " queuedBytes=%u queueDrops=%u errors=%u",
+             media.audio_active ? 1 : 0,
+             audio_codec_name((IHS_StreamAudioCodec)media.audio_codec), media.audio_codec,
+             media.audio_frequency, media.audio_channels, media.audio_frames,
+             media.audio_bytes / 1024U, media.audio_decoded_samples,
+             media.audio_queued_bytes, media.audio_queue_drops, media.audio_decode_errors);
+}
+
+typedef struct diag_marker_net {
+    uint32_t frames;
+    uint32_t keyframes;
+    uint32_t displayed;
+    uint32_t media_dropped;
+    uint32_t audio_frames;
+    uint32_t audio_queued_bytes;
+    uint32_t audio_queue_drops;
+    uint32_t audio_decode_errors;
+    uint32_t frame_gaps;
+    uint32_t max_frame_gap;
+    uint32_t control_warn;
+    uint64_t reliable_retries;
+    uint64_t hid_coalesced;
+    uint32_t reliable_outstanding;
+    uint32_t hid_pending;
+    uint32_t hid_in_flight;
+    uint64_t reliable_oldest_ms;
+    uint32_t reliable_oldest_channel;
+    uint32_t reliable_oldest_packet;
+    int32_t reliable_oldest_fragment;
+    uint32_t reliable_oldest_retry;
+    int32_t hid_oldest_packet;
+    uint64_t encoded_bytes;
+    size_t last_frame_size;
+    uint32_t frame_delta;
+    uint32_t keyframe_delta;
+    uint32_t displayed_delta;
+    uint32_t media_drop_delta;
+    uint32_t audio_delta;
+    uint32_t frame_gap_delta;
+    uint64_t reliable_retry_delta;
+    uint64_t hid_coalesced_delta;
+    uint32_t control_warn_delta;
+    uint64_t encoded_delta;
+    uint64_t main_age_ms;
+    uint64_t last_frame_age_ms;
+} diag_marker_net;
+
+typedef struct diag_disk_prev {
+    bool valid;
+    uint32_t frames;
+    uint32_t keyframes;
+    uint32_t displayed;
+    uint32_t media_dropped;
+    uint32_t audio_frames;
+    uint32_t frame_gaps;
+    uint32_t control_warn;
+    uint64_t reliable_retries;
+    uint64_t hid_coalesced;
+    uint64_t encoded_bytes;
+} diag_disk_prev;
+
+static uint32_t diag_counter_delta(uint32_t value, uint32_t previous, bool valid) {
+    return valid && value >= previous ? value - previous : 0U;
+}
+
+static uint64_t diag_counter_delta64(uint64_t value, uint64_t previous, bool valid) {
+    return valid && value >= previous ? value - previous : 0U;
+}
+
+static void diag_marker_net_capture(app_state *state, uint64_t now_ms,
+                                    diag_disk_prev *prev, diag_marker_net *out) {
+    stream_media_snapshot media;
+    stream_media_get_snapshot(&media);
+
+    uint64_t last_frame_ms = 0;
+    memset(out, 0, sizeof(*out));
+
+    pthread_mutex_lock(&state->lock);
+    out->frames = state->frame_count;
+    out->keyframes = state->keyframe_count;
+    out->displayed = state->displayed_frames;
+    out->media_dropped = state->media_dropped_frames;
+    out->frame_gaps = state->frame_gap_count;
+    out->max_frame_gap = state->max_frame_gap;
+    out->encoded_bytes = state->encoded_bytes;
+    out->last_frame_size = state->last_frame_size;
+    last_frame_ms = state->last_frame_ms;
+    pthread_mutex_unlock(&state->lock);
+
+    out->audio_frames = media.audio_frames;
+    out->audio_queued_bytes = media.audio_queued_bytes;
+    out->audio_queue_drops = media.audio_queue_drops;
+    out->audio_decode_errors = media.audio_decode_errors;
+    out->control_warn =
+        (uint32_t)atomic_load_explicit(&diag_control_warn, memory_order_relaxed);
+    out->reliable_retries = media.reliability.reliableRetries;
+    out->hid_coalesced = media.reliability.hidCoalesced;
+    out->reliable_outstanding = media.reliability.reliableOutstanding;
+    out->hid_pending = media.reliability.hidPending;
+    out->hid_in_flight = media.reliability.hidInFlight;
+    out->reliable_oldest_ms = media.reliability.reliableOldestOutstandingMs;
+    out->reliable_oldest_channel = media.reliability.reliableOldestChannelId;
+    out->reliable_oldest_packet = media.reliability.reliableOldestPacketId;
+    out->reliable_oldest_fragment = media.reliability.reliableOldestFragmentId;
+    out->reliable_oldest_retry = media.reliability.reliableOldestRetryCount;
+    out->hid_oldest_packet = media.reliability.hidOldestInFlightPacketId;
+    uint64_t last_main_ms =
+        atomic_load_explicit(&watchdog_last_main_ms, memory_order_relaxed);
+    if (last_main_ms > 0 && now_ms >= last_main_ms) {
+        out->main_age_ms = now_ms - last_main_ms;
+    }
+    if (last_frame_ms > 0 && now_ms >= last_frame_ms) {
+        out->last_frame_age_ms = now_ms - last_frame_ms;
+    }
+
+    out->frame_delta = diag_counter_delta(out->frames, prev->frames, prev->valid);
+    out->keyframe_delta =
+        diag_counter_delta(out->keyframes, prev->keyframes, prev->valid);
+    out->displayed_delta =
+        diag_counter_delta(out->displayed, prev->displayed, prev->valid);
+    out->media_drop_delta =
+        diag_counter_delta(out->media_dropped, prev->media_dropped, prev->valid);
+    out->audio_delta = diag_counter_delta(out->audio_frames, prev->audio_frames, prev->valid);
+    out->frame_gap_delta =
+        diag_counter_delta(out->frame_gaps, prev->frame_gaps, prev->valid);
+    out->reliable_retry_delta =
+        diag_counter_delta64(out->reliable_retries, prev->reliable_retries, prev->valid);
+    out->hid_coalesced_delta =
+        diag_counter_delta64(out->hid_coalesced, prev->hid_coalesced, prev->valid);
+    out->control_warn_delta =
+        diag_counter_delta(out->control_warn, prev->control_warn, prev->valid);
+    out->encoded_delta =
+        diag_counter_delta64(out->encoded_bytes, prev->encoded_bytes, prev->valid);
+
+    prev->valid = true;
+    prev->frames = out->frames;
+    prev->keyframes = out->keyframes;
+    prev->displayed = out->displayed;
+    prev->media_dropped = out->media_dropped;
+    prev->audio_frames = out->audio_frames;
+    prev->frame_gaps = out->frame_gaps;
+    prev->control_warn = out->control_warn;
+    prev->reliable_retries = out->reliable_retries;
+    prev->hid_coalesced = out->hid_coalesced;
+    prev->encoded_bytes = out->encoded_bytes;
+}
+
+static void diag_recent_reset(void) {
+    pthread_mutex_lock(&diag_recent_lock);
+    diag_recent_len = 0;
+    diag_recent[0] = '\0';
+    pthread_mutex_unlock(&diag_recent_lock);
+}
+
+static void diag_recent_append(const char *text) {
+    if (text == NULL || text[0] == '\0') {
+        return;
+    }
+    size_t text_len = strlen(text);
+    size_t capacity = sizeof(diag_recent) - 1U;
+    pthread_mutex_lock(&diag_recent_lock);
+    if (text_len >= capacity) {
+        memcpy(diag_recent, text + text_len - capacity, capacity);
+        diag_recent_len = capacity;
+    } else {
+        if (diag_recent_len + text_len > capacity) {
+            size_t drop = diag_recent_len + text_len - capacity;
+            memmove(diag_recent, diag_recent + drop, diag_recent_len - drop);
+            diag_recent_len -= drop;
+        }
+        memcpy(diag_recent + diag_recent_len, text, text_len);
+        diag_recent_len += text_len;
+    }
+    diag_recent[diag_recent_len] = '\0';
+    pthread_mutex_unlock(&diag_recent_lock);
+}
+
+static bool diag_recent_copy(char *out, size_t out_len) {
+    if (out == NULL || out_len == 0) {
+        return false;
+    }
+    pthread_mutex_lock(&diag_recent_lock);
+    size_t n = diag_recent_len < out_len - 1U ? diag_recent_len : out_len - 1U;
+    if (n > 0) {
+        memcpy(out, diag_recent + diag_recent_len - n, n);
+    }
+    pthread_mutex_unlock(&diag_recent_lock);
+    out[n] = '\0';
+    return n > 0;
+}
+
+static void diag_marker_recent_reset(void) {
+    pthread_mutex_lock(&diag_marker_recent_lock);
+    diag_marker_recent_len = 0;
+    diag_marker_recent[0] = '\0';
+    pthread_mutex_unlock(&diag_marker_recent_lock);
+}
+
+static void diag_marker_recent_append(const char *text) {
+    if (text == NULL || text[0] == '\0') {
+        return;
+    }
+    size_t text_len = strlen(text);
+    size_t capacity = sizeof(diag_marker_recent) - 1U;
+    pthread_mutex_lock(&diag_marker_recent_lock);
+    if (text_len >= capacity) {
+        memcpy(diag_marker_recent, text + text_len - capacity, capacity);
+        diag_marker_recent_len = capacity;
+    } else {
+        if (diag_marker_recent_len + text_len > capacity) {
+            size_t drop = diag_marker_recent_len + text_len - capacity;
+            memmove(diag_marker_recent, diag_marker_recent + drop,
+                    diag_marker_recent_len - drop);
+            diag_marker_recent_len -= drop;
+        }
+        memcpy(diag_marker_recent + diag_marker_recent_len, text, text_len);
+        diag_marker_recent_len += text_len;
+    }
+    diag_marker_recent[diag_marker_recent_len] = '\0';
+    pthread_mutex_unlock(&diag_marker_recent_lock);
+}
+
+static bool diag_marker_recent_copy(char *out, size_t out_len) {
+    if (out == NULL || out_len == 0) {
+        return false;
+    }
+    pthread_mutex_lock(&diag_marker_recent_lock);
+    size_t n = diag_marker_recent_len < out_len - 1U ? diag_marker_recent_len : out_len - 1U;
+    if (n > 0) {
+        memcpy(out, diag_marker_recent + diag_marker_recent_len - n, n);
+    }
+    pthread_mutex_unlock(&diag_marker_recent_lock);
+    out[n] = '\0';
+    return n > 0;
+}
+
+static void diag_disk_printf(FILE *fp, const char *fmt, ...) {
+    char line[DEBUG_TX + 512U];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+    fputs(line, fp);
+    diag_recent_append(line);
+}
+
+static void diag_marker_printf(FILE *fp, const char *fmt, ...) {
+    char line[DEBUG_TX + 512U];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+    if (fp != NULL) {
+        fputs(line, fp);
+    }
+    diag_marker_recent_append(line);
+}
+
+static void diag_disk_write_hid_history(FILE *fp, FILE *marker_fp, uint32_t *last_seq,
+                                        const diag_marker_net *net) {
+    stream_media_hid_history_entry entries[60];
+    size_t count = stream_media_copy_hid_history(entries, sizeof(entries) / sizeof(entries[0]));
+    for (size_t i = 0; i < count; i++) {
+        const stream_media_hid_history_entry *e = &entries[i];
+        if (e->seq <= *last_seq) {
+            continue;
+        }
+        bool marker_seen = e->marker_minus_sdl_held != 0 ||
+                           e->marker_minus_sdl_samples != 0 ||
+                           e->marker_minus_raw_held != 0 ||
+                           e->marker_minus_raw_samples != 0;
+        diag_disk_printf(fp,
+                         "hidsec seq=%u sec=%u e=%u ok=%u f=%u h=%u p=%u ax=%u btn=%u sen=%u oth=%u "
+                         "sup=%u raw=%u/%u sty=%u:%s sticks=%d/%d/%d/%d b=0x%x "
+                         "minus=%u/%u/%u/%u tot=%u/%u/%u/%u/%u last=%d/%d/%d/%d\n",
+                         e->seq, e->sec, e->events, e->send_ok, e->send_fail,
+                         e->state_full, e->pump, e->ax, e->btn, e->sen, e->oth,
+                         e->ev_sup, e->raw_ax, e->raw_btn, e->sty_fl,
+                         e->sty[0] ? e->sty : "-", e->left_x, e->left_y,
+                         e->right_x, e->right_y, e->buttons,
+                         e->marker_minus_sdl_held, e->marker_minus_sdl_samples,
+                         e->marker_minus_raw_held, e->marker_minus_raw_samples,
+                         e->events_total,
+                         e->send_ok_total, e->state_full_total, e->raw_ax_total,
+                         e->raw_btn_total, e->last_type, e->last_which,
+                         e->last_code, e->last_value);
+        if (marker_seen) {
+            diag_marker_printf(marker_fp,
+                               "markMinus seq=%u sec=%u e=%u ok=%u f=%u h=%u p=%u ax=%u btn=%u raw=%u/%u "
+                               "sticks=%d/%d/%d/%d b=0x%x minus=%u/%u/%u/%u tot=%u/%u/%u/%u/%u last=%d/%d/%d/%d\n",
+                               e->seq, e->sec, e->events, e->send_ok, e->send_fail,
+                               e->state_full, e->pump, e->ax, e->btn, e->raw_ax,
+                               e->raw_btn, e->left_x, e->left_y, e->right_x,
+                               e->right_y, e->buttons, e->marker_minus_sdl_held,
+                               e->marker_minus_sdl_samples, e->marker_minus_raw_held,
+                               e->marker_minus_raw_samples, e->events_total,
+                               e->send_ok_total, e->state_full_total, e->raw_ax_total,
+                               e->raw_btn_total, e->last_type, e->last_which,
+                               e->last_code, e->last_value);
+            diag_marker_printf(marker_fp,
+                               "markNet seq=%u frames=%u/+%u displayed=%u/+%u audio=%u/+%u "
+                               "mainAgeMs=%" PRIu64 " lastFrameAgeMs=%" PRIu64
+                               " gaps=%u/%u audioQ=%u "
+                               "audioDrop=%u audioErr=%u relRetry=%" PRIu64 "/+%" PRIu64
+                               " relOut=%u relOldest=%" PRIu64 "@%u/%u/%d#%u"
+                               " hidCoal=%" PRIu64 "/+%" PRIu64 " hidWait=%u/%u@%d"
+                               " ctrlWarn=%u/+%u\n",
+                               e->seq, net->frames, net->frame_delta, net->displayed,
+                               net->displayed_delta, net->audio_frames, net->audio_delta,
+                               net->main_age_ms, net->last_frame_age_ms, net->frame_gaps,
+                               net->max_frame_gap, net->audio_queued_bytes,
+                               net->audio_queue_drops,
+                               net->audio_decode_errors, net->reliable_retries,
+                               net->reliable_retry_delta, net->reliable_outstanding,
+                               net->reliable_oldest_ms, net->reliable_oldest_channel,
+                               net->reliable_oldest_packet, net->reliable_oldest_fragment,
+                               net->reliable_oldest_retry, net->hid_coalesced,
+                               net->hid_coalesced_delta, net->hid_pending,
+                               net->hid_in_flight, net->hid_oldest_packet, net->control_warn,
+                               net->control_warn_delta);
+        }
+        *last_seq = e->seq;
+    }
+}
+
+static void diag_disk_write_tick(FILE *fp, FILE *marker_fp, app_state *state,
+                                 uint32_t *last_hid_seq, diag_disk_prev *prev) {
+    uint64_t now = monotonic_ms();
+    uint64_t last_main = atomic_load_explicit(&watchdog_last_main_ms, memory_order_relaxed);
+    uint64_t main_age = last_main > 0 && now >= last_main ? now - last_main : 0;
+    char state_buf[DEBUG_TX];
+    char hid_buf[DEBUG_TX];
+    char audio_buf[DEBUG_TX];
+    diag_marker_net net;
+
+    diag_marker_net_capture(state, now, prev, &net);
+    state_line(state, state_buf, sizeof(state_buf));
+    hid_line(hid_buf, sizeof(hid_buf));
+    audio_line(audio_buf, sizeof(audio_buf));
+
+    diag_disk_printf(fp, "diag ms=%" PRIu64 " mainAgeMs=%" PRIu64 " %s\n", now,
+                     main_age, state_buf);
+    diag_disk_printf(fp, "diag-hid ms=%" PRIu64 " %s\n", now, hid_buf);
+    diag_disk_printf(fp, "diag-audio ms=%" PRIu64 " %s\n", now, audio_buf);
+    diag_disk_write_hid_history(fp, marker_fp, last_hid_seq, &net);
+    atomic_fetch_add_explicit(&diag_disk_ticks, 1, memory_order_relaxed);
+}
+
+static void diag_disk_flush(FILE *fp) {
+    fflush(fp);
+    int fd = fileno(fp);
+    if (fd >= 0) {
+        fsync(fd);
+    }
+}
+
+static void *diag_disk_thread_main(void *arg) {
+    app_state *state = (app_state *)arg;
+    atomic_store_explicit(&diag_disk_thread_alive, true, memory_order_relaxed);
+    atomic_store_explicit(&diag_disk_thread_error, 0, memory_order_relaxed);
+    FILE *fp = fopen(DIAG_PATH, "a");
+    if (fp == NULL) {
+        atomic_store_explicit(&diag_disk_thread_error, (uint32_t)errno, memory_order_relaxed);
+        atomic_store_explicit(&diag_disk_thread_alive, false, memory_order_relaxed);
+        return NULL;
+    }
+    FILE *marker_fp = fopen(DIAG_MARKER_PATH, "a");
+    if (marker_fp == NULL) {
+        atomic_store_explicit(&diag_disk_marker_error, (uint32_t)errno, memory_order_relaxed);
+    }
+    setvbuf(fp, NULL, _IOLBF, 0);
+    if (marker_fp != NULL) {
+        setvbuf(marker_fp, NULL, _IOLBF, 0);
+    }
+    diag_disk_printf(fp, "thread_start ms=%" PRIu64 "\n", monotonic_ms());
+    uint32_t last_hid_seq = 0;
+    diag_disk_prev prev = {0};
+    diag_disk_write_tick(fp, marker_fp, state, &last_hid_seq, &prev);
+    diag_disk_flush(fp);
+    if (marker_fp != NULL) {
+        diag_disk_flush(marker_fp);
+    }
+
+    while (!atomic_load_explicit(&diag_disk_stop, memory_order_relaxed)) {
+        for (int i = 0; i < 10; i++) {
+            if (atomic_load_explicit(&diag_disk_stop, memory_order_relaxed)) {
+                break;
+            }
+            svcSleepThread(100ULL * 1000ULL * 1000ULL);
+        }
+        if (atomic_load_explicit(&diag_disk_stop, memory_order_relaxed)) {
+            break;
+        }
+        diag_disk_write_tick(fp, marker_fp, state, &last_hid_seq, &prev);
+        diag_disk_flush(fp);
+        if (marker_fp != NULL) {
+            diag_disk_flush(marker_fp);
+        }
+    }
+
+    diag_disk_printf(fp, "thread_stop ms=%" PRIu64 "\n", monotonic_ms());
+    diag_disk_write_tick(fp, marker_fp, state, &last_hid_seq, &prev);
+    diag_disk_flush(fp);
+    fclose(fp);
+    if (marker_fp != NULL) {
+        diag_disk_flush(marker_fp);
+        fclose(marker_fp);
+    }
+    atomic_store_explicit(&diag_disk_thread_alive, false, memory_order_relaxed);
+    return NULL;
+}
+
+static void diag_disk_start(app_state *state) {
+    if (diag_disk_started) {
+        return;
+    }
+    int saved_errno = errno;
+    atomic_store_explicit(&diag_disk_start_error, 0, memory_order_relaxed);
+    atomic_store_explicit(&diag_disk_thread_error, 0, memory_order_relaxed);
+    atomic_store_explicit(&diag_disk_marker_error, 0, memory_order_relaxed);
+    atomic_store_explicit(&diag_disk_event_error, 0, memory_order_relaxed);
+    atomic_store_explicit(&diag_disk_ticks, 0, memory_order_relaxed);
+    diag_recent_reset();
+    diag_marker_recent_reset();
+    if (!ensure_auth_dir()) {
+        atomic_store_explicit(&diag_disk_start_error, (uint32_t)errno, memory_order_relaxed);
+        logline("diag disk disabled: mkdir errno=%d", errno);
+        errno = saved_errno;
+        return;
+    }
+    remove(DIAG_PREV_PATH);
+    if (rename(DIAG_PATH, DIAG_PREV_PATH) != 0 && errno != ENOENT) {
+        logline("diag disk rotate failed: errno=%d", errno);
+    }
+    remove(DIAG_MARKER_PREV_PATH);
+    if (rename(DIAG_MARKER_PATH, DIAG_MARKER_PREV_PATH) != 0 && errno != ENOENT) {
+        logline("diag marker rotate failed: errno=%d", errno);
+    }
+
+    FILE *fp = fopen(DIAG_PATH, "w");
+    if (fp == NULL) {
+        atomic_store_explicit(&diag_disk_start_error, (uint32_t)errno, memory_order_relaxed);
+        logline("diag disk disabled: fopen errno=%d", errno);
+        errno = saved_errno;
+        return;
+    }
+    char header[96];
+    snprintf(header, sizeof(header), "run_start ms=%" PRIu64 " app=%d\n", monotonic_ms(),
+             (int)NSTREAMLINK_APP);
+    fputs(header, fp);
+    diag_recent_append(header);
+    diag_disk_flush(fp);
+    fclose(fp);
+    FILE *marker_fp = fopen(DIAG_MARKER_PATH, "w");
+    if (marker_fp != NULL) {
+        diag_disk_flush(marker_fp);
+        fclose(marker_fp);
+    } else {
+        atomic_store_explicit(&diag_disk_marker_error, (uint32_t)errno, memory_order_relaxed);
+    }
+
+    atomic_store_explicit(&diag_disk_stop, false, memory_order_relaxed);
+    int rc = pthread_create(&diag_disk_thread, NULL, diag_disk_thread_main, state);
+    if (rc != 0) {
+        atomic_store_explicit(&diag_disk_start_error, (uint32_t)rc, memory_order_relaxed);
+        logline("diag disk disabled: pthread_create rc=%d", rc);
+        errno = saved_errno;
+        return;
+    }
+    diag_disk_started = true;
+    logline("diag disk active: %s prev=%s", DIAG_PATH, DIAG_PREV_PATH);
+    errno = saved_errno;
+}
+
+static void diag_disk_stop_thread(void) {
+    if (!diag_disk_started) {
+        return;
+    }
+    atomic_store_explicit(&diag_disk_stop, true, memory_order_relaxed);
+    pthread_join(diag_disk_thread, NULL);
+    diag_disk_started = false;
+    logline("diag disk stopped");
+}
+
+static void diag_status_line(char *out, size_t out_len) {
+    snprintf(out, out_len,
+             "started=%d alive=%d stop=%d ticks=%u startErr=%u threadErr=%u markerErr=%u "
+             "path=%s prev=%s marker=%s markerPrev=%s",
+             diag_disk_started ? 1 : 0,
+             atomic_load_explicit(&diag_disk_thread_alive, memory_order_relaxed) ? 1 : 0,
+             atomic_load_explicit(&diag_disk_stop, memory_order_relaxed) ? 1 : 0,
+             (uint32_t)atomic_load_explicit(&diag_disk_ticks, memory_order_relaxed),
+             (uint32_t)atomic_load_explicit(&diag_disk_start_error, memory_order_relaxed),
+             (uint32_t)atomic_load_explicit(&diag_disk_thread_error, memory_order_relaxed),
+             (uint32_t)atomic_load_explicit(&diag_disk_marker_error, memory_order_relaxed),
+             DIAG_PATH, DIAG_PREV_PATH, DIAG_MARKER_PATH, DIAG_MARKER_PREV_PATH);
 }
 
 static void log_perf_summary(app_state *state) {
@@ -1770,9 +2751,12 @@ static void console_draw(app_state *state) {
     size_t last_size;
     IHS_StreamVideoCodec codec;
     bool first_displayed;
+    stream_media_snapshot media;
     char decoder[64];
     char media_error[128];
     char status[sizeof(state->status)];
+
+    stream_media_get_snapshot(&media);
 
     pthread_mutex_lock(&state->lock);
     host_count = state->host_count;
@@ -1811,7 +2795,8 @@ static void console_draw(app_state *state) {
     dprintf(cons_fd, "auth: %s  deviceId: 0x%016" PRIx64 "  steamId: %" PRIu64 "\n",
             auth.steam_id ? "paired" : "not paired", auth.device_id, auth.steam_id);
     dprintf(cons_fd, "mode: %s  status: %s\n\n", mode_name(mode), status[0] ? status : "-");
-    dprintf(cons_fd, "menu: A start  X mode  Y refresh  PLUS exit | stream: MINUS+B stop  PLUS exit\n");
+    dprintf(cons_fd,
+            "menu: A start  X mode  Y refresh  B stop | local: L3+R3+VOL+ exit  L3+R3+VOL- stop\n");
     dprintf(cons_fd,
             "Debug UDP %d: state | stats | stream [game] [frames=N|seconds=N|hold] | stop | exit\n\n",
             DEBUG_PORT);
@@ -1840,6 +2825,11 @@ static void console_draw(app_state *state) {
             codec_name(codec), width, height, frames, keyframes);
     dprintf(cons_fd, "  decoded=%u displayed=%u first=%d mediaDrop=%u decoder=%s\n",
             decoded, displayed, first_displayed, media_dropped, decoder[0] ? decoder : "-");
+    dprintf(cons_fd, "  audio=%d %s %dHz ch=%d frames=%u queued=%u err=%u drop=%u\n",
+            media.audio_active ? 1 : 0,
+            audio_codec_name((IHS_StreamAudioCodec)media.audio_codec),
+            media.audio_frequency, media.audio_channels, media.audio_frames,
+            media.audio_queued_bytes, media.audio_decode_errors, media.audio_queue_drops);
     dprintf(cons_fd, "  lastFrame=%u lastBytes=%zu lastDisplayed=%u\n",
             last_frame, last_size, last_displayed);
     if (media_error[0]) {
@@ -1939,7 +2929,10 @@ static void update_screen_ui(app_state *state) {
     bool session_active;
     bool video_started;
     uint32_t frames, displayed, dropped, gaps, max_gap;
+    stream_media_snapshot media;
     char decoder[sizeof(state->media_decoder)];
+
+    stream_media_get_snapshot(&media);
 
     pthread_mutex_lock(&state->lock);
     mode = state->mode;
@@ -1979,7 +2972,7 @@ static void update_screen_ui(app_state *state) {
     if (!auth_loaded || mode == PROBE_ERROR) {
         ui_set_line(&ui, &line, "STATUS: %s", status[0] ? status : "ERROR");
         ui_set_line(&ui, &line, "RUN M2 PAIRING IF AUTH.BIN IS MISSING");
-        ui_set_line(&ui, &line, "+ EXIT");
+        ui_set_line(&ui, &line, "L3+R3+VOL+ EXIT");
         stream_media_set_ui(&ui);
         return;
     }
@@ -1999,7 +2992,8 @@ static void update_screen_ui(app_state *state) {
         ui_set_line(&ui, &line, "HOST PIN REQUIRED");
         ui_set_line(&ui, &line, "PIN: %s", decorated);
         ui_set_line(&ui, &line, "LEFT/RIGHT MOVE  UP/DOWN EDIT");
-        ui_set_line(&ui, &line, "A SUBMIT  B CANCEL  + EXIT");
+        ui_set_line(&ui, &line, "A SUBMIT  B CANCEL");
+        ui_set_line(&ui, &line, "L3+R3+VOL+ EXIT");
         stream_media_set_ui(&ui);
         return;
     }
@@ -2010,8 +3004,11 @@ static void update_screen_ui(app_state *state) {
                     dropped);
         ui_set_line(&ui, &line, "GAPS %u  MAX %u  DECODER %s", gaps, max_gap,
                     decoder[0] ? decoder : "-");
+        ui_set_line(&ui, &line, "AUDIO %s  Q %u  ERR %u",
+                    media.audio_active ? "ON" : "WAIT",
+                    media.audio_queued_bytes, media.audio_decode_errors);
         ui_set_line(&ui, &line, "STATUS: %s", status[0] ? status : "-");
-        ui_set_line(&ui, &line, "MINUS+B STOP  PLUS EXIT");
+        ui_set_line(&ui, &line, "L3+R3+VOL- STOP  L3+R3+VOL+ EXIT");
         stream_media_set_ui(&ui);
         return;
     }
@@ -2029,7 +3026,8 @@ static void update_screen_ui(app_state *state) {
 
     ui_set_line(&ui, &line, "MODE: %s", ui_desktop ? "DESKTOP" : "GAME");
     ui_set_line(&ui, &line, "A START  X MODE  Y REFRESH");
-    ui_set_line(&ui, &line, "UP/DOWN HOST  B STOP  + EXIT");
+    ui_set_line(&ui, &line, "UP/DOWN HOST  B STOP");
+    ui_set_line(&ui, &line, "L3+R3+VOL- STOP  L3+R3+VOL+ EXIT");
     ui_set_line(&ui, &line, "STATUS: %s", status[0] ? status : stream_result_name(stream_result));
     stream_media_set_ui(&ui);
 }
@@ -2255,7 +3253,8 @@ static bool ensure_media_started(app_state *state, char *err, size_t err_len) {
     return true;
 }
 
-static void handle_input(app_state *state, stream_runtime *runtime, u64 kdown, u64 kheld) {
+static void handle_input(app_state *state, stream_runtime *runtime, u64 kdown, u64 kheld,
+                         local_volume_change volume_change) {
     bool pin_mode = false;
     bool session_active = false;
     pthread_mutex_lock(&state->lock);
@@ -2266,13 +3265,15 @@ static void handle_input(app_state *state, stream_runtime *runtime, u64 kdown, u
                      state->mode == PROBE_STREAM_READY;
     pthread_mutex_unlock(&state->lock);
 
-    bool app_control_held = (kheld & HidNpadButton_Minus) != 0;
-    if (kdown & HidNpadButton_Plus) {
-        pthread_mutex_lock(&state->lock);
-        state->exit_requested = true;
-        state->stop_requested = true;
-        pthread_mutex_unlock(&state->lock);
-        return;
+    if ((kheld & LOCAL_HOTKEY_MASK) == LOCAL_HOTKEY_MASK) {
+        if (volume_change == LOCAL_VOLUME_UP) {
+            request_app_exit(state, "hotkey:vol_up+sticks");
+            return;
+        }
+        if (volume_change == LOCAL_VOLUME_DOWN) {
+            request_stream_stop(state, "hotkey:vol_down+sticks");
+            return;
+        }
     }
 
     if (pin_mode) {
@@ -2333,20 +3334,11 @@ static void handle_input(app_state *state, stream_runtime *runtime, u64 kdown, u
     }
 
     if (session_active) {
-        if (app_control_held && (kdown & HidNpadButton_B)) {
-            pthread_mutex_lock(&state->lock);
-            state->stop_requested = true;
-            snprintf(state->ui_notice, sizeof(state->ui_notice), "Stopping stream");
-            pthread_mutex_unlock(&state->lock);
-        }
         return;
     }
 
     if (kdown & HidNpadButton_B) {
-        pthread_mutex_lock(&state->lock);
-        state->stop_requested = true;
-        snprintf(state->ui_notice, sizeof(state->ui_notice), "Stopping stream");
-        pthread_mutex_unlock(&state->lock);
+        request_stream_stop(state, "input:b");
         return;
     }
     if (kdown & HidNpadButton_X) {
@@ -2432,7 +3424,8 @@ static void debug_handle_command(debug_server *dbg, const struct sockaddr_in *pe
 
     if (*cmd == '\0' || ascii_ieq(cmd, "help")) {
         debug_reply(dbg, peer,
-                    "OK commands: ping state stats/perf hid hosts select <n> "
+                    "OK commands: ping state stats/perf audio hid hidlog [n] "
+                    "diag [current|prev|status|marker [current|prev]] hosts select <n> "
                     "press <A|B|X|Y|MINUS|PLUS|MINUS+B|MINUS+PLUS|UP|DOWN|LEFT|RIGHT> "
                     "ihs-init discover-once media-init media-shutdown "
                     "stream [desktop|game] [short|long|frames=N|seconds=N|hold] [pin] "
@@ -2445,10 +3438,85 @@ static void debug_handle_command(debug_server *dbg, const struct sockaddr_in *pe
         char line_out[DEBUG_TX - 16];
         perf_line(state, line_out, sizeof(line_out));
         debug_reply(dbg, peer, "OK %s", line_out);
+    } else if (ascii_ieq(cmd, "audio")) {
+        char line_out[DEBUG_TX - 16];
+        audio_line(line_out, sizeof(line_out));
+        debug_reply(dbg, peer, "OK %s", line_out);
     } else if (ascii_ieq(cmd, "hid")) {
         char line_out[DEBUG_TX - 16];
         hid_line(line_out, sizeof(line_out));
         debug_reply(dbg, peer, "OK %s", line_out);
+    } else if (ascii_ieq(cmd, "hidlog")) {
+        uint32_t count = 16;
+        if (*arg != '\0' && !parse_u32_arg(arg, 1, 60, &count)) {
+            debug_reply(dbg, peer, "ERR bad hidlog count");
+            return;
+        }
+        char line_out[DEBUG_TX - 16];
+        stream_media_format_hid_history(line_out, sizeof(line_out), count);
+        debug_reply(dbg, peer, "OK %s", line_out);
+    } else if (ascii_ieq(cmd, "diag") || ascii_ieq(cmd, "diag-tail")) {
+        char diag_arg_buf[DEBUG_RX];
+        strncpy(diag_arg_buf, arg, sizeof(diag_arg_buf));
+        diag_arg_buf[sizeof(diag_arg_buf) - 1] = '\0';
+        char *diag_arg = trim_ascii(diag_arg_buf);
+        char *diag_rest = diag_arg;
+        while (*diag_rest != '\0' && !isspace((unsigned char)*diag_rest)) {
+            diag_rest++;
+        }
+        if (*diag_rest != '\0') {
+            *diag_rest++ = '\0';
+            diag_rest = trim_ascii(diag_rest);
+        }
+        if (ascii_ieq(diag_arg, "status")) {
+            char status_out[DEBUG_TX - 16];
+            diag_status_line(status_out, sizeof(status_out));
+            debug_reply(dbg, peer, "OK %s", status_out);
+            return;
+        }
+        if (ascii_ieq(diag_arg, "marker") || ascii_ieq(diag_arg, "markers") ||
+            ascii_ieq(diag_arg, "minus")) {
+            bool previous = ascii_ieq(diag_rest, "prev") ||
+                            ascii_ieq(diag_rest, "previous") ||
+                            ascii_ieq(diag_rest, "last");
+            bool current = *diag_rest == '\0' || ascii_ieq(diag_rest, "current") ||
+                           ascii_ieq(diag_rest, "now");
+            if (!previous && !current) {
+                debug_reply(dbg, peer, "ERR bad diag marker target");
+                return;
+            }
+            const char *path = previous ? DIAG_MARKER_PREV_PATH : DIAG_MARKER_PATH;
+            char line_out[DEBUG_TX - 64];
+            if (current && diag_marker_recent_copy(line_out, sizeof(line_out))) {
+                debug_reply(dbg, peer, "OK current-marker %s\n%s", path, line_out);
+                return;
+            }
+            if (!read_text_tail(path, line_out, sizeof(line_out))) {
+                debug_reply(dbg, peer, "OK %s\n(no marker)", path);
+                return;
+            }
+            debug_reply(dbg, peer, "OK %s\n%s", path, line_out);
+            return;
+        }
+        bool previous = ascii_ieq(diag_arg, "prev") || ascii_ieq(diag_arg, "previous") ||
+                        ascii_ieq(diag_arg, "last");
+        bool current = *diag_arg == '\0' || ascii_ieq(diag_arg, "current") ||
+                       ascii_ieq(diag_arg, "now");
+        if (!previous && !current) {
+            debug_reply(dbg, peer, "ERR bad diag target");
+            return;
+        }
+        const char *path = previous ? DIAG_PREV_PATH : DIAG_PATH;
+        char line_out[DEBUG_TX - 64];
+        if (current && diag_recent_copy(line_out, sizeof(line_out))) {
+            debug_reply(dbg, peer, "OK current-memory %s\n%s", path, line_out);
+            return;
+        }
+        if (!read_text_tail(path, line_out, sizeof(line_out))) {
+            debug_reply(dbg, peer, "ERR no diag log at %s", path);
+            return;
+        }
+        debug_reply(dbg, peer, "OK %s\n%s", path, line_out);
     } else if (ascii_ieq(cmd, "hosts")) {
         debug_reply_hosts(dbg, peer, state);
     } else if (ascii_ieq(cmd, "ihs-init")) {
@@ -2496,7 +3564,7 @@ static void debug_handle_command(debug_server *dbg, const struct sockaddr_in *pe
             debug_reply(dbg, peer, "ERR unknown button");
             return;
         }
-        handle_input(state, runtime, button, button);
+        handle_input(state, runtime, button, button, LOCAL_VOLUME_NONE);
         debug_reply_state(dbg, peer, state, "OK");
     } else if (ascii_ieq(cmd, "stream") || ascii_ieq(cmd, "stream-game") ||
                ascii_ieq(cmd, "stream-desktop")) {
@@ -2549,15 +3617,10 @@ static void debug_handle_command(debug_server *dbg, const struct sockaddr_in *pe
         }
         debug_reply_state(dbg, peer, state, "OK");
     } else if (ascii_ieq(cmd, "stop")) {
-        pthread_mutex_lock(&state->lock);
-        state->stop_requested = true;
-        pthread_mutex_unlock(&state->lock);
+        request_stream_stop(state, "debug:stop");
         debug_reply_state(dbg, peer, state, "OK");
     } else if (ascii_ieq(cmd, "exit")) {
-        pthread_mutex_lock(&state->lock);
-        state->stop_requested = true;
-        state->exit_requested = true;
-        pthread_mutex_unlock(&state->lock);
+        request_app_exit(state, "debug:exit");
         debug_reply_state(dbg, peer, state, "OK");
     } else {
         debug_reply(dbg, peer, "ERR unknown command");
@@ -2645,18 +3708,6 @@ static void cleanup_client(IHS_Client *client) {
     logq_drain();
 }
 
-static bool blocking_cleanup_safe(app_state *state, stream_worker *streamer) {
-    bool safe = stream_worker_idle(streamer);
-    pthread_mutex_lock(&state->lock);
-    if (state->session != NULL || state->mode == PROBE_STREAM_REQUESTING ||
-        state->mode == PROBE_STREAM_READY || state->mode == PROBE_SESSION_CONNECTING ||
-        state->mode == PROBE_SESSION_ACTIVE || state->mode == PROBE_SESSION_STOPPING) {
-        safe = false;
-    }
-    pthread_mutex_unlock(&state->lock);
-    return safe;
-}
-
 static void read_text_summary(const char *path, char *out, size_t out_len) {
     if (out_len == 0) {
         return;
@@ -2681,7 +3732,10 @@ static void read_text_summary(const char *path, char *out, size_t out_len) {
 
 static void log_previous_evidence(const char *label, const char *text) {
     if (text != NULL && text[0] != '\0') {
-        logline("previous %s: %.180s", label, text);
+        char local[256];
+        snprintf(local, sizeof(local), "%.220s", text);
+        sanitize_text_for_log(local);
+        logline("previous %s: %s", label, local);
     }
 }
 
@@ -2693,13 +3747,17 @@ int main(int argc, char **argv) {
     char prev_exit_stage[256];
     char prev_watchdog[256];
     char prev_exception[512];
+    char prev_diag[768];
     read_text_summary(BOOT_STAGE_PATH, prev_boot_stage, sizeof(prev_boot_stage));
     read_text_summary(EXIT_STAGE_PATH, prev_exit_stage, sizeof(prev_exit_stage));
     read_text_summary(WATCHDOG_PATH, prev_watchdog, sizeof(prev_watchdog));
     read_text_summary(EXCEPTION_PATH, prev_exception, sizeof(prev_exception));
+    read_text_tail(DIAG_PATH, prev_diag, sizeof(prev_diag));
 
     write_boot_stage("main:entered");
     bool console_active = false;
+    local_controls local_input;
+    memset(&local_input, 0, sizeof(local_input));
 
     padConfigureInput(1, HidNpadStyleSet_NpadStandard);
     PadState pad;
@@ -2784,6 +3842,11 @@ int main(int argc, char **argv) {
     log_previous_evidence("exit_stage", prev_exit_stage);
     log_previous_evidence("watchdog", prev_watchdog);
     log_previous_evidence("exception", prev_exception);
+    log_previous_evidence("diag_tail", prev_diag);
+    local_controls_init(&local_input);
+    local_controls_publish(&state, &local_input);
+    write_boot_stage(local_input.audctl_ready ? "local_hotkeys:ready" :
+                     "local_hotkeys:disabled");
     if (state.auth_loaded) {
         logline("loaded auth.bin: deviceId=0x%016" PRIx64 " steamId=%" PRIu64
                 " lastHost=%s",
@@ -2798,6 +3861,8 @@ int main(int argc, char **argv) {
     debug_server debug;
     debug_server_init(&debug);
     write_boot_stage(debug.fd >= 0 ? "debug:ready" : "debug:disabled");
+    diag_disk_start(&state);
+    write_boot_stage(diag_disk_started ? "diag:ready" : "diag:disabled");
 
     stream_runtime runtime;
     memset(&runtime, 0, sizeof(runtime));
@@ -2838,6 +3903,7 @@ int main(int argc, char **argv) {
     for (;;) {
         bool media_was_available = stream_media_available();
         if (!appletMainLoop()) {
+            request_app_exit(&state, "applet:main_loop_end");
             break;
         }
 
@@ -2845,7 +3911,9 @@ int main(int argc, char **argv) {
         padUpdate(&pad);
         u64 kdown = padGetButtonsDown(&pad);
         u64 kheld = padGetButtons(&pad);
-        handle_input(&state, &runtime, kdown, kheld);
+        local_volume_change volume_change = local_controls_poll_volume(&local_input, monotonic_ms());
+        local_controls_publish(&state, &local_input);
+        handle_input(&state, &runtime, kdown, kheld, volume_change);
         debug_server_poll(&debug, &state, &runtime);
         if (runtime.client != NULL) {
             start_session_if_ready(&state, &runtime.client_config);
@@ -2877,10 +3945,7 @@ int main(int argc, char **argv) {
             update_screen_ui(&state);
             stream_media_present();
             if (stream_media_exit_requested()) {
-                pthread_mutex_lock(&state.lock);
-                state.exit_requested = true;
-                state.stop_requested = true;
-                pthread_mutex_unlock(&state.lock);
+                request_app_exit(&state, "media:exit_requested");
             }
             update_media_snapshot(&state);
         } else if (console_active) {
@@ -2907,9 +3972,7 @@ int main(int argc, char **argv) {
             if (auto_exit) {
                 logline("auto exit requested after selftest stream");
                 write_boot_stage("exit:auto_stop");
-                pthread_mutex_lock(&state.lock);
-                state.exit_requested = true;
-                pthread_mutex_unlock(&state.lock);
+                request_app_exit(&state, "selftest:auto_stop");
             }
             if (should_exit) {
                 break;
@@ -2922,7 +3985,19 @@ int main(int argc, char **argv) {
 
     logline("main loop ended");
     write_boot_stage("loop:ended");
+    char exit_reason[sizeof(state.exit_reason)];
+    pthread_mutex_lock(&state.lock);
+    strncpy(exit_reason, state.exit_reason, sizeof(exit_reason));
+    exit_reason[sizeof(exit_reason) - 1] = '\0';
+    pthread_mutex_unlock(&state.lock);
+    logline("cleanup: begin reason=%s", exit_reason[0] ? exit_reason : "loop-ended");
+    write_exit_stage("cleanup:begin");
+
+    logline("cleanup: stop stream worker");
+    write_exit_stage("cleanup:stream_worker_stop:start");
     stream_worker_stop(&runtime.streamer);
+    write_exit_stage("cleanup:stream_worker_stop:done");
+
     atomic_store_explicit(&watchdog_stop, true, memory_order_relaxed);
     if (watchdog_started) {
         logline("cleanup: join watchdog");
@@ -2931,56 +4006,82 @@ int main(int argc, char **argv) {
         write_exit_stage("cleanup:watchdog_join:done");
     }
 
-    bool safe_cleanup = blocking_cleanup_safe(&state, &runtime.streamer);
-    logline("return path: safe_cleanup=%d", (int)safe_cleanup);
-    write_boot_stage(safe_cleanup ? "cleanup:safe:start" : "cleanup:skip:start");
-    if (safe_cleanup) {
-        write_exit_stage("cleanup:stream_worker_join:start");
-        stream_worker_join(&runtime.streamer);
-        write_exit_stage("cleanup:stream_worker_join:done");
-
-        write_exit_stage("cleanup:client:start");
-        cleanup_client(runtime.client);
-        write_exit_stage("cleanup:client:done");
-
-        if (runtime.ihs_initialized) {
-            logline("cleanup: IHS_Quit");
-            write_exit_stage("cleanup:ihs_quit:start");
-            IHS_Quit();
-            write_exit_stage("cleanup:ihs_quit:done");
-        } else {
-            write_exit_stage("cleanup:ihs_quit:skipped");
-        }
-
-        write_exit_stage("cleanup:media_shutdown:start");
-        stream_media_shutdown();
-        logq_drain();
-        write_exit_stage("cleanup:media_shutdown:done");
-
-        write_exit_stage("cleanup:debug_close:start");
-        debug_server_close(&debug);
-        write_exit_stage("cleanup:debug_close:done");
-
-        logline("cleanup: close nxlink log socket");
-        if (nxlink_fd >= 0) {
-            write_exit_stage("cleanup:nxlink_close:start");
-            nxlink_log_close();
-            write_exit_stage("cleanup:nxlink_close:done");
-        }
-
-        write_exit_stage("cleanup:socket_exit:start");
-        socketExit();
-        write_exit_stage("cleanup:socket_exit:done");
-
-        write_exit_stage("cleanup:state_destroy:start");
-        pthread_mutex_destroy(&state.lock);
-        write_exit_stage("cleanup:state_destroy:done");
-        write_boot_stage("cleanup:safe:done");
+    pthread_mutex_lock(&state.lock);
+    bool have_session = state.session != NULL;
+    pthread_mutex_unlock(&state.lock);
+    if (have_session) {
+        logline("cleanup: stop active session");
+        write_exit_stage("cleanup:session:start");
+        join_destroy_session(&state, true);
+        write_exit_stage("cleanup:session:done");
     } else {
-        write_exit_stage("cleanup:skip_blocking:return");
-        logline("cleanup: skipped blocking joins; returning from main");
-        write_boot_stage("cleanup:skip:done");
+        pthread_mutex_lock(&state.lock);
+        if (state.mode == PROBE_STREAM_REQUESTING || state.mode == PROBE_STREAM_READY ||
+            state.mode == PROBE_SESSION_CONNECTING || state.mode == PROBE_SESSION_STOPPING) {
+            state.mode = PROBE_READY;
+            state.stream_result = IHS_StreamingCanceled;
+            snprintf(state.status, sizeof(state.status), "Exit canceled pending stream");
+        }
+        pthread_mutex_unlock(&state.lock);
+        write_exit_stage("cleanup:session:skipped");
     }
+
+    write_exit_stage("cleanup:stream_worker_join:start");
+    stream_worker_join(&runtime.streamer);
+    runtime.stream_worker_started = false;
+    update_runtime_flags(&state, &runtime);
+    write_exit_stage("cleanup:stream_worker_join:done");
+
+    write_exit_stage("cleanup:client:start");
+    cleanup_client(runtime.client);
+    runtime.client = NULL;
+    update_runtime_flags(&state, &runtime);
+    write_exit_stage("cleanup:client:done");
+
+    if (runtime.ihs_initialized) {
+        logline("cleanup: IHS_Quit");
+        write_exit_stage("cleanup:ihs_quit:start");
+        IHS_Quit();
+        runtime.ihs_initialized = false;
+        update_runtime_flags(&state, &runtime);
+        write_exit_stage("cleanup:ihs_quit:done");
+    } else {
+        write_exit_stage("cleanup:ihs_quit:skipped");
+    }
+
+    logline("cleanup: join diag disk");
+    write_exit_stage("cleanup:diag_disk_join:start");
+    diag_disk_stop_thread();
+    write_exit_stage("cleanup:diag_disk_join:done");
+
+    write_exit_stage("cleanup:media_shutdown:start");
+    stream_media_shutdown();
+    logq_drain();
+    write_exit_stage("cleanup:media_shutdown:done");
+
+    write_exit_stage("cleanup:debug_close:start");
+    debug_server_close(&debug);
+    write_exit_stage("cleanup:debug_close:done");
+
+    write_exit_stage("cleanup:local_hotkeys:start");
+    local_controls_shutdown(&local_input);
+    write_exit_stage("cleanup:local_hotkeys:done");
+
+    logline("cleanup: close nxlink log socket");
+    if (nxlink_fd >= 0) {
+        write_exit_stage("cleanup:nxlink_close:start");
+        nxlink_log_close();
+        write_exit_stage("cleanup:nxlink_close:done");
+    }
+
+    write_exit_stage("cleanup:socket_exit:start");
+    socketExit();
+    write_exit_stage("cleanup:socket_exit:done");
+
+    write_exit_stage("cleanup:state_destroy:start");
+    pthread_mutex_destroy(&state.lock);
+    write_exit_stage("cleanup:state_destroy:done");
+    write_boot_stage("cleanup:done");
 
     if (cons_fd >= 0) {
         close(cons_fd);

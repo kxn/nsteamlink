@@ -6,8 +6,8 @@ Switch 自制软件（homebrew）版 Steam Link 客户端：通过 Steam Remote 
 广播发现、Switch 端生成/显示 pairing code、授权回调与 `auth.bin` 身份持久化；2026-08-24
 真机日志已出现 `Authorization response result=0` 并保存身份。M3 串流/session/video channel
 已在真机跑通；full application 环境下 Mesa/OpenGL 基准已通过。当前正式 `nsteamlink.nro`
-使用 FFmpeg/NVTEGRA + SDL2 NV12 串流路径，并已加入 host/mode/PIN/stop/exit 英文 UI 与第一版
-手柄输入回传。
+使用 FFmpeg/NVTEGRA + SDL2 NV12 串流路径，并已加入 host/mode/PIN/stop/exit 英文 UI、第一版
+手柄输入回传与 Opus 音频输出。
 
 ## 文档索引
 
@@ -37,8 +37,9 @@ Switch 自制软件（homebrew）版 Steam Link 客户端：通过 Steam Remote 
 ./scripts/build-switch.sh
 # 产物 build/switch/app/nsteamlink.nro → SD 卡 sd:/switch/，
 # 经 Title Redirection 启动 hbmenu 后运行；当前显示英文 UI。
-# 菜单：A 开始串流，X 切换 game/desktop，Y 刷新 host，B 停流，+ 退出
-# 串流中：普通手柄输入转发给 Steam，MINUS+B 停流，+ 本地退出
+# 菜单：A 开始串流，X 切换 game/desktop，Y 刷新 host，B 停流
+# 串流中：普通手柄输入转发给 Steam；+ / - 不再作为本地控制键
+# 本地控制：L3+R3+VOL+ 退出程序，L3+R3+VOL- 停流
 
 # M2 发现/配对工具
 # 产物 build/switch/tools/switch-discover/switch-discover.nro
@@ -48,5 +49,5 @@ Switch 自制软件（homebrew）版 Steam Link 客户端：通过 Steam Remote 
 # 流程自检 NRO（正式 app 复用同一实现）
 # 产物 build/switch/client/switch-stream-selftest.nro
 # 保留为证据工具；正式 app 现在复用同一条已验证串流链路
-# PC 端 debug 命令：state / hosts / select <n> / stream game / stats / stop / exit
+# PC 端 debug 命令：state / hosts / select <n> / stream game / stats / audio / hid / hidlog / diag current / diag prev / diag marker current / diag marker prev / stop / exit
 ```
