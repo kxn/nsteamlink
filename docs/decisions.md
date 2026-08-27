@@ -1133,3 +1133,29 @@ channelId=2 可靠消息 20 次重试耗尽 + 视频 stall 与输入失灵同窗
     真机 smoke evidence，支持当前实现可用，但不替代后续长时间游玩验证；
   - 待真机：长时间游玩确认 BUG-M4-HID-001 是否消失；若仍复现，用持久日志中的 `relOut/oldest` 与
     `hidSM` 判断是 host ACK 停止、HID admission 等待，还是故障已移到状态机之外。
+
+## D-035 session receive 必须有界唤醒，避免本地退出卡在 join
+
+- Evidence：用户在真机串流中按 `L3+R3+VOL+`；Steam host 已停止串流，但 Switch 保持最后一帧，
+  所有本地输入均无响应，最终只能 HOME 后强杀。这证明本地热键和 host StopRequest 路径已生效，不能
+  把症状归因于组合键未识别；Switch 是否进入哪个具体 cleanup 子阶段仍需代码/测试证据判断。
+- Evidence：新增 host 回归用例启动真实 session receive/send worker，在没有 host ACK 的情况下调用
+  `IHS_SessionDisconnect -> IHS_SessionThreadedJoin -> IHS_SessionDestroy`。修复前该用例稳定超过 6 秒
+  不返回；gdb 显示主线程阻塞在 `IHS_SessionThreadedJoin()`，session worker 阻塞在 UDP `recvfrom()`，
+  timer worker仍正常运行。
+- Evidence：源码中 `IHS_SessionInterrupt()` 只设置 `base.interrupted` 并唤醒 send queue，不能唤醒
+  已进入阻塞 `recvfrom()` 的 receive worker。`ClientInitialized()` 已给 discovery client socket 设置
+  10ms `SO_RCVTIMEO`，但 `SessionInitialized()` 没有对应设置。
+- Conclusion：本次退出挂死的确定性代码根因是 streaming session socket 缺少有界 receive timeout。
+  StopRequest 使 host 停止发送后，本地 transport timer虽然设置 interrupted，receive worker仍等不到
+  下一包，`IHS_SessionThreadedJoin()` 因而无限等待。这与真机“host 已断、Switch 停在最后一帧”一致。
+- Decision：`SessionInitialized()` 给 session UDP socket设置 10ms receive timeout。超时只让 worker
+  回到循环检查 interrupted，不把 `EAGAIN/EWOULDBLOCK/ETIMEDOUT` 当作网络失败；保留现有 250ms
+  StopRequest ACK 等待和 discovery disconnect 重试语义。
+- Verification：同一无 host ACK 用例修复后约 1.5 秒完成；ihslib host 27/27、ASan+UBSan 27/27、
+  TSan 的 timer/disconnect/concurrent HID/retransmission/admission 5/5 通过。Switch 构建与真机退出
+  仍分别作为集成证据和最终行为证据，不用 host 测试替代。
+- Real-device verification：修复版真机收到 `hotkey:vol_up+sticks` 后，日志依次出现 StopRequest、
+  `session stop: join`、`session disconnected`、video/audio worker stop、session destroy、watchdog/stream
+  worker join、IHS client stop/join/destroy、`IHS_Quit`、诊断线程 join、`SDL_Quit done` 与 `exiting`；
+  用户确认 Switch 端正常退出，不再停在最后一帧。该结果闭环本次 `L3+R3+VOL+` 回归。

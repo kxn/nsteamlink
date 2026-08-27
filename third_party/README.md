@@ -44,7 +44,8 @@
   该 API 的声明与"低频刷新"契约此前已写在公开头文件 `ihslib/hid/sdl.h` 中，本补丁补上实现。
 - `0013-control-reliability-state-machine.patch`：撤回旧的 HID fire-and-forget 方案；可靠包在初发前
   登记并保留到精确 ACK，NACK 触发立即重发，分片 ACK 回显 fragmentId。HID 输入使用“单个在途
-  完整快照 + 最新待发快照”合并，SDL 输入线上只发完整状态，避免在可靠有序 packet ID 中制造缺口。
+  完整快照 + 最新待发快照”合并，SDL 输入线上只发完整状态，避免在可靠有序 packet ID 中制造缺口；
+  session UDP receive 增加 10ms timeout，使 StopRequest 后的 interrupt 能有界唤醒 worker 并完成 join。
 
 ## 待引入（按里程碑）
 

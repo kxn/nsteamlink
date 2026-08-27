@@ -1274,10 +1274,14 @@ index a652c6d..e935e47 100644
 +void IHS_RetransmissionGetStats(IHS_SessionRetransmission *retransmission,
 +                                IHS_RetransmissionStats *stats, uint64_t nowMs);
 diff --git a/src/session/session.c b/src/session/session.c
-index 14ac2a9..7d20fd9 100644
+index 14ac2a9..d362d0a 100644
 --- a/src/session/session.c
 +++ b/src/session/session.c
-@@ -53,7 +53,7 @@
+@@ -50,10 +50,11 @@
+  * that a host which never answers doesn't hold the UI. */
+ #define STOP_ACK_TIMEOUT_MS 250
+ #define STOP_ACK_POLL_MS 5
++#define SESSION_RECV_TIMEOUT_US 10000
  
  typedef struct IHS_QueueItem {
      IHS_SessionPacket packet;
@@ -1286,7 +1290,7 @@ index 14ac2a9..7d20fd9 100644
  } QueuedPacket;
  
  static void SessionRecvCallback(IHS_Base *base, const IHS_SocketAddress *address, IHS_Buffer *data);
-@@ -149,6 +149,12 @@ void IHS_SessionDisconnect(IHS_Session *session) {
+@@ -149,6 +150,12 @@ void IHS_SessionDisconnect(IHS_Session *session) {
          IHS_SessionChannelDiscoveryDisconnect(IHS_SessionChannelFor(session, IHS_SessionChannelIdDiscovery));
          return;
      }
@@ -1299,7 +1303,7 @@ index 14ac2a9..7d20fd9 100644
      session->stopPacketId = control->nextPacketId;
      session->stopAcked = false;
      CStopRequest stop = CSTOP_REQUEST__INIT;
-@@ -215,10 +221,20 @@ bool IHS_SessionQueuePacket(IHS_Session *session, IHS_SessionPacket *packet, boo
+@@ -215,10 +222,20 @@ bool IHS_SessionQueuePacket(IHS_Session *session, IHS_SessionPacket *packet, boo
      assert(packet->body.offset == IHS_PACKET_HEADER_SIZE);
      // If the packet has CRC, require 4 bytes extra space at the end of body
      assert(!packet->header.hasCrc || packet->body.suffix == 4);
@@ -1321,7 +1325,7 @@ index 14ac2a9..7d20fd9 100644
  
      IHS_QueueAppend(session->sendQueue, item);
  
-@@ -232,11 +248,6 @@ bool IHS_SessionSendControlMessage(IHS_Session *session, EStreamControlMessage t
+@@ -232,11 +249,6 @@ bool IHS_SessionSendControlMessage(IHS_Session *session, EStreamControlMessage t
      return IHS_SessionChannelControlSend(channel, type, message, IHS_PACKET_ID_NEXT);
  }
  
@@ -1333,7 +1337,7 @@ index 14ac2a9..7d20fd9 100644
  void IHS_SessionHIDAddProvider(IHS_Session *session, IHS_HIDProvider *provider) {
      IHS_BaseLock(&session->base);
      IHS_HIDManagerAddProvider(session->hidManager, provider);
-@@ -247,6 +258,47 @@ const IHS_SessionInfo *IHS_SessionGetInfo(const IHS_Session *session) {
+@@ -247,6 +259,47 @@ const IHS_SessionInfo *IHS_SessionGetInfo(const IHS_Session *session) {
      return &session->info;
  }
  
@@ -1381,7 +1385,7 @@ index 14ac2a9..7d20fd9 100644
  static void SessionRecvCallback(IHS_Base *base, const IHS_SocketAddress *address, IHS_Buffer *data) {
      (void) address;
      IHS_Session *session = (IHS_Session *) base;
-@@ -259,13 +311,18 @@ static void SessionRecvCallback(IHS_Base *base, const IHS_SocketAddress *address
+@@ -259,13 +312,18 @@ static void SessionRecvCallback(IHS_Base *base, const IHS_SocketAddress *address
  
      IHS_SessionChannelId channelId = packet.header.channelId;
      IHS_SessionPacketType packetType = packet.header.type;
@@ -1404,7 +1408,21 @@ index 14ac2a9..7d20fd9 100644
      }
      IHS_SessionChannel *channel = IHS_SessionChannelFor(session, channelId);
      if (channel == NULL && session->negotiatedVideoCodec != 0 /* not None */ &&
-@@ -353,17 +410,18 @@ static void SessionSendWorker(void *context) {
+@@ -301,6 +359,13 @@ static void SessionRecvCallback(IHS_Base *base, const IHS_SocketAddress *address
+ static void SessionInitialized(IHS_Base *base, void *context) {
+     (void) context;
+     IHS_Session *session = (IHS_Session *) base;
++    /* Interrupting a worker only changes base.interrupted; it cannot wake a
++     * blocking recvfrom(). Once StopRequest makes the host go quiet, join must
++     * still observe the interrupt without waiting for another datagram. */
++    if (!IHS_UDPSocketSetRecvTimeout(base->socket, SESSION_RECV_TIMEOUT_US)) {
++        IHS_SessionLog(session, IHS_LogLevelWarn, "Session",
++                       "Failed to set session receive timeout");
++    }
+     session->sendThread = IHS_ThreadCreate(SessionSendWorker, "IHSSessSend", session);
+ 
+     if (session->callbacks.session && session->callbacks.session->initialized) {
+@@ -353,17 +418,18 @@ static void SessionSendWorker(void *context) {
          }
          IHS_MutexUnlock(session->sendQueueMutex);
  
@@ -1428,7 +1446,7 @@ index 14ac2a9..7d20fd9 100644
          }
          QueuedPacketDestroy(queued, NULL);
          IHS_QueueItemFree(queued);
-@@ -381,4 +439,4 @@ static QueuedPacket *QueuedPacketCreate(IHS_Session *session, IHS_SessionPacket
+@@ -381,4 +447,4 @@ static QueuedPacket *QueuedPacketCreate(IHS_Session *session, IHS_SessionPacket
  static void QueuedPacketDestroy(QueuedPacket *queued, void *unused) {
      (void) unused;
      IHS_SessionPacketClear(&queued->packet, true);
@@ -1648,6 +1666,49 @@ index 0000000..783d710
 +    puts("retransmission state machine OK");
 +    return 0;
 +}
+diff --git a/tests/session/test_disconnect_destroy.c b/tests/session/test_disconnect_destroy.c
+index d52643e..71ce5a5 100644
+--- a/tests/session/test_disconnect_destroy.c
++++ b/tests/session/test_disconnect_destroy.c
+@@ -32,6 +32,7 @@
+ 
+ #include <unistd.h>
+ #include <assert.h>
++#include <signal.h>
+ #include <stdio.h>
+ 
+ #include "session/session_pri.h"
+@@ -61,6 +62,20 @@ static void test_destroy_after_timer_starts_firing(void) {
+     IHS_SessionDestroy(session);
+ }
+ 
++static void test_threaded_disconnect_without_host_ack(void) {
++    IHS_Session *session = IHS_TestSessionCreate();
++    assert(IHS_SessionConnect(session));
++
++    // Let the receive/send workers initialize before asking the normal graceful
++    // disconnect path to exhaust its bounded StopRequest and transport timers.
++    usleep(20 * 1000);
++    alarm(4);
++    IHS_SessionDisconnect(session);
++    IHS_SessionThreadedJoin(session);
++    IHS_SessionDestroy(session);
++    alarm(0);
++}
++
+ int main(void) {
+     IHS_Init();
+     for (int i = 0; i < 5; ++i) {
+@@ -69,7 +84,8 @@ int main(void) {
+     for (int i = 0; i < 5; ++i) {
+         test_destroy_after_timer_starts_firing();
+     }
++    test_threaded_disconnect_without_host_ack();
+     IHS_Quit();
+-    printf("disconnect-destroy UAF tests OK\n");
++    printf("disconnect lifecycle tests OK\n");
+     return 0;
+ }
 diff --git a/tests/test_hid_report_replace.c b/tests/test_hid_report_replace.c
 new file mode 100644
 index 0000000..f2f5721

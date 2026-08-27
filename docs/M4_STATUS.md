@@ -5,6 +5,14 @@
 
 ## 当前状态
 
+- 2026-08-27 用户真机发现本地退出回归：串流中按 `L3+R3+VOL+` 后 Steam host 已停止串流，
+  但 Switch 保持最后一帧且本地输入不再响应，只能 HOME 后强杀。D-035 已用 host 回归测试确定性复现：
+  session StopRequest/transport timer 已执行，但 session UDP receive worker 仍永久阻塞在 `recvfrom()`，
+  主线程因此卡在 `IHS_SessionThreadedJoin()`。根因是 10ms receive timeout 只配置给 discovery client，
+  streaming session socket 被遗漏。现已给 session socket补相同 timeout；修复前测试超过 6 秒不返回，
+  修复后无 host ACK 路径约 1.5 秒完成 `Disconnect -> Join -> Destroy`。同版真机退出日志完整出现
+  `session disconnected`、session join/destroy、`IHS_Quit`、`SDL_Quit done` 与 `exiting`，用户确认
+  Switch 端不再停在最后一帧，D-035 实机验收通过。
 - 2026-08-27 已按 D-034 完整重写 control reliable/HID 发送状态机。旧的
   `Reliable + fire-and-forget` 方案会消耗可靠 packet ID 却不补丢包，与 control 有序接收窗口的
   head-gap 行为矛盾，现已撤回并删除。可靠包改为初发前登记、精确 ACK 删除、NACK 立即重发且不再
@@ -270,11 +278,11 @@
 - ihslib SDL2 host tests 27/27、ASan+UBSan 27/27 通过；TSan 关键并发测试 5/5 通过。
 - 当前产物：
   - `build/switch/app/nsteamlink.nro`
-    sha256 `50e5a23577365bdec9d4aeff6bf564348a0669ff0fb59b8861875d69a86b2899`
+    sha256 `f8064f5859a506fa3d34eca5749380f7bb9ac9f6571f260c1a18dca9e05c8ebd`
   - `build/switch/client/switch-stream-selftest.nro`
-    sha256 `59a5062780cf95e25d1541ab7f5c129dddcfbdc8f5374698071ad62e0b0af55c`
+    sha256 `6e5284a380947ed90eddf0b16ac40e63e931bd5bdc8613ee1604ae4d00147bd8`
   - `build/switch/client/switch-stream-selftest-core.nro`
-    sha256 `bc12add3949eabe69e317a8adac5d8bf32e371839bb3eeeefeeb80b683969d33`
+    sha256 `83242b8f1ddec654901fc2404d3566a32065d30a25dc17e455e72f2365772687`
 
 ## 待验证
 
@@ -285,7 +293,8 @@
   admission 状态；若仍复现，记录“再动/松右摇杆是否恢复”并保留 marker 同窗。
 - 真机上菜单文字可读、没有遮挡主要串流画面。
 - `A` 启动 game stream；菜单中 `B` 停止；streaming 中 `+` / `-` 能作为普通 Steam/game 输入。
-- `L3+R3+VOL+` 本地退出、`L3+R3+VOL-` 本地停流能触发并写入 `exitReason`/cleanup 阶段。
+- D-035 已真机确认 `L3+R3+VOL+` 能在 host 停流后继续完成 session join/destroy 和 app cleanup，
+  Switch 正常离开最后一帧；`L3+R3+VOL-` 单独停流仍保留为独立交互验收项。
 - 如果 Steam host 返回 `PINRequired`，四位 PIN UI 能提交并成功重试。
 - Steam host 能收到 Switch 手柄输入，且 stop/exit 后不会残留按键按下状态。
 - 真机确认 Steam/game 里的 `A/B/X/Y` 是否按 Switch 面壳字母正确映射。
