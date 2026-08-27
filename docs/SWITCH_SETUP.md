@@ -133,14 +133,16 @@ $DEVKITPRO/devkitA64/bin/aarch64-none-elf-addr2line -f -C \
   是 libnx `PadState` 原始摇杆/按钮变化计数，`sty=flips:style/attrs` 是 style/attribute 抖动计；
   `sticks=lx/ly/rx/ry` 与 `b=0x...` 是当秒结束时 SDL controller 的摇杆轴和按钮 mask；
   `minus=sdlHeld/sdlSamples/rawHeld/rawSamples` 是故障 marker。
-- `diag current` 读取 `sdmc:/switch/nsteamlink/stream_diag.log` 尾部；`diag prev` 读取上一轮
-  `stream_diag_prev.log` 尾部。正式 app 会每秒在后台 append+flush state/hid/audio 摘要，退出后
-  仍可通过下一次启动的 `diag prev` 或直接读 SD 卡文件复盘；`diag status` 返回诊断线程状态与
+- `diag current` 读取 `sdmc:/switch/nsteamlink/stream_diag.log` 尾部；`diag prev` / `diag older`
+  读取前两轮日志。`diag-chunk <current|prev|older> <offset> [length]` 可分页读取完整文件，避免尾部
+  采样掩盖较早的故障窗口。正式 app 会每秒在后台 append+flush state/hid/audio 摘要，退出后
+  仍可通过下一次启动的历史文件复盘；`diag status` 返回诊断线程状态与
   文件/线程错误码；`diag marker current` / `diag marker prev` 只返回看到 `-` / `MINUS` marker
   的秒级记录。marker 日志中 `markMinus` 是输入同窗，`markNet` 是同一 seq 的视频/音频/control
   同窗摘要，用来判断 Wi-Fi/stream 是否同时断流。新版 `hid`/marker 网络字段中的
-  `rel=tracked/acked`、`retry/fail/out/oldest/maxAck` 来自可靠发送状态机本身；
-  `hidSM=submitted/coalesced/sent/acked/pending/inFlight` 用于判断输入是在本地等待 ACK、已合并还是已确认。
+  `rel=tracked/acked/superseded`、`retry/fail/out/oldest/maxAck` 来自可靠发送状态机本身；
+  `hidSM=submitted/coalesced/sent/acked/superseded/pending/inFlight` 用于判断输入是在本地等待 ACK、
+  已合并、被更新完整状态取代还是已精确确认。
 - `audio` 返回 Opus/SDL 音频状态：是否 active、codec/frequency/channels、解码帧数、SDL queued
   bytes、queue drop 与 decode/queue 错误计数。
 - M3.3 接入 FFmpeg/SDL2 后 `switch-stream-selftest.nro` 约 19MB，nxlink/netloader 传输会明显慢于 M2/M3.2

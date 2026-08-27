@@ -1106,28 +1106,58 @@ channelId=2 可靠消息 20 次重试耗尽 + 视频 stall 与输入失灵同窗
   收包 `fragmentId`。这些都是独立于真机症状、可由源码直接证明的可靠性错误。
 - Evidence：D-033 marker 真机记录证明至少一次故障窗口中 SDL、libnx raw、input pump 和本地 HID
   submit 均继续工作，但旧 `hidSendOk` 只表示本地入队，不表示 host ACK 或应用。
+- Evidence（后续真机反证）：用户观察 Steam/game 端所有按钮均无效果；退出后从 SD 持久日志读到
+  `rel=68/67 retry=420 out=1 oldest=41647ms@1/15/0#416 maxAck=17ms` 与
+  `hidSM=1498/1497/2/1/1/1@15`。这表示 packet 15 的 ACK 缺失 41.647 秒并已重传 416 次；同期
+  1498 次 HID 快照提交中 1497 次被合并，只发送 2 次、确认 1 次，pending 和 in-flight 均为 1。
+- Evidence（源码）：重传项在可靠包进入 send queue 前就把 `nextRetryMs` 设为登记时间加 10ms，
+  send worker 真正完成初发后没有重置该期限。发送队列延迟超过期限时，timer 可在初发之前直接发送
+  `retransmitCount=1` 的副本；该乱序窗口是独立的状态机错误。
+- Evidence（双 lane 后续真机）：一轮 211.5 秒日志结束时为
+  `rel=5084/5083 retry=2056 out=1 oldest=205495ms@1/71/0#2044 maxAck=89ms`、
+  `hidSM=4860/520/4837/4836/0/1@71`。packet 71 的精确 ACK 始终缺失并被重传约 2044 次，但后续
+  4836 个 HID 完整快照仍得到确认。这证明双 lane 已消除 admission 全局锁死，同时证明“被更新完整
+  状态取代的旧 HID 包仍永久每 100ms 重传”是独立残留错误。
+- Evidence（2026-08-28 marker 复现）：用户发现 host/game 不响应后按了数次 `-`。marker 前后的
+  `minus` 同时出现在 SDL 与 libnx raw 采样；约 4.4 秒内 `hidSM` 从
+  `3867/414/3826/3825/0/1@519` 推进到 `3975/422/3934/3933/0/1@519`，即新增 108 次提交、
+  93 次发送和 93 次精确 ACK，最大 ACK 延迟保持 63ms。同期视频约 50–63fps、音频约 100 帧/秒，
+  没有链路断流。旧 packet 519 已在 marker 前重传 1365 次，marker 内继续重传，但没有阻止新包确认。
 - Conclusion：此前 D-030 的“Reliable 类型 + fire-and-forget 可以靠后续 full heartbeat 自愈”结论
   **撤回**。在可靠有序 packet ID 空间里跳过任意一个包会制造接收窗口无法跨越的缺口；后续 full
   snapshot 也排在缺口后面，不能承担自愈作用。
 - Limitation：目前没有故障窗口的逐包抓包能直接证明某个具体 HID packet ID 丢失后恰好造成用户观察
-  的每一次约 10 秒卡住。因此该协议错误是当前最强、可验证的根因候选，但“已彻底修复所有真机卡键”
-  仍是待验证命题。
+  的每一次约 10 秒卡住。packet 15 日志已直接证明本次“全部按钮无效”由 admission 等待 ACK 造成，
+  但“已彻底修复所有真机卡键”仍是待验证命题。
+- Retraction：本节最初采用的“正常只允许一个 HID 完整快照在途并无限等待精确 ACK”已被 packet 15
+  真机日志否定。精确可靠重传仍保留，但 HID admission 不得再把全局输入推进绑定到单个 ACK。
+- Retraction：本节第二版仍让“已被更新完整快照取代的 HID 包”无限等待精确 ACK。packet 71/519
+  真机记录证明这会制造数千次无收益重传；该规则只继续适用于不能由更新状态替代的一般可靠控制包。
+- Conclusion：2026-08-28 marker 窗口不支持 SDL 拒绝输入、Switch 主循环停摆、HID admission 堵塞、
+  新 control 包没有到达 host，或 Wi-Fi 整体断流。Steam 的 transport ACK 是收包确认，不是 host
+  virtual controller/game 已应用输入的确认；因此本次约 10 秒无响应仍位于 transport 收包之后的
+  host 输入应用路径，不能声称由本次旧包退休修正解决。
 - Decision：
   1. 可靠包在初次发送进入 worker 队列前复制进 session pending 表，消除 ACK-before-registration；
-  2. 每 session 只使用一个 5ms 扫描任务；10/20/40/80/100ms 退避后保持 100ms 重发，直到精确
-     `(channelId, packetId, fragmentId)` ACK 或 session 销毁，不再有次数上限、give-up 或 cancelled ring；
+     此时不启动重传时钟，必须等 send worker 完成初发后再以 25ms 首次等待启动，避免重传先于初发；
+  2. 每 session 只使用一个 5ms 扫描任务；25/50/100ms 退避后保持 100ms 重发。一般可靠控制包直到
+     精确 `(channelId, packetId, fragmentId)` ACK 或 session 销毁，不恢复旧的任意次数 give-up；
   3. ACK 删除 pending，NACK 将该包立即置为 due；分片 ACK 回显收到的 fragmentId；
-  4. HID report admission 正常只允许一个完整快照在途；等待 ACK 期间的新输入覆盖“最新待发快照”，
-     ACK 后立即发送最新值。退出时可额外提交最终 neutral snapshot，并保证它排在 StopRequest 前；
+  4. HID report admission 允许两个可靠完整快照在途，窗口满时的新输入只覆盖“最新待发快照”；任一
+     lane ACK 后立即发送最新值。若确认的是较新完整快照，更老在途 HID 快照标记为 superseded；旧包
+     总计完成至少三次 25/50/100ms 补洞重传后退休，不再永久污染发送路径。精确 ACK 与 superseded
+     分开计数。退出时可额外提交最终 neutral snapshot，并保证它排在 StopRequest 前；
   5. SDL event handler 只更新 canonical controller state；每次提交先清除旧 delta 条目，再生成单个
      forced full report，线上不再依赖 delta 链；
   6. 删除 `ControlSendDatagram`、HID 三次重试上限、per-packet timer/cancelled ring 与 give-up 日志解析；
-     持久诊断改为直接采样 reliable tracked/acked/retry/failure/outstanding/oldest 和
-     HID submitted/coalesced/sent/acked/pending/in-flight。
+     持久诊断改为直接采样 reliable tracked/acked/superseded/retry/failure/outstanding/oldest 和
+     HID submitted/coalesced/sent/acked/superseded/pending/in-flight。
 - Verification：
   - ihslib SDL2 host tests 27/27 通过；新增测试覆盖错误 fragment ACK、NACK 立即重发、超过旧 20 次
-    上限仍保留、重复 ACK、HID 最新值合并及 delta 被 full snapshot 替换；
-  - ASan+UBSan 27/27 通过；TSan 的 timer/destroy/concurrent HID/retransmission/admission 5/5 通过；
+    上限仍保留、重复 ACK、HID 最新值合并、delta 被 full snapshot 替换、初发前禁止重传，以及第一个
+    HID ACK 永久缺失时第二 lane 仍持续确认并推进最新快照；后续补充 superseded HID 仍完成三次
+    补洞重传、随后退休且不计作精确 ACK；
+  - ASan+UBSan 27/27 通过；TSan 27/27 通过；
   - Switch `nsteamlink_nro`、`switch-stream-selftest_nro`、`switch-stream-selftest-core_nro` 均构建通过；
   - 2026-08-27 用户在真机启动新版串流并实际测试，反馈“没有任何问题”；这是新版状态机的首轮
     真机 smoke evidence，支持当前实现可用，但不替代后续长时间游玩验证；
@@ -1159,3 +1189,33 @@ channelId=2 可靠消息 20 次重试耗尽 + 视频 stall 与输入失灵同窗
   `session stop: join`、`session disconnected`、video/audio worker stop、session destroy、watchdog/stream
   worker join、IHS client stop/join/destroy、`IHS_Quit`、诊断线程 join、`SDL_Quit done` 与 `exiting`；
   用户确认 Switch 端正常退出，不再停在最后一帧。该结果闭环本次 `L3+R3+VOL+` 回归。
+
+## D-036 NVTEGRA 下载先切换到 256B 对齐 VIC 传输
+
+- Evidence：当前显示链仍是 `AV_PIX_FMT_NVTEGRA -> av_hwframe_transfer_data() -> CPU NV12 ->
+  SDL_UpdateNVTexture()`；既有真机摘要约为 `transferAvgUs=1.6ms`、`uploadAvgUs=2.1ms`，并曾由
+  FFmpeg 打印 `Frame address/pitch not aligned to 256, falling back to cpu transfer`。
+- Evidence：本机 `switch-ffmpeg-7.1-5` 的 `libavutil.a` 包含同一 fallback 文本；averne FFmpeg
+  `nvtegra` 分支 `libavutil/hwcontext_nvtegra.c` 的 `nvtegra_transfer_data()` 明确检查每个软件平面的
+  地址和 pitch 是否均按 256B 对齐，满足时调用 VIC，不满足时执行 CPU block-linear 解块拷贝。
+- Evidence：Moonlight-Switch 的 deko3d renderer 会从 `AV_PIX_FMT_NVTEGRA` 帧取得
+  `AVNVTegraMap`，用其 CPU 地址创建 deko3d memory block，并把 luma/chroma 映射为 GPU image；这证明
+  Switch 上硬件帧直显可行，但该实现运行在完整 deko3d 图形后端，不是 SDL texture 扩展。
+- Conclusion：当前 SDL renderer 没有接收 `AVNVTegraMap` 的接口，直接零拷贝需要把视频及 overlay 的
+  图形所有权迁移到 deko3d，不能作为一次局部 SDL texture 修改完成。当前可独立落地的优化是让
+  FFmpeg 用 VIC 将 block-linear NVDEC surface 转为线性 NV12，先消除 CPU 解块成本。
+- Decision：
+  1. 硬件帧下载前按 `AVHWFramesContext.sw_format` 创建 4KB 对齐 backing、256B pitch 的目标 frame；
+  2. 运行时再次检查所有 plane 地址和 pitch，对齐且 transfer 成功才累计 `vicTransfers`；
+  3. 对齐准备失败、VIC transfer 失败或非预期格式均重试旧的 FFmpeg 自动 transfer，并累计
+     `transferFallback`；
+  4. 保留 `SDL_UpdateNVTexture()` 和 IYUV fallback，因此本阶段不称为 zero-copy；
+  5. 后续若迁移 deko3d，必须同时迁移窗口/swapchain、视频 YUV shader、overlay、applet lifecycle
+     和 cleanup，不能与当前 SDL/Mesa renderer 并行占用图形生命周期。
+- Verification：Switch app/selftest/core 三目标构建通过；ihslib host 27/27、ASan+UBSan 27/27
+  通过。真机待确认日志出现 `NVTEGRA transfer path: VIC 256B-aligned`，且摘要满足
+  `vicTransfers == transferFrames`、`transferFallback=0`；实际耗时收益只以同场景真机
+  `transferAvgUs/MaxUs` 对照为准。
+- Real-device evidence：本轮命中 `vicTransfers=1963`、`transferFallback=0`，但
+  `transferAvgUs=1658` 未优于既有约 1.6ms 基线，因此当前没有性能收益证据。同轮按钮失效已由
+  `rel/hidSM` 精确定位为 packet 15 ACK 缺失触发的单在途 admission 锁死，不能把它归因于 VIC。

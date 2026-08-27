@@ -5,6 +5,20 @@
 
 ## 当前状态
 
+- 2026-08-28 用户在双 lane 版再次复现约 10 秒 host/game 输入无响应，并在故障后按数次 `-`。
+  完整 SD 日志确认 SDL 与 libnx raw 均看到 marker；marker 前后约 4.4 秒内 HID 新快照发送/精确 ACK
+  同步增加 93，最大 ACK 延迟保持 63ms，视频与音频持续推进。因此这轮不是 SDL 拒绝输入、客户端
+  admission 堵塞或 Wi-Fi 整体断流，transport ACK 之后的 host virtual controller/game apply 仍待查。
+  同时日志发现旧 HID packet 519 已重传 1400 余次；另一轮 packet 71 更持续 205 秒/2044 次，而新
+  快照照常确认。现只对被更新完整快照取代的旧 HID 包保留至少三次补洞重传后退休，并将 exact ACK
+  与 superseded 分开统计；这是独立状态机清理，不宣称修复上述约 10 秒症状。
+- 2026-08-27 后续真机测试推翻了 D-034 的“单个 HID 在途包可以无限等待 ACK”设计。用户观察为
+  Steam/game 端所有按钮均无效果；同轮 SD 持久日志仍有大量 SDL 事件与本地提交，但
+  `rel=68/67 retry=420 out=1 oldest=41647ms@1/15/0#416`、
+  `hidSM=1498/1497/2/1/1/1@15`。证据直接证明 control packet 15 的 ACK 缺失后，单在途 admission
+  把 1497 次后续完整快照全部合并在 pending，实际只发出 2 次。修正为：可靠重传只在初发真正完成后
+  才启动（25ms 首次等待），HID 使用两个可靠在途 lane 加 latest pending；即使一个 ACK 永久缺失，
+  另一个 lane 仍可持续发送并确认最新完整状态。host、ASan+UBSan、TSan 均 27/27 通过，待真机复验。
 - 2026-08-27 用户真机发现本地退出回归：串流中按 `L3+R3+VOL+` 后 Steam host 已停止串流，
   但 Switch 保持最后一帧且本地输入不再响应，只能 HOME 后强杀。D-035 已用 host 回归测试确定性复现：
   session StopRequest/transport timer 已执行，但 session UDP receive worker 仍永久阻塞在 `recvfrom()`，
@@ -13,13 +27,13 @@
   修复后无 host ACK 路径约 1.5 秒完成 `Disconnect -> Join -> Destroy`。同版真机退出日志完整出现
   `session disconnected`、session join/destroy、`IHS_Quit`、`SDL_Quit done` 与 `exiting`，用户确认
   Switch 端不再停在最后一帧，D-035 实机验收通过。
-- 2026-08-27 已按 D-034 完整重写 control reliable/HID 发送状态机。旧的
+- 2026-08-27 已按 D-034 重写 control reliable/HID 发送状态机。旧的
   `Reliable + fire-and-forget` 方案会消耗可靠 packet ID 却不补丢包，与 control 有序接收窗口的
   head-gap 行为矛盾，现已撤回并删除。可靠包改为初发前登记、精确 ACK 删除、NACK 立即重发且不再
-  按次数放弃；HID 改为一个在途 full snapshot 加一个 latest pending snapshot，SDL 不再发送 delta 链。
-  该协议错误已由源码和测试证明，但是否解释并消除全部约 10 秒真机卡键仍待新版长跑验证。
+  按次数放弃；SDL 不再发送 delta 链。最初采用的“一个在途 full snapshot + latest pending”已被上述
+  packet 15 真机证据否掉并改为双在途；该记录不再代表当前实现。
 - 2026-08-27 新版已通过 nxlink 部署；用户在真机启动串流并实际测试后反馈没有任何问题。当前可记为
-  首轮 smoke 通过，BUG-M4-HID-001 是否长期消失仍以更长游玩时间为准。
+  首轮 smoke 通过，但后续 packet 15 复现已证明它不足以验收单在途状态机。
 
 - 2026-08-25 已完成 M4 UI 与第一版手柄输入回传本地实现；真机反馈为菜单按键有效。
 - 2026-08-26 真机验证通过 D-029 两项：用户确认 `A/B/X/Y` 按 Switch 面壳字母方向响应（映射
@@ -269,28 +283,36 @@
   - Opus payload 用 libopus 解码为 S16LE PCM，送入 SDL queued audio device；
   - SDL audio queue 限制在约 300ms，超限清队列并累计 `audio_queue_drops`，避免延迟无限增长；
   - `state`/`stats`/streaming overlay 与 UDP `audio` 命令输出音频状态和错误计数。
+- NVTEGRA transfer 优化第一步：
+  - 当前 SDL/Mesa 路线仍需把硬件帧转成 CPU 可见 NV12；本版不宣称 zero-copy；
+  - 下载目标 frame 改为 4KB 对齐 backing、256B pitch，使 switch-ffmpeg 满足条件时使用 VIC 做
+    block-linear 到 pitch-linear transfer，避免旧路径的 CPU 解块拷贝；
+  - 首次命中会打印 `NVTEGRA transfer path: VIC 256B-aligned`；`stats`/`perf summary` 新增
+    `vicTransfers` 与 `transferFallback`，仅 transfer 成功后计数；
+  - 对齐准备或 VIC transfer 失败会自动重试原 FFmpeg transfer，继续保留 SDL NV12 upload 与
+    IYUV fallback。
 
 ## 本地验证
 
 - `cmake --build build/switch --target nsteamlink_nro switch-stream-selftest_nro -j$(nproc)` 通过。
 - `cmake --build build/switch --target switch-stream-selftest-core_nro -j$(nproc)` 通过。
 - `git diff --check` 与 `git -C third_party/ihslib diff --check` 通过。
-- ihslib SDL2 host tests 27/27、ASan+UBSan 27/27 通过；TSan 关键并发测试 5/5 通过。
+- ihslib SDL2 host tests 27/27、ASan+UBSan 27/27、TSan 27/27 通过。
 - 当前产物：
   - `build/switch/app/nsteamlink.nro`
-    sha256 `f8064f5859a506fa3d34eca5749380f7bb9ac9f6571f260c1a18dca9e05c8ebd`
+    sha256 `3efdbe4a93fa8333deed418fd0ac3a6bc31b6fdc79b050291f7475c1b0050bab`
   - `build/switch/client/switch-stream-selftest.nro`
-    sha256 `6e5284a380947ed90eddf0b16ac40e63e931bd5bdc8613ee1604ae4d00147bd8`
+    sha256 `c1e42074b9abe51f448720b6f82c7e3b74b6e8331c4a9daea49e739137f2ba68`
   - `build/switch/client/switch-stream-selftest-core.nro`
-    sha256 `83242b8f1ddec654901fc2404d3566a32065d30a25dc17e455e72f2365772687`
+    sha256 `a3cdd6e3b7e7537df2303f7fc52c718b75642150847d1b380568843fc11887a8`
 
 ## 待验证
 
-- BUG-M4-HID-001（D-034 状态机重写后待真机复测）：stream 中曾偶发 host/game 侧输入状态卡住，表现为画面像
+- BUG-M4-HID-001（已定位到 host 收包之后，仍待根因化）：stream 中曾偶发 host/game 侧输入状态卡住，表现为画面像
   右摇杆某方向持续按下而持续旋转，期间左摇杆与 A/B 可能无响应；随后可自行恢复。本轮已知证据
-  已证明一次 marker 复现中 Switch 侧在故障窗口捕获到了 `-`、左摇杆、按钮事件并成功排队 HID report，
-  不能证明 host 已应用这些 report。新版日志可直接观察 reliable ACK/retry/outstanding/oldest 与 HID
-  admission 状态；若仍复现，记录“再动/松右摇杆是否恢复”并保留 marker 同窗。
+  2026-08-28 marker 复现进一步证明故障窗口的新 HID 快照持续获得 Steam transport ACK，且没有
+  音视频断流；ACK 不能证明 host 已应用 report。后续优先取 host Remote Play/virtual controller 日志，
+  并记录“再动/松右摇杆是否恢复”，不再从 Switch 状态机堵塞假设出发。
 - 真机上菜单文字可读、没有遮挡主要串流画面。
 - `A` 启动 game stream；菜单中 `B` 停止；streaming 中 `+` / `-` 能作为普通 Steam/game 输入。
 - D-035 已真机确认 `L3+R3+VOL+` 能在 host 停流后继续完成 session join/destroy 和 app cleanup，
@@ -313,5 +335,8 @@
 
 ## 下一步
 
-- 不让 BUG-M4-HID-001 继续阻塞主线；下一步真机验证音频输出，并开始把 UI/stream 状态模块从 probe
-  源中逐步拆出，避免正式 app 和证据 probe 长期共用越来越多临时代码。
+- 真机验证 VIC transfer：要求首次命中日志、`vicTransfers == transferFrames`、
+  `transferFallback=0`，并与旧版约 `transferAvgUs=1.6ms` 比较；若失败，保留 fallback 错误原文。
+- 真正 NVTEGRA zero-copy 已确认需要 deko3d 图形后端迁移；应作为独立阶段迁移窗口/swapchain、
+  YUV shader、overlay 与 cleanup，而不是在 SDL renderer 内叠加第二个图形后端。
+- 不让 BUG-M4-HID-001 继续阻塞主线；继续真机验证音频输出，并逐步拆分 UI/stream 状态模块。

@@ -46,10 +46,10 @@ index 8fecfdf..afed8e8 100644
 \ No newline at end of file
 +endif ()
 diff --git a/include/ihslib/session.h b/include/ihslib/session.h
-index 70676aa..d38c6b9 100644
+index 70676aa..ec7581b 100644
 --- a/include/ihslib/session.h
 +++ b/include/ihslib/session.h
-@@ -50,6 +50,30 @@ typedef struct IHS_SessionConfig {
+@@ -50,6 +50,32 @@ typedef struct IHS_SessionConfig {
      uint32_t maxBitrateKbps;
  } IHS_SessionConfig;
  
@@ -58,6 +58,7 @@ index 70676aa..d38c6b9 100644
 +typedef struct IHS_SessionReliabilityStats {
 +    uint64_t reliableTracked;
 +    uint64_t reliableAcknowledged;
++    uint64_t reliableSuperseded;
 +    uint64_t reliableNacks;
 +    uint64_t reliableRetries;
 +    uint64_t reliableSendFailures;
@@ -72,6 +73,7 @@ index 70676aa..d38c6b9 100644
 +    uint64_t hidCoalesced;
 +    uint64_t hidSent;
 +    uint64_t hidAcknowledged;
++    uint64_t hidSuperseded;
 +    uint32_t hidPending;
 +    uint32_t hidInFlight;
 +    int32_t hidOldestInFlightPacketId;
@@ -80,7 +82,7 @@ index 70676aa..d38c6b9 100644
  typedef struct IHS_StreamSessionCallbacks {
      void (*initialized)(IHS_Session *session, void *context);
  
-@@ -200,4 +224,7 @@ void IHS_SessionStatsSetFullReporting(IHS_Session *session, bool enabled);
+@@ -200,4 +226,7 @@ void IHS_SessionStatsSetFullReporting(IHS_Session *session, bool enabled);
  
  void IHS_SessionSetLogFunction(IHS_Session *session, IHS_LogFunction *logFunction);
  
@@ -982,7 +984,7 @@ index 198f528..e6b66f1 100644
      socklen_t actualLen = sizeof(actual);
      if (getsockopt(s->fd, SOL_SOCKET, SO_RCVBUF, &actual, &actualLen) == 0 && actual < rcvbuf) {
 diff --git a/src/session/channels/ch_control.c b/src/session/channels/ch_control.c
-index 97d53ed..bb900e2 100644
+index 97d53ed..6ae4051 100644
 --- a/src/session/channels/ch_control.c
 +++ b/src/session/channels/ch_control.c
 @@ -40,10 +40,6 @@
@@ -1075,7 +1077,7 @@ index 97d53ed..bb900e2 100644
              return false;
          }
          free(serialized);
-@@ -131,12 +141,101 @@ bool IHS_SessionChannelControlSend(IHS_SessionChannel *channel, EStreamControlMe
+@@ -131,12 +141,109 @@ bool IHS_SessionChannelControlSend(IHS_SessionChannel *channel, EStreamControlMe
      } else {
          IHS_BufferAppendMessage(&frame.body, message);
      }
@@ -1087,7 +1089,8 @@ index 97d53ed..bb900e2 100644
  }
  
 +static bool ControlSendPendingHIDLocked(IHS_SessionChannelControl *control, bool force) {
-+    if (!control->hidPendingValid || (!force && control->hidInFlightCount != 0)) {
++    if (!control->hidPendingValid ||
++        (!force && control->hidInFlightCount >= IHS_CONTROL_HID_MAX_IN_FLIGHT)) {
 +        return true;
 +    }
 +    if (control->hidInFlightCount >= sizeof(control->hidInFlightIds) /
@@ -1122,7 +1125,8 @@ index 97d53ed..bb900e2 100644
 +    IHS_SessionChannelControl *control = (IHS_SessionChannelControl *) channel;
 +    IHS_MutexLock(control->sendLock);
 +    control->hidSubmitted++;
-+    if (control->hidPendingValid || control->hidInFlightCount != 0) {
++    if (control->hidPendingValid ||
++        control->hidInFlightCount >= IHS_CONTROL_HID_MAX_IN_FLIGHT) {
 +        control->hidCoalesced++;
 +    }
 +    IHS_BufferClear(&control->hidPending, false);
@@ -1160,15 +1164,21 @@ index 97d53ed..bb900e2 100644
 +    }
 +    bool ret = true;
 +    if (found < control->hidInFlightCount) {
-+        if (found + 1 < control->hidInFlightCount) {
-+            memmove(&control->hidInFlightIds[found], &control->hidInFlightIds[found + 1],
-+                    (control->hidInFlightCount - found - 1) * sizeof(control->hidInFlightIds[0]));
++        for (size_t i = 0; i < found; i++) {
++            if (IHS_RetransmissionSupersede(&control->base.session->retransmission,
++                                            IHS_SessionChannelIdControl,
++                                            control->hidInFlightIds[i], 0)) {
++                control->hidSuperseded++;
++            }
 +        }
-+        control->hidInFlightCount--;
++        size_t removed = found + 1;
++        if (removed < control->hidInFlightCount) {
++            memmove(control->hidInFlightIds, &control->hidInFlightIds[removed],
++                    (control->hidInFlightCount - removed) * sizeof(control->hidInFlightIds[0]));
++        }
++        control->hidInFlightCount -= removed;
 +        control->hidAcknowledged++;
-+        if (control->hidInFlightCount == 0) {
-+            ret = ControlSendPendingHIDLocked(control, false);
-+        }
++        ret = ControlSendPendingHIDLocked(control, false);
 +    }
 +    IHS_MutexUnlock(control->sendLock);
 +    if (!ret) {
@@ -1179,7 +1189,7 @@ index 97d53ed..bb900e2 100644
  void IHS_SessionChannelControlHandshake(IHS_SessionChannel *channel, bool networkTest) {
      // Idempotent — a duplicate ConnectACK on the wire can re-trigger this; skip if we're
      // already past the handshake phase.
-@@ -158,12 +257,14 @@ static void OnControlInit(IHS_SessionChannel *channel, const void *data) {
+@@ -158,12 +265,14 @@ static void OnControlInit(IHS_SessionChannel *channel, const void *data) {
      IHS_UNUSED(data);
      IHS_SessionChannelControl *control = (IHS_SessionChannelControl *) channel;
      control->sendLock = IHS_MutexCreate();
@@ -1194,7 +1204,7 @@ index 97d53ed..bb900e2 100644
      IHS_MutexDestroy(control->sendLock);
  }
  
-@@ -183,11 +284,14 @@ static void OnControlReceived(IHS_SessionChannel *channel, IHS_SessionPacket *pa
+@@ -183,11 +292,14 @@ static void OnControlReceived(IHS_SessionChannel *channel, IHS_SessionPacket *pa
                  }
                  return;
              }
@@ -1211,7 +1221,7 @@ index 97d53ed..bb900e2 100644
              break;
          default:
              // Other items should not come here
-@@ -522,4 +626,4 @@ static const char *ControlMessageTypeName(EStreamControlMessage type) {
+@@ -522,4 +634,4 @@ static const char *ControlMessageTypeName(EStreamControlMessage type) {
      const ProtobufCEnumValue *value = protobuf_c_enum_descriptor_get_value(&estream_control_message__descriptor,
                                                                             type);
      return value ? value->name : "unknown";
@@ -1219,28 +1229,40 @@ index 97d53ed..bb900e2 100644
 \ No newline at end of file
 +}
 diff --git a/src/session/channels/ch_control.h b/src/session/channels/ch_control.h
-index ece8431..8b837b4 100644
+index ece8431..d2b536f 100644
 --- a/src/session/channels/ch_control.h
 +++ b/src/session/channels/ch_control.h
-@@ -44,6 +44,17 @@ typedef struct IHS_SessionChannelControl {
+@@ -35,6 +35,10 @@
+ #include "protobuf/remoteplay.pb-c.h"
+ #include "protobuf/hiddevices.pb-c.h"
+ 
++/* Keep one progress lane available when an earlier full-state report reaches
++ * the host but its ACK is lost. Superseded reports receive bounded gap filling. */
++#define IHS_CONTROL_HID_MAX_IN_FLIGHT 2
++
+ typedef struct IHS_SessionChannelControl {
+     IHS_SessionChannel base;
+     /** Serializes IHS_SessionChannelControlSend: it allocates a packet id and an
+@@ -44,6 +48,18 @@ typedef struct IHS_SessionChannelControl {
      IHS_Mutex *sendLock;
      uint64_t sendEncryptSequence;
      uint64_t recvEncryptSequence;
-+    /** Latest complete input snapshot waiting behind reliable HID traffic. */
++    /** Latest complete input snapshot waiting behind the bounded HID window. */
 +    IHS_Buffer hidPending;
 +    bool hidPendingValid;
-+    /** Routine input admits one packet at a time. Teardown may flush a final neutral
-+     * snapshot, so keep a small exact-ID set rather than a single boolean. */
++    /** Two routine packets may be in flight so one missing ACK cannot stop all
++     * future full-state snapshots. Teardown may add a final neutral snapshot. */
 +    uint16_t hidInFlightIds[4];
 +    size_t hidInFlightCount;
 +    uint64_t hidSubmitted;
 +    uint64_t hidCoalesced;
 +    uint64_t hidSent;
 +    uint64_t hidAcknowledged;
++    uint64_t hidSuperseded;
      IHS_SessionPacketsWindow *framePacketWindow;
      /** Set once the frame window overflowed, so we disconnect only once. */
      bool overflowed;
-@@ -55,6 +66,15 @@ IHS_SessionChannel *IHS_SessionChannelControlCreate(IHS_Session *session);
+@@ -55,6 +71,15 @@ IHS_SessionChannel *IHS_SessionChannelControlCreate(IHS_Session *session);
  bool IHS_SessionChannelControlSend(IHS_SessionChannel *channel, EStreamControlMessage type,
                                     const ProtobufCMessage *message, int32_t packetId);
  
@@ -1464,10 +1486,10 @@ index ba3a75c..217ea93 100644
 \ No newline at end of file
 +uint32_t IHS_SessionPacketTimestamp();
 diff --git a/src/session/retransmission.c b/src/session/retransmission.c
-index 2b88b25..fc1ba7a 100644
+index 2b88b25..c0b6ba2 100644
 --- a/src/session/retransmission.c
 +++ b/src/session/retransmission.c
-@@ -1,216 +1,259 @@
+@@ -1,216 +1,325 @@
  /*
 - *  _____  _   _  _____  _  _  _
 - * |_   _|| | | |/  ___|| |(_)| |     Steam
@@ -1505,21 +1527,25 @@ index 2b88b25..fc1ba7a 100644
 -#define RETRANSMISSION_INTERVAL 10
 -#define RETRANSMISSION_ATTEMPTS 20
 +#define RETRANSMISSION_TICK_MS 5
-+#define RETRANSMISSION_INITIAL_MS 10
++#define RETRANSMISSION_INITIAL_MS 25
 +#define RETRANSMISSION_MAX_MS 100
-+
++#define RETRANSMISSION_SUPERSEDE_MIN_RETRIES 3
+ 
+-/* Per-packet override of RETRANSMISSION_ATTEMPTS; 0 means use the default. */
+-static inline unsigned int AttemptCap(const IHS_SessionPacketHeader *header) {
+-    return header->maxRetransmit ? header->maxRetransmit : RETRANSMISSION_ATTEMPTS;
 +struct IHS_RetransmissionPending {
 +    IHS_SessionPacket packet;
 +    uint64_t firstTrackedMs;
 +    uint64_t lastSendMs;
 +    uint64_t nextRetryMs;
 +    uint32_t retryCount;
++    bool initialSent;
++    bool nackPending;
++    bool superseded;
 +    IHS_RetransmissionPending *next;
 +};
- 
--/* Per-packet override of RETRANSMISSION_ATTEMPTS; 0 means use the default. */
--static inline unsigned int AttemptCap(const IHS_SessionPacketHeader *header) {
--    return header->maxRetransmit ? header->maxRetransmit : RETRANSMISSION_ATTEMPTS;
++
 +static bool PacketIdentityMatches(const IHS_SessionPacketHeader *header,
 +                                  IHS_SessionChannelId channelId, uint16_t packetId,
 +                                  int16_t fragmentId) {
@@ -1615,11 +1641,7 @@ index 2b88b25..fc1ba7a 100644
      assert(packet->body.offset == IHS_PACKET_HEADER_SIZE);
 -    if (packet->header.retransmitCount >= AttemptCap(&packet->header)) {
 -        return false; /* RetransmissionTimerRun already warned */
-+
-+    IHS_RetransmissionPending *pending = calloc(1, sizeof(*pending));
-+    if (pending == NULL) {
-+        return false;
-     }
+-    }
 -    if (packet->header.retransmitCount > 0) {
 -        /* A twin whose predecessor was ACKed while this one was in the send queue.
 -         * Drop it here, where it finally becomes visible to Cancel. */
@@ -1639,9 +1661,17 @@ index 2b88b25..fc1ba7a 100644
 -            IHS_SessionLog(retransmission->session, IHS_LogLevelVerbose, "Retransmission",
 -                           "Dropping cancelled Packet(channelId=%u, packetId=%u, fragmentId=%u)",
 -                           packet->header.channelId, packet->header.packetId, packet->header.fragmentId);
++
++    IHS_RetransmissionPending *pending = calloc(1, sizeof(*pending));
++    if (pending == NULL) {
++        return false;
++    }
 +    PacketClone(&pending->packet, packet);
 +    pending->firstTrackedMs = nowMs;
-+    pending->nextRetryMs = nowMs + RETRANSMISSION_INITIAL_MS;
++    /* Registration precedes queue admission so a fast ACK cannot race past us.
++     * Do not arm retry here: the send queue may take longer than the retry delay,
++     * which used to let a retransmission overtake the initial datagram. */
++    pending->nextRetryMs = UINT64_MAX;
 +
 +    IHS_MutexLock(retransmission->lock);
 +    for (IHS_RetransmissionPending *item = retransmission->head; item != NULL;
@@ -1737,16 +1767,15 @@ index 2b88b25..fc1ba7a 100644
 +    return false;
 +}
 +
-+bool IHS_RetransmissionNack(IHS_SessionRetransmission *retransmission,
-+                            IHS_SessionChannelId channelId, uint16_t packetId,
-+                            int16_t fragmentId, uint64_t nowMs) {
++bool IHS_RetransmissionSupersede(IHS_SessionRetransmission *retransmission,
++                                 IHS_SessionChannelId channelId, uint16_t packetId,
++                                 int16_t fragmentId) {
 +    bool found = false;
 +    IHS_MutexLock(retransmission->lock);
 +    for (IHS_RetransmissionPending *pending = retransmission->head; pending != NULL;
 +         pending = pending->next) {
 +        if (PacketIdentityMatches(&pending->packet.header, channelId, packetId, fragmentId)) {
-+            pending->nextRetryMs = nowMs;
-+            retransmission->stats.nacks++;
++            pending->superseded = true;
 +            found = true;
              break;
          }
@@ -1764,9 +1793,10 @@ index 2b88b25..fc1ba7a 100644
 -    (void) runCount;
 -    PendingRetransmission *pending = context;
 -    IHS_SessionRetransmission *retransmission = pending->retransmission;
-+void IHS_RetransmissionNoteInitialSend(IHS_SessionRetransmission *retransmission,
-+                                       const IHS_SessionPacketHeader *header, bool sent,
-+                                       uint64_t nowMs) {
++bool IHS_RetransmissionNack(IHS_SessionRetransmission *retransmission,
++                            IHS_SessionChannelId channelId, uint16_t packetId,
++                            int16_t fragmentId, uint64_t nowMs) {
++    bool found = false;
      IHS_MutexLock(retransmission->lock);
 -    bool cancelled = pending->cancelled;
 -    IHS_MutexUnlock(retransmission->lock);
@@ -1785,13 +1815,14 @@ index 2b88b25..fc1ba7a 100644
 -                       AttemptCap(&packet->header));
 +    for (IHS_RetransmissionPending *pending = retransmission->head; pending != NULL;
 +         pending = pending->next) {
-+        if (PacketIdentityMatches(&pending->packet.header, header->channelId,
-+                                  header->packetId, header->fragmentId)) {
-+            pending->lastSendMs = nowMs;
-+            if (!sent) {
++        if (PacketIdentityMatches(&pending->packet.header, channelId, packetId, fragmentId)) {
++            if (pending->initialSent) {
 +                pending->nextRetryMs = nowMs;
-+                retransmission->stats.sendFailures++;
++            } else {
++                pending->nackPending = true;
 +            }
++            retransmission->stats.nacks++;
++            found = true;
 +            break;
 +        }
      }
@@ -1799,6 +1830,7 @@ index 2b88b25..fc1ba7a 100644
 -    assert(packet->body.data == NULL);
 -    return 0;
 +    IHS_MutexUnlock(retransmission->lock);
++    return found;
  }
  
 -static void RetransmissionTimerEnd(void *context) {
@@ -1808,31 +1840,86 @@ index 2b88b25..fc1ba7a 100644
 -                   "Timer ended for Packet(channelId=%u, packetId=%u, fragmentId=%u), retransmitCount=%u",
 -                   pending->packet.header.channelId, pending->packet.header.packetId, pending->packet.header.fragmentId,
 -                   pending->packet.header.retransmitCount);
-+size_t IHS_RetransmissionProcessAt(IHS_SessionRetransmission *retransmission, uint64_t nowMs,
-+                                   IHS_RetransmissionSendFunction send, void *context) {
-+    size_t dueCount = 0;
++void IHS_RetransmissionNoteInitialSend(IHS_SessionRetransmission *retransmission,
++                                       const IHS_SessionPacketHeader *header, bool sent,
++                                       uint64_t nowMs) {
      IHS_MutexLock(retransmission->lock);
 -    IHS_QueuePollBy(retransmission->queue, RetransmissionIdenticalPredicate, pending);
 +    for (IHS_RetransmissionPending *pending = retransmission->head; pending != NULL;
 +         pending = pending->next) {
-+        if (pending->nextRetryMs <= nowMs) {
++        if (PacketIdentityMatches(&pending->packet.header, header->channelId,
++                                  header->packetId, header->fragmentId)) {
++            pending->initialSent = true;
++            pending->lastSendMs = nowMs;
++            if (!sent || pending->nackPending) {
++                pending->nextRetryMs = nowMs;
++            } else {
++                pending->nextRetryMs = nowMs + RETRANSMISSION_INITIAL_MS;
++            }
++            if (!sent) {
++                retransmission->stats.sendFailures++;
++            }
++            break;
++        }
++    }
+     IHS_MutexUnlock(retransmission->lock);
+-    IHS_SessionPacketClear(&pending->packet, true);
+-    IHS_QueueItemFree(pending);
+ }
+ 
+-static bool RetransmissionIdenticalPredicate(PendingRetransmission *item, void *context) {
+-    return item == context;
++size_t IHS_RetransmissionProcessAt(IHS_SessionRetransmission *retransmission, uint64_t nowMs,
++                                   IHS_RetransmissionSendFunction send, void *context) {
++    size_t dueCount = 0;
++    IHS_RetransmissionPending *retired = NULL;
++    IHS_MutexLock(retransmission->lock);
++
++    IHS_RetransmissionPending **link = &retransmission->head;
++    while (*link != NULL) {
++        IHS_RetransmissionPending *pending = *link;
++        if (pending->superseded &&
++            pending->retryCount >= RETRANSMISSION_SUPERSEDE_MIN_RETRIES) {
++            *link = pending->next;
++            pending->next = retired;
++            retired = pending;
++            retransmission->stats.superseded++;
++            retransmission->stats.outstanding--;
++            continue;
++        }
++        link = &pending->next;
++    }
++
++    for (IHS_RetransmissionPending *pending = retransmission->head; pending != NULL;
++         pending = pending->next) {
++        if (pending->initialSent && pending->nextRetryMs <= nowMs) {
 +            dueCount++;
 +        }
 +    }
 +    if (dueCount == 0) {
 +        IHS_MutexUnlock(retransmission->lock);
++        while (retired != NULL) {
++            IHS_RetransmissionPending *next = retired->next;
++            PendingDestroy(retired);
++            retired = next;
++        }
 +        return 0;
 +    }
 +
 +    IHS_SessionPacket *due = calloc(dueCount, sizeof(*due));
 +    if (due == NULL) {
 +        IHS_MutexUnlock(retransmission->lock);
++        while (retired != NULL) {
++            IHS_RetransmissionPending *next = retired->next;
++            PendingDestroy(retired);
++            retired = next;
++        }
 +        return 0;
 +    }
 +    size_t index = 0;
 +    for (IHS_RetransmissionPending *pending = retransmission->head; pending != NULL;
 +         pending = pending->next) {
-+        if (pending->nextRetryMs > nowMs) {
++        if (!pending->initialSent || pending->nextRetryMs > nowMs) {
 +            continue;
 +        }
 +        PacketClone(&due[index], &pending->packet);
@@ -1844,13 +1931,14 @@ index 2b88b25..fc1ba7a 100644
 +        retransmission->stats.retries++;
 +        index++;
 +    }
-     IHS_MutexUnlock(retransmission->lock);
--    IHS_SessionPacketClear(&pending->packet, true);
--    IHS_QueueItemFree(pending);
--}
- 
--static bool RetransmissionIdenticalPredicate(PendingRetransmission *item, void *context) {
--    return item == context;
++    IHS_MutexUnlock(retransmission->lock);
++
++    while (retired != NULL) {
++        IHS_RetransmissionPending *next = retired->next;
++        PendingDestroy(retired);
++        retired = next;
++    }
++
 +    for (index = 0; index < dueCount; index++) {
 +        bool sent = send(&due[index], context);
 +        if (!sent) {
@@ -1892,10 +1980,10 @@ index 2b88b25..fc1ba7a 100644
 +    IHS_MutexUnlock(retransmission->lock);
 +}
 diff --git a/src/session/retransmission.h b/src/session/retransmission.h
-index a652c6d..e935e47 100644
+index a652c6d..f51f0bb 100644
 --- a/src/session/retransmission.h
 +++ b/src/session/retransmission.h
-@@ -1,60 +1,72 @@
+@@ -1,60 +1,80 @@
  /*
 - *  _____  _   _  _____  _  _  _
 - * |_   _|| | | |/  ___|| |(_)| |     Steam
@@ -1946,6 +2034,7 @@ index a652c6d..e935e47 100644
 +typedef struct IHS_RetransmissionStats {
 +    uint64_t tracked;
 +    uint64_t acknowledged;
++    uint64_t superseded;
 +    uint64_t nacks;
 +    uint64_t retries;
 +    uint64_t sendFailures;
@@ -1961,7 +2050,8 @@ index a652c6d..e935e47 100644
 +/**
 + * One session-owned reliability state machine. A packet is tracked before its
 + * first send is queued and remains here until the peer acknowledges the exact
-+ * (channel, packet, fragment) identity or the session is destroyed.
++ * (channel, packet, fragment) identity, its owner retires a superseded packet
++ * after bounded gap filling, or the session is destroyed.
 + */
  typedef struct IHS_SessionRetransmission {
      IHS_Session *session;
@@ -1990,6 +2080,12 @@ index a652c6d..e935e47 100644
 +                                   IHS_SessionChannelId channelId, uint16_t packetId,
 +                                   int16_t fragmentId, uint64_t nowMs);
 +
++/** Mark an exact packet as superseded by a newer full-state message. It remains
++ * eligible for a small, bounded number of retries before being retired. */
++bool IHS_RetransmissionSupersede(IHS_SessionRetransmission *retransmission,
++                                 IHS_SessionChannelId channelId, uint16_t packetId,
++                                 int16_t fragmentId);
++
 +bool IHS_RetransmissionNack(IHS_SessionRetransmission *retransmission,
 +                            IHS_SessionChannelId channelId, uint16_t packetId,
 +                            int16_t fragmentId, uint64_t nowMs);
@@ -2006,7 +2102,7 @@ index a652c6d..e935e47 100644
 +void IHS_RetransmissionGetStats(IHS_SessionRetransmission *retransmission,
 +                                IHS_RetransmissionStats *stats, uint64_t nowMs);
 diff --git a/src/session/session.c b/src/session/session.c
-index 14ac2a9..d362d0a 100644
+index 14ac2a9..ebcf052 100644
 --- a/src/session/session.c
 +++ b/src/session/session.c
 @@ -50,10 +50,11 @@
@@ -2069,7 +2165,7 @@ index 14ac2a9..d362d0a 100644
  void IHS_SessionHIDAddProvider(IHS_Session *session, IHS_HIDProvider *provider) {
      IHS_BaseLock(&session->base);
      IHS_HIDManagerAddProvider(session->hidManager, provider);
-@@ -247,6 +259,47 @@ const IHS_SessionInfo *IHS_SessionGetInfo(const IHS_Session *session) {
+@@ -247,6 +259,49 @@ const IHS_SessionInfo *IHS_SessionGetInfo(const IHS_Session *session) {
      return &session->info;
  }
  
@@ -2087,6 +2183,7 @@ index 14ac2a9..d362d0a 100644
 +    IHS_RetransmissionGetStats(&session->retransmission, &reliable, IHS_TimerNow());
 +    stats->reliableTracked = reliable.tracked;
 +    stats->reliableAcknowledged = reliable.acknowledged;
++    stats->reliableSuperseded = reliable.superseded;
 +    stats->reliableNacks = reliable.nacks;
 +    stats->reliableRetries = reliable.retries;
 +    stats->reliableSendFailures = reliable.sendFailures;
@@ -2106,6 +2203,7 @@ index 14ac2a9..d362d0a 100644
 +        stats->hidCoalesced = control->hidCoalesced;
 +        stats->hidSent = control->hidSent;
 +        stats->hidAcknowledged = control->hidAcknowledged;
++        stats->hidSuperseded = control->hidSuperseded;
 +        stats->hidPending = control->hidPendingValid ? 1U : 0U;
 +        stats->hidInFlight = (uint32_t) control->hidInFlightCount;
 +        stats->hidOldestInFlightPacketId = control->hidInFlightCount > 0
@@ -2117,7 +2215,7 @@ index 14ac2a9..d362d0a 100644
  static void SessionRecvCallback(IHS_Base *base, const IHS_SocketAddress *address, IHS_Buffer *data) {
      (void) address;
      IHS_Session *session = (IHS_Session *) base;
-@@ -259,13 +312,18 @@ static void SessionRecvCallback(IHS_Base *base, const IHS_SocketAddress *address
+@@ -259,13 +314,18 @@ static void SessionRecvCallback(IHS_Base *base, const IHS_SocketAddress *address
  
      IHS_SessionChannelId channelId = packet.header.channelId;
      IHS_SessionPacketType packetType = packet.header.type;
@@ -2140,7 +2238,7 @@ index 14ac2a9..d362d0a 100644
      }
      IHS_SessionChannel *channel = IHS_SessionChannelFor(session, channelId);
      if (channel == NULL && session->negotiatedVideoCodec != 0 /* not None */ &&
-@@ -301,6 +359,13 @@ static void SessionRecvCallback(IHS_Base *base, const IHS_SocketAddress *address
+@@ -301,6 +361,13 @@ static void SessionRecvCallback(IHS_Base *base, const IHS_SocketAddress *address
  static void SessionInitialized(IHS_Base *base, void *context) {
      (void) context;
      IHS_Session *session = (IHS_Session *) base;
@@ -2154,7 +2252,7 @@ index 14ac2a9..d362d0a 100644
      session->sendThread = IHS_ThreadCreate(SessionSendWorker, "IHSSessSend", session);
  
      if (session->callbacks.session && session->callbacks.session->initialized) {
-@@ -353,17 +418,18 @@ static void SessionSendWorker(void *context) {
+@@ -353,17 +420,18 @@ static void SessionSendWorker(void *context) {
          }
          IHS_MutexUnlock(session->sendQueueMutex);
  
@@ -2178,7 +2276,7 @@ index 14ac2a9..d362d0a 100644
          }
          QueuedPacketDestroy(queued, NULL);
          IHS_QueueItemFree(queued);
-@@ -381,4 +447,4 @@ static QueuedPacket *QueuedPacketCreate(IHS_Session *session, IHS_SessionPacket
+@@ -381,4 +449,4 @@ static QueuedPacket *QueuedPacketCreate(IHS_Session *session, IHS_SessionPacket
  static void QueuedPacketDestroy(QueuedPacket *queued, void *unused) {
      (void) unused;
      IHS_SessionPacketClear(&queued->packet, true);
@@ -2234,10 +2332,10 @@ index bd90aa5..47f2826 100644
 +add_subdirectory(video)
 diff --git a/tests/session/control_hid_admission.c b/tests/session/control_hid_admission.c
 new file mode 100644
-index 0000000..33c54ca
+index 0000000..f74c7b4
 --- /dev/null
 +++ b/tests/session/control_hid_admission.c
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,69 @@
 +#include <assert.h>
 +#include <stdio.h>
 +#include <string.h>
@@ -2266,7 +2364,8 @@ index 0000000..33c54ca
 +    IHS_SessionChannelControl *control = (IHS_SessionChannelControl *) channel;
 +    const uint8_t first[] = {1, 2, 3};
 +    const uint8_t second[] = {4, 5, 6};
-+    const uint8_t latest[] = {7, 8, 9};
++    const uint8_t third[] = {7, 8, 9};
++    const uint8_t latest[] = {10, 11, 12};
 +
 +    assert(IHS_SessionChannelControlSubmitHIDReport(channel, first, sizeof(first)));
 +    assert(control->hidInFlightCount == 1);
@@ -2274,22 +2373,32 @@ index 0000000..33c54ca
 +    uint16_t firstId = control->hidInFlightIds[0];
 +
 +    assert(IHS_SessionChannelControlSubmitHIDReport(channel, second, sizeof(second)));
++    assert(control->hidInFlightCount == IHS_CONTROL_HID_MAX_IN_FLIGHT);
++    assert(!control->hidPendingValid);
++    uint16_t secondId = control->hidInFlightIds[1];
++    assert(secondId != firstId);
++
++    /* A missing ACK for firstId must not prevent a newer full snapshot from
++     * advancing through the second in-flight lane. */
++    assert(IHS_SessionChannelControlSubmitHIDReport(channel, third, sizeof(third)));
 +    assert(IHS_SessionChannelControlSubmitHIDReport(channel, latest, sizeof(latest)));
-+    assert(control->hidInFlightCount == 1);
++    assert(control->hidInFlightCount == IHS_CONTROL_HID_MAX_IN_FLIGHT);
 +    assert(control->hidPendingValid);
 +    assert(control->hidPending.size == sizeof(latest));
 +    assert(memcmp(IHS_BufferPointer(&control->hidPending), latest, sizeof(latest)) == 0);
-+    assert(control->hidSubmitted == 3 && control->hidCoalesced == 2 && control->hidSent == 1);
++    assert(control->hidSubmitted == 4 && control->hidCoalesced == 2 && control->hidSent == 2);
 +
-+    Ack(channel, firstId);
++    Ack(channel, secondId);
 +    assert(control->hidInFlightCount == 1);
 +    assert(!control->hidPendingValid);
-+    assert(control->hidSent == 2 && control->hidAcknowledged == 1);
++    assert(control->hidSent == 3 && control->hidAcknowledged == 1);
++    assert(control->hidSuperseded == 1);
 +    uint16_t latestId = control->hidInFlightIds[0];
-+    assert(latestId != firstId);
++    assert(latestId != firstId && latestId != secondId);
 +    Ack(channel, latestId);
 +    assert(control->hidInFlightCount == 0);
 +    assert(control->hidAcknowledged == 2);
++    assert(control->hidSuperseded == 1);
 +
 +    IHS_SessionDestroy(session);
 +    IHS_Quit();
@@ -2298,10 +2407,10 @@ index 0000000..33c54ca
 +}
 diff --git a/tests/session/retransmission_state_machine.c b/tests/session/retransmission_state_machine.c
 new file mode 100644
-index 0000000..783d710
+index 0000000..006b07d
 --- /dev/null
 +++ b/tests/session/retransmission_state_machine.c
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,120 @@
 +#include <assert.h>
 +#include <stdint.h>
 +#include <stdio.h>
@@ -2359,40 +2468,64 @@ index 0000000..783d710
 +    assert(stats.oldestRetryCount == 0);
 +
 +    SendCapture capture = {.result = true};
-+    assert(IHS_RetransmissionProcessAt(&retransmission, 109, CaptureSend, &capture) == 0);
-+    assert(IHS_RetransmissionProcessAt(&retransmission, 110, CaptureSend, &capture) == 1);
++    /* Tracking must not arm a retry before the queued initial send completes. */
++    assert(IHS_RetransmissionProcessAt(&retransmission, 1000, CaptureSend, &capture) == 0);
++    IHS_RetransmissionNoteInitialSend(&retransmission, &packet.header, true, 1000);
++    assert(IHS_RetransmissionProcessAt(&retransmission, 1024, CaptureSend, &capture) == 0);
++    assert(IHS_RetransmissionProcessAt(&retransmission, 1025, CaptureSend, &capture) == 1);
 +    assert(capture.calls == 1);
 +    assert(capture.packetId == 42 && capture.fragmentId == 3);
 +    assert(capture.payload == 0xa5 && capture.retransmitCount == 1);
 +
 +    /* ACK identity includes fragmentId. A neighbouring fragment cannot release it. */
 +    assert(!IHS_RetransmissionAcknowledge(&retransmission,
-+                                          IHS_SessionChannelIdControl, 42, 2, 111));
++                                          IHS_SessionChannelIdControl, 42, 2, 1026));
 +    assert(IHS_RetransmissionNack(&retransmission,
-+                                  IHS_SessionChannelIdControl, 42, 3, 111));
-+    assert(IHS_RetransmissionProcessAt(&retransmission, 111, CaptureSend, &capture) == 1);
++                                  IHS_SessionChannelIdControl, 42, 3, 1026));
++    assert(IHS_RetransmissionProcessAt(&retransmission, 1026, CaptureSend, &capture) == 1);
 +    assert(capture.retransmitCount == 2);
 +    assert(IHS_RetransmissionAcknowledge(&retransmission,
-+                                         IHS_SessionChannelIdControl, 42, 3, 120));
++                                         IHS_SessionChannelIdControl, 42, 3, 1030));
 +    assert(!IHS_RetransmissionAcknowledge(&retransmission,
-+                                          IHS_SessionChannelIdControl, 42, 3, 121));
++                                          IHS_SessionChannelIdControl, 42, 3, 1031));
 +
 +    /* Reliable ordered traffic is never forgotten at an arbitrary attempt cap. */
 +    IHS_SessionPacketClear(&packet, true);
 +    InitPacket(&packet, 43, 0, 0x5a);
 +    assert(IHS_RetransmissionTrack(&retransmission, &packet, 200));
-+    for (uint64_t now = 210; now <= 5210; now += 100) {
++    IHS_RetransmissionNoteInitialSend(&retransmission, &packet.header, true, 200);
++    for (uint64_t now = 225; now <= 5225; now += 100) {
 +        IHS_RetransmissionProcessAt(&retransmission, now, CaptureSend, &capture);
 +    }
-+    IHS_RetransmissionGetStats(&retransmission, &stats, 5210);
++    IHS_RetransmissionGetStats(&retransmission, &stats, 5225);
 +    assert(stats.retries > 20);
 +    assert(stats.outstanding == 1);
 +    assert(IHS_RetransmissionAcknowledge(&retransmission,
-+                                         IHS_SessionChannelIdControl, 43, 0, 5211));
++                                         IHS_SessionChannelIdControl, 43, 0, 5226));
 +
-+    IHS_RetransmissionGetStats(&retransmission, &stats, 5211);
++    IHS_RetransmissionGetStats(&retransmission, &stats, 5226);
 +    assert(stats.outstanding == 0);
 +    assert(stats.acknowledged == 2);
++
++    /* A newer full-state message may supersede an older one. Preserve three
++     * gap-filling retries, then retire it without pretending an ACK arrived. */
++    IHS_SessionPacketClear(&packet, true);
++    InitPacket(&packet, 44, 0, 0xc3);
++    assert(IHS_RetransmissionTrack(&retransmission, &packet, 6000));
++    IHS_RetransmissionNoteInitialSend(&retransmission, &packet.header, true, 6000);
++    assert(IHS_RetransmissionSupersede(&retransmission,
++                                       IHS_SessionChannelIdControl, 44, 0));
++    assert(IHS_RetransmissionProcessAt(&retransmission, 6025, CaptureSend, &capture) == 1);
++    assert(capture.retransmitCount == 1);
++    assert(IHS_RetransmissionProcessAt(&retransmission, 6075, CaptureSend, &capture) == 1);
++    assert(capture.retransmitCount == 2);
++    assert(IHS_RetransmissionProcessAt(&retransmission, 6175, CaptureSend, &capture) == 1);
++    assert(capture.retransmitCount == 3);
++    assert(IHS_RetransmissionProcessAt(&retransmission, 6176, CaptureSend, &capture) == 0);
++    IHS_RetransmissionGetStats(&retransmission, &stats, 6176);
++    assert(stats.outstanding == 0);
++    assert(stats.acknowledged == 2);
++    assert(stats.superseded == 1);
 +    IHS_SessionPacketClear(&packet, true);
 +    IHS_RetransmissionDeinit(&retransmission);
 +    puts("retransmission state machine OK");

@@ -43,8 +43,10 @@
 #define WATCHDOG_PATH        AUTH_DIR "/stream_watchdog.txt"
 #define DIAG_PATH            AUTH_DIR "/stream_diag.log"
 #define DIAG_PREV_PATH       AUTH_DIR "/stream_diag_prev.log"
+#define DIAG_OLDER_PATH      AUTH_DIR "/stream_diag_older.log"
 #define DIAG_MARKER_PATH     AUTH_DIR "/stream_diag_markers.log"
 #define DIAG_MARKER_PREV_PATH AUTH_DIR "/stream_diag_markers_prev.log"
+#define DIAG_MARKER_OLDER_PATH AUTH_DIR "/stream_diag_markers_older.log"
 #define DIAG_EVENT_PATH      AUTH_DIR "/stream_diag_events.log"
 #define DIAG_EVENT_PREV_PATH AUTH_DIR "/stream_diag_events_prev.log"
 #define DIAG_TAIL_BYTES      3500U
@@ -2134,7 +2136,7 @@ static void perf_line(app_state *state, char *out, size_t out_len) {
              "frames=%u keyframes=%u decoded=%u displayed=%u mediaDrop=%u"
              " gaps=%u maxGap=%u encodedKB=%" PRIu64 " avgKbps=%" PRIu64
              " elapsedMs=%" PRIu64 " firstRxMs=%" PRIu64 " autoStop=%u"
-             " decoder=\"%s\" transferFrames=%u converted=%u"
+             " decoder=\"%s\" transferFrames=%u vicTransfers=%u transferFallback=%u converted=%u"
              " audio=%d audioFrames=%u audioKB=%" PRIu64
              " audioSamples=%" PRIu64 " audioQ=%u audioDrops=%u audioErr=%u"
              " decodeAvgUs=%" PRIu64 " decodeMaxUs=%u"
@@ -2147,6 +2149,7 @@ static void perf_line(app_state *state, char *out, size_t out_len) {
              media.dropped_frames, frame_gaps, max_frame_gap, encoded_bytes / 1024U,
              avg_kbps, elapsed_ms, first_rx_ms, auto_stop,
              media.decoder[0] ? media.decoder : "-", media.transferred_frames,
+             media.vic_transfer_frames, media.transfer_fallback_frames,
              media.converted_frames, media.audio_active ? 1 : 0, media.audio_frames,
              media.audio_bytes / 1024U, media.audio_decoded_samples,
              media.audio_queued_bytes, media.audio_queue_drops, media.audio_decode_errors,
@@ -2169,9 +2172,10 @@ static void hid_line(char *out, size_t out_len) {
              " lastEvent=%d/%d/%d/%d"
              " openOk=%u openFail=%u start=%u startLen=%u full=%u"
              " getFeature=%u getStrings=%u noDevice=%u activeInput=1 ctrlWarn=%u"
-             " rel=%" PRIu64 "/%" PRIu64 " retry=%" PRIu64 " fail=%" PRIu64
+             " rel=%" PRIu64 "/%" PRIu64 "/%" PRIu64 " retry=%" PRIu64 " fail=%" PRIu64
              " out=%u oldest=%" PRIu64 "ms@%u/%u/%d#%u maxAck=%" PRIu64 "ms"
-             " hidSM=%" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%u/%u@%d"
+             " hidSM=%" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64
+             "/%" PRIu64 "/%u/%u@%d"
              " sdlName=\"%s\" sdlGuid=%s",
              media.hid_events, media.hid_send_ok, media.hid_send_fail, media.hid_state_full,
              media.hid_raw_ax_total, media.hid_raw_btn_total,
@@ -2197,6 +2201,7 @@ static void hid_line(char *out, size_t out_len) {
              (uint32_t)atomic_load_explicit(&diag_control_warn, memory_order_relaxed),
              media.reliability.reliableTracked,
              media.reliability.reliableAcknowledged,
+             media.reliability.reliableSuperseded,
              media.reliability.reliableRetries,
              media.reliability.reliableSendFailures,
              media.reliability.reliableOutstanding,
@@ -2210,6 +2215,7 @@ static void hid_line(char *out, size_t out_len) {
              media.reliability.hidCoalesced,
              media.reliability.hidSent,
              media.reliability.hidAcknowledged,
+             media.reliability.hidSuperseded,
              media.reliability.hidPending,
              media.reliability.hidInFlight,
              media.reliability.hidOldestInFlightPacketId,
@@ -2244,7 +2250,9 @@ typedef struct diag_marker_net {
     uint32_t max_frame_gap;
     uint32_t control_warn;
     uint64_t reliable_retries;
+    uint64_t reliable_superseded;
     uint64_t hid_coalesced;
+    uint64_t hid_superseded;
     uint32_t reliable_outstanding;
     uint32_t hid_pending;
     uint32_t hid_in_flight;
@@ -2263,7 +2271,9 @@ typedef struct diag_marker_net {
     uint32_t audio_delta;
     uint32_t frame_gap_delta;
     uint64_t reliable_retry_delta;
+    uint64_t reliable_superseded_delta;
     uint64_t hid_coalesced_delta;
+    uint64_t hid_superseded_delta;
     uint32_t control_warn_delta;
     uint64_t encoded_delta;
     uint64_t main_age_ms;
@@ -2280,7 +2290,9 @@ typedef struct diag_disk_prev {
     uint32_t frame_gaps;
     uint32_t control_warn;
     uint64_t reliable_retries;
+    uint64_t reliable_superseded;
     uint64_t hid_coalesced;
+    uint64_t hid_superseded;
     uint64_t encoded_bytes;
 } diag_disk_prev;
 
@@ -2319,7 +2331,9 @@ static void diag_marker_net_capture(app_state *state, uint64_t now_ms,
     out->control_warn =
         (uint32_t)atomic_load_explicit(&diag_control_warn, memory_order_relaxed);
     out->reliable_retries = media.reliability.reliableRetries;
+    out->reliable_superseded = media.reliability.reliableSuperseded;
     out->hid_coalesced = media.reliability.hidCoalesced;
+    out->hid_superseded = media.reliability.hidSuperseded;
     out->reliable_outstanding = media.reliability.reliableOutstanding;
     out->hid_pending = media.reliability.hidPending;
     out->hid_in_flight = media.reliability.hidInFlight;
@@ -2350,8 +2364,13 @@ static void diag_marker_net_capture(app_state *state, uint64_t now_ms,
         diag_counter_delta(out->frame_gaps, prev->frame_gaps, prev->valid);
     out->reliable_retry_delta =
         diag_counter_delta64(out->reliable_retries, prev->reliable_retries, prev->valid);
+    out->reliable_superseded_delta =
+        diag_counter_delta64(out->reliable_superseded, prev->reliable_superseded,
+                             prev->valid);
     out->hid_coalesced_delta =
         diag_counter_delta64(out->hid_coalesced, prev->hid_coalesced, prev->valid);
+    out->hid_superseded_delta =
+        diag_counter_delta64(out->hid_superseded, prev->hid_superseded, prev->valid);
     out->control_warn_delta =
         diag_counter_delta(out->control_warn, prev->control_warn, prev->valid);
     out->encoded_delta =
@@ -2366,7 +2385,9 @@ static void diag_marker_net_capture(app_state *state, uint64_t now_ms,
     prev->frame_gaps = out->frame_gaps;
     prev->control_warn = out->control_warn;
     prev->reliable_retries = out->reliable_retries;
+    prev->reliable_superseded = out->reliable_superseded;
     prev->hid_coalesced = out->hid_coalesced;
+    prev->hid_superseded = out->hid_superseded;
     prev->encoded_bytes = out->encoded_bytes;
 }
 
@@ -2527,8 +2548,10 @@ static void diag_disk_write_hid_history(FILE *fp, FILE *marker_fp, uint32_t *las
                                "mainAgeMs=%" PRIu64 " lastFrameAgeMs=%" PRIu64
                                " gaps=%u/%u audioQ=%u "
                                "audioDrop=%u audioErr=%u relRetry=%" PRIu64 "/+%" PRIu64
+                               " relSup=%" PRIu64 "/+%" PRIu64
                                " relOut=%u relOldest=%" PRIu64 "@%u/%u/%d#%u"
-                               " hidCoal=%" PRIu64 "/+%" PRIu64 " hidWait=%u/%u@%d"
+                               " hidCoal=%" PRIu64 "/+%" PRIu64
+                               " hidSup=%" PRIu64 "/+%" PRIu64 " hidWait=%u/%u@%d"
                                " ctrlWarn=%u/+%u\n",
                                e->seq, net->frames, net->frame_delta, net->displayed,
                                net->displayed_delta, net->audio_frames, net->audio_delta,
@@ -2536,11 +2559,13 @@ static void diag_disk_write_hid_history(FILE *fp, FILE *marker_fp, uint32_t *las
                                net->max_frame_gap, net->audio_queued_bytes,
                                net->audio_queue_drops,
                                net->audio_decode_errors, net->reliable_retries,
-                               net->reliable_retry_delta, net->reliable_outstanding,
+                               net->reliable_retry_delta, net->reliable_superseded,
+                               net->reliable_superseded_delta, net->reliable_outstanding,
                                net->reliable_oldest_ms, net->reliable_oldest_channel,
                                net->reliable_oldest_packet, net->reliable_oldest_fragment,
                                net->reliable_oldest_retry, net->hid_coalesced,
-                               net->hid_coalesced_delta, net->hid_pending,
+                               net->hid_coalesced_delta, net->hid_superseded,
+                               net->hid_superseded_delta, net->hid_pending,
                                net->hid_in_flight, net->hid_oldest_packet, net->control_warn,
                                net->control_warn_delta);
         }
@@ -2653,11 +2678,17 @@ static void diag_disk_start(app_state *state) {
         errno = saved_errno;
         return;
     }
-    remove(DIAG_PREV_PATH);
+    remove(DIAG_OLDER_PATH);
+    if (rename(DIAG_PREV_PATH, DIAG_OLDER_PATH) != 0 && errno != ENOENT) {
+        logline("diag older rotate failed: errno=%d", errno);
+    }
     if (rename(DIAG_PATH, DIAG_PREV_PATH) != 0 && errno != ENOENT) {
         logline("diag disk rotate failed: errno=%d", errno);
     }
-    remove(DIAG_MARKER_PREV_PATH);
+    remove(DIAG_MARKER_OLDER_PATH);
+    if (rename(DIAG_MARKER_PREV_PATH, DIAG_MARKER_OLDER_PATH) != 0 && errno != ENOENT) {
+        logline("diag marker older rotate failed: errno=%d", errno);
+    }
     if (rename(DIAG_MARKER_PATH, DIAG_MARKER_PREV_PATH) != 0 && errno != ENOENT) {
         logline("diag marker rotate failed: errno=%d", errno);
     }
@@ -2693,7 +2724,8 @@ static void diag_disk_start(app_state *state) {
         return;
     }
     diag_disk_started = true;
-    logline("diag disk active: %s prev=%s", DIAG_PATH, DIAG_PREV_PATH);
+    logline("diag disk active: %s prev=%s older=%s", DIAG_PATH, DIAG_PREV_PATH,
+            DIAG_OLDER_PATH);
     errno = saved_errno;
 }
 
@@ -2710,7 +2742,7 @@ static void diag_disk_stop_thread(void) {
 static void diag_status_line(char *out, size_t out_len) {
     snprintf(out, out_len,
              "started=%d alive=%d stop=%d ticks=%u startErr=%u threadErr=%u markerErr=%u "
-             "path=%s prev=%s marker=%s markerPrev=%s",
+             "path=%s prev=%s older=%s marker=%s markerPrev=%s markerOlder=%s",
              diag_disk_started ? 1 : 0,
              atomic_load_explicit(&diag_disk_thread_alive, memory_order_relaxed) ? 1 : 0,
              atomic_load_explicit(&diag_disk_stop, memory_order_relaxed) ? 1 : 0,
@@ -2718,7 +2750,8 @@ static void diag_status_line(char *out, size_t out_len) {
              (uint32_t)atomic_load_explicit(&diag_disk_start_error, memory_order_relaxed),
              (uint32_t)atomic_load_explicit(&diag_disk_thread_error, memory_order_relaxed),
              (uint32_t)atomic_load_explicit(&diag_disk_marker_error, memory_order_relaxed),
-             DIAG_PATH, DIAG_PREV_PATH, DIAG_MARKER_PATH, DIAG_MARKER_PREV_PATH);
+             DIAG_PATH, DIAG_PREV_PATH, DIAG_OLDER_PATH, DIAG_MARKER_PATH,
+             DIAG_MARKER_PREV_PATH, DIAG_MARKER_OLDER_PATH);
 }
 
 static void log_perf_summary(app_state *state) {
@@ -3425,7 +3458,8 @@ static void debug_handle_command(debug_server *dbg, const struct sockaddr_in *pe
     if (*cmd == '\0' || ascii_ieq(cmd, "help")) {
         debug_reply(dbg, peer,
                     "OK commands: ping state stats/perf audio hid hidlog [n] "
-                    "diag [current|prev|status|marker [current|prev]] hosts select <n> "
+                    "diag [current|prev|older|status|marker [current|prev]] "
+                    "diag-chunk <current|prev|older> <offset> [length] hosts select <n> "
                     "press <A|B|X|Y|MINUS|PLUS|MINUS+B|MINUS+PLUS|UP|DOWN|LEFT|RIGHT> "
                     "ihs-init discover-once media-init media-shutdown "
                     "stream [desktop|game] [short|long|frames=N|seconds=N|hold] [pin] "
@@ -3455,6 +3489,49 @@ static void debug_handle_command(debug_server *dbg, const struct sockaddr_in *pe
         char line_out[DEBUG_TX - 16];
         stream_media_format_hid_history(line_out, sizeof(line_out), count);
         debug_reply(dbg, peer, "OK %s", line_out);
+    } else if (ascii_ieq(cmd, "diag-chunk")) {
+        char chunk_arg_buf[DEBUG_RX];
+        strncpy(chunk_arg_buf, arg, sizeof(chunk_arg_buf));
+        chunk_arg_buf[sizeof(chunk_arg_buf) - 1] = '\0';
+        char *saveptr = NULL;
+        char *target = strtok_r(chunk_arg_buf, " \t\r\n", &saveptr);
+        char *offset_s = strtok_r(NULL, " \t\r\n", &saveptr);
+        char *length_s = strtok_r(NULL, " \t\r\n", &saveptr);
+        char *extra = strtok_r(NULL, " \t\r\n", &saveptr);
+        uint32_t offset = 0;
+        uint32_t length = DIAG_CHUNK_BYTES;
+        if (target == NULL || offset_s == NULL || extra != NULL ||
+            !parse_u32_arg(offset_s, 0, UINT32_MAX, &offset) ||
+            (length_s != NULL &&
+             !parse_u32_arg(length_s, 1, DIAG_CHUNK_BYTES, &length))) {
+            debug_reply(dbg, peer,
+                        "ERR usage: diag-chunk <current|prev|older> <offset> [1..%u]",
+                        DIAG_CHUNK_BYTES);
+            return;
+        }
+        const char *path = NULL;
+        if (ascii_ieq(target, "current") || ascii_ieq(target, "now")) {
+            path = DIAG_PATH;
+        } else if (ascii_ieq(target, "prev") || ascii_ieq(target, "previous") ||
+                   ascii_ieq(target, "last")) {
+            path = DIAG_PREV_PATH;
+        } else if (ascii_ieq(target, "older") || ascii_ieq(target, "prev2")) {
+            path = DIAG_OLDER_PATH;
+        } else {
+            debug_reply(dbg, peer, "ERR bad diag chunk target");
+            return;
+        }
+        char line_out[DEBUG_TX - 160];
+        uint32_t file_size = 0;
+        uint32_t next_offset = offset;
+        bool eof = true;
+        if (!read_text_chunk(path, offset, length, line_out, sizeof(line_out),
+                             &file_size, &next_offset, &eof)) {
+            debug_reply(dbg, peer, "ERR cannot read %s at offset=%u", path, offset);
+            return;
+        }
+        debug_reply(dbg, peer, "OK %s offset=%u next=%u size=%u eof=%d\n%s",
+                    path, offset, next_offset, file_size, eof ? 1 : 0, line_out);
     } else if (ascii_ieq(cmd, "diag") || ascii_ieq(cmd, "diag-tail")) {
         char diag_arg_buf[DEBUG_RX];
         strncpy(diag_arg_buf, arg, sizeof(diag_arg_buf));
@@ -3500,13 +3577,15 @@ static void debug_handle_command(debug_server *dbg, const struct sockaddr_in *pe
         }
         bool previous = ascii_ieq(diag_arg, "prev") || ascii_ieq(diag_arg, "previous") ||
                         ascii_ieq(diag_arg, "last");
+        bool older = ascii_ieq(diag_arg, "older") || ascii_ieq(diag_arg, "prev2");
         bool current = *diag_arg == '\0' || ascii_ieq(diag_arg, "current") ||
                        ascii_ieq(diag_arg, "now");
-        if (!previous && !current) {
+        if (!previous && !older && !current) {
             debug_reply(dbg, peer, "ERR bad diag target");
             return;
         }
-        const char *path = previous ? DIAG_PREV_PATH : DIAG_PATH;
+        const char *path = older ? DIAG_OLDER_PATH :
+                           (previous ? DIAG_PREV_PATH : DIAG_PATH);
         char line_out[DEBUG_TX - 64];
         if (current && diag_recent_copy(line_out, sizeof(line_out))) {
             debug_reply(dbg, peer, "OK current-memory %s\n%s", path, line_out);

@@ -28,6 +28,8 @@ typedef struct stream_media_snapshot {
     uint32_t dropped_frames;
     uint32_t decode_samples;
     uint32_t transferred_frames;
+    uint32_t vic_transfer_frames;
+    uint32_t transfer_fallback_frames;
     uint32_t converted_frames;
     uint16_t last_displayed_frame;
     uint64_t decode_us_total;

@@ -43,9 +43,10 @@
   在可靠控制通道丢包后有界恢复手柄状态（delta 链本身无法自愈）。动机与证据见 decisions D-030；
   该 API 的声明与"低频刷新"契约此前已写在公开头文件 `ihslib/hid/sdl.h` 中，本补丁补上实现。
 - `0013-control-reliability-state-machine.patch`：撤回旧的 HID fire-and-forget 方案；可靠包在初发前
-  登记并保留到精确 ACK，NACK 触发立即重发，分片 ACK 回显 fragmentId。HID 输入使用“单个在途
-  完整快照 + 最新待发快照”合并，SDL 输入线上只发完整状态，避免在可靠有序 packet ID 中制造缺口；
-  session UDP receive 增加 10ms timeout，使 StopRequest 后的 interrupt 能有界唤醒 worker 并完成 join。
+  登记、初发完成后才启动重传并保留到精确 ACK，NACK 触发立即重发，分片 ACK 回显 fragmentId。
+  HID 输入使用“双可靠在途 lane + 最新待发快照”，避免单个 ACK 缺失锁死全部输入；SDL 输入线上只发
+  完整状态；较新完整快照得到 ACK 后，旧 HID 快照只完成三次补洞重传并以 superseded 单独退休，
+  不再永久重发。session UDP receive 增加 10ms timeout，使 StopRequest 后的 interrupt 能有界唤醒 worker。
 
 ## 待引入（按里程碑）
 

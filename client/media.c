@@ -15,9 +15,12 @@
 #endif
 
 #include <libavcodec/avcodec.h>
+#include <libavutil/buffer.h>
 #include <libavutil/error.h>
 #include <libavutil/frame.h>
 #include <libavutil/hwcontext.h>
+#include <libavutil/imgutils.h>
+#include <libavutil/mem.h>
 #include <libavutil/pixdesc.h>
 #include <libswscale/swscale.h>
 
@@ -148,6 +151,9 @@ static bool need_flush;
 static bool have_last_frame;
 static uint16_t last_frame_id;
 static bool logged_alignment_fallback;
+static bool logged_vic_transfer;
+static bool logged_vic_prepare_fallback;
+static bool logged_vic_transfer_retry;
 static enum AVPixelFormat logged_convert_format = AV_PIX_FMT_NONE;
 
 static void media_logf(const char *fmt, ...);
@@ -1420,6 +1426,9 @@ int stream_media_video_start(IHS_Session *session, const IHS_StreamVideoConfig *
     have_last_frame = false;
     last_frame_id = 0;
     logged_alignment_fallback = false;
+    logged_vic_transfer = false;
+    logged_vic_prepare_fallback = false;
+    logged_vic_transfer_retry = false;
     logged_convert_format = AV_PIX_FMT_NONE;
     nv12_texture_failed = false;
 
@@ -1431,6 +1440,8 @@ int stream_media_video_start(IHS_Session *session, const IHS_StreamVideoConfig *
     snapshot.dropped_frames = 0;
     snapshot.decode_samples = 0;
     snapshot.transferred_frames = 0;
+    snapshot.vic_transfer_frames = 0;
+    snapshot.transfer_fallback_frames = 0;
     snapshot.converted_frames = 0;
     snapshot.last_displayed_frame = 0;
     snapshot.decode_us_total = 0;
@@ -1516,20 +1527,150 @@ static void stash_converted_frame(const AVFrame *src, uint16_t frame_id) {
     av_frame_free(&out);
 }
 
+#define NVTEGRA_VIC_ALIGNMENT 256
+#define NVTEGRA_MAP_ALIGNMENT 4096
+
+static void free_aligned_frame_buffer(void *opaque, uint8_t *data) {
+    (void)data;
+    av_free(opaque);
+}
+
+static bool frame_planes_aligned(const AVFrame *frame) {
+    int planes = av_pix_fmt_count_planes((enum AVPixelFormat)frame->format);
+    if (planes <= 0) {
+        return false;
+    }
+    for (int i = 0; i < planes; i++) {
+        if (frame->data[i] == NULL ||
+            ((uintptr_t)frame->data[i] & (NVTEGRA_VIC_ALIGNMENT - 1)) != 0 ||
+            (frame->linesize[i] & (NVTEGRA_VIC_ALIGNMENT - 1)) != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static int prepare_vic_transfer_frame(AVFrame *dst, const AVFrame *src) {
+    if (src->hw_frames_ctx == NULL) {
+        return AVERROR(EINVAL);
+    }
+
+    const AVHWFramesContext *frames_ctx =
+        (const AVHWFramesContext *)src->hw_frames_ctx->data;
+    dst->format = frames_ctx->sw_format;
+    dst->width = src->width;
+    dst->height = src->height;
+
+    int image_size = av_image_get_buffer_size((enum AVPixelFormat)dst->format,
+                                              dst->width, dst->height,
+                                              NVTEGRA_VIC_ALIGNMENT);
+    if (image_size < 0) {
+        return image_size;
+    }
+
+    size_t map_size = ((size_t)image_size + NVTEGRA_MAP_ALIGNMENT - 1) &
+                      ~(size_t)(NVTEGRA_MAP_ALIGNMENT - 1);
+    if (map_size > SIZE_MAX - (NVTEGRA_MAP_ALIGNMENT - 1)) {
+        return AVERROR(ENOMEM);
+    }
+
+    uint8_t *allocation = av_malloc(map_size + NVTEGRA_MAP_ALIGNMENT - 1);
+    if (allocation == NULL) {
+        return AVERROR(ENOMEM);
+    }
+    uint8_t *aligned = (uint8_t *)(((uintptr_t)allocation + NVTEGRA_MAP_ALIGNMENT - 1) &
+                                   ~(uintptr_t)(NVTEGRA_MAP_ALIGNMENT - 1));
+    dst->buf[0] = av_buffer_create(aligned, map_size, free_aligned_frame_buffer,
+                                   allocation, 0);
+    if (dst->buf[0] == NULL) {
+        av_free(allocation);
+        return AVERROR(ENOMEM);
+    }
+
+    int rc = av_image_fill_arrays(dst->data, dst->linesize, aligned,
+                                  (enum AVPixelFormat)dst->format,
+                                  dst->width, dst->height,
+                                  NVTEGRA_VIC_ALIGNMENT);
+    if (rc < 0) {
+        av_frame_unref(dst);
+        return rc;
+    }
+    dst->extended_data = dst->data;
+    return 0;
+}
+
+static int transfer_nvtegra_frame(AVFrame *dst, const AVFrame *src, bool *used_vic) {
+    *used_vic = false;
+
+    int prepare_rc = prepare_vic_transfer_frame(dst, src);
+    bool vic_eligible = prepare_rc == 0 && frame_planes_aligned(dst);
+    if (!vic_eligible) {
+        if (!logged_vic_prepare_fallback) {
+            logged_vic_prepare_fallback = true;
+            if (prepare_rc < 0) {
+                char errbuf[AV_ERROR_MAX_STRING_SIZE];
+                av_strerror(prepare_rc, errbuf, sizeof(errbuf));
+                media_logf("NVTEGRA VIC buffer preparation failed: %s (%d); using default transfer",
+                           errbuf, prepare_rc);
+            } else {
+                media_logf("NVTEGRA VIC buffer failed runtime alignment check; using default transfer");
+            }
+        }
+        av_frame_unref(dst);
+    }
+
+    int transfer_rc = av_hwframe_transfer_data(dst, src, 0);
+    if (transfer_rc < 0 && vic_eligible) {
+        if (!logged_vic_transfer_retry) {
+            logged_vic_transfer_retry = true;
+            char errbuf[AV_ERROR_MAX_STRING_SIZE];
+            av_strerror(transfer_rc, errbuf, sizeof(errbuf));
+            media_logf("NVTEGRA VIC transfer failed: %s (%d); retrying default transfer",
+                       errbuf, transfer_rc);
+        }
+        av_frame_unref(dst);
+        transfer_rc = av_hwframe_transfer_data(dst, src, 0);
+        vic_eligible = false;
+    }
+    if (transfer_rc < 0) {
+        return transfer_rc;
+    }
+
+    if (vic_eligible) {
+        int props_rc = av_frame_copy_props(dst, src);
+        if (props_rc < 0) {
+            return props_rc;
+        }
+    }
+    *used_vic = vic_eligible;
+    if (vic_eligible && !logged_vic_transfer) {
+        logged_vic_transfer = true;
+        media_logf("NVTEGRA transfer path: VIC 256B-aligned format=%d pitch=%d/%d",
+                   dst->format, dst->linesize[0], dst->linesize[1]);
+    }
+    return 0;
+}
+
 static void receive_frames(uint16_t frame_id) {
     while (avcodec_receive_frame(decoder_ctx, decode_frame) == 0) {
         AVFrame *frame = decode_frame;
         AVFrame *downloaded = NULL;
         if (decode_frame->hw_frames_ctx != NULL || decode_frame->format == AV_PIX_FMT_NVTEGRA) {
             downloaded = av_frame_alloc();
+            bool used_vic = false;
             uint64_t transfer_start = media_monotonic_us();
             int transfer_rc = downloaded != NULL ?
-                                  av_hwframe_transfer_data(downloaded, decode_frame, 0) :
+                                  transfer_nvtegra_frame(downloaded, decode_frame, &used_vic) :
                                   AVERROR(ENOMEM);
             uint32_t transfer_us = elapsed_us(transfer_start, media_monotonic_us());
             if (downloaded != NULL && transfer_rc == 0) {
                 pthread_mutex_lock(&state_lock);
                 snapshot.transferred_frames++;
+                if (used_vic) {
+                    snapshot.vic_transfer_frames++;
+                } else {
+                    snapshot.transfer_fallback_frames++;
+                }
                 add_timing(&snapshot.transfer_us_total, &snapshot.transfer_us_max, transfer_us);
                 pthread_mutex_unlock(&state_lock);
                 frame = downloaded;
