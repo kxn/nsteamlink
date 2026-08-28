@@ -76,6 +76,7 @@
 #define WATCHDOG_STREAM_NO_FRAME_MS 45000U
 #define WATCHDOG_POLL_MS 250U
 #define VIDEO_STALL_NOTICE_MS 2500U
+#define VIDEO_STALL_AUTO_STOP_MS 10000U
 #define LOCAL_HOTKEY_MASK     (HidNpadButton_StickL | HidNpadButton_StickR)
 #define LOCAL_VOLUME_POLL_MS  80U
 
@@ -2956,6 +2957,16 @@ static void note_video_stall_if_needed(app_state *state) {
                      "Video stalled: no frames for %" PRIu64 "ms", age);
             snprintf(state->ui_notice, sizeof(state->ui_notice),
                      "Video stalled; waiting for Steam");
+        }
+        /* Host-side game launch stops the stream without telling us; a frozen
+         * frame forever reads as a dead app. Give Steam a grace window for a
+         * video-channel restart, then auto-stop back to the menu (#11 bridge). */
+        if (age > VIDEO_STALL_AUTO_STOP_MS && !state->stop_requested) {
+            state->stop_requested = true;
+            snprintf(state->ui_notice, sizeof(state->ui_notice),
+                     "Host stopped streaming; returning to menu");
+            logline_net("video stalled %" PRIu64 "ms after %u frames; auto stop stream", age,
+                        frames);
         }
     }
     pthread_mutex_unlock(&state->lock);
