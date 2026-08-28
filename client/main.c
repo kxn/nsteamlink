@@ -2544,12 +2544,15 @@ static void diag_disk_write_hid_history(FILE *fp, FILE *marker_fp, uint32_t *las
         diag_disk_printf(fp,
                          "hidsec seq=%u sec=%u e=%u ok=%u f=%u h=%u p=%u ax=%u btn=%u sen=%u oth=%u "
                          "sup=%u raw=%u/%u sty=%u:%s sticks=%d/%d/%d/%d b=0x%x "
+                         "sent=%d/%d/%d/%d b=0x%x#%u "
                          "minus=%u/%u/%u/%u tot=%u/%u/%u/%u/%u last=%d/%d/%d/%d\n",
                          e->seq, e->sec, e->events, e->send_ok, e->send_fail,
                          e->state_full, e->pump, e->ax, e->btn, e->sen, e->oth,
                          e->ev_sup, e->raw_ax, e->raw_btn, e->sty_fl,
                          e->sty[0] ? e->sty : "-", e->left_x, e->left_y,
                          e->right_x, e->right_y, e->buttons,
+                         e->sent_lx, e->sent_ly, e->sent_rx, e->sent_ry,
+                         e->sent_buttons, e->sent_seq,
                          e->marker_minus_sdl_held, e->marker_minus_sdl_samples,
                          e->marker_minus_raw_held, e->marker_minus_raw_samples,
                          e->events_total,

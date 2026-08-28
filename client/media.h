@@ -139,6 +139,13 @@ typedef struct stream_media_hid_history_entry {
     uint32_t marker_minus_raw_held;
     uint32_t marker_minus_raw_samples;
     char sty[12];
+    /** Wire truth: axes/buttons packed into the last submitted HID report. */
+    int16_t sent_lx;
+    int16_t sent_ly;
+    int16_t sent_rx;
+    int16_t sent_ry;
+    uint16_t sent_buttons;
+    uint32_t sent_seq;
 } stream_media_hid_history_entry;
 
 bool stream_media_init(stream_media_log_fn log_fn);

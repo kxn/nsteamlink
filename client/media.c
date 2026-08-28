@@ -612,6 +612,14 @@ static void record_hid_history(uint64_t now_us) {
         marker_minus_sdl_held = 1;
     }
 
+    IHS_HIDSDLLastSubmitted last_submitted;
+    memset(&last_submitted, 0, sizeof(last_submitted));
+    pthread_mutex_lock(&state_lock);
+    IHS_Session *report_session = hid_session;
+    pthread_mutex_unlock(&state_lock);
+    bool have_sent = report_session != NULL &&
+                     IHS_HIDSDLGetLastSubmittedReport(report_session, &last_submitted);
+
     pthread_mutex_lock(&state_lock);
     stream_media_hid_history_entry *entry = &hid_history[hid_history_next];
     memset(entry, 0, sizeof(*entry));
@@ -649,6 +657,14 @@ static void record_hid_history(uint64_t now_us) {
     entry->marker_minus_raw_held = hid_marker_minus_raw_held ? 1U : 0U;
     entry->marker_minus_raw_samples = hid_marker_minus_raw_samples_since_log;
     strncpy(entry->sty, hid_style_last, sizeof(entry->sty) - 1);
+    if (have_sent) {
+        entry->sent_lx = last_submitted.axes[0];
+        entry->sent_ly = last_submitted.axes[1];
+        entry->sent_rx = last_submitted.axes[2];
+        entry->sent_ry = last_submitted.axes[3];
+        entry->sent_buttons = last_submitted.buttons;
+        entry->sent_seq = (uint32_t) last_submitted.seq;
+    }
 
     hid_history_next = (hid_history_next + 1U) % HID_HISTORY_CAP;
     if (hid_history_count < HID_HISTORY_CAP) {

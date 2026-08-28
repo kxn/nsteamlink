@@ -1288,3 +1288,23 @@ channelId=2 可靠消息 20 次重试耗尽 + 视频 stall 与输入失灵同窗
   的卡死，则洞假设被否证，嫌疑收敛到 host 虚拟控制器 apply，转向 host 侧取证。
 - 影响：ihslib fork 新提交 `d5645e4`（submodule pin 随父仓库更新）；测试
   `retransmission_state_machine` 同步改写为新策略；`rel=` 调试输出新增 giveups 计数。
+
+## D-040 HID 改单在途串行发送 + 槽位随放弃回收（#1 根因候选）
+
+- 日期：2026-08-28
+- Evidence：关键约束——同一 host/网络下官方 Steam Link 客户端从未出现输入卡死，说明
+  host 对丢包的容错已被官方客户端验证，问题在客户端特有行为。marker 数据：HID 包
+  `hidWait=0/1@6096` 在途 6 秒未轮转（心跳 10/s 正常应 100ms 换手）；packet 1875 失联
+  189 秒（D-039）。代码证据：`hidInFlightIds` 槽位仅由 ACK 回收，D-039 的重传放弃
+  不会通知控制通道——每个永失包永久泄漏一个槽，丢两个 HID 即完全静默；双在途允许
+  报告乱序到达 host，这是官方串行客户端从不产生的模式。
+- Decision：
+  1. `IHS_CONTROL_HID_MAX_IN_FLIGHT` 2 → 1：HID 严格串行，与官方客户端一致；
+     提交时合并进 pending 全量快照，host 永远按序看到最新状态；
+  2. `ControlSendPendingHIDLocked` 发送前清扫：重传层已放弃（IsTracked=false）的
+     最老在途 id 直接回收槽位，丢包代价封顶 ≈3 秒 + 一个 RTT；
+  3. 线上真值 tap：`IHS_HIDSDLGetLastSubmittedReport()` 暴露最近提交报告的轴/按键/
+     seq，hidsec 诊断行新增 `sent=` 字段——下次卡死可直接分辨"发了回中"还是"发了旧值"。
+- 影响：部分取代 D-034 双在途设计（其动机"单 ACK 丢失锁死"已由 D-039 放弃窗口 +
+  本条槽位回收共同覆盖，且不再有乱序副作用）；ihslib fork `e17e697`；admission 测试
+  重写为单在途语义；hidsec 行格式扩展。
