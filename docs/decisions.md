@@ -1270,3 +1270,21 @@ channelId=2 可靠消息 20 次重试耗尽 + 视频 stall 与输入失灵同窗
      取回；BUG-M4-HID-001 的浓缩证据链在 issue #1。
 - 影响：新会话开工顺序改为"kickoff → decisions → DEVELOPMENT → Issues"；
   AGENTS.md 同步登记；decisions.md 本身 append-only，属设计资产，不受本条约束。
+
+## D-039 可靠包 3 秒有界放弃（部分取代 D-034 的"不按次数放弃"）
+
+- 日期：2026-08-28
+- Evidence：真机游玩轮（2026-08-28）marker 数据显示 channel 1 packet 1875 自会话 ~30s 起无 ACK，
+  `relOldest=189609ms`，relRetry 以 +40~50/s 重传至会话结束（8000+ 次）。期间后续包均正常
+  ACK（hidSup 持续增长、视频音频不断）——host 传输层并未卡死；且 8000 次重传不可能全部
+  丢失，说明 host 端解密序列 resync 越过洞之后，重传副本作为过期重放被静默丢弃，
+  永远不可能获得 ACK。D-034 的"不按次数放弃"在该场景下退化为无限重传黑洞。
+- Decision：所有已初发成功的可靠包，`firstTrackedMs` 起 3 秒（RETRANSMISSION_GIVE_UP_MS）
+  仍未精确 ACK 即退休，计入 `giveUps`/`reliableGiveUps`；被新快照取代的 HID 包照旧走
+  superseded 退休。状态收敛依赖既有 100ms 全量心跳。取代 D-034 中"保留到精确 ACK、
+  不按次数放弃"的无限重传部分；精确 ACK 删除、NACK 立即重发、双在途 lane 均不变。
+- 可测试预言：若"输入卡死"的机制是有序通道的洞导致 host 端 apply 停滞，则本修复后
+  卡死时长被封顶在 ~3 秒（洞放弃 → host 序列前进 → 心跳恢复状态）；若仍出现远超 3 秒
+  的卡死，则洞假设被否证，嫌疑收敛到 host 虚拟控制器 apply，转向 host 侧取证。
+- 影响：ihslib fork 新提交 `d5645e4`（submodule pin 随父仓库更新）；测试
+  `retransmission_state_machine` 同步改写为新策略；`rel=` 调试输出新增 giveups 计数。

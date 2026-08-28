@@ -2181,7 +2181,7 @@ static void hid_line(char *out, size_t out_len) {
              " lastEvent=%d/%d/%d/%d"
              " openOk=%u openFail=%u start=%u startLen=%u full=%u"
              " getFeature=%u getStrings=%u noDevice=%u activeInput=1 ctrlWarn=%u"
-             " rel=%" PRIu64 "/%" PRIu64 "/%" PRIu64 " retry=%" PRIu64 " fail=%" PRIu64
+             " rel=%" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64 " retry=%" PRIu64 " fail=%" PRIu64
              " out=%u oldest=%" PRIu64 "ms@%u/%u/%d#%u maxAck=%" PRIu64 "ms"
              " hidSM=%" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64
              "/%" PRIu64 "/%u/%u@%d"
@@ -2211,6 +2211,7 @@ static void hid_line(char *out, size_t out_len) {
              media.reliability.reliableTracked,
              media.reliability.reliableAcknowledged,
              media.reliability.reliableSuperseded,
+             media.reliability.reliableGiveUps,
              media.reliability.reliableRetries,
              media.reliability.reliableSendFailures,
              media.reliability.reliableOutstanding,

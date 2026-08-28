@@ -50,7 +50,7 @@ stop / exit     停流 / 退出程序
 | `sty=flips:style/attrs` | style/attribute 抖动计（验证 SWITCH_JoystickUpdate 早退风暴用） |
 | `sticks=lx/ly/rx/ry`、`b=0x...` | 当秒结束时的 SDL 摇杆轴值与按钮 mask |
 | `minus=sdlHeld/sdlSamples/rawHeld/rawSamples` | `-` 故障 marker 统计（被动记录，不吞键） |
-| `rel=tracked/acked/superseded retry/fail/out/oldest/maxAck` | 可靠发送状态机直接计数：在途登记/精确 ACK/被新快照取代退休/重试/失败/在途/最老在途年龄/最大 ACK 延迟 |
+| `rel=tracked/acked/superseded/giveups` | 可靠发送状态机直接计数：在途登记/精确 ACK/被新快照取代退休/**超时放弃（3s 未确认，靠 resync+心跳收敛）**/重试/失败/在途/最老在途年龄/最大 ACK 延迟 |
 | `hidSM=submitted/coalesced/sent/acked/superseded/pending/inFlight` | HID 状态机：提交/被合并/已发送/已确认/已取代/待发/在途 |
 | `vicTransfers` / `transferFallback` | VIC 256B 对齐传输命中 / 回退 FFmpeg 自动 transfer（stats 输出） |
 | `frameLatAvgUs/MaxUs` | 单帧客户端总延迟：完整帧提交（ihslib 组帧完成）→ 上屏完成，仅统计实际显示帧 |
