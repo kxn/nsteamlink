@@ -1,5 +1,8 @@
 # M3 状态整理
 
+> **本文件已归档（2026-08-28）：M3 已验收完成。当前任务见 GitHub Issues（kxn/nsteamlink），本文件仅作历史证据追溯。**
+
+
 > 目标：先证明 Steam streaming request、session 认证/协商和视频数据通道，再在同一个 probe 中接入
 > FFmpeg/NVTEGRA + SDL2 texture 显示，完成第一帧显示。
 

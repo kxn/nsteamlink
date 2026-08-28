@@ -14,6 +14,7 @@
 - For Switch testing, do not use TCP port probes against netloader port `28280`; use `nxlink` directly because empty TCP connections can consume netloader's receive attempt.
 - This project's Switch debug unit is `10.10.10.77`; hbmenu netloader listens on port `28280`. Do not infer another Switch IP from ARP/neighbour tables unless the user explicitly says the IP changed.
 - Keep Steam authentication semantics aligned with `docs/STEAM_REMOTE_PLAY_AUTH.md`: do not collapse pairing PIN / authorization code and connect/security PIN into one concept, and do not change protocol flow without a source/log-backed evidence note.
+- Current tasks and status live in GitHub Issues on the private repo `kxn/nsteamlink` (with milestones). `docs/M2_STATUS.md` / `docs/M3_STATUS.md` / `docs/M4_STATUS.md` are frozen archives: never take tasks or "未处理事项" from them without cross-checking Issues first.
 
 ## Switch Homebrew Runtime Discipline
 

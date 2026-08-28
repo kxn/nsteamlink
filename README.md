@@ -2,12 +2,13 @@
 
 Switch 自制软件（homebrew）版 Steam Link 客户端：通过 Steam Remote Play 协议串流 PC 上的 Steam 游戏。
 
-**当前状态：M2/M3 主路径已在真机跑通，M4 已进入正式 app UI 阶段** —— `switch-discover` 已支持
-广播发现、Switch 端生成/显示 pairing code、授权回调与 `auth.bin` 身份持久化；2026-08-24
-真机日志已出现 `Authorization response result=0` 并保存身份。M3 串流/session/video channel
-已在真机跑通；full application 环境下 Mesa/OpenGL 基准已通过。当前正式 `nsteamlink.nro`
-使用 FFmpeg/NVTEGRA + SDL2 NV12 串流路径，并已加入 host/mode/PIN/stop/exit 英文 UI、第一版
-手柄输入回传与 Opus 音频输出。
+**当前状态：M4 功能开发基本完成，处于验收收尾阶段** —— 正式 `nsteamlink.nro`
+（FFmpeg/NVTEGRA + SDL2 NV12 串流路径）已具备 host/mode/PIN/stop/exit 英文 UI、
+手柄输入回传（`A/B/X/Y` 按面壳字母映射正确）与 Opus 音频输出第一版；
+`L3+R3+VOL+` / `L3+R3+VOL-` 本地退出/停流真机可用。遗留工作为若干真机验收项与
+BUG-M4-HID-001（偶发输入无响应，证据已排除 Switch 侧，定位到 ACK 之后的 host 侧 apply）。
+**任务跟踪在 GitHub Issues（私有仓库 `kxn/nsteamlink`，见 M4 milestone）**；
+`docs/M2_STATUS.md` / `M3_STATUS.md` / `M4_STATUS.md` 为冻结的历史档案。
 
 ## 文档索引
 

@@ -57,7 +57,7 @@ third_party/        第三方库（submodule / vendored），禁止就地修改�
 | 命令 | 产物 |
 |---|---|
 | `./scripts/build-desktop.sh` | `build/desktop/app/nsteamlink` |
-| `./scripts/build-switch.sh` | `build/switch/app/nsteamlink.nro` |
+| `./scripts/build-switch.sh` | `build/switch/app/nsteamlink.nro`（及 client/tools 下各 NRO） |
 
 - CMake ≥ 3.22；Switch 目标使用 `$DEVKITPRO/cmake/Switch.cmake` 工具链文件，
   nro 产出用官方 `nx_create_nro()`，不要手写 elf2nro 调用。
@@ -70,7 +70,8 @@ third_party/        第三方库（submodule / vendored），禁止就地修改�
 
 ## 6. Git 规范
 
-- 分支模型：`main` 保持可构建可运行；开发分支 `feat/<主题>`，修复分支 `fix/<主题>`。
+- 远程：`origin = https://github.com/kxn/nsteamlink.git`（私有）。单人开发当前直接提交
+  `main`（保持可构建可运行）；风险较大的主题仍应开 `feat/<主题>` / `fix/<主题>` 分支。
 - Commit message 用 Conventional Commits：
   `feat|fix|docs|build|refactor|test|chore: <摘要>`；正文写动机与影响，一行不超过 72 列。
 - 克隆必须 `git clone --recursive`；submodule 有更新时 `git submodule update --init --recursive`
@@ -132,8 +133,9 @@ third_party/        第三方库（submodule / vendored），禁止就地修改�
 
 - README 的命令必须始终可直接复制执行；构建步骤变更时同步更新。
 - 所有选型 / 翻案级决定进 `docs/decisions.md`，格式见该文件头部说明。
-- 新会话开工顺序：读 kickoff → 读 decisions → 读本文档 → 读当前里程碑状态文档
-  （如 `docs/M2_STATUS.md`）→ 从状态文档取任务。
+- 新会话开工顺序：读 kickoff → 读 decisions → 读本文档 → 在仓库 GitHub Issues（含 milestone）
+  取当前任务；`docs/M2_STATUS.md` / `M3_STATUS.md` / `M4_STATUS.md` 已冻结为历史档案，
+  仅作证据追溯，不从中取任务。
 
 ## 12. Switch Homebrew 生命周期与退出规范
 

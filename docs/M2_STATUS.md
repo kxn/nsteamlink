@@ -1,5 +1,8 @@
 # M2 状态整理
 
+> **本文件已归档（2026-08-28）：M2 已验收完成。当前任务见 GitHub Issues（kxn/nsteamlink），本文件仅作历史证据追溯。**
+
+
 > 目标：Switch 真机上完成 Steam 主机发现与 pairing code 授权，并保存客户端身份，给 M3 串流请求打底。
 
 **当前状态：M2 主路径已在真机跑通：发现、pairing code 授权、`auth.bin` 身份持久化和 debug exit

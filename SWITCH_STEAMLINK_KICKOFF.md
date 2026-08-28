@@ -67,6 +67,7 @@ bool IHS_ClientStreamingRequest(IHS_Client*, const IHS_HostInfo*, const IHS_Stre
 - **重要**：配对和串流接口都接受手动构造的 `IHS_HostInfo`，即可以跳过发现流程直接填 IP 连接。调试时发现广播若有问题，直接连 IP 即可，不阻塞。
 - 构建依赖：`libprotobuf-c`（必需）、`mbedTLS` 或 `OpenSSL` 二选一做加密后端（Switch 上用 mbedTLS）、SDL2 仅其 samples 需要。
 - ⚠️ 注意：plume 用的是**它自己的 IHSlib fork**（[beudbeud/ihslib](https://github.com/beudbeud/ihslib)，`plume` 分支带补丁）。用上游还是该 fork，开工时先对比补丁差异再定。
+  （已定：D-002 选该 fork pin `8c5a17c`；D-037 起演进为本项目自有 fork `kxn/ihslib` 的 `nsteamlink` 分支，见 `third_party/README.md`。）
 
 ### 3.2 plume（参考答案，M1 就靠它）
 
@@ -182,7 +183,9 @@ Switch（真机联调阶段加入）
 
 ## 8. 新会话开工指令（拷贝给 Linux 上的 AI）
 
-> 先通读工作目录下的 `SWITCH_STEAMLINK_KICKOFF.md`、`docs/decisions.md`、`DEVELOPMENT.md`
-> 和 `docs/M2_STATUS.md`。当前先做 Switch 真机配对与退出路径回归验收
-> （广播发现、配对码授权、重启复用 `auth.bin`、PLUS/B 返回 hbmenu），通过后进入 M3 第一帧串流；
-> 不要从 M0/M1 重做。
+> 通读工作目录下的 `SWITCH_STEAMLINK_KICKOFF.md`、`docs/decisions.md`、`DEVELOPMENT.md`；
+> 调试命令查 `docs/UDP_DEBUG.md`，真机环境查 `docs/SWITCH_SETUP.md`。
+> 当前阶段：M4 收尾——UI、手柄输入回传、Opus 音频、本地退出均已真机可用，剩余为验收项与
+> BUG-M4-HID-001（#1）。任务一律以 GitHub Issues（私有仓库 `kxn/nsteamlink`，含 milestone）
+> 为准；`docs/M2_STATUS.md` / `M3_STATUS.md` / `M4_STATUS.md` 是冻结档案，只作证据追溯，
+> 不从中取任务。不要从 M0/M1 重做。

@@ -123,28 +123,12 @@ $DEVKITPRO/devkitA64/bin/aarch64-none-elf-addr2line -f -C \
   记录，不吞键、不触发停流。本地控制改为 `L3+R3+VOL+` 退出程序、`L3+R3+VOL-` 停流；该实现通过
   audctl 观察音量值变化，音量已到顶/到底时对应方向可能不会触发。Steam 返回 streaming PIN 时，
   `LEFT/RIGHT` 移动数字位，`UP/DOWN` 调整数字，`A` 提交，`B` 取消。
-- `nsteamlink.nro` 与 `switch-stream-selftest` 使用同一个 UDP debug 端口 `28772`。可用命令：
-  `ping`、`state`、`stats`/`perf`、`audio`、`hid`、`hidlog [n]`、`diag [current|prev|status]`、
-  `hosts`、`select <n>`、`press <A|B|X|Y|MINUS|PLUS|MINUS+B|MINUS+PLUS|UP|DOWN|LEFT|RIGHT>`、
-  `stream [desktop|game] [short|long|frames=N|seconds=N|hold] [pin]`、`stream-pin <pin>`、
-  `stop`、`exit`。这里的 `stream-pin` 是串流阶段 host PIN，不是 M2 pairing code。
-- `hidlog [n]` 返回最近若干秒 HID 诊断环形历史；字段中 `e/ok/f/h/p` 分别是 SDL HID 事件、
-  input report 成功发送、发送失败、100ms full-state heartbeat、pump 调用计数，`raw=x/y`
-  是 libnx `PadState` 原始摇杆/按钮变化计数，`sty=flips:style/attrs` 是 style/attribute 抖动计；
-  `sticks=lx/ly/rx/ry` 与 `b=0x...` 是当秒结束时 SDL controller 的摇杆轴和按钮 mask；
-  `minus=sdlHeld/sdlSamples/rawHeld/rawSamples` 是故障 marker。
-- `diag current` 读取 `sdmc:/switch/nsteamlink/stream_diag.log` 尾部；`diag prev` / `diag older`
-  读取前两轮日志。`diag-chunk <current|prev|older> <offset> [length]` 可分页读取完整文件，避免尾部
-  采样掩盖较早的故障窗口。正式 app 会每秒在后台 append+flush state/hid/audio 摘要，退出后
-  仍可通过下一次启动的历史文件复盘；`diag status` 返回诊断线程状态与
-  文件/线程错误码；`diag marker current` / `diag marker prev` 只返回看到 `-` / `MINUS` marker
-  的秒级记录。marker 日志中 `markMinus` 是输入同窗，`markNet` 是同一 seq 的视频/音频/control
-  同窗摘要，用来判断 Wi-Fi/stream 是否同时断流。新版 `hid`/marker 网络字段中的
-  `rel=tracked/acked/superseded`、`retry/fail/out/oldest/maxAck` 来自可靠发送状态机本身；
-  `hidSM=submitted/coalesced/sent/acked/superseded/pending/inFlight` 用于判断输入是在本地等待 ACK、
-  已合并、被更新完整状态取代还是已精确确认。
-- `audio` 返回 Opus/SDL 音频状态：是否 active、codec/frequency/channels、解码帧数、SDL queued
-  bytes、queue drop 与 decode/queue 错误计数。
+- `nsteamlink.nro` 与 `switch-stream-selftest` 使用同一个 UDP debug 端口 `28772`。
+  命令总表（`ping`、`state`、`stats`/`perf`、`audio`、`hid`、`hidlog [n]`、
+  `diag [current|prev|older|status|marker [...]]`、`diag-chunk`、`hosts`、`select <n>`、
+  `press <...>`、`stream [...]`、`stream-pin <pin>`、`stop`、`exit`）与
+  `hid`/`diag` 字段释义统一见 **`docs/UDP_DEBUG.md`**；
+  `stream-pin` 是串流阶段 host PIN，不是 M2 pairing code。
 - M3.3 接入 FFmpeg/SDL2 后 `switch-stream-selftest.nro` 约 19MB，nxlink/netloader 传输会明显慢于 M2/M3.2
   的 487KB probe。传输慢只说明 NRO 大，不能单独作为程序卡死或协议失败证据。
 
