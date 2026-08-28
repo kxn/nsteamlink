@@ -1252,3 +1252,21 @@ channelId=2 可靠消息 20 次重试耗尽 + 视频 stall 与输入失灵同窗
   - D-002 的"若上游日后吸收补丁可评估切回"继续有效；fork 分支的存在使
     上游/本地对比与反哺更直接；
   - submodule pin 从 `8c5a17c` 前进到 `263fd5d`，属预期变化，非版本回退。
+
+## D-038 开发模式迁移：issue 为核心，文档不承载进度
+
+- 日期：2026-08-28
+- 背景：此前以文档承载进度（M2/M3/M4_STATUS、README 状态段），每轮开发后需同步
+  多处文档，维护成本高且易漂移；2026-08-28 私有仓库 `kxn/nsteamlink` 开通后
+  具备了 Issues/milestone 跟踪条件。
+- Decision：
+  1. 进度、任务、验收状态、待办一律只记 GitHub Issues（含 milestone）；开发完成后
+     的记录动作是关 issue / 写 decisions / 必要时更新使用说明，不写状态文档；
+  2. 仓库文档只保留三类：宏观设计与规范（kickoff、DEVELOPMENT、decisions）、
+     使用说明（README、SWITCH_SETUP、UDP_DEBUG、third_party/README）、
+     协议/平台封闭参考（STEAM_REMOTE_PLAY_AUTH、M3_RESEARCH_PLAN、GFX_MESA_INVESTIGATION）；
+  3. 禁止在任何文档维护"当前状态 / 下一步 / 待验证"章节；
+  4. 删除 docs/M2_STATUS.md / M3_STATUS.md / M4_STATUS.md，证据时间线从 git 历史
+     取回；BUG-M4-HID-001 的浓缩证据链在 issue #1。
+- 影响：新会话开工顺序改为"kickoff → decisions → DEVELOPMENT → Issues"；
+  AGENTS.md 同步登记；decisions.md 本身 append-only，属设计资产，不受本条约束。
