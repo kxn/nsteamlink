@@ -1,5 +1,18 @@
 # M4 状态整理
 
+> **本文件已于 2026-08-28 冻结为历史档案，不再更新。**
+> 后续状态与任务跟踪迁移至 GitHub Issues：当前遗留工作见
+> [#1 BUG-M4-HID-001](https://github.com/kxn/nsteamlink/issues/1)、
+> [#2 VIC transfer 验收](https://github.com/kxn/nsteamlink/issues/2)、
+> [#3 音频验收](https://github.com/kxn/nsteamlink/issues/3)、
+> [#4 本地控制键验收](https://github.com/kxn/nsteamlink/issues/4)、
+> [#5 PIN/映射复核](https://github.com/kxn/nsteamlink/issues/5)、
+> [#6 Frames window overflow 旁支](https://github.com/kxn/nsteamlink/issues/6)，
+> 以及 [M4 milestone](https://github.com/kxn/nsteamlink/milestone/1)；
+> backlog 见 #7 gameid 启动、#8 deko3d 迁移、#9 UI/stream 模块拆分。
+> UDP 调试命令与字段释义已抽至 `docs/UDP_DEBUG.md`。
+> 以下正文保留 2026-08-25 → 2026-08-28 的完整证据时间线，仅供追溯。
+
 > 目标：把 M3.5 的自动串流 probe 变成可操作的正式 app UI；先做 host/mode/PIN/stop/exit，
 > 再接入 Steam Remote Play 手柄输入回传。
 

@@ -20,7 +20,8 @@ Switch 自制软件（homebrew）版 Steam Link 客户端：通过 Steam Remote 
 | `docs/STEAM_REMOTE_PLAY_AUTH.md` | Steam Remote Play 认证流程证据整理 |
 | `docs/M3_RESEARCH_PLAN.md` | M3 串流请求、session、FFmpeg/NVTEGRA 第一帧调研与实施计划 |
 | `docs/M3_STATUS.md` | M3 probe 当前实现、真机命令与验收标准 |
-| `docs/M4_STATUS.md` | M4 正式 app UI、PIN 输入与交互进度 |
+| `docs/M4_STATUS.md` | M4 历史档案（2026-08-28 冻结；当前任务见 GitHub Issues） |
+| `docs/UDP_DEBUG.md` | UDP 调试命令参考（28772 端口命令集与字段释义） |
 | `docs/SWITCH_SETUP.md` | Switch 真机环境准备指南（刷自制系统 / hbmenu / nxlink） |
 | `third_party/README.md` | 第三方依赖引入计划 |
 
