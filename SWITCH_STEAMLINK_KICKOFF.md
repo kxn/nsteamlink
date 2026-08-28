@@ -3,8 +3,7 @@
 > 目标：做一个 Switch 自制软件（homebrew）的 Steam Link 客户端，通过 Steam Remote Play 协议串流 PC 上的 Steam 游戏。
 > 本文档汇总了截至 2026-08-23 的全部调研结论，所有事实均已实际查证过源码仓库，非道听途说。
 > 在新机器上开工时，先让 AI 通读本文档。
-> 状态性结论会随项目推进更新；当前进度以 `README.md`、`docs/M2_STATUS.md` 与 `docs/decisions.md`
-> 的最新条目为准。
+> 本文档只承载宏观设计与调研结论；当前进度/任务一律以 GitHub Issues（含 milestone）为准。
 
 ---
 
@@ -186,6 +185,5 @@ Switch（真机联调阶段加入）
 > 通读工作目录下的 `SWITCH_STEAMLINK_KICKOFF.md`、`docs/decisions.md`、`DEVELOPMENT.md`；
 > 调试命令查 `docs/UDP_DEBUG.md`，真机环境查 `docs/SWITCH_SETUP.md`。
 > 当前阶段：M4 收尾——UI、手柄输入回传、Opus 音频、本地退出均已真机可用，剩余为验收项与
-> BUG-M4-HID-001（#1）。任务一律以 GitHub Issues（私有仓库 `kxn/nsteamlink`，含 milestone）
-> 为准；`docs/M2_STATUS.md` / `M3_STATUS.md` / `M4_STATUS.md` 是冻结档案，只作证据追溯，
-> 不从中取任务。不要从 M0/M1 重做。
+> BUG-M4-HID-001（#1）。进度与任务一律只看 GitHub Issues（私有仓库 `kxn/nsteamlink`，
+> 含 milestone）；仓库文档不维护进度状态。不要从 M0/M1 重做。

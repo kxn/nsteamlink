@@ -133,9 +133,17 @@ third_party/        第三方库（submodule / vendored），禁止就地修改�
 
 - README 的命令必须始终可直接复制执行；构建步骤变更时同步更新。
 - 所有选型 / 翻案级决定进 `docs/decisions.md`，格式见该文件头部说明。
-- 新会话开工顺序：读 kickoff → 读 decisions → 读本文档 → 在仓库 GitHub Issues（含 milestone）
-  取当前任务；`docs/M2_STATUS.md` / `M3_STATUS.md` / `M4_STATUS.md` 已冻结为历史档案，
-  仅作证据追溯，不从中取任务。
+- **文档边界（issue 为核心开发，2026-08-28 定）**：文档只承载三类内容——
+  1. 宏观设计与规范：`SWITCH_STEAMLINK_KICKOFF.md`、本文、`docs/decisions.md`（append-only，
+     写完不改，属设计资产而非进度）；
+  2. 使用说明：`README.md`、`docs/SWITCH_SETUP.md`、`docs/UDP_DEBUG.md`、`third_party/README.md`；
+  3. 协议/平台参考：`docs/STEAM_REMOTE_PLAY_AUTH.md`、`docs/M3_RESEARCH_PLAN.md`、
+     `docs/GFX_MESA_INVESTIGATION.md`（封闭的调研记录，不再更新）。
+- **进度、任务、验收状态、待办一律只进 GitHub Issues（含 milestone）；禁止在任何文档中
+  维护"当前状态 / 下一步 / 待验证"章节**。开发完成后的记录动作是：关 issue / 写 decisions /
+  必要时更新使用说明，而不是写状态文档。历史进度文档 M2/M3/M4_STATUS 已于 2026-08-28
+  从仓库删除，需要时从 git 历史取回。
+- 新会话开工顺序：读 kickoff → 读 decisions → 读本文档 → 在 GitHub Issues 取任务。
 
 ## 12. Switch Homebrew 生命周期与退出规范
 
