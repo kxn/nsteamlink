@@ -147,6 +147,8 @@ static stream_media_snapshot snapshot;
 static stream_media_ui ui_state;
 static bool frame_dirty;
 static uint16_t pending_frame_id;
+static uint64_t pending_submit_us;
+static uint64_t pending_latch_us;
 static bool need_flush;
 static bool have_last_frame;
 static uint16_t last_frame_id;
@@ -912,6 +914,10 @@ static void pump_sdl_events(void) {
     IHS_Session *event_hid_session = NULL;
     bool hid_enabled = false;
     bool hid_changed = false;
+    uint64_t pump_start_us = media_monotonic_us();
+    uint64_t pump_age_ms_total = 0;
+    uint32_t pump_age_samples = 0;
+    uint32_t pump_age_ms_max = 0;
 
     pthread_mutex_lock(&state_lock);
     event_hid_session = hid_session;
@@ -931,6 +937,15 @@ static void pump_sdl_events(void) {
             hid_changed = true;
             hid_events_since_log++;
             hid_events_total++;
+            uint32_t ev_age_ms =
+                (uint32_t)(SDL_GetTicks() > event.common.timestamp
+                               ? SDL_GetTicks() - event.common.timestamp
+                               : 0);
+            pump_age_ms_total += ev_age_ms;
+            pump_age_samples++;
+            if (ev_age_ms > pump_age_ms_max) {
+                pump_age_ms_max = ev_age_ms;
+            }
             switch (event.type) {
                 case SDL_CONTROLLERAXISMOTION:
                     hid_axis_since_log++;
@@ -998,6 +1013,21 @@ static void pump_sdl_events(void) {
             hid_send_fail_since_log++;
             hid_send_fail_total++;
         }
+    }
+    if (hid_enabled && event_hid_session != NULL &&
+        (pump_age_samples > 0 || hid_changed)) {
+        uint32_t send_us = (uint32_t)elapsed_us(pump_start_us, media_monotonic_us());
+        pthread_mutex_lock(&state_lock);
+        if (hid_changed) {
+            snapshot.hid_send_samples++;
+            add_timing(&snapshot.hid_send_us_total, &snapshot.hid_send_us_max, send_us);
+        }
+        snapshot.hid_age_samples += pump_age_samples;
+        snapshot.hid_age_ms_total += pump_age_ms_total;
+        if (pump_age_ms_max > snapshot.hid_age_ms_max) {
+            snapshot.hid_age_ms_max = pump_age_ms_max;
+        }
+        pthread_mutex_unlock(&state_lock);
     }
     if (hid_enabled && event_hid_session != NULL) {
         uint64_t now_us = media_monotonic_us();
@@ -1419,6 +1449,8 @@ int stream_media_video_start(IHS_Session *session, const IHS_StreamVideoConfig *
     av_frame_unref(present_frame);
     frame_dirty = false;
     pending_frame_id = 0;
+    pending_submit_us = 0;
+    pending_latch_us = 0;
     pthread_mutex_unlock(&frame_lock);
 
     stats_session = session;
@@ -1454,6 +1486,15 @@ int stream_media_video_start(IHS_Session *session, const IHS_StreamVideoConfig *
     snapshot.convert_us_max = 0;
     snapshot.upload_us_max = 0;
     snapshot.present_us_max = 0;
+    snapshot.frame_wait_samples = 0;
+    snapshot.frame_wait_us_total = 0;
+    snapshot.frame_wait_us_max = 0;
+    snapshot.frame_e2e_samples = 0;
+    snapshot.frame_e2e_us_total = 0;
+    snapshot.frame_e2e_us_max = 0;
+    snapshot.hid_send_samples = 0;
+    snapshot.hid_send_us_total = 0;
+    snapshot.hid_send_us_max = 0;
     snapshot.hid_events = 0;
     snapshot.hid_send_ok = 0;
     snapshot.hid_send_fail = 0;
@@ -1468,7 +1509,7 @@ int stream_media_video_start(IHS_Session *session, const IHS_StreamVideoConfig *
     return 0;
 }
 
-static void stash_frame(AVFrame *src, uint16_t frame_id) {
+static void stash_frame(AVFrame *src, uint16_t frame_id, uint64_t submit_us) {
     bool had_pending;
     uint16_t dropped_id;
 
@@ -1478,6 +1519,8 @@ static void stash_frame(AVFrame *src, uint16_t frame_id) {
     av_frame_unref(latched_frame);
     av_frame_move_ref(latched_frame, src);
     pending_frame_id = frame_id;
+    pending_submit_us = submit_us;
+    pending_latch_us = media_monotonic_us();
     frame_dirty = true;
     pthread_mutex_unlock(&frame_lock);
 
@@ -1496,7 +1539,7 @@ static void stash_frame(AVFrame *src, uint16_t frame_id) {
     }
 }
 
-static void stash_converted_frame(const AVFrame *src, uint16_t frame_id) {
+static void stash_converted_frame(const AVFrame *src, uint16_t frame_id, uint64_t submit_us) {
     AVFrame *out = av_frame_alloc();
     if (out == NULL) {
         return;
@@ -1523,7 +1566,7 @@ static void stash_converted_frame(const AVFrame *src, uint16_t frame_id) {
     snapshot.converted_frames++;
     add_timing(&snapshot.convert_us_total, &snapshot.convert_us_max, convert_us);
     pthread_mutex_unlock(&state_lock);
-    stash_frame(out, frame_id);
+    stash_frame(out, frame_id, submit_us);
     av_frame_free(&out);
 }
 
@@ -1651,7 +1694,7 @@ static int transfer_nvtegra_frame(AVFrame *dst, const AVFrame *src, bool *used_v
     return 0;
 }
 
-static void receive_frames(uint16_t frame_id) {
+static void receive_frames(uint16_t frame_id, uint64_t submit_us) {
     while (avcodec_receive_frame(decoder_ctx, decode_frame) == 0) {
         AVFrame *frame = decode_frame;
         AVFrame *downloaded = NULL;
@@ -1683,14 +1726,14 @@ static void receive_frames(uint16_t frame_id) {
         }
 
         if (frame->format == AV_PIX_FMT_YUV420P || frame->format == AV_PIX_FMT_NV12) {
-            stash_frame(frame, frame_id);
+            stash_frame(frame, frame_id, submit_us);
         } else {
             if (logged_convert_format != frame->format) {
                 logged_convert_format = frame->format;
                 media_logf("converting decoded frame format %d to YUV420P; suppressing repeats",
                            frame->format);
             }
-            stash_converted_frame(frame, frame_id);
+            stash_converted_frame(frame, frame_id, submit_us);
         }
 
         av_frame_free(&downloaded);
@@ -1704,6 +1747,7 @@ IHS_StreamVideoSubmitResult stream_media_video_submit(IHS_Session *session, uint
     if (decoder_ctx == NULL || packet == NULL) {
         return IHS_StreamVideoSubmitError;
     }
+    uint64_t submit_us = media_monotonic_us();
 
     stats_session = session;
     if (have_last_frame && frame_id != (uint16_t)(last_frame_id + 1)) {
@@ -1732,11 +1776,11 @@ IHS_StreamVideoSubmitResult stream_media_video_submit(IHS_Session *session, uint
     uint64_t decode_start = media_monotonic_us();
     int rc = avcodec_send_packet(decoder_ctx, packet);
     if (rc == AVERROR(EAGAIN)) {
-        receive_frames(frame_id);
+        receive_frames(frame_id, submit_us);
         rc = avcodec_send_packet(decoder_ctx, packet);
     }
     if (rc == 0) {
-        receive_frames(frame_id);
+        receive_frames(frame_id, submit_us);
         uint32_t decode_us = elapsed_us(decode_start, media_monotonic_us());
         pthread_mutex_lock(&state_lock);
         snapshot.decode_samples++;
@@ -1955,7 +1999,7 @@ void stream_media_audio_stop(IHS_Session *session) {
     }
 }
 
-static AVFrame *take_frame(uint16_t *frame_id) {
+static AVFrame *take_frame(uint16_t *frame_id, uint64_t *submit_us, uint64_t *latch_us) {
     pthread_mutex_lock(&frame_lock);
     if (!frame_dirty || latched_frame == NULL || latched_frame->width <= 0) {
         pthread_mutex_unlock(&frame_lock);
@@ -1964,6 +2008,10 @@ static AVFrame *take_frame(uint16_t *frame_id) {
     av_frame_unref(present_frame);
     av_frame_move_ref(present_frame, latched_frame);
     *frame_id = pending_frame_id;
+    *submit_us = pending_submit_us;
+    *latch_us = pending_latch_us;
+    pending_submit_us = 0;
+    pending_latch_us = 0;
     frame_dirty = false;
     pthread_mutex_unlock(&frame_lock);
     return present_frame;
@@ -2144,7 +2192,10 @@ void stream_media_present(void) {
     pump_sdl_events();
 
     uint16_t frame_id = 0;
-    AVFrame *frame = take_frame(&frame_id);
+    uint64_t frame_submit_us = 0;
+    uint64_t frame_latch_us = 0;
+    uint64_t take_us = media_monotonic_us();
+    AVFrame *frame = take_frame(&frame_id, &frame_submit_us, &frame_latch_us);
     bool displayed = false;
     if (frame != NULL && stats_session != NULL) {
         IHS_SessionReportVideoFrameStage(stats_session, frame_id,
@@ -2166,6 +2217,15 @@ void stream_media_present(void) {
     }
 
     if (displayed) {
+        uint64_t displayed_us = media_monotonic_us();
+        uint32_t wait_us =
+            frame_latch_us != 0 && take_us > frame_latch_us
+                ? (uint32_t)elapsed_us(frame_latch_us, take_us)
+                : 0;
+        uint32_t e2e_us =
+            frame_submit_us != 0 && displayed_us > frame_submit_us
+                ? (uint32_t)elapsed_us(frame_submit_us, displayed_us)
+                : 0;
         pthread_mutex_lock(&state_lock);
         bool first = !snapshot.first_frame_displayed;
         snapshot.first_frame_displayed = true;
@@ -2173,6 +2233,10 @@ void stream_media_present(void) {
         snapshot.last_displayed_frame = frame_id;
         snapshot.width = frame->width;
         snapshot.height = frame->height;
+        snapshot.frame_wait_samples++;
+        add_timing(&snapshot.frame_wait_us_total, &snapshot.frame_wait_us_max, wait_us);
+        snapshot.frame_e2e_samples++;
+        add_timing(&snapshot.frame_e2e_us_total, &snapshot.frame_e2e_us_max, e2e_us);
         pthread_mutex_unlock(&state_lock);
         if (first) {
             media_logf("first frame displayed: id=%u size=%dx%d fmt=%d", frame_id,

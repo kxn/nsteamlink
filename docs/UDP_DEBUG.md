@@ -17,7 +17,8 @@
 ```
 ping            存活探测
 state           会话/媒体状态摘要（含 lastFrameAgeMs、STATUS 等）
-stats | perf    帧统计（fps、gaps、transferAvgUs、vicTransfers、transferFallback 等）
+stats | perf    帧统计（fps、gaps、transferAvgUs、vicTransfers、transferFallback、
+                frameLat/frameWait/hidSend/hidEvAge 延迟分段等）
 audio           音频状态：active、codec/frequency/channels、解码帧数、
                 SDL queued bytes、queue drop、decode/queue 错误计数
 hid             HID/输入可靠通道计数（字段见下）
@@ -52,6 +53,11 @@ stop / exit     停流 / 退出程序
 | `rel=tracked/acked/superseded retry/fail/out/oldest/maxAck` | 可靠发送状态机直接计数：在途登记/精确 ACK/被新快照取代退休/重试/失败/在途/最老在途年龄/最大 ACK 延迟 |
 | `hidSM=submitted/coalesced/sent/acked/superseded/pending/inFlight` | HID 状态机：提交/被合并/已发送/已确认/已取代/待发/在途 |
 | `vicTransfers` / `transferFallback` | VIC 256B 对齐传输命中 / 回退 FFmpeg 自动 transfer（stats 输出） |
+| `frameLatAvgUs/MaxUs` | 单帧客户端总延迟：完整帧提交（ihslib 组帧完成）→ 上屏完成，仅统计实际显示帧 |
+| `frameWaitAvgUs/MaxUs` | 跨线程排队：解码线程 latch 帧 → 主线程取帧 |
+| `hidSendAvgUs/MaxUs` | 含输入事件处理的 pump → HID 发送完成的本地耗时（仅计有事件的 pump） |
+| `hidEvAgeAvgMs/MaxMs` | 事件捕获延迟：SDL 事件时间戳 → 被 poll 处理的年龄（ms） |
+| `diag-lat` 行 | stream_diag.log 每秒一行上述延迟分段（avg/max/样本数），供离线分析 |
 
 ## `diag` 体系
 

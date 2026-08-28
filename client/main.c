@@ -2144,6 +2144,10 @@ static void perf_line(app_state *state, char *out, size_t out_len) {
              " convertAvgUs=%" PRIu64 " convertMaxUs=%u"
              " uploadAvgUs=%" PRIu64 " uploadMaxUs=%u"
              " presentAvgUs=%" PRIu64 " presentMaxUs=%u"
+             " frameLatAvgUs=%" PRIu64 " frameLatMaxUs=%u"
+             " frameWaitAvgUs=%" PRIu64 " frameWaitMaxUs=%u"
+             " hidSendAvgUs=%" PRIu64 " hidSendMaxUs=%u"
+             " hidEvAgeAvgMs=%" PRIu64 " hidEvAgeMaxMs=%u"
              " mediaError=\"%s\" status=\"%s\"",
              frames, keyframes, media.decoded_frames, media.displayed_frames,
              media.dropped_frames, frame_gaps, max_frame_gap, encoded_bytes / 1024U,
@@ -2158,6 +2162,10 @@ static void perf_line(app_state *state, char *out, size_t out_len) {
              avg_u64(media.convert_us_total, media.converted_frames), media.convert_us_max,
              avg_u64(media.upload_us_total, media.displayed_frames), media.upload_us_max,
              avg_u64(media.present_us_total, media.displayed_frames), media.present_us_max,
+             avg_u64(media.frame_e2e_us_total, media.frame_e2e_samples), media.frame_e2e_us_max,
+             avg_u64(media.frame_wait_us_total, media.frame_wait_samples), media.frame_wait_us_max,
+             avg_u64(media.hid_send_us_total, media.hid_send_samples), media.hid_send_us_max,
+             avg_u64(media.hid_age_ms_total, media.hid_age_samples), media.hid_age_ms_max,
              media.last_error[0] ? media.last_error : "-", status[0] ? status : "-");
 }
 
@@ -2221,6 +2229,22 @@ static void hid_line(char *out, size_t out_len) {
              media.reliability.hidOldestInFlightPacketId,
              media.hid_sdl_name[0] ? media.hid_sdl_name : "-",
              media.hid_sdl_guid[0] ? media.hid_sdl_guid : "-");
+}
+
+static void lat_line(char *out, size_t out_len) {
+    stream_media_snapshot media;
+    stream_media_get_snapshot(&media);
+    snprintf(out, out_len,
+             "frameLat=%" PRIu64 "/%uus(n=%u) frameWait=%" PRIu64 "/%uus(n=%u)"
+             " hidSend=%" PRIu64 "/%uus(n=%u) hidEvAge=%" PRIu64 "/%ums(n=%u)",
+             avg_u64(media.frame_e2e_us_total, media.frame_e2e_samples),
+             media.frame_e2e_us_max, media.frame_e2e_samples,
+             avg_u64(media.frame_wait_us_total, media.frame_wait_samples),
+             media.frame_wait_us_max, media.frame_wait_samples,
+             avg_u64(media.hid_send_us_total, media.hid_send_samples),
+             media.hid_send_us_max, media.hid_send_samples,
+             avg_u64(media.hid_age_ms_total, media.hid_age_samples),
+             media.hid_age_ms_max, media.hid_age_samples);
 }
 
 static void audio_line(char *out, size_t out_len) {
@@ -2587,11 +2611,14 @@ static void diag_disk_write_tick(FILE *fp, FILE *marker_fp, app_state *state,
     state_line(state, state_buf, sizeof(state_buf));
     hid_line(hid_buf, sizeof(hid_buf));
     audio_line(audio_buf, sizeof(audio_buf));
+    char lat_buf[DEBUG_TX];
+    lat_line(lat_buf, sizeof(lat_buf));
 
     diag_disk_printf(fp, "diag ms=%" PRIu64 " mainAgeMs=%" PRIu64 " %s\n", now,
                      main_age, state_buf);
     diag_disk_printf(fp, "diag-hid ms=%" PRIu64 " %s\n", now, hid_buf);
     diag_disk_printf(fp, "diag-audio ms=%" PRIu64 " %s\n", now, audio_buf);
+    diag_disk_printf(fp, "diag-lat ms=%" PRIu64 " %s\n", now, lat_buf);
     diag_disk_write_hid_history(fp, marker_fp, last_hid_seq, &net);
     atomic_fetch_add_explicit(&diag_disk_ticks, 1, memory_order_relaxed);
 }
@@ -3040,6 +3067,10 @@ static void update_screen_ui(app_state *state) {
         ui_set_line(&ui, &line, "AUDIO %s  Q %u  ERR %u",
                     media.audio_active ? "ON" : "WAIT",
                     media.audio_queued_bytes, media.audio_decode_errors);
+        ui_set_line(&ui, &line, "LAT FRAME %u/%u MS  HID %u US",
+                    (uint32_t)(avg_u64(media.frame_e2e_us_total, media.frame_e2e_samples) / 1000U),
+                    media.frame_e2e_us_max / 1000U,
+                    (uint32_t)avg_u64(media.hid_send_us_total, media.hid_send_samples));
         ui_set_line(&ui, &line, "STATUS: %s", status[0] ? status : "-");
         ui_set_line(&ui, &line, "L3+R3+VOL- STOP  L3+R3+VOL+ EXIT");
         stream_media_set_ui(&ui);

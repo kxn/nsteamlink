@@ -42,6 +42,18 @@ typedef struct stream_media_snapshot {
     uint32_t convert_us_max;
     uint32_t upload_us_max;
     uint32_t present_us_max;
+    uint32_t frame_wait_samples;
+    uint64_t frame_wait_us_total;
+    uint32_t frame_wait_us_max;
+    uint32_t frame_e2e_samples;
+    uint64_t frame_e2e_us_total;
+    uint32_t frame_e2e_us_max;
+    uint32_t hid_send_samples;
+    uint64_t hid_send_us_total;
+    uint32_t hid_send_us_max;
+    uint32_t hid_age_samples;
+    uint64_t hid_age_ms_total;
+    uint32_t hid_age_ms_max;
     uint32_t hid_events;
     uint32_t hid_send_ok;
     uint32_t hid_send_fail;
