@@ -78,6 +78,7 @@ static IHS_Session *stats_session;
 #if NSTREAMLINK_APP
 static IHS_Session *hid_session;
 static bool hid_session_enabled;
+static bool hid_frame_dirty;
 static SDL_GameController *hid_controller;
 static SDL_JoystickID hid_controller_id = -1;
 static int hid_controller_index = -1;
@@ -930,7 +931,6 @@ static void pump_sdl_events(void) {
     IHS_Session *event_hid_session = NULL;
     bool hid_enabled = false;
     bool hid_changed = false;
-    uint64_t pump_start_us = media_monotonic_us();
     uint64_t pump_age_ms_total = 0;
     uint32_t pump_age_samples = 0;
     uint32_t pump_age_ms_max = 0;
@@ -1021,23 +1021,14 @@ static void pump_sdl_events(void) {
 #if NSTREAMLINK_APP
     sample_sdl_marker_minus();
     if (hid_changed && event_hid_session != NULL) {
-        bool hid_sent = IHS_HIDRefreshSDLGameControllers(event_hid_session);
-        if (hid_sent) {
-            hid_send_ok_since_log++;
-            hid_send_ok_total++;
-        } else {
-            hid_send_fail_since_log++;
-            hid_send_fail_total++;
-        }
+        /* Plume semantics: one HID packet per frame at most, carrying the
+         * coalesced state - present() flushes the flag once per vsync frame.
+         * Per-event sends burst dozens of reliable packets per second and are
+         * the input-path divergence from every working client. */
+        hid_frame_dirty = true;
     }
-    if (hid_enabled && event_hid_session != NULL &&
-        (pump_age_samples > 0 || hid_changed)) {
-        uint32_t send_us = (uint32_t)elapsed_us(pump_start_us, media_monotonic_us());
+    if (hid_enabled && event_hid_session != NULL && pump_age_samples > 0) {
         pthread_mutex_lock(&state_lock);
-        if (hid_changed) {
-            snapshot.hid_send_samples++;
-            add_timing(&snapshot.hid_send_us_total, &snapshot.hid_send_us_max, send_us);
-        }
         snapshot.hid_age_samples += pump_age_samples;
         snapshot.hid_age_ms_total += pump_age_ms_total;
         if (pump_age_ms_max > snapshot.hid_age_ms_max) {
@@ -2206,6 +2197,34 @@ void stream_media_present(void) {
     }
 
     pump_sdl_events();
+
+#if NSTREAMLINK_APP
+    /* Plume semantics: at most one HID packet per frame, carrying the state
+     * coalesced across all pumps since the previous frame. */
+    if (hid_frame_dirty) {
+        pthread_mutex_lock(&state_lock);
+        IHS_Session *hid_sess = hid_session;
+        bool hid_enabled = hid_session_enabled;
+        pthread_mutex_unlock(&state_lock);
+        if (hid_enabled && hid_sess != NULL) {
+            uint64_t send_start = media_monotonic_us();
+            bool hid_sent = IHS_HIDRefreshSDLGameControllers(hid_sess);
+            uint32_t send_us = (uint32_t)elapsed_us(send_start, media_monotonic_us());
+            pthread_mutex_lock(&state_lock);
+            snapshot.hid_send_samples++;
+            add_timing(&snapshot.hid_send_us_total, &snapshot.hid_send_us_max, send_us);
+            pthread_mutex_unlock(&state_lock);
+            if (hid_sent) {
+                hid_send_ok_since_log++;
+                hid_send_ok_total++;
+            } else {
+                hid_send_fail_since_log++;
+                hid_send_fail_total++;
+            }
+        }
+        hid_frame_dirty = false;
+    }
+#endif
 
     uint16_t frame_id = 0;
     uint64_t frame_submit_us = 0;
