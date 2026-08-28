@@ -22,7 +22,7 @@ app/src/platform/   HAL 接口头文件（.h）。只定义接口，不含实现
 app/platforms/<plat>/  平台后端实现（desktop / switch），只允许被 HAL 接口约束
 docs/               决策记录等文档
 scripts/            构建脚本（唯一构建入口）
-third_party/        第三方库（submodule / vendored），禁止就地修改
+third_party/        第三方库（submodule / vendored），禁止就地修改（IHSlib 例外见 §7/D-037）
 ```
 
 规则：
@@ -81,7 +81,7 @@ third_party/        第三方库（submodule / vendored），禁止就地修改
 
 | 库 | 来源/版本 | 许可证 | 用途 | 引入里程碑 |
 |---|---|---|---|---|
-| IHSlib | `beudbeud/ihslib` plume 分支，pin `8c5a17c`（D-002） | LGPL-3.0 | 发现/配对/串流协议 | M2 |
+| IHSlib | `kxn/ihslib` `nsteamlink` 分支（fork 自 `beudbeud/ihslib` plume pin `8c5a17c`，D-002/D-037） | LGPL-3.0 | 发现/配对/串流协议 | M2 |
 | plume | beudbeud/plume | GPL | 参考实现，仅对照学习不链接 | M1 参考 |
 | FFmpeg(Switch) | Moonlight-Switch 预编译（averne NVDEC fork） | LGPL/GPL | H264 硬解 | M3 |
 | SDL2 | 系统 2.32.4 / `switch-sdl2` | zlib | UI / 渲染 / 音频输出 | M3 起 |
@@ -91,8 +91,12 @@ third_party/        第三方库（submodule / vendored），禁止就地修改
 
 - 项目整体以 **GPLv3** 发布（复用 Moonlight-Switch 材料所致，kickoff §7.1 / decisions D-004）。
 - 复用第三方代码必须保留原版权与许可声明，并在上表登记。
-- `third_party/` 内代码禁止就地修改；需要的改动以 patch 文件放
+- `third_party/` 内代码禁止就地修改；一般库的改动以 patch 文件放
   `third_party/patches/<库名>/` 并记入 decisions。
+- **IHSlib 例外（D-037）**：协议层用本项目 fork `kxn/ihslib`（submodule 指向它，
+  track `nsteamlink` 分支）。改动直接在 `third_party/ihslib` 内提交并
+  `git push fork nsteamlink`，父仓库同步更新 submodule pin；不再产 patch 文件。
+  流程细节见 `third_party/README.md`。
 
 ## 8. 日志与调试
 

@@ -1219,3 +1219,36 @@ channelId=2 可靠消息 20 次重试耗尽 + 视频 stall 与输入失灵同窗
 - Real-device evidence：本轮命中 `vicTransfers=1963`、`transferFallback=0`，但
   `transferAvgUs=1658` 未优于既有约 1.6ms 基线，因此当前没有性能收益证据。同轮按钮失效已由
   `rel/hidSM` 精确定位为 packet 15 ACK 缺失触发的单在途 admission 锁死，不能把它归因于 VIC。
+
+## D-037 IHSlib 改用本项目 GitHub fork，废弃 patch 文件工作流
+
+- 日期：2026-08-28
+- Evidence：
+  - 子模块 `third_party/ihslib` 在 pin `8c5a17c` 之上累积了 44 文件 +1338/−333 的
+    未提交改动（内容 = 历史补丁 0001–0013 全部 + D-034/D-035/D-036 后续工作），
+    双目标构建与 ihslib 27/27（host / ASan+UBSan / TSan）测试均在该工作区状态通过；
+  - 2026-08-28 `git fetch origin plume` 后 `FETCH_HEAD == 8c5a17c`：上游 plume 分支
+    在 pin 之后零新提交，短期内不存在我们状态机重写被上游吸收的可能；
+  - 上游对 HID 重传的处理（b10c319：3 次后放弃、依赖"下一个快照取代"）已被本项目
+    真机证据否定（D-030/D-034：输入事件稀疏时丢失的快照没有后继，状态永久发散）；
+  - patch 工作流已有事故记录：分层补丁与工作区漂移曾导致"补丁真相"问题，
+    靠 c8b7bdf 补录 0010/0011 索引并新增 0020 权威累计补丁才收敛。
+- Conclusion：fork + 分支直提可以把"改动真相"收敛到单一 git 历史里，消除
+  patch 重放/漂移核对成本；在上游不活跃且取舍冲突的现状下，维护自有 fork 是
+  诚实且成本最低的方案。
+- Decision：
+  1. fork `beudbeud/ihslib` 为 `kxn/ihslib`，创建 `nsteamlink` 分支；
+  2. 把 `8c5a17c` 之上的全部改动以单提交 `263fd5d` 固化并推送 fork
+     （提交信息按主题记录全部改动，树与已验证工作区逐字节一致）；
+  3. 父仓库 `.gitmodules` 的 submodule URL 切至 `https://github.com/kxn/ihslib.git`，
+     并设 `branch = nsteamlink`；
+  4. 删除 `third_party/patches/ihslib/`（历史补丁从本仓库 git 历史取回）；
+  5. 后续 ihslib 改动直接在 `nsteamlink` 分支提交推送（`remote fork`），
+     父仓库同步更新 pin；若上游恢复活动，以 PR 反哺独立主题后再评估回归上游。
+- 影响：
+  - 新克隆流程不变（`git clone --recursive`），但 ihslib 拉到的是本项目 fork；
+  - DEVELOPMENT.md §7"第三方库禁止就地修改"规则对 ihslib 变更为
+    "改动进 fork 分支"；其余第三方库仍走 patch 流程；
+  - D-002 的"若上游日后吸收补丁可评估切回"继续有效；fork 分支的存在使
+    上游/本地对比与反哺更直接；
+  - submodule pin 从 `8c5a17c` 前进到 `263fd5d`，属预期变化，非版本回退。

@@ -1,3 +1,4 @@
 [submodule "third_party/ihslib"]
 	path = third_party/ihslib
-	url = https://github.com/beudbeud/ihslib.git
+	url = https://github.com/kxn/ihslib.git
+	branch = nsteamlink
