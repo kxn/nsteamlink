@@ -1308,3 +1308,28 @@ channelId=2 可靠消息 20 次重试耗尽 + 视频 stall 与输入失灵同窗
 - 影响：部分取代 D-034 双在途设计（其动机"单 ACK 丢失锁死"已由 D-039 放弃窗口 +
   本条槽位回收共同覆盖，且不再有乱序副作用）；ihslib fork `e17e697`；admission 测试
   重写为单在途语义；hidsec 行格式扩展。
+
+## D-041 输入报告恢复 delta 编码，对齐官方客户端输入路径
+
+- 日期：2026-08-29
+- Evidence（逆向 docs/OFFICIAL_INPUT_RE.md，可复核）：
+  - 官方 Android 客户端 v1.3.32 libmain.so 中 `set_full_report` 的 PLT 全二进制零调用——
+    官方输入报告全部为 delta_report（掩码差分 + size + CRC32），经
+    `BCollectReports → SendBuffer → 队列 → 专用报告线程` 发送，实测 31 批/s（30fps 逐帧）；
+  - 官方 `OnNegotiationInit` 读取 host 宣告的 reliable_data 存入客户端状态（0x7ad6fc）；
+  - ihslib 的 `IHS_HIDReportHolderAddDelta`（report.c:129）已实现与官方一致的
+    ComputeDelta 掩码差分 + CRC32 + delta_report/size/crc 三字段——基础设施完整但被
+    D-034 时代停用（事件路径的 AddDelta 调用被移除，改为每帧强制 full）；
+  - 上游 ihslib 与 plume 即运行在该 delta 路径上。
+- Decision：
+  1. 新增 `IHS_HIDFlushSDLGameControllers()`：逐设备 AddDelta（previous→current 掩码
+     差分，无变化跳过）+ 发送，作为每帧一次的常规输入发送路径（plume 同构）；
+  2. `IHS_HIDRefreshSDLGameControllers()`（强制 full）保留，仅用于 100ms 心跳锚点与
+     RequestFullReport 响应——**与官方的残留差异**（官方从不发 full_report 字段），
+     因为我方 host 接受 full_report 已被现网会话证实；
+  3. 事件处理器保持只更新 canonical state（与官方 BInjectGamepadState 同构）。
+  部分推翻 D-034 的"SDL 线上只发完整状态"。
+- 验证判据：输入包尺寸/速率对齐官方 pcap 基线（98B 级批量 @ 帧率）；**对 20 秒卡死的
+  影响未知**（hold 在包序号层面，与包内容无关——不做修复承诺）。
+- 影响：ihslib fork e17e697→新提交；SD 诊断 hidsec 的 sent= 线上真值字段继续有效；
+  delta 语义（链式基于 previous）要求 previous 推进与 flush 严格成对，代码已保证。

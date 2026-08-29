@@ -2208,7 +2208,7 @@ void stream_media_present(void) {
         pthread_mutex_unlock(&state_lock);
         if (hid_enabled && hid_sess != NULL) {
             uint64_t send_start = media_monotonic_us();
-            bool hid_sent = IHS_HIDRefreshSDLGameControllers(hid_sess);
+            bool hid_sent = IHS_HIDFlushSDLGameControllers(hid_sess);
             uint32_t send_us = (uint32_t)elapsed_us(send_start, media_monotonic_us());
             pthread_mutex_lock(&state_lock);
             snapshot.hid_send_samples++;
