@@ -78,7 +78,8 @@ static IHS_Session *stats_session;
 #if NSTREAMLINK_APP
 static IHS_Session *hid_session;
 static bool hid_session_enabled;
-static bool hid_frame_dirty;
+static pthread_t hid_flush_thread;
+static volatile bool hid_flush_running;
 static SDL_GameController *hid_controller;
 static SDL_JoystickID hid_controller_id = -1;
 static int hid_controller_index = -1;
@@ -1020,13 +1021,9 @@ static void pump_sdl_events(void) {
     }
 #if NSTREAMLINK_APP
     sample_sdl_marker_minus();
-    if (hid_changed && event_hid_session != NULL) {
-        /* Plume semantics: one HID packet per frame at most, carrying the
-         * coalesced state - present() flushes the flag once per vsync frame.
-         * Per-event sends burst dozens of reliable packets per second and are
-         * the input-path divergence from every working client. */
-        hid_frame_dirty = true;
-    }
+    /* Delta flush moved to dedicated 8ms thread (hid_flush_thread_fn), which
+     * polls IHS_HIDFlushSDLGameControllers independently of the present loop.
+     * No per-event or per-frame flush needed here. */
     if (hid_enabled && event_hid_session != NULL && pump_age_samples > 0) {
         pthread_mutex_lock(&state_lock);
         snapshot.hid_age_samples += pump_age_samples;
@@ -1257,6 +1254,38 @@ bool stream_media_exit_requested(void) {
     return sdl_exit_requested;
 }
 
+#if NSTREAMLINK_APP
+/* Dedicated input flush thread: 8ms interval, matching the official client's
+ * CHIDDeviceReportThread. Sends delta reports (previous→current masked diff)
+ * independently of the present loop. Thread safety: calls the same
+ * IHS_HIDFlushSDLGameControllers which locks each device under its own lock;
+ * no new lock ordering. */
+static void *hid_flush_thread_fn(void *arg) {
+    (void)arg;
+    while (hid_flush_running) {
+        pthread_mutex_lock(&state_lock);
+        IHS_Session *sess = hid_session;
+        bool enabled = hid_session_enabled;
+        pthread_mutex_unlock(&state_lock);
+        if (enabled && sess != NULL) {
+            IHS_HIDFlushSDLGameControllers(sess);
+        }
+        usleep(8000); /* 8ms = 125Hz */
+    }
+    return NULL;
+}
+
+static void hid_flush_thread_start(void) {
+    hid_flush_running = true;
+    pthread_create(&hid_flush_thread, NULL, hid_flush_thread_fn, NULL);
+}
+
+static void hid_flush_thread_stop(void) {
+    hid_flush_running = false;
+    pthread_join(hid_flush_thread, NULL);
+}
+#endif
+
 void stream_media_set_hid_session(IHS_Session *session, bool enabled) {
 #if NSTREAMLINK_APP
     pthread_mutex_lock(&state_lock);
@@ -1292,7 +1321,9 @@ void stream_media_set_hid_session(IHS_Session *session, bool enabled) {
         snapshot.hid_last_event_which = -1;
         snapshot.hid_last_event_code = -1;
         snapshot.hid_last_event_value = 0;
+        hid_flush_thread_start();
     } else {
+        hid_flush_thread_stop();
         reset_hid_probe_window();
         hid_last_log_us = 0;
         hid_last_full_us = 0;
@@ -2198,33 +2229,9 @@ void stream_media_present(void) {
 
     pump_sdl_events();
 
-#if NSTREAMLINK_APP
-    /* Plume semantics: at most one HID packet per frame, carrying the state
-     * coalesced across all pumps since the previous frame. */
-    if (hid_frame_dirty) {
-        pthread_mutex_lock(&state_lock);
-        IHS_Session *hid_sess = hid_session;
-        bool hid_enabled = hid_session_enabled;
-        pthread_mutex_unlock(&state_lock);
-        if (hid_enabled && hid_sess != NULL) {
-            uint64_t send_start = media_monotonic_us();
-            bool hid_sent = IHS_HIDFlushSDLGameControllers(hid_sess);
-            uint32_t send_us = (uint32_t)elapsed_us(send_start, media_monotonic_us());
-            pthread_mutex_lock(&state_lock);
-            snapshot.hid_send_samples++;
-            add_timing(&snapshot.hid_send_us_total, &snapshot.hid_send_us_max, send_us);
-            pthread_mutex_unlock(&state_lock);
-            if (hid_sent) {
-                hid_send_ok_since_log++;
-                hid_send_ok_total++;
-            } else {
-                hid_send_fail_since_log++;
-                hid_send_fail_total++;
-            }
-        }
-        hid_frame_dirty = false;
-    }
-#endif
+    /* Input delta flush moved to dedicated 8ms thread (hid_flush_thread_fn).
+     * Present loop only handles rendering and event pump; input timing is
+     * decoupled from vsync (matches official 125Hz dedicated thread). */
 
     uint16_t frame_id = 0;
     uint64_t frame_submit_us = 0;
