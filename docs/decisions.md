@@ -1333,3 +1333,12 @@ channelId=2 可靠消息 20 次重试耗尽 + 视频 stall 与输入失灵同窗
   影响未知**（hold 在包序号层面，与包内容无关——不做修复承诺）。
 - 影响：ihslib fork e17e697→新提交；SD 诊断 hidsec 的 sent= 线上真值字段继续有效；
   delta 语义（链式基于 previous）要求 previous 推进与 flush 严格成对，代码已保证。
+
+### D-041 附录（同日补充）：心跳与恢复态也走全掩码 delta，输入线上不再出现 full_report
+
+- Evidence：官方二进制 `set_full_report` 零调用（全量反汇编交叉引用），恢复态/心跳
+  以全掩码 delta 表达（掩码覆盖全部状态字节，host 经 delta_report_crc 校验）。
+- Decision 补充：100ms 心跳与 Reset 中性态同步从 full_report 字段改为全掩码 delta
+  （`IHS_HIDDeviceReportAddForcedFullMaskDelta`，掩码覆盖全部状态字节 + CRC32）。
+  输入线上不再出现 full_report 字段，与官方 wire 形态完全对齐。
+- 判据：真机输入功能回归正常（对齐本身），host 拒收/无响应即回退。
