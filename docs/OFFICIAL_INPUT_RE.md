@@ -419,3 +419,26 @@ ihslib 不能——这是架构级差异。**
 无需重传——**高频不可靠 delta 是官方的丢失容忍策略核心**。
 如果走可靠通道，125Hz 会严重塞满上行（每包都需 ACK + 重传），上游 ihslib 注释
 已警告过此问题。官方可能默认走不可靠通道用于输入。
+
+## 16. R4 补充：SendRemoteHIDMessage 的可靠性与调用者分析
+
+【已验证】`SendRemoteHIDMessage(msg, bool)` 三个调用点（0x7bd74c / 0x7bd978 / 0x7bd9d8）：
+
+- 前两个传 `w2=wzr`（false）→ `SendControlMessage` → `CStreamFrame::Send(conn, false)`
+  → `Send()` 走**可靠有序通道**
+- 第三个（0x7bd9d8，UpdateHIDDeviceReports 内的批量发送路径）bool 来自变量——
+  需要跟踪上下文确定
+
+【已验证】`SendControlMessage` → `CStreamFrame::Send(conn, bool)`:
+```
+Send():
+  if (bool) → CStreamConnection::SendUnreliable()  
+  else      → CStreamConnection::Send()
+```
+
+【结论】官方输入至少部分走可靠通道。但 `Send()` 存在 `SendUnreliable()` 路径
+意味着官方**具备**不可靠发送输入的能力（可能用于高频场景下的降级）。
+ihslib 只有 `IHS_SessionChannelControlSend` 一条路径（全可靠有序）。
+
+传输层序列跟踪（字符串证据）：`recvseq/inorder/dup/lurch/ooo` 五个计数器
+——官方传输层独立跟踪乱序/重复，与 ihslib 的 window.c 不同。
