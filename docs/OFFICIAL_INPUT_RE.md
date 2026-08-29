@@ -379,3 +379,43 @@ while (m_bRunning) {
 
 【含义】如果要对齐官方，关键是 **8ms 高频 delta 线程**（而非我们的每帧 flush），
 以及**放弃单在途限制**（允许连续多包在途——官方就是这样做的，丢一个不影响后续）。
+
+## 15. R3 完成：传输封装与可靠性选择（全量反汇编解析）
+
+【已验证】`CStreamClient::SendRemoteHIDMessage(CHIDMessageFromRemote const*, bool reliable)`（0x7ab374）：
+
+```
+1. 检查连接状态（== 6 即 k_EStreamConnectionStateConnected）
+2. CHIDMessageFromRemote::ByteSizeLong() → 序列化到 buffer
+3. 构造 CRemoteHIDMsg → data = 序列化后的 DeviceInputReports
+4. GetStreamTimestamp() → CRecordedInput.timestamp（毫秒时间戳）
+5. CRecordedInput.type = 0xd (13 = hid)
+6. CRecordedInput.hid = CRemoteHIDMsg
+7. 加入 CRecordedInputStream.entries（repeated 批量）
+8. CStreamClient::SendControlMessage(k_EStreamControlRemoteHID=106, CRemoteHIDMsg)
+```
+
+【已验证】`CStreamClient::SendControlMessage`（0x7a7d90）：
+```
+CStreamFrame(type=106, channel)
+CStreamFrame::Put(protobuf_msg, bool)
+CStreamFrame::Send(conn, bool)  ← bool 参数选择路径：
+  → CStreamConnection::Send()            (可靠有序)
+  → CStreamConnection::SendUnreliable()  (不可靠)
+```
+
+【已验证】`Send()` 的 bool 参数决定走 `Send()` 还是 `SendUnreliable()`——
+官方客户端有**两条路径**：可靠有序通道 和 不可靠直发通道。
+
+### 对比 ihslib
+
+ihslib 的 `IHS_SessionChannelControlSend` 只有一条路径：所有控制消息（含 RemoteHID）
+走 Reliable 有序通道。无 Unreliable 选项。**官方输入可以走不可靠通道，
+ihslib 不能——这是架构级差异。**
+
+### 125Hz 不等 ACK 的原因
+
+官方 125Hz 输入线程每次产生新报告，如果走不可靠通道：丢一个 delta 8ms 后下一条就到，
+无需重传——**高频不可靠 delta 是官方的丢失容忍策略核心**。
+如果走可靠通道，125Hz 会严重塞满上行（每包都需 ACK + 重传），上游 ihslib 注释
+已警告过此问题。官方可能默认走不可靠通道用于输入。
