@@ -289,3 +289,57 @@ delta 压不下时出现"一致（出现的 full 混在 98B 簇中不可分）�
 **D-041 附录需再修正：全掩码 delta 应改为官方的自适应规则**）。
 收敛判定：未达成。代码改动继续冻结（D-041 已实施的 delta flush 与本轮发现冲突的
 部分，待 R2-R10 完成后一并修正）。
+
+## 13. 客户端→host 消息字段逐项审计（2026-08-29）
+
+审计范围：ihslib 客户端模式实际发送的全部控制消息（代码 grep 验证全集），逐字段核对
+来源与官方对照。**本节只记录，不含任何代码修改。**
+
+### 13.1 NegotiationSetConfig（三层）
+
+已填字段：config（reliable_data=false、enable_remote_hid=1、音视频编解码选择、
+分辨率/帧率）、clientConfig（quality=Balanced、1280x720@60、6000kbps、audio 2ch、
+HEVC off、performance_overlay=true、controller_overlay_hotkey="auto"）、
+caps（system_info、system_can_suspend、max_decode 30000/burst 90000、codecs、
+form_factor=TV）。
+
+发现的问题：
+
+- P1【确认】`supported_colorspaces` 未声明 → host 会话选 BT.601 limited。
+  HD 内容按 601 采样存在色彩精度损失。修复方向：声明 BT.709/601（含 Full）。
+  对照：官方会话 host 日志无 "Capture colorspace" 行（成因未知，见 P9）。
+- P2【确认】`display/quality/runtime/decoder_limit`（CStreamVideoLimit）未声明。
+  官方二进制存在该消息族的使用痕迹（待动态确认取值）。
+- P3【确认】`enable_unreliable_fec` 未设（false）。与 FEC 队列类
+  （CFECIncoming/OutgoingQueue）及输入批量是否走 FEC 通道的问题相关（第 9 节）。
+- P4【确认】`reliable_data=false` 硬编码。官方流程从 host InitMsg **读取**该宣告
+  （0x7ad6fc），声明方向不同；官方生效值未知。
+- P5【观察】caps.system_info 为硬编码假串（263MB RAM、1 核、JN-MD133BFHDR 面板）。
+  host 端用途未知。
+- P6【观察】quality=Balanced/6M/720p vs 官方 Beautiful/50M/2944x1840——有意低配，
+  非缺陷；但影响 SessionStats 的对比基线。
+
+### 13.2 其余消息快审
+
+- AuthRequest：version/steamid/HMAC-SHA256("Steam In-Home Streaming") token ✓ 标准；
+- ClientHandshake：network_test=true ✓；
+- KeepAlive：空消息，5s 周期 ✓（host 有 ping timeout 断连机制，间隔待对照）；
+- StartVideoData：**客户端不发送**（host 推送启动）✓ 与官方一致；
+- RemoteHID wrapper：has_active_input=true + active_input=true（0010 补丁），
+  官方同字段的取值未逆向（低优先）；
+- 帧反馈：CFrameStatsListMsg（k_EStreamStatsFrameEvents，stats 通道，1s 周期，
+  reliable）——时间戳单位 bug 已修（见第 12 节前文）；
+- 包头 sendTimestamp：ms 修复已推送（ab8712d）。
+
+### 13.3 官方会话 host 日志的独有现象
+
+- 官方会话段无 "Capture colorspace" 行（我们会话均有 BT.601 行）——成因未知（P1 相关）；
+- 官方会话段 `Slow framerate: game 16.00` 常驻（游戏自身帧率 16fps，
+  非网络/客户端问题）。
+
+### 13.4 审计状态
+
+字段审计完成度：NegotiationSetConfig ✓、AuthRequest/ClientHandshake/KeepAlive ✓、
+StartVideo/Audio ✓（不发送）、RemoteHID wrapper ✓（active_input 待官方对照）、
+帧反馈 ✓（时间戳已修）、ACK/包头 ✓（ms 已修）。
+colorspaces 官方构造点、ControllerConfigMsg 官方载荷：静态到边界，需动态分析（Frida）。
