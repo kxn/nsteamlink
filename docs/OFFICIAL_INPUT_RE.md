@@ -198,3 +198,87 @@ InitMsg 的三个 bool 宣告（`ldrb [InitMsg+0x68/0x69/0x6a]` → 存入
 - D-030 时代"delta 链丢失导致永久错状态"的结论需要修正表述：在 host `DeviceRequestFullReport`
   恢复机制（已实现）与 CRC 校验（ihslib 已有）配合下，delta 方案的丢包自愈路径是存在的，
   当年的放弃决策缺少对这套配套机制的分析。
+
+## 11. 十轮全链路核验（2026-08-29，应用户要求启动；代码冻结直至收敛）
+
+核验方法：每轮以一个独立视角走完整条输入链（采集→状态→编码→打包→传输→host 接收→apply），
+对官方（逆向+pcap+host 日志）与 ihslib/我们（源码+diag 日志）逐环节比对。发现即记录，
+**收敛（连续两轮无新发现）前不改任何代码**。
+
+### R1 wire 编码策略 ✅
+
+【已验证】官方 `SendBuffer`（0x7d00f0）对每帧状态做掩码差分后**自适应选择**：
+
+```
+deltaLen + 8 < fullLen  →  set_delta_report（掩码+变化字节）+ delta_report_size + CRC32(全态)
+deltaLen + 8 ≥ fullLen  →  set_full_report（完整态直发）+ 重置内部计数
+```
+
+（反汇编原文：0x7d035c-0x7d03b8，`cmp x8,x26 / b.cs → full` 分支。）
+
+**更正**：此前"set_full_report 零调用"的断言系 grep 制表符不匹配造成的假阴性，作废。
+官方 delta/full 双模自适应；本文件第 3 节相应段落以本条为准。
+
+### R2 报告生成与排队 ✅（触发节奏需动态确认）
+
+【已验证】生成与发送解耦：generator 编码入队（`ImplAddToTail`），
+`CHIDDeviceReportThread::Run`（0x7c9e40）为独立消费线程；
+`BCollectReports`（0x7cf884，虚表调用——静态 xref 不可达，虚表分派）收集全部生成器。
+
+### R3 传输封装 ✅
+
+【已验证】`SendRemoteHIDMessage`（0x7ab374）：
+`CHIDMessageFromRemote` 序列化 → 包进 `CRemoteHIDMsg.data` → 同时录入
+`CRecordedInput`（`GetStreamTimestamp()` 时间戳，type==0xd 即 hid）→
+**`CStreamClient::SendControlMessage(EStreamControlMessage, MessageLite const&)`**（0x7a7d90）→
+`CStreamFrame(type, channel)` → `Put` → `BEncrypt(seq)` → `Send`。
+与 ihslib 同构：输入走控制通道、加密、带序列号。**输入的可靠性级别未在此层见到
+特殊分支**（帧类型参数来源于更上层，R4 继续）。
+
+### R4 丢失恢复 ◐
+
+【已验证·字符串】传输层序列跟踪五计数器：`recvseq / inorder / dup / lurch / ooo`
+（官方术语 "lurch" = 乱序落点）。"Sender sent reliable stream pos… expected next…"。
+【未知】host 对控制流洞后消息：hold 后按序补 apply，还是丢弃（客户端 delta 链基线
+失配 → CRC 失败 → RequestFullReport 恢复）。两种行为与观测均兼容，需动态实验区分。
+
+### R5 时序与速率 ✅
+
+【已验证】官方输入批量间隔（8684 个间隔）：均值 30.5ms、中位 11.1ms、p90 56.8ms、
+p99 414.6ms、最大 1222ms；89% 的间隔 <50ms——**事件驱动逐帧批量，无固定速率**；
+221 秒中仅 3 秒无输入批量。
+
+### R6 会话生命周期 ◐
+
+【已验证】官方会话流：捕获开始后 ~60s 为大屏桌面导航（输入批量 40.9/s），
+后 161s 进游戏（29.8/s）。
+【未知】会话建立时的初始状态同步方式（首包 full？全掩码 delta？）——pcap 未覆盖
+会话起点（用户在流开始 3 分钟后才启动抓包）。
+
+### R7 host 接收行为 ✅（现象确认，成因未知）
+
+【已验证】官方会话 host 记录 287 条 CLIENT: 控制消息；我们会话 0 条（ihslib 代码证实
+相关消息我们不发）。另：我们会话的 host 帧反馈计时失真（network≈58518652ms）。
+
+### R8 协商能力 ◐
+
+【已验证·代码】ihslib 已加日志输出 host InitMsg 宣告的
+`reliable_data / supports_remote_hid / supports_touch_input`（3d16df4），
+待下次真机连接采集。【未知】官方实际生效值。
+
+### R9 静态-动态交叉 ✅
+
+【已验证】R1 的自适应策略可解释观测的双簇尺寸分布（82B=轻中度变化的 delta，
+98B=大 delta/多设备批量）；无 >140B 的独立 full 态包簇——与"full 仅在
+delta 压不下时出现"一致（出现的 full 混在 98B 簇中不可分）。
+
+### R10 端到端事件追踪 ⬜
+
+待 R4 的 host hold 行为区分实验后进行（需动态注入或 Frida）。
+
+## 12. 收敛状态
+
+已产生新发现的轮次：R1（自适应规则，推翻 D-041"不出现 full_report"的假设——
+**D-041 附录需再修正：全掩码 delta 应改为官方的自适应规则**）。
+收敛判定：未达成。代码改动继续冻结（D-041 已实施的 delta flush 与本轮发现冲突的
+部分，待 R2-R10 完成后一并修正）。
