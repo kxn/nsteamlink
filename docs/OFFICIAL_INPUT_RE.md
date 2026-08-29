@@ -61,12 +61,21 @@ message CHIDDeviceInputReport {
 }
 ```
 
-【推断】官方常态输入 = delta 报告（小包），依据：SendBuffer 明确调用 `set_delta_report`
-（符号级）；pcap 实测输入批量 98B（与本机 73B 全量+封装的 138B 相比明显更小，与 delta
-尺寸特征一致）。**包内容加密，未能从线上直接验证 delta/full 字段选择。**
+【已验证·全量反汇编交叉引用】（main.disasm 1,694,052 行，2026-08-29 补充分析）：
 
-【未知】delta 与 full 的触发策略（首包/心跳/丢失恢复时何时切 full）；批量刷新的精确节奏
-（实测 ~31/s，与游戏帧率相关的推断未证实）。
+- **`set_full_report` 的 PLT（0xc10020）在全二进制中零调用**——官方 Android 客户端的
+  输入报告**全部为 delta_report，从不发送 full_report**。初始状态同步依赖 delta 的
+  "全掩码"能力（ComputeDelta 掩码覆盖全部字节时等价全量）与 host 侧中性初始化；
+- 完整发送链：`ReportGenerator`（EncodeDelta 编码入队）→
+  `BCollectReports(CHIDMessageFromRemote_DeviceInputReports*, bool*)`
+  （收集全部生成器的报告，@ `0x7cf884`）→ `SendBuffer`（打包）→
+  `ImplAddToTail`（报告线程队列）→ 报告线程发送；
+- 产生节奏：pcap 实测 31/s 批量，与 30fps 游戏的逐帧收集一致。
+
+【推断】delta 丢失的自愈路径：delta 带 size+CRC32，host 端 CRC 校验失败或基线状态缺失时，
+通过 `CHIDMessageToRemote.DeviceRequestFullReport`（proto 字段存在，ihslib 已实现
+客户端侧响应）请求客户端重发——客户端以"全掩码 delta"响应（set_full_report 无调用者，
+全量只能以 delta 形态发出）。该路径未被动态观测证实。
 
 ## 4. 官方会话线上数据（pcap 实测）
 
@@ -158,6 +167,16 @@ InitMsg 的三个 bool 宣告（`ldrb [InitMsg+0x68/0x69/0x6a]` → 存入
 | B | 补控制对话：SetQoS / SetTargetBitrate / ControllerConfigMsg（游戏切换时请求配置）| host 日志 287 vs 0；官方会话含完整协商 | host 日志出现对应记录；卡死是否变化 | 中；部分消息语义需进一步逆向 |
 | C | 帧反馈时间戳校准 | host 的 network 计时失真（第 5 节）| SessionStats 的 network 值正常化 | 低 |
 | D | reliable_data 对齐 | 见第 6 节 | 待 host 宣告值采集后评估 | **用户已否决无证据实验**；官方值逆向未完成 |
+
+### 路线 A 的补充事实（2026-08-29 全量反汇编补充）
+
+- 官方 `set_full_report` 零调用：**官方从不发 full_report**，初始/恢复态一律以"全掩码
+  delta"表达；我们若对齐，心跳的 full 也应以全掩码 delta 或保留 full_report 字段发送
+  （host 对两种字段的接受度未知，需实验）；
+- ihslib 的 `IHS_HIDReportHolderAddDelta`（report.c:129）已实现与官方一致的
+  delta+size+CRC32 三件套，属"休眠的完整基础设施"，恢复 = 重新接线而非新写；
+- 上游 ihslib（8c5a17c）与 plume 实测即运行在此 delta 路径上；**但 plume 可用性用户无法
+  独立验证，不作为因果证据，仅作为上游行为参照**。
 
 ## 9. 未决问题
 
