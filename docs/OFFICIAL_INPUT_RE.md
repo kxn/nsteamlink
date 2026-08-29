@@ -343,3 +343,39 @@ form_factor=TV）。
 StartVideo/Audio ✓（不发送）、RemoteHID wrapper ✓（active_input 待官方对照）、
 帧反馈 ✓（时间戳已修）、ACK/包头 ✓（ms 已修）。
 colorspaces 官方构造点、ControllerConfigMsg 官方载荷：静态到边界，需动态分析（Frida）。
+
+## 14. R2 补充：官方输入报告线程（全量反汇编解析）
+
+【已验证】`CStreamPlayer::CHIDDeviceReportThread::Run()`（0x7c9e40）：
+
+```
+while (m_bRunning) {
+    UpdateHIDDeviceReports();     // ← 收集所有设备 delta/full + SendRemoteHIDMessage
+    ThreadSleep(8);               // ← 8 毫秒
+    if (loop_count % 125 == 0) {  // ← ~每秒一次
+        UpdateHIDDeviceInfo();    // ← 更新设备信息
+    }
+    if (has_virtual_controller) {
+        UpdateControllerState();  // ← 虚拟控制器状态
+    }
+}
+```
+
+- `ThreadSleep(8)` = **125Hz 发送频率**，每次循环遍历所有设备收集 delta/full 并立即发送
+- `UpdateHIDDeviceReports()` 内部（0x7bd838）：
+  - 持锁遍历设备列表
+  - 对每个设备调用虚函数 `BCollectReports(DeviceInputReports*, bool*)` 收集
+  - **有数据就立即调 `SendRemoteHIDMessage` 发送**（不等 ACK、不合并批次）
+  - 无数据的设备构造 CloseDevice 消息（设备已断开的通知）
+
+【结论】官方输入不是事件驱动（"有变化才发"），也不是低频心跳，而是**固定 125Hz 高频
+轮询发送**——每次都收 delta（或全掩码 delta 当变化太大时），不管 host 是否确认上一包。
+单在途限制在官方架构中不存在——125Hz 高频本身就是丢失容忍策略的一部分：
+丢一个 delta 8ms 后下一条就到了，不需要重传也不需要等待。
+
+【与我们的对比】
+- 我们目前（D-041 后）：每帧一次 flush（~60Hz 或 vsync 率）+ 100ms 心跳 full + 单在途
+- 官方：125Hz 专用线程 + delta/full 自适应 + 不等 ACK + 不限在途
+
+【含义】如果要对齐官方，关键是 **8ms 高频 delta 线程**（而非我们的每帧 flush），
+以及**放弃单在途限制**（允许连续多包在途——官方就是这样做的，丢一个不影响后续）。
