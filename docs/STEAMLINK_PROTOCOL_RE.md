@@ -500,6 +500,20 @@ PersonalizationResponse(2)/ActiveConfigChange(3)/RequestActiveConfig(4)，客户
 | 19 | VideoDecoderInfo/StopRequest 发送 | 有 | MATCH |
 | 20 | 上行 wire 形态（尺寸簇/速率） | 未测 | 待真机 pcap 对照（判据§9.3） |
 
+### 13.2b 收包链专项审计（2026-09-04，第二轮）
+
+- 未知控制通道包类型：fork 原为断连（一次意外包类型即死会话），官方是忽略——已改为 log+ignore；
+- KeepAlive(9)：官方在 OnStreamPacket 内联静默消费（0x7ad0b4），fork 原会落入未处理分支打日志——已静默；
+- CaptureFailed(147)/SystemSuspend(100)：官方转 UI 委托，fork 原静默丢弃——已加 error/warn 日志；
+- HID 下行 13 种命令全覆盖（含 DeviceRequestFullReport→全量回复、DeviceWrite→设备写）✓；
+- 控制消息 switch 40 个 case，覆盖 host 实际会发的全部关键消息；未覆盖的
+  （TouchConfig 族/OverlayEnabled/SetGammaRamp/VR/RemotePlayTogether 等）
+  走 benign-ignore，与官方未匹配类型的处理一致；
+- ACK 政策：逐包 → 每批交付点一次（0x7f9e70），线上格式不变；
+- 数据通道：溢出→ReleaseAll+DataLost 上报（对等 SendDataLost）✓；FEC 未实现
+  ——但我们从未协商 enable_unreliable_fec，host 不应发送 FEC 包（assert 仅 debug 生效）；
+- 加密边界/ACK wire 格式/信封/合批：逐字节等价 ✓。
+
 ### 13.3 结论
 
 16 项 fork 行为裁定：**MATCH 1 项、PARTIAL 1 项、MISMATCH 12 项、未验证 0 项**（三项
