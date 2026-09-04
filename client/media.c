@@ -30,6 +30,7 @@
 
 #if NSTREAMLINK_APP
 #include <ihslib/hid/sdl.h>
+#include <ihslib/input.h>
 #endif
 
 #define SDL_WIDTH  1920
@@ -948,6 +949,26 @@ static void pump_sdl_events(void) {
 
     while (SDL_PollEvent(&event)) {
 #if NSTREAMLINK_APP
+        /* Switch touchscreen -> official InputTouchFingerDown/Motion/Up(117-119).
+         * SDL reports tfinger x/y normalized to the display, which is exactly
+         * the wire format (x_normalized/y_normalized). Officially these go out
+         * as control messages independent of the HID gamepad device. */
+        if (event.type == SDL_FINGERDOWN || event.type == SDL_FINGERMOTION ||
+            event.type == SDL_FINGERUP) {
+            if (hid_enabled && event_hid_session != NULL) {
+                if (event.type == SDL_FINGERDOWN) {
+                    IHS_SessionSendTouchDown(event_hid_session, event.tfinger.fingerId,
+                                             event.tfinger.x, event.tfinger.y);
+                } else if (event.type == SDL_FINGERMOTION) {
+                    IHS_SessionSendTouchMotion(event_hid_session, event.tfinger.fingerId,
+                                               event.tfinger.x, event.tfinger.y);
+                } else {
+                    IHS_SessionSendTouchUp(event_hid_session, event.tfinger.fingerId,
+                                           event.tfinger.x, event.tfinger.y);
+                }
+            }
+            continue;
+        }
         record_hid_event(&event);
         if (hid_enabled && event_hid_session != NULL &&
             IHS_HIDHandleSDLEvent(event_hid_session, &event)) {
