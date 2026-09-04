@@ -11,3 +11,4 @@ build/
 *.swp
 compile_commands.json
 .cache/
+.zcode/

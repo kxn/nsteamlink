@@ -1,5 +1,25 @@
 # 官方 Steam Link 输入路径逆向调研
 
+> **2026-09-04 更正与拆分**：本文档的协议层结论已由系统再逆向复核，
+> 新权威参照为 `docs/STEAMLINK_PROTOCOL_RE.md`。对本文的具体更正：
+> ① §5 对 host 日志 `CLIENT:` 前缀的解读有误——官方客户端二进制中不存在 SetQoS(87)/
+>    SetTargetBitrate(94)/VideoEncoderInfo(90)/SetTitle(81)/SetActivity(98)/TouchConfig 下行族
+>    (110/112/114/116) 的任何发送代码路径（SendControlMessage 全部 35 个调用点已枚举），
+>    这些消息全部有 On* 接收 handler，故 `CLIENT:` 前缀 = host→client 方向，
+>    287 条记录不能作为"官方客户端发送控制对话"的证据；
+> ② §8 候选路线 B（客户端补发 SetQoS/SetTargetBitrate）前提作废；
+> ③ §15/§16 `CStreamFrame::Send(conn, bool)` 的 bool 映射写反：true=可靠 Send，
+>    false=SendUnreliable；且 SendControlMessage 两路均硬编码 reliable=true——
+>    "官方输入可能默认走不可靠通道"的猜测不成立；
+> ④ §6 【未知】项部分落地：官方把 host InitMsg 的 reliable_data 回显进自己的
+>    NegotiationSetConfig.config.reliable_data（无条件字节拷贝）；
+> ⑤ §13.2 "时间戳单位 bug 已修（ms）"方向反了：官方 GetStreamTimestamp 是
+>    **16.16 定点秒**（高 16 位整数秒+低 16 位小数），帧事件时间戳为该单位减连接基准
+>    （conn+848）的相对值；我们发绝对毫秒正是 host 日志 network≈58518652ms 失真的成因。
+>    详见 STEAMLINK_PROTOCOL_RE.md §9c。
+> 输入链（125Hz 线程、delta/full 自适应、生成节奏）结论不受影响；
+> §14 "不合并批次"表述由 STEAMLINK_PROTOCOL_RE.md §9b.2 更正（官方单消息多设备合批）。
+
 > 目的：BUG-M4-HID-001（串流中偶发 host/game 输入无响应 ~20 秒）的根因排查进入
 > "host 侧 apply 停滞"阶段后，客户端侧可观测手段已用尽（见 decisions D-030/D-034/D-039/D-040
 > 与 issue #1 时间线）。本文档逆向官方 Steam Link Android 客户端（v1.3.32）的输入路径，
