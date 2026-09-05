@@ -206,6 +206,7 @@ static atomic_uint_fast32_t diag_hid_get_feature;
 static atomic_uint_fast32_t diag_hid_get_strings;
 static atomic_uint_fast32_t diag_hid_no_device;
 static atomic_uint_fast32_t diag_control_warn;
+static atomic_uint_fast32_t diag_control_unhandled;
 static atomic_bool diag_disk_stop;
 static pthread_t diag_disk_thread;
 static bool diag_disk_started;
@@ -670,6 +671,31 @@ static void diag_note_hid_log(const char *message) {
     }
 }
 
+#define DIAG_UNHANDLED_TYPES 12
+static char diag_unhandled_names[DIAG_UNHANDLED_TYPES][40];
+static uint32_t diag_unhandled_counts[DIAG_UNHANDLED_TYPES];
+static uint32_t diag_unhandled_type_n;
+static pthread_mutex_t diag_unhandled_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/* Renders "Name xN, ..." for up to 8 tracked types; returns chars written. */
+static int format_unhandled_types(char *out, size_t cap) {
+    pthread_mutex_lock(&diag_unhandled_lock);
+    int written = 0;
+    for (uint32_t i = 0; i < diag_unhandled_type_n && cap > 1; i++) {
+        int w = snprintf(out, cap, "%s%s x%u",
+                         i > 0 ? ", " : "", diag_unhandled_names[i],
+                         diag_unhandled_counts[i]);
+        if (w < 0 || (size_t) w >= cap) {
+            break;
+        }
+        out += w;
+        cap -= w;
+        written += w;
+    }
+    pthread_mutex_unlock(&diag_unhandled_lock);
+    return written;
+}
+
 static void diag_note_control_log(const char *message) {
     if (message == NULL) {
         return;
@@ -679,6 +705,33 @@ static void diag_note_control_log(const char *message) {
         strstr(message, "Mismatched message sequence") != NULL ||
         strstr(message, "Unrecognized packet") != NULL) {
         atomic_fetch_add_explicit(&diag_control_warn, 1, memory_order_relaxed);
+    }
+    if (strstr(message, "Unhandled control message") != NULL) {
+        atomic_fetch_add_explicit(&diag_control_unhandled, 1, memory_order_relaxed);
+        /* Record WHICH message type went unhandled, with its name, so the
+         * 1 Hz diag line can persist it (the logq ring is volatile). */
+        const char *name = strstr(message, ": ");
+        if (name != NULL) {
+            name += 2;
+            pthread_mutex_lock(&diag_unhandled_lock);
+            uint32_t slot = diag_unhandled_type_n;
+            for (uint32_t i = 0; i < diag_unhandled_type_n; i++) {
+                if (strncmp(diag_unhandled_names[i], name,
+                            sizeof(diag_unhandled_names[0]) - 1) == 0) {
+                    slot = i;
+                    break;
+                }
+            }
+            if (slot == diag_unhandled_type_n && diag_unhandled_type_n < DIAG_UNHANDLED_TYPES) {
+                snprintf(diag_unhandled_names[slot], sizeof(diag_unhandled_names[0]),
+                         "%s", name);
+                diag_unhandled_type_n++;
+            }
+            if (slot < DIAG_UNHANDLED_TYPES) {
+                diag_unhandled_counts[slot]++;
+            }
+            pthread_mutex_unlock(&diag_unhandled_lock);
+        }
     }
 }
 
@@ -2174,6 +2227,10 @@ static void perf_line(app_state *state, char *out, size_t out_len) {
 }
 
 static void hid_line(char *out, size_t out_len) {
+    static char diag_unhandled_types_scratch[512];
+    diag_unhandled_types_scratch[0] = '\0';
+    format_unhandled_types(diag_unhandled_types_scratch,
+                           sizeof(diag_unhandled_types_scratch));
     stream_media_snapshot media;
     stream_media_get_snapshot(&media);
     snprintf(out, out_len,
@@ -2183,7 +2240,7 @@ static void hid_line(char *out, size_t out_len) {
              " providerDevices=%d sdlJoy=%d sdlIndex=%d sdlInstance=%d sdlType=%d"
              " lastEvent=%d/%d/%d/%d"
              " openOk=%u openFail=%u start=%u startLen=%u full=%u"
-             " getFeature=%u getStrings=%u noDevice=%u activeInput=1 ctrlWarn=%u"
+             " getFeature=%u getStrings=%u noDevice=%u activeInput=1 ctrlWarn=%u unhandled=%u unhandledTypes=[%s]"
              " rel=%" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64 " retry=%" PRIu64 " fail=%" PRIu64
              " out=%u oldest=%" PRIu64 "ms@%u/%u/%d#%u maxAck=%" PRIu64 "ms"
              " hidSM=%" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64
@@ -2211,6 +2268,8 @@ static void hid_line(char *out, size_t out_len) {
              (uint32_t)atomic_load_explicit(&diag_hid_get_strings, memory_order_relaxed),
              (uint32_t)atomic_load_explicit(&diag_hid_no_device, memory_order_relaxed),
              (uint32_t)atomic_load_explicit(&diag_control_warn, memory_order_relaxed),
+             (uint32_t)atomic_load_explicit(&diag_control_unhandled, memory_order_relaxed),
+             diag_unhandled_types_scratch,
              media.reliability.reliableTracked,
              media.reliability.reliableAcknowledged,
              media.reliability.reliableSuperseded,
