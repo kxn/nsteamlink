@@ -514,6 +514,24 @@ PersonalizationResponse(2)/ActiveConfigChange(3)/RequestActiveConfig(4)，客户
   ——但我们从未协商 enable_unreliable_fec，host 不应发送 FEC 包（assert 仅 debug 生效）；
 - 加密边界/ACK wire 格式/信封/合批：逐字节等价 ✓。
 
+### 13.2c 跨线程锁审计（2026-09-04，真机卡死定位后）
+
+真机实证：第一次触发震动即全 app 死锁（接收线程 SDL_RumbleGamepad × 媒体线程
+SDL_PollEvent/libnx-hid 跨线程竞争）。修复 = DeviceWrite 在接收线程只入队
+（设备锁 FIFO，512B 上限），新增公开 API `IHS_HIDSDLApplyPendingWrites`
+由**媒体线程**（SDL/libnx-hid 属主，SDL_PollEvent 同线程）执行；flush 线程
+不再执行（libnx hid 服务不允许与媒体线程跨线程并发）。
+
+其余跨线程点逐项定性：
+- DeviceOpen 的 SDL_OpenGamepad（接收线程）：16+ 会话实证存活；协议要求同步
+  RequestResponse 无法延迟——记录为已知风险；
+- DeviceClose 的 SDL_CloseGamepad（接收线程）：实证存活（仅收尾时序触发）——记录；
+- 字符串/电源信息 getter（接收线程）：与 flush 线程 getter 同类，实证共存；
+- 锁序：全路径均为 device → send 单向（flush 先解锁再发送；Write 入队不再
+  持锁发送），无 device↔send 反向；sendLock/retransmission/sendQueue 层叠
+  与既有高频路径一致；
+- 触摸发送（媒体线程 → sendLock）与 flush 发送互斥正确。
+
 ### 13.3 结论
 
 16 项 fork 行为裁定：**MATCH 1 项、PARTIAL 1 项、MISMATCH 12 项、未验证 0 项**（三项

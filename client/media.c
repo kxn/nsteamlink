@@ -970,6 +970,11 @@ static void pump_sdl_events(void) {
             continue;
         }
         record_hid_event(&event);
+        if (hid_enabled && event_hid_session != NULL) {
+            /* Host rumble/LED writes queued by the receive thread are applied
+             * here, on the SDL/libnx-hid owner thread (deadlock fix). */
+            IHS_HIDSDLApplyPendingWrites(event_hid_session);
+        }
         if (hid_enabled && event_hid_session != NULL &&
             IHS_HIDHandleSDLEvent(event_hid_session, &event)) {
             hid_changed = true;
