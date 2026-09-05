@@ -57,7 +57,7 @@
 #define DEBUG_PORT           28772
 #define DEBUG_RX             256
 #define DEBUG_TX             4096
-#define LOGQ_LEN             32
+#define LOGQ_LEN             256
 #define LOGQ_MSG             224
 #define LOGQ_DRAIN_LIMIT     8
 #define MAX_HOSTS            8
@@ -253,6 +253,7 @@ void __libnx_exception_handler(ThreadExceptionDump *ctx) {
 }
 
 static char logq[LOGQ_LEN][LOGQ_MSG];
+static uint64_t logq_ms[LOGQ_LEN];
 static int logq_head = 0;
 static int logq_tail = 0;
 static pthread_mutex_t logq_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -280,6 +281,8 @@ static void set_nonblocking_log_fd(int fd) {
     }
 }
 
+static uint64_t monotonic_ms(void);
+
 static void logline_net(const char *fmt, ...) {
     pthread_mutex_lock(&logq_lock);
     char *slot = logq[logq_head];
@@ -287,6 +290,7 @@ static void logline_net(const char *fmt, ...) {
     va_start(ap, fmt);
     vsnprintf(slot, LOGQ_MSG, fmt, ap);
     va_end(ap);
+    logq_ms[logq_head] = monotonic_ms();
     logq_head = (logq_head + 1) % LOGQ_LEN;
     if (logq_head == logq_tail) {
         logq_tail = (logq_tail + 1) % LOGQ_LEN;
@@ -296,22 +300,6 @@ static void logline_net(const char *fmt, ...) {
 
 static void media_log(const char *message) {
     logline_net("%s", message);
-}
-
-static void logq_drain(void) {
-    for (int drained = 0; drained < LOGQ_DRAIN_LIMIT; drained++) {
-        pthread_mutex_lock(&logq_lock);
-        if (logq_head == logq_tail) {
-            pthread_mutex_unlock(&logq_lock);
-            return;
-        }
-        char local[LOGQ_MSG];
-        strncpy(local, logq[logq_tail], sizeof(local));
-        local[sizeof(local) - 1] = '\0';
-        logq_tail = (logq_tail + 1) % LOGQ_LEN;
-        pthread_mutex_unlock(&logq_lock);
-        logline("%s", local);
-    }
 }
 
 static void nxlink_log_close(void) {
@@ -1829,7 +1817,6 @@ static bool wait_for_selected_host(app_state *state, uint64_t timeout_ms) {
         if (have_selected_host(state)) {
             return true;
         }
-        logq_drain();
         svcSleepThread(50 * 1000 * 1000);
     }
     return have_selected_host(state);
@@ -1983,7 +1970,6 @@ static bool join_destroy_session(app_state *state, bool send_stop) {
     IHS_SessionInterrupt(session);
     logline("session stop: join");
     IHS_SessionThreadedJoin(session);
-    logq_drain();
     logline("session stop: destroy");
     IHS_SessionDestroy(session);
 #if NSTREAMLINK_APP
@@ -2686,6 +2672,23 @@ static void diag_disk_write_tick(FILE *fp, FILE *marker_fp, app_state *state,
     diag_disk_printf(fp, "diag-hid ms=%" PRIu64 " %s\n", now, hid_buf);
     diag_disk_printf(fp, "diag-audio ms=%" PRIu64 " %s\n", now, audio_buf);
     diag_disk_printf(fp, "diag-lat ms=%" PRIu64 " %s\n", now, lat_buf);
+    /* Merge queued IHS logs into the diag file: control-plane events
+     * (unhandled messages, disable windows, stop flow) must survive on SD,
+     * not evaporate in the volatile console ring. */
+    for (;;) {
+        pthread_mutex_lock(&logq_lock);
+        if (logq_head == logq_tail) {
+            pthread_mutex_unlock(&logq_lock);
+            break;
+        }
+        char local[LOGQ_MSG];
+        strncpy(local, logq[logq_tail], sizeof(local) - 1);
+        local[sizeof(local) - 1] = '\0';
+        uint64_t tms = logq_ms[logq_tail];
+        logq_tail = (logq_tail + 1) % LOGQ_LEN;
+        pthread_mutex_unlock(&logq_lock);
+        diag_disk_printf(fp, "log ms=%" PRIu64 " %s\n", tms, local);
+    }
     diag_disk_write_hid_history(fp, marker_fp, last_hid_seq, &net);
     atomic_fetch_add_explicit(&diag_disk_ticks, 1, memory_order_relaxed);
 }
@@ -3889,10 +3892,8 @@ static void cleanup_client(IHS_Client *client) {
     IHS_ClientStop(client);
     logline("cleanup: join IHS client");
     IHS_ClientThreadedJoin(client);
-    logq_drain();
     logline("cleanup: destroy IHS client");
     IHS_ClientDestroy(client);
-    logq_drain();
 }
 
 static void read_text_summary(const char *path, char *out, size_t out_len) {
@@ -4105,7 +4106,6 @@ int main(int argc, char **argv) {
         if (runtime.client != NULL) {
             start_session_if_ready(&state, &runtime.client_config);
         }
-        logq_drain();
         if (auto_stream_pending) {
             auto_stream_pending = false;
             char err[160] = "";
@@ -4243,7 +4243,6 @@ int main(int argc, char **argv) {
 
     write_exit_stage("cleanup:media_shutdown:start");
     stream_media_shutdown();
-    logq_drain();
     write_exit_stage("cleanup:media_shutdown:done");
 
     write_exit_stage("cleanup:debug_close:start");
