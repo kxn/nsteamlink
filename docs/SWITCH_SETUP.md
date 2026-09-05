@@ -79,27 +79,27 @@ $DEVKITPRO/tools/bin/nxlink -a <Switch的IP> -s build/switch/app/nsteamlink.nro 
 
 # M2 配对工具（发现 + pairing code 授权 + auth.bin 持久化）
 cp build/switch/tools/switch-discover/switch-discover.nro <SD卡>/switch/
-$DEVKITPRO/tools/bin/nxlink -a 10.10.10.77 -s build/switch/tools/switch-discover/switch-discover.nro
+$DEVKITPRO/tools/bin/nxlink -a 10.10.10.17 -s build/switch/tools/switch-discover/switch-discover.nro
 
 # NRO 跑起来后，PC 端控制 M2 工具（UDP debug port 28772）
-tools/switch-debugctl.py 10.10.10.77 state
-tools/switch-debugctl.py 10.10.10.77 hosts
-tools/switch-debugctl.py 10.10.10.77 select 1
-tools/switch-debugctl.py 10.10.10.77 pair       # Switch 生成 code；把 code 输入 Steam host
-tools/switch-debugctl.py 10.10.10.77 code       # 重新读取当前 code/state
-tools/switch-debugctl.py 10.10.10.77 exit
+tools/switch-debugctl.py 10.10.10.17 state
+tools/switch-debugctl.py 10.10.10.17 hosts
+tools/switch-debugctl.py 10.10.10.17 select 1
+tools/switch-debugctl.py 10.10.10.17 pair       # Switch 生成 code；把 code 输入 Steam host
+tools/switch-debugctl.py 10.10.10.17 code       # 重新读取当前 code/state
+tools/switch-debugctl.py 10.10.10.17 exit
 
 # M3 串流/session/video/第一帧显示 probe（复用 M2 auth.bin）
-$DEVKITPRO/tools/bin/nxlink -a 10.10.10.77 -s build/switch/app/nsteamlink.nro
+$DEVKITPRO/tools/bin/nxlink -a 10.10.10.17 -s build/switch/app/nsteamlink.nro
 
 # 串流证据 selftest（保留为排障工具；正式 app 复用同一条串流链路）
-$DEVKITPRO/tools/bin/nxlink -a 10.10.10.77 -s build/switch/client/switch-stream-selftest.nro
-tools/switch-debugctl.py 10.10.10.77 state
-tools/switch-debugctl.py 10.10.10.77 hosts
-tools/switch-debugctl.py 10.10.10.77 select 1
-tools/switch-debugctl.py 10.10.10.77 stream game  # 默认 3600 帧后自动 stop；desktop 用 stream
-tools/switch-debugctl.py 10.10.10.77 stats
-tools/switch-debugctl.py 10.10.10.77 exit
+$DEVKITPRO/tools/bin/nxlink -a 10.10.10.17 -s build/switch/client/switch-stream-selftest.nro
+tools/switch-debugctl.py 10.10.10.17 state
+tools/switch-debugctl.py 10.10.10.17 hosts
+tools/switch-debugctl.py 10.10.10.17 select 1
+tools/switch-debugctl.py 10.10.10.17 stream game  # 默认 3600 帧后自动 stop；desktop 用 stream
+tools/switch-debugctl.py 10.10.10.17 stats
+tools/switch-debugctl.py 10.10.10.17 exit
 
 # 若 switch-discover 崩溃，读取 SD 卡上的 exception dump 后映射源码行
 $DEVKITPRO/devkitA64/bin/aarch64-none-elf-addr2line -f -C \
@@ -111,8 +111,8 @@ $DEVKITPRO/devkitA64/bin/aarch64-none-elf-addr2line -f -C \
 - `switch-discover` 退出时会写 `sdmc:/switch/nsteamlink/exit_stage.txt`，用于确认 fatal 前最后
   完成的 cleanup 阶段。程序自身 userland exception handler 触发时还会尝试写
   `sdmc:/switch/nsteamlink/exception_dump.txt`；其中 `pc` 和 `lr` 是优先映射的地址。
-- 本机 Switch 调试地址固定为 `10.10.10.77`；hbmenu netloader 端口是 `28280`。不要用空 TCP
-  探测 netloader 端口，直接用 `nxlink -a 10.10.10.77` 上传。
+- 本机 Switch 调试地址固定为 `10.10.10.17`；hbmenu netloader 端口是 `28280`。不要用空 TCP
+  探测 netloader 端口，直接用 `nxlink -a 10.10.10.17` 上传。
 - `switch-discover` 的 UDP debug 入口只用于开发测试，端口 `28772`；通过 nxlink 启动时优先只接受
   nxlink host 发来的命令。可用命令：`ping`、`state`、`hosts`、`select <n>`、`press <button>`、
   `pair`、`code`、`delete-auth`、`exit`。`pair` 不接收 PIN；Switch 生成并显示 pairing code。

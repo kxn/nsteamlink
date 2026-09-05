@@ -12,7 +12,7 @@
 - Do not present hypotheses as conclusions. Mark them as `hypothesis` or `待验证`.
 - If a prior conclusion is contradicted by new evidence, explicitly retract it in docs before building on it.
 - For Switch testing, do not use TCP port probes against netloader port `28280`; use `nxlink` directly because empty TCP connections can consume netloader's receive attempt.
-- This project's Switch debug unit is `10.10.10.77`; hbmenu netloader listens on port `28280`. Do not infer another Switch IP from ARP/neighbour tables unless the user explicitly says the IP changed.
+- This project's Switch debug unit is `10.10.10.17`; hbmenu netloader listens on port `28280`. Do not infer another Switch IP from ARP/neighbour tables unless the user explicitly says the IP changed.
 - Keep Steam authentication semantics aligned with `docs/STEAM_REMOTE_PLAY_AUTH.md`: do not collapse pairing PIN / authorization code and connect/security PIN into one concept, and do not change protocol flow without a source/log-backed evidence note.
 - Current tasks and status live exclusively in GitHub Issues on the private repo `kxn/nsteamlink` (with milestones). Repo documents carry only macro design/spec (kickoff, DEVELOPMENT, decisions), user manuals (README, SWITCH_SETUP, UDP_DEBUG, third_party/README), and protocol/platform references (STEAM_REMOTE_PLAY_AUTH, M3_RESEARCH_PLAN, GFX_MESA_INVESTIGATION). Never maintain progress/status/"下一步" sections in documents. The old M2/M3/M4_STATUS progress docs were removed on 2026-08-28; retrieve them from git history if needed.
 

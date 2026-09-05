@@ -7,7 +7,7 @@
 
 ## 约定
 
-- 调试单元 IP 固定 `10.10.10.77`，UDP 端口 `28772`；经 nxlink 启动时优先只接受 nxlink host 的命令。
+- 调试单元 IP 固定 `10.10.10.17`，UDP 端口 `28772`；经 nxlink 启动时优先只接受 nxlink host 的命令。
 - `nsteamlink.nro` 与 `switch-stream-selftest.nro` 使用同一端口、同一命令集
   （selftest 保留自动 3600 帧长跑行为；audio 保持 off 作为对照）。
 - `switch-discover`（M2 配对工具）是独立命令集，见文末。
