@@ -1925,6 +1925,9 @@ static bool join_destroy_session(app_state *state, bool send_stop) {
         logline("session stop: joining already-finished session");
     }
 
+    /* Ensure the session worker wakes from its recv loop even if the
+     * StopRequest/ACK handshake could not complete (host already gone). */
+    IHS_SessionInterrupt(session);
     logline("session stop: join");
     IHS_SessionThreadedJoin(session);
     logq_drain();
