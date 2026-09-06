@@ -2737,6 +2737,7 @@ static void diag_disk_write_tick(FILE *fp, FILE *marker_fp, app_state *state,
         logq_tail = (logq_tail + 1) % LOGQ_LEN;
         pthread_mutex_unlock(&logq_lock);
         diag_disk_printf(fp, "log ms=%" PRIu64 " %s\n", tms, local);
+        log_udp_send(local);
     }
     {
         static char hidrep_buf[4096];
