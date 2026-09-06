@@ -198,6 +198,12 @@ typedef struct debug_server {
 static int cons_fd = -1;
 static int nxlink_fd = -1;
 static bool nxlink_active = false;
+/* Live UDP log stream: every logline datagram is fire-and-forget to the
+ * operator's listener (MSG_DONTWAIT — drops, never blocks, never deadlocks).
+ * Destination is learned from the nxlink host or the first debugctl peer. */
+static int log_udp_fd = -1;
+static struct sockaddr_in log_udp_dst;
+static volatile bool log_udp_ready;
 static char socket_summary[LOGQ_MSG];
 static atomic_uint_fast64_t watchdog_last_main_ms;
 static atomic_uint_fast64_t watchdog_stream_start_ms;
@@ -264,6 +270,9 @@ static int logq_head = 0;
 static int logq_tail = 0;
 static pthread_mutex_t logq_lock = PTHREAD_MUTEX_INITIALIZER;
 
+static void log_udp_open(const struct in_addr *dst);
+static void log_udp_send(const char *buf);
+
 static void logline(const char *fmt, ...) {
     char buf[LOGQ_MSG];
     va_list ap;
@@ -278,6 +287,7 @@ static void logline(const char *fmt, ...) {
             nxlink_active = false;
         }
     }
+    log_udp_send(buf);
 }
 
 static void set_nonblocking_log_fd(int fd) {
@@ -302,6 +312,39 @@ static void logline_net(const char *fmt, ...) {
         logq_tail = (logq_tail + 1) % LOGQ_LEN;
     }
     pthread_mutex_unlock(&logq_lock);
+}
+
+static void log_udp_open(const struct in_addr *dst) {
+    if (log_udp_fd >= 0) {
+        return;
+    }
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) {
+        return;
+    }
+    int sndbuf = 65536;
+    setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags >= 0) {
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    }
+    memset(&log_udp_dst, 0, sizeof(log_udp_dst));
+    log_udp_dst.sin_family = AF_INET;
+    log_udp_dst.sin_addr = *dst;
+    log_udp_dst.sin_port = htons(28773);
+    log_udp_fd = fd;
+    log_udp_ready = true;
+    logline_net("udp log stream active: %s:28773", inet_ntoa(log_udp_dst.sin_addr));
+}
+
+static void log_udp_send(const char *buf) {
+    if (!log_udp_ready || log_udp_fd < 0) {
+        return;
+    }
+    /* fire-and-forget: MSG_DONTWAIT, connectionless — drops instead of
+     * blocking, and touches no SDL/session locks. */
+    sendto(log_udp_fd, buf, strlen(buf), MSG_DONTWAIT,
+           (struct sockaddr *) &log_udp_dst, sizeof(log_udp_dst));
 }
 
 static void media_log(const char *message) {
@@ -3893,6 +3936,9 @@ static void debug_server_init(debug_server *dbg) {
 
     dbg->fd = fd;
     dbg->allowed_host = __nxlink_host;
+    if (dbg->allowed_host.s_addr != 0) {
+        log_udp_open(&dbg->allowed_host);
+    }
     logline("debug udp ready: port=%d allowed=%s", DEBUG_PORT,
             dbg->allowed_host.s_addr ? inet_ntoa(dbg->allowed_host) : "any");
 }
@@ -3917,6 +3963,9 @@ static void debug_server_poll(debug_server *dbg, app_state *state, stream_runtim
         buf[n] = '\0';
         if (!debug_peer_allowed(dbg, &peer)) {
             continue;
+        }
+        if (!log_udp_ready) {
+            log_udp_open(&peer.sin_addr);
         }
         debug_handle_command(dbg, &peer, state, runtime, buf);
     }
