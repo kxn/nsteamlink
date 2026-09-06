@@ -80,6 +80,11 @@
 #define LOCAL_HOTKEY_MASK     (HidNpadButton_StickL | HidNpadButton_StickR)
 #define LOCAL_VOLUME_POLL_MS  80U
 
+
+/* internal ihslib API (session/channels/ch_control.h) */
+void IHS_SessionChannelControlGetRecentHIDReports(uint64_t *out_ms, uint16_t *out_len,
+                                                  uint8_t *out_data, size_t *out_off);
+
 #if NSTREAMLINK_APP
 #include <ihslib/hid/sdl.h>
 #endif
@@ -3600,6 +3605,39 @@ static void debug_handle_command(debug_server *dbg, const struct sockaddr_in *pe
         char line_out[DEBUG_TX - 16];
         stream_media_format_hid_history(line_out, sizeof(line_out), count);
         debug_reply(dbg, peer, "OK %s", line_out);
+    } else if (ascii_ieq(cmd, "hidreports")) {
+        /* Dump recently submitted HID input reports (newest first) — the
+         * exact wire payload, for post-mortem of input anomalies. */
+        uint32_t count = 32;
+        if (*arg != '\0' && !parse_u32_arg(arg, 1, 128, &count)) {
+            debug_reply(dbg, peer, "ERR bad hidreports count");
+            return;
+        }
+        char rep_buf[DEBUG_TX];
+        char *out = rep_buf;
+        size_t cap = sizeof(rep_buf);
+        int written = snprintf(out, cap, "OK hidreports\n");
+        out += written; cap -= (size_t) written;
+        size_t off = 0;
+        uint64_t ms; uint16_t len; uint8_t data[96];
+        while (off < count && cap > 32) {
+            IHS_SessionChannelControlGetRecentHIDReports(&ms, &len, data, &off);
+            if (off == (size_t) -1) {
+                break;
+            }
+            written = snprintf(out, cap, "[%llu ms] len=%u ", (unsigned long long) ms, len);
+            out += written; cap -= (size_t) written;
+            for (uint16_t i = 0; i < len && cap > 4; i++) {
+                written = snprintf(out, cap, "%02x", data[i]);
+                out += written; cap -= (size_t) written;
+            }
+            written = snprintf(out, cap, "\n");
+            out += written; cap -= (size_t) written;
+        }
+        debug_reply(dbg, peer, "%s", out == rep_buf ? "OK hidreports (none)" : rep_buf);
+    } else if (ascii_ieq(cmd, "marker")) {
+        logline_net("[marker] %s", arg);
+        debug_reply(dbg, peer, "OK marker recorded");
     } else if (ascii_ieq(cmd, "diag-chunk")) {
         char chunk_arg_buf[DEBUG_RX];
         strncpy(chunk_arg_buf, arg, sizeof(chunk_arg_buf));
