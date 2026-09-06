@@ -84,6 +84,7 @@
 /* internal ihslib API (session/channels/ch_control.h) */
 void IHS_SessionChannelControlGetRecentHIDReports(uint64_t *out_ms, uint16_t *out_len,
                                                   uint8_t *out_data, size_t *out_off);
+size_t IHS_SessionChannelControlDrainPendingHIDReports(char *out, size_t cap);
 
 #if NSTREAMLINK_APP
 #include <ihslib/hid/sdl.h>
@@ -2693,6 +2694,14 @@ static void diag_disk_write_tick(FILE *fp, FILE *marker_fp, app_state *state,
         logq_tail = (logq_tail + 1) % LOGQ_LEN;
         pthread_mutex_unlock(&logq_lock);
         diag_disk_printf(fp, "log ms=%" PRIu64 " %s\n", tms, local);
+    }
+    {
+        static char hidrep_buf[4096];
+        size_t n = IHS_SessionChannelControlDrainPendingHIDReports(
+            hidrep_buf, sizeof(hidrep_buf));
+        if (n > 0) {
+            diag_disk_printf(fp, "%.*s", (int) n, hidrep_buf);
+        }
     }
     diag_disk_write_hid_history(fp, marker_fp, last_hid_seq, &net);
     atomic_fetch_add_explicit(&diag_disk_ticks, 1, memory_order_relaxed);
