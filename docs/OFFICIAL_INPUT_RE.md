@@ -462,3 +462,133 @@ ihslib 只有 `IHS_SessionChannelControlSend` 一条路径（全可靠有序）�
 
 传输层序列跟踪（字符串证据）：`recvseq/inorder/dup/lurch/ooo` 五个计数器
 ——官方传输层独立跟踪乱序/重复，与 ihslib 的 window.c 不同。
+
+## 17. Generic Gamepad wire 模式定论与 is_generic_gamepad 语义（2026-09-07）
+
+背景：上一构建移除 `is_generic_gamepad`（意图让 host 按真实 NS Pro 处理）后
+真机实测 host 完全不认输入。本轮对 libmain.so 做了生成器/解析器全链路反汇编，
+得到决定性证据。
+
+### 17.1 设备类型→wire 格式选择（ReportGenerator 构造函数 0x7cf2bc）【已验证】
+
+`CHIDDeviceReportGenerator::CHIDDeviceReportGenerator(player, deviceId, IHIDDevice*,
+info, int, int)` 对 `CHIDDeviceInfo` 拷贝执行：
+
+```
+this+144 = GuessControllerType(info.vendor_id, info.product_id)  // EControllerType
+this+148 = wire 类型：
+  if (info 偏移 88 处 bool != 0)   → 4 (Generic)
+  else switch (EControllerType):
+    2,3,4            → 1 (SteamController)
+    0xa (10)         → 2 (Triton = SteamControllerV2，BIsTritonDongle VID 0x28de)
+    0x2b (43)        → 3
+    100..129 ∩ 0x04010007 → 1
+    其他             → Log + AssertMsgHelper("unknown controller type")
+```
+
+EControllerType 的 Nintendo 值（辅助函数位掩码解码，均【已验证】）：
+`BIsSwitchController`（0x745354，掩码 0x01800440000000）→ t ∈ {38,42,51,52}；
+`BIsJoyconController`（0x745370）→ t ∈ {39,40,41}。
+
+【结论】**Nintendo 手柄类型不在任何 wire 分支内——没有 generic 标志时，
+官方代码对 Nintendo 设备直接走到断言。"声明真实 NS Pro VID/PID 且不带
+generic 标志"在官方客户端中不是合法发送模式。** 与真机观察（移除标志后
+host 完全不认输入）一致。
+
+### 17.2 官方为 SDL 手柄声明 is_generic_gamepad（EnumerateDevices 0x75480c）【已验证】
+
+`CHIDDeviceListSDL::EnumerateDevices` 构造 CHIDDeviceInfo：
+
+```
+w22 = (SDL_GetGamepadType(pad) != XBOX360)
+usage = w22 ? 5 : 4
+has_bits |= 0x380            // interface_number + ostype + is_generic_gamepad
+if (w22) { has_bits |= 0x100000; *(bool*)(info+88) = 1; }  // 0x754bbc
+vendor_id/product_id = SDL 真实 VID/PID（GuessControllerType 的输入）
+caps_bits/caps_bits2 由辅助函数从 SDL gamepad 能力计算
+```
+
+【结论】官方 Android 客户端对 **除 Xbox360 型之外的一切 SDL 手柄
+（含 Nintendo Pro/Joycon/PS）** 都置 `is_generic_gamepad=true`，同时保留
+真实 VID/PID。我们的 InfoFromHID 恢复该标志即与官方一致。
+
+### 17.3 Generic wire 格式 = RAW V2 结构体，版本字节 3【已验证】
+
+`CStreamPlayer::CHIDDeviceReportGenerator` 的两个分发器按 this+148 分发
+（`BParseGamepadState` 0x7d0044 / `BInjectGamepadState` 0x7d0074）：
+1=SteamController、2=Triton、4=Generic（Pack 内联）、其余 false。
+`BParseGamepadStateMobileTouch`/`BInjectGamepadStateMobileTouch` 为 8 字节
+空桩——触摸不走生成器（对应独立 control 消息族）。
+
+`BParseGamepadStateGenericGamepad`（0x7d089c）双模式，由输入 byte[27] 选择：
+- byte[27]==0（ENCODED）：axes = u16[6] @0..11；buttons = byte[12..26] 展开
+  为 state+16 u32 位域 bit0..14；随后 state byte[27] = 3（0x7d0a50）。
+- byte[27]!=0（RAW）：`memcpy(state, input, min(len,72))`；version≤2 时
+  flags `orr 0xc00`（bits 10,11）兼容修正。
+
+客户端链路（BCollectReports 0x7cf884，【已验证】）：
+本地 IHIDDevice 读报告 → Parse（Generic 模式，本地报告为 ENCODED）→
+`CStreamPlayer::BFilterGamepadState`（0x7bc5c8）过滤 → 注入 wire 缓冲
+（Generic= `Pack(state, buf, cap)`，0x7cfd8c → RAW 模式输出整个 V2 结构体）。
+Parse 失败的原始报告整条丢弃。
+
+**官方 wire 上的 Generic 报告 = RAW 模式 V2 结构体（最长 72B），byte[27]=3**：
+```
+[0..11]  axes 6×s16 (LX,LY,RX,RY,LT,RT)
+[12..15] flags u32（version=3 时 host 不做修正；官方值未逐位确认）
+[16..19] buttons u32，EGamepadButton 位
+[20..26] 0
+[27]     版本字节 = 3（RAW 选择器）
+[28..71] IMU/touch 区（V2 尾部布局未确认，发 0）
+```
+ENCODED 28B 格式只存在于本地 SDL 层与生成器之间，不上 wire。
+host 两种模式都能解析（同一函数），但 RAW+版本 3 是官方实际发送形态。
+
+### 17.4 EGamepadButton 枚举值（名表 0x3dabc4 反解，27 项）【已验证】
+
+```
+0 BeforeFirst   1 Y(north)      2 DPad_Down    3 A(south)
+4 RStick_Right  5 RStick_Up     6 R3           7 RStick_Left
+8 LB            9 RB           10 Start       11 Select
+12 LStick_Left 13 Trigger_Left 14 Trigger_Right 15 X(west)
+16 Steam(guide) 17 LStick_Right 18 L3         19 DPad_Up
+20 LStick_Down 21 LStick_Up    22 RStick_Down 23 AfterLast
+24 B(east)     25 DPad_Right   26 DPad_Left
+```
+按钮位域在 state+16（`SetButton` 0x761094：u32 @+16，索引<0x20 断言）。
+
+### 17.5 SendBuffer 发送语义（0x7d00f0）【已验证】
+
+- 与 lastSent（this+328）len+memcmp 相同 → 整包回收**不发送**（去重）；
+- 否则填 `DeviceInputReports`（proto 指针存 this+256）：
+  `device` = 设备 managed id；`full_report` 整包，或自适应
+  **delta_report**：逐字节变化位图 + 变化字节，仅当 `deltaLen+8 < fullLen`
+  才发 delta，附 `delta_report_size`=fullLen、`delta_report_crc`=CRC32；
+- delta 用的缓冲含上次发送内容（this+320/328 链）。
+
+我们 report.c 的 AddDelta/去重/自适应规则与之一致（本轮已对照）。
+
+### 17.6 生效代码改动
+
+- `control_hid.c InfoFromHID`：恢复 `is_generic_gamepad=true`
+  （17.2 证据；2026-09-07 真机移除标志 → host 不认输入的直接回归证据）；
+- `sdl_hid_common.h`：`IHS_HIDReportSDLPackWire` 重写为 RAW V2（按钮经
+  SDL3→EGamepadButton 映射，byte[27]=3），`IHS_HIDDeviceSDLWireReportLength`
+  = min(host 通告长度, 72)；
+- `sdl_hid_event.c` 三条路径（flush delta / resync full-mask / neutral reset）
+  统一走共享 packer，缓冲 48→72。
+
+### 17.7 遗留矛盾（待验证，不影响本轮修复）
+
+旧 ihslib 48B 结构体直发（SDL3 按钮位 0..15 直写 +16 位域）在 host 侧按
+§17.3 RAW 解析应产生错乱按钮（bit1=Y、bit3=A…），但历史真机按钮基本可用。
+最可能解释（【推断】）：历史构建未设 is_generic_gamepad，host 对
+Nintendo VID/PID 走了非 generic 解析路径（其行为未逆向，host 侧为 PC Steam，
+不在 libmain.so 内）。git 考古可确认历史 InfoFromHID 的标志状态。
+
+### 17.8 部署状态
+
+2026-09-07 构建通过（switch NRO），待 netloader 推送真机验证：
+预期 ABXY/十字键/L3/R3 映射按 §17.4 位置语义直达 host Steam Input 的
+Generic 模板（Nintendo 布局习惯的 A/B 互换由 host 端 Steam Input 设置承担，
+与官方 Android 客户端行为相同）。
