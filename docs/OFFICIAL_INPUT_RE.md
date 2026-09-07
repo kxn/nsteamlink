@@ -592,3 +592,28 @@ Nintendo VID/PID 走了非 generic 解析路径（其行为未逆向，host 侧�
 预期 ABXY/十字键/L3/R3 映射按 §17.4 位置语义直达 host Steam Input 的
 Generic 模板（Nintendo 布局习惯的 A/B 互换由 host 端 Steam Input 设置承担，
 与官方 Android 客户端行为相同）。
+
+### 17.9 更正：按钮位域是 SDL 序，不是 EGamepadButton（2026-09-07 真机回归后）
+
+§17.4 的 EGamepadButton 位分配解算本身没错（枚举名表 0x3dabc4 反解正确），
+但**该 protobuf 枚举与 state+16 位域无关**。决定性证据：
+
+`CHIDDeviceSDLGamepad::OnButtonEvent`（0x754034）【已验证】：
+
+```
+mask = 1 << ev->button;      // SDL_GamepadButton 值直接移位
+if (down) state+16 |= mask;  else state+16 &= ~mask;
+// 另：byte[162] 标志置位时 button==5(GUIDE) 被吞掉不上报
+```
+
+即 wire 位域位序 = SDL_GamepadButton（0 起始：A=0,B=1,X=2,Y=3,BACK=4,
+GUIDE=5,START=6,L3=7,R3=8,LB=9,RB=10,十字 上11/下12/左13/右14,MISC1=15）。
+ihslib 原版 `1 << SDL_button` 本来就是对的。
+
+上一构建用 EGamepadButton 位（A=3,B=24,X=15,Y=1）发送，host 按 SDL 序解释，
+真机症状与错位预测完全吻合：Y→bit1=host B（触发菜单/返回类动作）、
+A→bit3=host Y（UI 无反应）、X→bit15=host MISC1（无反应）、B→bit24（越界丢弃）；
+左摇杆走轴字节不受影响。
+
+已回退按钮映射为 SDL 位直通（sdl_hid_common.h），RAW V2 结构体与版本字节 3
+不变。本节同时收回 §17.4 末段对该映射的实现引用。
