@@ -45,13 +45,13 @@ stop / exit     停流 / 退出程序
 | 字段 | 含义 |
 |---|---|
 | `e` / `ok` / `f` | 当秒 SDL HID 事件数 / input report 发送成功 / 发送失败 |
-| `h` / `p` | 100ms 全量心跳（stateFull）发送数 / pump 调用数 |
+| `h` / `p` | 显式完整状态刷新计数（stateFull；无周期 100ms 心跳）/ pump 调用数 |
 | `raw=x/y` | libnx `PadState` 原始摇杆/按钮变化计数（绕过 SDL 直读共享内存的对照探针） |
 | `sty=flips:style/attrs` | style/attribute 抖动计（验证 SWITCH_JoystickUpdate 早退风暴用） |
 | `sticks=lx/ly/rx/ry`、`b=0x...` | 当秒结束时的 SDL 摇杆轴值与按钮 mask |
 | `minus=sdlHeld/sdlSamples/rawHeld/rawSamples` | `-` 故障 marker 统计（被动记录，不吞键） |
-| `rel=tracked/acked/superseded/giveups` | 可靠发送状态机直接计数：在途登记/精确 ACK/被新快照取代退休/**超时放弃（3s 未确认，靠 resync+心跳收敛）**/重试/失败/在途/最老在途年龄/最大 ACK 延迟 |
-| `hidSM=submitted/coalesced/sent/acked/superseded/pending/inFlight` | HID 状态机：提交/被合并/已发送/已确认/已取代/待发/在途 |
+| `rel=tracked/acked/superseded/giveups` | 可靠传输计数：登记/累计或选择确认/取代退休（恒为 0）/超时放弃（恒为 0）/重试/失败/未确认/最老年龄/最大确认延迟 |
+| `hidSM=submitted/coalesced/sent/acked/superseded/pending/inFlight` | HID：提交批次/合并（0）/成功入队批次/传输确认包数（含分片）/取代（0）/未初发包/已尝试发送但未确认包；不等于 Host 应用确认 |
 | `vicTransfers` / `transferFallback` | VIC 256B 对齐传输命中 / 回退 FFmpeg 自动 transfer（stats 输出） |
 | `frameLatAvgUs/MaxUs` | 单帧客户端总延迟：完整帧提交（ihslib 组帧完成）→ 上屏完成，仅统计实际显示帧 |
 | `frameWaitAvgUs/MaxUs` | 跨线程排队：解码线程 latch 帧 → 主线程取帧 |
@@ -65,6 +65,8 @@ stop / exit     停流 / 退出程序
   append+flush 到 `sdmc:/switch/nsteamlink/stream_diag.log`；下次启动把上一轮
   轮转为 `stream_diag_prev.log`（再上一轮为 `_older`）。退出后不可达 UDP 时，
   靠下一轮启动的历史文件复盘。
+- HID 报告记录最多保留 512B，`wire_len` 为原始长度，`dropped` 为累计队列掉条数；
+  读取失败或记录截断不得解释为线上没有输入。
 - marker 日志另写 `stream_diag_markers.log`：`markMinus` 是输入同窗记录，
   `markNet` 是同一 seq 的视频/音频/control 同窗摘要（`frames/displayed/audio` 增量、
   `lastFrameAgeMs`、`mainAgeMs`、`gaps/maxGap`、`ctrlRetrans/ctrlWarn` 增量），
@@ -81,8 +83,8 @@ stop / exit     停流 / 退出程序
 ## 排障用法速查
 
 - 复现输入故障后：`diag marker prev` 看 marker 同窗 → `markNet` 判断是否 Wi-Fi 整体断流
-  → `hidlog` 对照 `rel/hidSM` 判断可靠通道是否健康（当前 BUG-M4-HID-001 已证明
-  ACK 正常仍可复现，嫌疑在 host 侧 apply）。
+  → `hidlog` 对照 `rel/hidSM` 检查可靠通道。旧版 ACK 计数含重复与非 HID 包，
+  不能凭旧计数证明传输链无问题，也不能凭新版传输确认断言 Host 已应用输入。
 - `openOk=0`：host 没 open 我们的 HID 设备；`openOk>0 && start=0`：open 了但没启动
   input reports；`start>0 && hidSendOk>0 && ctrlRetrans/ctrlWarn>0`：查控制通道；
   `ctrlRetrans=0`：查 report 内容/映射/caps。

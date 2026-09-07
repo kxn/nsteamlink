@@ -1,5 +1,10 @@
 # 官方 Steam Link 输入路径逆向调研
 
+> **2026-09-07 证据更正**：本文包含相互矛盾的历史结论。
+> 解密递增时机、NACK 与帧统计的独立复核见
+> [协议参考 §14](STEAMLINK_PROTOCOL_RE.md#14-独立汇编复核与协议反例2026-09-07)。
+> §18 不能用作“已排除客户端协议问题／NVENC 是卡死根因”的证明。
+
 > **2026-09-04 更正与拆分**：本文档的协议层结论已由系统再逆向复核，
 > 新权威参照为 `docs/STEAMLINK_PROTOCOL_RE.md`。对本文的具体更正：
 > ① §5 对 host 日志 `CLIENT:` 前缀的解读有误——官方客户端二进制中不存在 SetQoS(87)/
@@ -14,15 +19,13 @@
 > ④ §6 【未知】项部分落地：官方把 host InitMsg 的 reliable_data 回显进自己的
 >    NegotiationSetConfig.config.reliable_data（无条件字节拷贝）；
 > ⑤ §13.2 "时间戳单位 bug 已修（ms）"方向反了：官方 GetStreamTimestamp 是
->    **16.16 定点秒**（高 16 位整数秒+低 16 位小数），帧事件时间戳为该单位减连接基准
->    （conn+848）的相对值；我们发绝对毫秒正是 host 日志 network≈58518652ms 失真的成因。
->    详见 STEAMLINK_PROTOCOL_RE.md §9c。
-> 输入链（125Hz 线程、delta/full 自适应、生成节奏）结论不受影响；
+>    **16.16 定点秒**；旧文进一步解释为“减连接起点”是错误的，已撤回。
+>    实际为首事件加时钟偏移，后续事件间 delta，见协议参考 §14.4、§14.10。
+> 输入链的完整报告、active_input、禁用门控也须按 §14.10 的调用链解释；
 > §14 "不合并批次"表述由 STEAMLINK_PROTOCOL_RE.md §9b.2 更正（官方单消息多设备合批）。
 
-> 目的：BUG-M4-HID-001（串流中偶发 host/game 输入无响应 ~20 秒）的根因排查进入
-> "host 侧 apply 停滞"阶段后，客户端侧可观测手段已用尽（见 decisions D-030/D-034/D-039/D-040
-> 与 issue #1 时间线）。本文档逆向官方 Steam Link Android 客户端（v1.3.32）的输入路径，
+> 目的：排查串流中偶发 host/game 输入无响应约 20 秒。旧文“客户端可观测手段已用尽”
+> 没有成立；传输确认不等于 host 应用确认。本文逆向 Android 客户端（v1.3.32）的输入路径，
 > 与 ihslib 实现逐项对照，为后续对齐提供证据基础。
 > 证据纪律：每条标注【已验证】（工具/地址可复核）或【推断】（由证据支持但未直接观测）。
 > 日期：2026-08-29。
@@ -394,7 +397,7 @@ while (m_bRunning) {
 丢一个 delta 8ms 后下一条就到了，不需要重传也不需要等待。
 
 【与我们的对比】
-- 我们目前（D-041 后）：每帧一次 flush（~60Hz 或 vsync 率）+ 100ms 心跳 full + 单在途
+- 历史实现（D-041 后，已由 D-042 取代）：每帧一次 flush（~60Hz 或 vsync 率）+ 100ms 心跳 full + 单在途
 - 官方：125Hz 专用线程 + delta/full 自适应 + 不等 ACK + 不限在途
 
 【含义】如果要对齐官方，关键是 **8ms 高频 delta 线程**（而非我们的每帧 flush），
@@ -408,7 +411,7 @@ while (m_bRunning) {
 1. 检查连接状态（== 6 即 k_EStreamConnectionStateConnected）
 2. CHIDMessageFromRemote::ByteSizeLong() → 序列化到 buffer
 3. 构造 CRemoteHIDMsg → data = 序列化后的 DeviceInputReports
-4. GetStreamTimestamp() → CRecordedInput.timestamp（毫秒时间戳）
+4. GetStreamTimestamp() → CRecordedInput.timestamp（16.16 秒时间戳）
 5. CRecordedInput.type = 0xd (13 = hid)
 6. CRecordedInput.hid = CRemoteHIDMsg
 7. 加入 CRecordedInputStream.entries（repeated 批量）
@@ -575,7 +578,7 @@ host 两种模式都能解析（同一函数），但 RAW+版本 3 是官方实�
 - `sdl_hid_common.h`：`IHS_HIDReportSDLPackWire` 重写为 RAW V2（按钮经
   SDL3→EGamepadButton 映射，byte[27]=3），`IHS_HIDDeviceSDLWireReportLength`
   = min(host 通告长度, 72)；
-- `sdl_hid_event.c` 三条路径（flush delta / resync full-mask / neutral reset）
+- 历史 `sdl_hid_event.c` 三条路径（flush delta / resync full-mask / neutral reset；full-mask 依据已撤回）
   统一走共享 packer，缓冲 48→72。
 
 ### 17.7 遗留矛盾（待验证，不影响本轮修复）
@@ -630,23 +633,25 @@ A→bit3=host Y（UI 无反应）、X→bit15=host MISC1（无反应）、B→bi
 - 全程无 Frames window overflow / disconnect / Failed-to-decrypt。
 
 【结论】两次游戏内卡死期间客户端侧事件、提交、发送全部正常，
-是 host 侧 apply 停滞（与既有 BUG-M4-HID-001 定性一致）。
+上述日志只能证明记录到的事件与报告提交仍在发生；不能证明所有报告实际发出、
+被 host 正确解密或应用。hidrep 存在截断和排队滞后，详见协议参考 §14.6。
 早期 31-51s / 74-97s 两个零事件窗口在进游戏前（40.7s 处有 2.5s 视频停顿），
 与游戏内卡死无关。
 
-### 18.2 加密接收计数器永久失配（已修复的确定性 bug）【已验证】
+### 18.2 加密计数器失配：观测保留，所谓“官方成功才递增”撤回
 
-t+378s（20:24:00）起 `Mismatched message sequence` 偏移恒为 **+1 直到会话结束**：
-一帧 host→client 加密消息（crypto seq 311）永久丢失，此后 45 条收到的
-host 消息全部解密失败被丢（43×RemoteHID=host→client 震动、2×SetTargetFramerate）
-——**震动从 20:24:00 起全灭**。另有 ~27 个 crypto seq（316-318、323、325-326、
-334-335、339-341、343-348、358-363）百余秒从未送达。
+Evidence：`/tmp/stream_diag_prev.log:14412` 起有 45 条序列失配日志；
+首条为 `312 (expect 311), id=348`。这证明收到的加密序列与本地期望不同，
+不能单凭日志断言是哪一层丢弃、跳过或多消费了消息。
 
-根因：`ch_control.c` 收包路径 `control->recvEncryptSequence++` 在**每次解密
-尝试时无条件自增**，而同函数注释引用的官方语义（BDecrypt 0x7ad06c）是
-**仅解密成功才推进、失配帧丢弃且计数器不动**。无条件自增使 expect 以恒定
-+1 追着 actual 跑，偏移永不愈合；官方语义下迟到的重传帧到达即自动重对齐。
-已修复：仅 `IHS_SessionPacketResultOK` 时 `++`。
+**撤回旧结论**：“官方仅解密成功才递增，因此 8bb05be 修复了确定性 bug”。
+重新反汇编同一 `libmain.so`：`0x7ad060 add`、`0x7ad064 str` 先更新计数器，
+`0x7ad06c bl BDecrypt` 后解密，`0x7ad070 tbz` 才分成功/失败。
+官方实际为 `BDecrypt(recvSequence++, ...)`，失败不回滚；8bb05be 与该语义相反。
+
+此外，我方窗口在解密前就已 Poll 并释放该帧，解密失败仍确认 packet ID。
+因此“冻结计数器后迟到的重传自然自愈”也没有成立：已越过的旧 packet ID 不会
+重新交付。正确性依赖可靠传输不误确认、不跳洞；详见协议参考 §14.1–14.3。
 
 ### 18.3 待验证（需 host 侧证据）
 
@@ -679,20 +684,22 @@ Setting target framerate: 30.00 [game 35.59ms (game)]
 - 20:18:34 game=111ms 尖峰（游戏加载）对应客户端 40.7s 处 2.5s 视频停顿
   与 31-51s 零输入窗口——第一次卡死【推断】为游戏加载期。
 
-【结论（18.3 假设修正）】host 日志无任何输入/解密/序列类报错——
-host 侧不存在输入流持久洞（与我方发送侧 62ms 封顶重发一致）。
-第二次卡死【推断】= 20:24:00-20:24:30 的 host 侧 GPU/编码灾难窗口本身：
-NVENC 超时恶化→丢弃→管线重建期间，host 系统（含输入 apply）停顿 ~20-30s，
-恢复后客户端收到的事件流留下永久 +1 加密失配（18.2，已修复自愈）。
-此为 host 本机负载事件（黑神话重场景 + NVENC 崩溃），非协议 bug；
-协议侧唯一真实缺陷是 18.2 的计数器不自愈，已修。
+**撤回旧结论**：“host 日志没有输入报错，所以没有输入流洞；卡死是 NVENC
+负载事件，非协议 bug；协议唯一缺陷已修”。日志未报告错误不能证明接收、
+解密、delta CRC 和虚拟控制器应用均成功。Android 客户端汇编也不能证明
+Windows host 内部存在某个 20 秒恢复计时器。
 
-### 18.5 "Slow framerate" 假警报成因【已验证】
+本节所引 NVENC 错误在 20:24:21，而列出的右摇杆事件簇在 20:25:28–20:25:59；
+不能把两者直接当作同一故障窗口。GPU/编码负载与输入停滞的因果关系仍是
+hypothesis。原始 host 日志在此次本地复核中未取得，以上摘录按历史转述保留。
+客户端 NACK 双向错误已在真实代码离线复现，不能排除协议问题。
+
+### 18.5 "Slow framerate" 异常统计：旧单位解释不足
 
 host 日志每秒 `Slow framerate: ... network 3118880768.00, decode 3xx,
 display 7xx-10xx (network)(decode)(display)` 中 network/decode/display 三列
 为 10^8-10^9 量级假值：均由我方上报的帧级时间戳推导，单位仍不正确
 （§18.1 期间客户端真实帧率正常、hidEvAge≤50ms）。game 列（host 本机测量）
 真实有效。已修的 16.16 定点秒（packet.c）覆盖了帧事件时间戳，
-但帧 ACK 中的 decode/display 阶段时间戳单位仍未对齐——后续待办，
-非卡死相关。
+但 FrameEvents 的事件差分编码本身不匹配官方（协议参考 §14.4），
+不能继续只按单位解释；统计反馈对输入卡死的影响尚未建立因果证据。

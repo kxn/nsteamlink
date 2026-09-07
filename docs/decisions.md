@@ -1336,9 +1336,32 @@ channelId=2 可靠消息 20 次重试耗尽 + 视频 stall 与输入失灵同窗
 
 ### D-041 附录（同日补充）：心跳与恢复态也走全掩码 delta，输入线上不再出现 full_report
 
+> **已撤回**：下述“零调用”与 0x7d03b8 的直接调用矛盾。以 D-042 为准。
+
 - Evidence：官方二进制 `set_full_report` 零调用（全量反汇编交叉引用），恢复态/心跳
   以全掩码 delta 表达（掩码覆盖全部状态字节，host 经 delta_report_crc 校验）。
 - Decision 补充：100ms 心跳与 Reset 中性态同步从 full_report 字段改为全掩码 delta
   （`IHS_HIDDeviceReportAddForcedFullMaskDelta`，掩码覆盖全部状态字节 + CRC32）。
   输入线上不再出现 full_report 字段，与官方 wire 形态完全对齐。
 - 判据：真机输入功能回归正常（对齐本身），host 拒收/无响应即回退。
+
+
+## D-042 以可复核调用链修正可靠输入和时钟编码
+
+日期：2026-09-07。取代 D-039 的可靠包放弃、D-040 的单在途策略，以及 D-041 附录
+的“full_report 零调用”和周期全掩码心跳。证据原件、哈希及地址见
+[协议参考 §14](STEAMLINK_PROTOCOL_RE.md#14-独立汇编复核与协议反例2026-09-07)。
+
+Evidence：HandleAck/HandleNack 确认累计水位和选择位；缺失包必须保留。
+SendBuffer 0x7d0368–0x7d03b8 在 delta 不划算时发送 full_report。
+InputDisabled 对话框的两个手柄处理函数返回 false，不能推导为禁止 HID 提交。
+Save 0x7f4c7c/0x7f4cac 分别加时钟偏移和减前一事件。
+
+Decision：可靠包持续重传直到有效确认/会话结束，NACK 空洞与累计确认分开；
+HID 收集到入队整体串行，普通状态变化使用 delta/full 自适应，显式重置发 full，
+相同状态不额外发 100ms 心跳。active_input 来自实际按钮/轴活动。
+帧时间采用单调 16.16 秒、ACK 估计的 peer−local 偏移及事件间 delta。
+诊断有界且不阻塞输入；线程及 timer 的所有权必须覆盖最后一次回调。
+
+限制：这些决策有汇编或本地生命周期证据；不能据此宣称 20 秒锁键的唯一根因已找到。
+ACK 指标只表示传输确认；实际 HID 解密、重建、游戏应用仍需 Host/真机证据。

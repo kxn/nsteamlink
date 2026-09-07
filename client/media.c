@@ -1,6 +1,7 @@
 #include "media.h"
 
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -80,7 +81,9 @@ static IHS_Session *stats_session;
 static IHS_Session *hid_session;
 static bool hid_session_enabled;
 static pthread_t hid_flush_thread;
-static volatile bool hid_flush_running;
+static atomic_bool hid_flush_running;
+static bool hid_flush_started;
+static pthread_mutex_t hid_lifecycle_lock = PTHREAD_MUTEX_INITIALIZER;
 static SDL_GameController *hid_controller;
 static SDL_JoystickID hid_controller_id = -1;
 static int hid_controller_index = -1;
@@ -95,10 +98,7 @@ static uint32_t hid_state_full_total;
 static uint32_t hid_raw_ax_total;
 static uint32_t hid_raw_btn_total;
 static uint32_t hid_style_flips_total;
-static uint64_t hid_last_full_us;
 static uint64_t hid_last_log_us;
-/* 100ms forced full-state heartbeat; bounded input staleness after packet loss. */
-#define HID_FULL_REFRESH_US 100000ULL
 /* Event-classification counters for locating capture halts; immediate trace budget. */
 #define HID_TRACE_BUDGET_PER_SEC 12U
 static uint32_t hid_pump_calls_since_log;
@@ -1063,17 +1063,8 @@ static void pump_sdl_events(void) {
         uint64_t now_us = media_monotonic_us();
         if (hid_last_log_us == 0) {
             hid_last_log_us = now_us;
-            hid_last_full_us = 0;
         }
-        /* Keep a low-rate complete-state heartbeat even when SDL emits no event. */
-        if (now_us - hid_last_full_us >= HID_FULL_REFRESH_US) {
-            bool refreshed = IHS_HIDRefreshSDLGameControllers(event_hid_session);
-            if (refreshed) {
-                hid_state_full_since_log++;
-                hid_state_full_total++;
-            }
-            hid_last_full_us = now_us;
-        }
+        /* Unchanged input is silent; transport ACK/NACK performs recovery. */
         if (elapsed_us(hid_last_log_us, now_us) >= 1000000U) {
             record_hid_history(now_us);
             media_logf("hid summary: events=%u send_ok=%u send_fail=%u stateFull=%u"
@@ -1091,7 +1082,6 @@ static void pump_sdl_events(void) {
     } else {
         reset_hid_probe_window();
         hid_last_log_us = 0;
-        hid_last_full_us = 0;
     }
 #endif
 }
@@ -1210,6 +1200,7 @@ bool stream_media_init(stream_media_log_fn log_fn) {
 
 void stream_media_shutdown(void) {
     media_logf("media shutdown: begin");
+    stream_media_set_hid_session(NULL, false);
     stream_media_video_stop(NULL);
     stream_media_audio_stop(NULL);
 
@@ -1231,7 +1222,6 @@ void stream_media_shutdown(void) {
     hid_marker_minus_raw_samples_total = 0;
     reset_hid_probe_baseline();
     hid_last_log_us = 0;
-    hid_last_full_us = 0;
 #endif
     pthread_mutex_unlock(&state_lock);
 
@@ -1288,7 +1278,7 @@ bool stream_media_exit_requested(void) {
  * no new lock ordering. */
 static void *hid_flush_thread_fn(void *arg) {
     (void)arg;
-    while (hid_flush_running) {
+    while (atomic_load(&hid_flush_running)) {
         pthread_mutex_lock(&state_lock);
         IHS_Session *sess = hid_session;
         bool enabled = hid_session_enabled;
@@ -1302,18 +1292,30 @@ static void *hid_flush_thread_fn(void *arg) {
 }
 
 static void hid_flush_thread_start(void) {
-    hid_flush_running = true;
-    pthread_create(&hid_flush_thread, NULL, hid_flush_thread_fn, NULL);
+    atomic_store(&hid_flush_running, true);
+    int err = pthread_create(&hid_flush_thread, NULL, hid_flush_thread_fn, NULL);
+    hid_flush_started = err == 0;
+    if (err != 0) {
+        atomic_store(&hid_flush_running, false);
+        media_logf("HID flush thread creation failed: %d", err);
+    }
 }
 
 static void hid_flush_thread_stop(void) {
-    hid_flush_running = false;
-    pthread_join(hid_flush_thread, NULL);
+    atomic_store(&hid_flush_running, false);
+    if (hid_flush_started) {
+        pthread_join(hid_flush_thread, NULL);
+        hid_flush_started = false;
+    }
 }
 #endif
 
 void stream_media_set_hid_session(IHS_Session *session, bool enabled) {
 #if NSTREAMLINK_APP
+    /* The lifecycle lock is never acquired by the worker. Join before
+     * replacing its session pointer, outside the worker's state_lock. */
+    pthread_mutex_lock(&hid_lifecycle_lock);
+    hid_flush_thread_stop();
     pthread_mutex_lock(&state_lock);
     hid_session = session;
     hid_session_enabled = enabled;
@@ -1329,7 +1331,6 @@ void stream_media_set_hid_session(IHS_Session *session, bool enabled) {
         hid_marker_minus_raw_samples_total = 0;
         reset_hid_probe_baseline();
         hid_last_log_us = 0;
-        hid_last_full_us = 0;
         snapshot.hid_events = 0;
         snapshot.hid_send_ok = 0;
         snapshot.hid_send_fail = 0;
@@ -1347,14 +1348,13 @@ void stream_media_set_hid_session(IHS_Session *session, bool enabled) {
         snapshot.hid_last_event_which = -1;
         snapshot.hid_last_event_code = -1;
         snapshot.hid_last_event_value = 0;
-        hid_flush_thread_start();
     } else {
-        hid_flush_thread_stop();
         reset_hid_probe_window();
         hid_last_log_us = 0;
-        hid_last_full_us = 0;
     }
     pthread_mutex_unlock(&state_lock);
+    if (session != NULL && enabled) hid_flush_thread_start();
+    pthread_mutex_unlock(&hid_lifecycle_lock);
 #else
     (void)session;
     (void)enabled;

@@ -1,5 +1,10 @@
 # Steam Link Android 客户端协议逆向参考（v1.3.32 / libmain.so）
 
+> **证据更正（2026-09-07）**：本文历史段落的“已验证”不能整体沿用。
+> §14 记录从同一 ELF 重新反汇编得到的反例：解密计数器在调用前递增；
+> FrameEvents 首项加偏移、后续项为差分；NACK 的确认水位与掩码基址是两个字段。
+> §13 的“逐字节等价／未验证 0 项”结论撤回，不能作为现行实现的正确性证明。
+
 > 目的：对官方 Steam Link Android 客户端（v1.3.32，`lib/arm64-v8a/libmain.so`，24922 个动态符号）
 > 的线上协议做系统性静态逆向，作为协议行为的权威参照（ihslib 属 legacy 参照，见第 8 节差异表）。
 > 证据纪律：标注【已验证】（反汇编地址可复核）或【推断】（证据支持未直接观测）。
@@ -115,7 +120,8 @@ if (type <= 7 && ((1u << type) & 0xC6)) {    // 0xC6 = 位 1,2,6,7
   加密 = {3,4,5} ∪ {>7}。**Negotiation 三条消息全部加密**（密钥在 Auth 握手阶段已协商）。
 - 解密失败路径：`BDecrypt` 失败 → `Log("GetMessageName(...)")` → 丢弃（0x7ad07c）。
 - **序列号**：发送计数器 CStreamClient+0x80（+128，uint64，每加密帧自增，先取值后增），
-  接收计数器 CStreamClient+0x88（+136，同样自增）。**seq 不上线**，由两侧各自维护，
+  接收计数器 CStreamClient+0x88（+136，调用解密前自增，失败不回滚，见 §14.3）。
+  seq 在加密明文的前 8 字节内，**不在明文 UDP 包头中**；接收端另维护期望值，
   隐含要求加密帧严格按序到达——控制通道的可靠有序是加密正确性的前提。
 - `CStreamFrame::BEncrypt(seq, key, keylen)`（0x7f342c）：
   `buf = seq(8, LE) || payload`；
@@ -138,7 +144,7 @@ data[13] = messageType；若 hasExtHeader：data[14..25] = 扩展头 12 字节
 `CStreamConnection::Send/SendUnreliable(packet, channel)`。
 
 接收：`OnStreamPacket`（0x7acfa8）按 channel 分派——channel≥3 为数据通道
-（仅接受 type==1，OnDataPacket；扩展头 +48 u32 字段被减去 conn+848 基准 = 流内相对时间戳，
+（仅接受 type==1，OnDataPacket；扩展头 +48 u32 字段减去 conn+848 的 peer−local 时钟偏移，换算为本地时间，
 即**扩展头第 12 字节域是流时间戳**）；channel==1 为控制通道；channel==0（发现/Ping）
 由 OnPingRequest 处理。控制通道内 type==9（KeepAlive）静默消费，type==106（RemoteHID）
 内联转 IStreamPlayer 虚表槽 10，**其余控制消息经 ThreadInterlockedIncrement 引用计数后
@@ -261,37 +267,34 @@ data[13] = messageType；若 hasExtHeader：data[14..25] = 扩展头 12 字节
 
 | # | 项 | 官方（地址） | 我们当前 | 差异判定 | 真机判据 |
 |---|---|---|---|---|---|
-| 1 | 重传放弃 | 无放弃，重传到 ACK/NACK 确认（0x7f8ac4/0x7f94b8/0x7f95dc 全路径） | 3s 放弃（D-039），放弃=从发送窗口除名 | **自创行为，官方不存在**；放弃在 host 接收窗制造永久洞，host 只能等它自己的放弃计时（观测 ~20s）后才恢复 | 不再出现"重传 25 次后放弃"；卡死时长消失或 <1s 级 |
+| 1 | 重传放弃 | 无放弃，重传到 ACK/NACK 确认（0x7f8ac4/0x7f94b8/0x7f95dc 全路径） | 3s 放弃（D-039），放弃=从发送窗口除名 | **自创行为**；放弃制造永久洞，但 Host 的 20 秒恢复机制未证实 | 不再出现"重传 25 次后放弃"；卡死时长消失或 <1s 级 |
 | 2 | NACK | 收到洞即发扩展 NACK（掩码），收到 NACK 快速重发（0x7f9d0c/0x7f95dc） | ihslib 无 NACK 机制 | **缺失整个快速恢复通道**；host 只能靠自己的重复 ACK/计时发现洞 | tcpdump 可见我们发出的 type-8 NACK 包 |
 | 3 | 在途限制 | 无（窗口制，ACK/NACK 驱动滑动，掩码覆盖 ≤320 包） | 单在途（D-040）+ 100ms 心跳 | **自创行为**；单在途把"高频 delta 容忍丢失"变成"串行等待" | 输入包速率/在途数与官方 pcap 对齐（31/s 批量、无 1 包往返） |
 | 4 | ACK 语义 | 累计 ACK+空槽跳跃+周期重发+时间回显（0x7f94b8） | ihslib window.c 自实现 | 行为需逐项核对（互操作已通，疑似大体一致） | host ACK 延迟统计正常（≤99ms 已观测） |
 | 5 | 接收窗口交付 | 只弹连续头部，无弃洞（0x7f9d0c 第 1 步） | 同构 | 一致 | — |
 | 6 | FEC | 不可靠通道带 FEC（SendUnreliableFEC 0x7f90e4、CFECOutgoing/IncomingQueue） | 未实现（enable_unreliable_fec 未协商） | 待评估（视频/音频下行方向，与输入卡死无直接关系） | — |
 
-**P0 因果模型（推断，待 P0 修复实验证实）**：卡死 = 我们丢一个上行可靠包
-→ 我们 3s 后放弃（洞永久化，行为 1）→ host 接收窗头部滞留、按序 apply 停止（行为 5 同构）
-→ host 无我们的 NACK 协助（行为 2），只能靠自身计时放弃洞（~20s，host 侧，非本二进制可证）
-→ 恢复。官方在同样丢包下：NACK 回环 ~1 RTT 愈合，永远不会触发 host 的长计时器。
-修复方向 = 对齐行为 1+2（去掉放弃、补 NACK 回环），行为 3 一并对齐（官方无单在途）。
+**原 P0 因果模型部分撤回**：主动放弃可靠包会制造永久缺口，有源码依据；
+“Host 固定等 20 秒”“官方一定在一个 RTT 内恢复”没有 Host 端实现或故障包序列证明。
+客户端发出的 NACK 修复 host→client 缺口，Host 发出的 NACK 才请求 client→host 补包，
+不能把这两个方向混成一个因果链。20 秒故障根因仍须实机验证。
 
-
-
-### 9.4 窗口结构与我们传输层的逐项对照（P0.5，2026-09-04）
+### 9.4 窗口结构与历史实现对照（2026-09-04 快照；修正依据见 §14）
 
 `CStreamPacketWindow`（0x7f7230/0x7f76f4/0x7f9bb0）：+0=count、+4=mask、+8=head(u16)、
 +10=连续交付水位(u16)、+16=槽表、+24=时间戳表。
 `Advance(n)`：推进 head 逐格释放被跳过的槽（引用计数→析构），水位跟随 head；
 `ReleasePacketByID(id)`：ID 在 [head, head+mask] 内→释放该槽（**head 不动**，洞原地释放，
-由后续 ACK 的空槽跳跃自然收紧）。NACK 掩码覆盖上限 0x140=320 与窗口容量一致。
+由后续 ACK 的空槽跳跃自然收紧）。NACK 掩码覆盖上限 0x140=320；窗口另按需扩容至 16384（§14.11），两者不是同一个限制。
 
 | 项 | 官方 | ihslib fork（retransmission.c/channel.c） |
 |---|---|---|
-| 重传节奏 | 超时 = f(srtt)：`(srtt+2.0)×0.75` 钳制（0x7f95dc），运行时常量 | 5ms tick，25ms 起倍增封顶 100ms |
+| 重传节奏 | RTO=`1.25×clamp(srtt)`；NACK age 另算（§14.11–12） | 5ms tick，25ms 起倍增封顶 100ms |
 | 放弃 | **无**（重传至 ACK/NACK 确认） | `RETRANSMISSION_GIVE_UP_MS=3000`，放弃=退休（D-039） |
 | ACK | **累计**（连续交付点 data[7..8]）+ 周期重发 + 时间回显（RTT 对时） | 逐包 ACK（packetId+fragmentId+body 时间戳） |
 | NACK 发送 | 洞检测→扩展 NACK：首洞序号+连续交付点+320 包占位掩码，限频 | 仅单包校验失败时发（ok=false），无窗口状态报告 |
 | NACK 接收 | bit=1→ReleasePacketByID；bit=0→超时则强制重发 | （session.c 有分支，语义未对齐官方掩码协议） |
-| 窗口 | 320 容量环形窗口，累计 ACK 滑动+原地释放 | 自实现 window.c |
+| 窗口 | 按需扩容，累计 ACK 滑动+原地释放（§14.11） | 自实现 window.c |
 | 加密 seq 推进 | 按**按序交付**推进（重传补洞后解密，0x7ad06c 的 ++ 在交付路径上） | 按发送推进；放弃后依赖"对端 resync"假设（fork 注释自认） |
 
 **说明**：官方把 BDecrypt 放在按序交付路径上（接收计数器只对交付的包自增），
@@ -359,11 +362,14 @@ OFFICIAL_INPUT_RE §13.2 的"ms 修复"（ab8712d、包头 sendTimestamp）方�
 
 ### 9c.3 SendFrameEvents（0x7a82e8）——帧反馈构造
 
+> 更正：以下旧文关于 `Save` “时间戳减连接基准”的解释撤回。
+> `0x7f4c7c` 是 ADD，`0x7f4cac` 是减前一已输出事件的时间戳，详见 §14.4。
+
 - 每数据类型一个 240 槽环形 `CFastFrameStats`（120B/槽，槽 0 = frameId）；
   遍历未发送帧：帧未完成（+88==0）→ `RecordFrameComplete(type, id, 6)` 标记 Cancelled 照报；
-- 逐帧 `CFastFrameStats::Save(CFrameStats*, full=1, conn+848)`——**时间戳减 conn+848
-  （连接基准）**，CFrameEvent.timestamp 为 16.16 定点秒的连接相对值；
-  数据通道扩展头 +48 字段的减 conn+848（§4）同单位同基准；
+- 逐帧 `CFastFrameStats::Save(CFrameStats*, full=1, conn+848)`：首个输出事件加
+  peer−local 时钟偏移，后续事件减前一个已输出事件。单位均为 16.16 秒；
+  数据通道接收则先减该偏移，将 host 时间换算为本地时间（§14.4、§14.10）。
 - 网络样本取自连接统计：srtt(conn+732)、conn+1152/+1000（×系数 0x3A83126F≈2^-10，
   【推断】µs→定点秒换算）、丢包 = conn+1252×100.0/conn+1248；
 - `CFrameStatsAccumulator.Calculate()` 后追加最多 20 条 accumulated_stats
@@ -371,28 +377,17 @@ OFFICIAL_INPUT_RE §13.2 的"ms 修复"（ab8712d、包头 sendTimestamp）方�
 - 发送节奏：`HandleStreaming`（0x7a7140）内 `now - last > 0x10000`，**单位即定点秒
   → 精确 1.0 秒一次**；`TriggerDebugDump`（0x7ac6b4）前置一次强制 flush。
 
-### 9c.4 我们的问题定位（network≈58518652ms 失真）——2026-09-04 复核定案
+### 9c.4 时钟与统计编码的证据边界
 
-官方侧证据链（全部反汇编复核）：
-1. `Plat_RelativeTicks`（0x90b0e4）：`clock_gettime(CLOCK_MONOTONIC)`，基准累加
-   `tv_sec × 1e9 + tv_nsec`（立即数 0x3B9ACA00=1e9）→ tick = **纳秒**；
-2. `Plat_RelativeTickFrequency`（0x90b1c8）：同初始化路径，`csel x19=1e9` → **freq = 1e9 tick/秒**；
-3. `GetStreamTimestamp`（0x802a88/0x802b14）：`(ticks/freq)<<16 | ((ticks%freq)<<16)/freq`
-   → **16.16 定点秒**，65536s 回绕；
-4. 帧事件时间戳再减连接基准（`CFastFrameStats::Save(..., conn+848)`）→ **流内相对 16.16 定点秒**。
+`Plat_RelativeTicks`（0x90b0e4）使用 CLOCK_MONOTONIC 纳秒，频率为 1e9。
+`GetStreamTimestamp`（0x802a88/0x802b14）换算为 16.16 秒，65536 秒回绕。
+`ProcessTimestamp` 根据 ACK echo、peer send、local receive 三个时间估计时钟差；
+`CFastFrameStats::Save` 首项加差值，后续项目写事件间 delta，详见 §14.4、§14.10。
 
-我们侧证据（ihslib fork 源码）：
-- 现状 `IHS_SessionPacketTimestamp`（packet.c:134）= `CLOCK_REALTIME` 毫秒截断 u32，
-  注释声称 "matching the official client's GetStreamTimestamp"——**该注释与反汇编矛盾，作废**；
-- 历史版发的是 "1/65536-s ticks"（注释自述）= 恰恰是 16.16 定点秒的**绝对值**（未减连接基准），
-  同样失真（~58.5M）。
-
-**失真机制（修正后的结论）**：host 用它自己的流内相对时钟求差。官方客户端发
-"16.16 定点秒 − 连接基准"；我们无论发绝对 16.16 秒刻度（v1）还是 epoch 毫秒（v2），
-与 host 的流内时钟都不同基不同源（v2 还把 CLOCK_MONOTONIC 换成了 REALTIME），
-差值自然爆炸。**修复 = 完整复刻：CLOCK_MONOTONIC → 16.16 定点秒 → 减去"连接建立时刻
-的同单位值"。单位、基准、时钟源三者都要对齐，缺一不可。** 这也解释了前两次修复
-（v1 刻度、v2 毫秒）为何都失败：两版都只改了单位、没改基准。
+**撤回**：“conn+848 是连接建立时刻”“所有帧事件减连接起点即可修复”，以及
+据此宣称 network≈58518652ms 的唯一成因已经定案。CLOCK_REALTIME 毫秒和错误的
+事件编码均与汇编不符；历史 host 日志的具体异常还涉及如何解读和应用这些字段，
+不能将统计修正直接当成 20 秒锁键的根因证明。
 
 ### 9c.5 ControllerConfigMsg(137) 触发层（结论）
 
@@ -437,7 +432,7 @@ PersonalizationResponse(2)/ActiveConfigChange(3)/RequestActiveConfig(4)，客户
 | 11 | ← | StartAudioData(50)/StartVideoData(52) | ch1 加密可靠 | CStartAudioDataMsg{channel=2, codec=3, codec_data=4, frequency=5, channels=6}；channel 值写入数据通道匹配（client+625/626），client 启动解码（IsSupportedAudioCodec：1 恒可、3 视 +0x238） |
 | 12 | → | VideoDecoderInfo(80) | ch1 加密可靠 | CVideoDecoderInfoMsg{decoder=1...}（0x7aacf0） |
 | 13 | →/← | 输入：UpdateDeviceList(信封1) → host DeviceOpen(下行2)+DeviceStartInputReports(下行11) → 125Hz 报告 | RemoteHID(106) ch1 加密可靠 | 信封 CRemoteHIDMsg{data=1, active_input=2}；下行 oneof 见 §9b/12.2；报告合批规则 §9b.2；delta/full 自适应 R1 |
-| 14 | → | 帧反馈 | ch2 **明文**可靠 | CFrameStatsListMsg{data_type=1, stats=2, accumulated=3, latest_frame_id=4}；1.0s；时间戳 16.16 定点秒减 conn 基准（§9c） |
+| 14 | → | 帧反馈 | ch2 **明文**可靠 | CFrameStatsListMsg{data_type=1, stats=2, accumulated=3, latest_frame_id=4}；1.0s；首事件加时钟偏移，后续事件间 delta（§14.4） |
 | 15 | ← | 会话中下行 | ch1 加密可靠 | SetQoS(87){use_qos=1}、SetTargetBitrate(94){bitrate=1}、VideoEncoderInfo(90){info=1}、SetTitle(81)/SetActivity(98)、TouchConfigActive(110)/SetTouchConfigData(112)、SetCursor 族(63-68)、OverlayEnabled(74)、SetGammaRamp(89)、CaptureFailed(147) |
 | 16 | → | 结束 | ch1 加密可靠 | StopRequest(129)/QuitRequest(83) 空消息；挂起 SystemSuspend(100) |
 
@@ -478,7 +473,7 @@ PersonalizationResponse(2)/ActiveConfigChange(3)/RequestActiveConfig(4)，客户
 | 2 | channel.c:203 | NACK 仅单包校验失败时发 | 洞检测→窗口掩码 NACK+限频（0x7f9d0c）；收 NACK→释放/强制重发（0x7f95dc） | **MISMATCH 缺失机制** |
 | 3 | channel.c ACK | 逐包 ACK（packetId+fragmentId+body 时间戳） | 累计 ACK+周期重发+时间回显（0x7f94b8） | MISMATCH（互操作兼容） |
 | 4 | packet.c:134 | CLOCK_REALTIME epoch 毫秒 | MONOTONIC 16.16 定点秒（0x90b0e4/0x90b1c8/0x802a88） | **MISMATCH 已定案**（§9c.4） |
-| 5 | frame_stats.c | 事件时间戳=上述毫秒值 | conn 基准相对 16.16s（0x7a847c Save 第 3 参） | **MISMATCH** |
+| 5 | frame_stats.c | 事件时间戳=上述毫秒值 | 首项加偏移、后续 delta（§14.4；旧解释撤回） | **MISMATCH** |
 | 6 | ch_control.c:142-186 | 单在途 MAX_IN_FLIGHT=1；coalesce 丢弃中间态；give-up 槽回收 | 窗口制无在途限制；无丢弃；无回收概念（0x7f89dc/0x7f8ac4） | **MISMATCH 自创** |
 | 7 | ch_control.c:176 | active_input 硬编码 true | 按当拍 BCollectReports 结果动态传（0x7ab4c8 `and w9,w20,#1`） | MISMATCH-小 |
 | 8 | ch_control_negotiation.c | enable_remote_hid 无条件 1 | 按 host 宣告 supports_remote_hid 条件置位（0x7ad9cc） | MISMATCH-小 |
@@ -501,6 +496,9 @@ PersonalizationResponse(2)/ActiveConfigChange(3)/RequestActiveConfig(4)，客户
 | 20 | 上行 wire 形态（尺寸簇/速率） | 未测 | 待真机 pcap 对照（判据§9.3） |
 
 ### 13.2b 收包链专项审计（2026-09-04，第二轮）
+
+> 更正：本节“加密边界/ACK wire 格式/信封/合批：逐字节等价”不能成立。
+> §14.1–14.5 给出实际代码、汇编及离线复现反例。
 
 - 未知控制通道包类型：fork 原为断连（一次意外包类型即死会话），官方是忽略——已改为 log+ignore；
 - KeepAlive(9)：官方在 OnStreamPacket 内联静默消费（0x7ad0b4），fork 原会落入未处理分支打日志——已静默；
@@ -534,22 +532,20 @@ SDL_PollEvent/libnx-hid 跨线程竞争）。修复 = DeviceWrite 在接收线�
 
 ### 13.3 结论
 
-16 项 fork 行为裁定：**MATCH 1 项、PARTIAL 1 项、MISMATCH 12 项、未验证 0 项**（三项
-"未验证"已于 2026-09-04 二轮逆向闭环：#11 system_info、#12 KeepAlive、#15 StopRequest）。
-MISMATCH 集中在四处自创机制（#1放弃、#6单在途/coalesce、#4/#5时间戳、#2缺NACK）
-——与 §9.3 修复清单完全对应，无新增矛盾。业务代码缺口 = 触摸（#17）。
-官方 KeepAlive 周期=10s、进入 Streaming 立即首发；Stopping 态不处理任何入包。
+本段旧稿的“未验证 0 项”“无新增矛盾”结论撤回：§14 的独立复核发现 NACK
+字段/方向、时钟换算、full_report 和 Unconnected 过滤等反例。不能用分类计数
+代替逐项证据，也不能把 Android 客户端的 Stopping 分支外推成 Host 的超时策略。
+KeepAlive 的立即首发及 10 秒周期有调用点证据；其他裁定应按 §14 的具体边界理解。
 
 
 
-1. host 侧"弃洞"计时的确切时长与条件（host 非本二进制，只能黑盒观测；P0 因果模型预测：
-   客户端补齐 NACK+取消放弃后，该计时器应永远不会被触发）；
-2. `SendUnreliable` 在官方客户端的实际使用者（数据面候选：ACK/日志/统计）——
-   找到 `bl c11000 <SendUnreliable@plt>` 的全部调用点即可闭环；
-3. OnSetQoS/OnSetTargetBitrate/OnVideoEncoderInfo 客户端处理逻辑（收到后做什么）
-   ——影响我们对 host 下行消息的响应面；
+1. host 侧超时的确切时长与条件：本二进制不含 Host 实现，不能证明存在所谓
+   “弃洞”机制，更不能证明修正客户端后它“永远不会触发”；
+2. `SendUnreliable` 的直接静态调用已追到 frame 分发与其调用者，见 §14.16。
+   旧稿只搜索 `bl` 会漏掉尾调用 `b`，且不能由包装函数数量推断实际发送者；
+3. OnSetQoS/OnSetTargetBitrate/OnVideoEncoderInfo 的接收行为见 §14.16；
 4. CStreamingClientHandshakeInfo / CStreamingClientCaps 其余字段取值（Android 官方值）；
-5. KeepAlive 周期（SendKeepAlive 的调度源：OnThink 定时器参数）；
+5. KeepAlive 的立即首发与 10 秒周期见 §13.3、§14.14；
 6. ControllerConfigMsg(137) 官方载荷构造（0x7abb30 只做转发，构造在调用方——
    CStreamPlayer/UI 层，需沿 xref 上溯）。
 
@@ -557,7 +553,484 @@ MISMATCH 集中在四处自创机制（#1放弃、#6单在途/coalesce、#4/#5�
 
 - 本文件更正 OFFICIAL_INPUT_RE.md §5（CLIENT: 方向）、§8 候选路线 B、§15/§16
   （Send bool 映射方向、"官方输入可能走不可靠通道"猜测）；
-- **不推翻**：R1 delta/full 自适应规则（0x7d035c 反汇编独立成立）、R2/R3/R5/R6 的
-  发送节奏与时序观测、R7 host 日志量差异本身（仅其方向解读）、D-039/D-040 传输层修复；
+- R1 delta/full 自适应规则有独立指令证据。R2/R3/R5/R6 的观测与 R7 日志量差异
+  不能单独确立因果；D-039/D-040 的放弃与单在途机制已由 D-042 替代；
 - 候选路线 B 缩水为"补 ControllerConfigMsg / GetTouchConfig 族 + VideoOverflow"，
   其优先级需要结合第 9 节问题 3（host 下行处理逻辑）重新评估后再立项。
+
+## 14. 独立汇编复核与协议反例（2026-09-07）
+
+### 14.0 证据身份与边界
+
+- 父仓快照 `d6d411f`；ihslib `8bb05be`；比较基线是本项目实际采用的
+  `beudbeud/ihslib` pin `8c5a17c`，不是未经确认的“最新上游”。
+- `git -C third_party/ihslib diff 8c5a17c` 涉及 54 个文件，包含两处已有未提交
+  修改：`frame_stats.c` 与 `channels/video/ch_data_video.c`。本次审计没有改动这些实现。
+- 二进制来自仓库根目录 XAPK 的 `config.arm64_v8a.apk!lib/arm64-v8a/libmain.so`。
+  SHA-256：`50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e`。
+  重新解包计算的 hash 与 `/tmp/slink/arm64/lib/arm64-v8a/libmain.so` 一致。
+- 下列地址由 `aarch64-linux-gnu-objdump -dC --start-address=... --stop-address=...`
+  重新读取 ELF 验证，不以旧文档的“已验证”标签作为证据。
+- Android 客户端汇编证明该客户端的行为，不自动证明 Windows host 的内部行为。
+  用户观察的“保持最后按键约 20 秒后恢复”保留为主要故障现象；精确超时机制没有闭合证据。
+- 可重放反例：从仓库根运行 `./scripts/audit-ihslib-control.sh`。
+  它单独构建 Debug 库，调用生产函数，不启动网络 worker；退出 1 表示发现不变量违反。
+  C 探针见 `scripts/audit-ihslib-control.c`，预留额外 canary 空间观察越界，避免破坏其他对象。
+
+### 14.1 接收扩展 NACK：把时间戳误读成确认序号（P1）
+
+Evidence：官方 `HandleNackPacket`：
+
+| 汇编地址 | 操作 | UDP payload 中的字段 |
+|---|---|---|
+| `0x7f9764` | `ldur w10, [x23,#13]` | u32 时间戳 |
+| `0x7f9760` | `ldurh w9, [x23,#17]` | u16 最后连续确认 ID |
+| `0x7f9770–0x7f97a8` | `confirmed-head+1` 后 Advance | 确认到该 ID，包含端点 |
+| `0x7f9810` | `add x26,x23,#19` | bitmap 首字节 |
+| `0x7f9848–0x7f984c` | 读 header+7，加 byteIndex×8 | bitmap 以 header.packetId 为基址 |
+| `0x7f9854–0x7f987c` | bit=1 时 ReleasePacketByID | 选择性确认该包 |
+
+`IHS_SessionPacketParse` 只剥离 13 字节头及可选 CRC，因此业务层 body 的对应偏移
+是 **0=timestamp、4=confirmed、6=bitmap**。然而 `ControlOnNackPacket`
+（`ch_control.c:466`）读取 `body[0..1]` 为 confirmed、`body[2..]` 为 bitmap，
+还用误读的 confirmed 作为 bitmap 基址。它也没有正确处理确认的包含端点语义。
+
+真实函数离线反例：登记 pending 100、101、102；注入官方格式的
+`header.packetId=101, timestamp=200, confirmed=100, bitmap=02`。
+对方有 100、102，唯一应保留补发的是 101；实际输出：
+
+```text
+RX NACK: missing packet 101 retained=0 (required 1); outstanding=0 (required 1)
+```
+
+Conclusion：现行实现会错误删除尚未交付的可靠包，并把这种删除计入 acknowledged。
+这是输入上行留下永久缺包的直接机制；“还在提交／acked 增长”不能排除它。
+正确实现应使用上述三个独立字段，按 packet ID 确认包括各分片，不可把时间戳当序号。
+简单 NACK、旧反馈过滤、重传时间阈值也应分别处理，不可复用错误的扩展布局。
+**是否触发了用户那次故障及为何约 20 秒恢复仍是 hypothesis。**
+
+### 14.2 发送扩展 NACK：确认了自己正在请求的缺包（P1）
+
+Evidence：`ControlSendGapNack`（`ch_control.c:507`）计算 `needed=首个缺包`，
+同时把 needed 写入 header.packetId 和 body+4 的确认水位。
+官方 body+4 是最后连续确认的 ID（见上面的 `+1` 与 Advance），不是下一个所需 ID。
+`UpdateReliableState` 的 `0x7fa14c–0x7fa154` 写入独立的 channel+42 确认水位。
+
+真实函数接收 100 后再接收 102，输出：
+
+```text
+TX feedback after 102 (101 missing): NACK base=101 contiguous=101 (required 100), mask=02
+```
+
+Conclusion：该报文同时说“101 缺失”和“已连续收到 101”。按官方接收算法会先释放
+101，随后 bitmap 的 0 位不能恢复已释放的包。正确字段应为 `confirmed=100`。
+这可破坏 host→client 的补洞；它与 §18 的下行加密失配有机制上的关联，但尚无故障包序列证明。
+此外 `needed==0` 直接返回会在 16 位 ID 回绕处漏发 NACK；0 是合法包号。
+
+### 14.3 解密计数器：“成功才推进”与汇编相反（P1）
+
+Evidence：`CStreamClient::OnStreamPacket`：
+
+```asm
+7ad054: ldr x1, [x19, #136]   // 旧计数器作为解密参数
+7ad060: add x8, x1, #1
+7ad064: str x8, [x19, #136]   // 调用前已写回
+7ad06c: bl  CStreamFrame::BDecrypt@plt
+7ad070: tbz w0, #0, 7ad07c    // 此后才判断失败，无计数器回滚
+```
+
+Conclusion：官方等价于 `BDecrypt(recvSequence++, ...)`。
+`8bb05be` 把 `ch_control.c:397–400` 改成成功才递增，其“与官方一致”的理由撤回。
+失败帧已经由窗口 Poll 消费并被 ACK，“保持期望值等待旧 packet 重传自愈”不成立。
+严格对齐应恢复调用前递增，同时修正可靠窗口的误确认/跳洞问题；单独更改计数器
+不能弥补已经越过的加密帧，也不构成 20 秒故障已修复的证明。
+
+### 14.4 FrameEvents 是事件差分，不能逐项写绝对/连接相对时间（P1）
+
+Evidence：`CFastFrameStats::Save`：
+
+- `0x7f4b68–0x7f4b74`：bool 参数为 true 时跳过 event 2–12。
+- `0x7f4c48` 按**输出列表中是否第一项**分支。
+- 首项 `0x7f4c74–0x7f4c80`：`timestamp = eventTime + 第三个显式参数`（ADD）。
+- 后续 `0x7f4ca8–0x7f4cb8`：`timestamp = eventTime - w28`；
+  `0x7f4b58` 在每个已输出项后更新 w28 为该项原始时间。
+- 调用点 `0x7a8470–0x7a847c`：bool=true、第三参数读自 connection+848。
+  **仅此读指令不能把 connection+848 命名为“连接建立时间”。**
+
+Conclusion：线上是首项基准加偏移、后续事件间 delta。例：两事件原始值
+1000/1100，第三参数为 50，输出应为 1050/100，而非 950/1050。
+`ReportVideoStats`（`ch_data_video.c:487–542`）逐项写时间、已有未提交修改按
+event>=13 分开减 timeBase，两者都不符合这个格式。
+`GetStreamTimestamp` 的 16.16 单位仍成立（`0x802ab0–0x802ac4`），但单位正确
+不能抵消编码方式错误。准确实现还须追清 connection+848 的时间偏移来源，不能用
+协商完成时刻代替。由此不能宣称异常 network/decode/display 数字已修复，或与输入故障无关。
+
+### 14.5 ACK 回显与诊断计数不是有效的排除证据
+
+Evidence：官方 ACK body+0 在 `0x7f9ec0–0x7f9ee0` 由
+`peerTimestamp + now - localReceiveTime` 构造；`HandleAckPacket` 调用
+`ProcessTimestamp` 用其测 RTT/时钟偏移。我方 `channel.c:200–208` 只填本地当前时间。
+这个问题在 pin `8c5a17c` 已存在，不应归咎于最近的 fork 改动，但仍是互操作差异。
+
+此外，累计 ACK 主路径是 `session.c:339 → IHS_RetransmissionAcknowledgeThrough`。
+该函数不更新 `maxAckLatencyMs`，只有精确 ACK 函数更新；故日志里的最大 ACK 延迟
+不是所有可靠包的最大延迟。`ControlOnHIDPacketAck` 无论是否释放了 HID 包都将
+hidAcknowledged 加一；`SubmitHIDReport` 即使发送入队失败也增加 hidSent；
+`IHS_SessionGetReliabilityStats` 将 hidPending/hidInFlight 硬编码为 0。
+
+Conclusion：不能再用这些计数推导“故障窗口所有输入都被确认且延迟≤62ms”。
+确认/丢弃应区分 ACK、NACK confirmed、NACK bitmap、发送失败，并与包号和密文序号关联。
+重传周期上限也不是 ACK 延迟上限。
+
+### 14.6 HID 诊断会越界，原始报告记录也不完整（P1）
+
+Evidence：`DrainPendingHIDReports`（`ch_control.c:138–148`）以 144 字节估计一行，
+但 96 字节数据仅 hex 就需 192 字符，还不含前缀和换行。`snprintf` 返回应写长度，
+一旦超 cap，后续 `cap-written` 下溢。生产调用方 `client/main.c:2743` 使用 4096 字节。
+离线探针混合 96/70 字节报告，给生产函数同样的 cap，并检查缓冲区后的 canary：
+
+```text
+HID diagnostic drain: capacity=4096 returned=4128; canary bytes overwritten=31 (required 0)
+```
+
+Conclusion：这是实测越界写，可能破坏进程内存；不能将其仅归类为打印格式问题。
+正确实现必须按完整行所需长度判界、检查 snprintf 返回值，且不可先消费队列再发现无空间。
+它是否解释该次输入卡死没有证据，不能替代协议故障分析。
+
+记录可信度还有独立问题：提交数据先截至 96 字节，队列满时静默丢新项。
+`/tmp/stream_diag_prev.log` 有 12340 条 hidrep，其中 2949 条长度达到截断上限；
+部分 hex 的 protobuf 长度宣告已超过留存数据。相对于前一个 diag 行，hidrep 原始
+时间戳最大落后 76937ms（日志第 12743 行）。这不是网络延迟，是落盘积压的证据。
+该日志不能支持“逐包完整记录／文件相邻行是同一故障时刻”的假设。
+
+### 14.7 源码层的线程顺序与生命周期缺陷
+
+这些是本项目 C/线程设计问题，Android 汇编不能替代本地锁与所有权证明：
+
+- **退出死锁（P1）**：`client/media.c:1317` 持有 state_lock；禁用分支
+  `:1352 → hid_flush_thread_stop → pthread_join` 仍持锁。被 join 的线程在
+  `:1292` 获取同一锁。若恰好等待该锁，两线程永久互等。stop→join 应在释放
+  worker 所需锁后执行；还应记录线程是否成功创建，不能无条件 join。
+- **delta 排序风险**：8ms flush、媒体线程完整状态心跳、接收线程 RequestFullReport
+  都可进入 `IHS_SessionHIDSendReport`。它先打包/重置 holder/解设备锁
+  （`control_hid.c:258–272`），后取得 control sendLock 入队。允许 A 先取旧
+  delta、B 再取新 delta，但 B 先上线、A 后上线。sendLock 只串行加密，不能保证
+  报告生成顺序。需要对收集到入发送队列整体排序，或所有输入报告经单一发送者。
+  此交错可由源码推出；它是否在故障现场发生、host 如何处理 CRC 失败是 hypothesis。
+- **DeviceWrite 累积 offset**：`sdl_hid_write.c:130–170` 消费 pendingWrites 时只
+  OffsetBy，不在清空后复位。逻辑 size=0 但 offset 持续增长，追加最终越过初始设定的
+  maxCapacity=1024（Debug 断言，关闭断言时可能继续扩容）。所谓 512B 有界队列
+  没有约束已消费空间；清空必须复位。此项为源码证明，未在 Switch 上触发测试。
+- `hidPendingLock` 在两个线程首次调用时无同步懒初始化，且没有对应销毁；
+  这不满足 NRO 返回 loader 前的显式资源清理要求。
+
+### 14.8 可保留的协议结论，以及不能扩大解释的部分
+
+- **SDL 按钮位直通有证据**：`OnButtonEvent 0x7540b8–0x7540d8` 是
+  `1 << SDL_button` 写入 state+16。不能再次依据 EGamepadButton 枚举重映射。
+- **RAW 分支有证据**：`HIDDeviceSDLGamepadStateV2_t::Pack 0x752dcc–0x752dec`
+  在 byte27!=0 时 memcpy(min(cap,72))。这个分支存在不等于所有设备/协商版本
+  必须永远使用 RAW；不能将局部 Pack 分支扩大成“全部路径唯一格式”。
+- **full_report 存在**：`SendBuffer 0x7d0368–0x7d03b8` 在
+  `deltaLen+8 >= fullLen` 时明确调用 set_full_report。因此 `report.c` 的自适应
+  回退有汇编支持；早期“零调用”和强制 full-mask delta 的论据撤回。
+  代码注释与 D-041 附录的绝对说法不能继续用作协议规范。
+- **16.16 时间单位、累计 ACK 的包含端点语义有直接指令证据**；问题在字段、
+  水位及事件编码的实际实现，而不是应把所有已工作的协议改回上游。
+- **SetInputTemporarilyDisabled 的解释不完整**：`0x7af974–0x7af980` 转入 player；
+  `CStreamPlayer::OnSetInputTemporarilyDisabled 0x7c6550` 查找 InputDisabled 对话框，
+  false 时 CloseDialog，true 时创建并 OpenDialog（`0x7c6618–0x7c6644`）。
+  这段汇编本身没有“停止全部 HID 上报”的赋值；是否经 overlay 间接抑制输入，
+  需追踪 OpenDialog/事件消费，不能只凭消息名宣称与我方全局闸门等价。
+
+### 14.9 差异清单的审计口径
+
+54 个差异文件分属构建/SDL2 兼容、认证和协商、HID 编码和设备命令、传输可靠性、
+视频/统计、诊断与生命周期、测试/API。上述是带反例的重点核验，**不是 54 个文件
+每个 hunk 均已获得汇编证明**。构建适配、NUL 终止、通道数组计数和线程释放应以
+C 源码、平台 API 及测试评估；Android 并无可以照搬的 Switch 实现。
+
+初次审计的 8bb05be 源码快照（本次修正前）host CTest 结果为 24/27：managed/unmanaged SDL
+device 的 player-index 断言失败（测试仍期待 DeviceWrite 同步生效），frame_stats
+断言失败（测试按毫秒输入，已有工作区实现按 16.16 换算）。这些失败证明测试与
+实现已经漂移，不能简单解释为三项线上故障，也不能引用历史 27/27 作为本快照的验证。
+上述离线协议探针另外复现三项独立违反：NACK 接收误删除、NACK 发送误确认、诊断越界。
+
+本节撤回的是证据不支持的定论，不宣称用户实机故障已修复。协议修复应分别验证：
+缺包仍保留可重传、接收方绝不确认洞、加密/报告顺序不跨越缺口、诊断不能破坏内存。
+可靠传输确认只证明传输层处理，不能替代 host 解密、delta 重建和游戏应用的证据。
+
+### 14.10 后续调用链确认与修正约束
+
+以下补充撤回 §14.0 中“本次没有改动实现”的初始审计范围说明：在用户明确要求修正后，
+本节对应的代码开始按证据修改。§14.1–14.7 的失败输出是修改前反例，不是修改后行为。
+
+**时钟偏移来源（Conclusion）**：`ProcessTimestamp 0x7f9b1c–0x7f9b34`
+将 `peerSend - echoedLocal - (localReceive-echoedLocal)/2` 加入 connection+0x2f0。
+`TimeOffsetStats::AddSample 0x7fcac8–0x7fcacc` 将有符号样本均值存至该对象+96，
+即 connection+752+96=848。构造函数 `0x7fc958–0x7fc964` 设置十秒窗口，
+`0x7fc9c8–0x7fc9d8` 按样本年龄过期。`ProcessTimestamp 0x7f9b08–0x7f9b18`
+只纳入 RTT≤动态最小 RTT+65 ticks 的样本。`OnDataPacket 0x7ad22c–0x7ad25c`
+从 host 时间减去该偏移转为本地时间；Save 首事件加回偏移。代码以此替换连接起始时刻，
+不再将 host 的 frame-start 时间冒充 transport send 时间。
+
+**可靠接收窗口（Conclusion）**：构造函数 `0x7f8720–0x7f8728` 明确以 ID=0
+初始化 reliable receive window。`UpdateReliableState 0x7f9e08–0x7f9e58`
+从已交付帧后的窗口头继续扫描已收到的连续分片；确认的是包的接收水位，而不只是
+完整帧的交付水位。因此 reliable 窗口禁止沿用视频 join-midmessage 的跳片策略，
+并必须处理第一包丢失、16 位回绕、未拼齐分片和最后一条 ACK 丢失后的重复包。
+`tests/session/test_protocol_evidence.c` 用固定的独立报文期望检查这些条件及解密失败计数。
+
+**临时输入禁用（Conclusion，撤回原门控解释）**：
+`OnSetInputTemporarilyDisabled 0x7c6550–0x7c6644` 仅增删 InputDisabled 对话框。
+`OpenDialog 0x7be088–0x7be1f0` 更新对话框列表、光标与叠层状态。
+`BFilterGamepadState 0x7bc888–0x7bc910` 调用顶层对话框的手柄 down/up 处理，
+仅在其返回 true 时转入清空输入分支。而
+`CInputDisabledDialog::BOnControllerButtonDown 0x766cb8` 和
+`BOnControllerButtonUp 0x766cc0` **均返回 false**。
+因此这个通知不支持 `IHS_SessionInputEnabled = streamingInput && !temporarilyDisabled`；
+保留通知供诊断，只以协商的 enable_input_streaming 门控。
+
+**HID 输出与活动标志（Conclusion）**：generic gamepad 路径
+`BCollectReports 0x7cfb24–0x7cfb34 → BParseGamepadStateGenericGamepad`，
+解析 ENCODED 分支在 `0x7d0a50` 写 version=3，回到
+`0x7cfd84–0x7cfd8c → Pack` 的 RAW 分支。该证据支持本项目 generic SDL
+设备的 RAW 发送路径，不能推广到 Steam Controller 等其他设备格式。
+`BFilterGamepadState 0x7bc5e8–0x7bc6a4` 检查按钮、摇杆阈值与扳机，
+`0x7bc92c–0x7bc93c` 才设置 active_input。松开最后一个按钮的报告可以是 inactive。
+`SendBuffer 0x7d00f0` 跳过相同状态，并按 delta/full 大小选择编码；定时发送相同状态
+不是该函数的行为，原“官方 full_report 零调用”的论据撤回。
+
+**本地运行时修正（Evidence/设计推论）**：`reportSendLock` 覆盖 holder 收集、重置到
+control 入队的完整顺序；失败分配不消费 holder。媒体 flush worker 以 atomic stop、
+成功创建标记与 join 管理，join 时不持有 worker 需要的 state_lock。诊断 mutex 由
+IHS_Init/Quit 显式创建销毁；每条记录分别标出捕获长度、wire_len 和累计丢弃数。
+这些是 C 并发/内存约束，不宣称是从 Android 汇编推导出的 Switch 平台实现。
+
+
+### 14.11 接收跨度、媒体配置与本地并发约束
+
+**Evidence / Conclusion：窗口不是 320 包上限。** `BInsertPacket 0x7f7270–0x7f7288`
+对新 ID 相对窗口头的距离执行 `tst #0xc000`，合法跨度扩容；
+`EnsureCapacity 0x7fd21c` 的容量检查为 0x4000。320 是 NACK presence mask
+覆盖范围（40 字节），不能据此固定可靠窗口容量。实现保留已收到的稀疏槽位并扩容至
+16384；超出序号跨度的包忽略，不能据此越过缺口。发送端仍逐包保存和重传，
+没有“单在途”或“三次后 supersede”的证据。旧文中的固定 320 包窗口说法撤回。
+
+**Evidence / Conclusion：重传与 NACK 的时间条件不同。**
+`ProcessTimestamp 0x7f9b38–0x7f9b4c` 更新 RTT 平滑值；
+`SendReliablePackets 0x7f8b04–0x7f8b2c` 使用 `1.25 × clamp(srtt,65,3276)` ticks。
+`HandleNack 0x7f9634–0x7f9688` 使用三秒 RTT 均值计算
+`floor((meanRTT_ms+2)×0.75)` 毫秒后换算 ticks，最大 3276；
+扩展体的 echo 时间还约束重发候选的最近发送时刻（0x7f976c–0x7f9780）。
+不能用固定倍增重传代替这两个不同条件。当前定时器精度为毫秒，周期为 5ms，
+因此与 Android 调度时刻并非逐 tick 相同。
+
+**Evidence / Conclusion：媒体必须等待配置。** `OnDataPacket 0x7ad1d0–0x7ad214`
+暂存尚无消费者的数据；`OnStartVideoData 0x7ae0c8` 停旧解码器，
+`0x7ae1d8` 启新解码器，`0x7ae1f4` 才处理 pending packets。
+不能把任意未知通道按 1920×1080 视频创建。实现等待真实 StartAudio/VideoData，
+暂存原始包和到达时间；暂存队列 320 包是本地内存限制，**不是汇编中的容量常量**。
+`HandlePacket 0x7faff0–0x7fb028` 验证对端地址和连接 ID，旧会话 ACK 不得释放新会话数据。
+
+**明确的平台能力差异：** Android 的可靠媒体实现能回显 reliable_data
+（0x7ad710）；ihslib 的媒体接收只处理 Unreliable/UnreliableFrag，所以协商 false。
+控制与统计通道继续可靠传输。不能仅复制 Android 的能力声明却没有相应接收实现。
+Switch 的分辨率、硬解、SDL2、系统信息和码率限制属于平台选择；不宣称它们与 Android 相同。
+
+**本地源码约束（不冒充汇编结论）：**
+
+- HID 报告从收集、holder 重置到 control 入队由 reportSendLock 统一排序；设备句柄关闭
+  与 provider 操作共用设备锁，快照引用的内存延迟到 manager 销毁。
+- SDL pending writes 消费后复位 offset，超出有界队列返回失败；诊断逐条先测长度再复制，
+  不足一条时不消费。每条最多保存 512B，同时记录 wire_len、截断和累计掉条数。
+- 媒体退出在 worker 需要的 state_lock 外 stop/join；已创建标志区分 pthread_create 失败。
+  数据和控制的定时任务停止后再销毁依赖。数据 interrupted 使用原子变量。
+- `streaming.c` 原来的“先启动 timer、后发布 handle”允许任务结束后发布悬空指针；
+  `authorization.c` 的 base 锁→timer 锁与 timer callback→base 锁构成反序。
+  两种请求应共用 timer owner 发布/访问/结束协议，避免上下文在 RX 回调期间释放。
+  这是对象生命周期修复；pairing PIN、connect PIN 的消息语义仍遵守认证参考。
+
+**验证边界：** 离线 oracle 检查包洞、回绕、分片、重复 ACK、NACK offset/bitmap、
+解密尝试序号、时钟过滤、事件 delta、短包和诊断容量；这些测试无法证明 Steam
+已将 HID 应用到游戏。20 秒现象与可靠通道缺口、delta 顺序、日志内存破坏的关联仍属
+hypothesis，须以修正版本的 Switch、Host 日志及同一时段抓包互相印证。
+
+
+### 14.12 NACK 分支边界与报告链回归
+
+`0x7f9774 cmp cutoff-seen; 0x7f977c csel ...,lt` 表示选择
+`max(now-age, seen)`（按 32 位有符号差比较），**不是 min**。本次复核中曾将此条件
+写成 min，现明确撤回；`nack_age_and_trailing_zeros` 用固定序列及隔离的普通重试期限
+验证 seen 可以使新近发送的缺包立即获得重发资格。
+
+掩码 `0x7f9840 cbz` 跳过全零字节，`0x7f9868–0x7f9878` 在每字节最高 1 位后结束，
+所以“每个 0 位都会触发重发”是过度概括。例如 `02` 确认 base+1 并对 base 检查重发条件，
+不对 base+2…base+7 主动加速；这些包仍保留普通 RTO。掩码前的范围由
+`0x7f9698` 独立处理。重试批次按旧包到新包发送，对应 SendReliablePackets 的正向窗口遍历。
+
+`SendBuffer 0x7d00f0` 的去重针对上一生成状态；本地 holder 已有未发 press 时，
+不能仅因为 release 等于上次已发状态就丢掉该 full report。完整报告与 delta 都需要
+保持一批内的 press→release；`test_hid_report_chain.c` 同时覆盖两种编码。
+`test_hid_send_order.c` 从四个并发收集者产生 256 次变化，逐条解密实际入队包、应用
+delta、检查 CRC 和严格递增的状态编号。它验证本地顺序，不模拟 Host 的应用策略。
+
+音频重建同样有证据：`OnStartAudioData 0x7adddc–0x7addf8` 先停止并销毁旧解码器。
+本地 `audio_reconfiguration` 交替重建音频通道检查数组计数和停止/销毁路径。
+该测试暴露并修正了直接 SessionDestroy 时仍有 data worker 的遗漏；销毁必须先
+interrupt、join session worker、关闭 HID、join/destroy data worker，再释放控制和统计通道。
+StopRequest 的 packet ID 必须在 control sendLock 内记录，避免并发 HID 分配使等待的 ACK
+错误地指向另一条消息。这两项清理/竞态约束由 C 源码及测试建立，不作为 Android ABI 结论。
+
+### 14.13 Unconnected 探测与连接 ID 的适用边界
+
+**证据：** 官方 `good.pcapng` 第 34 帧 Connected 分配 client `a3` / host `d5`，
+第 37 帧发送 ClientHandshake；第 42–74 帧是双方 ID 均为零的 discovery ping 请求/响应，
+第 75 帧才是 ServerHandshake。`CStreamSocket::HandleMessage 0x7ff660–0x7ff6f0`
+在调用连接的 HandlePacket 前，将 type 0、channel 0 分派给 HandleUnconnectedPacket。
+所以 `HandlePacket 0x7faff0–0x7fb028` 的 ID 检查不适用于这种包。
+
+**撤回：** 本次审计新增过滤曾仅为 Unconnected 豁免目标 ID，却仍在 Handshaking
+阶段检查来源 ID。该实现错误，会丢弃上述真实握手探测。`handshake_unconnected_probe`
+通过实际接收入口先输入 Connected，再输入官方第 43 帧的探测负载，验证响应 sequence=2。
+2026-09-07/08 Switch 日志中多次连接均在约 4.3 秒后由 Host 关闭，且没有 ServerHandshake；
+这是回归现象的真机证据。过滤缺陷可以离线重现；它是否完整解释真机失败仍须修复后运行确认。
+
+**修复后的真机反例验证：** NRO SHA-256
+`6c0e9b4491940de87d77c7cdd111abf99cd01403393390af70f93cec080ab9f8`
+重新加载后，`stream desktop hold` 获得 connected=1，首帧 1712ms，H.264 1280×720、
+Opus 48kHz 双声道，HID open=1/start=1；25 秒采样期间继续收到音视频且可靠队列清空。
+这支持 Unconnected 过滤导致此次握手回归；不证明长期锁键已解决。
+
+**本地生命周期约束：** `diag_disk_write_tick` 调用 IHS 的 HID 诊断队列，退出线程还会
+执行最后一次 tick。主程序必须在 IHS_Quit 销毁诊断互斥锁前 stop/join 该线程。
+此前先 Quit 再 join 的顺序不满足新诊断实现的依赖关系；正常退出一次不能排除竞态。
+
+
+### 14.14 上游差异的证据索引
+
+比较基线为 adopted upstream `8c5a17c` 与审计输入 `8bb05be`，下表逐一列出原始 54 个差异文件（路径相对 `third_party/ihslib`）。这是参考索引，不是任务状态表。汇编证明仅限列明的行为；平台适配、诊断和测试无法从 Android 汇编推出 Switch 的实现。
+
+| 文件 | 依据及适用边界 |
+| --- | --- |
+| `CMakeLists.txt` | 平台：SDL2/SDL3 互斥选择及依赖传播；host SDL2、Switch 交叉构建验证，不属于 Android 协议。 |
+| `include/ihslib/session.h` | 接口：状态/诊断/时钟所有权；字段在本地传递，非 wire 布局；§14.4、14.10–14.13。 |
+| `src/client/authorization.c` | 源码：新增消息描述符与诊断不改变认证分支；字符串终止及 timer owner 生命周期修复，见认证参考与 §14.11。非 Android 配对全流程等价证明。 |
+| `src/client/client.c` | 源码：新增消息描述符与诊断不改变认证分支；字符串终止及 timer owner 生命周期修复，见认证参考与 §14.11。非 Android 配对全流程等价证明。 |
+| `src/client/streaming.c` | 源码：新增消息描述符与诊断不改变认证分支；字符串终止及 timer owner 生命周期修复，见认证参考与 §14.11。非 Android 配对全流程等价证明。 |
+| `src/hid/CMakeLists.txt` | 平台：SDL2/SDL3 互斥选择及依赖传播；host SDL2、Switch 交叉构建验证，不属于 Android 协议。 |
+| `src/hid/device.c` | 汇编：SendBuffer 0x7d00f0、0x7d0368–0x7d03b8；自适应 delta/full 与生成顺序。兼容的强制全掩码 helper 不再由生产路径调用；§14.12、报告链测试。 |
+| `src/hid/device.h` | 汇编：SendBuffer 0x7d00f0、0x7d0368–0x7d03b8；自适应 delta/full 与生成顺序。兼容的强制全掩码 helper 不再由生产路径调用；§14.12、报告链测试。 |
+| `src/hid/report.c` | 汇编：SendBuffer 0x7d00f0、0x7d0368–0x7d03b8；自适应 delta/full 与生成顺序。兼容的强制全掩码 helper 不再由生产路径调用；§14.12、报告链测试。 |
+| `src/hid/report.h` | 汇编：SendBuffer 0x7d00f0、0x7d0368–0x7d03b8；自适应 delta/full 与生成顺序。兼容的强制全掩码 helper 不再由生产路径调用；§14.12、报告链测试。 |
+| `src/hid/sdl/CMakeLists.txt` | 平台：SDL2/SDL3 互斥选择及依赖传播；host SDL2、Switch 交叉构建验证，不属于 Android 协议。 |
+| `src/hid/sdl/include/SDL3/SDL.h` | 平台：SDL2 头转发、instance ID→device index、按钮枚举及电量适配；本地 SDL 头/SDL provider 测试。电量百分比未知返回 -1，不伪造 Android 值。 |
+| `src/hid/sdl/include/SDL3/SDL_events.h` | 平台：SDL2 头转发、instance ID→device index、按钮枚举及电量适配；本地 SDL 头/SDL provider 测试。电量百分比未知返回 -1，不伪造 Android 值。 |
+| `src/hid/sdl/include/SDL3/SDL_gamepad.h` | 平台：SDL2 头转发、instance ID→device index、按钮枚举及电量适配；本地 SDL 头/SDL provider 测试。电量百分比未知返回 -1，不伪造 Android 值。 |
+| `src/hid/sdl/include/SDL3/SDL_joystick.h` | 平台：SDL2 头转发、instance ID→device index、按钮枚举及电量适配；本地 SDL 头/SDL provider 测试。电量百分比未知返回 -1，不伪造 Android 值。 |
+| `src/hid/sdl/include/SDL3/SDL_version.h` | 平台：SDL2 头转发、instance ID→device index、按钮枚举及电量适配；本地 SDL 头/SDL provider 测试。电量百分比未知返回 -1，不伪造 Android 值。 |
+| `src/hid/sdl/include/ihslib/hid/sdl.h` | 汇编：按钮 0x7540b8、RAW Pack 0x752dcc、Generic 解析 0x7d0a50、activity 0x7bc5e8；§14.8/14.10。设备/线程所有权另由 C 锁序及 SDL 测试验证。IMU/touch 未实现。 |
+| `src/hid/sdl/include/ihslib/hid/sdl/sdl2_compat.h` | 平台：SDL2 头转发、instance ID→device index、按钮枚举及电量适配；本地 SDL 头/SDL provider 测试。电量百分比未知返回 -1，不伪造 Android 值。 |
+| `src/hid/sdl/src/config.h.in` | 平台：SDL2/SDL3 互斥选择及依赖传播；host SDL2、Switch 交叉构建验证，不属于 Android 协议。 |
+| `src/hid/sdl/src/sdl_hid_common.h` | 汇编：按钮 0x7540b8、RAW Pack 0x752dcc、Generic 解析 0x7d0a50、activity 0x7bc5e8；§14.8/14.10。设备/线程所有权另由 C 锁序及 SDL 测试验证。IMU/touch 未实现。 |
+| `src/hid/sdl/src/sdl_hid_device.c` | 汇编：按钮 0x7540b8、RAW Pack 0x752dcc、Generic 解析 0x7d0a50、activity 0x7bc5e8；§14.8/14.10。设备/线程所有权另由 C 锁序及 SDL 测试验证。IMU/touch 未实现。 |
+| `src/hid/sdl/src/sdl_hid_event.c` | 汇编：按钮 0x7540b8、RAW Pack 0x752dcc、Generic 解析 0x7d0a50、activity 0x7bc5e8；§14.8/14.10。设备/线程所有权另由 C 锁序及 SDL 测试验证。IMU/touch 未实现。 |
+| `src/hid/sdl/src/sdl_hid_feature_report.c` | 源码：保留上游设备命令格式；player index 缓存使异步 Write 可见，SDL 命令在媒体线程执行，有界队列耗尽返回失败。managed/unmanaged 测试含 4096 次 drain；不声称调度与 Android 相同。 |
+| `src/hid/sdl/src/sdl_hid_write.c` | 源码：保留上游设备命令格式；player index 缓存使异步 Write 可见，SDL 命令在媒体线程执行，有界队列耗尽返回失败。managed/unmanaged 测试含 4096 次 drain；不声称调度与 Android 相同。 |
+| `src/platforms/ihs_ip_posix.c` | 平台：补 socket 声明及 SO_RCVBUFFORCE 宏缺失时回退；Switch 编译和 UDP 串流验证。 |
+| `src/platforms/ihs_udp_posix.c` | 平台：补 socket 声明及 SO_RCVBUFFORCE 宏缺失时回退；Switch 编译和 UDP 串流验证。 |
+| `src/session/channels/ch_control.c` | 汇编：ACK/NACK 0x7f94b8/0x7f960c、接收水位 0x7fa14c、解密序号 0x7ad054；§14.1–14.7/14.12。诊断容量另有离线 canary/并发测试。 |
+| `src/session/channels/ch_control.h` | 汇编：ACK/NACK 0x7f94b8/0x7f960c、接收水位 0x7fa14c、解密序号 0x7ad054；§14.1–14.7/14.12。诊断容量另有离线 canary/并发测试。 |
+| `src/session/channels/ch_control_keepalive.c` | 汇编：HandleStreaming 0x7a7140 首发与 0xA0000 ticks 周期；本地 stop/join 定时器生命周期。 |
+| `src/session/channels/ch_control_negotiation.c` | 汇编：OnNegotiationInit 0x7ad710、0x7ad9cc、0x7ad9e8；真实能力约束 reliable_data=false，§14.11。分辨率/码率/硬解/system_info 是 Switch 平台选择。 |
+| `src/session/channels/ch_control_video.c` | 汇编：真实 StartVideoData 0x7ae0c8–0x7ae1f4、数据时钟换算 0x7ad22c；§14.10/14.11。本地 worker/短包防护及音视频真机验证。 |
+| `src/session/channels/ch_discovery.c` | 汇编：Connected 0x7fae30 与 Unconnected 分流 0x7ff660；§14.13。重复 Connected 不重复发送 ClientHandshake；停止任务后释放 channel。 |
+| `src/session/channels/channel.c` | 汇编：ACK echo 0x7f9ec0；数组移除计数、重复添加/容量边界属于 C 内存约束，protocol_evidence 音频重建/早到包测试。 |
+| `src/session/channels/channel.h` | 汇编：ACK echo 0x7f9ec0；数组移除计数、重复添加/容量边界属于 C 内存约束，protocol_evidence 音频重建/早到包测试。 |
+| `src/session/channels/control/control_hid.c` | 汇编：Generic 枚举 0x754bbc、SendBuffer 0x7d00f0、输入对话框 0x766cb8/0x766cc0；§14.8/14.10/14.12。四线程实际加密入队验证顺序；ACK 数不能表示游戏已应用。 |
+| `src/session/channels/video/ch_data_video.c` | 汇编：真实 StartVideoData 0x7ae0c8–0x7ae1f4、数据时钟换算 0x7ad22c；§14.10/14.11。本地 worker/短包防护及音视频真机验证。 |
+| `src/session/frame_stats.c` | 汇编：Save 0x7f4b68–0x7f4cb8，首项加时钟偏移、后项 delta；§14.4/14.10。聚合快照及堆缓冲为本地并发修复。 |
+| `src/session/frame_stats.h` | 汇编：Save 0x7f4b68–0x7f4cb8，首项加时钟偏移、后项 delta；§14.4/14.10。聚合快照及堆缓冲为本地并发修复。 |
+| `src/session/packet.c` | 汇编：GetStreamTimestamp 0x802ab0–0x802ac4；13 字节头保持不变，本地 metadata 不序列化；短包/CRC 边界测试。 |
+| `src/session/packet.h` | 汇编：GetStreamTimestamp 0x802ab0–0x802ac4；13 字节头保持不变，本地 metadata 不序列化；短包/CRC 边界测试。 |
+| `src/session/retransmission.c` | 汇编：可靠发送 0x7f8b04、累计 ACK 0x7f94b8、NACK 0x7f9634–0x7f9878；§14.1/14.11/14.12。无 supersede/giveup，保留缺口直到确认。 |
+| `src/session/retransmission.h` | 汇编：可靠发送 0x7f8b04、累计 ACK 0x7f94b8、NACK 0x7f9634–0x7f9878；§14.1/14.11/14.12。无 supersede/giveup，保留缺口直到确认。 |
+| `src/session/session.c` | 汇编：连接 ID 检查 0x7faff0 与 Unconnected 豁免 0x7ff660；未知数据待真实配置 0x7ad1d0；§14.10–14.13。停止/销毁顺序以 C 生命周期验证。 |
+| `src/session/session_pri.h` | 接口：状态/诊断/时钟所有权；字段在本地传递，非 wire 布局；§14.4、14.10–14.13。 |
+| `src/session/window.c` | 汇编：构造首 ID=0（0x7f8720）、动态窗口 0x7f7270/0x7fd21c、水位 0x7fa14c；丢首包/回绕/分片/丢 NACK/扩容测试。 |
+| `src/session/window.h` | 汇编：构造首 ID=0（0x7f8720）、动态窗口 0x7f7270/0x7fd21c、水位 0x7fa14c；丢首包/回绕/分片/丢 NACK/扩容测试。 |
+| `tests/CMakeLists.txt` | 验证代码：按上述协议 oracle 更新；测试通过仅覆盖具体输入与并发路径，不作为 Android 行为的独立来源。 |
+| `tests/session/CMakeLists.txt` | 验证代码：按上述协议 oracle 更新；测试通过仅覆盖具体输入与并发路径，不作为 Android 行为的独立来源。 |
+| `tests/session/control_hid_admission.c` | 验证代码：按上述协议 oracle 更新；测试通过仅覆盖具体输入与并发路径，不作为 Android 行为的独立来源。 |
+| `tests/session/retransmission_state_machine.c` | 验证代码：按上述协议 oracle 更新；测试通过仅覆盖具体输入与并发路径，不作为 Android 行为的独立来源。 |
+| `tests/session/test_disconnect_destroy.c` | 验证代码：按上述协议 oracle 更新；测试通过仅覆盖具体输入与并发路径，不作为 Android 行为的独立来源。 |
+| `tests/session/test_frame_stats.c` | 验证代码：按上述协议 oracle 更新；测试通过仅覆盖具体输入与并发路径，不作为 Android 行为的独立来源。 |
+| `tests/test_hid_report_batch.c` | 验证代码：按上述协议 oracle 更新；测试通过仅覆盖具体输入与并发路径，不作为 Android 行为的独立来源。 |
+| `tests/test_hid_report_replace.c` | 验证代码：按上述协议 oracle 更新；测试通过仅覆盖具体输入与并发路径，不作为 Android 行为的独立来源。 |
+
+本次为修复上述调用链而扩展的文件包括 `src/hid/manager.*`、`src/ihs_timer.*`、`src/base.c`、`src/session/clock.*`、`frame_crypto.c`、`channels/ch_data.*`、`ch_control_audio.c` 及新增回归测试；其依据见 §14.10–14.13。主程序 `client/main.c`、`client/media.c` 的停止/加入与日志限额属于 Switch 运行时约束。
+
+### 14.15 重复断开与报告长度的本地并发约束
+
+**证据：** `test_disconnect_destroy` 在立即销毁前调用两次 discovery disconnect，
+ASan 报告 `DisconnectTimerEnd` 写入已释放的 channel。第二次 Start 覆盖第一任务的句柄，
+channel deinit 只取消后一任务，TimerDestroy 仍执行前一任务的 end callback。
+因此 discovery 的断开任务也必须使用同一 owner 的原子发布/取消，重复请求不创建第二任务。
+此问题由真实 C 执行反例建立，与 Host 锁键的关系未经证明。
+
+`HandleDeviceStartInputReports` 原来在设备锁外更新 reportHolder.reportLength，而媒体线程
+在设备锁内读取该长度并生成报告。长度更新应移入 `IHS_HIDDeviceStartInputReports` 的
+同一设备锁内，与 provider 初始报告生成构成一次操作。这是本地数据竞争修复，
+不改变 StartInputReports 的线上消息或响应语义。
+
+### 14.16 发送类型与非 HID 控制消息的补充核验
+
+**直接调用证据：** `CStreamFrame::Send 0x7f3118` 将 bool=true 分派到可靠 Send，
+false 在 `0x7f314c` **尾调用 b** 到 SendUnreliable。静态列表中的日志
+`0x7a7430`、认证 `0x7a7d08`、控制 `0x7a7e00/0x7a7e70`、帧事件 `0x7a8638`、
+统计 `0x7a8c0c`、日志上传 `0x7a8e94/0x7a8fac/0x7a9034`、debug dump `0x7ac7c0`、
+ClientHandshake `0x7acf1c` 均传 true。`SendDataLost 0x7abe2c` 传 false；
+麦克风 `0x7a8ab8` 读取协商状态字节。ACK/NACK 走 channel 的独立反馈路径。
+因此不能把“数据丢失通知使用不可靠发送”泛化为“HID/统计应改成不可靠”。
+本地 `ch_stats.c` 可靠发送、`ch_data.c` 不可靠 DataLost 的选择与此相符。
+这里列举的是可见静态调用，并非证明动态调用不存在。
+
+**接收行为证据：**
+
+- `OnSetQoS 0x7add24–0x7add30` 把 use_qos 左移一位后传给 transport；
+  `CStreamTransportUDP::SetQOS 0x802288/0x8022b8` 调用 setsockopt 设置本地网络选项，
+  不是 HID 使能消息。本地仍只记录该消息，这是沿用上游的 QoS 能力差异，
+  不能直接把 Android 的 socket 常数照抄为 Switch 常数，也没有证据将其称为锁键根因。
+- `OnSetTargetBitrate 0x7aebf8–0x7aec28` 保存目标码率并通知 decoder/player 回调；
+  `CStreamPlayer::SetTargetBitrate 0x7c9df4` 是空实现，standalone H.264 decoder
+  `0x7b1234` 则可向加速后端转发。本地已有 setTargetBitrate 回调；不是要求回复
+  一条隐藏的控制确认。常规可靠 ACK 仍由传输层处理。
+- `OnVideoEncoderInfo 0x7aee94–0x7aeeac` 只保存编码器说明字符串，没有解码器重建
+  或控制回复。本地只记录该字符串；不能由 NVENC 字样推断编码器故障。
+- `OnControllerConfigMessage 0x7afcec–0x7afd00` 转发 player 虚方法，
+  本二进制中的基础 player 实现 `0x7c9e04` 直接 ret；重定位 `0xc44560` 引用该实现。
+  这不足以建立“必须额外发送 ControllerConfig 才能使 HID 生效”的说法。
+  完整的 UI 配置构造链和派生类型覆盖仍不能仅凭此叶函数宣称已穷尽。
+
+### 14.17 实机输入与版本归属的证据
+
+2026-09-08，用户游玩后反馈：“我玩了一会，非常好，似乎 20s 卡死消失了”。
+对应 NRO 为 §14.13 的 `6c0e9b44…80ab9f8`；PC 侧退出摘要记录串流 738630ms，
+接收/解码 41687 帧、显示 41510 帧，首帧 1712ms。保存的输入采样最后记录
+28729 批 HID 发送，1 个正在等待确认的包年龄 3ms，全程观测的最大确认延迟 146ms，
+没有 giveup、supersede 或发送失败。用户的操作反馈是游戏生效的证据；ACK 数据
+只能旁证可靠传输，不能单独得出相同结论。
+
+**结论边界：** 此次约 12 分 19 秒游玩没有复现原症状，支持修正版改善了问题。
+未做逐项回退对照，没有同轮 Host 解密日志，因此不能把根因唯一归到 NACK、
+报告顺序或某一项修复，也不能保证所有网络条件下永不复现。
+nxlink 日志记录退出原因为 `hotkey:vol_up+sticks`，且诊断线程在 IHS_Quit 前结束；
+不由 PC 侧日志推断 Switch 的最终屏幕状态。
+用户随后另外确认此次退出恢复正常，并指出旧版有时退出报错。这是本轮退出行为的
+真机正面证据，支持清理修正有效；它不提供旧版异常的调用栈，不能唯一定位到某个清理点。
+
+游玩期间另以离线反例修正了 §14.15 的重复断开 UAF 和报告长度锁。
+含这两项后续修复的构建 SHA-256 为
+`74d1cf53606e6dff4cb57bcb1bca3c03f5a4f4a594f833e68ffb9a29b9d38bc2`；
+29 项测试在普通、ASan/UBSan、TSan 配置下均通过。该构建与上述已实测构建不同，
+不能把前者的完整运行时验证归给后者。

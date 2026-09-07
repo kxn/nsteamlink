@@ -2724,7 +2724,7 @@ static void diag_disk_write_tick(FILE *fp, FILE *marker_fp, app_state *state,
     /* Merge queued IHS logs into the diag file: control-plane events
      * (unhandled messages, disable windows, stop flow) must survive on SD,
      * not evaporate in the volatile console ring. */
-    for (;;) {
+    for (unsigned drained = 0; drained < LOGQ_LEN; drained++) {
         pthread_mutex_lock(&logq_lock);
         if (logq_head == logq_tail) {
             pthread_mutex_unlock(&logq_lock);
@@ -2739,10 +2739,11 @@ static void diag_disk_write_tick(FILE *fp, FILE *marker_fp, app_state *state,
         diag_disk_printf(fp, "log ms=%" PRIu64 " %s\n", tms, local);
         log_udp_send(local);
     }
-    {
-        static char hidrep_buf[4096];
+    for (unsigned chunk = 0; chunk < 32; chunk++) {
+        char hidrep_buf[4096];
         size_t n = IHS_SessionChannelControlDrainPendingHIDReports(
             hidrep_buf, sizeof(hidrep_buf));
+        if (n == 0) break;
         if (n > 0) {
             diag_disk_printf(fp, "%.*s", (int) n, hidrep_buf);
         }
@@ -4322,6 +4323,13 @@ int main(int argc, char **argv) {
     update_runtime_flags(&state, &runtime);
     write_exit_stage("cleanup:client:done");
 
+    /* The final diagnostic tick drains IHS-owned queues; join before IHS_Quit
+     * destroys their mutex. Session/client producers have already stopped. */
+    logline("cleanup: join diag disk");
+    write_exit_stage("cleanup:diag_disk_join:start");
+    diag_disk_stop_thread();
+    write_exit_stage("cleanup:diag_disk_join:done");
+
     if (runtime.ihs_initialized) {
         logline("cleanup: IHS_Quit");
         write_exit_stage("cleanup:ihs_quit:start");
@@ -4332,11 +4340,6 @@ int main(int argc, char **argv) {
     } else {
         write_exit_stage("cleanup:ihs_quit:skipped");
     }
-
-    logline("cleanup: join diag disk");
-    write_exit_stage("cleanup:diag_disk_join:start");
-    diag_disk_stop_thread();
-    write_exit_stage("cleanup:diag_disk_join:done");
 
     write_exit_stage("cleanup:media_shutdown:start");
     stream_media_shutdown();

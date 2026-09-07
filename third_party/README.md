@@ -19,23 +19,19 @@ submodule 工作区逐字节一致。旧 patch 文件已删除，需要查阅时
 `third_party/patches/ihslib/`（0001–0013 为按主题分层的历史记录，0020 为当时的
 权威累计快照；分层补丁单独/顺序重放已不可靠）。
 
-改动内容按主题：
+改动内容按主题（协议依据见 `docs/STEAMLINK_PROTOCOL_RE.md` §14、decisions D-042）：
 
-- Switch/libnx 可移植性：socket/线程/构建适配，SDL HID provider 改为可选；
-  授权请求固定缓冲区复制后显式补 NUL；streaming request 不在持有 client base 锁时
-  启动 timer；授权响应与 pairing 消息日志。
-- SDL HID provider：SDL2 兼容垫片（Switch 无 SDL3 portlib）；wire report 长度跟随
-  `StartInputReports(length=...)`；active_input 与 player-index feature report 修正；
-  `IHS_HIDRefreshSDLGameControllers()` 全量状态心跳（D-030）。
-- 控制通道可靠状态机（D-034）：初发前登记、精确 ACK 删除、NACK 立即重发不设次数上限；
-  被新完整快照取代的旧 HID 包三次补洞后以 superseded 退休；HID 双可靠在途 lane +
-  最新待发快照，单 ACK 永久缺失不再锁死输入；SDL 线上只发完整状态。
-- 会话稳定性：session negotiation 显式请求 `enable_input_streaming=true`；
-  host 侧重发 `StartVideoData` 时先 remove 再重建 video channel；
-  `IHS_SessionChannelRemove()` 的 `numChannels` 簿记修复（D-029）；
-  session socket 10ms receive timeout，StopRequest 后 join 有界返回（D-035）。
-- 测试：重传状态机、HID admission、HID report replace、disconnect-destroy 回归，
-  共 27 例。
+- Switch/libnx 构建、socket 和 SDL2 兼容适配；认证字符串 NUL 终止和消息诊断。
+- HID：报告长度跟随 StartInputReports；状态变化采用 delta/full 自适应，显式重置用 full；
+  收集与发送统一排序，active_input 按实际活动计算，相同状态不额外发送定期快照。
+- 可靠传输：初发前登记，累计 ACK 与选择 NACK 正确释放已确认包，缺失包持续重传；
+  接收窗口保留空洞并扩容，ACK echo 驱动 RTT 与时钟偏移估计。
+- 视频/统计：等待 StartVideoData 后创建或替换解码器；帧事件首项加时钟偏移、后续 delta；
+  媒体可靠模式尚未实现，协商 reliable_data=false。
+- 生命周期与诊断：有界 socket 唤醒，stop/join 后释放依赖，设备快照延迟释放；
+  日志队列显式记录截断/掉条，诊断输出先检查容量。
+- 回归入口：host CTest、`scripts/audit-ihslib-control.sh` 协议反例探针；
+  Switch 运行行为必须以真机证据验证。
 
 ## 后续改 ihslib 的流程（取代 patch 流程，D-037）
 
