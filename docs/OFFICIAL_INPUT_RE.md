@@ -658,3 +658,41 @@ host 消息全部解密失败被丢（43×RemoteHID=host→client 震动、2×Se
 - ~27 帧 host 消息百余秒未送达：若官方 host 无限重传未 ACK 包，则
   我们的累计 ACK/NACK 反馈可能让 host 误信洞已填。需结合 host 日志
   与/或下一步 pcap 密文层时序分析。
+
+### 18.4 host 日志比对（kxn-pc streaming_log.txt，2026-09-07 会话）【已验证】
+
+游戏：黑神话：悟空（gameID 2358720），20:17:47 串流开始，20:26:29 退出到桌面。
+
+host 侧唯一异常窗口 **20:24:21**：
+```
+NVENC: Hardware encoding is too slow, disabling
+Encoder stage failed [type=2, codec=4]
+CGameStreamVideoStageMFX: Couldn't init session ×4 → MFX not supported
+Created encoder X264 (libx264 superfast zerolatency, 4 threads)
+>>> Capture method set to Game polled D3D11 NV12 + libx264 main
+Setting target framerate: 30.00 [game 35.59ms (game)]
+```
+与客户端证据对齐：
+- 客户端加密失配起点 20:24:00（丢 host 一帧）——比 NVENC 宣告死亡早 21s，
+  即 "too slow" 恶化期从 ~20:24:00 已开始（GPU/场景重载）；
+- 客户端第二次卡死的右摇杆事件簇 20:25:28-20:25:59 紧跟该窗口之后；
+- 20:18:34 game=111ms 尖峰（游戏加载）对应客户端 40.7s 处 2.5s 视频停顿
+  与 31-51s 零输入窗口——第一次卡死【推断】为游戏加载期。
+
+【结论（18.3 假设修正）】host 日志无任何输入/解密/序列类报错——
+host 侧不存在输入流持久洞（与我方发送侧 62ms 封顶重发一致）。
+第二次卡死【推断】= 20:24:00-20:24:30 的 host 侧 GPU/编码灾难窗口本身：
+NVENC 超时恶化→丢弃→管线重建期间，host 系统（含输入 apply）停顿 ~20-30s，
+恢复后客户端收到的事件流留下永久 +1 加密失配（18.2，已修复自愈）。
+此为 host 本机负载事件（黑神话重场景 + NVENC 崩溃），非协议 bug；
+协议侧唯一真实缺陷是 18.2 的计数器不自愈，已修。
+
+### 18.5 "Slow framerate" 假警报成因【已验证】
+
+host 日志每秒 `Slow framerate: ... network 3118880768.00, decode 3xx,
+display 7xx-10xx (network)(decode)(display)` 中 network/decode/display 三列
+为 10^8-10^9 量级假值：均由我方上报的帧级时间戳推导，单位仍不正确
+（§18.1 期间客户端真实帧率正常、hidEvAge≤50ms）。game 列（host 本机测量）
+真实有效。已修的 16.16 定点秒（packet.c）覆盖了帧事件时间戳，
+但帧 ACK 中的 decode/display 阶段时间戳单位仍未对齐——后续待办，
+非卡死相关。
