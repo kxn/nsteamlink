@@ -73,7 +73,7 @@ sd-root/                        → 拷到 SD 卡根目录
 ## 开发迭代（本项目专用）
 
 ```bash
-./scripts/build-switch.sh
+./scripts/build-switch.sh -DNSL_DIAGNOSTICS=ON
 # hbmenu 开启网络接收后上传；不要先探测 28280 端口。
 $DEVKITPRO/tools/bin/nxlink -a 10.10.10.17 -s build/switch/app/nsteamlink.nro
 # 或复制到 SD 卡 switch/ 目录后手动启动。
@@ -87,10 +87,12 @@ tools/switch-debugctl.py 10.10.10.17 diag current
 - 使用 Title Takeover 启动 hbmenu；在 hbmenu 按 L 开启网络接收。
 - 正式应用中直接完成发现、配对和串流，不需先运行另一个 NRO。
 - 首页 L/R 换电脑、A 确认、B 返回、X 选项、Y 电脑信息，也可触摸操作。
-- 串流中同时长按 −/+ 0.8 秒或点“菜单”；在游玩菜单中断开，返回首页后 B 退出。
-- 游玩菜单内单独长按 X 一秒切换 Debug 浮层。完整诊断接口见 [UDP_DEBUG](UDP_DEBUG.md)。
+- 串流中同时长按 −/+ 0.8 秒；在游玩菜单中断开，返回首页后 B 退出。
+- 仅诊断构建：游玩菜单内单独长按 X 一秒切换 Debug 浮层。完整诊断接口见 [UDP_DEBUG](UDP_DEBUG.md)。
 - 设备身份、逐电脑授权和设置保存在 `sdmc:/switch/nsteamlink/profile.bin`。
   旧 `auth.bin` 迁移保留设备身份；旧格式无法证明主机唯一身份，因此首次连接需重新配对。
 - `switch-stream-selftest.nro` 使用同一 runtime，默认 600 个渲染帧后清理退出，无自动串流。
 - 本机 Switch 调试地址为 `10.10.10.17`，netloader 端口为 `28280`；直接使用 nxlink，不发空 TCP 探测。
 - 涉及生命周期的验证要区分日志清理完成和屏幕返回 hbmenu；后一项必须由实机观察确认。
+
+普通 Release NRO 不包含诊断入口。NSP 安装包与发版构建方法见 [RELEASING](RELEASING.md)。

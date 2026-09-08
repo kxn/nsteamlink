@@ -1,6 +1,7 @@
 # UDP 调试
 
-正式应用和 `switch-stream-selftest.nro` 的诊断端口为 UDP `28772`。
+本页仅适用于 `-DNSL_DIAGNOSTICS=ON` 构建；默认 Release 不包含这些入口或日志。
+诊断应用和 `switch-stream-selftest.nro` 的诊断端口为 UDP `28772`。
 调试 Switch 地址为 `10.10.10.17`；命令由 `app/platforms/common/runtime.c` 实现。
 
 ```bash
@@ -23,7 +24,7 @@ tools/switch-debugctl.py 10.10.10.17 diag prev
 | `diag prev` | 上次启动日志的缓存尾部，最多 3500 字节 |
 
 该产品入口的 UDP 接口只读。连接、配对、安全码、停流和退出通过同一套屏幕／手柄操作完成。
-手动地址位于选项 → 设置 → 高级。图形、IHS 初始化及发现不再由调试命令分步驱动。
+手动地址位于选项 → 设置 → 手动地址。图形、IHS 初始化及发现不再由调试命令分步驱动。
 独立 `switch-discover` 工具的 `hosts/select/pair/code/exit` 等命令属于其工具接口，
 不适用于正式应用。
 
