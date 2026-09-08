@@ -1155,3 +1155,233 @@ SetActivity，不再要求新增收包计数实测。保留原有完整会话结
 边界：以上确认了官方处理及本地缺口，不能倒推出 8e918e0 旧日志未记录的 activity 值，
 也不能宣称该次真机必定收到过 StopVideoData。用户确认退出游戏后声音来自其他程序，
 该观察与“视频停止但音频可能继续”的模型相容，不等同于抓到具体结束包。
+
+### 21.1 直启退出复现与视频流替换核对
+
+Evidence：ae61751 真机日志 `/tmp/nsl-ae61751-device.log` 中两次串流均为：
+
+- 第 81/193 行：SetActivity activity=2 gameid=2358720。
+- 第 86/199 行：StartVideoData(channel=4, codec=4, size=1280x720)。
+- 第 123/238 行：SetActivity activity=3 gameid=413080 name=。
+- 第 135/250 行：本地 watchdog，idle_ms=10004/10006，video_active=1，host_stop=0。
+- 这两段从游戏转 Desktop 到 watchdog 清理之间，没有记录 StopVideoData、
+  第二个 StartVideoData 或明确主机会话停止；video lifecycle: stop 在清理后才出现。
+- 用户观察 Switch 先变黑，电脑也在黑屏返回 Steam；其他程序声音仍经串流播放。
+
+Conclusion：最新日志确认的是 Desktop 活动，不能再把 413080 仅当作未知游戏 ID。
+这次报错确由本地无画面 watchdog 发起；显式 StopVideoData 的修正未覆盖这条路径。
+日志只覆盖到本地断开，不能证明无限等待后主机也绝不会恢复视频，也不能证明未记录的
+包从未发出。黑屏实机观察不因本地 video_active 仍为 1 而被否定。
+
+Evidence：官方同版本 ARM64：
+
+- OnStartVideoData @0x7ae074：@0x7ae0bc–e0 停止并析构旧视频解码器；
+  @0x7ae0e4–ec 保存消息中的新通道；@0x7ae1d8 按新配置 StartVideoDecoding。
+  不需要先收到 StopVideoData，不为桌面和游戏各保留一条等待中的固定视频流。
+- SetLaunchedActivity @0x7b7140 保存 launched ID 到 player+488；
+  SDL_main @0x75cd08 调用它。SetActivity @0x7c5290 的当前活动另存 player+496/+504。
+- BHandleEvent @0x7b8238–3c 在 SDL 事件类型 0x100（Quit）才跳到
+  @0x7b8ad0 检查 launched ID；这不是主机游戏退出通知。
+- SendQuitRequest @0x7b9d88 根据 launched ID 和另外的模式/退出状态位选择
+  Disconnect 或 SendStopRequest，不能由此推导“Desktop 活动自动结束”。
+
+Conclusion：官方有视频通道替换能力，也确实分别保存“启动意图”和“当前活动”，
+但以上调用链没有证明直启游戏在 Desktop 活动时自动断开。NSteamLink 的
+ch_control_video.c 同样移除旧视频通道并使用新 StartVideoData 创建通道；runtime.c
+没有按桌面通道 ID 等待的逻辑。当前实机片段也没有观察到通道替换。
+
+设计边界：直启结束回 NSteamLink 首页、Steam 入口保留串流，可以作为产品策略，
+但必须有独立的游戏结束证据，不能只使用 SetActivity(Desktop)、无帧时长或 ID 变化。
+可核对的协议候选是发现响应 games_running；它表示主机是否有运行中的游戏，
+并非目标游戏的进程退出事件。当前 fork 没有向调用者保留 has_games_running，
+且开流时停止周期发现，因此首页缓存的 false 或缺省 false 均不能用于立即结束。
+“主机是否在直启结束时停止捕获但保持会话”仍是待验证的主机策略，不能冒充官方结论。
+
+### 21.2 主机运行状态作为直启结束的补充依据
+
+Evidence：2026-09-08 开发机对当前 Steam 主机 10.10.10.166:27036 发送三次
+单播 Discovery（仅查询状态，不进行配对或开流）。仅接受对应地址、正确 magic 和
+Status 消息类型后解码，三次相同 client_id/instance_id 的响应分别含：
+
+| 主机 timestamp | has_games_running / games_running | has_remoteplay_active |
+| --- | --- | --- |
+| 1788878389 | true / false | false |
+| 1788878390 | true / false | false |
+| 1788878392 | true / false | false |
+
+Conclusion：当前主机实际支持带时间戳的“有无游戏运行”状态；remoteplay_active
+未提供，不能把其缺省 false 当作会话结束。这次只读查询不是游戏退出瞬间的抓取，
+不能证明 games_running 的退出更新延迟、切屏表现或所有类型游戏的跟踪准确度。
+
+官方附加核对：CServerManager::Update @0x79890c 接收发现消息，并在
+@0x798ab0 调用 RequestStatus；HandleBroadcastMsgStatus @0x79ebdc
+更新 CServerInfo，发生变化时 @0x79ec88 调用 delegate。此路径没有直接根据
+游戏结束断开串流的分支。CStreamTransportClient::OnServerOffline @0x7d4e58
+是空返回。不能将本文提出的组合判定称为已还原的官方自动退出算法。
+
+可实现策略：原始直启意图 + 已收到目标 Game 活动 + 当前 Desktop 活动 + 同一
+主机新鲜、显式、稳定的 games_running=false，才允许自动正常回首页。
+这是 NSteamLink 的产品收尾策略，不把 Desktop 定义成进程退出。状态只反映
+主机是否还有游戏，不提供逐个 AppID 的运行列表；其他游戏仍在运行时不能用它
+确认目标游戏已结束。缺字段、缺时间戳、主机实例改变或查询不通均保留未知状态。
+
+### 21.3 取消启动后立即重连的官方事务隔离
+
+Evidence：同一官方 ARM64：
+
+- StartStreaming @0x798d94：state==5 且目标主机相同时 @0x798dc0–d4 直接
+  返回，避免同一在途请求重复创建；新请求 @0x798e90 生成随机编号，
+  @0x798ea0 保存到 manager+512。
+- SendCancelStreamingRequest @0x799ac4：@0x799b54 读取原编号，
+  @0x799b64 写入 CMsgRemoteDeviceStreamingCancelRequest.request_id，
+  @0x799b80–84 发消息类型 10 到目标主机。
+- StopStreaming @0x79987c：按状态分别取消 authorization 或 streaming；
+  @0x799980–8c 转空闲并清除目标/账号/请求编号。此路径没有等待 cancel ACK
+  的分支，不能宣称 Steam 已在此刻撤销启动游戏的所有副作用。
+- HandleStartStreamingProgress @0x79e788：@0x79e790–98 要求编号非零且
+  等于当前编号；不匹配走忽略日志。
+- HandleStartStreamingResponse @0x79e828：@0x79e884–8c 同样核对编号。
+  不匹配进入 @0x79e94c；若 result==InProgress(5)，@0x79e96c–b4
+  构造取消消息，使用迟到响应自身的 request_id（@0x79e97c），再次取消旧请求。
+  其他不匹配结果返回，不把旧 success 接到新事务。
+
+Conclusion：官方既有本地请求隔离，也有带编号的主机端取消，并处理取消消息
+丢失或迟到的后续 InProgress。请求编号保护的是启动事务，不代表 games_running
+状态查询也携带同一编号；两类消息不能混用其关联保证。
+
+本地对照：UI B 在连接页增加 generation 并进入 STOPPING；收到 worker 的
+STOPPED 前 A 不会启动新请求。execute 在替换 active 前 join/destroy 旧 client，
+UI 拒绝旧 generation 事件，IHS streaming response 有 request_id 比较。
+但是 stop_client 只有 AuthorizationCancel，没有 StreamingCancel；fork 当前也
+没有对应 API。StreamingResponseVisit 还在 request_id 校验前更新 lastMsgTime/
+lastMsgType，意味着旧响应虽不成功连接，却能干扰当前请求的超时计时；
+IHS_ClientStreamingCallback 忽略来源地址。
+
+Conclusion：当前 B/A 不会必然把旧 success 直接接成新连接，但主机端旧启动请求
+没有被明确取消，不能以本地 generation 推出完整安全。主机旧请求与新请求冲突
+的具体表现（Busy、继续启动等）尚未通过这一操作序列实测。
+
+## 22. 局域网串流 Request 报文与发送场景核对
+
+范围：discovery.proto、remoteplay.proto、hiddevices.proto 中全部名称含 Request
+的协议项，以及 GetCursorImage/GetTouchConfigData/GetTouchIconData 这类实际查询。
+补查与连接生命周期相关的 Disconnect、Pause/Resume、KeepAlive 和协商。
+不将 APK 中商店 HTTP、Steam 云端 CM/RPC、VR 等所有命名为 Request 的消息
+都当作局域网客户端必发项。本表是静态协议参考，不代表所有路径完成真机验收。
+
+证据基线：官方 Android 1.3.32 arm64 libmain.so（SHA256
+50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e）；
+本地 ae61751 / ihslib 38d842b。地址均是官方虚拟地址，非文件偏移。
+
+### 22.1 启动、配对与会话请求
+
+| 报文 | 官方发送/使用场景和证据 | 本地对应及结论 |
+| --- | --- | --- |
+| AuthorizationRequest（发现 3） | SendAuthorizeDeviceRequest @79a490、BCreateAuthorizationRequest @79c594；配对授权阶段 | client/authorization.c 定时发送 KeyEscrow 路径，已有；不因开流就重复配对。官方还有密钥交换分支，不能宣称所有认证变体齐全 |
+| AuthorizationCancelRequest（9） | SendCancelAuthorizationRequest @7999b8；StopStreaming 在授权状态调用 | AuthorizationCancelVisit 已发送，runtime stop_client 已调用；不是本轮漏发项。取消消息没有 streaming request_id，不能照搬开流编号策略 |
+| StreamingRequest（5） | StartStreaming @798d94 建编号，SendStartStreamingRequest @799328 使用原编号重试；同主机在途请求去重 | client/streaming.c 有随机编号和重复发送；stream_interface 固定 BigPicture 属请求配置差异，不能凭名字改变其主机行为 |
+| StreamingCancelRequest（10） | 取消原 request_id；迟到 InProgress 再取消其旧编号，详见 §21.3 | 缺发送/API；只停止本地 client 不等于撤销主机启动请求，必须补齐事务级取消 |
+| ProofRequest（7）→ProofResponse（8） | 主机发 challenge，HandleStreamingProofRequest @79e1c0 校验目标 client_id；有 request_id 时比较。@79e234–40 处理 update_secret，@79e4d4 SHA256、@79e510 保存密钥 | 已响应普通 challenge；忽略源地址、未检查目标 client_id，且无条件比较 request_id，丢失“可选字段不存在”的兼容语义。没有 update_secret/updated_secret 处理；属于条件认证兼容缺口，不能无证据直接轮换现有凭据 |
+| AuthenticationRequest（控制 1） | StartAuthentication @7a7b7c，握手后/握手分发路径发送 HMAC 会话认证；不是配对 PIN | ch_control_authentication.c 已发送，不能用配对或开流请求替代；本轮未发现整条漏发 |
+| DiscoveryPingRequest（会话发现 1）→PingResponse（2） | OnPingRequest @7acc20 收到探测后复制探测信息并按尺寸回包；不是首页 UDP 发现请求 | ch_discovery.c 已解析并回 PingResponse；没有证据需要客户端周期性额外发 PingRequest 才能结束游戏 |
+| StopRequest（控制 129） | SendStopRequest @7abb4c 仅 streaming 状态发；菜单 stop_game 使用它，见 §22.2 | 已发，但 session.c 的通用 IHS_SessionDisconnect 无差别发送，场景不等价于官方；须拆开停止游戏与停止串流 |
+| QuitRequest（控制 83） | SendQuitRequest @7abbe0 有 streaming 门槛和发送实现；静态直接调用索引未找到有效产品调用者 | 本地未发送，但缺乏应发场景证据，不补。CStreamPlayer::SendQuitRequest 实际可能调用 StopRequest/Disconnect，函数名不能当报文名 |
+| VirtualHereRequest（102） | SendVirtualHereRequest @7aaf20；调用者 OnDeviceAvailable @7bce58，在设备共享启用且服务状态需要时 @7bcf14 发 | 当前无 USB-over-network/VirtualHere 功能；不应在普通 Switch HID 连接时补发 |
+| ControllerConfigMsg.RequestConfigsForApp（子类型 0） | 存在枚举及 SendControllerConfigMessage @7abb30，未找到本次二进制的直接业务发送调用 | fork 只解析丢弃，配置编辑未实现；不能把枚举存在等同启动必需 |
+| ControllerConfigMsg.RequestActiveConfig（子类型 4） | 同上；官方 player OnControllerConfigMessage @7c9e04 是空返回 | 同上，不自动添加请求 |
+| HID DeviceRequestFullReport | 主机→客户端恢复完整手柄报告，HandleRemoteHIDMessage @7c6be8 统一分发 | control_hid.c 已调设备 requestFullReport 并立即发送完整报告；不是客户端主动请求主机的游戏结束消息 |
+
+### 22.2 StopRequest 的菜单语义与错误发送范围
+
+Evidence：SetupMenubarElements @773e40 使用相对字符串表 @446694，
+逐个写入 overlay+88+i*8；解码表得到 +160=menu_stop_streaming，
++168=menu_stop_game。BOnAction @77465c：
+
+- 匹配 +160 后 @774878–80 调 CStreamClient::Disconnect。
+- 匹配 +168 后 @774888–8c 调 CStreamPlayer::SendStopRequest；
+  player @7baf5c 转调 client SendStopRequest，最终发送控制 129。
+- CStreamClient::Disconnect @7a7acc 调 CStreamConnection::Disconnect，
+  清理会话并 ResetConnection，此函数不发送控制 129。
+
+Conclusion：官方明确分开“停止串流”和“停止游戏”。本地通用断开无差别
+发送 StopRequest 与之不一致。可证明发送场景错误；不能仅凭静态代码宣称
+用户每一次断开都实际杀掉了游戏，主机最终行为还取决于会话和主机实现。
+尤其不能在收到主机结束、自动返回、网络异常或取消新请求时用通用 StopRequest
+补偿未知旧状态。保留游戏的断开应使用 transport Disconnect 及有界清理；
+停止游戏应有独立、明确的产品动作。
+
+### 22.3 查询及相邻生命周期消息
+
+| 消息 | 官方场景 | 本地结论 |
+| --- | --- | --- |
+| GetCursorImage（66） | SetCursor @7c5cb0 缓存未命中时 @7c5d30 请求指定 cursor_id | control_cursor.c 已有按回调缓存结果查询；runtime 只注册 activityState，未接光标呈现，属于功能未接线，不是视频结束缺包 |
+| GetTouchConfigData（111） | SetTouchConfig @7c66e8 → SendGetTouchConfigData @7ab698 | 手机虚拟触控配置功能未接；普通物理 HID 不需要强行请求 |
+| GetTouchIconData（115） | player GetTouchIconData @7baf64 → client @7ab748，为触控图标取资源 | 本地未实现虚拟触控布局，不补发；不是游戏封面 |
+| Discovery/Status | RequestStatus @79a278，manager Update @798ab0 周期调用 | 首页已广播和单播已保存主机；开流停止查询。为直启结束补充主机状态是本产品策略，不是假设官方靠它自动退出 |
+| ClientHandshake / NegotiationSetConfig / NegotiationComplete | StartAuthentication、OnNegotiationInit @7ad698、OnNegotiationSetConfig @7adb28 分阶段处理 | 现有认证/协商模块已发送；未发现整个必要阶段漏发。能力字段应只宣告实际支持项 |
+| KeepAlive（9） | HandleStreaming @7a7140、SendKeepAlive @7a8744，独立于新视频帧 | ch_control_keepalive.c 已首次即发并周期发送；黑屏时不应额外启动第二个保活循环 |
+| Pause / Resume（122/123） | client @7b02bc/@7b0384；SDL 生命周期事件触发。Resume 还通知 transport，并分别发送音视频 DataLost | 应用尚未实现保留会话的暂停/恢复协议；只在实现此能力时成对接入，不能把启动取消改成 Pause。缺口需与 Switch 生命周期单独验收 |
+| VideoDecoderInfo / DataLost | @7aacf0 / @7abd4c；解码器描述、媒体恢复反馈 | video/ch_data_video.c 和 ch_data.c 已有发送，不是整体漏发；不能用反馈请求替代游戏结束判定 |
+
+### 22.4 RemoteHID 的逐请求分发
+
+主机发送 CHIDMessageToRemote，客户端返回 CHIDMessageFromRemote 或输入报告。
+官方 RunHIDDeviceMessageThread @7c6a0c 解析后 @7c6b50 调 HandleRemoteHIDMessage
+@7c6be8；后者 @7c6c60–6c 将请求编号写入回复。不能要求 Switch 反向发送
+DeviceOpen 等主机指令，也不能认为所有指令都要同一种 ACK。
+
+| 主机命令 | fork control_hid.c |
+| --- | --- |
+| DeviceOpen | 有 HandleDeviceOpen 和对应结果回复 |
+| DeviceClose | 有 HandleDeviceClose，关闭设备 |
+| DeviceWrite | 有处理及结果回复 |
+| DeviceRead | 有处理及数据/结果回复 |
+| DeviceSendFeatureReport | 有处理及结果回复 |
+| DeviceGetFeatureReport | 有处理及数据/结果回复 |
+| DeviceGetVendorString | 已有处理及字符串/失败回复（撤回初次审计的漏看结论） |
+| DeviceGetProductString | 已有处理及字符串/失败回复（撤回初次审计的漏看结论） |
+| DeviceGetSerialNumberString | 有处理及字符串回复 |
+| DeviceStartInputReports | 有处理，开启报告 |
+| DeviceRequestFullReport | 有处理，发送完整报告 |
+| DeviceDisconnect | 有设备断开处理 |
+
+官方 @7c6d10–1c 分别把命令 8/9 分派到 @7c6f34/@7c71c8，
+对应 proto 的 VendorString/ProductString。实施时完整重读 control_hid.c，
+发现原来已有这两个分派及处理函数，初次审计受截断输出影响漏看；明确撤回
+“这两种查询被静默忽略”的结论，不重复添加已有实现。
+其余“有处理”表示路径存在，
+不代表所有设备返回值/编码/线程时序已完成逐字节一致性验证。
+
+### 22.5 跨请求的接收校验
+
+StreamingResponseVisit 在 request_id 校验前修改 lastMsgTime/lastMsgType；
+StreamingProgress 本身也没有独立匹配后再更新的分支。旧消息或不相干消息
+可能延长新请求等待，这是源码可见的时序缺口。StreamingCallback 和
+AuthorizationCallback 都忽略来源地址；后者没有开流那样的 request_id 可
+用于替代来源校验。必须先检查目标主机、当前事务与消息字段 presence，再
+更新计时/状态或回调。认证成功仅凭回调上下文指向当前目标，并不足以证明
+该响应来自当前目标。此结论不要求改变现有配对 PIN / connect PIN 语义。
+
+### 22.6 接线修订与兼容边界
+
+- 通用断开只使用传输 Disconnect；worker 等有界断开重试结束再 join，
+  不在发送之前立即 interrupt。无差别 StopRequest 及其 ACK 等待状态已移除。
+- 启动事务取消立即撤销其 timer owner，保留 8 条、60 秒有效的取消编号；
+  已取消 InProgress 按原编号重发取消，至少间隔 250ms。已消费为会话的
+  成功请求单独标记 Established，之后不再把会话断开当作启动取消。
+- runtime 保留 client 接收 socket，取消的 timer/回调先被同步隔离，再修改
+  active generation。STOPPING 仍等待 worker 完成；不等待不存在的取消 ACK。
+- 接收前校验来源 IP/端口、目标 client_id、可用的 instance_id 及请求编号；
+  仅有效 Proof/Response/Progress 更新等待计时。Proof 的可选编号按 presence
+  处理。终态响应只消费一次。
+- 当前 KeyEscrow 客户端使用安装级共享 secret，未实现官方按主机保存的轮换
+  密钥链。ProofResponse 明确携带 updated_secret=false，使用原 secret 回答
+  challenge，不伪称已更新、不覆盖其他主机配对。主机要求轮换时是否接受
+  此兼容响应仍需对应主机证据；不能宣称实现了完整自动密钥轮换。
+- 主机状态 presence/timestamp 透传；直启观察必须先有目标活动后的画面，
+  并观察到主机运行游戏，再在 Desktop 接收两份递增时间戳的明确 false。
+  旧时间戳不计入、缺字段清确认、活动切换清确认，新连接重置全部观察。
+  Steam 入口不自动结束；Desktop/SecureDesktop 不触发游戏无帧 watchdog。
+
+风险边界：主机级 games_running 不能识别同时运行的其他游戏；没有明确字段/
+运行基线时保守保持连接。该策略不是已逆向出的官方游戏自动结束算法。

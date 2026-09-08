@@ -3,6 +3,7 @@
 #include "discovery.pb-c.h"
 #include "media.h"
 #include "platform/system.h"
+#include "services/launch_watch.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -34,6 +35,9 @@ struct sl_runtime {
     IHS_ClientConfig config;
     IHS_SessionInfo session_info;
     bool video_suspended;
+    bool activity_changed;
+    sl_launch_watch launch;
+    uint64_t launch_probe_at;
     bool session_ready, connected, finished, host_stopped, first_reported, auth_ready,
         auth_consumed, request_terminal;
     uint64_t auth_account, request_at, frame_at, last_diag;
@@ -221,6 +225,16 @@ static sl_host host_from(const IHS_HostInfo *info) {
 static void discovered(IHS_Client *client, const IHS_HostInfo *h, void *ctx) {
     (void)client;
     sl_runtime *r = ctx;
+    pthread_mutex_lock(&r->lock);
+    if (r->active.type == SL_CMD_STREAM && h->clientId == r->active.host.client_id &&
+        h->instanceId == r->active.host.instance_id && h->address.port == 27036) {
+        char *ip = IHS_IPAddressToString(&h->address.ip);
+        if (ip && !strcmp(ip, r->active.host.address))
+            sl_launch_status(&r->launch, h->hasGamesRunning, h->gamesRunning, h->hasTimestamp,
+                             h->timestamp);
+        free(ip);
+    }
+    pthread_mutex_unlock(&r->lock);
     sl_host observed = host_from(h);
     char line[192];
     snprintf(line, sizeof(line), "discovery: response %.63s %.63s", observed.name,
@@ -345,11 +359,19 @@ static void audio_stop(IHS_Session *s, void *ctx) {
     stream_media_audio_stop(s);
 }
 static void activity(IHS_Session *s, int kind, uint64_t id, const char *name, void *ctx) {
-    /* Official SetActivity caches artwork only for EStreamActivityGame. */
-    if (kind != 2 || !id || !name || !name[0])
-        return;
     (void)s;
     sl_runtime *r = ctx;
+    stream_media_snapshot media;
+    stream_media_get_snapshot(&media);
+    pthread_mutex_lock(&r->lock);
+    if (r->launch.kind != kind)
+        r->activity_changed = true;
+    sl_launch_activity(&r->launch, kind, id, media.displayed_frames);
+    r->launch_probe_at = 0;
+    pthread_mutex_unlock(&r->lock);
+    /* Only Game activities belong in recent history. */
+    if (kind != 2 || !id || !name || !name[0])
+        return;
     sl_runtime_event e = {.type = SL_EVENT_ACTIVITY, .account = r->active.host.account};
     e.game.id = id;
     e.host.id = r->active.host.id;
@@ -372,6 +394,7 @@ static void stop_client(sl_runtime *r) {
         return;
     IHS_ClientStopDiscovery(r->client);
     IHS_ClientAuthorizationCancel(r->client);
+    IHS_ClientStreamingCancel(r->client);
     IHS_ClientStop(r->client);
     IHS_ClientThreadedJoin(r->client);
     IHS_ClientDestroy(r->client);
@@ -395,9 +418,10 @@ static void stop_session(sl_runtime *r) {
     sl_log("cleanup: stop/join HID worker");
     stream_media_set_hid_session(NULL, false);
     if (r->session) {
-        sl_log("cleanup: session disconnect/interrupt/join");
+        sl_log("cleanup: session disconnect/join");
         IHS_SessionDisconnect(r->session);
-        IHS_SessionInterrupt(r->session);
+        /* Discovery disconnect retries are bounded to ~1.1 s. Let the session
+         * worker send them before joining; immediate interrupt drops the goodbye. */
         IHS_SessionThreadedJoin(r->session);
         /* Callbacks no longer reference media. Stop releases frame-stage session references. */
         stream_media_video_stop(r->session);
@@ -424,7 +448,10 @@ static bool launch_session(sl_runtime *r, IHS_SessionInfo info) {
     IHS_SessionSetInputCallbacks(r->session, &input_cb, r);
     if (r->provider)
         IHS_SessionHIDAddProvider(r->session, r->provider);
-    return IHS_SessionConnect(r->session);
+    if (!IHS_SessionConnect(r->session))
+        return false;
+    IHS_ClientStreamingEstablished(r->client);
+    return true;
 }
 static bool host_info(const sl_host *h, IHS_HostInfo *out) {
     memset(out, 0, sizeof(*out));
@@ -441,24 +468,32 @@ static void execute(sl_runtime *r, sl_command cmd) {
     sl_log(trace);
     if (cmd.type == SL_CMD_SAVE)
         return;
-    /* Joining the old client before changing active generation also isolates
-     * callbacks from a canceled request whose library has no streaming-cancel API. */
-    stop_client(r);
+    /* Cancel/join each request before changing its callback generation. Keep the
+     * client socket alive so canceled launch IDs can reject late host responses. */
+    if (r->client) {
+        IHS_ClientStreamingCancel(r->client);
+        IHS_ClientAuthorizationCancel(r->client);
+    }
     stop_session(r);
-    r->active = cmd;
     r->request_at = 0;
     pthread_mutex_lock(&r->lock);
+    r->active = cmd;
+    r->launch = (sl_launch_watch){.target = cmd.game_id};
+    r->activity_changed = false;
+    r->launch_probe_at = 0;
     r->auth_ready = r->session_ready = false;
     r->auth_consumed = false;
+    r->request_terminal = false;
     pthread_mutex_unlock(&r->lock);
     if (cmd.type == SL_CMD_EXIT) {
         r->quit = true;
         return;
     }
-    if (!start_client(r)) {
+    if (!r->client && !start_client(r)) {
         fail(r, "网络服务不可用");
         return;
     }
+    IHS_ClientStartDiscovery(r->client, 3000);
     if (cmd.type == SL_CMD_CANCEL || cmd.type == SL_CMD_STOP) {
         post(r, (sl_runtime_event){.type = SL_EVENT_STOPPED});
         return;
@@ -515,6 +550,9 @@ static void execute(sl_runtime *r, sl_command cmd) {
 static void sample(sl_runtime *r, uint64_t now) {
     stream_media_snapshot s;
     stream_media_get_snapshot(&s);
+    pthread_mutex_lock(&r->lock);
+    sl_launch_frame(&r->launch, s.displayed_frames);
+    pthread_mutex_unlock(&r->lock);
 #if NSL_DIAGNOSTICS
     if (r->session) {
         IHS_SessionGetReliabilityStats(r->session, &s.reliability);
@@ -731,6 +769,35 @@ static void *worker_main(void *ctx) {
         }
         if (now - r->last_diag >= 1000)
             sample(r, now);
+        pthread_mutex_lock(&r->lock);
+        bool launch_done = sl_launch_finished(&r->launch);
+        bool activity_changed = r->activity_changed;
+        r->activity_changed = false;
+        bool desktop = r->launch.kind == 3 || r->launch.kind == 4;
+        bool probe_launch = r->session && r->launch.target && now - r->launch_probe_at >= 1000;
+        if (probe_launch)
+            r->launch_probe_at = now;
+        pthread_mutex_unlock(&r->lock);
+        if (activity_changed && r->first_reported)
+            r->frame_at = now; /* Desktop -> Game starts a fresh video wait window. */
+        if (launch_done && r->session) {
+            sl_log("launch: target played, Desktop, fresh host reports no games; normal return");
+            stop_session(r);
+            post(r, (sl_runtime_event){.type = SL_EVENT_STOPPED});
+            IHS_ClientStartDiscovery(r->client, 3000);
+            continue;
+        }
+        if (probe_launch) {
+            IHS_HostInfo host;
+            if (host_info(&r->active.host, &host)) {
+                CMsgRemoteClientBroadcastDiscovery probe =
+                    CMSG_REMOTE_CLIENT_BROADCAST_DISCOVERY__INIT;
+                probe.has_seq_num = true;
+                probe.seq_num = ++discovery_seq;
+                IHS_ClientSend(r->client, host.address, k_ERemoteClientBroadcastMsgDiscovery,
+                               (ProtobufCMessage *)&probe);
+            }
+        }
         bool video_suspended = r->session && IHS_SessionHostVideoStopped(r->session);
         if (r->video_suspended && !video_suspended) {
             r->frame_at = now;
@@ -740,7 +807,7 @@ static void *worker_main(void *ctx) {
         r->video_suspended = video_suspended;
         if (!video_suspended && r->request_at &&
             ((!r->first_reported && now - r->request_at > 45000) ||
-             (r->first_reported && now - r->frame_at > 10000))) {
+             (r->first_reported && !desktop && now - r->frame_at > 10000))) {
             /* A host stop may arrive after this loop copied finished. Read the
              * explicit reason again before teardown, so it wins over the watchdog. */
             bool normal =
