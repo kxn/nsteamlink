@@ -298,9 +298,15 @@ int main(void) {
     key(&r, SL_KEY_X, 1, 4200);
     sl_input_tick(&r, 5200);
     sl_ui_tick(&m, m.now + 160);
+#if NSL_DIAGNOSTICS
     assert(m.debug && m.page == SL_STREAM);
     sl_input_tick(&r, 7000);
     assert(m.debug);
+#else
+    assert(!m.debug && m.page == SL_MENU);
+    sl_ui_action(&m, SL_BACK, 0);
+    sl_ui_tick(&m, m.now + 160);
+#endif
     key(&r, SL_KEY_X, 0, 7100);
     assert(n == 0);
     tap(&r, 1180, 50);
@@ -311,6 +317,12 @@ int main(void) {
     n = 0;
     key(&r, SL_KEY_X, 1, 7200);
     sl_input_tick(&r, 8200);
+#if !NSL_DIAGNOSTICS
+    assert(!m.debug && m.page == SL_MENU);
+    sl_ui_action(&m, SL_DEBUG, 0);
+    assert(!m.debug && m.page == SL_MENU);
+    sl_ui_action(&m, SL_BACK, 0);
+#endif
     sl_ui_tick(&m, m.now + 160);
     assert(!m.debug && m.page == SL_STREAM);
     key(&r, SL_KEY_X, 0, 8210);

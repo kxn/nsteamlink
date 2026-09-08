@@ -21,6 +21,10 @@ app/src/            业务代码，平台无关。禁止任何平台条件编译
 app/src/platform/   HAL 接口头文件（.h）。只定义接口，不含实现
 app/platforms/<plat>/  平台后端实现（desktop / switch），只允许被 HAL 接口约束
 docs/               决策记录等文档
+cmake/              构建身份、素材嵌入和依赖构建适配
+packaging/switch/   独立 NSP 应用描述
+assets/branding/    原创图标/背景与来源提示词
+.github/workflows/  双目标测试与双格式发版
 scripts/            构建脚本（唯一构建入口）
 third_party/        第三方库（submodule / vendored），禁止就地修改（IHSlib 例外见 §7/D-037）
 ```
@@ -63,7 +67,7 @@ UI 替换的目标模块边界见 `docs/UI_UX_DESIGN.md` §5：`app/src/ui/` 负
 | 命令 | 产物 |
 |---|---|
 | `./scripts/build-desktop.sh` | `build/desktop/app/nsteamlink` |
-| `./scripts/build-switch.sh` | `build/switch/app/nsteamlink.nro`（及 client/tools 下各 NRO） |
+| `./scripts/build-switch.sh` | `build/switch/app/nsteamlink.nro`（诊断工具需显式开启） |
 
 - CMake ≥ 3.22；Switch 目标使用 `$DEVKITPRO/cmake/Switch.cmake` 工具链文件，
   nro 产出用官方 `nx_create_nro()`，不要手写 elf2nro 调用。
@@ -73,6 +77,8 @@ UI 替换的目标模块边界见 `docs/UI_UX_DESIGN.md` §5：`app/src/ui/` 负
 - Switch 目标链接 portlibs 库时，include/lib 路径用 `$DEVKITPRO/portlibs/switch` 下
   的 `aarch64-none-elf-pkg-config` 或显式 `target_include_directories`，不借用桌面 pkg-config 结果。
 - 新增第三方依赖流程：submodule/vendored → decisions 记录版本与理由 → 更新 §7 依赖表。
+
+版本、诊断选项、NSP 目标与 Actions 发版见 `docs/RELEASING.md`。
 
 ## 6. Git 规范
 

@@ -12,3 +12,13 @@ build/
 compile_commands.json
 .cache/
 .zcode/
+
+# Local Switch packaging keysets. CI uses a temporary secret file.
+prod.keys
+dev.keys
+keys.dat
+keys.txt
+keys.ini
+*.keyset
+
+__pycache__/

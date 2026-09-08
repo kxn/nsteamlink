@@ -42,6 +42,7 @@ struct sl_runtime {
     int udp;
 };
 
+#if NSL_DIAGNOSTICS
 /* The log producer never waits for disk or the network. */
 static pthread_mutex_t log_lock;
 static atomic_bool log_ready;
@@ -156,6 +157,17 @@ static void ihs_log(IHS_LogLevel level, const char *tag, const char *message) {
     snprintf(s, sizeof(s), "%.24s: %.190s", tag, message);
     sl_log(s);
 }
+#else
+void sl_log(const char *s) {
+    (void)s;
+}
+bool sl_log_start(void) {
+    return true;
+}
+void sl_log_finish(void) {
+}
+#define ihs_log NULL
+#endif
 static void post(sl_runtime *r, sl_runtime_event e) {
     pthread_mutex_lock(&r->lock);
     if (e.type != SL_EVENT_HOST && e.type != SL_EVENT_NETWORK)
@@ -494,6 +506,7 @@ static void execute(sl_runtime *r, sl_command cmd) {
 static void sample(sl_runtime *r, uint64_t now) {
     stream_media_snapshot s;
     stream_media_get_snapshot(&s);
+#if NSL_DIAGNOSTICS
     if (r->session) {
         IHS_SessionGetReliabilityStats(r->session, &s.reliability);
         IHS_HIDSDLLastSubmitted sent = {0};
@@ -530,6 +543,7 @@ static void sample(sl_runtime *r, uint64_t now) {
     pthread_mutex_lock(&r->lock);
     r->debug = d;
     pthread_mutex_unlock(&r->lock);
+#endif
     if (r->session && s.first_frame_displayed && !r->first_reported) {
         post(r, (sl_runtime_event){.type = SL_EVENT_FIRST_FRAME});
         r->first_reported = true;
@@ -538,6 +552,7 @@ static void sample(sl_runtime *r, uint64_t now) {
         r->frames = s.displayed_frames;
         r->frame_at = now;
     }
+#if NSL_DIAGNOSTICS
     char line[224];
     snprintf(line, sizeof(line),
              "stats frames=%u fps=%.20s local=%.20s decode/upload=%.32s audio=%.20s hid=%.20s "
@@ -546,8 +561,10 @@ static void sample(sl_runtime *r, uint64_t now) {
              d.values[5]);
     sl_log(line);
     r->previous = s;
+#endif
     r->last_diag = now;
 }
+#if NSL_DIAGNOSTICS
 static void udp_poll(sl_runtime *r) {
     if (r->udp < 0)
         return;
@@ -597,6 +614,7 @@ static void udp_poll(sl_runtime *r) {
     }
     sendto(r->udp, reply, strlen(reply), MSG_DONTWAIT, (struct sockaddr *)&peer, len);
 }
+#endif
 static void *worker_main(void *ctx) {
     sl_runtime *r = ctx;
     sl_log("runtime: worker entered; initializing IHS");
@@ -709,7 +727,9 @@ static void *worker_main(void *ctx) {
             start_client(r);
             fail(r, "等待电脑画面超时");
         }
+#if NSL_DIAGNOSTICS
         udp_poll(r);
+#endif
         pthread_mutex_lock(&r->lock);
         if (!r->request_pending && !r->quit) {
             struct timespec t;
@@ -742,6 +762,7 @@ sl_runtime *sl_runtime_create(const sl_auth_store *store) {
                                    .secretKey = r->store.secret,
                                    .deviceName = r->store.device_name};
     r->provider = stream_media_create_hid_provider();
+#if NSL_DIAGNOSTICS
     r->udp = socket(AF_INET, SOCK_DGRAM, 0);
     if (r->udp >= 0) {
         fcntl(r->udp, F_SETFL, O_NONBLOCK);
@@ -756,6 +777,7 @@ sl_runtime *sl_runtime_create(const sl_auth_store *store) {
     char udp_status[96];
     snprintf(udp_status, sizeof(udp_status), "runtime: debug UDP fd=%d errno=%d", r->udp, errno);
     sl_log(udp_status);
+#endif
     r->started = pthread_create(&r->worker, NULL, worker_main, r) == 0;
     if (!r->started) {
         sl_runtime_destroy(r);
@@ -797,10 +819,15 @@ bool sl_runtime_poll(sl_runtime *r, sl_runtime_event *e) {
     return found;
 }
 void sl_runtime_debug(sl_runtime *r, sl_debug_snapshot *d) {
+#if NSL_DIAGNOSTICS
     if (!pthread_mutex_trylock(&r->lock)) {
         *d = r->debug;
         pthread_mutex_unlock(&r->lock);
     }
+#else
+    (void)r;
+    memset(d, 0, sizeof(*d));
+#endif
 }
 void sl_runtime_destroy(sl_runtime *r) {
     if (!r)

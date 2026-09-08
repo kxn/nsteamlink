@@ -1,0 +1,111 @@
+name: Build and release
+on:
+  push:
+    branches: [main, 'codex/**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+jobs:
+  desktop:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        diagnostics: ['ON', 'OFF']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build libsdl2-dev libsdl2-ttf-dev libavcodec-dev libavutil-dev libswscale-dev libopus-dev libprotobuf-c-dev libmbedtls-dev fonts-noto-cjk
+      - name: Build and test
+        run: |
+          cmake -S . -B build/desktop -G Ninja -DCMAKE_BUILD_TYPE=Release -DNSL_DIAGNOSTICS=${{ matrix.diagnostics }} -DNSL_BUILD_TOOLS=OFF
+          cmake --build build/desktop -j2
+          ctest --test-dir build/desktop --output-on-failure
+          python3 scripts/test-release.py
+  switch:
+    runs-on: ubuntu-24.04
+    container: devkitpro/devkita64:20260219
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - name: Allow container checkout owner
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y cmake python3 build-essential git
+          scripts/setup-switch-deps.sh
+      - name: Build NRO (diagnostics excluded)
+        run: scripts/build-switch.sh -DNSL_DIAGNOSTICS=OFF -DNSL_BUILD_TOOLS=OFF
+      - name: Build NSP when keyset is configured
+        env:
+          SWITCH_KEYSET: ${{ secrets.NSL_SWITCH_KEYSET }}
+          HACBREWPACK: ${{ github.workspace }}/build/deps/hacBrewPack/hacbrewpack
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$SWITCH_KEYSET" ]; then
+            if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+              echo '::error::NSL_SWITCH_KEYSET is required: a release must contain both NSP and NRO.'
+              exit 1
+            fi
+            echo '::notice::No NSL_SWITCH_KEYSET configured; NRO-only CI build (not a release).'
+            exit 0
+          fi
+          export NSL_KEYSET="$(mktemp)"
+          trap 'rm -f "$NSL_KEYSET"' EXIT
+          chmod 600 "$NSL_KEYSET"
+          printf '%s' "$SWITCH_KEYSET" > "$NSL_KEYSET"
+          unset SWITCH_KEYSET
+          cmake --build build/switch --target nsteamlink_release -j2
+      - name: Validate and collect artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(--identity build/switch/generated/build_identity.json --nro build/switch/app/nsteamlink.nro --icon assets/branding/icon.jpg --require-clean)
+          if [ -f build/switch/app/nsteamlink.nsp ]; then args+=(--nsp build/switch/app/nsteamlink.nsp); fi
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then args+=(--tag "$GITHUB_REF_NAME"); fi
+          python3 scripts/validate-artifacts.py "${args[@]}"
+          python3 scripts/collect-release.py --build build/switch --output build/release
+          cp build/deps/devkitpro-packages.txt build/release/
+          cd build/release
+          sha256sum *.nro *.json *.txt $(ls *.nsp 2>/dev/null || true) > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: switch-release
+          path: build/release/
+          if-no-files-found: error
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [desktop, switch]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: switch-release
+          path: release
+      - name: Publish both formats together
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          compgen -G 'release/*.nro' >/dev/null
+          compgen -G 'release/*.nsp' >/dev/null
+          (cd release && sha256sum -c SHA256SUMS)
+          # Create a draft first so an upload failure never leaves a half release visible.
+          gh release create "$RELEASE_TAG" release/* --verify-tag --draft --generate-notes --title "NSteamLink $RELEASE_TAG"
+          gh release edit "$RELEASE_TAG" --draft=false

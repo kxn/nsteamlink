@@ -234,10 +234,12 @@ void sl_ui_action(sl_ui_model *m, sl_action a, int arg) {
         }
         break;
     case SL_DEBUG:
+#if NSL_DIAGNOSTICS
         if (m->streaming && m->page == SL_MENU) {
             m->debug = !m->debug;
             back(m);
         }
+#endif
         break;
     case SL_OPEN_DISCONNECT:
         if (m->streaming)

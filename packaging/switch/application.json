@@ -1,0 +1,147 @@
+{
+  "name": "NSteamLink",
+  "program_id": "0x01004e534c4b0000",
+  "program_id_range_min": "0x01004e534c4b0000",
+  "program_id_range_max": "0x01004e534c4b0000",
+  "main_thread_stack_size": "0x100000",
+  "main_thread_priority": 44,
+  "default_cpu_id": 0,
+  "process_category": 0,
+  "pool_partition": 0,
+  "is_64_bit": true,
+  "address_space_type": 1,
+  "is_retail": true,
+  "filesystem_access": {
+    "permissions": "0xFFFFFFFFFFFFFFFF"
+  },
+  "service_host": [],
+  "service_access": [
+    "*"
+  ],
+  "kernel_capabilities": [
+    {
+      "type": "kernel_flags",
+      "value": {
+        "highest_thread_priority": 59,
+        "lowest_thread_priority": 28,
+        "highest_cpu_id": 2,
+        "lowest_cpu_id": 0
+      }
+    },
+    {
+      "type": "syscalls",
+      "value": {
+        "svc_01": "0x01",
+        "svc_02": "0x02",
+        "svc_03": "0x03",
+        "svc_04": "0x04",
+        "svc_05": "0x05",
+        "svc_06": "0x06",
+        "svc_07": "0x07",
+        "svc_08": "0x08",
+        "svc_09": "0x09",
+        "svc_0a": "0x0a",
+        "svc_0b": "0x0b",
+        "svc_0c": "0x0c",
+        "svc_0d": "0x0d",
+        "svc_0e": "0x0e",
+        "svc_0f": "0x0f",
+        "svc_10": "0x10",
+        "svc_11": "0x11",
+        "svc_12": "0x12",
+        "svc_13": "0x13",
+        "svc_14": "0x14",
+        "svc_15": "0x15",
+        "svc_16": "0x16",
+        "svc_17": "0x17",
+        "svc_18": "0x18",
+        "svc_19": "0x19",
+        "svc_1a": "0x1a",
+        "svc_1b": "0x1b",
+        "svc_1c": "0x1c",
+        "svc_1d": "0x1d",
+        "svc_1e": "0x1e",
+        "svc_1f": "0x1f",
+        "svc_20": "0x20",
+        "svc_21": "0x21",
+        "svc_22": "0x22",
+        "svc_23": "0x23",
+        "svc_24": "0x24",
+        "svc_25": "0x25",
+        "svc_26": "0x26",
+        "svc_27": "0x27",
+        "svc_28": "0x28",
+        "svc_29": "0x29",
+        "svc_2a": "0x2a",
+        "svc_2b": "0x2b",
+        "svc_2c": "0x2c",
+        "svc_2d": "0x2d",
+        "svc_2e": "0x2e",
+        "svc_2f": "0x2f",
+        "svc_30": "0x30",
+        "svc_31": "0x31",
+        "svc_32": "0x32",
+        "svc_33": "0x33",
+        "svc_34": "0x34",
+        "svc_35": "0x35",
+        "svc_36": "0x36",
+        "svc_37": "0x37",
+        "svc_38": "0x38",
+        "svc_39": "0x39",
+        "svc_3a": "0x3a",
+        "svc_3b": "0x3b",
+        "svc_3c": "0x3c",
+        "svc_3d": "0x3d",
+        "svc_3e": "0x3e",
+        "svc_3f": "0x3f",
+        "svc_40": "0x40",
+        "svc_41": "0x41",
+        "svc_42": "0x42",
+        "svc_43": "0x43",
+        "svc_44": "0x44",
+        "svc_45": "0x45",
+        "svc_4b": "0x4b",
+        "svc_4c": "0x4c",
+        "svc_50": "0x50",
+        "svc_51": "0x51",
+        "svc_52": "0x52"
+      }
+    },
+    {
+      "type": "application_type",
+      "value": 1
+    },
+    {
+      "type": "min_kernel_version",
+      "value": "0x30"
+    },
+    {
+      "type": "handle_table_size",
+      "value": 512
+    },
+    {
+      "type": "debug_flags",
+      "value": {
+        "allow_debug": false,
+        "force_debug_prod": false,
+        "force_debug": false
+      }
+    },
+    {
+      "type": "map_region",
+      "value": [
+        {
+          "region_type": 1,
+          "is_ro": true
+        }
+      ]
+    }
+  ],
+  "system_resource_size": "0x1000000",
+  "version": "0x0",
+  "optimize_memory_allocation": false,
+  "disable_device_address_space_merge": false,
+  "enable_alias_region_extra_size": false,
+  "prevent_code_reads": false,
+  "signature_key_generation": 0
+}

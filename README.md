@@ -59,3 +59,5 @@ NSL_DATA_DIR=/tmp/nsteamlink-preview ./build/desktop/app/nsteamlink --offline
 
 开发工具 `switch-stream-selftest.nro` 运行同一界面和 runtime，默认绘制 600 帧后清理退出；
 不自动选择电脑或开启游戏。独立 `switch-discover` 保留作为协议取证工具，正常使用无需运行它。
+
+构建 NSP/NRO、关闭诊断和 GitHub Actions 发版见 [发版说明](docs/RELEASING.md)。

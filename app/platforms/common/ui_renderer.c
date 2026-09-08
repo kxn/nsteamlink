@@ -82,24 +82,13 @@ static void monitor(SDL_Renderer *r, int x, int y, int size, SDL_Color color) {
     line(r, x + size / 2, y + size * 2 / 3, x + size / 2, y + size * 2 / 3 + 7, color);
     line(r, x + size / 2 - 9, y + size * 2 / 3 + 8, x + size / 2 + 9, y + size * 2 / 3 + 8, color);
 }
+extern const unsigned char nsl_background[];
+extern const size_t nsl_background_size;
 static SDL_Texture *make_backdrop(SDL_Renderer *r) {
-    SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(0, 1280, 720, 32, SDL_PIXELFORMAT_RGBA32);
+    SDL_Surface *s =
+        SDL_LoadBMP_RW(SDL_RWFromConstMem(nsl_background, (int)nsl_background_size), 1);
     if (!s)
         return NULL;
-    for (int y = 0; y < 720; ++y)
-        for (int x = 0; x < 1280; ++x) {
-            float dx = (x - 960) / 1050.f, dy = (y + 80) / 800.f;
-            float glow = 1.f - dx * dx - dy * dy;
-            if (glow < 0)
-                glow = 0;
-            Uint8 *p = (Uint8 *)s->pixels + y * s->pitch + x * 4;
-            float wx = (x - 1120) / 720.f, wy = (y - 560) / 580.f;
-            float warm = fmaxf(0.f, 1.f - wx * wx - wy * wy);
-            p[0] = 17 + 7 * glow + 17 * warm;
-            p[1] = 20 + 13 * glow + 8 * warm;
-            p[2] = 26 + 21 * glow + 11 * warm;
-            p[3] = 255;
-        }
     SDL_Texture *texture = SDL_CreateTextureFromSurface(r, s);
     SDL_FreeSurface(s);
     return texture;
@@ -512,7 +501,7 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
             draw_text(r, "http://github.com/kxn/nsteamlink", 276,
                       centered_y(r, "http://github.com/kxn/nsteamlink", 24, 18, 44, 780), 780, 64,
                       24, muted);
-            char version[40];
+            char version[64];
             snprintf(version, sizeof(version), "v%s", NSL_APP_VERSION);
             int w = text_width(r, version, 24) + 32;
             rounded(r->renderer, (SDL_Rect){1228 - w, 23, w, 34}, 10, (SDL_Color){38, 53, 68, 255});
@@ -696,6 +685,7 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
         }
     }
 
+#if NSL_DIAGNOSTICS
     if (m->debug && m->streaming && m->page == SL_STREAM) {
         rect(r->renderer, (SDL_Rect){24, 24, 500, 320}, panel);
         draw_text(r, d->title[0] ? d->title : "诊断", 44, 42, 460, 38, 24, muted);
@@ -708,6 +698,9 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
         if (m->now > d->sampled_at + 3000)
             draw_text(r, "数据已过期", 44, 304, 400, 32, 24, muted);
     }
+#else
+    (void)d;
+#endif
 }
 void sl_ui_renderer_draw(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_snapshot *d) {
     animate_focus(r, m);

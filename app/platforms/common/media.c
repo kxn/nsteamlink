@@ -81,6 +81,7 @@ static pthread_mutex_t hid_lifecycle_lock;
 static SDL_GameController *hid_controller;
 static SDL_JoystickID hid_controller_id = -1;
 static int hid_controller_index = -1;
+#if NSL_DIAGNOSTICS
 static uint32_t hid_events_since_log;
 static uint32_t hid_send_ok_since_log;
 static uint32_t hid_send_fail_since_log;
@@ -138,6 +139,7 @@ static stream_media_hid_history_entry hid_history[HID_HISTORY_CAP];
 static uint32_t hid_history_next;
 static uint32_t hid_history_count;
 static uint32_t hid_history_seq;
+#endif
 static stream_media_log_fn log_cb;
 static stream_media_snapshot snapshot;
 static void (*draw_hook)(void *, void *);
@@ -148,7 +150,9 @@ static atomic_bool muted;
 static atomic_bool clear_texture;
 static pthread_mutex_t decoder_lock;
 static pthread_mutex_t present_lock;
+#if NSL_DIAGNOSTICS
 static IHS_HIDSDLLastSubmitted submitted_cache;
+#endif
 static struct SwsContext *upload_sws;
 static SDL_Rect video_rect;
 static struct {
@@ -177,7 +181,9 @@ static void update_audio_snapshot(void);
 
 static bool open_hid_controller(void);
 static void close_hid_controller(void);
+#if NSL_DIAGNOSTICS
 static void record_hid_event(const SDL_Event *event);
+#endif
 static int hid_device_list_count(void *context);
 static int hid_device_list_index(SDL_JoystickID joystick_id, void *context);
 static SDL_JoystickID hid_device_list_instance_id(int index, void *context);
@@ -360,6 +366,7 @@ static void update_audio_snapshot(void) {
     pthread_mutex_unlock(&state_lock);
 }
 
+#if NSL_DIAGNOSTICS
 static void reset_hid_probe_window(void) {
     hid_events_since_log = 0;
     hid_send_ok_since_log = 0;
@@ -519,6 +526,10 @@ static void log_hid_sdl_inventory(void) {
     }
 }
 
+#else
+#define snapshot_hid_controller(...) ((void)0)
+#define log_hid_sdl_inventory()      ((void)0)
+#endif
 static bool open_hid_controller(void) {
     if (hid_controller != NULL) {
         return true;
@@ -565,6 +576,7 @@ static bool open_hid_controller(void) {
 
     hid_controller_index = index;
     hid_controller_id = SDL_JoystickInstanceID(joystick);
+#if NSL_DIAGNOSTICS
     SDL_JoystickGUID joystick_guid = SDL_JoystickGetGUID(joystick);
     char guid[40];
     SDL_JoystickGetGUIDString(joystick_guid, guid, sizeof(guid));
@@ -582,6 +594,7 @@ static bool open_hid_controller(void) {
     if (mapping != NULL) {
         SDL_free(mapping);
     }
+#endif
     return true;
 }
 
@@ -597,6 +610,7 @@ static void close_hid_controller(void) {
     snapshot_hid_controller(0, -1, -1, 0, NULL, NULL, 0);
 }
 
+#if NSL_DIAGNOSTICS
 static void record_hid_event(const SDL_Event *event) {
     int type = 0;
     int which = -1;
@@ -640,6 +654,7 @@ static void record_hid_event(const SDL_Event *event) {
     pthread_mutex_unlock(&state_lock);
 }
 
+#endif
 static int hid_device_list_count(void *context) {
     (void)context;
     return hid_controller != NULL ? 1 : 0;
@@ -660,6 +675,7 @@ static SDL_Gamepad *hid_device_list_controller(int index, void *context) {
     return (hid_controller != NULL && index == 0) ? hid_controller : NULL;
 }
 
+#if NSL_DIAGNOSTICS
 static void sample_sdl_marker_minus(void) {
     bool held = hid_controller != NULL &&
                 SDL_GameControllerGetButton(hid_controller, SDL_CONTROLLER_BUTTON_BACK) != 0;
@@ -720,11 +736,14 @@ static void sample_raw_npad(void) {
 }
 #endif
 
+#endif
 static void pump_sdl_events(void) {
     SDL_Event event;
     bool devices_changed = false;
     while (SDL_PollEvent(&event)) {
+#if NSL_DIAGNOSTICS
         record_hid_event(&event);
+#endif
         if (event.type == SDL_CONTROLLERDEVICEADDED) {
             open_hid_controller();
             devices_changed = true;
@@ -738,6 +757,7 @@ static void pump_sdl_events(void) {
         if (event_hook)
             event_hook(&event, hook_context);
     }
+#if NSL_DIAGNOSTICS
     uint64_t now = media_monotonic_us();
     if (now - hid_last_log_us >= 1000000) {
         sample_sdl_marker_minus();
@@ -748,6 +768,7 @@ static void pump_sdl_events(void) {
         reset_hid_probe_window();
         hid_last_log_us = now;
     }
+#endif
     pthread_mutex_lock(&state_lock);
     if (hid_session) {
         IHS_HIDSDLApplyPendingWrites(hid_session);
@@ -772,11 +793,11 @@ bool stream_media_init(stream_media_log_fn log_fn) {
     }
     atomic_store(&input_gate, false);
     atomic_store(&clear_texture, false);
-    log_cb = log_fn;
+    log_cb = NSL_DIAGNOSTICS ? log_fn : NULL;
     memset(&snapshot, 0, sizeof(snapshot));
     sdl_exit_requested = false;
 
-    av_log_set_level(AV_LOG_WARNING);
+    av_log_set_level(NSL_DIAGNOSTICS ? AV_LOG_WARNING : AV_LOG_QUIET);
     av_log_set_callback(ffmpeg_log_callback);
 
     latched_frame = av_frame_alloc();
@@ -839,6 +860,7 @@ void stream_media_shutdown(void) {
     hid_session = NULL;
     hid_session_enabled = false;
     snapshot.hid_provider_devices = 0;
+#if NSL_DIAGNOSTICS
     hid_events_total = 0;
     hid_send_ok_total = 0;
     hid_send_fail_total = 0;
@@ -850,6 +872,7 @@ void stream_media_shutdown(void) {
     hid_marker_minus_raw_samples_total = 0;
     reset_hid_probe_baseline();
     hid_last_log_us = 0;
+#endif
     pthread_mutex_unlock(&state_lock);
 
     close_hid_controller();
@@ -947,6 +970,7 @@ void stream_media_set_hid_session(IHS_Session *session, bool enabled) {
     hid_session = session;
     memset(remote_touches, 0, sizeof(remote_touches));
     hid_session_enabled = enabled;
+#if NSL_DIAGNOSTICS
     if (session != NULL && enabled) {
         hid_events_total = 0;
         hid_send_ok_total = 0;
@@ -980,6 +1004,7 @@ void stream_media_set_hid_session(IHS_Session *session, bool enabled) {
         reset_hid_probe_window();
         hid_last_log_us = 0;
     }
+#endif
     pthread_mutex_unlock(&state_lock);
     if (session != NULL && enabled)
         hid_flush_thread_start();
@@ -1979,6 +2004,7 @@ void stream_media_get_snapshot(stream_media_snapshot *out) {
     snapshot.audio_codec = audio_snap_codec;
     snapshot.audio_channels = audio_snap_channels;
     snapshot.audio_frequency = audio_snap_frequency;
+#if NSL_DIAGNOSTICS
     snapshot.hid_events = hid_events_total;
     snapshot.hid_send_ok = hid_send_ok_total;
     snapshot.hid_send_fail = hid_send_fail_total;
@@ -1993,11 +2019,14 @@ void stream_media_get_snapshot(stream_media_snapshot *out) {
     /* Protocol statistics are sampled by runtime owner, never while holding this UI lock. */
     strncpy(snapshot.hid_style_state, hid_style_last, sizeof(snapshot.hid_style_state) - 1);
     snapshot.hid_style_state[sizeof(snapshot.hid_style_state) - 1] = '\0';
+#endif
     *out = snapshot;
     pthread_mutex_unlock(&state_lock);
 }
 
 size_t stream_media_copy_hid_history(stream_media_hid_history_entry *out, size_t max_entries) {
+#if NSL_DIAGNOSTICS
+
     if (out == NULL || max_entries == 0) {
         return 0;
     }
@@ -2012,9 +2041,17 @@ size_t stream_media_copy_hid_history(stream_media_hid_history_entry *out, size_t
     }
     pthread_mutex_unlock(&state_lock);
     return count;
+
+#else
+    (void)out;
+    (void)max_entries;
+    return 0;
+#endif
 }
 
 void stream_media_format_hid_history(char *out, size_t out_len, uint32_t max_entries) {
+#if NSL_DIAGNOSTICS
+
     if (out == NULL || out_len == 0) {
         return;
     }
@@ -2061,6 +2098,12 @@ void stream_media_format_hid_history(char *out, size_t out_len, uint32_t max_ent
         }
         used += (size_t)written;
     }
+
+#else
+    (void)max_entries;
+    if (out && out_len)
+        out[0] = 0;
+#endif
 }
 
 int stream_media_video_start(IHS_Session *session, const IHS_StreamVideoConfig *config) {
@@ -2165,8 +2208,12 @@ void sl_media_input(const sl_input_event *e, void *context) {
             event.caxis.value = e->value;
         }
         if (event.type) {
+#if NSL_DIAGNOSTICS
             if (IHS_HIDHandleSDLEvent(session, &event))
                 hid_events_total++;
+#else
+            IHS_HIDHandleSDLEvent(session, &event);
+#endif
             if (e->immediate)
                 IHS_HIDFlushSDLGameControllers(session);
         }
@@ -2175,7 +2222,13 @@ void sl_media_input(const sl_input_event *e, void *context) {
 }
 
 void sl_media_submitted(const IHS_HIDSDLLastSubmitted *value) {
+#if NSL_DIAGNOSTICS
+
     pthread_mutex_lock(&state_lock);
     submitted_cache = *value;
     pthread_mutex_unlock(&state_lock);
+
+#else
+    (void)value;
+#endif
 }

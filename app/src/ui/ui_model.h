@@ -1,4 +1,5 @@
 #pragma once
+#include "build_identity.h"
 #include "services/auth_store.h"
 
 typedef enum sl_page {

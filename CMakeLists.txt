@@ -21,6 +21,19 @@ else()
 endif()
 message(STATUS "nsteamlink target platform: ${NSL_PLATFORM}")
 
+option(NSL_DIAGNOSTICS "Compile advanced diagnostics, UDP console and log collection" OFF)
+option(NSL_BUILD_TOOLS "Build standalone Switch diagnostic tools" ${NSL_DIAGNOSTICS})
+set(NSL_IDENTITY_DIR "${CMAKE_BINARY_DIR}/generated")
+execute_process(COMMAND "${CMAKE_COMMAND}" -DSOURCE_DIR=${CMAKE_SOURCE_DIR}
+    -DOUTPUT_DIR=${NSL_IDENTITY_DIR} -DAPP_VERSION=${PROJECT_VERSION}
+    -P "${CMAKE_SOURCE_DIR}/cmake/BuildIdentity.cmake" COMMAND_ERROR_IS_FATAL ANY)
+add_custom_target(nsl_identity ALL
+    COMMAND "${CMAKE_COMMAND}" -DSOURCE_DIR=${CMAKE_SOURCE_DIR}
+        -DOUTPUT_DIR=${NSL_IDENTITY_DIR} -DAPP_VERSION=${PROJECT_VERSION}
+        -P "${CMAKE_SOURCE_DIR}/cmake/BuildIdentity.cmake"
+    BYPRODUCTS "${NSL_IDENTITY_DIR}/build_identity.h" "${NSL_IDENTITY_DIR}/build_identity.json"
+    VERBATIM)
+
 set(IHSLIB_HID_SDL ON CACHE BOOL "Build ihslib SDL HID provider" FORCE)
 set(IHSLIB_HID_SDL_USE_SDL2 ON CACHE BOOL "Build ihslib SDL HID provider against SDL2" FORCE)
 add_subdirectory(third_party/ihslib)
@@ -28,7 +41,7 @@ add_subdirectory(third_party/ihslib)
 enable_testing()
 add_subdirectory(app)
 
-if(NSL_PLATFORM STREQUAL "switch")
+if(NSL_PLATFORM STREQUAL "switch" AND NSL_BUILD_TOOLS)
     add_subdirectory(tools/switch-discover)
     add_subdirectory(client)
 endif()

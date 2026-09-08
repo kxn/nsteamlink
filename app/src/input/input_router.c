@@ -202,7 +202,7 @@ void sl_input_event_handle(sl_input_router *r, const sl_input_event *e, uint64_t
     if (was == (e->value != 0))
         return;
     if (!r->remote) {
-        if (e->code == SL_KEY_X && r->ui->page == SL_MENU) {
+        if (NSL_DIAGNOSTICS && e->code == SL_KEY_X && r->ui->page == SL_MENU) {
             if (e->value) {
                 r->debug_at = now;
                 r->debug_used = false;
@@ -249,7 +249,8 @@ void sl_input_tick(sl_input_router *r, uint64_t now) {
         } else if (!r->combo && now - r->first_at >= 100)
             flush(r);
     }
-    if (r->ui->page == SL_MENU && r->debug_at && !r->debug_used && now - r->debug_at >= 1000) {
+    if (NSL_DIAGNOSTICS && r->ui->page == SL_MENU && r->debug_at && !r->debug_used &&
+        now - r->debug_at >= 1000) {
         r->debug_used = true;
         sl_ui_action(r->ui, SL_DEBUG, 0);
         sl_input_sync(r);

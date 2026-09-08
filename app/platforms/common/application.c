@@ -35,6 +35,7 @@ int sl_application_run(int argc, char **argv) {
     bool offline = false;
     unsigned frames = 0;
     const char *screenshot = NULL;
+#if NSL_DIAGNOSTICS
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--offline"))
             offline = true;
@@ -43,6 +44,10 @@ int sl_application_run(int argc, char **argv) {
         else if (!strcmp(argv[i], "--screenshot") && i + 1 < argc)
             screenshot = argv[++i];
     }
+#else
+    (void)argc;
+    (void)argv;
+#endif
     if (!sl_system_init()) {
         fprintf(stderr, "Platform initialization failed\n");
         return 1;
@@ -90,7 +95,9 @@ int sl_application_run(int argc, char **argv) {
         sl_ui_tick(&a->ui, sl_system_now());
         if (a->runtime) {
             runtime_events(a);
+#if NSL_DIAGNOSTICS
             sl_runtime_debug(a->runtime, &a->debug);
+#endif
         }
         sl_input_tick(&a->input, a->ui.now);
         sl_media_gate(sl_ui_remote(&a->ui));
@@ -114,7 +121,7 @@ int sl_application_run(int argc, char **argv) {
             done = true;
         SDL_Delay(1);
     }
-    if (screenshot) {
+    if (NSL_DIAGNOSTICS && screenshot) {
         SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(0, 1280, 720, 32, SDL_PIXELFORMAT_ARGB8888);
         if (s) {
             SDL_RenderReadPixels(sl_media_renderer(), NULL, s->format->format, s->pixels, s->pitch);

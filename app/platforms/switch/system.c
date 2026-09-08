@@ -1,4 +1,5 @@
 #include "platform/system.h"
+#include "build_identity.h"
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <string.h>
@@ -27,7 +28,7 @@ bool sl_system_init(void) {
         return false;
     }
     mkdir("sdmc:/switch/nsteamlink", 0777);
-    if (__nxlink_host.s_addr) {
+    if (NSL_DIAGNOSTICS && __nxlink_host.s_addr) {
         log_fd = nxlinkConnectToHost(false, false);
         if (log_fd >= 0)
             fcntl(log_fd, F_SETFL, O_NONBLOCK);
@@ -79,6 +80,7 @@ uint64_t sl_system_now(void) {
 }
 
 void sl_system_log(const char *message) {
+#if NSL_DIAGNOSTICS
     if (log_fd < 0)
         return;
     char line[240];
@@ -86,4 +88,7 @@ void sl_system_log(const char *message) {
     memcpy(line, message, n);
     line[n++] = '\n';
     send(log_fd, line, n, MSG_DONTWAIT);
+#else
+    (void)message;
+#endif
 }

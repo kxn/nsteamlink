@@ -1497,3 +1497,25 @@ TTF 字形透明留白与 fallback 字体高度不同，控件改用裁剪后的
 PROJECT_VERSION。低对比背景和抗锯齿圆角描边为初始化缓存纹理；焦点140ms插值只移动描边，
 不移动输入命中区，不让动画阻塞操作。弹窗180ms渐入，连接指示不暗示协议完成百分比。
 新增纹理与SDL/font一起由渲染线程创建、释放，不新增后台线程或改变IHS生命周期。
+
+#### D-044 构建身份、诊断裁剪与独立 NSP
+
+Evidence：devkitPro `NintendoSwitch.cmake` 的 `nx_create_exefs()` 只用 `build_pfs0`
+封装 main/main.npdm，不生成 NCA，尽管默认文件扩展名为 `.nsp`。
+[hacBrewPack 源码](https://github.com/dragonflylee/hacBrewPack/tree/745b16ecfc9ce055743067d200572204cb2aac6c)
+明确要求 header_key 与 application key-area key，并生成 program/control/CNMT NCA。
+[libnx envSetup](https://github.com/switchbrew/libnx/blob/master/nx/source/runtime/env.c)
+在 ctx==NULL 时识别 NSO，以 svcExitProcess 作为返回路径；不需要应用自建 loader。
+libnx `nacp.h` 定义 StartupUserAccount 位于 0x3025；本应用只用 SD 配置，设为 0。
+
+Conclusion：保留官方 nx_create_nro，新增 ELF→NSO/NPDM→NCA/NSP 的完整目标。
+使用固定 Title ID 01004e534c4b0000；打包工具为构建期依赖，不链接进应用。
+hacBrewPack 为 GPL-2.0（其自带 mbedTLS 见上游 LICENSES），protobuf-c runtime 沿用 D-007
+的 v1.5.0 单 C 文件交叉编译方式。打包不带 Nintendo 启动图标，应用品牌素材独立生成。
+
+版本在每次 build 时从根项目版本和 Git 计算，UI/NACP 使用同一生成文件。
+NSL_DIAGNOSTICS 默认 OFF，编译排除诊断线程、远程调试 socket、HID 历史采样和浮屏入口；
+必须保留首帧/存活判断及 IHS 输入线程。Release 工作流固定 OFF，双格式齐备才发布。
+NSP 内核能力描述采用 libnx 自制应用常见服务/文件权限与 512 handle table，未更改运行时
+清理顺序。Hypothesis（待验证）：当前能力描述满足实际 SDL/Mesa/网络独立应用运行；
+结构正确及交叉编译成功不能替代 NSP 真机安装、串流和退出证据。
