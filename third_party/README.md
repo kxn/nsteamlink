@@ -54,3 +54,11 @@ submodule 工作区逐字节一致。旧 patch 文件已删除，需要查阅时
 - 克隆/拉取后务必 `git submodule update --init --recursive`，
   否则会静默回退上游版本且行为不对（kickoff §7.2 的坑）。
 - 复用的任何第三方代码保留原版权与许可声明，并更新 `DEVELOPMENT.md` §7 的依赖表。
+
+## jsmn：游戏封面元数据解析
+
+`third_party/jsmn/jsmn.h` 与 `LICENSE` 来自 [zserge/jsmn](https://github.com/zserge/jsmn)，
+固定提交 `25647e692c7906b96ffd2b05ca54c097948e879c`，MIT，未修改上游内容。
+使用 strict 模式、固定 token 数、64 KiB 响应上限，只提取匹配 AppID 的图片资源。
+新增链接依赖 libcurl（curl license）和 libjpeg-turbo（BSD/IJG）由系统/devkitPro portlibs 提供；
+Switch curl 使用 libnx SSL，不引入应用自己的根证书文件或关闭 TLS 校验。

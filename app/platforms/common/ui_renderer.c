@@ -1,4 +1,5 @@
 #include "platform/ui_renderer.h"
+#include "artwork.h"
 #include "platform/system.h"
 #include <SDL.h>
 #include <SDL_ttf.h>
@@ -20,6 +21,12 @@ struct sl_ui_renderer {
     uint64_t tick;
     SDL_Texture *backdrop, *outline, *overlay;
     sl_ui_model *base_ui;
+    sl_artwork *artwork;
+    struct {
+        uint64_t id, used, ready_at;
+        SDL_Texture *texture;
+        int w, h;
+    } covers[8];
     float text_alpha;
     bool painted, focus_valid;
     sl_page page;
@@ -452,6 +459,49 @@ sl_ui_renderer *sl_ui_renderer_create(void *native) {
     SDL_SetRenderDrawBlendMode(r->renderer, SDL_BLENDMODE_BLEND);
     return r;
 }
+static void draw_cover(sl_ui_renderer *r, uint64_t id, SDL_Rect box, uint64_t now) {
+    if (!r->artwork || !sl_artwork_appid(id))
+        return;
+    int index = -1;
+    for (int i = 0; i < 8; ++i)
+        if (r->covers[i].id == id) {
+            index = i;
+            break;
+        }
+    if (index < 0) {
+        sl_artwork_request(r->artwork, id);
+        sl_artwork_image image;
+        if (!sl_artwork_take(r->artwork, id, &image))
+            return;
+        index = 0;
+        for (int i = 1; i < 8; ++i)
+            if (r->covers[i].used < r->covers[index].used)
+                index = i;
+        SDL_DestroyTexture(r->covers[index].texture);
+        r->covers[index].texture =
+            SDL_CreateTexture(r->renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC,
+                              image.width, image.height);
+        if (r->covers[index].texture) {
+            SDL_UpdateTexture(r->covers[index].texture, NULL, image.pixels, image.width * 4);
+            SDL_SetTextureBlendMode(r->covers[index].texture, SDL_BLENDMODE_BLEND);
+        }
+        r->covers[index].w = image.width;
+        r->covers[index].h = image.height;
+        free(image.pixels);
+        r->covers[index].id = id;
+        r->covers[index].ready_at = now;
+    }
+    r->covers[index].used = ++r->tick;
+    if (!r->covers[index].texture)
+        return;
+    /* Contain the complete header artwork; never crop the game's logo. */
+    float scale = fminf((float)box.w / r->covers[index].w, (float)box.h / r->covers[index].h);
+    int w = (int)(r->covers[index].w * scale), h = (int)(r->covers[index].h * scale);
+    SDL_Rect target = {box.x + (box.w - w) / 2, box.y + (box.h - h) / 2, w, h};
+    Uint8 alpha = (Uint8)(255.f * fminf(1.f, (float)(now - r->covers[index].ready_at) / 180.f));
+    SDL_SetTextureAlphaMod(r->covers[index].texture, alpha);
+    SDL_RenderCopy(r->renderer, r->covers[index].texture, NULL, &target);
+}
 static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_snapshot *d,
                        bool focused_scene) {
     const sl_layout *l = &m->layout;
@@ -629,10 +679,13 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
         int y = centered_y(r, label, size, c->y, c->h, width);
         if (c->action == SL_RECENT) {
             SDL_Color game_color = c->arg % 2 ? amber : violet;
-            rounded(r->renderer, (SDL_Rect){box.x + 24, box.y + 24, box.w - 48, 112}, 10,
-                    mix(panel, game_color, .25f));
-            play_icon(r->renderer, box.x + 47, box.y + 80, 28, game_color);
-            y = centered_y(r, label, size, box.y + box.h - 88, 64, width);
+            SDL_Rect art = {box.x + 12, box.y + 12, box.w - 24, 172};
+            rounded(r->renderer, art, 10, mix(panel, game_color, .16f));
+            play_icon(r->renderer, box.x + box.w / 2 - 10, box.y + 96, 28, game_color);
+            int selected = m->store.registry.selected;
+            if (selected >= 0 && selected < m->store.registry.count && c->arg < SL_RECENT_LIMIT)
+                draw_cover(r, m->store.registry.hosts[selected].games[c->arg].id, art, m->now);
+            y = centered_y(r, label, size, box.y + box.h - 62, 48, width);
         } else if (!centered && !footer) {
             width -= 28;
             if (c->action == SL_SOUND) {
@@ -702,6 +755,9 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
     (void)d;
 #endif
 }
+void sl_ui_renderer_set_artwork(sl_ui_renderer *r, sl_artwork *artwork) {
+    r->artwork = artwork;
+}
 void sl_ui_renderer_draw(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_snapshot *d) {
     animate_focus(r, m);
     if (m->layout.dialog) {
@@ -729,6 +785,8 @@ void sl_ui_renderer_draw(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug
 void sl_ui_renderer_destroy(sl_ui_renderer *r) {
     if (!r)
         return;
+    for (int i = 0; i < 8; ++i)
+        SDL_DestroyTexture(r->covers[i].texture);
     SDL_DestroyTexture(r->overlay);
     free(r->base_ui);
     SDL_DestroyTexture(r->backdrop);

@@ -1,3 +1,4 @@
+#include "artwork.h"
 #include "media.h"
 #include "platform/runtime.h"
 #include "platform/system.h"
@@ -119,11 +120,27 @@ static void decode(const char *path) {
     avcodec_free_context(&ctx);
     free(bytes);
 }
+static bool no_artwork_network(const char *url, size_t limit, unsigned char **data, size_t *size,
+                               void *context) {
+    (void)url;
+    (void)limit;
+    (void)data;
+    (void)size;
+    (void)context;
+    return false;
+}
 int main(int argc, char **argv) {
     assert(sl_system_init());
     assert(stream_media_init(sl_log));
     renderer = sl_ui_renderer_create(sl_media_renderer());
     assert(renderer);
+    sl_artwork *artwork = NULL;
+    const char *art_dir = getenv("NSL_TEST_ARTWORK_DIR");
+    if (art_dir) {
+        artwork = sl_artwork_create(art_dir, no_artwork_network, NULL);
+        assert(artwork);
+        sl_ui_renderer_set_artwork(renderer, artwork);
+    }
     sl_auth_store s = {.sound = true};
     sl_host_registry_init(&s.registry);
     sl_ui_init(&ui, &s);
@@ -160,11 +177,25 @@ int main(int argc, char **argv) {
     key(SDLK_ESCAPE);
     ui.store.registry.hosts[0].paired = true;
     ui.store.registry.hosts[0].account = 1;
-    ui.store.registry.hosts[0].games[0].id = 42;
+    ui.store.registry.hosts[0].games[0].id = 413150;
     strcpy(ui.store.registry.hosts[0].games[0].name, "星露谷物语");
     sl_ui_layout(&ui);
     stream_media_present();
     save_image("paired");
+    if (artwork) {
+        /* Offline fixture rendering exercises queue -> decode -> texture upload -> fade. */
+        for (int i = 0; i < 100; ++i) {
+            sl_ui_tick(&ui, ui.now + 10);
+            stream_media_present();
+            SDL_Delay(5);
+        }
+        save_image("paired-artwork");
+        ui.focus = 40;
+        stream_media_present();
+        sl_ui_tick(&ui, ui.now + 200);
+        stream_media_present();
+        save_image("paired-artwork-focused");
+    }
     for (int p = SL_PAIRING; p <= SL_ERROR; ++p) {
         ui.page = p;
         strcpy(ui.pairing_code, "4826");
@@ -246,6 +277,8 @@ int main(int argc, char **argv) {
         sl_runtime_destroy(rt);
     }
     sl_media_hooks(NULL, NULL, NULL);
+    sl_artwork_destroy(artwork);
+    artwork = NULL;
     sl_ui_renderer_destroy(renderer);
     stream_media_shutdown();
     assert(rmdir(blocked_temp) == 0);
@@ -260,6 +293,8 @@ int main(int argc, char **argv) {
     sl_media_hooks(draw, event, NULL);
     stream_media_present();
     sl_media_hooks(NULL, NULL, NULL);
+    sl_artwork_destroy(artwork);
+    artwork = NULL;
     sl_ui_renderer_destroy(renderer);
     stream_media_shutdown();
     sl_system_shutdown();

@@ -57,3 +57,10 @@ uint64_t sl_system_now(void) {
 void sl_system_log(const char *message) {
     (void)message;
 }
+
+uint32_t sl_system_dns_begin(void) {
+    return 0;
+}
+void sl_system_dns_cancel(uint32_t handle) {
+    (void)handle;
+}

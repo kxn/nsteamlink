@@ -1519,3 +1519,35 @@ NSL_DIAGNOSTICS 默认 OFF，编译排除诊断线程、远程调试 socket、HI
 NSP 内核能力描述采用 libnx 自制应用常见服务/文件权限与 512 handle table，未更改运行时
 清理顺序。Hypothesis（待验证）：当前能力描述满足实际 SDL/Mesa/网络独立应用运行；
 结构正确及交叉编译成功不能替代 NSP 真机安装、串流和退出证据。
+
+#### D-045 游戏封面独立下载与缓存
+
+Evidence：STEAMLINK_PROTOCOL_RE §20 记录官方 CAppImages 的 StoreBrowse/CDN 横版 header
+路径、主机 SetIcon 的窗口图标用途，以及匿名元数据/JPEG 请求实测。现有 recent history 来自
+SetActivity 的 gameid/name，按主机/账号保存，不新增主机游戏库或认证协议。
+
+实现采用独立 joinable worker。HTTPS 使用 devkitPro switch-curl（7.69.1-5，libnx SSL），
+开启 peer/hostname 验证；不接受重定向，不发送账号、Cookie 或配对记录。JSON 解析采用
+vendored jsmn（MIT，25647e692c7906b96ffd2b05ca54c097948e879c），JPEG 解码用 portlibs
+libjpeg-turbo（Switch 2.1.2-2，BSD/IJG）。原始 JSON/JPEG 限制为 64 KiB/1 MiB，JPEG 最大
+2048×2048 且不超过 2M 像素；RGBA 输出不超过 548×256。下载与文件读写、解码不在绘制线程。
+
+Evidence：libcurl threadsafe 文档要求 NOSIGNAL 且提示同步 DNS 不受普通超时完整约束。
+devkitPro curl 包禁用了 threaded resolver。libnx runtime/resolver.c 使用 thread-local
+cancel handle；resolverGetCancelHandle 为当前线程下一次查询取号，resolverCancel 可取消该查询。
+因此 HAL 提供解析取消，避免依赖 curl timeout 来宣称 DNS 一定可中止。
+
+接入在 UI 渲染前初始化 worker；进入串流/非首页时暂停请求，libcurl progress callback 和
+Switch DNS cancel 协作取消。在关闭路径先 stop/join 图片 worker、释放 curl/SSL，再清理
+IHS runtime、UI 纹理、SDL/Mesa，最后 socketExit。不存在 detach；桌面测试 seam 不影响正式
+网络路径。实际 Switch DNS/HTTPS 取消效果和 loader cleanup 仍以真机观察为证。
+
+图片缓存位于原数据目录的 artwork/，按有效 24 位普通 Steam AppID 命名（其他 CGameID 类型
+跳过）。最多 32 张 JPEG（每张最多 1 MiB），按访问时间淘汰；8 个后台槽位和 8 张渲染纹理，
+失败至少退避一分钟。缓存命中不联网；损坏缓存重新下载。封面不替代/扩展历史游戏列表。
+渲染只 trylock 取结果和创建纹理，180ms 淡入；完整缩放，不裁去标题，保持原按键/触摸命中。
+
+来源：
+- [libcurl thread-safety](https://curl.se/libcurl/c/threadsafe.html)
+- [libnx resolver](https://github.com/switchbrew/libnx/blob/master/nx/source/runtime/resolver.c)
+- [devkitPro curl package](https://github.com/devkitPro/pacman-packages/tree/master/switch/curl)

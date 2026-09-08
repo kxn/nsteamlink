@@ -1034,3 +1034,71 @@ nxlink 日志记录退出原因为 `hotkey:vol_up+sticks`，且诊断线程在 I
 `74d1cf53606e6dff4cb57bcb1bca3c03f5a4f4a594f833e68ffb9a29b9d38bc2`；
 29 项测试在普通、ASan/UBSan、TSan 配置下均通过。该构建与上述已实测构建不同，
 不能把前者的完整运行时验证归给后者。
+
+## 20. 游戏封面与主机图标（2026-09-08）
+
+本节复核对象为同一 Android v1.3.32 arm64 `libmain.so`，不把符号存在本身等同于功能已验证。
+ELF SHA256：`50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e`。
+
+### 20.1 Evidence：商店图片下载与缓存
+
+- `CAppImages::GetStoreItem(uint32)` @ `0x75ea0c` 构造 StoreBrowse GetItems 请求，写入
+  appid；`0x75eb60` 设置数据请求的 include_assets_without_overrides（field 15）。随后
+  序列化 protobuf、Base64/URL 编码，经 `CWebRequestManager::BStart` 发请求。
+- URL 格式常量 @ `0x370c2d` 为
+  `%s/IStoreBrowseService/GetItems/v1?input_protobuf_encoded=%s`。
+- `CAppImages::OnStoreItem` @ `0x75fd00` 拼接资源 URL：国际域名常量 @ `0x3a3e4c`
+  为 `https://shared.steamstatic.com/store_item_assets`，中国域名 @ `0x390607` 为
+  `https://shared.cdn.steamchina.eccdnx.com/store_item_assets`；从 assets 取 URL 模板与
+  header 字段，将 `${FILENAME}` 替换成文件名，再异步请求。
+- `SaveImage` @ `0x760020` 经 BSaveCacheFile 保存；`GetImagePath` @ `0x75fa04` 和
+  `GetImageInfoPath` @ `0x75f92c` 使用 `app_image_%u.jpg` / `app_image_%u.txt`。
+- `LoadImage` @ `0x75f698` 从缓存读取，经 IMG_Load_IO 解码并创建 SDL 纹理。
+  本次静态调用索引中，直接调用者为 `CreateStartupBackground` @ `0x75f1c8`，
+  后者由 `CStreamPlayer::InitStartup` @ `0x7b6794` 调用。
+- `SetStreamingActivity` @ `0x7b7160`、`SetLaunchedActivity` @ `0x7b7140` 以及
+  `SetActivity` 的 `0x7c5440` 调用 AddAppID，证明图片缓存与游戏活动关联。
+
+Conclusion：官方确实存在“游戏活动 ID → Steam 商店元数据 → CDN 横版图片 → 本地缓存 →
+启动背景”的路径，不是保存串流末帧。此调用链不能证明用户记忆中的首页卡片一定采用
+同一图片，也不能排除其他页面使用截图；本次没有确认“断开时截图作为游戏卡片”的路径。
+
+### 20.2 Evidence：主机直接发送的是窗口图标
+
+`remoteplay.proto` 的 CSetIconMsg 包含 width、height、image。
+`CStreamClient::OnSetIcon` @ `0x7ae4bc` 校验图片至少 width×height×4 字节，
+传给 `CStreamPlayer::SetIcon` @ `0x7c5804`，后者创建 surface 并调用 SDL_SetWindowIcon。
+IHSlib 当前 `src/session/channels/ch_control.c` 对 k_EStreamControlSetIcon 直接 break。
+
+Conclusion：主机有直接发送位图的协议，但这条已经确认的用途是窗口图标，不能把它
+当成高清封面接口。GetTouchIconData 属于触控配置，CDebugDumpMsg.screenshot 属于调试消息；
+字段名称不能作为游戏卡片图片来源的证据。
+
+### 20.3 Evidence：公开接口读请求实测
+
+2026-09-08 在开发机对同一路径使用 input_json 参数，仅请求 appid=413150、
+context(language=schinese,country_code=US)、include_assets_without_overrides=true，
+没有发送 Steam 登录 Cookie 或 Web API key。返回 success=1、Stardew Valley，以及：
+
+- asset_url_format：`steam/apps/413150/${FILENAME}?t=1786554168`
+- header：`header.jpg`
+- library_capsule：`library_600x900.jpg`
+- library_hero：`library_hero.jpg`
+
+按返回的模板拼接 header 地址后，HEAD 返回 HTTP 200、image/jpeg、58853 字节。
+
+Conclusion：该游戏的元数据当前可匿名读取；不能由单个应用成功推出所有游戏、地区和
+未来接口行为都一致。接口是客户端内部使用方式，不按公开稳定 SDK 契约假设。
+素材类别的官方说明：[Steamworks Library Assets](https://partner.steamgames.com/doc/store/assets/libraryassets)。
+
+### 20.4 NSteamLink 接入设计边界
+
+现有 runtime activity 回调已经得到 gameid/name，UI 将历史按 host/account 保存。
+封面可以单独按验证过的 Steam AppID 缓存，主机切换仍只展示该主机/账号原有游戏列表。
+不要把非 Steam 快捷方式的 64 位 gameid 直接截断后拿去查询商店，也不把公开商店结果
+冒充用户的完整游戏库。当前“最近游玩”源自实际串流活动记录，不是已实现的主机游戏库枚举。
+
+推荐横版封面适配现有卡片：先显示缓存或占位，后台有界请求；成功后替换纹理，不改变焦点
+与触摸命中，不阻塞发现/配对。下载失败保留名称及占位，不弹对话框。工作线程可停止、可 join；
+图片字节/尺寸/缓存量需限制。自定义主机封面、非 Steam 游戏图片与局域网离线首次取图不在
+已验证的商店路径能力之内；窗口图标接收可作为独立备选研究，不自动截取串流画面。

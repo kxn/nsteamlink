@@ -96,3 +96,11 @@ tools/switch-debugctl.py 10.10.10.17 diag current
 - 涉及生命周期的验证要区分日志清理完成和屏幕返回 hbmenu；后一项必须由实机观察确认。
 
 普通 Release NRO 不包含诊断入口。NSP 安装包与发版构建方法见 [RELEASING](RELEASING.md)。
+
+## 最近游戏封面
+
+首页自动为已记录的普通 Steam 游戏获取横版封面，无需登录或填写 API key。
+首次取图需要能访问 Steam 商店/CDN；成功后保存在 `sdmc:/switch/nsteamlink/artwork/`，
+之后即使无法访问互联网也能使用缓存。图片不会改变按电脑/账号保存的最近游戏列表。
+非 Steam 快捷方式、接口不可用或图片缺失时保留游戏名称和占位，仍可正常启动游戏。
+封面缓存最多 32 张；删除 artwork 目录可让应用重新获取，不会清除配对和设置。

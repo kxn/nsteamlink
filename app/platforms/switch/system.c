@@ -92,3 +92,11 @@ void sl_system_log(const char *message) {
     (void)message;
 #endif
 }
+
+uint32_t sl_system_dns_begin(void) {
+    return resolverGetCancelHandle();
+}
+void sl_system_dns_cancel(uint32_t handle) {
+    if (handle)
+        resolverCancel(handle);
+}

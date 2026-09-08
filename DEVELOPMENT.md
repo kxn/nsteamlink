@@ -101,6 +101,9 @@ UI 替换的目标模块边界见 `docs/UI_UX_DESIGN.md` §5：`app/src/ui/` 负
 | SDL2_ttf | 系统 2.24.0 / devkitPro `switch-sdl2_ttf` | zlib | 中文与平台共享字体、字形缓存 | M5 |
 | mbedTLS | 系统 2.28 / `switch-mbedtls` | Apache-2.0 | IHSlib 加密后端 | M2 |
 | libopus | 系统 1.5.2 / `switch-libopus` | BSD-3 | 音频解码 | M4 |
+| libcurl | 系统 / devkitPro switch-curl 7.69.1-5（libnx SSL） | curl | 封面 HTTPS | M5 |
+| libjpeg-turbo | 系统 / devkitPro 2.1.2-2 | BSD/IJG | 后台 JPEG 解码 | M5 |
+| jsmn | vendored 25647e6 | MIT | 有界商店 JSON 解析 | M5 |
 | protobuf-c | 系统 1.5.1 / M2 自行交叉编译 | BSD-2 | IHSlib 依赖 | M2 |
 
 - 项目整体以 **GPLv3** 发布（复用 Moonlight-Switch 材料所致，kickoff §7.1 / decisions D-004）。
@@ -236,6 +239,9 @@ Switch 端 probe/client 默认 cleanup 顺序：
 | switch-portlibs | 含 SDL2/ttf/mbedtls 2.28/opus 1.3 | `dkp-pacman -S switch-portlibs` |
 | SDL2 (desktop) | 2.32.4 | apt |
 | FFmpeg (desktop) | libavcodec 61.19 | apt |
+| libcurl | 系统 / devkitPro switch-curl 7.69.1-5（libnx SSL） | curl | 封面 HTTPS | M5 |
+| libjpeg-turbo | 系统 / devkitPro 2.1.2-2 | BSD/IJG | 后台 JPEG 解码 | M5 |
+| jsmn | vendored 25647e6 | MIT | 有界商店 JSON 解析 | M5 |
 | protobuf-c | 1.5.1（含 protoc-c） | apt |
 | mbedTLS (desktop) | 2.28.x | apt |
 | clang-format / tshark | 系统 | 格式化 / 抓包 |
