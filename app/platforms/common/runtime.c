@@ -33,6 +33,7 @@ struct sl_runtime {
     IHS_HIDProvider *provider;
     IHS_ClientConfig config;
     IHS_SessionInfo session_info;
+    bool video_suspended;
     bool session_ready, connected, finished, host_stopped, first_reported, auth_ready,
         auth_consumed, request_terminal;
     uint64_t auth_account, request_at, frame_at, last_diag;
@@ -151,7 +152,7 @@ void sl_log_finish(void) {
     pthread_mutex_destroy(&log_lock);
 }
 static void ihs_log(IHS_LogLevel level, const char *tag, const char *message) {
-    if (level > IHS_LogLevelWarn && strcmp(tag, "Activity"))
+    if (level > IHS_LogLevelWarn && strcmp(tag, "Activity") && strcmp(tag, "StreamState"))
         return;
     char s[224];
     snprintf(s, sizeof(s), "%.24s: %.190s", tag, message);
@@ -343,7 +344,10 @@ static void audio_stop(IHS_Session *s, void *ctx) {
     (void)ctx;
     stream_media_audio_stop(s);
 }
-static void activity(IHS_Session *s, uint64_t id, const char *name, void *ctx) {
+static void activity(IHS_Session *s, int kind, uint64_t id, const char *name, void *ctx) {
+    /* Official SetActivity caches artwork only for EStreamActivityGame. */
+    if (kind != 2 || !id || !name || !name[0])
+        return;
     (void)s;
     sl_runtime *r = ctx;
     sl_runtime_event e = {.type = SL_EVENT_ACTIVITY, .account = r->active.host.account};
@@ -362,7 +366,7 @@ static const IHS_StreamVideoCallbacks video_cb = {
     .start = video_start, .submit = video_submit, .stop = video_stop};
 static const IHS_StreamAudioCallbacks audio_cb = {
     .start = audio_start, .submit = audio_submit, .stop = audio_stop};
-static const IHS_StreamInputCallbacks input_cb = {.activity = activity};
+static const IHS_StreamInputCallbacks input_cb = {.activityState = activity};
 static void stop_client(sl_runtime *r) {
     if (!r->client)
         return;
@@ -406,6 +410,7 @@ static void stop_session(sl_runtime *r) {
     r->connected = r->finished = r->host_stopped = r->session_ready = false;
     pthread_mutex_unlock(&r->lock);
     r->first_reported = false;
+    r->video_suspended = false;
     r->request_at = 0;
 }
 static bool launch_session(sl_runtime *r, IHS_SessionInfo info) {
@@ -564,16 +569,6 @@ static void sample(sl_runtime *r, uint64_t now) {
              s.displayed_frames, d.values[0], d.values[1], d.values[2], d.values[3], d.values[4],
              d.values[5]);
     sl_log(line);
-    if (r->session && r->first_reported && now - r->frame_at >= 2000) {
-        snprintf(line, sizeof(line),
-                 "video stall: rx_v=%llu rx_a=%llu rx_c=%llu decoded=%u shown=%u audio_frames=%u "
-                 "audio_samples=%llu",
-                 (unsigned long long)s.reliability.receivedVideoPackets,
-                 (unsigned long long)s.reliability.receivedAudioPackets,
-                 (unsigned long long)s.reliability.receivedControlPackets, s.decoded_frames,
-                 s.displayed_frames, s.audio_frames, (unsigned long long)s.audio_decoded_samples);
-        sl_log(line);
-    }
     r->previous = s;
 #endif
     r->last_diag = now;
@@ -736,8 +731,16 @@ static void *worker_main(void *ctx) {
         }
         if (now - r->last_diag >= 1000)
             sample(r, now);
-        if (r->request_at && ((!r->first_reported && now - r->request_at > 45000) ||
-                              (r->first_reported && now - r->frame_at > 10000))) {
+        bool video_suspended = r->session && IHS_SessionHostVideoStopped(r->session);
+        if (r->video_suspended && !video_suspended) {
+            r->frame_at = now;
+            if (!r->first_reported)
+                r->request_at = now;
+        }
+        r->video_suspended = video_suspended;
+        if (!video_suspended && r->request_at &&
+            ((!r->first_reported && now - r->request_at > 45000) ||
+             (r->first_reported && now - r->frame_at > 10000))) {
             /* A host stop may arrive after this loop copied finished. Read the
              * explicit reason again before teardown, so it wins over the watchdog. */
             bool normal =

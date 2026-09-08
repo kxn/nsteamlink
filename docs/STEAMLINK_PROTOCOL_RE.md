@@ -1119,3 +1119,39 @@ Conclusion：header 是相对资源路径，不能限制为无目录的单个文
 与触摸命中，不阻塞发现/配对。下载失败保留名称及占位，不弹对话框。工作线程可停止、可 join；
 图片字节/尺寸/缓存量需限制。自定义主机封面、非 Steam 游戏图片与局域网离线首次取图不在
 已验证的商店路径能力之内；窗口图标接收可作为独立备选研究，不自动截取串流画面。
+
+## 21. 视频停止、活动变化与会话结束的区别（2026-09-08）
+
+Evidence：同一 v1.3.32 arm64 libmain.so，静态反汇编 /tmp/slink/main.disasm：
+
+- OnStopVideoData @0x7ae278：解析 CStopVideoDataMsg；成功后 @0x7ae2c4 清除
+  client+626 的视频状态位，@0x7ae2cc 调用 IStreamDecoder::OnStreamStopped，
+  @0x7ae2e0 析构 client+40 的视频解码器，@0x7ae2e4 清空指针。此分支不销毁
+  client+32 音频解码器，也不写 client+256 会话状态。
+- OnSetActivity @0x7aef08：@0x7aef5c 读取 activity，@0x7aef64–70 按 has_gameid
+  选择 64 位 gameid 或旧 appid，@0x7aef80 向 player 委托完整 activity/id/name。
+- SetActivity @0x7c5290：@0x7c53e4 保存 activity 到 player+496；根据活动类型更新
+  文字、控制覆盖层和电源管理。@0x7c5428–40 只有 activity==Game(2) 且标准 AppID
+  才加入封面缓存；没有在 activity 变为 Desktop(3) 时调用 Disconnect/StopRequest。
+- remoteplay.proto 的 EStreamActivity：Idle=1、Game=2、Desktop=3、
+  SecureDesktop=4、Music=5；它不是视频结束原因枚举。
+- OnThink @0x7a5ff8：分别检查并处理音频/视频解码器，缺少视频解码器时跳过视频处理；
+  state==6 调用 HandleStreaming @0x7a7140。后者发送帧反馈和 KeepAlive；
+  此函数没有“显示帧数 10 秒不变就断会话”的分支。
+- OnStreamDisconnected @0x7b00d0：当原会话 state==6 时，@0x7b014c–54 设置 state=7
+  并清除状态位，进入会话停止路径。与 OnStopVideoData 的仅视频清理有明确区别。
+
+Conclusion：StopVideoData(53) 是明确的视频停止消息，允许音频与会话继续存在；
+不能将它、SetActivity(98) 和会话 StopRequest(129)/Disconnect 混为一谈。
+当前 fork 原已接收 StopVideoData 并移除视频通道，但应用无独立的显式停止状态，
+仍会触发无帧 watchdog。SetActivity 原只上报非零且有名的游戏 ID，丢失活动类型、
+空 ID 和旧 appid 回退，因此旧日志无法恢复完整语义。
+
+接线规则：解析并保存明确视频停止状态，StartVideoData 清除它；该状态下禁止无帧
+watchdog，恢复视频时重新给足等待窗口。完整活动回调保留 activity/id/name；
+只有 Game 活动写入最近游戏。状态日志记录 StartVideoData/StopVideoData 和完整
+SetActivity，不再要求新增收包计数实测。保留原有完整会话结束处理和清理顺序。
+
+边界：以上确认了官方处理及本地缺口，不能倒推出 8e918e0 旧日志未记录的 activity 值，
+也不能宣称该次真机必定收到过 StopVideoData。用户确认退出游戏后声音来自其他程序，
+该观察与“视频停止但音频可能继续”的模型相容，不等同于抓到具体结束包。
