@@ -81,6 +81,7 @@ static void start(sl_ui_model *m, int game) {
     if (!h || !sl_host_online(h, m->now))
         return;
     m->generation++;
+    m->repair_attempted = !h->paired;
     memset(&m->intent, 0, sizeof(m->intent));
     m->intent.host = *h;
     m->intent.generation = m->generation;
@@ -277,6 +278,8 @@ void sl_ui_action(sl_ui_model *m, sl_action a, int arg) {
         break;
     case SL_RETRY:
         if (m->page == SL_ERROR) {
+            m->repair_attempted = !m->intent.host.paired;
+            m->pairing_code[0] = 0;
             ++m->generation;
             page(m, m->intent.host.paired ? SL_CONNECTING : SL_PAIRING);
             emit(m, m->intent.host.id ? (m->intent.host.paired ? SL_CMD_STREAM : SL_CMD_PAIR)

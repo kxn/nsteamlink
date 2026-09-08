@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 static sl_ui_model ui;
 static sl_ui_renderer *renderer;
@@ -179,6 +180,9 @@ int main(int argc, char **argv) {
     const char *dir = sl_system_data_dir();
     sl_auth_store auth;
     assert(sl_auth_load(&auth, dir) >= 0);
+    char blocked_temp[512];
+    snprintf(blocked_temp, sizeof(blocked_temp), "%s/profile.tmp", dir);
+    assert(mkdir(blocked_temp, 0700) == 0);
     for (int launch = 0; launch < 2; ++launch) {
         sl_runtime *rt = sl_runtime_create(&auth);
         assert(rt);
@@ -188,9 +192,11 @@ int main(int argc, char **argv) {
         uint64_t deadline = sl_system_now() + 5000;
         while (sl_system_now() < deadline && !stopped) {
             sl_runtime_event e;
-            while (sl_runtime_poll(rt, &e))
+            while (sl_runtime_poll(rt, &e)) {
+                assert(e.type != SL_EVENT_FAILURE);
                 if (e.type == SL_EVENT_STOPPED && e.generation == cancel.generation)
                     stopped = true;
+            }
             stream_media_present();
             SDL_Delay(5);
         }

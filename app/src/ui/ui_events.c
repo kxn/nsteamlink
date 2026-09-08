@@ -17,12 +17,18 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
         return;
     switch (e.type) {
     case SL_EVENT_CODE:
+        if (m->page != SL_PAIRING || m->pairing_code[0])
+            break;
         snprintf(m->pairing_code, sizeof(m->pairing_code), "%.4s", e.text);
         break;
     case SL_EVENT_SAVING:
+        if (m->page != SL_PAIRING)
+            break;
         m->page = SL_SAVING;
         break;
     case SL_EVENT_AUTHORIZED: {
+        if (m->page != SL_PAIRING && m->page != SL_SAVING)
+            break;
         sl_host *h = sl_host_find(&m->store.registry, e.host.id);
         if (h) {
             if (h->account != e.account)
@@ -46,11 +52,19 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
         break;
     case SL_EVENT_FAILURE:
         if (e.account == 1) {
+            if (m->page != SL_CONNECTING)
+                break;
             sl_host *h = sl_host_find(&m->store.registry, m->intent.host.id);
             if (h) {
                 h->paired = false;
                 m->intent.host = *h;
+                if (m->repair_attempted) {
+                    sl_ui_error(m, e.text);
+                    break;
+                }
+                m->repair_attempted = true;
                 m->page = SL_PAIRING;
+                m->pairing_code[0] = 0;
                 m->command = m->intent;
                 m->command.generation = m->generation;
                 m->command.type = SL_CMD_PAIR;

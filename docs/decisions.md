@@ -1463,3 +1463,19 @@ ping 有回复，但用户仍未发现 Steam，证明 socket 修复不足以证�
 产品不恢复硬编码地址：只对已保存主机地址、身份匹配的旧 auth.bin 上次地址做周期定向发现。
 旧地址只是候选，不产生 UI 主机、不导入授权；收到真实 discovery callback 才更新列表。
 这是对“完全丢弃旧 lastHost”实现的修正，设备 ID/secret 必须匹配后才读取候选。
+
+#### D-043 配对事务修正
+
+用户证据：选择配对后 code 快速变更数次，最后显示无法保存配对。日志同时出现连续
+client stop/create，不能把它仅归因为 SD 卡或单次写盘失败。
+源码证据：runtime_submit 把每个命令的 store 快照标为 save_pending；worker 在切换命令
+世代之前先写盘，错误归到旧世代。ui_events 不限制授权成功的页面和重复消费，Unauthorized
+可反复转配对。分离“更新快照”与“要求写盘”，授权回调每次事务只消费一次，UI 只接受配对/
+保存阶段的成功，同一连接意图不在配对失败后无限自动再配对，code 仅显式新尝试时重置。
+
+存储证据：[libnx fsdev_rename](https://github.com/switchbrew/libnx/blob/master/nx/source/runtime/devices/fs_dev.c)
+直接调用 Horizon fsFsRenameFile；不能把 POSIX 覆盖重命名作为平台共同保证。
+保留普通 rename 的快速路径，目标存在时将旧完整文件移到 profile.bak，再发布完整临时文件；
+发布失败尝试回滚，启动遇到主文件缺失则校验并恢复 backup，不生成新设备身份。
+该回退是可恢复事务，不宣称两次 rename 整体原子。真实保存失败步骤由 stage/errno 日志确认，
+不把主机授权拒绝解释为文件错误，也不记录配对 code/secret。

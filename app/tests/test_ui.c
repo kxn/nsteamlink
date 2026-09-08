@@ -2,11 +2,25 @@
 #include "ui/ui_events.h"
 #include "ui/ui_model.h"
 #include <assert.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+static bool no_replace, fail_publish;
+int __real_rename(const char *, const char *);
+int __wrap_rename(const char *from, const char *to) {
+    if (no_replace && access(to, F_OK) == 0) {
+        errno = EEXIST;
+        return -1;
+    }
+    if (fail_publish && strstr(from, "profile.tmp") && access(to, F_OK) != 0) {
+        errno = EIO;
+        return -1;
+    }
+    return __real_rename(from, to);
+}
 static sl_input_event sent[64];
 static int n, neutral;
 static void send_event(const sl_input_event *e, void *ctx) {
@@ -222,6 +236,37 @@ int main(void) {
     first.generation = m.generation;
     sl_ui_runtime_event(&m, &first);
     assert(m.streaming);
+    /* Authorization is consumed once; neither duplicates nor a refusal after
+     * pairing may silently generate another code. */
+    sl_ui_model flow = model();
+    add(&flow, 4, "PAIR-HOST");
+    sl_ui_action(&flow, SL_START, 0);
+    assert(flow.repair_attempted);
+    assert(sl_ui_take_command(&flow, &cmd) && cmd.type == SL_CMD_PAIR);
+    sl_runtime_event code = {.type = SL_EVENT_CODE, .generation = flow.generation};
+    strcpy(code.text, "1234");
+    sl_ui_runtime_event(&flow, &code);
+    strcpy(code.text, "5678");
+    sl_ui_runtime_event(&flow, &code);
+    assert(!strcmp(flow.pairing_code, "1234"));
+    sl_runtime_event success = {.type = SL_EVENT_AUTHORIZED,
+                                .generation = flow.generation,
+                                .host = flow.intent.host,
+                                .account = 88};
+    sl_ui_runtime_event(&flow, &success);
+    assert(sl_ui_take_command(&flow, &cmd) && cmd.type == SL_CMD_STREAM);
+    sl_ui_runtime_event(&flow, &success);
+    assert(!sl_ui_take_command(&flow, &cmd));
+    sl_runtime_event refusal = {
+        .type = SL_EVENT_FAILURE, .generation = flow.generation, .account = 1};
+    strcpy(refusal.text, "需要重新配对");
+    sl_ui_runtime_event(&flow, &refusal);
+    assert(flow.page == SL_ERROR && !sl_ui_take_command(&flow, &cmd));
+    sl_ui_runtime_event(&flow, &success);
+    assert(flow.page == SL_ERROR && !sl_ui_take_command(&flow, &cmd));
+    sl_ui_action(&flow, SL_RETRY, 0);
+    assert(flow.page == SL_PAIRING && !flow.pairing_code[0]);
+    assert(sl_ui_take_command(&flow, &cmd) && cmd.type == SL_CMD_PAIR);
     /* A centered axis works immediately after opening a stream. Held axes
      * remain neutral across the menu until returning through the deadzone. */
     sl_input_init(&r, &m, send_event, reset_remote, NULL);
@@ -274,6 +319,23 @@ int main(void) {
     s.quality = 2;
     assert(sl_auth_save(&s, dir));
     assert(sl_auth_load(&t, dir) == 0 && t.quality == 2);
+    no_replace = true;
+    s.quality = 1;
+    assert(sl_auth_save(&s, dir));
+    assert(sl_auth_load(&t, dir) == 0 && t.quality == 1);
+    fail_publish = true;
+    s.quality = 2;
+    assert(!sl_auth_save(&s, dir));
+    assert(sl_auth_load(&t, dir) == 0 && t.quality == 1);
+    fail_publish = false;
+    assert(sl_auth_save(&s, dir));
+    no_replace = false;
+    char primary[512], backup[512];
+    snprintf(primary, sizeof(primary), "%s/profile.bin", dir);
+    snprintf(backup, sizeof(backup), "%s/profile.bak", dir);
+    assert(rename(primary, backup) == 0); /* interrupted before publication */
+    assert(sl_auth_load(&t, dir) == 0 && t.quality == 2);
+    assert(access(primary, F_OK) == 0);
     /* A failed temporary write must preserve the previous valid profile. */
     char tmp[512];
     snprintf(tmp, sizeof(tmp), "%s/profile.tmp", dir);

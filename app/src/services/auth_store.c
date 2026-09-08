@@ -30,12 +30,41 @@ static uint32_t checksum(const void *ptr, size_t n) {
         h = (h ^ p[i]) * 16777619u;
     return h;
 }
+static bool store_error(const char *stage) {
+    int error = errno;
+    char line[128];
+    snprintf(line, sizeof(line), "storage: stage=%s errno=%d", stage, error);
+    sl_system_log(line);
+    errno = error;
+    return false;
+}
+/* Horizon RenameFile does not replace an existing destination. Preserve the
+ * old file as a recovery record before publishing the new complete file. */
+static bool replace_profile(const char *tmp, const char *path, const char *backup) {
+    if (rename(tmp, path) == 0)
+        return true;
+    if (errno != EEXIST && errno != ENOTEMPTY)
+        return store_error("replace");
+    if (remove(backup) && errno != ENOENT)
+        return store_error("remove-old-backup");
+    if (rename(path, backup))
+        return store_error("backup");
+    if (rename(tmp, path) == 0) {
+        remove(backup);
+        return true;
+    }
+    int error = errno;
+    rename(backup, path); /* On failure the backup remains recoverable on load. */
+    errno = error;
+    return store_error("publish");
+}
 bool sl_auth_save(const sl_auth_store *s, const char *dir) {
     if (mkdir(dir, 0700) && errno != EEXIST)
-        return false;
-    char path[512], tmp[512];
+        return store_error("mkdir");
+    char path[512], tmp[512], backup[512];
     snprintf(path, sizeof(path), "%s/profile.bin", dir);
     snprintf(tmp, sizeof(tmp), "%s/profile.tmp", dir);
+    snprintf(backup, sizeof(backup), "%s/profile.bak", dir);
     disk_store d = {0};
     memcpy(d.magic, "NSLUI02", 8);
     d.version = 2;
@@ -48,14 +77,18 @@ bool sl_auth_save(const sl_auth_store *s, const char *dir) {
     d.checksum = checksum(&d.data, sizeof(d.data));
     FILE *f = fopen(tmp, "wb");
     if (!f)
-        return false;
+        return store_error("open-temp");
     bool ok = fwrite(&d, 1, sizeof(d), f) == sizeof(d);
-    ok = fflush(f) == 0 && ok;
+    if (!ok)
+        store_error("write-temp");
+    if (fflush(f))
+        ok = store_error("flush-temp");
     if (ok && fsync(fileno(f)) && errno != ENOSYS && errno != EINVAL)
-        ok = false;
-    ok = fclose(f) == 0 && ok;
+        ok = store_error("sync-temp");
+    if (fclose(f))
+        ok = store_error("close-temp");
     if (ok)
-        ok = rename(tmp, path) == 0;
+        ok = replace_profile(tmp, path, backup);
     if (!ok)
         remove(tmp);
     return ok;
@@ -67,6 +100,13 @@ int sl_auth_load(sl_auth_store *s, const char *dir) {
     char path[512];
     snprintf(path, sizeof(path), "%s/profile.bin", dir);
     FILE *f = fopen(path, "rb");
+    bool recovered = false;
+    char backup[512];
+    snprintf(backup, sizeof(backup), "%s/profile.bak", dir);
+    if (!f && errno == ENOENT) {
+        f = fopen(backup, "rb");
+        recovered = f != NULL;
+    }
     if (f) {
         disk_store d;
         bool ok = fread(&d, 1, sizeof(d), f) == sizeof(d) && fgetc(f) == EOF;
@@ -76,6 +116,10 @@ int sl_auth_load(sl_auth_store *s, const char *dir) {
             d.data.registry.count < 0 || d.data.registry.count > SL_HOST_LIMIT ||
             d.data.quality > 2)
             return -2;
+        if (recovered && rename(backup, path)) {
+            store_error("recover");
+            return -1;
+        }
         *s = d.data;
         s->device_name[63] = 0;
         s->registry.selected = s->registry.count ? 0 : -1;

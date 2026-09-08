@@ -23,7 +23,7 @@ struct sl_runtime {
     pthread_t worker;
     pthread_mutex_t lock;
     pthread_cond_t wake;
-    bool started, quit, request_pending, save_pending;
+    bool started, quit, request_pending, save_pending, snapshot_pending;
     sl_command pending, active;
     sl_auth_store store, save;
     sl_runtime_event events[48];
@@ -33,7 +33,8 @@ struct sl_runtime {
     IHS_HIDProvider *provider;
     IHS_ClientConfig config;
     IHS_SessionInfo session_info;
-    bool session_ready, connected, finished, first_reported, auth_ready, request_terminal;
+    bool session_ready, connected, finished, first_reported, auth_ready, auth_consumed,
+        request_terminal;
     uint64_t auth_account, request_at, frame_at, last_diag;
     uint32_t frames;
     sl_debug_snapshot debug;
@@ -184,6 +185,7 @@ static void post(sl_runtime *r, sl_runtime_event e) {
     pthread_mutex_unlock(&r->lock);
 }
 static void fail(sl_runtime *r, const char *s) {
+    sl_log(s);
     sl_runtime_event e = {.type = SL_EVENT_FAILURE};
     snprintf(e.text, sizeof(e.text), "%s", s);
     post(r, e);
@@ -218,8 +220,12 @@ static void authorized(IHS_Client *client, const IHS_HostInfo *h, uint64_t accou
     (void)h;
     sl_runtime *r = ctx;
     pthread_mutex_lock(&r->lock);
-    r->auth_account = account;
-    r->auth_ready = true;
+    if (r->active.type == SL_CMD_PAIR && !r->auth_consumed) {
+        r->auth_account = account;
+        r->auth_ready = true;
+        r->auth_consumed = true;
+        sl_log("pair: authorization success callback");
+    }
     pthread_mutex_unlock(&r->lock);
 }
 static void auth_failed(IHS_Client *c, const IHS_HostInfo *h, IHS_AuthorizationResult result,
@@ -408,6 +414,10 @@ static bool host_info(const sl_host *h, IHS_HostInfo *out) {
     return IHS_IPAddressFromString(&out->address.ip, h->address);
 }
 static void execute(sl_runtime *r, sl_command cmd) {
+    char trace[120];
+    snprintf(trace, sizeof(trace), "command: type=%d generation=%llu host=%llu", cmd.type,
+             (unsigned long long)cmd.generation, (unsigned long long)cmd.host.id);
+    sl_log(trace);
     if (cmd.type == SL_CMD_SAVE)
         return;
     /* Joining the old client before changing active generation also isolates
@@ -418,6 +428,7 @@ static void execute(sl_runtime *r, sl_command cmd) {
     r->request_at = 0;
     pthread_mutex_lock(&r->lock);
     r->auth_ready = r->session_ready = false;
+    r->auth_consumed = false;
     pthread_mutex_unlock(&r->lock);
     if (cmd.type == SL_CMD_EXIT) {
         r->quit = true;
@@ -600,17 +611,19 @@ static void *worker_main(void *ctx) {
     while (!r->quit) {
         sl_command cmd = {0};
         sl_auth_store save;
-        bool save_pending;
+        bool save_pending, snapshot_pending;
         pthread_mutex_lock(&r->lock);
         if (r->request_pending) {
             cmd = r->pending;
             r->request_pending = false;
         }
         save_pending = r->save_pending;
-        if (save_pending) {
+        snapshot_pending = r->snapshot_pending;
+        if (snapshot_pending) {
             save = r->save;
-            r->save_pending = false;
+            r->snapshot_pending = false;
         }
+        r->save_pending = false;
         if (r->request_terminal) {
             r->request_at = 0;
             r->request_terminal = false;
@@ -625,8 +638,9 @@ static void *worker_main(void *ctx) {
         r->auth_ready = false;
         uint64_t account = r->auth_account;
         pthread_mutex_unlock(&r->lock);
-        if (save_pending) {
+        if (snapshot_pending)
             r->store = save;
+        if (save_pending) {
             if (!sl_auth_save(&save, sl_system_data_dir()))
                 fail(r, "无法保存设置");
         }
@@ -753,6 +767,7 @@ bool sl_runtime_submit(sl_runtime *r, const sl_command *cmd, const sl_auth_store
     pthread_mutex_lock(&r->lock);
     if (cmd->type == SL_CMD_SAVE) {
         r->save = *store;
+        r->snapshot_pending = true;
         r->save_pending = true;
     } else {
         if (r->request_pending && cmd->type != SL_CMD_EXIT && cmd->type != SL_CMD_CANCEL &&
@@ -762,9 +777,9 @@ bool sl_runtime_submit(sl_runtime *r, const sl_command *cmd, const sl_auth_store
         }
         r->pending = *cmd;
         r->request_pending = true;
-        /* Snapshot the registry for the authorization save, never mutate it from callbacks. */
+        /* A command needs a snapshot, not an unrelated pre-command disk write. */
         r->save = *store;
-        r->save_pending = true;
+        r->snapshot_pending = true;
     }
     pthread_cond_signal(&r->wake);
     pthread_mutex_unlock(&r->lock);
