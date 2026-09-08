@@ -36,7 +36,8 @@ void sl_ui_layout(sl_ui_model *m) {
                       (m->page == SL_PAIRING && !sl_ui_pair_prompt_visible(m));
     l->dialog = m->page != SL_HOME && m->page != SL_STREAM && !connecting;
     if (m->page == SL_HOME) {
-        snprintf(l->title, sizeof(l->title), "nsteamlink");
+        snprintf(l->title, sizeof(l->title), "NSteamLink  http://github.com/kxn/nsteamlink  v%s",
+                 NSL_APP_VERSION);
         if (h) {
             int begin = r->selected / 3 * 3, end = begin + 3;
             if (end > r->count)
@@ -90,7 +91,8 @@ void sl_ui_layout(sl_ui_model *m) {
     } else if (m->page == SL_STREAM) {
         /* Full video, no persistent local touch target. */
     } else if (connecting) {
-        strcpy(l->title, "nsteamlink");
+        snprintf(l->title, sizeof(l->title), "NSteamLink  http://github.com/kxn/nsteamlink  v%s",
+                 NSL_APP_VERSION);
         center(l, 276, 44, "正在连接");
         center(l, 354, 30, m->intent.host.name[0] ? m->intent.host.name : m->intent.text);
         button(l, 9, 40, 632, 180, 64, "B  取消", SL_BACK, 0, false);

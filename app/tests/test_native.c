@@ -169,9 +169,24 @@ int main(int argc, char **argv) {
         ui.pair_code_at = ui.now - 1800;
         sl_ui_layout(&ui);
         stream_media_present();
+        sl_ui_tick(&ui, ui.now + 200);
+        stream_media_present();
         char name[32];
         snprintf(name, sizeof(name), "page-%02d", p);
         save_image(name);
+    }
+    if (getenv("NSL_TEST_MOTION")) {
+        ui.page = SL_OPTIONS;
+        ui.focus = 100;
+        for (int frame = 0; frame < 45; ++frame) {
+            if (frame == 12 || frame == 27)
+                sl_ui_action(&ui, SL_DOWN, 0);
+            sl_ui_tick(&ui, ui.now + 33);
+            stream_media_present();
+            char name[32];
+            snprintf(name, sizeof(name), "motion-%03d", frame);
+            save_image(name);
+        }
     }
     ui.page = SL_HOME;
     sl_ui_connected(&ui);

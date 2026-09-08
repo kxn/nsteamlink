@@ -2,6 +2,8 @@
 #include "platform/system.h"
 #include <SDL.h>
 #include <SDL_ttf.h>
+#include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 static const int sizes[] = {24, 26, 28, 30, 32, 36, 40, 44, 72};
@@ -16,6 +18,13 @@ struct sl_ui_renderer {
     TTF_Font *fonts[3][9];
     glyph cache[512];
     uint64_t tick;
+    SDL_Texture *backdrop, *outline;
+    float text_alpha;
+    bool painted, focus_valid;
+    sl_page page;
+    int focus_id;
+    uint64_t focus_at, page_at;
+    SDL_FRect focus_from, focus_to, focus_box;
 };
 static SDL_Color bg = {17, 24, 35, 255}, panel = {29, 39, 53, 255}, accent = {117, 207, 247, 255},
                  fg = {232, 242, 250, 255}, muted = {169, 194, 212, 255};
@@ -34,6 +43,128 @@ static void rounded(SDL_Renderer *r, SDL_Rect b, int radius, SDL_Color c) {
         SDL_RenderDrawLine(r, b.x + radius - x, b.y + b.h - y - 1, b.x + b.w - radius + x - 1,
                            b.y + b.h - y - 1);
     }
+}
+static float ease(uint64_t elapsed, float duration) {
+    float t = elapsed / duration;
+    if (t >= 1.f)
+        return 1.f;
+    float remaining = 1.f - t;
+    return 1.f - remaining * remaining * remaining;
+}
+static SDL_Color mix(SDL_Color a, SDL_Color b, float t) {
+    return (SDL_Color){a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t,
+                       a.a + (b.a - a.a) * t};
+}
+static void line(SDL_Renderer *r, int x1, int y1, int x2, int y2, SDL_Color c) {
+    SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
+    SDL_RenderDrawLine(r, x1, y1, x2, y2);
+    SDL_RenderDrawLine(r, x1, y1 + 1, x2, y2 + 1);
+}
+static void play_icon(SDL_Renderer *r, int x, int y, int size, SDL_Color color) {
+    SDL_SetRenderDrawColor(r, color.r, color.g, color.b, color.a);
+    for (int i = 0; i < size; ++i) {
+        int half = (size - i) / 2;
+        SDL_RenderDrawLine(r, x + i, y - half, x + i, y + half);
+    }
+}
+static void monitor(SDL_Renderer *r, int x, int y, int size, SDL_Color color) {
+    rounded(r, (SDL_Rect){x, y, size, size * 2 / 3}, 6, color);
+    rounded(r, (SDL_Rect){x + 2, y + 2, size - 4, size * 2 / 3 - 4}, 4,
+            (SDL_Color){26, 40, 55, 255});
+    line(r, x + size / 2, y + size * 2 / 3, x + size / 2, y + size * 2 / 3 + 7, color);
+    line(r, x + size / 2 - 9, y + size * 2 / 3 + 8, x + size / 2 + 9, y + size * 2 / 3 + 8, color);
+}
+static SDL_Texture *make_backdrop(SDL_Renderer *r) {
+    SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(0, 1280, 720, 32, SDL_PIXELFORMAT_RGBA32);
+    if (!s)
+        return NULL;
+    for (int y = 0; y < 720; ++y)
+        for (int x = 0; x < 1280; ++x) {
+            float dx = (x - 960) / 1050.f, dy = (y + 80) / 800.f;
+            float glow = 1.f - dx * dx - dy * dy;
+            if (glow < 0)
+                glow = 0;
+            Uint8 *p = (Uint8 *)s->pixels + y * s->pitch + x * 4;
+            p[0] = 15 + 9 * glow;
+            p[1] = 21 + 17 * glow;
+            p[2] = 30 + 23 * glow;
+            p[3] = 255;
+        }
+    SDL_Texture *texture = SDL_CreateTextureFromSurface(r, s);
+    SDL_FreeSurface(s);
+    return texture;
+}
+static SDL_Texture *make_outline(SDL_Renderer *r) {
+    SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(0, 64, 64, 32, SDL_PIXELFORMAT_RGBA32);
+    if (!s)
+        return NULL;
+    for (int y = 0; y < 64; ++y)
+        for (int x = 0; x < 64; ++x) {
+            float qx = fabsf(x - 31.5f) - 18.f, qy = fabsf(y - 31.5f) - 18.f;
+            float ax = fmaxf(qx, 0), ay = fmaxf(qy, 0);
+            float distance = sqrtf(ax * ax + ay * ay) + fminf(fmaxf(qx, qy), 0) - 13.5f;
+            float outer = fminf(1, fmaxf(0, .5f - distance));
+            float inner = fminf(1, fmaxf(0, .5f - distance - 2));
+            Uint8 *p = (Uint8 *)s->pixels + y * s->pitch + x * 4;
+            p[0] = p[1] = p[2] = 255;
+            p[3] = (Uint8)((outer - inner) * 255);
+        }
+    SDL_Texture *texture = SDL_CreateTextureFromSurface(r, s);
+    SDL_FreeSurface(s);
+    if (texture)
+        SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+    return texture;
+}
+static void outline(sl_ui_renderer *r, SDL_Rect b) {
+    if (!r->outline)
+        return;
+    SDL_SetTextureColorMod(r->outline, accent.r, accent.g, accent.b);
+    const int source[] = {0, 16, 48, 64};
+    int xs[] = {b.x, b.x + 16, b.x + b.w - 16, b.x + b.w};
+    int ys[] = {b.y, b.y + 16, b.y + b.h - 16, b.y + b.h};
+    for (int y = 0; y < 3; ++y)
+        for (int x = 0; x < 3; ++x) {
+            if (x == 1 && y == 1)
+                continue;
+            SDL_Rect src = {source[x], source[y], source[x + 1] - source[x],
+                            source[y + 1] - source[y]};
+            SDL_Rect dst = {xs[x], ys[y], xs[x + 1] - xs[x], ys[y + 1] - ys[y]};
+            SDL_RenderCopy(r->renderer, r->outline, &src, &dst);
+        }
+}
+static void animate_focus(sl_ui_renderer *r, const sl_ui_model *m) {
+    bool page_changed = !r->painted || r->page != m->page;
+    if (page_changed) {
+        r->page = m->page;
+        r->page_at = m->now;
+        r->focus_valid = false;
+    }
+    r->painted = true;
+    const sl_control *target = NULL;
+    for (int i = 0; i < m->layout.count; ++i)
+        if (m->layout.controls[i].id == m->focus)
+            target = &m->layout.controls[i];
+    if (!target) {
+        r->focus_valid = false;
+        return;
+    }
+    SDL_FRect dest = {(float)target->x, (float)target->y, (float)target->w, (float)target->h};
+    if (!r->focus_valid) {
+        r->focus_from = r->focus_to = r->focus_box = dest;
+        r->focus_id = m->focus;
+        r->focus_at = m->now;
+        r->focus_valid = true;
+    } else if (r->focus_id != m->focus || memcmp(&dest, &r->focus_to, sizeof(dest))) {
+        r->focus_from = r->focus_box;
+        r->focus_to = dest;
+        r->focus_id = m->focus;
+        r->focus_at = m->now;
+    }
+    float t = ease(m->now >= r->focus_at ? m->now - r->focus_at : 0, 140);
+    r->focus_box = (SDL_FRect){r->focus_from.x + (dest.x - r->focus_from.x) * t,
+                               r->focus_from.y + (dest.y - r->focus_from.y) * t,
+                               r->focus_from.w + (dest.w - r->focus_from.w) * t,
+                               r->focus_from.h + (dest.h - r->focus_from.h) * t};
 }
 static uint32_t utf8(const char **s) {
     const unsigned char *p = (const unsigned char *)*s;
@@ -139,6 +270,7 @@ static glyph *get_glyph(sl_ui_renderer *r, uint32_t code, int size) {
 }
 static void draw_text(sl_ui_renderer *r, const char *s, int x, int y, int width, int height,
                       int size, SDL_Color color) {
+    color.a = (Uint8)(color.a * r->text_alpha);
     int px = x, py = y, line = size + 10;
     while (*s) {
         uint32_t cp = utf8(&s);
@@ -217,7 +349,7 @@ static void badge(sl_ui_renderer *r, const char *key, int x, int y, SDL_Color in
     SDL_Color dark = bg;
     dark.a = ink.a;
     draw_text(r, key, x + (34 - text_width(r, key, 24)) / 2, centered_y(r, key, 24, y, 34, 34), 34,
-              44, 24, bg);
+              44, 24, dark);
 }
 static void chevron(SDL_Renderer *r, int x, int y, SDL_Color c) {
     SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
@@ -235,6 +367,9 @@ sl_ui_renderer *sl_ui_renderer_create(void *native) {
         return NULL;
     }
     r->renderer = native;
+    r->backdrop = make_backdrop(r->renderer);
+    r->outline = make_outline(r->renderer);
+    r->text_alpha = 1.f;
     for (int f = 0; f < 3; ++f) {
         size_t bytes;
         const char *path;
@@ -255,17 +390,58 @@ sl_ui_renderer *sl_ui_renderer_create(void *native) {
 }
 void sl_ui_renderer_draw(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_snapshot *d) {
     const sl_layout *l = &m->layout;
-    if (!l->fullscreen)
-        rect(r->renderer, (SDL_Rect){0, 0, 1280, 720}, bg);
+    animate_focus(r, m);
+    float arrival = ease(m->now >= r->page_at ? m->now - r->page_at : 0, 180);
+    r->text_alpha = l->dialog ? .65f + .35f * arrival : 1.f;
+    if (!l->fullscreen) {
+        if (r->backdrop)
+            SDL_RenderCopy(r->renderer, r->backdrop, NULL, NULL);
+        else
+            rect(r->renderer, (SDL_Rect){0, 0, 1280, 720}, bg);
+    }
     if (l->dialog) {
-        rect(r->renderer, (SDL_Rect){0, 0, 1280, 720}, (SDL_Color){0, 0, 0, 140});
+        rect(r->renderer, (SDL_Rect){0, 0, 1280, 720}, (SDL_Color){0, 0, 0, 105 + 35 * arrival});
         rounded(r->renderer, (SDL_Rect){268, 100, 744, 592}, 24, (SDL_Color){0, 0, 0, 80});
-        rounded(r->renderer, (SDL_Rect){272, 96, 736, 588}, 22, panel);
+        rounded(r->renderer, (SDL_Rect){271, 95, 738, 590}, 23, (SDL_Color){61, 77, 94, 255});
+        rounded(r->renderer, (SDL_Rect){272, 96, 736, 588}, 22,
+                mix(bg, panel, .8f + .2f * arrival));
         rect(r->renderer, (SDL_Rect){320, 183, 640, 1}, (SDL_Color){67, 82, 101, 255});
     }
-    if (l->title[0])
-        draw_text(r, l->title, l->dialog ? 320 : 64, l->dialog ? 128 : 20, l->dialog ? 640 : 1100,
-                  68, l->dialog ? 40 : 26, fg);
+    if (l->title[0]) {
+        if (!l->dialog) {
+            draw_text(r, "NSteamLink", 52, centered_y(r, "NSteamLink", 28, 18, 44, 220), 220, 64,
+                      28, fg);
+            draw_text(r, "http://github.com/kxn/nsteamlink", 276,
+                      centered_y(r, "http://github.com/kxn/nsteamlink", 24, 18, 44, 780), 780, 64,
+                      24, muted);
+            char version[40];
+            snprintf(version, sizeof(version), "v%s", NSL_APP_VERSION);
+            int w = text_width(r, version, 24) + 32;
+            rounded(r->renderer, (SDL_Rect){1228 - w, 23, w, 34}, 10, (SDL_Color){38, 53, 68, 255});
+            draw_text(r, version, 1244 - w, centered_y(r, version, 24, 23, 34, w), w, 48, 24,
+                      muted);
+            rect(r->renderer, (SDL_Rect){52, 76, 1176, 1}, (SDL_Color){78, 103, 124, 60});
+        } else
+            draw_text(r, l->title, 320, 128, 640, 68, 40, fg);
+    }
+    if (m->page == SL_HOME && !m->layout.dialog) {
+        const sl_host_registry *hosts = &m->store.registry;
+        const sl_host *host = hosts->selected >= 0 && hosts->selected < hosts->count
+                                  ? &hosts->hosts[hosts->selected]
+                                  : NULL;
+        if (!host || !host->paired || !host->games[0].id) {
+            rounded(r->renderer, (SDL_Rect){596, 194, 88, 72}, 20, (SDL_Color){49, 81, 104, 75});
+            monitor(r->renderer, 615, 210, 50, muted);
+        }
+        rect(r->renderer, (SDL_Rect){52, 612, 1176, 1}, (SDL_Color){78, 103, 124, 45});
+    }
+    if (m->page == SL_CONNECTING || m->page == SL_SAVING ||
+        (m->page == SL_PAIRING && !sl_ui_pair_prompt_visible(m))) {
+        rounded(r->renderer, (SDL_Rect){532, 426, 216, 3}, 1, (SDL_Color){45, 64, 81, 255});
+        float phase = (m->now % 1500) / 1500.f;
+        float travel = phase < .5f ? phase * 2 : 2 - phase * 2;
+        rounded(r->renderer, (SDL_Rect){532 + (int)(156 * travel), 426, 60, 3}, 1, accent);
+    }
     for (int i = 0; i < l->label_count; ++i) {
         const sl_label *t = &l->labels[i];
         int x = t->x, width = l->dialog ? 960 - x : 1216 - x;
@@ -293,13 +469,19 @@ void sl_ui_renderer_draw(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug
         bool plain = tab || footer || shoulder || (c->action == SL_START && !c->primary);
         SDL_Color ink = c->primary && !tab ? bg : fg;
         if (!plain || focused) {
-            if (focused)
-                rounded(r->renderer, (SDL_Rect){box.x - 3, box.y - 3, box.w + 6, box.h + 6}, 15,
-                        accent);
+            if (!plain) {
+                rounded(r->renderer, (SDL_Rect){box.x, box.y + 3, box.w, box.h}, 13,
+                        (SDL_Color){0, 0, 0, 50});
+                rounded(r->renderer, (SDL_Rect){box.x - 1, box.y - 1, box.w + 2, box.h + 2}, 13,
+                        (SDL_Color){64, 83, 101, 120});
+            }
             SDL_Color fill = c->primary && !tab ? accent
-                             : focused          ? (SDL_Color){45, 67, 86, 255}
-                                                : (SDL_Color){38, 51, 68, 255};
+                             : focused          ? (SDL_Color){42, 63, 80, 255}
+                                                : (SDL_Color){32, 45, 60, 255};
             rounded(r->renderer, box, 12, fill);
+            if (c->primary && !tab)
+                rounded(r->renderer, (SDL_Rect){box.x + 12, box.y + 1, box.w - 24, 1}, 0,
+                        (SDL_Color){213, 244, 255, 150});
         }
         if (tab && c->primary) {
             rounded(r->renderer, (SDL_Rect){c->x + 28, c->y + c->h - 4, c->w - 56, 4}, 2, accent);
@@ -330,7 +512,7 @@ void sl_ui_renderer_draw(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug
         if (c->action == SL_RECENT) {
             rounded(r->renderer, (SDL_Rect){box.x + 24, box.y + 24, 52, 52}, 14,
                     (SDL_Color){62, 92, 115, 255});
-            chevron(r->renderer, box.x + 46, box.y + 50, accent);
+            play_icon(r->renderer, box.x + 43, box.y + 50, 18, accent);
             y = centered_y(r, label, size, box.y + box.h - 88, 64, width);
         } else if (!centered && !footer) {
             width -= 28;
@@ -340,6 +522,14 @@ void sl_ui_renderer_draw(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug
         draw_text(r, label, x, y, width, c->y + c->h - 8 - y, size, ink);
         SDL_RenderSetClipRect(r->renderer, NULL);
     }
+    if (r->focus_valid && m->page != SL_STREAM) {
+        SDL_FRect f = r->focus_box;
+        SDL_SetRenderDrawColor(r->renderer, accent.r, accent.g, accent.b, 210);
+        /* Only the focus indicator moves; control layout and hit testing stay fixed. */
+        SDL_Rect b = {(int)f.x - 3, (int)f.y - 3, (int)f.w + 6, (int)f.h + 6};
+        outline(r, b);
+    }
+
     if (m->page == SL_STREAM && m->now >= m->stream_started_at) {
         uint64_t elapsed = m->now - m->stream_started_at;
         if (elapsed < 4200) {
@@ -373,6 +563,8 @@ void sl_ui_renderer_draw(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug
 void sl_ui_renderer_destroy(sl_ui_renderer *r) {
     if (!r)
         return;
+    SDL_DestroyTexture(r->backdrop);
+    SDL_DestroyTexture(r->outline);
     for (int i = 0; i < 512; ++i)
         SDL_DestroyTexture(r->cache[i].texture);
     for (int f = 0; f < 3; ++f)
