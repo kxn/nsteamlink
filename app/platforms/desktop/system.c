@@ -53,3 +53,7 @@ uint64_t sl_system_now(void) {
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
+
+void sl_system_log(const char *message) {
+    (void)message;
+}

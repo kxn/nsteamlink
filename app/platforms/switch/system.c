@@ -1,6 +1,7 @@
 #include "platform/system.h"
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <string.h>
 #include <switch.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -11,10 +12,12 @@ static int log_fd = -1;
 bool sl_system_init(void) {
     padConfigureInput(1, HidNpadStyleSet_NpadStandard);
     SocketInitConfig cfg = *socketGetDefaultInitConfig();
-    cfg.udp_rx_buf_size = 0x200000;
-    cfg.udp_tx_buf_size = 0x40000;
-    cfg.sb_efficiency = 4;
+    /* Preserve the proven client configuration. Enlarging UDP defaults made
+     * socket() fail with ENOBUFS on the Switch (2026-09-08 device log). */
+    cfg.udp_rx_buf_size = 1024U * 1024U;
     sockets = R_SUCCEEDED(socketInitialize(&cfg));
+    if (!sockets)
+        sockets = R_SUCCEEDED(socketInitializeDefault());
     if (!sockets)
         return false;
     fonts = R_SUCCEEDED(plInitialize(PlServiceType_User));
@@ -73,4 +76,14 @@ uint64_t sl_system_now(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+void sl_system_log(const char *message) {
+    if (log_fd < 0)
+        return;
+    char line[240];
+    size_t n = strnlen(message, sizeof(line) - 2);
+    memcpy(line, message, n);
+    line[n++] = '\n';
+    send(log_fd, line, n, MSG_DONTWAIT);
 }

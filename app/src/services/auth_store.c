@@ -116,3 +116,20 @@ int sl_auth_load(sl_auth_store *s, const char *dir) {
     }
     return sl_auth_save(s, dir) ? 1 : -1;
 }
+
+bool sl_auth_discovery_hint(const sl_auth_store *s, const char *dir, char *address, size_t size) {
+    char path[512];
+    snprintf(path, sizeof(path), "%s/auth.bin", dir);
+    FILE *f = fopen(path, "rb");
+    if (!f)
+        return false;
+    legacy_auth old;
+    bool ok = fread(&old, 1, sizeof(old), f) == sizeof(old) && fgetc(f) == EOF;
+    fclose(f);
+    if (!ok || memcmp(old.magic, "NSLAUTH", 8) || old.version != 1 || old.size != sizeof(old) ||
+        old.device_id != s->device_id || memcmp(old.secret, s->secret, 32) || !old.ip[0] ||
+        old.ip[0] >= 224)
+        return false;
+    snprintf(address, size, "%u.%u.%u.%u", old.ip[0], old.ip[1], old.ip[2], old.ip[3]);
+    return true;
+}

@@ -106,6 +106,8 @@ static void *log_main(void *unused) {
             log_tail_text[log_tail_size] = 0;
         }
         pthread_mutex_unlock(&log_lock);
+        if (message[0])
+            sl_system_log(message);
         if (message[0] && f && bytes < 4 * 1024 * 1024) {
             int n = fprintf(f, "%llu %s\n", (unsigned long long)sl_system_now(), message);
             if (n > 0)
@@ -204,7 +206,12 @@ static sl_host host_from(const IHS_HostInfo *info) {
 static void discovered(IHS_Client *client, const IHS_HostInfo *h, void *ctx) {
     (void)client;
     sl_runtime *r = ctx;
-    post(r, (sl_runtime_event){.type = SL_EVENT_HOST, .host = host_from(h)});
+    sl_host observed = host_from(h);
+    char line[192];
+    snprintf(line, sizeof(line), "discovery: response %.63s %.63s", observed.name,
+             observed.address);
+    sl_log(line);
+    post(r, (sl_runtime_event){.type = SL_EVENT_HOST, .host = observed});
 }
 static void authorized(IHS_Client *client, const IHS_HostInfo *h, uint64_t account, void *ctx) {
     (void)client;
@@ -345,6 +352,7 @@ static void stop_client(sl_runtime *r) {
     r->client = NULL;
 }
 static bool start_client(sl_runtime *r) {
+    sl_log("discovery: creating IHS client");
     r->client = IHS_ClientCreate(&r->config);
     if (!r->client)
         return false;
@@ -352,7 +360,10 @@ static bool start_client(sl_runtime *r) {
     IHS_ClientSetDiscoveryCallbacks(r->client, &discovery_cb, r);
     IHS_ClientSetAuthorizationCallbacks(r->client, &auth_cb, r);
     IHS_ClientSetStreamingCallbacks(r->client, &stream_cb, r);
-    return IHS_ClientStartDiscovery(r->client, 3000);
+    sl_log("discovery: client created; registering periodic broadcast");
+    bool started = IHS_ClientStartDiscovery(r->client, 3000);
+    sl_log(started ? "discovery: periodic broadcast registered" : "discovery: registration failed");
+    return started;
 }
 static void stop_session(sl_runtime *r) {
     sl_log("cleanup: stop/join HID worker");
@@ -577,7 +588,13 @@ static void udp_poll(sl_runtime *r) {
 }
 static void *worker_main(void *ctx) {
     sl_runtime *r = ctx;
+    sl_log("runtime: worker entered; initializing IHS");
+    char legacy_address[64] = {0};
+    sl_auth_discovery_hint(&r->store, sl_system_data_dir(), legacy_address, sizeof(legacy_address));
+    uint64_t last_probe = 0;
+    uint32_t discovery_seq = 0;
     IHS_Init();
+    sl_log("runtime: IHS initialized");
     if (!start_client(r))
         fail(r, "网络服务不可用");
     while (!r->quit) {
@@ -650,6 +667,25 @@ static void *worker_main(void *ctx) {
             IHS_ClientStartDiscovery(r->client, 3000);
         }
         uint64_t now = sl_system_now();
+        if (r->client && !r->session && !r->request_at && now - last_probe >= 3000) {
+            last_probe = now;
+            CMsgRemoteClientBroadcastDiscovery probe = CMSG_REMOTE_CLIENT_BROADCAST_DISCOVERY__INIT;
+            probe.has_seq_num = true;
+            probe.seq_num = ++discovery_seq;
+            for (int i = -1; i < r->store.registry.count; ++i) {
+                const char *ip = i < 0 ? legacy_address : r->store.registry.hosts[i].address;
+                IHS_SocketAddress address = {.port = 27036};
+                if (!ip[0] || !IHS_IPAddressFromString(&address.ip, ip))
+                    continue;
+                bool sent = IHS_ClientSend(r->client, address, k_ERemoteClientBroadcastMsgDiscovery,
+                                           (ProtobufCMessage *)&probe);
+                if (discovery_seq <= 2) {
+                    char line[160];
+                    snprintf(line, sizeof(line), "discovery: saved address %s sent=%d", ip, sent);
+                    sl_log(line);
+                }
+            }
+        }
         if (now - r->last_diag >= 1000)
             sample(r, now);
         if (r->request_at && ((!r->first_reported && now - r->request_at > 45000) ||
@@ -703,6 +739,9 @@ sl_runtime *sl_runtime_create(const sl_auth_store *store) {
             r->udp = -1;
         }
     }
+    char udp_status[96];
+    snprintf(udp_status, sizeof(udp_status), "runtime: debug UDP fd=%d errno=%d", r->udp, errno);
+    sl_log(udp_status);
     r->started = pthread_create(&r->worker, NULL, worker_main, r) == 0;
     if (!r->started) {
         sl_runtime_destroy(r);

@@ -162,9 +162,21 @@ void sl_input_event_handle(sl_input_router *r, const sl_input_event *e, uint64_t
         if (r->remote)
             send(r, e);
         else if (e->code < 2) {
-            sl_action a = e->value > 16000    ? (e->code ? SL_DOWN : SL_RIGHT)
-                          : e->value < -16000 ? (e->code ? SL_UP : SL_LEFT)
-                                              : SL_NONE;
+            /* SDL emits X/Y independently, including noise on the centered
+             * axis. Derive one direction from the complete stick state. */
+            int x = r->axes[0], y = r->axes[1];
+            int axis = abs(y) >= abs(x) ? 1 : 0;
+            bool vertical = r->repeat == SL_UP || r->repeat == SL_DOWN;
+            bool horizontal = r->repeat == SL_LEFT || r->repeat == SL_RIGHT;
+            if (vertical && abs(y) >= 12000 && abs(x) < abs(y) + 4000)
+                axis = 1;
+            else if (horizontal && abs(x) >= 12000 && abs(y) < abs(x) + 4000)
+                axis = 0;
+            int value = axis ? y : x;
+            sl_action direction =
+                value > 0 ? (axis ? SL_DOWN : SL_RIGHT) : (axis ? SL_UP : SL_LEFT);
+            int threshold = direction == r->repeat ? 12000 : 16000;
+            sl_action a = abs(value) >= threshold ? direction : SL_NONE;
             if (a != r->repeat) {
                 r->repeat = a;
                 r->repeat_at = now + 300;

@@ -10,3 +10,6 @@ const char *sl_system_data_dir(void);
 /* Font memory remains valid until shutdown; desktop returns a filename. */
 const void *sl_system_font(int index, size_t *size, const char **path);
 uint64_t sl_system_now(void);
+
+/* Bounded, best-effort diagnostic output; never called on the input path. */
+void sl_system_log(const char *message);

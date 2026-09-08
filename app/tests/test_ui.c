@@ -240,6 +240,30 @@ int main(void) {
     axis.value = 24000;
     sl_input_event_handle(&r, &axis, 13030);
     assert(n == 3);
+    /* Alternating X/Y events must not turn one held direction into a burst. */
+    m = model();
+    sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
+    sl_input_init(&r, &m, send_event, reset_remote, NULL);
+    axis = (sl_input_event){.type = SL_AXIS, .code = 1, .value = 25000};
+    sl_input_event_handle(&r, &axis, 14000);
+    int stick_focus = m.focus;
+    for (int i = 1; i < 100; ++i) {
+        axis.code = 0;
+        axis.value = i % 500;
+        sl_input_event_handle(&r, &axis, 14000 + i);
+        axis.code = 1;
+        axis.value = 25000 + i;
+        sl_input_event_handle(&r, &axis, 14000 + i);
+        assert(m.focus == stick_focus && r.repeat == SL_DOWN && r.repeat_at == 14300);
+    }
+    sl_input_tick(&r, 14299);
+    assert(m.focus == stick_focus);
+    sl_input_tick(&r, 14300);
+    assert(r.repeat_at == 14460);
+    axis.code = 1;
+    axis.value = 0;
+    sl_input_event_handle(&r, &axis, 14301);
+    assert(r.repeat == SL_NONE);
     char dir[] = "/tmp/nsl-auth-test-XXXXXX";
     assert(mkdtemp(dir));
     sl_auth_store s, t;
@@ -288,6 +312,10 @@ int main(void) {
     strcpy(old.name, "Existing Switch");
     old.steam_id = 999;
     strcpy(old.hostname, "OLD-PC");
+    old.ip[0] = 192;
+    old.ip[1] = 168;
+    old.ip[2] = 1;
+    old.ip[3] = 24;
     snprintf(path, sizeof(path), "%s/auth.bin", dir);
     f = fopen(path, "wb");
     assert(f);
@@ -297,6 +325,10 @@ int main(void) {
     assert(t.device_id == old.device_id && !memcmp(t.secret, old.secret, 32));
     assert(!strcmp(t.device_name, old.name) && t.registry.count == 0);
     assert(sl_auth_load(&s, dir) == 0 && s.device_id == old.device_id);
+    char hint[64];
+    assert(sl_auth_discovery_hint(&s, dir, hint, sizeof(hint)) && !strcmp(hint, "192.168.1.24"));
+    s.device_id++;
+    assert(!sl_auth_discovery_hint(&s, dir, hint, sizeof(hint)));
     unlink(path);
     snprintf(path, sizeof(path), "%s/profile.bin", dir);
     unlink(path);

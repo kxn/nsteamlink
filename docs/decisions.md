@@ -1441,3 +1441,25 @@ base-lock 环路。发现任务改用已有 Owned timer API，周期在任务私
 日志线程仅消费复制后的文本，无 IHS/SDL 引用；在协议工作线程 stop/join/destroy、IHS_Quit、
 媒体及字体释放后排空并 join，最后关闭平台 socket/font 服务，以保留清理日志。
 UDP 调试接口保留只读诊断，产品操作统一进入 UI 状态机；不保留旧音量控制、旧 UI 或动画入口。
+
+
+#### D-043 真机反馈修正：保留原 UDP 配置与摇杆整体方向
+
+证据：2026-09-08 用户观察到新版首页无法发现 Steam、旧版可以；无启动存储报错。
+补充非阻塞 nxlink 日志后实际打印 `runtime: debug UDP fd=-1 errno=105`；工具链 errno.h
+将 105 定义为 ENOBUFS。新版 system.c 将 UDP RX/TX/sb 改为 2MiB/256KiB/4，
+旧 client/main.c init_socket_for_stream 只将 UDP RX 改为 1MiB，其余保留平台默认。
+撤回“新版网络配置已由桌面发现测试充分验证”的任何推断；恢复旧配置及初始化失败回退。
+缓冲配置是造成真机 UDP 创建失败的首要解释，恢复后的发现行为须以真机回调确认。
+
+输入证据：input_router 原先用每个轴事件直接更新同一个 repeat；中性 X 轴清空 Y 轴连按，
+下一个 Y 事件再次立即移动。改为从两轴整体状态选择方向，加入保持阈值，沿用 300ms/160ms
+连按节奏；不改变串流发送的原始摇杆值。
+
+发现路径补充证据：旧 `client/main.c send_discovery_once` 和
+`tools/switch-discover/main.c maybe_send_fallback_discovery` 在广播之外，向固定地址发送
+同一种 Discovery protobuf；新版只保留了广播。恢复 UDP 配置后真机 debug socket=5、
+ping 有回复，但用户仍未发现 Steam，证明 socket 修复不足以证明发现恢复。
+产品不恢复硬编码地址：只对已保存主机地址、身份匹配的旧 auth.bin 上次地址做周期定向发现。
+旧地址只是候选，不产生 UI 主机、不导入授权；收到真实 discovery callback 才更新列表。
+这是对“完全丢弃旧 lastHost”实现的修正，设备 ID/secret 必须匹配后才读取候选。
