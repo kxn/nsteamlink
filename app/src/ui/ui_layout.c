@@ -174,7 +174,7 @@ void sl_ui_layout(sl_ui_model *m) {
             row(l, 1, "退出", SL_CONFIRM_EXIT, 0);
             break;
         case SL_ERROR:
-            strcpy(l->title, "连接未完成");
+            strcpy(l->title, m->had_stream ? "串流已中断" : "连接未完成");
             text(l, 320, 232, 30, m->error);
             if (m->intent.host.id)
                 row(l, 2, "重试", SL_RETRY, 0);

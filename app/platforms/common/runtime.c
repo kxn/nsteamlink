@@ -564,6 +564,16 @@ static void sample(sl_runtime *r, uint64_t now) {
              s.displayed_frames, d.values[0], d.values[1], d.values[2], d.values[3], d.values[4],
              d.values[5]);
     sl_log(line);
+    if (r->session && r->first_reported && now - r->frame_at >= 2000) {
+        snprintf(line, sizeof(line),
+                 "video stall: rx_v=%llu rx_a=%llu rx_c=%llu decoded=%u shown=%u audio_frames=%u "
+                 "audio_samples=%llu",
+                 (unsigned long long)s.reliability.receivedVideoPackets,
+                 (unsigned long long)s.reliability.receivedAudioPackets,
+                 (unsigned long long)s.reliability.receivedControlPackets, s.decoded_frames,
+                 s.displayed_frames, s.audio_frames, (unsigned long long)s.audio_decoded_samples);
+        sl_log(line);
+    }
     r->previous = s;
 #endif
     r->last_diag = now;

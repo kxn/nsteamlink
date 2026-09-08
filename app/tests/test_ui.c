@@ -91,6 +91,12 @@ static void session_end_events(void) {
     strcpy(e.text, "等待电脑画面超时");
     sl_ui_runtime_event(&m, &e);
     assert(m.page == SL_ERROR && !strcmp(m.error, e.text));
+    assert(!strcmp(m.layout.title, "串流已中断"));
+    m.page = SL_HOME;
+    sl_ui_action(&m, SL_START, 0);
+    e.generation = m.generation;
+    sl_ui_runtime_event(&m, &e);
+    assert(!strcmp(m.layout.title, "连接未完成"));
 }
 static void carousel(void) {
     sl_ui_model m = model();

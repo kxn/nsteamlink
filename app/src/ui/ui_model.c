@@ -120,6 +120,7 @@ bool sl_ui_remote(const sl_ui_model *m) {
     return m->streaming && m->page == SL_STREAM;
 }
 void sl_ui_connected(sl_ui_model *m) {
+    m->had_stream = true;
     m->streaming = true;
     m->stream_started_at = m->now;
     m->debug = false;
@@ -170,6 +171,7 @@ static void start(sl_ui_model *m, int game) {
     sl_host *h = selected(m);
     if (!h || !sl_host_online(h, m->now))
         return;
+    m->had_stream = false;
     m->launch_at = m->now;
     memset(&m->launch_card, 0, sizeof(m->launch_card));
     if (game >= 0)

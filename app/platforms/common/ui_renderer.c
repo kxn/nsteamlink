@@ -545,11 +545,11 @@ sl_ui_renderer *sl_ui_renderer_create(void *native) {
 /* Precompute a small separable blur once per downloaded image. No readback,
  * allocation or filtering is needed during the launch animation. */
 static SDL_Texture *blurred_cover(sl_ui_renderer *r, const sl_artwork_image *image) {
-    int w = 96, h = (int)(96.f * image->height / image->width);
+    int w = 192, h = (int)(192.f * image->height / image->width);
     if (h < 1)
         h = 1;
-    if (h > 96)
-        h = 96;
+    if (h > 192)
+        h = 192;
     unsigned char *pixels = malloc((size_t)w * h * 8);
     if (!pixels)
         return NULL;
@@ -621,16 +621,16 @@ static bool launch_background(sl_ui_renderer *r, const sl_ui_model *m) {
     cx += (640.f - cx) * p;
     cy += (360.f - cy) * p;
     SDL_FRect dest = {cx - iw * scale / 2, cy - ih * scale / 2, iw * scale, ih * scale};
-    if (!handoff || !r->covers[index].blurred) {
+    {
         SDL_SetTextureAlphaMod(r->covers[index].texture, (Uint8)(255 * alpha));
         SDL_RenderCopyF(r->renderer, r->covers[index].texture, NULL, &dest);
     }
     if (r->covers[index].blurred) {
-        SDL_SetTextureAlphaMod(r->covers[index].blurred, (Uint8)(255 * p * alpha));
+        SDL_SetTextureAlphaMod(r->covers[index].blurred, (Uint8)(90 * p * alpha));
         SDL_RenderCopyF(r->renderer, r->covers[index].blurred, NULL, &dest);
     }
     rect(r->renderer, (SDL_Rect){0, 0, 1280, 720},
-         (SDL_Color){9, 12, 20, (Uint8)(150 * p * alpha)});
+         (SDL_Color){9, 12, 20, (Uint8)(120 * p * alpha)});
     return true;
 }
 static void draw_cover(sl_ui_renderer *r, uint64_t id, SDL_Rect box, uint64_t now) {
