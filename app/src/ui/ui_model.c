@@ -41,6 +41,7 @@ bool sl_ui_remote(const sl_ui_model *m) {
 }
 void sl_ui_connected(sl_ui_model *m) {
     m->streaming = true;
+    m->stream_started_at = m->now;
     m->debug = false;
     m->depth = 0;
     page(m, SL_STREAM);
@@ -307,4 +308,8 @@ void sl_ui_activate(sl_ui_model *m, int id) {
             sl_ui_action(m, c.action, c.arg);
             return;
         }
+}
+
+bool sl_ui_pair_prompt_visible(const sl_ui_model *m) {
+    return m->page == SL_PAIRING && m->pairing_code[0] && m->now >= m->pair_code_at + 1800;
 }

@@ -19,6 +19,7 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
     case SL_EVENT_CODE:
         if (m->page != SL_PAIRING || m->pairing_code[0])
             break;
+        m->pair_code_at = m->now;
         snprintf(m->pairing_code, sizeof(m->pairing_code), "%.4s", e.text);
         break;
     case SL_EVENT_SAVING:

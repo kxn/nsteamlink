@@ -20,7 +20,7 @@ static void button(sl_layout *l, int id, int x, int y, int w, int h, const char 
     snprintf(c->label, sizeof(c->label), "%s", s);
 }
 static void row(sl_layout *l, int n, const char *s, sl_action a, int arg) {
-    button(l, 100 + n, 320, 205 + n * 88, 640, 72, s, a, arg, n == 0);
+    button(l, 100 + n, 320, 205 + n * 88, 640, 72, s, a, arg, false);
 }
 static void center(sl_layout *l, int y, int size, const char *s) {
     text(l, 64, y, size, s);
@@ -32,7 +32,9 @@ void sl_ui_layout(sl_ui_model *m) {
     sl_host_registry *r = &m->store.registry;
     sl_host *h = r->selected >= 0 && r->selected < r->count ? &r->hosts[r->selected] : NULL;
     l->fullscreen = m->streaming;
-    l->dialog = m->page != SL_HOME && m->page != SL_STREAM;
+    bool connecting = m->page == SL_CONNECTING || m->page == SL_SAVING ||
+                      (m->page == SL_PAIRING && !sl_ui_pair_prompt_visible(m));
+    l->dialog = m->page != SL_HOME && m->page != SL_STREAM && !connecting;
     if (m->page == SL_HOME) {
         snprintf(l->title, sizeof(l->title), "nsteamlink");
         if (h) {
@@ -86,7 +88,12 @@ void sl_ui_layout(sl_ui_model *m) {
         if (h && sl_host_online(h, m->now))
             text(l, 260, 648, 24, "A  确认");
     } else if (m->page == SL_STREAM) {
-        button(l, 6, 1100, 24, 152, 72, "菜单", SL_OPEN_MENU, 0, false);
+        /* Full video, no persistent local touch target. */
+    } else if (connecting) {
+        strcpy(l->title, "nsteamlink");
+        center(l, 276, 44, "正在连接");
+        center(l, 354, 30, m->intent.host.name[0] ? m->intent.host.name : m->intent.text);
+        button(l, 9, 40, 632, 180, 64, "B  取消", SL_BACK, 0, false);
     } else {
         switch (m->page) {
         case SL_MENU:
@@ -146,7 +153,7 @@ void sl_ui_layout(sl_ui_model *m) {
         case SL_SAVING:
             strcpy(l->title, m->page == SL_SAVING ? "正在保存配对" : "配对电脑");
             text(l, 320, 240, 30, "在电脑上的 Steam 输入此代码");
-            text(l, 472, 330, 72, m->pairing_code[0] ? m->pairing_code : "····");
+            center(l, 330, 72, m->pairing_code[0] ? m->pairing_code : "····");
             break;
         case SL_CONNECTING:
             strcpy(l->title, "正在连接");

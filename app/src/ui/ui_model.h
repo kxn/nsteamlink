@@ -105,7 +105,7 @@ typedef struct sl_ui_model {
     int depth;
     bool streaming, debug, network_ok, closing;
     int focus;
-    uint64_t now, generation, entered_at;
+    uint64_t now, generation, entered_at, stream_started_at, pair_code_at;
     sl_command intent, command;
     char input[64], pairing_code[5], error[192];
     sl_layout layout;
@@ -121,3 +121,5 @@ bool sl_ui_take_command(sl_ui_model *m, sl_command *out);
 int sl_ui_hit(const sl_layout *layout, int x, int y);
 void sl_ui_activate(sl_ui_model *m, int id);
 bool sl_ui_remote(const sl_ui_model *m);
+
+bool sl_ui_pair_prompt_visible(const sl_ui_model *model);

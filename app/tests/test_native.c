@@ -102,6 +102,9 @@ static void decode(const char *path) {
         stream_media_present();
     stream_media_get_snapshot(&s);
     assert(s.displayed_frames == shown && draws == before + 5);
+    save_image("stream-hint");
+    ui.now = ui.stream_started_at + 4200;
+    stream_media_present();
     save_image("stream");
     sl_ui_action(&ui, SL_OPEN_MENU, 0);
     stream_media_present();
@@ -163,6 +166,7 @@ int main(int argc, char **argv) {
     for (int p = SL_PAIRING; p <= SL_ERROR; ++p) {
         ui.page = p;
         strcpy(ui.pairing_code, "4826");
+        ui.pair_code_at = ui.now - 1800;
         sl_ui_layout(&ui);
         stream_media_present();
         char name[32];
@@ -177,6 +181,9 @@ int main(int argc, char **argv) {
         decode(argv[1]);
     assert(remote_events == 0);
     /* Same runtime creates/joins real discovery workers twice, without requesting a host stream. */
+    char profile_dir[] = "/tmp/nsl-native-profile-XXXXXX";
+    assert(mkdtemp(profile_dir));
+    assert(setenv("NSL_DATA_DIR", profile_dir, 1) == 0);
     const char *dir = sl_system_data_dir();
     sl_auth_store auth;
     assert(sl_auth_load(&auth, dir) >= 0);
@@ -206,6 +213,10 @@ int main(int argc, char **argv) {
     sl_media_hooks(NULL, NULL, NULL);
     sl_ui_renderer_destroy(renderer);
     stream_media_shutdown();
+    assert(rmdir(blocked_temp) == 0);
+    snprintf(blocked_temp, sizeof(blocked_temp), "%s/profile.bin", dir);
+    assert(unlink(blocked_temp) == 0);
+    assert(rmdir(dir) == 0);
     /* Reinitialize SDL/fonts in this process to catch stale static ownership. */
     assert(stream_media_init(sl_log));
     renderer = sl_ui_renderer_create(sl_media_renderer());

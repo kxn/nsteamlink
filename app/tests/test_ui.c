@@ -167,8 +167,11 @@ int main(void) {
     key(&r, SL_KEY_X, 0, 7100);
     assert(n == 0);
     tap(&r, 1180, 50);
-    assert(m.page == SL_MENU);
-    assert(n == 0);
+    assert(m.page == SL_STREAM && n == 2);
+    assert(m.layout.count == 0);
+    sl_ui_action(&m, SL_OPEN_MENU, 0);
+    sl_input_sync(&r);
+    n = 0;
     key(&r, SL_KEY_X, 1, 7200);
     sl_input_tick(&r, 8200);
     assert(!m.debug && m.page == SL_STREAM);
@@ -249,6 +252,11 @@ int main(void) {
     strcpy(code.text, "5678");
     sl_ui_runtime_event(&flow, &code);
     assert(!strcmp(flow.pairing_code, "1234"));
+    assert(!sl_ui_pair_prompt_visible(&flow) && !flow.layout.dialog);
+    sl_ui_tick(&flow, flow.pair_code_at + 1799);
+    assert(!sl_ui_pair_prompt_visible(&flow));
+    sl_ui_tick(&flow, flow.pair_code_at + 1800);
+    assert(sl_ui_pair_prompt_visible(&flow) && flow.layout.dialog);
     sl_runtime_event success = {.type = SL_EVENT_AUTHORIZED,
                                 .generation = flow.generation,
                                 .host = flow.intent.host,
