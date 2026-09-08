@@ -31,7 +31,9 @@ struct sl_ui_renderer {
     bool painted, focus_valid;
     sl_page page;
     int focus_id;
-    uint64_t focus_at;
+    uint64_t focus_at, title_at, title_host;
+    int title_focus;
+    char title_text[160];
     SDL_FRect focus_from, focus_to, focus_box;
 };
 static SDL_Color bg = {18, 20, 25, 255}, panel = {32, 35, 42, 255}, accent = {114, 199, 242, 255},
@@ -140,6 +142,8 @@ static void outline(sl_ui_renderer *r, SDL_Rect b) {
 }
 static void animate_focus(sl_ui_renderer *r, const sl_ui_model *m) {
     bool page_changed = !r->painted || r->page != m->page;
+    if (page_changed)
+        r->title_focus = 0;
     if (page_changed) {
         r->page = m->page;
         r->focus_valid = false;
@@ -347,6 +351,85 @@ static int centered_y(sl_ui_renderer *r, const char *s, int size, int y, int hei
         advance += g->advance;
     }
     return y + (height - (bottom - top)) / 2 - size - top;
+}
+/* A card title is always one line. Measure visible glyph bounds independently
+ * of clipping so neither truncation nor scrolling changes its baseline. */
+static void card_title(sl_ui_renderer *r, const char *label, SDL_Rect box, SDL_Rect viewport,
+                       bool focused, const sl_ui_model *m) {
+    char text[160];
+    snprintf(text, sizeof(text), "%s", label);
+    for (char *p = text; *p; ++p)
+        if (*p == '\n' || *p == '\r')
+            *p = ' ';
+    const int size = 30;
+    int measured = text_width(r, text, size), top = 0, bottom = 0;
+    bool any = false;
+    for (const char *p = text; *p;) {
+        uint32_t cp = utf8(&p);
+        glyph *g = get_glyph(r, cp, size);
+        if (g && cp != ' ') {
+            if (!any || g->top < top)
+                top = g->top;
+            if (!any || g->top + g->h > bottom)
+                bottom = g->top + g->h;
+            any = true;
+        }
+    }
+    float offset = 0.f;
+    if (focused) {
+        if (r->title_focus != m->focus || r->title_host != m->games_host ||
+            strcmp(r->title_text, text) || m->games_dragging ||
+            fabsf(m->games_target - m->games_scroll) > .5f) {
+            r->title_focus = m->focus;
+            r->title_host = m->games_host;
+            snprintf(r->title_text, sizeof(r->title_text), "%s", text);
+            r->title_at = m->now;
+        }
+        if (measured > box.w && m->now >= r->title_at) {
+            float travel = (measured - box.w) / 30.f; /* 30 pixels / second. */
+            float t = fmodf((m->now - r->title_at) / 1000.f, 2.f * travel + 2.4f);
+            if (t > 1.2f && t <= 1.2f + travel)
+                offset = (t - 1.2f) * 30.f;
+            else if (t > 1.2f + travel && t <= 2.4f + travel)
+                offset = measured - box.w;
+            else if (t > 2.4f + travel)
+                offset = (2.4f + 2.f * travel - t) * 30.f;
+        }
+    }
+    SDL_Rect clip;
+    if (!SDL_IntersectRect(&box, &viewport, &clip))
+        return;
+    SDL_RenderSetClipRect(r->renderer, &clip);
+    int baseline = box.y + (box.h - (bottom - top)) / 2 - top;
+    bool truncated = !focused && measured > box.w;
+    int dots = truncated ? text_width(r, "...", size) : 0;
+    int pen = box.x - (int)offset;
+    const char *p = text;
+    while (*p) {
+        glyph *g = get_glyph(r, utf8(&p), size);
+        if (!g)
+            continue;
+        if (truncated && pen + g->advance > box.x + box.w - dots)
+            break;
+        SDL_SetTextureColorMod(g->texture, fg.r, fg.g, fg.b);
+        SDL_SetTextureAlphaMod(g->texture, (Uint8)(255 * r->text_alpha));
+        SDL_Rect dst = {pen + g->left, baseline + g->top, g->w, g->h};
+        SDL_RenderCopy(r->renderer, g->texture, NULL, &dst);
+        pen += g->advance;
+    }
+    if (truncated) {
+        glyph *dot = get_glyph(r, '.', size);
+        if (dot) {
+            SDL_SetTextureColorMod(dot->texture, fg.r, fg.g, fg.b);
+            SDL_SetTextureAlphaMod(dot->texture, (Uint8)(255 * r->text_alpha));
+            for (int i = 0; i < 3; ++i) {
+                SDL_Rect dst = {pen + dot->left, baseline + dot->top, dot->w, dot->h};
+                SDL_RenderCopy(r->renderer, dot->texture, NULL, &dst);
+                pen += dot->advance;
+            }
+        }
+    }
+    SDL_RenderSetClipRect(r->renderer, NULL);
 }
 static void badge(sl_ui_renderer *r, const char *key, int x, int y, SDL_Color ink) {
     SDL_Rect b = {x, y, 34, 34};
@@ -705,7 +788,9 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
             int selected = m->store.registry.selected;
             if (selected >= 0 && selected < m->store.registry.count && c->arg < SL_RECENT_LIMIT)
                 draw_cover(r, m->store.registry.hosts[selected].games[c->arg].id, art, m->now);
-            y = centered_y(r, label, size, box.y + box.h - 62, 48, width);
+            card_title(r, label, (SDL_Rect){box.x + 24, box.y + box.h - 62, box.w - 48, 54},
+                       viewport, focused, m);
+            continue;
         } else if (!centered && !footer) {
             width -= 28;
             if (c->action == SL_SOUND) {

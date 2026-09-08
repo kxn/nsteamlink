@@ -45,6 +45,20 @@ static void save_image(const char *name) {
     assert(SDL_SaveBMP(s, path) == 0);
     SDL_FreeSurface(s);
 }
+static uint64_t region_hash(SDL_Rect box) {
+    SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(0, box.w, box.h, 32, SDL_PIXELFORMAT_ARGB8888);
+    assert(s);
+    assert(
+        !SDL_RenderReadPixels(sl_media_renderer(), &box, s->format->format, s->pixels, s->pitch));
+    uint64_t hash = 14695981039346656037ULL;
+    for (int y = 0; y < s->h; ++y)
+        for (int x = 0; x < s->w * 4; ++x) {
+            hash ^= ((unsigned char *)s->pixels)[y * s->pitch + x];
+            hash *= 1099511628211ULL;
+        }
+    SDL_FreeSurface(s);
+    return hash;
+}
 static void tap(int x, int y) {
     SDL_Event e = {.type = SDL_MOUSEBUTTONDOWN};
     e.button.button = SDL_BUTTON_LEFT;
@@ -201,6 +215,30 @@ int main(int argc, char **argv) {
     sl_ui_layout(&ui);
     stream_media_present();
     save_image("carousel-start");
+    strcpy(ui.store.registry.hosts[0].games[0].name, "Girls Made Pudding -少女布丁旅情-");
+    strcpy(ui.store.registry.hosts[0].games[1].name, "很长的中文游戏标题：完整版本与附加内容");
+    sl_ui_layout(&ui);
+    stream_media_present();
+    save_image("title-start");
+    SDL_Rect selected_title = {76, 508, 392, 54}, other_title = {540, 508, 392, 54};
+    uint64_t initial_title = region_hash(selected_title), still_title = region_hash(other_title);
+    sl_ui_tick(&ui, ui.now + 1000);
+    stream_media_present();
+    assert(initial_title == region_hash(selected_title));
+    for (int i = 0; i < 240; ++i) {
+        sl_ui_tick(&ui, ui.now + 16);
+        stream_media_present();
+    }
+    save_image("title-scroll");
+    assert(initial_title != region_hash(selected_title));
+    assert(still_title == region_hash(other_title));
+    sl_ui_action(&ui, SL_RIGHT, 0);
+    stream_media_present();
+    save_image("title-switch");
+    sl_ui_action(&ui, SL_LEFT, 0);
+    stream_media_present();
+    assert(initial_title == region_hash(selected_title));
+
     for (int i = 0; i < 3; ++i)
         sl_ui_action(&ui, SL_RIGHT, 0);
     for (int i = 0; i < 40; ++i) {
