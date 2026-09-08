@@ -77,16 +77,19 @@ bool sl_artwork_url(const unsigned char *data, size_t size, uint32_t appid, char
     int assets = member(s, tokens, n, item, "assets_without_overrides");
     int format = member(s, tokens, n, assets, "asset_url_format");
     int header = member(s, tokens, n, assets, "header");
-    char pattern[1024], filename[128], prefix[64];
+    char pattern[1024], filename[512], prefix[64];
     if (format < 0 || header < 0 || !ascii_string(s, &tokens[format], pattern, sizeof(pattern)) ||
         !ascii_string(s, &tokens[header], filename, sizeof(filename)))
         return false;
     snprintf(prefix, sizeof(prefix), "steam/apps/%u/", appid);
     if (strncmp(pattern, prefix, strlen(prefix)) || strstr(pattern, ".."))
         return false;
-    if (strspn(filename, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-") !=
+    /* Steam headers may live under a content-hash directory. Accept a relative
+     * asset path while keeping the fixed CDN and app-specific root. */
+    if (strspn(filename, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_/.-") !=
             strlen(filename) ||
-        strstr(filename, ".."))
+        strstr(filename, "..") || filename[0] == '/' || filename[0] == '.' ||
+        filename[strlen(filename) - 1] == '/' || strstr(filename, "//") || strstr(filename, "/./"))
         return false;
     char *slot = strstr(pattern, "${FILENAME}");
     if (!slot || strstr(slot + 11, "${FILENAME}"))

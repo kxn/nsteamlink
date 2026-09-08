@@ -1091,6 +1091,23 @@ Conclusion：该游戏的元数据当前可匿名读取；不能由单个应用�
 未来接口行为都一致。接口是客户端内部使用方式，不按公开稳定 SDK 契约假设。
 素材类别的官方说明：[Steamworks Library Assets](https://partner.steamgames.com/doc/store/assets/libraryassets)。
 
+### 20.3.1 Evidence：header 字段包含相对目录
+
+2026-09-08，用户报告 GIRLS MADE PUDDING 与 Palworld 新卡片有标题但持续没有封面。
+对 appid=3337210 和 1623730 使用相同匿名 GetItems 请求，均返回 success=1：
+
+- 3337210：header 为 `08a8d3df458f6b3ec9cf32d7faf2c87101598623/header.jpg`。
+- 1623730：header 为 `6912f19c43a95ff5fe514eedd35e68bf12335459/header.jpg`。
+- 按各自 asset_url_format 拼接后，实际 GET 均为 HTTP 200、image/jpeg，
+  响应分别为 56568 和 69631 字节。
+- 将两份实际 JSON 输入 5d9fa1a 的 `sl_artwork_url`，均返回 false；
+  原因是 header 的字符白名单不接受斜杠。
+
+Conclusion：header 是相对资源路径，不能限制为无目录的单个文件名。原先仅以
+`header.jpg` 为样例的校验过严，可以直接复现这两款游戏的封面失败。
+允许相对目录后仍固定 Steam CDN 与对应 AppID 根路径，拒绝绝对路径、父目录、
+协议地址及查询／片段注入。这一证据只定位资源解析，不推断其他真机网络请求的结果。
+
 ### 20.4 NSteamLink 接入设计边界
 
 现有 runtime activity 回调已经得到 gameid/name，UI 将历史按 host/account 保存。

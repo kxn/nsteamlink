@@ -122,7 +122,46 @@ static void cache_limit(fixture *f) {
     assert(!rmdir(dir));
     assert(!rmdir(root));
 }
+static void asset_paths(void) {
+    const char *paths[] = {"08a8d3df458f6b3ec9cf32d7faf2c87101598623/header.jpg",
+                           "6912f19c43a95ff5fe514eedd35e68bf12335459/header.jpg",
+                           "hash/header.jpg",
+                           "hash\\/header.jpg",
+                           "../header.jpg",
+                           "hash/../header.jpg",
+                           "/header.jpg",
+                           "//elsewhere/header.jpg",
+                           "https://elsewhere/header.jpg",
+                           "hash//header.jpg",
+                           "hash/./header.jpg",
+                           "hash/",
+                           "hash/%2e%2e/header.jpg",
+                           "hash/header.jpg?x=1",
+                           "hash/header.jpg#fragment",
+                           "./header.jpg",
+                           ""};
+    for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i) {
+        unsigned id = i == 0 ? 3337210 : 1623730;
+        char json[2048], url[1536], expected[1536];
+        snprintf(json, sizeof(json),
+                 "{\"response\":{\"store_items\":[{\"success\":1,\"appid\":%u,"
+                 "\"assets_without_overrides\":{\"asset_url_format\":"
+                 "\"steam/apps/%u/${FILENAME}?t=123\",\"header\":\"%s\"}}]}}",
+                 id, id, paths[i]);
+        bool accepted =
+            sl_artwork_url((const unsigned char *)json, strlen(json), id, url, sizeof(url));
+        assert(accepted == (i < 4));
+        if (accepted) {
+            snprintf(expected, sizeof(expected),
+                     "https://shared.steamstatic.com/store_item_assets/steam/apps/%u/%s?t=123", id,
+                     i == 3 ? "hash/header.jpg" : paths[i]);
+            assert(!strcmp(url, expected));
+            assert(!sl_artwork_url((const unsigned char *)json, strlen(json), id, url, 20));
+        }
+    }
+}
 int main(int argc, char **argv) {
+    asset_paths();
     char url[1536];
     assert(sl_artwork_appid(413150));
     assert(!sl_artwork_appid(0));
@@ -240,17 +279,23 @@ int main(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "--live")) {
         a = sl_artwork_create(dir, NULL, NULL);
         assert(a);
-        sl_artwork_request(a, 413150);
-        bool received = false;
-        for (int i = 0; i < 20000; ++i) {
-            if (sl_artwork_take(a, 413150, &image)) {
-                free(image.pixels);
-                received = true;
-                break;
+        const uint64_t ids[] = {413150, 3337210, 1623730};
+        for (size_t game = 0; game < sizeof(ids) / sizeof(ids[0]); ++game) {
+            sl_artwork_request(a, ids[game]);
+            bool received = false;
+            for (int i = 0; i < 20000; ++i) {
+                if (sl_artwork_take(a, ids[game], &image)) {
+                    free(image.pixels);
+                    received = true;
+                    break;
+                }
+                usleep(1000);
             }
-            usleep(1000);
+            assert(received);
+            printf("live artwork decoded: %llu\n", (unsigned long long)ids[game]);
+            snprintf(path, sizeof(path), "%s/artwork/%llu.jpg", dir, (unsigned long long)ids[game]);
+            unlink(path);
         }
-        assert(received);
         sl_artwork_destroy(a);
         puts("live Steam artwork fetched and decoded");
     }
