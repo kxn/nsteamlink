@@ -253,6 +253,21 @@ int main(int argc, char **argv) {
     sl_ui_layout(&ui);
     stream_media_present();
     save_image("carousel-hosts");
+    sl_ui_model before_launch = ui;
+    sl_ui_action(&ui, SL_RECENT, 2);
+    assert(ui.page == SL_CONNECTING && ui.launch_card.id == 42);
+    assert(ui.launch_card.x < SL_GAMES_LEFT + 2 * SL_CARD_STEP);
+    for (int i = 0; i <= 30; ++i) {
+        if (i)
+            sl_ui_tick(&ui, ui.now + 16);
+        stream_media_present();
+        char frame[48];
+        snprintf(frame, sizeof(frame), "launch-%02d", i);
+        save_image(frame);
+    }
+    ui = before_launch;
+    sl_ui_layout(&ui);
+
     for (int p = SL_PAIRING; p <= SL_ERROR; ++p) {
         ui.page = p;
         strcpy(ui.pairing_code, "4826");

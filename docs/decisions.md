@@ -1551,3 +1551,29 @@ IHS runtime、UI 纹理、SDL/Mesa，最后 socketExit。不存在 detach；桌�
 - [libcurl thread-safety](https://curl.se/libcurl/c/threadsafe.html)
 - [libnx resolver](https://github.com/switchbrew/libnx/blob/master/nx/source/runtime/resolver.c)
 - [devkitPro curl package](https://github.com/devkitPro/pacman-packages/tree/master/switch/curl)
+
+## D-046：游戏启动封面过渡与明确主机结束信号（2026-09-08）
+
+Evidence：
+- 用户真机观察：直启最近游戏时，电脑先进入大屏并启动游戏，Switch 等待期间仍显示通用连接页；
+  退出游戏回 Steam 后，Switch 显示“等待电脑画面超时”。具体间隔未计时，不能据此认定主机发了断开包。
+- runtime.c 的 watchdog 在首帧前等待 45 秒，首帧后按 displayed_frames 的变化计时，
+  连续 10 秒无新画面就显示同一超时文案，不检查游戏是否已退出。
+- IHSlib session.c 的 inbound Disconnect 与 ch_control.c 的 StopRequest 都调用
+  IHS_SessionHostStopped；ch_discovery.c 的本地断开计时器也调用同一 disconnected 回调。
+  旧 runtime 把所有此类回调上报为异常停止，因此不能仅凭回调判断正常主机结束。
+- StopVideoData 会移除视频通道；它可能是视频重配置的一部分，不等同于会话结束。
+
+Decision：
+- 封面过渡只作用于呈现，保留原连接请求、授权语义和首帧门槛；无图不阻塞。
+  原生渲染在纹理上传时预生成低分辨率分离式模糊，动画阶段只做等比缩放与透明度混合。
+- IHSlib 增加只读 hostRequestedStop 标记，仅由明确的 inbound Disconnect / StopRequest 设置；
+  普通本地清理、认证失败、无视频超时都不能设置它。原子读写，可在 disconnected 回调读取。
+- 已显示首帧且主机明确结束时正常回首页；其他断开保留错误。watchdog 到期前再次读取明确标记，
+  避免该循环先前拷贝的 finished 过时而把已收到的主机结束报成超时。
+- 保留真正的无画面超时，不依据 gamesRunning=0、活动 gameid=0 或 StopVideoData 猜测正常退出。
+  diagnostics 构建通过已有有界日志队列记录视频起停、活动 ID、明确结束原因及 watchdog 快照；
+  release 仍可编译关闭这些诊断。
+
+待验证假设：用户此次超时可能发生在视频停止而未收到明确结束信号时；也可能存在回调与
+watchdog 的时序竞争。没有该次日志不能选定根因，新增明确结束分支不能宣称已修复所有退游戏超时。

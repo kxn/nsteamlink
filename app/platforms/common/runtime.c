@@ -33,8 +33,8 @@ struct sl_runtime {
     IHS_HIDProvider *provider;
     IHS_ClientConfig config;
     IHS_SessionInfo session_info;
-    bool session_ready, connected, finished, first_reported, auth_ready, auth_consumed,
-        request_terminal;
+    bool session_ready, connected, finished, host_stopped, first_reported, auth_ready,
+        auth_consumed, request_terminal;
     uint64_t auth_account, request_at, frame_at, last_diag;
     uint32_t frames;
     sl_debug_snapshot debug;
@@ -151,7 +151,7 @@ void sl_log_finish(void) {
     pthread_mutex_destroy(&log_lock);
 }
 static void ihs_log(IHS_LogLevel level, const char *tag, const char *message) {
-    if (level > IHS_LogLevelWarn)
+    if (level > IHS_LogLevelWarn && strcmp(tag, "Activity"))
         return;
     char s[224];
     snprintf(s, sizeof(s), "%.24s: %.190s", tag, message);
@@ -308,14 +308,17 @@ static void connected(IHS_Session *s, void *ctx) {
     pthread_mutex_unlock(&r->lock);
 }
 static void disconnected(IHS_Session *s, void *ctx) {
-    (void)s;
     sl_runtime *r = ctx;
     pthread_mutex_lock(&r->lock);
     r->finished = true;
+    r->host_stopped = IHS_SessionHostRequestedStop(s);
+    sl_log(r->host_stopped ? "session end: explicit host stop"
+                           : "session end: transport/local disconnect");
     pthread_mutex_unlock(&r->lock);
 }
 static int video_start(IHS_Session *s, const IHS_StreamVideoConfig *c, void *ctx) {
     (void)ctx;
+    sl_log("video lifecycle: start");
     return stream_media_video_start(s, c);
 }
 static IHS_StreamVideoSubmitResult video_submit(IHS_Session *s, uint16_t id, IHS_Buffer *b,
@@ -325,6 +328,7 @@ static IHS_StreamVideoSubmitResult video_submit(IHS_Session *s, uint16_t id, IHS
 }
 static void video_stop(IHS_Session *s, void *ctx) {
     (void)ctx;
+    sl_log("video lifecycle: stop");
     stream_media_video_stop(s);
 }
 static int audio_start(IHS_Session *s, const IHS_StreamAudioConfig *c, void *ctx) {
@@ -399,7 +403,7 @@ static void stop_session(sl_runtime *r) {
         sl_log("cleanup: session destroyed");
     }
     pthread_mutex_lock(&r->lock);
-    r->connected = r->finished = r->session_ready = false;
+    r->connected = r->finished = r->host_stopped = r->session_ready = false;
     pthread_mutex_unlock(&r->lock);
     r->first_reported = false;
     r->request_at = 0;
@@ -652,6 +656,7 @@ static void *worker_main(void *ctx) {
         bool conn = r->connected;
         r->connected = false;
         bool finished = r->finished;
+        bool host_stopped = r->host_stopped;
         bool auth = r->auth_ready;
         r->auth_ready = false;
         uint64_t account = r->auth_account;
@@ -694,8 +699,9 @@ static void *worker_main(void *ctx) {
             IHS_SessionHIDNotifyDeviceChange(r->session);
         }
         if (finished && r->session) {
+            bool normal = host_stopped && r->first_reported;
             stop_session(r);
-            post(r, (sl_runtime_event){.type = SL_EVENT_STOPPED, .account = 1});
+            post(r, (sl_runtime_event){.type = SL_EVENT_STOPPED, .account = normal ? 0 : 1});
             IHS_ClientStartDiscovery(r->client, 3000);
         }
         uint64_t now = sl_system_now();
@@ -722,10 +728,25 @@ static void *worker_main(void *ctx) {
             sample(r, now);
         if (r->request_at && ((!r->first_reported && now - r->request_at > 45000) ||
                               (r->first_reported && now - r->frame_at > 10000))) {
+            /* A host stop may arrive after this loop copied finished. Read the
+             * explicit reason again before teardown, so it wins over the watchdog. */
+            bool normal =
+                r->session && r->first_reported && IHS_SessionHostRequestedStop(r->session);
+#if NSL_DIAGNOSTICS
+            char line[192];
+            snprintf(line, sizeof(line),
+                     "video watchdog: first=%d idle_ms=%llu video_active=%d host_stop=%d game=%llu",
+                     r->first_reported, (unsigned long long)(now - r->frame_at),
+                     r->previous.video_active, normal, (unsigned long long)r->active.game_id);
+            sl_log(line);
+#endif
             stop_session(r);
             stop_client(r);
             start_client(r);
-            fail(r, "等待电脑画面超时");
+            if (normal)
+                post(r, (sl_runtime_event){.type = SL_EVENT_STOPPED});
+            else
+                fail(r, "等待电脑画面超时");
         }
 #if NSL_DIAGNOSTICS
         udp_poll(r);

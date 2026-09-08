@@ -24,7 +24,7 @@ struct sl_ui_renderer {
     sl_artwork *artwork;
     struct {
         uint64_t id, used, ready_at;
-        SDL_Texture *texture;
+        SDL_Texture *texture, *blurred;
         int w, h;
     } covers[8];
     float text_alpha;
@@ -542,6 +542,97 @@ sl_ui_renderer *sl_ui_renderer_create(void *native) {
     SDL_SetRenderDrawBlendMode(r->renderer, SDL_BLENDMODE_BLEND);
     return r;
 }
+/* Precompute a small separable blur once per downloaded image. No readback,
+ * allocation or filtering is needed during the launch animation. */
+static SDL_Texture *blurred_cover(sl_ui_renderer *r, const sl_artwork_image *image) {
+    int w = 96, h = (int)(96.f * image->height / image->width);
+    if (h < 1)
+        h = 1;
+    if (h > 96)
+        h = 96;
+    unsigned char *pixels = malloc((size_t)w * h * 8);
+    if (!pixels)
+        return NULL;
+    unsigned char *temp = pixels + w * h * 4;
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x)
+            memcpy(pixels + (y * w + x) * 4,
+                   image->pixels +
+                       ((y * image->height / h) * image->width + x * image->width / w) * 4,
+                   4);
+    for (int pass = 0; pass < 2; ++pass) {
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x)
+                for (int c = 0; c < 4; ++c) {
+                    unsigned sum = 0;
+                    for (int k = -1; k <= 1; ++k) {
+                        int sx = x, sy = y;
+                        if (pass % 2)
+                            sy = y + k;
+                        else
+                            sx = x + k;
+                        if (sx < 0)
+                            sx = 0;
+                        if (sx >= w)
+                            sx = w - 1;
+                        if (sy < 0)
+                            sy = 0;
+                        if (sy >= h)
+                            sy = h - 1;
+                        sum += pixels[(sy * w + sx) * 4 + c];
+                    }
+                    temp[(y * w + x) * 4 + c] = sum / 3;
+                }
+        memcpy(pixels, temp, (size_t)w * h * 4);
+    }
+    SDL_Texture *texture =
+        SDL_CreateTexture(r->renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, w, h);
+    if (texture) {
+        SDL_UpdateTexture(texture, NULL, pixels, w * 4);
+        SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(texture, SDL_ScaleModeLinear);
+    }
+    free(pixels);
+    return texture;
+}
+static bool launch_background(sl_ui_renderer *r, const sl_ui_model *m) {
+    bool handoff = m->page == SL_STREAM && m->now >= m->stream_started_at &&
+                   m->now - m->stream_started_at < 180;
+    if ((!handoff && m->page != SL_CONNECTING) || !m->intent.game_id)
+        return false;
+    int index = -1;
+    for (int i = 0; i < 8; ++i)
+        if (r->covers[i].id == m->intent.game_id && r->covers[i].texture)
+            index = i;
+    if (index < 0)
+        return false;
+    r->covers[index].used = ++r->tick;
+    float t = fminf(1.f, (m->now >= m->launch_at ? m->now - m->launch_at : 0) / 420.f);
+    /* Strong initial acceleration and a short settle, without spring overshoot. */
+    float p = handoff ? 1.f : 1.f - powf(1.f - t, 4.f);
+    float alpha = handoff ? 1.f - (m->now - m->stream_started_at) / 180.f : 1.f;
+    int iw = r->covers[index].w, ih = r->covers[index].h;
+    const sl_control *c = &m->launch_card;
+    float start_scale = c->w ? fminf((c->w - 16.f) / iw, 198.f / ih) : 0.f;
+    float end_scale = fmaxf(1280.f / iw, 720.f / ih);
+    float scale = start_scale + (end_scale - start_scale) * p;
+    float cx = c->w ? c->x + c->w / 2.f : 640.f;
+    float cy = c->w ? c->y + 8.f + 99.f : 360.f;
+    cx += (640.f - cx) * p;
+    cy += (360.f - cy) * p;
+    SDL_FRect dest = {cx - iw * scale / 2, cy - ih * scale / 2, iw * scale, ih * scale};
+    if (!handoff || !r->covers[index].blurred) {
+        SDL_SetTextureAlphaMod(r->covers[index].texture, (Uint8)(255 * alpha));
+        SDL_RenderCopyF(r->renderer, r->covers[index].texture, NULL, &dest);
+    }
+    if (r->covers[index].blurred) {
+        SDL_SetTextureAlphaMod(r->covers[index].blurred, (Uint8)(255 * p * alpha));
+        SDL_RenderCopyF(r->renderer, r->covers[index].blurred, NULL, &dest);
+    }
+    rect(r->renderer, (SDL_Rect){0, 0, 1280, 720},
+         (SDL_Color){9, 12, 20, (Uint8)(150 * p * alpha)});
+    return true;
+}
 static void draw_cover(sl_ui_renderer *r, uint64_t id, SDL_Rect box, uint64_t now) {
     if (!r->artwork || !sl_artwork_appid(id))
         return;
@@ -561,6 +652,8 @@ static void draw_cover(sl_ui_renderer *r, uint64_t id, SDL_Rect box, uint64_t no
             if (r->covers[i].used < r->covers[index].used)
                 index = i;
         SDL_DestroyTexture(r->covers[index].texture);
+        SDL_DestroyTexture(r->covers[index].blurred);
+        r->covers[index].blurred = blurred_cover(r, &image);
         r->covers[index].texture =
             SDL_CreateTexture(r->renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC,
                               image.width, image.height);
@@ -598,6 +691,9 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
             SDL_RenderCopy(r->renderer, r->backdrop, NULL, NULL);
         else
             rect(r->renderer, (SDL_Rect){0, 0, 1280, 720}, bg);
+        launch_background(r, m);
+    } else if (m->page == SL_STREAM) {
+        launch_background(r, m);
     }
     if (l->dialog) {
         rect(r->renderer, (SDL_Rect){0, 0, 1280, 720},
@@ -894,8 +990,10 @@ void sl_ui_renderer_draw(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug
 void sl_ui_renderer_destroy(sl_ui_renderer *r) {
     if (!r)
         return;
-    for (int i = 0; i < 8; ++i)
+    for (int i = 0; i < 8; ++i) {
         SDL_DestroyTexture(r->covers[i].texture);
+        SDL_DestroyTexture(r->covers[i].blurred);
+    }
     SDL_DestroyTexture(r->overlay);
     free(r->base_ui);
     SDL_DestroyTexture(r->backdrop);

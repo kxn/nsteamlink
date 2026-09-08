@@ -72,6 +72,26 @@ static void layout_check(sl_ui_model *m) {
         }
     }
 }
+static void session_end_events(void) {
+    sl_ui_model m = model();
+    add(&m, 1, "HOST");
+    m.store.registry.hosts[0].paired = true;
+    sl_ui_action(&m, SL_START, 0);
+    sl_ui_connected(&m);
+    sl_runtime_event e = {.type = SL_EVENT_STOPPED, .generation = m.generation};
+    sl_ui_runtime_event(&m, &e);
+    assert(m.page == SL_HOME && !m.streaming);
+    sl_ui_connected(&m);
+    e.account = 1;
+    sl_ui_runtime_event(&m, &e);
+    assert(m.page == SL_ERROR && !m.streaming);
+    sl_ui_connected(&m);
+    e.type = SL_EVENT_FAILURE;
+    e.account = 0;
+    strcpy(e.text, "等待电脑画面超时");
+    sl_ui_runtime_event(&m, &e);
+    assert(m.page == SL_ERROR && !strcmp(m.error, e.text));
+}
 static void carousel(void) {
     sl_ui_model m = model();
     add(&m, 1, "HOST");
@@ -308,6 +328,7 @@ static void actionable_settings(void) {
 }
 int main(void) {
     carousel();
+    session_end_events();
     confirmation_shortcuts();
     actionable_settings();
     overlay_interaction();

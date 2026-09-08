@@ -109,6 +109,8 @@ typedef struct sl_ui_model {
     uint64_t leave_at;
     float leave_opacity;
     int focus;
+    uint64_t launch_at;
+    sl_control launch_card; /* Captured before the HOME layout is replaced. */
     float games_scroll, games_target;
     bool games_dragging;
     uint64_t games_host;

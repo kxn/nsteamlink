@@ -170,6 +170,12 @@ static void start(sl_ui_model *m, int game) {
     sl_host *h = selected(m);
     if (!h || !sl_host_online(h, m->now))
         return;
+    m->launch_at = m->now;
+    memset(&m->launch_card, 0, sizeof(m->launch_card));
+    if (game >= 0)
+        for (int i = 0; i < m->layout.count; ++i)
+            if (m->layout.controls[i].action == SL_RECENT && m->layout.controls[i].arg == game)
+                m->launch_card = m->layout.controls[i];
     m->generation++;
     m->repair_attempted = !h->paired;
     memset(&m->intent, 0, sizeof(m->intent));
