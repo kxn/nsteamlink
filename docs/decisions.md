@@ -1519,3 +1519,202 @@ NSL_DIAGNOSTICS 默认 OFF，编译排除诊断线程、远程调试 socket、HI
 NSP 内核能力描述采用 libnx 自制应用常见服务/文件权限与 512 handle table，未更改运行时
 清理顺序。Hypothesis（待验证）：当前能力描述满足实际 SDL/Mesa/网络独立应用运行；
 结构正确及交叉编译成功不能替代 NSP 真机安装、串流和退出证据。
+
+#### D-045 游戏封面独立下载与缓存
+
+Evidence：STEAMLINK_PROTOCOL_RE §20 记录官方 CAppImages 的 StoreBrowse/CDN 横版 header
+路径、主机 SetIcon 的窗口图标用途，以及匿名元数据/JPEG 请求实测。现有 recent history 来自
+SetActivity 的 gameid/name，按主机/账号保存，不新增主机游戏库或认证协议。
+
+实现采用独立 joinable worker。HTTPS 使用 devkitPro switch-curl（7.69.1-5，libnx SSL），
+开启 peer/hostname 验证；不接受重定向，不发送账号、Cookie 或配对记录。JSON 解析采用
+vendored jsmn（MIT，25647e692c7906b96ffd2b05ca54c097948e879c），JPEG 解码用 portlibs
+libjpeg-turbo（Switch 2.1.2-2，BSD/IJG）。原始 JSON/JPEG 限制为 64 KiB/1 MiB，JPEG 最大
+2048×2048 且不超过 2M 像素；RGBA 输出不超过 548×256。下载与文件读写、解码不在绘制线程。
+
+Evidence：libcurl threadsafe 文档要求 NOSIGNAL 且提示同步 DNS 不受普通超时完整约束。
+devkitPro curl 包禁用了 threaded resolver。libnx runtime/resolver.c 使用 thread-local
+cancel handle；resolverGetCancelHandle 为当前线程下一次查询取号，resolverCancel 可取消该查询。
+因此 HAL 提供解析取消，避免依赖 curl timeout 来宣称 DNS 一定可中止。
+
+接入在 UI 渲染前初始化 worker；进入串流/非首页时暂停请求，libcurl progress callback 和
+Switch DNS cancel 协作取消。在关闭路径先 stop/join 图片 worker、释放 curl/SSL，再清理
+IHS runtime、UI 纹理、SDL/Mesa，最后 socketExit。不存在 detach；桌面测试 seam 不影响正式
+网络路径。实际 Switch DNS/HTTPS 取消效果和 loader cleanup 仍以真机观察为证。
+
+图片缓存位于原数据目录的 artwork/，按有效 24 位普通 Steam AppID 命名（其他 CGameID 类型
+跳过）。最多 32 张 JPEG（每张最多 1 MiB），按访问时间淘汰；8 个后台槽位和 8 张渲染纹理，
+失败至少退避一分钟。缓存命中不联网；损坏缓存重新下载。封面不替代/扩展历史游戏列表。
+渲染只 trylock 取结果和创建纹理，180ms 淡入；完整缩放，不裁去标题，保持原按键/触摸命中。
+
+来源：
+- [libcurl thread-safety](https://curl.se/libcurl/c/threadsafe.html)
+- [libnx resolver](https://github.com/switchbrew/libnx/blob/master/nx/source/runtime/resolver.c)
+- [devkitPro curl package](https://github.com/devkitPro/pacman-packages/tree/master/switch/curl)
+
+## D-046：游戏启动封面过渡与明确主机结束信号（2026-09-08）
+
+Evidence：
+- 用户真机观察：直启最近游戏时，电脑先进入大屏并启动游戏，Switch 等待期间仍显示通用连接页；
+  退出游戏回 Steam 后，Switch 显示“等待电脑画面超时”。具体间隔未计时，不能据此认定主机发了断开包。
+- runtime.c 的 watchdog 在首帧前等待 45 秒，首帧后按 displayed_frames 的变化计时，
+  连续 10 秒无新画面就显示同一超时文案，不检查游戏是否已退出。
+- IHSlib session.c 的 inbound Disconnect 与 ch_control.c 的 StopRequest 都调用
+  IHS_SessionHostStopped；ch_discovery.c 的本地断开计时器也调用同一 disconnected 回调。
+  旧 runtime 把所有此类回调上报为异常停止，因此不能仅凭回调判断正常主机结束。
+- StopVideoData 会移除视频通道；它可能是视频重配置的一部分，不等同于会话结束。
+
+Decision：
+- 封面过渡只作用于呈现，保留原连接请求、授权语义和首帧门槛；无图不阻塞。
+  原生渲染在纹理上传时预生成低分辨率分离式模糊，动画阶段只做等比缩放与透明度混合。
+- IHSlib 增加只读 hostRequestedStop 标记，仅由明确的 inbound Disconnect / StopRequest 设置；
+  普通本地清理、认证失败、无视频超时都不能设置它。原子读写，可在 disconnected 回调读取。
+- 已显示首帧且主机明确结束时正常回首页；其他断开保留错误。watchdog 到期前再次读取明确标记，
+  避免该循环先前拷贝的 finished 过时而把已收到的主机结束报成超时。
+- 保留真正的无画面超时，不依据 gamesRunning=0、活动 gameid=0 或 StopVideoData 猜测正常退出。
+  diagnostics 构建通过已有有界日志队列记录视频起停、活动 ID、明确结束原因及 watchdog 快照；
+  release 仍可编译关闭这些诊断。
+
+待验证假设：用户此次超时可能发生在视频停止而未收到明确结束信号时；也可能存在回调与
+watchdog 的时序竞争。没有该次日志不能选定根因，新增明确结束分支不能宣称已修复所有退游戏超时。
+
+### D-046 真机证据补充与虚化修订（2026-09-08）
+
+Evidence：8e918e0 真机日志 `/tmp/nsl-8e918e0-device.log` 第 70–134 行：
+游戏活动 2358720，正常显示 1538 帧后收到活动 413080；随后约十个每秒采样的
+displayed_frames 不变，音频队列在 39–63 ms 间变化。watchdog 明确记录
+`first=1 idle_ms=10009 video_active=1 host_stop=0 game=2358720`。
+video lifecycle: stop 出现在本地 watchdog 触发清理之后，之前没有记录到明确主机停止。
+
+Conclusion：这次触发的是已开流后的本地无画面 watchdog，不是首帧等待失败；
+“连接未完成”标题误导。前述“已收到主机明确结束，但与 watchdog 竞争”的假设
+未得到本次日志支持，不能将之前新增的结束标记视作这次故障的修复。
+音频队列持续变化提示仍有音频补充，但未记录接收/解码计数，不能据此断言声音内容正常。
+不能从该片段断言主机未发过任何丢失的包，也不能仅凭活动变化认定游戏会话已结束。
+
+Decision：不修改超时阈值、不用活动变化伪装正常断开；新增经过来源/连接 ID 校验后的
+视频、音频、控制通道数据包累计计数。画面停滞时以每秒一次的有界日志输出接收、
+视频解码/显示、音频解码计数，用来区分发送/传输与本地解码停滞。
+初次连接失败与开流后中断使用不同标题。
+
+用户真机反馈原放大背景虚化过重。背景保留清晰原图，虚化混合上限从 100% 降至约 35%，
+模糊底图宽度从 96 提至 192，暗色遮罩由约 59% 降至约 47%；推进时长及原图比例不变。
+
+### D-046 状态语义优先修订（2026-09-08）
+
+用户要求停止收包计数试验，先核对官方结束消息。§21 逆向确认 StopVideoData 仅停止
+视频解码，SetActivity 包含活动类型，完整会话结束另有路径。因此撤回前述以新增媒体包
+计数作为下一轮验收前置条件的安排，并移除其实现。视频/活动状态与会话状态分别处理：
+明确视频停止不触发无帧超时；新 StartVideoData 恢复 watchdog；完整活动仅在 Game
+类型下更新最近游戏。日志聚焦明确状态转换。不以游戏 ID 或音频存在推断会话结束。
+
+### D-046 最新实机对先前假设的限制
+
+Evidence：ae61751 的两次真机片段均为 Game(2358720) → Desktop(413080)，
+随后本地约 10 秒无画面超时；没有记录新的 StartVideoData、StopVideoData 或明确
+主机会话结束。用户确认 Switch 变黑且其他程序音频仍在播放。细节与官方地址见
+STEAMLINK_PROTOCOL_RE §21.1。
+
+Conclusion：撤回“显式视频停止处理足以覆盖本次退出场景”的推断；该修正对应独立
+协议缺口，但没有解决用户此次问题。官方与 fork 都支持收到 StartVideoData 时替换
+视频通道，当前没有证据支持“客户端固定等待桌面那一条视频流”。官方 launched ID
+在 SDL Quit / 主动退出路径中被使用，不构成主机游戏完成事件的证据。
+
+Decision：保留用户已认可的背景虚化。不以 Desktop 单一活动替换超时为正常退出，
+避免临时切屏触发断开；直启与 Steam 入口的收尾策略需要独立游戏结束依据。
+发现响应的 games_running 是可研究的补充状态，但旧缓存、缺省字段和它的主机级
+含义不能被当作目标游戏的可靠完成通知。
+
+### D-046 直启收尾的组合状态方案
+
+Evidence：STEAMLINK_PROTOCOL_RE §21.2 的当前主机只读响应证明 games_running
+及递增 timestamp 可用；remoteplay_active 未提供。退出瞬间的更新时延尚未实测。
+
+Proposed design（产品策略，并非宣称官方算法）：
+
+1. 分别保存原始入口（Steam / 直启 gameid）、是否已进入目标 Game 活动、当前
+   活动类型及活动代次。启动阶段的 Desktop 不触发结束。
+2. 直启会话后台只查询正在连接的主机，不恢复全网扫描；使用已有 worker 和
+   joinable client，不新增线程。对端地址、client_id、instance_id 必须匹配。
+   解析层保留 has_games_running、has_timestamp，缺字段是未知。
+3. 目标游戏活动转 Desktop 时进入核实状态，立即单播查询。以此前最新主机
+   timestamp 为基线，只接受更新的状态；两份时间戳递增的明确 false 才确认
+   无游戏运行。只保存布尔值、活动代次和时间戳，不添加媒体收包计数。
+   任意 Game / SecureDesktop 活动、true 状态或新连接使待确认结果失效。
+4. 确认结果由 worker 再检查活动代次，按已有 stop/join/destroy 路径结束，
+   发正常 STOPPED 返回首页。不能在 IHS 回调线程内 join 自己，不发送游戏
+   QuitRequest，不重新启动 Steam，也不弹超时错误。
+5. Steam 入口不使用“无游戏”结束规则，继续接受任意新的 StartVideoData
+   替换通道。Desktop / 显式视频暂停不能仅因显示帧 10 秒未变化就报连接故障；
+   连接失效由传输层超时/断开区分，本地菜单始终可退出。首帧启动失败和处于
+   Game 活动的媒体停滞仍需保留异常处理。
+6. 状态查询失败、字段缺失、时间戳无法判新或另一个游戏仍运行时，不伪造正常
+   完成；保留连接和本地退出能力。多游戏下精确判断目标 AppID 退出需要额外
+   的逐游戏运行状态协议，当前局域网 Status 无此数据。
+
+验收规格：启动 Desktop→目标 Game 不退出；目标 Game→Desktop 且新 false
+正常结束；Alt-Tab 后 games_running=true 保持；SecureDesktop 不结束；缺字段、
+旧时间戳、错误主机、旧活动代次不结束；Steam 入口不因 false 结束；同通道或
+新通道 StartVideoData 都能替换。真机应验证退出状态更新时间及 Alt-Tab 两条路径，
+不能用本次空闲状态查询替代这两条证据。
+
+### D-046 取消/重连优先于自动结束判定
+
+Evidence：STEAMLINK_PROTOCOL_RE §21.3 确认官方的有编号取消及迟到
+InProgress 再取消。当前本地有 generation 和 worker 清理屏障，但无主机
+StreamingCancel；旧响应还会在验证前刷新请求计时。
+
+Decision：修正此前仅凭“每次连接有代次便足够”的表述。连接代次只能隔离
+本地事件，不会取消主机已接收的请求，也不能为无 request_id 的发现状态
+提供协议关联。自动结束方案应在以下事务规则建立后接入：
+
+- 启动事务拥有不可变 request_id、主机身份和 UI generation；先校验来源/
+  编号/有效状态，再更新计时和触发回调。
+- 取消时先使事务失效并停重试，发送原编号 StreamingCancel，再清理本地
+  资源。新请求使用新编号；保留有界的已取消请求记录，迟到 InProgress
+  只重发对应旧编号的取消。旧 success 不建会话，不对它发送可能影响新
+  会话的笼统 StopRequest。已建立会话另走既有会话停止流程。
+- 清理结束前保持 STOPPING，不让 A 穿透；清理完成才允许新启动。
+  重置 request_terminal、session_ready、媒体首帧及游戏结束观察状态。
+- 主机取消没有已确认的 ACK/回滚保证；不能承诺已启动的游戏会被杀掉。
+  新请求若收到 Busy 等结果应按自身编号处理，不用杀游戏来消除竞争。
+- games_running 查询不携带启动 request_id；新连接需重新建立运行基线，
+  不沿用取消前的 false 或仅在收到时给旧消息套上新 generation。
+
+验收规格包含 B→清理→A、取消与 success 同时到达、旧 InProgress/旧 success
+在新请求期间迟到、取消报文丢失、不同主机同编号、旧响应不能延长新请求
+期限、启动 splash 的 false 不能触发结束。协议仿真应先覆盖这些时序再
+做真机验证；不需要用户反复碰运气复现竞争。
+
+### D-046 通用 StopRequest 假设撤回
+
+Evidence：协议参考 §22.2 将官方菜单字符串表和动作分支对应，
+menu_stop_streaming→Disconnect，menu_stop_game→StopRequest。
+
+Conclusion：撤回旧 session.c 注释所表达的“普通断开必先 StopRequest”的
+普遍化假设。那条注释把游戏保留运行视为异常，缺少官方语义支持。停止游戏、
+取消启动请求、断开串流必须分开；主机已结束或自动正常返回也不能无差别
+请求停止游戏。审计时实现仍有该行为；修订后的普通断开仅发送传输 Disconnect，
+启动取消使用自己的 request_id。
+
+Decision：按 §22 证据优先修启动取消与断开语义，再修请求来源/编号/计时
+校验及条件响应缺口。虚拟触控、USB 共享、控制器配置编辑等未实现功能不
+因为存在 Request 枚举就宣告支持或加入开流必发序列。
+
+### D-046 实施时证据纠正
+
+完整重读 control_hid.c 确认 VendorString/ProductString 原有分派与处理，
+撤回 §22 初次审计的“缺两种 HID 字符串回复”结论；无需重复添加。
+认证使用安装级 KeyEscrow secret，轮换回应显式 updated_secret=false，
+不能将此说成已实现主机级自动密钥轮换。实现边界见协议参考 §22.6。
+
+### D-046 断开 worker 的内存同步
+
+Evidence：disconnect_destroy 的 ThreadSanitizer 调用栈显示
+IHS_BaseInterruptWorker 与 DisconnectTimerRun / SessionSendWorker 并发访问
+base.interrupted。旧普通 bool 无同步；立即 interrupt 曾掩盖部分等待时序，
+不能作为正确的退出同步方式。
+
+Decision：interrupted 使用 C11 atomic_bool，在 BaseInit 清零结构后初始化。
+保留 stop HID → 传输断开有界重试 → join session → 停媒体 → destroy 的顺序；
+最终退出时 join client 后再销毁 IHS/socket。无 ACK 的断开也必须有界完成。

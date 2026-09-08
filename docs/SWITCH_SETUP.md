@@ -86,7 +86,7 @@ tools/switch-debugctl.py 10.10.10.17 diag current
 
 - 使用 Title Takeover 启动 hbmenu；在 hbmenu 按 L 开启网络接收。
 - 正式应用中直接完成发现、配对和串流，不需先运行另一个 NRO。
-- 首页 L/R 换电脑、A 确认、B 返回、X 选项、Y 电脑信息，也可触摸操作。
+- 首页 L/R（LB/RB）换电脑，左右摇杆／方向键直接选择游戏，A 启动所选游戏，Y 打开 Steam，B 返回，X 选项。无游戏记录时 A 也可连接。卡片支持触摸横向滑动，轻点启动；IP 与配对状态直接显示在主机标签下。
 - 串流中同时长按 −/+ 0.8 秒；在游玩菜单中断开，返回首页后 B 退出。
 - 仅诊断构建：游玩菜单内单独长按 X 一秒切换 Debug 浮层。完整诊断接口见 [UDP_DEBUG](UDP_DEBUG.md)。
 - 设备身份、逐电脑授权和设置保存在 `sdmc:/switch/nsteamlink/profile.bin`。
@@ -96,3 +96,11 @@ tools/switch-debugctl.py 10.10.10.17 diag current
 - 涉及生命周期的验证要区分日志清理完成和屏幕返回 hbmenu；后一项必须由实机观察确认。
 
 普通 Release NRO 不包含诊断入口。NSP 安装包与发版构建方法见 [RELEASING](RELEASING.md)。
+
+## 最近游戏封面
+
+首页自动为已记录的普通 Steam 游戏获取横版封面，无需登录或填写 API key。
+首次取图需要能访问 Steam 商店/CDN；成功后保存在 `sdmc:/switch/nsteamlink/artwork/`，
+之后即使无法访问互联网也能使用缓存。图片不会改变按电脑/账号保存的最近游戏列表。
+非 Steam 快捷方式、接口不可用或图片缺失时保留游戏名称和占位，仍可正常启动游戏。
+封面缓存最多 32 张；删除 artwork 目录可让应用重新获取，不会清除配对和设置。

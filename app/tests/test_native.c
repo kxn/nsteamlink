@@ -1,3 +1,4 @@
+#include "artwork.h"
 #include "media.h"
 #include "platform/runtime.h"
 #include "platform/system.h"
@@ -43,6 +44,20 @@ static void save_image(const char *name) {
                                 s->pitch) == 0);
     assert(SDL_SaveBMP(s, path) == 0);
     SDL_FreeSurface(s);
+}
+static uint64_t region_hash(SDL_Rect box) {
+    SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(0, box.w, box.h, 32, SDL_PIXELFORMAT_ARGB8888);
+    assert(s);
+    assert(
+        !SDL_RenderReadPixels(sl_media_renderer(), &box, s->format->format, s->pixels, s->pitch));
+    uint64_t hash = 14695981039346656037ULL;
+    for (int y = 0; y < s->h; ++y)
+        for (int x = 0; x < s->w * 4; ++x) {
+            hash ^= ((unsigned char *)s->pixels)[y * s->pitch + x];
+            hash *= 1099511628211ULL;
+        }
+    SDL_FreeSurface(s);
+    return hash;
 }
 static void tap(int x, int y) {
     SDL_Event e = {.type = SDL_MOUSEBUTTONDOWN};
@@ -119,11 +134,27 @@ static void decode(const char *path) {
     avcodec_free_context(&ctx);
     free(bytes);
 }
+static bool no_artwork_network(const char *url, size_t limit, unsigned char **data, size_t *size,
+                               void *context) {
+    (void)url;
+    (void)limit;
+    (void)data;
+    (void)size;
+    (void)context;
+    return false;
+}
 int main(int argc, char **argv) {
     assert(sl_system_init());
     assert(stream_media_init(sl_log));
     renderer = sl_ui_renderer_create(sl_media_renderer());
     assert(renderer);
+    sl_artwork *artwork = NULL;
+    const char *art_dir = getenv("NSL_TEST_ARTWORK_DIR");
+    if (art_dir) {
+        artwork = sl_artwork_create(art_dir, no_artwork_network, NULL);
+        assert(artwork);
+        sl_ui_renderer_set_artwork(renderer, artwork);
+    }
     sl_auth_store s = {.sound = true};
     sl_host_registry_init(&s.registry);
     sl_ui_init(&ui, &s);
@@ -146,8 +177,7 @@ int main(int argc, char **argv) {
     stream_media_present();
     save_image("unpaired");
     tap(900, 660);
-    assert(ui.page == SL_INFO && ui.command.type == SL_CMD_NONE);
-    key(SDLK_ESCAPE);
+    assert(ui.page == SL_HOME && ui.command.type == SL_CMD_NONE);
     SDL_Event touch = {.type = SDL_FINGERDOWN};
     touch.tfinger.fingerId = 123;
     touch.tfinger.x = .9f;
@@ -160,11 +190,84 @@ int main(int argc, char **argv) {
     key(SDLK_ESCAPE);
     ui.store.registry.hosts[0].paired = true;
     ui.store.registry.hosts[0].account = 1;
-    ui.store.registry.hosts[0].games[0].id = 42;
+    ui.store.registry.hosts[0].games[0].id = 413150;
     strcpy(ui.store.registry.hosts[0].games[0].name, "星露谷物语");
     sl_ui_layout(&ui);
     stream_media_present();
     save_image("paired");
+    if (artwork) {
+        /* Offline fixture rendering exercises queue -> decode -> texture upload -> fade. */
+        for (int i = 0; i < 100; ++i) {
+            sl_ui_tick(&ui, ui.now + 10);
+            stream_media_present();
+            SDL_Delay(5);
+        }
+        save_image("paired-artwork");
+        ui.focus = 40;
+        stream_media_present();
+        sl_ui_tick(&ui, ui.now + 200);
+        stream_media_present();
+        save_image("paired-artwork-focused");
+    }
+    /* Fixture duplicates artwork only to exercise a four-card viewport. */
+    for (int i = 1; i < 4; ++i)
+        ui.store.registry.hosts[0].games[i] = ui.store.registry.hosts[0].games[0];
+    sl_ui_layout(&ui);
+    stream_media_present();
+    save_image("carousel-start");
+    strcpy(ui.store.registry.hosts[0].games[0].name, "Girls Made Pudding -少女布丁旅情-");
+    strcpy(ui.store.registry.hosts[0].games[1].name, "很长的中文游戏标题：完整版本与附加内容");
+    sl_ui_layout(&ui);
+    stream_media_present();
+    save_image("title-start");
+    SDL_Rect selected_title = {76, 508, 392, 54}, other_title = {540, 508, 392, 54};
+    uint64_t initial_title = region_hash(selected_title), still_title = region_hash(other_title);
+    sl_ui_tick(&ui, ui.now + 1000);
+    stream_media_present();
+    assert(initial_title == region_hash(selected_title));
+    for (int i = 0; i < 240; ++i) {
+        sl_ui_tick(&ui, ui.now + 16);
+        stream_media_present();
+    }
+    save_image("title-scroll");
+    assert(initial_title != region_hash(selected_title));
+    assert(still_title == region_hash(other_title));
+    sl_ui_action(&ui, SL_RIGHT, 0);
+    stream_media_present();
+    save_image("title-switch");
+    sl_ui_action(&ui, SL_LEFT, 0);
+    stream_media_present();
+    assert(initial_title == region_hash(selected_title));
+
+    for (int i = 0; i < 3; ++i)
+        sl_ui_action(&ui, SL_RIGHT, 0);
+    for (int i = 0; i < 40; ++i) {
+        sl_ui_tick(&ui, ui.now + 16);
+        stream_media_present();
+    }
+    save_image("carousel-end");
+    h.client_id = 124;
+    strcpy(h.name, "DESKTOP-B");
+    strcpy(h.address, "192.168.1.25");
+    sl_host_observe(&ui.store.registry, &h, ui.now);
+    sl_ui_layout(&ui);
+    stream_media_present();
+    save_image("carousel-hosts");
+    sl_ui_model before_launch = ui;
+    sl_ui_action(&ui, SL_RECENT, 2);
+    assert(ui.page == SL_CONNECTING && ui.launch_card.id == 42);
+    assert(ui.launch_card.x < SL_GAMES_LEFT + 2 * SL_CARD_STEP);
+    for (int i = 0; i <= 30; ++i) {
+        if (i)
+            sl_ui_tick(&ui, ui.now + 16);
+        stream_media_present();
+        char frame[48];
+        snprintf(frame, sizeof(frame), "launch-%02d", i);
+        save_image(frame);
+    }
+    ui = before_launch;
+    sl_ui_layout(&ui);
+
     for (int p = SL_PAIRING; p <= SL_ERROR; ++p) {
         ui.page = p;
         strcpy(ui.pairing_code, "4826");
@@ -246,6 +349,8 @@ int main(int argc, char **argv) {
         sl_runtime_destroy(rt);
     }
     sl_media_hooks(NULL, NULL, NULL);
+    sl_artwork_destroy(artwork);
+    artwork = NULL;
     sl_ui_renderer_destroy(renderer);
     stream_media_shutdown();
     assert(rmdir(blocked_temp) == 0);
@@ -260,6 +365,8 @@ int main(int argc, char **argv) {
     sl_media_hooks(draw, event, NULL);
     stream_media_present();
     sl_media_hooks(NULL, NULL, NULL);
+    sl_artwork_destroy(artwork);
+    artwork = NULL;
     sl_ui_renderer_destroy(renderer);
     stream_media_shutdown();
     sl_system_shutdown();

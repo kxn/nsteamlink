@@ -49,11 +49,12 @@ typedef struct sl_input_router {
     sl_input_event pending[8];
     int pending_count;
     struct {
-        bool used, remote;
+        bool used, remote, carousel, moved, dragging;
         int64_t id;
         int control;
         sl_page page;
-        float x, y;
+        float x, y, start_x, start_y, velocity;
+        uint64_t at, host;
     } touches[8];
 } sl_input_router;
 void sl_input_init(sl_input_router *, sl_ui_model *, sl_input_send_fn, sl_input_neutral_fn, void *);

@@ -13,7 +13,6 @@ typedef enum sl_page {
     SL_OPTIONS,
     SL_SETTINGS,
     SL_MANUAL,
-    SL_INFO,
     SL_QUALITY,
     SL_FORGET,
     SL_DISCONNECT,
@@ -38,7 +37,6 @@ typedef enum sl_action {
     SL_OPEN_MENU,
     SL_DEBUG,
     SL_OPEN_OPTIONS,
-    SL_OPEN_INFO,
     SL_OPEN_SETTINGS,
     SL_OPEN_MANUAL,
     SL_OPEN_QUALITY,
@@ -94,6 +92,13 @@ typedef struct sl_layout {
     float opacity;
     char title[128];
 } sl_layout;
+#define SL_CARD_WIDTH  440
+#define SL_CARD_HEIGHT 270
+#define SL_CARD_STEP   464
+#define SL_CARD_Y      300
+#define SL_GAMES_LEFT  52
+#define SL_GAMES_WIDTH 1176
+
 typedef struct sl_ui_model {
     sl_auth_store store;
     sl_page page, stack[8];
@@ -104,6 +109,12 @@ typedef struct sl_ui_model {
     uint64_t leave_at;
     float leave_opacity;
     int focus;
+    bool had_stream;
+    uint64_t launch_at;
+    sl_control launch_card; /* Captured before the HOME layout is replaced. */
+    float games_scroll, games_target;
+    bool games_dragging;
+    uint64_t games_host;
     uint64_t now, generation, entered_at, stream_started_at, pair_code_at;
     sl_command intent, command;
     char input[64], pairing_code[5], error[192];
@@ -124,3 +135,8 @@ bool sl_ui_remote(const sl_ui_model *m);
 bool sl_ui_pair_prompt_visible(const sl_ui_model *model);
 
 float sl_ui_overlay_opacity(const sl_ui_model *model);
+
+int sl_ui_game_count(const sl_ui_model *);
+float sl_ui_scroll_limit(const sl_ui_model *);
+void sl_ui_drag_games(sl_ui_model *, float delta);
+void sl_ui_release_games(sl_ui_model *, float velocity);

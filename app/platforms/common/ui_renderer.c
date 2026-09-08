@@ -1,4 +1,5 @@
 #include "platform/ui_renderer.h"
+#include "artwork.h"
 #include "platform/system.h"
 #include <SDL.h>
 #include <SDL_ttf.h>
@@ -20,11 +21,19 @@ struct sl_ui_renderer {
     uint64_t tick;
     SDL_Texture *backdrop, *outline, *overlay;
     sl_ui_model *base_ui;
+    sl_artwork *artwork;
+    struct {
+        uint64_t id, used, ready_at;
+        SDL_Texture *texture, *blurred;
+        int w, h;
+    } covers[8];
     float text_alpha;
     bool painted, focus_valid;
     sl_page page;
     int focus_id;
-    uint64_t focus_at;
+    uint64_t focus_at, title_at, title_host;
+    int title_focus;
+    char title_text[160];
     SDL_FRect focus_from, focus_to, focus_box;
 };
 static SDL_Color bg = {18, 20, 25, 255}, panel = {32, 35, 42, 255}, accent = {114, 199, 242, 255},
@@ -133,6 +142,8 @@ static void outline(sl_ui_renderer *r, SDL_Rect b) {
 }
 static void animate_focus(sl_ui_renderer *r, const sl_ui_model *m) {
     bool page_changed = !r->painted || r->page != m->page;
+    if (page_changed)
+        r->title_focus = 0;
     if (page_changed) {
         r->page = m->page;
         r->focus_valid = false;
@@ -147,7 +158,7 @@ static void animate_focus(sl_ui_renderer *r, const sl_ui_model *m) {
         return;
     }
     SDL_FRect dest = {(float)target->x, (float)target->y, (float)target->w, (float)target->h};
-    if (!r->focus_valid) {
+    if (m->page == SL_HOME || !r->focus_valid) {
         r->focus_from = r->focus_to = r->focus_box = dest;
         r->focus_id = m->focus;
         r->focus_at = m->now;
@@ -341,6 +352,85 @@ static int centered_y(sl_ui_renderer *r, const char *s, int size, int y, int hei
     }
     return y + (height - (bottom - top)) / 2 - size - top;
 }
+/* A card title is always one line. Measure visible glyph bounds independently
+ * of clipping so neither truncation nor scrolling changes its baseline. */
+static void card_title(sl_ui_renderer *r, const char *label, SDL_Rect box, SDL_Rect viewport,
+                       bool focused, const sl_ui_model *m) {
+    char text[160];
+    snprintf(text, sizeof(text), "%s", label);
+    for (char *p = text; *p; ++p)
+        if (*p == '\n' || *p == '\r')
+            *p = ' ';
+    const int size = 30;
+    int measured = text_width(r, text, size), top = 0, bottom = 0;
+    bool any = false;
+    for (const char *p = text; *p;) {
+        uint32_t cp = utf8(&p);
+        glyph *g = get_glyph(r, cp, size);
+        if (g && cp != ' ') {
+            if (!any || g->top < top)
+                top = g->top;
+            if (!any || g->top + g->h > bottom)
+                bottom = g->top + g->h;
+            any = true;
+        }
+    }
+    float offset = 0.f;
+    if (focused) {
+        if (r->title_focus != m->focus || r->title_host != m->games_host ||
+            strcmp(r->title_text, text) || m->games_dragging ||
+            fabsf(m->games_target - m->games_scroll) > .5f) {
+            r->title_focus = m->focus;
+            r->title_host = m->games_host;
+            snprintf(r->title_text, sizeof(r->title_text), "%s", text);
+            r->title_at = m->now;
+        }
+        if (measured > box.w && m->now >= r->title_at) {
+            float travel = (measured - box.w) / 30.f; /* 30 pixels / second. */
+            float t = fmodf((m->now - r->title_at) / 1000.f, 2.f * travel + 2.4f);
+            if (t > 1.2f && t <= 1.2f + travel)
+                offset = (t - 1.2f) * 30.f;
+            else if (t > 1.2f + travel && t <= 2.4f + travel)
+                offset = measured - box.w;
+            else if (t > 2.4f + travel)
+                offset = (2.4f + 2.f * travel - t) * 30.f;
+        }
+    }
+    SDL_Rect clip;
+    if (!SDL_IntersectRect(&box, &viewport, &clip))
+        return;
+    SDL_RenderSetClipRect(r->renderer, &clip);
+    int baseline = box.y + (box.h - (bottom - top)) / 2 - top;
+    bool truncated = !focused && measured > box.w;
+    int dots = truncated ? text_width(r, "...", size) : 0;
+    int pen = box.x - (int)offset;
+    const char *p = text;
+    while (*p) {
+        glyph *g = get_glyph(r, utf8(&p), size);
+        if (!g)
+            continue;
+        if (truncated && pen + g->advance > box.x + box.w - dots)
+            break;
+        SDL_SetTextureColorMod(g->texture, fg.r, fg.g, fg.b);
+        SDL_SetTextureAlphaMod(g->texture, (Uint8)(255 * r->text_alpha));
+        SDL_Rect dst = {pen + g->left, baseline + g->top, g->w, g->h};
+        SDL_RenderCopy(r->renderer, g->texture, NULL, &dst);
+        pen += g->advance;
+    }
+    if (truncated) {
+        glyph *dot = get_glyph(r, '.', size);
+        if (dot) {
+            SDL_SetTextureColorMod(dot->texture, fg.r, fg.g, fg.b);
+            SDL_SetTextureAlphaMod(dot->texture, (Uint8)(255 * r->text_alpha));
+            for (int i = 0; i < 3; ++i) {
+                SDL_Rect dst = {pen + dot->left, baseline + dot->top, dot->w, dot->h};
+                SDL_RenderCopy(r->renderer, dot->texture, NULL, &dst);
+                pen += dot->advance;
+            }
+        }
+    }
+    SDL_RenderSetClipRect(r->renderer, NULL);
+}
 static void badge(sl_ui_renderer *r, const char *key, int x, int y, SDL_Color ink) {
     SDL_Rect b = {x, y, 34, 34};
     rounded(r->renderer, b, 17, ink);
@@ -409,7 +499,7 @@ static void action_icon(SDL_Renderer *r, sl_action a, int x, int y, SDL_Color c)
         line(r, x + 16, y + 4, x + 16, y + 24, c);
         line(r, x + 23, y + 8, x + 27, y + 14, c);
         line(r, x + 27, y + 14, x + 23, y + 20, c);
-    } else if (a == SL_OPEN_QUALITY || a == SL_OPEN_INFO || a == SL_OPEN_MANUAL) {
+    } else if (a == SL_OPEN_QUALITY || a == SL_OPEN_MANUAL) {
         monitor(r, x + 1, y + 3, 28, c);
     } else {
         rounded(r, (SDL_Rect){x + 2, y + 2, 26, 26}, 13, c);
@@ -452,6 +542,142 @@ sl_ui_renderer *sl_ui_renderer_create(void *native) {
     SDL_SetRenderDrawBlendMode(r->renderer, SDL_BLENDMODE_BLEND);
     return r;
 }
+/* Precompute a small separable blur once per downloaded image. No readback,
+ * allocation or filtering is needed during the launch animation. */
+static SDL_Texture *blurred_cover(sl_ui_renderer *r, const sl_artwork_image *image) {
+    int w = 192, h = (int)(192.f * image->height / image->width);
+    if (h < 1)
+        h = 1;
+    if (h > 192)
+        h = 192;
+    unsigned char *pixels = malloc((size_t)w * h * 8);
+    if (!pixels)
+        return NULL;
+    unsigned char *temp = pixels + w * h * 4;
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x)
+            memcpy(pixels + (y * w + x) * 4,
+                   image->pixels +
+                       ((y * image->height / h) * image->width + x * image->width / w) * 4,
+                   4);
+    for (int pass = 0; pass < 2; ++pass) {
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x)
+                for (int c = 0; c < 4; ++c) {
+                    unsigned sum = 0;
+                    for (int k = -1; k <= 1; ++k) {
+                        int sx = x, sy = y;
+                        if (pass % 2)
+                            sy = y + k;
+                        else
+                            sx = x + k;
+                        if (sx < 0)
+                            sx = 0;
+                        if (sx >= w)
+                            sx = w - 1;
+                        if (sy < 0)
+                            sy = 0;
+                        if (sy >= h)
+                            sy = h - 1;
+                        sum += pixels[(sy * w + sx) * 4 + c];
+                    }
+                    temp[(y * w + x) * 4 + c] = sum / 3;
+                }
+        memcpy(pixels, temp, (size_t)w * h * 4);
+    }
+    SDL_Texture *texture =
+        SDL_CreateTexture(r->renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, w, h);
+    if (texture) {
+        SDL_UpdateTexture(texture, NULL, pixels, w * 4);
+        SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(texture, SDL_ScaleModeLinear);
+    }
+    free(pixels);
+    return texture;
+}
+static bool launch_background(sl_ui_renderer *r, const sl_ui_model *m) {
+    bool handoff = m->page == SL_STREAM && m->now >= m->stream_started_at &&
+                   m->now - m->stream_started_at < 180;
+    if ((!handoff && m->page != SL_CONNECTING) || !m->intent.game_id)
+        return false;
+    int index = -1;
+    for (int i = 0; i < 8; ++i)
+        if (r->covers[i].id == m->intent.game_id && r->covers[i].texture)
+            index = i;
+    if (index < 0)
+        return false;
+    r->covers[index].used = ++r->tick;
+    float t = fminf(1.f, (m->now >= m->launch_at ? m->now - m->launch_at : 0) / 420.f);
+    /* Strong initial acceleration and a short settle, without spring overshoot. */
+    float p = handoff ? 1.f : 1.f - powf(1.f - t, 4.f);
+    float alpha = handoff ? 1.f - (m->now - m->stream_started_at) / 180.f : 1.f;
+    int iw = r->covers[index].w, ih = r->covers[index].h;
+    const sl_control *c = &m->launch_card;
+    float start_scale = c->w ? fminf((c->w - 16.f) / iw, 198.f / ih) : 0.f;
+    float end_scale = fmaxf(1280.f / iw, 720.f / ih);
+    float scale = start_scale + (end_scale - start_scale) * p;
+    float cx = c->w ? c->x + c->w / 2.f : 640.f;
+    float cy = c->w ? c->y + 8.f + 99.f : 360.f;
+    cx += (640.f - cx) * p;
+    cy += (360.f - cy) * p;
+    SDL_FRect dest = {cx - iw * scale / 2, cy - ih * scale / 2, iw * scale, ih * scale};
+    {
+        SDL_SetTextureAlphaMod(r->covers[index].texture, (Uint8)(255 * alpha));
+        SDL_RenderCopyF(r->renderer, r->covers[index].texture, NULL, &dest);
+    }
+    if (r->covers[index].blurred) {
+        SDL_SetTextureAlphaMod(r->covers[index].blurred, (Uint8)(90 * p * alpha));
+        SDL_RenderCopyF(r->renderer, r->covers[index].blurred, NULL, &dest);
+    }
+    rect(r->renderer, (SDL_Rect){0, 0, 1280, 720},
+         (SDL_Color){9, 12, 20, (Uint8)(120 * p * alpha)});
+    return true;
+}
+static void draw_cover(sl_ui_renderer *r, uint64_t id, SDL_Rect box, uint64_t now) {
+    if (!r->artwork || !sl_artwork_appid(id))
+        return;
+    int index = -1;
+    for (int i = 0; i < 8; ++i)
+        if (r->covers[i].id == id) {
+            index = i;
+            break;
+        }
+    if (index < 0) {
+        sl_artwork_request(r->artwork, id);
+        sl_artwork_image image;
+        if (!sl_artwork_take(r->artwork, id, &image))
+            return;
+        index = 0;
+        for (int i = 1; i < 8; ++i)
+            if (r->covers[i].used < r->covers[index].used)
+                index = i;
+        SDL_DestroyTexture(r->covers[index].texture);
+        SDL_DestroyTexture(r->covers[index].blurred);
+        r->covers[index].blurred = blurred_cover(r, &image);
+        r->covers[index].texture =
+            SDL_CreateTexture(r->renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC,
+                              image.width, image.height);
+        if (r->covers[index].texture) {
+            SDL_UpdateTexture(r->covers[index].texture, NULL, image.pixels, image.width * 4);
+            SDL_SetTextureBlendMode(r->covers[index].texture, SDL_BLENDMODE_BLEND);
+        }
+        r->covers[index].w = image.width;
+        r->covers[index].h = image.height;
+        free(image.pixels);
+        r->covers[index].id = id;
+        r->covers[index].ready_at = now;
+    }
+    r->covers[index].used = ++r->tick;
+    if (!r->covers[index].texture)
+        return;
+    /* Contain the complete header artwork; never crop the game's logo. */
+    float scale = fminf((float)box.w / r->covers[index].w, (float)box.h / r->covers[index].h);
+    int w = (int)(r->covers[index].w * scale), h = (int)(r->covers[index].h * scale);
+    SDL_Rect target = {box.x + (box.w - w) / 2, box.y + (box.h - h) / 2, w, h};
+    Uint8 alpha = (Uint8)(255.f * fminf(1.f, (float)(now - r->covers[index].ready_at) / 180.f));
+    SDL_SetTextureAlphaMod(r->covers[index].texture, alpha);
+    SDL_RenderCopy(r->renderer, r->covers[index].texture, NULL, &target);
+}
 static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_snapshot *d,
                        bool focused_scene) {
     const sl_layout *l = &m->layout;
@@ -465,6 +691,9 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
             SDL_RenderCopy(r->renderer, r->backdrop, NULL, NULL);
         else
             rect(r->renderer, (SDL_Rect){0, 0, 1280, 720}, bg);
+        launch_background(r, m);
+    } else if (m->page == SL_STREAM) {
+        launch_background(r, m);
     }
     if (l->dialog) {
         rect(r->renderer, (SDL_Rect){0, 0, 1280, 720},
@@ -560,6 +789,13 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
     for (int i = 0; i < l->count; ++i) {
         const sl_control *c = &l->controls[i];
         SDL_Rect box = {c->x, c->y, c->w, c->h};
+        bool card = c->action == SL_RECENT;
+        SDL_Rect viewport = {40, SL_CARD_Y - 8, 1200, SL_CARD_HEIGHT + 16}, clip;
+        if (card) {
+            if (!SDL_IntersectRect(&box, &viewport, &clip))
+                continue;
+            SDL_RenderSetClipRect(r->renderer, &clip);
+        }
         bool tab = c->action == SL_SELECT_HOST;
         bool footer = c->label[0] && c->label[1] == ' ' && c->label[2] == ' ';
         bool shoulder = c->action == SL_PREV_HOST || c->action == SL_NEXT_HOST;
@@ -571,12 +807,16 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
                  .hosts[m->store.registry.selected >= 0 ? m->store.registry.selected : 0]
                  .paired)
             role = amber;
-        bool plain = tab || footer || shoulder || (c->action == SL_START && !c->primary);
+        bool plain =
+            tab || (footer && !c->primary) || shoulder || (c->action == SL_START && !c->primary);
         SDL_Color ink = focused || (c->primary && !tab) ? bg : fg;
         if (l->compact) {
             /* White always means the explicitly labelled A action. */
             ink = c->primary ? bg : fg;
             rounded(r->renderer, box, 9, c->primary ? fg : (SDL_Color){43, 47, 57, 255});
+        } else if (card) {
+            ink = fg;
+            rounded(r->renderer, box, 14, focused ? (SDL_Color){52, 62, 78, 255} : panel);
         } else if (menu_row) {
             if (focused)
                 rounded(r->renderer, box, 8, fg);
@@ -605,34 +845,48 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
             rounded(r->renderer, (SDL_Rect){c->x + 28, c->y + c->h - 4, c->w - 56, 4}, 2, accent);
             ink = focused ? bg : accent;
         }
-        int size = c->action == SL_RECENT ? 36 : footer ? 26 : 30;
+        int size = c->action == SL_RECENT ? 30 : footer ? 26 : 30;
         const char *label = c->action == SL_SOUND ? "声音" : footer ? c->label + 3 : c->label;
         int x = c->x + (menu_row ? 78 : 24), width = c->w - (menu_row ? 110 : 48);
         bool centered = l->compact || tab || c->action == SL_START || c->action == SL_DIGIT ||
                         c->action == SL_SUBMIT || shoulder || footer;
+        if (tab) {
+            const sl_host *host = &m->store.registry.hosts[c->arg];
+            SDL_Color status = !sl_host_online(host, m->now) ? muted : host->paired ? green : amber;
+            rounded(r->renderer, (SDL_Rect){box.x + 18, box.y + (box.h - 12) / 2, 12, 12}, 6,
+                    status);
+            x = box.x + 44;
+            width = box.w - 60;
+        }
         int measured = text_width(r, label, size);
         if (footer) {
             int group = measured + 48;
             x = c->x + (c->w - group) / 2;
             char key[2] = {c->label[0], 0};
-            badge(r, key, x, c->y + (c->h - 34) / 2, focused ? bg : muted);
+            badge(r, key, x, c->y + (c->h - 34) / 2, c->primary || focused ? bg : muted);
             x += 48;
             width = measured + 2;
         } else if (shoulder) {
+            width = c->w - 8;
             rounded(r->renderer, (SDL_Rect){box.x + 8, box.y + 20, box.w - 16, 32}, 9, muted);
             ink = bg;
             x = c->x + (c->w - measured) / 2;
-        } else if (centered && measured < width) {
+        } else if (centered && !tab && measured < width) {
             x = c->x + (c->w - measured) / 2;
             width = measured + 2;
         }
         int y = centered_y(r, label, size, c->y, c->h, width);
         if (c->action == SL_RECENT) {
             SDL_Color game_color = c->arg % 2 ? amber : violet;
-            rounded(r->renderer, (SDL_Rect){box.x + 24, box.y + 24, box.w - 48, 112}, 10,
-                    mix(panel, game_color, .25f));
-            play_icon(r->renderer, box.x + 47, box.y + 80, 28, game_color);
-            y = centered_y(r, label, size, box.y + box.h - 88, 64, width);
+            SDL_Rect art = {box.x + 8, box.y + 8, box.w - 16, 198};
+            rounded(r->renderer, art, 10, mix(panel, game_color, .16f));
+            play_icon(r->renderer, box.x + box.w / 2 - 10, box.y + 96, 28, game_color);
+            int selected = m->store.registry.selected;
+            if (selected >= 0 && selected < m->store.registry.count && c->arg < SL_RECENT_LIMIT)
+                draw_cover(r, m->store.registry.hosts[selected].games[c->arg].id, art, m->now);
+            card_title(r, label, (SDL_Rect){box.x + 24, box.y + box.h - 62, box.w - 48, 54},
+                       viewport, focused, m);
+            continue;
         } else if (!centered && !footer) {
             width -= 28;
             if (c->action == SL_SOUND) {
@@ -644,7 +898,7 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
             } else if (c->action != SL_BACK && c->action != SL_SET_QUALITY)
                 chevron(r->renderer, box.x + box.w - 35, box.y + box.h / 2, focused ? bg : muted);
         }
-        SDL_RenderSetClipRect(r->renderer, &box);
+        SDL_RenderSetClipRect(r->renderer, card ? &clip : &box);
         draw_text(r, label, x, y, width, c->y + c->h - 8 - y, size, ink);
         SDL_RenderSetClipRect(r->renderer, NULL);
     }
@@ -653,7 +907,11 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
         SDL_SetRenderDrawColor(r->renderer, accent.r, accent.g, accent.b, 210);
         /* Only the focus indicator moves; control layout and hit testing stay fixed. */
         SDL_Rect b = {(int)f.x - 3, (int)f.y - 3, (int)f.w + 6, (int)f.h + 6};
+        SDL_Rect viewport = {40, SL_CARD_Y - 8, 1200, SL_CARD_HEIGHT + 16};
+        if (m->page == SL_HOME)
+            SDL_RenderSetClipRect(r->renderer, &viewport);
         outline(r, b);
+        SDL_RenderSetClipRect(r->renderer, NULL);
     }
 
     if (l->dialog) {
@@ -702,6 +960,9 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
     (void)d;
 #endif
 }
+void sl_ui_renderer_set_artwork(sl_ui_renderer *r, sl_artwork *artwork) {
+    r->artwork = artwork;
+}
 void sl_ui_renderer_draw(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_snapshot *d) {
     animate_focus(r, m);
     if (m->layout.dialog) {
@@ -729,6 +990,10 @@ void sl_ui_renderer_draw(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug
 void sl_ui_renderer_destroy(sl_ui_renderer *r) {
     if (!r)
         return;
+    for (int i = 0; i < 8; ++i) {
+        SDL_DestroyTexture(r->covers[i].texture);
+        SDL_DestroyTexture(r->covers[i].blurred);
+    }
     SDL_DestroyTexture(r->overlay);
     free(r->base_ui);
     SDL_DestroyTexture(r->backdrop);

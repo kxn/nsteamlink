@@ -1,4 +1,5 @@
 #include "platform/application.h"
+#include "artwork.h"
 #include "media.h"
 #include "platform/runtime.h"
 #include "platform/system.h"
@@ -15,6 +16,7 @@ typedef struct application {
     sl_input_router input;
     sl_ui_renderer *renderer;
     sl_runtime *runtime;
+    sl_artwork *artwork;
     sl_debug_snapshot debug;
 } application;
 static void draw(void *native, void *ctx) {
@@ -62,9 +64,12 @@ int sl_application_run(int argc, char **argv) {
     int auth = sl_auth_load(&store, sl_system_data_dir());
     sl_ui_init(&a->ui, &store);
     sl_log_start();
+    if (!offline)
+        a->artwork = sl_artwork_create(sl_system_data_dir(), NULL, NULL);
     a->ui.now = a->ui.entered_at = sl_system_now();
     if (!stream_media_init(sl_log)) {
         fprintf(stderr, "Media initialization failed\n");
+        sl_artwork_destroy(a->artwork);
         free(a);
         sl_log_finish();
         sl_system_shutdown();
@@ -73,12 +78,14 @@ int sl_application_run(int argc, char **argv) {
     a->renderer = sl_ui_renderer_create(sl_media_renderer());
     if (!a->renderer) {
         fprintf(stderr, "Font initialization failed: %s\n", SDL_GetError());
+        sl_artwork_destroy(a->artwork);
         stream_media_shutdown();
         free(a);
         sl_log_finish();
         sl_system_shutdown();
         return 1;
     }
+    sl_ui_renderer_set_artwork(a->renderer, a->artwork);
     sl_input_init(&a->input, &a->ui, sl_media_input, sl_media_neutral, NULL);
     sl_media_hooks(draw, event, a);
     if (auth < 0)
@@ -99,6 +106,7 @@ int sl_application_run(int argc, char **argv) {
             sl_runtime_debug(a->runtime, &a->debug);
 #endif
         }
+        sl_artwork_pause(a->artwork, a->ui.streaming || a->ui.page != SL_HOME);
         sl_input_tick(&a->input, a->ui.now);
         sl_media_gate(sl_ui_remote(&a->ui));
         sl_media_mute(!a->ui.store.sound);
@@ -130,6 +138,7 @@ int sl_application_run(int argc, char **argv) {
         }
     }
     sl_media_gate(false);
+    sl_artwork_destroy(a->artwork);
     sl_runtime_destroy(a->runtime);
     sl_media_hooks(NULL, NULL, NULL);
     sl_ui_renderer_destroy(a->renderer);

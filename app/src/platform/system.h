@@ -13,3 +13,7 @@ uint64_t sl_system_now(void);
 
 /* Bounded, best-effort diagnostic output; never called on the input path. */
 void sl_system_log(const char *message);
+
+/* Obtain on the resolving worker; cancellation may be requested by its owner. */
+uint32_t sl_system_dns_begin(void);
+void sl_system_dns_cancel(uint32_t handle);

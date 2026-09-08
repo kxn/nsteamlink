@@ -1,10 +1,12 @@
 #include "ui_model.h"
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 static void page(sl_ui_model *m, sl_page p) {
     m->leaving = false;
+    m->games_dragging = false;
     m->page = p;
     m->focus = 0;
     m->entered_at = m->now;
@@ -49,6 +51,59 @@ static sl_host *selected(sl_ui_model *m) {
     int i = m->store.registry.selected;
     return i >= 0 && i < m->store.registry.count ? &m->store.registry.hosts[i] : NULL;
 }
+int sl_ui_game_count(const sl_ui_model *m) {
+    int selected = m->store.registry.selected;
+    if (selected < 0 || selected >= m->store.registry.count)
+        return 0;
+    const sl_host *h = &m->store.registry.hosts[selected];
+    if (!h->paired || !sl_host_online(h, m->now))
+        return 0;
+    int n = 0;
+    while (n < SL_RECENT_LIMIT && h->games[n].id)
+        ++n;
+    return n;
+}
+float sl_ui_scroll_limit(const sl_ui_model *m) {
+    int width = sl_ui_game_count(m) * SL_CARD_STEP - (SL_CARD_STEP - SL_CARD_WIDTH);
+    return width > SL_GAMES_WIDTH ? (float)(width - SL_GAMES_WIDTH) : 0.f;
+}
+static float clamp_scroll(sl_ui_model *m, float value) {
+    return fmaxf(0.f, fminf(sl_ui_scroll_limit(m), value));
+}
+static void show_game(sl_ui_model *m, int index) {
+    float left = index * SL_CARD_STEP, right = left + SL_CARD_WIDTH;
+    m->games_dragging = false;
+    if (left < m->games_target)
+        m->games_target = left;
+    if (right > m->games_target + SL_GAMES_WIDTH)
+        m->games_target = right - SL_GAMES_WIDTH;
+    m->games_target = clamp_scroll(m, m->games_target);
+}
+void sl_ui_drag_games(sl_ui_model *m, float delta) {
+    if (m->page != SL_HOME || !sl_ui_game_count(m))
+        return;
+    m->games_dragging = true;
+    m->games_scroll = clamp_scroll(m, m->games_scroll + delta);
+    m->games_target = m->games_scroll;
+    sl_ui_layout(m);
+}
+void sl_ui_release_games(sl_ui_model *m, float velocity) {
+    if (!m->games_dragging)
+        return;
+    m->games_dragging = false;
+    float projected = clamp_scroll(m, m->games_scroll + velocity * 160.f);
+    float before = clamp_scroll(m, floorf(projected / SL_CARD_STEP) * SL_CARD_STEP);
+    float after = clamp_scroll(m, ceilf(projected / SL_CARD_STEP) * SL_CARD_STEP);
+    m->games_target = projected - before < after - projected ? before : after;
+    int index = (int)ceilf(m->games_target / SL_CARD_STEP);
+    int count = sl_ui_game_count(m);
+    if (count) {
+        if (index >= count)
+            index = count - 1;
+        m->focus = 40 + index;
+    }
+    sl_ui_layout(m);
+}
 void sl_ui_init(sl_ui_model *m, const sl_auth_store *s) {
     memset(m, 0, sizeof(*m));
     m->store = *s;
@@ -65,6 +120,7 @@ bool sl_ui_remote(const sl_ui_model *m) {
     return m->streaming && m->page == SL_STREAM;
 }
 void sl_ui_connected(sl_ui_model *m) {
+    m->had_stream = true;
     m->streaming = true;
     m->stream_started_at = m->now;
     m->debug = false;
@@ -85,7 +141,14 @@ void sl_ui_stopped(sl_ui_model *m, bool unexpected) {
     sl_ui_layout(m);
 }
 void sl_ui_tick(sl_ui_model *m, uint64_t now) {
+    float dt = now >= m->now ? fminf((float)(now - m->now), 64.f) : 0.f;
     m->now = now;
+    if (m->page == SL_HOME && !m->games_dragging) {
+        m->games_target = clamp_scroll(m, m->games_target);
+        m->games_scroll += (m->games_target - m->games_scroll) * (1.f - expf(-dt / 65.f));
+        if (fabsf(m->games_target - m->games_scroll) < .25f)
+            m->games_scroll = m->games_target;
+    }
     if (m->leaving && now >= m->leave_at + 160)
         back_now(m);
     sl_ui_layout(m);
@@ -108,6 +171,13 @@ static void start(sl_ui_model *m, int game) {
     sl_host *h = selected(m);
     if (!h || !sl_host_online(h, m->now))
         return;
+    m->had_stream = false;
+    m->launch_at = m->now;
+    memset(&m->launch_card, 0, sizeof(m->launch_card));
+    if (game >= 0)
+        for (int i = 0; i < m->layout.count; ++i)
+            if (m->layout.controls[i].action == SL_RECENT && m->layout.controls[i].arg == game)
+                m->launch_card = m->layout.controls[i];
     m->generation++;
     m->repair_attempted = !h->paired;
     memset(&m->intent, 0, sizeof(m->intent));
@@ -151,10 +221,28 @@ void sl_ui_action(sl_ui_model *m, sl_action a, int arg) {
     if (a >= SL_LEFT && a <= SL_DOWN) {
         if (m->layout.compact)
             return;
-        move(m, a);
+        if (m->page == SL_HOME) {
+            int count = sl_ui_game_count(m);
+            if (count && !m->games_dragging && (a == SL_LEFT || a == SL_RIGHT)) {
+                int index = m->focus >= 40 && m->focus < 40 + count ? m->focus - 40 : 0;
+                index += a == SL_LEFT ? -1 : 1;
+                if (index < 0)
+                    index = 0;
+                if (index >= count)
+                    index = count - 1;
+                m->focus = 40 + index;
+                show_game(m, index);
+                sl_ui_layout(m);
+            }
+        } else
+            move(m, a);
         return;
     }
     if (a == SL_ACCEPT) {
+        if (m->page == SL_HOME && !sl_ui_game_count(m)) {
+            sl_ui_action(m, SL_START, 0);
+            return;
+        }
         if (m->layout.compact) {
             /* Confirm dialogs advertise fixed A/B actions, not focus navigation. */
             for (int i = 0; i < m->layout.count; ++i)
@@ -191,16 +279,12 @@ void sl_ui_action(sl_ui_model *m, sl_action a, int arg) {
             start(m, -1);
         break;
     case SL_RECENT:
-        if (m->page == SL_HOME)
+        if (m->page == SL_HOME && arg >= 0 && arg < sl_ui_game_count(m))
             start(m, arg);
         break;
     case SL_OPEN_OPTIONS:
         if (m->page == SL_HOME)
             push(m, SL_OPTIONS);
-        break;
-    case SL_OPEN_INFO:
-        if (m->page == SL_HOME && h)
-            push(m, SL_INFO);
         break;
     case SL_OPEN_SETTINGS:
         push(m, SL_SETTINGS);
@@ -331,6 +415,8 @@ int sl_ui_hit(const sl_layout *l, int x, int y) {
     y -= l->offset_y;
     for (int i = l->count - 1; i >= 0; --i) {
         const sl_control *c = &l->controls[i];
+        if (c->action == SL_RECENT && (x < 40 || x >= 1240))
+            continue;
         if (x >= c->x && y >= c->y && x < c->x + c->w && y < c->y + c->h)
             return c->id;
     }
@@ -342,7 +428,7 @@ void sl_ui_activate(sl_ui_model *m, int id) {
     for (int i = 0; i < m->layout.count; ++i)
         if (m->layout.controls[i].id == id) {
             sl_control c = m->layout.controls[i];
-            if (!m->layout.compact)
+            if (!m->layout.compact && (m->page != SL_HOME || c.action == SL_RECENT))
                 m->focus = id;
             sl_ui_action(m, c.action, c.arg);
             return;

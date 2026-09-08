@@ -1,4 +1,5 @@
 #include "input_router.h"
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #define BIT(k)    (1u << (k))
@@ -25,6 +26,13 @@ void sl_input_init(sl_input_router *r, sl_ui_model *m, sl_input_send_fn fn,
     r->context = ctx;
 }
 void sl_input_sync(sl_input_router *r) {
+    for (int i = 0; i < 8; ++i)
+        if (r->touches[i].used && !r->touches[i].remote &&
+            (r->touches[i].page != r->ui->page ||
+             (r->touches[i].page == SL_HOME && r->touches[i].host != r->ui->games_host))) {
+            r->touches[i].control = 0;
+            r->touches[i].carousel = r->touches[i].dragging = false;
+        }
     bool remote = sl_ui_remote(r->ui);
     if (remote != r->remote) {
         if (r->remote) {
@@ -66,7 +74,7 @@ static sl_action key_action(int k) {
     case SL_KEY_X:
         return SL_OPEN_OPTIONS;
     case SL_KEY_Y:
-        return SL_OPEN_INFO;
+        return SL_START;
     case SL_KEY_L:
         return SL_PREV_HOST;
     case SL_KEY_R:
@@ -96,6 +104,7 @@ void sl_input_event_handle(sl_input_router *r, const sl_input_event *e, uint64_t
                                      .y = r->touches[i].y};
                 send(r, &up);
             }
+        sl_ui_release_games(r->ui, 0);
         memset(r->touches, 0, sizeof(r->touches));
         r->release |= r->held;
         r->axis_release = 0;
@@ -119,6 +128,10 @@ void sl_input_event_handle(sl_input_router *r, const sl_input_event *e, uint64_t
         if (e->type == SL_TOUCH_DOWN) {
             if (slot >= 0)
                 return;
+            if (!r->remote)
+                for (int i = 0; i < 8; ++i)
+                    if (r->touches[i].used)
+                        return;
             for (int i = 0; i < 8; ++i)
                 if (!r->touches[i].used) {
                     slot = i;
@@ -126,15 +139,53 @@ void sl_input_event_handle(sl_input_router *r, const sl_input_event *e, uint64_t
                 }
             if (slot < 0)
                 return;
+            memset(&r->touches[slot], 0, sizeof(r->touches[slot]));
             r->touches[slot].used = true;
             r->touches[slot].id = e->finger;
             r->touches[slot].control =
                 sl_ui_hit(&r->ui->layout, (int)(e->x * 1280), (int)(e->y * 720));
             r->touches[slot].remote = r->remote && !r->touches[slot].control;
             r->touches[slot].page = r->ui->page;
+            r->touches[slot].host = r->ui->games_host;
+            r->touches[slot].start_x = r->touches[slot].x = e->x;
+            r->touches[slot].start_y = r->touches[slot].y = e->y;
+            r->touches[slot].at = now;
+            r->touches[slot].carousel = r->ui->page == SL_HOME && sl_ui_game_count(r->ui) &&
+                                        e->x * 1280 >= 40 && e->x * 1280 < 1240 &&
+                                        e->y * 720 >= SL_CARD_Y - 8 &&
+                                        e->y * 720 < SL_CARD_Y + SL_CARD_HEIGHT + 8;
+            /* A tap during coasting stops the list; a second tap may launch. */
+            if (r->touches[slot].carousel &&
+                fabsf(r->ui->games_target - r->ui->games_scroll) > 1.f) {
+                r->ui->games_target = r->ui->games_scroll;
+                r->touches[slot].control = 0;
+            }
         }
         if (slot < 0)
             return;
+        if (r->touches[slot].carousel && e->type != SL_TOUCH_DOWN) {
+            float dx = (r->touches[slot].start_x - e->x) * 1280;
+            float dy = (r->touches[slot].start_y - e->y) * 720;
+            if (!r->touches[slot].moved && (fabsf(dx) > 12 || fabsf(dy) > 12)) {
+                r->touches[slot].moved = true;
+                r->touches[slot].control = 0;
+                if (fabsf(dx) > fabsf(dy)) {
+                    r->touches[slot].dragging = true;
+                    sl_ui_drag_games(r->ui, dx);
+                }
+            } else if (r->touches[slot].dragging && e->type == SL_TOUCH_MOVE) {
+                sl_ui_drag_games(r->ui, (r->touches[slot].x - e->x) * 1280);
+            }
+            if (e->type == SL_TOUCH_MOVE) {
+                uint64_t dt = now > r->touches[slot].at ? now - r->touches[slot].at : 1;
+                float v = (r->touches[slot].x - e->x) * 1280 / dt;
+                r->touches[slot].velocity = fmaxf(-3.f, fminf(3.f, v));
+                r->touches[slot].at = now;
+            }
+            if (e->type == SL_TOUCH_UP && r->touches[slot].dragging)
+                sl_ui_release_games(
+                    r->ui, now - r->touches[slot].at > 100 ? 0 : r->touches[slot].velocity);
+        }
         r->touches[slot].x = e->x;
         r->touches[slot].y = e->y;
         if (r->touches[slot].remote)
