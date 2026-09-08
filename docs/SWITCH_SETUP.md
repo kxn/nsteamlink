@@ -73,105 +73,24 @@ sd-root/                        → 拷到 SD 卡根目录
 ## 开发迭代（本项目专用）
 
 ```bash
-./scripts/build-switch.sh                                        # 产出 nro
-cp build/switch/app/nsteamlink.nro <SD卡>/switch/                # 手动部署
-$DEVKITPRO/tools/bin/nxlink -a <Switch的IP> -s build/switch/app/nsteamlink.nro   # 网络部署+日志回传
-
-# M2 配对工具（发现 + pairing code 授权 + auth.bin 持久化）
-cp build/switch/tools/switch-discover/switch-discover.nro <SD卡>/switch/
-$DEVKITPRO/tools/bin/nxlink -a 10.10.10.17 -s build/switch/tools/switch-discover/switch-discover.nro
-
-# NRO 跑起来后，PC 端控制 M2 工具（UDP debug port 28772）
-tools/switch-debugctl.py 10.10.10.17 state
-tools/switch-debugctl.py 10.10.10.17 hosts
-tools/switch-debugctl.py 10.10.10.17 select 1
-tools/switch-debugctl.py 10.10.10.17 pair       # Switch 生成 code；把 code 输入 Steam host
-tools/switch-debugctl.py 10.10.10.17 code       # 重新读取当前 code/state
-tools/switch-debugctl.py 10.10.10.17 exit
-
-# M3 串流/session/video/第一帧显示 probe（复用 M2 auth.bin）
+./scripts/build-switch.sh
+# hbmenu 开启网络接收后上传；不要先探测 28280 端口。
 $DEVKITPRO/tools/bin/nxlink -a 10.10.10.17 -s build/switch/app/nsteamlink.nro
+# 或复制到 SD 卡 switch/ 目录后手动启动。
 
-# 串流证据 selftest（保留为排障工具；正式 app 复用同一条串流链路）
-$DEVKITPRO/tools/bin/nxlink -a 10.10.10.17 -s build/switch/client/switch-stream-selftest.nro
 tools/switch-debugctl.py 10.10.10.17 state
-tools/switch-debugctl.py 10.10.10.17 hosts
-tools/switch-debugctl.py 10.10.10.17 select 1
-tools/switch-debugctl.py 10.10.10.17 stream game  # 默认 3600 帧后自动 stop；desktop 用 stream
 tools/switch-debugctl.py 10.10.10.17 stats
-tools/switch-debugctl.py 10.10.10.17 exit
-
-# 若 switch-discover 崩溃，读取 SD 卡上的 exception dump 后映射源码行
-$DEVKITPRO/devkitA64/bin/aarch64-none-elf-addr2line -f -C \
-  -e build/switch/tools/switch-discover/switch-discover.elf <pc> <lr>
+tools/switch-debugctl.py 10.10.10.17 hid
+tools/switch-debugctl.py 10.10.10.17 diag current
 ```
 
-- nxlink 用法：hbmenu 界面按 **L** 开网络接收，屏幕显示 IP 填到 `-a`；
-- nro 一律用 **Title Takeover**（按住 R 启动 eShop 或任意游戏）方式运行，applet 模式内存不足秒退。
-- `switch-discover` 退出时会写 `sdmc:/switch/nsteamlink/exit_stage.txt`，用于确认 fatal 前最后
-  完成的 cleanup 阶段。程序自身 userland exception handler 触发时还会尝试写
-  `sdmc:/switch/nsteamlink/exception_dump.txt`；其中 `pc` 和 `lr` 是优先映射的地址。
-- 本机 Switch 调试地址固定为 `10.10.10.17`；hbmenu netloader 端口是 `28280`。不要用空 TCP
-  探测 netloader 端口，直接用 `nxlink -a 10.10.10.17` 上传。
-- `switch-discover` 的 UDP debug 入口只用于开发测试，端口 `28772`；通过 nxlink 启动时优先只接受
-  nxlink host 发来的命令。可用命令：`ping`、`state`、`hosts`、`select <n>`、`press <button>`、
-  `pair`、`code`、`delete-auth`、`exit`。`pair` 不接收 PIN；Switch 生成并显示 pairing code。
-  旧 `pin/submit` 命令只返回 deprecated 错误，不能作为 pairing 验收路径。
-- 当前 `nsteamlink.nro` 启动后显示英文 UI：菜单中 `A` 启动 stream，`X` 切换 game/desktop，
-  `Y` 刷新 host，`UP/DOWN` 选择 host，`B` 停流；streaming 中普通游戏按键会转发给 Steam，
-  `+` / `-` 不再作为本地控制键，会恢复给 Steam/game 使用。`-` / `MINUS` 的 marker 日志仍是被动
-  记录，不吞键、不触发停流。本地控制改为 `L3+R3+VOL+` 退出程序、`L3+R3+VOL-` 停流；该实现通过
-  audctl 观察音量值变化，音量已到顶/到底时对应方向可能不会触发。Steam 返回 streaming PIN 时，
-  `LEFT/RIGHT` 移动数字位，`UP/DOWN` 调整数字，`A` 提交，`B` 取消。
-- `nsteamlink.nro` 与 `switch-stream-selftest` 使用同一个 UDP debug 端口 `28772`。
-  命令总表（`ping`、`state`、`stats`/`perf`、`audio`、`hid`、`hidlog [n]`、
-  `diag [current|prev|older|status|marker [...]]`、`diag-chunk`、`hosts`、`select <n>`、
-  `press <...>`、`stream [...]`、`stream-pin <pin>`、`stop`、`exit`）与
-  `hid`/`diag` 字段释义统一见 **`docs/UDP_DEBUG.md`**；
-  `stream-pin` 是串流阶段 host PIN，不是 M2 pairing code。
-- M3.3 接入 FFmpeg/SDL2 后 `switch-stream-selftest.nro` 约 19MB，nxlink/netloader 传输会明显慢于 M2/M3.2
-  的 487KB probe。传输慢只说明 NRO 大，不能单独作为程序卡死或协议失败证据。
-
-## 可选远程调试
-
-Atmosphère 提供 standalone gdbstub，可用 devkitPro 的 `aarch64-none-elf-gdb` 连接到 Switch
-的 `22225` 端口。启用需要改 SD 卡 `/atmosphere/config/system_settings.ini` 并重启：
-
-```ini
-[atmosphere]
-enable_htc = u8!0x0
-enable_standalone_gdbstub = u8!0x1
-```
-
-```bash
-/opt/devkitpro/devkitA64/bin/aarch64-none-elf-gdb -nx
-```
-
-```gdb
-target extended-remote <Switch的IP>:22225
-info os processes
-attach <pid>
-```
-
-注意：Atmosphère 官方 changelog 提醒，调试使用 socket 的进程时 gdbstub 本身可能引入 hang；
-本项目默认先用 nxlink 阶段日志 + SD 卡 exception dump 定位，只有 dump 不够时再启用 gdbstub。
-
-## 排错速查
-
-| 现象 | 处理 |
-|---|---|
-| `Missing Minerva/LP0 / Update bootloader folder!` | Hekate 报的：SD 卡 `bootloader/` 缺失或版本不配套。重做第 1、2 步，两处必须同版本。别无视报错硬启动 |
-| 应用秒退/初始化失败 | applet 模式内存不足，改 Title Takeover（按住 R 启动 eShop/游戏） |
-| nxlink 找不到机器 | 只能说明当前 IP 没有 netloader 接收端或网络不可达；先看 hbmenu 是否按 L，并核对屏幕 IP，不要据此推断 NRO 没运行 |
-| 本地退出后崩溃 | 以 Switch 屏幕 fatal 为准；保留 nxlink `cleanup:` 日志，查看 `sdmc:/switch/nsteamlink/exit_stage.txt`，若存在 `exception_dump.txt` 再用上面的 `addr2line` 命令映射 `pc/lr` |
-| 进不了 RCM | 拨片没顶到位（多试姿势）；确认机器是未打补丁型号 |
-| 机器用一会儿就关机 | 没挂 PD 充电器，或充电器只有 5V 档——换支持 PD 15V 的头 |
-| 机器已被任天堂 ban（eShop 打不开） | **不影响本项目**：Title Takeover 不真正启动 eShop、不联网；串流走局域网。若按 R 无反应，先确认当前系统是 Atmosphère（设置→系统版本行带 `\|AMS` 字样），再检查 R 是否全程按住 |
-| SD 卡在电脑上读写异常 | 文件系统损坏（`wipefs -a` 后重建 FAT32 分区）/ 假卡（`f3write`+`f3read` 验容量）/ 主控报废（写操作报 I/O 错，换卡） |
-
-## 已跳过项（不用做，留档说明）
-
-- **NAND 备份**：约 30GB 需大卡；本机已放弃原系统，跳过。想补随时借大卡在 Hekate 里做；
-- **emummc / incognito / 防封号设置**：专用调试机不需要；
-- **电脑端 fusee-launcher**：RCM Loader 已替代；仅在注入棒没电时才需要
-  （`pip3 install pyusb` + reSwitched/fusee-launcher 发 Hekate）。
+- 使用 Title Takeover 启动 hbmenu；在 hbmenu 按 L 开启网络接收。
+- 正式应用中直接完成发现、配对和串流，不需先运行另一个 NRO。
+- 首页 L/R 换电脑、A 确认、B 返回、X 选项、Y 电脑信息，也可触摸操作。
+- 串流中同时长按 −/+ 0.8 秒或点“菜单”；在游玩菜单中断开，返回首页后 B 退出。
+- 游玩菜单内单独长按 X 一秒切换 Debug 浮层。完整诊断接口见 [UDP_DEBUG](UDP_DEBUG.md)。
+- 设备身份、逐电脑授权和设置保存在 `sdmc:/switch/nsteamlink/profile.bin`。
+  旧 `auth.bin` 迁移保留设备身份；旧格式无法证明主机唯一身份，因此首次连接需重新配对。
+- `switch-stream-selftest.nro` 使用同一 runtime，默认 600 个渲染帧后清理退出，无自动串流。
+- 本机 Switch 调试地址为 `10.10.10.17`，netloader 端口为 `28280`；直接使用 nxlink，不发空 TCP 探测。
+- 涉及生命周期的验证要区分日志清理完成和屏幕返回 hbmenu；后一项必须由实机观察确认。

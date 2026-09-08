@@ -1,43 +1,37 @@
-set(NSL_SOURCES src/main.c)
-
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
+pkg_check_modules(SDL2_TTF REQUIRED IMPORTED_TARGET SDL2_ttf)
+pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavcodec libavutil libswscale)
+pkg_check_modules(OPUS REQUIRED IMPORTED_TARGET opus)
+find_package(Threads REQUIRED)
+add_library(nsl_ui STATIC src/ui/ui_model.c src/ui/ui_layout.c src/ui/ui_events.c src/input/input_router.c
+    src/services/host_registry.c src/services/auth_store.c)
+target_include_directories(nsl_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_options(nsl_ui PRIVATE -Wall -Wextra)
+add_library(nsl_platform STATIC platforms/common/application.c platforms/common/sdl_input.c platforms/common/media.c
+    platforms/common/ui_renderer.c platforms/common/runtime.c platforms/${NSL_PLATFORM}/system.c)
+target_include_directories(nsl_platform PRIVATE ${CMAKE_SOURCE_DIR}/third_party/ihslib/src
+    ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf)
+target_compile_options(nsl_platform PRIVATE -Wall -Wextra -Wno-unknown-pragmas -g)
+target_link_libraries(nsl_platform PUBLIC nsl_ui ihslib ihslib-hid-sdl PkgConfig::SDL2 PkgConfig::SDL2_TTF
+    PkgConfig::FFMPEG PkgConfig::OPUS Threads::Threads)
+add_executable(nsteamlink src/main.c)
+target_link_libraries(nsteamlink PRIVATE nsl_platform)
 if(NSL_PLATFORM STREQUAL "switch")
-    list(APPEND NSL_SOURCES platforms/switch/hal.c)
-    find_package(PkgConfig REQUIRED)
-    if(NOT TARGET PkgConfig::FFMPEG)
-        pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavcodec libavutil libswscale)
-    endif()
-    if(NOT TARGET PkgConfig::SDL2)
-        pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
-    endif()
-    if(NOT TARGET PkgConfig::OPUS)
-        pkg_check_modules(OPUS REQUIRED IMPORTED_TARGET opus)
-    endif()
-
-    set(NSL_CLIENT_MAIN ${CMAKE_SOURCE_DIR}/client/main.c)
-    set(NSL_CLIENT_MEDIA ${CMAKE_SOURCE_DIR}/client/media.c)
-    set_source_files_properties(${NSL_CLIENT_MAIN}
-        PROPERTIES COMPILE_DEFINITIONS "main=nsteamlink_stream_main;NSTREAMLINK_APP=1")
-    set_source_files_properties(${NSL_CLIENT_MEDIA}
-        PROPERTIES COMPILE_DEFINITIONS "NSTREAMLINK_APP=1")
-    list(APPEND NSL_SOURCES
-        ${NSL_CLIENT_MAIN}
-        ${NSL_CLIENT_MEDIA})
-else()
-    list(APPEND NSL_SOURCES platforms/desktop/hal.c)
-endif()
-
-add_executable(nsteamlink ${NSL_SOURCES})
-target_include_directories(nsteamlink PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-
-if(NSL_PLATFORM STREQUAL "switch")
-    target_include_directories(nsteamlink PRIVATE
-        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src
-        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
-        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf
-        $ENV{DEVKITPRO}/portlibs/switch/include)
-    target_compile_options(nsteamlink PRIVATE -g)
-    target_link_options(nsteamlink PRIVATE -g)
-    target_link_libraries(nsteamlink PRIVATE ihslib ihslib-hid-sdl PkgConfig::FFMPEG PkgConfig::SDL2 PkgConfig::OPUS nx)
-    # 需要 $DEVKITPRO/tools/bin 下的 nacptool 与 elf2nro（switch-tools 包）
+    target_link_libraries(nsl_platform PUBLIC nx)
     nx_create_nro(nsteamlink OUTPUT nsteamlink.nro)
+endif()
+if(NSL_PLATFORM STREQUAL "desktop")
+    add_executable(nsl-ui-tests tests/test_ui.c platforms/desktop/system.c)
+    target_link_libraries(nsl-ui-tests PRIVATE nsl_ui)
+    target_compile_options(nsl-ui-tests PRIVATE -Wall -Wextra -UNDEBUG)
+    add_test(NAME nsl-ui COMMAND nsl-ui-tests)
+endif()
+if(NSL_PLATFORM STREQUAL "desktop")
+    add_executable(nsl-native-tests tests/test_native.c)
+    target_include_directories(nsl-native-tests PRIVATE platforms/common)
+    target_compile_options(nsl-native-tests PRIVATE -UNDEBUG)
+    target_link_libraries(nsl-native-tests PRIVATE nsl_platform)
+    add_test(NAME nsl-native COMMAND nsl-native-tests)
+    set_tests_properties(nsl-native PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;NSL_DATA_DIR=${CMAKE_BINARY_DIR}/native-test-profile" TIMEOUT 20)
 endif()

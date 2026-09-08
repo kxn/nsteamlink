@@ -1365,3 +1365,79 @@ HID 收集到入队整体串行，普通状态变化使用 delta/full 自适应�
 
 限制：这些决策有汇编或本地生命周期证据；不能据此宣称 20 秒锁键的唯一根因已找到。
 ACK 指标只表示传输确认；实际 HID 解密、重建、游戏应用仍需 Host/真机证据。
+
+## D-043 普通用户 UI 定稿与一次性旧 UI 替换
+
+日期：2026-09-08。取代 D-033 追记四的产品音量组合键设计，及旧行式 UI／idle 动画作为正式
+界面的安排；不改变 D-042 的输入编码、ACK、重传和证据约束。完整目标规格见
+[UI_UX_DESIGN](UI_UX_DESIGN.md)，实施与验收状态见 [#9](https://github.com/kxn/nsteamlink/issues/9)。
+
+Evidence：用户认可最终精简 mock，要求按此定稿、对照代码决定接线，旧 UI 和 SDL 动画全部删除，
+仅保留可通过专用按键呼出的高级诊断浮层。用户已观察到音量极值会影响旧热键；之前 mock 的
+根容器 data-focus 点击错误已由鼠标／触摸复现，证明纯按键测试不能代替触摸验收。
+
+Evidence：父仓 `9a4c829` 的 `app/CMakeLists.txt` 把 `client/main.c` 宏改名后链接入正式 app；
+`client/main.c:4069/1792` 将启动与发现错误地绑定到已有授权；`client/media.c:1089` 的
+`draw_idle_indicator` 移动条和橙块被 init／无帧 present 正常调用；`media.c:930` 直接转发触摸
+与 HID，而 `main.c handle_input` 独立处理 libnx UI 按键。`media.c:2111` 在无新帧时不绘制视频，
+原菜单不能只靠替换八行字符串获得完整交互。
+
+Decision：
+
+1. 首页直接持续发现、按广播 hostname 展示设备；配对前不虚构账号或游戏，授权与主机／账号历史
+   独立存储。手动添加仅在设置的高级页面。配对确认并保存后自动继续连接；安全码是独立流请求事件。
+2. 串流占满应用画布，隐藏上下栏；本地菜单覆盖视频，悬浮菜单入口提供完整触摸路径。
+   使用同一 renderer，无新帧也重绘本地界面，重复绘制不增加已显示视频帧计数。
+3. 共用 C11 model/layout/actions 与统一输入 router 经平台 runtime 接入现有媒体／协议服务。
+   正式应用不再借用自测 main；SDL_ttf 与平台字体 provider 替换旧 ASCII 点阵字库。
+4. −/+ 长按打开本地菜单，单键有明确上限的组合识别等待；菜单接管和释放有中性状态与 release barrier。
+   Debug 仅在本地菜单中长按 L+R+X 切换，默认关闭、只读、会话内有效；游戏中的 L/R/X 不引入等待。
+5. 旧 UI、动画、点阵表、音量轮询／热键、正式入口的固定 IP fallback 和自测行为必须从源码与
+   构建链接路径删除，不保留 legacy 模式。独立图形动画验证目标一并移除，历史证据从 git 取回。
+   协议／生命周期自测可以消费新的 runtime 服务，但不能继续携带旧产品 UI。
+6. 最近游戏直启、Steam 菜单调用与真实图片各自按能力开放，不把 HTML 演示行为当成底层支持。
+   Debug 读现有计数的有界快照；本机 submit→present 时长不命名为网络或端到端延迟。
+
+影响：定稿文档与交互附件是设计资产；runtime 替换、legacy 删除与真机证据由 issue 追踪。
+新 SDL_ttf 链接依赖接入时更新 DEVELOPMENT 依赖表；系统共享字体运行时读取，不打包系统字体。
+不得用删除文档历史或第三方上游测试的方式制造“旧 UI 零残留”，也不得用仅隐藏旧控件代替删除。
+
+### D-043 追记：Debug 改为菜单内单键长按
+
+日期：2026-09-08。
+
+Evidence：用户明确反馈 L+R+第三键的组合难按，要求更容易操作且不容易影响游戏。
+
+Decision：撤回上述 L+R+X 组合，改为仅在本地游玩菜单中单独长按 X 1000 ms 切换 Debug。
+该菜单内短按 X 无动作；游戏中的 X 直接转发，不增加识别等待。必须在进入菜单后重新按下 X，
+松开、离开菜单或失焦取消计时；触发一次后关闭菜单，消耗 X 至释放。再次进入菜单长按 X 关闭浮层。
+用菜单状态隔离游戏输入，避免通过增加同时按键数量防误触。手感仍需真机验证。
+
+### D-043 接线证据：共用 runtime 与活动元数据
+
+Evidence：IHSlib `discovery.proto` 的 streaming request 已定义可选 `gameid`，原公共 request
+未传递该字段；`remoteplay.proto CSetActivityMsg` 含 `gameid/game_name`，控制通道此前忽略该消息。
+`session/channels/ch_control.c` 已通过 input callbacks 交付其他主机 UI 元数据。
+
+Decision：在 fork 增加可选 request.gameId，并用 input.activity callback 交付有效活动的 ID/名称。
+不从 appid 猜测非 Steam 游戏 ID，不推断完整游戏库或图片源；零 ID 保持原 Steam 入口请求。
+此变更不改变配对、安全码、HID 编码与重传语义。真实主机是否接受具体游戏直启仍由实际响应决定。
+
+Evidence：旧 media video-stop 回调中包含 SDL_DestroyTexture，且原正式入口在 UI 主循环执行 session join。
+Decision：将媒体服务抽到 `app/platforms/common/`，SDL 纹理由主线程释放，协议/session 创建和清理
+由可 join 的 runtime owner 执行。共用 POSIX/SDL adapter 由两平台链接；业务 model/layout/router
+不包含平台 SDK。诊断采用有界缓存和独立日志线程，SDL 输入拥有者在转发前统一仲裁。
+
+
+#### D-043 实现补充：发现任务所有权与退出顺序
+
+证据：桌面原生集成测试在 TSan 下报告 `base.c` 的 interrupted 跨线程读写，以及
+`client/discovery.c` 的 discoveryTimer / discoveryInterval 竞争和 base-lock → timer-lock →
+base-lock 环路。发现任务改用已有 Owned timer API，周期在任务私有上下文中保持不变；
+停止同步移除任务，接收线程读取 interrupted 使用同一把锁。未改变广播或认证报文语义。
+
+设备 v1 身份（deviceId、secret、name）原样迁移；旧记录没有可验证的主机 clientId，
+因此保留 auth.bin、要求重新配对，不把旧 Steam 账号授给新发现主机。
+日志线程仅消费复制后的文本，无 IHS/SDL 引用；在协议工作线程 stop/join/destroy、IHS_Quit、
+媒体及字体释放后排空并 join，最后关闭平台 socket/font 服务，以保留清理日志。
+UDP 调试接口保留只读诊断，产品操作统一进入 UI 状态机；不保留旧音量控制、旧 UI 或动画入口。

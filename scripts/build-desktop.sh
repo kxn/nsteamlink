@@ -3,8 +3,9 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_TYPE="${NSL_BUILD_TYPE:-Release}"
+BUILD_DIR="${NSL_BUILD_DIR:-$ROOT/build/desktop}"
 
-cmake -S "$ROOT" -B "$ROOT/build/desktop" -DCMAKE_BUILD_TYPE="$BUILD_TYPE" "$@"
-cmake --build "$ROOT/build/desktop" -j"$(nproc)"
+cmake -S "$ROOT" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE="$BUILD_TYPE" "$@"
+cmake --build "$BUILD_DIR" -j"$(nproc)"
 
-echo "== 产物: $ROOT/build/desktop/app/nsteamlink =="
+echo "== 产物: $BUILD_DIR/app/nsteamlink =="

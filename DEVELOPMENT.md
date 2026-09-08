@@ -32,6 +32,12 @@ third_party/        第三方库（submodule / vendored），禁止就地修改�
 - `app/platforms/<plat>/` 允许 include 业务头文件与平台 SDK 头文件，但不得反向被业务层直接引用。
 - 新目录的增设需在本文档同步登记职责说明。
 
+UI 替换的目标模块边界见 `docs/UI_UX_DESIGN.md` §5：`app/src/ui/` 负责状态、布局与命中，
+`app/src/input/` 负责输入仲裁，`app/src/services/` 负责主机／授权／历史，
+`app/src/diagnostics/` 负责有界统计快照，平台 runtime 与 renderer 仍经 HAL 接口约束。
+`app/platforms/common/` 提供双目标共用的 SDL2/FFmpeg/IHS runtime adapter，平台初始化与字体来源
+位于 `app/platforms/<plat>/system.c`。`app/tests/` 包含业务状态与原生事件／媒体测试。实施任务只在 Issue #9 维护。
+
 ## 3. 语言与命名
 
 - **语言标准**：ISO C11（顶层 CMake 已锁定 `CMAKE_C_STANDARD 11`）。禁用 VLA，变长缓冲显式分配。
@@ -86,6 +92,7 @@ third_party/        第三方库（submodule / vendored），禁止就地修改�
 | plume | beudbeud/plume | GPL | 参考实现，仅对照学习不链接 | M1 参考 |
 | FFmpeg(Switch) | Moonlight-Switch 预编译（averne NVDEC fork） | LGPL/GPL | H264 硬解 | M3 |
 | SDL2 | 系统 2.32.4 / `switch-sdl2` | zlib | UI / 渲染 / 音频输出 | M3 起 |
+| SDL2_ttf | 系统 2.24.0 / devkitPro `switch-sdl2_ttf` | zlib | 中文与平台共享字体、字形缓存 | M5 |
 | mbedTLS | 系统 2.28 / `switch-mbedtls` | Apache-2.0 | IHSlib 加密后端 | M2 |
 | libopus | 系统 1.5.2 / `switch-libopus` | BSD-3 | 音频解码 | M4 |
 | protobuf-c | 系统 1.5.1 / M2 自行交叉编译 | BSD-2 | IHSlib 依赖 | M2 |
@@ -135,7 +142,8 @@ third_party/        第三方库（submodule / vendored），禁止就地修改�
 - 所有选型 / 翻案级决定进 `docs/decisions.md`，格式见该文件头部说明。
 - **文档边界（issue 为核心开发，2026-08-28 定）**：文档只承载三类内容——
   1. 宏观设计与规范：`SWITCH_STEAMLINK_KICKOFF.md`、本文、`docs/decisions.md`（append-only，
-     写完不改，属设计资产而非进度）；
+     写完不改，属设计资产而非进度）、`docs/UI_UX_DESIGN.md` 与 `docs/ui-final.html`
+     （交互／接线规格与可交互设计附件，不作为运行时或任务状态文件）；
   2. 使用说明：`README.md`、`docs/SWITCH_SETUP.md`、`docs/UDP_DEBUG.md`、`third_party/README.md`；
   3. 协议/平台参考：`docs/STEAM_REMOTE_PLAY_AUTH.md`、`docs/M3_RESEARCH_PLAN.md`、
      `docs/GFX_MESA_INVESTIGATION.md`（封闭的调研记录，不再更新）。

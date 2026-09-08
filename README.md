@@ -12,6 +12,7 @@ Switch 自制软件（homebrew）版 Steam Link 客户端：通过 Steam Remote 
 | `SWITCH_STEAMLINK_KICKOFF.md` | 调研结论、总体架构、里程碑定义、已知坑 |
 | `DEVELOPMENT.md` | 开发规范（目录结构、命名、构建、Git、许可证、调试、文档边界） |
 | `docs/decisions.md` | 工程决策记录（ADR-lite，append-only） |
+| `docs/UI_UX_DESIGN.md` | 普通用户界面定稿、输入与 Debug 浮层、现有代码接线及旧 UI 删除契约（目标设计） |
 | `docs/STEAM_REMOTE_PLAY_AUTH.md` | Steam Remote Play 认证流程证据整理 |
 | `docs/M3_RESEARCH_PLAN.md` | M3 串流第一帧调研与实施计划（已归档设计记录） |
 | `docs/GFX_MESA_INVESTIGATION.md` | Mesa/SDL2 applet 崩溃调研（平台证据，已封闭） |
@@ -31,18 +32,30 @@ Switch 自制软件（homebrew）版 Steam Link 客户端：通过 Steam Remote 
 # Switch 目标（需 DEVKITPRO 环境变量）
 ./scripts/build-switch.sh
 # 产物 build/switch/app/nsteamlink.nro → SD 卡 sd:/switch/，
-# 经 Title Redirection 启动 hbmenu 后运行；当前显示英文 UI。
-# 菜单：A 开始串流，X 切换 game/desktop，Y 刷新 host，B 停流
-# 串流中：普通手柄输入转发给 Steam；+ / - 不再作为本地控制键
-# 本地控制：L3+R3+VOL+ 退出程序，L3+R3+VOL- 停流
+# 经 Title Redirection 启动 hbmenu 后运行。
 
-# M2 发现/配对工具
-# 产物 build/switch/tools/switch-discover/switch-discover.nro
-# PC 端 debug 命令：state / hosts / select <n> / pair / code / exit
-# pair 不接收 PIN；Switch 会生成 code，并显示在屏幕与 debug state/code 输出里
+# 自动测试（含真实 SDL 事件、存储、协议及输入可靠性）
+ctest --test-dir build/desktop --output-on-failure
 
-# 流程自检 NRO（正式 app 复用同一实现）
-# 产物 build/switch/client/switch-stream-selftest.nro
-# 保留为证据工具；正式 app 现在复用同一条已验证串流链路
-# PC 端 debug 命令：state / hosts / select <n> / stream game / stats / audio / hid / hidlog / diag current / diag prev / diag marker current / diag marker prev / stop / exit
+# 无网络桌面预览；数据目录可隔离，避免改动已有配对
+NSL_DATA_DIR=/tmp/nsteamlink-preview ./build/desktop/app/nsteamlink --offline
 ```
+
+启动后自动查找电脑。选择电脑并点击“配对并连接”，把 Switch 显示的四位码输入电脑的 Steam。
+配对保存后会继续连接；如果电脑要求连接安全码，再用屏幕数字键盘输入。每台电脑分别保存授权和最近游戏。
+最近游戏来自实际串流期间主机报告的活动；有记录后可直接请求启动该游戏和串流，没有记录时显示“开始游玩”。
+
+首页 **L/R** 切换电脑，方向键移动、**A** 确认、**B** 返回，**X** 选项、**Y** 电脑信息。
+所有正常操作也可触摸完成。串流全屏显示；同时长按 **− 和 + 0.8 秒**或点悬浮菜单打开本地菜单。
+菜单内可断开串流；电脑上的游戏继续运行。回首页后按 B 可退出应用。
+高级 Debug：在本地游玩菜单里单独长按 **X 一秒**开关，只读浮层不接管游戏输入。
+
+桌面预览支持鼠标、手柄和键盘：方向键、Enter/A、Esc/B、X、Y，Q/E 对应 L/R，Minus/Equals 对应 −/+。
+桌面实际串流可使用 SDL 手柄；没有手柄时仍能使用本地界面和触摸／鼠标指针路径。
+
+配对与设置保存在 Switch 的 `sdmc:/switch/nsteamlink/profile.bin`；桌面默认 `~/.nsteamlink/`，
+可用 `NSL_DATA_DIR` 指定独立目录。旧 `auth.bin` 的设备身份会保留；由于旧文件没有可信的主机唯一标识，
+升级后首次选择电脑需重新确认配对。损坏文件不会被自动覆盖。
+
+开发工具 `switch-stream-selftest.nro` 运行同一界面和 runtime，默认绘制 600 帧后清理退出；
+不自动选择电脑或开启游戏。独立 `switch-discover` 保留作为协议取证工具，正常使用无需运行它。

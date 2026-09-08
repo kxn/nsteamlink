@@ -5,21 +5,20 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export DEVKITPRO="${DEVKITPRO:-/opt/devkitpro}"
 BUILD_TYPE="${NSL_BUILD_TYPE:-Release}"
+BUILD_DIR="${NSL_BUILD_DIR:-$ROOT/build/switch}"
 TOOLCHAIN="${DEVKITPRO}/cmake/Switch.cmake"
 
 [ -f "$TOOLCHAIN" ] || { echo "错误: 找不到工具链文件 $TOOLCHAIN" >&2; exit 1; }
 
-cmake -S "$ROOT" -B "$ROOT/build/switch" \
+cmake -S "$ROOT" -B "$BUILD_DIR" \
     -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" \
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE" "$@"
-cmake --build "$ROOT/build/switch" -j"$(nproc)"
+cmake --build "$BUILD_DIR" -j"$(nproc)"
 
 NROS=(
-    "$ROOT/build/switch/app/nsteamlink.nro"
-    "$ROOT/build/switch/tools/switch-discover/switch-discover.nro"
-    "$ROOT/build/switch/client/switch-stream-selftest.nro"
-    "$ROOT/build/switch/tools/switch-gfx-probe/switch-gfx-sdl-official.nro"
-    "$ROOT/build/switch/tools/switch-gfx-probe/switch-gfx-gl-official.nro"
+    "$BUILD_DIR/app/nsteamlink.nro"
+    "$BUILD_DIR/tools/switch-discover/switch-discover.nro"
+    "$BUILD_DIR/client/switch-stream-selftest.nro"
 )
 for NRO in "${NROS[@]}"; do
     if [ -f "$NRO" ]; then

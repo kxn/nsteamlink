@@ -1,13 +1,14 @@
 #include "media.h"
 
+#include <ctype.h>
 #include <pthread.h>
-#include <stdatomic.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <ctype.h>
+#include <unistd.h>
 
 #include <SDL.h>
 #include <opus.h>
@@ -25,24 +26,18 @@
 #include <libavutil/pixdesc.h>
 #include <libswscale/swscale.h>
 
-#ifndef NSTREAMLINK_APP
-#define NSTREAMLINK_APP 0
-#endif
-
-#if NSTREAMLINK_APP
 #include <ihslib/hid/sdl.h>
 #include <ihslib/input.h>
-#endif
 
-#define SDL_WIDTH  1920
-#define SDL_HEIGHT 1080
+#define SDL_WIDTH  1280
+#define SDL_HEIGHT 720
 
 static SDL_Window *sdl_window;
 static SDL_Renderer *sdl_renderer;
 static SDL_Texture *video_texture;
 static SDL_AudioDeviceID audio_device;
-static SDL_Joystick *joysticks[2];
 static bool sdl_initialized;
+static bool locks_ready, mapping_installed;
 static bool sdl_ready;
 static bool sdl_exit_requested;
 static int texture_width;
@@ -50,9 +45,9 @@ static int texture_height;
 static Uint32 texture_format;
 static bool nv12_texture_failed;
 
-static pthread_mutex_t frame_lock = PTHREAD_MUTEX_INITIALIZER;
-static pthread_mutex_t state_lock = PTHREAD_MUTEX_INITIALIZER;
-static pthread_mutex_t audio_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t frame_lock;
+static pthread_mutex_t state_lock;
+static pthread_mutex_t audio_lock;
 
 static AVCodecContext *decoder_ctx;
 static AVBufferRef *hw_device_ctx;
@@ -73,17 +68,16 @@ static uint64_t audio_decoded_samples_total;
 static uint32_t audio_queue_drops_total;
 static uint32_t audio_decode_errors_total;
 #define AUDIO_MAX_OPUS_FRAME_SAMPLES 5760
-#define AUDIO_QUEUE_LIMIT_MS 300U
+#define AUDIO_QUEUE_LIMIT_MS         300U
 static opus_int16 audio_decode_buf[AUDIO_MAX_OPUS_FRAME_SAMPLES * 2];
 
 static IHS_Session *stats_session;
-#if NSTREAMLINK_APP
 static IHS_Session *hid_session;
 static bool hid_session_enabled;
 static pthread_t hid_flush_thread;
 static atomic_bool hid_flush_running;
 static bool hid_flush_started;
-static pthread_mutex_t hid_lifecycle_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t hid_lifecycle_lock;
 static SDL_GameController *hid_controller;
 static SDL_JoystickID hid_controller_id = -1;
 static int hid_controller_index = -1;
@@ -144,10 +138,23 @@ static stream_media_hid_history_entry hid_history[HID_HISTORY_CAP];
 static uint32_t hid_history_next;
 static uint32_t hid_history_count;
 static uint32_t hid_history_seq;
-#endif
 static stream_media_log_fn log_cb;
 static stream_media_snapshot snapshot;
-static stream_media_ui ui_state;
+static void (*draw_hook)(void *, void *);
+static void (*event_hook)(const void *, void *);
+static void *hook_context;
+static atomic_bool input_gate;
+static atomic_bool muted;
+static atomic_bool clear_texture;
+static pthread_mutex_t decoder_lock;
+static pthread_mutex_t present_lock;
+static IHS_HIDSDLLastSubmitted submitted_cache;
+static struct SwsContext *upload_sws;
+static SDL_Rect video_rect;
+static struct {
+    bool active;
+    int64_t id;
+} remote_touches[8];
 static bool frame_dirty;
 static uint16_t pending_frame_id;
 static uint64_t pending_submit_us;
@@ -162,12 +169,12 @@ static bool logged_vic_transfer_retry;
 static enum AVPixelFormat logged_convert_format = AV_PIX_FMT_NONE;
 
 static void media_logf(const char *fmt, ...);
+static void video_stop_locked(IHS_Session *session);
 static bool opus_rate_supported(uint32_t rate);
 static uint32_t audio_queue_limit_bytes(int frequency, int channels);
 static void audio_stop_locked(void);
 static void update_audio_snapshot(void);
 
-#if NSTREAMLINK_APP
 static bool open_hid_controller(void);
 static void close_hid_controller(void);
 static void record_hid_event(const SDL_Event *event);
@@ -191,8 +198,7 @@ static const char *SWITCH_FACE_LABEL_MAPPING =
     "start:b10,x:b2,y:b3,";
 
 static void install_switch_face_label_mapping(void) {
-    static bool installed;
-    if (installed) {
+    if (mapping_installed) {
         return;
     }
     int rc = SDL_GameControllerAddMapping(SWITCH_FACE_LABEL_MAPPING);
@@ -200,206 +206,7 @@ static void install_switch_face_label_mapping(void) {
     if (rc < 0) {
         media_logf("hid sdl mapping override failed: %s", SDL_GetError());
     }
-    installed = true;
-}
-#endif
-
-static const uint8_t *font_rows(char c) {
-    static const uint8_t blank[7] = {0, 0, 0, 0, 0, 0, 0};
-    static const uint8_t unknown[7] = {0x0E, 0x11, 0x01, 0x02, 0x04, 0x00, 0x04};
-    static const uint8_t glyphs[][7] = {
-        {0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E}, /* 0 */
-        {0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E}, /* 1 */
-        {0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F}, /* 2 */
-        {0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E}, /* 3 */
-        {0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02}, /* 4 */
-        {0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E}, /* 5 */
-        {0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E}, /* 6 */
-        {0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08}, /* 7 */
-        {0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E}, /* 8 */
-        {0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C}, /* 9 */
-        {0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11}, /* A */
-        {0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E}, /* B */
-        {0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E}, /* C */
-        {0x1E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1E}, /* D */
-        {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F}, /* E */
-        {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10}, /* F */
-        {0x0E, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0F}, /* G */
-        {0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11}, /* H */
-        {0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E}, /* I */
-        {0x07, 0x02, 0x02, 0x02, 0x12, 0x12, 0x0C}, /* J */
-        {0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11}, /* K */
-        {0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F}, /* L */
-        {0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11}, /* M */
-        {0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11}, /* N */
-        {0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E}, /* O */
-        {0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10}, /* P */
-        {0x0E, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0D}, /* Q */
-        {0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11}, /* R */
-        {0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E}, /* S */
-        {0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04}, /* T */
-        {0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E}, /* U */
-        {0x11, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x04}, /* V */
-        {0x11, 0x11, 0x11, 0x15, 0x15, 0x15, 0x0A}, /* W */
-        {0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11}, /* X */
-        {0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04}, /* Y */
-        {0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F}, /* Z */
-    };
-    static const uint8_t colon[7] = {0, 0x04, 0x04, 0, 0x04, 0x04, 0};
-    static const uint8_t dot[7] = {0, 0, 0, 0, 0, 0x0C, 0x0C};
-    static const uint8_t dash[7] = {0, 0, 0, 0x1F, 0, 0, 0};
-    static const uint8_t slash[7] = {0x01, 0x01, 0x02, 0x04, 0x08, 0x10, 0x10};
-    static const uint8_t plus[7] = {0, 0x04, 0x04, 0x1F, 0x04, 0x04, 0};
-    static const uint8_t eq[7] = {0, 0, 0x1F, 0, 0x1F, 0, 0};
-    static const uint8_t lt[7] = {0x02, 0x04, 0x08, 0x10, 0x08, 0x04, 0x02};
-    static const uint8_t gt[7] = {0x08, 0x04, 0x02, 0x01, 0x02, 0x04, 0x08};
-    static const uint8_t lbr[7] = {0x0E, 0x08, 0x08, 0x08, 0x08, 0x08, 0x0E};
-    static const uint8_t rbr[7] = {0x0E, 0x02, 0x02, 0x02, 0x02, 0x02, 0x0E};
-    static const uint8_t excl[7] = {0x04, 0x04, 0x04, 0x04, 0x04, 0, 0x04};
-
-    if (c >= 'a' && c <= 'z') {
-        c = (char)toupper((unsigned char)c);
-    }
-    if (c == ' ') {
-        return blank;
-    }
-    if (c >= '0' && c <= '9') {
-        return glyphs[c - '0'];
-    }
-    if (c >= 'A' && c <= 'Z') {
-        return glyphs[10 + c - 'A'];
-    }
-    switch (c) {
-    case ':':
-        return colon;
-    case '.':
-        return dot;
-    case '-':
-    case '_':
-        return dash;
-    case '/':
-        return slash;
-    case '+':
-        return plus;
-    case '=':
-        return eq;
-    case '<':
-    case '(':
-        return lt;
-    case '>':
-    case ')':
-        return gt;
-    case '[':
-        return lbr;
-    case ']':
-        return rbr;
-    case '!':
-        return excl;
-    case '?':
-        return unknown;
-    default:
-        return unknown;
-    }
-}
-
-static void draw_text(const char *text, int x, int y, int scale, SDL_Color color) {
-    if (text == NULL || scale <= 0) {
-        return;
-    }
-    SDL_SetRenderDrawColor(sdl_renderer, color.r, color.g, color.b, color.a);
-    int cursor = x;
-    for (const char *p = text; *p != '\0'; p++) {
-        const uint8_t *rows = font_rows(*p);
-        for (int row = 0; row < 7; row++) {
-            for (int col = 0; col < 5; col++) {
-                if ((rows[row] & (1U << (4 - col))) == 0) {
-                    continue;
-                }
-                SDL_Rect px = {cursor + col * scale, y + row * scale, scale, scale};
-                SDL_RenderFillRect(sdl_renderer, &px);
-            }
-        }
-        cursor += 6 * scale;
-    }
-}
-
-static void draw_ui_overlay(void) {
-    stream_media_ui ui;
-    pthread_mutex_lock(&state_lock);
-    ui = ui_state;
-    pthread_mutex_unlock(&state_lock);
-    if (!ui.visible || sdl_renderer == NULL) {
-        return;
-    }
-
-    int w = SDL_WIDTH;
-    int h = SDL_HEIGHT;
-    SDL_GetWindowSize(sdl_window, &w, &h);
-
-    SDL_SetRenderDrawBlendMode(sdl_renderer, SDL_BLENDMODE_BLEND);
-    if (ui.dim_background) {
-        SDL_SetRenderDrawColor(sdl_renderer, 0, 0, 0, 150);
-        SDL_Rect dim = {0, 0, w, h};
-        SDL_RenderFillRect(sdl_renderer, &dim);
-    }
-
-    SDL_Color title = {240, 246, 255, 255};
-    SDL_Color body = {210, 224, 238, 255};
-    SDL_Color muted = {134, 155, 176, 255};
-    if (ui.dim_background) {
-        SDL_SetRenderDrawColor(sdl_renderer, 10, 12, 16, 220);
-        SDL_Rect panel = {48, 48, w - 96, h - 96};
-        SDL_RenderFillRect(sdl_renderer, &panel);
-        SDL_SetRenderDrawColor(sdl_renderer, 66, 153, 225, 255);
-        SDL_Rect top = {48, 48, w - 96, 6};
-        SDL_RenderFillRect(sdl_renderer, &top);
-
-        if (ui.title[0] != '\0') {
-            draw_text(ui.title, 78, 82, 5, title);
-        }
-
-        int y = 184;
-        for (int i = 0; i < STREAM_MEDIA_UI_LINES; i++) {
-            if (ui.lines[i][0] == '\0') {
-                continue;
-            }
-            SDL_Color color = i >= STREAM_MEDIA_UI_LINES - 2 ? muted : body;
-            draw_text(ui.lines[i], 82, y, 3, color);
-            y += 44;
-        }
-    } else {
-        int line_count = 0;
-        for (int i = 0; i < STREAM_MEDIA_UI_LINES; i++) {
-            if (ui.lines[i][0] != '\0') {
-                line_count++;
-            }
-        }
-        int panel_h = 58 + line_count * 28;
-        if (panel_h < 96) {
-            panel_h = 96;
-        }
-        SDL_SetRenderDrawColor(sdl_renderer, 10, 12, 16, 165);
-        SDL_Rect panel = {28, 28, 980, panel_h};
-        SDL_RenderFillRect(sdl_renderer, &panel);
-        SDL_SetRenderDrawColor(sdl_renderer, 66, 153, 225, 230);
-        SDL_Rect top = {28, 28, 980, 4};
-        SDL_RenderFillRect(sdl_renderer, &top);
-
-        if (ui.title[0] != '\0') {
-            draw_text(ui.title, 50, 48, 3, title);
-        }
-        int y = 88;
-        for (int i = 0; i < STREAM_MEDIA_UI_LINES; i++) {
-            if (ui.lines[i][0] == '\0') {
-                continue;
-            }
-            SDL_Color color = i >= STREAM_MEDIA_UI_LINES - 2 ? muted : body;
-            draw_text(ui.lines[i], 50, y, 2, color);
-            y += 28;
-        }
-    }
-
-    SDL_SetRenderDrawBlendMode(sdl_renderer, SDL_BLENDMODE_NONE);
+    mapping_installed = true;
 }
 
 static uint64_t media_monotonic_us(void) {
@@ -485,16 +292,15 @@ static void ffmpeg_log_callback(void *ptr, int level, const char *fmt, va_list v
 }
 
 static bool opus_rate_supported(uint32_t rate) {
-    return rate == 8000U || rate == 12000U || rate == 16000U ||
-           rate == 24000U || rate == 48000U;
+    return rate == 8000U || rate == 12000U || rate == 16000U || rate == 24000U || rate == 48000U;
 }
 
 static uint32_t audio_queue_limit_bytes(int frequency, int channels) {
     if (frequency <= 0 || channels <= 0) {
         return 0;
     }
-    uint64_t bytes = (uint64_t)frequency * (uint64_t)channels *
-                     sizeof(opus_int16) * AUDIO_QUEUE_LIMIT_MS / 1000U;
+    uint64_t bytes = (uint64_t)frequency * (uint64_t)channels * sizeof(opus_int16) *
+                     AUDIO_QUEUE_LIMIT_MS / 1000U;
     return bytes > UINT32_MAX ? UINT32_MAX : (uint32_t)bytes;
 }
 
@@ -554,7 +360,6 @@ static void update_audio_snapshot(void) {
     pthread_mutex_unlock(&state_lock);
 }
 
-#if NSTREAMLINK_APP
 static void reset_hid_probe_window(void) {
     hid_events_since_log = 0;
     hid_send_ok_since_log = 0;
@@ -615,15 +420,9 @@ static void record_hid_history(uint64_t now_us) {
         marker_minus_sdl_held = 1;
     }
 
-    IHS_HIDSDLLastSubmitted last_submitted;
-    memset(&last_submitted, 0, sizeof(last_submitted));
     pthread_mutex_lock(&state_lock);
-    IHS_Session *report_session = hid_session;
-    pthread_mutex_unlock(&state_lock);
-    bool have_sent = report_session != NULL &&
-                     IHS_HIDSDLGetLastSubmittedReport(report_session, &last_submitted);
-
-    pthread_mutex_lock(&state_lock);
+    IHS_HIDSDLLastSubmitted last_submitted = submitted_cache;
+    bool have_sent = last_submitted.seq != 0;
     stream_media_hid_history_entry *entry = &hid_history[hid_history_next];
     memset(entry, 0, sizeof(*entry));
     entry->seq = ++hid_history_seq;
@@ -659,14 +458,14 @@ static void record_hid_history(uint64_t now_us) {
     entry->marker_minus_sdl_samples = hid_marker_minus_sdl_samples_since_log;
     entry->marker_minus_raw_held = hid_marker_minus_raw_held ? 1U : 0U;
     entry->marker_minus_raw_samples = hid_marker_minus_raw_samples_since_log;
-    strncpy(entry->sty, hid_style_last, sizeof(entry->sty) - 1);
+    snprintf(entry->sty, sizeof(entry->sty), "%s", hid_style_last);
     if (have_sent) {
         entry->sent_lx = last_submitted.axes[0];
         entry->sent_ly = last_submitted.axes[1];
         entry->sent_rx = last_submitted.axes[2];
         entry->sent_ry = last_submitted.axes[3];
         entry->sent_buttons = last_submitted.buttons;
-        entry->sent_seq = (uint32_t) last_submitted.seq;
+        entry->sent_seq = (uint32_t)last_submitted.seq;
     }
 
     hid_history_next = (hid_history_next + 1U) % HID_HISTORY_CAP;
@@ -677,9 +476,8 @@ static void record_hid_history(uint64_t now_us) {
 }
 
 static void snapshot_hid_controller(int joystick_count, int controller_index,
-                                    SDL_JoystickID instance_id,
-                                    int controller_type, const char *guid,
-                                    const char *name, int provider_devices) {
+                                    SDL_JoystickID instance_id, int controller_type,
+                                    const char *guid, const char *name, int provider_devices) {
     pthread_mutex_lock(&state_lock);
     snapshot.hid_sdl_joystick_count = joystick_count;
     snapshot.hid_sdl_controller_index = controller_index;
@@ -709,13 +507,12 @@ static void log_hid_sdl_inventory(void) {
         SDL_JoystickGUID joystick_guid = SDL_JoystickGetDeviceGUID(i);
         SDL_JoystickGetGUIDString(joystick_guid, guid, sizeof(guid));
         char *mapping = SDL_GameControllerMappingForDeviceIndex(i);
-        media_logf("hid sdl device[%d]: instance=%d isController=%d type=%d name=%s guid=%s mapping=%s",
-                   i, (int)SDL_JoystickGetDeviceInstanceID(i),
-                   (int)SDL_IsGameController(i),
-                   (int)SDL_GameControllerTypeForIndex(i),
-                   SDL_JoystickNameForIndex(i) ? SDL_JoystickNameForIndex(i) : "-",
-                   guid[0] ? guid : "-",
-                   mapping != NULL ? mapping : "-");
+        media_logf(
+            "hid sdl device[%d]: instance=%d isController=%d type=%d name=%s guid=%s mapping=%s", i,
+            (int)SDL_JoystickGetDeviceInstanceID(i), (int)SDL_IsGameController(i),
+            (int)SDL_GameControllerTypeForIndex(i),
+            SDL_JoystickNameForIndex(i) ? SDL_JoystickNameForIndex(i) : "-", guid[0] ? guid : "-",
+            mapping != NULL ? mapping : "-");
         if (mapping != NULL) {
             SDL_free(mapping);
         }
@@ -746,7 +543,7 @@ static bool open_hid_controller(void) {
     }
     if (index < 0) {
         snapshot_hid_controller(count, -1, -1, 0, NULL, NULL, 0);
-        media_set_error("No SDL game controller available for HID");
+        /* Keyboard/touch remain usable without a controller. */
         return false;
     }
 
@@ -776,14 +573,12 @@ static bool open_hid_controller(void) {
         name = SDL_JoystickName(joystick);
     }
     int type = (int)SDL_GameControllerGetType(hid_controller);
-    snapshot_hid_controller(count, hid_controller_index, hid_controller_id,
-                            type, guid, name, 1);
+    snapshot_hid_controller(count, hid_controller_index, hid_controller_id, type, guid, name, 1);
 
     char *mapping = SDL_GameControllerMapping(hid_controller);
     media_logf("hid controller selected: index=%d instance=%d type=%d name=%s guid=%s mapping=%s",
-               hid_controller_index, (int)hid_controller_id, type,
-               name ? name : "-", guid[0] ? guid : "-",
-               mapping != NULL ? mapping : "-");
+               hid_controller_index, (int)hid_controller_id, type, name ? name : "-",
+               guid[0] ? guid : "-", mapping != NULL ? mapping : "-");
     if (mapping != NULL) {
         SDL_free(mapping);
     }
@@ -792,8 +587,8 @@ static bool open_hid_controller(void) {
 
 static void close_hid_controller(void) {
     if (hid_controller != NULL) {
-        media_logf("hid controller close: index=%d instance=%d",
-                   hid_controller_index, (int)hid_controller_id);
+        media_logf("hid controller close: index=%d instance=%d", hid_controller_index,
+                   (int)hid_controller_id);
         SDL_GameControllerClose(hid_controller);
         hid_controller = NULL;
     }
@@ -809,32 +604,32 @@ static void record_hid_event(const SDL_Event *event) {
     int value = 0;
 
     switch (event->type) {
-        case SDL_CONTROLLERDEVICEADDED:
-        case SDL_CONTROLLERDEVICEREMOVED:
-        case SDL_CONTROLLERDEVICEREMAPPED:
-            type = (int)event->type;
-            which = (int)event->cdevice.which;
-            break;
-        case SDL_CONTROLLERBUTTONDOWN:
-        case SDL_CONTROLLERBUTTONUP:
-            type = (int)event->type;
-            which = (int)event->cbutton.which;
-            code = (int)event->cbutton.button;
-            value = (int)event->cbutton.state;
-            break;
-        case SDL_CONTROLLERAXISMOTION:
-            type = (int)event->type;
-            which = (int)event->caxis.which;
-            code = (int)event->caxis.axis;
-            value = (int)event->caxis.value;
-            break;
-        case SDL_CONTROLLERSENSORUPDATE:
-            type = (int)event->type;
-            which = (int)event->csensor.which;
-            code = (int)event->csensor.sensor;
-            break;
-        default:
-            return;
+    case SDL_CONTROLLERDEVICEADDED:
+    case SDL_CONTROLLERDEVICEREMOVED:
+    case SDL_CONTROLLERDEVICEREMAPPED:
+        type = (int)event->type;
+        which = (int)event->cdevice.which;
+        break;
+    case SDL_CONTROLLERBUTTONDOWN:
+    case SDL_CONTROLLERBUTTONUP:
+        type = (int)event->type;
+        which = (int)event->cbutton.which;
+        code = (int)event->cbutton.button;
+        value = (int)event->cbutton.state;
+        break;
+    case SDL_CONTROLLERAXISMOTION:
+        type = (int)event->type;
+        which = (int)event->caxis.which;
+        code = (int)event->caxis.axis;
+        value = (int)event->caxis.value;
+        break;
+    case SDL_CONTROLLERSENSORUPDATE:
+        type = (int)event->type;
+        which = (int)event->csensor.which;
+        code = (int)event->csensor.sensor;
+        break;
+    default:
+        return;
     }
 
     pthread_mutex_lock(&state_lock);
@@ -874,9 +669,8 @@ static void sample_sdl_marker_minus(void) {
         hid_marker_minus_sdl_samples_total++;
     }
 }
-#endif
 
-#if NSTREAMLINK_APP && __SWITCH__
+#if __SWITCH__
 /* Sample the libnx PadState path every 250ms, independent of SDL. */
 static void sample_raw_npad(void) {
     uint64_t now_us = media_monotonic_us();
@@ -911,8 +705,7 @@ static void sample_raw_npad(void) {
         hid_marker_minus_raw_samples_since_log++;
         hid_marker_minus_raw_samples_total++;
     }
-    if (hid_raw_have_prev &&
-        (left.x != hid_raw_prev_x || left.y != hid_raw_prev_y)) {
+    if (hid_raw_have_prev && (left.x != hid_raw_prev_x || left.y != hid_raw_prev_y)) {
         hid_raw_ax_since_log++;
         hid_raw_ax_total++;
     }
@@ -929,203 +722,56 @@ static void sample_raw_npad(void) {
 
 static void pump_sdl_events(void) {
     SDL_Event event;
-#if NSTREAMLINK_APP
-    IHS_Session *event_hid_session = NULL;
-    bool hid_enabled = false;
-    bool hid_changed = false;
-    uint64_t pump_age_ms_total = 0;
-    uint32_t pump_age_samples = 0;
-    uint32_t pump_age_ms_max = 0;
-
-    pthread_mutex_lock(&state_lock);
-    event_hid_session = hid_session;
-    hid_enabled = hid_session_enabled;
-    pthread_mutex_unlock(&state_lock);
-    hid_pump_calls_since_log++;
-#if __SWITCH__
-    sample_raw_npad();
-#endif
-#endif
-
+    bool devices_changed = false;
     while (SDL_PollEvent(&event)) {
-#if NSTREAMLINK_APP
-        /* Switch touchscreen -> official InputTouchFingerDown/Motion/Up(117-119).
-         * SDL reports tfinger x/y normalized to the display, which is exactly
-         * the wire format (x_normalized/y_normalized). Officially these go out
-         * as control messages independent of the HID gamepad device. */
-        if (event.type == SDL_FINGERDOWN || event.type == SDL_FINGERMOTION ||
-            event.type == SDL_FINGERUP) {
-            if (hid_enabled && event_hid_session != NULL) {
-                if (event.type == SDL_FINGERDOWN) {
-                    IHS_SessionSendTouchDown(event_hid_session, event.tfinger.fingerId,
-                                             event.tfinger.x, event.tfinger.y);
-                } else if (event.type == SDL_FINGERMOTION) {
-                    IHS_SessionSendTouchMotion(event_hid_session, event.tfinger.fingerId,
-                                               event.tfinger.x, event.tfinger.y);
-                } else {
-                    IHS_SessionSendTouchUp(event_hid_session, event.tfinger.fingerId,
-                                           event.tfinger.x, event.tfinger.y);
-                }
-            }
-            continue;
-        }
         record_hid_event(&event);
-        if (hid_enabled && event_hid_session != NULL) {
-            /* Host rumble/LED writes queued by the receive thread are applied
-             * here, on the SDL/libnx-hid owner thread (deadlock fix). */
-            IHS_HIDSDLApplyPendingWrites(event_hid_session);
+        if (event.type == SDL_CONTROLLERDEVICEADDED) {
+            open_hid_controller();
+            devices_changed = true;
         }
-        if (hid_enabled && event_hid_session != NULL &&
-            IHS_HIDHandleSDLEvent(event_hid_session, &event)) {
-            hid_changed = true;
-            hid_events_since_log++;
-            hid_events_total++;
-            uint32_t ev_age_ms =
-                (uint32_t)(SDL_GetTicks() > event.common.timestamp
-                               ? SDL_GetTicks() - event.common.timestamp
-                               : 0);
-            pump_age_ms_total += ev_age_ms;
-            pump_age_samples++;
-            if (ev_age_ms > pump_age_ms_max) {
-                pump_age_ms_max = ev_age_ms;
-            }
-            switch (event.type) {
-                case SDL_CONTROLLERAXISMOTION:
-                    hid_axis_since_log++;
-                    break;
-                case SDL_CONTROLLERBUTTONDOWN:
-                case SDL_CONTROLLERBUTTONUP:
-                    hid_button_since_log++;
-                    break;
-                case SDL_CONTROLLERSENSORUPDATE:
-                    hid_sensor_since_log++;
-                    break;
-                default:
-                    hid_other_since_log++;
-                    break;
-            }
+        if (event.type == SDL_CONTROLLERDEVICEREMOVED && event.cdevice.which == hid_controller_id) {
+            close_hid_controller();
+            devices_changed = true;
         }
-        if (event.type == SDL_CONTROLLERBUTTONDOWN ||
-            event.type == SDL_CONTROLLERBUTTONUP ||
-            event.type == SDL_CONTROLLERAXISMOTION ||
-            event.type == SDL_CONTROLLERSENSORUPDATE) {
-            if (hid_trace_lines_this_sec < HID_TRACE_BUDGET_PER_SEC) {
-                const char *kind = event.type == SDL_CONTROLLERAXISMOTION ? "axis" :
-                                   (event.type == SDL_CONTROLLERBUTTONDOWN ? "btn-down" :
-                                   (event.type == SDL_CONTROLLERBUTTONUP ? "btn-up" : "sensor"));
-                int code = event.type == SDL_CONTROLLERAXISMOTION ? (int) event.caxis.axis :
-                           (int) event.cbutton.button;
-                int value = event.type == SDL_CONTROLLERAXISMOTION ? (int) event.caxis.value :
-                            (event.type == SDL_CONTROLLERSENSORUPDATE ? -1 :
-                             (int) event.cbutton.state);
-                media_logf("hid ev %s which=%d code=%d value=%d", kind,
-                           event.type == SDL_CONTROLLERAXISMOTION ? (int) event.caxis.which :
-                           (int) event.cbutton.which, code, value);
-                hid_trace_lines_this_sec++;
-            } else {
-                hid_trace_suppressed++;
-            }
-        }
-#endif
-        switch (event.type) {
-            case SDL_QUIT:
-                media_logf("SDL_QUIT received");
-                sdl_exit_requested = true;
-                break;
-#if !NSTREAMLINK_APP
-            case SDL_JOYBUTTONDOWN:
-                media_logf("SDL joystick %d button %d down",
-                           (int)event.jbutton.which, (int)event.jbutton.button);
-                if (event.jbutton.which == 0 && event.jbutton.button == 10) {
-                    sdl_exit_requested = true;
-                }
-                break;
-#endif
-            default:
-                break;
-        }
+        if (event.type == SDL_QUIT)
+            sdl_exit_requested = true;
+        if (event_hook)
+            event_hook(&event, hook_context);
     }
-#if NSTREAMLINK_APP
-    sample_sdl_marker_minus();
-    /* Delta flush moved to dedicated 8ms thread (hid_flush_thread_fn), which
-     * polls IHS_HIDFlushSDLGameControllers independently of the present loop.
-     * No per-event or per-frame flush needed here. */
-    if (hid_enabled && event_hid_session != NULL && pump_age_samples > 0) {
-        pthread_mutex_lock(&state_lock);
-        snapshot.hid_age_samples += pump_age_samples;
-        snapshot.hid_age_ms_total += pump_age_ms_total;
-        if (pump_age_ms_max > snapshot.hid_age_ms_max) {
-            snapshot.hid_age_ms_max = pump_age_ms_max;
-        }
-        pthread_mutex_unlock(&state_lock);
-    }
-    if (hid_enabled && event_hid_session != NULL) {
-        uint64_t now_us = media_monotonic_us();
-        if (hid_last_log_us == 0) {
-            hid_last_log_us = now_us;
-        }
-        /* Unchanged input is silent; transport ACK/NACK performs recovery. */
-        if (elapsed_us(hid_last_log_us, now_us) >= 1000000U) {
-            record_hid_history(now_us);
-            media_logf("hid summary: events=%u send_ok=%u send_fail=%u stateFull=%u"
-                       " pump=%u ax=%u btn=%u sen=%u oth=%u evSup=%u rawAx=%u rawBtn=%u styFl=%u(%s)",
-                       hid_events_since_log, hid_send_ok_since_log,
-                       hid_send_fail_since_log, hid_state_full_since_log,
-                       hid_pump_calls_since_log, hid_axis_since_log,
-                       hid_button_since_log, hid_sensor_since_log,
-                       hid_other_since_log, hid_trace_suppressed,
-                       hid_raw_ax_since_log, hid_raw_btn_since_log,
-                       hid_style_flips_since_log, hid_style_last);
-            reset_hid_probe_window();
-            hid_last_log_us = now_us;
-        }
-    } else {
+    uint64_t now = media_monotonic_us();
+    if (now - hid_last_log_us >= 1000000) {
+        sample_sdl_marker_minus();
+#if __SWITCH__
+        sample_raw_npad();
+#endif
+        record_hid_history(now);
         reset_hid_probe_window();
-        hid_last_log_us = 0;
+        hid_last_log_us = now;
     }
-#endif
-}
-
-static void draw_idle_indicator(void) {
-    if (!sdl_ready || sdl_renderer == NULL) {
-        return;
+    pthread_mutex_lock(&state_lock);
+    if (hid_session) {
+        IHS_HIDSDLApplyPendingWrites(hid_session);
+        if (devices_changed)
+            IHS_SessionHIDNotifyDeviceChange(hid_session);
     }
-
-    static int tick;
-    tick = (tick + 1) % 180;
-
-    int w = SDL_WIDTH;
-    int h = SDL_HEIGHT;
-    SDL_GetWindowSize(sdl_window, &w, &h);
-
-    SDL_SetRenderDrawColor(sdl_renderer, 14, 15, 18, 255);
-    SDL_RenderClear(sdl_renderer);
-
-    SDL_SetRenderDrawColor(sdl_renderer, 46, 51, 58, 255);
-    SDL_Rect rail = {32, h - 72, w - 64, 12};
-    SDL_RenderFillRect(sdl_renderer, &rail);
-
-    int span = w - 64 - 144;
-    if (span < 1) {
-        span = 1;
-    }
-    int pos = (tick * span) / 179;
-    SDL_SetRenderDrawColor(sdl_renderer, 39, 174, 96, 255);
-    SDL_Rect bar = {32 + pos, h - 88, 144, 42};
-    SDL_RenderFillRect(sdl_renderer, &bar);
-
-    SDL_SetRenderDrawColor(sdl_renderer, 245, 166, 35, 255);
-    SDL_Rect marker = {24, 24, 42, 42};
-    SDL_RenderFillRect(sdl_renderer, &marker);
-
-    draw_ui_overlay();
-    SDL_RenderPresent(sdl_renderer);
+    pthread_mutex_unlock(&state_lock);
 }
 
 bool stream_media_init(stream_media_log_fn log_fn) {
     if (sdl_ready) {
         return true;
     }
+    if (!locks_ready) {
+        pthread_mutex_init(&frame_lock, NULL);
+        pthread_mutex_init(&state_lock, NULL);
+        pthread_mutex_init(&audio_lock, NULL);
+        pthread_mutex_init(&hid_lifecycle_lock, NULL);
+        pthread_mutex_init(&decoder_lock, NULL);
+        pthread_mutex_init(&present_lock, NULL);
+        locks_ready = true;
+    }
+    atomic_store(&input_gate, false);
+    atomic_store(&clear_texture, false);
     log_cb = log_fn;
     memset(&snapshot, 0, sizeof(snapshot));
     sdl_exit_requested = false;
@@ -1142,11 +788,7 @@ bool stream_media_init(stream_media_log_fn log_fn) {
     }
 
     Uint32 init_flags = SDL_INIT_VIDEO;
-#if NSTREAMLINK_APP
     init_flags |= SDL_INIT_GAMECONTROLLER | SDL_INIT_AUDIO;
-#else
-    init_flags |= SDL_INIT_JOYSTICK;
-#endif
     if (SDL_Init(init_flags) < 0) {
         media_set_error("SDL_Init: %s", SDL_GetError());
         stream_media_shutdown();
@@ -1161,35 +803,20 @@ bool stream_media_init(stream_media_log_fn log_fn) {
         return false;
     }
 
-    sdl_renderer = SDL_CreateRenderer(sdl_window, 0,
-                                      SDL_RENDERER_ACCELERATED |
-                                          SDL_RENDERER_PRESENTVSYNC);
+    sdl_renderer =
+        SDL_CreateRenderer(sdl_window, 0, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    if (sdl_renderer == NULL)
+        sdl_renderer = SDL_CreateRenderer(sdl_window, -1, SDL_RENDERER_SOFTWARE);
     if (sdl_renderer == NULL) {
         media_set_error("SDL_CreateRenderer: %s", SDL_GetError());
         stream_media_shutdown();
         return false;
     }
 
-#if NSTREAMLINK_APP
-    if (!open_hid_controller()) {
-        stream_media_shutdown();
-        return false;
-    }
-#endif
-
-#if !NSTREAMLINK_APP
-    for (int i = 0; i < 2; i++) {
-        joysticks[i] = SDL_JoystickOpen(i);
-        if (joysticks[i] == NULL) {
-            media_set_error("SDL_JoystickOpen(%d): %s", i, SDL_GetError());
-            stream_media_shutdown();
-            return false;
-        }
-    }
-#endif
+    open_hid_controller();
 
     sdl_ready = true;
-    draw_idle_indicator();
+    SDL_RenderSetLogicalSize(sdl_renderer, 1280, 720);
 
     pthread_mutex_lock(&state_lock);
     snapshot.available = true;
@@ -1199,6 +826,8 @@ bool stream_media_init(stream_media_log_fn log_fn) {
 }
 
 void stream_media_shutdown(void) {
+    if (!locks_ready)
+        return;
     media_logf("media shutdown: begin");
     stream_media_set_hid_session(NULL, false);
     stream_media_video_stop(NULL);
@@ -1207,7 +836,6 @@ void stream_media_shutdown(void) {
     pthread_mutex_lock(&state_lock);
     snapshot.available = false;
     snapshot.video_active = false;
-#if NSTREAMLINK_APP
     hid_session = NULL;
     hid_session_enabled = false;
     snapshot.hid_provider_devices = 0;
@@ -1222,20 +850,14 @@ void stream_media_shutdown(void) {
     hid_marker_minus_raw_samples_total = 0;
     reset_hid_probe_baseline();
     hid_last_log_us = 0;
-#endif
     pthread_mutex_unlock(&state_lock);
 
-#if NSTREAMLINK_APP
     close_hid_controller();
-#endif
 
-    for (int i = 0; i < 2; i++) {
-        if (joysticks[i] != NULL) {
-            media_logf("media shutdown: close joystick %d", i);
-            SDL_JoystickClose(joysticks[i]);
-            joysticks[i] = NULL;
-        }
-    }
+    SDL_DestroyTexture(video_texture);
+    video_texture = NULL;
+    sws_freeContext(upload_sws);
+    upload_sws = NULL;
     if (sdl_renderer != NULL) {
         media_logf("media shutdown: destroy renderer");
         SDL_DestroyRenderer(sdl_renderer);
@@ -1259,6 +881,14 @@ void stream_media_shutdown(void) {
     av_frame_free(&latched_frame);
     av_frame_free(&present_frame);
     pthread_mutex_unlock(&frame_lock);
+    mapping_installed = false;
+    pthread_mutex_destroy(&frame_lock);
+    pthread_mutex_destroy(&state_lock);
+    pthread_mutex_destroy(&audio_lock);
+    pthread_mutex_destroy(&hid_lifecycle_lock);
+    pthread_mutex_destroy(&decoder_lock);
+    pthread_mutex_destroy(&present_lock);
+    locks_ready = false;
     media_logf("media shutdown: done");
 }
 
@@ -1270,7 +900,6 @@ bool stream_media_exit_requested(void) {
     return sdl_exit_requested;
 }
 
-#if NSTREAMLINK_APP
 /* Dedicated input flush thread: 8ms interval, matching the official client's
  * CHIDDeviceReportThread. Sends delta reports (previous→current masked diff)
  * independently of the present loop. Thread safety: calls the same
@@ -1282,10 +911,10 @@ static void *hid_flush_thread_fn(void *arg) {
         pthread_mutex_lock(&state_lock);
         IHS_Session *sess = hid_session;
         bool enabled = hid_session_enabled;
-        pthread_mutex_unlock(&state_lock);
-        if (enabled && sess != NULL) {
+        if (enabled && sess != NULL && input_gate) {
             IHS_HIDFlushSDLGameControllers(sess);
         }
+        pthread_mutex_unlock(&state_lock);
         usleep(8000); /* 8ms = 125Hz */
     }
     return NULL;
@@ -1308,16 +937,15 @@ static void hid_flush_thread_stop(void) {
         hid_flush_started = false;
     }
 }
-#endif
 
 void stream_media_set_hid_session(IHS_Session *session, bool enabled) {
-#if NSTREAMLINK_APP
     /* The lifecycle lock is never acquired by the worker. Join before
      * replacing its session pointer, outside the worker's state_lock. */
     pthread_mutex_lock(&hid_lifecycle_lock);
     hid_flush_thread_stop();
     pthread_mutex_lock(&state_lock);
     hid_session = session;
+    memset(remote_touches, 0, sizeof(remote_touches));
     hid_session_enabled = enabled;
     if (session != NULL && enabled) {
         hid_events_total = 0;
@@ -1353,21 +981,14 @@ void stream_media_set_hid_session(IHS_Session *session, bool enabled) {
         hid_last_log_us = 0;
     }
     pthread_mutex_unlock(&state_lock);
-    if (session != NULL && enabled) hid_flush_thread_start();
+    if (session != NULL && enabled)
+        hid_flush_thread_start();
     pthread_mutex_unlock(&hid_lifecycle_lock);
-#else
-    (void)session;
-    (void)enabled;
-#endif
 }
 
-#if NSTREAMLINK_APP
 IHS_HIDProvider *stream_media_create_hid_provider(void) {
-    if (!open_hid_controller()) {
-        return NULL;
-    }
-    IHS_HIDProvider *provider =
-        IHS_HIDProviderSDLCreateUnmanaged(&HID_DEVICE_LIST, NULL);
+    open_hid_controller();
+    IHS_HIDProvider *provider = IHS_HIDProviderSDLCreateUnmanaged(&HID_DEVICE_LIST, NULL);
     pthread_mutex_lock(&state_lock);
     snapshot.hid_provider_devices = provider != NULL ? hid_device_list_count(NULL) : 0;
     pthread_mutex_unlock(&state_lock);
@@ -1385,7 +1006,6 @@ void stream_media_destroy_hid_provider(IHS_HIDProvider *provider) {
     snapshot.hid_provider_devices = 0;
     pthread_mutex_unlock(&state_lock);
 }
-#endif
 
 static enum AVPixelFormat get_hw_format(AVCodecContext *ctx, const enum AVPixelFormat *fmts) {
     (void)ctx;
@@ -1412,7 +1032,7 @@ static bool find_nvtegra_config(const AVCodec *codec) {
             return false;
         }
         if ((cfg->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX) &&
-            cfg->device_type == AV_HWDEVICE_TYPE_NVTEGRA) {
+            cfg->device_type == av_hwdevice_find_type_by_name("nvtegra")) {
             hw_pix_fmt = cfg->pix_fmt;
             return true;
         }
@@ -1437,7 +1057,8 @@ static int open_decoder(const IHS_StreamVideoConfig *config, bool use_hw) {
     decoder_ctx->flags |= AV_CODEC_FLAG_LOW_DELAY;
 
     if (use_hw) {
-        int rc = av_hwdevice_ctx_create(&hw_device_ctx, AV_HWDEVICE_TYPE_NVTEGRA, NULL, NULL, 0);
+        int rc = av_hwdevice_ctx_create(&hw_device_ctx, av_hwdevice_find_type_by_name("nvtegra"),
+                                        NULL, NULL, 0);
         if (rc != 0) {
             avcodec_free_context(&decoder_ctx);
             media_log_av_error("av_hwdevice_ctx_create(NVTEGRA) failed", rc);
@@ -1457,8 +1078,8 @@ static int open_decoder(const IHS_StreamVideoConfig *config, bool use_hw) {
         if (hw_device_ctx != NULL) {
             av_buffer_unref(&hw_device_ctx);
         }
-        media_log_av_error(use_hw ? "avcodec_open2 H264 NVTEGRA failed" :
-                                    "avcodec_open2 H264 software failed",
+        media_log_av_error(use_hw ? "avcodec_open2 H264 NVTEGRA failed"
+                                  : "avcodec_open2 H264 software failed",
                            rc);
         return -1;
     }
@@ -1474,24 +1095,24 @@ static int open_decoder(const IHS_StreamVideoConfig *config, bool use_hw) {
     return 0;
 }
 
-int stream_media_video_start(IHS_Session *session, const IHS_StreamVideoConfig *config) {
+static int video_start_locked(IHS_Session *session, const IHS_StreamVideoConfig *config) {
     (void)session;
     if (!sdl_ready) {
         media_set_error("media unavailable at video start");
         return -1;
     }
     if (config->codec != IHS_StreamVideoCodecH264) {
-        media_set_error("unsupported video codec for M3.3: %d", (int)config->codec);
+        media_set_error("unsupported video codec: %d", (int)config->codec);
         return -1;
     }
 
-    stream_media_video_stop(NULL);
+    video_stop_locked(NULL);
 
     packet = av_packet_alloc();
     decode_frame = av_frame_alloc();
     if (packet == NULL || decode_frame == NULL) {
         media_set_error("FFmpeg packet/frame allocation failed");
-        stream_media_video_stop(NULL);
+        video_stop_locked(NULL);
         return -1;
     }
 
@@ -1504,7 +1125,7 @@ int stream_media_video_start(IHS_Session *session, const IHS_StreamVideoConfig *
     }
 
     if ((!can_try_hw || open_decoder(config, true) != 0) && open_decoder(config, false) != 0) {
-        stream_media_video_stop(NULL);
+        video_stop_locked(NULL);
         return -1;
     }
 
@@ -1529,6 +1150,7 @@ int stream_media_video_start(IHS_Session *session, const IHS_StreamVideoConfig *
     nv12_texture_failed = false;
 
     pthread_mutex_lock(&state_lock);
+    snapshot.video_epoch++;
     snapshot.video_active = true;
     snapshot.first_frame_displayed = false;
     snapshot.decoded_frames = 0;
@@ -1544,6 +1166,7 @@ int stream_media_video_start(IHS_Session *session, const IHS_StreamVideoConfig *
     snapshot.transfer_us_total = 0;
     snapshot.convert_us_total = 0;
     snapshot.upload_us_total = 0;
+    snapshot.upload_samples = 0;
     snapshot.present_us_total = 0;
     snapshot.decode_us_max = 0;
     snapshot.transfer_us_max = 0;
@@ -1615,16 +1238,15 @@ static void stash_converted_frame(const AVFrame *src, uint16_t frame_id, uint64_
         av_frame_free(&out);
         return;
     }
-    sws = sws_getCachedContext(sws, src->width, src->height, src->format,
-                               src->width, src->height, AV_PIX_FMT_YUV420P,
-                               SWS_BILINEAR, NULL, NULL, NULL);
+    sws = sws_getCachedContext(sws, src->width, src->height, src->format, src->width, src->height,
+                               AV_PIX_FMT_YUV420P, SWS_BILINEAR, NULL, NULL, NULL);
     if (sws == NULL) {
         av_frame_free(&out);
         return;
     }
     uint64_t convert_start = media_monotonic_us();
-    sws_scale(sws, (const uint8_t *const *)src->data, src->linesize, 0, src->height,
-              out->data, out->linesize);
+    sws_scale(sws, (const uint8_t *const *)src->data, src->linesize, 0, src->height, out->data,
+              out->linesize);
     uint32_t convert_us = elapsed_us(convert_start, media_monotonic_us());
     pthread_mutex_lock(&state_lock);
     snapshot.converted_frames++;
@@ -1662,21 +1284,19 @@ static int prepare_vic_transfer_frame(AVFrame *dst, const AVFrame *src) {
         return AVERROR(EINVAL);
     }
 
-    const AVHWFramesContext *frames_ctx =
-        (const AVHWFramesContext *)src->hw_frames_ctx->data;
+    const AVHWFramesContext *frames_ctx = (const AVHWFramesContext *)src->hw_frames_ctx->data;
     dst->format = frames_ctx->sw_format;
     dst->width = src->width;
     dst->height = src->height;
 
-    int image_size = av_image_get_buffer_size((enum AVPixelFormat)dst->format,
-                                              dst->width, dst->height,
-                                              NVTEGRA_VIC_ALIGNMENT);
+    int image_size = av_image_get_buffer_size((enum AVPixelFormat)dst->format, dst->width,
+                                              dst->height, NVTEGRA_VIC_ALIGNMENT);
     if (image_size < 0) {
         return image_size;
     }
 
-    size_t map_size = ((size_t)image_size + NVTEGRA_MAP_ALIGNMENT - 1) &
-                      ~(size_t)(NVTEGRA_MAP_ALIGNMENT - 1);
+    size_t map_size =
+        ((size_t)image_size + NVTEGRA_MAP_ALIGNMENT - 1) & ~(size_t)(NVTEGRA_MAP_ALIGNMENT - 1);
     if (map_size > SIZE_MAX - (NVTEGRA_MAP_ALIGNMENT - 1)) {
         return AVERROR(ENOMEM);
     }
@@ -1687,17 +1307,15 @@ static int prepare_vic_transfer_frame(AVFrame *dst, const AVFrame *src) {
     }
     uint8_t *aligned = (uint8_t *)(((uintptr_t)allocation + NVTEGRA_MAP_ALIGNMENT - 1) &
                                    ~(uintptr_t)(NVTEGRA_MAP_ALIGNMENT - 1));
-    dst->buf[0] = av_buffer_create(aligned, map_size, free_aligned_frame_buffer,
-                                   allocation, 0);
+    dst->buf[0] = av_buffer_create(aligned, map_size, free_aligned_frame_buffer, allocation, 0);
     if (dst->buf[0] == NULL) {
         av_free(allocation);
         return AVERROR(ENOMEM);
     }
 
-    int rc = av_image_fill_arrays(dst->data, dst->linesize, aligned,
-                                  (enum AVPixelFormat)dst->format,
-                                  dst->width, dst->height,
-                                  NVTEGRA_VIC_ALIGNMENT);
+    int rc =
+        av_image_fill_arrays(dst->data, dst->linesize, aligned, (enum AVPixelFormat)dst->format,
+                             dst->width, dst->height, NVTEGRA_VIC_ALIGNMENT);
     if (rc < 0) {
         av_frame_unref(dst);
         return rc;
@@ -1720,7 +1338,8 @@ static int transfer_nvtegra_frame(AVFrame *dst, const AVFrame *src, bool *used_v
                 media_logf("NVTEGRA VIC buffer preparation failed: %s (%d); using default transfer",
                            errbuf, prepare_rc);
             } else {
-                media_logf("NVTEGRA VIC buffer failed runtime alignment check; using default transfer");
+                media_logf(
+                    "NVTEGRA VIC buffer failed runtime alignment check; using default transfer");
             }
         }
         av_frame_unref(dst);
@@ -1732,8 +1351,8 @@ static int transfer_nvtegra_frame(AVFrame *dst, const AVFrame *src, bool *used_v
             logged_vic_transfer_retry = true;
             char errbuf[AV_ERROR_MAX_STRING_SIZE];
             av_strerror(transfer_rc, errbuf, sizeof(errbuf));
-            media_logf("NVTEGRA VIC transfer failed: %s (%d); retrying default transfer",
-                       errbuf, transfer_rc);
+            media_logf("NVTEGRA VIC transfer failed: %s (%d); retrying default transfer", errbuf,
+                       transfer_rc);
         }
         av_frame_unref(dst);
         transfer_rc = av_hwframe_transfer_data(dst, src, 0);
@@ -1752,8 +1371,8 @@ static int transfer_nvtegra_frame(AVFrame *dst, const AVFrame *src, bool *used_v
     *used_vic = vic_eligible;
     if (vic_eligible && !logged_vic_transfer) {
         logged_vic_transfer = true;
-        media_logf("NVTEGRA transfer path: VIC 256B-aligned format=%d pitch=%d/%d",
-                   dst->format, dst->linesize[0], dst->linesize[1]);
+        media_logf("NVTEGRA transfer path: VIC 256B-aligned format=%d pitch=%d/%d", dst->format,
+                   dst->linesize[0], dst->linesize[1]);
     }
     return 0;
 }
@@ -1762,13 +1381,14 @@ static void receive_frames(uint16_t frame_id, uint64_t submit_us) {
     while (avcodec_receive_frame(decoder_ctx, decode_frame) == 0) {
         AVFrame *frame = decode_frame;
         AVFrame *downloaded = NULL;
-        if (decode_frame->hw_frames_ctx != NULL || decode_frame->format == AV_PIX_FMT_NVTEGRA) {
+        if (decode_frame->hw_frames_ctx != NULL ||
+            decode_frame->format == av_get_pix_fmt("nvtegra")) {
             downloaded = av_frame_alloc();
             bool used_vic = false;
             uint64_t transfer_start = media_monotonic_us();
-            int transfer_rc = downloaded != NULL ?
-                                  transfer_nvtegra_frame(downloaded, decode_frame, &used_vic) :
-                                  AVERROR(ENOMEM);
+            int transfer_rc = downloaded != NULL
+                                  ? transfer_nvtegra_frame(downloaded, decode_frame, &used_vic)
+                                  : AVERROR(ENOMEM);
             uint32_t transfer_us = elapsed_us(transfer_start, media_monotonic_us());
             if (downloaded != NULL && transfer_rc == 0) {
                 pthread_mutex_lock(&state_lock);
@@ -1805,15 +1425,14 @@ static void receive_frames(uint16_t frame_id, uint64_t submit_us) {
     }
 }
 
-IHS_StreamVideoSubmitResult stream_media_video_submit(IHS_Session *session, uint16_t frame_id,
-                                                     IHS_Buffer *data,
-                                                     IHS_StreamVideoFrameFlag flags) {
+static IHS_StreamVideoSubmitResult video_submit_locked(IHS_Session *session, uint16_t frame_id,
+                                                       IHS_Buffer *data,
+                                                       IHS_StreamVideoFrameFlag flags) {
     if (decoder_ctx == NULL || packet == NULL) {
         return IHS_StreamVideoSubmitError;
     }
     uint64_t submit_us = media_monotonic_us();
 
-    stats_session = session;
     if (have_last_frame && frame_id != (uint16_t)(last_frame_id + 1)) {
         need_flush = true;
     }
@@ -1868,7 +1487,7 @@ IHS_StreamVideoSubmitResult stream_media_video_submit(IHS_Session *session, uint
     return IHS_StreamVideoSubmitReportLost;
 }
 
-void stream_media_video_stop(IHS_Session *session) {
+static void video_stop_locked(IHS_Session *session) {
     (void)session;
     uint16_t dropped_id = 0;
     bool had_pending = false;
@@ -1880,9 +1499,6 @@ void stream_media_video_stop(IHS_Session *session) {
     if (latched_frame != NULL) {
         av_frame_unref(latched_frame);
     }
-    if (present_frame != NULL) {
-        av_frame_unref(present_frame);
-    }
     pthread_mutex_unlock(&frame_lock);
 
     if (had_pending && stats_session != NULL) {
@@ -1891,13 +1507,7 @@ void stream_media_video_stop(IHS_Session *session) {
     }
     stats_session = NULL;
 
-    if (video_texture != NULL) {
-        SDL_DestroyTexture(video_texture);
-        video_texture = NULL;
-        texture_width = 0;
-        texture_height = 0;
-        texture_format = 0;
-    }
+    atomic_store(&clear_texture, true);
     if (sws != NULL) {
         sws_freeContext(sws);
         sws = NULL;
@@ -1913,6 +1523,7 @@ void stream_media_video_stop(IHS_Session *session) {
 
     pthread_mutex_lock(&state_lock);
     snapshot.video_active = false;
+    snapshot.first_frame_displayed = false;
     pthread_mutex_unlock(&state_lock);
 }
 
@@ -1964,10 +1575,9 @@ int stream_media_audio_start(IHS_Session *session, const IHS_StreamAudioConfig *
         opus_decoder_destroy(decoder);
         return -1;
     }
-    if (have.freq != want.freq || have.format != want.format ||
-        have.channels != want.channels) {
-        media_set_error("SDL audio format mismatch: got %dHz fmt=0x%x ch=%u",
-                        have.freq, (unsigned)have.format, (unsigned)have.channels);
+    if (have.freq != want.freq || have.format != want.format || have.channels != want.channels) {
+        media_set_error("SDL audio format mismatch: got %dHz fmt=0x%x ch=%u", have.freq,
+                        (unsigned)have.format, (unsigned)have.channels);
         SDL_CloseAudioDevice(device);
         opus_decoder_destroy(decoder);
         return -1;
@@ -1990,8 +1600,8 @@ int stream_media_audio_start(IHS_Session *session, const IHS_StreamAudioConfig *
     pthread_mutex_unlock(&audio_lock);
 
     update_audio_snapshot();
-    media_logf("audio start: codec=Opus freq=%d channels=%d samples=%u codecData=%zu",
-               have.freq, have.channels, have.samples, config->codecDataLen);
+    media_logf("audio start: codec=Opus freq=%d channels=%d samples=%u codecData=%zu", have.freq,
+               have.channels, have.samples, config->codecDataLen);
     return 0;
 }
 
@@ -2018,8 +1628,8 @@ int stream_media_audio_submit(IHS_Session *session, IHS_Buffer *data) {
 
     const unsigned char *payload =
         data->size > 0 ? (const unsigned char *)IHS_BufferPointer(data) : NULL;
-    int samples = opus_decode(audio_decoder, payload, (opus_int32)data->size,
-                              audio_decode_buf, AUDIO_MAX_OPUS_FRAME_SAMPLES, 0);
+    int samples = opus_decode(audio_decoder, payload, (opus_int32)data->size, audio_decode_buf,
+                              AUDIO_MAX_OPUS_FRAME_SAMPLES, 0);
     if (samples < 0) {
         audio_decode_errors_total++;
         ret = -1;
@@ -2029,6 +1639,8 @@ int stream_media_audio_submit(IHS_Session *session, IHS_Buffer *data) {
     } else {
         uint32_t pcm_bytes =
             (uint32_t)samples * (uint32_t)audio_channels * (uint32_t)sizeof(opus_int16);
+        if (atomic_load(&muted))
+            memset(audio_decode_buf, 0, pcm_bytes);
         if (pcm_bytes > 0 && SDL_QueueAudio(audio_device, audio_decode_buf, pcm_bytes) != 0) {
             audio_decode_errors_total++;
             ret = -1;
@@ -2093,8 +1705,8 @@ static bool ensure_video_texture(int width, int height, Uint32 format) {
         texture_height = 0;
         texture_format = 0;
     }
-    video_texture = SDL_CreateTexture(sdl_renderer, format, SDL_TEXTUREACCESS_STREAMING, width,
-                                      height);
+    video_texture =
+        SDL_CreateTexture(sdl_renderer, format, SDL_TEXTUREACCESS_STREAMING, width, height);
     if (video_texture == NULL) {
         media_set_error("SDL_CreateTexture(%s %dx%d): %s",
                         format == SDL_PIXELFORMAT_NV12 ? "NV12" : "IYUV", width, height,
@@ -2110,17 +1722,17 @@ static bool ensure_video_texture(int width, int height, Uint32 format) {
 }
 
 static bool draw_frame_to_sdl(const AVFrame *frame) {
-    if (!sdl_ready || sdl_renderer == NULL || frame == NULL ||
-        frame->width <= 0 || frame->height <= 0) {
+    if (!sdl_ready || sdl_renderer == NULL || frame == NULL || frame->width <= 0 ||
+        frame->height <= 0) {
         return false;
     }
     if (frame->format != AV_PIX_FMT_YUV420P && frame->format != AV_PIX_FMT_NV12) {
         media_set_error("unsupported present format: %d", frame->format);
         return false;
     }
-    Uint32 wanted_format = frame->format == AV_PIX_FMT_NV12 && !nv12_texture_failed ?
-                               SDL_PIXELFORMAT_NV12 :
-                               SDL_PIXELFORMAT_IYUV;
+    Uint32 wanted_format = frame->format == AV_PIX_FMT_NV12 && !nv12_texture_failed
+                               ? SDL_PIXELFORMAT_NV12
+                               : SDL_PIXELFORMAT_IYUV;
     if (!ensure_video_texture(frame->width, frame->height, wanted_format)) {
         if (wanted_format == SDL_PIXELFORMAT_NV12) {
             nv12_texture_failed = true;
@@ -2150,15 +1762,15 @@ static bool draw_frame_to_sdl(const AVFrame *frame) {
             av_frame_free(&converted);
             return false;
         }
-        sws = sws_getCachedContext(sws, frame->width, frame->height, frame->format,
-                                   frame->width, frame->height, AV_PIX_FMT_YUV420P,
-                                   SWS_BILINEAR, NULL, NULL, NULL);
-        if (sws == NULL) {
+        upload_sws = sws_getCachedContext(upload_sws, frame->width, frame->height, frame->format,
+                                          frame->width, frame->height, AV_PIX_FMT_YUV420P,
+                                          SWS_BILINEAR, NULL, NULL, NULL);
+        if (upload_sws == NULL) {
             av_frame_free(&converted);
             return false;
         }
         uint64_t convert_start = media_monotonic_us();
-        sws_scale(sws, (const uint8_t *const *)frame->data, frame->linesize, 0,
+        sws_scale(upload_sws, (const uint8_t *const *)frame->data, frame->linesize, 0,
                   frame->height, converted->data, converted->linesize);
         uint32_t convert_us = elapsed_us(convert_start, media_monotonic_us());
         pthread_mutex_lock(&state_lock);
@@ -2203,12 +1815,13 @@ static bool draw_frame_to_sdl(const AVFrame *frame) {
     }
     uint32_t upload_us = elapsed_us(upload_start, media_monotonic_us());
     pthread_mutex_lock(&state_lock);
+    snapshot.upload_samples++;
     add_timing(&snapshot.upload_us_total, &snapshot.upload_us_max, upload_us);
     pthread_mutex_unlock(&state_lock);
 
     int w = SDL_WIDTH;
     int h = SDL_HEIGHT;
-    SDL_GetWindowSize(sdl_window, &w, &h);
+    /* Rendering and hit testing share the 1280x720 logical canvas. */
 
     SDL_SetRenderDrawColor(sdl_renderer, 0, 0, 0, 255);
     SDL_RenderClear(sdl_renderer);
@@ -2225,13 +1838,15 @@ static bool draw_frame_to_sdl(const AVFrame *frame) {
     }
 
     SDL_Rect dst = {(w - dst_w) / 2, (h - dst_h) / 2, dst_w, dst_h};
+    video_rect = dst;
     uint64_t present_start = media_monotonic_us();
     if (SDL_RenderCopy(sdl_renderer, video_texture, NULL, &dst) != 0) {
         media_set_error("SDL_RenderCopy: %s", SDL_GetError());
         av_frame_free(&converted);
         return false;
     }
-    draw_ui_overlay();
+    if (draw_hook)
+        draw_hook(sdl_renderer, hook_context);
     SDL_RenderPresent(sdl_renderer);
     uint32_t present_us = elapsed_us(present_start, media_monotonic_us());
     pthread_mutex_lock(&state_lock);
@@ -2241,24 +1856,33 @@ static bool draw_frame_to_sdl(const AVFrame *frame) {
     return true;
 }
 
-static bool should_draw_idle(void) {
-    pthread_mutex_lock(&state_lock);
-    bool idle = !snapshot.video_active && !snapshot.first_frame_displayed;
-    pthread_mutex_unlock(&state_lock);
-    return idle;
-}
-
 void stream_media_present(void) {
     if (!sdl_ready) {
         return;
     }
 
     pump_sdl_events();
+    if (atomic_exchange(&clear_texture, false)) {
+        SDL_DestroyTexture(video_texture);
+        video_texture = NULL;
+        texture_width = texture_height = 0;
+        texture_format = 0;
+    }
 
     /* Input delta flush moved to dedicated 8ms thread (hid_flush_thread_fn).
      * Present loop only handles rendering and event pump; input timing is
      * decoupled from vsync (matches official 125Hz dedicated thread). */
 
+    if (pthread_mutex_trylock(&present_lock) != 0) {
+        SDL_SetRenderDrawColor(sdl_renderer, 0, 0, 0, 255);
+        SDL_RenderClear(sdl_renderer);
+        if (video_texture)
+            SDL_RenderCopy(sdl_renderer, video_texture, NULL, &video_rect);
+        if (draw_hook)
+            draw_hook(sdl_renderer, hook_context);
+        SDL_RenderPresent(sdl_renderer);
+        return;
+    }
     uint16_t frame_id = 0;
     uint64_t frame_submit_us = 0;
     uint64_t frame_latch_us = 0;
@@ -2266,34 +1890,36 @@ void stream_media_present(void) {
     AVFrame *frame = take_frame(&frame_id, &frame_submit_us, &frame_latch_us);
     bool displayed = false;
     if (frame != NULL && stats_session != NULL) {
-        IHS_SessionReportVideoFrameStage(stats_session, frame_id,
-                                         IHS_VideoFrameStageUploadBegin, 0);
+        IHS_SessionReportVideoFrameStage(stats_session, frame_id, IHS_VideoFrameStageUploadBegin,
+                                         0);
     }
 
-    if (frame == NULL && should_draw_idle()) {
-        draw_idle_indicator();
-    } else {
-        displayed = draw_frame_to_sdl(frame);
+    displayed = draw_frame_to_sdl(frame);
+    if (!displayed) {
+        SDL_SetRenderDrawColor(sdl_renderer, 0, 0, 0, 255);
+        SDL_RenderClear(sdl_renderer);
+        if (video_texture)
+            SDL_RenderCopy(sdl_renderer, video_texture, NULL, &video_rect);
+        if (draw_hook)
+            draw_hook(sdl_renderer, hook_context);
+        SDL_RenderPresent(sdl_renderer);
     }
 
     if (frame != NULL && stats_session != NULL) {
-        IHS_SessionReportVideoFrameStage(stats_session, frame_id,
-                                         IHS_VideoFrameStageUploadEnd, 0);
-        IHS_SessionReportVideoFrameComplete(
-            stats_session, frame_id,
-            displayed ? IHS_VideoFrameResultDisplayed : IHS_VideoFrameResultDroppedLate);
+        IHS_SessionReportVideoFrameStage(stats_session, frame_id, IHS_VideoFrameStageUploadEnd, 0);
+        IHS_SessionReportVideoFrameComplete(stats_session, frame_id,
+                                            displayed ? IHS_VideoFrameResultDisplayed
+                                                      : IHS_VideoFrameResultDroppedLate);
     }
 
     if (displayed) {
         uint64_t displayed_us = media_monotonic_us();
-        uint32_t wait_us =
-            frame_latch_us != 0 && take_us > frame_latch_us
-                ? (uint32_t)elapsed_us(frame_latch_us, take_us)
-                : 0;
-        uint32_t e2e_us =
-            frame_submit_us != 0 && displayed_us > frame_submit_us
-                ? (uint32_t)elapsed_us(frame_submit_us, displayed_us)
-                : 0;
+        uint32_t wait_us = frame_latch_us != 0 && take_us > frame_latch_us
+                               ? (uint32_t)elapsed_us(frame_latch_us, take_us)
+                               : 0;
+        uint32_t e2e_us = frame_submit_us != 0 && displayed_us > frame_submit_us
+                              ? (uint32_t)elapsed_us(frame_submit_us, displayed_us)
+                              : 0;
         pthread_mutex_lock(&state_lock);
         bool first = !snapshot.first_frame_displayed;
         snapshot.first_frame_displayed = true;
@@ -2307,10 +1933,11 @@ void stream_media_present(void) {
         add_timing(&snapshot.frame_e2e_us_total, &snapshot.frame_e2e_us_max, e2e_us);
         pthread_mutex_unlock(&state_lock);
         if (first) {
-            media_logf("first frame displayed: id=%u size=%dx%d fmt=%d", frame_id,
-                       frame->width, frame->height, frame->format);
+            media_logf("first frame displayed: id=%u size=%dx%d fmt=%d", frame_id, frame->width,
+                       frame->height, frame->format);
         }
     }
+    pthread_mutex_unlock(&present_lock);
 }
 
 void stream_media_get_snapshot(stream_media_snapshot *out) {
@@ -2352,7 +1979,6 @@ void stream_media_get_snapshot(stream_media_snapshot *out) {
     snapshot.audio_codec = audio_snap_codec;
     snapshot.audio_channels = audio_snap_channels;
     snapshot.audio_frequency = audio_snap_frequency;
-#if NSTREAMLINK_APP
     snapshot.hid_events = hid_events_total;
     snapshot.hid_send_ok = hid_send_ok_total;
     snapshot.hid_send_fail = hid_send_fail_total;
@@ -2364,10 +1990,9 @@ void stream_media_get_snapshot(stream_media_snapshot *out) {
     snapshot.hid_marker_minus_raw_held = hid_marker_minus_raw_held;
     snapshot.hid_marker_minus_sdl_samples_total = hid_marker_minus_sdl_samples_total;
     snapshot.hid_marker_minus_raw_samples_total = hid_marker_minus_raw_samples_total;
-    IHS_SessionGetReliabilityStats(hid_session, &snapshot.reliability);
+    /* Protocol statistics are sampled by runtime owner, never while holding this UI lock. */
     strncpy(snapshot.hid_style_state, hid_style_last, sizeof(snapshot.hid_style_state) - 1);
     snapshot.hid_style_state[sizeof(snapshot.hid_style_state) - 1] = '\0';
-#endif
     *out = snapshot;
     pthread_mutex_unlock(&state_lock);
 }
@@ -2376,7 +2001,6 @@ size_t stream_media_copy_hid_history(stream_media_hid_history_entry *out, size_t
     if (out == NULL || max_entries == 0) {
         return 0;
     }
-#if NSTREAMLINK_APP
     if (max_entries > HID_HISTORY_CAP) {
         max_entries = HID_HISTORY_CAP;
     }
@@ -2388,11 +2012,6 @@ size_t stream_media_copy_hid_history(stream_media_hid_history_entry *out, size_t
     }
     pthread_mutex_unlock(&state_lock);
     return count;
-#else
-    (void)out;
-    (void)max_entries;
-    return 0;
-#endif
 }
 
 void stream_media_format_hid_history(char *out, size_t out_len, uint32_t max_entries) {
@@ -2400,7 +2019,6 @@ void stream_media_format_hid_history(char *out, size_t out_len, uint32_t max_ent
         return;
     }
     out[0] = '\0';
-#if NSTREAMLINK_APP
     if (max_entries == 0 || max_entries > HID_HISTORY_CAP) {
         max_entries = HID_HISTORY_CAP;
     }
@@ -2422,22 +2040,18 @@ void stream_media_format_hid_history(char *out, size_t out_len, uint32_t max_ent
     }
     for (uint32_t i = 0; i < count; i++) {
         const stream_media_hid_history_entry *e = &entries[i];
-        int written = snprintf(out + used, out_len - used,
-                               " | #%u t=%u e=%u ok=%u f=%u h=%u p=%u ax=%u btn=%u sen=%u oth=%u sup=%u raw=%u/%u sty=%u:%s sticks=%d/%d/%d/%d b=0x%x minus=%u/%u/%u/%u tot=%u/%u/%u/%u/%u last=%d/%d/%d/%d",
-                               e->seq, e->sec, e->events, e->send_ok,
-                               e->send_fail, e->state_full, e->pump, e->ax,
-                               e->btn, e->sen, e->oth, e->ev_sup,
-                               e->raw_ax, e->raw_btn, e->sty_fl,
-                               e->sty[0] ? e->sty : "-", e->left_x, e->left_y,
-                               e->right_x, e->right_y, e->buttons,
-                               e->marker_minus_sdl_held,
-                               e->marker_minus_sdl_samples,
-                               e->marker_minus_raw_held,
-                               e->marker_minus_raw_samples, e->events_total,
-                               e->send_ok_total, e->state_full_total,
-                               e->raw_ax_total, e->raw_btn_total,
-                               e->last_type, e->last_which, e->last_code,
-                               e->last_value);
+        int written =
+            snprintf(out + used, out_len - used,
+                     " | #%u t=%u e=%u ok=%u f=%u h=%u p=%u ax=%u btn=%u sen=%u oth=%u sup=%u "
+                     "raw=%u/%u sty=%u:%s sticks=%d/%d/%d/%d b=0x%x minus=%u/%u/%u/%u "
+                     "tot=%u/%u/%u/%u/%u last=%d/%d/%d/%d",
+                     e->seq, e->sec, e->events, e->send_ok, e->send_fail, e->state_full, e->pump,
+                     e->ax, e->btn, e->sen, e->oth, e->ev_sup, e->raw_ax, e->raw_btn, e->sty_fl,
+                     e->sty[0] ? e->sty : "-", e->left_x, e->left_y, e->right_x, e->right_y,
+                     e->buttons, e->marker_minus_sdl_held, e->marker_minus_sdl_samples,
+                     e->marker_minus_raw_held, e->marker_minus_raw_samples, e->events_total,
+                     e->send_ok_total, e->state_full_total, e->raw_ax_total, e->raw_btn_total,
+                     e->last_type, e->last_which, e->last_code, e->last_value);
         if (written < 0) {
             break;
         }
@@ -2447,17 +2061,121 @@ void stream_media_format_hid_history(char *out, size_t out_len, uint32_t max_ent
         }
         used += (size_t)written;
     }
-#else
-    snprintf(out, out_len, "hidlog disabled");
-#endif
 }
 
-void stream_media_set_ui(const stream_media_ui *ui) {
+int stream_media_video_start(IHS_Session *session, const IHS_StreamVideoConfig *config) {
+    pthread_mutex_lock(&present_lock);
+    pthread_mutex_lock(&decoder_lock);
+    int ret = video_start_locked(session, config);
+    pthread_mutex_unlock(&decoder_lock);
+    pthread_mutex_unlock(&present_lock);
+    return ret;
+}
+IHS_StreamVideoSubmitResult stream_media_video_submit(IHS_Session *session, uint16_t id,
+                                                      IHS_Buffer *data,
+                                                      IHS_StreamVideoFrameFlag flags) {
+    pthread_mutex_lock(&decoder_lock);
+    IHS_StreamVideoSubmitResult ret = video_submit_locked(session, id, data, flags);
+    pthread_mutex_unlock(&decoder_lock);
+    return ret;
+}
+void stream_media_video_stop(IHS_Session *session) {
+    pthread_mutex_lock(&present_lock);
+    pthread_mutex_lock(&decoder_lock);
+    video_stop_locked(session);
+    pthread_mutex_unlock(&decoder_lock);
+    pthread_mutex_unlock(&present_lock);
+}
+void sl_media_hooks(void (*draw)(void *, void *), void (*event)(const void *, void *),
+                    void *context) {
+    draw_hook = draw;
+    event_hook = event;
+    hook_context = context;
+}
+void *sl_media_renderer(void) {
+    return sdl_renderer;
+}
+void sl_media_mute(bool mute) {
+    atomic_store(&muted, mute);
+}
+void sl_media_gate(bool enabled) {
+    if (atomic_load(&input_gate) == enabled)
+        return;
     pthread_mutex_lock(&state_lock);
-    if (ui != NULL) {
-        ui_state = *ui;
-    } else {
-        memset(&ui_state, 0, sizeof(ui_state));
+    if (input_gate && !enabled && hid_session)
+        IHS_HIDResetSDLGameControllers(hid_session);
+    input_gate = enabled;
+    pthread_mutex_unlock(&state_lock);
+}
+void sl_media_neutral(void *context) {
+    (void)context;
+    sl_media_gate(false);
+}
+void sl_media_input(const sl_input_event *e, void *context) {
+    (void)context;
+    pthread_mutex_lock(&state_lock);
+    IHS_Session *session = hid_session;
+    if (!session) {
+        pthread_mutex_unlock(&state_lock);
+        return;
     }
+    if (e->type == SL_TOUCH_DOWN || e->type == SL_TOUCH_MOVE || e->type == SL_TOUCH_UP) {
+        float x = (e->x * 1280 - video_rect.x) / (video_rect.w ? video_rect.w : 1280);
+        float y = (e->y * 720 - video_rect.y) / (video_rect.h ? video_rect.h : 720);
+        int slot = -1;
+        for (int i = 0; i < 8; ++i)
+            if (remote_touches[i].active && remote_touches[i].id == e->finger)
+                slot = i;
+        if (e->type == SL_TOUCH_DOWN) {
+            if (x < 0 || x > 1 || y < 0 || y > 1 || !input_gate) {
+                pthread_mutex_unlock(&state_lock);
+                return;
+            }
+            for (int i = 0; i < 8; ++i)
+                if (!remote_touches[i].active) {
+                    slot = i;
+                    break;
+                }
+            if (slot >= 0 && IHS_SessionSendTouchDown(session, e->finger, x, y)) {
+                remote_touches[slot].active = true;
+                remote_touches[slot].id = e->finger;
+            }
+        } else if (slot >= 0) {
+            x = x < 0 ? 0 : x > 1 ? 1 : x;
+            y = y < 0 ? 0 : y > 1 ? 1 : y;
+            if (e->type == SL_TOUCH_MOVE && input_gate)
+                IHS_SessionSendTouchMotion(session, e->finger, x, y);
+            if (e->type == SL_TOUCH_UP) {
+                IHS_SessionSendTouchUp(session, e->finger, x, y);
+                remote_touches[slot].active = false;
+            }
+        }
+    } else if (input_gate) {
+        SDL_Event event = {0};
+        if (e->type == SL_BUTTON) {
+            event.type = e->value ? SDL_CONTROLLERBUTTONDOWN : SDL_CONTROLLERBUTTONUP;
+            event.cbutton.which = hid_controller_id;
+            event.cbutton.button = e->code;
+            event.cbutton.state = e->value ? SDL_PRESSED : SDL_RELEASED;
+        }
+        if (e->type == SL_AXIS) {
+            event.type = SDL_CONTROLLERAXISMOTION;
+            event.caxis.which = hid_controller_id;
+            event.caxis.axis = e->code;
+            event.caxis.value = e->value;
+        }
+        if (event.type) {
+            if (IHS_HIDHandleSDLEvent(session, &event))
+                hid_events_total++;
+            if (e->immediate)
+                IHS_HIDFlushSDLGameControllers(session);
+        }
+    }
+    pthread_mutex_unlock(&state_lock);
+}
+
+void sl_media_submitted(const IHS_HIDSDLLastSubmitted *value) {
+    pthread_mutex_lock(&state_lock);
+    submitted_cache = *value;
     pthread_mutex_unlock(&state_lock);
 }

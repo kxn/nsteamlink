@@ -1,25 +1,21 @@
 #pragma once
 
+#include "input/input_router.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
-#include <ihslib/buffer.h>
 #include <ihslib/audio.h>
+#include <ihslib/buffer.h>
 #include <ihslib/session.h>
 #include <ihslib/video.h>
 
-#ifndef NSTREAMLINK_APP
-#define NSTREAMLINK_APP 0
-#endif
-
-#if NSTREAMLINK_APP
 #include <ihslib/hid/sdl.h>
-#endif
 
 typedef void (*stream_media_log_fn)(const char *message);
 
 typedef struct stream_media_snapshot {
+    uint64_t video_epoch;
     bool available;
     bool video_active;
     bool first_frame_displayed;
@@ -36,6 +32,7 @@ typedef struct stream_media_snapshot {
     uint64_t transfer_us_total;
     uint64_t convert_us_total;
     uint64_t upload_us_total;
+    uint32_t upload_samples;
     uint64_t present_us_total;
     uint32_t decode_us_max;
     uint32_t transfer_us_max;
@@ -94,16 +91,6 @@ typedef struct stream_media_snapshot {
     char last_error[128];
 } stream_media_snapshot;
 
-#define STREAM_MEDIA_UI_LINES 8
-#define STREAM_MEDIA_UI_TEXT  96
-
-typedef struct stream_media_ui {
-    bool visible;
-    bool dim_background;
-    char title[48];
-    char lines[STREAM_MEDIA_UI_LINES][STREAM_MEDIA_UI_TEXT];
-} stream_media_ui;
-
 typedef struct stream_media_hid_history_entry {
     uint32_t seq;
     uint32_t sec;
@@ -153,22 +140,28 @@ void stream_media_shutdown(void);
 bool stream_media_available(void);
 bool stream_media_exit_requested(void);
 void stream_media_set_hid_session(IHS_Session *session, bool enabled);
-#if NSTREAMLINK_APP
 IHS_HIDProvider *stream_media_create_hid_provider(void);
 void stream_media_destroy_hid_provider(IHS_HIDProvider *provider);
-#endif
 void stream_media_present(void);
 void stream_media_get_snapshot(stream_media_snapshot *out);
 size_t stream_media_copy_hid_history(stream_media_hid_history_entry *out, size_t max_entries);
 void stream_media_format_hid_history(char *out, size_t out_len, uint32_t max_entries);
-void stream_media_set_ui(const stream_media_ui *ui);
+void sl_media_hooks(void (*draw)(void *, void *), void (*event)(const void *, void *),
+                    void *context);
+void sl_media_gate(bool enabled);
+void sl_media_input(const sl_input_event *event, void *context);
+void sl_media_neutral(void *context);
+void sl_media_mute(bool mute);
+void *sl_media_renderer(void);
 
 int stream_media_video_start(IHS_Session *session, const IHS_StreamVideoConfig *config);
 IHS_StreamVideoSubmitResult stream_media_video_submit(IHS_Session *session, uint16_t frame_id,
-                                                     IHS_Buffer *data,
-                                                     IHS_StreamVideoFrameFlag flags);
+                                                      IHS_Buffer *data,
+                                                      IHS_StreamVideoFrameFlag flags);
 void stream_media_video_stop(IHS_Session *session);
 
 int stream_media_audio_start(IHS_Session *session, const IHS_StreamAudioConfig *config);
 int stream_media_audio_submit(IHS_Session *session, IHS_Buffer *data);
 void stream_media_audio_stop(IHS_Session *session);
+
+void sl_media_submitted(const IHS_HIDSDLLastSubmitted *value);
