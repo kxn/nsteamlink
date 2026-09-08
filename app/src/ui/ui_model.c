@@ -4,6 +4,7 @@
 #include <string.h>
 
 static void page(sl_ui_model *m, sl_page p) {
+    m->leaving = false;
     m->page = p;
     m->focus = 0;
     m->entered_at = m->now;
@@ -15,10 +16,34 @@ static void push(sl_ui_model *m, sl_page p) {
     }
     page(m, p);
 }
-static void back(sl_ui_model *m) {
+static void back_now(sl_ui_model *m) {
     int focus = m->depth ? m->focus_stack[m->depth - 1] : 0;
     page(m, m->depth ? m->stack[--m->depth] : (m->streaming ? SL_STREAM : SL_HOME));
     m->focus = focus;
+    /* The parent was already visible beneath the departing overlay. */
+    m->entered_at = m->now >= 220 ? m->now - 220 : 0;
+}
+float sl_ui_overlay_opacity(const sl_ui_model *m) {
+    uint64_t start = m->page == SL_PAIRING ? m->pair_code_at + 1800 : m->entered_at;
+    float t = m->now >= start ? (m->now - start) / 220.f : 0.f;
+    if (t > 1.f)
+        t = 1.f;
+    float value = 1.f - (1.f - t) * (1.f - t) * (1.f - t);
+    if (m->leaving) {
+        t = m->now >= m->leave_at ? (m->now - m->leave_at) / 160.f : 0.f;
+        if (t > 1.f)
+            t = 1.f;
+        value = m->leave_opacity * (1.f - t * t);
+    }
+    return value;
+}
+static void back(sl_ui_model *m) {
+    if (m->layout.dialog) {
+        m->leave_opacity = sl_ui_overlay_opacity(m);
+        m->leave_at = m->now;
+        m->leaving = true;
+    } else
+        back_now(m);
 }
 static sl_host *selected(sl_ui_model *m) {
     int i = m->store.registry.selected;
@@ -61,6 +86,8 @@ void sl_ui_stopped(sl_ui_model *m, bool unexpected) {
 }
 void sl_ui_tick(sl_ui_model *m, uint64_t now) {
     m->now = now;
+    if (m->leaving && now >= m->leave_at + 160)
+        back_now(m);
     sl_ui_layout(m);
 }
 bool sl_ui_take_command(sl_ui_model *m, sl_command *out) {
@@ -119,7 +146,7 @@ static void move(sl_ui_model *m, sl_action direction) {
         m->focus = best;
 }
 void sl_ui_action(sl_ui_model *m, sl_action a, int arg) {
-    if (m->page == SL_CLOSING)
+    if (m->page == SL_CLOSING || m->leaving)
         return;
     if (a >= SL_LEFT && a <= SL_DOWN) {
         move(m, a);
@@ -293,6 +320,8 @@ void sl_ui_action(sl_ui_model *m, sl_action a, int arg) {
     sl_ui_layout(m);
 }
 int sl_ui_hit(const sl_layout *l, int x, int y) {
+    x -= l->offset_x;
+    y -= l->offset_y;
     for (int i = l->count - 1; i >= 0; --i) {
         const sl_control *c = &l->controls[i];
         if (x >= c->x && y >= c->y && x < c->x + c->w && y < c->y + c->h)
@@ -301,6 +330,8 @@ int sl_ui_hit(const sl_layout *l, int x, int y) {
     return 0;
 }
 void sl_ui_activate(sl_ui_model *m, int id) {
+    if (m->leaving)
+        return;
     for (int i = 0; i < m->layout.count; ++i)
         if (m->layout.controls[i].id == id) {
             sl_control c = m->layout.controls[i];

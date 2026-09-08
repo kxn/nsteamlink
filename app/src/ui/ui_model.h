@@ -94,7 +94,9 @@ typedef struct sl_layout {
     int count;
     sl_label labels[16];
     int label_count;
-    bool fullscreen, dialog;
+    bool fullscreen, dialog, drawer, compact;
+    int panel_x, panel_y, panel_w, panel_h, offset_x, offset_y;
+    float opacity;
     char title[128];
 } sl_layout;
 typedef struct sl_ui_model {
@@ -103,7 +105,9 @@ typedef struct sl_ui_model {
     int focus_stack[8];
     bool repair_attempted;
     int depth;
-    bool streaming, debug, network_ok, closing;
+    bool streaming, debug, network_ok, closing, leaving;
+    uint64_t leave_at;
+    float leave_opacity;
     int focus;
     uint64_t now, generation, entered_at, stream_started_at, pair_code_at;
     sl_command intent, command;
@@ -123,3 +127,5 @@ void sl_ui_activate(sl_ui_model *m, int id);
 bool sl_ui_remote(const sl_ui_model *m);
 
 bool sl_ui_pair_prompt_visible(const sl_ui_model *model);
+
+float sl_ui_overlay_opacity(const sl_ui_model *model);

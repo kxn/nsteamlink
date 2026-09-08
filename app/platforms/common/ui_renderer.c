@@ -18,30 +18,38 @@ struct sl_ui_renderer {
     TTF_Font *fonts[3][9];
     glyph cache[512];
     uint64_t tick;
-    SDL_Texture *backdrop, *outline;
+    SDL_Texture *backdrop, *outline, *overlay;
+    sl_ui_model *base_ui;
     float text_alpha;
     bool painted, focus_valid;
     sl_page page;
     int focus_id;
-    uint64_t focus_at, page_at;
+    uint64_t focus_at;
     SDL_FRect focus_from, focus_to, focus_box;
 };
-static SDL_Color bg = {17, 24, 35, 255}, panel = {29, 39, 53, 255}, accent = {117, 207, 247, 255},
-                 fg = {232, 242, 250, 255}, muted = {169, 194, 212, 255};
+static SDL_Color bg = {18, 20, 25, 255}, panel = {32, 35, 42, 255}, accent = {114, 199, 242, 255},
+                 fg = {239, 242, 246, 255}, muted = {162, 170, 184, 255},
+                 green = {154, 218, 104, 255}, amber = {241, 190, 104, 255},
+                 violet = {179, 158, 238, 255}, coral = {239, 130, 130, 255};
 static void rect(SDL_Renderer *r, SDL_Rect box, SDL_Color c) {
     SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
     SDL_RenderFillRect(r, &box);
 }
 static void rounded(SDL_Renderer *r, SDL_Rect b, int radius, SDL_Color c) {
     rect(r, (SDL_Rect){b.x, b.y + radius, b.w, b.h - 2 * radius}, c);
-    SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
     for (int y = 0; y < radius; ++y) {
-        int x = 0, dy = radius - y - 1;
-        while ((x + 1) * (x + 1) + dy * dy <= radius * radius)
-            ++x;
-        SDL_RenderDrawLine(r, b.x + radius - x, b.y + y, b.x + b.w - radius + x - 1, b.y + y);
-        SDL_RenderDrawLine(r, b.x + radius - x, b.y + b.h - y - 1, b.x + b.w - radius + x - 1,
+        float dy = radius - y - .5f;
+        float edge = radius - sqrtf(radius * radius - dy * dy);
+        int inset = (int)edge;
+        SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
+        SDL_RenderDrawLine(r, b.x + inset + 1, b.y + y, b.x + b.w - inset - 2, b.y + y);
+        SDL_RenderDrawLine(r, b.x + inset + 1, b.y + b.h - y - 1, b.x + b.w - inset - 2,
                            b.y + b.h - y - 1);
+        SDL_SetRenderDrawColor(r, c.r, c.g, c.b, (Uint8)(c.a * (1.f - edge + inset)));
+        SDL_RenderDrawPoint(r, b.x + inset, b.y + y);
+        SDL_RenderDrawPoint(r, b.x + b.w - inset - 1, b.y + y);
+        SDL_RenderDrawPoint(r, b.x + inset, b.y + b.h - y - 1);
+        SDL_RenderDrawPoint(r, b.x + b.w - inset - 1, b.y + b.h - y - 1);
     }
 }
 static float ease(uint64_t elapsed, float duration) {
@@ -85,9 +93,11 @@ static SDL_Texture *make_backdrop(SDL_Renderer *r) {
             if (glow < 0)
                 glow = 0;
             Uint8 *p = (Uint8 *)s->pixels + y * s->pitch + x * 4;
-            p[0] = 15 + 9 * glow;
-            p[1] = 21 + 17 * glow;
-            p[2] = 30 + 23 * glow;
+            float wx = (x - 1120) / 720.f, wy = (y - 560) / 580.f;
+            float warm = fmaxf(0.f, 1.f - wx * wx - wy * wy);
+            p[0] = 17 + 7 * glow + 17 * warm;
+            p[1] = 20 + 13 * glow + 8 * warm;
+            p[2] = 26 + 21 * glow + 11 * warm;
             p[3] = 255;
         }
     SDL_Texture *texture = SDL_CreateTextureFromSurface(r, s);
@@ -118,7 +128,7 @@ static SDL_Texture *make_outline(SDL_Renderer *r) {
 static void outline(sl_ui_renderer *r, SDL_Rect b) {
     if (!r->outline)
         return;
-    SDL_SetTextureColorMod(r->outline, accent.r, accent.g, accent.b);
+    SDL_SetTextureColorMod(r->outline, fg.r, fg.g, fg.b);
     const int source[] = {0, 16, 48, 64};
     int xs[] = {b.x, b.x + 16, b.x + b.w - 16, b.x + b.w};
     int ys[] = {b.y, b.y + 16, b.y + b.h - 16, b.y + b.h};
@@ -136,7 +146,6 @@ static void animate_focus(sl_ui_renderer *r, const sl_ui_model *m) {
     bool page_changed = !r->painted || r->page != m->page;
     if (page_changed) {
         r->page = m->page;
-        r->page_at = m->now;
         r->focus_valid = false;
     }
     r->painted = true;
@@ -346,7 +355,7 @@ static int centered_y(sl_ui_renderer *r, const char *s, int size, int y, int hei
 static void badge(sl_ui_renderer *r, const char *key, int x, int y, SDL_Color ink) {
     SDL_Rect b = {x, y, 34, 34};
     rounded(r->renderer, b, 17, ink);
-    SDL_Color dark = bg;
+    SDL_Color dark = ink.r < 80 ? fg : bg;
     dark.a = ink.a;
     draw_text(r, key, x + (34 - text_width(r, key, 24)) / 2, centered_y(r, key, 24, y, 34, 34), 34,
               44, 24, dark);
@@ -356,6 +365,73 @@ static void chevron(SDL_Renderer *r, int x, int y, SDL_Color c) {
     for (int k = 0; k < 2; ++k) {
         SDL_RenderDrawLine(r, x + k, y - 6, x + 6 + k, y);
         SDL_RenderDrawLine(r, x + 6 + k, y, x + k, y + 6);
+    }
+}
+static SDL_Color action_color(sl_action a) {
+    switch (a) {
+    case SL_START:
+    case SL_RECENT:
+    case SL_BACK:
+        return green;
+    case SL_OPEN_SETTINGS:
+    case SL_OPEN_QUALITY:
+    case SL_SET_QUALITY:
+        return violet;
+    case SL_OPEN_HOTKEY:
+    case SL_OPEN_MANUAL:
+        return amber;
+    case SL_OPEN_FORGET:
+    case SL_CONFIRM_FORGET:
+    case SL_CONFIRM_STOP:
+        return coral;
+    default:
+        return accent;
+    }
+}
+/* Native two-pixel pictograms, sharing the same 28px optical box. */
+static void action_icon(SDL_Renderer *r, sl_action a, int x, int y, SDL_Color c) {
+    if (a == SL_BACK || a == SL_START || a == SL_RECENT) {
+        play_icon(r, x + 7, y + 14, 19, c);
+    } else if (a == SL_OPEN_SETTINGS || a == SL_OPEN_ADVANCED || a == SL_SET_QUALITY) {
+        for (int i = 0; i < 3; ++i) {
+            int yy = y + 6 + i * 8, xx = x + (i == 1 ? 17 : 9);
+            line(r, x + 3, yy, x + 27, yy, c);
+            rounded(r, (SDL_Rect){xx - 2, yy - 3, 5, 8}, 2, c);
+        }
+    } else if (a == SL_OPEN_FORGET || a == SL_CONFIRM_FORGET) {
+        line(r, x + 4, y + 6, x + 26, y + 6, c);
+        line(r, x + 11, y + 2, x + 19, y + 2, c);
+        line(r, x + 7, y + 10, x + 9, y + 26, c);
+        line(r, x + 23, y + 10, x + 21, y + 26, c);
+        line(r, x + 9, y + 26, x + 21, y + 26, c);
+    } else if (a == SL_OPEN_DISCONNECT || a == SL_CONFIRM_STOP || a == SL_CONFIRM_EXIT) {
+        line(r, x + 14, y + 2, x + 14, y + 15, c);
+        for (int i = 0; i < 25; ++i) {
+            float u = (50 + i * 260.f / 25) * 3.14159265f / 180;
+            float v = (50 + (i + 1) * 260.f / 25) * 3.14159265f / 180;
+            line(r, x + 14 + 11 * sinf(u), y + 15 - 11 * cosf(u), x + 14 + 11 * sinf(v),
+                 y + 15 - 11 * cosf(v), c);
+        }
+    } else if (a == SL_SOUND) {
+        line(r, x + 3, y + 10, x + 9, y + 10, c);
+        line(r, x + 3, y + 18, x + 9, y + 18, c);
+        line(r, x + 3, y + 10, x + 3, y + 18, c);
+        line(r, x + 9, y + 10, x + 16, y + 4, c);
+        line(r, x + 9, y + 18, x + 16, y + 24, c);
+        line(r, x + 16, y + 4, x + 16, y + 24, c);
+        line(r, x + 23, y + 8, x + 27, y + 14, c);
+        line(r, x + 27, y + 14, x + 23, y + 20, c);
+    } else if (a == SL_OPEN_QUALITY || a == SL_OPEN_INFO || a == SL_OPEN_MANUAL) {
+        monitor(r, x + 1, y + 3, 28, c);
+    } else if (a == SL_OPEN_HOTKEY) {
+        rounded(r, (SDL_Rect){x, y + 5, 30, 20}, 6, c);
+        line(r, x + 5, y + 14, x + 11, y + 14, bg);
+        line(r, x + 21, y + 11, x + 21, y + 18, bg);
+        line(r, x + 18, y + 14, x + 24, y + 14, bg);
+    } else {
+        rounded(r, (SDL_Rect){x + 2, y + 2, 26, 26}, 13, c);
+        line(r, x + 14, y + 7, x + 14, y + 9, bg);
+        line(r, x + 14, y + 13, x + 14, y + 22, bg);
     }
 }
 sl_ui_renderer *sl_ui_renderer_create(void *native) {
@@ -370,6 +446,11 @@ sl_ui_renderer *sl_ui_renderer_create(void *native) {
     r->backdrop = make_backdrop(r->renderer);
     r->outline = make_outline(r->renderer);
     r->text_alpha = 1.f;
+    r->base_ui = calloc(1, sizeof(*r->base_ui));
+    r->overlay = SDL_CreateTexture(r->renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET,
+                                   1280, 720);
+    if (r->overlay)
+        SDL_SetTextureBlendMode(r->overlay, SDL_BLENDMODE_BLEND);
     for (int f = 0; f < 3; ++f) {
         size_t bytes;
         const char *path;
@@ -381,31 +462,54 @@ sl_ui_renderer *sl_ui_renderer_create(void *native) {
                 r->fonts[f][s] = TTF_OpenFont(path, sizes[s]);
         }
     }
-    if (!r->fonts[0][0] || !r->fonts[1][0]) {
+    if (!r->base_ui || !r->fonts[0][0] || !r->fonts[1][0]) {
         sl_ui_renderer_destroy(r);
         return NULL;
     }
     SDL_SetRenderDrawBlendMode(r->renderer, SDL_BLENDMODE_BLEND);
     return r;
 }
-void sl_ui_renderer_draw(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_snapshot *d) {
+static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_snapshot *d,
+                       bool focused_scene) {
     const sl_layout *l = &m->layout;
-    animate_focus(r, m);
-    float arrival = ease(m->now >= r->page_at ? m->now - r->page_at : 0, 180);
-    r->text_alpha = l->dialog ? .65f + .35f * arrival : 1.f;
-    if (!l->fullscreen) {
+    r->text_alpha = 1.f;
+    SDL_Texture *previous_target = SDL_GetRenderTarget(r->renderer);
+    SDL_Rect previous_viewport;
+    SDL_RenderGetViewport(r->renderer, &previous_viewport);
+    bool layer = false;
+    if (!l->fullscreen && !l->dialog) {
         if (r->backdrop)
             SDL_RenderCopy(r->renderer, r->backdrop, NULL, NULL);
         else
             rect(r->renderer, (SDL_Rect){0, 0, 1280, 720}, bg);
     }
     if (l->dialog) {
-        rect(r->renderer, (SDL_Rect){0, 0, 1280, 720}, (SDL_Color){0, 0, 0, 105 + 35 * arrival});
-        rounded(r->renderer, (SDL_Rect){268, 100, 744, 592}, 24, (SDL_Color){0, 0, 0, 80});
-        rounded(r->renderer, (SDL_Rect){271, 95, 738, 590}, 23, (SDL_Color){61, 77, 94, 255});
-        rounded(r->renderer, (SDL_Rect){272, 96, 736, 588}, 22,
-                mix(bg, panel, .8f + .2f * arrival));
-        rect(r->renderer, (SDL_Rect){320, 183, 640, 1}, (SDL_Color){67, 82, 101, 255});
+        rect(r->renderer, (SDL_Rect){0, 0, 1280, 720},
+             (SDL_Color){0, 0, 0, (Uint8)(130 * l->opacity)});
+        layer = r->overlay && SDL_SetRenderTarget(r->renderer, r->overlay) == 0;
+        if (layer) {
+            SDL_SetRenderDrawColor(r->renderer, 0, 0, 0, 0);
+            SDL_RenderClear(r->renderer);
+        } else {
+            SDL_Rect viewport = {l->offset_x, l->offset_y, 1280, 720};
+            SDL_RenderSetViewport(r->renderer, &viewport);
+            r->text_alpha = l->opacity;
+        }
+        SDL_Rect box = {l->panel_x, l->panel_y, l->panel_w, l->panel_h};
+        if (l->drawer) {
+            rect(r->renderer, box, panel);
+            rect(r->renderer, (SDL_Rect){box.x, 0, 1, 720}, (SDL_Color){77, 82, 94, 150});
+            rect(r->renderer, (SDL_Rect){784, 139, 456, 1}, (SDL_Color){59, 63, 73, 255});
+            draw_text(r, "NSteamLink", 784, 29, 440, 42, 24, muted);
+        } else {
+            for (int i = 20; i > 0; i -= 2)
+                rounded(r->renderer,
+                        (SDL_Rect){box.x - i, box.y - i + 8, box.w + i * 2, box.h + i * 2}, 16 + i,
+                        (SDL_Color){0, 0, 0, 6});
+            rounded(r->renderer, (SDL_Rect){box.x - 1, box.y - 1, box.w + 2, box.h + 2}, 17,
+                    (SDL_Color){73, 77, 86, 255});
+            rounded(r->renderer, box, 16, panel);
+        }
     }
     if (l->title[0]) {
         if (!l->dialog) {
@@ -421,8 +525,10 @@ void sl_ui_renderer_draw(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug
             draw_text(r, version, 1244 - w, centered_y(r, version, 24, 23, 34, w), w, 48, 24,
                       muted);
             rect(r->renderer, (SDL_Rect){52, 76, 1176, 1}, (SDL_Color){78, 103, 124, 60});
-        } else
-            draw_text(r, l->title, 320, 128, 640, 68, 40, fg);
+        } else {
+            int x = l->panel_x + 40, y = l->panel_y + (l->drawer ? 78 : 36);
+            draw_text(r, l->title, x, y, l->panel_w - 80, 68, l->drawer ? 36 : 40, fg);
+        }
     }
     if (m->page == SL_HOME && !m->layout.dialog) {
         const sl_host_registry *hosts = &m->store.registry;
@@ -430,8 +536,9 @@ void sl_ui_renderer_draw(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug
                                   ? &hosts->hosts[hosts->selected]
                                   : NULL;
         if (!host || !host->paired || !host->games[0].id) {
-            rounded(r->renderer, (SDL_Rect){596, 194, 88, 72}, 20, (SDL_Color){49, 81, 104, 75});
-            monitor(r->renderer, 615, 210, 50, muted);
+            SDL_Color state = !host ? accent : host->paired ? green : amber;
+            rounded(r->renderer, (SDL_Rect){588, 190, 104, 78}, 22, mix(bg, state, .13f));
+            monitor(r->renderer, 615, 208, 50, state);
         }
         rect(r->renderer, (SDL_Rect){52, 612, 1176, 1}, (SDL_Color){78, 103, 124, 45});
     }
@@ -444,7 +551,7 @@ void sl_ui_renderer_draw(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug
     }
     for (int i = 0; i < l->label_count; ++i) {
         const sl_label *t = &l->labels[i];
-        int x = t->x, width = l->dialog ? 960 - x : 1216 - x;
+        int x = t->x, width = l->dialog ? l->panel_x + l->panel_w - 40 - x : 1216 - x;
         if (t->center) {
             int measured = text_width(r, t->text, t->size);
             if (measured < 1152) {
@@ -452,7 +559,15 @@ void sl_ui_renderer_draw(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug
                 width = measured + 2;
             }
         }
-        if (!strcmp(t->text, "A  确认")) {
+        if (m->page == SL_PAIRING && t->size == 72 && m->pairing_code[0]) {
+            for (int digit = 0; digit < 4; ++digit) {
+                int dx = 430 + digit * 108;
+                rounded(r->renderer, (SDL_Rect){dx, 322, 96, 104}, 12, mix(panel, amber, .13f));
+                char value[] = {m->pairing_code[digit], 0};
+                draw_text(r, value, dx + (96 - text_width(r, value, 72)) / 2,
+                          centered_y(r, value, 72, 322, 104, 96), 96, 114, 72, amber);
+            }
+        } else if (!strcmp(t->text, "A  确认")) {
             badge(r, "A", x, 647, muted);
             draw_text(r, "确认", x + 48, centered_y(r, "确认", 26, 632, 64, width - 48), width - 48,
                       70, 26, fg);
@@ -465,39 +580,45 @@ void sl_ui_renderer_draw(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug
         bool tab = c->action == SL_SELECT_HOST;
         bool footer = c->label[0] && c->label[1] == ' ' && c->label[2] == ' ';
         bool shoulder = c->action == SL_PREV_HOST || c->action == SL_NEXT_HOST;
-        bool focused = c->id == m->focus;
+        bool focused = focused_scene && c->id == m->focus;
+        bool menu_row = l->drawer && !footer;
+        SDL_Color role = action_color(c->action);
+        if (c->action == SL_START &&
+            !m->store.registry
+                 .hosts[m->store.registry.selected >= 0 ? m->store.registry.selected : 0]
+                 .paired)
+            role = amber;
         bool plain = tab || footer || shoulder || (c->action == SL_START && !c->primary);
-        SDL_Color ink = c->primary && !tab ? bg : fg;
-        if (!plain || focused) {
-            if (!plain) {
-                rounded(r->renderer, (SDL_Rect){box.x, box.y + 3, box.w, box.h}, 13,
-                        (SDL_Color){0, 0, 0, 50});
-                rounded(r->renderer, (SDL_Rect){box.x - 1, box.y - 1, box.w + 2, box.h + 2}, 13,
-                        (SDL_Color){64, 83, 101, 120});
-            }
-            SDL_Color fill = c->primary && !tab ? accent
-                             : focused          ? (SDL_Color){42, 63, 80, 255}
-                                                : (SDL_Color){32, 45, 60, 255};
-            rounded(r->renderer, box, 12, fill);
+        SDL_Color ink = focused || (c->primary && !tab) ? bg : fg;
+        if (menu_row) {
+            if (focused)
+                rounded(r->renderer, box, 8, fg);
+            SDL_Color tile = mix(panel, role, .16f);
+            rounded(r->renderer, (SDL_Rect){box.x + 14, box.y + 14, 44, 44}, 10, tile);
+            action_icon(r->renderer, c->action, box.x + 21, box.y + 21, role);
+        } else if (!plain || focused) {
+            SDL_Color fill = focused              ? fg
+                             : c->primary && !tab ? role
+                                                  : (SDL_Color){43, 47, 57, 255};
             if (c->primary && !tab)
-                rounded(r->renderer, (SDL_Rect){box.x + 12, box.y + 1, box.w - 24, 1}, 0,
-                        (SDL_Color){213, 244, 255, 150});
+                fill = focused ? mix(role, fg, .18f) : role;
+            rounded(r->renderer, box, c->action == SL_RECENT ? 14 : 9, fill);
         }
         if (tab && c->primary) {
             rounded(r->renderer, (SDL_Rect){c->x + 28, c->y + c->h - 4, c->w - 56, 4}, 2, accent);
-            ink = accent;
+            ink = focused ? bg : accent;
         }
         int size = c->action == SL_RECENT ? 36 : footer ? 26 : 30;
-        const char *label = footer ? c->label + 3 : c->label;
-        int x = c->x + 24, width = c->w - 48;
-        bool centered = tab || c->action == SL_START || c->action == SL_DIGIT ||
+        const char *label = c->action == SL_SOUND ? "声音" : footer ? c->label + 3 : c->label;
+        int x = c->x + (menu_row ? 78 : 24), width = c->w - (menu_row ? 110 : 48);
+        bool centered = l->compact || tab || c->action == SL_START || c->action == SL_DIGIT ||
                         c->action == SL_SUBMIT || shoulder || footer;
         int measured = text_width(r, label, size);
         if (footer) {
             int group = measured + 48;
             x = c->x + (c->w - group) / 2;
             char key[2] = {c->label[0], 0};
-            badge(r, key, x, c->y + (c->h - 34) / 2, focused ? accent : muted);
+            badge(r, key, x, c->y + (c->h - 34) / 2, focused ? bg : muted);
             x += 48;
             width = measured + 2;
         } else if (shoulder) {
@@ -510,24 +631,44 @@ void sl_ui_renderer_draw(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug
         }
         int y = centered_y(r, label, size, c->y, c->h, width);
         if (c->action == SL_RECENT) {
-            rounded(r->renderer, (SDL_Rect){box.x + 24, box.y + 24, 52, 52}, 14,
-                    (SDL_Color){62, 92, 115, 255});
-            play_icon(r->renderer, box.x + 43, box.y + 50, 18, accent);
+            SDL_Color game_color = c->arg % 2 ? amber : violet;
+            rounded(r->renderer, (SDL_Rect){box.x + 24, box.y + 24, box.w - 48, 112}, 10,
+                    mix(panel, game_color, .25f));
+            play_icon(r->renderer, box.x + 47, box.y + 80, 28, game_color);
             y = centered_y(r, label, size, box.y + box.h - 88, 64, width);
         } else if (!centered && !footer) {
             width -= 28;
-            chevron(r->renderer, box.x + box.w - 35, box.y + box.h / 2, muted);
+            if (c->action == SL_SOUND) {
+                SDL_Color track = m->store.sound ? green : muted;
+                int tx = box.x + box.w - 74, ty = box.y + (box.h - 28) / 2;
+                rounded(r->renderer, (SDL_Rect){tx, ty, 50, 28}, 14, track);
+                rounded(r->renderer, (SDL_Rect){tx + (m->store.sound ? 25 : 3), ty + 3, 22, 22}, 11,
+                        bg);
+            } else if (c->action != SL_BACK && c->action != SL_SET_QUALITY)
+                chevron(r->renderer, box.x + box.w - 35, box.y + box.h / 2, focused ? bg : muted);
         }
         SDL_RenderSetClipRect(r->renderer, &box);
         draw_text(r, label, x, y, width, c->y + c->h - 8 - y, size, ink);
         SDL_RenderSetClipRect(r->renderer, NULL);
     }
-    if (r->focus_valid && m->page != SL_STREAM) {
+    if (focused_scene && r->focus_valid && m->page != SL_STREAM && !l->dialog) {
         SDL_FRect f = r->focus_box;
         SDL_SetRenderDrawColor(r->renderer, accent.r, accent.g, accent.b, 210);
         /* Only the focus indicator moves; control layout and hit testing stay fixed. */
         SDL_Rect b = {(int)f.x - 3, (int)f.y - 3, (int)f.w + 6, (int)f.h + 6};
         outline(r, b);
+    }
+
+    if (l->dialog) {
+        if (layer) {
+            SDL_SetRenderTarget(r->renderer, previous_target);
+            SDL_RenderSetViewport(r->renderer, &previous_viewport);
+            SDL_SetTextureAlphaMod(r->overlay, l->drawer ? 255 : (Uint8)(255 * l->opacity));
+            SDL_Rect destination = {l->offset_x, l->offset_y, 1280, 720};
+            SDL_RenderCopy(r->renderer, r->overlay, NULL, &destination);
+        } else
+            SDL_RenderSetViewport(r->renderer, &previous_viewport);
+        r->text_alpha = 1.f;
     }
 
     if (m->page == SL_STREAM && m->now >= m->stream_started_at) {
@@ -560,9 +701,35 @@ void sl_ui_renderer_draw(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug
             draw_text(r, "数据已过期", 44, 304, 400, 32, 24, muted);
     }
 }
+void sl_ui_renderer_draw(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_snapshot *d) {
+    animate_focus(r, m);
+    if (m->layout.dialog) {
+        *r->base_ui = *m;
+        r->base_ui->leaving = false;
+        r->base_ui->entered_at = 0;
+        if (!m->streaming) {
+            r->base_ui->page = SL_HOME;
+            sl_ui_layout(r->base_ui);
+            draw_scene(r, r->base_ui, d, false);
+        }
+        /* A confirmation keeps the menu it belongs to underneath it. */
+        if (m->depth) {
+            r->base_ui->page = m->stack[m->depth - 1];
+            sl_ui_layout(r->base_ui);
+            if (r->base_ui->layout.drawer) {
+                r->base_ui->layout.opacity = 1.f;
+                r->base_ui->layout.offset_x = 0;
+                draw_scene(r, r->base_ui, d, false);
+            }
+        }
+    }
+    draw_scene(r, m, d, true);
+}
 void sl_ui_renderer_destroy(sl_ui_renderer *r) {
     if (!r)
         return;
+    SDL_DestroyTexture(r->overlay);
+    free(r->base_ui);
     SDL_DestroyTexture(r->backdrop);
     SDL_DestroyTexture(r->outline);
     for (int i = 0; i < 512; ++i)

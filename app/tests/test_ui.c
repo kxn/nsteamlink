@@ -71,7 +71,53 @@ static void layout_check(sl_ui_model *m) {
         }
     }
 }
+static void overlay_interaction(void) {
+    sl_ui_model m = model();
+    add(&m, 7, "HOST");
+    sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
+    sl_ui_tick(&m, 160);
+    const sl_control *c = &m.layout.controls[0];
+    assert(m.layout.drawer && m.layout.offset_x > 0);
+    assert(sl_ui_hit(&m.layout, c->x + m.layout.offset_x + 8, c->y + 8) == c->id);
+    assert(sl_ui_hit(&m.layout, c->x + 1, c->y + 8) == 0);
+    sl_ui_tick(&m, 320);
+    sl_ui_action(&m, SL_OPEN_FORGET, 0);
+    assert(m.focus == 9); /* Destructive confirmations start on cancel. */
+    sl_ui_tick(&m, 540);
+    sl_ui_action(&m, SL_BACK, 0);
+    assert(m.leaving && m.page == SL_FORGET);
+    sl_ui_activate(&m, 102);
+    assert(m.focus == 9);
+    assert(m.store.registry.count == 1 && m.command.type == SL_CMD_NONE);
+    sl_ui_tick(&m, 699);
+    assert(m.page == SL_FORGET);
+    sl_ui_tick(&m, 700);
+    assert(m.page == SL_OPTIONS && !m.leaving && m.focus == 100);
+
+    sl_ui_connected(&m);
+    sl_ui_action(&m, SL_OPEN_MENU, 0);
+    sl_ui_tick(&m, 920);
+    sl_input_router input;
+    sl_input_init(&input, &m, send_event, reset_remote, NULL);
+    sl_input_sync(&input);
+    n = 0;
+    key(&input, SL_KEY_B, 1, 920);
+    assert(m.leaving && !sl_ui_remote(&m));
+    key(&input, SL_KEY_A, 1, 950);
+    sl_ui_tick(&m, 1079);
+    assert(!sl_ui_remote(&m) && n == 0);
+    sl_ui_tick(&m, 1080);
+    sl_input_sync(&input);
+    assert(sl_ui_remote(&m));
+    key(&input, SL_KEY_A, 0, 1090);
+    key(&input, SL_KEY_B, 0, 1090);
+    assert(n == 0); /* Neither closing key leaks into the game. */
+    key(&input, SL_KEY_A, 1, 1100);
+    key(&input, SL_KEY_A, 0, 1110);
+    assert(n == 2);
+}
 int main(void) {
+    overlay_interaction();
     sl_ui_model m = model();
     sl_input_router r;
     sl_input_init(&r, &m, send_event, reset_remote, NULL);
@@ -88,10 +134,12 @@ int main(void) {
     assert(m.page == SL_INFO);
     assert(!sl_ui_take_command(&m, &cmd));
     sl_ui_action(&m, SL_BACK, 0);
+    sl_ui_tick(&m, m.now + 160);
     tap(&r, 1140, 660);
     assert(m.page == SL_OPTIONS);
     assert(!sl_ui_take_command(&m, &cmd));
     sl_ui_action(&m, SL_BACK, 0);
+    sl_ui_tick(&m, m.now + 160);
     sl_ui_action(&m, SL_NEXT_HOST, 0);
     assert(m.store.registry.selected == 1);
     assert(!sl_ui_take_command(&m, &cmd));
@@ -100,6 +148,7 @@ int main(void) {
     assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_PAIR && cmd.host.client_id == 2);
     uint64_t generation = m.generation;
     sl_ui_action(&m, SL_BACK, 0);
+    sl_ui_tick(&m, m.now + 160);
     assert(m.generation > generation && m.page == SL_STOPPING);
     assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_CANCEL);
     sl_ui_stopped(&m, false);
@@ -116,6 +165,7 @@ int main(void) {
     sl_ui_action(&m, SL_RECENT, 0);
     assert(sl_ui_take_command(&m, &cmd) && cmd.game_id == 123);
     sl_ui_action(&m, SL_BACK, 0);
+    sl_ui_tick(&m, m.now + 160);
     sl_ui_take_command(&m, &cmd);
     sl_ui_stopped(&m, false);
     sl_ui_tick(&m, 20000);
@@ -161,6 +211,7 @@ int main(void) {
     assert(!m.debug && m.page == SL_MENU);
     key(&r, SL_KEY_X, 1, 4200);
     sl_input_tick(&r, 5200);
+    sl_ui_tick(&m, m.now + 160);
     assert(m.debug && m.page == SL_STREAM);
     sl_input_tick(&r, 7000);
     assert(m.debug);
@@ -174,6 +225,7 @@ int main(void) {
     n = 0;
     key(&r, SL_KEY_X, 1, 7200);
     sl_input_tick(&r, 8200);
+    sl_ui_tick(&m, m.now + 160);
     assert(!m.debug && m.page == SL_STREAM);
     key(&r, SL_KEY_X, 0, 8210);
     n = 0;
@@ -187,6 +239,7 @@ int main(void) {
     sl_input_event_handle(&r, &touch, 8400);
     assert(n == 2);
     sl_ui_action(&m, SL_BACK, 0);
+    sl_ui_tick(&m, m.now + 160);
     sl_input_sync(&r);
     n = 0;
     key(&r, SL_KEY_MINUS, 1, 9000);
@@ -213,6 +266,7 @@ int main(void) {
                              .account = 88,
                              .host = m.intent.host};
     sl_ui_action(&m, SL_BACK, 0);
+    sl_ui_tick(&m, m.now + 160);
     sl_ui_take_command(&m, &cmd);
     sl_ui_runtime_event(&m, &late);
     assert(m.page == SL_STOPPING && !m.command.type);
@@ -285,6 +339,7 @@ int main(void) {
     sl_ui_action(&m, SL_OPEN_MENU, 0);
     sl_input_sync(&r);
     sl_ui_action(&m, SL_BACK, 0);
+    sl_ui_tick(&m, m.now + 160);
     sl_input_sync(&r);
     sl_input_event_handle(&r, &axis, 13010);
     assert(n == 1);

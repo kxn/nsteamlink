@@ -200,7 +200,7 @@ void sl_ui_layout(sl_ui_model *m) {
             row(l, 2, "移除", SL_CONFIRM_FORGET, 0);
             break;
         case SL_EXIT:
-            strcpy(l->title, "退出 nsteamlink？");
+            strcpy(l->title, "退出 NSteamLink？");
             row(l, 1, "退出", SL_CONFIRM_EXIT, 0);
             break;
         case SL_ERROR:
@@ -219,12 +219,90 @@ void sl_ui_layout(sl_ui_model *m) {
                        : "B  返回",
                    SL_BACK, 0, false);
     }
+    if (l->dialog) {
+        l->drawer = m->page == SL_MENU || m->page == SL_OPTIONS || m->page == SL_SETTINGS ||
+                    m->page == SL_QUALITY || m->page == SL_ADVANCED;
+        l->compact = m->page == SL_DISCONNECT || m->page == SL_FORGET || m->page == SL_EXIT ||
+                     m->page == SL_ERROR;
+        l->panel_x = 272;
+        l->panel_y = 96;
+        l->panel_w = 736;
+        l->panel_h = 588;
+        if (l->drawer) {
+            l->panel_x = 744;
+            l->panel_y = 0;
+            l->panel_w = 536;
+            l->panel_h = 720;
+            for (int i = 0; i < l->count; ++i) {
+                sl_control *c = &l->controls[i];
+                c->x = 776;
+                c->w = 472;
+                c->y = c->id == 9 ? 624 : 172 + (c->id - 100) * 88;
+                c->h = 72;
+            }
+            for (int i = 0; i < l->label_count; ++i)
+                l->labels[i].x = 784;
+        } else if (l->compact) {
+            l->panel_x = 304;
+            l->panel_y = 188;
+            l->panel_w = 672;
+            l->panel_h = 344;
+            for (int i = 0; i < l->label_count; ++i) {
+                l->labels[i].x = 344;
+                l->labels[i].y = 292;
+            }
+            for (int i = 0; i < l->count; ++i) {
+                sl_control *c = &l->controls[i];
+                c->x = c->id == 9 ? 344 : 648;
+                c->y = 420;
+                c->w = 288;
+                c->h = 72;
+                if (c->id == 9)
+                    strcpy(c->label, "B  取消");
+                else
+                    c->primary = true;
+            }
+            if (m->page == SL_EXIT) {
+                l->panel_y = 230;
+                l->panel_h = 260;
+                for (int i = 0; i < l->count; ++i)
+                    l->controls[i].y = 378;
+            }
+        } else if (m->page == SL_PAIRING) {
+            l->panel_y = 160;
+            l->panel_h = 420;
+            l->controls[l->count - 1].y = 484;
+            l->labels[0].y = 260;
+        } else if (m->page == SL_HELP || m->page == SL_HOTKEY) {
+            l->panel_y = 180;
+            l->panel_h = 400;
+            for (int i = 0; i < l->label_count; ++i)
+                l->labels[i].y = 274 + i * 70;
+            l->controls[l->count - 1].y = 484;
+        }
+        if (!l->drawer && !l->compact) {
+            for (int i = 0; i < l->label_count; ++i)
+                if (!l->labels[i].center)
+                    l->labels[i].x = l->panel_x + 40;
+            for (int i = 0; i < l->count; ++i)
+                if (l->controls[i].id == 9) {
+                    l->controls[i].x = l->panel_x + 40;
+                    l->controls[i].w = 180;
+                }
+        }
+        l->opacity = sl_ui_overlay_opacity(m);
+        l->offset_x = l->drawer ? (int)(536 * (1.f - l->opacity)) : 0;
+        l->offset_y = l->drawer ? 0 : (int)(20 * (1.f - l->opacity));
+    } else
+        l->opacity = 1.f;
     bool found = false;
     for (int i = 0; i < l->count; ++i)
         if (l->controls[i].id == m->focus)
             found = true;
     if (!found) {
         m->focus = l->count ? l->controls[0].id : 0;
+        if (l->compact)
+            m->focus = 9;
         if (m->page == SL_HOME)
             for (int i = 0; i < l->count; ++i)
                 if (l->controls[i].action == SL_START || l->controls[i].action == SL_RECENT) {

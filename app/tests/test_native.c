@@ -61,6 +61,8 @@ static void key(SDL_Keycode k) {
     e.type = SDL_KEYUP;
     SDL_PushEvent(&e);
     stream_media_present();
+    sl_ui_tick(&ui, ui.now + 220);
+    stream_media_present();
 }
 static void decode(const char *path) {
     FILE *f = fopen(path, "rb");
@@ -176,11 +178,19 @@ int main(int argc, char **argv) {
         save_image(name);
     }
     if (getenv("NSL_TEST_MOTION")) {
-        ui.page = SL_OPTIONS;
-        ui.focus = 100;
-        for (int frame = 0; frame < 45; ++frame) {
-            if (frame == 12 || frame == 27)
-                sl_ui_action(&ui, SL_DOWN, 0);
+        ui.page = SL_HOME;
+        ui.depth = 0;
+        ui.leaving = false;
+        sl_ui_layout(&ui);
+        for (int frame = 0; frame < 120; ++frame) {
+            if (frame == 9)
+                sl_ui_action(&ui, SL_OPEN_OPTIONS, 0);
+            if (frame == 28)
+                sl_ui_action(&ui, SL_ACCEPT, 0);
+            if (frame == 45 || frame == 80 || frame == 100)
+                sl_ui_action(&ui, SL_BACK, 0);
+            if (frame == 60)
+                sl_ui_action(&ui, SL_OPEN_FORGET, 0);
             sl_ui_tick(&ui, ui.now + 33);
             stream_media_present();
             char name[32];
