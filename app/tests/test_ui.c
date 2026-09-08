@@ -82,12 +82,12 @@ static void overlay_interaction(void) {
     assert(sl_ui_hit(&m.layout, c->x + 1, c->y + 8) == 0);
     sl_ui_tick(&m, 320);
     sl_ui_action(&m, SL_OPEN_FORGET, 0);
-    assert(m.focus == 9); /* Destructive confirmations start on cancel. */
+    assert(m.focus == 102); /* A executes the named action; B cancels. */
     sl_ui_tick(&m, 540);
     sl_ui_action(&m, SL_BACK, 0);
     assert(m.leaving && m.page == SL_FORGET);
     sl_ui_activate(&m, 102);
-    assert(m.focus == 9);
+    assert(m.focus == 102);
     assert(m.store.registry.count == 1 && m.command.type == SL_CMD_NONE);
     sl_ui_tick(&m, 699);
     assert(m.page == SL_FORGET);
@@ -116,7 +116,93 @@ static void overlay_interaction(void) {
     key(&input, SL_KEY_A, 0, 1110);
     assert(n == 2);
 }
+static void confirmation_shortcuts(void) {
+    const sl_page pages[] = {SL_FORGET, SL_DISCONNECT, SL_EXIT, SL_ERROR};
+    const sl_command_type expected[] = {SL_CMD_SAVE, SL_CMD_STOP, SL_CMD_EXIT, SL_CMD_PAIR};
+    for (int p = 0; p < 4; ++p) {
+        for (int path = 0; path < 4; ++path) {
+            sl_ui_model m = model();
+            add(&m, 7, "HOST");
+            m.intent.host = m.store.registry.hosts[0];
+            m.page = pages[p];
+            m.streaming = m.page == SL_DISCONNECT;
+            sl_ui_tick(&m, 1000);
+            sl_control positive = {0}, cancel = {0};
+            for (int i = 0; i < m.layout.count; ++i) {
+                if (m.layout.controls[i].primary)
+                    positive = m.layout.controls[i];
+                else
+                    cancel = m.layout.controls[i];
+            }
+            assert(positive.id && positive.label[0] == 'A' && cancel.label[0] == 'B');
+            sl_input_router r;
+            sl_input_init(&r, &m, NULL, NULL, NULL);
+            /* Directional input cannot turn the advertised A action into cancel. */
+            key(&r, SL_KEY_LEFT, 1, 1000);
+            key(&r, SL_KEY_LEFT, 0, 1001);
+            assert(m.focus == positive.id);
+            if (path < 2) {
+                key(&r, path == 0 ? SL_KEY_A : SL_KEY_B, 1, 1010);
+                key(&r, path == 0 ? SL_KEY_A : SL_KEY_B, 0, 1011);
+            } else {
+                sl_control c = path == 2 ? positive : cancel;
+                tap(&r, c.x + c.w / 2, c.y + c.h / 2);
+            }
+            sl_command command;
+            if (path == 0 || path == 2) {
+                assert(sl_ui_take_command(&m, &command) && command.type == expected[p]);
+                assert(!sl_ui_take_command(&m, &command));
+                if (p == 0)
+                    assert(m.store.registry.count == 0);
+            } else {
+                assert(m.store.registry.count == 1 && !m.closing);
+                if (p == 3) {
+                    assert(sl_ui_take_command(&m, &command) && command.type == SL_CMD_CANCEL);
+                } else {
+                    assert(m.leaving && !sl_ui_take_command(&m, &command));
+                }
+            }
+        }
+    }
+    sl_ui_model m = model();
+    sl_ui_error(&m, "网络不可用");
+    sl_ui_action(&m, SL_ACCEPT, 0);
+    assert(m.page == SL_ERROR && !m.command.type); /* No retry target: B only. */
+}
+static void actionable_settings(void) {
+    sl_ui_model m = model();
+    sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
+    assert(m.layout.count == 2); /* Settings and back, no help-only page. */
+    sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
+    assert(m.layout.count == 4); /* Quality, sound, manual address, back. */
+    assert(m.layout.controls[2].action == SL_OPEN_MANUAL);
+    sl_ui_action(&m, SL_OPEN_MANUAL, 0);
+    assert(m.page == SL_MANUAL);
+    sl_ui_action(&m, SL_BACK, 0);
+    sl_ui_tick(&m, m.now + 160);
+    sl_ui_action(&m, SL_SOUND, 0);
+    sl_command command;
+    assert(!m.store.sound && sl_ui_take_command(&m, &command) && command.type == SL_CMD_SAVE);
+    sl_ui_action(&m, SL_OPEN_QUALITY, 0);
+    assert(!strcmp(m.layout.controls[0].label, "均衡"));
+    assert(!strcmp(m.layout.controls[1].label, "流畅"));
+    assert(!strcmp(m.layout.controls[2].label, "清晰"));
+    sl_ui_action(&m, SL_DOWN, 0);
+    assert(m.store.quality == 0); /* Focus movement does not change the radio selection. */
+    sl_ui_action(&m, SL_SET_QUALITY, 2);
+    assert(m.store.quality == 2 && sl_ui_take_command(&m, &command) && command.type == SL_CMD_SAVE);
+    sl_ui_connected(&m);
+    sl_ui_action(&m, SL_OPEN_MENU, 0);
+    sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
+    assert(m.layout.count == 3); /* Only live sound and next-session quality, plus back. */
+    for (int i = 0; i < m.layout.count; ++i)
+        assert(m.layout.controls[i].action != SL_OPEN_MANUAL);
+    sl_ui_action(&m, SL_OPEN_MANUAL, 0);
+    assert(m.page == SL_SETTINGS); /* No empty advanced page or stream-time host entry. */
+}
 int main(void) {
+    confirmation_shortcuts();
+    actionable_settings();
     overlay_interaction();
     sl_ui_model m = model();
     sl_input_router r;

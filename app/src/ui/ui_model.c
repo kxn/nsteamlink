@@ -149,10 +149,21 @@ void sl_ui_action(sl_ui_model *m, sl_action a, int arg) {
     if (m->page == SL_CLOSING || m->leaving)
         return;
     if (a >= SL_LEFT && a <= SL_DOWN) {
+        if (m->layout.compact)
+            return;
         move(m, a);
         return;
     }
     if (a == SL_ACCEPT) {
+        if (m->layout.compact) {
+            /* Confirm dialogs advertise fixed A/B actions, not focus navigation. */
+            for (int i = 0; i < m->layout.count; ++i)
+                if (m->layout.controls[i].primary) {
+                    sl_ui_activate(m, m->layout.controls[i].id);
+                    break;
+                }
+            return;
+        }
         sl_ui_activate(m, m->focus);
         return;
     }
@@ -194,21 +205,15 @@ void sl_ui_action(sl_ui_model *m, sl_action a, int arg) {
     case SL_OPEN_SETTINGS:
         push(m, SL_SETTINGS);
         break;
-    case SL_OPEN_ADVANCED:
-        push(m, SL_ADVANCED);
-        break;
     case SL_OPEN_MANUAL:
-        m->input[0] = 0;
-        push(m, SL_MANUAL);
+        if (!m->streaming && m->page == SL_SETTINGS) {
+            m->input[0] = 0;
+            push(m, SL_MANUAL);
+        }
         break;
     case SL_OPEN_QUALITY:
         push(m, SL_QUALITY);
-        break;
-    case SL_OPEN_HELP:
-        push(m, SL_HELP);
-        break;
-    case SL_OPEN_HOTKEY:
-        push(m, SL_HOTKEY);
+        m->focus = 100 + (m->store.quality <= 2 ? (int)m->store.quality : 0);
         break;
     case SL_OPEN_FORGET:
         if (h)
@@ -335,7 +340,8 @@ void sl_ui_activate(sl_ui_model *m, int id) {
     for (int i = 0; i < m->layout.count; ++i)
         if (m->layout.controls[i].id == id) {
             sl_control c = m->layout.controls[i];
-            m->focus = id;
+            if (!m->layout.compact)
+                m->focus = id;
             sl_ui_action(m, c.action, c.arg);
             return;
         }

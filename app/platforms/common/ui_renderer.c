@@ -377,7 +377,6 @@ static SDL_Color action_color(sl_action a) {
     case SL_OPEN_QUALITY:
     case SL_SET_QUALITY:
         return violet;
-    case SL_OPEN_HOTKEY:
     case SL_OPEN_MANUAL:
         return amber;
     case SL_OPEN_FORGET:
@@ -392,7 +391,7 @@ static SDL_Color action_color(sl_action a) {
 static void action_icon(SDL_Renderer *r, sl_action a, int x, int y, SDL_Color c) {
     if (a == SL_BACK || a == SL_START || a == SL_RECENT) {
         play_icon(r, x + 7, y + 14, 19, c);
-    } else if (a == SL_OPEN_SETTINGS || a == SL_OPEN_ADVANCED || a == SL_SET_QUALITY) {
+    } else if (a == SL_OPEN_SETTINGS || a == SL_SET_QUALITY) {
         for (int i = 0; i < 3; ++i) {
             int yy = y + 6 + i * 8, xx = x + (i == 1 ? 17 : 9);
             line(r, x + 3, yy, x + 27, yy, c);
@@ -423,11 +422,6 @@ static void action_icon(SDL_Renderer *r, sl_action a, int x, int y, SDL_Color c)
         line(r, x + 27, y + 14, x + 23, y + 20, c);
     } else if (a == SL_OPEN_QUALITY || a == SL_OPEN_INFO || a == SL_OPEN_MANUAL) {
         monitor(r, x + 1, y + 3, 28, c);
-    } else if (a == SL_OPEN_HOTKEY) {
-        rounded(r, (SDL_Rect){x, y + 5, 30, 20}, 6, c);
-        line(r, x + 5, y + 14, x + 11, y + 14, bg);
-        line(r, x + 21, y + 11, x + 21, y + 18, bg);
-        line(r, x + 18, y + 14, x + 24, y + 14, bg);
     } else {
         rounded(r, (SDL_Rect){x + 2, y + 2, 26, 26}, 13, c);
         line(r, x + 14, y + 7, x + 14, y + 9, bg);
@@ -590,12 +584,26 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
             role = amber;
         bool plain = tab || footer || shoulder || (c->action == SL_START && !c->primary);
         SDL_Color ink = focused || (c->primary && !tab) ? bg : fg;
-        if (menu_row) {
+        if (l->compact) {
+            /* White always means the explicitly labelled A action. */
+            ink = c->primary ? bg : fg;
+            rounded(r->renderer, box, 9, c->primary ? fg : (SDL_Color){43, 47, 57, 255});
+        } else if (menu_row) {
             if (focused)
                 rounded(r->renderer, box, 8, fg);
-            SDL_Color tile = mix(panel, role, .16f);
-            rounded(r->renderer, (SDL_Rect){box.x + 14, box.y + 14, 44, 44}, 10, tile);
-            action_icon(r->renderer, c->action, box.x + 21, box.y + 21, role);
+            if (c->action == SL_SET_QUALITY) {
+                int x = box.x + 23, y = box.y + (box.h - 26) / 2;
+                SDL_Color surface = focused ? fg : panel;
+                SDL_Color ring = focused ? bg : muted;
+                rounded(r->renderer, (SDL_Rect){x, y, 26, 26}, 13, ring);
+                rounded(r->renderer, (SDL_Rect){x + 2, y + 2, 22, 22}, 11, surface);
+                if ((uint32_t)c->arg == m->store.quality)
+                    rounded(r->renderer, (SDL_Rect){x + 6, y + 6, 14, 14}, 7, focused ? bg : green);
+            } else {
+                SDL_Color tile = mix(panel, role, .16f);
+                rounded(r->renderer, (SDL_Rect){box.x + 14, box.y + 14, 44, 44}, 10, tile);
+                action_icon(r->renderer, c->action, box.x + 21, box.y + 21, role);
+            }
         } else if (!plain || focused) {
             SDL_Color fill = focused              ? fg
                              : c->primary && !tab ? role

@@ -107,39 +107,23 @@ void sl_ui_layout(sl_ui_model *m) {
         case SL_OPTIONS:
             strcpy(l->title, "选项");
             row(l, 0, "设置", SL_OPEN_SETTINGS, 0);
-            row(l, 1, "连接帮助", SL_OPEN_HELP, 0);
             if (h)
-                row(l, 2, "移除电脑", SL_OPEN_FORGET, 0);
+                row(l, 1, "移除电脑", SL_OPEN_FORGET, 0);
             break;
         case SL_SETTINGS:
             strcpy(l->title, "设置");
             row(l, 0, "画面偏好", SL_OPEN_QUALITY, 0);
             row(l, 1, m->store.sound ? "声音：开" : "声音：关", SL_SOUND, 0);
-            row(l, 2, "菜单快捷键", SL_OPEN_HOTKEY, 0);
-            row(l, 3, "高级", SL_OPEN_ADVANCED, 0);
-            break;
-        case SL_ADVANCED:
-            strcpy(l->title, "高级");
             if (!m->streaming)
-                row(l, 0, "手动添加电脑", SL_OPEN_MANUAL, 0);
+                row(l, 2, "手动添加电脑", SL_OPEN_MANUAL, 0);
             break;
         case SL_QUALITY:
             strcpy(l->title, "画面偏好");
-            row(l, 0, m->store.quality == 0 ? "均衡  ✓" : "均衡", SL_SET_QUALITY, 0);
-            row(l, 1, m->store.quality == 1 ? "流畅  ✓" : "流畅", SL_SET_QUALITY, 1);
-            row(l, 2, m->store.quality == 2 ? "清晰  ✓" : "清晰", SL_SET_QUALITY, 2);
+            row(l, 0, "均衡", SL_SET_QUALITY, 0);
+            row(l, 1, "流畅", SL_SET_QUALITY, 1);
+            row(l, 2, "清晰", SL_SET_QUALITY, 2);
             if (m->streaming)
                 text(l, 320, 500, 26, "下次连接时生效");
-            break;
-        case SL_HELP:
-            strcpy(l->title, "连接帮助");
-            text(l, 320, 240, 30, "电脑与 Switch 连接同一网络");
-            text(l, 320, 310, 30, "在 Steam 设置中开启远程畅玩");
-            break;
-        case SL_HOTKEY:
-            strcpy(l->title, "菜单快捷键");
-            text(l, 320, 252, 40, "同时长按 − 和 +");
-            text(l, 320, 332, 28, "保持 0.8 秒，打开本地菜单");
             break;
         case SL_INFO:
             strcpy(l->title, "电脑信息");
@@ -221,7 +205,7 @@ void sl_ui_layout(sl_ui_model *m) {
     }
     if (l->dialog) {
         l->drawer = m->page == SL_MENU || m->page == SL_OPTIONS || m->page == SL_SETTINGS ||
-                    m->page == SL_QUALITY || m->page == SL_ADVANCED;
+                    m->page == SL_QUALITY;
         l->compact = m->page == SL_DISCONNECT || m->page == SL_FORGET || m->page == SL_EXIT ||
                      m->page == SL_ERROR;
         l->panel_x = 272;
@@ -259,8 +243,12 @@ void sl_ui_layout(sl_ui_model *m) {
                 c->h = 72;
                 if (c->id == 9)
                     strcpy(c->label, "B  取消");
-                else
+                else {
+                    char title[160];
+                    snprintf(title, sizeof(title), "A  %.150s", c->label);
+                    snprintf(c->label, sizeof(c->label), "%s", title);
                     c->primary = true;
+                }
             }
             if (m->page == SL_EXIT) {
                 l->panel_y = 230;
@@ -273,12 +261,6 @@ void sl_ui_layout(sl_ui_model *m) {
             l->panel_h = 420;
             l->controls[l->count - 1].y = 484;
             l->labels[0].y = 260;
-        } else if (m->page == SL_HELP || m->page == SL_HOTKEY) {
-            l->panel_y = 180;
-            l->panel_h = 400;
-            for (int i = 0; i < l->label_count; ++i)
-                l->labels[i].y = 274 + i * 70;
-            l->controls[l->count - 1].y = 484;
         }
         if (!l->drawer && !l->compact) {
             for (int i = 0; i < l->label_count; ++i)
@@ -301,13 +283,17 @@ void sl_ui_layout(sl_ui_model *m) {
             found = true;
     if (!found) {
         m->focus = l->count ? l->controls[0].id : 0;
-        if (l->compact)
-            m->focus = 9;
         if (m->page == SL_HOME)
             for (int i = 0; i < l->count; ++i)
                 if (l->controls[i].action == SL_START || l->controls[i].action == SL_RECENT) {
                     m->focus = l->controls[i].id;
                     break;
                 }
+    }
+    if (l->compact) {
+        m->focus = 0;
+        for (int i = 0; i < l->count; ++i)
+            if (l->controls[i].primary)
+                m->focus = l->controls[i].id;
     }
 }

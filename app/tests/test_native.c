@@ -177,6 +177,16 @@ int main(int argc, char **argv) {
         snprintf(name, sizeof(name), "page-%02d", p);
         save_image(name);
     }
+    ui.page = SL_HOME;
+    ui.depth = 0;
+    ui.leaving = false;
+    sl_ui_action(&ui, SL_OPEN_OPTIONS, 0);
+    sl_ui_action(&ui, SL_OPEN_SETTINGS, 0);
+    sl_ui_action(&ui, SL_OPEN_QUALITY, 0);
+    sl_ui_tick(&ui, ui.now + 220);
+    sl_ui_action(&ui, SL_DOWN, 0);
+    stream_media_present();
+    save_image("quality-focused-unsaved");
     if (getenv("NSL_TEST_MOTION")) {
         ui.page = SL_HOME;
         ui.depth = 0;
