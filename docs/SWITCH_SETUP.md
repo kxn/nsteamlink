@@ -86,7 +86,7 @@ tools/switch-debugctl.py 10.10.10.17 diag current
 
 - 使用 Title Takeover 启动 hbmenu；在 hbmenu 按 L 开启网络接收。
 - 正式应用中直接完成发现、配对和串流，不需先运行另一个 NRO。
-- 首页 L/R 换电脑、A 确认、B 返回、X 选项、Y 电脑信息，也可触摸操作。
+- 首页 L/R（LB/RB）换电脑，左右摇杆／方向键直接选择游戏，A 启动所选游戏，Y 打开 Steam，B 返回，X 选项。无游戏记录时 A 也可连接。卡片支持触摸横向滑动，轻点启动；IP 与配对状态直接显示在主机标签下。
 - 串流中同时长按 −/+ 0.8 秒；在游玩菜单中断开，返回首页后 B 退出。
 - 仅诊断构建：游玩菜单内单独长按 X 一秒切换 Debug 浮层。完整诊断接口见 [UDP_DEBUG](UDP_DEBUG.md)。
 - 设备身份、逐电脑授权和设置保存在 `sdmc:/switch/nsteamlink/profile.bin`。

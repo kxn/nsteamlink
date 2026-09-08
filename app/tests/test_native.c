@@ -163,8 +163,7 @@ int main(int argc, char **argv) {
     stream_media_present();
     save_image("unpaired");
     tap(900, 660);
-    assert(ui.page == SL_INFO && ui.command.type == SL_CMD_NONE);
-    key(SDLK_ESCAPE);
+    assert(ui.page == SL_HOME && ui.command.type == SL_CMD_NONE);
     SDL_Event touch = {.type = SDL_FINGERDOWN};
     touch.tfinger.fingerId = 123;
     touch.tfinger.x = .9f;
@@ -196,6 +195,26 @@ int main(int argc, char **argv) {
         stream_media_present();
         save_image("paired-artwork-focused");
     }
+    /* Fixture duplicates artwork only to exercise a four-card viewport. */
+    for (int i = 1; i < 4; ++i)
+        ui.store.registry.hosts[0].games[i] = ui.store.registry.hosts[0].games[0];
+    sl_ui_layout(&ui);
+    stream_media_present();
+    save_image("carousel-start");
+    for (int i = 0; i < 3; ++i)
+        sl_ui_action(&ui, SL_RIGHT, 0);
+    for (int i = 0; i < 40; ++i) {
+        sl_ui_tick(&ui, ui.now + 16);
+        stream_media_present();
+    }
+    save_image("carousel-end");
+    h.client_id = 124;
+    strcpy(h.name, "DESKTOP-B");
+    strcpy(h.address, "192.168.1.25");
+    sl_host_observe(&ui.store.registry, &h, ui.now);
+    sl_ui_layout(&ui);
+    stream_media_present();
+    save_image("carousel-hosts");
     for (int p = SL_PAIRING; p <= SL_ERROR; ++p) {
         ui.page = p;
         strcpy(ui.pairing_code, "4826");

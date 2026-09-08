@@ -154,7 +154,7 @@ static void animate_focus(sl_ui_renderer *r, const sl_ui_model *m) {
         return;
     }
     SDL_FRect dest = {(float)target->x, (float)target->y, (float)target->w, (float)target->h};
-    if (!r->focus_valid) {
+    if (m->page == SL_HOME || !r->focus_valid) {
         r->focus_from = r->focus_to = r->focus_box = dest;
         r->focus_id = m->focus;
         r->focus_at = m->now;
@@ -416,7 +416,7 @@ static void action_icon(SDL_Renderer *r, sl_action a, int x, int y, SDL_Color c)
         line(r, x + 16, y + 4, x + 16, y + 24, c);
         line(r, x + 23, y + 8, x + 27, y + 14, c);
         line(r, x + 27, y + 14, x + 23, y + 20, c);
-    } else if (a == SL_OPEN_QUALITY || a == SL_OPEN_INFO || a == SL_OPEN_MANUAL) {
+    } else if (a == SL_OPEN_QUALITY || a == SL_OPEN_MANUAL) {
         monitor(r, x + 1, y + 3, 28, c);
     } else {
         rounded(r, (SDL_Rect){x + 2, y + 2, 26, 26}, 13, c);
@@ -610,6 +610,13 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
     for (int i = 0; i < l->count; ++i) {
         const sl_control *c = &l->controls[i];
         SDL_Rect box = {c->x, c->y, c->w, c->h};
+        bool card = c->action == SL_RECENT;
+        SDL_Rect viewport = {40, SL_CARD_Y - 8, 1200, SL_CARD_HEIGHT + 16}, clip;
+        if (card) {
+            if (!SDL_IntersectRect(&box, &viewport, &clip))
+                continue;
+            SDL_RenderSetClipRect(r->renderer, &clip);
+        }
         bool tab = c->action == SL_SELECT_HOST;
         bool footer = c->label[0] && c->label[1] == ' ' && c->label[2] == ' ';
         bool shoulder = c->action == SL_PREV_HOST || c->action == SL_NEXT_HOST;
@@ -621,12 +628,16 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
                  .hosts[m->store.registry.selected >= 0 ? m->store.registry.selected : 0]
                  .paired)
             role = amber;
-        bool plain = tab || footer || shoulder || (c->action == SL_START && !c->primary);
+        bool plain =
+            tab || (footer && !c->primary) || shoulder || (c->action == SL_START && !c->primary);
         SDL_Color ink = focused || (c->primary && !tab) ? bg : fg;
         if (l->compact) {
             /* White always means the explicitly labelled A action. */
             ink = c->primary ? bg : fg;
             rounded(r->renderer, box, 9, c->primary ? fg : (SDL_Color){43, 47, 57, 255});
+        } else if (card) {
+            ink = fg;
+            rounded(r->renderer, box, 14, focused ? (SDL_Color){52, 62, 78, 255} : panel);
         } else if (menu_row) {
             if (focused)
                 rounded(r->renderer, box, 8, fg);
@@ -655,31 +666,40 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
             rounded(r->renderer, (SDL_Rect){c->x + 28, c->y + c->h - 4, c->w - 56, 4}, 2, accent);
             ink = focused ? bg : accent;
         }
-        int size = c->action == SL_RECENT ? 36 : footer ? 26 : 30;
+        int size = c->action == SL_RECENT ? 30 : footer ? 26 : 30;
         const char *label = c->action == SL_SOUND ? "声音" : footer ? c->label + 3 : c->label;
         int x = c->x + (menu_row ? 78 : 24), width = c->w - (menu_row ? 110 : 48);
         bool centered = l->compact || tab || c->action == SL_START || c->action == SL_DIGIT ||
                         c->action == SL_SUBMIT || shoulder || footer;
+        if (tab) {
+            const sl_host *host = &m->store.registry.hosts[c->arg];
+            SDL_Color status = !sl_host_online(host, m->now) ? muted : host->paired ? green : amber;
+            rounded(r->renderer, (SDL_Rect){box.x + 18, box.y + (box.h - 12) / 2, 12, 12}, 6,
+                    status);
+            x = box.x + 44;
+            width = box.w - 60;
+        }
         int measured = text_width(r, label, size);
         if (footer) {
             int group = measured + 48;
             x = c->x + (c->w - group) / 2;
             char key[2] = {c->label[0], 0};
-            badge(r, key, x, c->y + (c->h - 34) / 2, focused ? bg : muted);
+            badge(r, key, x, c->y + (c->h - 34) / 2, c->primary || focused ? bg : muted);
             x += 48;
             width = measured + 2;
         } else if (shoulder) {
+            width = c->w - 8;
             rounded(r->renderer, (SDL_Rect){box.x + 8, box.y + 20, box.w - 16, 32}, 9, muted);
             ink = bg;
             x = c->x + (c->w - measured) / 2;
-        } else if (centered && measured < width) {
+        } else if (centered && !tab && measured < width) {
             x = c->x + (c->w - measured) / 2;
             width = measured + 2;
         }
         int y = centered_y(r, label, size, c->y, c->h, width);
         if (c->action == SL_RECENT) {
             SDL_Color game_color = c->arg % 2 ? amber : violet;
-            SDL_Rect art = {box.x + 12, box.y + 12, box.w - 24, 172};
+            SDL_Rect art = {box.x + 8, box.y + 8, box.w - 16, 198};
             rounded(r->renderer, art, 10, mix(panel, game_color, .16f));
             play_icon(r->renderer, box.x + box.w / 2 - 10, box.y + 96, 28, game_color);
             int selected = m->store.registry.selected;
@@ -697,7 +717,7 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
             } else if (c->action != SL_BACK && c->action != SL_SET_QUALITY)
                 chevron(r->renderer, box.x + box.w - 35, box.y + box.h / 2, focused ? bg : muted);
         }
-        SDL_RenderSetClipRect(r->renderer, &box);
+        SDL_RenderSetClipRect(r->renderer, card ? &clip : &box);
         draw_text(r, label, x, y, width, c->y + c->h - 8 - y, size, ink);
         SDL_RenderSetClipRect(r->renderer, NULL);
     }
@@ -706,7 +726,11 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
         SDL_SetRenderDrawColor(r->renderer, accent.r, accent.g, accent.b, 210);
         /* Only the focus indicator moves; control layout and hit testing stay fixed. */
         SDL_Rect b = {(int)f.x - 3, (int)f.y - 3, (int)f.w + 6, (int)f.h + 6};
+        SDL_Rect viewport = {40, SL_CARD_Y - 8, 1200, SL_CARD_HEIGHT + 16};
+        if (m->page == SL_HOME)
+            SDL_RenderSetClipRect(r->renderer, &viewport);
         outline(r, b);
+        SDL_RenderSetClipRect(r->renderer, NULL);
     }
 
     if (l->dialog) {

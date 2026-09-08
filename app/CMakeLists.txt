@@ -14,6 +14,7 @@ add_library(nsl_ui STATIC src/ui/ui_model.c src/ui/ui_layout.c src/ui/ui_events.
     src/services/host_registry.c src/services/auth_store.c)
 target_include_directories(nsl_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(nsl_ui PRIVATE -Wall -Wextra)
+target_link_libraries(nsl_ui PUBLIC m)
 add_dependencies(nsl_ui nsl_identity)
 target_include_directories(nsl_ui PUBLIC ${NSL_IDENTITY_DIR})
 target_compile_definitions(nsl_ui PUBLIC NSL_DIAGNOSTICS=$<BOOL:${NSL_DIAGNOSTICS}>)

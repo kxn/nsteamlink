@@ -62,7 +62,8 @@ static void layout_check(sl_ui_model *m) {
     for (int i = 0; i < m->layout.count; ++i) {
         sl_control *c = &m->layout.controls[i];
         assert(c->w >= 64 && c->h >= 64);
-        assert(c->x >= 0 && c->y >= 0 && c->x + c->w <= 1280 && c->y + c->h <= 720);
+        assert(c->action == SL_RECENT ||
+               (c->x >= 0 && c->y >= 0 && c->x + c->w <= 1280 && c->y + c->h <= 720));
         for (int j = 0; j < i; ++j) {
             sl_control *d = &m->layout.controls[j];
             assert(c->id != d->id);
@@ -71,6 +72,111 @@ static void layout_check(sl_ui_model *m) {
         }
     }
 }
+static void carousel(void) {
+    sl_ui_model m = model();
+    add(&m, 1, "HOST");
+    m.store.registry.hosts[0].paired = true;
+    for (int i = 0; i < 4; ++i) {
+        m.store.registry.hosts[0].games[i].id = 100 + i;
+        snprintf(m.store.registry.hosts[0].games[i].name, 128, "Game %d", i);
+    }
+    sl_ui_layout(&m);
+    assert(m.focus == 40 && sl_ui_game_count(&m) == 4);
+    assert(sl_ui_hit(&m.layout, 1100, 400) == 42);
+    assert(!sl_ui_hit(&m.layout, 1250, 400));
+    sl_ui_action(&m, SL_DOWN, 0);
+    sl_ui_action(&m, SL_UP, 0);
+    assert(m.focus == 40);
+    sl_ui_action(&m, SL_RIGHT, 0);
+    assert(m.focus == 41 && m.games_target == 0);
+    sl_ui_action(&m, SL_RIGHT, 0);
+    assert(m.focus == 42 && m.games_target > 0 && m.games_scroll == 0);
+    sl_ui_tick(&m, 116);
+    assert(m.games_scroll > 0 && m.games_scroll < m.games_target);
+    sl_ui_action(&m, SL_RIGHT, 0);
+    assert(m.focus == 43 && m.games_target == sl_ui_scroll_limit(&m));
+    for (int i = 0; i < 50; ++i)
+        sl_ui_tick(&m, m.now + 16);
+    assert(m.games_scroll == m.games_target);
+    add(&m, 2, "OTHER");
+    sl_ui_action(&m, SL_NEXT_HOST, 0);
+    assert(m.focus == 0 && m.games_scroll == 0);
+    sl_ui_action(&m, SL_PREV_HOST, 0);
+    assert(m.focus == 43 && m.games_scroll == sl_ui_scroll_limit(&m));
+    sl_ui_action(&m, SL_LEFT, 0);
+    assert(m.focus == 42);
+    sl_ui_model copy = m;
+    sl_input_router r;
+    sl_input_init(&r, &copy, NULL, NULL, NULL);
+    key(&r, SL_KEY_Y, 1, 2000);
+    assert(copy.command.type == SL_CMD_STREAM && copy.command.game_id == 0);
+    copy = m;
+    sl_ui_action(&copy, SL_ACCEPT, 0);
+    assert(copy.command.type == SL_CMD_STREAM && copy.command.game_id == 102);
+
+    m.games_scroll = m.games_target = 0;
+    m.focus = 40;
+    sl_ui_layout(&m);
+    sl_input_init(&r, &m, NULL, NULL, NULL);
+    sl_input_event e = {.type = SL_TOUCH_DOWN, .finger = 7, .x = .6f, .y = .55f};
+    sl_input_event_handle(&r, &e, 2000);
+    e.type = SL_TOUCH_MOVE;
+    e.x = .25f;
+    sl_input_event_handle(&r, &e, 2100);
+    assert(m.games_dragging && m.games_scroll > 400);
+    sl_ui_action(&m, SL_LEFT, 0);
+    assert(m.games_dragging && m.focus == 40);
+    e.type = SL_TOUCH_UP;
+    sl_input_event_handle(&r, &e, 2110);
+    assert(!m.games_dragging && m.page == SL_HOME && m.command.type == SL_CMD_NONE);
+    for (int i = 0; i < 50; ++i)
+        sl_ui_tick(&m, m.now + 16);
+    assert(m.games_scroll == sl_ui_scroll_limit(&m));
+    assert(m.focus == 42);
+    tap(&r, 1000, 400);
+    assert(m.command.type == SL_CMD_STREAM && m.command.game_id == 103);
+
+    m = copy;
+    m.page = SL_HOME;
+    m.command.type = SL_CMD_NONE;
+    m.games_scroll = m.games_target = 0;
+    sl_ui_layout(&m);
+    sl_input_init(&r, &m, NULL, NULL, NULL);
+    e = (sl_input_event){.type = SL_TOUCH_DOWN, .finger = 7, .x = .3f, .y = .55f};
+    sl_input_event_handle(&r, &e, 3000);
+    sl_ui_action(&m, SL_NEXT_HOST, 0);
+    e.type = SL_TOUCH_UP;
+    sl_input_event_handle(&r, &e, 3100);
+    assert(m.page == SL_HOME && m.command.type == SL_CMD_NONE);
+
+    sl_ui_action(&m, SL_PREV_HOST, 0);
+    m.store.registry.hosts[0].games[3].id = 0;
+    sl_ui_layout(&m);
+    sl_ui_drag_games(&m, 10000);
+    sl_ui_release_games(&m, 0);
+    assert(m.games_target == sl_ui_scroll_limit(&m) && m.games_target > 0);
+    /* Finger-down during motion brakes without launching on release. */
+    m.games_scroll = 0;
+    sl_ui_layout(&m);
+    sl_input_init(&r, &m, NULL, NULL, NULL);
+    tap(&r, 300, 400);
+    assert(m.games_target == 0 && m.page == SL_HOME && m.command.type == SL_CMD_NONE);
+    e = (sl_input_event){.type = SL_TOUCH_DOWN, .finger = 7, .x = 503.f / 1280, .y = .55f};
+    sl_input_event_handle(&r, &e, 4000); /* Gap between cards. */
+    e.type = SL_TOUCH_MOVE;
+    e.x -= .1f;
+    sl_input_event_handle(&r, &e, 4050);
+    assert(m.games_dragging);
+    sl_input_event second = {.type = SL_TOUCH_DOWN, .finger = 8, .x = .2f, .y = .55f};
+    sl_input_event_handle(&r, &second, 4051);
+    second.type = SL_TOUCH_UP;
+    sl_input_event_handle(&r, &second, 4052);
+    assert(m.command.type == SL_CMD_NONE);
+    e.type = SL_FOCUS_LOST;
+    sl_input_event_handle(&r, &e, 4060);
+    assert(!m.games_dragging && m.page == SL_HOME && m.command.type == SL_CMD_NONE);
+}
+
 static void overlay_interaction(void) {
     sl_ui_model m = model();
     add(&m, 7, "HOST");
@@ -201,6 +307,7 @@ static void actionable_settings(void) {
     assert(m.page == SL_SETTINGS); /* No empty advanced page or stream-time host entry. */
 }
 int main(void) {
+    carousel();
     confirmation_shortcuts();
     actionable_settings();
     overlay_interaction();
@@ -217,9 +324,8 @@ int main(void) {
     add(&m, 2, "DESKTOP-A");
     assert(m.store.registry.selected == 0);
     tap(&r, 900, 660);
-    assert(m.page == SL_INFO);
+    assert(m.page == SL_HOME);
     assert(!sl_ui_take_command(&m, &cmd));
-    sl_ui_action(&m, SL_BACK, 0);
     sl_ui_tick(&m, m.now + 160);
     tap(&r, 1140, 660);
     assert(m.page == SL_OPTIONS);

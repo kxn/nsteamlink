@@ -43,40 +43,36 @@ void sl_ui_layout(sl_ui_model *m) {
             if (end > r->count)
                 end = r->count;
             if (r->count > 1)
-                button(l, 1, 40, 86, 64, 72, "L", SL_PREV_HOST, 0, false);
+                button(l, 1, 40, 86, 64, 72, "LB", SL_PREV_HOST, 0, false);
             int origin = (1280 - (end - begin) * 342 + 16) / 2;
             for (int i = begin; i < end; ++i)
                 button(l, 10 + i, origin + (i - begin) * 342, 86, 326, 72,
                        r->hosts[i].name[0] ? r->hosts[i].name : r->hosts[i].address, SL_SELECT_HOST,
                        i, i == r->selected);
             if (r->count > 1)
-                button(l, 2, 1176, 86, 64, 72, "R", SL_NEXT_HOST, 0, false);
-            bool duplicate = !h->name[0];
-            for (int i = 0; i < r->count; ++i)
-                if (&r->hosts[i] != h && !strcmp(h->name, r->hosts[i].name))
-                    duplicate = true;
+                button(l, 2, 1176, 86, 64, 72, "RB", SL_NEXT_HOST, 0, false);
+            char address[160];
+            snprintf(address, sizeof(address), "%s%s · %s",
+                     sl_host_online(h, m->now) ? "" : "上次地址 ", h->address,
+                     h->paired ? "已配对" : "未配对");
+            center(l, 170, 26, address);
             if (!sl_host_online(h, m->now)) {
                 center(l, 300, 44, "暂未发现这台电脑");
                 center(l, 372, 30, "正在自动查找");
             } else if (h->paired && h->games[0].id) {
                 text(l, 52, 236, 36, "最近游玩");
-                button(l, 30, 956, 220, 272, 72, "打开 Steam →", SL_START, 0, false);
-                for (int i = 0; i < 2 && h->games[i].id; ++i)
-                    button(l, 40 + i, 52 + i * 602, 320, 572, 250, h->games[i].name, SL_RECENT, i,
+                button(l, 30, 956, 220, 272, 72, "Y  打开 Steam", SL_START, 0, false);
+                for (int i = 0; i < sl_ui_game_count(m); ++i)
+                    button(l, 40 + i, SL_GAMES_LEFT + i * SL_CARD_STEP - (int)m->games_scroll,
+                           SL_CARD_Y, SL_CARD_WIDTH, SL_CARD_HEIGHT, h->games[i].name, SL_RECENT, i,
                            false);
             } else {
                 center(l, 284, 44, h->paired ? "准备就绪" : "连接这台电脑");
-                char meta[128];
-                snprintf(meta, sizeof(meta), "%s%s%s", h->system,
-                         duplicate && h->system[0] ? " · " : "", duplicate ? h->address : "");
-                if (meta[0])
-                    center(l, 356, 30, meta);
                 if (h->games_running)
                     center(l, 404, 28, "电脑正在运行游戏");
-                button(l, 30, 448, 472, 384, 80, h->paired ? "开始游玩" : "配对并连接", SL_START, 0,
-                       true);
+                button(l, 30, 448, 472, 384, 80, h->paired ? "Y  打开 Steam" : "Y  配对并连接",
+                       SL_START, 0, true);
             }
-            button(l, 4, 776, 632, 264, 64, "Y  电脑信息", SL_OPEN_INFO, 0, false);
         } else {
             center(l, 292, 44,
                    !m->network_ok                  ? "网络未连接"
@@ -87,7 +83,7 @@ void sl_ui_layout(sl_ui_model *m) {
         button(l, 3, 1060, 632, 180, 64, "X  选项", SL_OPEN_OPTIONS, 0, false);
         button(l, 5, 40, 632, 180, 64, "B  退出", SL_BACK, 0, false);
         if (h && sl_host_online(h, m->now))
-            text(l, 260, 648, 24, "A  确认");
+            text(l, 260, 648, 24, sl_ui_game_count(m) ? "A  启动游戏" : "A  连接");
     } else if (m->page == SL_STREAM) {
         /* Full video, no persistent local touch target. */
     } else if (connecting) {
@@ -124,16 +120,6 @@ void sl_ui_layout(sl_ui_model *m) {
             row(l, 2, "清晰", SL_SET_QUALITY, 2);
             if (m->streaming)
                 text(l, 320, 500, 26, "下次连接时生效");
-            break;
-        case SL_INFO:
-            strcpy(l->title, "电脑信息");
-            if (h) {
-                text(l, 320, 220, 32, h->name[0] ? h->name : "未提供名称");
-                text(l, 320, 324, 28, h->system);
-                text(l, 320, 380, 28, sl_host_online(h, m->now) ? "已发现" : "暂未发现 · 上次地址");
-                text(l, 320, 436, 28, h->address);
-                text(l, 320, 492, 28, h->paired ? "本机有配对记录" : "尚未配对");
-            }
             break;
         case SL_PAIRING:
         case SL_SAVING:
@@ -277,18 +263,42 @@ void sl_ui_layout(sl_ui_model *m) {
         l->offset_y = l->drawer ? 0 : (int)(20 * (1.f - l->opacity));
     } else
         l->opacity = 1.f;
+    if (m->page == SL_HOME) {
+        int count = sl_ui_game_count(m);
+        if (m->focus < 40 || m->focus >= 40 + count)
+            m->focus = count ? (h->focus >= 40 && h->focus < 40 + count ? h->focus : 40) : 0;
+        if (h)
+            h->focus = m->focus;
+        if (m->games_host != (h ? h->id : 0)) {
+            m->games_host = h ? h->id : 0;
+            m->games_dragging = false;
+            m->games_target = m->focus >= 40 ? (m->focus - 40) * SL_CARD_STEP : 0.f;
+            float limit = sl_ui_scroll_limit(m);
+            if (m->games_target > limit)
+                m->games_target = limit;
+            m->games_scroll = m->games_target;
+        }
+        float limit = sl_ui_scroll_limit(m);
+        if (m->games_target > limit)
+            m->games_target = limit;
+        if (m->games_scroll > limit)
+            m->games_scroll = limit;
+        if (!count) {
+            m->games_scroll = m->games_target = 0.f;
+            m->games_dragging = false;
+        }
+        for (int i = 0; i < l->count; ++i)
+            if (l->controls[i].action == SL_RECENT)
+                l->controls[i].x =
+                    SL_GAMES_LEFT + l->controls[i].arg * SL_CARD_STEP - (int)m->games_scroll;
+        return;
+    }
     bool found = false;
     for (int i = 0; i < l->count; ++i)
         if (l->controls[i].id == m->focus)
             found = true;
     if (!found) {
         m->focus = l->count ? l->controls[0].id : 0;
-        if (m->page == SL_HOME)
-            for (int i = 0; i < l->count; ++i)
-                if (l->controls[i].action == SL_START || l->controls[i].action == SL_RECENT) {
-                    m->focus = l->controls[i].id;
-                    break;
-                }
     }
     if (l->compact) {
         m->focus = 0;
