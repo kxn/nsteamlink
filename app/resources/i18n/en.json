@@ -113,5 +113,10 @@
   "MS": "%.1f ms",
   "DECODE_MS": "%.1f / %.1f ms",
   "AUDIO_MS": "%.0f ms",
-  "ACK_MS": "%llu ms"
+  "ACK_MS": "%llu ms",
+  "END_GAME": "End game",
+  "END_GAME_QUESTION": "End the game on your PC?",
+  "END_GAME_EXPLANATION": "Save your game before ending it.",
+  "END_GAME_FAILED": "Could not confirm the game ended. Check your PC.",
+  "ENDING_GAME": "Ending game"
 }

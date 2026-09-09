@@ -44,3 +44,32 @@ static inline void sl_launch_status(sl_launch_watch *s, bool present, bool runni
 static inline bool sl_launch_finished(const sl_launch_watch *s) {
     return s->target && s->kind == 3 && s->played && s->running_seen && s->empty_statuses == 2;
 }
+
+/* Explicit stop is separate from automatic completion: it also applies to a
+ * game started inside a Steam-first session. Only runtime starts this watch,
+ * after a user confirmation during an established stream. */
+typedef struct sl_end_game_watch {
+    uint64_t at;
+    uint32_t stamp;
+    unsigned empty;
+    bool have_stamp;
+} sl_end_game_watch;
+static inline void sl_end_game_status(sl_end_game_watch *s, bool present, bool running,
+                                      bool timestamp_present, uint32_t stamp) {
+    if (!s->at)
+        return;
+    if (!present || !timestamp_present) {
+        s->empty = 0;
+        return;
+    }
+    if (s->have_stamp && (int32_t)(stamp - s->stamp) <= 0)
+        return;
+    bool had_stamp = s->have_stamp;
+    s->have_stamp = true;
+    s->stamp = stamp;
+    if (had_stamp && !running) {
+        if (s->empty < 2)
+            ++s->empty;
+    } else
+        s->empty = 0;
+}

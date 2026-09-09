@@ -9,6 +9,7 @@ static void page(sl_ui_model *m, sl_page p) {
     m->leaving = false;
     m->games_dragging = false;
     m->page = p;
+    m->ending_game = false;
     m->focus = 0;
     m->entered_at = m->now;
 }
@@ -338,6 +339,18 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
             back(m);
         }
 #endif
+        break;
+    case SL_OPEN_END_GAME:
+        if (m->streaming)
+            push(m, SL_END_GAME);
+        break;
+    case SL_CONFIRM_END_GAME:
+        if (m->streaming && m->page == SL_END_GAME) {
+            ++m->generation;
+            page(m, SL_STOPPING);
+            m->ending_game = true;
+            emit(m, SL_CMD_END_GAME);
+        }
         break;
     case SL_OPEN_DISCONNECT:
         if (m->streaming)

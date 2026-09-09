@@ -121,7 +121,8 @@ int sl_application_run(int argc, char **argv) {
             } else if (cmd.type == SL_CMD_SAVE) {
                 if (!sl_i18n_save(sl_system_data_dir(), cmd.language))
                     sl_ui_error(&a->ui, sl_tr(SL_T_SAVE_SETTINGS_FAILED));
-            } else if (cmd.type == SL_CMD_CANCEL || cmd.type == SL_CMD_STOP)
+            } else if (cmd.type == SL_CMD_CANCEL || cmd.type == SL_CMD_STOP ||
+                       cmd.type == SL_CMD_END_GAME)
                 sl_ui_stopped(&a->ui, false);
             else if (cmd.type != SL_CMD_EXIT && cmd.type != SL_CMD_SAVE)
                 sl_ui_error(&a->ui, sl_tr(SL_T_OFFLINE_PREVIEW));

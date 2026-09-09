@@ -1764,3 +1764,45 @@ samples；desktop 使用 1024，避免已观察到的 SDL dummy 非幂次块越�
 事件时直接返回原数据，不遍历/转换样本。停止游戏音频后可重新打开首页设备。交接由
 media.audio_lock 串行，UI 仅投递原子事件，不开关设备、不阻塞渲染。
 退出时禁止重新打开首页音频，停止串流设备后关闭 UI 音频，之后才释放 SDL/Mesa。
+
+## D-048：Switch 原生振动适配与显式结束游戏
+
+Evidence：官方停止游戏菜单见 `STEAMLINK_PROTOCOL_RE.md` §22.2/22.6。
+振动参数来源：
+
+- SDL2 `SDL_GameControllerRumble` 文档明确两路参数为 0..65535 强度：
+  <https://wiki.libsdl.org/SDL2/SDL_GameControllerRumble>。
+- libnx `HidVibrationValue` 定义振幅最大 1.0，频率为 Hz；双设备初始化支持
+  Handheld/JoyDual/FullKey：<https://switchbrew.github.io/libnx/hid_8h_source.html>。
+- SDL2 上游 `SDL_hidapi_switch.c` 的 paired Joy-Con 分支将 low 交给左侧、high
+  交给右侧；Pro/独立单 Joy-Con 保留两频带。`SDL_joystick.c` 中 duration=0
+  不设到期时间，显式零强度终止：<https://github.com/libsdl-org/SDL/tree/SDL2/src/joystick>。
+- 本机 switch-sdl2 2.28.5-4 的 `libSDL2.a(SDL_sysjoystick.o)` 反汇编确认与
+  devkitPro switch-sdl-2.28 分支一致：非零 low 时振幅写入 320.0、输入强度
+  除以 204 当作频率、仅一个输出设备、GetCapabilities 返回零。
+  `SWITCH_JoystickInit` 还未初始化 slot 0 的振动句柄；默认输入包含 Handheld，
+  但原振动路径使用 No1。源参考：
+  <https://github.com/devkitPro/SDL/blob/switch-sdl-2.28/src/joystick/switch/SDL_sysjoystick.c>。
+
+Conclusion：原驱动不能提供可靠的本地振动映射。用户无振动的完整根因仍不能仅凭
+这些源码确定；尚需真实 Steam 输出与电机反馈。此前不能将“已有 SDL 调用”等同
+于“Joy-Con 振动可用”。
+
+Decision：应用在 Switch 链接时用 `--wrap=SDL_GameControllerRumble` 接入自有
+`app/platforms/switch/rumble.c`；不修改系统 devkitPro 安装，不更改桌面 SDL。
+保留 IHSlib 的输出报文解析与 media 线程排队；只替换最终平台输出。强度线性归一化
+为 input/65535.0，采用 160/320 Hz 固定频带，不重复实现 libnx 的硬件编码。
+这是一种标准双频 rumble 到 HD Rumble 的映射，不声称复原游戏原生 HD Rumble 波形。
+双 Joy-Con/Handheld 将两路分到左右；Pro 两设备均保留两频带；单 Joy-Con 合并两路。
+slot 0 在 Handheld 有效时使用 Handheld，其余沿用已核实 SDL 的 instance ID 0..7。
+因此升级 Switch SDL 时须重新核对该 ID 契约。
+
+所有调用、到期停止、设备变化停止和最终 SDL_Quit 前停止均在 media 线程执行。
+断开会话后下一个 media tick 清零，无新线程；不改变用户系统振动开关。
+平台调用失败设置 SDL 错误并限频记录。没有新增测试振动菜单。
+
+同一路径的并发证据：TSan `hid_concurrent_devices` 报告 `HIDPollTick →
+IHS_HIDDeviceLock` 读取 `device->managed`，与 `IHS_HIDManagerOpenDevice` 在
+列表发布后写该字段竞争。将反向指针初始化移到 devicesLock 保护的列表发布之前；
+同时将 opened（SDL 状态与 pendingWrites 初始化）放到最终列表发布之前，
+避免另一种半初始化读取；不改轮询线程和设备延迟释放策略。

@@ -488,6 +488,8 @@ static SDL_Color action_color(sl_action a) {
         return amber;
     case SL_OPEN_FORGET:
     case SL_CONFIRM_FORGET:
+    case SL_OPEN_END_GAME:
+    case SL_CONFIRM_END_GAME:
     case SL_CONFIRM_STOP:
         return coral;
     default:
@@ -510,7 +512,8 @@ static void action_icon(SDL_Renderer *r, sl_action a, int x, int y, SDL_Color c)
         line(r, x + 7, y + 10, x + 9, y + 26, c);
         line(r, x + 23, y + 10, x + 21, y + 26, c);
         line(r, x + 9, y + 26, x + 21, y + 26, c);
-    } else if (a == SL_OPEN_DISCONNECT || a == SL_CONFIRM_STOP || a == SL_CONFIRM_EXIT) {
+    } else if (a == SL_OPEN_END_GAME || a == SL_CONFIRM_END_GAME || a == SL_OPEN_DISCONNECT ||
+               a == SL_CONFIRM_STOP || a == SL_CONFIRM_EXIT) {
         line(r, x + 14, y + 2, x + 14, y + 15, c);
         for (int i = 0; i < 25; ++i) {
             float u = (50 + i * 260.f / 25) * 3.14159265f / 180;

@@ -1,4 +1,5 @@
 #include "media.h"
+#include "platform/rumble.h"
 #include "ui_audio.h"
 
 #include <ctype.h>
@@ -75,6 +76,7 @@ static opus_int16 audio_decode_buf[AUDIO_MAX_OPUS_FRAME_SAMPLES * 2];
 
 static IHS_Session *stats_session;
 static IHS_Session *hid_session;
+static bool rumble_reset_pending;
 static bool hid_session_enabled;
 static pthread_t hid_flush_thread;
 static atomic_bool hid_flush_running;
@@ -772,11 +774,16 @@ static void pump_sdl_events(void) {
     }
 #endif
     pthread_mutex_lock(&state_lock);
+    if (rumble_reset_pending) {
+        sl_rumble_tick(false);
+        rumble_reset_pending = false;
+    }
     if (hid_session) {
         IHS_HIDSDLApplyPendingWrites(hid_session);
         if (devices_changed)
             IHS_SessionHIDNotifyDeviceChange(hid_session);
     }
+    sl_rumble_tick(hid_session != NULL);
     pthread_mutex_unlock(&state_lock);
 }
 
@@ -898,6 +905,7 @@ void stream_media_shutdown(void) {
         sdl_window = NULL;
     }
     if (sdl_initialized) {
+        sl_rumble_tick(false);
         media_logf("media shutdown: SDL_Quit");
         SDL_Quit();
         sdl_initialized = false;
@@ -973,6 +981,8 @@ void stream_media_set_hid_session(IHS_Session *session, bool enabled) {
     pthread_mutex_lock(&hid_lifecycle_lock);
     hid_flush_thread_stop();
     pthread_mutex_lock(&state_lock);
+    if (hid_session != session)
+        rumble_reset_pending = true;
     hid_session = session;
     memset(remote_touches, 0, sizeof(remote_touches));
     hid_session_enabled = enabled;

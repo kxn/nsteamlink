@@ -249,15 +249,16 @@ static void overlay_interaction(void) {
     assert(n == 2);
 }
 static void confirmation_shortcuts(void) {
-    const sl_page pages[] = {SL_FORGET, SL_DISCONNECT, SL_EXIT, SL_ERROR};
-    const sl_command_type expected[] = {SL_CMD_SAVE, SL_CMD_STOP, SL_CMD_EXIT, SL_CMD_PAIR};
-    for (int p = 0; p < 4; ++p) {
+    const sl_page pages[] = {SL_FORGET, SL_DISCONNECT, SL_EXIT, SL_ERROR, SL_END_GAME};
+    const sl_command_type expected[] = {SL_CMD_SAVE, SL_CMD_STOP, SL_CMD_EXIT, SL_CMD_PAIR,
+                                        SL_CMD_END_GAME};
+    for (int p = 0; p < 5; ++p) {
         for (int path = 0; path < 4; ++path) {
             sl_ui_model m = model();
             add(&m, 7, "HOST");
             m.intent.host = m.store.registry.hosts[0];
             m.page = pages[p];
-            m.streaming = m.page == SL_DISCONNECT;
+            m.streaming = m.page == SL_DISCONNECT || m.page == SL_END_GAME;
             sl_ui_tick(&m, 1000);
             sl_control positive = {0}, cancel = {0};
             for (int i = 0; i < m.layout.count; ++i) {

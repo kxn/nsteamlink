@@ -17,6 +17,7 @@ typedef enum sl_page {
     SL_QUALITY,
     SL_LANGUAGE,
     SL_FORGET,
+    SL_END_GAME,
     SL_DISCONNECT,
     SL_EXIT,
     SL_STOPPING,
@@ -46,6 +47,8 @@ typedef enum sl_action {
     SL_SET_LANGUAGE,
     SL_OPEN_FORGET,
     SL_CONFIRM_FORGET,
+    SL_OPEN_END_GAME,
+    SL_CONFIRM_END_GAME,
     SL_OPEN_DISCONNECT,
     SL_CONFIRM_STOP,
     SL_CONFIRM_EXIT,
@@ -61,6 +64,7 @@ typedef enum sl_command_type {
     SL_CMD_PAIR,
     SL_CMD_STREAM,
     SL_CMD_CANCEL,
+    SL_CMD_END_GAME,
     SL_CMD_STOP,
     SL_CMD_EXIT,
     SL_CMD_SAVE,
@@ -120,7 +124,7 @@ typedef struct sl_ui_model {
     int focus_stack[8];
     bool repair_attempted;
     int depth;
-    bool streaming, debug, network_ok, closing, leaving;
+    bool streaming, debug, network_ok, closing, leaving, ending_game;
     uint64_t leave_at;
     float leave_opacity;
     int focus;

@@ -100,7 +100,8 @@ void sl_ui_layout(sl_ui_model *m) {
             strcpy(l->title, sl_tr(SL_T_PLAY_MENU));
             row(l, 0, sl_tr(SL_T_RESUME), SL_BACK, 0);
             row(l, 1, sl_tr(SL_T_SETTINGS), SL_OPEN_SETTINGS, 0);
-            row(l, 2, sl_tr(SL_T_DISCONNECT), SL_OPEN_DISCONNECT, 0);
+            row(l, 2, sl_tr(SL_T_END_GAME), SL_OPEN_END_GAME, 0);
+            row(l, 3, sl_tr(SL_T_DISCONNECT), SL_OPEN_DISCONNECT, 0);
             break;
         case SL_OPTIONS:
             strcpy(l->title, sl_tr(SL_T_OPTIONS));
@@ -142,7 +143,7 @@ void sl_ui_layout(sl_ui_model *m) {
             text(l, 320, 360, 28, sl_tr(SL_T_WAIT_VIDEO));
             break;
         case SL_STOPPING:
-            strcpy(l->title, sl_tr(SL_T_DISCONNECTING));
+            strcpy(l->title, sl_tr(m->ending_game ? SL_T_ENDING_GAME : SL_T_DISCONNECTING));
             break;
         case SL_CLOSING:
             strcpy(l->title, sl_tr(SL_T_EXITING));
@@ -168,6 +169,11 @@ void sl_ui_layout(sl_ui_model *m) {
             button(l, 220, 756, 274, 204, 136, sl_tr(SL_T_CONFIRM), SL_SUBMIT, 0, true);
             break;
         }
+        case SL_END_GAME:
+            strcpy(l->title, sl_tr(SL_T_END_GAME_QUESTION));
+            text(l, 320, 236, 30, sl_tr(SL_T_END_GAME_EXPLANATION));
+            row(l, 2, sl_tr(SL_T_END_GAME), SL_CONFIRM_END_GAME, 0);
+            break;
         case SL_DISCONNECT:
             strcpy(l->title, sl_tr(SL_T_DISCONNECT_QUESTION));
             text(l, 320, 236, 30, sl_tr(SL_T_GAME_CONTINUES));
@@ -202,8 +208,8 @@ void sl_ui_layout(sl_ui_model *m) {
     if (l->dialog) {
         l->drawer = m->page == SL_MENU || m->page == SL_OPTIONS || m->page == SL_SETTINGS ||
                     m->page == SL_QUALITY || m->page == SL_LANGUAGE;
-        l->compact = m->page == SL_DISCONNECT || m->page == SL_FORGET || m->page == SL_EXIT ||
-                     m->page == SL_ERROR;
+        l->compact = m->page == SL_END_GAME || m->page == SL_DISCONNECT || m->page == SL_FORGET ||
+                     m->page == SL_EXIT || m->page == SL_ERROR;
         l->panel_x = 272;
         l->panel_y = 96;
         l->panel_w = 736;

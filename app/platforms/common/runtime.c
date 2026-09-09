@@ -40,6 +40,7 @@ struct sl_runtime {
     bool activity_changed;
     sl_launch_watch launch;
     uint64_t launch_probe_at;
+    sl_end_game_watch end_game;
     bool session_ready, connected, finished, host_stopped, first_reported, auth_ready,
         auth_consumed, request_terminal;
     uint64_t auth_account, request_at, frame_at, last_diag;
@@ -231,9 +232,12 @@ static void discovered(IHS_Client *client, const IHS_HostInfo *h, void *ctx) {
     if (r->active.type == SL_CMD_STREAM && h->clientId == r->active.host.client_id &&
         h->instanceId == r->active.host.instance_id && h->address.port == 27036) {
         char *ip = IHS_IPAddressToString(&h->address.ip);
-        if (ip && !strcmp(ip, r->active.host.address))
+        if (ip && !strcmp(ip, r->active.host.address)) {
             sl_launch_status(&r->launch, h->hasGamesRunning, h->gamesRunning, h->hasTimestamp,
                              h->timestamp);
+            sl_end_game_status(&r->end_game, h->hasGamesRunning, h->gamesRunning, h->hasTimestamp,
+                               h->timestamp);
+        }
         free(ip);
     }
     pthread_mutex_unlock(&r->lock);
@@ -417,6 +421,10 @@ static bool start_client(sl_runtime *r) {
     return started;
 }
 static void stop_session(sl_runtime *r) {
+    pthread_mutex_lock(&r->lock);
+    r->end_game.at = 0;
+    r->end_game.empty = 0;
+    pthread_mutex_unlock(&r->lock);
     sl_log("cleanup: stop/join HID worker");
     stream_media_set_hid_session(NULL, false);
     if (r->session) {
@@ -470,6 +478,26 @@ static void execute(sl_runtime *r, sl_command cmd) {
     sl_log(trace);
     if (cmd.type == SL_CMD_SAVE)
         return;
+    if (cmd.type == SL_CMD_END_GAME) {
+        pthread_mutex_lock(&r->lock);
+        r->active.generation = cmd.generation;
+        bool already_sent = r->end_game.at != 0;
+        if (!already_sent) {
+            r->end_game.at = sl_system_now();
+            r->end_game.have_stamp = r->launch.have_stamp;
+            r->end_game.stamp = r->launch.stamp;
+            r->end_game.empty = 0;
+        }
+        pthread_mutex_unlock(&r->lock);
+        if (!already_sent &&
+            (!r->session || !r->first_reported || !IHS_SessionStopGame(r->session))) {
+            stop_session(r);
+            fail(r, sl_tr(SL_T_END_GAME_FAILED));
+        } else if (!already_sent) {
+            sl_log("user end game: reliable StopRequest queued; awaiting host completion");
+        }
+        return;
+    }
     /* Cancel/join each request before changing its callback generation. Keep the
      * client socket alive so canceled launch IDs can reject late host responses. */
     if (r->client) {
@@ -781,14 +809,26 @@ static void *worker_main(void *ctx) {
         bool activity_changed = r->activity_changed;
         r->activity_changed = false;
         bool desktop = r->launch.kind == 3 || r->launch.kind == 4;
-        bool probe_launch = r->session && r->launch.target && now - r->launch_probe_at >= 1000;
+        bool ending_game = r->end_game.at != 0;
+        bool end_game_done = ending_game && r->end_game.empty >= 2;
+        bool end_game_timeout = ending_game && now - r->end_game.at >= 15000;
+        bool probe_launch =
+            r->session && (r->launch.target || ending_game) && now - r->launch_probe_at >= 1000;
         if (probe_launch)
             r->launch_probe_at = now;
         pthread_mutex_unlock(&r->lock);
         if (activity_changed && r->first_reported)
             r->frame_at = now; /* Desktop -> Game starts a fresh video wait window. */
-        if (launch_done && r->session) {
-            sl_log("launch: target played, Desktop, fresh host reports no games; normal return");
+        if (end_game_timeout && !end_game_done && !launch_done && r->session) {
+            stop_session(r);
+            fail(r, sl_tr(SL_T_END_GAME_FAILED));
+            continue;
+        }
+        if ((launch_done || end_game_done) && r->session) {
+            sl_log(
+                end_game_done
+                    ? "user end game: fresh host reports no games; normal return"
+                    : "launch: target played, Desktop, fresh host reports no games; normal return");
             stop_session(r);
             post(r, (sl_runtime_event){.type = SL_EVENT_STOPPED});
             IHS_ClientStartDiscovery(r->client, 3000);
@@ -812,7 +852,7 @@ static void *worker_main(void *ctx) {
                 r->request_at = now;
         }
         r->video_suspended = video_suspended;
-        if (!video_suspended && r->request_at &&
+        if (!ending_game && !video_suspended && r->request_at &&
             ((!r->first_reported && now - r->request_at > 45000) ||
              (r->first_reported && !desktop && now - r->frame_at > 10000))) {
             /* A host stop may arrive after this loop copied finished. Read the
