@@ -1,4 +1,4 @@
-# nsteamlink
+# NSteamLink
 
 Switch 自制软件（homebrew）版 Steam Link 客户端：通过 Steam Remote Play 协议串流 PC 上的 Steam 游戏。
 
@@ -20,7 +20,23 @@ Switch 自制软件（homebrew）版 Steam Link 客户端：通过 Steam Remote 
 | `docs/SWITCH_SETUP.md` | Switch 真机环境准备指南（刷自制系统 / hbmenu / nxlink） |
 | `third_party/README.md` | 第三方依赖与 IHSlib fork 工作流 |
 
-## 快速开始
+## 安装与游玩
+
+从 [Releases](https://github.com/kxn/nsteamlink/releases/latest) 下载 NRO，放到 SD 卡的
+`switch/nsteamlink/nsteamlink.nro`。按住 R 启动一个游戏，进入全内存 hbmenu 后打开 NSteamLink。
+相册 applet 模式不受支持，应用会在图形初始化前提示并允许按 B 返回。
+
+电脑上开启 Steam Remote Play，保持电脑与 Switch 在同一局域网。首次运行自动发现电脑，
+选择后按屏幕提示完成配对。可在 **X 选项 → 添加到 HOME 菜单** 中安装启动入口，
+无需提供密钥；入口依赖上述 NRO，后续更新只需替换该文件。需要 CFW 支持自制应用安装与启动。
+
+English: Download the NRO from [Releases](https://github.com/kxn/nsteamlink/releases/latest) and place it at
+`switch/nsteamlink/nsteamlink.nro` on your SD card. Hold R while launching a game to enter full-memory
+hbmenu, then launch NSteamLink. Enable Steam Remote Play on your PC and pair on the same LAN.
+The app supports English and Chinese. **Options → Add to HOME Menu** installs a shortcut without
+requiring a key file; keep the NRO at that fixed path. Applet mode is not supported.
+
+## 从源码构建
 
 环境要求见 `DEVELOPMENT.md` 附录 A。
 
@@ -37,7 +53,7 @@ Switch 自制软件（homebrew）版 Steam Link 客户端：通过 Steam Remote 
 # 自动测试（含真实 SDL 事件、存储、协议及输入可靠性）
 ctest --test-dir build/desktop --output-on-failure
 
-# 无网络桌面预览；数据目录可隔离，避免改动已有配对
+# 无网络桌面预览（需以 -DNSL_DIAGNOSTICS=ON 构建）；数据目录可隔离
 NSL_DATA_DIR=/tmp/nsteamlink-preview ./build/desktop/app/nsteamlink --offline
 ```
 
@@ -45,10 +61,10 @@ NSL_DATA_DIR=/tmp/nsteamlink-preview ./build/desktop/app/nsteamlink --offline
 配对保存后会继续连接；如果电脑要求连接安全码，再用屏幕数字键盘输入。每台电脑分别保存授权和最近游戏。
 最近游戏来自实际串流期间主机报告的活动；有记录后可直接请求启动该游戏和串流，没有记录时显示“开始游玩”。
 
-首页 **L/R** 切换电脑，方向键移动、**A** 确认、**B** 返回，**X** 选项、**Y** 电脑信息。
+首页 **L/R** 切换电脑，方向键移动、**A** 确认、**B** 返回，**X** 选项、**Y** 打开 Steam。
 首页及本地菜单支持触摸操作。串流全屏显示；同时长按 **− 和 + 0.8 秒**打开本地菜单。开流时显示一次快捷键提示，随后渐隐，画面上不保留常驻按钮。
-菜单内可断开串流；电脑上的游戏继续运行。回首页后按 B 可退出应用。
-高级 Debug：在本地游玩菜单里单独长按 **X 一秒**开关，只读浮层不接管游戏输入。
+菜单内可选择“断开连接”（电脑游戏继续运行），或“结束游戏”（请求电脑退出游戏）。回首页后按 B 可退出应用。
+仅诊断构建提供高级 Debug：在本地游玩菜单里单独长按 **X 一秒**开关，只读浮层不接管游戏输入。
 
 桌面预览支持鼠标、手柄和键盘：方向键、Enter/A、Esc/B、X、Y，Q/E 对应 L/R，Minus/Equals 对应 −/+。
 桌面实际串流可使用 SDL 手柄；没有手柄时仍能使用本地界面和触摸／鼠标指针路径。
