@@ -164,3 +164,25 @@ Windows 中打开设备 `Nintendo Switch` → `Album`，复制需要的图片。
 在 hbmenu 中运行。电脑与 Switch 连接同一局域网，用 FTP 客户端连接 ftpd 屏幕显示的
 IP 与端口，下载 `Nintendo/Album` 目录；端口以屏幕显示为准。
 传输后退出 ftpd。只需读卡复制时，也可以在关机后取出 microSD，用读卡器复制同一目录。
+
+
+## deko 视频直显诊断构建
+
+固定后端选择 `-DNSL_GFX_BACKEND=deko`；默认构建保留 SDL 对照路径。示例：
+
+```sh
+NSL_BUILD_DIR="$PWD/build/switch-deko" scripts/build-switch.sh \
+  -DNSL_GFX_BACKEND=deko -DNSL_DIAGNOSTICS=ON -DNSL_BUILD_TOOLS=OFF
+```
+
+该目录生成应用 `app/nsteamlink.nro`、独立 `app/nsl-video-probe.nro` 和
+`generated/graphics_manifest.json`。保存 manifest 与 NRO，不能混用不同 SDK/shader 的实测记录。
+将 `app/tests/fixtures/video/padding720.h264` 放到 SD 的
+`/switch/nsteamlink-video-probe/padding720.h264`，运行 probe 即可离线测试，不需 Steam 或网络。
+启动器支持 argv 时可传入其他 fixture 的绝对路径；默认路径也可换成另外一份 fixture 内容，
+记录对应 manifest 条目。日志写入 `/switch/nsteamlink-video-probe.log`。
+
+probe 先验证 UI alpha/atlas/方向，再比较软件 YUV 与硬件导入输出、旧帧重画及两域交替。
+`FINAL=PASS` 仅表示这些像素和引用检查通过；是否回到 hbmenu、HOME/睡眠恢复、连续启动以及
+整机功耗和帧时间收益需要分别记录。已经故障的 GPU queue 会进入系统 fatal，避免把仍被使用的
+内存释放后返回 loader。正式启用 deko 的验收契约见 [渲染设计](VIDEO_RENDERING_DESIGN.md)。

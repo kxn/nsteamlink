@@ -1,5 +1,8 @@
 #include "media.h"
+#include "events_backend.h"
+#include "gfx_backend.h"
 #include "platform/rumble.h"
+#include "session/frame_tracker.h"
 #include "ui_audio.h"
 
 #include <ctype.h>
@@ -34,32 +37,25 @@
 #define SDL_WIDTH  1280
 #define SDL_HEIGHT 720
 
-static SDL_Window *sdl_window;
-static SDL_Renderer *sdl_renderer;
-static SDL_Texture *video_texture;
+static sl_gfx *gfx;
 static SDL_AudioDeviceID audio_device;
 static bool audio_shutting_down;
 static bool sdl_initialized;
 static bool locks_ready, mapping_installed;
 static bool sdl_ready;
 static bool sdl_exit_requested;
-static int texture_width;
-static int texture_height;
-static Uint32 texture_format;
-static bool nv12_texture_failed;
+static bool logged_alignment_fallback;
 
-static pthread_mutex_t frame_lock;
 static pthread_mutex_t state_lock;
 static pthread_mutex_t audio_lock;
 
-static AVCodecContext *decoder_ctx;
-static AVBufferRef *hw_device_ctx;
-static enum AVPixelFormat hw_pix_fmt = AV_PIX_FMT_NONE;
-static AVPacket *packet;
-static AVFrame *decode_frame;
-static AVFrame *latched_frame;
-static AVFrame *present_frame;
-static struct SwsContext *sws;
+static sl_video_pipeline *video;
+static sl_video_frame *current_frame;
+static sl_video_key video_key;
+static IHS_FrameTracker *test_tracker;
+static uint64_t test_session_id;
+static uint64_t presentation_serial, last_presentation_us;
+static sl_video_key presentation_key, layout_key;
 static OpusDecoder *audio_decoder;
 static int audio_frequency;
 static int audio_channels;
@@ -74,7 +70,6 @@ static uint32_t audio_decode_errors_total;
 #define AUDIO_QUEUE_LIMIT_MS         300U
 static opus_int16 audio_decode_buf[AUDIO_MAX_OPUS_FRAME_SAMPLES * 2];
 
-static IHS_Session *stats_session;
 static IHS_Session *hid_session;
 static bool rumble_reset_pending;
 static bool hid_session_enabled;
@@ -151,33 +146,15 @@ static void (*event_hook)(const void *, void *);
 static void *hook_context;
 static atomic_bool input_gate;
 static atomic_bool muted;
-static atomic_bool clear_texture;
-static pthread_mutex_t decoder_lock;
-static pthread_mutex_t present_lock;
 #if NSL_DIAGNOSTICS
 static IHS_HIDSDLLastSubmitted submitted_cache;
 #endif
-static struct SwsContext *upload_sws;
 static SDL_Rect video_rect;
 static struct {
     bool active;
     int64_t id;
 } remote_touches[8];
-static bool frame_dirty;
-static uint16_t pending_frame_id;
-static uint64_t pending_submit_us;
-static uint64_t pending_latch_us;
-static bool need_flush;
-static bool have_last_frame;
-static uint16_t last_frame_id;
-static bool logged_alignment_fallback;
-static bool logged_vic_transfer;
-static bool logged_vic_prepare_fallback;
-static bool logged_vic_transfer_retry;
-static enum AVPixelFormat logged_convert_format = AV_PIX_FMT_NONE;
-
 static void media_logf(const char *fmt, ...);
-static void video_stop_locked(IHS_Session *session);
 static bool opus_rate_supported(uint32_t rate);
 static uint32_t audio_queue_limit_bytes(int frequency, int channels);
 static void audio_stop_locked(void);
@@ -268,12 +245,6 @@ static void media_set_error(const char *fmt, ...) {
     snapshot.last_error[sizeof(snapshot.last_error) - 1] = '\0';
     pthread_mutex_unlock(&state_lock);
     media_logf("media error: %s", msg);
-}
-
-static void media_log_av_error(const char *prefix, int err) {
-    char errbuf[AV_ERROR_MAX_STRING_SIZE];
-    av_strerror(err, errbuf, sizeof(errbuf));
-    media_set_error("%s: %s (%d)", prefix, errbuf, err);
 }
 
 static void ffmpeg_log_callback(void *ptr, int level, const char *fmt, va_list vl) {
@@ -744,7 +715,7 @@ static void sample_raw_npad(void) {
 static void pump_sdl_events(void) {
     SDL_Event event;
     bool devices_changed = false;
-    while (SDL_PollEvent(&event)) {
+    for (unsigned budget = 0; budget < 128 && sl_events_next(&event); ++budget) {
 #if NSL_DIAGNOSTICS
         record_hid_event(&event);
 #endif
@@ -792,16 +763,12 @@ bool stream_media_init(stream_media_log_fn log_fn) {
         return true;
     }
     if (!locks_ready) {
-        pthread_mutex_init(&frame_lock, NULL);
         pthread_mutex_init(&state_lock, NULL);
         pthread_mutex_init(&audio_lock, NULL);
         pthread_mutex_init(&hid_lifecycle_lock, NULL);
-        pthread_mutex_init(&decoder_lock, NULL);
-        pthread_mutex_init(&present_lock, NULL);
         locks_ready = true;
     }
     atomic_store(&input_gate, false);
-    atomic_store(&clear_texture, false);
     log_cb = NSL_DIAGNOSTICS ? log_fn : NULL;
     memset(&snapshot, 0, sizeof(snapshot));
     sdl_exit_requested = false;
@@ -809,15 +776,12 @@ bool stream_media_init(stream_media_log_fn log_fn) {
     av_log_set_level(NSL_DIAGNOSTICS ? AV_LOG_WARNING : AV_LOG_QUIET);
     av_log_set_callback(ffmpeg_log_callback);
 
-    latched_frame = av_frame_alloc();
-    present_frame = av_frame_alloc();
-    if (latched_frame == NULL || present_frame == NULL) {
-        media_set_error("media frame allocation failed");
+    video = sl_video_create();
+    if (!video) {
         stream_media_shutdown();
         return false;
     }
-
-    Uint32 init_flags = SDL_INIT_VIDEO;
+    Uint32 init_flags = NSL_GFX_DEKO ? 0 : SDL_INIT_VIDEO;
     init_flags |= SDL_INIT_GAMECONTROLLER | SDL_INIT_AUDIO;
     if (SDL_Init(init_flags) < 0) {
         media_set_error("SDL_Init: %s", SDL_GetError());
@@ -825,20 +789,12 @@ bool stream_media_init(stream_media_log_fn log_fn) {
         return false;
     }
     sdl_initialized = true;
+    sl_events_init();
 
-    sdl_window = SDL_CreateWindow("nsteamlink", 0, 0, SDL_WIDTH, SDL_HEIGHT, 0);
-    if (sdl_window == NULL) {
-        media_set_error("SDL_CreateWindow: %s", SDL_GetError());
-        stream_media_shutdown();
-        return false;
-    }
-
-    sdl_renderer =
-        SDL_CreateRenderer(sdl_window, 0, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-    if (sdl_renderer == NULL)
-        sdl_renderer = SDL_CreateRenderer(sdl_window, -1, SDL_RENDERER_SOFTWARE);
-    if (sdl_renderer == NULL) {
-        media_set_error("SDL_CreateRenderer: %s", SDL_GetError());
+    sl_gfx_config graphics = {SDL_WIDTH, SDL_HEIGHT, "nsteamlink"};
+    gfx = sl_gfx_create(&graphics);
+    if (!gfx) {
+        media_set_error("graphics initialization failed");
         stream_media_shutdown();
         return false;
     }
@@ -848,12 +804,11 @@ bool stream_media_init(stream_media_log_fn log_fn) {
     audio_shutting_down = false;
     sl_audio_init();
     sdl_ready = true;
-    SDL_RenderSetLogicalSize(sdl_renderer, 1280, 720);
 
     pthread_mutex_lock(&state_lock);
     snapshot.available = true;
     pthread_mutex_unlock(&state_lock);
-    media_logf("media init: SDL2 renderer ready");
+    media_logf("media init: graphics backend ready");
     return true;
 }
 
@@ -890,20 +845,16 @@ void stream_media_shutdown(void) {
 
     close_hid_controller();
 
-    SDL_DestroyTexture(video_texture);
-    video_texture = NULL;
-    sws_freeContext(upload_sws);
-    upload_sws = NULL;
-    if (sdl_renderer != NULL) {
-        media_logf("media shutdown: destroy renderer");
-        SDL_DestroyRenderer(sdl_renderer);
-        sdl_renderer = NULL;
+    if (current_frame) {
+        sl_resource_release(&current_frame->ref);
+        current_frame = NULL;
     }
-    if (sdl_window != NULL) {
-        media_logf("media shutdown: destroy window");
-        SDL_DestroyWindow(sdl_window);
-        sdl_window = NULL;
-    }
+    if (video)
+        sl_video_reap(video);
+    sl_gfx_destroy(gfx);
+    gfx = NULL;
+    if (video)
+        sl_video_reap(video);
     if (sdl_initialized) {
         sl_rumble_tick(false);
         media_logf("media shutdown: SDL_Quit");
@@ -913,18 +864,13 @@ void stream_media_shutdown(void) {
         media_logf("media shutdown: SDL_Quit done");
     }
 
-    pthread_mutex_lock(&frame_lock);
-    frame_dirty = false;
-    av_frame_free(&latched_frame);
-    av_frame_free(&present_frame);
-    pthread_mutex_unlock(&frame_lock);
+    if (video && !sl_video_destroy(video))
+        abort();
+    video = NULL;
     mapping_installed = false;
-    pthread_mutex_destroy(&frame_lock);
     pthread_mutex_destroy(&state_lock);
     pthread_mutex_destroy(&audio_lock);
     pthread_mutex_destroy(&hid_lifecycle_lock);
-    pthread_mutex_destroy(&decoder_lock);
-    pthread_mutex_destroy(&present_lock);
     locks_ready = false;
     media_logf("media shutdown: done");
 }
@@ -1048,524 +994,86 @@ void stream_media_destroy_hid_provider(IHS_HIDProvider *provider) {
     pthread_mutex_unlock(&state_lock);
 }
 
-static enum AVPixelFormat get_hw_format(AVCodecContext *ctx, const enum AVPixelFormat *fmts) {
-    (void)ctx;
-    for (const enum AVPixelFormat *p = fmts; *p != AV_PIX_FMT_NONE; p++) {
-        if (*p == hw_pix_fmt) {
-            return *p;
-        }
-    }
-    media_logf("NVTEGRA pixel format unavailable; falling back to software output");
-    for (const enum AVPixelFormat *p = fmts; *p != AV_PIX_FMT_NONE; p++) {
-        const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(*p);
-        if (desc != NULL && !(desc->flags & AV_PIX_FMT_FLAG_HWACCEL)) {
-            return *p;
-        }
-    }
-    return fmts[0];
-}
-
-static bool find_nvtegra_config(const AVCodec *codec) {
-    hw_pix_fmt = AV_PIX_FMT_NONE;
-    for (int i = 0;; i++) {
-        const AVCodecHWConfig *cfg = avcodec_get_hw_config(codec, i);
-        if (cfg == NULL) {
-            return false;
-        }
-        if ((cfg->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX) &&
-            cfg->device_type == av_hwdevice_find_type_by_name("nvtegra")) {
-            hw_pix_fmt = cfg->pix_fmt;
-            return true;
-        }
-    }
-}
-
-static int open_decoder(const IHS_StreamVideoConfig *config, bool use_hw) {
-    const AVCodec *codec = avcodec_find_decoder(AV_CODEC_ID_H264);
-    if (codec == NULL) {
-        media_set_error("avcodec_find_decoder(H264) failed");
-        return -1;
-    }
-
-    decoder_ctx = avcodec_alloc_context3(codec);
-    if (decoder_ctx == NULL) {
-        media_set_error("avcodec_alloc_context3 failed");
-        return -1;
-    }
-    decoder_ctx->width = (int)config->width;
-    decoder_ctx->height = (int)config->height;
-    decoder_ctx->thread_count = 1;
-    decoder_ctx->flags |= AV_CODEC_FLAG_LOW_DELAY;
-
-    if (use_hw) {
-        int rc = av_hwdevice_ctx_create(&hw_device_ctx, av_hwdevice_find_type_by_name("nvtegra"),
-                                        NULL, NULL, 0);
-        if (rc != 0) {
-            avcodec_free_context(&decoder_ctx);
-            media_log_av_error("av_hwdevice_ctx_create(NVTEGRA) failed", rc);
-            return -1;
-        }
-        decoder_ctx->hw_device_ctx = av_buffer_ref(hw_device_ctx);
-        decoder_ctx->get_format = get_hw_format;
-        decoder_ctx->extra_hw_frames = 3;
-    } else {
-        decoder_ctx->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
-        decoder_ctx->thread_count = 0;
-    }
-
-    int rc = avcodec_open2(decoder_ctx, codec, NULL);
-    if (rc != 0) {
-        avcodec_free_context(&decoder_ctx);
-        if (hw_device_ctx != NULL) {
-            av_buffer_unref(&hw_device_ctx);
-        }
-        media_log_av_error(use_hw ? "avcodec_open2 H264 NVTEGRA failed"
-                                  : "avcodec_open2 H264 software failed",
-                           rc);
-        return -1;
-    }
-
-    pthread_mutex_lock(&state_lock);
-    snprintf(snapshot.decoder, sizeof(snapshot.decoder), "%s %s", codec->name,
-             use_hw ? "nvtegra" : "software");
-    snapshot.decoder[sizeof(snapshot.decoder) - 1] = '\0';
-    snapshot.last_error[0] = '\0';
-    pthread_mutex_unlock(&state_lock);
-
-    media_logf("video decoder opened: %s (%s)", codec->name, use_hw ? "nvtegra" : "software");
-    return 0;
-}
-
-static int video_start_locked(IHS_Session *session, const IHS_StreamVideoConfig *config) {
+int sl_media_video_start_tracked(IHS_Session *session, const IHS_VideoEpochInfo *epoch,
+                                 const IHS_StreamVideoConfig *config) {
     (void)session;
-    if (!sdl_ready) {
-        media_set_error("media unavailable at video start");
+    if (!video || config->codec != IHS_StreamVideoCodecH264)
         return -1;
-    }
-    if (config->codec != IHS_StreamVideoCodecH264) {
-        media_set_error("unsupported video codec: %d", (int)config->codec);
-        return -1;
-    }
-
-    video_stop_locked(NULL);
-
-    packet = av_packet_alloc();
-    decode_frame = av_frame_alloc();
-    if (packet == NULL || decode_frame == NULL) {
-        media_set_error("FFmpeg packet/frame allocation failed");
-        video_stop_locked(NULL);
-        return -1;
-    }
-
-    const AVCodec *codec = avcodec_find_decoder(AV_CODEC_ID_H264);
-    bool can_try_hw = codec != NULL && find_nvtegra_config(codec);
-    if (can_try_hw) {
-        media_logf("H264 NVTEGRA hw config found: pix_fmt=%d", (int)hw_pix_fmt);
-    } else {
-        media_logf("H264 NVTEGRA hw config not advertised; trying software decoder");
-    }
-
-    if ((!can_try_hw || open_decoder(config, true) != 0) && open_decoder(config, false) != 0) {
-        video_stop_locked(NULL);
-        return -1;
-    }
-
-    pthread_mutex_lock(&frame_lock);
-    av_frame_unref(latched_frame);
-    av_frame_unref(present_frame);
-    frame_dirty = false;
-    pending_frame_id = 0;
-    pending_submit_us = 0;
-    pending_latch_us = 0;
-    pthread_mutex_unlock(&frame_lock);
-
-    stats_session = session;
-    need_flush = false;
-    have_last_frame = false;
-    last_frame_id = 0;
-    logged_alignment_fallback = false;
-    logged_vic_transfer = false;
-    logged_vic_prepare_fallback = false;
-    logged_vic_transfer_retry = false;
-    logged_convert_format = AV_PIX_FMT_NONE;
-    nv12_texture_failed = false;
-
+    sl_video_reap(video);
+    sl_video_config decoder = {.width = config->width,
+                               .height = config->height,
+                               .extradata = config->codecData,
+                               .extradata_size = config->codecDataLen,
+#if __SWITCH__
+                               .hardware = true
+#endif
+    };
+    sl_video_key key = {epoch->session_id, epoch->video_epoch};
     pthread_mutex_lock(&state_lock);
-    snapshot.video_epoch++;
-    snapshot.video_active = true;
-    snapshot.first_frame_displayed = false;
-    snapshot.decoded_frames = 0;
-    snapshot.displayed_frames = 0;
-    snapshot.dropped_frames = 0;
-    snapshot.decode_samples = 0;
-    snapshot.transferred_frames = 0;
-    snapshot.vic_transfer_frames = 0;
-    snapshot.transfer_fallback_frames = 0;
-    snapshot.converted_frames = 0;
-    snapshot.last_displayed_frame = 0;
-    snapshot.decode_us_total = 0;
-    snapshot.transfer_us_total = 0;
-    snapshot.convert_us_total = 0;
-    snapshot.upload_us_total = 0;
-    snapshot.upload_samples = 0;
-    snapshot.present_us_total = 0;
-    snapshot.decode_us_max = 0;
-    snapshot.transfer_us_max = 0;
-    snapshot.convert_us_max = 0;
-    snapshot.upload_us_max = 0;
-    snapshot.present_us_max = 0;
-    snapshot.frame_wait_samples = 0;
-    snapshot.frame_wait_us_total = 0;
-    snapshot.frame_wait_us_max = 0;
-    snapshot.frame_e2e_samples = 0;
-    snapshot.frame_e2e_us_total = 0;
-    snapshot.frame_e2e_us_max = 0;
-    snapshot.hid_send_samples = 0;
-    snapshot.hid_send_us_total = 0;
-    snapshot.hid_send_us_max = 0;
-    snapshot.hid_events = 0;
-    snapshot.hid_send_ok = 0;
-    snapshot.hid_send_fail = 0;
-    snapshot.hid_last_event_type = 0;
-    snapshot.hid_last_event_which = -1;
-    snapshot.hid_last_event_code = -1;
-    snapshot.hid_last_event_value = 0;
-    snapshot.width = (int)config->width;
-    snapshot.height = (int)config->height;
-    snapshot.last_error[0] = '\0';
-    pthread_mutex_unlock(&state_lock);
-    return 0;
-}
-
-static void stash_frame(AVFrame *src, uint16_t frame_id, uint64_t submit_us) {
-    bool had_pending;
-    uint16_t dropped_id;
-
-    pthread_mutex_lock(&frame_lock);
-    had_pending = frame_dirty;
-    dropped_id = pending_frame_id;
-    av_frame_unref(latched_frame);
-    av_frame_move_ref(latched_frame, src);
-    pending_frame_id = frame_id;
-    pending_submit_us = submit_us;
-    pending_latch_us = media_monotonic_us();
-    frame_dirty = true;
-    pthread_mutex_unlock(&frame_lock);
-
-    pthread_mutex_lock(&state_lock);
-    snapshot.decoded_frames++;
-    pthread_mutex_unlock(&state_lock);
-
-    if (had_pending) {
-        pthread_mutex_lock(&state_lock);
-        snapshot.dropped_frames++;
-        pthread_mutex_unlock(&state_lock);
-        if (stats_session != NULL) {
-            IHS_SessionReportVideoFrameComplete(stats_session, dropped_id,
-                                                IHS_VideoFrameResultDroppedLate);
-        }
-    }
-}
-
-static void stash_converted_frame(const AVFrame *src, uint16_t frame_id, uint64_t submit_us) {
-    AVFrame *out = av_frame_alloc();
-    if (out == NULL) {
-        return;
-    }
-    out->format = AV_PIX_FMT_YUV420P;
-    out->width = src->width;
-    out->height = src->height;
-    if (av_frame_get_buffer(out, 32) != 0) {
-        av_frame_free(&out);
-        return;
-    }
-    sws = sws_getCachedContext(sws, src->width, src->height, src->format, src->width, src->height,
-                               AV_PIX_FMT_YUV420P, SWS_BILINEAR, NULL, NULL, NULL);
-    if (sws == NULL) {
-        av_frame_free(&out);
-        return;
-    }
-    uint64_t convert_start = media_monotonic_us();
-    sws_scale(sws, (const uint8_t *const *)src->data, src->linesize, 0, src->height, out->data,
-              out->linesize);
-    uint32_t convert_us = elapsed_us(convert_start, media_monotonic_us());
-    pthread_mutex_lock(&state_lock);
-    snapshot.converted_frames++;
-    add_timing(&snapshot.convert_us_total, &snapshot.convert_us_max, convert_us);
-    pthread_mutex_unlock(&state_lock);
-    stash_frame(out, frame_id, submit_us);
-    av_frame_free(&out);
-}
-
-#define NVTEGRA_VIC_ALIGNMENT 256
-#define NVTEGRA_MAP_ALIGNMENT 4096
-
-static void free_aligned_frame_buffer(void *opaque, uint8_t *data) {
-    (void)data;
-    av_free(opaque);
-}
-
-static bool frame_planes_aligned(const AVFrame *frame) {
-    int planes = av_pix_fmt_count_planes((enum AVPixelFormat)frame->format);
-    if (planes <= 0) {
-        return false;
-    }
-    for (int i = 0; i < planes; i++) {
-        if (frame->data[i] == NULL ||
-            ((uintptr_t)frame->data[i] & (NVTEGRA_VIC_ALIGNMENT - 1)) != 0 ||
-            (frame->linesize[i] & (NVTEGRA_VIC_ALIGNMENT - 1)) != 0) {
-            return false;
-        }
-    }
-    return true;
-}
-
-static int prepare_vic_transfer_frame(AVFrame *dst, const AVFrame *src) {
-    if (src->hw_frames_ctx == NULL) {
-        return AVERROR(EINVAL);
-    }
-
-    const AVHWFramesContext *frames_ctx = (const AVHWFramesContext *)src->hw_frames_ctx->data;
-    dst->format = frames_ctx->sw_format;
-    dst->width = src->width;
-    dst->height = src->height;
-
-    int image_size = av_image_get_buffer_size((enum AVPixelFormat)dst->format, dst->width,
-                                              dst->height, NVTEGRA_VIC_ALIGNMENT);
-    if (image_size < 0) {
-        return image_size;
-    }
-
-    size_t map_size =
-        ((size_t)image_size + NVTEGRA_MAP_ALIGNMENT - 1) & ~(size_t)(NVTEGRA_MAP_ALIGNMENT - 1);
-    if (map_size > SIZE_MAX - (NVTEGRA_MAP_ALIGNMENT - 1)) {
-        return AVERROR(ENOMEM);
-    }
-
-    uint8_t *allocation = av_malloc(map_size + NVTEGRA_MAP_ALIGNMENT - 1);
-    if (allocation == NULL) {
-        return AVERROR(ENOMEM);
-    }
-    uint8_t *aligned = (uint8_t *)(((uintptr_t)allocation + NVTEGRA_MAP_ALIGNMENT - 1) &
-                                   ~(uintptr_t)(NVTEGRA_MAP_ALIGNMENT - 1));
-    dst->buf[0] = av_buffer_create(aligned, map_size, free_aligned_frame_buffer, allocation, 0);
-    if (dst->buf[0] == NULL) {
-        av_free(allocation);
-        return AVERROR(ENOMEM);
-    }
-
-    int rc =
-        av_image_fill_arrays(dst->data, dst->linesize, aligned, (enum AVPixelFormat)dst->format,
-                             dst->width, dst->height, NVTEGRA_VIC_ALIGNMENT);
-    if (rc < 0) {
-        av_frame_unref(dst);
-        return rc;
-    }
-    dst->extended_data = dst->data;
-    return 0;
-}
-
-static int transfer_nvtegra_frame(AVFrame *dst, const AVFrame *src, bool *used_vic) {
-    *used_vic = false;
-
-    int prepare_rc = prepare_vic_transfer_frame(dst, src);
-    bool vic_eligible = prepare_rc == 0 && frame_planes_aligned(dst);
-    if (!vic_eligible) {
-        if (!logged_vic_prepare_fallback) {
-            logged_vic_prepare_fallback = true;
-            if (prepare_rc < 0) {
-                char errbuf[AV_ERROR_MAX_STRING_SIZE];
-                av_strerror(prepare_rc, errbuf, sizeof(errbuf));
-                media_logf("NVTEGRA VIC buffer preparation failed: %s (%d); using default transfer",
-                           errbuf, prepare_rc);
-            } else {
-                media_logf(
-                    "NVTEGRA VIC buffer failed runtime alignment check; using default transfer");
-            }
-        }
-        av_frame_unref(dst);
-    }
-
-    int transfer_rc = av_hwframe_transfer_data(dst, src, 0);
-    if (transfer_rc < 0 && vic_eligible) {
-        if (!logged_vic_transfer_retry) {
-            logged_vic_transfer_retry = true;
-            char errbuf[AV_ERROR_MAX_STRING_SIZE];
-            av_strerror(transfer_rc, errbuf, sizeof(errbuf));
-            media_logf("NVTEGRA VIC transfer failed: %s (%d); retrying default transfer", errbuf,
-                       transfer_rc);
-        }
-        av_frame_unref(dst);
-        transfer_rc = av_hwframe_transfer_data(dst, src, 0);
-        vic_eligible = false;
-    }
-    if (transfer_rc < 0) {
-        return transfer_rc;
-    }
-
-    if (vic_eligible) {
-        int props_rc = av_frame_copy_props(dst, src);
-        if (props_rc < 0) {
-            return props_rc;
-        }
-    }
-    *used_vic = vic_eligible;
-    if (vic_eligible && !logged_vic_transfer) {
-        logged_vic_transfer = true;
-        media_logf("NVTEGRA transfer path: VIC 256B-aligned format=%d pitch=%d/%d", dst->format,
-                   dst->linesize[0], dst->linesize[1]);
-    }
-    return 0;
-}
-
-static void receive_frames(uint16_t frame_id, uint64_t submit_us) {
-    while (avcodec_receive_frame(decoder_ctx, decode_frame) == 0) {
-        AVFrame *frame = decode_frame;
-        AVFrame *downloaded = NULL;
-        if (decode_frame->hw_frames_ctx != NULL ||
-            decode_frame->format == av_get_pix_fmt("nvtegra")) {
-            downloaded = av_frame_alloc();
-            bool used_vic = false;
-            uint64_t transfer_start = media_monotonic_us();
-            int transfer_rc = downloaded != NULL
-                                  ? transfer_nvtegra_frame(downloaded, decode_frame, &used_vic)
-                                  : AVERROR(ENOMEM);
-            uint32_t transfer_us = elapsed_us(transfer_start, media_monotonic_us());
-            if (downloaded != NULL && transfer_rc == 0) {
-                pthread_mutex_lock(&state_lock);
-                snapshot.transferred_frames++;
-                if (used_vic) {
-                    snapshot.vic_transfer_frames++;
-                } else {
-                    snapshot.transfer_fallback_frames++;
-                }
-                add_timing(&snapshot.transfer_us_total, &snapshot.transfer_us_max, transfer_us);
-                pthread_mutex_unlock(&state_lock);
-                frame = downloaded;
-            } else {
-                media_set_error("av_hwframe_transfer_data failed for frame %u", frame_id);
-                av_frame_free(&downloaded);
-                av_frame_unref(decode_frame);
-                continue;
-            }
-        }
-
-        if (frame->format == AV_PIX_FMT_YUV420P || frame->format == AV_PIX_FMT_NV12) {
-            stash_frame(frame, frame_id, submit_us);
-        } else {
-            if (logged_convert_format != frame->format) {
-                logged_convert_format = frame->format;
-                media_logf("converting decoded frame format %d to YUV420P; suppressing repeats",
-                           frame->format);
-            }
-            stash_converted_frame(frame, frame_id, submit_us);
-        }
-
-        av_frame_free(&downloaded);
-        av_frame_unref(decode_frame);
-    }
-}
-
-static IHS_StreamVideoSubmitResult video_submit_locked(IHS_Session *session, uint16_t frame_id,
-                                                       IHS_Buffer *data,
-                                                       IHS_StreamVideoFrameFlag flags) {
-    if (decoder_ctx == NULL || packet == NULL) {
-        return IHS_StreamVideoSubmitError;
-    }
-    uint64_t submit_us = media_monotonic_us();
-
-    if (have_last_frame && frame_id != (uint16_t)(last_frame_id + 1)) {
-        need_flush = true;
-    }
-    have_last_frame = true;
-    last_frame_id = frame_id;
-    if ((flags & IHS_StreamVideoFrameKeyFrame) && need_flush) {
-        avcodec_flush_buffers(decoder_ctx);
-        need_flush = false;
-    }
-
-    if (av_new_packet(packet, (int)data->size) < 0) {
-        need_flush = true;
-        if (session != NULL) {
-            IHS_SessionReportVideoFrameComplete(session, frame_id,
-                                                IHS_VideoFrameResultDroppedNetworkLost);
-        }
-        return IHS_StreamVideoSubmitReportLost;
-    }
-    memcpy(packet->data, IHS_BufferPointer(data), data->size);
-
-    if (session != NULL) {
-        IHS_SessionReportVideoFrameStage(session, frame_id, IHS_VideoFrameStageDecodeBegin, 0);
-    }
-    uint64_t decode_start = media_monotonic_us();
-    int rc = avcodec_send_packet(decoder_ctx, packet);
-    if (rc == AVERROR(EAGAIN)) {
-        receive_frames(frame_id, submit_us);
-        rc = avcodec_send_packet(decoder_ctx, packet);
-    }
-    if (rc == 0) {
-        receive_frames(frame_id, submit_us);
-        uint32_t decode_us = elapsed_us(decode_start, media_monotonic_us());
-        pthread_mutex_lock(&state_lock);
-        snapshot.decode_samples++;
-        add_timing(&snapshot.decode_us_total, &snapshot.decode_us_max, decode_us);
-        pthread_mutex_unlock(&state_lock);
-        if (session != NULL) {
-            IHS_SessionReportVideoFrameStage(session, frame_id, IHS_VideoFrameStageDecodeEnd, 0);
-        }
-        av_packet_unref(packet);
-        return IHS_StreamVideoSubmitOK;
-    }
-
-    if (session != NULL) {
-        IHS_SessionReportVideoFrameStage(session, frame_id, IHS_VideoFrameStageDecodeEnd, 0);
-        IHS_SessionReportVideoFrameComplete(session, frame_id,
-                                            IHS_VideoFrameResultDroppedDecodeCorrupt);
-    }
-    media_log_av_error("avcodec_send_packet failed", rc);
-    need_flush = true;
-    av_packet_unref(packet);
-    return IHS_StreamVideoSubmitReportLost;
-}
-
-static void video_stop_locked(IHS_Session *session) {
-    (void)session;
-    uint16_t dropped_id = 0;
-    bool had_pending = false;
-
-    pthread_mutex_lock(&frame_lock);
-    had_pending = frame_dirty;
-    dropped_id = pending_frame_id;
-    frame_dirty = false;
-    if (latched_frame != NULL) {
-        av_frame_unref(latched_frame);
-    }
-    pthread_mutex_unlock(&frame_lock);
-
-    if (had_pending && stats_session != NULL) {
-        IHS_SessionReportVideoFrameComplete(stats_session, dropped_id,
-                                            IHS_VideoFrameResultDroppedReset);
-    }
-    stats_session = NULL;
-
-    atomic_store(&clear_texture, true);
-    if (sws != NULL) {
-        sws_freeContext(sws);
-        sws = NULL;
-    }
-    if (decoder_ctx != NULL) {
-        avcodec_free_context(&decoder_ctx);
-    }
-    if (hw_device_ctx != NULL) {
-        av_buffer_unref(&hw_device_ctx);
-    }
-    av_packet_free(&packet);
-    av_frame_free(&decode_frame);
-
-    pthread_mutex_lock(&state_lock);
+    video_key = key;
+    snapshot.session_id = key.session;
+    snapshot.video_epoch = key.epoch;
     snapshot.video_active = false;
     snapshot.first_frame_displayed = false;
+    snapshot.render_failed = false;
+    snapshot.decoded_frames = snapshot.displayed_frames = snapshot.dropped_frames = 0;
+    snapshot.width = config->width;
+    snapshot.height = config->height;
     pthread_mutex_unlock(&state_lock);
+    if (!sl_video_open(video, key, &decoder)) {
+        media_set_error("video domain unavailable or decoder initialization failed");
+        return -1;
+    }
+    pthread_mutex_lock(&state_lock);
+    snapshot.video_active = true;
+    snprintf(snapshot.decoder, sizeof(snapshot.decoder), "h264 %s",
+             decoder.hardware ? "nvtegra" : "software");
+    snapshot.last_error[0] = 0;
+    pthread_mutex_unlock(&state_lock);
+    return 0;
+}
+IHS_StreamVideoSubmitResult
+sl_media_video_submit_tracked(IHS_Session *session, const IHS_VideoEpochInfo *epoch, uint16_t id,
+                              IHS_FrameTicket *ticket, IHS_Buffer *data,
+                              IHS_StreamVideoFrameFlag flags, bool *taken) {
+    (void)session;
+    (void)id;
+    (void)flags;
+    if (!video) {
+        *taken = false;
+        return IHS_StreamVideoSubmitError;
+    }
+    bool ok = sl_video_submit(video, (sl_video_key){epoch->session_id, epoch->video_epoch},
+                              IHS_BufferPointer(data), data->size, ticket, taken);
+    if (!ok)
+        media_set_error("video packet ownership or decode failure");
+    return ok ? IHS_StreamVideoSubmitOK : IHS_StreamVideoSubmitError;
+}
+void sl_media_video_stop_tracked(IHS_Session *session, const IHS_VideoEpochInfo *epoch) {
+    (void)session;
+    if (!video)
+        return;
+    sl_video_key key = {epoch->session_id, epoch->video_epoch};
+    sl_video_stop(video, key);
+    pthread_mutex_lock(&state_lock);
+    if (video_key.session == key.session && video_key.epoch == key.epoch)
+        snapshot.video_active = false;
+    pthread_mutex_unlock(&state_lock);
+    sl_video_reap(video);
+}
+void sl_media_close_video(void) {
+    if (video)
+        sl_video_freeze(video);
+}
+void sl_media_allow_video(void) {
+    if (video)
+        sl_video_thaw(video);
+}
+bool sl_media_video_clean(void) {
+    if (!video)
+        return true;
+    sl_video_reap(video);
+    return sl_video_clean(video);
 }
 
 int stream_media_audio_start(IHS_Session *session, const IHS_StreamAudioConfig *config) {
@@ -1728,269 +1236,117 @@ void stream_media_audio_stop(IHS_Session *session) {
     }
 }
 
-static AVFrame *take_frame(uint16_t *frame_id, uint64_t *submit_us, uint64_t *latch_us) {
-    pthread_mutex_lock(&frame_lock);
-    if (!frame_dirty || latched_frame == NULL || latched_frame->width <= 0) {
-        pthread_mutex_unlock(&frame_lock);
-        return NULL;
-    }
-    av_frame_unref(present_frame);
-    av_frame_move_ref(present_frame, latched_frame);
-    *frame_id = pending_frame_id;
-    *submit_us = pending_submit_us;
-    *latch_us = pending_latch_us;
-    pending_submit_us = 0;
-    pending_latch_us = 0;
-    frame_dirty = false;
-    pthread_mutex_unlock(&frame_lock);
-    return present_frame;
-}
-
-static bool ensure_video_texture(int width, int height, Uint32 format) {
-    if (video_texture != NULL && texture_width == width && texture_height == height &&
-        texture_format == format) {
-        return true;
-    }
-    if (video_texture != NULL) {
-        SDL_DestroyTexture(video_texture);
-        video_texture = NULL;
-        texture_width = 0;
-        texture_height = 0;
-        texture_format = 0;
-    }
-    video_texture =
-        SDL_CreateTexture(sdl_renderer, format, SDL_TEXTUREACCESS_STREAMING, width, height);
-    if (video_texture == NULL) {
-        media_set_error("SDL_CreateTexture(%s %dx%d): %s",
-                        format == SDL_PIXELFORMAT_NV12 ? "NV12" : "IYUV", width, height,
-                        SDL_GetError());
-        return false;
-    }
-    texture_width = width;
-    texture_height = height;
-    texture_format = format;
-    media_logf("SDL video texture ready: %s %dx%d",
-               format == SDL_PIXELFORMAT_NV12 ? "NV12" : "IYUV", width, height);
-    return true;
-}
-
-static bool draw_frame_to_sdl(const AVFrame *frame) {
-    if (!sdl_ready || sdl_renderer == NULL || frame == NULL || frame->width <= 0 ||
-        frame->height <= 0) {
-        return false;
-    }
-    if (frame->format != AV_PIX_FMT_YUV420P && frame->format != AV_PIX_FMT_NV12) {
-        media_set_error("unsupported present format: %d", frame->format);
-        return false;
-    }
-    Uint32 wanted_format = frame->format == AV_PIX_FMT_NV12 && !nv12_texture_failed
-                               ? SDL_PIXELFORMAT_NV12
-                               : SDL_PIXELFORMAT_IYUV;
-    if (!ensure_video_texture(frame->width, frame->height, wanted_format)) {
-        if (wanted_format == SDL_PIXELFORMAT_NV12) {
-            nv12_texture_failed = true;
-            media_logf("SDL NV12 texture unavailable; falling back to IYUV conversion");
-            if (!ensure_video_texture(frame->width, frame->height, SDL_PIXELFORMAT_IYUV)) {
-                return false;
-            }
-            pthread_mutex_lock(&state_lock);
-            snapshot.last_error[0] = '\0';
-            pthread_mutex_unlock(&state_lock);
-        } else {
-            return false;
-        }
-    }
-
-    const AVFrame *upload_frame = frame;
-    AVFrame *converted = NULL;
-    if (frame->format == AV_PIX_FMT_NV12 && texture_format == SDL_PIXELFORMAT_IYUV) {
-        converted = av_frame_alloc();
-        if (converted == NULL) {
-            return false;
-        }
-        converted->format = AV_PIX_FMT_YUV420P;
-        converted->width = frame->width;
-        converted->height = frame->height;
-        if (av_frame_get_buffer(converted, 32) != 0) {
-            av_frame_free(&converted);
-            return false;
-        }
-        upload_sws = sws_getCachedContext(upload_sws, frame->width, frame->height, frame->format,
-                                          frame->width, frame->height, AV_PIX_FMT_YUV420P,
-                                          SWS_BILINEAR, NULL, NULL, NULL);
-        if (upload_sws == NULL) {
-            av_frame_free(&converted);
-            return false;
-        }
-        uint64_t convert_start = media_monotonic_us();
-        sws_scale(upload_sws, (const uint8_t *const *)frame->data, frame->linesize, 0,
-                  frame->height, converted->data, converted->linesize);
-        uint32_t convert_us = elapsed_us(convert_start, media_monotonic_us());
+void sl_media_collect(void) {
+    if (!sdl_ready)
+        return;
+    pump_sdl_events();
+    sl_gfx_collect(gfx);
+    if (!sl_events_foreground())
+        sl_media_gate(false);
+    if (current_frame && !sl_video_is_current(video, current_frame->key)) {
+        sl_resource_release(&current_frame->ref);
+        current_frame = NULL;
+        sl_media_neutral(NULL);
         pthread_mutex_lock(&state_lock);
-        snapshot.converted_frames++;
-        add_timing(&snapshot.convert_us_total, &snapshot.convert_us_max, convert_us);
+        layout_key = (sl_video_key){0};
         pthread_mutex_unlock(&state_lock);
-        upload_frame = converted;
-    } else if (frame->format == AV_PIX_FMT_YUV420P && texture_format != SDL_PIXELFORMAT_IYUV) {
-        return false;
     }
-
-    uint64_t upload_start = media_monotonic_us();
-    int update_rc = 0;
-    if (texture_format == SDL_PIXELFORMAT_NV12) {
-        update_rc = SDL_UpdateNVTexture(video_texture, NULL, upload_frame->data[0],
-                                        upload_frame->linesize[0], upload_frame->data[1],
-                                        upload_frame->linesize[1]);
-    } else {
-        update_rc = SDL_UpdateYUVTexture(video_texture, NULL, upload_frame->data[0],
-                                         upload_frame->linesize[0], upload_frame->data[1],
-                                         upload_frame->linesize[1], upload_frame->data[2],
-                                         upload_frame->linesize[2]);
-    }
-    if (update_rc != 0) {
-        if (texture_format == SDL_PIXELFORMAT_NV12) {
-            media_logf("SDL_UpdateNVTexture failed: %s; falling back to IYUV conversion",
-                       SDL_GetError());
-            nv12_texture_failed = true;
-            if (video_texture != NULL) {
-                SDL_DestroyTexture(video_texture);
-                video_texture = NULL;
-                texture_width = 0;
-                texture_height = 0;
-                texture_format = 0;
-            }
-            av_frame_free(&converted);
-            return draw_frame_to_sdl(frame);
-        }
-        media_set_error("SDL_UpdateYUVTexture: %s", SDL_GetError());
-        av_frame_free(&converted);
-        return false;
-    }
-    uint32_t upload_us = elapsed_us(upload_start, media_monotonic_us());
     pthread_mutex_lock(&state_lock);
-    snapshot.upload_samples++;
-    add_timing(&snapshot.upload_us_total, &snapshot.upload_us_max, upload_us);
+    sl_video_key key = video_key;
     pthread_mutex_unlock(&state_lock);
-
-    int w = SDL_WIDTH;
-    int h = SDL_HEIGHT;
-    /* Rendering and hit testing share the 1280x720 logical canvas. */
-
-    SDL_SetRenderDrawColor(sdl_renderer, 0, 0, 0, 255);
-    SDL_RenderClear(sdl_renderer);
-
-    int dst_w = w;
-    int dst_h = (frame->height * w) / frame->width;
-    if (dst_h > h) {
-        dst_h = h;
-        dst_w = (frame->width * h) / frame->height;
+    if (!sl_video_is_current(video, key))
+        sl_gfx_forget_video(gfx);
+}
+void stream_media_present(void) {
+    if (!sdl_ready)
+        return;
+    sl_media_collect();
+    if (!sl_events_foreground() || sl_gfx_begin(gfx) != SL_GFX_READY)
+        return;
+    sl_video_frame *candidate = sl_video_take(video);
+    if (candidate && !sl_video_is_current(video, candidate->key)) {
+        sl_resource_release(&candidate->ref);
+        candidate = NULL;
     }
-    if (dst_w <= 0 || dst_h <= 0) {
-        av_frame_free(&converted);
-        return false;
-    }
-
-    SDL_Rect dst = {(w - dst_w) / 2, (h - dst_h) / 2, dst_w, dst_h};
-    video_rect = dst;
-    uint64_t present_start = media_monotonic_us();
-    if (SDL_RenderCopy(sdl_renderer, video_texture, NULL, &dst) != 0) {
-        media_set_error("SDL_RenderCopy: %s", SDL_GetError());
-        av_frame_free(&converted);
-        return false;
+    sl_video_frame *frame = candidate ? candidate : current_frame;
+    sl_gfx_draw_color(gfx, 0, 0, 0, 255);
+    sl_gfx_clear(gfx);
+    uint64_t upload_begin = media_monotonic_us();
+    bool drawn = frame && sl_gfx_video(gfx, frame);
+    uint64_t upload_end = media_monotonic_us();
+    if (candidate && !drawn) {
+        media_set_error("video layout, import, or renderer capacity rejected");
+        pthread_mutex_lock(&state_lock);
+        if (snapshot.session_id == candidate->key.session &&
+            snapshot.video_epoch == candidate->key.epoch)
+            snapshot.render_failed = true;
+        pthread_mutex_unlock(&state_lock);
+        sl_video_close(video, candidate->key);
+        if (current_frame)
+            sl_gfx_video(gfx, current_frame);
     }
     if (draw_hook)
-        draw_hook(sdl_renderer, hook_context);
-    SDL_RenderPresent(sdl_renderer);
-    uint32_t present_us = elapsed_us(present_start, media_monotonic_us());
-    pthread_mutex_lock(&state_lock);
-    add_timing(&snapshot.present_us_total, &snapshot.present_us_max, present_us);
-    pthread_mutex_unlock(&state_lock);
-    av_frame_free(&converted);
-    return true;
-}
-
-void stream_media_present(void) {
-    if (!sdl_ready) {
-        return;
-    }
-
-    pump_sdl_events();
-    if (atomic_exchange(&clear_texture, false)) {
-        SDL_DestroyTexture(video_texture);
-        video_texture = NULL;
-        texture_width = texture_height = 0;
-        texture_format = 0;
-    }
-
-    /* Input delta flush moved to dedicated 8ms thread (hid_flush_thread_fn).
-     * Present loop only handles rendering and event pump; input timing is
-     * decoupled from vsync (matches official 125Hz dedicated thread). */
-
-    if (pthread_mutex_trylock(&present_lock) != 0) {
-        SDL_SetRenderDrawColor(sdl_renderer, 0, 0, 0, 255);
-        SDL_RenderClear(sdl_renderer);
-        if (video_texture)
-            SDL_RenderCopy(sdl_renderer, video_texture, NULL, &video_rect);
-        if (draw_hook)
-            draw_hook(sdl_renderer, hook_context);
-        SDL_RenderPresent(sdl_renderer);
-        return;
-    }
-    uint16_t frame_id = 0;
-    uint64_t frame_submit_us = 0;
-    uint64_t frame_latch_us = 0;
-    uint64_t take_us = media_monotonic_us();
-    AVFrame *frame = take_frame(&frame_id, &frame_submit_us, &frame_latch_us);
-    bool displayed = false;
-    if (frame != NULL && stats_session != NULL) {
-        IHS_SessionReportVideoFrameStage(stats_session, frame_id, IHS_VideoFrameStageUploadBegin,
-                                         0);
-    }
-
-    displayed = draw_frame_to_sdl(frame);
-    if (!displayed) {
-        SDL_SetRenderDrawColor(sdl_renderer, 0, 0, 0, 255);
-        SDL_RenderClear(sdl_renderer);
-        if (video_texture)
-            SDL_RenderCopy(sdl_renderer, video_texture, NULL, &video_rect);
-        if (draw_hook)
-            draw_hook(sdl_renderer, hook_context);
-        SDL_RenderPresent(sdl_renderer);
-    }
-
-    if (frame != NULL && stats_session != NULL) {
-        IHS_SessionReportVideoFrameStage(stats_session, frame_id, IHS_VideoFrameStageUploadEnd, 0);
-        IHS_SessionReportVideoFrameComplete(stats_session, frame_id,
-                                            displayed ? IHS_VideoFrameResultDisplayed
-                                                      : IHS_VideoFrameResultDroppedLate);
-    }
-
-    if (displayed) {
-        uint64_t displayed_us = media_monotonic_us();
-        uint32_t wait_us = frame_latch_us != 0 && take_us > frame_latch_us
-                               ? (uint32_t)elapsed_us(frame_latch_us, take_us)
-                               : 0;
-        uint32_t e2e_us = frame_submit_us != 0 && displayed_us > frame_submit_us
-                              ? (uint32_t)elapsed_us(frame_submit_us, displayed_us)
-                              : 0;
-        pthread_mutex_lock(&state_lock);
-        bool first = !snapshot.first_frame_displayed;
-        snapshot.first_frame_displayed = true;
-        snapshot.displayed_frames++;
-        snapshot.last_displayed_frame = frame_id;
-        snapshot.width = frame->width;
-        snapshot.height = frame->height;
-        snapshot.frame_wait_samples++;
-        add_timing(&snapshot.frame_wait_us_total, &snapshot.frame_wait_us_max, wait_us);
-        snapshot.frame_e2e_samples++;
-        add_timing(&snapshot.frame_e2e_us_total, &snapshot.frame_e2e_us_max, e2e_us);
-        pthread_mutex_unlock(&state_lock);
-        if (first) {
-            media_logf("first frame displayed: id=%u size=%dx%d fmt=%d", frame_id, frame->width,
-                       frame->height, frame->format);
+        draw_hook(gfx, hook_context);
+    sl_gfx_present_result result = sl_gfx_present(gfx);
+    uint64_t present_us = media_monotonic_us();
+    if (candidate) {
+        bool displayed = drawn && result.result == SL_GFX_READY && result.output_returned;
+        if (presentation_key.session != candidate->key.session ||
+            presentation_key.epoch != candidate->key.epoch) {
+            presentation_key = candidate->key;
+            presentation_serial = last_presentation_us = 0;
         }
+        IHS_FrameOutcome outcome = {.result = displayed ? IHS_VideoFrameResultDisplayed
+                                                        : IHS_VideoFrameResultDroppedLate,
+                                    .completionUs = present_us};
+        if (displayed) {
+            outcome.presentationSerial = ++presentation_serial;
+            outcome.hasPresentationInterval = last_presentation_us != 0;
+            outcome.presentationIntervalUs =
+                last_presentation_us ? present_us - last_presentation_us : 0;
+            last_presentation_us = present_us;
+            outcome.hasUpload = !NSL_GFX_DEKO || candidate->pixels->hw_frames_ctx == NULL;
+            outcome.uploadBeginUs = upload_begin;
+            outcome.uploadEndUs = upload_end;
+        }
+        sl_video_frame_complete(candidate, &outcome);
+        bool active = sl_video_is_current(video, candidate->key);
+        pthread_mutex_lock(&state_lock);
+        if (video_key.session == candidate->key.session &&
+            video_key.epoch == candidate->key.epoch) {
+            if (!NSL_GFX_DEKO && candidate->pixels->hw_frames_ctx && drawn)
+                snapshot.transferred_frames++;
+            if (displayed && active) {
+                int w = 1280, h = candidate->pixels->height * 1280 / candidate->pixels->width;
+                if (h > 720) {
+                    h = 720;
+                    w = candidate->pixels->width * 720 / candidate->pixels->height;
+                }
+                video_rect = (SDL_Rect){(1280 - w) / 2, (720 - h) / 2, w, h};
+                layout_key = candidate->key;
+                snapshot.first_frame_displayed = true;
+                snapshot.displayed_frames++;
+                snapshot.last_displayed_frame = IHS_FrameTicketIdentity(candidate->ticket).frameId;
+                snapshot.width = candidate->pixels->width;
+                snapshot.height = candidate->pixels->height;
+                if (outcome.hasUpload) {
+                    snapshot.upload_samples++;
+                    add_timing(&snapshot.upload_us_total, &snapshot.upload_us_max,
+                               elapsed_us(upload_begin, upload_end));
+                }
+                add_timing(&snapshot.present_us_total, &snapshot.present_us_max,
+                           elapsed_us(upload_end, present_us));
+            } else
+                snapshot.dropped_frames++;
+        }
+        pthread_mutex_unlock(&state_lock);
+        if (displayed && active) {
+            if (current_frame)
+                sl_resource_release(&current_frame->ref);
+            current_frame = candidate;
+        } else
+            sl_resource_release(&candidate->ref);
     }
-    pthread_mutex_unlock(&present_lock);
 }
 
 void stream_media_get_snapshot(stream_media_snapshot *out) {
@@ -2022,6 +1378,12 @@ void stream_media_get_snapshot(stream_media_snapshot *out) {
     pthread_mutex_unlock(&audio_lock);
 
     pthread_mutex_lock(&state_lock);
+    sl_video_counters counters;
+    if (video && sl_video_read_counters(video, video_key, &counters)) {
+        snapshot.decoded_frames = snapshot.decode_samples = counters.decoded;
+        snapshot.decode_us_total = counters.decode_total_us;
+        snapshot.decode_us_max = counters.decode_max_us;
+    }
     snapshot.audio_active = audio_snap_active;
     snapshot.audio_queued_bytes = audio_snap_queued;
     snapshot.audio_frames = audio_snap_frames;
@@ -2134,53 +1496,85 @@ void stream_media_format_hid_history(char *out, size_t out_len, uint32_t max_ent
 #endif
 }
 
+/* Compatibility entry points for local media fixtures. Production registers
+ * the tracked IHS callbacks and never routes a renderer through a session. */
 int stream_media_video_start(IHS_Session *session, const IHS_StreamVideoConfig *config) {
-    pthread_mutex_lock(&present_lock);
-    pthread_mutex_lock(&decoder_lock);
-    int ret = video_start_locked(session, config);
-    pthread_mutex_unlock(&decoder_lock);
-    pthread_mutex_unlock(&present_lock);
-    return ret;
+    stream_media_video_stop(session);
+    sl_media_allow_video();
+    test_tracker = IHS_FrameTrackerCreate(++test_session_id);
+    if (!test_tracker || !IHS_FrameTrackerOpenEpoch(test_tracker, 1))
+        return -1;
+    IHS_VideoEpochInfo epoch = {test_session_id, 1};
+    return sl_media_video_start_tracked(session, &epoch, config);
 }
 IHS_StreamVideoSubmitResult stream_media_video_submit(IHS_Session *session, uint16_t id,
                                                       IHS_Buffer *data,
                                                       IHS_StreamVideoFrameFlag flags) {
-    pthread_mutex_lock(&decoder_lock);
-    IHS_StreamVideoSubmitResult ret = video_submit_locked(session, id, data, flags);
-    pthread_mutex_unlock(&decoder_lock);
-    return ret;
+    if (!test_tracker)
+        return IHS_StreamVideoSubmitError;
+    uint64_t now = media_monotonic_us();
+    IHS_TrackedFrame settled[16];
+    while (IHS_FrameTrackerSettle(test_tracker, now, 2000000, settled, 16) == 16) {
+    }
+    IHS_FrameReceive received = {.firstReceiveUs = now, .lastReceiveUs = now};
+    IHS_FrameTicket *ticket;
+    if (IHS_FrameTrackerBegin(test_tracker, 1, id, &received, &ticket) != IHS_FrameBeginOK)
+        return IHS_StreamVideoSubmitError;
+    IHS_VideoEpochInfo epoch = {test_session_id, 1};
+    bool taken = false;
+    IHS_StreamVideoSubmitResult result =
+        sl_media_video_submit_tracked(session, &epoch, id, ticket, data, flags, &taken);
+    IHS_FrameTicketRelease(ticket);
+    return result;
 }
 void stream_media_video_stop(IHS_Session *session) {
-    pthread_mutex_lock(&present_lock);
-    pthread_mutex_lock(&decoder_lock);
-    video_stop_locked(session);
-    pthread_mutex_unlock(&decoder_lock);
-    pthread_mutex_unlock(&present_lock);
+    if (!video)
+        return;
+    pthread_mutex_lock(&state_lock);
+    IHS_VideoEpochInfo epoch = {video_key.session, video_key.epoch};
+    pthread_mutex_unlock(&state_lock);
+    sl_media_video_stop_tracked(session, &epoch);
+    if (test_tracker) {
+        IHS_FrameTrackerClose(test_tracker);
+        test_tracker = NULL;
+    }
 }
+
 void sl_media_hooks(void (*draw)(void *, void *), void (*event)(const void *, void *),
                     void *context) {
     draw_hook = draw;
     event_hook = event;
     hook_context = context;
 }
-void *sl_media_renderer(void) {
-    return sdl_renderer;
+sl_gfx *sl_media_gfx(void) {
+    return gfx;
 }
 void sl_media_mute(bool mute) {
     atomic_store(&muted, mute);
+}
+static void neutral_locked(void) {
+    if (hid_session) {
+        IHS_HIDResetSDLGameControllers(hid_session);
+        for (unsigned i = 0; i < 8; ++i)
+            if (remote_touches[i].active)
+                IHS_SessionSendTouchUp(hid_session, remote_touches[i].id, 0, 0);
+    }
+    memset(remote_touches, 0, sizeof(remote_touches));
 }
 void sl_media_gate(bool enabled) {
     if (atomic_load(&input_gate) == enabled)
         return;
     pthread_mutex_lock(&state_lock);
-    if (input_gate && !enabled && hid_session)
-        IHS_HIDResetSDLGameControllers(hid_session);
+    if (input_gate && !enabled)
+        neutral_locked();
     input_gate = enabled;
     pthread_mutex_unlock(&state_lock);
 }
 void sl_media_neutral(void *context) {
     (void)context;
-    sl_media_gate(false);
+    pthread_mutex_lock(&state_lock);
+    neutral_locked();
+    pthread_mutex_unlock(&state_lock);
 }
 void sl_media_input(const sl_input_event *e, void *context) {
     (void)context;
@@ -2191,6 +1585,12 @@ void sl_media_input(const sl_input_event *e, void *context) {
         return;
     }
     if (e->type == SL_TOUCH_DOWN || e->type == SL_TOUCH_MOVE || e->type == SL_TOUCH_UP) {
+        if (e->type != SL_TOUCH_UP &&
+            (!layout_key.session || layout_key.session != snapshot.session_id ||
+             layout_key.epoch != snapshot.video_epoch)) {
+            pthread_mutex_unlock(&state_lock);
+            return;
+        }
         float x = (e->x * 1280 - video_rect.x) / (video_rect.w ? video_rect.w : 1280);
         float y = (e->y * 720 - video_rect.y) / (video_rect.h ? video_rect.h : 720);
         int slot = -1;

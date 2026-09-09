@@ -38,18 +38,17 @@ static void save_image(const char *name) {
         return;
     char path[512];
     snprintf(path, sizeof(path), "%s/%s.bmp", dir, name);
-    SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(0, 1280, 720, 32, SDL_PIXELFORMAT_ARGB8888);
+    SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(0, 1280, 720, 32, SDL_PIXELFORMAT_RGBA32);
     assert(s);
-    assert(SDL_RenderReadPixels(sl_media_renderer(), NULL, s->format->format, s->pixels,
-                                s->pitch) == 0);
+    assert(sl_gfx_readback(sl_media_gfx(), NULL, s->pixels, (size_t)s->pitch * s->h, s->pitch));
     assert(SDL_SaveBMP(s, path) == 0);
     SDL_FreeSurface(s);
 }
 static uint64_t region_hash(SDL_Rect box) {
-    SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(0, box.w, box.h, 32, SDL_PIXELFORMAT_ARGB8888);
+    SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(0, box.w, box.h, 32, SDL_PIXELFORMAT_RGBA32);
     assert(s);
-    assert(
-        !SDL_RenderReadPixels(sl_media_renderer(), &box, s->format->format, s->pixels, s->pitch));
+    sl_gfx_rect region = {box.x, box.y, box.w, box.h};
+    assert(sl_gfx_readback(sl_media_gfx(), &region, s->pixels, (size_t)s->pitch * s->h, s->pitch));
     uint64_t hash = 14695981039346656037ULL;
     for (int y = 0; y < s->h; ++y)
         for (int x = 0; x < s->w * 4; ++x) {
@@ -146,7 +145,8 @@ static bool no_artwork_network(const char *url, size_t limit, unsigned char **da
 int main(int argc, char **argv) {
     assert(sl_system_init());
     assert(stream_media_init(sl_log));
-    renderer = sl_ui_renderer_create(sl_media_renderer());
+    assert(sl_gfx_request_readback(sl_media_gfx()));
+    renderer = sl_ui_renderer_create(sl_media_gfx());
     assert(renderer);
     sl_artwork *artwork = NULL;
     const char *art_dir = getenv("NSL_TEST_ARTWORK_DIR");
@@ -395,7 +395,8 @@ int main(int argc, char **argv) {
     assert(rmdir(dir) == 0);
     /* Reinitialize SDL/fonts in this process to catch stale static ownership. */
     assert(stream_media_init(sl_log));
-    renderer = sl_ui_renderer_create(sl_media_renderer());
+    assert(sl_gfx_request_readback(sl_media_gfx()));
+    renderer = sl_ui_renderer_create(sl_media_gfx());
     assert(renderer);
     sl_ui_init(&ui, &s);
     sl_media_hooks(draw, event, NULL);

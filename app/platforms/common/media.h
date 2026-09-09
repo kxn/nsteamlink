@@ -1,6 +1,7 @@
 #pragma once
 
 #include "input/input_router.h"
+#include "platform/gfx.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -15,9 +16,9 @@
 typedef void (*stream_media_log_fn)(const char *message);
 
 typedef struct stream_media_snapshot {
-    uint64_t video_epoch;
+    uint64_t session_id, video_epoch;
     bool available;
-    bool video_active;
+    bool video_active, render_failed;
     bool first_frame_displayed;
     uint32_t decoded_frames;
     uint32_t displayed_frames;
@@ -152,7 +153,7 @@ void sl_media_gate(bool enabled);
 void sl_media_input(const sl_input_event *event, void *context);
 void sl_media_neutral(void *context);
 void sl_media_mute(bool mute);
-void *sl_media_renderer(void);
+sl_gfx *sl_media_gfx(void);
 
 int stream_media_video_start(IHS_Session *session, const IHS_StreamVideoConfig *config);
 IHS_StreamVideoSubmitResult stream_media_video_submit(IHS_Session *session, uint16_t frame_id,
@@ -165,3 +166,16 @@ int stream_media_audio_submit(IHS_Session *session, IHS_Buffer *data);
 void stream_media_audio_stop(IHS_Session *session);
 
 void sl_media_submitted(const IHS_HIDSDLLastSubmitted *value);
+
+int sl_media_video_start_tracked(IHS_Session *, const IHS_VideoEpochInfo *,
+                                 const IHS_StreamVideoConfig *);
+IHS_StreamVideoSubmitResult sl_media_video_submit_tracked(IHS_Session *, const IHS_VideoEpochInfo *,
+                                                          uint16_t, IHS_FrameTicket *, IHS_Buffer *,
+                                                          IHS_StreamVideoFrameFlag, bool *);
+void sl_media_video_stop_tracked(IHS_Session *, const IHS_VideoEpochInfo *);
+void sl_media_close_video(void);
+bool sl_media_video_clean(void);
+
+void sl_media_collect(void);
+
+void sl_media_allow_video(void);

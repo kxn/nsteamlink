@@ -2,10 +2,10 @@
 
 设计日期：2026-09-09。对应决策：D-051。实施任务、依赖、进度与实测结果仅在
 [Issue #8](https://github.com/kxn/nsteamlink/issues/8) 维护；本文只定义架构、接口契约与验收规范。
-本设计不是已经实现的行为。证据基线为 `a6f743465817913a965ca075276c1f231420cc98`。
+历史路径分析的证据基线为 `a6f743465817913a965ca075276c1f231420cc98`。
 架构修订：应用协调停止、FrameTracker 统一统计、renderer 统一 GPU 使用期；本文各节为修订后的完整契约。
-§14–19 将上述契约对应到当前函数、拟新增接口、关键算法和交错验收；其中代码是设计伪码，
-不代表仓库已有实现。可直接开始 CPU 契约与 SDL 封装工作；Switch 导入参数和不可取消等待仍受 G1 约束。
+§14–19 定义接口、算法和交错验收；§20 明确 C 实现的边界与容量选择。代码构建与 CPU 测试
+不能替代 G1 的 Switch 导入、缓存可见性和 SDK 等待实测。
 
 ## 1. 目标与边界
 
@@ -1269,8 +1269,8 @@ CPU upload 参数只在调用期间借用，返回前复制到本 batch staging 
 | `overlay`, `draw_scene` 的 target/opacity | 每 batch 独立、可复用 UI group target；完整清除后画组、barrier 后整体 alpha 合成，不把视频画进组 target |
 | `sl_ui_renderer_destroy` | 先移除逻辑纹理引用；GPU 引用由 renderer 收尾；TTF 字体关闭先于 plExit，不依赖 runtime 已存在 |
 
-初始可调常量集中在 gfx 配置：每 batch 1 MiB 命令区、4096 quad 的顶点/索引容量、1024 个
-资源版本引用、独立 emergency-clear 区；两张 2048² R8 glyph atlas 共 8 MiB，包含退役子区。
+初始可调常量集中在 gfx 配置：每 batch 4 MiB 命令区、4096 quad 的参数/描述符容量、1024 个
+资源版本引用；quad 上限以外的命令空间保留给 fence/present 收尾；两张 2048² R8 glyph atlas 共 8 MiB，包含退役子区。
 这些是容量选择而非实测充分性；G3 用实际 UI 最大绘制统计验证。超额在编码命令前降级可选 UI，
 不能溢出固定数组或调用无界 cmd memory callback。硬件 frame 不走这些 CPU staging 区；软件
 staging 按已准入尺寸单独预留，合计仍受 §11 的 96 MiB 和 UI ≤64 MiB 约束。
@@ -1347,3 +1347,65 @@ G0/SDL 工程可以直接按以上接口开始。以下值没有从公开头文�
 组合、包内 NVDEC wait/析构的错误返回、NWindow acquire/归还在 HOME/休眠的边界、两个独立
 decoder 的实际内存高水位。任一项失败都有明确出口：拒绝该布局、限制并存/格式并修订容量契约，
 或保持实验构建；不能在工程后段靠增加复制、强行 free 或 detached thread 绕过。
+
+
+## 20. C 实现的具体边界
+
+### 20.1 编译选择与证据
+
+`NSL_GFX_BACKEND=sdl|deko` 是进程级固定选择，默认 `sdl`；deko 仅接受 Switch 工具链。
+SDL 对照后端可以下载 NVTEGRA 帧，deko 后端只接受验证通过的直接导入或软件 YUV 平面上传，
+不隐式切换为下载。`generated/graphics_manifest.json` 保存后端、应用/IHS commit、dirty 标记、
+SDK 静态库、NVTEGRA 头文件、ABI adapter、shader 源码和 DKSH 的 SHA-256。
+对 manifest 的构建成功判定只代表输入可复现，不代表硬件性质已验证。
+
+### 20.2 入口冻结、状态事实与清理
+
+`sl_video_freeze()` 在短 mailbox 锁内冻结整个会话接收入口，并移走 pending lease。
+它覆盖“尚未进入 open”和“已进入 FFmpeg open”两个窗口；open 发布时再次检查 frozen。
+只有 runtime 接受新的 STREAM 请求后才调用 thaw；thaw 与 STOP/CANCEL/EXIT 提交共用 runtime
+准入锁，避免主线程冻结后被迟到的启动重新打开。host 的单次 video stop 不冻结未来 epoch。
+
+`sl_runtime_facts` 持久保存原始 STREAM request、session、video transition、epoch、连接、呈现、
+错误和三个清理事实。UI 事件的 reply generation 不承担资源归属。application 的 lifecycle 是
+replacement 意图和远端 input gate 的唯一策略所有者；runtime 工作线程负责取消/join/回收。
+所有关闭动作先关闭输入、冻结帧入口，主线程继续 collect，worker 只在 video_clean 后退出。
+解码域 reaper 在全局 decoder 锁外调用 `avcodec_free_context`，其 occupied/reaping 标志阻止
+提前重用，避免旧域 SDK 析构阻塞另一活动域的 decode 锁。
+
+GPU fence 错误使批次隔离并关闭正常渲染。退出阶段仅在 SDK queue idle 正常返回且 queue
+未处于 error state 时释放隔离引用；已故障 queue 进入 Switch fatal，不能返回 hbmenu。
+SDK acquire、NVDEC 和 queue idle 的不可取消等待仍属于 G1 必须用真机证明的限制；
+不能用 CPU 超时直接释放 backing，也不能把一次工具正常退出视为 loader ABI 安全证据。
+
+### 20.3 图形资源与支持范围
+
+每个硬件批次 pin FrameLease 和 PoolGroup，PoolGroup 的 map/pool 引用阻止 backing 析构，
+但不独占解码 surface；只有 FrameLease 的 AVFrame 引用阻止该 surface 被解码器复用。
+关闭时即使没有 current frame，也必须 retire 缓存，防止“首帧导入过但未呈现”造成清理死锁。
+初始 NVTEGRA adapter 接受 NV12、progressive、偶数尺寸、最大 1920×1080、零 crop；
+要求 64 字节 pitch 对齐、32 行高度对齐、两 GOB block、匹配的 Y/UV offset 和实际 backing 范围。
+不匹配的 ABI、crop、色彩空间、平面布局明确拒绝，不猜测参数。shader 分别限制 Y 和 UV 的
+有效采样边界，防止过滤到 padding；BT.601/709、limited/full 和 left/center/topleft chroma
+由帧 metadata 决定。无新帧时 current lease 跨循环保留，且不重复软件上传。
+
+两张 2048² R8 atlas 各有 256 个 128² cell，cell 含透明边框，接受最大 126² 可见 glyph。
+512 项逻辑 LRU 淘汰不覆盖被 Recording/Submitted 引用的 cell；满额或超大 glyph 跳过绘制，
+不扩张 atlas。普通可变纹理使用独立物理版本，UI group target 每批次独立。
+图片/atlas/软件平面合计最多 64 MiB，另预留 32 MiB 给 command/data、swapchain、shader 和
+诊断 readback；导入 backing 另计最多 128 MiB。批次最多 4096 quad、1024 个资源引用。
+quad 耗尽使图形后端明确失败并完成已录制批次收尾，不能静默溢出或把半帧报告为成功。
+
+### 20.4 离线 oracle
+
+`app/tests/fixtures/video/manifest.json` 记录自生成 H.264 的命令、版本、哈希，
+`*.framemd5` 是软件解码可见平面的 golden，包含顺序帧、B 帧重排和 720/1080 padding。
+CPU pipeline 测试验证 opaque ticket/PTS 对应、可见像素、两域占用、关闭后 lease 存活、
+启动前冻结以及真实 avcodec_open2 边界的并发冻结。IHS channel 测试通过真实 dataFrame hook
+验证跨分片身份、16 位 id 回绕、跨 epoch id 重用和 session/IHS 关闭后的迟到完成。
+
+`nsl-video-probe.nro` 不联网，首先用 CPU 可计算颜色检查 alpha、R8 atlas、上下方向和纹理
+提前销毁；随后软件解码生成 GPU YUV oracle，两次硬件解码对照 readback（每分量容差 3）。
+每次解码结束后保留最后 lease 重画 120 次，上一域 lease 保留到新域首帧替换。
+该对照检验导入/缓存/padding，不能单独证明共同 shader 的所有颜色矩阵正确性；
+原文 G1 的色卡、HOME/睡眠、退出及 pool 内存实测仍是独立验收项。
