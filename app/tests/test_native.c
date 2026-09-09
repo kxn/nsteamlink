@@ -270,6 +270,7 @@ int main(int argc, char **argv) {
 
     for (int p = SL_PAIRING; p <= SL_ERROR; ++p) {
         ui.page = p;
+        ui.ending_game = p == SL_STOPPING;
         strcpy(ui.pairing_code, "4826");
         ui.pair_code_at = ui.now - 1800;
         sl_ui_layout(&ui);

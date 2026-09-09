@@ -778,7 +778,13 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
             rect(r->renderer, (SDL_Rect){52, 76, 1176, 1}, (SDL_Color){78, 103, 124, 60});
         } else {
             int x = l->panel_x + 40, y = l->panel_y + (l->drawer ? 78 : 36);
-            draw_text(r, l->title, x, y, l->panel_w - 80, 68, l->drawer ? 36 : 40, fg);
+            if (m->page == SL_STOPPING) {
+                int width = text_width(r, l->title, 36);
+                draw_text(r, l->title, l->panel_x + (l->panel_w - width) / 2,
+                          centered_y(r, l->title, 36, l->panel_y + 40, 64, l->panel_w - 80),
+                          l->panel_w - 80, 68, 36, fg);
+            } else
+                draw_text(r, l->title, x, y, l->panel_w - 80, 68, l->drawer ? 36 : 40, fg);
         }
     }
     if (m->page == SL_HOME && !m->layout.dialog) {
@@ -793,12 +799,13 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
         }
         rect(r->renderer, (SDL_Rect){52, 612, 1176, 1}, (SDL_Color){78, 103, 124, 45});
     }
-    if (m->page == SL_CONNECTING || m->page == SL_SAVING ||
+    if (m->page == SL_STOPPING || m->page == SL_CONNECTING || m->page == SL_SAVING ||
         (m->page == SL_PAIRING && !sl_ui_pair_prompt_visible(m))) {
-        rounded(r->renderer, (SDL_Rect){532, 426, 216, 3}, 1, (SDL_Color){45, 64, 81, 255});
-        float phase = (m->now % 1500) / 1500.f;
+        int bar_y = m->page == SL_STOPPING ? l->panel_y + 140 : 426;
+        rounded(r->renderer, (SDL_Rect){532, bar_y, 216, 3}, 1, (SDL_Color){45, 64, 81, 255});
+        float phase = ((m->now - m->entered_at) % 1500) / 1500.f;
         float travel = phase < .5f ? phase * 2 : 2 - phase * 2;
-        rounded(r->renderer, (SDL_Rect){532 + (int)(156 * travel), 426, 60, 3}, 1, accent);
+        rounded(r->renderer, (SDL_Rect){532 + (int)(156 * travel), bar_y, 60, 3}, 1, accent);
     }
     for (int i = 0; i < l->label_count; ++i) {
         const sl_label *t = &l->labels[i];

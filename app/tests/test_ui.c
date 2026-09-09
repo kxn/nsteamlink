@@ -248,6 +248,26 @@ static void overlay_interaction(void) {
     key(&input, SL_KEY_A, 0, 1110);
     assert(n == 2);
 }
+static void wait_screen_cancel_shortcut(void) {
+    const sl_page pages[] = {SL_CONNECTING, SL_SAVING, SL_PAIRING};
+    for (unsigned i = 0; i < sizeof(pages) / sizeof(pages[0]); ++i) {
+        for (int touch = 0; touch < 2; ++touch) {
+            sl_ui_model m = model();
+            m.page = pages[i];
+            sl_ui_tick(&m, 4000);
+            m.command.type = SL_CMD_NONE;
+            uint64_t generation = m.generation;
+            sl_ui_action(&m, SL_DOWN, 0);
+            sl_ui_action(&m, SL_ACCEPT, 0);
+            assert(m.page == pages[i] && m.generation == generation && !m.command.type);
+            if (touch)
+                sl_ui_activate(&m, 9);
+            else
+                sl_ui_action(&m, SL_BACK, 0);
+            assert(m.page == SL_STOPPING && m.command.type == SL_CMD_CANCEL);
+        }
+    }
+}
 static void confirmation_shortcuts(void) {
     const sl_page pages[] = {SL_FORGET, SL_DISCONNECT, SL_EXIT, SL_ERROR, SL_END_GAME};
     const sl_command_type expected[] = {SL_CMD_SAVE, SL_CMD_STOP, SL_CMD_EXIT, SL_CMD_PAIR,
@@ -336,6 +356,7 @@ static void actionable_settings(void) {
 int main(void) {
     carousel();
     session_end_events();
+    wait_screen_cancel_shortcut();
     confirmation_shortcuts();
     actionable_settings();
     overlay_interaction();

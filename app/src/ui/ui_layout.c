@@ -209,7 +209,7 @@ void sl_ui_layout(sl_ui_model *m) {
         l->drawer = m->page == SL_MENU || m->page == SL_OPTIONS || m->page == SL_SETTINGS ||
                     m->page == SL_QUALITY || m->page == SL_LANGUAGE;
         l->compact = m->page == SL_END_GAME || m->page == SL_DISCONNECT || m->page == SL_FORGET ||
-                     m->page == SL_EXIT || m->page == SL_ERROR;
+                     m->page == SL_EXIT || m->page == SL_ERROR || m->page == SL_STOPPING;
         l->panel_x = 272;
         l->panel_y = 96;
         l->panel_w = 736;
@@ -251,6 +251,12 @@ void sl_ui_layout(sl_ui_model *m) {
                     snprintf(c->label, sizeof(c->label), "%s", title);
                     c->primary = true;
                 }
+            }
+            if (m->page == SL_STOPPING) {
+                l->panel_x = 360;
+                l->panel_y = 256;
+                l->panel_w = 560;
+                l->panel_h = 208;
             }
             if (m->page == SL_EXIT) {
                 l->panel_y = 230;
@@ -307,6 +313,10 @@ void sl_ui_layout(sl_ui_model *m) {
             if (l->controls[i].action == SL_RECENT)
                 l->controls[i].x =
                     SL_GAMES_LEFT + l->controls[i].arg * SL_CARD_STEP - (int)m->games_scroll;
+        return;
+    }
+    if (m->page == SL_CONNECTING || m->page == SL_SAVING || m->page == SL_PAIRING) {
+        m->focus = 0; /* B/touch shortcut, never an A-selectable cancellation. */
         return;
     }
     bool found = false;

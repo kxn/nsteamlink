@@ -222,7 +222,8 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
     if (m->page == SL_CLOSING || m->leaving)
         return;
     if (a >= SL_LEFT && a <= SL_DOWN) {
-        if (m->layout.compact)
+        if (m->layout.compact || m->page == SL_CONNECTING || m->page == SL_SAVING ||
+            m->page == SL_PAIRING)
             return;
         if (m->page == SL_HOME) {
             int count = sl_ui_game_count(m);
@@ -242,6 +243,9 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
         return;
     }
     if (a == SL_ACCEPT) {
+        /* A must not activate the only B-labelled control on a wait screen. */
+        if (m->page == SL_CONNECTING || m->page == SL_SAVING || m->page == SL_PAIRING)
+            return;
         if (m->page == SL_HOME && !sl_ui_game_count(m)) {
             sl_ui_action(m, SL_START, 0);
             return;
