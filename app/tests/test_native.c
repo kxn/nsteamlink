@@ -311,6 +311,27 @@ int main(int argc, char **argv) {
             save_image(name);
         }
     }
+    /* Render every screen in both languages with real font metrics. */
+    for (int lang = SL_LANG_ZH_CN; lang <= SL_LANG_EN; ++lang) {
+        sl_i18n_set(lang);
+        for (int p = SL_HOME; p <= SL_CLOSING; ++p) {
+            ui.page = p;
+            ui.depth = 0;
+            ui.leaving = false;
+            ui.streaming = p == SL_STREAM || p == SL_MENU;
+            ui.debug = p == SL_STREAM;
+            ui.stream_started_at = ui.now;
+            ui.entered_at = ui.now > 500 ? ui.now - 500 : 0;
+            strcpy(ui.error, sl_tr(SL_T_PROFILE_CORRUPT));
+            sl_ui_layout(&ui);
+            stream_media_present();
+            char image[64];
+            snprintf(image, sizeof(image), "i18n-%s-page-%02d", lang == SL_LANG_EN ? "en" : "zh",
+                     p);
+            save_image(image);
+        }
+    }
+    sl_i18n_set(SL_LANG_ZH_CN);
     ui.page = SL_HOME;
     sl_ui_connected(&ui);
     sl_input_sync(&router);

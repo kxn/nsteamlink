@@ -252,3 +252,21 @@ Switch 端 probe/client 默认 cleanup 顺序：
 2. `sudo dkp-pacman -S switch-dev switch-portlibs dkp-toolchain-vars`
 3. bashrc 追加 `DEVKITPRO/DEVKITA64/PATH`（见 §5 环境变量纪律）
 4. 验证：`./scripts/build-switch.sh` 产出 `.nro`
+
+## 界面语言资源
+
+应用可见文字集中在 `app/resources/i18n/zh-CN.json` 和 `en.json`，使用稳定的语义键。
+`scripts/compile-i18n.py` 检查键集合、重复键、UTF-8 字节长度、printf 参数及按键前缀，
+生成只读 C 资源表并编入程序；修改 JSON 后重新构建即可，无需在 SD 卡额外部署语言包。
+资源文件是唯一文案来源，不编辑 build 下生成的头文件。新增 UI 文案必须同时补齐两份资源，
+代码使用 `sl_tr(SL_T_...)`，不要根据翻译后的文字决定操作语义。
+
+默认跟随系统语言：中文系统使用简体中文，其他语言使用英文。设置中的语言选择即时生效，
+由 worker 保存到数据目录的 `language.conf`（`system`、`zh-CN` 或 `en`）。语言偏好独立于
+`profile.bin`，不迁移配对身份；文件发布沿用 Horizon 不覆盖已存在目标的备份/恢复规则。
+只读资源及原子语言选择允许协议 worker 和 UI 并发取词。游戏名、电脑名、地址以及协议返回
+的数据保持原文，底层开发日志不随 UI 语言变化。诊断浮层的标题和字段名称属于可见文案。
+
+桌面系统语言取 LC_ALL、LC_MESSAGES、LANG 的首个非空值；可用 `LANG=en_US.UTF-8` 或
+`LANG=zh_CN.UTF-8` 配合新的 NSL_DATA_DIR 检查首次启动。nsl-i18n 测试覆盖切换、偏好保存、
+系统回退和身份保持，nsl-native 在两种语言下渲染全部页面；NSL_TEST_OUTPUT 可导出截图。

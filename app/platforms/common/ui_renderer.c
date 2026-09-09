@@ -1,6 +1,7 @@
 #include "platform/ui_renderer.h"
 #include "artwork.h"
 #include "platform/system.h"
+#include "services/i18n.h"
 #include <SDL.h>
 #include <SDL_ttf.h>
 #include <math.h>
@@ -499,6 +500,15 @@ static void action_icon(SDL_Renderer *r, sl_action a, int x, int y, SDL_Color c)
         line(r, x + 16, y + 4, x + 16, y + 24, c);
         line(r, x + 23, y + 8, x + 27, y + 14, c);
         line(r, x + 27, y + 14, x + 23, y + 20, c);
+    } else if (a == SL_OPEN_LANGUAGE) {
+        for (int i = 0; i < 32; ++i) {
+            float u = i * 6.2831853f / 32, v = (i + 1) * 6.2831853f / 32;
+            line(r, x + 14 + 12 * cosf(u), y + 14 + 12 * sinf(u), x + 14 + 12 * cosf(v),
+                 y + 14 + 12 * sinf(v), c);
+            line(r, x + 14 + 6 * cosf(u), y + 14 + 12 * sinf(u), x + 14 + 6 * cosf(v),
+                 y + 14 + 12 * sinf(v), c);
+        }
+        line(r, x + 2, y + 14, x + 26, y + 14, c);
     } else if (a == SL_OPEN_QUALITY || a == SL_OPEN_MANUAL) {
         monitor(r, x + 1, y + 3, 28, c);
     } else {
@@ -712,7 +722,7 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
             rect(r->renderer, box, panel);
             rect(r->renderer, (SDL_Rect){box.x, 0, 1, 720}, (SDL_Color){77, 82, 94, 150});
             rect(r->renderer, (SDL_Rect){784, 139, 456, 1}, (SDL_Color){59, 63, 73, 255});
-            draw_text(r, "NSteamLink", 784, 29, 440, 42, 24, muted);
+            draw_text(r, sl_tr(SL_T_BRAND), 784, 29, 440, 42, 24, muted);
         } else {
             for (int i = 20; i > 0; i -= 2)
                 rounded(r->renderer,
@@ -725,13 +735,12 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
     }
     if (l->title[0]) {
         if (!l->dialog) {
-            draw_text(r, "NSteamLink", 52, centered_y(r, "NSteamLink", 28, 18, 44, 220), 220, 64,
-                      28, fg);
-            draw_text(r, "http://github.com/kxn/nsteamlink", 276,
-                      centered_y(r, "http://github.com/kxn/nsteamlink", 24, 18, 44, 780), 780, 64,
-                      24, muted);
+            draw_text(r, sl_tr(SL_T_BRAND), 52, centered_y(r, sl_tr(SL_T_BRAND), 28, 18, 44, 220),
+                      220, 64, 28, fg);
+            draw_text(r, sl_tr(SL_T_PROJECT_URL), 276,
+                      centered_y(r, sl_tr(SL_T_PROJECT_URL), 24, 18, 44, 780), 780, 64, 24, muted);
             char version[64];
-            snprintf(version, sizeof(version), "v%s", NSL_APP_VERSION);
+            snprintf(version, sizeof(version), sl_tr(SL_T_VERSION), NSL_APP_VERSION);
             int w = text_width(r, version, 24) + 32;
             rounded(r->renderer, (SDL_Rect){1228 - w, 23, w, 34}, 10, (SDL_Color){38, 53, 68, 255});
             draw_text(r, version, 1244 - w, centered_y(r, version, 24, 23, 34, w), w, 48, 24,
@@ -779,10 +788,11 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
                 draw_text(r, value, dx + (96 - text_width(r, value, 72)) / 2,
                           centered_y(r, value, 72, 322, 104, 96), 96, 114, 72, amber);
             }
-        } else if (!strcmp(t->text, "A  确认")) {
+        } else if (!strcmp(t->text, sl_tr(SL_T_CONFIRM_KEY))) {
             badge(r, "A", x, 647, muted);
-            draw_text(r, "确认", x + 48, centered_y(r, "确认", 26, 632, 64, width - 48), width - 48,
-                      70, 26, fg);
+            draw_text(r, sl_tr(SL_T_CONFIRM), x + 48,
+                      centered_y(r, sl_tr(SL_T_CONFIRM), 26, 632, 64, width - 48), width - 48, 70,
+                      26, fg);
         } else
             draw_text(r, t->text, x, t->y, width, t->size * 2 + 22, t->size, fg);
     }
@@ -820,13 +830,14 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
         } else if (menu_row) {
             if (focused)
                 rounded(r->renderer, box, 8, fg);
-            if (c->action == SL_SET_QUALITY) {
+            if (c->action == SL_SET_QUALITY || c->action == SL_SET_LANGUAGE) {
                 int x = box.x + 23, y = box.y + (box.h - 26) / 2;
                 SDL_Color surface = focused ? fg : panel;
                 SDL_Color ring = focused ? bg : muted;
                 rounded(r->renderer, (SDL_Rect){x, y, 26, 26}, 13, ring);
                 rounded(r->renderer, (SDL_Rect){x + 2, y + 2, 22, 22}, 11, surface);
-                if ((uint32_t)c->arg == m->store.quality)
+                if (c->arg == (c->action == SL_SET_LANGUAGE ? (int)sl_i18n_language()
+                                                            : (int)m->store.quality))
                     rounded(r->renderer, (SDL_Rect){x + 6, y + 6, 14, 14}, 7, focused ? bg : green);
             } else {
                 SDL_Color tile = mix(panel, role, .16f);
@@ -846,10 +857,12 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
             ink = focused ? bg : accent;
         }
         int size = c->action == SL_RECENT ? 30 : footer ? 26 : 30;
-        const char *label = c->action == SL_SOUND ? "声音" : footer ? c->label + 3 : c->label;
+        const char *label = c->action == SL_SOUND ? sl_tr(SL_T_SOUND)
+                            : footer              ? c->label + 3
+                                                  : c->label;
         int x = c->x + (menu_row ? 78 : 24), width = c->w - (menu_row ? 110 : 48);
         bool centered = l->compact || tab || c->action == SL_START || c->action == SL_DIGIT ||
-                        c->action == SL_SUBMIT || shoulder || footer;
+                        c->action == SL_SUBMIT || c->action == SL_ERASE || shoulder || footer;
         if (tab) {
             const sl_host *host = &m->store.registry.hosts[c->arg];
             SDL_Color status = !sl_host_online(host, m->now) ? muted : host->paired ? green : amber;
@@ -895,7 +908,8 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
                 rounded(r->renderer, (SDL_Rect){tx, ty, 50, 28}, 14, track);
                 rounded(r->renderer, (SDL_Rect){tx + (m->store.sound ? 25 : 3), ty + 3, 22, 22}, 11,
                         bg);
-            } else if (c->action != SL_BACK && c->action != SL_SET_QUALITY)
+            } else if (c->action != SL_BACK && c->action != SL_SET_QUALITY &&
+                       c->action != SL_SET_LANGUAGE)
                 chevron(r->renderer, box.x + box.w - 35, box.y + box.h / 2, focused ? bg : muted);
         }
         SDL_RenderSetClipRect(r->renderer, card ? &clip : &box);
@@ -930,31 +944,39 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
         uint64_t elapsed = m->now - m->stream_started_at;
         if (elapsed < 4200) {
             Uint8 alpha = elapsed < 2800 ? 255 : (Uint8)((4200 - elapsed) * 255 / 1400);
-            rounded(r->renderer, (SDL_Rect){436, 592, 408, 64}, 18,
+            const char *before = sl_tr(SL_T_HOLD_TOGETHER), *after = sl_tr(SL_T_OPEN_MENU);
+            int before_w = text_width(r, before, 26), after_w = text_width(r, after, 26);
+            int total = before_w + after_w + 96 + 32 + 48;
+            int left = (1280 - total) / 2;
+            rounded(r->renderer, (SDL_Rect){left, 592, total, 64}, 18,
                     (SDL_Color){17, 24, 35, (Uint8)(alpha * 220 / 255)});
             SDL_Color ink = fg;
             ink.a = alpha;
-            draw_text(r, "同时长按", 468, centered_y(r, "同时长按", 26, 592, 64, 120), 120, 70, 26,
-                      ink);
-            badge(r, "−", 602, 607, ink);
-            badge(r, "+", 648, 607, ink);
-            draw_text(r, "打开菜单", 708, centered_y(r, "打开菜单", 26, 592, 64, 280), 280, 70, 26,
-                      ink);
+            int x = left + 24;
+            draw_text(r, before, x, centered_y(r, before, 26, 592, 64, before_w + 2), before_w + 2,
+                      70, 26, ink);
+            x += before_w + 16;
+            badge(r, "−", x, 607, ink);
+            badge(r, "+", x + 46, 607, ink);
+            x += 96 + 16;
+            draw_text(r, after, x, centered_y(r, after, 26, 592, 64, after_w + 2), after_w + 2, 70,
+                      26, ink);
         }
     }
 
 #if NSL_DIAGNOSTICS
     if (m->debug && m->streaming && m->page == SL_STREAM) {
-        rect(r->renderer, (SDL_Rect){24, 24, 500, 320}, panel);
-        draw_text(r, d->title[0] ? d->title : "诊断", 44, 42, 460, 38, 24, muted);
-        const char *names[] = {"呈现",     "本机视频",        "解码 / 上传",
-                               "音频缓冲", "HID 待发 / 在途", "最大 ACK 等待"};
+        rect(r->renderer, (SDL_Rect){24, 24, 640, 320}, panel);
+        draw_text(r, d->title[0] ? d->title : sl_tr(SL_T_DIAGNOSTICS), 44, 42, 600, 38, 24, muted);
+        const char *names[] = {sl_tr(SL_T_PRESENTATION),  sl_tr(SL_T_LOCAL_VIDEO),
+                               sl_tr(SL_T_DECODE_UPLOAD), sl_tr(SL_T_AUDIO_BUFFER),
+                               sl_tr(SL_T_HID_QUEUE),     sl_tr(SL_T_MAX_ACK)};
         for (int i = 0; i < 6; ++i) {
-            draw_text(r, names[i], 44, 90 + i * 36, 250, 34, 24, fg);
-            draw_text(r, d->values[i][0] ? d->values[i] : "—", 296, 90 + i * 36, 208, 34, 24, fg);
+            draw_text(r, names[i], 44, 90 + i * 36, 310, 34, 24, fg);
+            draw_text(r, d->values[i][0] ? d->values[i] : "—", 370, 90 + i * 36, 274, 34, 24, fg);
         }
         if (m->now > d->sampled_at + 3000)
-            draw_text(r, "数据已过期", 44, 304, 400, 32, 24, muted);
+            draw_text(r, sl_tr(SL_T_STALE), 44, 304, 400, 32, 24, muted);
     }
 #else
     (void)d;

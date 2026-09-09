@@ -306,8 +306,8 @@ static void actionable_settings(void) {
     sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
     assert(m.layout.count == 2); /* Settings and back, no help-only page. */
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
-    assert(m.layout.count == 4); /* Quality, sound, manual address, back. */
-    assert(m.layout.controls[2].action == SL_OPEN_MANUAL);
+    assert(m.layout.count == 5); /* Quality, sound, language, manual address, back. */
+    assert(m.layout.controls[3].action == SL_OPEN_MANUAL);
     sl_ui_action(&m, SL_OPEN_MANUAL, 0);
     assert(m.page == SL_MANUAL);
     sl_ui_action(&m, SL_BACK, 0);
@@ -326,7 +326,7 @@ static void actionable_settings(void) {
     sl_ui_connected(&m);
     sl_ui_action(&m, SL_OPEN_MENU, 0);
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
-    assert(m.layout.count == 3); /* Only live sound and next-session quality, plus back. */
+    assert(m.layout.count == 4); /* Sound, quality, language and back. */
     for (int i = 0; i < m.layout.count; ++i)
         assert(m.layout.controls[i].action != SL_OPEN_MANUAL);
     sl_ui_action(&m, SL_OPEN_MANUAL, 0);

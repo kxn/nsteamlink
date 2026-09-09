@@ -1,4 +1,5 @@
 #include "ui_events.h"
+#include "services/i18n.h"
 #include <stdio.h>
 #include <string.h>
 void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
@@ -43,7 +44,7 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
             m->command.type = SL_CMD_STREAM;
             m->command.quality = m->store.quality;
         } else
-            sl_ui_error(m, "电脑记录已移除");
+            sl_ui_error(m, sl_tr(SL_T_HOST_REMOVED));
         break;
     }
     case SL_EVENT_PIN:

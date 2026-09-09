@@ -5,6 +5,7 @@
 #include "platform/system.h"
 #include "platform/ui_renderer.h"
 #include "sdl_input.h"
+#include "services/i18n.h"
 #include "ui/ui_events.h"
 #include <SDL.h>
 #include <stdio.h>
@@ -60,6 +61,7 @@ int sl_application_run(int argc, char **argv) {
         sl_system_shutdown();
         return 1;
     }
+    sl_i18n_load(sl_system_data_dir(), sl_system_locale());
     sl_auth_store store;
     int auth = sl_auth_load(&store, sl_system_data_dir());
     sl_ui_init(&a->ui, &store);
@@ -89,12 +91,11 @@ int sl_application_run(int argc, char **argv) {
     sl_input_init(&a->input, &a->ui, sl_media_input, sl_media_neutral, NULL);
     sl_media_hooks(draw, event, a);
     if (auth < 0)
-        sl_ui_error(&a->ui,
-                    auth == -2 ? "配对记录损坏，请保留原文件后修复" : "无法读取或保存配对记录");
+        sl_ui_error(&a->ui, auth == -2 ? sl_tr(SL_T_PROFILE_CORRUPT) : sl_tr(SL_T_PROFILE_FAILED));
     else if (!offline) {
         a->runtime = sl_runtime_create(&store);
         if (!a->runtime)
-            sl_ui_error(&a->ui, "无法启动网络服务");
+            sl_ui_error(&a->ui, sl_tr(SL_T_NETWORK_START_FAILED));
     }
     unsigned rendered = 0;
     bool done = false;
@@ -114,11 +115,14 @@ int sl_application_run(int argc, char **argv) {
         if (sl_ui_take_command(&a->ui, &cmd)) {
             if (a->runtime) {
                 if (!sl_runtime_submit(a->runtime, &cmd, &a->ui.store))
-                    sl_ui_error(&a->ui, "操作正在进行，请稍后重试");
+                    sl_ui_error(&a->ui, sl_tr(SL_T_BUSY));
+            } else if (cmd.type == SL_CMD_SAVE) {
+                if (!sl_i18n_save(sl_system_data_dir(), cmd.language))
+                    sl_ui_error(&a->ui, sl_tr(SL_T_SAVE_SETTINGS_FAILED));
             } else if (cmd.type == SL_CMD_CANCEL || cmd.type == SL_CMD_STOP)
                 sl_ui_stopped(&a->ui, false);
             else if (cmd.type != SL_CMD_EXIT && cmd.type != SL_CMD_SAVE)
-                sl_ui_error(&a->ui, "离线预览未连接网络");
+                sl_ui_error(&a->ui, sl_tr(SL_T_OFFLINE_PREVIEW));
             if (cmd.type == SL_CMD_EXIT)
                 done = true;
         }

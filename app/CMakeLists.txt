@@ -1,3 +1,11 @@
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(NSL_I18N_DIR "${CMAKE_CURRENT_BINARY_DIR}/i18n")
+add_custom_command(OUTPUT "${NSL_I18N_DIR}/i18n_keys.h" "${NSL_I18N_DIR}/i18n_data.h"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/compile-i18n.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/i18n" "${NSL_I18N_DIR}"
+    DEPENDS "${CMAKE_SOURCE_DIR}/scripts/compile-i18n.py"
+        resources/i18n/zh-CN.json resources/i18n/en.json VERBATIM)
+add_custom_target(nsl_i18n DEPENDS "${NSL_I18N_DIR}/i18n_keys.h" "${NSL_I18N_DIR}/i18n_data.h")
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
 pkg_check_modules(SDL2_TTF REQUIRED IMPORTED_TARGET SDL2_ttf)
@@ -11,12 +19,12 @@ target_include_directories(nsl_artwork PRIVATE ${CMAKE_SOURCE_DIR}/third_party/j
 target_compile_options(nsl_artwork PRIVATE -Wall -Wextra)
 target_link_libraries(nsl_artwork PUBLIC nsl_ui PkgConfig::CURL PkgConfig::JPEG Threads::Threads m)
 add_library(nsl_ui STATIC src/ui/ui_model.c src/ui/ui_layout.c src/ui/ui_events.c src/input/input_router.c
-    src/services/host_registry.c src/services/auth_store.c)
+    src/services/host_registry.c src/services/auth_store.c src/services/i18n.c)
 target_include_directories(nsl_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(nsl_ui PRIVATE -Wall -Wextra)
 target_link_libraries(nsl_ui PUBLIC m)
-add_dependencies(nsl_ui nsl_identity)
-target_include_directories(nsl_ui PUBLIC ${NSL_IDENTITY_DIR})
+add_dependencies(nsl_ui nsl_identity nsl_i18n)
+target_include_directories(nsl_ui PUBLIC ${NSL_IDENTITY_DIR} ${NSL_I18N_DIR})
 target_compile_definitions(nsl_ui PUBLIC NSL_DIAGNOSTICS=$<BOOL:${NSL_DIAGNOSTICS}>)
 add_library(nsl_platform STATIC platforms/common/application.c platforms/common/sdl_input.c platforms/common/media.c
     platforms/common/ui_renderer.c platforms/common/runtime.c platforms/${NSL_PLATFORM}/system.c)
@@ -86,4 +94,13 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_link_libraries(nsl-launch-tests PRIVATE nsl_ui)
     target_compile_options(nsl-launch-tests PRIVATE -UNDEBUG)
     add_test(NAME nsl-launch COMMAND nsl-launch-tests)
+endif()
+
+if(NSL_PLATFORM STREQUAL "desktop")
+    add_executable(nsl-i18n-tests tests/test_i18n.c platforms/desktop/system.c)
+    target_link_libraries(nsl-i18n-tests PRIVATE nsl_ui)
+    target_link_options(nsl-i18n-tests PRIVATE -Wl,--wrap=rename)
+    target_compile_options(nsl-i18n-tests PRIVATE -UNDEBUG)
+    add_test(NAME nsl-i18n COMMAND nsl-i18n-tests)
+    add_test(NAME nsl-i18n-catalogs COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/test-i18n.py")
 endif()

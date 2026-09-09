@@ -1,4 +1,5 @@
 #include "ui_model.h"
+#include "services/i18n.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -135,7 +136,7 @@ void sl_ui_stopped(sl_ui_model *m, bool unexpected) {
     if (m->closing)
         page(m, SL_CLOSING);
     else if (unexpected)
-        sl_ui_error(m, "连接已断开");
+        sl_ui_error(m, sl_tr(SL_T_DISCONNECTED));
     else
         page(m, SL_HOME);
     sl_ui_layout(m);
@@ -166,6 +167,7 @@ static void emit(sl_ui_model *m, sl_command_type type) {
     m->command.type = type;
     m->command.generation = m->generation;
     m->command.quality = m->store.quality;
+    m->command.language = sl_i18n_language();
 }
 static void start(sl_ui_model *m, int game) {
     sl_host *h = selected(m);
@@ -293,6 +295,18 @@ void sl_ui_action(sl_ui_model *m, sl_action a, int arg) {
         if (!m->streaming && m->page == SL_SETTINGS) {
             m->input[0] = 0;
             push(m, SL_MANUAL);
+        }
+        break;
+    case SL_OPEN_LANGUAGE:
+        if (m->page == SL_SETTINGS) {
+            push(m, SL_LANGUAGE);
+            m->focus = 100 + sl_i18n_language();
+        }
+        break;
+    case SL_SET_LANGUAGE:
+        if (m->page == SL_LANGUAGE && arg >= 0 && arg < SL_LANG_COUNT) {
+            sl_i18n_set(arg);
+            emit(m, SL_CMD_SAVE);
         }
         break;
     case SL_OPEN_QUALITY:

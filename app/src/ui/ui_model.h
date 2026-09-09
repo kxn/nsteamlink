@@ -1,6 +1,7 @@
 #pragma once
 #include "build_identity.h"
 #include "services/auth_store.h"
+#include "services/i18n.h"
 
 typedef enum sl_page {
     SL_HOME,
@@ -14,6 +15,7 @@ typedef enum sl_page {
     SL_SETTINGS,
     SL_MANUAL,
     SL_QUALITY,
+    SL_LANGUAGE,
     SL_FORGET,
     SL_DISCONNECT,
     SL_EXIT,
@@ -40,6 +42,8 @@ typedef enum sl_action {
     SL_OPEN_SETTINGS,
     SL_OPEN_MANUAL,
     SL_OPEN_QUALITY,
+    SL_OPEN_LANGUAGE,
+    SL_SET_LANGUAGE,
     SL_OPEN_FORGET,
     SL_CONFIRM_FORGET,
     SL_OPEN_DISCONNECT,
@@ -68,6 +72,7 @@ typedef struct sl_command {
     sl_host host;
     uint64_t game_id;
     uint32_t quality;
+    sl_language language;
     char text[64];
 } sl_command;
 typedef struct sl_control {
