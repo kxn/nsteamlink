@@ -1,5 +1,6 @@
 # nsteamlink 开发规范
 
+> 源码构建与实现概览见 [技术与开发指南](docs/TECHNICAL.md)。
 > 适用范围：本仓库全部代码与文档。
 > 调研结论与里程碑定义见 `SWITCH_STEAMLINK_KICKOFF.md`（下称 kickoff），本文与其冲突时以 kickoff 为准。
 > 选型类决定记录在 `docs/decisions.md`（下称 decisions），改规范前先查有没有相关决策。

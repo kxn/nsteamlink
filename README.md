@@ -1,79 +1,74 @@
+<p align="center">
+  <img src="assets/branding/icon.jpg" alt="NSteamLink" width="112" height="112">
+</p>
+
 # NSteamLink
 
-Switch 自制软件（homebrew）版 Steam Link 客户端：通过 Steam Remote Play 协议串流 PC 上的 Steam 游戏。
+**把电脑上的 Steam 游戏，带到 Switch 上玩。**
 
-> 进度、任务与验收状态一律见 GitHub Issues（仓库 `kxn/nsteamlink`，含 milestone）；
-> 本仓库文档只承载设计、规范与使用说明，不维护进度状态。
+NSteamLink 是一款面向 Nintendo Switch 自制系统的 Steam Remote Play 客户端。
+电脑运行游戏，Switch 接收画面和声音，并把你的操作传回电脑。
+拿起 Joy-Con，选择电脑，就可以继续上次的游戏。
 
-## 文档索引
+[下载最新版](https://github.com/kxn/nsteamlink/releases/latest) · [English](README.en.md) · [反馈问题](https://github.com/kxn/nsteamlink/issues)
 
-| 文档 | 内容 |
+## 能做什么
+
+- **配对一次，随时连接**：首页持续查找电脑，分别保存每台电脑的配对和最近游戏。
+- **从最近游戏继续**：带封面的游戏卡片，选中即可请求电脑启动游戏并开始串流。
+- **适合掌机的操作**：摇杆、方向键和触摸都能浏览游戏；卡片支持横向平滑滚动。
+- **专心玩游戏**：全屏画面、Joy-Con 振动，菜单按需呼出，不常驻遮挡。
+- **在 Switch 上结束游戏**：可以只断开串流，也可以请求电脑退出游戏。
+- **按自己的习惯使用**：中英文界面、画面偏好和界面提示音。
+- **从 HOME 菜单启动**：应用内添加启动入口，后续直接点图标打开。
+
+## 开始游玩
+
+你需要一台能运行自制软件的 Switch，以及一台开启了 **Steam Remote Play** 的电脑。
+先让两台设备连接同一局域网；电脑需要保持开机并运行 Steam。
+
+1. 从 [Releases](https://github.com/kxn/nsteamlink/releases/latest) 下载 `.nro` 文件。
+2. 将它保存为 SD 卡上的 `switch/nsteamlink/nsteamlink.nro`。
+3. **按住 R 启动一个游戏**，进入全内存 hbmenu，再打开 NSteamLink。
+4. 选择发现的电脑，将 Switch 显示的配对码输入电脑上的 Steam，按提示完成连接。
+
+**不要从相册的 applet 模式启动。** 内存不足以运行串流，应用会显示提示并允许按 B 返回。
+
+首次可以用 **Y 打开 Steam**。游玩后，首页会记录最近游戏；下次可以直接选择卡片启动。
+
+## 常用操作
+
+| 场景 | 操作 |
 |---|---|
-| `SWITCH_STEAMLINK_KICKOFF.md` | 调研结论、总体架构、里程碑定义、已知坑 |
-| `DEVELOPMENT.md` | 开发规范（目录结构、命名、构建、Git、许可证、调试、文档边界） |
-| `docs/decisions.md` | 工程决策记录（ADR-lite，append-only） |
-| `docs/UI_UX_DESIGN.md` | 普通用户界面定稿、输入与 Debug 浮层、现有代码接线及旧 UI 删除契约（目标设计） |
-| `docs/STEAM_REMOTE_PLAY_AUTH.md` | Steam Remote Play 认证流程证据整理 |
-| `docs/M3_RESEARCH_PLAN.md` | M3 串流第一帧调研与实施计划（已归档设计记录） |
-| `docs/GFX_MESA_INVESTIGATION.md` | Mesa/SDL2 applet 崩溃调研（平台证据，已封闭） |
-| `docs/UDP_DEBUG.md` | UDP 调试命令参考（28772 端口命令集与字段释义） |
-| `docs/SWITCH_SETUP.md` | Switch 真机环境准备指南（刷自制系统 / hbmenu / nxlink） |
-| `third_party/README.md` | 第三方依赖与 IHSlib fork 工作流 |
+| 选择游戏 | 左右推动摇杆／方向键，或触摸滑动卡片 |
+| 切换电脑 | L / R（多台电脑时显示提示） |
+| 启动所选游戏／确认 | A |
+| 打开 Steam | Y |
+| 打开选项 | X |
+| 返回／退出 | B |
+| 串流中呼出菜单 | 同时长按 **− 和 + 0.8 秒** |
 
-## 安装与游玩
+首页和菜单也支持触摸。串流菜单中的 **断开连接** 会让电脑上的游戏继续运行；
+**结束游戏** 则请求电脑退出游戏并结束此次游玩。
 
-从 [Releases](https://github.com/kxn/nsteamlink/releases/latest) 下载 NRO，放到 SD 卡的
-`switch/nsteamlink/nsteamlink.nro`。按住 R 启动一个游戏，进入全内存 hbmenu 后打开 NSteamLink。
-相册 applet 模式不受支持，应用会在图形初始化前提示并允许按 B 返回。
+## 添加到 HOME 菜单
 
-电脑上开启 Steam Remote Play，保持电脑与 Switch 在同一局域网。首次运行自动发现电脑，
-选择后按屏幕提示完成配对。可在 **X 选项 → 添加到 HOME 菜单** 中安装启动入口，
-无需提供密钥；入口依赖上述 NRO，后续更新只需替换该文件。需要 CFW 支持自制应用安装与启动。
+打开 **X 选项 → 添加到 HOME 菜单**，确认后即可添加入口，无需手动提供密钥文件。
+这需要你的自制系统支持自制应用的安装与启动。
 
-English: Download the NRO from [Releases](https://github.com/kxn/nsteamlink/releases/latest) and place it at
-`switch/nsteamlink/nsteamlink.nro` on your SD card. Hold R while launching a game to enter full-memory
-hbmenu, then launch NSteamLink. Enable Steam Remote Play on your PC and pair on the same LAN.
-The app supports English and Chinese. **Options → Add to HOME Menu** installs a shortcut without
-requiring a key file; keep the NRO at that fixed path. Applet mode is not supported.
+入口会打开 SD 卡上的 `switch/nsteamlink/nsteamlink.nro`，请保留这个文件。
+升级时将新版 NRO 替换到同一路径即可，无需重复添加入口。
 
-## 从源码构建
+## 获取帮助
 
-环境要求见 `DEVELOPMENT.md` 附录 A。
+遇到问题可以 [提交 Issue](https://github.com/kxn/nsteamlink/issues)，附上界面右上角的
+版本号、复现步骤，以及截图或错误提示，方便定位。
 
-```bash
-# 桌面目标
-./scripts/build-desktop.sh
-./build/desktop/app/nsteamlink
+想了解实现或参与开发，请阅读 [技术与开发指南](docs/TECHNICAL.md)。
 
-# Switch 目标（需 DEVKITPRO 环境变量）
-./scripts/build-switch.sh
-# 产物 build/switch/app/nsteamlink.nro → SD 卡 sd:/switch/，
-# 经 Title Redirection 启动 hbmenu 后运行。
+## 致谢与许可
 
-# 自动测试（含真实 SDL 事件、存储、协议及输入可靠性）
-ctest --test-dir build/desktop --output-on-failure
+感谢 IHSlib、FFmpeg、SDL、libnx、devkitPro 和 nx-hbloader 等开源项目。
+NSteamLink 以 [GPLv3](https://www.gnu.org/licenses/gpl-3.0.html) 发布，第三方组件遵循各自的许可证。
 
-# 无网络桌面预览（需以 -DNSL_DIAGNOSTICS=ON 构建）；数据目录可隔离
-NSL_DATA_DIR=/tmp/nsteamlink-preview ./build/desktop/app/nsteamlink --offline
-```
-
-启动后自动查找电脑。选择电脑并点击“配对并连接”，把 Switch 显示的四位码输入电脑的 Steam。
-配对保存后会继续连接；如果电脑要求连接安全码，再用屏幕数字键盘输入。每台电脑分别保存授权和最近游戏。
-最近游戏来自实际串流期间主机报告的活动；有记录后可直接请求启动该游戏和串流，没有记录时显示“开始游玩”。
-
-首页 **L/R** 切换电脑，方向键移动、**A** 确认、**B** 返回，**X** 选项、**Y** 打开 Steam。
-首页及本地菜单支持触摸操作。串流全屏显示；同时长按 **− 和 + 0.8 秒**打开本地菜单。开流时显示一次快捷键提示，随后渐隐，画面上不保留常驻按钮。
-菜单内可选择“断开连接”（电脑游戏继续运行），或“结束游戏”（请求电脑退出游戏）。回首页后按 B 可退出应用。
-仅诊断构建提供高级 Debug：在本地游玩菜单里单独长按 **X 一秒**开关，只读浮层不接管游戏输入。
-
-桌面预览支持鼠标、手柄和键盘：方向键、Enter/A、Esc/B、X、Y，Q/E 对应 L/R，Minus/Equals 对应 −/+。
-桌面实际串流可使用 SDL 手柄；没有手柄时仍能使用本地界面和触摸／鼠标指针路径。
-
-配对与设置保存在 Switch 的 `sdmc:/switch/nsteamlink/profile.bin`；桌面默认 `~/.nsteamlink/`，
-可用 `NSL_DATA_DIR` 指定独立目录。旧 `auth.bin` 的设备身份会保留；由于旧文件没有可信的主机唯一标识，
-升级后首次选择电脑需重新确认配对。损坏文件不会被自动覆盖。
-
-开发工具 `switch-stream-selftest.nro` 运行同一界面和 runtime，默认绘制 600 帧后清理退出；
-不自动选择电脑或开启游戏。独立 `switch-discover` 保留作为协议取证工具，正常使用无需运行它。
-
-构建 NSP/NRO、关闭诊断和 GitHub Actions 发版见 [发版说明](docs/RELEASING.md)。
+本项目是社区开发的非官方客户端，与 Valve 或 Nintendo 无关联。

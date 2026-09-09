@@ -129,3 +129,38 @@ tools/switch-debugctl.py 10.10.10.17 diag current
 
 菜单确认、返回、设置变化和卡片焦点移动带有轻量提示音，按键与触摸反馈一致。
 连续拖动和无效操作不发声。**设置 → 声音**统一开关串流声音与界面提示音。
+
+## 导出系统截图
+
+先区分截图保存到了本体内存还是 SD 卡；在 sysNAND CFW 中运行，不代表截图一定在
+sysNAND 内部。无需提取 NAND 镜像。下面的系统菜单路径基于 Nintendo Switch 系统相册功能，
+CFW 的相册快捷方式可能由本机配置覆盖；若点击相册进入 hbmenu，可按本机配置按住 R 打开真相册。
+
+### USB 直接复制到电脑
+
+系统设置 → 数据管理 → 管理截图和视频 → 通过 USB 连接复制至电脑。
+用支持数据传输的 USB 线连接 **Switch 本体底部 USB-C** 与电脑，不经过底座 USB 口。
+Windows 中打开设备 `Nintendo Switch` → `Album`，复制需要的图片。
+其他系统需要 MTP 支持，不能假定连接后会自动显示为普通 U 盘。
+参见 [Nintendo 官方 USB 说明](https://www.nintendo.com/en-gb/Support/Troubleshooting/How-to-Transfer-Screenshots-and-Video-Captures-from-Nintendo-Switch-to-a-Computer-Via-a-USB-Cable-1886300.html)。
+
+对于本项目记录的、运行时需要 PD 供电的测试机，优先使用下面的无线方式，避免为传图拔掉电源。
+
+### 少量截图：先发到手机
+
+打开系统相册 → 选择截图 → A 共享和编辑 → 发送至智能手机。
+按提示扫描两次二维码，连接 Switch 并在手机浏览器保存图片，再传到电脑。
+一次可传 10 张截图；这条路径不需要安装额外的 Switch 自制工具。
+参见 [Nintendo 相册传输说明](https://support.nintendo.com/jp/switch/data_management/screenshot_movie/index.html)。
+
+### 批量无线复制：SD 卡与 FTP
+
+如果截图在本体内存，先在系统设置 → 数据管理 → 管理截图和视频中，
+选择本体保存内存，将截图复制到 microSD 卡。不要选择删除。
+普通 sysNAND 的 SD 相册目录为 `Nintendo/Album`；其中的图片可以直接复制到电脑，
+无需解密。目录依据见 [Nintendo 的 microSD 图片复制说明](https://support-jp.nintendo.com/app/answers/detail/a_id/34865/)。
+
+可从 [ftpd 官方发布页](https://github.com/mtheall/ftpd/releases) 获取 Switch NRO，
+在 hbmenu 中运行。电脑与 Switch 连接同一局域网，用 FTP 客户端连接 ftpd 屏幕显示的
+IP 与端口，下载 `Nintendo/Album` 目录；端口以屏幕显示为准。
+传输后退出 ftpd。只需读卡复制时，也可以在关机后取出 microSD，用读卡器复制同一目录。
