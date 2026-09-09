@@ -3,6 +3,7 @@
 #include <deko3d.h>
 #include <math.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <switch.h>
@@ -75,7 +76,8 @@ typedef struct batch {
     sl_resource_ref *references[REFERENCES];
     DkCmdBuf commands;
     DkMemBlock command_memory, data, readback;
-    DkFence fence;
+    /* WaitFence records a pointer consumed later by QueueSubmitCommands. */
+    DkFence fence, available;
     unsigned quads, descriptors;
     bool readback_recorded;
 } batch;
@@ -86,6 +88,7 @@ typedef struct params {
 _Static_assert(sizeof(params) == 128 && offsetof(params, options) == 112, "shader parameter ABI");
 _Static_assert(ATOMIC_INT_LOCK_FREE == 2, "renderer references require lock-free atomics");
 struct sl_gfx {
+    void (*diagnostic)(const char *);
     DkDevice device;
     DkQueue queue;
     DkSwapchain swapchain;
@@ -289,6 +292,16 @@ static bool shader(sl_gfx *g, DkShader *shader, const unsigned char *source, siz
     dkShaderInitialize(shader, &maker);
     return dkShaderIsValid(shader);
 }
+static void device_diagnostic(void *context, const char *where, DkResult result,
+                              const char *message) {
+    sl_gfx *g = context;
+    char line[512];
+    snprintf(line, sizeof(line), "deko result=%u where=%s message=%s", result, where ? where : "?",
+             message ? message : "?");
+    g->diagnostic(line);
+    if (result != DkResult_Success)
+        g->failed = true;
+}
 sl_gfx *sl_gfx_create(const sl_gfx_config *config) {
     if (config->width != 1280 || config->height != 720)
         return NULL;
@@ -297,6 +310,11 @@ sl_gfx *sl_gfx_create(const sl_gfx_config *config) {
         return NULL;
     DkDeviceMaker device;
     dkDeviceMakerDefaults(&device);
+    g->diagnostic = config->diagnostic;
+    if (g->diagnostic) {
+        device.userData = g;
+        device.cbDebug = device_diagnostic;
+    }
     g->device = dkDeviceCreate(&device);
     if (!g->device)
         goto fail;
@@ -385,10 +403,9 @@ sl_gfx_result sl_gfx_begin(sl_gfx *g) {
     b->readback_recorded = false;
     dkCmdBufClear(b->commands);
     dkCmdBufAddMemory(b->commands, b->command_memory, 0, COMMAND_BYTES);
-    DkFence available;
-    dkSwapchainAcquireImage(g->swapchain, &g->output, &available);
+    dkSwapchainAcquireImage(g->swapchain, &g->output, &b->available);
     g->recording = b;
-    dkCmdBufWaitFence(b->commands, &available);
+    dkCmdBufWaitFence(b->commands, &b->available);
     dkCmdBufBarrier(b->commands, DkBarrier_Full,
                     DkInvalidateFlags_L2Cache | DkInvalidateFlags_Image |
                         DkInvalidateFlags_Descriptors | DkInvalidateFlags_Shader);
@@ -398,6 +415,7 @@ sl_gfx_result sl_gfx_begin(sl_gfx *g) {
     bind_target(g, &g->outputs[g->output]);
     DkRasterizerState raster;
     dkRasterizerStateDefaults(&raster);
+    raster.cullMode = DkFace_None; /* Screen-space UI quads are two-sided. */
     DkColorWriteState write;
     dkColorWriteStateDefaults(&write);
     dkCmdBufBindRasterizerState(b->commands, &raster);
@@ -423,15 +441,25 @@ sl_gfx_present_result sl_gfx_present(sl_gfx *g) {
         DkImageView source;
         dkImageViewDefaults(&source, &g->outputs[g->output]);
         DkImageRect region = {0, 0, 0, 1280, 720, 1};
-        DkCopyBuf destination = {dkMemBlockGetGpuAddr(b->readback), 1280 * 4, 720};
+        DkCopyBuf destination = {dkMemBlockGetGpuAddr(b->readback), 1280 * 4, 0};
         dkCmdBufBarrier(b->commands, DkBarrier_Full, 0);
+        if (g->diagnostic && b->life.serial == 1)
+            g->diagnostic("present: record-readback");
         dkCmdBufCopyImageToBuffer(b->commands, &source, &region, &destination, 0);
         b->readback_recorded = true;
     }
+    if (g->diagnostic && b->life.serial == 1)
+        g->diagnostic("present: record-fence");
     dkCmdBufSignalFence(b->commands, &b->fence, true);
     sl_batch_submit(&b->life);
+    if (g->diagnostic && b->life.serial == 1)
+        g->diagnostic("present: submit-commands");
     dkQueueSubmitCommands(g->queue, dkCmdBufFinishList(b->commands));
+    if (g->diagnostic && b->life.serial == 1)
+        g->diagnostic("present: queue-present");
     dkQueuePresentImage(g->queue, g->swapchain, g->output);
+    if (g->diagnostic && b->life.serial == 1)
+        g->diagnostic("present: returned");
     g->recording = NULL;
     return (sl_gfx_present_result){g->failed ? SL_GFX_ERROR : SL_GFX_READY, true, true,
                                    b->life.serial};
@@ -621,6 +649,13 @@ int sl_gfx_draw_blend(sl_gfx *g, sl_gfx_blend b) {
 int sl_gfx_clear(sl_gfx *g) {
     if (!g->recording)
         return -1;
+    /* Clear the entire attachment, independent of the previous draw's scissor. */
+    unsigned width = g->target ? g->target->width : 1280;
+    unsigned height = g->target ? g->target->height : 720;
+    DkViewport viewport = {0, 0, (float)width, (float)height, 0, 1};
+    DkScissor scissor = {0, 0, width, height};
+    dkCmdBufSetViewports(g->recording->commands, 0, &viewport, 1);
+    dkCmdBufSetScissors(g->recording->commands, 0, &scissor, 1);
     sl_gfx_color c = g->color;
     dkCmdBufClearColorFloat(g->recording->commands, 0, DkColorMask_RGBA, c.r / 255.f, c.g / 255.f,
                             c.b / 255.f, c.a / 255.f);

@@ -18,7 +18,7 @@ paths = [a.root / 'app/platforms/switch/video_surface.c', a.root / 'app/tests/fi
 if a.backend == 'deko':
     paths += [a.root / f'app/platforms/switch/shaders/quad.{s}' for s in ['vert', 'frag']]
     paths += [a.build / f'app/quad_{s}.dksh' for s in ['vert', 'frag']]
-    paths += [a.sdk / x for x in ['tools/bin/uam', 'libnx/lib/libdeko3d.a',
+    paths += [a.sdk / x for x in ['tools/bin/uam', 'libnx/lib/libdeko3d.a', 'libnx/lib/libdeko3dd.a',
         'libnx/lib/libnx.a', 'portlibs/switch/lib/libavcodec.a', 'portlibs/switch/lib/libavutil.a',
         'portlibs/switch/include/libavutil/hwcontext_nvtegra.h']]
 manifest = {'backend': a.backend, 'hardware_validation': 'not established by a build',

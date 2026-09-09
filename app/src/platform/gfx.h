@@ -23,6 +23,7 @@ typedef enum {
 typedef struct sl_gfx_config {
     unsigned width, height;
     const char *title;
+    void (*diagnostic)(const char *message); /* optional bounded callback */
 } sl_gfx_config;
 typedef struct sl_gfx_present_result {
     sl_gfx_result result;

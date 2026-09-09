@@ -791,7 +791,7 @@ bool stream_media_init(stream_media_log_fn log_fn) {
     sdl_initialized = true;
     sl_events_init();
 
-    sl_gfx_config graphics = {SDL_WIDTH, SDL_HEIGHT, "nsteamlink"};
+    sl_gfx_config graphics = {.width = SDL_WIDTH, .height = SDL_HEIGHT, .title = "nsteamlink"};
     gfx = sl_gfx_create(&graphics);
     if (!gfx) {
         media_set_error("graphics initialization failed");

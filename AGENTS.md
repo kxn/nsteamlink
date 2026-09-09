@@ -18,6 +18,8 @@
 
 ## Switch Homebrew Runtime Discipline
 
+- Device testing must be self-contained: the user only prepares hbmenu netloader. Automatically deploy fixtures, collect machine-readable stages/results/errors and any needed readbacks, and diagnose failures without asking the user to observe flashes, transcribe logs, or report screen state. Unobservable loader/display properties remain explicitly unverified; never infer them from nxlink exit.
+- Never ask the user to manually copy files to the Switch SD card. Bundle test fixtures/resources into the NRO (for example via RomFS), or transfer them automatically through available tools. Prepare this delivery path before requesting a device test; the user's one-time manual copy is not permission to repeat that workflow.
 - Treat returning to hbmenu as returning to a loader ABI, not as proof that the process state was fully reset.
 - Before any Switch NRO returns from `main()`, it must satisfy the Homebrew ABI cleanup rule: no leaked handles, no dirty memory-state assumptions, and no leftover background threads.
 - Do not use `pthread_detach()` or fire-and-forget threads in Switch NRO code unless a decision record proves they terminate before returning to hbmenu. Prefer joinable threads and explicit `stop -> join -> destroy`.

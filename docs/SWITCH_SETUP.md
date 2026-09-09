@@ -177,12 +177,19 @@ NSL_BUILD_DIR="$PWD/build/switch-deko" scripts/build-switch.sh \
 
 该目录生成应用 `app/nsteamlink.nro`、独立 `app/nsl-video-probe.nro` 和
 `generated/graphics_manifest.json`。保存 manifest 与 NRO，不能混用不同 SDK/shader 的实测记录。
-将 `app/tests/fixtures/video/padding720.h264` 放到 SD 的
-`/switch/nsteamlink-video-probe/padding720.h264`，运行 probe 即可离线测试，不需 Steam 或网络。
-启动器支持 argv 时可传入其他 fixture 的绝对路径；默认路径也可换成另外一份 fixture 内容，
-记录对应 manifest 条目。日志写入 `/switch/nsteamlink-video-probe.log`。
+四份测试视频已经嵌入 probe，无需复制文件到 SD，也无需 Steam。设备进入 hbmenu netloader 后运行：
+
+```sh
+python3 scripts/test-switch-video.py --fixture padding720
+```
+
+可选 fixture 为 `padding720`、`padding1080`、`sequential`、`reordered`。脚本自动推送 NRO，
+接收设备阶段日志，将结果、NRO 哈希和构建 manifest 保存到构建目录的 `probe-runs/`。
+日志中断或超时记为 `INCOMPLETE`，不能按 nxlink 退出码判定设备测试成功。
+诊断构建链接 `deko3dd`，使 SDK 参数错误可以通过网络回传。SD 日志只是自动保留的副本，
+后续启动会自动读取，不要求人工取回。
 
 probe 先验证 UI alpha/atlas/方向，再比较软件 YUV 与硬件导入输出、旧帧重画及两域交替。
-`FINAL=PASS` 仅表示这些像素和引用检查通过；是否回到 hbmenu、HOME/睡眠恢复、连续启动以及
+`PROBE_FINAL result=PASS` 仅表示这些像素和引用检查通过；是否回到 hbmenu、HOME/睡眠恢复、连续启动以及
 整机功耗和帧时间收益需要分别记录。已经故障的 GPU queue 会进入系统 fatal，避免把仍被使用的
 内存释放后返回 loader。正式启用 deko 的验收契约见 [渲染设计](VIDEO_RENDERING_DESIGN.md)。

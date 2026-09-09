@@ -1409,3 +1409,17 @@ CPU pipeline 测试验证 opaque ticket/PTS 对应、可见像素、两域占用
 每次解码结束后保留最后 lease 重画 120 次，上一域 lease 保留到新域首帧替换。
 该对照检验导入/缓存/padding，不能单独证明共同 shader 的所有颜色矩阵正确性；
 原文 G1 的色卡、HOME/睡眠、退出及 pool 内存实测仍是独立验收项。
+
+
+### deko 命令列表引用的 fence 存储期
+
+`dkCmdBufWaitFence()` 和 `dkCmdBufSignalFence()` 将 fence 指针写入控制命令，
+`dkQueueSubmitCommands()` 才解引用。依据 deko3d v0.5.0 的
+`source/dk_cmdbuf.cpp` 与 `source/dk_queue.cpp`，录制函数返回不代表引用结束。
+交换链 acquire fence 与完成 fence 均存放在批次对象中；批次完成前不得覆盖或销毁。
+禁止将跨 `begin()` / `present()` 使用的 fence 放在录制函数的栈上。
+清屏操作显式设置整个 attachment 的 viewport/scissor，后续绘制再恢复逻辑裁剪状态。
+
+默认 `DkDeviceFlags_OriginUpperLeft` 的 viewport Y 缩放为负数（SDK
+`source/maxwell/gpu_3d_base.cpp`）。因此屏幕坐标的顶边应映射至 NDC `y=+1`，
+底边映射至 `y=-1`；屏幕四边形关闭背面剔除。该约定同时适用于离屏 UI target 与输出图像。

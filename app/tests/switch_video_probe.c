@@ -1,20 +1,101 @@
-/* Offline G1 diagnostic. No session/socket/authentication dependency. */
+/* Self-contained G1 diagnostic. No Steam session/authentication dependency. */
+#include "build_identity.h"
 #include "gfx_backend.h"
 #include "session/frame_tracker.h"
 #include <SDL.h>
+#include <arpa/inet.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <libavcodec/avcodec.h>
+#include <poll.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <switch.h>
+#include <sys/socket.h>
 #include <time.h>
+#include <unistd.h>
 
 #define PIXELS (1280u * 720u * 4u)
 #define FRAMES 16
 static unsigned char *golden[FRAMES], *readback;
 static uint16_t golden_id[FRAMES];
 static unsigned golden_count;
-static FILE *logfile;
+static int log_fd = -1;
+static char transcript[128 * 1024];
+static size_t transcript_size, transmitted;
+static const char *stage = "startup";
+static uint64_t run_id;
+#define EMBED(name)                                                                                \
+    extern const unsigned char nsl_probe_##name[];                                                 \
+    extern const size_t nsl_probe_##name##_size
+EMBED(padding720);
+EMBED(padding1080);
+EMBED(sequential);
+EMBED(reordered);
+static void send_pending(void) {
+    if (log_fd < 0 || transmitted == transcript_size)
+        return;
+    ssize_t n = send(log_fd, transcript + transmitted, transcript_size - transmitted, MSG_DONTWAIT);
+    if (n > 0)
+        transmitted += (size_t)n;
+}
+static void trace(const char *format, ...) {
+    char line[1024];
+    int prefix = snprintf(line, sizeof(line), "[%llu %s] ", (unsigned long long)run_id, stage);
+    va_list args;
+    va_start(args, format);
+    vsnprintf(line + prefix, sizeof(line) - prefix, format, args);
+    va_end(args);
+    size_t n = strlen(line);
+    if (n && line[n - 1] != '\n' && n < sizeof(line) - 1)
+        line[n++] = '\n';
+    if (n <= sizeof(transcript) - transcript_size) {
+        memcpy(transcript + transcript_size, line, n);
+        transcript_size += n;
+    }
+    send_pending();
+}
+static void enter(const char *name) {
+    stage = name;
+    trace("STAGE=%s", stage);
+}
+static void diagnostic(const char *message) {
+    trace("%s", message);
+}
+static void av_diagnostic(void *context, int level, const char *format, va_list args) {
+    (void)context;
+    if (level > AV_LOG_WARNING)
+        return;
+    char text[512];
+    vsnprintf(text, sizeof(text), format, args);
+    trace("FFmpeg: %s", text);
+}
+static void connect_log(void) {
+    if (!__nxlink_host.s_addr)
+        return;
+    log_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (log_fd < 0)
+        return;
+    fcntl(log_fd, F_SETFL, O_NONBLOCK);
+    struct sockaddr_in host = {
+        .sin_family = AF_INET, .sin_port = htons(NXLINK_CLIENT_PORT), .sin_addr = __nxlink_host};
+    int rc = connect(log_fd, (void *)&host, sizeof(host));
+    if (rc < 0 && errno == EINPROGRESS) {
+        struct pollfd p = {.fd = log_fd, .events = POLLOUT};
+        int error = 0;
+        socklen_t length = sizeof(error);
+        rc = poll(&p, 1, 2000) > 0 &&
+                     getsockopt(log_fd, SOL_SOCKET, SO_ERROR, &error, &length) == 0 && !error
+                 ? 0
+                 : -1;
+    }
+    if (rc < 0) {
+        close(log_fd);
+        log_fd = -1;
+    }
+}
 static uint64_t now_us(void) {
     return armTicksToNs(armGetSystemTick()) / 1000;
 }
@@ -50,16 +131,22 @@ static bool draw(sl_gfx *gfx, sl_video_frame *frame) {
 }
 static bool near_pixel(unsigned x, unsigned y, unsigned r, unsigned g, unsigned b) {
     const unsigned char *p = readback + ((size_t)y * 1280 + x) * 4;
+    trace("pixel x=%u y=%u rgba=%u,%u,%u,%u expected=%u,%u,%u,255", x, y, p[0], p[1], p[2], p[3], r,
+          g, b);
     return abs((int)p[0] - (int)r) <= 2 && abs((int)p[1] - (int)g) <= 2 &&
            abs((int)p[2] - (int)b) <= 2 && p[3] == 255;
 }
 static bool ui_oracle(sl_gfx *gfx) {
+    enter("ui-create-rgba");
     sl_gfx_texture *rgba = sl_gfx_create_texture(gfx, SL_GFX_RGBA8, SL_GFX_STATIC, 1, 1);
+    enter("ui-create-glyph");
     sl_gfx_texture *glyph = sl_gfx_create_texture(gfx, SL_GFX_R8, SL_GFX_STATIC, 64, 64);
+    enter("ui-create-target");
     sl_gfx_texture *target = sl_gfx_create_texture(gfx, SL_GFX_RGBA8, SL_GFX_TARGET, 64, 64);
     bool ok = false;
     unsigned char red[4] = {255, 0, 0, 128}, alpha[64 * 64];
     memset(alpha, 128, sizeof(alpha));
+    enter("ui-upload");
     if (!rgba || !glyph || !target || sl_gfx_upload(rgba, NULL, red, 4) ||
         sl_gfx_upload(glyph, NULL, alpha, 64))
         goto cleanup;
@@ -67,20 +154,31 @@ static bool ui_oracle(sl_gfx *gfx) {
     sl_gfx_texture_blend(glyph, SL_GFX_BLEND_ALPHA);
     sl_gfx_texture_blend(target, SL_GFX_BLEND_ALPHA);
     sl_gfx_texture_alpha(target, 128);
+    enter("ui-begin");
     if (sl_gfx_begin(gfx) != SL_GFX_READY)
         goto cleanup;
+    enter("ui-bind-target");
     sl_gfx_target(gfx, target);
     sl_gfx_draw_color(gfx, 0, 0, 0, 0);
+    enter("ui-clear-target");
     sl_gfx_clear(gfx);
+    enter("ui-draw-rgba");
     sl_gfx_copy(gfx, rgba, NULL, &(sl_gfx_rect){0, 0, 64, 64});
+    enter("ui-bind-output");
     sl_gfx_target(gfx, NULL);
     sl_gfx_draw_color(gfx, 0, 0, 0, 255);
+    enter("ui-clear-output");
     sl_gfx_clear(gfx);
+    enter("ui-draw-target");
     sl_gfx_copy(gfx, target, NULL, &(sl_gfx_rect){0, 0, 64, 64});
+    enter("ui-draw-glyph");
     sl_gfx_copy(gfx, glyph, NULL, &(sl_gfx_rect){64, 0, 64, 64});
     sl_gfx_draw_color(gfx, 0, 255, 0, 255);
+    enter("ui-draw-solid");
     sl_gfx_fill(gfx, &(sl_gfx_rect){0, 128, 16, 16});
+    enter("ui-submit");
     sl_gfx_present(gfx);
+    enter("ui-release-handles");
     /* Destroy logical handles before the fence: concrete versions stay pinned. */
     sl_gfx_destroy_texture(rgba);
     rgba = NULL;
@@ -88,14 +186,15 @@ static bool ui_oracle(sl_gfx *gfx) {
     glyph = NULL;
     sl_gfx_destroy_texture(target);
     target = NULL;
+    enter("ui-drain-readback");
     ok = drain(gfx) && sl_gfx_readback(gfx, NULL, readback, PIXELS, 1280 * 4) &&
-         near_pixel(16, 16, 64, 0, 0) && near_pixel(80, 16, 128, 128, 128) &&
-         near_pixel(8, 136, 0, 255, 0) && near_pixel(8, 583, 0, 0, 0);
+         (near_pixel(16, 16, 64, 0, 0) & near_pixel(80, 16, 128, 128, 128) &
+          near_pixel(8, 136, 0, 255, 0) & near_pixel(8, 583, 0, 0, 0));
 cleanup:
     sl_gfx_destroy_texture(rgba);
     sl_gfx_destroy_texture(glyph);
     sl_gfx_destroy_texture(target);
-    fprintf(logfile, "UI alpha/atlas/origin/lifetime=%s\n", ok ? "PASS" : "FAIL");
+    trace("UI alpha/atlas/origin/lifetime=%s\n", ok ? "PASS" : "FAIL");
     return ok;
 }
 static bool compare(sl_video_frame *frame, bool hardware, unsigned index) {
@@ -121,8 +220,8 @@ static bool compare(sl_video_frame *frame, bool hardware, unsigned index) {
             max_delta = delta;
         differing += delta > 3;
     }
-    fprintf(logfile, "frame=%u ticket=%u max_delta=%u outside_tolerance=%zu\n", index, id,
-            max_delta, differing);
+    trace("frame=%u ticket=%u max_delta=%u outside_tolerance=%zu\n", index, id, max_delta,
+          differing);
     /* Both paths use the same shader; allow only normalized-coordinate rounding. */
     return differing == 0;
 }
@@ -131,11 +230,18 @@ static bool take(sl_video_pipeline *pipeline, sl_gfx *gfx, bool hardware, sl_vid
     sl_video_frame *frame = sl_video_take(pipeline);
     if (!frame)
         return true;
-    bool ok = draw(gfx, frame) && compare(frame, hardware, (*outputs)++);
+    bool ok = draw(gfx, frame);
+    if (!ok)
+        trace("draw rejected format=%d size=%dx%d pitch=%d,%d crop=%zu,%zu,%zu,%zu",
+              frame->pixels->format, frame->pixels->width, frame->pixels->height,
+              frame->pixels->linesize[0], frame->pixels->linesize[1], frame->pixels->crop_left,
+              frame->pixels->crop_top, frame->pixels->crop_right, frame->pixels->crop_bottom);
+    if (ok)
+        ok = compare(frame, hardware, (*outputs)++);
     IHS_FrameOutcome outcome = {.result = ok ? IHS_VideoFrameResultDisplayed
                                              : IHS_VideoFrameResultDroppedReset,
                                 .completionUs = now_us(),
-                                .presentationSerial = *outputs};
+                                .presentationSerial = ok ? *outputs : 0};
     sl_video_frame_complete(frame, &outcome);
     if (*held)
         sl_resource_release(&(*held)->ref);
@@ -210,95 +316,165 @@ cleanup:
     sl_gfx_get_counters(gfx, &counters);
     if (hardware && counters.uploads != before.uploads)
         ok = false;
-    fprintf(logfile,
-            "images=%zu imported=%zu pools=%u maps=%u busy=%u imports=%llu uploads=%llu "
-            "upload_bytes=%llu retired=%llu\n",
-            counters.image_bytes, counters.imported_bytes, counters.pool_groups, counters.maps,
-            counters.busy_batches, (unsigned long long)counters.imports,
-            (unsigned long long)counters.uploads, (unsigned long long)counters.uploaded_bytes,
-            (unsigned long long)counters.retired_groups);
+    trace("images=%zu imported=%zu pools=%u maps=%u busy=%u imports=%llu uploads=%llu "
+          "upload_bytes=%llu retired=%llu\n",
+          counters.image_bytes, counters.imported_bytes, counters.pool_groups, counters.maps,
+          counters.busy_batches, (unsigned long long)counters.imports,
+          (unsigned long long)counters.uploads, (unsigned long long)counters.uploaded_bytes,
+          (unsigned long long)counters.retired_groups);
     sl_video_stop(pipeline, key);
     if (tracker)
         IHS_FrameTrackerClose(tracker);
     av_parser_close(parser);
     avcodec_free_context(&parser_context);
-    fprintf(logfile, "session=%llu hardware=%d packets=%u outputs=%u result=%s\n",
-            (unsigned long long)key.session, hardware, packets, outputs, ok ? "PASS" : "FAIL");
+    trace("session=%llu hardware=%d packets=%u outputs=%u result=%s\n",
+          (unsigned long long)key.session, hardware, packets, outputs, ok ? "PASS" : "FAIL");
     return ok;
 }
 int main(int argc, char **argv) {
-    const char *path = argc > 1 ? argv[1] : "sdmc:/switch/nsteamlink-video-probe/padding720.h264";
-    logfile = fopen("sdmc:/switch/nsteamlink-video-probe.log", "w");
-    if (!logfile)
-        return 1;
-    fprintf(logfile,
-            "G1 offline comparison; avcodec=%u avutil=%u SDL-video must stay uninitialized\n",
-            avcodec_version(), avutil_version());
-    FILE *fixture = fopen(path, "rb");
+    run_id = armGetSystemTick();
+    bool sockets = R_SUCCEEDED(socketInitializeDefault());
+    if (sockets)
+        connect_log();
+    trace("PROBE_BEGIN build=%s fixture=%s avcodec=%u avutil=%u sockets=%d transport=%d",
+          NSL_GIT_COMMIT, argc > 1 ? argv[1] : "padding720", avcodec_version(), avutil_version(),
+          sockets, log_fd >= 0);
+    /* Retrieve the old diagnostic automatically, before replacing its file. */
+    FILE *old = fopen("sdmc:/switch/nsteamlink-video-probe.log", "r");
+    if (old) {
+        char line[512];
+        unsigned lines = 0;
+        trace("PREVIOUS_LOG_BEGIN");
+        while (lines < 64 && fgets(line, sizeof(line), old)) {
+            if (strstr(line, "previous:") || strstr(line, "PREVIOUS_LOG"))
+                continue;
+            trace("previous: %s", line);
+            ++lines;
+        }
+        fclose(old);
+        trace("PREVIOUS_LOG_END");
+    }
+    av_log_set_callback(av_diagnostic);
+    const unsigned char *embedded = nsl_probe_padding720;
+    size_t size = nsl_probe_padding720_size;
+    const char *fixture = argc > 1 ? argv[1] : "padding720";
+    bool known = !strcmp(fixture, "padding720");
+#define SELECT(name)                                                                               \
+    if (!strcmp(fixture, #name)) {                                                                 \
+        embedded = nsl_probe_##name;                                                               \
+        size = nsl_probe_##name##_size;                                                            \
+        known = true;                                                                              \
+    }
+    SELECT(padding1080);
+    SELECT(sequential);
+    SELECT(reordered);
     uint8_t *data = NULL;
-    long size = 0;
     sl_video_pipeline *pipeline = NULL;
     sl_gfx *gfx = NULL;
     sl_video_frame *held = NULL;
     bool ok = false, sdl = false;
-    if (!fixture || fseek(fixture, 0, SEEK_END) || (size = ftell(fixture)) <= 0 ||
-        size > 2 * 1024 * 1024)
+    enter("fixture");
+    if (!known) {
+        trace("unknown built-in fixture");
         goto cleanup;
-    rewind(fixture);
+    }
     data = calloc(1, size + AV_INPUT_BUFFER_PADDING_SIZE);
     readback = malloc(PIXELS);
-    if (!data || !readback || fread(data, 1, size, fixture) != (size_t)size)
+    if (!data || !readback) {
+        trace("allocation failed errno=%d", errno);
         goto cleanup;
-    fclose(fixture);
-    fixture = NULL;
-    if (SDL_Init(SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER))
+    }
+    memcpy(data, embedded, size);
+    trace("embedded fixture bytes=%zu", size);
+    enter("sdl-init");
+    if (SDL_Init(SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER)) {
+        trace("SDL_Init: %s", SDL_GetError());
         goto cleanup;
+    }
     sdl = true;
-    if (SDL_WasInit(SDL_INIT_VIDEO))
+    if (SDL_WasInit(SDL_INIT_VIDEO)) {
+        trace("unexpected SDL video owner");
         goto cleanup;
+    }
+    enter("pipeline-create");
     pipeline = sl_video_create();
-    gfx = sl_gfx_create(&(sl_gfx_config){1280, 720, "Video probe"});
-    if (!pipeline || !gfx || !sl_gfx_request_readback(gfx))
+    if (!pipeline)
         goto cleanup;
+    enter("gfx-create");
+    gfx = sl_gfx_create(&(sl_gfx_config){
+        .width = 1280, .height = 720, .title = "Video probe", .diagnostic = diagnostic});
+    if (!gfx) {
+        trace("gfx creation rejected");
+        goto cleanup;
+    }
+    enter("readback-allocate");
+    if (!sl_gfx_request_readback(gfx))
+        goto cleanup;
+    enter("ui-oracle");
     if (!ui_oracle(gfx))
         goto cleanup;
+    enter("software");
     if (!replay(pipeline, gfx, data, size, (sl_video_key){1, 1}, false, &held))
         goto cleanup;
-    /* Keep A alive while B opens. Its lease is released only on B's first output. */
+    enter("hardware-cold");
     if (!replay(pipeline, gfx, data, size, (sl_video_key){2, 1}, true, &held))
         goto cleanup;
     sl_video_reap(pipeline);
+    enter("hardware-reopen");
     if (!replay(pipeline, gfx, data, size, (sl_video_key){3, 1}, true, &held))
         goto cleanup;
     ok = true;
-cleanup:
-    if (fixture)
-        fclose(fixture);
+cleanup:;
+    const char *failed = ok ? "none" : stage;
     if (held)
         sl_resource_release(&held->ref);
     if (gfx) {
+        enter("cleanup-gfx-idle");
         sl_gfx_finish(gfx);
         sl_gfx_counters counters;
         sl_gfx_get_counters(gfx, &counters);
-        if (counters.imported_bytes || counters.pool_groups || counters.busy_batches)
+        if (counters.imported_bytes || counters.pool_groups || counters.busy_batches) {
             ok = false;
-        fprintf(logfile, "drained imported=%zu pools=%u busy=%u\n", counters.imported_bytes,
-                counters.pool_groups, counters.busy_batches);
+            failed = stage;
+        }
+        trace("drained imported=%zu pools=%u busy=%u", counters.imported_bytes,
+              counters.pool_groups, counters.busy_batches);
+        enter("cleanup-gfx-destroy");
         sl_gfx_destroy(gfx);
     }
     if (pipeline) {
+        enter("cleanup-decoder");
         sl_video_reap(pipeline);
-        if (!sl_video_destroy(pipeline))
+        if (!sl_video_destroy(pipeline)) {
+            trace("decoder resources still live");
             abort();
+        }
     }
-    if (sdl)
+    if (sdl) {
+        enter("cleanup-sdl");
         SDL_Quit();
+    }
     for (unsigned i = 0; i < FRAMES; ++i)
         free(golden[i]);
     free(readback);
     free(data);
-    fprintf(logfile, "FINAL=%s; user must independently observe hbmenu return\n",
-            ok ? "PASS" : "FAIL");
-    fclose(logfile);
+    av_log_set_callback(av_log_default_callback);
+    enter("complete");
+    trace("PROBE_FINAL result=%s failed_stage=%s", ok ? "PASS" : "FAIL", failed);
+    trace("PROBE_CLEANUP resources=clean transport=closing");
+    FILE *saved = fopen("sdmc:/switch/nsteamlink-video-probe.log", "w");
+    if (saved) {
+        fwrite(transcript, 1, transcript_size, saved);
+        fclose(saved);
+    }
+    uint64_t deadline = now_us() + 2000000;
+    while (log_fd >= 0 && transmitted < transcript_size && now_us() < deadline) {
+        send_pending();
+        svcSleepThread(1000000);
+    }
+    if (log_fd >= 0)
+        close(log_fd);
+    if (sockets)
+        socketExit();
     return ok ? 0 : 1;
 }

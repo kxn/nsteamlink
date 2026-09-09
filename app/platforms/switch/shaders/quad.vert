@@ -14,6 +14,7 @@ void main() {
     const vec2 corners[6]=vec2[6](vec2(0,0),vec2(1,0),vec2(0,1),vec2(0,1),vec2(1,0),vec2(1,1));
     vec2 q=corners[gl_VertexID];
     vec2 position=p.destination.xy+q*p.destination.zw;
-    gl_Position=vec4(position/p.viewport.xy*2.0-1.0,0.0,1.0);
+    vec2 ndc=position/p.viewport.xy*2.0-1.0;
+    gl_Position=vec4(ndc.x,-ndc.y,0.0,1.0);
     uv=p.uvrect.xy+q*p.uvrect.zw;
 }
