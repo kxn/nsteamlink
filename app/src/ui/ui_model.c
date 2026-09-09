@@ -217,7 +217,7 @@ static void move(sl_ui_model *m, sl_action direction) {
     if (best)
         m->focus = best;
 }
-void sl_ui_action(sl_ui_model *m, sl_action a, int arg) {
+static void action(sl_ui_model *m, sl_action a, int arg) {
     if (m->page == SL_CLOSING || m->leaving)
         return;
     if (a >= SL_LEFT && a <= SL_DOWN) {
@@ -423,6 +423,40 @@ void sl_ui_action(sl_ui_model *m, sl_action a, int arg) {
         break;
     }
     sl_ui_layout(m);
+}
+void sl_ui_action(sl_ui_model *m, sl_action a, int arg) {
+    if (a == SL_ACCEPT) {
+        action(m, a, arg);
+        return;
+    } /* Delegates to the actual control once. */
+    sl_page before = m->page;
+    int focus = m->focus, host = m->store.registry.selected;
+    uint32_t quality = m->store.quality;
+    bool sound = m->store.sound, leaving = m->leaving;
+    sl_language language = sl_i18n_language();
+    char input[64];
+    memcpy(input, m->input, sizeof(input));
+    action(m, a, arg);
+    sl_ui_cue cue = SL_CUE_NONE;
+    if (before != m->page || leaving != m->leaving)
+        cue = a == SL_BACK || a == SL_CONFIRM_STOP || a == SL_CONFIRM_EXIT ? SL_CUE_BACK
+                                                                           : SL_CUE_CONFIRM;
+    else if (sound != m->store.sound || quality != m->store.quality ||
+             language != sl_i18n_language())
+        cue = SL_CUE_TOGGLE;
+    else if (strcmp(input, m->input))
+        cue = a == SL_ERASE ? SL_CUE_BACK : SL_CUE_MOVE;
+    else if (focus != m->focus || host != m->store.registry.selected)
+        cue = SL_CUE_MOVE;
+    if (cue == SL_CUE_MOVE) {
+        if (m->move_sound_at && m->now - m->move_sound_at < 65)
+            return;
+        m->move_sound_at = m->now;
+    }
+    if (cue != SL_CUE_NONE) {
+        m->cue = cue;
+        ++m->cue_serial;
+    }
 }
 int sl_ui_hit(const sl_layout *l, int x, int y) {
     x -= l->offset_x;

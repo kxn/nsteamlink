@@ -1718,3 +1718,26 @@ base.interrupted。旧普通 bool 无同步；立即 interrupt 曾掩盖部分�
 Decision：interrupted 使用 C11 atomic_bool，在 BaseInit 清零结构后初始化。
 保留 stop HID → 传输断开有界重试 → join session → 停媒体 → destroy 的顺序；
 最终退出时 join client 后再销毁 IHS/socket。无 ACK 的断开也必须有界完成。
+
+## D-047：界面提示音与串流共用音频输出
+
+Evidence：原 media.c 使用 SDL_QueueAudio 输出 Opus 解码的 PCM，设备仅随串流开启；
+该模式无法直接在已排队的游戏声音上叠加首页/菜单提示音。SDL2 SDL_audio.h 的
+SDL_OpenAudioDevice 文档规定 callback 与 QueueAudio 二选一、samples 应为 2 的幂；
+本机 ASan 实测 samples=480 时 SDL dummy 后端将 2048 字节写入 1920 字节缓冲区，
+因此使用 samples=512。API 参考：https://wiki.libsdl.org/SDL2/SDL_OpenAudioDevice 。
+
+Decision：媒体初始化时打开单个 48kHz/S16/stereo callback 设备；会话 PCM 经
+SDL_AudioStream 转换后写入固定容量环形缓冲，原先的音频积压限制继续使用输入格式的
+字节数判断。48kHz stereo 输入在无提示音时保持样本值。callback 仅消费缓冲和预生成的
+原创提示音，以饱和加法混合，不做网络、日志、分配或三角函数计算。
+
+提示音采用 40–100ms 的淡入/衰减短音，移动焦点/切换电脑、确认、返回、设置变化分别
+使用轻点、上扬双音、低音及切换音；导航至少间隔 65ms。只对实际生效的本地动作反馈，
+不对游戏输入、无效操作或连续拖动发声。现有声音开关统一控制串流与界面声音。
+UI 仅以原子变量投递最新音效，不等待音频锁；模型中的 A 委托实际控件，避免重复播放。
+
+生命周期：先 stop/join IHS 和应用工作线程，停止会话解码器并清 PCM，再关闭 SDL 音频
+设备（等待 callback 退出）并释放转换器，最后释放图形资源及 SDL_Quit。无新增 detached
+线程；会话停止保留设备以支持首页提示音。音效设备失败不会阻止首页使用，串流音频
+仍按实际设备初始化结果报告失败。真机音色/响度不能由 dummy 设备测试代替。

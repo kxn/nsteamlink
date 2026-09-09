@@ -7,6 +7,7 @@
 #include "sdl_input.h"
 #include "services/i18n.h"
 #include "ui/ui_events.h"
+#include "ui_audio.h"
 #include <SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -97,6 +98,7 @@ int sl_application_run(int argc, char **argv) {
         if (!a->runtime)
             sl_ui_error(&a->ui, sl_tr(SL_T_NETWORK_START_FAILED));
     }
+    uint64_t last_cue = 0;
     unsigned rendered = 0;
     bool done = false;
     while (!done && sl_system_running()) {
@@ -127,6 +129,9 @@ int sl_application_run(int argc, char **argv) {
                 done = true;
         }
         stream_media_present();
+        sl_audio_feedback(a->ui.cue_serial != last_cue ? a->ui.cue : SL_CUE_NONE,
+                          a->ui.store.sound);
+        last_cue = a->ui.cue_serial;
         if (stream_media_exit_requested())
             done = true;
         if (frames && ++rendered >= frames)

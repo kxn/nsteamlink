@@ -104,7 +104,17 @@ typedef struct sl_layout {
 #define SL_GAMES_LEFT  52
 #define SL_GAMES_WIDTH 1176
 
+typedef enum sl_ui_cue {
+    SL_CUE_NONE,
+    SL_CUE_MOVE,
+    SL_CUE_CONFIRM,
+    SL_CUE_BACK,
+    SL_CUE_TOGGLE,
+    SL_CUE_COUNT
+} sl_ui_cue;
 typedef struct sl_ui_model {
+    sl_ui_cue cue;
+    uint64_t cue_serial, move_sound_at;
     sl_auth_store store;
     sl_page page, stack[8];
     int focus_stack[8];
