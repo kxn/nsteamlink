@@ -1718,3 +1718,91 @@ base.interrupted。旧普通 bool 无同步；立即 interrupt 曾掩盖部分�
 Decision：interrupted 使用 C11 atomic_bool，在 BaseInit 清零结构后初始化。
 保留 stop HID → 传输断开有界重试 → join session → 停媒体 → destroy 的顺序；
 最终退出时 join client 后再销毁 IHS/socket。无 ACK 的断开也必须有界完成。
+
+## D-047：界面提示音与串流输出（初版共享 callback 方案已撤回）
+
+Evidence：原 media.c 使用 SDL_QueueAudio 输出 Opus 解码的 PCM，设备仅随串流开启；
+该模式无法直接在已排队的游戏声音上叠加首页/菜单提示音。SDL2 SDL_audio.h 的
+SDL_OpenAudioDevice 文档规定 callback 与 QueueAudio 二选一、samples 应为 2 的幂；
+本机 ASan 实测 samples=480 时 SDL dummy 后端将 2048 字节写入 1920 字节缓冲区，
+因此使用 samples=512。API 参考：https://wiki.libsdl.org/SDL2/SDL_OpenAudioDevice 。
+
+Decision：媒体初始化时打开单个 48kHz/S16/stereo callback 设备；会话 PCM 经
+SDL_AudioStream 转换后写入固定容量环形缓冲，原先的音频积压限制继续使用输入格式的
+字节数判断。48kHz stereo 输入在无提示音时保持样本值。callback 仅消费缓冲和预生成的
+原创提示音，以饱和加法混合，不做网络、日志、分配或三角函数计算。
+
+提示音采用 40–100ms 的淡入/衰减短音，移动焦点/切换电脑、确认、返回、设置变化分别
+使用轻点、上扬双音、低音及切换音；导航至少间隔 65ms。只对实际生效的本地动作反馈，
+不对游戏输入、无效操作或连续拖动发声。现有声音开关统一控制串流与界面声音。
+UI 仅以原子变量投递最新音效，不等待音频锁；模型中的 A 委托实际控件，避免重复播放。
+
+生命周期：先 stop/join IHS 和应用工作线程，停止会话解码器并清 PCM，再关闭 SDL 音频
+设备（等待 callback 退出）并释放转换器，最后释放图形资源及 SDL_Quit。无新增 detached
+线程；会话停止保留设备以支持首页提示音。音效设备失败不会阻止首页使用，串流音频
+仍按实际设备初始化结果报告失败。真机音色/响度不能由 dummy 设备测试代替。
+
+
+### D-047 真机回归与输出路径修订
+
+Evidence：2026-09-09 用户实测 c1db663，提示音本身正常，但即使不触发操作，串流音质也
+明显下降。/tmp/nsl-c1db663-device.log 记录 Opus 48000Hz/stereo、samples=512。初版在
+所有串流 PCM 上新增 SDL_AudioStream、自建环形队列及持续 callback；此前 401b869 的
+设备已获用户认可，使用 Opus→SDL_QueueAudio，Switch samples 请求为 960。
+
+Conclusion：撤回“静态 PCM 相同/桌面 dummy 检查通过即可支持真机混音路径无回归”的
+推断；39 项回归不构成 Switch 音质证据。确认新音频路径存在实机回归，不能据此单独归因
+为重采样、callback 欠载或某个缓冲参数，这些具体机制仍待验证。
+
+Decision：移除游戏音频的转换器、环形队列和共享 callback，恢复原生 SDL 队列及原
+采样率/声道数/积压限制。Switch 恢复已验证的 samples=960 请求，仍允许 SDL 调整实际
+samples；desktop 使用 1024，避免已观察到的 SDL dummy 非幂次块越界。此平台差异为
+恢复已验证 Switch 路径，不用 desktop 的约束推翻真机正常基线。
+
+首页提示音使用独立生命周期的 UI-only callback；开始串流音频前先关闭并等待它退出，
+再打开游戏的 queue 设备。串流 worker 仅在确有提示音时叠加到已解码 PCM，没有声音
+事件时直接返回原数据，不遍历/转换样本。停止游戏音频后可重新打开首页设备。交接由
+media.audio_lock 串行，UI 仅投递原子事件，不开关设备、不阻塞渲染。
+退出时禁止重新打开首页音频，停止串流设备后关闭 UI 音频，之后才释放 SDL/Mesa。
+
+## D-048：Switch 原生振动适配与显式结束游戏
+
+Evidence：官方停止游戏菜单见 `STEAMLINK_PROTOCOL_RE.md` §22.2/22.6。
+振动参数来源：
+
+- SDL2 `SDL_GameControllerRumble` 文档明确两路参数为 0..65535 强度：
+  <https://wiki.libsdl.org/SDL2/SDL_GameControllerRumble>。
+- libnx `HidVibrationValue` 定义振幅最大 1.0，频率为 Hz；双设备初始化支持
+  Handheld/JoyDual/FullKey：<https://switchbrew.github.io/libnx/hid_8h_source.html>。
+- SDL2 上游 `SDL_hidapi_switch.c` 的 paired Joy-Con 分支将 low 交给左侧、high
+  交给右侧；Pro/独立单 Joy-Con 保留两频带。`SDL_joystick.c` 中 duration=0
+  不设到期时间，显式零强度终止：<https://github.com/libsdl-org/SDL/tree/SDL2/src/joystick>。
+- 本机 switch-sdl2 2.28.5-4 的 `libSDL2.a(SDL_sysjoystick.o)` 反汇编确认与
+  devkitPro switch-sdl-2.28 分支一致：非零 low 时振幅写入 320.0、输入强度
+  除以 204 当作频率、仅一个输出设备、GetCapabilities 返回零。
+  `SWITCH_JoystickInit` 还未初始化 slot 0 的振动句柄；默认输入包含 Handheld，
+  但原振动路径使用 No1。源参考：
+  <https://github.com/devkitPro/SDL/blob/switch-sdl-2.28/src/joystick/switch/SDL_sysjoystick.c>。
+
+Conclusion：原驱动不能提供可靠的本地振动映射。用户无振动的完整根因仍不能仅凭
+这些源码确定；尚需真实 Steam 输出与电机反馈。此前不能将“已有 SDL 调用”等同
+于“Joy-Con 振动可用”。
+
+Decision：应用在 Switch 链接时用 `--wrap=SDL_GameControllerRumble` 接入自有
+`app/platforms/switch/rumble.c`；不修改系统 devkitPro 安装，不更改桌面 SDL。
+保留 IHSlib 的输出报文解析与 media 线程排队；只替换最终平台输出。强度线性归一化
+为 input/65535.0，采用 160/320 Hz 固定频带，不重复实现 libnx 的硬件编码。
+这是一种标准双频 rumble 到 HD Rumble 的映射，不声称复原游戏原生 HD Rumble 波形。
+双 Joy-Con/Handheld 将两路分到左右；Pro 两设备均保留两频带；单 Joy-Con 合并两路。
+slot 0 在 Handheld 有效时使用 Handheld，其余沿用已核实 SDL 的 instance ID 0..7。
+因此升级 Switch SDL 时须重新核对该 ID 契约。
+
+所有调用、到期停止、设备变化停止和最终 SDL_Quit 前停止均在 media 线程执行。
+断开会话后下一个 media tick 清零，无新线程；不改变用户系统振动开关。
+平台调用失败设置 SDL 错误并限频记录。没有新增测试振动菜单。
+
+同一路径的并发证据：TSan `hid_concurrent_devices` 报告 `HIDPollTick →
+IHS_HIDDeviceLock` 读取 `device->managed`，与 `IHS_HIDManagerOpenDevice` 在
+列表发布后写该字段竞争。将反向指针初始化移到 devicesLock 保护的列表发布之前；
+同时将 opened（SDL 状态与 pendingWrites 初始化）放到最终列表发布之前，
+避免另一种半初始化读取；不改轮询线程和设备延迟释放策略。

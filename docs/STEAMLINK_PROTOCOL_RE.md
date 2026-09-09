@@ -1385,3 +1385,15 @@ AuthorizationCallback 都忽略来源地址；后者没有开流那样的 reques
 
 风险边界：主机级 games_running 不能识别同时运行的其他游戏；没有明确字段/
 运行基线时保守保持连接。该策略不是已逆向出的官方游戏自动结束算法。
+
+### 22.6 显式结束游戏的本地接线
+
+Evidence：§22.2 的 `menu_stop_game` 调用控制 129，且发送函数具有 streaming
+状态门槛。`IHS_SessionStopGame` 只在 Connected 时将该空 protobuf 消息放入可靠
+控制队列；返回成功只代表入队。普通 `IHS_SessionDisconnect` 不发送 129。
+
+本地产品策略：串流菜单确认“结束游戏”后保持会话接收与重传，等待明确主机结束，
+或来自同一 IP/client/instance 的两条递增主机时间戳、明确 gamesRunning=false
+的发现状态，再断开并返回首页。请求前已知时间戳作为下界；未知时第一条只建下界。
+这不是对官方菜单完整退出时序的复刻。15 秒只作为失败上限，不作为游戏结束的证据；
+该等待期间不触发普通画面超时。没有强杀进程，也不复用启动取消或 QuitRequest。

@@ -3,6 +3,7 @@
 #include "discovery.pb-c.h"
 #include "media.h"
 #include "platform/system.h"
+#include "services/i18n.h"
 #include "services/launch_watch.h"
 #include <arpa/inet.h>
 #include <errno.h>
@@ -25,6 +26,7 @@ struct sl_runtime {
     pthread_mutex_t lock;
     pthread_cond_t wake;
     bool started, quit, request_pending, save_pending, snapshot_pending;
+    sl_language save_language;
     sl_command pending, active;
     sl_auth_store store, save;
     sl_runtime_event events[48];
@@ -38,6 +40,7 @@ struct sl_runtime {
     bool activity_changed;
     sl_launch_watch launch;
     uint64_t launch_probe_at;
+    sl_end_game_watch end_game;
     bool session_ready, connected, finished, host_stopped, first_reported, auth_ready,
         auth_consumed, request_terminal;
     uint64_t auth_account, request_at, frame_at, last_diag;
@@ -197,7 +200,7 @@ static void post(sl_runtime *r, sl_runtime_event e) {
     else {
         r->events[47] =
             (sl_runtime_event){.type = SL_EVENT_FAILURE, .generation = r->active.generation};
-        snprintf(r->events[47].text, 192, "事件队列已满，请重新连接");
+        snprintf(r->events[47].text, 192, "%s", sl_tr(SL_T_ERROR_QUEUE));
     }
     pthread_mutex_unlock(&r->lock);
 }
@@ -229,9 +232,12 @@ static void discovered(IHS_Client *client, const IHS_HostInfo *h, void *ctx) {
     if (r->active.type == SL_CMD_STREAM && h->clientId == r->active.host.client_id &&
         h->instanceId == r->active.host.instance_id && h->address.port == 27036) {
         char *ip = IHS_IPAddressToString(&h->address.ip);
-        if (ip && !strcmp(ip, r->active.host.address))
+        if (ip && !strcmp(ip, r->active.host.address)) {
             sl_launch_status(&r->launch, h->hasGamesRunning, h->gamesRunning, h->hasTimestamp,
                              h->timestamp);
+            sl_end_game_status(&r->end_game, h->hasGamesRunning, h->gamesRunning, h->hasTimestamp,
+                               h->timestamp);
+        }
         free(ip);
     }
     pthread_mutex_unlock(&r->lock);
@@ -263,10 +269,10 @@ static void auth_failed(IHS_Client *c, const IHS_HostInfo *h, IHS_AuthorizationR
     pthread_mutex_lock(&r->lock);
     r->request_terminal = true;
     pthread_mutex_unlock(&r->lock);
-    fail(r, result == IHS_AuthorizationDenied        ? "电脑拒绝了配对"
-            : result == IHS_AuthorizationTimedOut    ? "配对超时"
-            : result == IHS_AuthorizationNotLoggedIn ? "请在电脑上登录 Steam"
-                                                     : "无法配对这台电脑");
+    fail(r, result == IHS_AuthorizationDenied        ? sl_tr(SL_T_PAIR_DENIED)
+            : result == IHS_AuthorizationTimedOut    ? sl_tr(SL_T_PAIR_TIMEOUT)
+            : result == IHS_AuthorizationNotLoggedIn ? sl_tr(SL_T_LOGIN_STEAM)
+                                                     : sl_tr(SL_T_PAIR_FAILED));
 }
 static void accepted(IHS_Client *c, const IHS_HostInfo *h, const IHS_SocketAddress *address,
                      const uint8_t *key, size_t len, void *ctx) {
@@ -274,7 +280,7 @@ static void accepted(IHS_Client *c, const IHS_HostInfo *h, const IHS_SocketAddre
     (void)h;
     sl_runtime *r = ctx;
     if (len > 32) {
-        fail(r, "连接响应无效");
+        fail(r, sl_tr(SL_T_INVALID_RESPONSE));
         return;
     }
     pthread_mutex_lock(&r->lock);
@@ -295,14 +301,14 @@ static void rejected(IHS_Client *c, const IHS_HostInfo *h, IHS_StreamingResult r
         post(r, (sl_runtime_event){.type = SL_EVENT_PIN});
     else if (result == IHS_StreamingUnauthorized) {
         sl_runtime_event e = {.type = SL_EVENT_FAILURE, .account = 1};
-        strcpy(e.text, "需要重新配对");
+        strcpy(e.text, sl_tr(SL_T_REPAIR));
         post(r, e);
     } else
-        fail(r, result == IHS_StreamingScreenLocked       ? "请先解锁电脑"
-                : result == IHS_StreamingBusy             ? "电脑正在使用其他串流"
-                : result == IHS_StreamingGameLaunchFailed ? "电脑未能启动游戏"
-                : result == IHS_StreamingDisabled         ? "请在 Steam 中开启远程畅玩"
-                                                          : "无法连接电脑");
+        fail(r, result == IHS_StreamingScreenLocked       ? sl_tr(SL_T_UNLOCK_PC)
+                : result == IHS_StreamingBusy             ? sl_tr(SL_T_PC_BUSY)
+                : result == IHS_StreamingGameLaunchFailed ? sl_tr(SL_T_GAME_FAILED)
+                : result == IHS_StreamingDisabled         ? sl_tr(SL_T_ENABLE_REMOTE_PLAY)
+                                                          : sl_tr(SL_T_CANNOT_CONNECT));
 }
 static void configuring(IHS_Session *s, IHS_SessionConfig *c, void *ctx) {
     (void)s;
@@ -415,6 +421,10 @@ static bool start_client(sl_runtime *r) {
     return started;
 }
 static void stop_session(sl_runtime *r) {
+    pthread_mutex_lock(&r->lock);
+    r->end_game.at = 0;
+    r->end_game.empty = 0;
+    pthread_mutex_unlock(&r->lock);
     sl_log("cleanup: stop/join HID worker");
     stream_media_set_hid_session(NULL, false);
     if (r->session) {
@@ -468,6 +478,26 @@ static void execute(sl_runtime *r, sl_command cmd) {
     sl_log(trace);
     if (cmd.type == SL_CMD_SAVE)
         return;
+    if (cmd.type == SL_CMD_END_GAME) {
+        pthread_mutex_lock(&r->lock);
+        r->active.generation = cmd.generation;
+        bool already_sent = r->end_game.at != 0;
+        if (!already_sent) {
+            r->end_game.at = sl_system_now();
+            r->end_game.have_stamp = r->launch.have_stamp;
+            r->end_game.stamp = r->launch.stamp;
+            r->end_game.empty = 0;
+        }
+        pthread_mutex_unlock(&r->lock);
+        if (!already_sent &&
+            (!r->session || !r->first_reported || !IHS_SessionStopGame(r->session))) {
+            stop_session(r);
+            fail(r, sl_tr(SL_T_END_GAME_FAILED));
+        } else if (!already_sent) {
+            sl_log("user end game: reliable StopRequest queued; awaiting host completion");
+        }
+        return;
+    }
     /* Cancel/join each request before changing its callback generation. Keep the
      * client socket alive so canceled launch IDs can reject late host responses. */
     if (r->client) {
@@ -490,7 +520,7 @@ static void execute(sl_runtime *r, sl_command cmd) {
         return;
     }
     if (!r->client && !start_client(r)) {
-        fail(r, "网络服务不可用");
+        fail(r, sl_tr(SL_T_NETWORK_UNAVAILABLE));
         return;
     }
     IHS_ClientStartDiscovery(r->client, 3000);
@@ -501,7 +531,7 @@ static void execute(sl_runtime *r, sl_command cmd) {
     if (cmd.type == SL_CMD_MANUAL) {
         IHS_SocketAddress address = {.port = 27036};
         if (!IHS_IPAddressFromString(&address.ip, cmd.text)) {
-            fail(r, "请输入有效的 IP 地址");
+            fail(r, sl_tr(SL_T_INVALID_IP));
             return;
         }
         CMsgRemoteClientBroadcastDiscovery msg = CMSG_REMOTE_CLIENT_BROADCAST_DISCOVERY__INIT;
@@ -509,14 +539,14 @@ static void execute(sl_runtime *r, sl_command cmd) {
         msg.seq_num = 1;
         if (!IHS_ClientSend(r->client, address, k_ERemoteClientBroadcastMsgDiscovery,
                             (ProtobufCMessage *)&msg))
-            fail(r, "无法查找这个地址");
+            fail(r, sl_tr(SL_T_LOOKUP_FAILED));
         else
             r->request_at = sl_system_now();
         return;
     }
     IHS_HostInfo h;
     if (!host_info(&cmd.host, &h)) {
-        fail(r, "电脑地址不可用");
+        fail(r, sl_tr(SL_T_ADDRESS_UNAVAILABLE));
         return;
     }
     r->request_at = sl_system_now();
@@ -526,14 +556,14 @@ static void execute(sl_runtime *r, sl_command cmd) {
     if (cmd.type == SL_CMD_PAIR) {
         uint32_t random;
         if (!sl_system_random(&random, sizeof(random))) {
-            fail(r, "无法生成配对码");
+            fail(r, sl_tr(SL_T_CODE_FAILED));
             return;
         }
         sl_runtime_event e = {.type = SL_EVENT_CODE};
         snprintf(e.text, sizeof(e.text), "%04u", random % 10000);
         post(r, e);
         if (!IHS_ClientAuthorizationRequest(r->client, &h, e.text))
-            fail(r, "无法请求配对");
+            fail(r, sl_tr(SL_T_REQUEST_PAIR_FAILED));
     } else if (cmd.type == SL_CMD_STREAM) {
         IHS_ClientStopDiscovery(r->client);
         IHS_StreamingRequest req = {.streamingEnable = {true, true, true},
@@ -544,7 +574,7 @@ static void execute(sl_runtime *r, sl_command cmd) {
                                     .gameId = cmd.game_id};
         snprintf(req.pin, sizeof(req.pin), "%.15s", cmd.text);
         if (!IHS_ClientStreamingRequest(r->client, &h, &req))
-            fail(r, "无法请求串流");
+            fail(r, sl_tr(SL_T_REQUEST_STREAM_FAILED));
     }
 }
 static void sample(sl_runtime *r, uint64_t now) {
@@ -561,7 +591,7 @@ static void sample(sl_runtime *r, uint64_t now) {
         sl_media_submitted(&sent);
     }
     sl_debug_snapshot d = {.sampled_at = now, .frames = s.displayed_frames};
-    snprintf(d.title, sizeof(d.title), "诊断 · %d × %d / %.40s", s.width, s.height, s.decoder);
+    snprintf(d.title, sizeof(d.title), sl_tr(SL_T_DEBUG_TITLE), s.width, s.height, s.decoder);
     for (int i = 0; i < 6; ++i)
         strcpy(d.values[i], "—");
     if (s.video_epoch != r->previous.video_epoch) {
@@ -570,23 +600,24 @@ static void sample(sl_runtime *r, uint64_t now) {
     }
     stream_media_snapshot *p = &r->previous;
     if (r->last_diag && now > r->last_diag && s.displayed_frames >= p->displayed_frames)
-        snprintf(d.values[0], 64, "%.1f fps",
+        snprintf(d.values[0], 64, sl_tr(SL_T_FPS),
                  (s.displayed_frames - p->displayed_frames) * 1000.0 / (now - r->last_diag));
     if (s.frame_e2e_samples > p->frame_e2e_samples)
-        snprintf(d.values[1], 64, "%.1f ms",
+        snprintf(d.values[1], 64, sl_tr(SL_T_MS),
                  (s.frame_e2e_us_total - p->frame_e2e_us_total) / 1000.0 /
                      (s.frame_e2e_samples - p->frame_e2e_samples));
     if (s.decode_samples > p->decode_samples && s.upload_samples > p->upload_samples)
-        snprintf(d.values[2], 64, "%.1f / %.1f ms",
+        snprintf(d.values[2], 64, sl_tr(SL_T_DECODE_MS),
                  (s.decode_us_total - p->decode_us_total) / 1000.0 /
                      (s.decode_samples - p->decode_samples),
                  (s.upload_us_total - p->upload_us_total) / 1000.0 /
                      (s.upload_samples - p->upload_samples));
     if (s.audio_active && s.audio_frequency && s.audio_channels)
-        snprintf(d.values[3], 64, "%.0f ms",
+        snprintf(d.values[3], 64, sl_tr(SL_T_AUDIO_MS),
                  s.audio_queued_bytes * 1000.0 / (s.audio_frequency * s.audio_channels * 2));
     snprintf(d.values[4], 64, "%u / %u", s.reliability.hidPending, s.reliability.hidInFlight);
-    snprintf(d.values[5], 64, "%llu ms", (unsigned long long)s.reliability.reliableMaxAckLatencyMs);
+    snprintf(d.values[5], 64, sl_tr(SL_T_ACK_MS),
+             (unsigned long long)s.reliability.reliableMaxAckLatencyMs);
     pthread_mutex_lock(&r->lock);
     r->debug = d;
     pthread_mutex_unlock(&r->lock);
@@ -672,17 +703,19 @@ static void *worker_main(void *ctx) {
     IHS_Init();
     sl_log("runtime: IHS initialized");
     if (!start_client(r))
-        fail(r, "网络服务不可用");
+        fail(r, sl_tr(SL_T_NETWORK_UNAVAILABLE));
     while (!r->quit) {
         sl_command cmd = {0};
         sl_auth_store save;
         bool save_pending, snapshot_pending;
+        sl_language save_language;
         pthread_mutex_lock(&r->lock);
         if (r->request_pending) {
             cmd = r->pending;
             r->request_pending = false;
         }
         save_pending = r->save_pending;
+        save_language = r->save_language;
         snapshot_pending = r->snapshot_pending;
         if (snapshot_pending) {
             save = r->save;
@@ -707,8 +740,10 @@ static void *worker_main(void *ctx) {
         if (snapshot_pending)
             r->store = save;
         if (save_pending) {
-            if (!sl_auth_save(&save, sl_system_data_dir()))
-                fail(r, "无法保存设置");
+            bool profile_saved = sl_auth_save(&save, sl_system_data_dir());
+            bool language_saved = sl_i18n_save(sl_system_data_dir(), save_language);
+            if (!profile_saved || !language_saved)
+                fail(r, sl_tr(SL_T_SAVE_SETTINGS_FAILED));
         }
         if (cmd.type) {
             execute(r, cmd);
@@ -726,7 +761,7 @@ static void *worker_main(void *ctx) {
                 h->account = account;
             }
             if (!h || !sl_auth_save(&r->store, sl_system_data_dir()))
-                fail(r, "无法保存配对，请重试");
+                fail(r, sl_tr(SL_T_SAVE_PAIR_FAILED));
             else
                 post(r, (sl_runtime_event){.type = SL_EVENT_AUTHORIZED,
                                            .account = account,
@@ -735,7 +770,7 @@ static void *worker_main(void *ctx) {
         }
         if (ready && !r->session && !launch_session(r, info)) {
             stop_session(r);
-            fail(r, "无法建立串流会话");
+            fail(r, sl_tr(SL_T_SESSION_FAILED));
         }
         if (conn && r->session) {
             stream_media_set_hid_session(r->session, true);
@@ -774,14 +809,26 @@ static void *worker_main(void *ctx) {
         bool activity_changed = r->activity_changed;
         r->activity_changed = false;
         bool desktop = r->launch.kind == 3 || r->launch.kind == 4;
-        bool probe_launch = r->session && r->launch.target && now - r->launch_probe_at >= 1000;
+        bool ending_game = r->end_game.at != 0;
+        bool end_game_done = ending_game && r->end_game.empty >= 2;
+        bool end_game_timeout = ending_game && now - r->end_game.at >= 15000;
+        bool probe_launch =
+            r->session && (r->launch.target || ending_game) && now - r->launch_probe_at >= 1000;
         if (probe_launch)
             r->launch_probe_at = now;
         pthread_mutex_unlock(&r->lock);
         if (activity_changed && r->first_reported)
             r->frame_at = now; /* Desktop -> Game starts a fresh video wait window. */
-        if (launch_done && r->session) {
-            sl_log("launch: target played, Desktop, fresh host reports no games; normal return");
+        if (end_game_timeout && !end_game_done && !launch_done && r->session) {
+            stop_session(r);
+            fail(r, sl_tr(SL_T_END_GAME_FAILED));
+            continue;
+        }
+        if ((launch_done || end_game_done) && r->session) {
+            sl_log(
+                end_game_done
+                    ? "user end game: fresh host reports no games; normal return"
+                    : "launch: target played, Desktop, fresh host reports no games; normal return");
             stop_session(r);
             post(r, (sl_runtime_event){.type = SL_EVENT_STOPPED});
             IHS_ClientStartDiscovery(r->client, 3000);
@@ -805,7 +852,7 @@ static void *worker_main(void *ctx) {
                 r->request_at = now;
         }
         r->video_suspended = video_suspended;
-        if (!video_suspended && r->request_at &&
+        if (!ending_game && !video_suspended && r->request_at &&
             ((!r->first_reported && now - r->request_at > 45000) ||
              (r->first_reported && !desktop && now - r->frame_at > 10000))) {
             /* A host stop may arrive after this loop copied finished. Read the
@@ -826,7 +873,7 @@ static void *worker_main(void *ctx) {
             if (normal)
                 post(r, (sl_runtime_event){.type = SL_EVENT_STOPPED});
             else
-                fail(r, "等待电脑画面超时");
+                fail(r, sl_tr(SL_T_VIDEO_TIMEOUT));
         }
 #if NSL_DIAGNOSTICS
         udp_poll(r);
@@ -892,6 +939,7 @@ bool sl_runtime_submit(sl_runtime *r, const sl_command *cmd, const sl_auth_store
         r->save = *store;
         r->snapshot_pending = true;
         r->save_pending = true;
+        r->save_language = cmd->language;
     } else {
         if (r->request_pending && cmd->type != SL_CMD_EXIT && cmd->type != SL_CMD_CANCEL &&
             cmd->type != SL_CMD_STOP) {

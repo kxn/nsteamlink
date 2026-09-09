@@ -248,16 +248,37 @@ static void overlay_interaction(void) {
     key(&input, SL_KEY_A, 0, 1110);
     assert(n == 2);
 }
+static void wait_screen_cancel_shortcut(void) {
+    const sl_page pages[] = {SL_CONNECTING, SL_SAVING, SL_PAIRING};
+    for (unsigned i = 0; i < sizeof(pages) / sizeof(pages[0]); ++i) {
+        for (int touch = 0; touch < 2; ++touch) {
+            sl_ui_model m = model();
+            m.page = pages[i];
+            sl_ui_tick(&m, 4000);
+            m.command.type = SL_CMD_NONE;
+            uint64_t generation = m.generation;
+            sl_ui_action(&m, SL_DOWN, 0);
+            sl_ui_action(&m, SL_ACCEPT, 0);
+            assert(m.page == pages[i] && m.generation == generation && !m.command.type);
+            if (touch)
+                sl_ui_activate(&m, 9);
+            else
+                sl_ui_action(&m, SL_BACK, 0);
+            assert(m.page == SL_STOPPING && m.command.type == SL_CMD_CANCEL);
+        }
+    }
+}
 static void confirmation_shortcuts(void) {
-    const sl_page pages[] = {SL_FORGET, SL_DISCONNECT, SL_EXIT, SL_ERROR};
-    const sl_command_type expected[] = {SL_CMD_SAVE, SL_CMD_STOP, SL_CMD_EXIT, SL_CMD_PAIR};
-    for (int p = 0; p < 4; ++p) {
+    const sl_page pages[] = {SL_FORGET, SL_DISCONNECT, SL_EXIT, SL_ERROR, SL_END_GAME};
+    const sl_command_type expected[] = {SL_CMD_SAVE, SL_CMD_STOP, SL_CMD_EXIT, SL_CMD_PAIR,
+                                        SL_CMD_END_GAME};
+    for (int p = 0; p < 5; ++p) {
         for (int path = 0; path < 4; ++path) {
             sl_ui_model m = model();
             add(&m, 7, "HOST");
             m.intent.host = m.store.registry.hosts[0];
             m.page = pages[p];
-            m.streaming = m.page == SL_DISCONNECT;
+            m.streaming = m.page == SL_DISCONNECT || m.page == SL_END_GAME;
             sl_ui_tick(&m, 1000);
             sl_control positive = {0}, cancel = {0};
             for (int i = 0; i < m.layout.count; ++i) {
@@ -306,8 +327,8 @@ static void actionable_settings(void) {
     sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
     assert(m.layout.count == 2); /* Settings and back, no help-only page. */
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
-    assert(m.layout.count == 4); /* Quality, sound, manual address, back. */
-    assert(m.layout.controls[2].action == SL_OPEN_MANUAL);
+    assert(m.layout.count == 5); /* Quality, sound, language, manual address, back. */
+    assert(m.layout.controls[3].action == SL_OPEN_MANUAL);
     sl_ui_action(&m, SL_OPEN_MANUAL, 0);
     assert(m.page == SL_MANUAL);
     sl_ui_action(&m, SL_BACK, 0);
@@ -326,7 +347,7 @@ static void actionable_settings(void) {
     sl_ui_connected(&m);
     sl_ui_action(&m, SL_OPEN_MENU, 0);
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
-    assert(m.layout.count == 3); /* Only live sound and next-session quality, plus back. */
+    assert(m.layout.count == 4); /* Sound, quality, language and back. */
     for (int i = 0; i < m.layout.count; ++i)
         assert(m.layout.controls[i].action != SL_OPEN_MANUAL);
     sl_ui_action(&m, SL_OPEN_MANUAL, 0);
@@ -335,6 +356,7 @@ static void actionable_settings(void) {
 int main(void) {
     carousel();
     session_end_events();
+    wait_screen_cancel_shortcut();
     confirmation_shortcuts();
     actionable_settings();
     overlay_interaction();

@@ -1,4 +1,5 @@
 #include "ui_model.h"
+#include "services/i18n.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,6 +9,7 @@ static void page(sl_ui_model *m, sl_page p) {
     m->leaving = false;
     m->games_dragging = false;
     m->page = p;
+    m->ending_game = false;
     m->focus = 0;
     m->entered_at = m->now;
 }
@@ -135,7 +137,7 @@ void sl_ui_stopped(sl_ui_model *m, bool unexpected) {
     if (m->closing)
         page(m, SL_CLOSING);
     else if (unexpected)
-        sl_ui_error(m, "连接已断开");
+        sl_ui_error(m, sl_tr(SL_T_DISCONNECTED));
     else
         page(m, SL_HOME);
     sl_ui_layout(m);
@@ -166,6 +168,7 @@ static void emit(sl_ui_model *m, sl_command_type type) {
     m->command.type = type;
     m->command.generation = m->generation;
     m->command.quality = m->store.quality;
+    m->command.language = sl_i18n_language();
 }
 static void start(sl_ui_model *m, int game) {
     sl_host *h = selected(m);
@@ -215,11 +218,12 @@ static void move(sl_ui_model *m, sl_action direction) {
     if (best)
         m->focus = best;
 }
-void sl_ui_action(sl_ui_model *m, sl_action a, int arg) {
+static void action(sl_ui_model *m, sl_action a, int arg) {
     if (m->page == SL_CLOSING || m->leaving)
         return;
     if (a >= SL_LEFT && a <= SL_DOWN) {
-        if (m->layout.compact)
+        if (m->layout.compact || m->page == SL_CONNECTING || m->page == SL_SAVING ||
+            m->page == SL_PAIRING)
             return;
         if (m->page == SL_HOME) {
             int count = sl_ui_game_count(m);
@@ -239,6 +243,9 @@ void sl_ui_action(sl_ui_model *m, sl_action a, int arg) {
         return;
     }
     if (a == SL_ACCEPT) {
+        /* A must not activate the only B-labelled control on a wait screen. */
+        if (m->page == SL_CONNECTING || m->page == SL_SAVING || m->page == SL_PAIRING)
+            return;
         if (m->page == SL_HOME && !sl_ui_game_count(m)) {
             sl_ui_action(m, SL_START, 0);
             return;
@@ -295,6 +302,18 @@ void sl_ui_action(sl_ui_model *m, sl_action a, int arg) {
             push(m, SL_MANUAL);
         }
         break;
+    case SL_OPEN_LANGUAGE:
+        if (m->page == SL_SETTINGS) {
+            push(m, SL_LANGUAGE);
+            m->focus = 100 + sl_i18n_language();
+        }
+        break;
+    case SL_SET_LANGUAGE:
+        if (m->page == SL_LANGUAGE && arg >= 0 && arg < SL_LANG_COUNT) {
+            sl_i18n_set(arg);
+            emit(m, SL_CMD_SAVE);
+        }
+        break;
     case SL_OPEN_QUALITY:
         push(m, SL_QUALITY);
         m->focus = 100 + (m->store.quality <= 2 ? (int)m->store.quality : 0);
@@ -324,6 +343,18 @@ void sl_ui_action(sl_ui_model *m, sl_action a, int arg) {
             back(m);
         }
 #endif
+        break;
+    case SL_OPEN_END_GAME:
+        if (m->streaming)
+            push(m, SL_END_GAME);
+        break;
+    case SL_CONFIRM_END_GAME:
+        if (m->streaming && m->page == SL_END_GAME) {
+            ++m->generation;
+            page(m, SL_STOPPING);
+            m->ending_game = true;
+            emit(m, SL_CMD_END_GAME);
+        }
         break;
     case SL_OPEN_DISCONNECT:
         if (m->streaming)
@@ -409,6 +440,40 @@ void sl_ui_action(sl_ui_model *m, sl_action a, int arg) {
         break;
     }
     sl_ui_layout(m);
+}
+void sl_ui_action(sl_ui_model *m, sl_action a, int arg) {
+    if (a == SL_ACCEPT) {
+        action(m, a, arg);
+        return;
+    } /* Delegates to the actual control once. */
+    sl_page before = m->page;
+    int focus = m->focus, host = m->store.registry.selected;
+    uint32_t quality = m->store.quality;
+    bool sound = m->store.sound, leaving = m->leaving;
+    sl_language language = sl_i18n_language();
+    char input[64];
+    memcpy(input, m->input, sizeof(input));
+    action(m, a, arg);
+    sl_ui_cue cue = SL_CUE_NONE;
+    if (before != m->page || leaving != m->leaving)
+        cue = a == SL_BACK || a == SL_CONFIRM_STOP || a == SL_CONFIRM_EXIT ? SL_CUE_BACK
+                                                                           : SL_CUE_CONFIRM;
+    else if (sound != m->store.sound || quality != m->store.quality ||
+             language != sl_i18n_language())
+        cue = SL_CUE_TOGGLE;
+    else if (strcmp(input, m->input))
+        cue = a == SL_ERASE ? SL_CUE_BACK : SL_CUE_MOVE;
+    else if (focus != m->focus || host != m->store.registry.selected)
+        cue = SL_CUE_MOVE;
+    if (cue == SL_CUE_MOVE) {
+        if (m->move_sound_at && m->now - m->move_sound_at < 65)
+            return;
+        m->move_sound_at = m->now;
+    }
+    if (cue != SL_CUE_NONE) {
+        m->cue = cue;
+        ++m->cue_serial;
+    }
 }
 int sl_ui_hit(const sl_layout *l, int x, int y) {
     x -= l->offset_x;

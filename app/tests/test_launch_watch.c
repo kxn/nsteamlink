@@ -1,6 +1,28 @@
 #include "services/launch_watch.h"
 #include <assert.h>
 int main(void) {
+    sl_end_game_watch end = {0};
+    sl_end_game_status(&end, true, false, true, 1);
+    assert(end.empty == 0); /* cannot activate itself during splash */
+    end = (sl_end_game_watch){.at = 100, .stamp = 10, .have_stamp = true};
+    sl_end_game_status(&end, true, false, true, 10);
+    sl_end_game_status(&end, true, false, true, 9);
+    assert(end.empty == 0); /* pre-request/duplicate responses */
+    sl_end_game_status(&end, true, false, true, 11);
+    sl_end_game_status(&end, false, false, true, 12);
+    assert(end.empty == 0);
+    sl_end_game_status(&end, true, false, true, 13);
+    sl_end_game_status(&end, true, true, true, 14);
+    assert(end.empty == 0); /* still running */
+    sl_end_game_status(&end, true, false, true, 15);
+    sl_end_game_status(&end, true, false, true, 16);
+    assert(end.empty == 2);
+    end = (sl_end_game_watch){.at = 200};
+    sl_end_game_status(&end, true, false, true, UINT32_MAX);
+    assert(end.empty == 0); /* unknown baseline: first only sets floor */
+    sl_end_game_status(&end, true, false, true, 0);
+    sl_end_game_status(&end, true, false, true, 1);
+    assert(end.empty == 2); /* timestamp wrap */
     sl_launch_watch s = {.target = 7};
     sl_launch_activity(&s, 3, 413080, 0);
     sl_launch_status(&s, true, false, true, 1);

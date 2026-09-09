@@ -1,3 +1,4 @@
+#include "services/i18n.h"
 #include "ui_model.h"
 #include <stdio.h>
 #include <string.h>
@@ -36,8 +37,7 @@ void sl_ui_layout(sl_ui_model *m) {
                       (m->page == SL_PAIRING && !sl_ui_pair_prompt_visible(m));
     l->dialog = m->page != SL_HOME && m->page != SL_STREAM && !connecting;
     if (m->page == SL_HOME) {
-        snprintf(l->title, sizeof(l->title), "NSteamLink  http://github.com/kxn/nsteamlink  v%s",
-                 NSL_APP_VERSION);
+        snprintf(l->title, sizeof(l->title), sl_tr(SL_T_APP_TITLE), NSL_APP_VERSION);
         if (h) {
             int begin = r->selected / 3 * 3, end = begin + 3;
             if (end > r->count)
@@ -53,131 +53,147 @@ void sl_ui_layout(sl_ui_model *m) {
                 button(l, 2, 1176, 86, 64, 72, "RB", SL_NEXT_HOST, 0, false);
             char address[160];
             snprintf(address, sizeof(address), "%s%s · %s",
-                     sl_host_online(h, m->now) ? "" : "上次地址 ", h->address,
-                     h->paired ? "已配对" : "未配对");
+                     sl_host_online(h, m->now) ? "" : sl_tr(SL_T_LAST_ADDRESS), h->address,
+                     h->paired ? sl_tr(SL_T_PAIRED) : sl_tr(SL_T_UNPAIRED));
             center(l, 170, 26, address);
             if (!sl_host_online(h, m->now)) {
-                center(l, 300, 44, "暂未发现这台电脑");
-                center(l, 372, 30, "正在自动查找");
+                center(l, 300, 44, sl_tr(SL_T_HOST_OFFLINE));
+                center(l, 372, 30, sl_tr(SL_T_SEARCHING_AUTO));
             } else if (h->paired && h->games[0].id) {
-                text(l, 52, 236, 36, "最近游玩");
-                button(l, 30, 956, 220, 272, 72, "Y  打开 Steam", SL_START, 0, false);
+                text(l, 52, 236, 36, sl_tr(SL_T_RECENT));
+                button(l, 30, 956, 220, 272, 72, sl_tr(SL_T_OPEN_STEAM), SL_START, 0, false);
                 for (int i = 0; i < sl_ui_game_count(m); ++i)
                     button(l, 40 + i, SL_GAMES_LEFT + i * SL_CARD_STEP - (int)m->games_scroll,
                            SL_CARD_Y, SL_CARD_WIDTH, SL_CARD_HEIGHT, h->games[i].name, SL_RECENT, i,
                            false);
             } else {
-                center(l, 284, 44, h->paired ? "准备就绪" : "连接这台电脑");
+                center(l, 284, 44, h->paired ? sl_tr(SL_T_READY) : sl_tr(SL_T_CONNECT_PC));
                 if (h->games_running)
-                    center(l, 404, 28, "电脑正在运行游戏");
-                button(l, 30, 448, 472, 384, 80, h->paired ? "Y  打开 Steam" : "Y  配对并连接",
-                       SL_START, 0, true);
+                    center(l, 404, 28, sl_tr(SL_T_GAME_RUNNING));
+                button(l, 30, 448, 472, 384, 80,
+                       h->paired ? sl_tr(SL_T_OPEN_STEAM) : sl_tr(SL_T_PAIR_CONNECT), SL_START, 0,
+                       true);
             }
         } else {
             center(l, 292, 44,
-                   !m->network_ok                  ? "网络未连接"
-                   : m->now - m->entered_at < 8000 ? "正在查找电脑"
-                                                   : "尚未发现电脑");
-            center(l, 368, 30, m->network_ok ? "在同一网络中打开 Steam" : "联网后会自动继续查找");
+                   !m->network_ok                  ? sl_tr(SL_T_NO_NETWORK)
+                   : m->now - m->entered_at < 8000 ? sl_tr(SL_T_SEARCHING)
+                                                   : sl_tr(SL_T_NO_HOSTS));
+            center(l, 368, 30,
+                   m->network_ok ? sl_tr(SL_T_OPEN_SAME_NETWORK) : sl_tr(SL_T_SEARCH_WHEN_ONLINE));
         }
-        button(l, 3, 1060, 632, 180, 64, "X  选项", SL_OPEN_OPTIONS, 0, false);
-        button(l, 5, 40, 632, 180, 64, "B  退出", SL_BACK, 0, false);
+        button(l, 3, 1060, 632, 180, 64, sl_tr(SL_T_OPTIONS_KEY), SL_OPEN_OPTIONS, 0, false);
+        button(l, 5, 40, 632, 180, 64, sl_tr(SL_T_EXIT_KEY), SL_BACK, 0, false);
         if (h && sl_host_online(h, m->now))
-            text(l, 260, 648, 24, sl_ui_game_count(m) ? "A  启动游戏" : "A  连接");
+            text(l, 260, 648, 24,
+                 sl_ui_game_count(m) ? sl_tr(SL_T_PLAY_KEY) : sl_tr(SL_T_CONNECT_KEY));
     } else if (m->page == SL_STREAM) {
         /* Full video, no persistent local touch target. */
     } else if (connecting) {
-        snprintf(l->title, sizeof(l->title), "NSteamLink  http://github.com/kxn/nsteamlink  v%s",
-                 NSL_APP_VERSION);
-        center(l, 276, 44, "正在连接");
+        snprintf(l->title, sizeof(l->title), sl_tr(SL_T_APP_TITLE), NSL_APP_VERSION);
+        center(l, 276, 44, sl_tr(SL_T_CONNECTING));
         center(l, 354, 30, m->intent.host.name[0] ? m->intent.host.name : m->intent.text);
-        button(l, 9, 40, 632, 180, 64, "B  取消", SL_BACK, 0, false);
+        button(l, 9, 40, 632, 180, 64, sl_tr(SL_T_CANCEL_KEY), SL_BACK, 0, false);
     } else {
         switch (m->page) {
         case SL_MENU:
-            strcpy(l->title, "游玩菜单");
-            row(l, 0, "继续游玩", SL_BACK, 0);
-            row(l, 1, "设置", SL_OPEN_SETTINGS, 0);
-            row(l, 2, "断开连接", SL_OPEN_DISCONNECT, 0);
+            strcpy(l->title, sl_tr(SL_T_PLAY_MENU));
+            row(l, 0, sl_tr(SL_T_RESUME), SL_BACK, 0);
+            row(l, 1, sl_tr(SL_T_SETTINGS), SL_OPEN_SETTINGS, 0);
+            row(l, 2, sl_tr(SL_T_END_GAME), SL_OPEN_END_GAME, 0);
+            row(l, 3, sl_tr(SL_T_DISCONNECT), SL_OPEN_DISCONNECT, 0);
             break;
         case SL_OPTIONS:
-            strcpy(l->title, "选项");
-            row(l, 0, "设置", SL_OPEN_SETTINGS, 0);
+            strcpy(l->title, sl_tr(SL_T_OPTIONS));
+            row(l, 0, sl_tr(SL_T_SETTINGS), SL_OPEN_SETTINGS, 0);
             if (h)
-                row(l, 1, "移除电脑", SL_OPEN_FORGET, 0);
+                row(l, 1, sl_tr(SL_T_REMOVE_PC), SL_OPEN_FORGET, 0);
             break;
         case SL_SETTINGS:
-            strcpy(l->title, "设置");
-            row(l, 0, "画面偏好", SL_OPEN_QUALITY, 0);
-            row(l, 1, m->store.sound ? "声音：开" : "声音：关", SL_SOUND, 0);
+            strcpy(l->title, sl_tr(SL_T_SETTINGS));
+            row(l, 0, sl_tr(SL_T_QUALITY), SL_OPEN_QUALITY, 0);
+            row(l, 1, m->store.sound ? sl_tr(SL_T_SOUND_ON) : sl_tr(SL_T_SOUND_OFF), SL_SOUND, 0);
+            row(l, 2, sl_tr(SL_T_LANGUAGE), SL_OPEN_LANGUAGE, 0);
             if (!m->streaming)
-                row(l, 2, "手动添加电脑", SL_OPEN_MANUAL, 0);
+                row(l, 3, sl_tr(SL_T_MANUAL), SL_OPEN_MANUAL, 0);
+            break;
+        case SL_LANGUAGE:
+            strcpy(l->title, sl_tr(SL_T_LANGUAGE));
+            row(l, 0, sl_tr(SL_T_SYSTEM_LANGUAGE), SL_SET_LANGUAGE, SL_LANG_SYSTEM);
+            row(l, 1, sl_tr(SL_T_CHINESE), SL_SET_LANGUAGE, SL_LANG_ZH_CN);
+            row(l, 2, sl_tr(SL_T_ENGLISH), SL_SET_LANGUAGE, SL_LANG_EN);
             break;
         case SL_QUALITY:
-            strcpy(l->title, "画面偏好");
-            row(l, 0, "均衡", SL_SET_QUALITY, 0);
-            row(l, 1, "流畅", SL_SET_QUALITY, 1);
-            row(l, 2, "清晰", SL_SET_QUALITY, 2);
+            strcpy(l->title, sl_tr(SL_T_QUALITY));
+            row(l, 0, sl_tr(SL_T_BALANCED), SL_SET_QUALITY, 0);
+            row(l, 1, sl_tr(SL_T_FAST), SL_SET_QUALITY, 1);
+            row(l, 2, sl_tr(SL_T_SHARP), SL_SET_QUALITY, 2);
             if (m->streaming)
-                text(l, 320, 500, 26, "下次连接时生效");
+                text(l, 320, 500, 26, sl_tr(SL_T_NEXT_CONNECTION));
             break;
         case SL_PAIRING:
         case SL_SAVING:
-            strcpy(l->title, m->page == SL_SAVING ? "正在保存配对" : "配对电脑");
-            text(l, 320, 240, 30, "在电脑上的 Steam 输入此代码");
+            strcpy(l->title, m->page == SL_SAVING ? sl_tr(SL_T_SAVING_PAIR) : sl_tr(SL_T_PAIR_PC));
+            text(l, 320, 240, 30, sl_tr(SL_T_ENTER_PAIR_CODE));
             center(l, 330, 72, m->pairing_code[0] ? m->pairing_code : "····");
             break;
         case SL_CONNECTING:
-            strcpy(l->title, "正在连接");
+            strcpy(l->title, sl_tr(SL_T_CONNECTING));
             text(l, 320, 282, 36, m->intent.host.name[0] ? m->intent.host.name : m->intent.text);
-            text(l, 320, 360, 28, "等待电脑和画面");
+            text(l, 320, 360, 28, sl_tr(SL_T_WAIT_VIDEO));
             break;
         case SL_STOPPING:
-            strcpy(l->title, "正在断开");
+            strcpy(l->title, sl_tr(m->ending_game ? SL_T_ENDING_GAME : SL_T_DISCONNECTING));
             break;
         case SL_CLOSING:
-            strcpy(l->title, "正在退出");
+            strcpy(l->title, sl_tr(SL_T_EXITING));
             break;
         case SL_PIN:
         case SL_MANUAL: {
             bool pin = m->page == SL_PIN;
-            strcpy(l->title, pin ? "连接安全码" : "电脑 IP 地址");
+            strcpy(l->title, pin ? sl_tr(SL_T_SECURITY_PIN) : sl_tr(SL_T_PC_IP));
             text(l, 320, 204, 36,
                  m->input[0] ? m->input
-                 : pin       ? "输入电脑的安全码"
-                             : "例如 192.168.1.24");
+                 : pin       ? sl_tr(SL_T_ENTER_PIN)
+                             : sl_tr(SL_T_IP_EXAMPLE));
             for (int i = 0; i < 12; ++i) {
                 int digit = i < 9 ? '1' + i : i == 9 ? '.' : i == 10 ? '0' : 0;
                 if (pin && i == 9)
                     continue;
-                char label[8] = {digit ? digit : 0, 0};
+                char label[32] = {digit ? digit : 0, 0};
                 if (!digit)
-                    strcpy(label, "删除");
+                    strcpy(label, sl_tr(SL_T_DELETE));
                 button(l, 200 + i, 320 + (i % 3) * 136, 274 + (i / 3) * 72, 120, 64, label,
                        digit ? SL_DIGIT : SL_ERASE, digit, false);
             }
-            button(l, 220, 756, 274, 204, 136, "确认", SL_SUBMIT, 0, true);
+            button(l, 220, 756, 274, 204, 136, sl_tr(SL_T_CONFIRM), SL_SUBMIT, 0, true);
             break;
         }
+        case SL_END_GAME:
+            strcpy(l->title, sl_tr(SL_T_END_GAME_QUESTION));
+            text(l, 320, 236, 30, sl_tr(SL_T_END_GAME_EXPLANATION));
+            row(l, 2, sl_tr(SL_T_END_GAME), SL_CONFIRM_END_GAME, 0);
+            break;
         case SL_DISCONNECT:
-            strcpy(l->title, "断开串流？");
-            text(l, 320, 236, 30, "电脑上的游戏会继续运行");
-            row(l, 2, "断开连接", SL_CONFIRM_STOP, 0);
+            strcpy(l->title, sl_tr(SL_T_DISCONNECT_QUESTION));
+            text(l, 320, 236, 30, sl_tr(SL_T_GAME_CONTINUES));
+            row(l, 2, sl_tr(SL_T_DISCONNECT), SL_CONFIRM_STOP, 0);
             break;
         case SL_FORGET:
-            strcpy(l->title, "移除这台电脑？");
-            text(l, 320, 236, 30, "移除本机的配对和游玩记录");
-            row(l, 2, "移除", SL_CONFIRM_FORGET, 0);
+            strcpy(l->title, sl_tr(SL_T_REMOVE_QUESTION));
+            text(l, 320, 236, 30, sl_tr(SL_T_REMOVE_EXPLANATION));
+            row(l, 2, sl_tr(SL_T_REMOVE), SL_CONFIRM_FORGET, 0);
             break;
         case SL_EXIT:
-            strcpy(l->title, "退出 NSteamLink？");
-            row(l, 1, "退出", SL_CONFIRM_EXIT, 0);
+            strcpy(l->title, sl_tr(SL_T_EXIT_QUESTION));
+            row(l, 1, sl_tr(SL_T_EXIT), SL_CONFIRM_EXIT, 0);
             break;
         case SL_ERROR:
-            strcpy(l->title, m->had_stream ? "串流已中断" : "连接未完成");
+            strcpy(l->title,
+                   m->had_stream ? sl_tr(SL_T_STREAM_INTERRUPTED) : sl_tr(SL_T_CONNECT_FAILED));
             text(l, 320, 232, 30, m->error);
             if (m->intent.host.id)
-                row(l, 2, "重试", SL_RETRY, 0);
+                row(l, 2, sl_tr(SL_T_RETRY), SL_RETRY, 0);
             break;
         default:
             break;
@@ -185,15 +201,15 @@ void sl_ui_layout(sl_ui_model *m) {
         if (m->page != SL_STOPPING && m->page != SL_CLOSING)
             button(l, 9, 320, 596, 640, 64,
                    m->page == SL_CONNECTING || m->page == SL_PAIRING || m->page == SL_SAVING
-                       ? "B  取消"
-                       : "B  返回",
+                       ? sl_tr(SL_T_CANCEL_KEY)
+                       : sl_tr(SL_T_BACK_KEY),
                    SL_BACK, 0, false);
     }
     if (l->dialog) {
         l->drawer = m->page == SL_MENU || m->page == SL_OPTIONS || m->page == SL_SETTINGS ||
-                    m->page == SL_QUALITY;
-        l->compact = m->page == SL_DISCONNECT || m->page == SL_FORGET || m->page == SL_EXIT ||
-                     m->page == SL_ERROR;
+                    m->page == SL_QUALITY || m->page == SL_LANGUAGE;
+        l->compact = m->page == SL_END_GAME || m->page == SL_DISCONNECT || m->page == SL_FORGET ||
+                     m->page == SL_EXIT || m->page == SL_ERROR || m->page == SL_STOPPING;
         l->panel_x = 272;
         l->panel_y = 96;
         l->panel_w = 736;
@@ -228,13 +244,19 @@ void sl_ui_layout(sl_ui_model *m) {
                 c->w = 288;
                 c->h = 72;
                 if (c->id == 9)
-                    strcpy(c->label, "B  取消");
+                    strcpy(c->label, sl_tr(SL_T_CANCEL_KEY));
                 else {
                     char title[160];
                     snprintf(title, sizeof(title), "A  %.150s", c->label);
                     snprintf(c->label, sizeof(c->label), "%s", title);
                     c->primary = true;
                 }
+            }
+            if (m->page == SL_STOPPING) {
+                l->panel_x = 360;
+                l->panel_y = 256;
+                l->panel_w = 560;
+                l->panel_h = 208;
             }
             if (m->page == SL_EXIT) {
                 l->panel_y = 230;
@@ -291,6 +313,10 @@ void sl_ui_layout(sl_ui_model *m) {
             if (l->controls[i].action == SL_RECENT)
                 l->controls[i].x =
                     SL_GAMES_LEFT + l->controls[i].arg * SL_CARD_STEP - (int)m->games_scroll;
+        return;
+    }
+    if (m->page == SL_CONNECTING || m->page == SL_SAVING || m->page == SL_PAIRING) {
+        m->focus = 0; /* B/touch shortcut, never an A-selectable cancellation. */
         return;
     }
     bool found = false;

@@ -270,6 +270,7 @@ int main(int argc, char **argv) {
 
     for (int p = SL_PAIRING; p <= SL_ERROR; ++p) {
         ui.page = p;
+        ui.ending_game = p == SL_STOPPING;
         strcpy(ui.pairing_code, "4826");
         ui.pair_code_at = ui.now - 1800;
         sl_ui_layout(&ui);
@@ -311,6 +312,27 @@ int main(int argc, char **argv) {
             save_image(name);
         }
     }
+    /* Render every screen in both languages with real font metrics. */
+    for (int lang = SL_LANG_ZH_CN; lang <= SL_LANG_EN; ++lang) {
+        sl_i18n_set(lang);
+        for (int p = SL_HOME; p <= SL_CLOSING; ++p) {
+            ui.page = p;
+            ui.depth = 0;
+            ui.leaving = false;
+            ui.streaming = p == SL_STREAM || p == SL_MENU;
+            ui.debug = p == SL_STREAM;
+            ui.stream_started_at = ui.now;
+            ui.entered_at = ui.now > 500 ? ui.now - 500 : 0;
+            strcpy(ui.error, sl_tr(SL_T_PROFILE_CORRUPT));
+            sl_ui_layout(&ui);
+            stream_media_present();
+            char image[64];
+            snprintf(image, sizeof(image), "i18n-%s-page-%02d", lang == SL_LANG_EN ? "en" : "zh",
+                     p);
+            save_image(image);
+        }
+    }
+    sl_i18n_set(SL_LANG_ZH_CN);
     ui.page = SL_HOME;
     sl_ui_connected(&ui);
     sl_input_sync(&router);
@@ -318,6 +340,19 @@ int main(int argc, char **argv) {
     if (argc > 1)
         decode(argv[1]);
     assert(remote_events == 0);
+    /* Real Opus -> native SDL queue path, including switching back to UI output. */
+    for (int channels = 1; channels <= 2; ++channels) {
+        IHS_StreamAudioConfig config = {
+            .codec = IHS_StreamAudioCodecOpus, .frequency = 48000, .channels = channels};
+        assert(stream_media_audio_start(NULL, &config) == 0);
+        IHS_Buffer silence = {0}; /* Opus packet-loss concealment is valid decoded PCM. */
+        assert(stream_media_audio_submit(NULL, &silence) == 0);
+        stream_media_snapshot snapshot;
+        stream_media_get_snapshot(&snapshot);
+        assert(snapshot.audio_active && snapshot.audio_frames == 1 &&
+               snapshot.audio_decode_errors == 0);
+        stream_media_audio_stop(NULL);
+    }
     /* Same runtime creates/joins real discovery workers twice, without requesting a host stream. */
     char profile_dir[] = "/tmp/nsl-native-profile-XXXXXX";
     assert(mkdtemp(profile_dir));

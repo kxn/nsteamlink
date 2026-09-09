@@ -100,3 +100,18 @@ void sl_system_dns_cancel(uint32_t handle) {
     if (handle)
         resolverCancel(handle);
 }
+
+const char *sl_system_locale(void) {
+    u64 code = 0;
+    if (R_FAILED(setInitialize()))
+        return "en";
+    Result result = setGetSystemLanguage(&code);
+    SetLanguage language = SetLanguage_ENUS;
+    if (R_SUCCEEDED(result))
+        result = setMakeLanguage(code, &language);
+    setExit();
+    if (R_SUCCEEDED(result) && (language == SetLanguage_ZHCN || language == SetLanguage_ZHTW ||
+                                language == SetLanguage_ZHHANS || language == SetLanguage_ZHHANT))
+        return "zh-CN";
+    return "en";
+}

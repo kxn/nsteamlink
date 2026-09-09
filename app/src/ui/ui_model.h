@@ -1,6 +1,7 @@
 #pragma once
 #include "build_identity.h"
 #include "services/auth_store.h"
+#include "services/i18n.h"
 
 typedef enum sl_page {
     SL_HOME,
@@ -14,7 +15,9 @@ typedef enum sl_page {
     SL_SETTINGS,
     SL_MANUAL,
     SL_QUALITY,
+    SL_LANGUAGE,
     SL_FORGET,
+    SL_END_GAME,
     SL_DISCONNECT,
     SL_EXIT,
     SL_STOPPING,
@@ -40,8 +43,12 @@ typedef enum sl_action {
     SL_OPEN_SETTINGS,
     SL_OPEN_MANUAL,
     SL_OPEN_QUALITY,
+    SL_OPEN_LANGUAGE,
+    SL_SET_LANGUAGE,
     SL_OPEN_FORGET,
     SL_CONFIRM_FORGET,
+    SL_OPEN_END_GAME,
+    SL_CONFIRM_END_GAME,
     SL_OPEN_DISCONNECT,
     SL_CONFIRM_STOP,
     SL_CONFIRM_EXIT,
@@ -57,6 +64,7 @@ typedef enum sl_command_type {
     SL_CMD_PAIR,
     SL_CMD_STREAM,
     SL_CMD_CANCEL,
+    SL_CMD_END_GAME,
     SL_CMD_STOP,
     SL_CMD_EXIT,
     SL_CMD_SAVE,
@@ -68,6 +76,7 @@ typedef struct sl_command {
     sl_host host;
     uint64_t game_id;
     uint32_t quality;
+    sl_language language;
     char text[64];
 } sl_command;
 typedef struct sl_control {
@@ -99,13 +108,23 @@ typedef struct sl_layout {
 #define SL_GAMES_LEFT  52
 #define SL_GAMES_WIDTH 1176
 
+typedef enum sl_ui_cue {
+    SL_CUE_NONE,
+    SL_CUE_MOVE,
+    SL_CUE_CONFIRM,
+    SL_CUE_BACK,
+    SL_CUE_TOGGLE,
+    SL_CUE_COUNT
+} sl_ui_cue;
 typedef struct sl_ui_model {
+    sl_ui_cue cue;
+    uint64_t cue_serial, move_sound_at;
     sl_auth_store store;
     sl_page page, stack[8];
     int focus_stack[8];
     bool repair_attempted;
     int depth;
-    bool streaming, debug, network_ok, closing, leaving;
+    bool streaming, debug, network_ok, closing, leaving, ending_game;
     uint64_t leave_at;
     float leave_opacity;
     int focus;

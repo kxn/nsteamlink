@@ -64,3 +64,12 @@ uint32_t sl_system_dns_begin(void) {
 void sl_system_dns_cancel(uint32_t handle) {
     (void)handle;
 }
+
+const char *sl_system_locale(void) {
+    const char *locale = getenv("LC_ALL");
+    if (!locale || !*locale)
+        locale = getenv("LC_MESSAGES");
+    if (!locale || !*locale)
+        locale = getenv("LANG");
+    return locale && *locale ? locale : "en";
+}

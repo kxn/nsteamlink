@@ -184,3 +184,131 @@ bool sl_artwork_decode(const unsigned char *data, size_t size, sl_artwork_image 
     free(w);
     return out->pixels != NULL;
 }
+
+static int hex4(const char *s) {
+    int v = 0;
+    for (int i = 0; i < 4; ++i) {
+        int c = s[i], d = c >= '0' && c <= '9'   ? c - '0'
+                          : c >= 'a' && c <= 'f' ? c - 'a' + 10
+                          : c >= 'A' && c <= 'F' ? c - 'A' + 10
+                                                 : -1;
+        if (d < 0)
+            return -1;
+        v = v * 16 + d;
+    }
+    return v;
+}
+/* Decode JSON escapes and validate raw UTF-8. Never split a codepoint. */
+static bool title_string(const char *s, const jsmntok_t *t, char *out, size_t cap) {
+    if (t->type != JSMN_STRING || !cap)
+        return false;
+    size_t written = 0;
+    for (int i = t->start; i < t->end;) {
+        uint32_t cp = (unsigned char)s[i++];
+        if (cp == '\\') {
+            if (i >= t->end)
+                return false;
+            char esc = s[i++];
+            if (esc == 'u') {
+                if (i + 4 > t->end)
+                    return false;
+                int v = hex4(s + i);
+                i += 4;
+                if (v < 0)
+                    return false;
+                cp = v;
+                if (cp >= 0xd800 && cp <= 0xdbff) {
+                    if (i + 6 > t->end || s[i] != '\\' || s[i + 1] != 'u')
+                        return false;
+                    v = hex4(s + i + 2);
+                    i += 6;
+                    if (v < 0xdc00 || v > 0xdfff)
+                        return false;
+                    cp = 0x10000 + ((cp - 0xd800) << 10) + v - 0xdc00;
+                } else if (cp >= 0xdc00 && cp <= 0xdfff)
+                    return false;
+            } else if (esc == '"' || esc == '\\' || esc == '/')
+                cp = esc;
+            else if (esc == 'n' || esc == 'r' || esc == 't' || esc == 'b' || esc == 'f')
+                cp = ' ';
+            else
+                return false;
+        } else if (cp >= 0x80) {
+            int count = cp >= 0xc2 && cp <= 0xdf   ? 1
+                        : cp >= 0xe0 && cp <= 0xef ? 2
+                        : cp >= 0xf0 && cp <= 0xf4 ? 3
+                                                   : -1;
+            if (count < 0 || i + count > t->end)
+                return false;
+            cp &= (1u << (6 - count)) - 1;
+            for (int n = 0; n < count; ++n) {
+                unsigned char c = s[i++];
+                if ((c & 0xc0) != 0x80)
+                    return false;
+                cp = (cp << 6) | (c & 63);
+            }
+            if (cp < (count == 1   ? 0x80u
+                      : count == 2 ? 0x800u
+                                   : 0x10000u) ||
+                cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff))
+                return false;
+        }
+        if (cp < 32 || cp == 127)
+            return false;
+        unsigned char bytes[4];
+        int n;
+        if (cp < 0x80) {
+            bytes[0] = cp;
+            n = 1;
+        } else if (cp < 0x800) {
+            bytes[0] = 0xc0 | (cp >> 6);
+            bytes[1] = 0x80 | (cp & 63);
+            n = 2;
+        } else if (cp < 0x10000) {
+            bytes[0] = 0xe0 | (cp >> 12);
+            bytes[1] = 0x80 | ((cp >> 6) & 63);
+            bytes[2] = 0x80 | (cp & 63);
+            n = 3;
+        } else {
+            bytes[0] = 0xf0 | (cp >> 18);
+            bytes[1] = 0x80 | ((cp >> 12) & 63);
+            bytes[2] = 0x80 | ((cp >> 6) & 63);
+            bytes[3] = 0x80 | (cp & 63);
+            n = 4;
+        }
+        if (written + n >= cap)
+            return false;
+        memcpy(out + written, bytes, n);
+        written += n;
+    }
+    out[written] = 0;
+    return written && strspn(out, " ") != written;
+}
+bool sl_artwork_name(const unsigned char *data, size_t size, uint32_t appid, char *out,
+                     size_t cap) {
+    if (!out || !cap)
+        return false;
+    out[0] = 0;
+    if (!data || !size || size > 65536 || !sl_artwork_appid(appid))
+        return false;
+    const char *s = (const char *)data;
+    jsmntok_t t[512];
+    jsmn_parser parser;
+    jsmn_init(&parser);
+    int n = jsmn_parse(&parser, s, size, t, 512);
+    if (n <= 0)
+        return false;
+    int response = member(s, t, n, 0, "response"), items = member(s, t, n, response, "store_items");
+    if (items < 0 || t[items].type != JSMN_ARRAY || t[items].size != 1)
+        return false;
+    int item = items + 1, success = member(s, t, n, item, "success"),
+        id = member(s, t, n, item, "appid"), name = member(s, t, n, item, "name");
+    char number[16];
+    snprintf(number, sizeof(number), "%u", appid);
+    bool ok = success >= 0 && id >= 0 && name >= 0 && t[success].type == JSMN_PRIMITIVE &&
+              t[id].type == JSMN_PRIMITIVE && equal(s, &t[success], "1") &&
+              equal(s, &t[id], number) && title_string(s, &t[name], out, cap);
+    if (!ok)
+        out[0] = 0;
+    return ok;
+}
