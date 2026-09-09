@@ -1034,10 +1034,12 @@ static bool software_video(sl_gfx *g, sl_video_frame *frame, params *p) {
             return false;
     bool drawn = draw_quad(g, p, &g->software[slot][0]->image, &g->software[slot][1]->image,
                            SL_GFX_BLEND_NONE);
-    if (drawn) {
-        g->software_slot = slot;
+    if (!same) {
         ++g->counters.uploads;
         g->counters.uploaded_bytes += (uint64_t)f->width * f->height * 3 / 2;
+    }
+    if (drawn) {
+        g->software_slot = slot;
         g->software_serial = identity.receiveSerial;
         g->software_session = identity.sessionId;
         g->software_epoch = identity.epoch;

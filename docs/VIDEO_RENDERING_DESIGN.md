@@ -1423,3 +1423,21 @@ CPU pipeline 测试验证 opaque ticket/PTS 对应、可见像素、两域占用
 默认 `DkDeviceFlags_OriginUpperLeft` 的 viewport Y 缩放为负数（SDK
 `source/maxwell/gpu_3d_base.cpp`）。因此屏幕坐标的顶边应映射至 NDC `y=+1`，
 底边映射至 `y=-1`；屏幕四边形关闭背面剔除。该约定同时适用于离屏 UI target 与输出图像。
+
+
+### 无人值守验证与统计口径
+
+独立 probe 的 `suite` 模式在一个 NRO 生命周期中运行固定的尺寸/重排矩阵，
+每项重新建立 graphics 与 decoder，并检查在途 atlas 淘汰、独立 YUV 数值 oracle、
+缓存帧零新增上传/导入、结束时映射/批次归零。总解码数必须与提交包数一致，
+`decoded = presented + replaced`；软件/硬件 oracle 仅比较实际取到的输出并校验 ticket 顺序。
+每项完全释放后记录堆内存及系统进程内存，保留分配器保留内存与活跃资源计数的区别。
+
+`uploads` / `uploaded_bytes` 只在实际执行软件像素拷贝时增加，缓存重画不增加。
+CPU 准备耗时对照使用同一份硬件解码帧：直接录制导入纹理绘制，对照下载至复用 AVFrame
+再上传并绘制。预热排除首次分配和导入，计时区间排除 acquire/present/fence/readback；
+两条路径使用相同 shader 与像素校验并交换测试先后顺序。此微基准不能替代 §12 的
+同场景 SDL/deko 全应用性能、交互和功耗验收。
+
+PC 在部署前冻结 NRO 和构建 manifest 副本。仅当本次运行的完整用例矩阵、最终结果、
+清理记录全部到达且无 SDK 错误、部署失败或超时，才返回成功；历史日志不能满足条件。

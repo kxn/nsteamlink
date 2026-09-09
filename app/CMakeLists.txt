@@ -272,4 +272,5 @@ endif()
 add_custom_target(nsl_graphics_manifest ALL
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/graphics-manifest.py"
         --root "${CMAKE_SOURCE_DIR}" --build "${CMAKE_BINARY_DIR}" --backend "${NSL_GFX_BACKEND}"
+        --deko-library "${NSL_DEKO3D}"
     DEPENDS nsl_gfx "${CMAKE_SOURCE_DIR}/scripts/graphics-manifest.py" VERBATIM)

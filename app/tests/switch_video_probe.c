@@ -7,6 +7,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <libavcodec/avcodec.h>
+#include <libavutil/hwcontext.h>
+#include <malloc.h>
 #include <poll.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -23,7 +25,7 @@ static unsigned char *golden[FRAMES], *readback;
 static uint16_t golden_id[FRAMES];
 static unsigned golden_count;
 static int log_fd = -1;
-static char transcript[128 * 1024];
+static char transcript[1024 * 1024];
 static size_t transcript_size, transmitted;
 static const char *stage = "startup";
 static uint64_t run_id;
@@ -301,6 +303,17 @@ static bool replay(sl_video_pipeline *pipeline, sl_gfx *gfx, const uint8_t *data
         goto cleanup;
     if (hardware && outputs != golden_count)
         goto cleanup;
+    sl_video_counters decoded;
+    if (!sl_video_read_counters(pipeline, key, &decoded) || decoded.decoded != packets ||
+        decoded.replaced + outputs != decoded.decoded) {
+        trace("decoded/output/replaced accounting failed");
+        goto cleanup;
+    }
+    trace("decode packets=%u decoded=%u presented=%u replaced=%u max_us=%u total_us=%llu", packets,
+          decoded.decoded, outputs, decoded.replaced, decoded.decode_max_us,
+          (unsigned long long)decoded.decode_total_us);
+    sl_gfx_counters redraw_before;
+    sl_gfx_get_counters(gfx, &redraw_before);
     /* No new decode: reuse the same lease for 120 presentations. */
     for (unsigned i = 0; i < 120; ++i) {
         if (!running() || !draw(gfx, *held))
@@ -310,6 +323,16 @@ static bool replay(sl_video_pipeline *pipeline, sl_gfx *gfx, const uint8_t *data
                 goto cleanup;
         }
     }
+    sl_gfx_counters redraw_after;
+    sl_gfx_get_counters(gfx, &redraw_after);
+    if (redraw_before.uploads != redraw_after.uploads ||
+        redraw_before.imports != redraw_after.imports ||
+        redraw_before.image_bytes != redraw_after.image_bytes ||
+        redraw_before.imported_bytes != redraw_after.imported_bytes) {
+        trace("redraw unexpectedly uploaded/imported/grew resources");
+        goto cleanup;
+    }
+    trace("redraw frames=120 new_uploads=0 new_imports=0 resource_growth=0");
     ok = true;
 cleanup:
     sl_gfx_counters counters;
@@ -331,71 +354,210 @@ cleanup:
           (unsigned long long)key.session, hardware, packets, outputs, ok ? "PASS" : "FAIL");
     return ok;
 }
-int main(int argc, char **argv) {
-    run_id = armGetSystemTick();
-    bool sockets = R_SUCCEEDED(socketInitializeDefault());
-    if (sockets)
-        connect_log();
-    trace("PROBE_BEGIN build=%s fixture=%s avcodec=%u avutil=%u sockets=%d transport=%d",
-          NSL_GIT_COMMIT, argc > 1 ? argv[1] : "padding720", avcodec_version(), avutil_version(),
-          sockets, log_fd >= 0);
-    /* Retrieve the old diagnostic automatically, before replacing its file. */
-    FILE *old = fopen("sdmc:/switch/nsteamlink-video-probe.log", "r");
-    if (old) {
-        char line[512];
-        unsigned lines = 0;
-        trace("PREVIOUS_LOG_BEGIN");
-        while (lines < 64 && fgets(line, sizeof(line), old)) {
-            if (strstr(line, "previous:") || strstr(line, "PREVIOUS_LOG"))
-                continue;
-            trace("previous: %s", line);
-            ++lines;
+/* CPU preparation microbenchmark, not end-to-end latency or power measurement.
+ * Both variants use the same decoded frame, shader, acquire/present/readback path.
+ * Acquire, fence waits and readback are outside the measured interval. */
+static int order_u64(const void *a, const void *b) {
+    uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b;
+    return (x > y) - (x < y);
+}
+static bool benchmark(sl_gfx *gfx, sl_video_frame *hardware, uint64_t session, bool reverse) {
+    enum { WARMUP = 8, SAMPLES = 64 };
+    IHS_FrameTracker *tracker = IHS_FrameTrackerCreate(session);
+    AVFrame *cpu = av_frame_alloc();
+    bool ok = false;
+    if (!tracker || !cpu || !IHS_FrameTrackerOpenEpoch(tracker, 1))
+        goto cleanup;
+    for (unsigned pass = 0; pass < 2; ++pass) {
+        bool copy = reverse ? pass == 0 : pass == 1;
+        uint64_t times[SAMPLES];
+        sl_gfx_counters before, after;
+        sl_gfx_get_counters(gfx, &before);
+        for (unsigned i = 0; i < WARMUP + SAMPLES; ++i) {
+            IHS_FrameTicket *ticket = NULL;
+            IHS_FrameReceive receive = {.firstReceiveUs = now_us(), .lastReceiveUs = now_us()};
+            if (!running() || !drain(gfx))
+                goto cleanup;
+            if (copy &&
+                IHS_FrameTrackerBegin(tracker, 1, i + 1, &receive, &ticket) != IHS_FrameBeginOK)
+                goto cleanup;
+            sl_video_frame software = {.pixels = cpu, .ticket = ticket};
+            sl_resource_init(&software.ref, NULL, NULL);
+            if (sl_gfx_begin(gfx) != SL_GFX_READY) {
+                IHS_FrameTicketRelease(ticket);
+                goto cleanup;
+            }
+            sl_gfx_draw_color(gfx, 0, 0, 0, 255);
+            sl_gfx_clear(gfx);
+            uint64_t start = now_us();
+            bool transferred = !copy || av_hwframe_transfer_data(cpu, hardware->pixels, 0) >= 0;
+            if (copy && transferred) {
+                cpu->colorspace = hardware->pixels->colorspace;
+                cpu->color_range = hardware->pixels->color_range;
+                cpu->chroma_location = hardware->pixels->chroma_location;
+            }
+            bool drawn = transferred && sl_gfx_video(gfx, copy ? &software : hardware);
+            uint64_t elapsed = now_us() - start;
+            sl_gfx_present_result presented = sl_gfx_present(gfx);
+            bool drained = drain(gfx);
+            if (ticket) {
+                IHS_FrameOutcome outcome = {.result = IHS_VideoFrameResultDroppedReset,
+                                            .completionUs = now_us()};
+                IHS_FrameTicketComplete(ticket, &outcome);
+                IHS_FrameTicketRelease(ticket);
+            }
+            sl_resource_release(&software.ref);
+            if (!drawn || presented.result != SL_GFX_READY || !drained ||
+                !sl_gfx_readback(gfx, NULL, readback, PIXELS, 1280 * 4) ||
+                memcmp(readback, golden[golden_count - 1], PIXELS))
+                goto cleanup;
+            if (i >= WARMUP)
+                times[i - WARMUP] = elapsed;
         }
-        fclose(old);
-        trace("PREVIOUS_LOG_END");
+        sl_gfx_get_counters(gfx, &after);
+        if (after.uploads - before.uploads != (copy ? WARMUP + SAMPLES : 0))
+            goto cleanup;
+        qsort(times, SAMPLES, sizeof(times[0]), order_u64);
+        trace("BENCH path=%s samples=%u warmup=%u cpu_prepare_median_us=%llu p95_us=%llu "
+              "uploads=%llu upload_bytes=%llu order=%u",
+              copy ? "download-upload" : "direct", SAMPLES, WARMUP,
+              (unsigned long long)times[SAMPLES / 2],
+              (unsigned long long)times[(SAMPLES * 95 + 99) / 100 - 1],
+              (unsigned long long)(after.uploads - before.uploads),
+              (unsigned long long)(after.uploaded_bytes - before.uploaded_bytes), pass);
     }
-    av_log_set_callback(av_diagnostic);
-    const unsigned char *embedded = nsl_probe_padding720;
-    size_t size = nsl_probe_padding720_size;
-    const char *fixture = argc > 1 ? argv[1] : "padding720";
-    bool known = !strcmp(fixture, "padding720");
-#define SELECT(name)                                                                               \
-    if (!strcmp(fixture, #name)) {                                                                 \
-        embedded = nsl_probe_##name;                                                               \
-        size = nsl_probe_##name##_size;                                                            \
-        known = true;                                                                              \
+    ok = true;
+cleanup:
+    /* No CPU frame is retained by software_video; its uploaded image versions
+     * belong to the batch. The source hardware lease remains owned by caller. */
+    av_frame_free(&cpu);
+    if (tracker)
+        IHS_FrameTrackerClose(tracker);
+    return ok;
+}
+/* Independent numeric oracle: both video paths sharing one shader is insufficient
+ * evidence for matrix/range correctness. Use constant YUV with known RGB values. */
+static bool color_oracle(sl_gfx *gfx) {
+    IHS_FrameTracker *tracker = IHS_FrameTrackerCreate(UINT64_MAX - 1);
+    AVFrame *pixels = av_frame_alloc();
+    bool ok = false;
+    unsigned id = 0;
+    if (!tracker || !pixels || !IHS_FrameTrackerOpenEpoch(tracker, 1))
+        goto cleanup;
+    for (unsigned planar = 0; planar < 2; ++planar) {
+        av_frame_unref(pixels);
+        pixels->format = planar ? AV_PIX_FMT_YUV420P : AV_PIX_FMT_NV12;
+        pixels->width = pixels->height = 16;
+        if (av_frame_get_buffer(pixels, 32) < 0)
+            goto cleanup;
+        for (unsigned full = 0; full < 2; ++full)
+            for (unsigned bt709 = 0; bt709 < 2; ++bt709)
+                for (unsigned tone = 0; tone < 3; ++tone) {
+                    unsigned y = tone == 0 ? (full ? 0 : 16) : (full ? 255 : 235);
+                    unsigned u = 128, v = 128;
+                    if (tone == 2) {
+                        y = bt709 ? (full ? 54 : 63) : (full ? 76 : 81);
+                        u = bt709 ? (full ? 99 : 102) : (full ? 85 : 90);
+                        v = full ? 255 : 240;
+                    }
+                    pixels->colorspace = bt709 ? AVCOL_SPC_BT709 : AVCOL_SPC_SMPTE170M;
+                    pixels->color_range = full ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
+                    pixels->chroma_location = AVCHROMA_LOC_LEFT;
+                    for (unsigned row = 0; row < 16; ++row)
+                        memset(pixels->data[0] + row * pixels->linesize[0], y, 16);
+                    for (unsigned row = 0; row < 8; ++row)
+                        for (unsigned x = 0; x < 8; ++x) {
+                            if (planar) {
+                                pixels->data[1][row * pixels->linesize[1] + x] = u;
+                                pixels->data[2][row * pixels->linesize[2] + x] = v;
+                            } else {
+                                pixels->data[1][row * pixels->linesize[1] + x * 2] = u;
+                                pixels->data[1][row * pixels->linesize[1] + x * 2 + 1] = v;
+                            }
+                        }
+                    IHS_FrameTicket *ticket = NULL;
+                    IHS_FrameReceive receive = {.firstReceiveUs = now_us(),
+                                                .lastReceiveUs = now_us()};
+                    if (IHS_FrameTrackerBegin(tracker, 1, ++id, &receive, &ticket) !=
+                        IHS_FrameBeginOK)
+                        goto cleanup;
+                    sl_video_frame frame = {.pixels = pixels, .ticket = ticket};
+                    sl_resource_init(&frame.ref, NULL, NULL);
+                    bool drawn = draw(gfx, &frame);
+                    bool matches = drawn && near_pixel(640, 360, tone ? 255 : 0,
+                                                       tone == 1 ? 255 : 0, tone == 1 ? 255 : 0);
+                    IHS_FrameOutcome outcome = {.result = IHS_VideoFrameResultDroppedReset,
+                                                .completionUs = now_us()};
+                    IHS_FrameTicketComplete(ticket, &outcome);
+                    IHS_FrameTicketRelease(ticket);
+                    sl_resource_release(&frame.ref);
+                    if (!matches) {
+                        trace("COLOR format=%s full=%u bt709=%u tone=%u result=FAIL",
+                              planar ? "IYUV" : "NV12", full, bt709, tone);
+                        goto cleanup;
+                    }
+                }
     }
-    SELECT(padding1080);
-    SELECT(sequential);
-    SELECT(reordered);
-    uint8_t *data = NULL;
+    ok = true;
+cleanup:
+    av_frame_free(&pixels);
+    if (tracker)
+        IHS_FrameTrackerClose(tracker);
+    trace("COLOR cases=%u result=%s", id, ok ? "PASS" : "FAIL");
+    return ok;
+}
+static bool atlas_stress(sl_gfx *gfx) {
+    unsigned char alpha[8 * 8];
+    memset(alpha, 255, sizeof(alpha));
+    if (sl_gfx_begin(gfx) != SL_GFX_READY)
+        return false;
+    unsigned pinned = 0, misses = 0;
+    bool ok = true;
+    for (unsigned i = 0; i < 600; ++i) {
+        sl_gfx_texture *glyph = sl_gfx_create_texture(gfx, SL_GFX_R8, SL_GFX_STATIC, 8, 8);
+        if (!glyph) {
+            ++misses;
+            continue;
+        }
+        bool drawn = !sl_gfx_upload(glyph, NULL, alpha, 8) &&
+                     !sl_gfx_copy(gfx, glyph, NULL,
+                                  &(sl_gfx_rect){(int)(i % 80) * 8, (int)(i / 80) * 8, 8, 8});
+        sl_gfx_destroy_texture(glyph);
+        ok &= drawn;
+        ++pinned;
+    }
+    sl_gfx_present_result result = sl_gfx_present(gfx);
+    bool drained = drain(gfx);
+    sl_gfx_texture *reused =
+        drained ? sl_gfx_create_texture(gfx, SL_GFX_R8, SL_GFX_STATIC, 8, 8) : NULL;
+    ok &= result.result == SL_GFX_READY && drained && pinned == 512 && misses == 88 && reused;
+    sl_gfx_destroy_texture(reused);
+    trace("ATLAS pinned=%u bounded_misses=%u reuse_after_fence=%d result=%s", pinned, misses,
+          reused != NULL, ok ? "PASS" : "FAIL");
+    return ok;
+}
+typedef struct fixture_data {
+    const char *name;
+    const unsigned char *bytes;
+    size_t size;
+} fixture_data;
+static bool run_case(const fixture_data *fixture, unsigned iteration, bool measure) {
     sl_video_pipeline *pipeline = NULL;
     sl_gfx *gfx = NULL;
     sl_video_frame *held = NULL;
-    bool ok = false, sdl = false;
+    unsigned char *data = NULL;
+    bool ok = false;
+    for (unsigned i = 0; i < FRAMES; ++i) {
+        free(golden[i]);
+        golden[i] = NULL;
+    }
+    golden_count = 0;
+    trace("CASE_BEGIN fixture=%s iteration=%u", fixture->name, iteration);
     enter("fixture");
-    if (!known) {
-        trace("unknown built-in fixture");
+    data = calloc(1, fixture->size + AV_INPUT_BUFFER_PADDING_SIZE);
+    if (!data)
         goto cleanup;
-    }
-    data = calloc(1, size + AV_INPUT_BUFFER_PADDING_SIZE);
-    readback = malloc(PIXELS);
-    if (!data || !readback) {
-        trace("allocation failed errno=%d", errno);
-        goto cleanup;
-    }
-    memcpy(data, embedded, size);
-    trace("embedded fixture bytes=%zu", size);
-    enter("sdl-init");
-    if (SDL_Init(SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER)) {
-        trace("SDL_Init: %s", SDL_GetError());
-        goto cleanup;
-    }
-    sdl = true;
-    if (SDL_WasInit(SDL_INIT_VIDEO)) {
-        trace("unexpected SDL video owner");
-        goto cleanup;
-    }
+    memcpy(data, fixture->bytes, fixture->size);
     enter("pipeline-create");
     pipeline = sl_video_create();
     if (!pipeline)
@@ -403,26 +565,36 @@ int main(int argc, char **argv) {
     enter("gfx-create");
     gfx = sl_gfx_create(&(sl_gfx_config){
         .width = 1280, .height = 720, .title = "Video probe", .diagnostic = diagnostic});
-    if (!gfx) {
-        trace("gfx creation rejected");
+    if (!gfx)
         goto cleanup;
-    }
     enter("readback-allocate");
     if (!sl_gfx_request_readback(gfx))
         goto cleanup;
     enter("ui-oracle");
     if (!ui_oracle(gfx))
         goto cleanup;
+    enter("color-oracle");
+    if (!color_oracle(gfx))
+        goto cleanup;
+    enter("atlas-stress");
+    if (!atlas_stress(gfx))
+        goto cleanup;
+    uint64_t session = (uint64_t)iteration * 4 + 1;
     enter("software");
-    if (!replay(pipeline, gfx, data, size, (sl_video_key){1, 1}, false, &held))
+    if (!replay(pipeline, gfx, data, fixture->size, (sl_video_key){session, 1}, false, &held))
         goto cleanup;
     enter("hardware-cold");
-    if (!replay(pipeline, gfx, data, size, (sl_video_key){2, 1}, true, &held))
+    if (!replay(pipeline, gfx, data, fixture->size, (sl_video_key){session + 1, 1}, true, &held))
         goto cleanup;
     sl_video_reap(pipeline);
     enter("hardware-reopen");
-    if (!replay(pipeline, gfx, data, size, (sl_video_key){3, 1}, true, &held))
+    if (!replay(pipeline, gfx, data, fixture->size, (sl_video_key){session + 2, 1}, true, &held))
         goto cleanup;
+    if (measure) {
+        enter("cpu-prepare-benchmark");
+        if (!benchmark(gfx, held, session + 3, iteration >= 4))
+            goto cleanup;
+    }
     ok = true;
 cleanup:;
     const char *failed = ok ? "none" : stage;
@@ -450,6 +622,78 @@ cleanup:;
             abort();
         }
     }
+    free(data);
+    for (unsigned i = 0; i < FRAMES; ++i) {
+        free(golden[i]);
+        golden[i] = NULL;
+    }
+    golden_count = 0;
+    u64 used = 0;
+    Result memory_result = svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0);
+    struct mallinfo heap = mallinfo();
+    trace("MEMORY iteration=%u heap_live_bytes=%llu process_used_bytes=%llu query_result=%u",
+          iteration, (unsigned long long)heap.uordblks, (unsigned long long)used, memory_result);
+    trace("CASE_FINAL fixture=%s iteration=%u result=%s failed_stage=%s", fixture->name, iteration,
+          ok ? "PASS" : "FAIL", failed);
+    if (!ok)
+        stage = failed;
+    return ok;
+}
+int main(int argc, char **argv) {
+    run_id = armGetSystemTick();
+    bool sockets = R_SUCCEEDED(socketInitializeDefault());
+    if (sockets)
+        connect_log();
+    trace("PROBE_BEGIN build=%s fixture=%s avcodec=%u avutil=%u sockets=%d transport=%d",
+          NSL_GIT_COMMIT, argc > 1 ? argv[1] : "padding720", avcodec_version(), avutil_version(),
+          sockets, log_fd >= 0);
+    /* Retrieve the old diagnostic automatically, before replacing its file. */
+    FILE *old = fopen("sdmc:/switch/nsteamlink-video-probe.log", "r");
+    if (old) {
+        char line[512];
+        unsigned lines = 0;
+        trace("PREVIOUS_LOG_BEGIN");
+        while (lines < 64 && fgets(line, sizeof(line), old)) {
+            if (strstr(line, "previous:") || strstr(line, "PREVIOUS_LOG"))
+                continue;
+            trace("previous: %s", line);
+            ++lines;
+        }
+        fclose(old);
+        trace("PREVIOUS_LOG_END");
+    }
+    av_log_set_callback(av_diagnostic);
+    const fixture_data fixtures[] = {
+#define FIXTURE(name) {#name, nsl_probe_##name, nsl_probe_##name##_size}
+        FIXTURE(padding720), FIXTURE(padding1080), FIXTURE(sequential), FIXTURE(reordered)};
+    const char *selection = argc > 1 ? argv[1] : "padding720";
+    bool suite = !strcmp(selection, "suite"), known = suite;
+    bool ok = false, sdl = false;
+    unsigned completed = 0;
+    readback = malloc(PIXELS);
+    if (!readback)
+        goto cleanup;
+    enter("sdl-init");
+    if (SDL_Init(SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER)) {
+        trace("SDL_Init: %s", SDL_GetError());
+        goto cleanup;
+    }
+    sdl = true;
+    if (SDL_WasInit(SDL_INIT_VIDEO))
+        goto cleanup;
+    for (unsigned iteration = 0; iteration < (suite ? 12u : 4u); ++iteration) {
+        const fixture_data *fixture = &fixtures[iteration % 4];
+        if (!suite && strcmp(selection, fixture->name))
+            continue;
+        known = true;
+        bool measure = suite && iteration % 4 < 2 && (iteration < 4 || iteration >= 8);
+        if (!run_case(fixture, iteration, measure))
+            goto cleanup;
+        ++completed;
+    }
+    ok = known && completed == (suite ? 12u : 1u);
+cleanup:;
+    const char *failed = ok ? "none" : stage;
     if (sdl) {
         enter("cleanup-sdl");
         SDL_Quit();
@@ -457,7 +701,7 @@ cleanup:;
     for (unsigned i = 0; i < FRAMES; ++i)
         free(golden[i]);
     free(readback);
-    free(data);
+    trace("SUITE cases_completed=%u cases_expected=%u", completed, suite ? 12u : 1u);
     av_log_set_callback(av_log_default_callback);
     enter("complete");
     trace("PROBE_FINAL result=%s failed_stage=%s", ok ? "PASS" : "FAIL", failed);

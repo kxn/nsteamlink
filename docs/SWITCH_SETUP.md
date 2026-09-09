@@ -183,7 +183,22 @@ NSL_BUILD_DIR="$PWD/build/switch-deko" scripts/build-switch.sh \
 python3 scripts/test-switch-video.py --fixture padding720
 ```
 
-可选 fixture 为 `padding720`、`padding1080`、`sequential`、`reordered`。脚本自动推送 NRO，
+无人值守、只准备一次 netloader 时使用：
+
+```sh
+python3 scripts/test-switch-video.py --fixture suite --timeout 900
+```
+
+`suite` 在一次 NRO 启动内运行四份视频各三轮，每轮创建并清理 graphics/decoder，
+执行 UI、24 组独立颜色检查、512 个在途 glyph 的容量/回收检查、软件与硬件像素比较、
+120 次旧帧重画和解码域重建。日志同时核对总解码数、呈现数与 mailbox 替换数：
+B 帧在 EOF 批量排出时，latest-frame mailbox 可以替换尚未取走的输出，不能将此计作漏解码。
+720p/1080p 首尾两轮附带 CPU 准备耗时对照，交换直接导入与下载后上传的测试顺序。
+每条路径预热 8 帧、采样 64 帧，记录中位数、p95、上传次数和字节数；
+垂直同步、GPU 等待及诊断回读不进入计时。这不是 SDL/deko 整体串流延迟或整机功耗对照。
+进程内重复初始化也不等价于多次 hbmenu 加载，HOME/睡眠与真实串流交互须另行验收。
+
+可选单项 fixture 为 `padding720`、`padding1080`、`sequential`、`reordered`。脚本自动推送 NRO，
 接收设备阶段日志，将结果、NRO 哈希和构建 manifest 保存到构建目录的 `probe-runs/`。
 日志中断或超时记为 `INCOMPLETE`，不能按 nxlink 退出码判定设备测试成功。
 诊断构建链接 `deko3dd`，使 SDK 参数错误可以通过网络回传。SD 日志只是自动保留的副本，

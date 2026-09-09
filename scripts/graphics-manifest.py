@@ -10,6 +10,7 @@ p = argparse.ArgumentParser()
 p.add_argument('--root', required=True, type=Path)
 p.add_argument('--build', required=True, type=Path)
 p.add_argument('--backend', choices=['sdl', 'deko'], required=True)
+p.add_argument('--deko-library', type=Path)
 p.add_argument('--sdk', type=Path, default=Path(os.environ.get('DEVKITPRO', '/opt/devkitpro')))
 a = p.parse_args()
 def digest(path):
@@ -23,6 +24,9 @@ if a.backend == 'deko':
         'portlibs/switch/include/libavutil/hwcontext_nvtegra.h']]
 manifest = {'backend': a.backend, 'hardware_validation': 'not established by a build',
             'sha256': {str(x.relative_to(a.root) if x.is_relative_to(a.root) else x): digest(x) for x in paths}}
+if a.backend == 'deko' and a.deko_library:
+    manifest['linked_deko_library'] = str(a.deko_library)
+    manifest['linked_deko_sha256'] = digest(a.deko_library)
 for name, root in [('application', a.root), ('ihslib', a.root / 'third_party/ihslib')]:
     manifest[name] = {'commit': subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip(),
                       'dirty': bool(subprocess.check_output(['git', '-C', str(root), 'diff', 'HEAD'], text=True))}
