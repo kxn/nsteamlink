@@ -2,7 +2,7 @@
 
 Switch 自制软件（homebrew）版 Steam Link 客户端：通过 Steam Remote Play 协议串流 PC 上的 Steam 游戏。
 
-> 进度、任务与验收状态一律见 GitHub Issues（私有仓库 `kxn/nsteamlink`，含 milestone）；
+> 进度、任务与验收状态一律见 GitHub Issues（仓库 `kxn/nsteamlink`，含 milestone）；
 > 本仓库文档只承载设计、规范与使用说明，不维护进度状态。
 
 ## 文档索引
