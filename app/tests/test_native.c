@@ -339,6 +339,19 @@ int main(int argc, char **argv) {
     if (argc > 1)
         decode(argv[1]);
     assert(remote_events == 0);
+    /* Real Opus -> native SDL queue path, including switching back to UI output. */
+    for (int channels = 1; channels <= 2; ++channels) {
+        IHS_StreamAudioConfig config = {
+            .codec = IHS_StreamAudioCodecOpus, .frequency = 48000, .channels = channels};
+        assert(stream_media_audio_start(NULL, &config) == 0);
+        IHS_Buffer silence = {0}; /* Opus packet-loss concealment is valid decoded PCM. */
+        assert(stream_media_audio_submit(NULL, &silence) == 0);
+        stream_media_snapshot snapshot;
+        stream_media_get_snapshot(&snapshot);
+        assert(snapshot.audio_active && snapshot.audio_frames == 1 &&
+               snapshot.audio_decode_errors == 0);
+        stream_media_audio_stop(NULL);
+    }
     /* Same runtime creates/joins real discovery workers twice, without requesting a host stream. */
     char profile_dir[] = "/tmp/nsl-native-profile-XXXXXX";
     assert(mkdtemp(profile_dir));

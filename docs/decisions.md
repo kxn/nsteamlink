@@ -1719,7 +1719,7 @@ Decision：interrupted 使用 C11 atomic_bool，在 BaseInit 清零结构后初�
 保留 stop HID → 传输断开有界重试 → join session → 停媒体 → destroy 的顺序；
 最终退出时 join client 后再销毁 IHS/socket。无 ACK 的断开也必须有界完成。
 
-## D-047：界面提示音与串流共用音频输出
+## D-047：界面提示音与串流输出（初版共享 callback 方案已撤回）
 
 Evidence：原 media.c 使用 SDL_QueueAudio 输出 Opus 解码的 PCM，设备仅随串流开启；
 该模式无法直接在已排队的游戏声音上叠加首页/菜单提示音。SDL2 SDL_audio.h 的
@@ -1741,3 +1741,26 @@ UI 仅以原子变量投递最新音效，不等待音频锁；模型中的 A �
 设备（等待 callback 退出）并释放转换器，最后释放图形资源及 SDL_Quit。无新增 detached
 线程；会话停止保留设备以支持首页提示音。音效设备失败不会阻止首页使用，串流音频
 仍按实际设备初始化结果报告失败。真机音色/响度不能由 dummy 设备测试代替。
+
+
+### D-047 真机回归与输出路径修订
+
+Evidence：2026-09-09 用户实测 c1db663，提示音本身正常，但即使不触发操作，串流音质也
+明显下降。/tmp/nsl-c1db663-device.log 记录 Opus 48000Hz/stereo、samples=512。初版在
+所有串流 PCM 上新增 SDL_AudioStream、自建环形队列及持续 callback；此前 401b869 的
+设备已获用户认可，使用 Opus→SDL_QueueAudio，Switch samples 请求为 960。
+
+Conclusion：撤回“静态 PCM 相同/桌面 dummy 检查通过即可支持真机混音路径无回归”的
+推断；39 项回归不构成 Switch 音质证据。确认新音频路径存在实机回归，不能据此单独归因
+为重采样、callback 欠载或某个缓冲参数，这些具体机制仍待验证。
+
+Decision：移除游戏音频的转换器、环形队列和共享 callback，恢复原生 SDL 队列及原
+采样率/声道数/积压限制。Switch 恢复已验证的 samples=960 请求，仍允许 SDL 调整实际
+samples；desktop 使用 1024，避免已观察到的 SDL dummy 非幂次块越界。此平台差异为
+恢复已验证 Switch 路径，不用 desktop 的约束推翻真机正常基线。
+
+首页提示音使用独立生命周期的 UI-only callback；开始串流音频前先关闭并等待它退出，
+再打开游戏的 queue 设备。串流 worker 仅在确有提示音时叠加到已解码 PCM，没有声音
+事件时直接返回原数据，不遍历/转换样本。停止游戏音频后可重新打开首页设备。交接由
+media.audio_lock 串行，UI 仅投递原子事件，不开关设备、不阻塞渲染。
+退出时禁止重新打开首页音频，停止串流设备后关闭 UI 音频，之后才释放 SDL/Mesa。

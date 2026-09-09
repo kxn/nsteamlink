@@ -36,18 +36,7 @@ int main(void) {
     for (int launch = 0; launch < 2; ++launch) {
         assert(sl_audio_init());
         SDL_PauseAudioDevice(device, 1);
-        assert(sl_audio_configure(48000, 2));
         int16_t pcm[2048], out[2048];
-        for (int i = 0; i < 2048; ++i)
-            pcm[i] = (i % 2 ? -1234 : 1234);
-        assert(!sl_audio_queue(pcm, sizeof(pcm)));
-        assert(sl_audio_queued() == sizeof(pcm));
-        sl_audio_feedback(SL_CUE_NONE, false);
-        callback(NULL, (Uint8 *)out, sizeof(out));
-        assert(!memcmp(pcm, out, sizeof(out)) && !sl_audio_queued());
-        callback(NULL, (Uint8 *)out, sizeof(out));
-        for (int i = 0; i < 2048; ++i)
-            assert(!out[i]);
         for (int kind = 1; kind < SL_CUE_COUNT; ++kind) {
             sl_audio_feedback(kind, true);
             long energy = 0;
@@ -60,35 +49,46 @@ int main(void) {
             }
             assert(energy > 10000);
             for (int i = 0; i < 2048; ++i)
-                assert(!out[i]); /* finite cue, no looping or tail DC */
+                assert(!out[i]);
         }
+        sl_audio_suspend();
+        assert(!device);
+        for (int rate = 8000; rate <= 48000; rate += 8000)
+            for (int ch = 1; ch <= 2; ++ch) {
+                for (int i = 0; i < 2048; ++i)
+                    pcm[i] = (i % 2 ? -1234 : 1234);
+                memcpy(out, pcm, sizeof(out));
+                sl_audio_feedback(SL_CUE_NONE, true);
+                sl_audio_mix(out, 1024 / ch, rate, ch);
+                assert(!memcmp(pcm, out, sizeof(out)));
+            }
         for (int i = 0; i < 2048; ++i)
-            pcm[i] = 32000;
-        assert(!sl_audio_queue(pcm, sizeof(pcm)));
+            out[i] = 32000;
         sl_audio_feedback(SL_CUE_CONFIRM, true);
-        callback(NULL, (Uint8 *)out, sizeof(out));
+        sl_audio_mix(out, 1024, 48000, 2);
         for (int i = 0; i < 2048; ++i)
-            assert(out[i] > 25000); /* saturates, never wraps sign */
+            assert(out[i] > 25000);
         sl_audio_feedback(SL_CUE_NONE, false);
-        callback(NULL, (Uint8 *)out, sizeof(out));
-        for (int i = 0; i < 2048; ++i)
-            assert(!out[i]);
-        assert(sl_audio_configure(16000, 1));
-        for (int i = 0; i < 2048; ++i)
-            pcm[i] = 1000;
-        assert(!sl_audio_queue(pcm, sizeof(pcm)));
-        assert(sl_audio_queued() > 0);
-        callback(NULL, (Uint8 *)out, sizeof(out));
-        for (int i = 200; i < 2048; i += 2)
-            assert(out[i] == out[i + 1] && out[i] > 900);
-        sl_audio_clear();
-        assert(!sl_audio_queued());
-        SDL_PauseAudioDevice(device, 0);
+        memcpy(out, pcm, sizeof(out));
+        sl_audio_mix(out, 1024, 48000, 2);
+        assert(!memcmp(out, pcm, sizeof(out)));
+        /* The stream owns SDL's only output; UI remains fully closed. */
+        SDL_AudioSpec want = {.freq = 48000,
+                              .format = AUDIO_S16SYS,
+                              .channels = 2,
+                              .samples = 1024},
+                      have;
+        SDL_AudioDeviceID stream =
+            SDL_OpenAudioDevice(NULL, 0, &want, &have, SDL_AUDIO_ALLOW_SAMPLES_CHANGE);
+        assert(stream);
+        assert(!SDL_QueueAudio(stream, pcm, sizeof(pcm)));
+        assert(SDL_GetQueuedAudioSize(stream) == sizeof(pcm));
+        SDL_CloseAudioDevice(stream);
+        assert(sl_audio_init());
         sl_audio_feedback(SL_CUE_BACK, true);
         SDL_Delay(20);
         sl_audio_shutdown();
     }
     SDL_Quit();
-    puts("PASS UI feedback semantics, PCM transparency, cue mixing/mute/resampling and repeated "
-         "cleanup");
+    puts("PASS original PCM bypass, event mixing, mute and exclusive UI/stream device handoff");
 }

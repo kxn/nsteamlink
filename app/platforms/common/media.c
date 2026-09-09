@@ -36,7 +36,8 @@
 static SDL_Window *sdl_window;
 static SDL_Renderer *sdl_renderer;
 static SDL_Texture *video_texture;
-static bool audio_output_active;
+static SDL_AudioDeviceID audio_device;
+static bool audio_shutting_down;
 static bool sdl_initialized;
 static bool locks_ready, mapping_installed;
 static bool sdl_ready;
@@ -312,9 +313,11 @@ static uint32_t audio_queue_limit_bytes(int frequency, int channels) {
 }
 
 static void audio_stop_locked(void) {
-    if (audio_output_active != 0) {
-        sl_audio_clear();
-        audio_output_active = 0;
+    if (audio_device != 0) {
+        SDL_PauseAudioDevice(audio_device, 1);
+        SDL_ClearQueuedAudio(audio_device);
+        SDL_CloseAudioDevice(audio_device);
+        audio_device = 0;
     }
     if (audio_decoder != NULL) {
         opus_decoder_destroy(audio_decoder);
@@ -340,7 +343,7 @@ static void update_audio_snapshot(void) {
 
     pthread_mutex_lock(&audio_lock);
     active = audio_active;
-    queued = audio_output_active != 0 ? sl_audio_queued() : 0;
+    queued = audio_device != 0 ? SDL_GetQueuedAudioSize(audio_device) : 0;
     frames = audio_frames_total;
     bytes = audio_bytes_total;
     samples = audio_decoded_samples_total;
@@ -835,7 +838,8 @@ bool stream_media_init(stream_media_log_fn log_fn) {
 
     open_hid_controller();
 
-    sl_audio_init(); /* UI feedback is optional if the device is unavailable. */
+    audio_shutting_down = false;
+    sl_audio_init();
     sdl_ready = true;
     SDL_RenderSetLogicalSize(sdl_renderer, 1280, 720);
 
@@ -852,6 +856,7 @@ void stream_media_shutdown(void) {
     media_logf("media shutdown: begin");
     stream_media_set_hid_session(NULL, false);
     stream_media_video_stop(NULL);
+    audio_shutting_down = true;
     stream_media_audio_stop(NULL);
     sl_audio_shutdown();
 
@@ -1584,18 +1589,46 @@ int stream_media_audio_start(IHS_Session *session, const IHS_StreamAudioConfig *
         return -1;
     }
 
+    SDL_AudioSpec want;
+    SDL_AudioSpec have;
+    SDL_zero(want);
+    SDL_zero(have);
+    want.freq = (int)config->frequency;
+    want.format = AUDIO_S16LSB;
+    want.channels = (Uint8)config->channels;
+#if __SWITCH__
+    want.samples = 960; /* Restore the device-tested pre-feedback Switch request. */
+#else
+    want.samples = 1024; /* Portable SDL/dummy requires power-of-two blocks. */
+#endif
+    want.callback = NULL;
+
     pthread_mutex_lock(&audio_lock);
-    if (!sl_audio_configure(config->frequency, config->channels)) {
+    sl_audio_suspend(); /* Close the UI device before opening the stream device. */
+    audio_stop_locked();
+    SDL_AudioDeviceID device =
+        SDL_OpenAudioDevice(NULL, 0, &want, &have, SDL_AUDIO_ALLOW_SAMPLES_CHANGE);
+    if (device == 0) {
+        sl_audio_init();
         pthread_mutex_unlock(&audio_lock);
-        media_set_error("audio output configure: %s", SDL_GetError());
+        media_set_error("SDL_OpenAudioDevice: %s", SDL_GetError());
         opus_decoder_destroy(decoder);
         return -1;
     }
-    audio_stop_locked();
+    if (have.freq != want.freq || have.format != want.format || have.channels != want.channels) {
+        media_set_error("SDL audio format mismatch: got %dHz fmt=0x%x ch=%u", have.freq,
+                        (unsigned)have.format, (unsigned)have.channels);
+        SDL_CloseAudioDevice(device);
+        sl_audio_init();
+        pthread_mutex_unlock(&audio_lock);
+        opus_decoder_destroy(decoder);
+        return -1;
+    }
+
     audio_decoder = decoder;
-    audio_output_active = true; /* Shared output is owned by ui_audio, not this session. */
-    audio_frequency = config->frequency;
-    audio_channels = config->channels;
+    audio_device = device;
+    audio_frequency = have.freq;
+    audio_channels = have.channels;
     audio_codec = config->codec;
     audio_active = true;
     audio_frames_total = 0;
@@ -1603,11 +1636,12 @@ int stream_media_audio_start(IHS_Session *session, const IHS_StreamAudioConfig *
     audio_decoded_samples_total = 0;
     audio_queue_drops_total = 0;
     audio_decode_errors_total = 0;
+    SDL_PauseAudioDevice(audio_device, 0);
     pthread_mutex_unlock(&audio_lock);
 
     update_audio_snapshot();
-    media_logf("audio start: codec=Opus freq=%d channels=%d samples=%u codecData=%zu",
-               audio_frequency, audio_channels, 512u, config->codecDataLen);
+    media_logf("audio start: codec=Opus freq=%d channels=%d samples=%u codecData=%zu", have.freq,
+               have.channels, have.samples, config->codecDataLen);
     return 0;
 }
 
@@ -1620,15 +1654,15 @@ int stream_media_audio_submit(IHS_Session *session, IHS_Buffer *data) {
     char error[128] = "";
     int ret = 0;
     pthread_mutex_lock(&audio_lock);
-    if (!audio_active || audio_decoder == NULL || audio_output_active == 0) {
+    if (!audio_active || audio_decoder == NULL || audio_device == 0) {
         pthread_mutex_unlock(&audio_lock);
         return 0;
     }
 
     uint32_t queue_limit = audio_queue_limit_bytes(audio_frequency, audio_channels);
-    uint32_t queued = sl_audio_queued();
+    uint32_t queued = SDL_GetQueuedAudioSize(audio_device);
     if (queue_limit > 0 && queued > queue_limit) {
-        sl_audio_clear();
+        SDL_ClearQueuedAudio(audio_device);
         audio_queue_drops_total++;
     }
 
@@ -1647,7 +1681,8 @@ int stream_media_audio_submit(IHS_Session *session, IHS_Buffer *data) {
             (uint32_t)samples * (uint32_t)audio_channels * (uint32_t)sizeof(opus_int16);
         if (atomic_load(&muted))
             memset(audio_decode_buf, 0, pcm_bytes);
-        if (pcm_bytes > 0 && sl_audio_queue(audio_decode_buf, pcm_bytes) != 0) {
+        sl_audio_mix(audio_decode_buf, samples, audio_frequency, audio_channels);
+        if (pcm_bytes > 0 && SDL_QueueAudio(audio_device, audio_decode_buf, pcm_bytes) != 0) {
             audio_decode_errors_total++;
             ret = -1;
             if (audio_decode_errors_total <= 3 || (audio_decode_errors_total % 60U) == 0U) {
@@ -1671,8 +1706,10 @@ int stream_media_audio_submit(IHS_Session *session, IHS_Buffer *data) {
 void stream_media_audio_stop(IHS_Session *session) {
     (void)session;
     pthread_mutex_lock(&audio_lock);
-    bool had_audio = audio_active || audio_output_active != 0 || audio_decoder != NULL;
+    bool had_audio = audio_active || audio_device != 0 || audio_decoder != NULL;
     audio_stop_locked();
+    if (!audio_shutting_down && sdl_ready)
+        sl_audio_init();
     pthread_mutex_unlock(&audio_lock);
 
     update_audio_snapshot();
@@ -1963,7 +2000,7 @@ void stream_media_get_snapshot(stream_media_snapshot *out) {
 
     pthread_mutex_lock(&audio_lock);
     audio_snap_active = audio_active;
-    audio_snap_queued = audio_output_active != 0 ? sl_audio_queued() : 0;
+    audio_snap_queued = audio_device != 0 ? SDL_GetQueuedAudioSize(audio_device) : 0;
     audio_snap_frames = audio_frames_total;
     audio_snap_bytes = audio_bytes_total;
     audio_snap_samples = audio_decoded_samples_total;
