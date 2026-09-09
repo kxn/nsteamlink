@@ -1839,7 +1839,10 @@ UI 独立呈现等待动画、禁用重复提交和 B 中断。服务不在 SDL/
 
 构建机将未经修改的 vendored nx-hbloader 复制到 build 目录，改固定目标为
 `sdmc:/switch/nsteamlink/nsteamlink.nro`，返回且无 nextLoad 请求时退出进程，目标缺失时退出。
-正常 NRO return 必须先完成应用既有 stop/join/destroy；loader 在检查退出前卸载旧 NRO 映射。
+**2026-09-09 更正**：撤回将上述 `svcExitProcess()` 设计视为“正常返回 HOME”的推断。
+用户实测应用内创建的入口退出时出现“发生错误，软件已经关闭”，而 hbmenu 退出正常。
+进程结束不等于已通知系统正常退出；原因依据与 NRO 兼容修复见 D-050。
+正常 NRO return 必须先完成应用既有 stop/join/destroy；原 loader 在检查退出前卸载旧 NRO 映射。
 保留官方 nextLoad ABI，不调用宿主应用 main 或自造映射流程。
 加载器 NPDM 在应用已有权限之上保留上游 hbl.json 中的 SVC 0x73 / 0x77 / 0x78，
 分别供 SetProcessMemoryPermission / MapProcessCodeMemory / UnmapProcessCodeMemory；
@@ -1866,3 +1869,37 @@ fsync、rename 到固定路径。路径不可读（例如某些 netloader 启动
 
 发版默认允许发布含本机 HOME 安装功能的 NRO；配置 Secret 时附带完整 NSP。
 这取代早期“缺少 keyset 必须阻止整个标签发版”的门槛；完整 NSP 本身仍要求 keyset。
+
+
+## D-050：HOME forwarder 的 NRO 正常退出通知（2026-09-09）
+
+**设备证据**：用户明确确认入口来自应用内“添加到 HOME 菜单”；从该入口启动后在应用内退出，
+系统报告“发生错误，软件已经关闭”。相同应用从 hbmenu 启动退出没有这个问题。
+撤回 D-049 中把裸 `svcExitProcess()` 当作正常 HOME 退出路径的设计推断。
+
+**源码证据**：本地 SDK 为 libnx `4.12.0-1`，库中导出弱变量 `__nx_applet_exit_mode`。
+对应 [v4.12.0 applet.c](https://github.com/switchbrew/libnx/blob/v4.12.0/nx/source/services/applet.c)
+第 13–15 行说明默认模式只为 NSO 发送退出命令；`_appletCleanup` 第 389–404 行只在
+`envIsNso() && mode == 0` 或 `mode == 1` 时安装两阶段退出回调。
+Application / SystemApplication 的最终回调发送 SelfController::Exit，成功后等待系统结束进程。
+[init.c](https://github.com/switchbrew/libnx/blob/v4.12.0/nx/source/runtime/init.c) 的
+`__libnx_exit` 先执行 `__appExit` 清理，再使用 `envGetExitFuncPtr()`。
+我们的 loader 模板则在 NRO 返回后直接 `svcExitProcess()`，没有这次系统退出通知。
+
+**结论**：v0.1.0 的默认 NRO 退出路径和生成的 loader 均未发送正常应用退出通知。
+**待验证的因果解释**：系统因此将此次 HOME 宿主终止判作异常；用户的实际报错与此吻合，
+但仅凭源码不能排除卸载旧 NRO 映射时的另一种异常，最终修复效果需要相同设备验证。
+
+**实现**：全内存启动通过 preflight 时读取当前宿主 `InfoType_ProgramId`。只对
+非 NSO 且宿主 ID 等于本项目 forwarder `01004e534c4b1000` 的 NRO，将 libnx
+`__nx_applet_exit_mode` 设为 1。不按 `argv[0]` 或“是否全内存”猜测宿主；普通 hbmenu、
+游戏 title takeover、完整独立 NSP、applet 模式、查询失败均不改 libnx 默认退出策略。
+
+退出仍先运行既有 application stop/join/destroy，再交给 libnx 默认运行库清理和两阶段
+SelfController::Exit；不在主循环或 shutdown 中提前销毁 applet 服务，不增加线程或自造等待循环。
+更新固定路径的 NRO 即可让已安装入口使用修复；正常退出不再返回旧 loader 的裸退出分支，
+无需为了这个修复覆盖已安装的 HOME 入口。
+
+自动测试覆盖两种全内存 applet 类型、独立 NSO、普通 hbmenu/游戏宿主、身份查询失败及
+applet 拦截。它证明退出策略的隔离条件，不将模拟测试当作系统实际关闭行为的证明。
+实机结果与任务状态维护于 GitHub Issues。

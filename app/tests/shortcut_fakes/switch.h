@@ -98,3 +98,8 @@ void padInitializeDefault(PadState *);
 void padUpdate(PadState *);
 u64 padGetButtonsDown(PadState *);
 bool appletMainLoop(void);
+
+#define CUR_PROCESS_HANDLE 0xffff8001u
+#define InfoType_ProgramId 18u
+bool envIsNso(void);
+Result svcGetInfo(u64 *out, u32 type, u32 handle, u64 sub_id);
