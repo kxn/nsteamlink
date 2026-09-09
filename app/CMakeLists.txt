@@ -27,6 +27,7 @@ add_dependencies(nsl_ui nsl_identity nsl_i18n)
 target_include_directories(nsl_ui PUBLIC ${NSL_IDENTITY_DIR} ${NSL_I18N_DIR})
 target_compile_definitions(nsl_ui PUBLIC NSL_DIAGNOSTICS=$<BOOL:${NSL_DIAGNOSTICS}>)
 add_library(nsl_platform STATIC platforms/common/application.c platforms/common/sdl_input.c platforms/common/media.c
+    platforms/common/shortcut_package.c platforms/${NSL_PLATFORM}/shortcut.c
     platforms/common/ui_renderer.c platforms/common/ui_audio.c platforms/common/runtime.c platforms/${NSL_PLATFORM}/system.c)
 target_include_directories(nsl_platform PRIVATE ${CMAKE_SOURCE_DIR}/third_party/ihslib/src
     ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf)
@@ -42,13 +43,29 @@ target_link_libraries(nsl_platform PUBLIC nsl_ui nsl_artwork ihslib ihslib-hid-s
 add_executable(nsteamlink src/main.c)
 target_link_libraries(nsteamlink PRIVATE nsl_platform)
 if(NSL_PLATFORM STREQUAL "switch")
-    target_sources(nsl_platform PRIVATE platforms/switch/rumble.c)
+    target_sources(nsl_platform PRIVATE platforms/switch/rumble.c platforms/switch/preflight.c)
     target_link_options(nsl_platform INTERFACE -Wl,--wrap=SDL_GameControllerRumble)
     target_link_libraries(nsl_platform PUBLIC nx)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     set(NSL_NACP "${CMAKE_CURRENT_BINARY_DIR}/control.nacp")
     set(NSL_KEYSET "" CACHE FILEPATH "Local Switch keyset; never commit it")
-    set(HACBREWPACK "hacbrewpack" CACHE STRING "hacBrewPack executable")
+    set(NSL_DEFAULT_HACBREWPACK "hacbrewpack")
+    if(EXISTS "${CMAKE_SOURCE_DIR}/build/deps/hacBrewPack/hacbrewpack")
+        set(NSL_DEFAULT_HACBREWPACK "${CMAKE_SOURCE_DIR}/build/deps/hacBrewPack/hacbrewpack")
+    endif()
+    set(HACBREWPACK "${NSL_DEFAULT_HACBREWPACK}" CACHE STRING "hacBrewPack executable")
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/shortcut_template.c"
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/build-shortcut.py"
+            --root "${CMAKE_SOURCE_DIR}" --output "${CMAKE_CURRENT_BINARY_DIR}/shortcut_template.c"
+            --hacbrewpack "${HACBREWPACK}"
+        DEPENDS "${CMAKE_SOURCE_DIR}/scripts/build-shortcut.py"
+            "${CMAKE_SOURCE_DIR}/third_party/nx-hbloader/source/main.c"
+            "${CMAKE_SOURCE_DIR}/third_party/nx-hbloader/source/trampoline.s"
+            "${CMAKE_SOURCE_DIR}/third_party/nx-hbloader/Makefile"
+            "${CMAKE_SOURCE_DIR}/third_party/nx-hbloader/hbl.json"
+            "${CMAKE_SOURCE_DIR}/packaging/switch/application.json"
+            "${CMAKE_SOURCE_DIR}/assets/branding/icon.jpg" VERBATIM)
+    target_sources(nsl_platform PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/shortcut_template.c")
     add_custom_command(OUTPUT "${NSL_NACP}"
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/switch-metadata.py"
             --identity "${NSL_IDENTITY_DIR}/build_identity.json" --nacptool "${NX_NACPTOOL_EXE}"
@@ -131,4 +148,36 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_compile_options(nsl-rumble-tests PRIVATE -Wall -Wextra -UNDEBUG)
     target_link_libraries(nsl-rumble-tests PRIVATE nsl_ui PkgConfig::SDL2)
     add_test(NAME nsl-rumble COMMAND nsl-rumble-tests)
+endif()
+
+if(NSL_PLATFORM STREQUAL "desktop")
+    find_package(OpenSSL REQUIRED)
+    add_executable(nsl-shortcut-package-tests tests/test_shortcut_package.c platforms/common/shortcut_package.c)
+    target_include_directories(nsl-shortcut-package-tests PRIVATE platforms/common)
+    target_link_libraries(nsl-shortcut-package-tests PRIVATE OpenSSL::Crypto)
+    target_compile_options(nsl-shortcut-package-tests PRIVATE -Wall -Wextra -UNDEBUG)
+    add_test(NAME nsl-shortcut-package COMMAND nsl-shortcut-package-tests)
+endif()
+
+if(NSL_PLATFORM STREQUAL "desktop")
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/shortcut_fixture.c"
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/test-shortcut-fixture.py"
+            "${CMAKE_CURRENT_BINARY_DIR}/shortcut_fixture.c"
+        DEPENDS "${CMAKE_SOURCE_DIR}/scripts/test-shortcut-fixture.py" VERBATIM)
+    add_executable(nsl-shortcut-install-tests tests/test_shortcut_install.c platforms/switch/shortcut.c
+        platforms/common/shortcut_package.c "${CMAKE_CURRENT_BINARY_DIR}/shortcut_fixture.c")
+    target_include_directories(nsl-shortcut-install-tests PRIVATE tests/shortcut_fakes platforms/common)
+    target_link_libraries(nsl-shortcut-install-tests PRIVATE nsl_ui OpenSSL::Crypto)
+    target_compile_options(nsl-shortcut-install-tests PRIVATE -Wall -Wextra -UNDEBUG)
+    add_test(NAME nsl-shortcut-install COMMAND nsl-shortcut-install-tests)
+    add_library(nsl-preflight-entry OBJECT src/main.c)
+    target_link_libraries(nsl-preflight-entry PRIVATE nsl_ui)
+    target_compile_definitions(nsl-preflight-entry PRIVATE main=sl_test_entry)
+    add_executable(nsl-preflight-tests tests/test_preflight.c platforms/switch/preflight.c
+        platforms/desktop/system.c $<TARGET_OBJECTS:nsl-preflight-entry>)
+    target_compile_definitions(nsl-preflight-tests PRIVATE NSL_PREFLIGHT_TEST=1)
+    target_include_directories(nsl-preflight-tests PRIVATE tests/shortcut_fakes)
+    target_link_libraries(nsl-preflight-tests PRIVATE nsl_ui)
+    target_compile_options(nsl-preflight-tests PRIVATE -Wall -Wextra -UNDEBUG)
+    add_test(NAME nsl-preflight COMMAND nsl-preflight-tests)
 endif()

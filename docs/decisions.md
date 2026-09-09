@@ -1806,3 +1806,63 @@ IHS_HIDDeviceLock` 读取 `device->managed`，与 `IHS_HIDManagerOpenDevice` 在
 列表发布后写该字段竞争。将反向指针初始化移到 devicesLock 保护的列表发布之前；
 同时将 opened（SDL 状态与 pendingWrites 初始化）放到最终列表发布之前，
 避免另一种半初始化读取；不改轮询线程和设备延迟释放策略。
+
+## D-049：本机 HOME 入口封装与 SDL 前 applet 门禁（2026-09-09）
+
+**证据**：原 `app/src/main.c` 无条件进入 `sl_application_run`；后者调用
+`sl_system_init` 和 `stream_media_init`，未检查 applet 类型。用户报告相册 applet
+启动在 Mesa 路径崩溃；此前平台实验见 `GFX_MESA_INVESTIGATION.md`。
+因此入口检查必须先于 SDL、网络和 app 自有 worker，不能依赖 SDL 弹窗报告。
+
+`sl_system_preflight` 仅允许 Application / SystemApplication；其他类型用 libnx
+软件 framebuffer console 显示启动方式，B 返回 loader。内置 console 字体只有 ASCII，
+这里明确使用英文资源，避免在门禁加载 SDL_ttf/Mesa 或尝试不可显示的中文。
+正常入口仍按用户语言设置工作。console 在返回 main 前销毁；全应用模式不初始化 console。
+
+**封装依据**：
+
+- [nx-hbloader 82b9512](https://github.com/switchbrew/nx-hbloader/tree/82b95122c5ae8dc059bf23893ba7623c72c86773)：
+  `source/main.c` 的 loadNro、映射卸载、Homebrew ABI entries、退出 trampoline。
+- [switch-nsp-forwarder 8458115](https://github.com/TooTallNate/switch-nsp-forwarder/blob/845811585e0b0d8881745afd50eca25d203957fd/src/prod-keys.ts)：
+  SPL GenerateAesKek / GenerateAesKey 获取本机 NCA header key；公开 derivation source 不等于生成的密钥。
+- [nx.js f41fb55](https://github.com/TooTallNate/nx.js/blob/f41fb5506a2da21337d6c9b41f14c69ae2e1418f/packages/install-title/src/index.ts)：
+  NCM placeholder/register、ContentMeta 数据库包含 meta 自身的 content info。
+  同提交 `packages/ns/src/index.ts` 的 ApplicationManager command 16 与 installed event 3。
+- hacBrewPack `745b16e` 的 `nca.c`、`cnmt.c`、`aes.c`：plaintext section、CNMT 记录、
+  PFS0 哈希树和 Nintendo big-endian sector AES-XTS。libnx 对应 NCM/SPL/crypto API。
+
+**选择**：NRO 内提供“添加到 HOME 菜单”。确认后由现有可 join 的 runtime worker 执行；
+UI 独立呈现等待动画、禁用重复提交和 B 中断。服务不在 SDL/render/input 路径调用。
+完整 NSP 使用 `01004e534c4b0000`，forwarder 使用 `01004e534c4b1000`，两者不是同一安装物。
+安装前检查 NS（含归档记录）、SD 和内置用户存储的同 ID 元数据及内容碰撞，不覆盖任何现有入口。
+不修改系统签名验证策略，实际安装/启动兼容性由用户 CFW 的自制应用支持决定。
+
+构建机将未经修改的 vendored nx-hbloader 复制到 build 目录，改固定目标为
+`sdmc:/switch/nsteamlink/nsteamlink.nro`，返回且无 nextLoad 请求时退出进程，目标缺失时退出。
+正常 NRO return 必须先完成应用既有 stop/join/destroy；loader 在检查退出前卸载旧 NRO 映射。
+保留官方 nextLoad ABI，不调用宿主应用 main 或自造映射流程。
+加载器 NPDM 在应用已有权限之上保留上游 hbl.json 中的 SVC 0x73 / 0x77 / 0x78，
+分别供 SetProcessMemoryPermission / MapProcessCodeMemory / UnmapProcessCodeMemory；
+普通应用 NPDM 没有这些权限，不能直接原样用于 loader。
+
+构建模板用明确的公开 synthetic test vector 和 hacBrewPack plaintext 模式；随后解开
+NCA header、清零无用 key area，只嵌入私有 `NSLFWD01` bundle。它不是可安装 NSP，
+不能作为“未签名 NSP”发布。Python cryptography 只在构建机使用。
+Switch 用 SPL 派生 header key，在内存封装 program/control，更新 CNMT 的 content IDs/hash，
+重算 CNMT digest、PFS0 hash table / master hash / FS header hash，再封装 meta。
+密钥不落盘、不记日志，返回前清零。NCM 导入三个 NCA、提交数据库后才注册 HOME record。
+失败尽力删除本事务 placeholder/content/metadata；回滚失败明确报告，不静默宣称恢复。
+不承诺断电原子性，清理失败时不得删除仍被元数据引用的内容。
+
+安装使用 argv[0] 指向的实际 SD NRO：校验 NRO header 和长度，必要时临时文件写入、flush、
+fsync、rename 到固定路径。路径不可读（例如某些 netloader 启动方式）则返回操作说明，
+不把历史 NRO 误当本次运行版本。NRO 保存后安装失败可留下这个可用文件；它不是安装残留。
+入口更新通过替换固定 NRO 完成；入口图标来自项目原创 icon，版本 1.0.0 表示 loader，
+应用 UI 的版本仍是运行 NRO 的版本 + short hash。
+
+**验证边界**：模板格式/哈希测试和服务失败注入只验证本地算法与清理控制流；
+它们不能证明某个 CFW 能安装或启动，也不能证明真机返回 HOME 的生命周期。
+实际运行证据和任务状态只记录在 Issue #23。
+
+发版默认允许发布含本机 HOME 安装功能的 NRO；配置 Secret 时附带完整 NSP。
+这取代早期“缺少 keyset 必须阻止整个标签发版”的门槛；完整 NSP 本身仍要求 keyset。

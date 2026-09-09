@@ -2,6 +2,7 @@
 #include "build_identity.h"
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <stdio.h>
 #include <string.h>
 #include <switch.h>
 #include <sys/socket.h>

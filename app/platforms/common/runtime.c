@@ -2,6 +2,7 @@
 #include "client_pri.h"
 #include "discovery.pb-c.h"
 #include "media.h"
+#include "platform/shortcut.h"
 #include "platform/system.h"
 #include "services/i18n.h"
 #include "services/launch_watch.h"
@@ -478,6 +479,17 @@ static void execute(sl_runtime *r, sl_command cmd) {
     sl_log(trace);
     if (cmd.type == SL_CMD_SAVE)
         return;
+    if (cmd.type == SL_CMD_SHORTCUT) {
+        pthread_mutex_lock(&r->lock);
+        r->active.generation = cmd.generation;
+        pthread_mutex_unlock(&r->lock);
+        char detail[64];
+        sl_text_id result = sl_shortcut_install(detail, sizeof(detail));
+        sl_runtime_event e = {.type = SL_EVENT_SHORTCUT};
+        snprintf(e.text, sizeof(e.text), "%s%s%s", sl_tr(result), detail[0] ? "\n" : "", detail);
+        post(r, e);
+        return;
+    }
     if (cmd.type == SL_CMD_END_GAME) {
         pthread_mutex_lock(&r->lock);
         r->active.generation = cmd.generation;

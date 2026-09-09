@@ -118,5 +118,20 @@
   "END_GAME_QUESTION": "结束电脑上的游戏？",
   "END_GAME_EXPLANATION": "游戏将关闭，请先保存进度。",
   "END_GAME_FAILED": "未能确认游戏已结束，请检查电脑。",
-  "ENDING_GAME": "正在结束游戏"
+  "ENDING_GAME": "正在结束游戏",
+  "APPLET_UNSUPPORTED": "不支持 applet 模式。",
+  "APPLET_INSTRUCTION": "按住 R 启动游戏进入 hbmenu，\n再打开 NSteamLink。",
+  "APPLET_RETURN": "B  返回 hbmenu",
+  "SHORTCUT": "添加到 HOME 菜单",
+  "SHORTCUT_QUESTION": "添加 HOME 入口？",
+  "SHORTCUT_DESCRIPTION": "将保存 NRO 到下方路径，请勿移动。",
+  "SHORTCUT_INSTALL": "添加",
+  "SHORTCUT_INSTALLING": "正在添加 HOME 入口",
+  "SHORTCUT_RESULT": "HOME 入口",
+  "SHORTCUT_ADDED": "已添加，可从 HOME 菜单启动。",
+  "SHORTCUT_EXISTS": "入口或同名应用已存在，未作更改。",
+  "SHORTCUT_FAILED": "无法添加，请检查安装权限和 SD 卡空间。",
+  "SHORTCUT_CLEANUP_FAILED": "清理未完成，请在系统设置中删除此入口。",
+  "SHORTCUT_NRO_REQUIRED": "无法保存 NRO。请将文件放到下方路径后重试。",
+  "SHORTCUT_SWITCH_ONLY": "请在 Switch 上添加 HOME 入口。"
 }

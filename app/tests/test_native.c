@@ -323,7 +323,8 @@ int main(int argc, char **argv) {
             ui.debug = p == SL_STREAM;
             ui.stream_started_at = ui.now;
             ui.entered_at = ui.now > 500 ? ui.now - 500 : 0;
-            strcpy(ui.error, sl_tr(SL_T_PROFILE_CORRUPT));
+            strcpy(ui.error,
+                   sl_tr(p == SL_INSTALL_RESULT ? SL_T_SHORTCUT_ADDED : SL_T_PROFILE_CORRUPT));
             sl_ui_layout(&ui);
             stream_media_present();
             char image[64];

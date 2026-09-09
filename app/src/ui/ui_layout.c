@@ -1,3 +1,4 @@
+#include "platform/shortcut.h"
 #include "services/i18n.h"
 #include "ui_model.h"
 #include <stdio.h>
@@ -108,6 +109,21 @@ void sl_ui_layout(sl_ui_model *m) {
             row(l, 0, sl_tr(SL_T_SETTINGS), SL_OPEN_SETTINGS, 0);
             if (h)
                 row(l, 1, sl_tr(SL_T_REMOVE_PC), SL_OPEN_FORGET, 0);
+            row(l, h ? 2 : 1, sl_tr(SL_T_SHORTCUT), SL_OPEN_SHORTCUT, 0);
+            break;
+        case SL_SHORTCUT:
+            strcpy(l->title, sl_tr(SL_T_SHORTCUT_QUESTION));
+            text(l, 320, 272, 28, sl_tr(SL_T_SHORTCUT_DESCRIPTION));
+            text(l, 320, 344, 24, SL_SHORTCUT_PATH);
+            row(l, 3, sl_tr(SL_T_SHORTCUT_INSTALL), SL_CONFIRM_SHORTCUT, 0);
+            break;
+        case SL_INSTALLING:
+            strcpy(l->title, sl_tr(SL_T_SHORTCUT_INSTALLING));
+            break;
+        case SL_INSTALL_RESULT:
+            strcpy(l->title, sl_tr(SL_T_SHORTCUT_RESULT));
+            text(l, 320, 240, 28, m->error);
+            text(l, 320, 360, 24, SL_SHORTCUT_PATH);
             break;
         case SL_SETTINGS:
             strcpy(l->title, sl_tr(SL_T_SETTINGS));
@@ -198,7 +214,7 @@ void sl_ui_layout(sl_ui_model *m) {
         default:
             break;
         }
-        if (m->page != SL_STOPPING && m->page != SL_CLOSING)
+        if (m->page != SL_STOPPING && m->page != SL_INSTALLING && m->page != SL_CLOSING)
             button(l, 9, 320, 596, 640, 64,
                    m->page == SL_CONNECTING || m->page == SL_PAIRING || m->page == SL_SAVING
                        ? sl_tr(SL_T_CANCEL_KEY)
@@ -209,7 +225,8 @@ void sl_ui_layout(sl_ui_model *m) {
         l->drawer = m->page == SL_MENU || m->page == SL_OPTIONS || m->page == SL_SETTINGS ||
                     m->page == SL_QUALITY || m->page == SL_LANGUAGE;
         l->compact = m->page == SL_END_GAME || m->page == SL_DISCONNECT || m->page == SL_FORGET ||
-                     m->page == SL_EXIT || m->page == SL_ERROR || m->page == SL_STOPPING;
+                     m->page == SL_EXIT || m->page == SL_ERROR || m->page == SL_STOPPING ||
+                     m->page == SL_INSTALLING;
         l->panel_x = 272;
         l->panel_y = 96;
         l->panel_w = 736;
@@ -252,7 +269,7 @@ void sl_ui_layout(sl_ui_model *m) {
                     c->primary = true;
                 }
             }
-            if (m->page == SL_STOPPING) {
+            if (m->page == SL_STOPPING || m->page == SL_INSTALLING) {
                 l->panel_x = 360;
                 l->panel_y = 256;
                 l->panel_w = 560;
@@ -264,6 +281,27 @@ void sl_ui_layout(sl_ui_model *m) {
                 for (int i = 0; i < l->count; ++i)
                     l->controls[i].y = 378;
             }
+        } else if (m->page == SL_SHORTCUT) {
+            l->panel_y = 164;
+            l->panel_h = 392;
+            for (int i = 0; i < l->count; ++i) {
+                sl_control *c = &l->controls[i];
+                c->x = c->id == 9 ? 320 : 652;
+                c->y = 444;
+                c->w = 308;
+                c->h = 72;
+                c->primary = c->id != 9;
+                if (c->primary)
+                    snprintf(c->label, sizeof(c->label), "A  %s", sl_tr(SL_T_SHORTCUT_INSTALL));
+                else
+                    snprintf(c->label, sizeof(c->label), "%s", sl_tr(SL_T_CANCEL_KEY));
+            }
+        } else if (m->page == SL_INSTALL_RESULT) {
+            l->panel_y = 164;
+            l->panel_h = 420;
+            l->labels[0].y = 272;
+            l->labels[1].y = 376;
+            l->controls[0].y = 472;
         } else if (m->page == SL_PAIRING) {
             l->panel_y = 160;
             l->panel_h = 420;
@@ -326,7 +364,7 @@ void sl_ui_layout(sl_ui_model *m) {
     if (!found) {
         m->focus = l->count ? l->controls[0].id : 0;
     }
-    if (l->compact) {
+    if (l->compact || m->page == SL_SHORTCUT) {
         m->focus = 0;
         for (int i = 0; i < l->count; ++i)
             if (l->controls[i].primary)

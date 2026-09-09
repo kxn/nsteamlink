@@ -104,6 +104,9 @@ UI 替换的目标模块边界见 `docs/UI_UX_DESIGN.md` §5：`app/src/ui/` 负
 | libcurl | 系统 / devkitPro switch-curl 7.69.1-5（libnx SSL） | curl | 封面 HTTPS | M5 |
 | libjpeg-turbo | 系统 / devkitPro 2.1.2-2 | BSD/IJG | 后台 JPEG 解码 | M5 |
 | jsmn | vendored 25647e6 | MIT | 有界商店 JSON 解析 | M5 |
+| nx-hbloader | vendored 82b9512 | ISC | HOME NRO 加载器 | M5 |
+| cryptography | 构建机 Python 包 | Apache-2.0/BSD | 解开 synthetic header，非运行时依赖 | M5 |
+| OpenSSL | 桌面测试系统库 | Apache-2.0（3.x） | 封装校验测试，Switch 不链接 | M5 |
 | protobuf-c | 系统 1.5.1 / M2 自行交叉编译 | BSD-2 | IHSlib 依赖 | M2 |
 
 - 项目整体以 **GPLv3** 发布（复用 Moonlight-Switch 材料所致，kickoff §7.1 / decisions D-004）。

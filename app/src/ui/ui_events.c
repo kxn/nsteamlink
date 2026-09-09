@@ -17,6 +17,14 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
     if (e.type != SL_EVENT_CLOSED && e.generation != m->generation)
         return;
     switch (e.type) {
+    case SL_EVENT_SHORTCUT:
+        if (m->page != SL_INSTALLING)
+            break;
+        snprintf(m->error, sizeof(m->error), "%s", e.text);
+        m->page = SL_INSTALL_RESULT;
+        m->entered_at = m->now;
+        m->focus = 9;
+        break;
     case SL_EVENT_CODE:
         if (m->page != SL_PAIRING || m->pairing_code[0])
             break;

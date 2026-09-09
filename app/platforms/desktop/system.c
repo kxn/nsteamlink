@@ -73,3 +73,10 @@ const char *sl_system_locale(void) {
         locale = getenv("LANG");
     return locale && *locale ? locale : "en";
 }
+
+#ifndef NSL_PREFLIGHT_TEST
+bool sl_system_preflight(void) {
+    return true;
+}
+
+#endif
