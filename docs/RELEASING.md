@@ -10,7 +10,7 @@ NACP 最多容纳 15 字节版本文本，超长会明确报错，不能静默�
 
 ## 本地构建
 
-需要 devkitPro、CMake、Python 3.9+、Git 与 make。已有 SDK 的开发机不必重新安装依赖。
+需要 devkitPro、CMake、Python 3.9+（cryptography 包）、Git 与 make。已有 SDK 的开发机不必重新安装依赖。
 干净环境可在 `devkitpro/devkita64:20260219` 容器中执行：
 
 ```sh
@@ -18,7 +18,10 @@ scripts/setup-switch-deps.sh
 scripts/build-switch.sh -DNSL_DIAGNOSTICS=OFF -DNSL_BUILD_TOOLS=OFF
 ```
 
-默认产物为 `build/switch/app/nsteamlink.nro`，不需要任何密钥。
+默认产物为 `build/switch/app/nsteamlink.nro`，构建不需要任何机器密钥。
+NRO 内含 HOME 入口安装功能；构建需要 setup 脚本提供的 hacBrewPack。
+Debian/Ubuntu 构建机可用 `apt-get install python3-cryptography`。
+已有 CMake 缓存时可显式传 `-DHACBREWPACK="$PWD/build/deps/hacBrewPack/hacbrewpack"`。
 protobuf-c 固定 v1.5.0，hacBrewPack 固定提交；devkitPro 包的实际版本由 CI 附件记录。
 容器标签和 portlibs 仓库不是完整的可复现依赖锁，升级后仍需真机验证。
 
@@ -34,7 +37,8 @@ cmake --build build/switch --target nsteamlink_release
 `nsteamlink_nsp` 仅生成 NSP，`nsteamlink_release` 同时生成 NRO 和 NSP。
 也可 configure 时传入 `-DNSL_KEYSET=/path/to/prod.keys -DHACBREWPACK=/path/to/hacbrewpack`。
 keyset 需要 `header_key` 和 `key_area_key_application_00`，只用于打包，不嵌入应用或发布附件。
-工程不会下载或生成替代 keyset。NRO 不受此依赖影响。
+构建机不会下载或生成替代生产 keyset。NRO 的本机 HOME 入口安装不要求用户提供 keyset；
+它通过本机 SPL 在内存完成封装，密钥不导出、不落盘。
 
 ## GitHub Actions
 
@@ -46,12 +50,13 @@ Release NRO；配置 Secret 后也构建 NSP。仅上传明确列出的用户产
 密钥只在 NSP 步骤写入权限 0600 的临时文件，退出时删除；日志不回显打包工具的原始输出。
 
 正式发布：修改根版本、提交并完成测试后，推送与版本一致的 `vX.Y.Z` 标签。
-标签工作流缺少 keyset、缺少任一格式、测试失败或版本不一致都会停止，不能发布半套产物。
+标签工作流必须包含 NRO；无 keyset 时发布带本机 HOME 安装功能的 NRO，
+配置 keyset 时也必须成功生成完整 NSP。测试失败或版本不一致都会停止。
 所有检查通过后先创建带全部附件的草稿，再公开 Release。手动运行分支工作流只构建；
 要重跑已存在标签的发布流程，在 Actions 中重跑该标签运行。上传失败留下的草稿需先检查
 并删除后重跑，避免覆盖用户已经下载的正式版本。
 
-附件：带版本和 short hash 的 `.nro` / `.nsp`、完整哈希 JSON、SDK 包版本清单、SHA256SUMS。
+附件：带版本和 short hash 的 `.nro`、可选完整 `.nsp`、完整哈希 JSON、SDK 包版本清单、SHA256SUMS。
 发版默认关闭诊断，不发布测试工具。源码由对应标签与 submodule 固定提交追溯。
 
 ## 诊断构建
@@ -72,3 +77,17 @@ NSP 应在支持自制应用的 Switch 上验证安装、HOME 图标、启动、
 
 安装标识固定为 `01004e534c4b0000`；这是项目选择的自制 Title ID，并非官方分配。
 NACP 不要求选择 Nintendo 用户；配置仍使用项目既有 SD 卡路径。
+
+
+## NRO 内的 HOME 入口
+
+在全内存 hbmenu 启动 NRO，选项 → 添加到 HOME 菜单 → A 添加。
+会将当前 SD 上的 NRO 保存到 `sdmc:/switch/nsteamlink/nsteamlink.nro`。
+若 netloader 的来源文件不可读，按提示手动将 NRO 放到该路径并从 hbmenu 打开后添加。
+该入口使用独立 ID `01004e534c4b1000`，依赖上述 NRO；完整 NSP 不依赖它。
+安装需要 CFW 支持自制应用安装与启动；程序不改动系统验证策略。
+
+HOME 入口只需添加一次，后续更新替换固定路径下的 NRO。删除入口用系统数据管理，
+不影响项目 SD 配置。不要移动或删除目标 NRO；文件缺失时入口直接退出。
+封装模板只存在于 build 目录和 NRO 内部，不作为 `.nsp` 发布。
+自动算法/失败注入测试不等于真机安装、启动和返回 HOME 的验证。

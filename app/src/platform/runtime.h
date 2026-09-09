@@ -12,6 +12,7 @@ typedef enum sl_event_type {
     SL_EVENT_STOPPED,
     SL_EVENT_ACTIVITY,
     SL_EVENT_NETWORK,
+    SL_EVENT_SHORTCUT,
     SL_EVENT_CLOSED
 } sl_event_type;
 typedef struct sl_runtime_event {

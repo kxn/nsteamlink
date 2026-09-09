@@ -22,7 +22,7 @@ jobs:
           submodules: recursive
           fetch-depth: 0
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build libsdl2-dev libsdl2-ttf-dev libavcodec-dev libavutil-dev libswscale-dev libopus-dev libprotobuf-c-dev libmbedtls-dev libcurl4-openssl-dev libjpeg-dev fonts-noto-cjk
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build libsdl2-dev libsdl2-ttf-dev libavcodec-dev libavutil-dev libswscale-dev libopus-dev libprotobuf-c-dev libmbedtls-dev libcurl4-openssl-dev libjpeg-dev libssl-dev fonts-noto-cjk
       - name: Build and test
         run: |
           cmake -S . -B build/desktop -G Ninja -DCMAKE_BUILD_TYPE=Release -DNSL_DIAGNOSTICS=${{ matrix.diagnostics }} -DNSL_BUILD_TOOLS=OFF
@@ -42,10 +42,10 @@ jobs:
       - name: Install build dependencies
         run: |
           apt-get update
-          apt-get install -y cmake python3 build-essential git
+          apt-get install -y cmake python3 python3-cryptography build-essential git
           scripts/setup-switch-deps.sh
       - name: Build NRO (diagnostics excluded)
-        run: scripts/build-switch.sh -DNSL_DIAGNOSTICS=OFF -DNSL_BUILD_TOOLS=OFF
+        run: scripts/build-switch.sh -DNSL_DIAGNOSTICS=OFF -DNSL_BUILD_TOOLS=OFF -DHACBREWPACK="$GITHUB_WORKSPACE/build/deps/hacBrewPack/hacbrewpack"
       - name: Build NSP when keyset is configured
         env:
           SWITCH_KEYSET: ${{ secrets.NSL_SWITCH_KEYSET }}
@@ -54,11 +54,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "$SWITCH_KEYSET" ]; then
-            if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-              echo '::error::NSL_SWITCH_KEYSET is required: a release must contain both NSP and NRO.'
-              exit 1
-            fi
-            echo '::notice::No NSL_SWITCH_KEYSET configured; NRO-only CI build (not a release).'
+            echo '::notice::Publishing NRO with on-device HOME shortcut installation; standalone NSP omitted.'
             exit 0
           fi
           export NSL_KEYSET="$(mktemp)"
@@ -95,7 +91,7 @@ jobs:
         with:
           name: switch-release
           path: release
-      - name: Publish both formats together
+      - name: Publish application artifacts
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -104,7 +100,6 @@ jobs:
         run: |
           set -euo pipefail
           compgen -G 'release/*.nro' >/dev/null
-          compgen -G 'release/*.nsp' >/dev/null
           (cd release && sha256sum -c SHA256SUMS)
           # Create a draft first so an upload failure never leaves a half release visible.
           gh release create "$RELEASE_TAG" release/* --verify-tag --draft --generate-notes --title "NSteamLink $RELEASE_TAG"

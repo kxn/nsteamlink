@@ -43,6 +43,18 @@ class ReleaseTests(unittest.TestCase):
             self.assertFalse(second['dirty'])
             self.assertNotEqual(first['commit'], second['commit'])
 
+    def test_forwarder_retains_loader_mapping_permissions(self):
+        spec = importlib.util.spec_from_file_location('shortcut', ROOT / 'scripts/build-shortcut.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        config = module.loader_config(ROOT)
+        self.assertEqual(config['program_id'], '0x01004e534c4b1000')
+        self.assertNotEqual(config['program_id'], json.loads((ROOT / 'packaging/switch/application.json').read_text())['program_id'])
+        calls = next(k['value'] for k in config['kernel_capabilities'] if k['type'] == 'syscalls')
+        self.assertEqual(calls['svcSetProcessMemoryPermission'], '0x73')
+        self.assertEqual(calls['svcMapProcessCodeMemory'], '0x77')
+        self.assertEqual(calls['svcUnmapProcessCodeMemory'], '0x78')
+
     def test_exefs_is_not_installable_nsp(self):
         with tempfile.TemporaryDirectory() as temp:
             p = Path(temp) / 'fake.nsp'

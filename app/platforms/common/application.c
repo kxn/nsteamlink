@@ -2,6 +2,7 @@
 #include "artwork.h"
 #include "media.h"
 #include "platform/runtime.h"
+#include "platform/shortcut.h"
 #include "platform/system.h"
 #include "platform/ui_renderer.h"
 #include "sdl_input.h"
@@ -36,6 +37,7 @@ static void runtime_events(application *a) {
         sl_ui_runtime_event(&a->ui, &e);
 }
 int sl_application_run(int argc, char **argv) {
+    sl_shortcut_source(argc, argv);
     bool offline = false;
     unsigned frames = 0;
     const char *screenshot = NULL;

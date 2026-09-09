@@ -222,8 +222,8 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
     if (m->page == SL_CLOSING || m->leaving)
         return;
     if (a >= SL_LEFT && a <= SL_DOWN) {
-        if (m->layout.compact || m->page == SL_CONNECTING || m->page == SL_SAVING ||
-            m->page == SL_PAIRING)
+        if (m->layout.compact || m->page == SL_SHORTCUT || m->page == SL_CONNECTING ||
+            m->page == SL_SAVING || m->page == SL_PAIRING)
             return;
         if (m->page == SL_HOME) {
             int count = sl_ui_game_count(m);
@@ -250,7 +250,7 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
             sl_ui_action(m, SL_START, 0);
             return;
         }
-        if (m->layout.compact) {
+        if (m->layout.compact || m->page == SL_SHORTCUT) {
             /* Confirm dialogs advertise fixed A/B actions, not focus navigation. */
             for (int i = 0; i < m->layout.count; ++i)
                 if (m->layout.controls[i].primary) {
@@ -292,6 +292,17 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
     case SL_OPEN_OPTIONS:
         if (m->page == SL_HOME)
             push(m, SL_OPTIONS);
+        break;
+    case SL_OPEN_SHORTCUT:
+        if (m->page == SL_OPTIONS && !m->streaming)
+            push(m, SL_SHORTCUT);
+        break;
+    case SL_CONFIRM_SHORTCUT:
+        if (m->page == SL_SHORTCUT && !m->streaming) {
+            ++m->generation;
+            page(m, SL_INSTALLING);
+            emit(m, SL_CMD_SHORTCUT);
+        }
         break;
     case SL_OPEN_SETTINGS:
         push(m, SL_SETTINGS);
@@ -384,7 +395,7 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
             emit(m, SL_CMD_CANCEL);
             m->depth = 0;
             page(m, SL_STOPPING);
-        } else if (m->page != SL_STREAM && m->page != SL_STOPPING)
+        } else if (m->page != SL_STREAM && m->page != SL_STOPPING && m->page != SL_INSTALLING)
             back(m);
         break;
     case SL_DIGIT:

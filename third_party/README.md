@@ -62,3 +62,11 @@ submodule 工作区逐字节一致。旧 patch 文件已删除，需要查阅时
 使用 strict 模式、固定 token 数、64 KiB 响应上限，只提取匹配 AppID 的图片资源。
 新增链接依赖 libcurl（curl license）和 libjpeg-turbo（BSD/IJG）由系统/devkitPro portlibs 提供；
 Switch curl 使用 libnx SSL，不引入应用自己的根证书文件或关闭 TLS 校验。
+
+## nx-hbloader：HOME 入口加载器
+
+`third_party/nx-hbloader/` 来自 [switchbrew/nx-hbloader](https://github.com/switchbrew/nx-hbloader)，
+固定提交 `82b95122c5ae8dc059bf23893ba7623c72c86773`，ISC。仅保留构建所需的
+Makefile、hbl.json、source/main.c、source/trampoline.s 和 LICENSE.md，均未修改。
+`scripts/build-shortcut.py` 在 build 副本应用固定路径和返回 HOME 调整，见 decisions D-049。
+不使用 Nintendo/Steam 原生图标，不提交机器密钥、生成的 NCA 或模板二进制。

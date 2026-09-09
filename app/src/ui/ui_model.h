@@ -12,6 +12,9 @@ typedef enum sl_page {
     SL_STREAM,
     SL_MENU,
     SL_OPTIONS,
+    SL_SHORTCUT,
+    SL_INSTALLING,
+    SL_INSTALL_RESULT,
     SL_SETTINGS,
     SL_MANUAL,
     SL_QUALITY,
@@ -41,6 +44,8 @@ typedef enum sl_action {
     SL_DEBUG,
     SL_OPEN_OPTIONS,
     SL_OPEN_SETTINGS,
+    SL_OPEN_SHORTCUT,
+    SL_CONFIRM_SHORTCUT,
     SL_OPEN_MANUAL,
     SL_OPEN_QUALITY,
     SL_OPEN_LANGUAGE,
@@ -68,6 +73,7 @@ typedef enum sl_command_type {
     SL_CMD_STOP,
     SL_CMD_EXIT,
     SL_CMD_SAVE,
+    SL_CMD_SHORTCUT,
     SL_CMD_MANUAL
 } sl_command_type;
 typedef struct sl_command {

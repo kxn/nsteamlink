@@ -118,5 +118,20 @@
   "END_GAME_QUESTION": "End the game on your PC?",
   "END_GAME_EXPLANATION": "Save your game before ending it.",
   "END_GAME_FAILED": "Could not confirm the game ended. Check your PC.",
-  "ENDING_GAME": "Ending game"
+  "ENDING_GAME": "Ending game",
+  "APPLET_UNSUPPORTED": "Applet mode is not supported.",
+  "APPLET_INSTRUCTION": "Hold R while launching a game to open hbmenu.\nThen open NSteamLink again.",
+  "APPLET_RETURN": "B  Return to hbmenu",
+  "SHORTCUT": "Add to HOME Menu",
+  "SHORTCUT_QUESTION": "Add a HOME shortcut?",
+  "SHORTCUT_DESCRIPTION": "The NRO will be saved below. Keep this file.",
+  "SHORTCUT_INSTALL": "Add",
+  "SHORTCUT_INSTALLING": "Adding HOME shortcut",
+  "SHORTCUT_RESULT": "HOME shortcut",
+  "SHORTCUT_ADDED": "Added. Launch from the HOME Menu.",
+  "SHORTCUT_EXISTS": "An entry already exists. No changes made.",
+  "SHORTCUT_FAILED": "Could not add. Check install access and SD space.",
+  "SHORTCUT_CLEANUP_FAILED": "Cleanup failed. Remove this entry in System Settings.",
+  "SHORTCUT_NRO_REQUIRED": "Could not save NRO. Place it at the path below and retry.",
+  "SHORTCUT_SWITCH_ONLY": "Add the HOME shortcut on your Switch."
 }

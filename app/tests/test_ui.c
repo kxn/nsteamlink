@@ -325,7 +325,7 @@ static void confirmation_shortcuts(void) {
 static void actionable_settings(void) {
     sl_ui_model m = model();
     sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
-    assert(m.layout.count == 2); /* Settings and back, no help-only page. */
+    assert(m.layout.count == 3); /* Settings, HOME shortcut and back. */
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
     assert(m.layout.count == 5); /* Quality, sound, language, manual address, back. */
     assert(m.layout.controls[3].action == SL_OPEN_MANUAL);
@@ -711,6 +711,31 @@ int main(void) {
     snprintf(path, sizeof(path), "%s/profile.bin", dir);
     unlink(path);
     rmdir(dir);
+    sl_command shortcut_cmd;
+    /* HOME install has fixed A/B actions and cannot be cancelled halfway through. */
+    sl_ui_init(&m, &s);
+    m.now = 5000;
+    sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
+    sl_ui_action(&m, SL_OPEN_SHORTCUT, 0);
+    assert(m.page == SL_SHORTCUT);
+    m.focus = 9;
+    sl_ui_action(&m, SL_LEFT, 0);
+    sl_ui_action(&m, SL_ACCEPT, 0);
+    assert(m.page == SL_INSTALLING);
+    assert(sl_ui_take_command(&m, &shortcut_cmd) && shortcut_cmd.type == SL_CMD_SHORTCUT);
+    sl_ui_action(&m, SL_ACCEPT, 0);
+    sl_ui_action(&m, SL_BACK, 0);
+    assert(m.page == SL_INSTALLING && !m.leaving && m.layout.count == 0);
+    sl_runtime_event installed = {.type = SL_EVENT_SHORTCUT, .generation = m.generation - 1};
+    sl_ui_runtime_event(&m, &installed);
+    assert(m.page == SL_INSTALLING);
+    installed.generation = m.generation;
+    strcpy(installed.text, "Added");
+    sl_ui_runtime_event(&m, &installed);
+    assert(m.page == SL_INSTALL_RESULT);
+    sl_ui_action(&m, SL_BACK, 0);
+    sl_ui_tick(&m, m.now + 200);
+    assert(m.page == SL_OPTIONS);
     puts("PASS model, touch ownership, controller commands, hotkey timing, debug, host/account "
          "isolation, expiry, layouts and atomic storage");
     return 0;
