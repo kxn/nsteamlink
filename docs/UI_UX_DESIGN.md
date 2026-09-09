@@ -187,7 +187,15 @@ IHS callbacks 复制必要数据到有界队列，不绘制、不写盘、不调
 
 ### 渲染与字体
 
-保留一个 SDL window/renderer 及现有 FFmpeg/NVTEGRA 上传链路，不引入第二个图形后端。
+原 D-043 以一个 SDL window/renderer 及 FFmpeg/NVTEGRA 上传链路承载界面。
+D-051 的目标架构由薄 gfx HAL 承载相同 UI 绘制语义，desktop 使用 SDL，Switch 的视频和 UI
+统一使用 deko3d；任何构建只允许一个图形后端拥有默认窗口。帧所有权、字体/封面缓存、离屏
+弹窗与事件迁移遵循 [VIDEO_RENDERING_DESIGN](VIDEO_RENDERING_DESIGN.md)，实施状态仅见 Issue #8。
+application 统一计算远端输入准入，UI 只提供交互意图，平台/renderer 提供前台与健康条件；
+停止/退出由主循环分阶段推进，不先阻塞 join。设备错误属于整个 application，菜单阶段也必须可处理。
+用户切换会话在旧会话资源清理完成后启动；UI 纹理逻辑淘汰交给 renderer 的 GpuBatch/版本引用管理。
+主机 StopVideoData 仅暂停视频，保留会话与 UI 交互，不据此回首页或报视频超时；同 session 恢复
+视频时重置等待基准。它与本地 suspend、真正会话结束分别处理，遵循 D-046。
 拆分 event pump、上传新帧、重绘已有纹理、绘制 UI、present；无新视频帧时也必须绘制菜单与连接状态。
 仅新视频帧成功呈现才增加 displayed_frames，重绘相同纹理不能虚增 fps。
 
