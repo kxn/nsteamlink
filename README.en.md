@@ -12,6 +12,8 @@ Pick up your Joy-Con, choose a PC, and return to your last game.
 
 [Download](https://github.com/kxn/nsteamlink/releases/latest) · [简体中文](README.md) · [Report an issue](https://github.com/kxn/nsteamlink/issues)
 
+![Recent games on the English home screen](docs/images/home-en.jpg)
+
 ## Features
 
 - **Pair once, connect again** — background PC discovery, with pairing and recent games saved per PC.
@@ -36,6 +38,8 @@ Connect both devices to the same local network. Keep the PC on with Steam runnin
 
 Use **Y to open Steam** on your first visit. Games played during streaming appear in your recent games for direct launch next time.
 
+![Connecting with the selected game’s artwork as the background](docs/images/game-launch.jpg)
+
 ## Controls
 
 | Action | Control |
@@ -51,6 +55,8 @@ Use **Y to open Steam** on your first visit. Games played during streaming appea
 The home screen and menus also support touch. **Disconnect** leaves the PC game running.
 **End game** asks the PC to quit the game and end the session.
 
+![The in-game menu: resume, settings, end game and disconnect](docs/images/streaming-menu.jpg)
+
 ## Add a HOME Menu shortcut
 
 Open **X Options → Add to HOME Menu** and confirm. No key file needs to be supplied manually.
@@ -58,6 +64,8 @@ Your CFW must support homebrew application installation and launch.
 
 The shortcut opens `switch/nsteamlink/nsteamlink.nro` on your SD card. Keep that file in place.
 To update, replace it with the new NRO; you do not need to install the shortcut again.
+
+![NSteamLink shortcut on the Switch HOME Menu](docs/images/home-menu-shortcut.jpg)
 
 ## Help and development
 
@@ -67,6 +75,8 @@ steps to reproduce, and a screenshot or error message.
 For implementation details and source builds, see the [technical and development guide](docs/TECHNICAL.md) (Chinese).
 
 ## Credits and license
+
+Special thanks to **Sven** from our community group for providing an original-model Nintendo Switch for development and testing.
 
 Built with open-source projects including IHSlib, FFmpeg, SDL, libnx, devkitPro and nx-hbloader.
 NSteamLink is distributed under [GPLv3](https://www.gnu.org/licenses/gpl-3.0.html); third-party components retain their own licenses.

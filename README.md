@@ -12,6 +12,8 @@ NSteamLink 是一款面向 Nintendo Switch 自制系统的 Steam Remote Play 客
 
 [下载最新版](https://github.com/kxn/nsteamlink/releases/latest) · [English](README.en.md) · [反馈问题](https://github.com/kxn/nsteamlink/issues)
 
+![中文首页：带封面的最近游玩卡片](docs/images/home-zh.jpg)
+
 ## 能做什么
 
 - **配对一次，随时连接**：首页持续查找电脑，分别保存每台电脑的配对和最近游戏。
@@ -36,6 +38,8 @@ NSteamLink 是一款面向 Nintendo Switch 自制系统的 Steam Remote Play 客
 
 首次可以用 **Y 打开 Steam**。游玩后，首页会记录最近游戏；下次可以直接选择卡片启动。
 
+![启动游戏：以所选游戏封面为背景的连接界面](docs/images/game-launch.jpg)
+
 ## 常用操作
 
 | 场景 | 操作 |
@@ -51,6 +55,8 @@ NSteamLink 是一款面向 Nintendo Switch 自制系统的 Steam Remote Play 客
 首页和菜单也支持触摸。串流菜单中的 **断开连接** 会让电脑上的游戏继续运行；
 **结束游戏** 则请求电脑退出游戏并结束此次游玩。
 
+![游玩菜单：继续游玩、设置、结束游戏与断开连接](docs/images/streaming-menu.jpg)
+
 ## 添加到 HOME 菜单
 
 打开 **X 选项 → 添加到 HOME 菜单**，确认后即可添加入口，无需手动提供密钥文件。
@@ -58,6 +64,8 @@ NSteamLink 是一款面向 Nintendo Switch 自制系统的 Steam Remote Play 客
 
 入口会打开 SD 卡上的 `switch/nsteamlink/nsteamlink.nro`，请保留这个文件。
 升级时将新版 NRO 替换到同一路径即可，无需重复添加入口。
+
+![Switch HOME 菜单中的 NSteamLink 启动入口](docs/images/home-menu-shortcut.jpg)
 
 ## 获取帮助
 
@@ -67,6 +75,8 @@ NSteamLink 是一款面向 Nintendo Switch 自制系统的 Steam Remote Play 客
 想了解实现或参与开发，请阅读 [技术与开发指南](docs/TECHNICAL.md)。
 
 ## 致谢与许可
+
+特别感谢群友 **Sven** 提供初代 Nintendo Switch，支持本项目的开发与实机测试。
 
 感谢 IHSlib、FFmpeg、SDL、libnx、devkitPro 和 nx-hbloader 等开源项目。
 NSteamLink 以 [GPLv3](https://www.gnu.org/licenses/gpl-3.0.html) 发布，第三方组件遵循各自的许可证。
