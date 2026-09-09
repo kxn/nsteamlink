@@ -88,7 +88,7 @@ renderer。主线程协调应用状态，各子系统只销毁自己拥有、且
 | `runtime.c`（既有 worker） | IHS session/client、音频/HID 会话连接；执行 stop/join/destroy | 返回带 session 身份的事实；不消费逐帧图形完成队列 |
 | `video_pipeline.c/.h`（新增） | decoder domain、帧 mailbox、解码回调串行化、关闭后的 codec 回收 | 交付只读 `FrameLease`；不创建 Dk 对象，不等待 main ack |
 | `frame_lifetime.c/.h`（新增） | FrameLease 与 GpuBatch 的引用不变量、析构条件 | desktop 假 GPU 可独立验证；不持有 session 裸指针 |
-| ihslib `frame_stats.c/.h`（扩展 FrameTracker） | 帧接收身份、阶段、完成、过期、结算；拥有 completion endpoint | renderer 只写 ticket 结果；不负责解释 wire id 或访问 session |
+| ihslib `frame_tracker.c/.h` + `frame_stats.c/.h` | 前者管理帧身份、阶段、完成、过期和 endpoint；后者承担统计聚合与发送快照 | renderer 只写 ticket 结果；不负责解释 wire id 或访问 session |
 | `platform/gfx.h`、`common/gfx_backend.h`（新增） | 公开 gfx HAL 与内部 AVFrame 桥接 | 业务层不可包含 SDL/FFmpeg/deko 类型 |
 | `platforms/{desktop,switch}/gfx.c`（新增，主线程） | 全部 GPU 对象、批次、cache 版本、提交与回收 | desktop 用 SDL；Switch 用 deko；UI 只持不透明纹理句柄 |
 | `switch/video_surface.c/.h`（新增） | surface 校验、按 pool 分组的映射缓存 | 由 renderer 驱动创建/退役；不拥有 decoder |
@@ -936,6 +936,12 @@ payload，也不能让 record_decode_stage 与 complete 无锁写同一时间戳
 endpoint 持有自己的存储和锁；IHS 活动引用与外部 ticket 引用保证寿命，最后引用只能释放 CPU 对象。
 锁的实际销毁和存储 free 发生在没有 consumer、ticket 操作者后，不依赖已退出的 IHS 全局服务。
 
+公开 ticket 定义放在 `include/ihslib/frame_ticket.h`，生产者只使用 retain/release/complete 和
+不可变 identity；内部 `frame_tracker.h` 才提供 begin/open_epoch/close_epoch/settle。接收、阶段、
+结算调用使用 endpoint 的短锁；complete 不获取它。endpoint 的 Close 要求所有 tracker consumer
+已停止，释放活动 owner 引用后不能再调用 tracker API；外部 ticket 引用继续保护整个存储。
+Claim/Publish 分步接口仅供内部受控交错验证，成功 Claim 后必须 Publish 才能释放该引用。
+
 `IHS_FrameOutcome` 至少包含 result、completion_us、有效位，以及可选的 upload_begin/end_us、
 presentation_serial、presentation_interval_us。接收/decode 阶段只写 IHS 锁内字段；renderer 的
 upload/complete 只写 payload。聚合时按阶段来源合并，不能有两处同时更新同一个 events 数组。
@@ -1286,7 +1292,8 @@ desktop gfx 链 SDL，Switch gfx/surface 链 deko/NVTEGRA。业务 `nsl_ui` 不�
 | `app/tests/test_video_pipeline.c`（新增） | fake decode 操作表注入 EAGAIN/失败；另跑真实 FFmpeg H.264 重排/零输出/flush fixture，验证 token 来源和不重复完成 |
 | `third_party/ihslib/tests/session/test_frame_stats.c` | 新 tracker 和真实 protobuf 发送快照；不能只测另写的纯模型、跳过 frame_stats.c |
 | `test_video_control.c`、新 `test_video_start_lifetime.c` | 实际 channel worker + timer；callback 成功后发送失败、timer 停止、重复 stop/deinit；原 StopVideoData 语义继续通过 |
-| 新 `test_frame_stats_interleaving.c` | 屏障控制 CLAIMED/close/recycle，以及 pending_report 发送中又收到新完成；解包校验新一期数据未丢 |
+| `third_party/ihslib/tests/session/test_frame_tracker.c` | 屏障控制 CLAIMED/close/recycle、竞争完成者；容量、回绕、半圈歧义、epoch 替换与最后引用释放 |
+| `third_party/ihslib/tests/session/test_video_report.c` | 实际 channel 的 report callback；pending_report 发送中又收到新完成、失败重试与关闭放弃；解包校验新一期数据未丢 |
 | `app/tests/test_native.c` | 改用 gfx/events；原输入、视频、菜单、布局/截图断言保留；dummy SDL 不要求实机完全相同像素 |
 | 既有 `test_artwork.c`, `test_launch_watch.c`, `test_ui.c`、ihslib launch transactions | finished/join、取消旧请求、同 session epoch 更新、输入中立化、End Game 和正常/异常结束行为 |
 | G1 独立 Switch probe | 包/ABI manifest、本地合法 H.264、Y/UV 映射、最后帧复用、两域独立回收、cache/padding；不依赖联网串流掩盖故障 |
