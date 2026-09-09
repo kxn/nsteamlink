@@ -19,3 +19,8 @@ bool sl_artwork_appid(uint64_t gameid);
 bool sl_artwork_url(const unsigned char *json, size_t size, uint32_t appid, char *url,
                     size_t capacity);
 bool sl_artwork_decode(const unsigned char *jpeg, size_t size, sl_artwork_image *out);
+
+/* Non-blocking lookup/queue, keyed by app and resolved UI language. */
+bool sl_artwork_title(sl_artwork *, uint64_t gameid, int language, char *out, size_t capacity);
+bool sl_artwork_name(const unsigned char *json, size_t size, uint32_t appid, char *out,
+                     size_t capacity);

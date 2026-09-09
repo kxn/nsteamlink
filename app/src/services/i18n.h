@@ -8,3 +8,5 @@ sl_language sl_i18n_language(void);
 void sl_i18n_set(sl_language language);
 void sl_i18n_load(const char *directory, const char *system_locale);
 bool sl_i18n_save(const char *directory, sl_language language);
+
+sl_language sl_i18n_resolved(void);

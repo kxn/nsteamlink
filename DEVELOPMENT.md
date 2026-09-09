@@ -264,9 +264,22 @@ Switch 端 probe/client 默认 cleanup 顺序：
 默认跟随系统语言：中文系统使用简体中文，其他语言使用英文。设置中的语言选择即时生效，
 由 worker 保存到数据目录的 `language.conf`（`system`、`zh-CN` 或 `en`）。语言偏好独立于
 `profile.bin`，不迁移配对身份；文件发布沿用 Horizon 不覆盖已存在目标的备份/恢复规则。
-只读资源及原子语言选择允许协议 worker 和 UI 并发取词。游戏名、电脑名、地址以及协议返回
-的数据保持原文，底层开发日志不随 UI 语言变化。诊断浮层的标题和字段名称属于可见文案。
+只读资源及原子语言选择允许协议 worker 和 UI 并发取词。电脑名、地址以及协议返回
+的数据保持原文，游戏卡片优先使用商店返回的当前语言名称，底层开发日志不随 UI 语言变化。诊断浮层的标题和字段名称属于可见文案。
 
 桌面系统语言取 LC_ALL、LC_MESSAGES、LANG 的首个非空值；可用 `LANG=en_US.UTF-8` 或
 `LANG=zh_CN.UTF-8` 配合新的 NSL_DATA_DIR 检查首次启动。nsl-i18n 测试覆盖切换、偏好保存、
 系统回退和身份保持，nsl-native 在两种语言下渲染全部页面；NSL_TEST_OUTPUT 可导出截图。
+
+
+游戏卡片名称通过 IStoreBrowseService/GetItems 的 context.language 请求 english/schinese，
+读取已验证 success/appid 对应的 name。2026-09-09 同一 AppID 实测返回 Black Myth: Wukong /
+黑神话：悟空和 Palworld / Palworld / 幻兽帕鲁；支持指定语言，不表示每个商品都提供翻译。
+UI 使用解析后的系统语言，主机的原始 game_name 始终作为后备保存在最近记录中。
+
+名称查询复用 artwork 的可取消、可 join worker，不在渲染线程做网络或文件 I/O。
+图片缓存与名称缓存独立：已有 JPEG 也要补查名称；获取新封面时可复用其英文元数据。
+内存和磁盘以 AppID+语言隔离，迟到响应不会替换另一种语言。名称 JSON 缓存限制为 64 个文件，
+每个不超过 64 KiB，读取时重新检查身份和 UTF-8/JSON 转义；失败至少间隔 60 秒重试。
+游戏名缺失、查询失败、非商店快捷方式均回退到主机名，不影响启动。卡片跑马灯保留完整
+可接受名称（最多 511 UTF-8 字节）；超长/非法名称不截断为破损字符，而是回退原名。

@@ -8,11 +8,12 @@
 #include <unistd.h>
 static atomic_int preferred = SL_LANG_SYSTEM;
 static atomic_int system_language = SL_LANG_ZH_CN;
-const char *sl_tr(sl_text_id id) {
+sl_language sl_i18n_resolved(void) {
     int language = atomic_load(&preferred);
-    if (language == SL_LANG_SYSTEM)
-        language = atomic_load(&system_language);
-    return id >= 0 && id < SL_T_COUNT ? translations[language == SL_LANG_EN][id] : "";
+    return language == SL_LANG_SYSTEM ? atomic_load(&system_language) : language;
+}
+const char *sl_tr(sl_text_id id) {
+    return id >= 0 && id < SL_T_COUNT ? translations[sl_i18n_resolved() == SL_LANG_EN][id] : "";
 }
 sl_language sl_i18n_language(void) {
     return atomic_load(&preferred);

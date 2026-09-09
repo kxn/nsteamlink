@@ -34,7 +34,12 @@ struct sl_ui_renderer {
     int focus_id;
     uint64_t focus_at, title_at, title_host;
     int title_focus;
-    char title_text[160];
+    char title_text[512];
+    struct {
+        uint64_t id, used;
+        int language;
+        char name[512];
+    } titles[16];
     SDL_FRect focus_from, focus_to, focus_box;
 };
 static SDL_Color bg = {18, 20, 25, 255}, panel = {32, 35, 42, 255}, accent = {114, 199, 242, 255},
@@ -353,11 +358,33 @@ static int centered_y(sl_ui_renderer *r, const char *s, int size, int y, int hei
     }
     return y + (height - (bottom - top)) / 2 - size - top;
 }
+static const char *localized_title(sl_ui_renderer *r, uint64_t id, const char *fallback) {
+    int language = sl_i18n_resolved(), slot = -1;
+    for (int i = 0; i < 16; ++i)
+        if (r->titles[i].id == id && r->titles[i].language == language) {
+            slot = i;
+            break;
+        }
+    if (slot < 0) {
+        slot = 0;
+        for (int i = 1; i < 16; ++i)
+            if (r->titles[i].used < r->titles[slot].used)
+                slot = i;
+        r->titles[slot].id = id;
+        r->titles[slot].language = language;
+        r->titles[slot].name[0] = 0;
+    }
+    r->titles[slot].used = ++r->tick;
+    char name[512];
+    if (sl_artwork_title(r->artwork, id, language, name, sizeof(name)))
+        strcpy(r->titles[slot].name, name);
+    return r->titles[slot].name[0] ? r->titles[slot].name : fallback;
+}
 /* A card title is always one line. Measure visible glyph bounds independently
  * of clipping so neither truncation nor scrolling changes its baseline. */
 static void card_title(sl_ui_renderer *r, const char *label, SDL_Rect box, SDL_Rect viewport,
                        bool focused, const sl_ui_model *m) {
-    char text[160];
+    char text[512];
     snprintf(text, sizeof(text), "%s", label);
     for (char *p = text; *p; ++p)
         if (*p == '\n' || *p == '\r')
@@ -897,6 +924,9 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
             int selected = m->store.registry.selected;
             if (selected >= 0 && selected < m->store.registry.count && c->arg < SL_RECENT_LIMIT)
                 draw_cover(r, m->store.registry.hosts[selected].games[c->arg].id, art, m->now);
+            if (selected >= 0 && selected < m->store.registry.count && c->arg < SL_RECENT_LIMIT)
+                label =
+                    localized_title(r, m->store.registry.hosts[selected].games[c->arg].id, label);
             card_title(r, label, (SDL_Rect){box.x + 24, box.y + box.h - 62, box.w - 48, 54},
                        viewport, focused, m);
             continue;

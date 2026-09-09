@@ -90,7 +90,8 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
         sl_host *h = sl_host_find(&m->store.registry, e.host.id);
         sl_host_activity(h, e.account, &e.game);
         if (m->command.type == SL_CMD_NONE)
-            m->command = (sl_command){.type = SL_CMD_SAVE, .generation = m->generation};
+            m->command = (sl_command){
+                .type = SL_CMD_SAVE, .generation = m->generation, .language = sl_i18n_language()};
         break;
     }
     case SL_EVENT_CLOSED:
