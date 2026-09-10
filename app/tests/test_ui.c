@@ -353,7 +353,56 @@ static void actionable_settings(void) {
     sl_ui_action(&m, SL_OPEN_MANUAL, 0);
     assert(m.page == SL_SETTINGS); /* No empty advanced page or stream-time host entry. */
 }
+static void end_game_failure(void) {
+    sl_ui_model m = model();
+    add(&m, 3, "HOST");
+    m.store.registry.hosts[0].paired = true;
+    sl_ui_action(&m, SL_START, 0);
+    sl_command cmd;
+    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_STREAM);
+    sl_ui_connected(&m);
+    sl_ui_action(&m, SL_OPEN_END_GAME, 0);
+    sl_ui_action(&m, SL_CONFIRM_END_GAME, 0);
+    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_END_GAME);
+    sl_ui_action(&m, SL_CONFIRM_END_GAME, 0);
+    assert(!sl_ui_take_command(&m, &cmd)); /* repeated confirm is inert */
+    sl_ui_model waiting = m;
+    sl_runtime_event error = {.type = SL_EVENT_FAILURE, .generation = m.generation};
+    strcpy(error.text, "End confirmation timed out");
+    sl_ui_runtime_event(&m, &error);
+    assert(m.page == SL_ERROR && m.ending_game && !m.streaming);
+    for (int i = 0; i < m.layout.count; ++i)
+        assert(m.layout.controls[i].action != SL_RETRY);
+    for (int i = 0; i < 3; ++i) {
+        sl_ui_action(&m, SL_ACCEPT, 0);
+        sl_ui_action(&m, SL_RETRY, 0); /* direct/stale action is guarded too */
+        assert(!sl_ui_take_command(&m, &cmd));
+    }
+    sl_ui_action(&m, SL_BACK, 0);
+    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_CANCEL);
+    sl_ui_runtime_event(&m, &error); /* late failure after cancel */
+    assert(m.page == SL_STOPPING && !m.ending_game);
+    sl_ui_stopped(&m, false);
+    assert(m.page == SL_HOME);
+    sl_ui_action(&m, SL_START, 0); /* an explicit new launch remains possible */
+    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_STREAM);
+
+    m = waiting;
+    sl_runtime_event stopped = {.type = SL_EVENT_STOPPED, .generation = m.generation};
+    sl_ui_runtime_event(&m, &stopped);
+    sl_ui_runtime_event(&m, &error); /* completion wins over a queued old error */
+    assert(m.page == SL_HOME && !m.ending_game);
+
+    m = waiting;
+    sl_ui_action(&m, SL_ACCEPT, 0); /* don't activate B while waiting */
+    assert(!sl_ui_take_command(&m, &cmd));
+    sl_ui_action(&m, SL_BACK, 0); /* bounded user escape from the longer wait */
+    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_CANCEL);
+    sl_ui_runtime_event(&m, &stopped); /* old completion must not end a new operation */
+    assert(m.page == SL_STOPPING && !m.ending_game);
+}
 int main(void) {
+    end_game_failure();
     carousel();
     session_end_events();
     wait_screen_cancel_shortcut();

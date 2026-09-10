@@ -118,6 +118,8 @@
   "END_GAME_QUESTION": "结束电脑上的游戏？",
   "END_GAME_EXPLANATION": "游戏将关闭，请先保存进度。",
   "END_GAME_FAILED": "未能确认游戏已结束，请检查电脑。",
+  "STOP_WAITING_KEY": "B  停止等待",
+  "ENDING_GAME_WAIT": "等待电脑确认；停止等待只会断开串流。",
   "ENDING_GAME": "正在结束游戏",
   "APPLET_UNSUPPORTED": "不支持 applet 模式。",
   "APPLET_INSTRUCTION": "按住 R 启动游戏进入 hbmenu，\n再打开 NSteamLink。",
