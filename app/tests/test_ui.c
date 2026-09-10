@@ -366,6 +366,11 @@ static void end_game_failure(void) {
     assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_END_GAME);
     sl_ui_action(&m, SL_CONFIRM_END_GAME, 0);
     assert(!sl_ui_take_command(&m, &cmd)); /* repeated confirm is inert */
+    assert(m.layout.label_count == 0 && m.layout.count == 1);
+    const sl_control *disconnect = &m.layout.controls[0];
+    assert(disconnect->x >= m.layout.panel_x && disconnect->y >= m.layout.panel_y);
+    assert(disconnect->x + disconnect->w <= m.layout.panel_x + m.layout.panel_w);
+    assert(disconnect->y + disconnect->h <= m.layout.panel_y + m.layout.panel_h);
     sl_ui_model waiting = m;
     sl_runtime_event error = {.type = SL_EVENT_FAILURE, .generation = m.generation};
     strcpy(error.text, "End confirmation timed out");
