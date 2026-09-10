@@ -168,11 +168,12 @@ IP 与端口，下载 `Nintendo/Album` 目录；端口以屏幕显示为准。
 
 ## deko 视频直显诊断构建
 
-固定后端选择 `-DNSL_GFX_BACKEND=deko`；默认构建保留 SDL 对照路径。示例：
+Switch 正式版与诊断版统一使用 deko 直显，不再提供 SDL 图形后端选择。
+诊断版保留性能采样，正式版默认编译排除；音频、输入和字体继续使用 SDL。示例：
 
 ```sh
 NSL_BUILD_DIR="$PWD/build/switch-deko" scripts/build-switch.sh \
-  -DNSL_GFX_BACKEND=deko -DNSL_DIAGNOSTICS=ON -DNSL_BUILD_TOOLS=OFF
+  -DNSL_DIAGNOSTICS=ON -DNSL_BUILD_TOOLS=OFF
 ```
 
 该目录生成应用 `app/nsteamlink.nro`、独立 `app/nsl-video-probe.nro` 和

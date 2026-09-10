@@ -1,5 +1,9 @@
 # Switch 硬件帧直显与统一图形后端设计
 
+构建策略以 D-052 为准：Switch 固定 deko，删除 SDL 图形回退；desktop 保留 SDL。
+用户已接受当前实测实现，以下平台边界验收作为工程参考，不再作为正式默认切换的前置门槛。
+
+
 设计日期：2026-09-09。对应决策：D-051。实施任务、依赖、进度与实测结果仅在
 [Issue #8](https://github.com/kxn/nsteamlink/issues/8) 维护；本文只定义架构、接口契约与验收规范。
 历史路径分析的证据基线为 `a6f743465817913a965ca075276c1f231420cc98`。
@@ -505,9 +509,8 @@ chroma sampling/crop 都显式配置。metadata 缺失采用与旧 SDL 路径一
 | deko 初始化/设备错误 | 受控失败清理；不能运行时再启动 SDL/Mesa 接管默认 NWindow |
 
 软件 staging 按 submission slot 配置，CPU 写入/纹理上传不得覆盖在途资源；软件回退本身不标为 zero-copy。
-迁移期间可保留编译时 `NSL_GFX_BACKEND=sdl|deko3d` 对照，两个构建分别只启用一个图形 owner，
-产物与 build identity 标明 backend。正式 Switch 默认切换后，以旧版本 NRO/构建作为回滚手段，
-不在流媒体会话中动态换后端。
+Switch 固定使用 deko，desktop 固定使用 SDL；不再维护 Switch SDL 渲染对照/回退路径。
+构建 manifest 标明平台对应 backend；故障在 deko 路径修复，不在会话中动态换后端。
 
 ## 10. 分阶段停止与故障作用域
 
@@ -680,12 +683,13 @@ G1 的独立 NRO 使用本地合法 H.264 fixture，可重复暂停解码而持�
 假设时保留实验构建，不把它隐藏在软件 fallback 后发布。本设计可以降低已知风险，不能保证设备/
 驱动不存在未知故障；未证实的 SDK 性质以 G1 的具体问题和失败处置管理。
 
-## 13. 构建与可回滚交付契约
+## 13. 平台固定后端的交付契约
 
 在隔离 probe 首次接入时就为 SDK 和 shader 建立可复现构建，不能留到正式切换后再补依赖。
 `scripts/setup-switch-deps.sh` 显式包含 deko3d/uam；用包清单记录版本，CI 镜像仍按现有策略固定。
 `app/CMakeLists.txt` 按平台/backend 选择源文件；desktop 不搜索 Switch headers、uam 或链接 deko。
-`NSL_GFX_BACKEND` 是构建参数，不作为普通用户运行时设置；不允许不支持的组合静默 fallback。
+后端由目标平台确定；`NSL_GFX_BACKEND` 仅为内部 manifest 变量，不再是 CMake 缓存选项。
+重新配置旧目录时清除遗留选项，Switch 始终编译 deko，desktop 始终编译 SDL。
 
 uam 作为 host 程序查找，不受交叉编译 sysroot 的目标程序搜索误导；GLSL→DKSH 用明确 custom command
 和 DEPENDS，生成数据嵌入产物或受控 RomFS，启动时检查 shader magic、大小与对齐。
@@ -700,8 +704,8 @@ uam 作为 host 程序查找，不受交叉编译 sysroot 的目标程序搜索�
 
 迁移提交可以先合入仍使用 SDL 的封装/测试，但 Switch 默认切换提交必须同时具备完整视频、UI、
 事件与 cleanup；不交付菜单依赖 SDL、视频依赖 deko 的中间产品。
-SDL 对照与 deko 使用不同 build dir，保留版本/校验和；回滚恢复整个已知 SDL 产物，避免残留两种
-backend 的对象文件。该规划不授权直接创建新 release 或向设备推送。
+诊断与正式构建使用不同 build dir，保留版本/校验和，两者均使用 deko。
+不维护 Switch SDL 回退构建。构建变更不自动创建新 release 或向设备推送。
 
 ## 14. 源码接线与数据结构规格
 
@@ -1353,8 +1357,8 @@ decoder 的实际内存高水位。任一项失败都有明确出口：拒绝该
 
 ### 20.1 编译选择与证据
 
-`NSL_GFX_BACKEND=sdl|deko` 是进程级固定选择，默认 `sdl`；deko 仅接受 Switch 工具链。
-SDL 对照后端可以下载 NVTEGRA 帧，deko 后端只接受验证通过的直接导入或软件 YUV 平面上传，
+Switch 唯一图形后端为 deko；desktop 保留 SDL 后端以运行桌面程序和回归测试。
+deko 后端只接受验证通过的直接导入或软件 YUV 平面上传，
 不隐式切换为下载。`generated/graphics_manifest.json` 保存后端、应用/IHS commit、dirty 标记、
 SDK 静态库、NVTEGRA 头文件、ABI adapter、shader 源码和 DKSH 的 SHA-256。
 对 manifest 的构建成功判定只代表输入可复现，不代表硬件性质已验证。

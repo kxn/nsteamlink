@@ -44,7 +44,11 @@ for entry in commands:
             assert required.encode() in data, f'product scheduler missing: {required}'
     checked += 1
 assert checked == 7, f'expected seven relevant translation units, got {checked}'
-if 'NSL_GFX_BACKEND:STRING=deko' in cache:
+manifest = json.loads((build / 'generated/graphics_manifest.json').read_text())
+if any('/platforms/switch/' in e['file'] for e in commands):
+    assert manifest['backend'] == 'deko', 'Switch must use deko'
+    gfx_sources = [Path(e['file']) for e in commands if Path(e['file']).name == 'gfx.c']
+    assert gfx_sources and all(p.parent.name == 'switch' for p in gfx_sources), 'SDL renderer in Switch build'
     link = (build / 'app/CMakeFiles/nsteamlink.dir/link.txt').read_text()
     assert 'libdeko3dd.a' not in link and 'libdeko3d.a' in link, 'wrong deko library'
 print(f'PASS: {checked} units; diagnostic macros/strings and GPU reports excluded')
