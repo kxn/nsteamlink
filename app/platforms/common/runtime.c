@@ -328,8 +328,18 @@ static void configuring(IHS_Session *s, IHS_SessionConfig *c, void *ctx) {
     c->maxWidth = 1280;
     c->maxHeight = 720;
     c->maxFps = 60;
-    const uint32_t rates[] = {6000, 4000, 10000};
-    c->maxBitrateKbps = rates[r->active.quality <= 2 ? r->active.quality : 0];
+    switch (r->active.quality) {
+    case 1:
+        c->quality = IHS_StreamQualityFast;
+        break;
+    case 2:
+        c->quality = IHS_StreamQualityBeautiful;
+        break;
+    default:
+        c->quality = IHS_StreamQualityBalanced;
+        break;
+    }
+    c->maxBitrateKbps = sl_bitrate_valid(r->active.bitrate_kbps) ? r->active.bitrate_kbps : 6000;
 }
 static void connected(IHS_Session *s, void *ctx) {
     (void)s;

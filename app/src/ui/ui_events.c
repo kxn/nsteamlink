@@ -51,6 +51,7 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
             m->command.generation = m->generation;
             m->command.type = SL_CMD_STREAM;
             m->command.quality = m->store.quality;
+            m->command.bitrate_kbps = m->store.bitrate_kbps;
         } else
             sl_ui_error(m, sl_tr(SL_T_HOST_REMOVED));
         break;

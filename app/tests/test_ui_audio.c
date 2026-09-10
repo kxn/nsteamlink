@@ -17,7 +17,7 @@ static void feedback_model(void) {
     sl_ui_action(&m, SL_DOWN, 0);
     assert(m.cue_serial == 3); /* repeat is rate limited */
     m.now += 100;
-    sl_ui_activate(&m, 101); /* touch uses the same action as the controller */
+    sl_ui_activate(&m, 102); /* touch uses the same action as the controller */
     assert(!m.store.sound && m.cue == SL_CUE_TOGGLE);
     sl_ui_action(&m, SL_BACK, 0);
     assert(m.cue == SL_CUE_BACK);

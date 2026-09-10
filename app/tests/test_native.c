@@ -330,7 +330,7 @@ int main(int argc, char **argv) {
             ui.page = p;
             ui.depth = 0;
             ui.leaving = false;
-            ui.streaming = p == SL_STREAM || p == SL_MENU;
+            ui.streaming = p == SL_STREAM || p == SL_MENU || p == SL_BANDWIDTH;
             ui.ending_game = p == SL_STOPPING;
             ui.debug = p == SL_STREAM;
             ui.stream_started_at = ui.now;
