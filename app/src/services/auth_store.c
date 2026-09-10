@@ -18,6 +18,20 @@ typedef struct __attribute__((packed)) legacy_auth {
     uint16_t port;
     uint8_t reserved[30];
 } legacy_auth;
+/* Frozen v2 layout: do not use the growing runtime structure to read old identities. */
+typedef struct auth_store_v2 {
+    uint64_t device_id;
+    uint8_t secret[32];
+    char device_name[64];
+    sl_host_registry registry;
+    uint32_t quality;
+    bool sound;
+} auth_store_v2;
+typedef struct disk_store_v2 {
+    char magic[8];
+    uint32_t version, size, checksum;
+    auth_store_v2 data;
+} disk_store_v2;
 typedef struct disk_store {
     char magic[8];
     uint32_t version, size, checksum;
@@ -66,10 +80,12 @@ bool sl_auth_save(const sl_auth_store *s, const char *dir) {
     snprintf(tmp, sizeof(tmp), "%s/profile.tmp", dir);
     snprintf(backup, sizeof(backup), "%s/profile.bak", dir);
     disk_store d = {0};
-    memcpy(d.magic, "NSLUI02", 8);
-    d.version = 2;
+    memcpy(d.magic, "NSLUI03", 8);
+    d.version = 3;
     d.size = sizeof(d);
     d.data = *s;
+    if (!sl_bitrate_valid(d.data.bitrate_kbps))
+        d.data.bitrate_kbps = 6000;
     for (int i = 0; i < d.data.registry.count; ++i) {
         d.data.registry.hosts[i].observed = false;
         d.data.registry.hosts[i].last_seen = 0;
@@ -97,6 +113,7 @@ int sl_auth_load(sl_auth_store *s, const char *dir) {
     memset(s, 0, sizeof(*s));
     sl_host_registry_init(&s->registry);
     s->sound = true;
+    s->bitrate_kbps = 6000;
     char path[512];
     snprintf(path, sizeof(path), "%s/profile.bin", dir);
     FILE *f = fopen(path, "rb");
@@ -108,13 +125,36 @@ int sl_auth_load(sl_auth_store *s, const char *dir) {
         recovered = f != NULL;
     }
     if (f) {
-        disk_store d;
-        bool ok = fread(&d, 1, sizeof(d), f) == sizeof(d) && fgetc(f) == EOF;
+        disk_store d = {0};
+        char magic[8];
+        bool ok = fread(magic, 1, sizeof(magic), f) == sizeof(magic);
+        rewind(f);
+        if (ok && !memcmp(magic, "NSLUI02", 8)) {
+            disk_store_v2 old;
+            ok = fread(&old, 1, sizeof(old), f) == sizeof(old) && fgetc(f) == EOF;
+            ok = ok && old.version == 2 && old.size == sizeof(old) &&
+                 old.checksum == checksum(&old.data, sizeof(old.data)) && old.data.quality <= 2;
+            if (ok) {
+                d.data.device_id = old.data.device_id;
+                memcpy(d.data.secret, old.data.secret, sizeof(d.data.secret));
+                memcpy(d.data.device_name, old.data.device_name, sizeof(d.data.device_name));
+                d.data.registry = old.data.registry;
+                d.data.quality = old.data.quality;
+                d.data.sound = old.data.sound;
+                const uint32_t old_rates[] = {6000, 4000, 10000};
+                d.data.bitrate_kbps = old_rates[old.data.quality];
+            }
+        } else if (ok && !memcmp(magic, "NSLUI03", 8)) {
+            ok = fread(&d, 1, sizeof(d), f) == sizeof(d) && fgetc(f) == EOF;
+            ok = ok && d.version == 3 && d.size == sizeof(d) &&
+                 d.checksum == checksum(&d.data, sizeof(d.data));
+        } else {
+            ok = false;
+        }
         fclose(f);
-        if (!ok || memcmp(d.magic, "NSLUI02", 8) || d.version != 2 || d.size != sizeof(d) ||
-            d.checksum != checksum(&d.data, sizeof(d.data)) || !d.data.device_id ||
-            d.data.registry.count < 0 || d.data.registry.count > SL_HOST_LIMIT ||
-            d.data.quality > 2)
+        if (!ok || !d.data.device_id || d.data.registry.count < 0 ||
+            d.data.registry.count > SL_HOST_LIMIT || d.data.quality > 2 ||
+            !sl_bitrate_valid(d.data.bitrate_kbps))
             return -2;
         if (recovered && rename(backup, path)) {
             store_error("recover");

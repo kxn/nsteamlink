@@ -327,8 +327,8 @@ static void actionable_settings(void) {
     sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
     assert(m.layout.count == 3); /* Settings, HOME shortcut and back. */
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
-    assert(m.layout.count == 5); /* Quality, sound, language, manual address, back. */
-    assert(m.layout.controls[3].action == SL_OPEN_MANUAL);
+    assert(m.layout.count == 6); /* Quality, bandwidth, sound, language, manual address, back. */
+    assert(m.layout.controls[4].action == SL_OPEN_MANUAL);
     sl_ui_action(&m, SL_OPEN_MANUAL, 0);
     assert(m.page == SL_MANUAL);
     sl_ui_action(&m, SL_BACK, 0);
@@ -336,6 +336,12 @@ static void actionable_settings(void) {
     sl_ui_action(&m, SL_SOUND, 0);
     sl_command command;
     assert(!m.store.sound && sl_ui_take_command(&m, &command) && command.type == SL_CMD_SAVE);
+    sl_ui_action(&m, SL_OPEN_BANDWIDTH, 0);
+    sl_ui_action(&m, SL_SET_BANDWIDTH, 20000);
+    assert(m.store.bitrate_kbps == 20000 && m.store.quality == 0);
+    assert(sl_ui_take_command(&m, &command) && command.type == SL_CMD_SAVE);
+    assert(command.bitrate_kbps == 20000 && command.quality == 0);
+    sl_ui_tick(&m, m.now + 160);
     sl_ui_action(&m, SL_OPEN_QUALITY, 0);
     assert(!strcmp(m.layout.controls[0].label, "均衡"));
     assert(!strcmp(m.layout.controls[1].label, "流畅"));
@@ -344,10 +350,11 @@ static void actionable_settings(void) {
     assert(m.store.quality == 0); /* Focus movement does not change the radio selection. */
     sl_ui_action(&m, SL_SET_QUALITY, 2);
     assert(m.store.quality == 2 && sl_ui_take_command(&m, &command) && command.type == SL_CMD_SAVE);
+    assert(m.store.bitrate_kbps == 20000 && command.bitrate_kbps == 20000);
     sl_ui_connected(&m);
     sl_ui_action(&m, SL_OPEN_MENU, 0);
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
-    assert(m.layout.count == 4); /* Sound, quality, language and back. */
+    assert(m.layout.count == 5); /* Sound, quality, bandwidth, language and back. */
     for (int i = 0; i < m.layout.count; ++i)
         assert(m.layout.controls[i].action != SL_OPEN_MANUAL);
     sl_ui_action(&m, SL_OPEN_MANUAL, 0);
@@ -406,7 +413,58 @@ static void end_game_failure(void) {
     sl_ui_runtime_event(&m, &stopped); /* old completion must not end a new operation */
     assert(m.page == SL_STOPPING && !m.ending_game);
 }
+
+static void profile_v2_migration(void) {
+    struct old_store {
+        uint64_t device_id;
+        uint8_t secret[32];
+        char device_name[64];
+        sl_host_registry registry;
+        uint32_t quality;
+        bool sound;
+    };
+    struct old_disk {
+        char magic[8];
+        uint32_t version, size, checksum;
+        struct old_store data;
+    } old = {0};
+    char dir[] = "/tmp/nsl-profile-v2-XXXXXX", path[512];
+    assert(mkdtemp(dir));
+    snprintf(path, sizeof(path), "%s/profile.bin", dir);
+    memcpy(old.magic, "NSLUI02", 8);
+    old.version = 2;
+    old.size = sizeof(old);
+    old.data.device_id = 12345;
+    memset(old.data.secret, 0x5a, sizeof(old.data.secret));
+    strcpy(old.data.device_name, "paired device");
+    old.data.registry.count = 1;
+    old.data.registry.hosts[0].client_id = 98765;
+    old.data.registry.hosts[0].paired = true;
+    const uint32_t rates[] = {6000, 4000, 10000};
+    for (unsigned q = 0; q < 3; ++q) {
+        old.data.quality = q;
+        old.checksum = 2166136261u;
+        const uint8_t *p = (const void *)&old.data;
+        for (size_t i = 0; i < sizeof(old.data); ++i)
+            old.checksum = (old.checksum ^ p[i]) * 16777619u;
+        FILE *f = fopen(path, "wb");
+        assert(f && fwrite(&old, 1, sizeof(old), f) == sizeof(old));
+        assert(fclose(f) == 0);
+        sl_auth_store s, reload;
+        assert(sl_auth_load(&s, dir) == 0);
+        assert(s.device_id == 12345 && !memcmp(s.secret, old.data.secret, 32));
+        assert(!strcmp(s.device_name, "paired device") && !s.sound);
+        assert(s.registry.hosts[0].paired && s.registry.hosts[0].client_id == 98765);
+        assert(s.quality == q && s.bitrate_kbps == rates[q]);
+        assert(sl_auth_save(&s, dir) && sl_auth_load(&reload, dir) == 0);
+        assert(reload.quality == q && reload.bitrate_kbps == rates[q]);
+        assert(reload.device_id == s.device_id && reload.registry.hosts[0].paired);
+    }
+    unlink(path);
+    rmdir(dir);
+}
 int main(void) {
+    profile_v2_migration();
     end_game_failure();
     carousel();
     session_end_events();
@@ -683,12 +741,13 @@ int main(void) {
     assert(mkdtemp(dir));
     sl_auth_store s, t;
     assert(sl_auth_load(&s, dir) == 1);
-    assert(s.device_id);
+    assert(s.device_id && s.bitrate_kbps == 6000);
     assert(sl_auth_load(&t, dir) == 0);
     assert(s.device_id == t.device_id && !memcmp(s.secret, t.secret, 32));
     s.quality = 2;
+    s.bitrate_kbps = 20000;
     assert(sl_auth_save(&s, dir));
-    assert(sl_auth_load(&t, dir) == 0 && t.quality == 2);
+    assert(sl_auth_load(&t, dir) == 0 && t.quality == 2 && t.bitrate_kbps == 20000);
     no_replace = true;
     s.quality = 1;
     assert(sl_auth_save(&s, dir));
@@ -704,7 +763,7 @@ int main(void) {
     snprintf(primary, sizeof(primary), "%s/profile.bin", dir);
     snprintf(backup, sizeof(backup), "%s/profile.bak", dir);
     assert(rename(primary, backup) == 0); /* interrupted before publication */
-    assert(sl_auth_load(&t, dir) == 0 && t.quality == 2);
+    assert(sl_auth_load(&t, dir) == 0 && t.quality == 2 && t.bitrate_kbps == 20000);
     assert(access(primary, F_OK) == 0);
     /* A failed temporary write must preserve the previous valid profile. */
     char tmp[512];
@@ -712,7 +771,7 @@ int main(void) {
     assert(mkdir(tmp, 0700) == 0);
     s.quality = 1;
     assert(!sl_auth_save(&s, dir));
-    assert(sl_auth_load(&t, dir) == 0 && t.quality == 2);
+    assert(sl_auth_load(&t, dir) == 0 && t.quality == 2 && t.bitrate_kbps == 20000);
     assert(rmdir(tmp) == 0);
     char path[512];
     snprintf(path, sizeof(path), "%s/profile.bin", dir);

@@ -18,6 +18,7 @@ typedef enum sl_page {
     SL_SETTINGS,
     SL_MANUAL,
     SL_QUALITY,
+    SL_BANDWIDTH,
     SL_LANGUAGE,
     SL_FORGET,
     SL_END_GAME,
@@ -48,6 +49,7 @@ typedef enum sl_action {
     SL_CONFIRM_SHORTCUT,
     SL_OPEN_MANUAL,
     SL_OPEN_QUALITY,
+    SL_OPEN_BANDWIDTH,
     SL_OPEN_LANGUAGE,
     SL_SET_LANGUAGE,
     SL_OPEN_FORGET,
@@ -61,6 +63,7 @@ typedef enum sl_action {
     SL_ERASE,
     SL_SUBMIT,
     SL_SET_QUALITY,
+    SL_SET_BANDWIDTH,
     SL_SOUND,
     SL_RETRY
 } sl_action;
@@ -82,6 +85,7 @@ typedef struct sl_command {
     sl_host host;
     uint64_t game_id;
     uint32_t quality;
+    uint32_t bitrate_kbps;
     sl_language language;
     char text[64];
 } sl_command;

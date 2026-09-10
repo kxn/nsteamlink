@@ -109,6 +109,8 @@ void sl_ui_release_games(sl_ui_model *m, float velocity) {
 void sl_ui_init(sl_ui_model *m, const sl_auth_store *s) {
     memset(m, 0, sizeof(*m));
     m->store = *s;
+    if (!sl_bitrate_valid(m->store.bitrate_kbps))
+        m->store.bitrate_kbps = 6000;
     m->page = SL_HOME;
     m->network_ok = true;
     sl_ui_layout(m);
@@ -172,6 +174,7 @@ static void emit(sl_ui_model *m, sl_command_type type) {
     m->command.type = type;
     m->command.generation = m->generation;
     m->command.quality = m->store.quality;
+    m->command.bitrate_kbps = m->store.bitrate_kbps;
     m->command.language = sl_i18n_language();
 }
 static void start(sl_ui_model *m, int game) {
@@ -329,6 +332,15 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
             emit(m, SL_CMD_SAVE);
         }
         break;
+    case SL_OPEN_BANDWIDTH: {
+        push(m, SL_BANDWIDTH);
+        const uint32_t rates[] = {4000, 6000, 10000, 20000};
+        m->focus = 101;
+        for (int i = 0; i < 4; ++i)
+            if (m->store.bitrate_kbps == rates[i])
+                m->focus = 100 + i;
+        break;
+    }
     case SL_OPEN_QUALITY:
         push(m, SL_QUALITY);
         m->focus = 100 + (m->store.quality <= 2 ? (int)m->store.quality : 0);
@@ -431,8 +443,15 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
             emit(m, SL_CMD_MANUAL);
         }
         break;
+    case SL_SET_BANDWIDTH:
+        if (m->page == SL_BANDWIDTH && sl_bitrate_valid((uint32_t)arg)) {
+            m->store.bitrate_kbps = (uint32_t)arg;
+            emit(m, SL_CMD_SAVE);
+            back(m);
+        }
+        break;
     case SL_SET_QUALITY:
-        if (arg >= 0 && arg <= 2) {
+        if (m->page == SL_QUALITY && arg >= 0 && arg <= 2) {
             m->store.quality = (uint32_t)arg;
             emit(m, SL_CMD_SAVE);
             back(m);

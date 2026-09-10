@@ -1418,3 +1418,54 @@ Conclusion：在已核对的消息和官方调用路径中，没有证明可用 
 host-stop，避免丢失清理期间到达的完成事实。这个检查只覆盖客户端实际收到的证据。
 结束失败保留操作类型；会话已销毁时不显示连接“重试”，也不能由迟到/直接重试动作启动游戏。
 返回首页后用户仍可主动重新启动。成功结束和取消都使该操作的迟到 UI 事件失效。
+
+## 23. 画质偏好与带宽配置（Android 1.3.32）
+
+### 23.1 官方预设的证据
+
+材料：同 §1 的官方 Android 1.3.32 ARM64 split 中
+`libshell_arm64-v8a.so`，SHA-256
+`15b2d79881eef0c47ed2f96c17d1d60a5f42d3285abcf9f512cfffdac5b238a2`。
+用 `aarch64-linux-gnu-objdump -d -C` 按下列符号/地址复核。
+
+【证据】`CreateStreamingConfigFastPreset` (`0xc85b74`) 清空配置后设置
+`quality=1`、HEVC 和 unreliable FEC，再调用保留部分用户设置的辅助函数
+(`0xc85868`)。该函数没有写入固定码率或固定帧率。
+`CreateStreamingConfigPreset` (`0xc8562c`) 的 preset=1 分支清空配置后调用
+同一辅助函数；preset=2/3 分支设置 `quality=3`、HEVC、unreliable FEC、
+`desired_bitrate_kbps=0`，并分别写入 1920×1080 / 3840×2160 的视频限制。
+尺寸常量位于 `.rodata` 的 `0x4cdd70` / `0x4cdc20`。
+
+字段定位交叉核对：配置对象 `+148` 是 quality；`OnBitrateChanged`
+(`0xc909d8`) 写配置 `+152`；`OnHEVCChanged` (`0xc90ffc`) 写 `+105`；
+`OnUnreliableFECChanged` (`0xc911a8`) 写 `+113`。
+`CPanelStreaming::OnPresetClicked` (`0xc9182c`) 直接调用上述 preset 工厂并保存设置。
+这里的 **EStreamingConfigPreset 与协议 EStreamQualityPreference 是不同枚举**，
+不能把 preset=1/2/3 当作 Fast/Balanced/Beautiful 的映射。
+辅助函数保留硬件解码、音频、输入等部分设置；因此上述写入也不是所有设备最终配置的完整清单。
+
+【结论】没有证据支持本项目旧有的“流畅=4M、均衡=6M、清晰=10M”是官方 profile。
+协议本身明确分离画质偏好（字段 1）与带宽请求（字段 6），也分离分辨率、帧率、
+编解码器能力。官方工厂包含超出当前 Switch 接线范围的设置，不整套移植。
+此前“尚未定位官方 preset 生成代码”的判断由这里的 shell 库证据补充；
+仅检查流媒体核心 `libmain.so` 不足以判断 UI preset 行为。
+
+【待验证】Host 对各画质偏好的具体编码器参数选择及实际画质/延迟收益；
+不得根据枚举名宣称 Fast 会发送更高帧率，或 Beautiful 必然增加输入延迟。
+
+### 23.2 本项目配置契约
+
+- UI 均衡/流畅/清晰显式映射到协议 Balanced=2 / Fast=1 / Beautiful=3。
+  IHSlib 提供独立公开枚举；零值及非法输入回落 Balanced，不暴露 protobuf 类型。
+- 带宽限制独立选择 4 / 6 / 10 / 20 Mbps，新安装默认 6 Mbps。
+  这些是本项目的手动带宽选项，**不是冒称官方的码率预设**。
+- 所有画质共用现有 H.264、1280×720、60 fps 请求；不随画质开启 HEVC、
+  unreliable FEC 或修改渲染/解码时序。本变更不实现自动带宽或运行时 message 99。
+- 开始连接时将画质、码率复制进命令快照；会话使用这份快照。
+  串流时保存设置只影响下次连接，不并发修改当前协商配置。
+- profile v3 存储独立码率。读取 v2 时保留设备身份、密钥、配对主机和偏好，
+  将旧偏好对应的 6/4/10 Mbps 迁移为独立码率；后续保存采用 v3。
+  文件头、长度、版本、校验和或范围不合法仍报损坏，不重建身份。
+  迁移保留旧码率，但旧 Fast/Beautiful 从此真正发送相应偏好，行为并非完全不变。
+- 协议测试解密实际 NegotiationSetConfig 并反序列化，交叉检查各画质与独立
+  码率、分辨率、帧率、编解码器；存储测试覆盖三种旧偏好和配对身份迁移。

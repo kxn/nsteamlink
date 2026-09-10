@@ -128,16 +128,26 @@ void sl_ui_layout(sl_ui_model *m) {
         case SL_SETTINGS:
             strcpy(l->title, sl_tr(SL_T_SETTINGS));
             row(l, 0, sl_tr(SL_T_QUALITY), SL_OPEN_QUALITY, 0);
-            row(l, 1, m->store.sound ? sl_tr(SL_T_SOUND_ON) : sl_tr(SL_T_SOUND_OFF), SL_SOUND, 0);
-            row(l, 2, sl_tr(SL_T_LANGUAGE), SL_OPEN_LANGUAGE, 0);
+            row(l, 1, sl_tr(SL_T_BANDWIDTH), SL_OPEN_BANDWIDTH, 0);
+            row(l, 2, m->store.sound ? sl_tr(SL_T_SOUND_ON) : sl_tr(SL_T_SOUND_OFF), SL_SOUND, 0);
+            row(l, 3, sl_tr(SL_T_LANGUAGE), SL_OPEN_LANGUAGE, 0);
             if (!m->streaming)
-                row(l, 3, sl_tr(SL_T_MANUAL), SL_OPEN_MANUAL, 0);
+                row(l, 4, sl_tr(SL_T_MANUAL), SL_OPEN_MANUAL, 0);
             break;
         case SL_LANGUAGE:
             strcpy(l->title, sl_tr(SL_T_LANGUAGE));
             row(l, 0, sl_tr(SL_T_SYSTEM_LANGUAGE), SL_SET_LANGUAGE, SL_LANG_SYSTEM);
             row(l, 1, sl_tr(SL_T_CHINESE), SL_SET_LANGUAGE, SL_LANG_ZH_CN);
             row(l, 2, sl_tr(SL_T_ENGLISH), SL_SET_LANGUAGE, SL_LANG_EN);
+            break;
+        case SL_BANDWIDTH:
+            strcpy(l->title, sl_tr(SL_T_BANDWIDTH));
+            row(l, 0, "4 Mbps", SL_SET_BANDWIDTH, 4000);
+            row(l, 1, "6 Mbps", SL_SET_BANDWIDTH, 6000);
+            row(l, 2, "10 Mbps", SL_SET_BANDWIDTH, 10000);
+            row(l, 3, "20 Mbps", SL_SET_BANDWIDTH, 20000);
+            if (m->streaming)
+                text(l, 320, 548, 26, sl_tr(SL_T_NEXT_CONNECTION));
             break;
         case SL_QUALITY:
             strcpy(l->title, sl_tr(SL_T_QUALITY));
@@ -227,7 +237,7 @@ void sl_ui_layout(sl_ui_model *m) {
     }
     if (l->dialog) {
         l->drawer = m->page == SL_MENU || m->page == SL_OPTIONS || m->page == SL_SETTINGS ||
-                    m->page == SL_QUALITY || m->page == SL_LANGUAGE;
+                    m->page == SL_QUALITY || m->page == SL_BANDWIDTH || m->page == SL_LANGUAGE;
         l->compact = m->page == SL_END_GAME || m->page == SL_DISCONNECT || m->page == SL_FORGET ||
                      m->page == SL_EXIT || m->page == SL_ERROR || m->page == SL_STOPPING ||
                      m->page == SL_INSTALLING;
