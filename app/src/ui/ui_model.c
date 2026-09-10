@@ -114,8 +114,10 @@ void sl_ui_init(sl_ui_model *m, const sl_auth_store *s) {
     sl_ui_layout(m);
 }
 void sl_ui_error(sl_ui_model *m, const char *message) {
+    bool ending_game = m->ending_game;
     snprintf(m->error, sizeof(m->error), "%s", message);
     page(m, SL_ERROR);
+    m->ending_game = ending_game; /* keep the failed operation, not just launch intent */
     sl_ui_layout(m);
 }
 bool sl_ui_remote(const sl_ui_model *m) {
@@ -131,6 +133,8 @@ void sl_ui_connected(sl_ui_model *m) {
     sl_ui_layout(m);
 }
 void sl_ui_stopped(sl_ui_model *m, bool unexpected) {
+    if (m->ending_game && !unexpected)
+        ++m->generation; /* retire late errors from the completed end-game operation */
     m->streaming = false;
     m->debug = false;
     m->depth = 0;
@@ -390,7 +394,8 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
         if (m->page == SL_HOME)
             push(m, SL_EXIT);
         else if (m->page == SL_PAIRING || m->page == SL_SAVING || m->page == SL_CONNECTING ||
-                 m->page == SL_PIN || m->page == SL_ERROR) {
+                 m->page == SL_PIN || m->page == SL_ERROR ||
+                 (m->page == SL_STOPPING && m->ending_game)) {
             ++m->generation;
             emit(m, SL_CMD_CANCEL);
             m->depth = 0;
@@ -438,7 +443,7 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
         emit(m, SL_CMD_SAVE);
         break;
     case SL_RETRY:
-        if (m->page == SL_ERROR) {
+        if (m->page == SL_ERROR && !m->ending_game) {
             m->repair_attempted = !m->intent.host.paired;
             m->pairing_code[0] = 0;
             ++m->generation;

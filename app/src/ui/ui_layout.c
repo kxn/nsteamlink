@@ -160,6 +160,9 @@ void sl_ui_layout(sl_ui_model *m) {
             break;
         case SL_STOPPING:
             strcpy(l->title, sl_tr(m->ending_game ? SL_T_ENDING_GAME : SL_T_DISCONNECTING));
+            if (m->ending_game) {
+                button(l, 9, 320, 596, 640, 64, sl_tr(SL_T_STOP_WAITING_KEY), SL_BACK, 0, false);
+            }
             break;
         case SL_CLOSING:
             strcpy(l->title, sl_tr(SL_T_EXITING));
@@ -206,9 +209,10 @@ void sl_ui_layout(sl_ui_model *m) {
             break;
         case SL_ERROR:
             strcpy(l->title,
-                   m->had_stream ? sl_tr(SL_T_STREAM_INTERRUPTED) : sl_tr(SL_T_CONNECT_FAILED));
+                   m->ending_game ? sl_tr(SL_T_END_GAME)
+                   : m->had_stream ? sl_tr(SL_T_STREAM_INTERRUPTED) : sl_tr(SL_T_CONNECT_FAILED));
             text(l, 320, 232, 30, m->error);
-            if (m->intent.host.id)
+            if (m->intent.host.id && !m->ending_game)
                 row(l, 2, sl_tr(SL_T_RETRY), SL_RETRY, 0);
             break;
         default:
@@ -274,6 +278,14 @@ void sl_ui_layout(sl_ui_model *m) {
                 l->panel_y = 256;
                 l->panel_w = 560;
                 l->panel_h = 208;
+                if (m->page == SL_STOPPING && m->ending_game) {
+                    l->panel_y = 208;
+                    l->panel_h = 304;
+                    sl_control *c = &l->controls[0];
+                    c->x = l->panel_x + (l->panel_w - c->w) / 2;
+                    c->y = l->panel_y + 192;
+                    strcpy(c->label, sl_tr(SL_T_STOP_WAITING_KEY));
+                }
             }
             if (m->page == SL_EXIT) {
                 l->panel_y = 230;

@@ -118,6 +118,7 @@
   "END_GAME_QUESTION": "End the game on your PC?",
   "END_GAME_EXPLANATION": "Save your game before ending it.",
   "END_GAME_FAILED": "Could not confirm the game ended. Check your PC.",
+  "STOP_WAITING_KEY": "B  Disconnect",
   "ENDING_GAME": "Ending game",
   "APPLET_UNSUPPORTED": "Applet mode is not supported.",
   "APPLET_INSTRUCTION": "Hold R while launching a game to open hbmenu.\nThen open NSteamLink again.",

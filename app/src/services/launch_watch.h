@@ -73,3 +73,17 @@ static inline void sl_end_game_status(sl_end_game_watch *s, bool present, bool r
     } else
         s->empty = 0;
 }
+
+/* Local patience limit, not a protocol deadline or evidence of completion. */
+#define SL_END_GAME_TIMEOUT_MS 60000ULL
+typedef enum { SL_END_GAME_WAIT, SL_END_GAME_DONE, SL_END_GAME_TIMEOUT } sl_end_game_result;
+static inline sl_end_game_result sl_end_game_poll(const sl_end_game_watch *s, uint64_t now,
+                                                 bool host_stopped) {
+    if (!s->at)
+        return SL_END_GAME_WAIT;
+    /* Positive evidence always wins, including at the timeout boundary. */
+    if (host_stopped || s->empty >= 2)
+        return SL_END_GAME_DONE;
+    return now >= s->at && now - s->at >= SL_END_GAME_TIMEOUT_MS
+               ? SL_END_GAME_TIMEOUT : SL_END_GAME_WAIT;
+}

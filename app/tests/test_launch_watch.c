@@ -23,6 +23,17 @@ int main(void) {
     sl_end_game_status(&end, true, false, true, 0);
     sl_end_game_status(&end, true, false, true, 1);
     assert(end.empty == 2); /* timestamp wrap */
+    end = (sl_end_game_watch){.at = 100};
+    assert(sl_end_game_poll(&end, 15100, false) == SL_END_GAME_WAIT);
+    assert(sl_end_game_poll(&end, 60099, false) == SL_END_GAME_WAIT);
+    assert(sl_end_game_poll(&end, 60100, false) == SL_END_GAME_TIMEOUT);
+    assert(sl_end_game_poll(&end, 60100, true) == SL_END_GAME_DONE);
+    end.empty = 2;
+    assert(sl_end_game_poll(&end, 60101, false) == SL_END_GAME_DONE);
+    end.empty = 0;
+    assert(sl_end_game_poll(&end, 99, false) == SL_END_GAME_WAIT); /* no underflow */
+    end = (sl_end_game_watch){0};
+    assert(sl_end_game_poll(&end, 90000, true) == SL_END_GAME_WAIT); /* canceled */
     sl_launch_watch s = {.target = 7};
     sl_launch_activity(&s, 3, 413080, 0);
     sl_launch_status(&s, true, false, true, 1);
