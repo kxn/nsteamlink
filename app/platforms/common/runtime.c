@@ -749,6 +749,54 @@ static void sample(sl_runtime *r, uint64_t now) {
                  U(now), m->resources.maps, m->resources.pool_groups, m->resources.busy_batches,
                  U(m->resources.image_bytes), U(m->resources.imported_bytes));
         sl_log(line);
+#if NSL_GFX_DEKO
+        snprintf(line, sizeof(line),
+                 "vq1 id=%llu attempts=%llu nobatch=%llu acquire=%llu acquire_us=%llu",
+                 U(now), U(m->resources.begin_attempts), U(m->resources.no_free_batch),
+                 U(m->resources.acquires), U(m->resources.acquire_us));
+        sl_log(line);
+        snprintf(line, sizeof(line),
+                 "vq2 id=%llu polls=%llu timeout=%llu done=%llu residence_us=%llu",
+                 U(now), U(m->resources.fence_polls), U(m->resources.fence_timeouts),
+                 U(m->resources.completed_batches), U(m->resources.batch_residence_us));
+        sl_log(line);
+#endif
+        snprintf(line, sizeof(line),
+                 "vq3 id=%llu n=%llu bad=%llu wait_ns=%llu work_ns=%llu wmax=%llu xmax=%llu",
+                 U(now), U(m->resources.gpu_samples), U(m->resources.gpu_invalid),
+                 U(m->resources.gpu_wait_ns), U(m->resources.gpu_work_ns),
+                 U(m->resources.gpu_wait_max_ns), U(m->resources.gpu_work_max_ns));
+        sl_log(line);
+        snprintf(line, sizeof(line),
+                 "vq4 id=%llu short=%llu long=%llu gapmax=%llu empty=%llu one=%llu many=%llu tmax=%llu",
+                 U(now), U(s.pacing.publish_short), U(s.pacing.publish_long),
+                 U(s.pacing.publish_gap_max_us), U(s.pacing.take_empty), U(s.pacing.take_one),
+                 U(s.pacing.take_many), U(s.pacing.take_gap_max_us));
+        sl_log(line);
+        snprintf(line, sizeof(line),
+                 "vq5 id=%llu submit=%llu bytes=%llu long=%llu gapmax=%llu",
+                 U(now), U(s.pacing.submits), U(s.pacing.submit_bytes), U(s.pacing.submit_long),
+                 U(s.pacing.submit_gap_max_us));
+        sl_log(line);
+        snprintf(line, sizeof(line),
+                 "vq6 id=%llu loops=%llu control=%llu media=%llu tail=%llu sleep=%llu collect=%llu",
+                 U(now), U(s.loop.loops), U(s.loop.control_us), U(s.loop.media_us),
+                 U(s.loop.tail_us), U(s.loop.sleep_us), U(s.loop.collect_us));
+        sl_log(line);
+        snprintf(line, sizeof(line), "vq7 id=%llu cpu=%llu wall=%llu rc=%u",
+                 U(now), U(s.loop.cpu_ticks), U(s.loop.cpu_wall_ticks), s.loop.cpu_result);
+        sl_log(line);
+        snprintf(line, sizeof(line),
+                 "vq8 id=%llu epoch=%llu a=%llu p=%llu ca=%llu cp=%llu defer=%llu tv=%u ts=%u active=%u unknown=%llu",
+                 U(now),U(s.video_epoch),U(m->available_frames),U(m->submitted_frames),
+                 U(m->cohort_frames),U(m->cohort_presented),U(m->deferred),
+                 m->input_period_us,m->output_period_us,m->adaptive_active,U(m->unobserved));
+        sl_log(line);
+        snprintf(line, sizeof(line),
+                 "vq9 id=%llu ready_us=%llu wait_us=%llu start_us=%llu hold=%llu",
+                 U(now),U(m->adaptive_ready_us),U(m->adaptive_wait_us),
+                 U(m->adaptive_start_us),U(m->adaptive_holdovers));
+        sl_log(line);
 #undef U
     }
     r->previous = s;

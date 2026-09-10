@@ -27,6 +27,11 @@ struct sl_video_pipeline {
     bool accepting;
     bool cancelled, frozen;
     sl_video_counters counters;
+    uint64_t publish_seq;
+    sl_publication publications[SL_PUBLICATIONS];
+#if NSL_DIAGNOSTICS
+    uint64_t last_publish_us, last_take_us, last_submit_us, published_since_take;
+#endif
 };
 typedef struct packet_token {
     IHS_FrameTicket *ticket;
@@ -129,6 +134,10 @@ bool sl_video_open(sl_video_pipeline *p, sl_video_key key, const sl_video_config
         p->active = key;
         p->cancelled = false;
         p->counters = (sl_video_counters){0};
+        p->publish_seq = 0;
+#if NSL_DIAGNOSTICS
+        p->last_publish_us = p->last_take_us = p->last_submit_us = p->published_since_take = 0;
+#endif
     }
     pthread_mutex_unlock(&p->mailbox);
     domain *d = NULL;
@@ -260,7 +269,23 @@ static bool publish(sl_video_pipeline *p, domain *d) {
     pthread_mutex_lock(&p->mailbox);
     sl_video_frame *old = NULL;
     bool accepted = p->accepting && same(p->active, d->key);
+    if (accepted && p->publish_seq == UINT64_MAX) accepted = false;
     if (accepted) {
+        frame->publish_seq = ++p->publish_seq;
+        p->publications[frame->publish_seq % SL_PUBLICATIONS] =
+            (sl_publication){frame->publish_seq, now_us()};
+#if NSL_DIAGNOSTICS
+        uint64_t stamp = now_us();
+        if (p->last_publish_us) {
+            uint64_t gap = stamp - p->last_publish_us;
+            p->counters.publish_short += gap < 8000;
+            p->counters.publish_long += gap > 25000;
+            if (gap > p->counters.publish_gap_max_us)
+                p->counters.publish_gap_max_us = gap;
+        }
+        p->last_publish_us = stamp;
+        ++p->published_since_take;
+#endif
         old = p->pending;
         p->pending = frame;
         if (p->counters.decoded != UINT32_MAX)
@@ -326,6 +351,21 @@ bool sl_video_submit(sl_video_pipeline *p, sl_video_key key, const unsigned char
     token->ticket = ticket;
     token->key = key;
     token->begin_us = now_us();
+#if NSL_DIAGNOSTICS
+    pthread_mutex_lock(&p->mailbox);
+    if (same(p->active, key)) {
+        ++p->counters.submits;
+        p->counters.submit_bytes += size;
+        if (p->last_submit_us) {
+            uint64_t gap = token->begin_us - p->last_submit_us;
+            p->counters.submit_long += gap > 25000;
+            if (gap > p->counters.submit_gap_max_us)
+                p->counters.submit_gap_max_us = gap;
+        }
+        p->last_submit_us = token->begin_us;
+    }
+    pthread_mutex_unlock(&p->mailbox);
+#endif
     IHS_FrameTicketDecodeStage(ticket, false, token->begin_us);
     atomic_init(&token->claimed, false);
     packet->opaque_ref = av_buffer_create((uint8_t *)token, sizeof(*token), free_token, NULL, 0);
@@ -366,6 +406,18 @@ bool sl_video_flush(sl_video_pipeline *p, sl_video_key key) {
 sl_video_frame *sl_video_take(sl_video_pipeline *p) {
     pthread_mutex_lock(&p->mailbox);
     sl_video_frame *frame = p->pending;
+#if NSL_DIAGNOSTICS
+    uint64_t stamp = now_us();
+    if (p->accepting) {
+        p->counters.take_empty += p->published_since_take == 0;
+        p->counters.take_one += p->published_since_take == 1;
+        p->counters.take_many += p->published_since_take > 1;
+        if (p->last_take_us && stamp - p->last_take_us > p->counters.take_gap_max_us)
+            p->counters.take_gap_max_us = stamp - p->last_take_us;
+        p->last_take_us = stamp;
+    }
+    p->published_since_take = 0;
+#endif
     p->pending = NULL;
     pthread_mutex_unlock(&p->mailbox);
     return frame;
@@ -456,4 +508,29 @@ bool sl_video_read_counters(sl_video_pipeline *p, sl_video_key key, sl_video_cou
         *out = p->counters;
     pthread_mutex_unlock(&p->mailbox);
     return same_key;
+}
+
+bool sl_video_publications(sl_video_pipeline *p, sl_video_key previous, uint64_t after,
+                           sl_publication_snapshot *out) {
+    if (!p) return false;
+    pthread_mutex_lock(&p->mailbox);
+    bool active = p->accepting;
+    if (active) {
+        out->key = p->active;
+        out->latest = p->publish_seq;
+        out->pending = p->pending ? p->pending->publish_seq : 0;
+        out->count = 0; out->overflow = false;
+        if (!same(previous, p->active)) after = 0;
+        if (after > p->publish_seq) after = 0;
+        if (p->publish_seq - after > SL_PUBLICATIONS) {
+            after = p->publish_seq - SL_PUBLICATIONS;
+            out->overflow = true;
+        }
+        while (after < p->publish_seq && out->count < SL_PUBLICATION_READ) {
+            ++after;
+            out->items[out->count++] = p->publications[after % SL_PUBLICATIONS];
+        }
+    }
+    pthread_mutex_unlock(&p->mailbox);
+    return active;
 }

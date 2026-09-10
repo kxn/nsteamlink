@@ -1,4 +1,9 @@
 #include "media.h"
+#include "video_scheduler.h"
+static sl_video_scheduler video_scheduler;
+#if NSL_DIAGNOSTICS
+void sl_media_adaptive_pacing(bool enabled) { sl_video_scheduler_init(&video_scheduler,enabled); }
+#endif
 #include "events_backend.h"
 #include "gfx_backend.h"
 #include "platform/rumble.h"
@@ -776,6 +781,7 @@ bool stream_media_init(stream_media_log_fn log_fn) {
     av_log_set_level(NSL_DIAGNOSTICS ? AV_LOG_WARNING : AV_LOG_QUIET);
     av_log_set_callback(ffmpeg_log_callback);
 
+    sl_video_scheduler_init(&video_scheduler, NSL_GFX_DEKO && NSL_ADAPTIVE_PACING);
     video = sl_video_create();
     if (!video) {
         stream_media_shutdown();
@@ -1013,7 +1019,9 @@ int sl_media_video_start_tracked(IHS_Session *session, const IHS_VideoEpochInfo 
     video_key = key;
     snapshot.session_id = key.session;
     snapshot.video_epoch = key.epoch;
+#if NSL_DIAGNOSTICS
     snapshot.render = (sl_render_metrics){0};
+#endif
     snapshot.replaced_frames = 0;
     snapshot.video_active = false;
     snapshot.first_frame_displayed = false;
@@ -1259,21 +1267,54 @@ void sl_media_collect(void) {
     if (!sl_video_is_current(video, key))
         sl_gfx_forget_video(gfx);
 }
+#if NSL_DIAGNOSTICS
+static uint64_t collect_total_us;
+void sl_media_loop_metrics(const sl_loop_metrics *metrics) {
+    pthread_mutex_lock(&state_lock);
+    snapshot.loop = *metrics;
+    snapshot.loop.collect_us = collect_total_us;
+    pthread_mutex_unlock(&state_lock);
+}
+#endif
 void stream_media_present(void) {
     if (!sdl_ready)
         return;
+#if NSL_DIAGNOSTICS
+    uint64_t collect_started = media_monotonic_us();
+#endif
     sl_media_collect();
+#if NSL_DIAGNOSTICS
+    collect_total_us += media_monotonic_us() - collect_started;
+#endif
     if (!sl_events_foreground())
         return;
 #if NSL_DIAGNOSTICS
     uint64_t begin_us = media_monotonic_us();
 #endif
-    if (sl_gfx_begin(gfx) != SL_GFX_READY)
+    uint64_t schedule_begin = media_monotonic_us();
+    if (sl_video_scheduler_wait(&video_scheduler,video,schedule_begin)) return;
+    sl_gfx_result begin_result = sl_gfx_begin(gfx);
+    if (begin_result != SL_GFX_READY) {
+#if NSL_DIAGNOSTICS
+        /* A stalled renderer must still publish its BUSY counters. Bound this
+         * copy/lock to once per second; never log from the retry path. */
+        static uint64_t last_busy_snapshot_us;
+        if (begin_us - last_busy_snapshot_us >= 1000000) {
+            sl_gfx_counters resources;
+            sl_gfx_get_counters(gfx, &resources);
+            pthread_mutex_lock(&state_lock);
+            snapshot.render.resources = resources;
+            pthread_mutex_unlock(&state_lock);
+            last_busy_snapshot_us = begin_us;
+        }
+#endif
         return;
+    }
 #if NSL_DIAGNOSTICS
     uint64_t begun_us = media_monotonic_us();
 #endif
     sl_video_frame *candidate = sl_video_take(video);
+    uint64_t take_us = media_monotonic_us();
     if (candidate && !sl_video_is_current(video, candidate->key)) {
         sl_resource_release(&candidate->ref);
         candidate = NULL;
@@ -1307,7 +1348,10 @@ void stream_media_present(void) {
 #if NSL_DIAGNOSTICS
     uint64_t ui_end = media_monotonic_us();
 #endif
+    uint64_t submit_started = media_monotonic_us();
     sl_gfx_present_result result = sl_gfx_present(gfx);
+    sl_video_scheduler_feedback(&video_scheduler,video,candidate,take_us,submit_started,
+        result.result==SL_GFX_READY && result.submitted && (!candidate || drawn));
     uint64_t present_us = media_monotonic_us();
 #if NSL_DIAGNOSTICS
     sl_gfx_counters resources;
@@ -1317,6 +1361,20 @@ void stream_media_present(void) {
     if (frame && frame->key.session == snapshot.session_id &&
         frame->key.epoch == snapshot.video_epoch) {
         sl_render_metrics *m = &snapshot.render;
+        const sl_frame_pacer *control=&video_scheduler.control;
+        m->available_frames=control->available;
+        m->submitted_frames=control->presented;
+        m->cohort_frames=control->settled;
+        m->cohort_presented=control->settled_presented;
+        m->deferred=control->deferred;
+        m->unobserved=control->unobserved;
+        m->input_period_us=(uint32_t)control->input.value;
+        m->output_period_us=(uint32_t)control->output.value;
+        m->adaptive_active=control->enabled && control->active;
+        m->adaptive_ready_us=control->diag_ready_us;
+        m->adaptive_wait_us=control->diag_wait_us;
+        m->adaptive_start_us=control->diag_start_us;
+        m->adaptive_holdovers=control->holdovers;
         m->hardware = frame->pixels->hw_frames_ctx != NULL;
         ++m->draws;
         m->redraws += candidate == NULL;
@@ -1426,6 +1484,7 @@ void stream_media_get_snapshot(stream_media_snapshot *out) {
     pthread_mutex_lock(&state_lock);
     sl_video_counters counters;
     if (video && sl_video_read_counters(video, video_key, &counters)) {
+        snapshot.pacing = counters;
         snapshot.decoded_frames = snapshot.decode_samples = counters.decoded;
         snapshot.replaced_frames = counters.replaced;
         snapshot.decode_us_total = counters.decode_total_us;

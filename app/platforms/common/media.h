@@ -2,6 +2,7 @@
 
 #include "input/input_router.h"
 #include "platform/gfx.h"
+#include "video_pipeline.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -15,6 +16,7 @@
 
 typedef void (*stream_media_log_fn)(const char *message);
 
+#if NSL_DIAGNOSTICS
 /* Main-thread measurements, copied under state_lock; no renderer access by worker.
  * prep/age/wait count only newly displayed frames; begin/UI/present include redraws. */
 typedef struct sl_render_metrics {
@@ -22,15 +24,31 @@ typedef struct sl_render_metrics {
     uint64_t draws, redraws, begin_us, ui_us, present_us;
     uint64_t uploads, upload_bytes, downloads;
     sl_gfx_counters resources;
+    uint64_t available_frames, submitted_frames, cohort_frames, cohort_presented, deferred, unobserved;
+    uint32_t input_period_us, output_period_us;
+    bool adaptive_active;
+    uint64_t adaptive_ready_us, adaptive_wait_us, adaptive_start_us, adaptive_holdovers;
     bool hardware;
 } sl_render_metrics;
+
+typedef struct sl_loop_metrics {
+    uint64_t loops, control_us, media_us, tail_us, sleep_us, collect_us;
+    uint64_t cpu_ticks, cpu_wall_ticks;
+    uint32_t cpu_result;
+} sl_loop_metrics;
+void sl_media_loop_metrics(const sl_loop_metrics *);
+#endif
 
 typedef struct stream_media_snapshot {
     uint64_t session_id, video_epoch;
     bool available;
     bool video_active, render_failed;
     bool first_frame_displayed;
+    sl_video_counters pacing;
+#if NSL_DIAGNOSTICS
     sl_render_metrics render;
+    sl_loop_metrics loop;
+#endif
     uint32_t replaced_frames;
     uint32_t decoded_frames;
     uint32_t displayed_frames;
@@ -191,3 +209,8 @@ bool sl_media_video_clean(void);
 void sl_media_collect(void);
 
 void sl_media_allow_video(void);
+
+#if NSL_DIAGNOSTICS
+/* Main-thread baseline toggle; resets the controller, never decoder state. */
+void sl_media_adaptive_pacing(bool enabled);
+#endif

@@ -15,6 +15,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if NSL_DIAGNOSTICS && defined(__SWITCH__)
+#include <switch.h>
+#endif
+#if NSL_DIAGNOSTICS
+static uint64_t loop_us(void) {
+    uint64_t t = SDL_GetPerformanceCounter(), f = SDL_GetPerformanceFrequency();
+    return (t / f) * 1000000 + (t % f) * 1000000 / f;
+}
+#endif
 
 typedef struct application {
     sl_ui_model ui;
@@ -107,8 +116,11 @@ int sl_application_run(int argc, char **argv) {
     unsigned frames = 0;
     const char *screenshot = NULL;
 #if NSL_DIAGNOSTICS
+    bool no_adaptive_pacing = false;
     for (int i = 1; i < argc; ++i) {
-        if (!strcmp(argv[i], "--offline"))
+        if (!strcmp(argv[i], "--no-adaptive-pacing"))
+            no_adaptive_pacing = true;
+        else if (!strcmp(argv[i], "--offline"))
             offline = true;
         else if (!strcmp(argv[i], "--frames") && i + 1 < argc)
             frames = (unsigned)strtoul(argv[++i], NULL, 10);
@@ -171,7 +183,16 @@ int sl_application_run(int argc, char **argv) {
     uint64_t last_cue = 0;
     unsigned rendered = 0;
     bool done = false;
+#if NSL_DIAGNOSTICS
+    if (no_adaptive_pacing)
+        sl_media_adaptive_pacing(false);
+    sl_loop_metrics loop_metrics = {0};
+    uint64_t loop_reported = 0;
+#endif
     while (!done && sl_system_running()) {
+#if NSL_DIAGNOSTICS
+        uint64_t loop_start = loop_us();
+#endif
         sl_ui_tick(&a->ui, sl_system_now());
         if (a->runtime) {
             runtime_events(a);
@@ -203,7 +224,13 @@ int sl_application_run(int argc, char **argv) {
             if (cmd.type == SL_CMD_EXIT)
                 done = true;
         }
+#if NSL_DIAGNOSTICS
+        uint64_t control_end = loop_us();
+#endif
         stream_media_present();
+#if NSL_DIAGNOSTICS
+        uint64_t media_end = loop_us();
+#endif
         sl_audio_feedback(a->ui.cue_serial != last_cue ? a->ui.cue : SL_CUE_NONE,
                           a->ui.store.sound);
         last_cue = a->ui.cue_serial;
@@ -212,7 +239,32 @@ int sl_application_run(int argc, char **argv) {
             done = true;
         if (frames && ++rendered >= frames)
             done = true;
+#if NSL_DIAGNOSTICS
+        uint64_t sleep_start = loop_us();
+#endif
         SDL_Delay(1);
+#if NSL_DIAGNOSTICS
+        uint64_t loop_end = loop_us();
+        ++loop_metrics.loops;
+        loop_metrics.control_us += control_end - loop_start;
+        loop_metrics.media_us += media_end - control_end;
+        loop_metrics.tail_us += sleep_start - media_end;
+        loop_metrics.sleep_us += loop_end - sleep_start;
+        if (loop_end - loop_reported >= 1000000) {
+#if defined(__SWITCH__)
+            u64 ticks = 0;
+            loop_metrics.cpu_result = svcGetInfo(&ticks,
+                hosversionAtLeast(13, 0, 0) ? InfoType_ThreadTickCount : InfoType_ThreadTickCountDeprecated,
+                CUR_THREAD_HANDLE, TickCountInfo_Total);
+            loop_metrics.cpu_ticks = ticks;
+            loop_metrics.cpu_wall_ticks = armGetSystemTick();
+#else
+            loop_metrics.cpu_result = UINT32_MAX;
+#endif
+            sl_media_loop_metrics(&loop_metrics);
+            loop_reported = loop_end;
+        }
+#endif
     }
     if (NSL_DIAGNOSTICS && screenshot) {
         SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(0, 1280, 720, 32, SDL_PIXELFORMAT_RGBA32);

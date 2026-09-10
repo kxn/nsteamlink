@@ -80,6 +80,11 @@ typedef struct batch {
     DkFence fence, available;
     unsigned quads, descriptors;
     bool readback_recorded;
+#if NSL_DIAGNOSTICS
+    uint64_t submitted_ticks;
+    DkMemBlock timing;
+    bool timed;
+#endif
 } batch;
 typedef struct params {
     float destination[4], uvrect[4], tint[4], viewport[4];
@@ -263,7 +268,34 @@ void sl_gfx_collect(sl_gfx *g) {
         if (b->life.state != SL_BATCH_SUBMITTED)
             continue;
         DkResult result = dkFenceWait(&b->fence, 0);
+#if NSL_DIAGNOSTICS
+        ++g->counters.fence_polls;
+        g->counters.fence_timeouts += result == DkResult_Timeout;
+#endif
         if (result == DkResult_Success) {
+#if NSL_DIAGNOSTICS
+            if (b->timed) {
+                /* deko report: uint64 counter followed by uint64 timestamp.
+                 * Read only after the existing completion fence succeeds. */
+                const volatile uint64_t *q = dkMemBlockGetCpuAddr(b->timing);
+                uint64_t before = q[1], ready = q[3], end = q[5];
+                if (before && ready >= before && end >= ready) {
+                    uint64_t wait = dkTimestampToNs(ready - before);
+                    uint64_t work = dkTimestampToNs(end - ready);
+                    ++g->counters.gpu_samples;
+                    g->counters.gpu_wait_ns += wait;
+                    g->counters.gpu_work_ns += work;
+                    if (wait > g->counters.gpu_wait_max_ns)
+                        g->counters.gpu_wait_max_ns = wait;
+                    if (work > g->counters.gpu_work_max_ns)
+                        g->counters.gpu_work_max_ns = work;
+                } else
+                    ++g->counters.gpu_invalid;
+            }
+            ++g->counters.completed_batches;
+            g->counters.batch_residence_us +=
+                armTicksToNs(armGetSystemTick() - b->submitted_ticks) / 1000;
+#endif
             if (b->readback_recorded && b->life.serial > g->readback_serial) {
                 memcpy(g->readback_cpu, dkMemBlockGetCpuAddr(b->readback), READBACK_BYTES);
                 g->readback_serial = b->life.serial;
@@ -357,6 +389,11 @@ sl_gfx *sl_gfx_create(const sl_gfx_config *config) {
     for (unsigned i = 0; i < BATCHES; ++i) {
         batch *b = &g->batches[i];
         sl_batch_init(&b->life, b->references, REFERENCES);
+#if NSL_DIAGNOSTICS
+        b->timing = memory(g, 4096, DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuUncached, NULL);
+        if (!b->timing)
+            goto fail;
+#endif
         b->command_memory =
             memory(g, COMMAND_BYTES, DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached, NULL);
         b->data =
@@ -381,6 +418,9 @@ static void bind_target(sl_gfx *g, const DkImage *image) {
     dkCmdBufBindRenderTarget(g->recording->commands, &view, NULL);
 }
 sl_gfx_result sl_gfx_begin(sl_gfx *g) {
+#if NSL_DIAGNOSTICS
+    ++g->counters.begin_attempts;
+#endif
     sl_gfx_collect(g);
     if (g->failed || g->finished)
         return SL_GFX_ERROR;
@@ -393,8 +433,12 @@ sl_gfx_result sl_gfx_begin(sl_gfx *g) {
             g->batch_index = i;
             break;
         }
-    if (!b)
+    if (!b) {
+#if NSL_DIAGNOSTICS
+        ++g->counters.no_free_batch;
+#endif
         return SL_GFX_BUSY;
+    }
     if (g->serial == UINT64_MAX || !sl_batch_begin(&b->life, ++g->serial)) {
         g->failed = true;
         return SL_GFX_ERROR;
@@ -403,9 +447,30 @@ sl_gfx_result sl_gfx_begin(sl_gfx *g) {
     b->readback_recorded = false;
     dkCmdBufClear(b->commands);
     dkCmdBufAddMemory(b->commands, b->command_memory, 0, COMMAND_BYTES);
+#if NSL_DIAGNOSTICS
+    uint64_t acquire_ticks = armGetSystemTick();
+#endif
     dkSwapchainAcquireImage(g->swapchain, &g->output, &b->available);
+#if NSL_DIAGNOSTICS
+    ++g->counters.acquires;
+    g->counters.acquire_us += armTicksToNs(armGetSystemTick() - acquire_ticks) / 1000;
+#endif
     g->recording = b;
+#if NSL_DIAGNOSTICS
+    /* Sparse reports reduce instrumentation effects; no extra fence or idle. */
+    b->timed = (g->serial % 16) == 0;
+    if (b->timed) {
+        memset(dkMemBlockGetCpuAddr(b->timing), 0, 48);
+        dkCmdBufReportCounter(b->commands, DkCounter_TimestampPipelineTop,
+                              dkMemBlockGetGpuAddr(b->timing));
+    }
+#endif
     dkCmdBufWaitFence(b->commands, &b->available);
+#if NSL_DIAGNOSTICS
+    if (b->timed)
+        dkCmdBufReportCounter(b->commands, DkCounter_TimestampPipelineTop,
+                              dkMemBlockGetGpuAddr(b->timing) + 16);
+#endif
     dkCmdBufBarrier(b->commands, DkBarrier_Full,
                     DkInvalidateFlags_L2Cache | DkInvalidateFlags_Image |
                         DkInvalidateFlags_Descriptors | DkInvalidateFlags_Shader);
@@ -450,10 +515,18 @@ sl_gfx_present_result sl_gfx_present(sl_gfx *g) {
     }
     if (g->diagnostic && b->life.serial == 1)
         g->diagnostic("present: record-fence");
+#if NSL_DIAGNOSTICS
+    if (b->timed)
+        dkCmdBufReportCounter(b->commands, DkCounter_Timestamp,
+                              dkMemBlockGetGpuAddr(b->timing) + 32);
+#endif
     dkCmdBufSignalFence(b->commands, &b->fence, true);
     sl_batch_submit(&b->life);
     if (g->diagnostic && b->life.serial == 1)
         g->diagnostic("present: submit-commands");
+#if NSL_DIAGNOSTICS
+    b->submitted_ticks = armGetSystemTick();
+#endif
     dkQueueSubmitCommands(g->queue, dkCmdBufFinishList(b->commands));
     if (g->diagnostic && b->life.serial == 1)
         g->diagnostic("present: queue-present");
@@ -536,6 +609,10 @@ void sl_gfx_destroy(sl_gfx *g) {
             dkMemBlockDestroy(b->data);
         if (b->readback)
             dkMemBlockDestroy(b->readback);
+#if NSL_DIAGNOSTICS
+        if (b->timing)
+            dkMemBlockDestroy(b->timing);
+#endif
     }
     for (unsigned i = 0; i < 2; ++i)
         if (g->atlas[i])

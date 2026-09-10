@@ -61,6 +61,18 @@ static void take(run *r) {
     sl_video_frame *frame = sl_video_take(r->pipeline);
     if (!frame)
         return;
+    sl_publication_snapshot history;
+    assert(sl_video_publications(r->pipeline,(sl_video_key){0},0,&history));
+    assert(history.key.session==r->key.session && history.pending==0);
+    assert(frame->publish_seq && frame->publish_seq<=history.latest);
+    bool found=false;
+    for(unsigned i=0;i<history.count;++i) {
+        assert(history.items[i].seq==i+1);
+        if(history.items[i].seq==frame->publish_seq) {
+            assert(history.items[i].us>=frame->decode_end_us); found=true;
+        }
+    }
+    assert(found);
     IHS_FrameIdentity identity = IHS_FrameTicketIdentity(frame->ticket);
     assert(frame->pixels->pts == (int64_t)identity.receiveSerial);
     assert(frame->pixels->width == 128 && frame->pixels->height == 72);

@@ -12,7 +12,7 @@ typedef struct sl_video_frame {
     AVFrame *pixels;
     sl_video_key key;
     IHS_FrameTicket *ticket;
-    uint64_t decode_begin_us, decode_end_us;
+    uint64_t decode_begin_us, decode_end_us, publish_seq;
     void *domain;
     atomic_bool available;
 } sl_video_frame;
@@ -51,5 +51,22 @@ void sl_video_thaw(sl_video_pipeline *);
 typedef struct sl_video_counters {
     uint32_t decoded, replaced, decode_max_us;
     uint64_t decode_total_us;
+    uint64_t publish_short, publish_long, publish_gap_max_us;
+    uint64_t take_empty, take_one, take_many, take_gap_max_us;
+    uint64_t submits, submit_bytes, submit_long, submit_gap_max_us;
 } sl_video_counters;
 bool sl_video_read_counters(sl_video_pipeline *, sl_video_key, sl_video_counters *);
+
+/* Product scheduling metadata, no frame references. Reader cursor is per epoch. */
+#define SL_PUBLICATIONS 128
+#define SL_PUBLICATION_READ 16
+typedef struct sl_publication { uint64_t seq, us; } sl_publication;
+typedef struct sl_publication_snapshot {
+    sl_video_key key;
+    uint64_t latest, pending;
+    unsigned count;
+    bool overflow;
+    sl_publication items[SL_PUBLICATION_READ];
+} sl_publication_snapshot;
+bool sl_video_publications(sl_video_pipeline *, sl_video_key previous, uint64_t after,
+                           sl_publication_snapshot *);

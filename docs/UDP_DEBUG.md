@@ -80,3 +80,57 @@ python3 scripts/analyze-video-perf.py deko.log --baseline sdl.log --output compa
 比较输出每个新帧节省的 CPU 准备微秒和百分比。基准必须采用相同游戏场景、分辨率、码率、
 刷新率、设备模式、频率策略与诊断配置；脚本仅能检查其中的后端/解码/尺寸元数据。
 旧版只有 `stats` 且耗时为 `—` 的日志无法反推出这些指标。每秒快照不能推导逐帧 p95。
+
+deko 诊断构建另外每秒输出 `vq1/vq2`，采用同一快照 `id`，不影响旧的五行分析器：
+
+- `vq1`：`attempts` 是 begin 尝试次数（不是完整主循环次数）；`nobatch` 是没有空闲
+  GPU batch 的返回次数；`acquire` 和 `acquire_us` 是输出缓冲 acquire 的次数和 CPU
+  累计耗时。均为 renderer 生命周期累计量，应取差分析。
+- `vq2`：`polls/timeout` 是现有非阻塞完成 fence 查询次数/超时次数；一次 batch
+  可以被查询多次，不能将超时次数当作丢帧数。`done` 是观察到完成的 batch 数，
+  `residence_us/done` 的差分比值是提交命令前至 CPU 观察完成的平均驻留时间。
+  它包括 GPU 队列等待、输出图像 release fence 等待及 CPU 回收采样延迟，**不是 GPU
+  绘制耗时或物理屏幕延迟**。阶段边界的在途 batch 会混入后一段，应排除过渡窗口。
+
+`vp3.draws` 只记录成功的视频绘制，不包含 BUSY 返回；`vp3.begin` 同样只覆盖成功路径。
+即使持续 BUSY，主线程仍至多每秒复制一次资源/队列计数，避免诊断数据随成功绘制一起停更。
+新增计数复用现有 fence 查询，仅在 acquire 和提交/回收边界读取 ARM 计数器，不增加 GPU
+等待、逐帧日志或新线程；关闭诊断时不执行新增队列计数和计时。
+
+扩展节奏诊断：
+
+- `vq3`：每 16 个 batch 采一次 GPU 时间戳。三个位置为输出 fence 等待之前、之后、
+  绘制末尾；前两项使用 pipeline-top，末项使用 timestamp report。`wait_ns` 是前两点
+  的累计差，`work_ns` 是后两点的累计差，`n/bad` 是有效/无效组数，`wmax/xmax` 是
+  renderer 生命周期最大值。工作区间包含屏障、清屏、视频和 UI，不是纯 shader 时间；
+  不包含第一个时间戳之前的队列等待。报告格式/时钟换算遵循 deko3d 0.5.0 `Primer.md`
+  Counters 和 `dk_variable.cpp`。报告可能扰动管线，稀疏采样不能保证捕获所有尖峰。
+  每个 batch 额外 4 KiB CPU/GPU uncached 报告内存，仅原完成 fence 成功后读，退出在
+  queue idle 后销毁。不开启诊断时不分配、不记录。无额外 waitIdle 或 CPU 等待。
+- `vq4`：同一 epoch 的解码发布间隔 `<8 ms` / `>25 ms` 次数和最大间隔；两次 take
+  之间发布数量为零/一/多次的次数，以及最大 take 间隔（微秒）。在现有 mailbox 锁内
+  更新，不逐帧输出。固定阈值用于当前 60 fps 实验，不是通用掉帧判据。
+- `vq5`：进入 decoder 后、send_packet 前的提交次数、压缩字节数、间隔 `>25 ms`
+  次数及最大间隔。这不是网卡到包时间，包含上游组帧和 decoder 串行化影响，不能独立
+  区分主机、网络和解码锁。`vp2.decode` 提供提交到解码输出的驻留时间作为交叉证据。
+- `vq6`：主循环次数和 control/media/tail/sleep 累计墙钟微秒。control 包括 UI 状态、
+  输入和 runtime 事件；media 包括 present 调用；collect 是 media 内部事件处理/资源
+  回收的子区间，不应再次加进总耗时。main 每秒发布，和视频快照的采样边界不完全一致。
+- `vq7`：主线程 CPU 执行 ticks、采样墙钟 ticks 和 svcGetInfo 返回码。仅 `rc=0` 且
+  两次计数单调时，`Δcpu/Δwall` 可表达主线程占用一个 CPU 核的比例；不是全进程 CPU
+  使用率，更不覆盖 NVDEC/GPU。接口失败保留错误码，不用墙钟耗时冒充 CPU 使用率。
+
+### 产品自适应选帧诊断
+
+Deko 产品调度由 `NSL_ADAPTIVE_PACING` 控制，默认 ON；算法输入在 diagnostics OFF 中也保留。
+诊断版 `--no-adaptive-pacing` 可关闭本次运行的调度，供基线比较。
+`vq8` 的 `a/p` 是同 epoch 累计发布/首次成功提交数，`ca/cp` 是已关闭 cohort 的计数，
+`unknown` 非零表示元数据观测缺失，此时不把累计 cohort 当完整样本；`defer` 为主动延后重复绘制次数，
+`tv/ts` 是在线估计的输入/输出周期，`active` 表示已启用且满足预测条件。重复绘制不增加 p。
+不要把任意时间窗的 p 增量除以 a 增量当作严格 cohort 利用率，也不要以 fence 等待是否缩短判断收益。
+这些日志由既有诊断 worker 输出，release 编译排除。
+
+`vq9` 的 `ready_us` 是控制器具备预测条件的累计时间，`wait_us` 是主动等待的累计时间，
+`start_us` 是首次发布至首次具备预测条件的间隔，`hold` 为输入观测中断时保留时钟的次数。
+时间跨度过长的主循环暂停不计入状态占比；首次具备条件不等于利用率已经收敛。
+该行由诊断 worker 输出，release 排除；控制器不使用这些计数决策。

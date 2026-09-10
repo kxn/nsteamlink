@@ -73,5 +73,11 @@ typedef struct sl_gfx_counters {
     uint64_t imports, uploads, uploaded_bytes, video_draws, retired_groups, downloads;
     size_t image_bytes, imported_bytes;
     unsigned pool_groups, maps, busy_batches;
+    /* Deko diagnostic cumulative counters, zero on other backends.
+     * Residence ends when CPU observes completion, not at GPU completion. */
+    uint64_t begin_attempts, no_free_batch, acquires, acquire_us;
+    uint64_t fence_polls, fence_timeouts, completed_batches, batch_residence_us;
+    uint64_t gpu_samples, gpu_invalid, gpu_wait_ns, gpu_work_ns;
+    uint64_t gpu_wait_max_ns, gpu_work_max_ns;
 } sl_gfx_counters;
 void sl_gfx_get_counters(const sl_gfx *, sl_gfx_counters *);
