@@ -164,3 +164,47 @@ Windows 中打开设备 `Nintendo Switch` → `Album`，复制需要的图片。
 在 hbmenu 中运行。电脑与 Switch 连接同一局域网，用 FTP 客户端连接 ftpd 屏幕显示的
 IP 与端口，下载 `Nintendo/Album` 目录；端口以屏幕显示为准。
 传输后退出 ftpd。只需读卡复制时，也可以在关机后取出 microSD，用读卡器复制同一目录。
+
+
+## deko 视频直显诊断构建
+
+固定后端选择 `-DNSL_GFX_BACKEND=deko`；默认构建保留 SDL 对照路径。示例：
+
+```sh
+NSL_BUILD_DIR="$PWD/build/switch-deko" scripts/build-switch.sh \
+  -DNSL_GFX_BACKEND=deko -DNSL_DIAGNOSTICS=ON -DNSL_BUILD_TOOLS=OFF
+```
+
+该目录生成应用 `app/nsteamlink.nro`、独立 `app/nsl-video-probe.nro` 和
+`generated/graphics_manifest.json`。保存 manifest 与 NRO，不能混用不同 SDK/shader 的实测记录。
+四份测试视频已经嵌入 probe，无需复制文件到 SD，也无需 Steam。设备进入 hbmenu netloader 后运行：
+
+```sh
+python3 scripts/test-switch-video.py --fixture padding720
+```
+
+无人值守、只准备一次 netloader 时使用：
+
+```sh
+python3 scripts/test-switch-video.py --fixture suite --timeout 900
+```
+
+`suite` 在一次 NRO 启动内运行四份视频各三轮，每轮创建并清理 graphics/decoder，
+执行 UI、24 组独立颜色检查、512 个在途 glyph 的容量/回收检查、软件与硬件像素比较、
+120 次旧帧重画和解码域重建。日志同时核对总解码数、呈现数与 mailbox 替换数：
+B 帧在 EOF 批量排出时，latest-frame mailbox 可以替换尚未取走的输出，不能将此计作漏解码。
+720p/1080p 首尾两轮附带 CPU 准备耗时对照，交换直接导入与下载后上传的测试顺序。
+每条路径预热 8 帧、采样 64 帧，记录中位数、p95、上传次数和字节数；
+垂直同步、GPU 等待及诊断回读不进入计时。这不是 SDL/deko 整体串流延迟或整机功耗对照。
+进程内重复初始化也不等价于多次 hbmenu 加载，HOME/睡眠与真实串流交互须另行验收。
+
+可选单项 fixture 为 `padding720`、`padding1080`、`sequential`、`reordered`。脚本自动推送 NRO，
+接收设备阶段日志，将结果、NRO 哈希和构建 manifest 保存到构建目录的 `probe-runs/`。
+日志中断或超时记为 `INCOMPLETE`，不能按 nxlink 退出码判定设备测试成功。
+诊断构建链接 `deko3dd`，使 SDK 参数错误可以通过网络回传。SD 日志只是自动保留的副本，
+后续启动会自动读取，不要求人工取回。
+
+probe 先验证 UI alpha/atlas/方向，再比较软件 YUV 与硬件导入输出、旧帧重画及两域交替。
+`PROBE_FINAL result=PASS` 仅表示这些像素和引用检查通过；是否回到 hbmenu、HOME/睡眠恢复、连续启动以及
+整机功耗和帧时间收益需要分别记录。已经故障的 GPU queue 会进入系统 fatal，避免把仍被使用的
+内存释放后返回 loader。正式启用 deko 的验收契约见 [渲染设计](VIDEO_RENDERING_DESIGN.md)。

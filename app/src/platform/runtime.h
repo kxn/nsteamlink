@@ -35,3 +35,17 @@ void sl_runtime_destroy(sl_runtime *);
 void sl_log(const char *message);
 bool sl_log_start(void);
 void sl_log_finish(void);
+
+void sl_runtime_request_exit(sl_runtime *);
+bool sl_runtime_finished(sl_runtime *);
+
+void sl_runtime_foreground(sl_runtime *, bool);
+
+/* Persistent ownership facts, independent of the bounded UI notification queue.
+ * request_id is the original STREAM command, never a STOP/END_GAME reply id. */
+typedef struct sl_runtime_facts {
+    uint64_t request_id, session_id, epoch, video_transition;
+    bool connected, paused, presented, failed;
+    bool requests_closed, protocol_closed, video_clean;
+} sl_runtime_facts;
+bool sl_runtime_read_facts(sl_runtime *, sl_runtime_facts *);

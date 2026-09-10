@@ -24,3 +24,6 @@ bool sl_artwork_decode(const unsigned char *jpeg, size_t size, sl_artwork_image 
 bool sl_artwork_title(sl_artwork *, uint64_t gameid, int language, char *out, size_t capacity);
 bool sl_artwork_name(const unsigned char *json, size_t size, uint32_t appid, char *out,
                      size_t capacity);
+
+void sl_artwork_request_stop(sl_artwork *);
+bool sl_artwork_finished(sl_artwork *);

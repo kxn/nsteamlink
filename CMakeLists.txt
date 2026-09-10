@@ -21,6 +21,7 @@ else()
 endif()
 message(STATUS "nsteamlink target platform: ${NSL_PLATFORM}")
 
+option(NSL_ADAPTIVE_PACING "Enable runtime adaptive video scheduling on deko" ON)
 option(NSL_DIAGNOSTICS "Compile advanced diagnostics, UDP console and log collection" OFF)
 option(NSL_BUILD_TOOLS "Build standalone Switch diagnostic tools" ${NSL_DIAGNOSTICS})
 set(NSL_IDENTITY_DIR "${CMAKE_BINARY_DIR}/generated")

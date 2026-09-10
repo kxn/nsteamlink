@@ -17,7 +17,7 @@ checkout() {
 }
 if [ "${1:-}" != --packager-only ]; then
     # The pinned CI image supplies the toolchain; portlibs are recorded in its manifest.
-    dkp-pacman -S --needed --noconfirm switch-sdl2 switch-sdl2_ttf switch-ffmpeg switch-libopus switch-mbedtls switch-curl switch-libjpeg-turbo
+    dkp-pacman -S --needed --noconfirm deko3d uam switch-sdl2 switch-sdl2_ttf switch-ffmpeg switch-libopus switch-mbedtls switch-curl switch-libjpeg-turbo
     checkout https://github.com/protobuf-c/protobuf-c.git 8c201f6e47a53feaab773922a743091eb6c8972a "$DEPS/protobuf-c"
     cmake -S "$ROOT/cmake/deps/protobuf-c" -B "$DEPS/protobuf-build" \
         -DCMAKE_TOOLCHAIN_FILE="$DEVKITPRO/cmake/Switch.cmake" \

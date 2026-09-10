@@ -96,6 +96,7 @@ Steam 的配对授权码与连接安全 PIN 是两个不同概念。修改认证
 | [协议研究](STEAMLINK_PROTOCOL_RE.md) | 官方行为与报文参考 |
 | [官方输入研究](OFFICIAL_INPUT_RE.md) | 控制器与输入协议参考 |
 | [平台图形研究](GFX_MESA_INVESTIGATION.md) | SDL/Mesa 与 applet 环境的证据 |
+| [硬件帧直显设计](VIDEO_RENDERING_DESIGN.md) | deko3d 目标架构、帧所有权、同步、平台迁移与验收契约 |
 | [早期媒体研究](M3_RESEARCH_PLAN.md) | 媒体方案的历史研究背景 |
 | [Switch 环境参考](SWITCH_SETUP.md) | 开发测试环境、启动和设备操作 |
 | [第三方组件](../third_party/README.md) | 来源、许可证与 IHSlib fork 工作流 |

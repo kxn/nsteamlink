@@ -1903,3 +1903,69 @@ SelfController::Exit；不在主循环或 shutdown 中提前销毁 applet 服务
 自动测试覆盖两种全内存 applet 类型、独立 NSO、普通 hbmenu/游戏宿主、身份查询失败及
 applet 拦截。它证明退出策略的隔离条件，不将模拟测试当作系统实际关闭行为的证明。
 实机结果与任务状态维护于 GitHub Issues。
+
+## D-051：Switch deko3d 硬件帧直显与统一图形所有权（2026-09-09）
+
+**Evidence**：`a6f7434` 的 `media.c:1323–1465,1838–1903` 仍在硬件解码输出后分配线性
+buffer、执行 VIC/CPU transfer，再上传 SDL texture。#2 已完成功能验收，VIC 替换没有消除中转。
+`application.c:106–142` 是自有 loop；`media.c:1950–1958` 在没有新帧时重绘旧纹理与 UI。
+Moonlight-Switch 的 NVTEGRA map 导入与 deko3d v0.5.0 的外部 storage 支持提供直显实现依据。
+固定源码、发行包差异与完整引用见 [视频渲染设计](VIDEO_RENDERING_DESIGN.md) §2。
+
+**Correction**：撤回把 #10 历史评论中 `decode + transfer + …` 相加作为客户端总延迟
+自洽证明的解释。当前与 `fd77eed` 源码的 decode 计时均包含 transfer，不能重复计入。
+原始测量值保留，Present 返回只代表呈现调用边界，不代表物理显示扫描完成。
+
+**Correction（架构与资源寿命）**：撤回初稿“report trylock 失败只丢诊断”的解释。
+`ihslib/src/session/frame_stats.c:237–268` 会把缺少完成的记录结算为 DroppedLate；回报不是可丢日志。
+同时撤回随后采用的“逐帧 outbox 交通用 runtime worker”“所有 renderer fatal 绑定视频代次”以及
+“主线程先阻塞 join 再 drain”的组合。`runtime.c:754–762,993–1002` 的同步保存/命令和 join、
+`application.c:116` 的 gate 覆写、IHS `ch_control_video.c:53–61` 的同 session 视频替换，
+表明必须区分控制调度、帧统计、设备寿命与视频内容寿命。
+默认保留关闭的 codec domain 到外部使用结束；跨 codec free 的输出引用保证不再是首版停止前提。
+完整替代契约见 [VIDEO_RENDERING_DESIGN](VIDEO_RENDERING_DESIGN.md) §3–5、§10。
+
+**Conclusion**：直接采样原硬件 surface 能移除明确的整帧中转。原复制也隔离了解码与显示的所有权，
+取消复制后必须重划生命周期边界。收益验收仍检查资源/耗时改善，不能用 FPS 是否超过 60 判定方向。
+最后一帧由 renderer 持有到被替换/关闭且最后 GPU 使用结束，不为重绘再复制一份视频。
+
+**Decision（修订后的目标架构，不代表已实现）**：
+
+1. Switch 采用 deko3d C API，唯一图形 owner；desktop 保留 SDL，薄 gfx HAL 共享完整 UI。
+   延续 D-036 的默认 NWindow 独占，不交付 SDL 菜单与 deko 视频同时运行的中间产品。
+2. application 主线程管理运行/暂停/停止/退出和最终输入准入。runtime 管 IHS 会话与协议事实，
+   不调度逐帧回报。ui_request_id、session_id、video_epoch、pool_id 和 GPU 提交身份各有明确作用域。
+3. FrameLease 只携带有效帧引用/元数据和 completion ticket；所有 GPU 使用由 renderer 的 GpuBatch
+   从 Recording 起保留。映射缓存按 PoolGroup 整组退役，UI 不自行实现 fence 回收。
+   首版 domain 独立创建 hw/device context、独占 pool/PoolGroup，撤回跨 domain 共享许可；
+   退役 domain 的映射归零不得等待活动 domain 停止。
+4. FrameTracker 在 ihslib 内统一接收/阶段/完成/过期/结算。renderer 非阻塞发布带唯一身份的 ticket
+   结果，不访问 session；endpoint 关闭后的 CPU 存储寿命由引用保证。新增本地接口，保持 wire、
+   认证/PIN 和连接语义；容量、16-bit 回绕和乱序结算须先通过真实 stats fixture。
+   统计 timer 读取独立计数快照，不取解码路径的 video stateMutex；tracker 锁内不调用 timer 或发送。
+   Evidence：`ihs_timer.c:228–255` 与 `ch_data_video.c:208–273,424–431` 的现有等待链会传播解码阻塞。
+5. 停止分为关闭准入、生产者停止/renderer 回收、依赖销毁。主线程保持 pump/collect；
+   callback 不等 GPU，runtime 不持锁等 main。冻结的 codec 在 callback 与外部 lease/映射都结束后
+   由 runtime 回收，IHS_SessionThreadedJoin 返回不能代替所有数据 worker 完成的证据。
+6. 用户新 session 等旧 session 和资源清理完成才启动；同 session 的视频 channel 重启允许受限重叠。
+   应用 start 回调失败自行回滚；回调成功后的 timer/发送失败，由 IHS channel 启动事务停止 timer、
+   恰好一次关闭已发布 epoch，不依赖随后 stop callback。Evidence：`ch_data_video.c:169–185` 与
+   `ch_data.c:127–131`；撤回回调成功即 channel 启动完成的隐含前提，保留 channel 失败断开 session 的语义。
+7. device/queue 故障属于 application，旧视频提交导致的设备失效不得因代次过期忽略；
+   视频错误进入统一 session stop。SDK fatal/不可取消等待不伪装为正常 loader return。
+8. 保留 SDL 音频/手柄与 SDL_ttf CPU 字体；Switch 不初始化 SDL VIDEO，平台 adapter 接管事件，
+   video watchdog 迁至 application。默认后端切换需完整视频/UI/lifecycle 验收，回滚使用独立 SDL 产物。
+   保留 D-046：StopVideoData 只暂停视频和视频 watchdog，不结束 session；StartVideoData 恢复等待
+   基准。主机视频暂停、本地 suspend 和应用 stop/exit 独立，恢复视频不能重新打开已关闭的会话准入。
+
+**待验证 / 工程门槛**：实际 FFmpeg 包 receive 完成与 NVDEC wait 的停止保证；冻结 codec/PoolGroup
+的资源回落；surface padding/cache 可见性；非视频 SDL 共存；NWindow acquire 与设备错误回收边界。
+FrameTracker 的 ticket/过期/回绕语义及停止状态交错必须先通过 G0，硬件保证通过 G1；更清晰的
+所有权不等于这些性质已获证明。实施任务、审计闭合和测量结果仅维护于 Issue #8。
+
+**实现规格约束**：VIDEO_RENDERING_DESIGN §14–19 将上述决策落实到现有函数和拟新增接口。
+视频回调新增可选 tracked 三入口并与 legacy 互斥，源码同步重编译；packet token 传递输出归因，
+不再给 receive 的所有输出套用最新 submit id。统计以 pending_report 快照事务提交，防止发送
+期间的新增样本被 reset；present 后再次核对关闭状态，截图在对应批次归还输出前录制。
+这些选择是实施契约，不是已完成代码或实机安全证明；遇到 M:N 归因、NVTEGRA layout 或 SDK
+等待与本规格不符时，按 G0/G1 明确失败并修订对应契约，不能回退到猜测身份或强制释放。

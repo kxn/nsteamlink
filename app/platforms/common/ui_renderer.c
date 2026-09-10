@@ -1,5 +1,6 @@
 #include "platform/ui_renderer.h"
 #include "artwork.h"
+#include "gfx_backend.h"
 #include "platform/system.h"
 #include "services/i18n.h"
 #include <SDL.h>
@@ -12,20 +13,20 @@ static const int sizes[] = {24, 26, 28, 30, 32, 36, 40, 44, 72};
 typedef struct glyph {
     uint32_t code;
     int size, w, h, advance, left, top;
-    SDL_Texture *texture;
+    sl_gfx_texture *texture;
     uint64_t used;
 } glyph;
 struct sl_ui_renderer {
-    SDL_Renderer *renderer;
+    sl_gfx *renderer;
     TTF_Font *fonts[3][9];
     glyph cache[512];
     uint64_t tick;
-    SDL_Texture *backdrop, *outline, *overlay;
+    sl_gfx_texture *backdrop, *outline, *overlay;
     sl_ui_model *base_ui;
     sl_artwork *artwork;
     struct {
         uint64_t id, used, ready_at;
-        SDL_Texture *texture, *blurred;
+        sl_gfx_texture *texture, *blurred;
         int w, h;
     } covers[8];
     float text_alpha;
@@ -40,31 +41,32 @@ struct sl_ui_renderer {
         int language;
         char name[512];
     } titles[16];
-    SDL_FRect focus_from, focus_to, focus_box;
+    sl_gfx_frect focus_from, focus_to, focus_box;
 };
-static SDL_Color bg = {18, 20, 25, 255}, panel = {32, 35, 42, 255}, accent = {114, 199, 242, 255},
-                 fg = {239, 242, 246, 255}, muted = {162, 170, 184, 255},
-                 green = {154, 218, 104, 255}, amber = {241, 190, 104, 255},
-                 violet = {179, 158, 238, 255}, coral = {239, 130, 130, 255};
-static void rect(SDL_Renderer *r, SDL_Rect box, SDL_Color c) {
-    SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
-    SDL_RenderFillRect(r, &box);
+static sl_gfx_color bg = {18, 20, 25, 255}, panel = {32, 35, 42, 255},
+                    accent = {114, 199, 242, 255}, fg = {239, 242, 246, 255},
+                    muted = {162, 170, 184, 255}, green = {154, 218, 104, 255},
+                    amber = {241, 190, 104, 255}, violet = {179, 158, 238, 255},
+                    coral = {239, 130, 130, 255};
+static void rect(sl_gfx *r, sl_gfx_rect box, sl_gfx_color c) {
+    sl_gfx_draw_color(r, c.r, c.g, c.b, c.a);
+    sl_gfx_fill(r, &box);
 }
-static void rounded(SDL_Renderer *r, SDL_Rect b, int radius, SDL_Color c) {
-    rect(r, (SDL_Rect){b.x, b.y + radius, b.w, b.h - 2 * radius}, c);
+static void rounded(sl_gfx *r, sl_gfx_rect b, int radius, sl_gfx_color c) {
+    rect(r, (sl_gfx_rect){b.x, b.y + radius, b.w, b.h - 2 * radius}, c);
     for (int y = 0; y < radius; ++y) {
         float dy = radius - y - .5f;
         float edge = radius - sqrtf(radius * radius - dy * dy);
         int inset = (int)edge;
-        SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
-        SDL_RenderDrawLine(r, b.x + inset + 1, b.y + y, b.x + b.w - inset - 2, b.y + y);
-        SDL_RenderDrawLine(r, b.x + inset + 1, b.y + b.h - y - 1, b.x + b.w - inset - 2,
-                           b.y + b.h - y - 1);
-        SDL_SetRenderDrawColor(r, c.r, c.g, c.b, (Uint8)(c.a * (1.f - edge + inset)));
-        SDL_RenderDrawPoint(r, b.x + inset, b.y + y);
-        SDL_RenderDrawPoint(r, b.x + b.w - inset - 1, b.y + y);
-        SDL_RenderDrawPoint(r, b.x + inset, b.y + b.h - y - 1);
-        SDL_RenderDrawPoint(r, b.x + b.w - inset - 1, b.y + b.h - y - 1);
+        sl_gfx_draw_color(r, c.r, c.g, c.b, c.a);
+        sl_gfx_line(r, b.x + inset + 1, b.y + y, b.x + b.w - inset - 2, b.y + y);
+        sl_gfx_line(r, b.x + inset + 1, b.y + b.h - y - 1, b.x + b.w - inset - 2,
+                    b.y + b.h - y - 1);
+        sl_gfx_draw_color(r, c.r, c.g, c.b, (Uint8)(c.a * (1.f - edge + inset)));
+        sl_gfx_point(r, b.x + inset, b.y + y);
+        sl_gfx_point(r, b.x + b.w - inset - 1, b.y + y);
+        sl_gfx_point(r, b.x + inset, b.y + b.h - y - 1);
+        sl_gfx_point(r, b.x + b.w - inset - 1, b.y + b.h - y - 1);
     }
 }
 static float ease(uint64_t elapsed, float duration) {
@@ -74,41 +76,41 @@ static float ease(uint64_t elapsed, float duration) {
     float remaining = 1.f - t;
     return 1.f - remaining * remaining * remaining;
 }
-static SDL_Color mix(SDL_Color a, SDL_Color b, float t) {
-    return (SDL_Color){a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t,
-                       a.a + (b.a - a.a) * t};
+static sl_gfx_color mix(sl_gfx_color a, sl_gfx_color b, float t) {
+    return (sl_gfx_color){a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t,
+                          a.a + (b.a - a.a) * t};
 }
-static void line(SDL_Renderer *r, int x1, int y1, int x2, int y2, SDL_Color c) {
-    SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
-    SDL_RenderDrawLine(r, x1, y1, x2, y2);
-    SDL_RenderDrawLine(r, x1, y1 + 1, x2, y2 + 1);
+static void line(sl_gfx *r, int x1, int y1, int x2, int y2, sl_gfx_color c) {
+    sl_gfx_draw_color(r, c.r, c.g, c.b, c.a);
+    sl_gfx_line(r, x1, y1, x2, y2);
+    sl_gfx_line(r, x1, y1 + 1, x2, y2 + 1);
 }
-static void play_icon(SDL_Renderer *r, int x, int y, int size, SDL_Color color) {
-    SDL_SetRenderDrawColor(r, color.r, color.g, color.b, color.a);
+static void play_icon(sl_gfx *r, int x, int y, int size, sl_gfx_color color) {
+    sl_gfx_draw_color(r, color.r, color.g, color.b, color.a);
     for (int i = 0; i < size; ++i) {
         int half = (size - i) / 2;
-        SDL_RenderDrawLine(r, x + i, y - half, x + i, y + half);
+        sl_gfx_line(r, x + i, y - half, x + i, y + half);
     }
 }
-static void monitor(SDL_Renderer *r, int x, int y, int size, SDL_Color color) {
-    rounded(r, (SDL_Rect){x, y, size, size * 2 / 3}, 6, color);
-    rounded(r, (SDL_Rect){x + 2, y + 2, size - 4, size * 2 / 3 - 4}, 4,
-            (SDL_Color){26, 40, 55, 255});
+static void monitor(sl_gfx *r, int x, int y, int size, sl_gfx_color color) {
+    rounded(r, (sl_gfx_rect){x, y, size, size * 2 / 3}, 6, color);
+    rounded(r, (sl_gfx_rect){x + 2, y + 2, size - 4, size * 2 / 3 - 4}, 4,
+            (sl_gfx_color){26, 40, 55, 255});
     line(r, x + size / 2, y + size * 2 / 3, x + size / 2, y + size * 2 / 3 + 7, color);
     line(r, x + size / 2 - 9, y + size * 2 / 3 + 8, x + size / 2 + 9, y + size * 2 / 3 + 8, color);
 }
 extern const unsigned char nsl_background[];
 extern const size_t nsl_background_size;
-static SDL_Texture *make_backdrop(SDL_Renderer *r) {
+static sl_gfx_texture *make_backdrop(sl_gfx *r) {
     SDL_Surface *s =
         SDL_LoadBMP_RW(SDL_RWFromConstMem(nsl_background, (int)nsl_background_size), 1);
     if (!s)
         return NULL;
-    SDL_Texture *texture = SDL_CreateTextureFromSurface(r, s);
+    sl_gfx_texture *texture = sl_gfx_from_surface(r, s);
     SDL_FreeSurface(s);
     return texture;
 }
-static SDL_Texture *make_outline(SDL_Renderer *r) {
+static sl_gfx_texture *make_outline(sl_gfx *r) {
     SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(0, 64, 64, 32, SDL_PIXELFORMAT_RGBA32);
     if (!s)
         return NULL;
@@ -123,16 +125,16 @@ static SDL_Texture *make_outline(SDL_Renderer *r) {
             p[0] = p[1] = p[2] = 255;
             p[3] = (Uint8)((outer - inner) * 255);
         }
-    SDL_Texture *texture = SDL_CreateTextureFromSurface(r, s);
+    sl_gfx_texture *texture = sl_gfx_from_surface(r, s);
     SDL_FreeSurface(s);
     if (texture)
-        SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+        sl_gfx_texture_blend(texture, SL_GFX_BLEND_ALPHA);
     return texture;
 }
-static void outline(sl_ui_renderer *r, SDL_Rect b) {
+static void outline(sl_ui_renderer *r, sl_gfx_rect b) {
     if (!r->outline)
         return;
-    SDL_SetTextureColorMod(r->outline, fg.r, fg.g, fg.b);
+    sl_gfx_texture_color(r->outline, fg.r, fg.g, fg.b);
     const int source[] = {0, 16, 48, 64};
     int xs[] = {b.x, b.x + 16, b.x + b.w - 16, b.x + b.w};
     int ys[] = {b.y, b.y + 16, b.y + b.h - 16, b.y + b.h};
@@ -140,10 +142,10 @@ static void outline(sl_ui_renderer *r, SDL_Rect b) {
         for (int x = 0; x < 3; ++x) {
             if (x == 1 && y == 1)
                 continue;
-            SDL_Rect src = {source[x], source[y], source[x + 1] - source[x],
-                            source[y + 1] - source[y]};
-            SDL_Rect dst = {xs[x], ys[y], xs[x + 1] - xs[x], ys[y + 1] - ys[y]};
-            SDL_RenderCopy(r->renderer, r->outline, &src, &dst);
+            sl_gfx_rect src = {source[x], source[y], source[x + 1] - source[x],
+                               source[y + 1] - source[y]};
+            sl_gfx_rect dst = {xs[x], ys[y], xs[x + 1] - xs[x], ys[y + 1] - ys[y]};
+            sl_gfx_copy(r->renderer, r->outline, &src, &dst);
         }
 }
 static void animate_focus(sl_ui_renderer *r, const sl_ui_model *m) {
@@ -163,7 +165,7 @@ static void animate_focus(sl_ui_renderer *r, const sl_ui_model *m) {
         r->focus_valid = false;
         return;
     }
-    SDL_FRect dest = {(float)target->x, (float)target->y, (float)target->w, (float)target->h};
+    sl_gfx_frect dest = {(float)target->x, (float)target->y, (float)target->w, (float)target->h};
     if (m->page == SL_HOME || !r->focus_valid) {
         r->focus_from = r->focus_to = r->focus_box = dest;
         r->focus_id = m->focus;
@@ -176,10 +178,10 @@ static void animate_focus(sl_ui_renderer *r, const sl_ui_model *m) {
         r->focus_at = m->now;
     }
     float t = ease(m->now >= r->focus_at ? m->now - r->focus_at : 0, 140);
-    r->focus_box = (SDL_FRect){r->focus_from.x + (dest.x - r->focus_from.x) * t,
-                               r->focus_from.y + (dest.y - r->focus_from.y) * t,
-                               r->focus_from.w + (dest.w - r->focus_from.w) * t,
-                               r->focus_from.h + (dest.h - r->focus_from.h) * t};
+    r->focus_box = (sl_gfx_frect){r->focus_from.x + (dest.x - r->focus_from.x) * t,
+                                  r->focus_from.y + (dest.y - r->focus_from.y) * t,
+                                  r->focus_from.w + (dest.w - r->focus_from.w) * t,
+                                  r->focus_from.h + (dest.h - r->focus_from.h) * t};
 }
 static uint32_t utf8(const char **s) {
     const unsigned char *p = (const unsigned char *)*s;
@@ -237,7 +239,7 @@ static glyph *get_glyph(sl_ui_renderer *r, uint32_t code, int size) {
     if (!surface)
         return NULL;
     glyph *g = &r->cache[slot];
-    SDL_DestroyTexture(g->texture);
+    sl_gfx_destroy_texture(g->texture);
     *g = (glyph){.code = code, .size = size, .w = surface->w, .h = surface->h, .used = ++r->tick};
     TTF_GlyphMetrics32(font, code, NULL, NULL, NULL, NULL, &g->advance);
     /* Crop transparent font padding, retaining a common baseline across fallback
@@ -262,8 +264,8 @@ static glyph *get_glyph(sl_ui_renderer *r, uint32_t code, int size) {
                     bottom = y;
             }
         }
-    SDL_Rect crop = right >= left ? (SDL_Rect){left, top, right - left + 1, bottom - top + 1}
-                                  : (SDL_Rect){0, 0, 1, 1};
+    sl_gfx_rect crop = right >= left ? (sl_gfx_rect){left, top, right - left + 1, bottom - top + 1}
+                                     : (sl_gfx_rect){0, 0, 1, 1};
     g->left = crop.x;
     g->top = crop.y - TTF_FontAscent(font);
     g->w = crop.w;
@@ -276,15 +278,16 @@ static glyph *get_glyph(sl_ui_renderer *r, uint32_t code, int size) {
         return NULL;
     }
     SDL_SetSurfaceBlendMode(rgba, SDL_BLENDMODE_NONE);
-    SDL_BlitSurface(rgba, &crop, trimmed, NULL);
-    g->texture = SDL_CreateTextureFromSurface(r->renderer, trimmed);
+    SDL_Rect pixel_crop = {crop.x, crop.y, crop.w, crop.h};
+    SDL_BlitSurface(rgba, &pixel_crop, trimmed, NULL);
+    g->texture = sl_gfx_glyph_surface(r->renderer, trimmed);
     SDL_FreeSurface(trimmed);
     SDL_FreeSurface(rgba);
     SDL_FreeSurface(surface);
     return g;
 }
 static void draw_text(sl_ui_renderer *r, const char *s, int x, int y, int width, int height,
-                      int size, SDL_Color color) {
+                      int size, sl_gfx_color color) {
     color.a = (Uint8)(color.a * r->text_alpha);
     int px = x, py = y, line = size + 10;
     while (*s) {
@@ -304,18 +307,18 @@ static void draw_text(sl_ui_renderer *r, const char *s, int x, int y, int width,
         if (py + size > y + height) {
             glyph *dot = get_glyph(r, 0x2026, size);
             if (dot) {
-                SDL_SetTextureColorMod(dot->texture, color.r, color.g, color.b);
-                SDL_SetTextureAlphaMod(dot->texture, color.a);
-                SDL_Rect dst = {x + width - dot->w, y + height - line + size + dot->top, dot->w,
-                                dot->h};
-                SDL_RenderCopy(r->renderer, dot->texture, NULL, &dst);
+                sl_gfx_texture_color(dot->texture, color.r, color.g, color.b);
+                sl_gfx_texture_alpha(dot->texture, color.a);
+                sl_gfx_rect dst = {x + width - dot->w, y + height - line + size + dot->top, dot->w,
+                                   dot->h};
+                sl_gfx_copy(r->renderer, dot->texture, NULL, &dst);
             }
             break;
         }
-        SDL_SetTextureColorMod(g->texture, color.r, color.g, color.b);
-        SDL_SetTextureAlphaMod(g->texture, color.a);
-        SDL_Rect dst = {px + g->left, py + size + g->top, g->w, g->h};
-        SDL_RenderCopy(r->renderer, g->texture, NULL, &dst);
+        sl_gfx_texture_color(g->texture, color.r, color.g, color.b);
+        sl_gfx_texture_alpha(g->texture, color.a);
+        sl_gfx_rect dst = {px + g->left, py + size + g->top, g->w, g->h};
+        sl_gfx_copy(r->renderer, g->texture, NULL, &dst);
         px += g->advance;
     }
 }
@@ -382,7 +385,7 @@ static const char *localized_title(sl_ui_renderer *r, uint64_t id, const char *f
 }
 /* A card title is always one line. Measure visible glyph bounds independently
  * of clipping so neither truncation nor scrolling changes its baseline. */
-static void card_title(sl_ui_renderer *r, const char *label, SDL_Rect box, SDL_Rect viewport,
+static void card_title(sl_ui_renderer *r, const char *label, sl_gfx_rect box, sl_gfx_rect viewport,
                        bool focused, const sl_ui_model *m) {
     char text[512];
     snprintf(text, sizeof(text), "%s", label);
@@ -424,10 +427,10 @@ static void card_title(sl_ui_renderer *r, const char *label, SDL_Rect box, SDL_R
                 offset = (2.4f + 2.f * travel - t) * 30.f;
         }
     }
-    SDL_Rect clip;
-    if (!SDL_IntersectRect(&box, &viewport, &clip))
+    sl_gfx_rect clip;
+    if (!sl_gfx_intersect(&box, &viewport, &clip))
         return;
-    SDL_RenderSetClipRect(r->renderer, &clip);
+    sl_gfx_clip(r->renderer, &clip);
     int baseline = box.y + (box.h - (bottom - top)) / 2 - top;
     bool truncated = !focused && measured > box.w;
     int dots = truncated ? text_width(r, "...", size) : 0;
@@ -439,42 +442,42 @@ static void card_title(sl_ui_renderer *r, const char *label, SDL_Rect box, SDL_R
             continue;
         if (truncated && pen + g->advance > box.x + box.w - dots)
             break;
-        SDL_SetTextureColorMod(g->texture, fg.r, fg.g, fg.b);
-        SDL_SetTextureAlphaMod(g->texture, (Uint8)(255 * r->text_alpha));
-        SDL_Rect dst = {pen + g->left, baseline + g->top, g->w, g->h};
-        SDL_RenderCopy(r->renderer, g->texture, NULL, &dst);
+        sl_gfx_texture_color(g->texture, fg.r, fg.g, fg.b);
+        sl_gfx_texture_alpha(g->texture, (Uint8)(255 * r->text_alpha));
+        sl_gfx_rect dst = {pen + g->left, baseline + g->top, g->w, g->h};
+        sl_gfx_copy(r->renderer, g->texture, NULL, &dst);
         pen += g->advance;
     }
     if (truncated) {
         glyph *dot = get_glyph(r, '.', size);
         if (dot) {
-            SDL_SetTextureColorMod(dot->texture, fg.r, fg.g, fg.b);
-            SDL_SetTextureAlphaMod(dot->texture, (Uint8)(255 * r->text_alpha));
+            sl_gfx_texture_color(dot->texture, fg.r, fg.g, fg.b);
+            sl_gfx_texture_alpha(dot->texture, (Uint8)(255 * r->text_alpha));
             for (int i = 0; i < 3; ++i) {
-                SDL_Rect dst = {pen + dot->left, baseline + dot->top, dot->w, dot->h};
-                SDL_RenderCopy(r->renderer, dot->texture, NULL, &dst);
+                sl_gfx_rect dst = {pen + dot->left, baseline + dot->top, dot->w, dot->h};
+                sl_gfx_copy(r->renderer, dot->texture, NULL, &dst);
                 pen += dot->advance;
             }
         }
     }
-    SDL_RenderSetClipRect(r->renderer, NULL);
+    sl_gfx_clip(r->renderer, NULL);
 }
-static void badge(sl_ui_renderer *r, const char *key, int x, int y, SDL_Color ink) {
-    SDL_Rect b = {x, y, 34, 34};
+static void badge(sl_ui_renderer *r, const char *key, int x, int y, sl_gfx_color ink) {
+    sl_gfx_rect b = {x, y, 34, 34};
     rounded(r->renderer, b, 17, ink);
-    SDL_Color dark = ink.r < 80 ? fg : bg;
+    sl_gfx_color dark = ink.r < 80 ? fg : bg;
     dark.a = ink.a;
     draw_text(r, key, x + (34 - text_width(r, key, 24)) / 2, centered_y(r, key, 24, y, 34, 34), 34,
               44, 24, dark);
 }
-static void chevron(SDL_Renderer *r, int x, int y, SDL_Color c) {
-    SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
+static void chevron(sl_gfx *r, int x, int y, sl_gfx_color c) {
+    sl_gfx_draw_color(r, c.r, c.g, c.b, c.a);
     for (int k = 0; k < 2; ++k) {
-        SDL_RenderDrawLine(r, x + k, y - 6, x + 6 + k, y);
-        SDL_RenderDrawLine(r, x + 6 + k, y, x + k, y + 6);
+        sl_gfx_line(r, x + k, y - 6, x + 6 + k, y);
+        sl_gfx_line(r, x + 6 + k, y, x + k, y + 6);
     }
 }
-static SDL_Color action_color(sl_action a) {
+static sl_gfx_color action_color(sl_action a) {
     switch (a) {
     case SL_START:
     case SL_RECENT:
@@ -497,14 +500,14 @@ static SDL_Color action_color(sl_action a) {
     }
 }
 /* Native two-pixel pictograms, sharing the same 28px optical box. */
-static void action_icon(SDL_Renderer *r, sl_action a, int x, int y, SDL_Color c) {
+static void action_icon(sl_gfx *r, sl_action a, int x, int y, sl_gfx_color c) {
     if (a == SL_BACK || a == SL_START || a == SL_RECENT) {
         play_icon(r, x + 7, y + 14, 19, c);
     } else if (a == SL_OPEN_SETTINGS || a == SL_SET_QUALITY) {
         for (int i = 0; i < 3; ++i) {
             int yy = y + 6 + i * 8, xx = x + (i == 1 ? 17 : 9);
             line(r, x + 3, yy, x + 27, yy, c);
-            rounded(r, (SDL_Rect){xx - 2, yy - 3, 5, 8}, 2, c);
+            rounded(r, (sl_gfx_rect){xx - 2, yy - 3, 5, 8}, 2, c);
         }
     } else if (a == SL_OPEN_FORGET || a == SL_CONFIRM_FORGET) {
         line(r, x + 4, y + 6, x + 26, y + 6, c);
@@ -542,12 +545,12 @@ static void action_icon(SDL_Renderer *r, sl_action a, int x, int y, SDL_Color c)
     } else if (a == SL_OPEN_QUALITY || a == SL_OPEN_MANUAL) {
         monitor(r, x + 1, y + 3, 28, c);
     } else {
-        rounded(r, (SDL_Rect){x + 2, y + 2, 26, 26}, 13, c);
+        rounded(r, (sl_gfx_rect){x + 2, y + 2, 26, 26}, 13, c);
         line(r, x + 14, y + 7, x + 14, y + 9, bg);
         line(r, x + 14, y + 13, x + 14, y + 22, bg);
     }
 }
-sl_ui_renderer *sl_ui_renderer_create(void *native) {
+sl_ui_renderer *sl_ui_renderer_create(sl_gfx *native) {
     if (TTF_Init())
         return NULL;
     sl_ui_renderer *r = calloc(1, sizeof(*r));
@@ -560,10 +563,9 @@ sl_ui_renderer *sl_ui_renderer_create(void *native) {
     r->outline = make_outline(r->renderer);
     r->text_alpha = 1.f;
     r->base_ui = calloc(1, sizeof(*r->base_ui));
-    r->overlay = SDL_CreateTexture(r->renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET,
-                                   1280, 720);
+    r->overlay = sl_gfx_create_texture(r->renderer, SL_GFX_RGBA8, SL_GFX_TARGET, 1280, 720);
     if (r->overlay)
-        SDL_SetTextureBlendMode(r->overlay, SDL_BLENDMODE_BLEND);
+        sl_gfx_texture_blend(r->overlay, SL_GFX_BLEND_ALPHA);
     for (int f = 0; f < 3; ++f) {
         size_t bytes;
         const char *path;
@@ -579,12 +581,12 @@ sl_ui_renderer *sl_ui_renderer_create(void *native) {
         sl_ui_renderer_destroy(r);
         return NULL;
     }
-    SDL_SetRenderDrawBlendMode(r->renderer, SDL_BLENDMODE_BLEND);
+    sl_gfx_draw_blend(r->renderer, SL_GFX_BLEND_ALPHA);
     return r;
 }
 /* Precompute a small separable blur once per downloaded image. No readback,
  * allocation or filtering is needed during the launch animation. */
-static SDL_Texture *blurred_cover(sl_ui_renderer *r, const sl_artwork_image *image) {
+static sl_gfx_texture *blurred_cover(sl_ui_renderer *r, const sl_artwork_image *image) {
     int w = 192, h = (int)(192.f * image->height / image->width);
     if (h < 1)
         h = 1;
@@ -625,12 +627,11 @@ static SDL_Texture *blurred_cover(sl_ui_renderer *r, const sl_artwork_image *ima
                 }
         memcpy(pixels, temp, (size_t)w * h * 4);
     }
-    SDL_Texture *texture =
-        SDL_CreateTexture(r->renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, w, h);
+    sl_gfx_texture *texture = sl_gfx_create_texture(r->renderer, SL_GFX_RGBA8, SL_GFX_STATIC, w, h);
     if (texture) {
-        SDL_UpdateTexture(texture, NULL, pixels, w * 4);
-        SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-        SDL_SetTextureScaleMode(texture, SDL_ScaleModeLinear);
+        sl_gfx_upload(texture, NULL, pixels, w * 4);
+        sl_gfx_texture_blend(texture, SL_GFX_BLEND_ALPHA);
+        sl_gfx_texture_linear(texture, 1);
     }
     free(pixels);
     return texture;
@@ -660,20 +661,20 @@ static bool launch_background(sl_ui_renderer *r, const sl_ui_model *m) {
     float cy = c->w ? c->y + 8.f + 99.f : 360.f;
     cx += (640.f - cx) * p;
     cy += (360.f - cy) * p;
-    SDL_FRect dest = {cx - iw * scale / 2, cy - ih * scale / 2, iw * scale, ih * scale};
+    sl_gfx_frect dest = {cx - iw * scale / 2, cy - ih * scale / 2, iw * scale, ih * scale};
     {
-        SDL_SetTextureAlphaMod(r->covers[index].texture, (Uint8)(255 * alpha));
-        SDL_RenderCopyF(r->renderer, r->covers[index].texture, NULL, &dest);
+        sl_gfx_texture_alpha(r->covers[index].texture, (Uint8)(255 * alpha));
+        sl_gfx_copy_f(r->renderer, r->covers[index].texture, NULL, &dest);
     }
     if (r->covers[index].blurred) {
-        SDL_SetTextureAlphaMod(r->covers[index].blurred, (Uint8)(90 * p * alpha));
-        SDL_RenderCopyF(r->renderer, r->covers[index].blurred, NULL, &dest);
+        sl_gfx_texture_alpha(r->covers[index].blurred, (Uint8)(90 * p * alpha));
+        sl_gfx_copy_f(r->renderer, r->covers[index].blurred, NULL, &dest);
     }
-    rect(r->renderer, (SDL_Rect){0, 0, 1280, 720},
-         (SDL_Color){9, 12, 20, (Uint8)(120 * p * alpha)});
+    rect(r->renderer, (sl_gfx_rect){0, 0, 1280, 720},
+         (sl_gfx_color){9, 12, 20, (Uint8)(120 * p * alpha)});
     return true;
 }
-static void draw_cover(sl_ui_renderer *r, uint64_t id, SDL_Rect box, uint64_t now) {
+static void draw_cover(sl_ui_renderer *r, uint64_t id, sl_gfx_rect box, uint64_t now) {
     if (!r->artwork || !sl_artwork_appid(id))
         return;
     int index = -1;
@@ -691,15 +692,14 @@ static void draw_cover(sl_ui_renderer *r, uint64_t id, SDL_Rect box, uint64_t no
         for (int i = 1; i < 8; ++i)
             if (r->covers[i].used < r->covers[index].used)
                 index = i;
-        SDL_DestroyTexture(r->covers[index].texture);
-        SDL_DestroyTexture(r->covers[index].blurred);
+        sl_gfx_destroy_texture(r->covers[index].texture);
+        sl_gfx_destroy_texture(r->covers[index].blurred);
         r->covers[index].blurred = blurred_cover(r, &image);
-        r->covers[index].texture =
-            SDL_CreateTexture(r->renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC,
-                              image.width, image.height);
+        r->covers[index].texture = sl_gfx_create_texture(r->renderer, SL_GFX_RGBA8, SL_GFX_STATIC,
+                                                         image.width, image.height);
         if (r->covers[index].texture) {
-            SDL_UpdateTexture(r->covers[index].texture, NULL, image.pixels, image.width * 4);
-            SDL_SetTextureBlendMode(r->covers[index].texture, SDL_BLENDMODE_BLEND);
+            sl_gfx_upload(r->covers[index].texture, NULL, image.pixels, image.width * 4);
+            sl_gfx_texture_blend(r->covers[index].texture, SL_GFX_BLEND_ALPHA);
         }
         r->covers[index].w = image.width;
         r->covers[index].h = image.height;
@@ -713,53 +713,53 @@ static void draw_cover(sl_ui_renderer *r, uint64_t id, SDL_Rect box, uint64_t no
     /* Contain the complete header artwork; never crop the game's logo. */
     float scale = fminf((float)box.w / r->covers[index].w, (float)box.h / r->covers[index].h);
     int w = (int)(r->covers[index].w * scale), h = (int)(r->covers[index].h * scale);
-    SDL_Rect target = {box.x + (box.w - w) / 2, box.y + (box.h - h) / 2, w, h};
+    sl_gfx_rect target = {box.x + (box.w - w) / 2, box.y + (box.h - h) / 2, w, h};
     Uint8 alpha = (Uint8)(255.f * fminf(1.f, (float)(now - r->covers[index].ready_at) / 180.f));
-    SDL_SetTextureAlphaMod(r->covers[index].texture, alpha);
-    SDL_RenderCopy(r->renderer, r->covers[index].texture, NULL, &target);
+    sl_gfx_texture_alpha(r->covers[index].texture, alpha);
+    sl_gfx_copy(r->renderer, r->covers[index].texture, NULL, &target);
 }
 static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_snapshot *d,
                        bool focused_scene) {
     const sl_layout *l = &m->layout;
     r->text_alpha = 1.f;
-    SDL_Texture *previous_target = SDL_GetRenderTarget(r->renderer);
-    SDL_Rect previous_viewport;
-    SDL_RenderGetViewport(r->renderer, &previous_viewport);
+    sl_gfx_texture *previous_target = sl_gfx_get_target(r->renderer);
+    sl_gfx_rect previous_viewport;
+    sl_gfx_get_viewport(r->renderer, &previous_viewport);
     bool layer = false;
     if (!l->fullscreen && !l->dialog) {
         if (r->backdrop)
-            SDL_RenderCopy(r->renderer, r->backdrop, NULL, NULL);
+            sl_gfx_copy(r->renderer, r->backdrop, NULL, NULL);
         else
-            rect(r->renderer, (SDL_Rect){0, 0, 1280, 720}, bg);
+            rect(r->renderer, (sl_gfx_rect){0, 0, 1280, 720}, bg);
         launch_background(r, m);
     } else if (m->page == SL_STREAM) {
         launch_background(r, m);
     }
     if (l->dialog) {
-        rect(r->renderer, (SDL_Rect){0, 0, 1280, 720},
-             (SDL_Color){0, 0, 0, (Uint8)(130 * l->opacity)});
-        layer = r->overlay && SDL_SetRenderTarget(r->renderer, r->overlay) == 0;
+        rect(r->renderer, (sl_gfx_rect){0, 0, 1280, 720},
+             (sl_gfx_color){0, 0, 0, (Uint8)(130 * l->opacity)});
+        layer = r->overlay && sl_gfx_target(r->renderer, r->overlay) == 0;
         if (layer) {
-            SDL_SetRenderDrawColor(r->renderer, 0, 0, 0, 0);
-            SDL_RenderClear(r->renderer);
+            sl_gfx_draw_color(r->renderer, 0, 0, 0, 0);
+            sl_gfx_clear(r->renderer);
         } else {
-            SDL_Rect viewport = {l->offset_x, l->offset_y, 1280, 720};
-            SDL_RenderSetViewport(r->renderer, &viewport);
+            sl_gfx_rect viewport = {l->offset_x, l->offset_y, 1280, 720};
+            sl_gfx_viewport(r->renderer, &viewport);
             r->text_alpha = l->opacity;
         }
-        SDL_Rect box = {l->panel_x, l->panel_y, l->panel_w, l->panel_h};
+        sl_gfx_rect box = {l->panel_x, l->panel_y, l->panel_w, l->panel_h};
         if (l->drawer) {
             rect(r->renderer, box, panel);
-            rect(r->renderer, (SDL_Rect){box.x, 0, 1, 720}, (SDL_Color){77, 82, 94, 150});
-            rect(r->renderer, (SDL_Rect){784, 139, 456, 1}, (SDL_Color){59, 63, 73, 255});
+            rect(r->renderer, (sl_gfx_rect){box.x, 0, 1, 720}, (sl_gfx_color){77, 82, 94, 150});
+            rect(r->renderer, (sl_gfx_rect){784, 139, 456, 1}, (sl_gfx_color){59, 63, 73, 255});
             draw_text(r, sl_tr(SL_T_BRAND), 784, 29, 440, 42, 24, muted);
         } else {
             for (int i = 20; i > 0; i -= 2)
                 rounded(r->renderer,
-                        (SDL_Rect){box.x - i, box.y - i + 8, box.w + i * 2, box.h + i * 2}, 16 + i,
-                        (SDL_Color){0, 0, 0, 6});
-            rounded(r->renderer, (SDL_Rect){box.x - 1, box.y - 1, box.w + 2, box.h + 2}, 17,
-                    (SDL_Color){73, 77, 86, 255});
+                        (sl_gfx_rect){box.x - i, box.y - i + 8, box.w + i * 2, box.h + i * 2},
+                        16 + i, (sl_gfx_color){0, 0, 0, 6});
+            rounded(r->renderer, (sl_gfx_rect){box.x - 1, box.y - 1, box.w + 2, box.h + 2}, 17,
+                    (sl_gfx_color){73, 77, 86, 255});
             rounded(r->renderer, box, 16, panel);
         }
     }
@@ -772,10 +772,11 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
             char version[64];
             snprintf(version, sizeof(version), sl_tr(SL_T_VERSION), NSL_APP_VERSION);
             int w = text_width(r, version, 24) + 32;
-            rounded(r->renderer, (SDL_Rect){1228 - w, 23, w, 34}, 10, (SDL_Color){38, 53, 68, 255});
+            rounded(r->renderer, (sl_gfx_rect){1228 - w, 23, w, 34}, 10,
+                    (sl_gfx_color){38, 53, 68, 255});
             draw_text(r, version, 1244 - w, centered_y(r, version, 24, 23, 34, w), w, 48, 24,
                       muted);
-            rect(r->renderer, (SDL_Rect){52, 76, 1176, 1}, (SDL_Color){78, 103, 124, 60});
+            rect(r->renderer, (sl_gfx_rect){52, 76, 1176, 1}, (sl_gfx_color){78, 103, 124, 60});
         } else {
             int x = l->panel_x + 40, y = l->panel_y + (l->drawer ? 78 : 36);
             if (m->page == SL_STOPPING || m->page == SL_INSTALLING) {
@@ -793,19 +794,19 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
                                   ? &hosts->hosts[hosts->selected]
                                   : NULL;
         if (!host || !host->paired || !host->games[0].id) {
-            SDL_Color state = !host ? accent : host->paired ? green : amber;
-            rounded(r->renderer, (SDL_Rect){588, 190, 104, 78}, 22, mix(bg, state, .13f));
+            sl_gfx_color state = !host ? accent : host->paired ? green : amber;
+            rounded(r->renderer, (sl_gfx_rect){588, 190, 104, 78}, 22, mix(bg, state, .13f));
             monitor(r->renderer, 615, 208, 50, state);
         }
-        rect(r->renderer, (SDL_Rect){52, 612, 1176, 1}, (SDL_Color){78, 103, 124, 45});
+        rect(r->renderer, (sl_gfx_rect){52, 612, 1176, 1}, (sl_gfx_color){78, 103, 124, 45});
     }
     if (m->page == SL_STOPPING || m->page == SL_INSTALLING || m->page == SL_CONNECTING ||
         m->page == SL_SAVING || (m->page == SL_PAIRING && !sl_ui_pair_prompt_visible(m))) {
         int bar_y = (m->page == SL_STOPPING || m->page == SL_INSTALLING) ? l->panel_y + 140 : 426;
-        rounded(r->renderer, (SDL_Rect){532, bar_y, 216, 3}, 1, (SDL_Color){45, 64, 81, 255});
+        rounded(r->renderer, (sl_gfx_rect){532, bar_y, 216, 3}, 1, (sl_gfx_color){45, 64, 81, 255});
         float phase = ((m->now - m->entered_at) % 1500) / 1500.f;
         float travel = phase < .5f ? phase * 2 : 2 - phase * 2;
-        rounded(r->renderer, (SDL_Rect){532 + (int)(156 * travel), bar_y, 60, 3}, 1, accent);
+        rounded(r->renderer, (sl_gfx_rect){532 + (int)(156 * travel), bar_y, 60, 3}, 1, accent);
     }
     for (int i = 0; i < l->label_count; ++i) {
         const sl_label *t = &l->labels[i];
@@ -820,7 +821,7 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
         if (m->page == SL_PAIRING && t->size == 72 && m->pairing_code[0]) {
             for (int digit = 0; digit < 4; ++digit) {
                 int dx = 430 + digit * 108;
-                rounded(r->renderer, (SDL_Rect){dx, 322, 96, 104}, 12, mix(panel, amber, .13f));
+                rounded(r->renderer, (sl_gfx_rect){dx, 322, 96, 104}, 12, mix(panel, amber, .13f));
                 char value[] = {m->pairing_code[digit], 0};
                 draw_text(r, value, dx + (96 - text_width(r, value, 72)) / 2,
                           centered_y(r, value, 72, 322, 104, 96), 96, 114, 72, amber);
@@ -835,20 +836,20 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
     }
     for (int i = 0; i < l->count; ++i) {
         const sl_control *c = &l->controls[i];
-        SDL_Rect box = {c->x, c->y, c->w, c->h};
+        sl_gfx_rect box = {c->x, c->y, c->w, c->h};
         bool card = c->action == SL_RECENT;
-        SDL_Rect viewport = {40, SL_CARD_Y - 8, 1200, SL_CARD_HEIGHT + 16}, clip;
+        sl_gfx_rect viewport = {40, SL_CARD_Y - 8, 1200, SL_CARD_HEIGHT + 16}, clip;
         if (card) {
-            if (!SDL_IntersectRect(&box, &viewport, &clip))
+            if (!sl_gfx_intersect(&box, &viewport, &clip))
                 continue;
-            SDL_RenderSetClipRect(r->renderer, &clip);
+            sl_gfx_clip(r->renderer, &clip);
         }
         bool tab = c->action == SL_SELECT_HOST;
         bool footer = c->label[0] && c->label[1] == ' ' && c->label[2] == ' ';
         bool shoulder = c->action == SL_PREV_HOST || c->action == SL_NEXT_HOST;
         bool focused = focused_scene && c->id == m->focus;
         bool menu_row = l->drawer && !footer;
-        SDL_Color role = action_color(c->action);
+        sl_gfx_color role = action_color(c->action);
         if (c->action == SL_START &&
             !m->store.registry
                  .hosts[m->store.registry.selected >= 0 ? m->store.registry.selected : 0]
@@ -856,41 +857,43 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
             role = amber;
         bool plain =
             tab || (footer && !c->primary) || shoulder || (c->action == SL_START && !c->primary);
-        SDL_Color ink = focused || (c->primary && !tab) ? bg : fg;
+        sl_gfx_color ink = focused || (c->primary && !tab) ? bg : fg;
         if (l->compact) {
             /* White always means the explicitly labelled A action. */
             ink = c->primary ? bg : fg;
-            rounded(r->renderer, box, 9, c->primary ? fg : (SDL_Color){43, 47, 57, 255});
+            rounded(r->renderer, box, 9, c->primary ? fg : (sl_gfx_color){43, 47, 57, 255});
         } else if (card) {
             ink = fg;
-            rounded(r->renderer, box, 14, focused ? (SDL_Color){52, 62, 78, 255} : panel);
+            rounded(r->renderer, box, 14, focused ? (sl_gfx_color){52, 62, 78, 255} : panel);
         } else if (menu_row) {
             if (focused)
                 rounded(r->renderer, box, 8, fg);
             if (c->action == SL_SET_QUALITY || c->action == SL_SET_LANGUAGE) {
                 int x = box.x + 23, y = box.y + (box.h - 26) / 2;
-                SDL_Color surface = focused ? fg : panel;
-                SDL_Color ring = focused ? bg : muted;
-                rounded(r->renderer, (SDL_Rect){x, y, 26, 26}, 13, ring);
-                rounded(r->renderer, (SDL_Rect){x + 2, y + 2, 22, 22}, 11, surface);
+                sl_gfx_color surface = focused ? fg : panel;
+                sl_gfx_color ring = focused ? bg : muted;
+                rounded(r->renderer, (sl_gfx_rect){x, y, 26, 26}, 13, ring);
+                rounded(r->renderer, (sl_gfx_rect){x + 2, y + 2, 22, 22}, 11, surface);
                 if (c->arg == (c->action == SL_SET_LANGUAGE ? (int)sl_i18n_language()
                                                             : (int)m->store.quality))
-                    rounded(r->renderer, (SDL_Rect){x + 6, y + 6, 14, 14}, 7, focused ? bg : green);
+                    rounded(r->renderer, (sl_gfx_rect){x + 6, y + 6, 14, 14}, 7,
+                            focused ? bg : green);
             } else {
-                SDL_Color tile = mix(panel, role, .16f);
-                rounded(r->renderer, (SDL_Rect){box.x + 14, box.y + 14, 44, 44}, 10, tile);
+                sl_gfx_color tile = mix(panel, role, .16f);
+                rounded(r->renderer, (sl_gfx_rect){box.x + 14, box.y + 14, 44, 44}, 10, tile);
                 action_icon(r->renderer, c->action, box.x + 21, box.y + 21, role);
             }
         } else if (!plain || focused) {
-            SDL_Color fill = focused              ? fg
-                             : c->primary && !tab ? role
-                                                  : (SDL_Color){43, 47, 57, 255};
+            sl_gfx_color fill = focused              ? fg
+                                : c->primary && !tab ? role
+                                                     : (sl_gfx_color){43, 47, 57, 255};
             if (c->primary && !tab)
                 fill = focused ? mix(role, fg, .18f) : role;
             rounded(r->renderer, box, c->action == SL_RECENT ? 14 : 9, fill);
         }
         if (tab && c->primary) {
-            rounded(r->renderer, (SDL_Rect){c->x + 28, c->y + c->h - 4, c->w - 56, 4}, 2, accent);
+            rounded(r->renderer, (sl_gfx_rect){c->x + 28, c->y + c->h - 4, c->w - 56, 4}, 2,
+                    accent);
             ink = focused ? bg : accent;
         }
         int size = c->action == SL_RECENT ? 30 : footer ? 26 : 30;
@@ -902,8 +905,10 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
                         c->action == SL_SUBMIT || c->action == SL_ERASE || shoulder || footer;
         if (tab) {
             const sl_host *host = &m->store.registry.hosts[c->arg];
-            SDL_Color status = !sl_host_online(host, m->now) ? muted : host->paired ? green : amber;
-            rounded(r->renderer, (SDL_Rect){box.x + 18, box.y + (box.h - 12) / 2, 12, 12}, 6,
+            sl_gfx_color status = !sl_host_online(host, m->now) ? muted
+                                  : host->paired                ? green
+                                                                : amber;
+            rounded(r->renderer, (sl_gfx_rect){box.x + 18, box.y + (box.h - 12) / 2, 12, 12}, 6,
                     status);
             x = box.x + 44;
             width = box.w - 60;
@@ -918,7 +923,7 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
             width = measured + 2;
         } else if (shoulder) {
             width = c->w - 8;
-            rounded(r->renderer, (SDL_Rect){box.x + 8, box.y + 20, box.w - 16, 32}, 9, muted);
+            rounded(r->renderer, (sl_gfx_rect){box.x + 8, box.y + 20, box.w - 16, 32}, 9, muted);
             ink = bg;
             x = c->x + (c->w - measured) / 2;
         } else if (centered && !tab && measured < width) {
@@ -927,8 +932,8 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
         }
         int y = centered_y(r, label, size, c->y, c->h, width);
         if (c->action == SL_RECENT) {
-            SDL_Color game_color = c->arg % 2 ? amber : violet;
-            SDL_Rect art = {box.x + 8, box.y + 8, box.w - 16, 198};
+            sl_gfx_color game_color = c->arg % 2 ? amber : violet;
+            sl_gfx_rect art = {box.x + 8, box.y + 8, box.w - 16, 198};
             rounded(r->renderer, art, 10, mix(panel, game_color, .16f));
             play_icon(r->renderer, box.x + box.w / 2 - 10, box.y + 96, 28, game_color);
             int selected = m->store.registry.selected;
@@ -937,46 +942,46 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
             if (selected >= 0 && selected < m->store.registry.count && c->arg < SL_RECENT_LIMIT)
                 label =
                     localized_title(r, m->store.registry.hosts[selected].games[c->arg].id, label);
-            card_title(r, label, (SDL_Rect){box.x + 24, box.y + box.h - 62, box.w - 48, 54},
+            card_title(r, label, (sl_gfx_rect){box.x + 24, box.y + box.h - 62, box.w - 48, 54},
                        viewport, focused, m);
             continue;
         } else if (!centered && !footer) {
             width -= 28;
             if (c->action == SL_SOUND) {
-                SDL_Color track = m->store.sound ? green : muted;
+                sl_gfx_color track = m->store.sound ? green : muted;
                 int tx = box.x + box.w - 74, ty = box.y + (box.h - 28) / 2;
-                rounded(r->renderer, (SDL_Rect){tx, ty, 50, 28}, 14, track);
-                rounded(r->renderer, (SDL_Rect){tx + (m->store.sound ? 25 : 3), ty + 3, 22, 22}, 11,
-                        bg);
+                rounded(r->renderer, (sl_gfx_rect){tx, ty, 50, 28}, 14, track);
+                rounded(r->renderer, (sl_gfx_rect){tx + (m->store.sound ? 25 : 3), ty + 3, 22, 22},
+                        11, bg);
             } else if (c->action != SL_BACK && c->action != SL_SET_QUALITY &&
                        c->action != SL_SET_LANGUAGE)
                 chevron(r->renderer, box.x + box.w - 35, box.y + box.h / 2, focused ? bg : muted);
         }
-        SDL_RenderSetClipRect(r->renderer, card ? &clip : &box);
+        sl_gfx_clip(r->renderer, card ? &clip : &box);
         draw_text(r, label, x, y, width, c->y + c->h - 8 - y, size, ink);
-        SDL_RenderSetClipRect(r->renderer, NULL);
+        sl_gfx_clip(r->renderer, NULL);
     }
     if (focused_scene && r->focus_valid && m->page != SL_STREAM && !l->dialog) {
-        SDL_FRect f = r->focus_box;
-        SDL_SetRenderDrawColor(r->renderer, accent.r, accent.g, accent.b, 210);
+        sl_gfx_frect f = r->focus_box;
+        sl_gfx_draw_color(r->renderer, accent.r, accent.g, accent.b, 210);
         /* Only the focus indicator moves; control layout and hit testing stay fixed. */
-        SDL_Rect b = {(int)f.x - 3, (int)f.y - 3, (int)f.w + 6, (int)f.h + 6};
-        SDL_Rect viewport = {40, SL_CARD_Y - 8, 1200, SL_CARD_HEIGHT + 16};
+        sl_gfx_rect b = {(int)f.x - 3, (int)f.y - 3, (int)f.w + 6, (int)f.h + 6};
+        sl_gfx_rect viewport = {40, SL_CARD_Y - 8, 1200, SL_CARD_HEIGHT + 16};
         if (m->page == SL_HOME)
-            SDL_RenderSetClipRect(r->renderer, &viewport);
+            sl_gfx_clip(r->renderer, &viewport);
         outline(r, b);
-        SDL_RenderSetClipRect(r->renderer, NULL);
+        sl_gfx_clip(r->renderer, NULL);
     }
 
     if (l->dialog) {
         if (layer) {
-            SDL_SetRenderTarget(r->renderer, previous_target);
-            SDL_RenderSetViewport(r->renderer, &previous_viewport);
-            SDL_SetTextureAlphaMod(r->overlay, l->drawer ? 255 : (Uint8)(255 * l->opacity));
-            SDL_Rect destination = {l->offset_x, l->offset_y, 1280, 720};
-            SDL_RenderCopy(r->renderer, r->overlay, NULL, &destination);
+            sl_gfx_target(r->renderer, previous_target);
+            sl_gfx_viewport(r->renderer, &previous_viewport);
+            sl_gfx_texture_alpha(r->overlay, l->drawer ? 255 : (Uint8)(255 * l->opacity));
+            sl_gfx_rect destination = {l->offset_x, l->offset_y, 1280, 720};
+            sl_gfx_copy(r->renderer, r->overlay, NULL, &destination);
         } else
-            SDL_RenderSetViewport(r->renderer, &previous_viewport);
+            sl_gfx_viewport(r->renderer, &previous_viewport);
         r->text_alpha = 1.f;
     }
 
@@ -988,9 +993,9 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
             int before_w = text_width(r, before, 26), after_w = text_width(r, after, 26);
             int total = before_w + after_w + 96 + 32 + 48;
             int left = (1280 - total) / 2;
-            rounded(r->renderer, (SDL_Rect){left, 592, total, 64}, 18,
-                    (SDL_Color){17, 24, 35, (Uint8)(alpha * 220 / 255)});
-            SDL_Color ink = fg;
+            rounded(r->renderer, (sl_gfx_rect){left, 592, total, 64}, 18,
+                    (sl_gfx_color){17, 24, 35, (Uint8)(alpha * 220 / 255)});
+            sl_gfx_color ink = fg;
             ink.a = alpha;
             int x = left + 24;
             draw_text(r, before, x, centered_y(r, before, 26, 592, 64, before_w + 2), before_w + 2,
@@ -1006,7 +1011,7 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
 
 #if NSL_DIAGNOSTICS
     if (m->debug && m->streaming && m->page == SL_STREAM) {
-        rect(r->renderer, (SDL_Rect){24, 24, 640, 320}, panel);
+        rect(r->renderer, (sl_gfx_rect){24, 24, 640, 320}, panel);
         draw_text(r, d->title[0] ? d->title : sl_tr(SL_T_DIAGNOSTICS), 44, 42, 600, 38, 24, muted);
         const char *names[] = {sl_tr(SL_T_PRESENTATION),  sl_tr(SL_T_LOCAL_VIDEO),
                                sl_tr(SL_T_DECODE_UPLOAD), sl_tr(SL_T_AUDIO_BUFFER),
@@ -1053,15 +1058,15 @@ void sl_ui_renderer_destroy(sl_ui_renderer *r) {
     if (!r)
         return;
     for (int i = 0; i < 8; ++i) {
-        SDL_DestroyTexture(r->covers[i].texture);
-        SDL_DestroyTexture(r->covers[i].blurred);
+        sl_gfx_destroy_texture(r->covers[i].texture);
+        sl_gfx_destroy_texture(r->covers[i].blurred);
     }
-    SDL_DestroyTexture(r->overlay);
+    sl_gfx_destroy_texture(r->overlay);
     free(r->base_ui);
-    SDL_DestroyTexture(r->backdrop);
-    SDL_DestroyTexture(r->outline);
+    sl_gfx_destroy_texture(r->backdrop);
+    sl_gfx_destroy_texture(r->outline);
     for (int i = 0; i < 512; ++i)
-        SDL_DestroyTexture(r->cache[i].texture);
+        sl_gfx_destroy_texture(r->cache[i].texture);
     for (int f = 0; f < 3; ++f)
         for (int s = 0; s < 9; ++s)
             if (r->fonts[f][s])

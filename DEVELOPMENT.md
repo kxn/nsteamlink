@@ -41,7 +41,22 @@ UI 替换的目标模块边界见 `docs/UI_UX_DESIGN.md` §5：`app/src/ui/` 负
 `app/src/input/` 负责输入仲裁，`app/src/services/` 负责主机／授权／历史，
 `app/src/diagnostics/` 负责有界统计快照，平台 runtime 与 renderer 仍经 HAL 接口约束。
 `app/platforms/common/` 提供双目标共用的 SDL2/FFmpeg/IHS runtime adapter，平台初始化与字体来源
-位于 `app/platforms/<plat>/system.c`。`app/tests/` 包含业务状态与原生事件／媒体测试。实施任务只在 Issue #9 维护。
+位于 `app/platforms/<plat>/system.c`。`app/tests/` 包含业务状态与原生事件／媒体测试。UI 替换任务在 Issue #9 维护。
+
+Switch 图形后端迁移的目标边界见 [VIDEO_RENDERING_DESIGN](docs/VIDEO_RENDERING_DESIGN.md) 与 D-051：
+`platform/gfx.h` / `platform/events.h` 定义图形与事件 HAL；`platforms/common/video_pipeline.*`
+和 `frame_lifetime.*` 管理 decoder domain、FrameLease 与 GpuBatch 的引用契约；
+`platforms/common/app_lifecycle.*` 由主线程驱动停止阶段、会话准入和统一输入 gate；
+`platforms/{desktop,switch}/gfx.c` / `events.c`
+分别实现平台能力；`platforms/switch/video_surface.*` 与 `shaders/` 负责硬件帧导入及 shader。
+ihslib FrameTracker 统一接收/完成/过期/结算，逐帧完成不经过通用 runtime worker。
+runtime 执行协议 stop/join 并在外部使用归零后回收关闭的 decoder domain；主线程停止期间继续 pump/collect，
+只在 worker 不再依赖主线程推进后最终 join。GPU 对象由 renderer 按批次和 PoolGroup 回收。
+首版 pool/PoolGroup 不跨 decoder domain 共享。IHS channel 层负责应用 start 成功后的启动失败回滚，
+停止统计 timer 并关闭已发布 epoch。StopVideoData 仅暂停视频及其 watchdog，保留 D-046 的会话语义。
+设计文档 §14–19 定义现有函数迁移表、tracked 视频回调、packet token/FrameLease 移交、统计快照
+发送事务、GpuBatch 提交及读回、runtime 请求/清理接口和对应测试入口；实现应同时对照这些接线规格。
+上述是设计职责登记，实施任务与状态在 Issue #8；业务层不包含 SDL/deko/FFmpeg 类型。
 
 ## 3. 语言与命名
 
@@ -205,6 +220,11 @@ Switch 端 probe/client 默认 cleanup 顺序：
 10. 从 `main()` 正常 return。
 
 顺序如需改变，必须在 decisions 写明证据和风险。
+
+D-051 硬件帧直显的资源依赖补充：session stop 不等待主线程 GPU 清理；输出硬件帧及导入缓存
+保留必要的 FFmpeg backing/device 引用。生产者停止并 join 后，主线程先完成在途 GPU 工作，
+再销毁导入映射，最后释放其 backing 引用。禁止为等待渲染确认而形成 main join worker 的依赖环。
+具体顺序、SDK 故障边界见 VIDEO_RENDERING_DESIGN §10。
 
 ### 12.4 真机验收
 

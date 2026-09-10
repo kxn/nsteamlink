@@ -1,6 +1,8 @@
 #pragma once
 
 #include "input/input_router.h"
+#include "platform/gfx.h"
+#include "video_pipeline.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -14,11 +16,40 @@
 
 typedef void (*stream_media_log_fn)(const char *message);
 
+#if NSL_DIAGNOSTICS
+/* Main-thread measurements, copied under state_lock; no renderer access by worker.
+ * prep/age/wait count only newly displayed frames; begin/UI/present include redraws. */
+typedef struct sl_render_metrics {
+    uint64_t samples, prep_us, age_us, wait_us;
+    uint64_t draws, redraws, begin_us, ui_us, present_us;
+    uint64_t uploads, upload_bytes, downloads;
+    sl_gfx_counters resources;
+    uint64_t available_frames, submitted_frames, cohort_frames, cohort_presented, deferred, unobserved;
+    uint32_t input_period_us, output_period_us;
+    bool adaptive_active;
+    uint64_t adaptive_ready_us, adaptive_wait_us, adaptive_start_us, adaptive_holdovers;
+    bool hardware;
+} sl_render_metrics;
+
+typedef struct sl_loop_metrics {
+    uint64_t loops, control_us, media_us, tail_us, sleep_us, collect_us;
+    uint64_t cpu_ticks, cpu_wall_ticks;
+    uint32_t cpu_result;
+} sl_loop_metrics;
+void sl_media_loop_metrics(const sl_loop_metrics *);
+#endif
+
 typedef struct stream_media_snapshot {
-    uint64_t video_epoch;
+    uint64_t session_id, video_epoch;
     bool available;
-    bool video_active;
+    bool video_active, render_failed;
     bool first_frame_displayed;
+    sl_video_counters pacing;
+#if NSL_DIAGNOSTICS
+    sl_render_metrics render;
+    sl_loop_metrics loop;
+#endif
+    uint32_t replaced_frames;
     uint32_t decoded_frames;
     uint32_t displayed_frames;
     uint32_t dropped_frames;
@@ -152,7 +183,7 @@ void sl_media_gate(bool enabled);
 void sl_media_input(const sl_input_event *event, void *context);
 void sl_media_neutral(void *context);
 void sl_media_mute(bool mute);
-void *sl_media_renderer(void);
+sl_gfx *sl_media_gfx(void);
 
 int stream_media_video_start(IHS_Session *session, const IHS_StreamVideoConfig *config);
 IHS_StreamVideoSubmitResult stream_media_video_submit(IHS_Session *session, uint16_t frame_id,
@@ -165,3 +196,21 @@ int stream_media_audio_submit(IHS_Session *session, IHS_Buffer *data);
 void stream_media_audio_stop(IHS_Session *session);
 
 void sl_media_submitted(const IHS_HIDSDLLastSubmitted *value);
+
+int sl_media_video_start_tracked(IHS_Session *, const IHS_VideoEpochInfo *,
+                                 const IHS_StreamVideoConfig *);
+IHS_StreamVideoSubmitResult sl_media_video_submit_tracked(IHS_Session *, const IHS_VideoEpochInfo *,
+                                                          uint16_t, IHS_FrameTicket *, IHS_Buffer *,
+                                                          IHS_StreamVideoFrameFlag, bool *);
+void sl_media_video_stop_tracked(IHS_Session *, const IHS_VideoEpochInfo *);
+void sl_media_close_video(void);
+bool sl_media_video_clean(void);
+
+void sl_media_collect(void);
+
+void sl_media_allow_video(void);
+
+#if NSL_DIAGNOSTICS
+/* Main-thread baseline toggle; resets the controller, never decoder state. */
+void sl_media_adaptive_pacing(bool enabled);
+#endif

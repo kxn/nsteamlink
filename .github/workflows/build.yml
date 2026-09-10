@@ -80,6 +80,19 @@ jobs:
           name: switch-release
           path: build/release/
           if-no-files-found: error
+      - name: Build isolated deko diagnostic and offline video probe
+        run: |
+          NSL_BUILD_DIR="$GITHUB_WORKSPACE/build/switch-deko" scripts/build-switch.sh -DNSL_GFX_BACKEND=deko -DNSL_DIAGNOSTICS=ON -DNSL_BUILD_TOOLS=OFF -DHACBREWPACK="$GITHUB_WORKSPACE/build/deps/hacBrewPack/hacbrewpack"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: switch-deko-diagnostic
+          path: |
+            build/switch-deko/app/*.nro
+            build/switch-deko/generated/*.json
+            build/switch-deko/app/*.dksh
+            app/tests/fixtures/video/*
+            build/deps/devkitpro-packages.txt
+          if-no-files-found: error
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [desktop, switch]

@@ -24,6 +24,11 @@
 
 struct sl_runtime {
     pthread_t worker;
+    atomic_bool exit_requested, worker_finished;
+    bool waiting_video;
+    atomic_bool foreground;
+    uint64_t session_id;
+    sl_runtime_facts facts;
     pthread_mutex_t lock;
     pthread_cond_t wake;
     bool started, quit, request_pending, save_pending, snapshot_pending;
@@ -206,6 +211,10 @@ static void post(sl_runtime *r, sl_runtime_event e) {
     pthread_mutex_unlock(&r->lock);
 }
 static void fail(sl_runtime *r, const char *s) {
+    pthread_mutex_lock(&r->lock);
+    if (r->active.type == SL_CMD_STREAM)
+        r->facts.failed = true;
+    pthread_mutex_unlock(&r->lock);
     sl_log(s);
     sl_runtime_event e = {.type = SL_EVENT_FAILURE};
     snprintf(e.text, sizeof(e.text), "%s", s);
@@ -327,6 +336,7 @@ static void connected(IHS_Session *s, void *ctx) {
     sl_runtime *r = ctx;
     pthread_mutex_lock(&r->lock);
     r->connected = true;
+    r->facts.connected = true;
     pthread_mutex_unlock(&r->lock);
 }
 static void disconnected(IHS_Session *s, void *ctx) {
@@ -338,20 +348,36 @@ static void disconnected(IHS_Session *s, void *ctx) {
                            : "session end: transport/local disconnect");
     pthread_mutex_unlock(&r->lock);
 }
-static int video_start(IHS_Session *s, const IHS_StreamVideoConfig *c, void *ctx) {
-    (void)ctx;
-    sl_log("video lifecycle: start");
-    return stream_media_video_start(s, c);
+static int video_start(IHS_Session *s, const IHS_VideoEpochInfo *epoch,
+                       const IHS_StreamVideoConfig *c, void *ctx) {
+    sl_runtime *r = ctx;
+    int result = sl_media_video_start_tracked(s, epoch, c);
+    pthread_mutex_lock(&r->lock);
+    if (!result && r->facts.session_id == epoch->session_id) {
+        r->facts.epoch = epoch->video_epoch;
+        ++r->facts.video_transition;
+        r->facts.paused = false;
+        r->facts.presented = false;
+    }
+    pthread_mutex_unlock(&r->lock);
+    return result;
 }
-static IHS_StreamVideoSubmitResult video_submit(IHS_Session *s, uint16_t id, IHS_Buffer *b,
-                                                IHS_StreamVideoFrameFlag flags, void *ctx) {
+static IHS_StreamVideoSubmitResult video_submit(IHS_Session *s, const IHS_VideoEpochInfo *epoch,
+                                                uint16_t id, IHS_FrameTicket *ticket, IHS_Buffer *b,
+                                                IHS_StreamVideoFrameFlag flags, bool *taken,
+                                                void *ctx) {
     (void)ctx;
-    return stream_media_video_submit(s, id, b, flags);
+    return sl_media_video_submit_tracked(s, epoch, id, ticket, b, flags, taken);
 }
-static void video_stop(IHS_Session *s, void *ctx) {
-    (void)ctx;
-    sl_log("video lifecycle: stop");
-    stream_media_video_stop(s);
+static void video_stop(IHS_Session *s, const IHS_VideoEpochInfo *epoch, void *ctx) {
+    sl_runtime *r = ctx;
+    sl_media_video_stop_tracked(s, epoch);
+    pthread_mutex_lock(&r->lock);
+    if (r->facts.session_id == epoch->session_id && r->facts.epoch == epoch->video_epoch) {
+        ++r->facts.video_transition;
+        r->facts.paused = true;
+    }
+    pthread_mutex_unlock(&r->lock);
 }
 static int audio_start(IHS_Session *s, const IHS_StreamAudioConfig *c, void *ctx) {
     (void)ctx;
@@ -392,7 +418,7 @@ static const IHS_ClientStreamingCallbacks stream_cb = {.success = accepted, .fai
 static const IHS_StreamSessionCallbacks session_cb = {
     .configuring = configuring, .connected = connected, .disconnected = disconnected};
 static const IHS_StreamVideoCallbacks video_cb = {
-    .start = video_start, .submit = video_submit, .stop = video_stop};
+    .startTracked = video_start, .submitTracked = video_submit, .stopTracked = video_stop};
 static const IHS_StreamAudioCallbacks audio_cb = {
     .start = audio_start, .submit = audio_submit, .stop = audio_stop};
 static const IHS_StreamInputCallbacks input_cb = {.activityState = activity};
@@ -422,6 +448,8 @@ static bool start_client(sl_runtime *r) {
     return started;
 }
 static void stop_session(sl_runtime *r) {
+    sl_media_close_video();
+    r->waiting_video = true;
     pthread_mutex_lock(&r->lock);
     r->end_game.at = 0;
     r->end_game.empty = 0;
@@ -434,8 +462,7 @@ static void stop_session(sl_runtime *r) {
         /* Discovery disconnect retries are bounded to ~1.1 s. Let the session
          * worker send them before joining; immediate interrupt drops the goodbye. */
         IHS_SessionThreadedJoin(r->session);
-        /* Callbacks no longer reference media. Stop releases frame-stage session references. */
-        stream_media_video_stop(r->session);
+        /* Workers are joined. Detached frame tickets can outlive the session. */
         stream_media_audio_stop(r->session);
         IHS_SessionDestroy(r->session);
         r->session = NULL;
@@ -443,6 +470,9 @@ static void stop_session(sl_runtime *r) {
     }
     pthread_mutex_lock(&r->lock);
     r->connected = r->finished = r->host_stopped = r->session_ready = false;
+    r->facts.connected = false;
+    r->facts.requests_closed = true;
+    r->facts.protocol_closed = true;
     pthread_mutex_unlock(&r->lock);
     r->first_reported = false;
     r->video_suspended = false;
@@ -450,8 +480,21 @@ static void stop_session(sl_runtime *r) {
 }
 static bool launch_session(sl_runtime *r, IHS_SessionInfo info) {
     r->session = IHS_SessionCreate(&r->config, &info);
+    static atomic_uint_fast64_t next_session_id = 1;
+    uint64_t next = atomic_load(&next_session_id);
+    while (next != UINT64_MAX && !atomic_compare_exchange_weak(&next_session_id, &next, next + 1)) {
+    }
+    r->session_id = next == UINT64_MAX ? 0 : next;
+    if (r->session && (!r->session_id || r->session_id == UINT64_MAX ||
+                       !IHS_SessionSetVideoTrackingIdentity(r->session, r->session_id))) {
+        IHS_SessionDestroy(r->session);
+        r->session = NULL;
+    }
     if (!r->session)
         return false;
+    pthread_mutex_lock(&r->lock);
+    r->facts.session_id = r->session_id;
+    pthread_mutex_unlock(&r->lock);
     IHS_SessionSetLogFunction(r->session, ihs_log);
     IHS_SessionSetSessionCallbacks(r->session, &session_cb, r);
     IHS_SessionSetVideoCallbacks(r->session, &video_cb, r);
@@ -517,8 +560,21 @@ static void execute(sl_runtime *r, sl_command cmd) {
         IHS_ClientAuthorizationCancel(r->client);
     }
     stop_session(r);
+    if (!sl_media_video_clean()) {
+        pthread_mutex_lock(&r->lock);
+        if (!r->request_pending) {
+            r->pending = cmd;
+            r->request_pending = true;
+        }
+        pthread_mutex_unlock(&r->lock);
+        return;
+    }
+    r->waiting_video = false;
     r->request_at = 0;
     pthread_mutex_lock(&r->lock);
+    r->facts.video_clean = true;
+    if (cmd.type == SL_CMD_STREAM)
+        r->facts = (sl_runtime_facts){.request_id = cmd.generation};
     r->active = cmd;
     r->launch = (sl_launch_watch){.target = cmd.game_id};
     r->activity_changed = false;
@@ -577,6 +633,10 @@ static void execute(sl_runtime *r, sl_command cmd) {
         if (!IHS_ClientAuthorizationRequest(r->client, &h, e.text))
             fail(r, sl_tr(SL_T_REQUEST_PAIR_FAILED));
     } else if (cmd.type == SL_CMD_STREAM) {
+        pthread_mutex_lock(&r->lock);
+        if (!r->request_pending && !atomic_load(&r->exit_requested))
+            sl_media_allow_video();
+        pthread_mutex_unlock(&r->lock);
         IHS_ClientStopDiscovery(r->client);
         IHS_StreamingRequest req = {.streamingEnable = {true, true, true},
                                     .maxResolution = {1280, 720},
@@ -606,7 +666,7 @@ static void sample(sl_runtime *r, uint64_t now) {
     snprintf(d.title, sizeof(d.title), sl_tr(SL_T_DEBUG_TITLE), s.width, s.height, s.decoder);
     for (int i = 0; i < 6; ++i)
         strcpy(d.values[i], "—");
-    if (s.video_epoch != r->previous.video_epoch) {
+    if (s.session_id != r->previous.session_id || s.video_epoch != r->previous.video_epoch) {
         memset(&r->previous, 0, sizeof(r->previous));
         r->last_diag = 0;
     }
@@ -614,16 +674,16 @@ static void sample(sl_runtime *r, uint64_t now) {
     if (r->last_diag && now > r->last_diag && s.displayed_frames >= p->displayed_frames)
         snprintf(d.values[0], 64, sl_tr(SL_T_FPS),
                  (s.displayed_frames - p->displayed_frames) * 1000.0 / (now - r->last_diag));
-    if (s.frame_e2e_samples > p->frame_e2e_samples)
+    if (s.render.samples > p->render.samples)
         snprintf(d.values[1], 64, sl_tr(SL_T_MS),
-                 (s.frame_e2e_us_total - p->frame_e2e_us_total) / 1000.0 /
-                     (s.frame_e2e_samples - p->frame_e2e_samples));
-    if (s.decode_samples > p->decode_samples && s.upload_samples > p->upload_samples)
+                 (s.render.age_us - p->render.age_us) / 1000.0 /
+                     (s.render.samples - p->render.samples));
+    if (s.decode_samples > p->decode_samples && s.render.samples > p->render.samples)
         snprintf(d.values[2], 64, sl_tr(SL_T_DECODE_MS),
                  (s.decode_us_total - p->decode_us_total) / 1000.0 /
                      (s.decode_samples - p->decode_samples),
-                 (s.upload_us_total - p->upload_us_total) / 1000.0 /
-                     (s.upload_samples - p->upload_samples));
+                 (s.render.prep_us - p->render.prep_us) / 1000.0 /
+                     (s.render.samples - p->render.samples));
     if (s.audio_active && s.audio_frequency && s.audio_channels)
         snprintf(d.values[3], 64, sl_tr(SL_T_AUDIO_MS),
                  s.audio_queued_bytes * 1000.0 / (s.audio_frequency * s.audio_channels * 2));
@@ -634,22 +694,111 @@ static void sample(sl_runtime *r, uint64_t now) {
     r->debug = d;
     pthread_mutex_unlock(&r->lock);
 #endif
-    if (r->session && s.first_frame_displayed && !r->first_reported) {
+    if (r->session && s.session_id == r->session_id && s.render_failed) {
+        fail(r, s.last_error);
+        stop_session(r);
+    }
+    pthread_mutex_lock(&r->lock);
+    if (s.session_id == r->facts.session_id && s.video_epoch == r->facts.epoch)
+        r->facts.presented = s.first_frame_displayed;
+    pthread_mutex_unlock(&r->lock);
+    if (r->session && s.session_id == r->session_id && s.first_frame_displayed &&
+        !r->first_reported) {
+        pthread_mutex_lock(&r->lock);
+        r->facts.presented = true;
+        pthread_mutex_unlock(&r->lock);
         post(r, (sl_runtime_event){.type = SL_EVENT_FIRST_FRAME});
         r->first_reported = true;
     }
-    if (s.displayed_frames != r->frames) {
+    if (s.session_id == r->session_id && s.displayed_frames != r->frames) {
         r->frames = s.displayed_frames;
         r->frame_at = now;
     }
 #if NSL_DIAGNOSTICS
     char line[224];
     snprintf(line, sizeof(line),
-             "stats frames=%u fps=%.20s local=%.20s decode/upload=%.32s audio=%.20s hid=%.20s "
+             "stats frames=%u fps=%.20s local=%.20s decode/prep=%.32s audio=%.20s hid=%.20s "
              "ackMax=%.20s",
              s.displayed_frames, d.values[0], d.values[1], d.values[2], d.values[3], d.values[4],
              d.values[5]);
     sl_log(line);
+    /* Five short, non-blocking log writes once per second, never from rendering.
+     * Cumulative values tolerate missing samples; id joins one coherent snapshot. */
+    if (s.video_active && s.video_epoch && s.first_frame_displayed) {
+#define U(value) ((unsigned long long)(value))
+        const sl_render_metrics *m = &s.render;
+        snprintf(line, sizeof(line),
+                 "vp1 id=%llu s=%llu e=%llu b=%s hw=%u w=%d h=%d dec=%u show=%u repl=%u drop=%u",
+                 U(now), U(s.session_id), U(s.video_epoch), NSL_GFX_DEKO ? "deko" : "sdl",
+                 m->hardware, s.width, s.height, s.decoded_frames, s.displayed_frames,
+                 s.replaced_frames, s.dropped_frames);
+        sl_log(line);
+        snprintf(line, sizeof(line), "vp2 id=%llu n=%llu prep=%llu age=%llu wait=%llu decode=%llu",
+                 U(now), U(m->samples), U(m->prep_us), U(m->age_us), U(m->wait_us),
+                 U(s.decode_us_total));
+        sl_log(line);
+        snprintf(line, sizeof(line),
+                 "vp3 id=%llu draws=%llu redraw=%llu begin=%llu ui=%llu present=%llu", U(now),
+                 U(m->draws), U(m->redraws), U(m->begin_us), U(m->ui_us), U(m->present_us));
+        sl_log(line);
+        snprintf(line, sizeof(line),
+                 "vp4 id=%llu uploads=%llu bytes=%llu downloads=%llu imports=%llu", U(now),
+                 U(m->uploads), U(m->upload_bytes), U(m->downloads), U(m->resources.imports));
+        sl_log(line);
+        snprintf(line, sizeof(line), "vp5 id=%llu maps=%u pools=%u busy=%u image=%llu mapped=%llu",
+                 U(now), m->resources.maps, m->resources.pool_groups, m->resources.busy_batches,
+                 U(m->resources.image_bytes), U(m->resources.imported_bytes));
+        sl_log(line);
+#if NSL_GFX_DEKO
+        snprintf(line, sizeof(line),
+                 "vq1 id=%llu attempts=%llu nobatch=%llu acquire=%llu acquire_us=%llu",
+                 U(now), U(m->resources.begin_attempts), U(m->resources.no_free_batch),
+                 U(m->resources.acquires), U(m->resources.acquire_us));
+        sl_log(line);
+        snprintf(line, sizeof(line),
+                 "vq2 id=%llu polls=%llu timeout=%llu done=%llu residence_us=%llu",
+                 U(now), U(m->resources.fence_polls), U(m->resources.fence_timeouts),
+                 U(m->resources.completed_batches), U(m->resources.batch_residence_us));
+        sl_log(line);
+#endif
+        snprintf(line, sizeof(line),
+                 "vq3 id=%llu n=%llu bad=%llu wait_ns=%llu work_ns=%llu wmax=%llu xmax=%llu",
+                 U(now), U(m->resources.gpu_samples), U(m->resources.gpu_invalid),
+                 U(m->resources.gpu_wait_ns), U(m->resources.gpu_work_ns),
+                 U(m->resources.gpu_wait_max_ns), U(m->resources.gpu_work_max_ns));
+        sl_log(line);
+        snprintf(line, sizeof(line),
+                 "vq4 id=%llu short=%llu long=%llu gapmax=%llu empty=%llu one=%llu many=%llu tmax=%llu",
+                 U(now), U(s.pacing.publish_short), U(s.pacing.publish_long),
+                 U(s.pacing.publish_gap_max_us), U(s.pacing.take_empty), U(s.pacing.take_one),
+                 U(s.pacing.take_many), U(s.pacing.take_gap_max_us));
+        sl_log(line);
+        snprintf(line, sizeof(line),
+                 "vq5 id=%llu submit=%llu bytes=%llu long=%llu gapmax=%llu",
+                 U(now), U(s.pacing.submits), U(s.pacing.submit_bytes), U(s.pacing.submit_long),
+                 U(s.pacing.submit_gap_max_us));
+        sl_log(line);
+        snprintf(line, sizeof(line),
+                 "vq6 id=%llu loops=%llu control=%llu media=%llu tail=%llu sleep=%llu collect=%llu",
+                 U(now), U(s.loop.loops), U(s.loop.control_us), U(s.loop.media_us),
+                 U(s.loop.tail_us), U(s.loop.sleep_us), U(s.loop.collect_us));
+        sl_log(line);
+        snprintf(line, sizeof(line), "vq7 id=%llu cpu=%llu wall=%llu rc=%u",
+                 U(now), U(s.loop.cpu_ticks), U(s.loop.cpu_wall_ticks), s.loop.cpu_result);
+        sl_log(line);
+        snprintf(line, sizeof(line),
+                 "vq8 id=%llu epoch=%llu a=%llu p=%llu ca=%llu cp=%llu defer=%llu tv=%u ts=%u active=%u unknown=%llu",
+                 U(now),U(s.video_epoch),U(m->available_frames),U(m->submitted_frames),
+                 U(m->cohort_frames),U(m->cohort_presented),U(m->deferred),
+                 m->input_period_us,m->output_period_us,m->adaptive_active,U(m->unobserved));
+        sl_log(line);
+        snprintf(line, sizeof(line),
+                 "vq9 id=%llu ready_us=%llu wait_us=%llu start_us=%llu hold=%llu",
+                 U(now),U(m->adaptive_ready_us),U(m->adaptive_wait_us),
+                 U(m->adaptive_start_us),U(m->adaptive_holdovers));
+        sl_log(line);
+#undef U
+    }
     r->previous = s;
 #endif
     r->last_diag = now;
@@ -717,6 +866,21 @@ static void *worker_main(void *ctx) {
     if (!start_client(r))
         fail(r, sl_tr(SL_T_NETWORK_UNAVAILABLE));
     while (!r->quit) {
+        if (r->waiting_video) {
+            if (!sl_media_video_clean()) {
+                struct timespec pause = {0, 1000000};
+                nanosleep(&pause, NULL);
+                continue;
+            }
+            r->waiting_video = false;
+            pthread_mutex_lock(&r->lock);
+            r->facts.video_clean = true;
+            pthread_mutex_unlock(&r->lock);
+        }
+        if (atomic_load_explicit(&r->exit_requested, memory_order_acquire)) {
+            execute(r, (sl_command){.type = SL_CMD_EXIT});
+            continue;
+        }
         sl_command cmd = {0};
         sl_auth_store save;
         bool save_pending, snapshot_pending;
@@ -857,7 +1021,8 @@ static void *worker_main(void *ctx) {
                                (ProtobufCMessage *)&probe);
             }
         }
-        bool video_suspended = r->session && IHS_SessionHostVideoStopped(r->session);
+        bool video_suspended =
+            !atomic_load(&r->foreground) || (r->session && IHS_SessionHostVideoStopped(r->session));
         if (r->video_suspended && !video_suspended) {
             r->frame_at = now;
             if (!r->first_reported)
@@ -904,10 +1069,22 @@ static void *worker_main(void *ctx) {
         pthread_mutex_unlock(&r->lock);
     }
     stop_session(r);
+    while (!sl_media_video_clean()) {
+        struct timespec pause = {0, 1000000};
+        nanosleep(&pause, NULL);
+    }
+    pthread_mutex_lock(&r->lock);
+    r->facts.video_clean = true;
+    pthread_mutex_unlock(&r->lock);
     stop_client(r);
+    if (r->provider) {
+        stream_media_destroy_hid_provider(r->provider);
+        r->provider = NULL;
+    }
     sl_log("cleanup: IHS_Quit");
     IHS_Quit();
     post(r, (sl_runtime_event){.type = SL_EVENT_CLOSED});
+    atomic_store_explicit(&r->worker_finished, true, memory_order_release);
     return NULL;
 }
 sl_runtime *sl_runtime_create(const sl_auth_store *store) {
@@ -916,6 +1093,9 @@ sl_runtime *sl_runtime_create(const sl_auth_store *store) {
         return NULL;
     r->store = *store;
     r->udp = -1;
+    atomic_init(&r->exit_requested, false);
+    atomic_init(&r->foreground, true);
+    atomic_init(&r->worker_finished, false);
     pthread_mutex_init(&r->lock, NULL);
     pthread_cond_init(&r->wake, NULL);
     r->config = (IHS_ClientConfig){.deviceId = r->store.device_id,
@@ -947,6 +1127,8 @@ sl_runtime *sl_runtime_create(const sl_auth_store *store) {
 }
 bool sl_runtime_submit(sl_runtime *r, const sl_command *cmd, const sl_auth_store *store) {
     pthread_mutex_lock(&r->lock);
+    if (cmd->type == SL_CMD_STOP || cmd->type == SL_CMD_CANCEL || cmd->type == SL_CMD_EXIT)
+        sl_media_close_video();
     if (cmd->type == SL_CMD_SAVE) {
         r->save = *store;
         r->snapshot_pending = true;
@@ -990,7 +1172,20 @@ void sl_runtime_debug(sl_runtime *r, sl_debug_snapshot *d) {
     memset(d, 0, sizeof(*d));
 #endif
 }
+void sl_runtime_request_exit(sl_runtime *r) {
+    if (!r)
+        return;
+    atomic_store_explicit(&r->exit_requested, true, memory_order_release);
+    pthread_mutex_lock(&r->lock);
+    sl_media_close_video();
+    pthread_cond_signal(&r->wake);
+    pthread_mutex_unlock(&r->lock);
+}
+bool sl_runtime_finished(sl_runtime *r) {
+    return !r || !r->started || atomic_load_explicit(&r->worker_finished, memory_order_acquire);
+}
 void sl_runtime_destroy(sl_runtime *r) {
+    sl_runtime_request_exit(r);
     if (!r)
         return;
     if (r->started) {
@@ -1009,4 +1204,17 @@ void sl_runtime_destroy(sl_runtime *r) {
     pthread_cond_destroy(&r->wake);
     pthread_mutex_destroy(&r->lock);
     free(r);
+}
+
+void sl_runtime_foreground(sl_runtime *r, bool foreground) {
+    if (r)
+        atomic_store(&r->foreground, foreground);
+}
+
+bool sl_runtime_read_facts(sl_runtime *r, sl_runtime_facts *facts) {
+    if (!r || pthread_mutex_trylock(&r->lock))
+        return false;
+    *facts = r->facts;
+    pthread_mutex_unlock(&r->lock);
+    return true;
 }

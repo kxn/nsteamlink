@@ -35,7 +35,7 @@ struct sl_artwork {
     pthread_t worker;
     pthread_mutex_t lock;
     pthread_cond_t wake;
-    atomic_bool stop, paused;
+    atomic_bool stop, paused, finished;
     atomic_uint dns_handle, cancel_generation;
     bool curl_ready;
     char directory[768];
@@ -354,12 +354,14 @@ static void *worker(void *ctx) {
         }
     }
     pthread_mutex_unlock(&a->lock);
+    atomic_store_explicit(&a->finished, true, memory_order_release);
     return NULL;
 }
 sl_artwork *sl_artwork_create(const char *dir, sl_artwork_fetch_fn fetch, void *ctx) {
     sl_artwork *a = calloc(1, sizeof(*a));
     if (!a)
         return NULL;
+    atomic_init(&a->finished, false);
     if (snprintf(a->directory, sizeof(a->directory), "%s/artwork", dir) >=
         (int)sizeof(a->directory)) {
         free(a);
@@ -490,6 +492,18 @@ bool sl_artwork_title(sl_artwork *a, uint64_t id, int language, char *out, size_
     }
     pthread_mutex_unlock(&a->lock);
     return found;
+}
+void sl_artwork_request_stop(sl_artwork *a) {
+    if (!a)
+        return;
+    atomic_store(&a->stop, true);
+    sl_system_dns_cancel(atomic_load(&a->dns_handle));
+    pthread_mutex_lock(&a->lock);
+    pthread_cond_signal(&a->wake);
+    pthread_mutex_unlock(&a->lock);
+}
+bool sl_artwork_finished(sl_artwork *a) {
+    return !a || atomic_load_explicit(&a->finished, memory_order_acquire);
 }
 void sl_artwork_destroy(sl_artwork *a) {
     if (!a)
