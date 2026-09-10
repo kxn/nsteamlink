@@ -113,7 +113,7 @@ runtime 执行协议 stop/join 并在外部使用归零后回收关闭的 decode
 | IHSlib | `kxn/ihslib` `nsteamlink` 分支（fork 自 `beudbeud/ihslib` plume pin `8c5a17c`，D-002/D-037） | LGPL-3.0 | 发现/配对/串流协议 | M2 |
 | plume | beudbeud/plume | GPL | 参考实现，仅对照学习不链接 | M1 参考 |
 | FFmpeg(Switch) | Moonlight-Switch 预编译（averne NVDEC fork） | LGPL/GPL | H264 硬解 | M3 |
-| SDL2 | 系统 2.32.4 / `switch-sdl2` | zlib | UI / 渲染 / 音频输出 | M3 起 |
+| SDL2 | 系统 2.32.4 / `switch-sdl2` | zlib | 桌面渲染 / 音频 / 输入（Switch 图形使用 deko） | M3 起 |
 | SDL2_ttf | 系统 2.24.0 / devkitPro `switch-sdl2_ttf` | zlib | 中文与平台共享字体、字形缓存 | M5 |
 | mbedTLS | 系统 2.28 / `switch-mbedtls` | Apache-2.0 | IHSlib 加密后端 | M2 |
 | libopus | 系统 1.5.2 / `switch-libopus` | BSD-3 | 音频解码 | M4 |

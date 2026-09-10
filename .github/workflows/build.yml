@@ -46,6 +46,8 @@ jobs:
           scripts/setup-switch-deps.sh
       - name: Build NRO (diagnostics excluded)
         run: scripts/build-switch.sh -DNSL_DIAGNOSTICS=OFF -DNSL_BUILD_TOOLS=OFF -DHACBREWPACK="$GITHUB_WORKSPACE/build/deps/hacBrewPack/hacbrewpack"
+      - name: Verify release graphics and diagnostic exclusion
+        run: python3 scripts/check-release-diagnostics.py build/switch
       - name: Build NSP when keyset is configured
         env:
           SWITCH_KEYSET: ${{ secrets.NSL_SWITCH_KEYSET }}
@@ -80,9 +82,9 @@ jobs:
           name: switch-release
           path: build/release/
           if-no-files-found: error
-      - name: Build isolated deko diagnostic and offline video probe
+      - name: Build Switch diagnostics and video correctness probe
         run: |
-          NSL_BUILD_DIR="$GITHUB_WORKSPACE/build/switch-deko" scripts/build-switch.sh -DNSL_GFX_BACKEND=deko -DNSL_DIAGNOSTICS=ON -DNSL_BUILD_TOOLS=OFF -DHACBREWPACK="$GITHUB_WORKSPACE/build/deps/hacBrewPack/hacbrewpack"
+          NSL_BUILD_DIR="$GITHUB_WORKSPACE/build/switch-deko" scripts/build-switch.sh -DNSL_DIAGNOSTICS=ON -DNSL_BUILD_TOOLS=OFF -DHACBREWPACK="$GITHUB_WORKSPACE/build/deps/hacBrewPack/hacbrewpack"
       - uses: actions/upload-artifact@v4
         with:
           name: switch-deko-diagnostic

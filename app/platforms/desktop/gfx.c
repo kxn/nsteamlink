@@ -1,3 +1,6 @@
+#ifdef __SWITCH__
+#error "Switch rendering requires the deko backend"
+#endif
 #include "gfx_backend.h"
 #include <SDL.h>
 #include <libavutil/hwcontext.h>
