@@ -666,7 +666,7 @@ static void sample(sl_runtime *r, uint64_t now) {
     snprintf(d.title, sizeof(d.title), sl_tr(SL_T_DEBUG_TITLE), s.width, s.height, s.decoder);
     for (int i = 0; i < 6; ++i)
         strcpy(d.values[i], "—");
-    if (s.video_epoch != r->previous.video_epoch) {
+    if (s.session_id != r->previous.session_id || s.video_epoch != r->previous.video_epoch) {
         memset(&r->previous, 0, sizeof(r->previous));
         r->last_diag = 0;
     }
@@ -674,16 +674,16 @@ static void sample(sl_runtime *r, uint64_t now) {
     if (r->last_diag && now > r->last_diag && s.displayed_frames >= p->displayed_frames)
         snprintf(d.values[0], 64, sl_tr(SL_T_FPS),
                  (s.displayed_frames - p->displayed_frames) * 1000.0 / (now - r->last_diag));
-    if (s.frame_e2e_samples > p->frame_e2e_samples)
+    if (s.render.samples > p->render.samples)
         snprintf(d.values[1], 64, sl_tr(SL_T_MS),
-                 (s.frame_e2e_us_total - p->frame_e2e_us_total) / 1000.0 /
-                     (s.frame_e2e_samples - p->frame_e2e_samples));
-    if (s.decode_samples > p->decode_samples && s.upload_samples > p->upload_samples)
+                 (s.render.age_us - p->render.age_us) / 1000.0 /
+                     (s.render.samples - p->render.samples));
+    if (s.decode_samples > p->decode_samples && s.render.samples > p->render.samples)
         snprintf(d.values[2], 64, sl_tr(SL_T_DECODE_MS),
                  (s.decode_us_total - p->decode_us_total) / 1000.0 /
                      (s.decode_samples - p->decode_samples),
-                 (s.upload_us_total - p->upload_us_total) / 1000.0 /
-                     (s.upload_samples - p->upload_samples));
+                 (s.render.prep_us - p->render.prep_us) / 1000.0 /
+                     (s.render.samples - p->render.samples));
     if (s.audio_active && s.audio_frequency && s.audio_channels)
         snprintf(d.values[3], 64, sl_tr(SL_T_AUDIO_MS),
                  s.audio_queued_bytes * 1000.0 / (s.audio_frequency * s.audio_channels * 2));
@@ -717,11 +717,40 @@ static void sample(sl_runtime *r, uint64_t now) {
 #if NSL_DIAGNOSTICS
     char line[224];
     snprintf(line, sizeof(line),
-             "stats frames=%u fps=%.20s local=%.20s decode/upload=%.32s audio=%.20s hid=%.20s "
+             "stats frames=%u fps=%.20s local=%.20s decode/prep=%.32s audio=%.20s hid=%.20s "
              "ackMax=%.20s",
              s.displayed_frames, d.values[0], d.values[1], d.values[2], d.values[3], d.values[4],
              d.values[5]);
     sl_log(line);
+    /* Five short, non-blocking log writes once per second, never from rendering.
+     * Cumulative values tolerate missing samples; id joins one coherent snapshot. */
+    if (s.video_active && s.video_epoch && s.first_frame_displayed) {
+#define U(value) ((unsigned long long)(value))
+        const sl_render_metrics *m = &s.render;
+        snprintf(line, sizeof(line),
+                 "vp1 id=%llu s=%llu e=%llu b=%s hw=%u w=%d h=%d dec=%u show=%u repl=%u drop=%u",
+                 U(now), U(s.session_id), U(s.video_epoch), NSL_GFX_DEKO ? "deko" : "sdl",
+                 m->hardware, s.width, s.height, s.decoded_frames, s.displayed_frames,
+                 s.replaced_frames, s.dropped_frames);
+        sl_log(line);
+        snprintf(line, sizeof(line), "vp2 id=%llu n=%llu prep=%llu age=%llu wait=%llu decode=%llu",
+                 U(now), U(m->samples), U(m->prep_us), U(m->age_us), U(m->wait_us),
+                 U(s.decode_us_total));
+        sl_log(line);
+        snprintf(line, sizeof(line),
+                 "vp3 id=%llu draws=%llu redraw=%llu begin=%llu ui=%llu present=%llu", U(now),
+                 U(m->draws), U(m->redraws), U(m->begin_us), U(m->ui_us), U(m->present_us));
+        sl_log(line);
+        snprintf(line, sizeof(line),
+                 "vp4 id=%llu uploads=%llu bytes=%llu downloads=%llu imports=%llu", U(now),
+                 U(m->uploads), U(m->upload_bytes), U(m->downloads), U(m->resources.imports));
+        sl_log(line);
+        snprintf(line, sizeof(line), "vp5 id=%llu maps=%u pools=%u busy=%u image=%llu mapped=%llu",
+                 U(now), m->resources.maps, m->resources.pool_groups, m->resources.busy_batches,
+                 U(m->resources.image_bytes), U(m->resources.imported_bytes));
+        sl_log(line);
+#undef U
+    }
     r->previous = s;
 #endif
     r->last_diag = now;

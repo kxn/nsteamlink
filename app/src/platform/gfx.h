@@ -70,7 +70,7 @@ void sl_gfx_finish(sl_gfx *);
 
 /* Renderer-thread diagnostic snapshot; counters do not touch the protocol. */
 typedef struct sl_gfx_counters {
-    uint64_t imports, uploads, uploaded_bytes, video_draws, retired_groups;
+    uint64_t imports, uploads, uploaded_bytes, video_draws, retired_groups, downloads;
     size_t image_bytes, imported_bytes;
     unsigned pool_groups, maps, busy_batches;
 } sl_gfx_counters;

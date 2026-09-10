@@ -113,11 +113,22 @@ static void decode(const char *path) {
     stream_media_snapshot s;
     stream_media_get_snapshot(&s);
     assert(s.displayed_frames > 0 && s.upload_samples > 0);
+#if NSL_DIAGNOSTICS
+    assert(s.render.samples == s.displayed_frames);
+    assert(s.render.prep_us > 0 && s.render.age_us >= s.render.prep_us);
+    assert(s.render.uploads == s.displayed_frames);
+    uint64_t prep_samples = s.render.samples, uploads = s.render.uploads;
+    uint64_t redraws = s.render.redraws;
+#endif
     unsigned shown = s.displayed_frames, before = draws;
     for (int i = 0; i < 5; ++i)
         stream_media_present();
     stream_media_get_snapshot(&s);
     assert(s.displayed_frames == shown && draws == before + 5);
+#if NSL_DIAGNOSTICS
+    assert(s.render.samples == prep_samples && s.render.uploads == uploads);
+    assert(s.render.redraws == redraws + 5);
+#endif
     save_image("stream-hint");
     ui.now = ui.stream_started_at + 4200;
     stream_media_present();

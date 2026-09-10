@@ -46,3 +46,37 @@ UDP 读取内存快照，不在渲染线程读文件。配对码、安全码及�
 
 清理日志包括 HID worker、session interrupt/join/destroy、IHS client、IHS_Quit、SDL_Quit。
 退出后 nxlink 结束仅是 PC 侧证据，Switch 返回 hbmenu 及再次启动结果仍以屏幕观察为准。
+
+## 视频直显性能统计
+
+诊断构建每秒由 runtime worker 输出 `vp1` 至 `vp5`，同一 `id` 表示一份一致快照。
+Switch 继续使用现有非阻塞日志发送；不重试阻塞发送，不逐帧写日志。渲染线程仅进行固定大小
+计数/快照、额外三个单调时钟读取和短锁内复制，无格式化、文件 I/O 或新增线程。
+新增采样以 `NSL_DIAGNOSTICS` 编译开关隔离；关闭诊断时不执行这些渲染采样。
+实际设备上的诊断开销仍应通过 ON/OFF 同场景对照确认，不能宣称为零。
+
+- `vp1`：session/epoch、后端、硬件解码标志、尺寸、解码/呈现/替换/拒绝累计数。
+- `vp2`：新呈现帧的样本数 `n`；CPU 视频准备 `prep`；解码准入至 present 返回 `age`；
+  解码输出至准备开始 `wait`；全部解码输出的驻留累计 `decode`。时间单位均为微秒。
+  解码驻留包含重排/缓冲，不能直接视为 NVDEC 硬件执行时间；`age` 不包含此前网络接收，
+  也不是输入至屏幕发光延迟。`prep` 不包含 UI、acquire、present 或 GPU fence 等待。
+- `vp3`：包括旧帧重画的绘制次数 `draws`、重画次数 `redraw`，及 begin（可能包含 acquire 等待）、
+  视频调用结束至 present 前的 UI/记账阶段、present API 的累计墙钟耗时。
+  两个后端等待垂直同步的位置可以不同，不能只比较 present 耗时。
+- `vp4`：仅视频调用造成的上传次数/有效像素字节数、硬件帧下载次数，以及 renderer 生命周期累计导入次数。
+  UI 字形上传不混入视频上传统计。旧帧缓存重画不增加新帧准备样本或实际上传数。
+- `vp5`：renderer 管理的图像/导入字节数、map/pool 数量和在途 batch 数。
+  它不覆盖 decoder 全部内部内存或进程总内存，也不能将 mapped+image 直接当成唯一物理内存占用。
+
+分析一份日志，默认按每个 session/epoch/尺寸组合排除前 5 秒：
+
+```sh
+python3 scripts/analyze-video-perf.py deko.log --output deko-perf.json
+python3 scripts/analyze-video-perf.py deko.log --baseline sdl.log --output comparison.json
+```
+
+脚本只使用完整的五行组，并对累计量取差、按对应帧数加权；丢失中间日志仍可跨采样计算。
+计数倒退、epoch 切换不会产生负耗时；活跃期间无新帧的窗口仍计入 FPS 分母。
+比较输出每个新帧节省的 CPU 准备微秒和百分比。基准必须采用相同游戏场景、分辨率、码率、
+刷新率、设备模式、频率策略与诊断配置；脚本仅能检查其中的后端/解码/尺寸元数据。
+旧版只有 `stats` 且耗时为 `—` 的日志无法反推出这些指标。每秒快照不能推导逐帧 p95。

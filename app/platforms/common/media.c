@@ -1013,6 +1013,8 @@ int sl_media_video_start_tracked(IHS_Session *session, const IHS_VideoEpochInfo 
     video_key = key;
     snapshot.session_id = key.session;
     snapshot.video_epoch = key.epoch;
+    snapshot.render = (sl_render_metrics){0};
+    snapshot.replaced_frames = 0;
     snapshot.video_active = false;
     snapshot.first_frame_displayed = false;
     snapshot.render_failed = false;
@@ -1261,8 +1263,16 @@ void stream_media_present(void) {
     if (!sdl_ready)
         return;
     sl_media_collect();
-    if (!sl_events_foreground() || sl_gfx_begin(gfx) != SL_GFX_READY)
+    if (!sl_events_foreground())
         return;
+#if NSL_DIAGNOSTICS
+    uint64_t begin_us = media_monotonic_us();
+#endif
+    if (sl_gfx_begin(gfx) != SL_GFX_READY)
+        return;
+#if NSL_DIAGNOSTICS
+    uint64_t begun_us = media_monotonic_us();
+#endif
     sl_video_frame *candidate = sl_video_take(video);
     if (candidate && !sl_video_is_current(video, candidate->key)) {
         sl_resource_release(&candidate->ref);
@@ -1271,9 +1281,16 @@ void stream_media_present(void) {
     sl_video_frame *frame = candidate ? candidate : current_frame;
     sl_gfx_draw_color(gfx, 0, 0, 0, 255);
     sl_gfx_clear(gfx);
+#if NSL_DIAGNOSTICS
+    sl_gfx_counters before_video, after_video;
+    sl_gfx_get_counters(gfx, &before_video);
+#endif
     uint64_t upload_begin = media_monotonic_us();
     bool drawn = frame && sl_gfx_video(gfx, frame);
     uint64_t upload_end = media_monotonic_us();
+#if NSL_DIAGNOSTICS
+    sl_gfx_get_counters(gfx, &after_video);
+#endif
     if (candidate && !drawn) {
         media_set_error("video layout, import, or renderer capacity rejected");
         pthread_mutex_lock(&state_lock);
@@ -1287,8 +1304,31 @@ void stream_media_present(void) {
     }
     if (draw_hook)
         draw_hook(gfx, hook_context);
+#if NSL_DIAGNOSTICS
+    uint64_t ui_end = media_monotonic_us();
+#endif
     sl_gfx_present_result result = sl_gfx_present(gfx);
     uint64_t present_us = media_monotonic_us();
+#if NSL_DIAGNOSTICS
+    sl_gfx_counters resources;
+    sl_gfx_get_counters(gfx, &resources);
+    pthread_mutex_lock(&state_lock);
+    snapshot.render.resources = resources;
+    if (frame && frame->key.session == snapshot.session_id &&
+        frame->key.epoch == snapshot.video_epoch) {
+        sl_render_metrics *m = &snapshot.render;
+        m->hardware = frame->pixels->hw_frames_ctx != NULL;
+        ++m->draws;
+        m->redraws += candidate == NULL;
+        m->begin_us += elapsed_us(begin_us, begun_us);
+        m->ui_us += elapsed_us(upload_end, ui_end);
+        m->present_us += elapsed_us(ui_end, present_us);
+        m->uploads += after_video.uploads - before_video.uploads;
+        m->upload_bytes += after_video.uploaded_bytes - before_video.uploaded_bytes;
+        m->downloads += after_video.downloads - before_video.downloads;
+    }
+    pthread_mutex_unlock(&state_lock);
+#endif
     if (candidate) {
         bool displayed = drawn && result.result == SL_GFX_READY && result.output_returned;
         if (presentation_key.session != candidate->key.session ||
@@ -1326,6 +1366,12 @@ void stream_media_present(void) {
                 layout_key = candidate->key;
                 snapshot.first_frame_displayed = true;
                 snapshot.displayed_frames++;
+#if NSL_DIAGNOSTICS
+                ++snapshot.render.samples;
+                snapshot.render.prep_us += elapsed_us(upload_begin, upload_end);
+                snapshot.render.wait_us += elapsed_us(candidate->decode_end_us, upload_begin);
+                snapshot.render.age_us += elapsed_us(candidate->decode_begin_us, present_us);
+#endif
                 snapshot.last_displayed_frame = IHS_FrameTicketIdentity(candidate->ticket).frameId;
                 snapshot.width = candidate->pixels->width;
                 snapshot.height = candidate->pixels->height;
@@ -1381,6 +1427,7 @@ void stream_media_get_snapshot(stream_media_snapshot *out) {
     sl_video_counters counters;
     if (video && sl_video_read_counters(video, video_key, &counters)) {
         snapshot.decoded_frames = snapshot.decode_samples = counters.decoded;
+        snapshot.replaced_frames = counters.replaced;
         snapshot.decode_us_total = counters.decode_total_us;
         snapshot.decode_us_max = counters.decode_max_us;
     }

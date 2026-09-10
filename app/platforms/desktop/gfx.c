@@ -194,6 +194,7 @@ bool sl_gfx_video(sl_gfx *g, sl_video_frame *lease) {
         av_frame_unref(g->download);
         if (av_hwframe_transfer_data(g->download, f, 0) < 0)
             return false;
+        ++g->counters.downloads;
         f = g->download;
     }
     if (f->format != AV_PIX_FMT_YUV420P && f->format != AV_PIX_FMT_NV12)

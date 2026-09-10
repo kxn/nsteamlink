@@ -15,11 +15,23 @@
 
 typedef void (*stream_media_log_fn)(const char *message);
 
+/* Main-thread measurements, copied under state_lock; no renderer access by worker.
+ * prep/age/wait count only newly displayed frames; begin/UI/present include redraws. */
+typedef struct sl_render_metrics {
+    uint64_t samples, prep_us, age_us, wait_us;
+    uint64_t draws, redraws, begin_us, ui_us, present_us;
+    uint64_t uploads, upload_bytes, downloads;
+    sl_gfx_counters resources;
+    bool hardware;
+} sl_render_metrics;
+
 typedef struct stream_media_snapshot {
     uint64_t session_id, video_epoch;
     bool available;
     bool video_active, render_failed;
     bool first_frame_displayed;
+    sl_render_metrics render;
+    uint32_t replaced_frames;
     uint32_t decoded_frames;
     uint32_t displayed_frames;
     uint32_t dropped_frames;
