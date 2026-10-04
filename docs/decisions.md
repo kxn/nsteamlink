@@ -2002,5 +2002,23 @@ Evidence：Linux Steam 主机在用户输入正确配对码后，对只带 KeyEs
 4. UI 快照会整体替换 runtime 的 profile；合入前用 `sl_host_registry_keep_secrets()` 保留快照缺失、
    且 id 与 clientId 一致的已配对主机 secret，避免配对完成前取的快照把它丢掉。
 
-待验证：主机 `update_secret` 轮换请求对协商 secret 的处理（仍回复 updated_secret=false）；Switch 真机
-上完整配对与串流回归。
+真机证据（2026-10-05）：Switch 对 Linux Steam 主机配对，主机日志依次记录
+`k_ERemoteDeviceAuthorizationSuccess`、authorization confirmation、`k_ERemoteDeviceStreamingSuccess`；
+退出并重新启动应用后，未重新配对即再次得到 `k_ERemoteDeviceStreamingSuccess`，说明按主机保存的 secret
+被正确选用。
+
+待验证：主机 `update_secret` 轮换请求对协商 secret 的处理（仍回复 updated_secret=false）。
+
+
+## D-054：发现请求同时发往子网广播地址（2026-10-05）
+
+Evidence：同一台 Switch、同一局域网，对 Linux Steam 主机：发往 255.255.255.255 的发现请求无论来自
+随机端口还是 UDP 27036 都没有应答；同样从随机端口发往子网广播 192.168.1.255 则每次都得到 Status。
+IHSlib 只发 255.255.255.255，因此应用始终显示找不到电脑（与 Issue #35 现象一致）。插桩确认 IHSlib
+socket 发送成功、15 秒内未收到任何数据报。
+
+决定：IHSlib 每次发现广播同时发往 255.255.255.255 和各本地 IPv4 网络的定向广播地址；Switch 由
+nifm 当前 IP 配置计算（无 getifaddrs），其他 POSIX 系统用 getifaddrs()。主机按请求来源端口应答，
+不需要绑定 27036。真机验证：该修改后 Switch 发现主机并完成 D-053 的配对与串流。
+
+待验证：255.255.255.255 是 Switch 未发出还是被网络设备丢弃（未抓包）。
