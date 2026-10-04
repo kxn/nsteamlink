@@ -1,4 +1,5 @@
 #include "input/input_router.h"
+#include "services/auth_store_legacy.h"
 #include "ui/ui_events.h"
 #include "ui/ui_model.h"
 #include <assert.h>
@@ -415,19 +416,7 @@ static void end_game_failure(void) {
 }
 
 static void profile_v2_migration(void) {
-    struct old_store {
-        uint64_t device_id;
-        uint8_t secret[32];
-        char device_name[64];
-        sl_host_registry registry;
-        uint32_t quality;
-        bool sound;
-    };
-    struct old_disk {
-        char magic[8];
-        uint32_t version, size, checksum;
-        struct old_store data;
-    } old = {0};
+    disk_store_v2 old = {0};
     char dir[] = "/tmp/nsl-profile-v2-XXXXXX", path[512];
     assert(mkdtemp(dir));
     snprintf(path, sizeof(path), "%s/profile.bin", dir);
@@ -459,12 +448,111 @@ static void profile_v2_migration(void) {
         assert(sl_auth_save(&s, dir) && sl_auth_load(&reload, dir) == 0);
         assert(reload.quality == q && reload.bitrate_kbps == rates[q]);
         assert(reload.device_id == s.device_id && reload.registry.hosts[0].paired);
+        assert(!reload.registry.hosts[0].has_secret);
     }
     unlink(path);
     rmdir(dir);
 }
+
+/* v3 hosts were paired before the key exchange: they keep the installation key. */
+static void profile_v3_migration(void) {
+    disk_store_v3 old = {0};
+    char dir[] = "/tmp/nsl-profile-v3-XXXXXX", path[512];
+    assert(mkdtemp(dir));
+    snprintf(path, sizeof(path), "%s/profile.bin", dir);
+    memcpy(old.magic, "NSLUI03", 8);
+    old.version = 3;
+    old.size = sizeof(old);
+    old.data.device_id = 4242;
+    memset(old.data.secret, 0x3c, sizeof(old.data.secret));
+    strcpy(old.data.device_name, "v3 device");
+    old.data.quality = 1;
+    old.data.sound = true;
+    old.data.bitrate_kbps = 10000;
+    old.data.registry.count = 2;
+    old.data.registry.selected = 1;
+    old.data.registry.next_id = 3;
+    old.data.registry.hosts[0].id = 1;
+    old.data.registry.hosts[0].client_id = 111;
+    old.data.registry.hosts[0].paired = true;
+    old.data.registry.hosts[0].account = 76561198000000001ull;
+    strcpy(old.data.registry.hosts[0].name, "first");
+    old.data.registry.hosts[0].games[0].id = 570;
+    strcpy(old.data.registry.hosts[0].games[0].name, "Dota 2");
+    old.data.registry.hosts[1].id = 2;
+    old.data.registry.hosts[1].client_id = 222;
+    strcpy(old.data.registry.hosts[1].address, "192.168.1.14");
+    old.checksum = 2166136261u;
+    const uint8_t *p = (const void *)&old.data;
+    for (size_t i = 0; i < sizeof(old.data); ++i)
+        old.checksum = (old.checksum ^ p[i]) * 16777619u;
+    FILE *f = fopen(path, "wb");
+    assert(f && fwrite(&old, 1, sizeof(old), f) == sizeof(old));
+    assert(fclose(f) == 0);
+
+    sl_auth_store s, reload;
+    assert(sl_auth_load(&s, dir) == 0);
+    assert(s.device_id == 4242 && !memcmp(s.secret, old.data.secret, 32));
+    assert(!strcmp(s.device_name, "v3 device") && s.quality == 1 && s.sound);
+    assert(s.bitrate_kbps == 10000 && s.registry.count == 2 && s.registry.next_id == 3);
+    const sl_host *first = &s.registry.hosts[0];
+    assert(first->id == 1 && first->client_id == 111 && first->paired && !first->has_secret);
+    assert(first->account == 76561198000000001ull && !strcmp(first->name, "first"));
+    assert(first->games[0].id == 570 && !strcmp(first->games[0].name, "Dota 2"));
+    assert(s.registry.hosts[1].client_id == 222 && !s.registry.hosts[1].paired);
+    assert(!strcmp(s.registry.hosts[1].address, "192.168.1.14"));
+
+    /* Saved again as v4, a negotiated key survives the round trip. */
+    s.registry.hosts[1].paired = true;
+    s.registry.hosts[1].has_secret = true;
+    memset(s.registry.hosts[1].secret, 0xa5, sizeof(s.registry.hosts[1].secret));
+    assert(sl_auth_save(&s, dir) && sl_auth_load(&reload, dir) == 0);
+    assert(reload.registry.hosts[1].has_secret && reload.registry.hosts[1].secret[31] == 0xa5);
+    assert(!reload.registry.hosts[0].has_secret);
+    f = fopen(path, "rb");
+    char magic[8];
+    assert(f && fread(magic, 1, sizeof(magic), f) == sizeof(magic) && fclose(f) == 0);
+    assert(!memcmp(magic, "NSLUI04", 8));
+    unlink(path);
+    rmdir(dir);
+}
+
+static void host_secrets(void) {
+    sl_host_registry known, snapshot;
+    sl_host_registry_init(&known);
+    sl_host o = {.client_id = 77, .instance_id = 1};
+    strcpy(o.name, "pc");
+    sl_host *h = sl_host_observe(&known, &o, 1000);
+    assert(h && !h->has_secret);
+    h->paired = true;
+    h->has_secret = true;
+    memset(h->secret, 0x42, sizeof(h->secret));
+
+    /* Rediscovery updates the record without touching the key. */
+    o.instance_id = 2;
+    assert(sl_host_observe(&known, &o, 60000) == h && h->has_secret && h->secret[0] == 0x42);
+
+    /* A snapshot taken before the pairing finished keeps the negotiated key... */
+    snapshot = known;
+    snapshot.hosts[0].has_secret = false;
+    memset(snapshot.hosts[0].secret, 0, sizeof(snapshot.hosts[0].secret));
+    sl_host_registry_keep_secrets(&snapshot, &known);
+    assert(snapshot.hosts[0].has_secret && snapshot.hosts[0].secret[0] == 0x42);
+
+    /* ...but not for an unpaired record or another installation behind the same id. */
+    snapshot.hosts[0].has_secret = false;
+    snapshot.hosts[0].paired = false;
+    sl_host_registry_keep_secrets(&snapshot, &known);
+    assert(!snapshot.hosts[0].has_secret);
+    snapshot.hosts[0].paired = true;
+    snapshot.hosts[0].client_id = 78;
+    sl_host_registry_keep_secrets(&snapshot, &known);
+    assert(!snapshot.hosts[0].has_secret);
+}
 int main(void) {
     profile_v2_migration();
+    profile_v3_migration();
+    host_secrets();
     end_game_failure();
     carousel();
     session_end_events();
@@ -680,8 +768,14 @@ int main(void) {
                                 .generation = flow.generation,
                                 .host = flow.intent.host,
                                 .account = 88};
+    success.host.has_secret = true;
+    memset(success.host.secret, 0x17, sizeof(success.host.secret));
     sl_ui_runtime_event(&flow, &success);
     assert(sl_ui_take_command(&flow, &cmd) && cmd.type == SL_CMD_STREAM);
+    /* The UI's copy keeps the negotiated key, so its later saves carry it. */
+    const sl_host *stored = sl_host_find(&flow.store.registry, flow.intent.host.id);
+    assert(stored && stored->has_secret && stored->secret[0] == 0x17);
+    assert(cmd.host.has_secret && cmd.host.secret[31] == 0x17);
     sl_ui_runtime_event(&flow, &success);
     assert(!sl_ui_take_command(&flow, &cmd));
     sl_runtime_event refusal = {
