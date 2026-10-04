@@ -8,8 +8,10 @@
 #include <string.h>
 #include <switch.h>
 
+/* QUADS: UI pages measure up to ~4000 quads per frame (rounded corners are
+ * drawn row by row); the keypad page exceeded 4096 on hardware. */
 #define BATCHES           2
-#define QUADS             4096u
+#define QUADS             8192u
 #define DESCRIPTORS       (QUADS * 2)
 #define COMMAND_BYTES     (4u * 1024u * 1024u)
 #define UNIFORM_BYTES     (QUADS * 256u)
@@ -744,6 +746,12 @@ static bool draw_quad(sl_gfx *g, params *p, const DkImage *first, const DkImage 
     if (!b)
         return false;
     if (b->quads >= QUADS || b->descriptors + 2 > DESCRIPTORS) {
+        if (g->diagnostic && !g->failed) {
+            char line[96];
+            snprintf(line, sizeof(line), "deko frame limit reached: quads=%u descriptors=%u",
+                     (unsigned)b->quads, (unsigned)b->descriptors);
+            g->diagnostic(line);
+        }
         g->failed = true;
         return false;
     }
