@@ -1980,3 +1980,27 @@ Evidence：用户在实际串流验收后明确要求直接切换正式构建、
 取消图形后端缓存选项，旧构建目录重新配置时迁移到对应平台后端。正式 CI 校验 deko
 链接与诊断排除。此决策取代 D-051 及 VIDEO_RENDERING_DESIGN 中以完整平台验收为
 默认切换前置条件、维护 SDL 回退产物的安排；用户验收不改写为所有边界测试已通过。
+
+
+## D-053：配对密钥交换与按主机保存 secret（2026-10-04）
+
+Evidence：Linux Steam 主机在用户输入正确配对码后，对只带 KeyEscrow ticket 的授权请求回复
+`k_ERemoteDeviceAuthorizationFailed`；官方 Steam Link 1.3.32 Linux x86_64 反汇编显示请求另带
+`auth_key = X25519 公钥 XOR SHA256(配对码)`，response 由 BHandleKeyExchangeAuthorization 做密钥交换、
+校验 `device_token` 并回复 `AuthorizationConfirmed`，协商出的 secret 按主机持久化。IHSlib 实现同一
+流程后，同一主机回复 Success、记录 authorization confirmation，并接受用协商 secret 发起的串流请求。
+地址与日志见 STEAM_REMOTE_PLAY_AUTH。
+
+决定：
+1. 配对由 IHSlib 完成密钥交换；成功回调后 runtime 用 `IHS_ClientGetSecretKey()` 读取 client 当前
+   secret。它与安装级 secret 不同时视为协商 secret，保存到该主机记录（`has_secret`）；相同时属于
+   旧版 KeyEscrow 配对，主机记录不保存 secret，继续用安装级 secret。
+2. profile 升到 v4，主机记录新增 `has_secret`/`secret`。v2/v3 的主机布局冻结在
+   `auth_store_legacy.h`，迁移后旧配对 `has_secret=false`，不影响已配对主机。
+3. 发起配对前切回安装级 secret（device_token 与 KeyEscrow ticket 由它构造）；发起串流前按 runtime
+   当前 profile 中该主机记录选择 secret。
+4. UI 快照会整体替换 runtime 的 profile；合入前用 `sl_host_registry_keep_secrets()` 保留快照缺失、
+   且 id 与 clientId 一致的已配对主机 secret，避免配对完成前取的快照把它丢掉。
+
+待验证：主机 `update_secret` 轮换请求对协商 secret 的处理（仍回复 updated_secret=false）；Switch 真机
+上完整配对与串流回归。

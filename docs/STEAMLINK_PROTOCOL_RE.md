@@ -1277,7 +1277,7 @@ Conclusion：当前 B/A 不会必然把旧 success 直接接成新连接，但�
 
 | 报文 | 官方发送/使用场景和证据 | 本地对应及结论 |
 | --- | --- | --- |
-| AuthorizationRequest（发现 3） | SendAuthorizeDeviceRequest @79a490、BCreateAuthorizationRequest @79c594；配对授权阶段 | client/authorization.c 定时发送 KeyEscrow 路径，已有；不因开流就重复配对。官方还有密钥交换分支，不能宣称所有认证变体齐全 |
+| AuthorizationRequest（发现 3） | SendAuthorizeDeviceRequest @79a490、BCreateAuthorizationRequest @79c594；配对授权阶段 | client/authorization.c 定时发送 KeyEscrow ticket，并带 auth_key（X25519 公钥 XOR SHA256(配对码)）与 request_id；response 的密钥交换、device_token 校验和 AuthorizationConfirmed 已按官方实现（Linux x86_64 1.3.32 @0x18b110，详见 STEAM_REMOTE_PLAY_AUTH）；不因开流就重复配对 |
 | AuthorizationCancelRequest（9） | SendCancelAuthorizationRequest @7999b8；StopStreaming 在授权状态调用 | AuthorizationCancelVisit 已发送，runtime stop_client 已调用；不是本轮漏发项。取消消息没有 streaming request_id，不能照搬开流编号策略 |
 | StreamingRequest（5） | StartStreaming @798d94 建编号，SendStartStreamingRequest @799328 使用原编号重试；同主机在途请求去重 | client/streaming.c 有随机编号和重复发送；stream_interface 固定 BigPicture 属请求配置差异，不能凭名字改变其主机行为 |
 | StreamingCancelRequest（10） | 取消原 request_id；迟到 InProgress 再取消其旧编号，详见 §21.3 | 缺发送/API；只停止本地 client 不等于撤销主机启动请求，必须补齐事务级取消 |
@@ -1374,10 +1374,11 @@ AuthorizationCallback 都忽略来源地址；后者没有开流那样的 reques
 - 接收前校验来源 IP/端口、目标 client_id、可用的 instance_id 及请求编号；
   仅有效 Proof/Response/Progress 更新等待计时。Proof 的可选编号按 presence
   处理。终态响应只消费一次。
-- 当前 KeyEscrow 客户端使用安装级共享 secret，未实现官方按主机保存的轮换
-  密钥链。ProofResponse 明确携带 updated_secret=false，使用原 secret 回答
-  challenge，不伪称已更新、不覆盖其他主机配对。主机要求轮换时是否接受
-  此兼容响应仍需对应主机证据；不能宣称实现了完整自动密钥轮换。
+- 配对密钥交换得到的 secret 按主机保存在 profile 的主机记录，开流前选用；
+  旧版 KeyEscrow 配对的主机继续使用安装级 secret。ProofResponse 明确携带
+  updated_secret=false，使用该主机当前 secret 回答 challenge，不伪称已更新、
+  不覆盖其他主机配对。主机要求轮换（update_secret）时是否接受此兼容响应
+  仍需对应主机证据；不能宣称实现了完整自动密钥轮换。
 - 主机状态 presence/timestamp 透传；直启观察必须先有目标活动后的画面，
   并观察到主机运行游戏，再在 Desktop 接收两份递增时间戳的明确 false。
   旧时间戳不计入、缺字段清确认、活动切换清确认，新连接重置全部观察。

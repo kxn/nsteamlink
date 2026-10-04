@@ -10,6 +10,9 @@
   `steammessages_remoteclient_discovery.proto`；上游 plume 的 README 和源码。
 - 真机证据：Switch 已经能发现 Steam 主机；用户在 Switch 输入 Steam 端已设置的 PIN 后，Steam host
   继续要求“设备上的四位数授权代码”；IHSlib 回调最终给出 `result=6`。
+- 逆向与主机日志证据（2026-10-04）：官方 Steam Link 1.3.32.316 Linux x86_64 `bin/steamlink`
+  （SHA256 95482ca6120f90bb90798b27206b7946ab732e079f008d7fc90ea58a8b0074e1）反汇编，下文地址均为
+  该文件的虚拟地址；Linux Steam 主机 `logs/remote_connections.txt` 的配对与串流记录。
 - 旁证：Steam 社区讨论、ValveSoftware/steam-for-linux issue 中的 Remote Play
   “Authorize Device”/authorization code UI 现象。旁证只能辅助解释 UI 名词，不能单独决定协议实现。
 
@@ -84,6 +87,13 @@
 因此可以确定：`IHS_ClientAuthorizationRequest(..., pin)` 的 `pin` 进入 pairing authorization ticket
 的 `password` 字段，并和客户端身份材料一起发给 host。
 
+外层还带密钥交换字段（官方客户端行为，IHSlib 已对齐）：
+
+- `auth_key = X25519 公钥 XOR SHA256(配对码)`。官方生成配对码（@0x182ef0，经 @0x182eb0 以 `%4.4u`
+  格式化）后调用 `keypair.cpp` 的密钥对生成（@0x1b7130，32 字节随机私钥），构造请求时计算 SHA256(配对码)
+  （@0x1af160）并与公钥逐字节异或（@0x1880b2–0x18815e）。没有配对码的人无法还原公钥。
+- `request_id` 取自客户端请求状态（@0x187fcd）。
+
 ### AuthorizationResponse
 
 本仓 `third_party/ihslib/protobuf/discovery.proto:181-186` 定义 response：
@@ -98,9 +108,16 @@
 - `InProgress` 调 progress 回调并继续等待。
 - `Success` 调 success 回调并停止任务。
 - 其他结果调 failed 回调并停止任务。
-- 当前代码会把 response 中的 `result`、`steamid`、`auth_key` 长度和 `device_token` 长度写入日志，
-  用于下一次真机回归取证。
-- 当前代码没有持久化 response 中的 `auth_key` / `device_token`。
+- 当前代码会把 response 中的 `result`、`steamid`、`auth_key` 长度和 `device_token` 长度写入日志。
+- 带 `auth_key` 的 response 不看 `result`，直接按密钥交换处理（官方在 @0x18c8c9 检查 `auth_key` 存在后，
+  于 @0x18c992 调用 @0x18b110）：`主机公钥 = auth_key XOR SHA256(配对码)`；
+  `secret = SHA256(X25519(本机私钥, 主机公钥))`（@0x1ad110，X25519 后在 @0x1ad25a 调用 SHA256）；
+  用该 secret 对 `device_token` 做 SymmetricDecrypt，结果必须恰为 8 字节且等于本机 deviceId
+  （@0x18b2b4–0x18b382）。校验成功后该 secret 成为此主机的 secretKey（@0x18b3ce），官方按主机持久化
+  （@0x183830，日志 `Saved persistent client key for Client ID %llu, Steam ID %llu`）。官方每次配对
+  最多处理 3 次（@0x18b169）。
+- IHSlib 按同样步骤处理；成功后 client 切换到该主机 secret。应用用 `IHS_ClientGetSecretKey()`
+  取得并保存到 profile 中对应主机记录，后续串流前用 `IHS_ClientSetSecretKey()` 选择。
 
 真机日志里的 `authorization failed result=6` 可以确定映射到
 `IHS_AuthorizationTimedOut`，因为本仓 `include/ihslib/client.h:40-49` 和 proto
@@ -122,11 +139,20 @@ SteamTracking proto 和本仓 proto 都定义：
 
 - `AuthorizationConfirmed` 会进入 authorization callback，并记录 `result`。
 - `PairingState` / `PairingExclusivity` 会解码并记录 msg type 与 payload size。
-- 当前没有把这些消息赋予 success/failed 语义；真正授权成功仍以 `AuthorizationResponse result=Success`
-  为准。
+- 主机发来的这些消息仍只记录日志；授权成功以 response 的密钥交换（无 `auth_key` 时以
+  `result=Success`）为准。
 
-待验证：现代 Steam 是否要求客户端进一步处理 `AuthorizationConfirmed`、response `auth_key` 或 response
-`device_token` 才能完成/持久化 pairing。现在只能把它列为协议缺口，不能直接说它就是超时根因。
+结论：现代 Steam 要求密钥交换。客户端处理 response 的 `auth_key`/`device_token` 后，必须自己发送
+`AuthorizationConfirmed{result}`（官方 @0x18acb0 以 msg type 14 发送，result 为校验结果）。
+
+证据：2026-10-04 Linux Steam 主机日志。只发 KeyEscrow ticket 时，用户在主机输入正确配对码后，主机
+回复 `k_ERemoteDeviceAuthorizationFailed`。加入密钥交换后，主机回复
+`k_ERemoteDeviceAuthorizationSuccess` 并记录 `Received authorization confirmation with device ID ...`；
+随后用协商 secret 发出的 streaming request 得到 `k_ERemoteDeviceStreamingSuccess`，session key
+能用该 secret 解密。
+
+待验证：主机发来的 `AuthorizationConfirmed`、`PairingState`、`PairingExclusivity` 的语义；是否仍有
+只接受 KeyEscrow 的旧版主机。
 
 ## D-016 前 Switch 实现的错位（已修正）
 
@@ -177,12 +203,13 @@ D-017 日志中继续验证。
 7. 用户在 Steam host 的 Remote Play 配对窗口输入 Switch 显示的四位码。
 8. Switch 等待 `AuthorizationResponse`：
    - `InProgress`：继续显示等待。
-   - `Success`：保存 `auth.bin` 中的身份材料和 `steamId`/最近 host 信息。
+   - `Success`：保存身份材料、`steamId`/最近 host 信息，以及密钥交换得到的该主机 secret。
    - `TimedOut`/`Failed`：显示结果码，保留日志。
 
 ### 后续串流
 
-1. 复用 `auth.bin` 中的 `deviceId` 与 `secretKey`。
+1. 复用 `deviceId`；按主机选择 secret：有协商 secret 的主机用它，旧版 KeyEscrow 配对的主机
+   用安装级 `secretKey`。
 2. 发现 host，发起 `IHS_ClientStreamingRequest()`。
 3. 如果返回 `IHS_StreamingUnauthorized`，回到首次配对流程。
 4. 如果返回 `IHS_StreamingPINRequired`，再让用户输入 host security/connect PIN，并把它放到
@@ -200,7 +227,8 @@ D-017 日志中继续验证。
 - 已完成：auth response 调试日志包含 `result`、`auth_key.len`、`device_token.len`。
 - 已完成：收到 message type 14/15/16 时打日志。只有在真机日志或抓包证明它们影响 pairing 后，
   才能写“必须实现”。
-- 继续保存 `auth.bin` 的 `deviceId`/`secretKey`。不要把 pairing PIN 保存为认证材料。
+- 保存 `deviceId`、安装级 `secretKey`（KeyEscrow ticket 与旧配对使用）以及每台主机的协商
+  secret。不要把 pairing PIN 保存为认证材料。
 - 后续 M3/M4 再做数字输入 UI，语义必须是 streaming/security PIN；只在 streaming 阶段需要时使用，
   不再用于 `IHS_ClientAuthorizationRequest()`。
 - 如果后续 security/connect PIN 需要保存，必须在 UI 上单独标为 host security PIN，并和 pairing
