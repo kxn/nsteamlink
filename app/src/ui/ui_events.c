@@ -45,6 +45,8 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
                 memset(h->games, 0, sizeof(h->games));
             h->paired = true;
             h->account = e.account;
+            h->has_secret = e.host.has_secret;
+            memcpy(h->secret, e.host.secret, sizeof(h->secret));
             m->intent.host = *h;
             m->page = SL_CONNECTING;
             m->command = m->intent;

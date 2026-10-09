@@ -72,3 +72,18 @@ void sl_host_activity(sl_host *h, uint64_t account, const sl_game *game) {
     h->games[0] = *game;
     h->games[0].name[sizeof(h->games[0].name) - 1] = 0;
 }
+void sl_host_registry_keep_secrets(sl_host_registry *dst, const sl_host_registry *src) {
+    for (int i = 0; i < dst->count; ++i) {
+        sl_host *h = &dst->hosts[i];
+        if (!h->paired || h->has_secret)
+            continue;
+        for (int j = 0; j < src->count; ++j) {
+            const sl_host *known = &src->hosts[j];
+            if (known->id == h->id && known->client_id == h->client_id && known->has_secret) {
+                h->has_secret = true;
+                memcpy(h->secret, known->secret, sizeof(h->secret));
+                break;
+            }
+        }
+    }
+}

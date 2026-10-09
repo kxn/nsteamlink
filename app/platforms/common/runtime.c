@@ -50,6 +50,7 @@ struct sl_runtime {
     bool session_ready, connected, finished, host_stopped, first_reported, auth_ready,
         auth_consumed, request_terminal;
     uint64_t auth_account, request_at, frame_at, last_diag;
+    uint8_t auth_secret[32];
     uint32_t frames;
     sl_debug_snapshot debug;
     stream_media_snapshot previous;
@@ -259,12 +260,14 @@ static void discovered(IHS_Client *client, const IHS_HostInfo *h, void *ctx) {
     post(r, (sl_runtime_event){.type = SL_EVENT_HOST, .host = observed});
 }
 static void authorized(IHS_Client *client, const IHS_HostInfo *h, uint64_t account, void *ctx) {
-    (void)client;
     (void)h;
     sl_runtime *r = ctx;
     pthread_mutex_lock(&r->lock);
     if (r->active.type == SL_CMD_PAIR && !r->auth_consumed) {
         r->auth_account = account;
+        /* After a key exchange the client already switched to the key
+         * negotiated with this computer; a legacy pairing keeps ours. */
+        IHS_ClientGetSecretKey(client, r->auth_secret);
         r->auth_ready = true;
         r->auth_consumed = true;
         sl_log("pair: authorization success callback");
@@ -642,6 +645,8 @@ static void execute(sl_runtime *r, sl_command cmd) {
         sl_runtime_event e = {.type = SL_EVENT_CODE};
         snprintf(e.text, sizeof(e.text), "%04u", random % 10000);
         post(r, e);
+        /* Device token and escrow ticket are built from the installation key. */
+        IHS_ClientSetSecretKey(r->client, r->store.secret);
         if (!IHS_ClientAuthorizationRequest(r->client, &h, e.text))
             fail(r, sl_tr(SL_T_REQUEST_PAIR_FAILED));
     } else if (cmd.type == SL_CMD_STREAM) {
@@ -650,6 +655,9 @@ static void execute(sl_runtime *r, sl_command cmd) {
             sl_media_allow_video();
         pthread_mutex_unlock(&r->lock);
         IHS_ClientStopDiscovery(r->client);
+        const sl_host *paired = sl_host_find(&r->store.registry, cmd.host.id);
+        IHS_ClientSetSecretKey(r->client,
+                               paired && paired->has_secret ? paired->secret : r->store.secret);
         IHS_StreamingRequest req = {.streamingEnable = {true, true, true},
                                     .maxResolution = {1280, 720},
                                     .audioChannelCount = 2,
@@ -924,9 +932,14 @@ static void *worker_main(void *ctx) {
         bool auth = r->auth_ready;
         r->auth_ready = false;
         uint64_t account = r->auth_account;
+        uint8_t auth_secret[32];
+        memcpy(auth_secret, r->auth_secret, sizeof(auth_secret));
+        memset(r->auth_secret, 0, sizeof(r->auth_secret));
         pthread_mutex_unlock(&r->lock);
-        if (snapshot_pending)
+        if (snapshot_pending) {
+            sl_host_registry_keep_secrets(&save.registry, &r->store.registry);
             r->store = save;
+        }
         if (save_pending) {
             bool profile_saved = sl_auth_save(&save, sl_system_data_dir());
             bool language_saved = sl_i18n_save(sl_system_data_dir(), save_language);
@@ -947,15 +960,22 @@ static void *worker_main(void *ctx) {
             if (h) {
                 h->paired = true;
                 h->account = account;
+                h->has_secret = memcmp(auth_secret, r->store.secret, sizeof(auth_secret)) != 0;
+                if (h->has_secret)
+                    memcpy(h->secret, auth_secret, sizeof(h->secret));
+                else
+                    memset(h->secret, 0, sizeof(h->secret));
+                sl_log(h->has_secret ? "pair: key exchange, host-specific key stored"
+                                     : "pair: legacy pairing, installation key kept");
             }
             if (!h || !sl_auth_save(&r->store, sl_system_data_dir()))
                 fail(r, sl_tr(SL_T_SAVE_PAIR_FAILED));
             else
-                post(r, (sl_runtime_event){.type = SL_EVENT_AUTHORIZED,
-                                           .account = account,
-                                           .host = r->active.host});
+                post(r, (sl_runtime_event){
+                            .type = SL_EVENT_AUTHORIZED, .account = account, .host = *h});
             r->request_at = 0;
         }
+        memset(auth_secret, 0, sizeof(auth_secret));
         if (ready && !r->session && !launch_session(r, info)) {
             stop_session(r);
             fail(r, sl_tr(SL_T_SESSION_FAILED));

@@ -14,6 +14,10 @@ typedef struct sl_host {
     bool paired, observed, legacy, games_running;
     int focus;
     sl_game games[SL_RECENT_LIMIT];
+    /* Key negotiated with this computer by the pairing key exchange. Hosts
+     * paired before it (has_secret false) keep using the installation secret. */
+    bool has_secret;
+    uint8_t secret[32];
 } sl_host;
 typedef struct sl_host_registry {
     sl_host hosts[SL_HOST_LIMIT];
@@ -26,3 +30,6 @@ sl_host *sl_host_observe(sl_host_registry *r, const sl_host *observation, uint64
 bool sl_host_online(const sl_host *h, uint64_t now);
 void sl_host_forget(sl_host_registry *r, uint64_t id);
 void sl_host_activity(sl_host *h, uint64_t account, const sl_game *game);
+/* Keeps negotiated keys that a newer copy of the registry lacks, so a UI
+ * snapshot taken before a pairing finished cannot drop them. */
+void sl_host_registry_keep_secrets(sl_host_registry *dst, const sl_host_registry *src);
