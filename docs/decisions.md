@@ -18,7 +18,8 @@
 - 日期：2026-08-23
 - 背景：plume 使用其自有 fork `beudbeud/ihslib`（`plume` 分支），kickoff §3.1 要求先 diff 补丁差异再定。
 - 考察结果（fork @ `8c5a17c` vs 上游 `mariotaku/IHSlib@master`）：
-  - fork 是上游的**严格超集**：上游没有 fork 缺失的提交；
+  - 当时比较所得结论是 fork 为上游的严格超集。**2026-10-09 撤回将此结论用于当前
+    版本的判断**：官方 `1881b9a` 有旧 fork `7bbc03b` 未含的 6 个提交，见 D-057；
   - fork 额外带 25+ 个实战修复，覆盖串流稳定性关键路径：重传队列死锁/
     孤儿分片、控制通道发送序列化（否则 host 静默丢消息）、HID 悬挂指针与
     delta 缓冲区溢出、session 停止前等待 host ACK、protobuf 与 Valve 现行
@@ -2042,3 +2043,43 @@ Decision：fork 的 master 是唯一长期维护分支；废弃 D-037 中继续�
 提交的流程。`.gitmodules` 跟踪 master，父仓同步审核并固定其提交。短期分支合入后
 删除，plume 的历史基线通过提交与 Git 历史查阅；主仓继续使用既有默认分支 main。
 本决策调整维护入口，不增加认证语义；密钥交换与发现行为依据 D-053/D-054。
+
+
+## D-057：吸收官方更新与由应用提供串流能力（2026-10-09）
+
+Evidence：官方 `mariotaku/ihslib` master `1881b9a` 与旧 fork `7bbc03b` 的
+共同祖先为 `5609081`，两侧独有提交数为 6/81。官方 `6721ecc` 修改
+`src/session/channels/video/ch_data_video.c`：解码器回报丢帧后清理 pending/assembly，
+设置等待关键帧并再次发送 DataLost；其 `test_decoder_loss.c` 验证后续依赖帧被丢弃、
+关键帧恢复。旧 fork 保留 tracked ticket 等实现，但缺少这段恢复。
+官方其余修改包含 math.h、protobuf-c 1.5.2 生成文件和 authorization request_id；
+后两项协议字段的项目扩展不能用官方生成文件直接覆盖。
+
+Evidence：旧 fork 的 `ch_control_negotiation.c` 无平台判断，统一发出 Tegra X1、
+1280×720、固定内存/频率、TV、30/90 Mbps 等能力；`ch_data_video.c` 统一发出
+Marvell 解码器名称。`include/ihslib/common.h` 定义 -197 为 Linux 3.6、Android 为
+-500，**撤回旧代码注释“-197 是官方 Android 值”**。Switch 对应 Steam OSType
+没有本项目确认的证据。`protobuf/remoteplay.proto` 将这些能力定义为 optional 字段。
+应用 `video_pipeline.c` 明确设置解码线程数 1，并在 Switch 使用 FFmpeg nvtegra；
+desktop 用软件解码。平台 `system.c` 是本项目既有 HAL，不依赖 IHS 类型。
+
+Conclusion：平台常量属于应用策略或平台信息，不能成为通用库的默认硬件身份。
+旧 fork 不能视作当前官方的严格超集；合并提交必须保留双方历史，并以合并后的 proto
+重新生成文件。官方解码恢复可以接入两套回调，保留 tracked frame/ticket 身份与生命周期。
+
+Decision：
+
+1. 官方 master 更新吸收到 fork master；按用户要求独立维护 fork，不向官方提交 PR。
+   此维护策略取代 D-037 中将反哺 PR 作为后续流程的安排；父仓仍固定审核后的 gitlink。
+2. 新增独立 `IHS_StreamClientCapabilities` 与启动前 setter，不再增长既有配置或回调
+   结构；session 深拷贝字符串，失败保留旧配置，销毁时在 workers join 后释放。
+   未知能力不发出。既有 fork 相对官方的 ABI/源码差异并未消失，应用与库同步重编译。
+3. desktop 从 uname/sysconf 提供 Linux、架构、逻辑 CPU 和内存信息，不编造 GPU/屏幕；
+   Switch 仅给出平台显示/核心信息及应用的 30/90 Mbps 策略，省略未知 OSType 与
+   随掌机/底座变化的 form_factor。解码器名称由平台给出，线程数来自解码实现。
+4. 合入官方解码丢帧后的清理/关键帧等待，并适配 legacy frameId 和 tracked ticket。
+   保持现有认证两种 PIN、按主机 secret、HID 收集/flush 和显式 StopGame 契约；
+   proof 不声称已轮换 secret，轮换流程继续按 D-053 留为待验证。
+
+待验证：这些能力字段省略后的不同 Steam host 实机行为，以及新恢复路径在真实网络/
+NVDEC 错误中的效果；主机侧序列化回归与交叉构建不能替代设备证据。

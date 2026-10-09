@@ -33,6 +33,12 @@ submodule 工作区逐字节一致。旧 patch 文件已删除，需要查阅时
 - 回归入口：host CTest、`scripts/audit-ihslib-control.sh` 协议反例探针；
   Switch 运行行为必须以真机证据验证。
 
+官方 `mariotaku/ihslib` master 的 `1881b9a` 已纳入 fork 历史。平台和解码器能力由
+应用通过 `IHS_SessionSetClientCapabilities()` 在连接前提供；通用层省略未知字段，
+不会默认上报 Switch/Marvell/TV。此接口拷贝字符串，不扩展既有 `IHS_SessionConfig`。
+应用与 fork 须同步源码重编译；配对 secret 的按主机保存/选择、tracked ticket 所有权
+和显式 HID flush 契约继续有效。详见 fork README 和 D-057。
+
 ## 后续改 ihslib 的流程（取代 patch 流程，D-037）
 
 1. `git submodule update --init --recursive` 后子模块默认处于 detached HEAD；先在
@@ -42,8 +48,8 @@ submodule 工作区逐字节一致。旧 patch 文件已删除，需要查阅时
 2. 在 fork 的 `master` 正常提交并 `git push origin master`（使用 `fork` remote 时
    相应改为 `git push fork master`）；风险主题可先开短期分支，合入 `master` 后删除；
 3. 父仓库随之更新 submodule pin 并提交；
-4. 若日后上游恢复活动，评估把 `master` 分支的独立主题以 PR 反哺上游
-   （控制可靠状态机是现成素材）；反哺被吸收前，fork 为权威源。
+4. 官方更新吸收到 fork 的 `master`，先核对协议定义和接口差异，再合并、验证、
+   推送并更新父仓 pin；本项目独立维护 fork，不要求向官方提交 PR（D-057）。
 
 ## 待引入（按里程碑）
 

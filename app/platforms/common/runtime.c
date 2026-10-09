@@ -507,6 +507,24 @@ static bool launch_session(sl_runtime *r, IHS_SessionInfo info) {
     }
     if (!r->session)
         return false;
+    sl_system_stream_info platform = sl_system_streaming_info();
+    IHS_StreamClientCapabilities caps = {
+        .systemInfo = platform.system_info[0] ? platform.system_info : NULL,
+        .decoderInfo = platform.decoder_info,
+        .decoderThreads = 1, /* video_pipeline.c sets AVCodecContext.thread_count = 1. */
+        .maximumDecodeBitrateKbps = platform.maximum_decode_bitrate_kbps,
+        .maximumBurstBitrateKbps = platform.maximum_burst_bitrate_kbps,
+        .hasSystemCanSuspend = true,
+        .systemCanSuspend = platform.can_suspend,
+        .formFactor = platform.form_factor == SL_STREAM_FORM_COMPUTER
+                          ? IHS_StreamDeviceFormFactorComputer
+                          : IHS_StreamDeviceFormFactorUnknown,
+    };
+    if (!IHS_SessionSetClientCapabilities(r->session, &caps)) {
+        IHS_SessionDestroy(r->session);
+        r->session = NULL;
+        return false;
+    }
     pthread_mutex_lock(&r->lock);
     r->facts.session_id = r->session_id;
     pthread_mutex_unlock(&r->lock);

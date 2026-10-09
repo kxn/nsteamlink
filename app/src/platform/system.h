@@ -21,3 +21,19 @@ uint32_t sl_system_dns_begin(void);
 void sl_system_dns_cancel(uint32_t handle);
 
 const char *sl_system_locale(void);
+
+/* Platform facts and application policy, copied into IHS before session start.
+ * Unknown values stay zero; no guessed hardware or OS identities. */
+typedef enum sl_system_stream_form_factor {
+    SL_STREAM_FORM_UNKNOWN,
+    SL_STREAM_FORM_COMPUTER,
+} sl_system_stream_form_factor;
+typedef struct sl_system_stream_info {
+    char system_info[1024];
+    const char *decoder_info;
+    uint32_t maximum_decode_bitrate_kbps;
+    uint32_t maximum_burst_bitrate_kbps;
+    bool can_suspend;
+    sl_system_stream_form_factor form_factor;
+} sl_system_stream_info;
+sl_system_stream_info sl_system_streaming_info(void);

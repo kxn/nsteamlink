@@ -4,7 +4,9 @@
 #include <stdlib.h>
 #include <sys/random.h>
 #include <sys/stat.h>
+#include <sys/utsname.h>
 #include <time.h>
+#include <unistd.h>
 
 bool sl_system_init(void) {
     return true;
@@ -80,3 +82,27 @@ bool sl_system_preflight(void) {
 }
 
 #endif
+
+sl_system_stream_info sl_system_streaming_info(void) {
+    sl_system_stream_info info = {.decoder_info = "FFmpeg software decoding",
+                                  .can_suspend = true,
+                                  .form_factor = SL_STREAM_FORM_COMPUTER};
+    struct utsname machine;
+    long cpus = sysconf(_SC_NPROCESSORS_ONLN);
+    long pages = sysconf(_SC_PHYS_PAGES), page_size = sysconf(_SC_PAGESIZE);
+    if (uname(&machine) == 0) {
+        /* Linux OSType and architecture are known. GPU, physical core count and
+         * display details are not measured here, so do not invent them. */
+        char cpu_info[80] = "", memory_info[80] = "";
+        if (cpus > 0)
+            snprintf(cpu_info, sizeof(cpu_info), "\t\"LogicalCPUCount\"\t\"%ld\"\n", cpus);
+        if (pages > 0 && page_size > 0)
+            snprintf(memory_info, sizeof(memory_info), "\t\"SystemRAM\"\t\"%llu\"\n",
+                     (unsigned long long)pages * (unsigned long long)page_size / (1024 * 1024));
+        snprintf(info.system_info, sizeof(info.system_info),
+                 "\"SystemInfo\"\n{\n\t\"OSType\"\t\"-203\"\n"
+                 "\t\"CPUID\"\t\"%s\"\n%s%s}\n",
+                 machine.machine, cpu_info, memory_info);
+    }
+    return info;
+}

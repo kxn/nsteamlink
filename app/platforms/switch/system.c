@@ -116,3 +116,19 @@ const char *sl_system_locale(void) {
         return "zh-CN";
     return "en";
 }
+
+sl_system_stream_info sl_system_streaming_info(void) {
+    /* Application limits, not claims about every Tegra model's maximum.
+     * Steam has no confirmed Switch OSType. -197 is Linux 3.6, not Android. */
+    return (sl_system_stream_info){
+        .system_info = "\"SystemInfo\"\n{\n"
+                       "\t\"LogicalCPUCount\"\t\"4\"\n"
+                       "\t\"VideoDisplayX\"\t\"1280\"\n"
+                       "\t\"VideoDisplayY\"\t\"720\"\n"
+                       "\t\"VideoDisplayNameID\"\t\"Nintendo Switch\"\n}\n",
+        .decoder_info = "FFmpeg NVDEC",
+        .maximum_decode_bitrate_kbps = 30000,
+        .maximum_burst_bitrate_kbps = 90000,
+        .can_suspend = true,
+    };
+}

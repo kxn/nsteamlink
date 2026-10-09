@@ -154,6 +154,12 @@ static bool no_artwork_network(const char *url, size_t limit, unsigned char **da
     return false;
 }
 int main(int argc, char **argv) {
+    sl_system_stream_info platform = sl_system_streaming_info();
+    assert(platform.system_info[0] && strstr(platform.system_info, "-203"));
+    assert(!strstr(platform.system_info, "Nintendo") && !strstr(platform.system_info, "Tegra"));
+    assert(platform.form_factor == SL_STREAM_FORM_COMPUTER);
+    assert(!platform.maximum_decode_bitrate_kbps && !platform.maximum_burst_bitrate_kbps);
+    assert(platform.decoder_info && strstr(platform.decoder_info, "FFmpeg"));
     assert(sl_system_init());
     assert(stream_media_init(sl_log));
     assert(sl_gfx_request_readback(sl_media_gfx()));
