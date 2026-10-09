@@ -1222,6 +1222,8 @@ channelId=2 可靠消息 20 次重试耗尽 + 视频 stall 与输入失灵同窗
 
 ## D-037 IHSlib 改用本项目 GitHub fork，废弃 patch 文件工作流
 
+> 分支命名与维护入口由 D-055 更新为 fork 的 `master`；下文保留最初迁移的证据。
+
 - 日期：2026-08-28
 - Evidence：
   - 子模块 `third_party/ihslib` 在 pin `8c5a17c` 之上累积了 44 文件 +1338/−333 的
@@ -2022,3 +2024,21 @@ nifm 当前 IP 配置计算（无 getifaddrs），其他 POSIX 系统用 getifad
 不需要绑定 27036。真机验证：该修改后 Switch 发现主机并完成 D-053 的配对与串流。
 
 待验证：255.255.255.255 是 Switch 未发出还是被网络设备丢弃（未抓包）。
+
+
+## D-055：IHSlib fork 统一到 master（2026-10-09）
+
+Evidence：远端 Git 提交关系显示 `5609081`（旧 master）、`8c5a17c`（plume）、
+`1a89a25`（nsteamlink）、`3fdbdf4`（video-direct-render）和 `82ea4e7`
+（video-quality-profiles）均为 `7bbc03b` 的祖先；`master...7bbc03b` 的
+left/right 提交计数为 0/81。`7bbc03b` 是 fork PR #1 的合并提交，包含配对密钥交换
+与子网发现修复；主仓 PR #36 提供其按主机保存 secret 的配套实现。
+`.gitmodules` 原先仍指定 nsteamlink，与主仓实际 pin 到视频功能分支的状态不一致。
+
+Conclusion：最新功能分支完整保留旧主分支及项目改动，能够以 fast-forward 收敛到
+master；分支名称不能用来判断依赖是否最新，父仓记录的 gitlink 才是构建版本依据。
+
+Decision：fork 的 master 是唯一长期维护分支；废弃 D-037 中继续向 nsteamlink
+提交的流程。`.gitmodules` 跟踪 master，父仓同步审核并固定其提交。短期分支合入后
+删除，plume 的历史基线通过提交与 Git 历史查阅；主仓继续使用既有默认分支 main。
+本决策调整维护入口，不增加认证语义；密钥交换与发现行为依据 D-053/D-054。

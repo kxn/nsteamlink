@@ -8,12 +8,12 @@
 
 | 库 | 版本 | 说明 |
 |---|---|---|
-| IHSlib | `kxn/ihslib` `nsteamlink` 分支，基线 `8c5a17c`（fork 自 `beudbeud/ihslib` plume） | 协议层依赖；改动直接进 fork 分支（D-037） |
+| IHSlib | `kxn/ihslib` `master` 分支，基线 `8c5a17c`（fork 自 `beudbeud/ihslib` plume） | 协议层依赖；改动进入 fork 主分支（D-037/D-055） |
 
-## IHSlib fork（kxn/ihslib，分支 nsteamlink）
+## IHSlib fork（kxn/ihslib，分支 master）
 
-基线为上游 `beudbeud/ihslib` plume 分支 pin `8c5a17c`。基线之上的全部项目改动
-（历史补丁 0001–0013 的内容 + 后续工作）已固化为 fork 上的单提交 `263fd5d`，
+基线为上游 `beudbeud/ihslib` plume 分支 pin `8c5a17c`。当时基线之上的全部项目改动
+（历史补丁 0001–0013 的内容 + 后续工作）固化为 fork 上的单提交 `263fd5d`，
 其内容与当时通过双目标构建和 ihslib 27/27（host / ASan+UBSan / TSan）测试的
 submodule 工作区逐字节一致。旧 patch 文件已删除，需要查阅时从本仓库 git 历史取回
 `third_party/patches/ihslib/`（0001–0013 为按主题分层的历史记录，0020 为当时的
@@ -35,10 +35,14 @@ submodule 工作区逐字节一致。旧 patch 文件已删除，需要查阅时
 
 ## 后续改 ihslib 的流程（取代 patch 流程，D-037）
 
-1. 在 `third_party/ihslib` 内（`nsteamlink` 分支）正常提交；
-2. `git push fork nsteamlink`（remote `fork` = `https://github.com/kxn/ihslib.git`）；
+1. `git submodule update --init --recursive` 后子模块默认处于 detached HEAD；先在
+   `third_party/ihslib` 中执行 `git switch master`，不存在时执行
+   `git switch --track origin/master`，再 `git pull --ff-only origin master`。
+   本地 `origin`（或既有的 `fork`）必须指向 `https://github.com/kxn/ihslib.git`；
+2. 在 fork 的 `master` 正常提交并 `git push origin master`（使用 `fork` remote 时
+   相应改为 `git push fork master`）；风险主题可先开短期分支，合入 `master` 后删除；
 3. 父仓库随之更新 submodule pin 并提交；
-4. 若日后上游恢复活动，评估把 `nsteamlink` 分支的独立主题以 PR 反哺上游
+4. 若日后上游恢复活动，评估把 `master` 分支的独立主题以 PR 反哺上游
    （控制可靠状态机是现成素材）；反哺被吸收前，fork 为权威源。
 
 ## 待引入（按里程碑）
@@ -52,7 +56,8 @@ submodule 工作区逐字节一致。旧 patch 文件已删除，需要查阅时
 ## 注意
 
 - 克隆/拉取后务必 `git submodule update --init --recursive`，
-  否则会静默回退上游版本且行为不对（kickoff §7.2 的坑）。
+  这会检出父仓库记录的确切提交；`branch = master` 仅供显式
+  `git submodule update --remote` 使用，不能代替审核和提交 submodule pin。
 - 复用的任何第三方代码保留原版权与许可声明，并更新 `DEVELOPMENT.md` §7 的依赖表。
 
 ## jsmn：游戏封面元数据解析

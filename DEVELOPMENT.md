@@ -110,7 +110,7 @@ runtime 执行协议 stop/join 并在外部使用归零后回收关闭的 decode
 
 | 库 | 来源/版本 | 许可证 | 用途 | 引入里程碑 |
 |---|---|---|---|---|
-| IHSlib | `kxn/ihslib` `nsteamlink` 分支（fork 自 `beudbeud/ihslib` plume pin `8c5a17c`，D-002/D-037） | LGPL-3.0 | 发现/配对/串流协议 | M2 |
+| IHSlib | `kxn/ihslib` `master` 分支（fork 自 `beudbeud/ihslib` plume pin `8c5a17c`，D-002/D-037/D-055） | LGPL-3.0 | 发现/配对/串流协议 | M2 |
 | plume | beudbeud/plume | GPL | 参考实现，仅对照学习不链接 | M1 参考 |
 | FFmpeg(Switch) | Moonlight-Switch 预编译（averne NVDEC fork） | LGPL/GPL | H264 硬解 | M3 |
 | SDL2 | 系统 2.32.4 / `switch-sdl2` | zlib | 桌面渲染 / 音频 / 输入（Switch 图形使用 deko） | M3 起 |
@@ -130,8 +130,8 @@ runtime 执行协议 stop/join 并在外部使用归零后回收关闭的 decode
 - `third_party/` 内代码禁止就地修改；一般库的改动以 patch 文件放
   `third_party/patches/<库名>/` 并记入 decisions。
 - **IHSlib 例外（D-037）**：协议层用本项目 fork `kxn/ihslib`（submodule 指向它，
-  track `nsteamlink` 分支）。改动直接在 `third_party/ihslib` 内提交并
-  `git push fork nsteamlink`，父仓库同步更新 submodule pin；不再产 patch 文件。
+  track `master` 分支，D-055）。改动直接在 `third_party/ihslib` 内提交并
+  推送 fork 的 `master`，父仓库同步更新 submodule pin；不再产 patch 文件。
   流程细节见 `third_party/README.md`。
 
 ## 8. 日志与调试
