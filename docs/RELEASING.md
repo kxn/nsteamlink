@@ -49,7 +49,10 @@ Release NRO；配置 Secret 后也构建 NSP。仅上传明确列出的用户产
 也可以在本地运行 `gh secret set NSL_SWITCH_KEYSET < /path/to/prod.keys`，不要把内容写进命令行。
 密钥只在 NSP 步骤写入权限 0600 的临时文件，退出时删除；日志不回显打包工具的原始输出。
 
-正式发布：修改根版本、提交并完成测试后，推送与版本一致的 `vX.Y.Z` 标签。
+正式发布：修改根版本，更新 `CHANGELOG.md`（中文）、`CHANGELOG.en.md`（英文）及
+`.github/RELEASE_NOTES.md`（完整中英双语发布说明，包含对应贡献者致谢）。发布说明首行必须为
+`# NSteamLink vX.Y.Z`，工作流会核对它与标签一致，并用此文件发布 Release Notes。
+提交并完成测试后，推送与版本一致的 `vX.Y.Z` 标签。
 标签工作流必须包含 NRO；无 keyset 时发布带本机 HOME 安装功能的 NRO，
 配置 keyset 时也必须成功生成完整 NSP。测试失败或版本不一致都会停止。
 所有检查通过后先创建带全部附件的草稿，再公开 Release。手动运行分支工作流只构建；

@@ -102,6 +102,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: switch-release
@@ -116,6 +117,7 @@ jobs:
           set -euo pipefail
           compgen -G 'release/*.nro' >/dev/null
           (cd release && sha256sum -c SHA256SUMS)
+          test "$(head -n 1 .github/RELEASE_NOTES.md)" = "# NSteamLink $RELEASE_TAG"
           # Create a draft first so an upload failure never leaves a half release visible.
-          gh release create "$RELEASE_TAG" release/* --verify-tag --draft --generate-notes --title "NSteamLink $RELEASE_TAG"
+          gh release create "$RELEASE_TAG" release/* --verify-tag --draft --notes-file .github/RELEASE_NOTES.md --title "NSteamLink $RELEASE_TAG"
           gh release edit "$RELEASE_TAG" --draft=false
