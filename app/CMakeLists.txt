@@ -83,6 +83,13 @@ add_library(nsl_platform STATIC platforms/common/application.c platforms/common/
 target_include_directories(nsl_platform PRIVATE ${CMAKE_SOURCE_DIR}/third_party/ihslib/src
     ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf)
 target_compile_options(nsl_platform PRIVATE -Wall -Wextra -Wno-unknown-pragmas)
+option(NSL_STREAM_SMOKE_TEST "Enable opt-in automatic Desktop stream observation in test builds" OFF)
+if(NSL_STREAM_SMOKE_TEST)
+    if(NOT NSL_DIAGNOSTICS)
+        message(FATAL_ERROR "NSL_STREAM_SMOKE_TEST requires NSL_DIAGNOSTICS=ON")
+    endif()
+    target_compile_definitions(nsl_platform PRIVATE NSL_STREAM_SMOKE_TEST=1)
+endif()
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/background.c"
     COMMAND "${CMAKE_COMMAND}" -DINPUT=${CMAKE_SOURCE_DIR}/assets/branding/background.bmp
         -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/background.c -P ${CMAKE_SOURCE_DIR}/cmake/EmbedAsset.cmake

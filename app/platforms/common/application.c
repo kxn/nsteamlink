@@ -110,6 +110,10 @@ static bool command(application *a, const sl_command *cmd) {
     }
     return sl_runtime_submit(a->runtime, cmd, &a->ui.store);
 }
+#if defined(NSL_STREAM_SMOKE_TEST) && NSL_DIAGNOSTICS
+#include "../../tests/stream_smoke.h"
+#endif
+
 int sl_application_run(int argc, char **argv) {
     sl_shortcut_source(argc, argv);
     bool offline = false;
@@ -117,6 +121,9 @@ int sl_application_run(int argc, char **argv) {
     const char *screenshot = NULL;
 #if NSL_DIAGNOSTICS
     bool no_adaptive_pacing = false;
+#if defined(NSL_STREAM_SMOKE_TEST)
+    unsigned smoke_seconds = 0;
+#endif
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--no-adaptive-pacing"))
             no_adaptive_pacing = true;
@@ -126,6 +133,10 @@ int sl_application_run(int argc, char **argv) {
             frames = (unsigned)strtoul(argv[++i], NULL, 10);
         else if (!strcmp(argv[i], "--screenshot") && i + 1 < argc)
             screenshot = argv[++i];
+#if defined(NSL_STREAM_SMOKE_TEST)
+        else if (!strcmp(argv[i], "--stream-smoke-seconds") && i + 1 < argc)
+            smoke_seconds = (unsigned)strtoul(argv[++i], NULL, 10);
+#endif
     }
 #else
     (void)argc;
@@ -188,6 +199,9 @@ int sl_application_run(int argc, char **argv) {
         sl_media_adaptive_pacing(false);
     sl_loop_metrics loop_metrics = {0};
     uint64_t loop_reported = 0;
+#if defined(NSL_STREAM_SMOKE_TEST)
+    sl_stream_smoke smoke = {.duration_ms = (uint64_t)smoke_seconds * 1000};
+#endif
 #endif
     while (!done && sl_system_running()) {
 #if NSL_DIAGNOSTICS
@@ -201,6 +215,9 @@ int sl_application_run(int argc, char **argv) {
             sl_runtime_debug(a->runtime, &a->debug);
 #endif
         }
+#if defined(NSL_STREAM_SMOKE_TEST) && NSL_DIAGNOSTICS
+        sl_stream_smoke_tick(&smoke, a);
+#endif
         sl_app_foreground(&a->lifecycle, sl_events_foreground());
         sl_runtime_foreground(a->runtime, sl_events_foreground());
         sl_artwork_pause(a->artwork, a->ui.streaming || a->ui.page != SL_HOME);

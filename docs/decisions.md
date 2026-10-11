@@ -2083,3 +2083,28 @@ Decision：
 
 待验证：这些能力字段省略后的不同 Steam host 实机行为，以及新恢复路径在真实网络/
 NVDEC 错误中的效果；主机侧序列化回归与交叉构建不能替代设备证据。
+
+
+## D-058：解码丢帧恢复回滚对照（2026-10-11）
+
+**Evidence**：用户报告 v0.2.1 连接后频繁断开，同时观察配对和发现正常，要求先回滚近期
+上游恢复路径并部署至 10.10.10.25。D-057 与 IHSlib `7bbc03b..04688d1` 的源码差异
+确认新增的是 decoder-reported loss 后 `ApplyDecoderReset`：丢弃 pending/assembly，设置
+`waitingKeyFrame`，并在原有 DataLost 请求之外再次发送 DataLost；它不是整条会话自动重连。
+
+**Conclusion**：已有构建/单元测试证据不能证明 v0.2.1 在用户设备上串流稳定。用户的频繁
+断开观察是本次回滚依据，不能被 CI 成功覆盖。D-057 的“可接入两套回调”仅是实现和测试
+覆盖事实，不再作为在该设备上适合启用新增恢复策略的依据。
+
+**Hypothesis / 待验证**：新增清理/关键帧等待或其 fork 适配可能与断开有关；尚无故障
+日志证明上游原始实现或移植实现是哪一方的问题，也不能排除其他串流改动或网络因素。
+
+**Decision**：以 v0.2.1 为基线，仅恢复 `7bbc03b` 的 decoder-reported loss 策略：发送
+原有的一次 DataLost，不新增清空组帧、关键帧等待与第二次请求。保留原有网络序列缺口
+恢复、tracked ticket 所有权、致命解码错误断开、平台能力接口，以及 PR #36/#37 的
+配对密钥、子网发现和 quad 容量修复。更新 legacy/tracked 回归用例验证对照契约。
+
+设备对照构建可显式启用 `NSL_STREAM_SMOKE_TEST`（且必须 NSL_DIAGNOSTICS=ON），
+通过 `--stream-smoke-seconds` 触发正常 UI Desktop 连接，不新建 worker、重连或退出路径；
+只选择在线已配对主机，阶段和结果经既有有界日志收集，不自动重新配对，不打印密钥。
+观察窗口结束后保持应用运行。运行结果和后续诊断仅记录于 GitHub Issue。
