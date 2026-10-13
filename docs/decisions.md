@@ -2083,3 +2083,25 @@ Decision：
 
 待验证：这些能力字段省略后的不同 Steam host 实机行为，以及新恢复路径在真实网络/
 NVDEC 错误中的效果；主机侧序列化回归与交叉构建不能替代设备证据。
+
+
+## D-059：移除独立 NSP 安装包（2026-10-13）
+
+Evidence：GitHub Releases v0.1.0、v0.1.1、v0.2.0、v0.2.1 的附件都只有 NRO，从未发布 `.nsp`。
+工作流只在配置 `NSL_SWITCH_KEYSET` Secret 时构建 NSP，构建需要维护者持有生产 keyset
+（`header_key`、`key_area_key_application_00`）。NRO 内的“添加到 HOME 菜单”（D-049/D-050）
+在 Switch 本机封装 forwarder，不需要 keyset；入口加载固定路径的 NRO，更新只需替换该文件。
+项目维护者于 2026-10-13 同意移除独立 NSP 构建。
+
+Conclusion：独立 NSP 从未成为实际发布产物，且是唯一需要 keyset 的构建路径；
+从 HOME 启动的需求已由 NRO 内的 HOME 入口满足。
+
+Decision：
+
+1. 撤回 D-044 中新增 ELF→NSO/NPDM→NCA/NSP 目标和“双格式齐备才发布”的部分，以及
+   D-049 末段“配置 Secret 时附带完整 NSP”。Release 只发布 NRO。
+2. 删除 `nsteamlink_nsp`/`nsteamlink_release` 目标、`NSL_KEYSET`、`package-switch.py`、
+   NSP 结构校验、CI 的 keyset 步骤和 setup 脚本的 `--packager-only`。
+3. hacBrewPack 与 `packaging/switch/application.json` 保留，继续用于构建 HOME 入口模板；
+   `.gitignore` 保留 keyset 文件名，防止误提交。运行时不变：libnx 对 NSO 的默认退出路径
+   与 D-050 的 forwarder 判断都无需修改。
