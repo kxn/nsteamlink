@@ -2107,3 +2107,38 @@ Decision：
 4. 应用只以 NRO 运行，`envIsNso()` 恒为假：删除 D-050 退出判断中的 NSO 条件，仅按宿主
    ID 识别 HOME 入口。`application.json` 的程序 ID 直接写为入口的 `01004e534c4b1000`，
    不再由构建脚本覆盖旧的 NSP ID。
+
+
+## D-060：启动时检查 GitHub Release 并更新 NRO（2026-10-13）
+
+Evidence：`https://api.github.com/repos/kxn/nsteamlink/releases/latest` 返回 v0.2.1
+（`draft=false`、`prerelease=false`），附件包括 `NSteamLink-0.2.1+ed805b6.nro`
+（24047048 字节）与 `SHA256SUMS`；后者逐行列出 NRO、`build_identity.json` 和
+`devkitpro-packages.txt` 的 SHA-256。`browser_download_url` 位于
+`https://github.com/kxn/nsteamlink/releases/download/v0.2.1/`，`+` 编码为 `%2B`，
+请求返回 302 跳转至 `release-assets.githubusercontent.com`。应用不使用 RomFS
+（运行期不再读取 NRO 文件），HOME 入口固定加载 `sdmc:/switch/nsteamlink/nsteamlink.nro`。
+Leaf-Installer 的做法：启动后后台查询 latest release，比较标签与当前版本，菜单出现后询问
+是否更新，下载覆盖后提示重新启动，设置中可关闭检查。
+
+Conclusion：发布流程已经提供更新所需的全部信息：语义版本标签、唯一命名的 NRO、精确大小和
+校验和。只信任仓库自己的 release 下载路径与同一 release 的 SHA256SUMS，就不需要另建
+更新服务或签名体系；HTTPS 证书校验与校验和共同保证内容来自该 release。
+
+Decision：
+
+1. 仅 Switch 构建在启动时用可 join 的后台线程查询 latest release；desktop 从源码构建，不检查。
+   设置项“检查更新”位于 X 选项，默认开启，保存在 `update.conf`（`check=0/1`），与语言
+   配置一样原子写入；关闭后下次启动生效。
+2. 仅接受非 draft、非 prerelease、标签为 `vX.Y.Z` 且严格新于当前 `X.Y.Z` 的版本；附件 URL
+   必须位于本仓库该标签的下载路径，NRO 名称必须是 `NSteamLink-<版本>+<hash>.nro`。
+   查询失败不提示，不影响串流。
+3. 每次启动最多在首页提示一次。确认后下载到 `<目标>.download`，大小必须等于 release
+   记录的字节数，SHA-256 必须与 SHA256SUMS 一致，否则不改动现有文件。替换按 Horizon
+   不覆盖已有文件的 rename 语义：旧文件先改名为 `.old`，新文件就位后删除，失败则回滚。
+4. 替换目标为 argv[0]（`sdmc:/` 下的 `.nro`）以及存在时的 HOME 入口 NRO；argv[0] 不是
+   SD 卡上的 NRO 时不检查更新。成功后要求退出并重新启动，不自动重启。
+5. curl 只允许 HTTPS（含重定向），校验证书与主机名；退出时先请求停止并取消 DNS，再 join 线程。
+
+待验证：Switch 真机上的完整查询、下载、替换与重新启动；hbmenu 与 HOME 入口两种启动方式下
+argv[0] 的实际取值；下载中途断网、SD 卡空间不足时的提示与回滚结果。
