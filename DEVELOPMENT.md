@@ -23,7 +23,7 @@ app/src/platform/   HAL 接口头文件（.h）。只定义接口，不含实现
 app/platforms/<plat>/  平台后端实现（desktop / switch），只允许被 HAL 接口约束
 docs/               决策记录等文档
 cmake/              构建身份、素材嵌入和依赖构建适配
-packaging/switch/   HOME 入口 NPDM 的基础应用描述
+packaging/switch/   HOME 入口 NPDM 描述
 assets/branding/    原创图标/背景与来源提示词
 .github/workflows/  双目标测试与 NRO 发版
 scripts/            构建脚本（唯一构建入口）

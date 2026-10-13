@@ -2103,5 +2103,7 @@ Decision：
 2. 删除 `nsteamlink_nsp`/`nsteamlink_release` 目标、`NSL_KEYSET`、`package-switch.py`、
    NSP 结构校验、CI 的 keyset 步骤和 setup 脚本的 `--packager-only`。
 3. hacBrewPack 与 `packaging/switch/application.json` 保留，继续用于构建 HOME 入口模板；
-   `.gitignore` 保留 keyset 文件名，防止误提交。运行时不变：libnx 对 NSO 的默认退出路径
-   与 D-050 的 forwarder 判断都无需修改。
+   `.gitignore` 保留 keyset 文件名，防止误提交。
+4. 应用只以 NRO 运行，`envIsNso()` 恒为假：删除 D-050 退出判断中的 NSO 条件，仅按宿主
+   ID 识别 HOME 入口。`application.json` 的程序 ID 直接写为入口的 `01004e534c4b1000`，
+   不再由构建脚本覆盖旧的 NSP ID。

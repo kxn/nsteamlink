@@ -590,7 +590,7 @@ Exiting 持续推进上述 session stop；同时对 artwork 等 app-owned produc
    按 SDK 依赖逆序；swapchain 先归还 NWindow buffers，再释放其 backing，不提前 nvExit。
 5. 关闭 SDL 音频/手柄与 SDL_Quit、字体/pl、诊断、socket 等依赖；所有 owner 释放完才返回 main。
 
-保持 D-050 的 hbmenu/title takeover/HOME forwarder/NSP 分流，不增加裸 svcExitProcess。
+保持 D-050 的 hbmenu/title takeover/HOME forwarder 分流，不增加裸 svcExitProcess。
 任何生产者或 GPU 完成条件未满足，就不能把“应用已不再画图”当成可返回 loader 的依据。
 
 ## 11. 容量、计时与性能验收
@@ -699,7 +699,7 @@ uam 作为 host 程序查找，不受交叉编译 sysroot 的目标程序搜索�
 
 `cmake/BuildIdentity.cmake` 和 `scripts/validate-artifacts.py` 按需要记录/验证 backend、shader 版本；
 修改身份 schema 时同步既有发布测试和使用者，避免只改生成端。
-`.github/workflows/build.yml` 增加 deko 构建及诊断配置覆盖，保留桌面测试、NRO、HOME shortcut/NSP
+`.github/workflows/build.yml` 增加 deko 构建及诊断配置覆盖，保留桌面测试、NRO、HOME shortcut
 现有产物契约。工具 target 仅随显式诊断选项构建，不随正式 release 打包。
 
 迁移提交可以先合入仍使用 SDL 的封装/测试，但 Switch 默认切换提交必须同时具备完整视频、UI、

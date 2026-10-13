@@ -45,8 +45,8 @@ class ReleaseTests(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         config = module.loader_config(ROOT)
-        self.assertEqual(config['program_id'], '0x01004e534c4b1000')
-        self.assertNotEqual(config['program_id'], json.loads((ROOT / 'packaging/switch/application.json').read_text())['program_id'])
+        for field in ('program_id', 'program_id_range_min', 'program_id_range_max'):
+            self.assertEqual(config[field], '0x01004e534c4b1000')
         calls = next(k['value'] for k in config['kernel_capabilities'] if k['type'] == 'syscalls')
         self.assertEqual(calls['svcSetProcessMemoryPermission'], '0x73')
         self.assertEqual(calls['svcMapProcessCodeMemory'], '0x77')
