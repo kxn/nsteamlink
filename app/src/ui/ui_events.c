@@ -17,6 +17,18 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
     if (e.type != SL_EVENT_CLOSED && e.generation != m->generation)
         return;
     switch (e.type) {
+    case SL_EVENT_UPDATE:
+        snprintf(m->update_version, sizeof(m->update_version), "%.15s", e.text);
+        break;
+    case SL_EVENT_UPDATE_RESULT:
+        if (m->page != SL_UPDATING)
+            break;
+        m->update_succeeded = e.account != 0;
+        snprintf(m->error, sizeof(m->error), "%s", e.text);
+        m->page = SL_UPDATE_RESULT;
+        m->entered_at = m->now;
+        m->focus = 0;
+        break;
     case SL_EVENT_SHORTCUT:
         if (m->page != SL_INSTALLING)
             break;
@@ -101,8 +113,10 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
         sl_host *h = sl_host_find(&m->store.registry, e.host.id);
         sl_host_activity(h, e.account, &e.game);
         if (m->command.type == SL_CMD_NONE)
-            m->command = (sl_command){
-                .type = SL_CMD_SAVE, .generation = m->generation, .language = sl_i18n_language()};
+            m->command = (sl_command){.type = SL_CMD_SAVE,
+                                      .generation = m->generation,
+                                      .language = sl_i18n_language(),
+                                      .update_check = m->update_check};
         break;
     }
     case SL_EVENT_CLOSED:

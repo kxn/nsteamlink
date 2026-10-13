@@ -323,10 +323,77 @@ static void confirmation_shortcuts(void) {
     sl_ui_action(&m, SL_ACCEPT, 0);
     assert(m.page == SL_ERROR && !m.command.type); /* No retry target: B only. */
 }
+static sl_runtime_event update_event(const sl_ui_model *m, sl_event_type type, bool flag,
+                                     const char *text) {
+    sl_runtime_event e = {.type = type, .generation = m->generation, .account = flag};
+    snprintf(e.text, sizeof(e.text), "%s", text);
+    return e;
+}
+static void update_flow(void) {
+    sl_command cmd;
+    sl_ui_model m = model();
+    assert(m.update_check);
+
+    /* Found while another page is open: offered once back on HOME. */
+    sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
+    sl_runtime_event found = update_event(&m, SL_EVENT_UPDATE, true, "0.2.2");
+    sl_ui_runtime_event(&m, &found);
+    sl_ui_tick(&m, m.now + 16);
+    assert(m.page == SL_OPTIONS);
+    sl_ui_action(&m, SL_BACK, 0);
+    sl_ui_tick(&m, m.now + 160);
+    sl_ui_tick(&m, m.now + 16);
+    assert(m.page == SL_UPDATE && m.layout.count == 2);
+
+    /* A installs; B can't abandon a running install. */
+    sl_ui_action(&m, SL_ACCEPT, 0);
+    assert(m.page == SL_UPDATING && sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_UPDATE);
+    sl_ui_action(&m, SL_BACK, 0);
+    sl_ui_tick(&m, m.now + 160);
+    assert(m.page == SL_UPDATING);
+
+    /* A failure can be retried. */
+    sl_runtime_event failed = update_event(&m, SL_EVENT_UPDATE_RESULT, false, "download failed");
+    sl_ui_runtime_event(&m, &failed);
+    assert(m.page == SL_UPDATE_RESULT && !strcmp(m.error, "download failed"));
+    sl_ui_action(&m, SL_ACCEPT, 0);
+    assert(m.page == SL_UPDATING && sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_UPDATE);
+
+    /* After a success, A exits the app. */
+    sl_runtime_event done = update_event(&m, SL_EVENT_UPDATE_RESULT, true, "updated");
+    sl_ui_runtime_event(&m, &done);
+    assert(m.page == SL_UPDATE_RESULT && m.update_succeeded);
+    sl_ui_action(&m, SL_ACCEPT, 0);
+    assert(m.closing && sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_EXIT);
+
+    /* Cancelled: back on HOME and not offered again. */
+    m = model();
+    found = update_event(&m, SL_EVENT_UPDATE, false, "0.2.2");
+    sl_ui_runtime_event(&m, &found);
+    sl_ui_tick(&m, m.now + 16);
+    assert(m.page == SL_UPDATE);
+    sl_ui_action(&m, SL_BACK, 0);
+    sl_ui_tick(&m, m.now + 160);
+    sl_ui_tick(&m, m.now + 16);
+    sl_ui_tick(&m, m.now + 16);
+    assert(m.page == SL_HOME && !sl_ui_take_command(&m, &cmd));
+
+    /* The toggle is saved with every save command, activity ones too. */
+    sl_ui_action(&m, SL_UPDATE_CHECK, 0);
+    assert(!m.update_check && sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_SAVE &&
+           !cmd.update_check);
+    add(&m, 3, "HOST");
+    m.store.registry.hosts[0].paired = true;
+    sl_runtime_event activity = {
+        .type = SL_EVENT_ACTIVITY, .generation = m.generation, .host = m.store.registry.hosts[0]};
+    sl_ui_runtime_event(&m, &activity);
+    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_SAVE && !cmd.update_check);
+}
 static void actionable_settings(void) {
     sl_ui_model m = model();
     sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
-    assert(m.layout.count == 3); /* Settings, HOME shortcut and back. */
+    assert(m.layout.count == 4); /* Settings, HOME shortcut, update check and back. */
+    assert(m.layout.controls[2].action == SL_UPDATE_CHECK);
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
     assert(m.layout.count == 6); /* Quality, bandwidth, sound, language, manual address, back. */
     assert(m.layout.controls[4].action == SL_OPEN_MANUAL);
@@ -550,6 +617,7 @@ static void host_secrets(void) {
     assert(!snapshot.hosts[0].has_secret);
 }
 int main(void) {
+    update_flow();
     profile_v2_migration();
     profile_v3_migration();
     host_secrets();

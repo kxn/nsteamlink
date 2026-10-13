@@ -110,6 +110,9 @@ void sl_ui_layout(sl_ui_model *m) {
             if (h)
                 row(l, 1, sl_tr(SL_T_REMOVE_PC), SL_OPEN_FORGET, 0);
             row(l, h ? 2 : 1, sl_tr(SL_T_SHORTCUT), SL_OPEN_SHORTCUT, 0);
+            row(l, h ? 3 : 2,
+                m->update_check ? sl_tr(SL_T_UPDATE_CHECK_ON) : sl_tr(SL_T_UPDATE_CHECK_OFF),
+                SL_UPDATE_CHECK, 0);
             break;
         case SL_SHORTCUT:
             strcpy(l->title, sl_tr(SL_T_SHORTCUT_QUESTION));
@@ -122,8 +125,28 @@ void sl_ui_layout(sl_ui_model *m) {
             break;
         case SL_INSTALL_RESULT:
             strcpy(l->title, sl_tr(SL_T_SHORTCUT_RESULT));
-            text(l, 320, 240, 28, m->error);
+            text(l, 320, 264, 28, m->error);
             text(l, 320, 360, 24, SL_SHORTCUT_PATH);
+            break;
+        case SL_UPDATE: {
+            char line[192];
+            strcpy(l->title, sl_tr(SL_T_UPDATE_QUESTION));
+            snprintf(line, sizeof(line), sl_tr(SL_T_UPDATE_DESCRIPTION), m->update_version,
+                     NSL_SEMANTIC_VERSION);
+            /* Two lines each; the strings break explicitly (no word wrap). */
+            text(l, 320, 264, 28, line);
+            text(l, 320, 352, 24, sl_tr(SL_T_UPDATE_RESTART));
+            row(l, 3, sl_tr(SL_T_UPDATE_INSTALL), SL_CONFIRM_UPDATE, 0);
+            break;
+        }
+        case SL_UPDATING:
+            strcpy(l->title, sl_tr(SL_T_UPDATE_INSTALLING));
+            break;
+        case SL_UPDATE_RESULT:
+            strcpy(l->title, sl_tr(SL_T_UPDATE_RESULT));
+            text(l, 320, 264, 28, m->error);
+            row(l, 3, m->update_succeeded ? sl_tr(SL_T_EXIT) : sl_tr(SL_T_RETRY),
+                m->update_succeeded ? SL_FINISH_UPDATE : SL_CONFIRM_UPDATE, 0);
             break;
         case SL_SETTINGS:
             strcpy(l->title, sl_tr(SL_T_SETTINGS));
@@ -228,7 +251,8 @@ void sl_ui_layout(sl_ui_model *m) {
         default:
             break;
         }
-        if (m->page != SL_STOPPING && m->page != SL_INSTALLING && m->page != SL_CLOSING)
+        if (m->page != SL_STOPPING && m->page != SL_INSTALLING && m->page != SL_UPDATING &&
+            m->page != SL_CLOSING)
             button(l, 9, 320, 596, 640, 64,
                    m->page == SL_CONNECTING || m->page == SL_PAIRING || m->page == SL_SAVING
                        ? sl_tr(SL_T_CANCEL_KEY)
@@ -240,7 +264,7 @@ void sl_ui_layout(sl_ui_model *m) {
                     m->page == SL_QUALITY || m->page == SL_BANDWIDTH || m->page == SL_LANGUAGE;
         l->compact = m->page == SL_END_GAME || m->page == SL_DISCONNECT || m->page == SL_FORGET ||
                      m->page == SL_EXIT || m->page == SL_ERROR || m->page == SL_STOPPING ||
-                     m->page == SL_INSTALLING;
+                     m->page == SL_INSTALLING || m->page == SL_UPDATING;
         l->panel_x = 272;
         l->panel_y = 96;
         l->panel_w = 736;
@@ -283,7 +307,7 @@ void sl_ui_layout(sl_ui_model *m) {
                     c->primary = true;
                 }
             }
-            if (m->page == SL_STOPPING || m->page == SL_INSTALLING) {
+            if (m->page == SL_STOPPING || m->page == SL_INSTALLING || m->page == SL_UPDATING) {
                 l->panel_x = 360;
                 l->panel_y = 256;
                 l->panel_w = 560;
@@ -317,6 +341,25 @@ void sl_ui_layout(sl_ui_model *m) {
                     snprintf(c->label, sizeof(c->label), "A  %s", sl_tr(SL_T_SHORTCUT_INSTALL));
                 else
                     snprintf(c->label, sizeof(c->label), "%s", sl_tr(SL_T_CANCEL_KEY));
+            }
+        } else if (m->page == SL_UPDATE || m->page == SL_UPDATE_RESULT) {
+            /* Like the shortcut question: B on the left, the A action on the
+             * right, or B centred when there is nothing to confirm. */
+            l->panel_y = 164;
+            l->panel_h = 392;
+            for (int i = 0; i < l->count; ++i) {
+                sl_control *c = &l->controls[i];
+                c->x = l->count == 1 ? l->panel_x + (l->panel_w - 308) / 2 : c->id == 9 ? 320 : 652;
+                c->y = 444;
+                c->w = 308;
+                c->h = 72;
+                c->primary = c->id != 9;
+                char label[160];
+                snprintf(label, sizeof(label), "%s%.150s", c->primary ? "A  " : "", c->label);
+                if (!c->primary)
+                    snprintf(label, sizeof(label), "%s",
+                             m->page == SL_UPDATE ? sl_tr(SL_T_CANCEL_KEY) : sl_tr(SL_T_BACK_KEY));
+                snprintf(c->label, sizeof(c->label), "%s", label);
             }
         } else if (m->page == SL_INSTALL_RESULT) {
             l->panel_y = 164;

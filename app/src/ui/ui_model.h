@@ -15,6 +15,9 @@ typedef enum sl_page {
     SL_SHORTCUT,
     SL_INSTALLING,
     SL_INSTALL_RESULT,
+    SL_UPDATE,
+    SL_UPDATING,
+    SL_UPDATE_RESULT,
     SL_SETTINGS,
     SL_MANUAL,
     SL_QUALITY,
@@ -65,7 +68,10 @@ typedef enum sl_action {
     SL_SET_QUALITY,
     SL_SET_BANDWIDTH,
     SL_SOUND,
-    SL_RETRY
+    SL_RETRY,
+    SL_UPDATE_CHECK,
+    SL_CONFIRM_UPDATE,
+    SL_FINISH_UPDATE
 } sl_action;
 typedef enum sl_command_type {
     SL_CMD_NONE,
@@ -77,7 +83,8 @@ typedef enum sl_command_type {
     SL_CMD_EXIT,
     SL_CMD_SAVE,
     SL_CMD_SHORTCUT,
-    SL_CMD_MANUAL
+    SL_CMD_MANUAL,
+    SL_CMD_UPDATE
 } sl_command_type;
 typedef struct sl_command {
     sl_command_type type;
@@ -87,6 +94,7 @@ typedef struct sl_command {
     uint32_t quality;
     uint32_t bitrate_kbps;
     sl_language language;
+    bool update_check;
     char text[64];
 } sl_command;
 typedef struct sl_control {
@@ -147,6 +155,9 @@ typedef struct sl_ui_model {
     uint64_t now, generation, entered_at, stream_started_at, pair_code_at;
     sl_command intent, command;
     char input[64], pairing_code[5], error[192];
+    /* Startup update check (D-060): offered once on HOME per launch. */
+    bool update_check, update_offered, update_succeeded;
+    char update_version[16];
     sl_layout layout;
 } sl_ui_model;
 void sl_ui_init(sl_ui_model *m, const sl_auth_store *store);

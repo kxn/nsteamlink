@@ -6,6 +6,7 @@
 #include "platform/system.h"
 #include "services/i18n.h"
 #include "services/launch_watch.h"
+#include "services/update_config.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -33,6 +34,7 @@ struct sl_runtime {
     pthread_cond_t wake;
     bool started, quit, request_pending, save_pending, snapshot_pending;
     sl_language save_language;
+    bool save_update_check;
     sl_command pending, active;
     sl_auth_store store, save;
     sl_runtime_event events[48];
@@ -923,6 +925,7 @@ static void *worker_main(void *ctx) {
         sl_auth_store save;
         bool save_pending, snapshot_pending;
         sl_language save_language;
+        bool save_update_check;
         pthread_mutex_lock(&r->lock);
         if (r->request_pending) {
             cmd = r->pending;
@@ -930,6 +933,7 @@ static void *worker_main(void *ctx) {
         }
         save_pending = r->save_pending;
         save_language = r->save_language;
+        save_update_check = r->save_update_check;
         snapshot_pending = r->snapshot_pending;
         if (snapshot_pending) {
             save = r->save;
@@ -961,7 +965,8 @@ static void *worker_main(void *ctx) {
         if (save_pending) {
             bool profile_saved = sl_auth_save(&save, sl_system_data_dir());
             bool language_saved = sl_i18n_save(sl_system_data_dir(), save_language);
-            if (!profile_saved || !language_saved)
+            bool update_saved = sl_update_config_save(sl_system_data_dir(), save_update_check);
+            if (!profile_saved || !language_saved || !update_saved)
                 fail(r, sl_tr(SL_T_SAVE_SETTINGS_FAILED));
         }
         if (cmd.type) {
@@ -1193,6 +1198,7 @@ bool sl_runtime_submit(sl_runtime *r, const sl_command *cmd, const sl_auth_store
         r->snapshot_pending = true;
         r->save_pending = true;
         r->save_language = cmd->language;
+        r->save_update_check = cmd->update_check;
     } else {
         if (r->request_pending && cmd->type != SL_CMD_EXIT && cmd->type != SL_CMD_CANCEL &&
             cmd->type != SL_CMD_STOP) {
