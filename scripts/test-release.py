@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression checks for build provenance and release container rejection."""
+"""Regression checks for build provenance and the HOME forwarder loader."""
 import importlib.util
 import json
 from pathlib import Path
@@ -8,9 +8,6 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location('artifacts', ROOT / 'scripts/validate-artifacts.py')
-artifacts = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(artifacts)
 
 
 class ReleaseTests(unittest.TestCase):
@@ -54,20 +51,6 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(calls['svcSetProcessMemoryPermission'], '0x73')
         self.assertEqual(calls['svcMapProcessCodeMemory'], '0x77')
         self.assertEqual(calls['svcUnmapProcessCodeMemory'], '0x78')
-
-    def test_exefs_is_not_installable_nsp(self):
-        with tempfile.TemporaryDirectory() as temp:
-            p = Path(temp) / 'fake.nsp'
-            p.write_bytes(b'PFS0' + bytes(60))
-            with self.assertRaisesRegex(ValueError, 'program, control and CNMT'):
-                artifacts.check_nsp(p)
-
-    def test_keyset_required_without_leaking_values(self):
-        result = subprocess.run(['python3', str(ROOT / 'scripts/package-switch.py'),
-            '--elf', 'missing', '--nacp', 'missing', '--icon', 'missing', '--config', 'missing',
-            '--output', 'missing', '--keyset', '/nonexistent/nsl-test-keyset'], capture_output=True, text=True)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('NSP requires', result.stderr)
 
 
 if __name__ == '__main__':

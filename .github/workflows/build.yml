@@ -48,35 +48,17 @@ jobs:
         run: scripts/build-switch.sh -DNSL_DIAGNOSTICS=OFF -DNSL_BUILD_TOOLS=OFF -DHACBREWPACK="$GITHUB_WORKSPACE/build/deps/hacBrewPack/hacbrewpack"
       - name: Verify release graphics and diagnostic exclusion
         run: python3 scripts/check-release-diagnostics.py build/switch
-      - name: Build NSP when keyset is configured
-        env:
-          SWITCH_KEYSET: ${{ secrets.NSL_SWITCH_KEYSET }}
-          HACBREWPACK: ${{ github.workspace }}/build/deps/hacBrewPack/hacbrewpack
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -z "$SWITCH_KEYSET" ]; then
-            echo '::notice::Publishing NRO with on-device HOME shortcut installation; standalone NSP omitted.'
-            exit 0
-          fi
-          export NSL_KEYSET="$(mktemp)"
-          trap 'rm -f "$NSL_KEYSET"' EXIT
-          chmod 600 "$NSL_KEYSET"
-          printf '%s' "$SWITCH_KEYSET" > "$NSL_KEYSET"
-          unset SWITCH_KEYSET
-          cmake --build build/switch --target nsteamlink_release -j2
       - name: Validate and collect artifacts
         shell: bash
         run: |
           set -euo pipefail
           args=(--identity build/switch/generated/build_identity.json --nro build/switch/app/nsteamlink.nro --icon assets/branding/icon.jpg --require-clean)
-          if [ -f build/switch/app/nsteamlink.nsp ]; then args+=(--nsp build/switch/app/nsteamlink.nsp); fi
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then args+=(--tag "$GITHUB_REF_NAME"); fi
           python3 scripts/validate-artifacts.py "${args[@]}"
           python3 scripts/collect-release.py --build build/switch --output build/release
           cp build/deps/devkitpro-packages.txt build/release/
           cd build/release
-          sha256sum *.nro *.json *.txt $(ls *.nsp 2>/dev/null || true) > SHA256SUMS
+          sha256sum *.nro *.json *.txt > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
           name: switch-release

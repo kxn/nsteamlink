@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Check release identity, embedded NRO assets and NSP container integrity.
+"""Check release identity and embedded NRO assets.
 
-NSP checks are structural; they cannot prove a supplied keyset or device launch.
+These checks are structural; they cannot prove a device launch.
 """
 import argparse
-import hashlib
 import json
 from pathlib import Path
 import re
@@ -14,33 +13,6 @@ import struct
 def require(condition, message):
     if not condition:
         raise ValueError(message)
-
-
-def check_nsp(path):
-    data = path.read_bytes()
-    require(data[:4] == b'PFS0' and len(data) >= 16, 'Invalid NSP header')
-    count, strings_size = struct.unpack_from('<II', data, 4)
-    require(count == 3, 'Expected program, control and CNMT NCAs, not an ExeFS PFS0')
-    strings_start = 16 + count * 24
-    base = strings_start + strings_size
-    require(base <= len(data), 'Truncated NSP table')
-    ranges, names = [], []
-    for i in range(count):
-        offset, size, name_offset = struct.unpack_from('<QQI', data, 16 + i * 24)
-        require(name_offset < strings_size, 'Invalid NSP filename offset')
-        end = data.find(b'\0', strings_start + name_offset, base)
-        require(end >= 0, 'Unterminated NSP filename')
-        name = data[strings_start + name_offset:end].decode('ascii')
-        require(re.fullmatch(r'[0-9a-f]{32}(?:\.cnmt)?\.nca', name), 'Unexpected NSP entry')
-        require(size >= 0xc00 and base + offset + size <= len(data), 'Truncated NCA')
-        content = data[base + offset:base + offset + size]
-        require(hashlib.sha256(content).hexdigest()[:32] == name[:32], 'NCA content hash mismatch')
-        ranges.append((offset, offset + size))
-        names.append(name)
-    require(len(set(names)) == count and sum('.cnmt.' in n for n in names) == 1, 'Invalid NCA set')
-    ranges.sort()
-    require(ranges[0][0] == 0 and all(a[1] == b[0] for a, b in zip(ranges, ranges[1:])), 'NSP gaps/overlap')
-    require(base + ranges[-1][1] == len(data), 'Unexpected trailing NSP bytes')
 
 
 def check_nro(path, identity, icon):
@@ -62,7 +34,6 @@ def main():
     p.add_argument('--identity', required=True, type=Path)
     p.add_argument('--nro', required=True, type=Path)
     p.add_argument('--icon', required=True, type=Path)
-    p.add_argument('--nsp', type=Path)
     p.add_argument('--tag')
     p.add_argument('--require-clean', action='store_true')
     a = p.parse_args()
@@ -73,9 +44,7 @@ def main():
     if a.tag:
         require(a.tag == 'v' + identity['version'], 'Release tag must match project version')
     check_nro(a.nro, identity, a.icon)
-    if a.nsp:
-        check_nsp(a.nsp)
-    print('Verified ' + identity['display_version'] + (' NRO + NSP structure' if a.nsp else ' NRO'))
+    print('Verified ' + identity['display_version'] + ' NRO')
 
 
 if __name__ == '__main__':

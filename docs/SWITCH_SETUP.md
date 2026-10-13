@@ -101,14 +101,14 @@ tools/switch-debugctl.py 10.10.10.17 diag current
 安装期间保留等待动画，结束后按 B 返回。需要支持自制应用的 CFW；无需填写密钥。
 入口依赖 `sdmc:/switch/nsteamlink/nsteamlink.nro`，后续更新只替换此文件。
 如果提示无法保存 NRO，请手动放到该路径，再从全内存 hbmenu 打开并添加。
-重复添加不会覆盖已存在的入口；完整 NSP 与此入口是不同的应用标识。
+重复添加不会覆盖已存在的入口。
 从入口启动后，在应用内退出返回 HOME。可以用系统设置的数据管理删除入口，配置仍保留。
 
 从相册 applet hbmenu 打开时，程序在 SDL/Mesa、网络和串流线程启动前拦截，
 用英文软件控制台提示：按住 R 打开一个游戏进入全内存 hbmenu，重新运行 NSteamLink。
 按 B 返回；这张提示不使用 Mesa 或中文字体渲染。
 
-普通 Release NRO 不包含诊断入口。NSP 安装包与发版构建方法见 [RELEASING](RELEASING.md)。
+普通 Release NRO 不包含诊断入口。发版构建方法见 [RELEASING](RELEASING.md)。
 
 ## 最近游戏封面
 

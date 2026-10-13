@@ -25,41 +25,24 @@ Debian/Ubuntu 构建机可用 `apt-get install python3-cryptography`。
 protobuf-c 固定 v1.5.0，hacBrewPack 固定提交；devkitPro 包的实际版本由 CI 附件记录。
 容器标签和 portlibs 仓库不是完整的可复现依赖锁，升级后仍需真机验证。
 
-安装包目标使用同一个 ELF 生成独立 NSO 应用，不依赖 SD 卡上的另一个 NRO：
-
-```sh
-scripts/setup-switch-deps.sh --packager-only
-export NSL_KEYSET=/absolute/path/to/prod.keys
-export HACBREWPACK="$PWD/build/deps/hacBrewPack/hacbrewpack"
-cmake --build build/switch --target nsteamlink_release
-```
-
-`nsteamlink_nsp` 仅生成 NSP，`nsteamlink_release` 同时生成 NRO 和 NSP。
-也可 configure 时传入 `-DNSL_KEYSET=/path/to/prod.keys -DHACBREWPACK=/path/to/hacbrewpack`。
-keyset 需要 `header_key` 和 `key_area_key_application_00`，只用于打包，不嵌入应用或发布附件。
-构建机不会下载或生成替代生产 keyset。NRO 的本机 HOME 入口安装不要求用户提供 keyset；
+项目只发布 NRO，不再构建独立 NSP（D-059）。NRO 的本机 HOME 入口安装不要求用户提供 keyset；
 它通过本机 SPL 在内存完成封装，密钥不导出、不落盘。
 
 ## GitHub Actions
 
 日常 push / PR / 手动执行 `Build and release`：测试诊断 ON/OFF 两种桌面构建，交叉构建
-Release NRO；配置 Secret 后也构建 NSP。仅上传明确列出的用户产物与构建元数据。
-
-维护者在仓库 Actions Secret 中配置 `NSL_SWITCH_KEYSET`，内容为 keyset 文件文本。
-也可以在本地运行 `gh secret set NSL_SWITCH_KEYSET < /path/to/prod.keys`，不要把内容写进命令行。
-密钥只在 NSP 步骤写入权限 0600 的临时文件，退出时删除；日志不回显打包工具的原始输出。
+Release NRO。仅上传明确列出的用户产物与构建元数据。工作流不使用任何 keyset Secret。
 
 正式发布：修改根版本，更新 `CHANGELOG.md`（中文）、`CHANGELOG.en.md`（英文）及
 `.github/RELEASE_NOTES.md`（完整中英双语发布说明，包含对应贡献者致谢）。发布说明首行必须为
 `# NSteamLink vX.Y.Z`，工作流会核对它与标签一致，并用此文件发布 Release Notes。
 提交并完成测试后，推送与版本一致的 `vX.Y.Z` 标签。
-标签工作流必须包含 NRO；无 keyset 时发布带本机 HOME 安装功能的 NRO，
-配置 keyset 时也必须成功生成完整 NSP。测试失败或版本不一致都会停止。
+标签工作流发布带本机 HOME 安装功能的 NRO。测试失败或版本不一致都会停止。
 所有检查通过后先创建带全部附件的草稿，再公开 Release。手动运行分支工作流只构建；
 要重跑已存在标签的发布流程，在 Actions 中重跑该标签运行。上传失败留下的草稿需先检查
 并删除后重跑，避免覆盖用户已经下载的正式版本。
 
-附件：带版本和 short hash 的 `.nro`、可选完整 `.nsp`、完整哈希 JSON、SDK 包版本清单、SHA256SUMS。
+附件：带版本和 short hash 的 `.nro`、完整哈希 JSON、SDK 包版本清单、SHA256SUMS。
 发版默认关闭诊断，不发布测试工具。源码由对应标签与 submodule 固定提交追溯。
 
 ## 诊断构建
@@ -71,14 +54,9 @@ Release NRO；配置 Secret 后也构建 NSP。仅上传明确列出的用户产
 
 ## 格式与运行验证的边界
 
-`validate-artifacts.py` 检查 NRO 的实际嵌入图标、名称、版本和程序标识；NSP 必须包含三个
-哈希正确的 NCA（program/control/CNMT）。这会拒绝把只有 main/main.npdm 的 ExeFS PFS0
-误当成可安装 NSP。结构校验不能证明 keyset 正确或真机启动成功。
+`validate-artifacts.py` 检查 NRO 的实际嵌入图标、名称、版本和程序标识。
+结构校验不能证明真机启动成功。
 
-NSP 应在支持自制应用的 Switch 上验证安装、HOME 图标、启动、发现/配对、串流、退出。
-它使用独立应用启动路径；NRO 则经 hbmenu 加载，两者不能互相代替运行证据。
-
-安装标识固定为 `01004e534c4b0000`；这是项目选择的自制 Title ID，并非官方分配。
 NACP 不要求选择 Nintendo 用户；配置仍使用项目既有 SD 卡路径。
 
 
@@ -87,7 +65,7 @@ NACP 不要求选择 Nintendo 用户；配置仍使用项目既有 SD 卡路径�
 在全内存 hbmenu 启动 NRO，选项 → 添加到 HOME 菜单 → A 添加。
 会将当前 SD 上的 NRO 保存到 `sdmc:/switch/nsteamlink/nsteamlink.nro`。
 若 netloader 的来源文件不可读，按提示手动将 NRO 放到该路径并从 hbmenu 打开后添加。
-该入口使用独立 ID `01004e534c4b1000`，依赖上述 NRO；完整 NSP 不依赖它。
+该入口使用独立 ID `01004e534c4b1000`，依赖上述 NRO。
 安装需要 CFW 支持自制应用安装与启动；程序不改动系统验证策略。
 
 HOME 入口只需添加一次，后续更新替换固定路径下的 NRO。删除入口用系统数据管理，

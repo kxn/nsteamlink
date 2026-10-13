@@ -25,7 +25,7 @@ UI 使用 SDL2 / SDL2_ttf。封面及本地化游戏名通过后台 HTTP 请求�
 具体平台限制和依赖版本以源代码、开发规范和对应参考文档为准。
 
 HOME 入口复用 nx-hbloader，加载固定路径的 NRO。构建机生成不含生产密钥的模板，
-Switch 本机完成封装与安装；完整独立 NSP 则是另一种产物。详见 [构建与发版](RELEASING.md)。
+Switch 本机完成封装与安装。详见 [构建与发版](RELEASING.md)。
 
 ## 获取源码
 
@@ -67,7 +67,7 @@ Minus/Equals 对应 −/+。桌面平台可用于实际串流和 UI 验证，但
 ./scripts/build-switch.sh -DNSL_DIAGNOSTICS=OFF -DNSL_BUILD_TOOLS=OFF
 ```
 
-产物为 `build/switch/app/nsteamlink.nro`。构建工具、模板所需 Python 包、NSP 目标、
+产物为 `build/switch/app/nsteamlink.nro`。构建工具、模板所需 Python 包、
 版本标识与 GitHub Actions 配置统一见 [构建与发版](RELEASING.md)。
 
 正式构建关闭高级 Debug、日志采集和开发工具。使用 `-DNSL_DIAGNOSTICS=ON` 开启诊断后，

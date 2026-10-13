@@ -23,9 +23,9 @@ app/src/platform/   HAL 接口头文件（.h）。只定义接口，不含实现
 app/platforms/<plat>/  平台后端实现（desktop / switch），只允许被 HAL 接口约束
 docs/               决策记录等文档
 cmake/              构建身份、素材嵌入和依赖构建适配
-packaging/switch/   独立 NSP 应用描述
+packaging/switch/   HOME 入口 NPDM 的基础应用描述
 assets/branding/    原创图标/背景与来源提示词
-.github/workflows/  双目标测试与双格式发版
+.github/workflows/  双目标测试与 NRO 发版
 scripts/            构建脚本（唯一构建入口）
 third_party/        第三方库（submodule / vendored），禁止就地修改（IHSlib 例外见 §7/D-037）
 ```
@@ -94,7 +94,7 @@ runtime 执行协议 stop/join 并在外部使用归零后回收关闭的 decode
   的 `aarch64-none-elf-pkg-config` 或显式 `target_include_directories`，不借用桌面 pkg-config 结果。
 - 新增第三方依赖流程：submodule/vendored → decisions 记录版本与理由 → 更新 §7 依赖表。
 
-版本、诊断选项、NSP 目标与 Actions 发版见 `docs/RELEASING.md`。
+版本、诊断选项与 Actions 发版见 `docs/RELEASING.md`。
 
 ## 6. Git 规范
 

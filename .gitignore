@@ -13,7 +13,7 @@ compile_commands.json
 .cache/
 .zcode/
 
-# Local Switch packaging keysets. CI uses a temporary secret file.
+# Switch keysets are never needed to build; keep them out of the repository.
 prod.keys
 dev.keys
 keys.dat

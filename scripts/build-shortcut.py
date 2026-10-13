@@ -74,7 +74,7 @@ def main():
         '\nkey_area_key_application_00 = ' + bytes(range(16)).hex() + '\n')
     tool = shutil.which(a.hacbrewpack)
     if not tool:
-        raise SystemExit('Run scripts/setup-switch-deps.sh --packager-only; set HACBREWPACK')
+        raise SystemExit('Run scripts/setup-switch-deps.sh or set HACBREWPACK')
     subprocess.run([tool, '-k', str(work / 'synthetic.keys'), '--titleid', tid,
         '--nspdir', str(work / 'out'), '--noromfs', '--nologo', '--plaintext', '--keygeneration', '1'],
         cwd=work, check=True, stdout=subprocess.DEVNULL)
