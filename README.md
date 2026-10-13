@@ -23,6 +23,7 @@ NSteamLink 是一款面向 Nintendo Switch 自制系统的 Steam Remote Play 客
 - **在 Switch 上结束游戏**：可以只断开串流，也可以请求电脑退出游戏。
 - **按自己的习惯使用**：中英文界面、画面偏好和界面提示音。
 - **从 HOME 菜单启动**：应用内添加启动入口，后续直接点图标打开。
+- **自动检查更新**：启动时提示新版本，确认后自动下载并替换 NRO。
 
 ## 开始游玩
 
@@ -63,7 +64,8 @@ NSteamLink 是一款面向 Nintendo Switch 自制系统的 Steam Remote Play 客
 这需要你的自制系统支持自制应用的安装与启动。
 
 入口会打开 SD 卡上的 `switch/nsteamlink/nsteamlink.nro`，请保留这个文件。
-升级时将新版 NRO 替换到同一路径即可，无需重复添加入口。
+升级时确认启动时的更新提示，或将新版 NRO 替换到同一路径即可，无需重复添加入口。
+可在 **X 选项** 中关闭更新检查。
 
 ![Switch HOME 菜单中的 NSteamLink 启动入口](docs/images/home-menu-shortcut.jpg)
 

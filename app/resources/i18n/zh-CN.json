@@ -135,5 +135,17 @@
   "SHORTCUT_FAILED": "无法添加，请检查安装权限和 SD 卡空间。",
   "SHORTCUT_CLEANUP_FAILED": "清理未完成，请在系统设置中删除此入口。",
   "SHORTCUT_NRO_REQUIRED": "无法保存 NRO。请将文件放到下方路径后重试。",
-  "SHORTCUT_SWITCH_ONLY": "请在 Switch 上添加 HOME 入口。"
+  "SHORTCUT_SWITCH_ONLY": "请在 Switch 上添加 HOME 入口。",
+  "UPDATE_CHECK_ON": "检查更新：开",
+  "UPDATE_CHECK_OFF": "检查更新：关",
+  "UPDATE_QUESTION": "更新 NSteamLink？",
+  "UPDATE_DESCRIPTION": "新版本 %s 已发布。\n当前版本 %s。",
+  "UPDATE_RESTART": "更新后 NSteamLink 将退出，\n请重新打开。",
+  "UPDATE_INSTALL": "更新",
+  "UPDATE_INSTALLING": "正在更新 NSteamLink",
+  "UPDATE_RESULT": "更新",
+  "UPDATE_DONE": "已更新到 %s。\n请退出并重新打开 NSteamLink。",
+  "UPDATE_FAILED_DOWNLOAD": "下载失败。\n请检查网络后重试。",
+  "UPDATE_FAILED_VERIFY": "下载内容校验失败，\n未做任何更改。",
+  "UPDATE_FAILED_WRITE": "无法将更新写入 SD 卡。"
 }

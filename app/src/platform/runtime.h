@@ -13,7 +13,9 @@ typedef enum sl_event_type {
     SL_EVENT_ACTIVITY,
     SL_EVENT_NETWORK,
     SL_EVENT_SHORTCUT,
-    SL_EVENT_CLOSED
+    SL_EVENT_CLOSED,
+    SL_EVENT_UPDATE,       /* text: version */
+    SL_EVENT_UPDATE_RESULT /* text: message, account: succeeded */
 } sl_event_type;
 typedef struct sl_runtime_event {
     sl_event_type type;

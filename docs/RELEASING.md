@@ -7,6 +7,8 @@
 追加 `.d`；未跟踪的个人文件不影响标识。构建时自动刷新，无需重新运行 configure。
 NACP 最多容纳 15 字节版本文本，超长会明确报错，不能静默截断。
 `build_identity.json` 同时记录完整提交哈希。正式发版拒绝 dirty 或 unknown 来源。
+应用内更新（D-060）读取最新正式 Release 的 `NSteamLink-X.Y.Z+hash.nro` 与 `SHA256SUMS`：
+不要改变这两个附件的命名或校验和格式，也不要把未完成的版本发布为正式 Release。
 
 ## 本地构建
 

@@ -9,12 +9,15 @@
 #include "platform/ui_renderer.h"
 #include "sdl_input.h"
 #include "services/i18n.h"
+#include "services/update_config.h"
 #include "ui/ui_events.h"
 #include "ui_audio.h"
+#include "updater.h"
 #include <SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #if NSL_DIAGNOSTICS && defined(__SWITCH__)
 #include <switch.h>
 #endif
@@ -31,6 +34,7 @@ typedef struct application {
     sl_ui_renderer *renderer;
     sl_runtime *runtime;
     sl_artwork *artwork;
+    sl_updater *updater;
     sl_debug_snapshot debug;
     sl_app_lifecycle lifecycle;
     sl_command replacement;
@@ -56,6 +60,51 @@ static void runtime_events(application *a) {
     sl_runtime_event e;
     while (sl_runtime_poll(a->runtime, &e))
         sl_ui_runtime_event(&a->ui, &e);
+}
+/* D-060: the NRO that was launched is replaced, and the HOME shortcut's copy
+ * with it. Without a launched NRO on the SD card there is nothing to check. */
+static sl_updater *start_updater(int argc, char **argv) {
+#ifdef __SWITCH__
+    size_t n = argc > 0 && argv && argv[0] ? strlen(argv[0]) : 0;
+    if (n <= 4 || strncmp(argv[0], "sdmc:/", 6) || strcmp(argv[0] + n - 4, ".nro"))
+        return NULL;
+    const char *targets[SL_UPDATE_MAX_TARGETS] = {argv[0]};
+    int count = 1;
+    struct stat st;
+    if (!stat(SL_SHORTCUT_PATH, &st) && S_ISREG(st.st_mode))
+        targets[count++] = SL_SHORTCUT_PATH;
+    return sl_updater_create(NSL_SEMANTIC_VERSION, targets, count, NULL, NULL, NULL);
+#else
+    /* Desktop builds come from source; nothing to update in place. */
+    (void)argc;
+    (void)argv;
+    return NULL;
+#endif
+}
+static void update_result(application *a, bool succeeded, const char *text) {
+    sl_runtime_event e = {
+        .type = SL_EVENT_UPDATE_RESULT, .generation = a->ui.generation, .account = succeeded};
+    snprintf(e.text, sizeof(e.text), "%s", text);
+    sl_ui_runtime_event(&a->ui, &e);
+}
+static void update_events(application *a) {
+    sl_update_status s;
+    if (!sl_updater_poll(a->updater, &s))
+        return;
+    if (s.state == SL_UPDATE_AVAILABLE) {
+        sl_runtime_event e = {.type = SL_EVENT_UPDATE, .generation = a->ui.generation};
+        snprintf(e.text, sizeof(e.text), "%s", s.version);
+        sl_ui_runtime_event(&a->ui, &e);
+    } else if (s.state == SL_UPDATE_INSTALLED) {
+        char text[192];
+        snprintf(text, sizeof(text), sl_tr(SL_T_UPDATE_DONE), s.version);
+        update_result(a, true, text);
+    } else if (s.state == SL_UPDATE_FAILED) {
+        update_result(a, false,
+                      sl_tr(s.error == SL_UPDATE_ERROR_VERIFY  ? SL_T_UPDATE_FAILED_VERIFY
+                            : s.error == SL_UPDATE_ERROR_WRITE ? SL_T_UPDATE_FAILED_WRITE
+                                                               : SL_T_UPDATE_FAILED_DOWNLOAD));
+    }
 }
 /* All admission and input policy runs on the renderer/main thread. A pending
  * replacement is dispatched only after persistent cleanup facts close its owner. */
@@ -89,6 +138,12 @@ static void lifecycle_facts(application *a) {
         sl_ui_error(&a->ui, sl_tr(SL_T_BUSY));
 }
 static bool command(application *a, const sl_command *cmd) {
+    if (cmd->type == SL_CMD_UPDATE) {
+        /* Runs on the updater worker, not the protocol runtime. */
+        if (!sl_updater_install(a->updater))
+            update_result(a, false, sl_tr(SL_T_UPDATE_FAILED_DOWNLOAD));
+        return true;
+    }
     if (cmd->type == SL_CMD_STREAM) {
         if (!sl_app_request_start(&a->lifecycle, cmd->generation))
             return false;
@@ -146,12 +201,16 @@ int sl_application_run(int argc, char **argv) {
     sl_auth_store store;
     int auth = sl_auth_load(&store, sl_system_data_dir());
     sl_ui_init(&a->ui, &store);
+    a->ui.update_check = sl_update_config_load(sl_system_data_dir());
     sl_log_start();
     if (!offline)
         a->artwork = sl_artwork_create(sl_system_data_dir(), NULL, NULL);
+    if (!offline && a->ui.update_check)
+        a->updater = start_updater(argc, argv);
     a->ui.now = a->ui.entered_at = sl_system_now();
     if (!stream_media_init(sl_log)) {
         fprintf(stderr, "Media initialization failed\n");
+        sl_updater_destroy(a->updater);
         sl_artwork_destroy(a->artwork);
         free(a);
         sl_log_finish();
@@ -161,6 +220,7 @@ int sl_application_run(int argc, char **argv) {
     a->renderer = sl_ui_renderer_create(sl_media_gfx());
     if (!a->renderer) {
         fprintf(stderr, "Font initialization failed: %s\n", SDL_GetError());
+        sl_updater_destroy(a->updater);
         sl_artwork_destroy(a->artwork);
         stream_media_shutdown();
         free(a);
@@ -194,6 +254,7 @@ int sl_application_run(int argc, char **argv) {
         uint64_t loop_start = loop_us();
 #endif
         sl_ui_tick(&a->ui, sl_system_now());
+        update_events(a);
         if (a->runtime) {
             runtime_events(a);
             lifecycle_facts(a);
@@ -214,7 +275,8 @@ int sl_application_run(int argc, char **argv) {
                 if (!command(a, &cmd))
                     sl_ui_error(&a->ui, sl_tr(SL_T_BUSY));
             } else if (cmd.type == SL_CMD_SAVE) {
-                if (!sl_i18n_save(sl_system_data_dir(), cmd.language))
+                if (!sl_i18n_save(sl_system_data_dir(), cmd.language) ||
+                    !sl_update_config_save(sl_system_data_dir(), cmd.update_check))
                     sl_ui_error(&a->ui, sl_tr(SL_T_SAVE_SETTINGS_FAILED));
             } else if (cmd.type == SL_CMD_CANCEL || cmd.type == SL_CMD_STOP ||
                        cmd.type == SL_CMD_END_GAME)
@@ -279,16 +341,18 @@ int sl_application_run(int argc, char **argv) {
     sl_media_close_video();
     sl_runtime_request_exit(a->runtime);
     sl_artwork_request_stop(a->artwork);
+    sl_updater_request_stop(a->updater);
     if (!sl_gfx_healthy(sl_media_gfx()))
         sl_gfx_finish(sl_media_gfx());
     while (!sl_runtime_finished(a->runtime) || !sl_artwork_finished(a->artwork) ||
-           sl_gfx_poll_drain(sl_media_gfx()) == SL_GFX_BUSY) {
+           !sl_updater_finished(a->updater) || sl_gfx_poll_drain(sl_media_gfx()) == SL_GFX_BUSY) {
         sl_media_collect();
         if (!sl_gfx_healthy(sl_media_gfx()))
             sl_gfx_finish(sl_media_gfx());
         SDL_Delay(1);
     }
     sl_artwork_destroy(a->artwork);
+    sl_updater_destroy(a->updater);
     sl_runtime_destroy(a->runtime);
     sl_media_hooks(NULL, NULL, NULL);
     sl_ui_renderer_destroy(a->renderer);

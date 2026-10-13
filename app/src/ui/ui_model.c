@@ -113,6 +113,7 @@ void sl_ui_init(sl_ui_model *m, const sl_auth_store *s) {
         m->store.bitrate_kbps = 6000;
     m->page = SL_HOME;
     m->network_ok = true;
+    m->update_check = true;
     sl_ui_layout(m);
 }
 void sl_ui_error(sl_ui_model *m, const char *message) {
@@ -159,6 +160,12 @@ void sl_ui_tick(sl_ui_model *m, uint64_t now) {
     }
     if (m->leaving && now >= m->leave_at + 160)
         back_now(m);
+    /* Offer a found update once, when nothing else is in progress. */
+    if (m->update_version[0] && !m->update_offered && m->page == SL_HOME && !m->depth &&
+        !m->streaming && !m->leaving && !m->closing) {
+        m->update_offered = true;
+        push(m, SL_UPDATE);
+    }
     sl_ui_layout(m);
 }
 bool sl_ui_take_command(sl_ui_model *m, sl_command *out) {
@@ -176,6 +183,7 @@ static void emit(sl_ui_model *m, sl_command_type type) {
     m->command.quality = m->store.quality;
     m->command.bitrate_kbps = m->store.bitrate_kbps;
     m->command.language = sl_i18n_language();
+    m->command.update_check = m->update_check;
 }
 static void start(sl_ui_model *m, int game) {
     sl_host *h = selected(m);
@@ -229,8 +237,9 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
     if (m->page == SL_CLOSING || m->leaving)
         return;
     if (a >= SL_LEFT && a <= SL_DOWN) {
-        if (m->layout.compact || m->page == SL_SHORTCUT || m->page == SL_CONNECTING ||
-            m->page == SL_SAVING || m->page == SL_PAIRING)
+        if (m->layout.compact || m->page == SL_SHORTCUT || m->page == SL_UPDATE ||
+            m->page == SL_UPDATE_RESULT || m->page == SL_CONNECTING || m->page == SL_SAVING ||
+            m->page == SL_PAIRING)
             return;
         if (m->page == SL_HOME) {
             int count = sl_ui_game_count(m);
@@ -257,7 +266,8 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
             sl_ui_action(m, SL_START, 0);
             return;
         }
-        if (m->layout.compact || m->page == SL_SHORTCUT) {
+        if (m->layout.compact || m->page == SL_SHORTCUT || m->page == SL_UPDATE ||
+            m->page == SL_UPDATE_RESULT) {
             /* Confirm dialogs advertise fixed A/B actions, not focus navigation. */
             for (int i = 0; i < m->layout.count; ++i)
                 if (m->layout.controls[i].primary) {
@@ -394,8 +404,21 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
             emit(m, SL_CMD_STOP);
         }
         break;
+    case SL_UPDATE_CHECK:
+        m->update_check = !m->update_check;
+        emit(m, SL_CMD_SAVE);
+        break;
+    case SL_CONFIRM_UPDATE:
+        if ((m->page == SL_UPDATE || (m->page == SL_UPDATE_RESULT && !m->update_succeeded)) &&
+            !m->streaming) {
+            page(m, SL_UPDATING);
+            emit(m, SL_CMD_UPDATE);
+        }
+        break;
+    case SL_FINISH_UPDATE:
     case SL_CONFIRM_EXIT:
-        if (m->page == SL_EXIT) {
+        if (m->page == SL_EXIT ||
+            (a == SL_FINISH_UPDATE && m->page == SL_UPDATE_RESULT && m->update_succeeded)) {
             ++m->generation;
             m->closing = true;
             page(m, SL_CLOSING);
@@ -412,7 +435,8 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
             emit(m, SL_CMD_CANCEL);
             m->depth = 0;
             page(m, SL_STOPPING);
-        } else if (m->page != SL_STREAM && m->page != SL_STOPPING && m->page != SL_INSTALLING)
+        } else if (m->page != SL_STREAM && m->page != SL_STOPPING && m->page != SL_INSTALLING &&
+                   m->page != SL_UPDATING)
             back(m);
         break;
     case SL_DIGIT:

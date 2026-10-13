@@ -68,8 +68,15 @@ add_library(nsl_artwork STATIC platforms/common/artwork.c platforms/common/artwo
 target_include_directories(nsl_artwork PRIVATE ${CMAKE_SOURCE_DIR}/third_party/jsmn)
 target_compile_options(nsl_artwork PRIVATE -Wall -Wextra)
 target_link_libraries(nsl_artwork PUBLIC nsl_ui PkgConfig::CURL PkgConfig::JPEG Threads::Threads m)
+# Self-update (D-055). mbedTLS comes from IHSlib's cached find results.
+add_library(nsl_updater STATIC platforms/common/updater.c platforms/common/update_format.c)
+target_include_directories(nsl_updater PUBLIC platforms/common
+    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/jsmn SYSTEM ${MBEDTLS_INCLUDE_DIRS})
+target_compile_options(nsl_updater PRIVATE -Wall -Wextra)
+target_link_libraries(nsl_updater PUBLIC nsl_ui PkgConfig::CURL ${MBEDCRYPTO_LIBRARY} Threads::Threads)
 add_library(nsl_ui STATIC src/ui/ui_model.c src/ui/ui_layout.c src/ui/ui_events.c src/input/input_router.c
-    src/services/host_registry.c src/services/auth_store.c src/services/i18n.c)
+    src/services/host_registry.c src/services/auth_store.c src/services/i18n.c
+    src/services/update_config.c)
 target_include_directories(nsl_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(nsl_ui PRIVATE -Wall -Wextra)
 target_link_libraries(nsl_ui PUBLIC m)
@@ -89,7 +96,7 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/background.c"
     DEPENDS ${CMAKE_SOURCE_DIR}/assets/branding/background.bmp ${CMAKE_SOURCE_DIR}/cmake/EmbedAsset.cmake
     VERBATIM)
 target_sources(nsl_platform PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/background.c")
-target_link_libraries(nsl_platform PUBLIC nsl_ui nsl_artwork ihslib ihslib-hid-sdl PkgConfig::SDL2 PkgConfig::SDL2_TTF
+target_link_libraries(nsl_platform PUBLIC nsl_ui nsl_artwork nsl_updater ihslib ihslib-hid-sdl PkgConfig::SDL2 PkgConfig::SDL2_TTF
     PkgConfig::FFMPEG PkgConfig::OPUS Threads::Threads nsl_gfx)
 add_executable(nsteamlink src/main.c)
 target_link_libraries(nsteamlink PRIVATE nsl_platform)
@@ -136,6 +143,13 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_link_options(nsl-ui-tests PRIVATE -Wl,--wrap=rename)
     target_compile_options(nsl-ui-tests PRIVATE -Wall -Wextra -UNDEBUG)
     add_test(NAME nsl-ui COMMAND nsl-ui-tests)
+    add_executable(nsl-updater-tests tests/test_updater.c platforms/desktop/system.c)
+    target_link_libraries(nsl-updater-tests PRIVATE nsl_updater)
+    # Horizon's rename() never replaces; the tests switch between both behaviours.
+    target_link_options(nsl-updater-tests PRIVATE -Wl,--wrap=rename)
+    target_compile_options(nsl-updater-tests PRIVATE -Wall -Wextra -UNDEBUG)
+    add_test(NAME nsl-updater COMMAND nsl-updater-tests)
+    set_tests_properties(nsl-updater PROPERTIES TIMEOUT 30)
 endif()
 if(NSL_PLATFORM STREQUAL "desktop")
     add_executable(nsl-native-tests tests/test_native.c)

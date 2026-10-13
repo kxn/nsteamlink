@@ -23,6 +23,7 @@ Pick up your Joy-Con, choose a PC, and return to your last game.
 - **End games remotely** — disconnect while leaving the game running, or ask the PC to quit it.
 - **Make it yours** — English and Chinese, picture preferences and UI sounds.
 - **Launch from HOME** — add a shortcut from the app's options.
+- **Stay up to date** — on start, the app offers new releases and installs the NRO for you.
 
 ## Get started
 
@@ -63,7 +64,8 @@ Open **X Options → Add to HOME Menu** and confirm. No key file needs to be sup
 Your CFW must support homebrew application installation and launch.
 
 The shortcut opens `switch/nsteamlink/nsteamlink.nro` on your SD card. Keep that file in place.
-To update, replace it with the new NRO; you do not need to install the shortcut again.
+To update, accept the update offered on start, or replace the file with the new NRO;
+you do not need to install the shortcut again. Turn the check off in **X Options**.
 
 ![NSteamLink shortcut on the Switch HOME Menu](docs/images/home-menu-shortcut.jpg)
 

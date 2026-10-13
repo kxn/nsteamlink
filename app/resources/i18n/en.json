@@ -135,5 +135,17 @@
   "SHORTCUT_FAILED": "Could not add. Check install access and SD space.",
   "SHORTCUT_CLEANUP_FAILED": "Cleanup failed. Remove this entry in System Settings.",
   "SHORTCUT_NRO_REQUIRED": "Could not save NRO. Place it at the path below and retry.",
-  "SHORTCUT_SWITCH_ONLY": "Add the HOME shortcut on your Switch."
+  "SHORTCUT_SWITCH_ONLY": "Add the HOME shortcut on your Switch.",
+  "UPDATE_CHECK_ON": "Update check: On",
+  "UPDATE_CHECK_OFF": "Update check: Off",
+  "UPDATE_QUESTION": "Update NSteamLink?",
+  "UPDATE_DESCRIPTION": "Version %s is available.\nYou have version %s.",
+  "UPDATE_RESTART": "NSteamLink exits after updating;\nthen start it again.",
+  "UPDATE_INSTALL": "Update",
+  "UPDATE_INSTALLING": "Updating NSteamLink",
+  "UPDATE_RESULT": "Update",
+  "UPDATE_DONE": "Updated to %s.\nExit and start NSteamLink again.",
+  "UPDATE_FAILED_DOWNLOAD": "Download failed.\nCheck the connection and retry.",
+  "UPDATE_FAILED_VERIFY": "The download failed its checksum.\nNothing was changed.",
+  "UPDATE_FAILED_WRITE": "Could not write the update\nto the SD card."
 }
