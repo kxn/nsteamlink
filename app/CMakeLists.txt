@@ -99,7 +99,6 @@ if(NSL_PLATFORM STREQUAL "switch")
     target_link_libraries(nsl_platform PUBLIC nx)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     set(NSL_NACP "${CMAKE_CURRENT_BINARY_DIR}/control.nacp")
-    set(NSL_KEYSET "" CACHE FILEPATH "Local Switch keyset; never commit it")
     set(NSL_DEFAULT_HACBREWPACK "hacbrewpack")
     if(EXISTS "${CMAKE_SOURCE_DIR}/build/deps/hacBrewPack/hacbrewpack")
         set(NSL_DEFAULT_HACBREWPACK "${CMAKE_SOURCE_DIR}/build/deps/hacBrewPack/hacbrewpack")
@@ -125,15 +124,6 @@ if(NSL_PLATFORM STREQUAL "switch")
             "${CMAKE_SOURCE_DIR}/scripts/switch-metadata.py" VERBATIM)
     nx_create_nro(nsteamlink OUTPUT nsteamlink.nro NACP "${NSL_NACP}"
         ICON "${CMAKE_SOURCE_DIR}/assets/branding/icon.jpg")
-    add_custom_target(nsteamlink_nsp
-        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/package-switch.py"
-            --elf "$<TARGET_FILE:nsteamlink>" --nacp "${NSL_NACP}"
-            --icon "${CMAKE_SOURCE_DIR}/assets/branding/icon.jpg"
-            --config "${CMAKE_SOURCE_DIR}/packaging/switch/application.json"
-            --output "${CMAKE_CURRENT_BINARY_DIR}/nsteamlink.nsp"
-            --keyset "${NSL_KEYSET}" --hacbrewpack "${HACBREWPACK}"
-        DEPENDS nsteamlink "${NSL_NACP}" VERBATIM)
-    add_custom_target(nsteamlink_release DEPENDS nsteamlink_nro nsteamlink_nsp)
 endif()
 if(NSL_PLATFORM STREQUAL "desktop")
     add_executable(nsl-video-contract-tests tests/test_video_contracts.c)

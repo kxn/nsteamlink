@@ -21,8 +21,6 @@ def pfs_files(data):
 
 def loader_config(root):
     config = json.loads((root / 'packaging/switch/application.json').read_text())
-    for field in ('program_id', 'program_id_range_min', 'program_id_range_max'):
-        config[field] = '0x01004e534c4b1000'
     # A loader needs process-code mapping permissions beyond the application's own SVC set.
     upstream = json.loads((root / 'third_party/nx-hbloader/hbl.json').read_text())
     reference = next(k['value'] for k in upstream['kernel_capabilities'] if k['type'] == 'syscalls')
@@ -74,7 +72,7 @@ def main():
         '\nkey_area_key_application_00 = ' + bytes(range(16)).hex() + '\n')
     tool = shutil.which(a.hacbrewpack)
     if not tool:
-        raise SystemExit('Run scripts/setup-switch-deps.sh --packager-only; set HACBREWPACK')
+        raise SystemExit('Run scripts/setup-switch-deps.sh or set HACBREWPACK')
     subprocess.run([tool, '-k', str(work / 'synthetic.keys'), '--titleid', tid,
         '--nspdir', str(work / 'out'), '--noromfs', '--nologo', '--plaintext', '--keygeneration', '1'],
         cwd=work, check=True, stdout=subprocess.DEVNULL)

@@ -9,8 +9,7 @@
 extern u32 __nx_applet_exit_mode;
 static void configure_home_exit(void) {
     u64 program_id = 0;
-    if (!envIsNso() &&
-        R_SUCCEEDED(svcGetInfo(&program_id, InfoType_ProgramId, CUR_PROCESS_HANDLE, 0)) &&
+    if (R_SUCCEEDED(svcGetInfo(&program_id, InfoType_ProgramId, CUR_PROCESS_HANDLE, 0)) &&
         program_id == SL_SHORTCUT_ID)
         __nx_applet_exit_mode = 1;
 }
