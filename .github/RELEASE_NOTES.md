@@ -1,101 +1,71 @@
-# NSteamLink v0.2.1
+# NSteamLink v0.3.0
 
 ## 简体中文
 
-## [0.2.1] - 2026-10-11
+## [0.3.0] - 2026-10-15
 
-上一正式版：**v0.2.0**。本版：**v0.2.1**。目标分支：`main`；对应源码：[`v0.2.1`](https://github.com/kxn/nsteamlink/tree/v0.2.1)。
+上一正式版：**v0.2.1**。本版：**v0.3.0**。目标分支：`main`；对应源码：[`v0.3.0`](https://github.com/kxn/nsteamlink/tree/v0.3.0)。
 
 ### 主要变化
 
-- 修复现代 Steam 的首次配对：支持配对码掩码的 X25519 密钥交换，按电脑保存协商密钥，重新启动应用后可复用配对。旧 v2/v3 配置迁移时保留原有身份与配对信息。首次配对码与连接安全 PIN 仍是两个独立概念。
-- 改善局域网主机发现：发现请求同时发送到本地 IPv4 子网广播地址，修复已记录的 Switch 与 Linux Steam 主机之间仅全局广播无应答的问题。
-- 修复 Switch 打开“手动添加电脑”时退出：将 deko 每帧 quad 上限从 4096 提高到 8192，并在诊断构建中记录超限原因。
-- 同步 IHSlib 官方更新：解码器报告丢帧后清理待处理数据并等待关键帧；串流能力由应用提供实际平台与解码器信息，省略未经确认的 Switch 系统类型与设备形态。
+- **应用内更新**：Switch 启动后在后台检查最新正式版，有更新时在首页询问是否安装；每次启动最多提示一次。X 选项中的“检查更新”默认开启，关闭后下次启动生效。网络查询失败时静默跳过。
+- **下载与校验**：仅通过校验证书的 HTTPS 获取本仓库正式 Release，下载大小及 SHA-256 校验通过后才替换 NRO；文件替换失败时尝试恢复该文件的旧副本。同步更新启动文件与已存在的 HOME 入口目标，完成后提示退出并重新启动。
+- **简化发布**：移除从未实际发布过的独立 NSP 构建与密钥配置，只发布 NRO。NRO 内的“添加到 HOME 菜单”功能继续保留，无需用户提供打包密钥。
 
 ### 按类型分组的提交
 
-**修复**
-
-- `4a7973d`：按主机保存配对协商密钥，并保留 UI 快照缺失的密钥（[PR #36](https://github.com/kxn/nsteamlink/pull/36)）。
-- `63075fc`：提高 deko quad 上限，修复手动添加电脑页面退出（[PR #37](https://github.com/kxn/nsteamlink/pull/37)，[Issue #35](https://github.com/kxn/nsteamlink/issues/35)）。
-- `1f55e51`：同步官方解码恢复，并由应用提供平台串流能力（[Issue #38](https://github.com/kxn/nsteamlink/issues/38)）。
-
-**构建与依赖**
-
-- `689ecd8`、`d09e63f`：更新 IHSlib，接入配对密钥交换和子网广播发现。
-- `552c839`：统一 IHSlib fork 的维护分支并固定依赖提交。
-
-**文档**
-
-- `2c85f49`、`7861d68`：记录官方客户端密钥交换、Switch 配对与主机发现的源码和真机证据。
+- **功能**：`0a93607`，启动检查、更新设置、下载校验及更新界面（[PR #41](https://github.com/kxn/nsteamlink/pull/41)）。
+- **构建与清理**：`6df4b21`、`8b45610`，移除独立 NSP 打包及仅服务于该路径的代码（[PR #42](https://github.com/kxn/nsteamlink/pull/42)）。
+- **文档**：`4c0e8c0`、`68fd88d`，记录 NRO 发布与应用内更新的设计及证据边界。
 
 ### 致谢
 
-- 感谢 **Simone Caronni（[@scaronni](https://github.com/scaronni)）** 完成 PR #36 / #37 及相关 IHSlib 工作，修复配对密钥交换、按主机保存密钥、子网发现与手动添加电脑页面退出，并提供 Switch / Linux Steam 主机验证证据。
-- 感谢 **[@akiriroll](https://github.com/akiriroll)** 在 Issue #35 中报告发现失败及手动添加电脑退出的问题，提供设备环境与复现信息。
-- 感谢 **Mariotaku（[@mariotaku](https://github.com/mariotaku)）** 与 **[@skwizzy222](https://github.com/skwizzy222)** 提供本版吸收的上游解码丢帧恢复工作与原始思路（[IHSlib 提交 6721ecc](https://github.com/mariotaku/ihslib/commit/6721ecc1a31ed2a39af5a84a0df43158816b0dc6)）。
-- 感谢 **Sven** 提供初代 Nintendo Switch，支持开发与实机测试；感谢 IHSlib、FFmpeg、SDL、libnx、devkitPro、deko3d 与 nx-hbloader 等开源项目的作者和维护者。
+感谢 **Simone Caronni（[@scaronni](https://github.com/scaronni)）** 贡献 PR #41 / #42，实现应用内更新、简化打包流程，并补充自动测试和验证记录。感谢 **Sven** 提供初代 Nintendo Switch，支持开发与实机测试；感谢 IHSlib、FFmpeg、SDL、libnx、devkitPro、deko3d 与 nx-hbloader 等开源项目的作者和维护者。
 
 ### 验证与证据范围
 
-PR #36 记录了 Switch 发现 Linux Steam 主机、成功配对，以及应用重启后无需重新配对即可再次串流的真机结果。后续集成提交 `1f55e51` 通过诊断 ON/OFF 桌面测试（各 55 项）、Switch 正式/诊断构建及发布工具检查。标签工作流会再次运行桌面测试、Switch 构建、正式包诊断排除与附件结构/来源校验，全部通过后才公开发布。
+已审阅上述两个 PR 的更新器、UI、线程清理和打包改动。诊断 ON/OFF 两套桌面测试各 56 项及发布工具测试通过；合并后上游 CI 的桌面与 Switch 构建通过。标签工作流还会核对版本、正式包诊断排除、NRO 结构、构建来源及附件校验和，全部通过后才公开发布。
 
-新平台能力字段与解码恢复在不同 Steam 主机、真实网络丢帧和 NVDEC 错误中的效果仍待验证；上述构建和测试不代表这些场景或 hbmenu 返回生命周期已获真机证明。
+贡献者记录了主机端连接 GitHub、下载并校验 v0.2.1 的测试。Switch 上完整的查询、下载、替换、重新启动，以及断网、SD 卡空间不足和 hbmenu 返回生命周期仍待真机验证；桌面测试与交叉构建不证明这些设备行为。
 
 ### 下载与更新
 
-从[本版 Release](https://github.com/kxn/nsteamlink/releases/tag/v0.2.1) 下载 `.nro` 附件。若已添加 HOME 入口，更新其固定目标 `sdmc:/switch/nsteamlink/nsteamlink.nro` 即可。正式 NRO 关闭高级诊断，包含本机 HOME 入口安装功能；独立 `.nsp` 仅在发布构建配置了打包密钥时提供。`SHA256SUMS`、`build_identity.json` 与 SDK 包清单用于核验附件和构建来源。
+v0.2.1 及更早版本没有应用内更新，请从[本版 Release](https://github.com/kxn/nsteamlink/releases/tag/v0.3.0) 下载 `.nro` 完成本次升级。已添加 HOME 入口时，替换其固定目标 `sdmc:/switch/nsteamlink/nsteamlink.nro`。从 v0.3.0 起，从 SD 卡启动时可使用应用内更新；netloader 启动不检查更新。正式包关闭高级诊断，附带 `SHA256SUMS`、`build_identity.json` 和 SDK 包清单。
 
-[完整变更：v0.2.0 → v0.2.1](https://github.com/kxn/nsteamlink/compare/v0.2.0...v0.2.1)
+[完整变更：v0.2.1 → v0.3.0](https://github.com/kxn/nsteamlink/compare/v0.2.1...v0.3.0)
 
 ---
 
 ## English
 
-## [0.2.1] - 2026-10-11
+## [0.3.0] - 2026-10-15
 
-Previous stable release: **v0.2.0**. This release: **v0.2.1**. Target branch: `main`; tagged source: [`v0.2.1`](https://github.com/kxn/nsteamlink/tree/v0.2.1).
+Previous stable release: **v0.2.1**. This release: **v0.3.0**. Target branch: `main`; tagged source: [`v0.3.0`](https://github.com/kxn/nsteamlink/tree/v0.3.0).
 
 ### Highlights
 
-- Fix pairing with modern Steam: support the PIN-masked X25519 key exchange and persist the negotiated key for each computer, so pairing can be reused after restarting the app. Migration from v2/v3 profiles retains existing identity and pairing data. The initial pairing code and the connection security PIN remain separate concepts.
-- Improve LAN discovery: also send discovery requests to local IPv4 subnet broadcast addresses, addressing the recorded Switch/Linux Steam host case where global broadcast alone received no response.
-- Fix the app exiting when opening “Add PC manually” on Switch: raise the deko per-frame quad limit from 4096 to 8192 and report limit exhaustion in diagnostic builds.
-- Integrate upstream IHSlib updates: flush pending data and wait for a keyframe after decoder-reported frame loss; report actual platform and decoder capabilities supplied by the app, omitting unverified Switch OS type and form factor.
+- **In-app updates**: Switch checks for the latest stable release in the background at startup and offers installation on the home page, at most once per launch. “Update check” in X Options defaults to On; disabling it takes effect on the next launch. Failed checks are silently skipped.
+- **Download verification**: only use certificate-verified HTTPS for this repository's stable releases. Check the download size and SHA-256 before replacing an NRO; if replacing a file fails, attempt to restore its old copy. Update the launched file and any existing HOME shortcut target, then ask the user to exit and relaunch.
+- **Simpler releases**: remove the standalone NSP build and its key configuration, which never produced a published release asset. Releases contain the NRO; its “Add to HOME Menu” feature remains available without user-supplied packaging keys.
 
 ### Commits by type
 
-**Fixes**
-
-- `4a7973d`: persist each host's negotiated pairing key and retain keys missing from UI snapshots ([PR #36](https://github.com/kxn/nsteamlink/pull/36)).
-- `63075fc`: increase deko quad capacity to prevent the manual PC page from exiting ([PR #37](https://github.com/kxn/nsteamlink/pull/37), [Issue #35](https://github.com/kxn/nsteamlink/issues/35)).
-- `1f55e51`: integrate upstream decoder recovery and supply platform streaming capabilities from the app ([Issue #38](https://github.com/kxn/nsteamlink/issues/38)).
-
-**Build and dependencies**
-
-- `689ecd8`, `d09e63f`: update IHSlib for pairing key exchange and subnet broadcast discovery.
-- `552c839`: consolidate IHSlib fork maintenance on one branch and pin the dependency commit.
-
-**Documentation**
-
-- `2c85f49`, `7861d68`: document official-client key exchange and source/device evidence for Switch pairing and host discovery.
+- **Feature**: `0a93607`, startup checks, update settings, verified downloads, and update UI ([PR #41](https://github.com/kxn/nsteamlink/pull/41)).
+- **Build and cleanup**: `6df4b21`, `8b45610`, remove standalone NSP packaging and code used only by that path ([PR #42](https://github.com/kxn/nsteamlink/pull/42)).
+- **Documentation**: `4c0e8c0`, `68fd88d`, record NRO release and in-app update decisions and evidence limits.
 
 ### Thanks
 
-- Thank you to **Simone Caronni ([@scaronni](https://github.com/scaronni))** for PRs #36 / #37 and the related IHSlib work: pairing key exchange, per-host key persistence, subnet discovery, and the manual PC page fix, with Switch/Linux Steam host validation evidence.
-- Thank you to **[@akiriroll](https://github.com/akiriroll)** for reporting discovery failure and the manual PC page exit in Issue #35, including the device environment and reproduction details.
-- Thank you to **Mariotaku ([@mariotaku](https://github.com/mariotaku))** and **[@skwizzy222](https://github.com/skwizzy222)** for the upstream decoder-loss recovery work and original idea integrated in this release ([IHSlib commit 6721ecc](https://github.com/mariotaku/ihslib/commit/6721ecc1a31ed2a39af5a84a0df43158816b0dc6)).
-- Thank you to **Sven** for providing an original-model Nintendo Switch for development and device testing, and to the authors and maintainers of IHSlib, FFmpeg, SDL, libnx, devkitPro, deko3d, and nx-hbloader.
+Thank you to **Simone Caronni ([@scaronni](https://github.com/scaronni))** for PRs #41 / #42: implementing in-app updates, simplifying packaging, and adding automated tests and validation records. Thank you to **Sven** for providing an original-model Nintendo Switch for development and device testing, and to the authors and maintainers of IHSlib, FFmpeg, SDL, libnx, devkitPro, deko3d, and nx-hbloader.
 
 ### Validation and evidence scope
 
-PR #36 records device results for discovering a Linux Steam host from Switch, pairing successfully, and streaming again after restarting the app without re-pairing. Integration commit `1f55e51` passed desktop tests with diagnostics ON/OFF (55 each), Switch release/diagnostic builds, and release tooling checks. The tag workflow repeats desktop tests, Switch builds, release diagnostic-exclusion checks, and artifact structure/provenance validation before publication.
+Reviewed both PRs' updater, UI, thread cleanup, and packaging changes. Desktop suites with diagnostics ON/OFF passed all 56 tests each, along with release tooling tests; upstream desktop and Switch CI passed after the merges. The tag workflow also verifies the version, release diagnostic exclusion, NRO structure, build provenance, and attachment checksums before publication.
 
-The effects of the new capability fields and decoder recovery across different Steam hosts, real network loss, and NVDEC errors still require device validation. These builds and tests do not establish device proof for those cases or the hbmenu return lifecycle.
+The contributor recorded a host-side test that connected to GitHub, downloaded v0.2.1, and verified its checksum. The full check/download/replace/relaunch flow on Switch, network interruption, insufficient SD space, and the hbmenu return lifecycle still require device validation. Desktop tests and cross builds do not prove those device behaviors.
 
 ### Download and update
 
-Download the `.nro` attachment from [this release](https://github.com/kxn/nsteamlink/releases/tag/v0.2.1). If you already installed a HOME shortcut, update its fixed target at `sdmc:/switch/nsteamlink/nsteamlink.nro`. The release NRO excludes advanced diagnostics and includes on-device HOME shortcut installation; a standalone `.nsp` is provided only when packaging keys are configured for the release build. Use `SHA256SUMS`, `build_identity.json`, and the SDK package list to verify artifacts and build provenance.
+v0.2.1 and earlier have no in-app updater: download the `.nro` from [this release](https://github.com/kxn/nsteamlink/releases/tag/v0.3.0) for this upgrade. If a HOME shortcut is installed, replace its fixed target at `sdmc:/switch/nsteamlink/nsteamlink.nro`. Starting with v0.3.0, in-app updates are available when launched from the SD card; netloader launches skip update checks. Release builds exclude advanced diagnostics and include `SHA256SUMS`, `build_identity.json`, and the SDK package list.
 
-[Full changelog: v0.2.0 → v0.2.1](https://github.com/kxn/nsteamlink/compare/v0.2.0...v0.2.1)
+[Full changelog: v0.2.1 → v0.3.0](https://github.com/kxn/nsteamlink/compare/v0.2.1...v0.3.0)
