@@ -2496,8 +2496,9 @@ counter == 0 或 last_send == 0：跳过包龄条件，立即尝试
 1250 不重传、1251 重传。33 个 `reliable_retry` 覆盖 RTT clamp、严格边界、
 counter=1/255 与三个立即尝试反例。Socket send 是显式替身；真实预算拒绝/发送
 失败另在 `send_budget` 验证，不能据此称重传线程调度逐 tick 等价。
-本地 `RetryTicks` 数值公式相同，但 `retransmission.c` 转成向上取整毫秒 deadline
-后由 timer 判断；精度/调度不同，不能把数值公式相同写成触发时刻完全一致。
+本地普通可靠包生产 timer 已改为直接判断16.16时间戳的严格边界，见§37；
+`ProcessAt` 毫秒入口仅保留兼容用途。5ms timer 的实际调用间隔仍不同于官方连接
+Update，不把条件相同写成墙钟触发时刻完全一致。
 
 **累计 ACK 触发**：类型 7 进入可靠 state 的 HandleAckPacket；包头 sequence 是
 累计确认号，13…16B 是 echo。先计算 `int16(ack - head + 1)`，正值时按已占用范围
@@ -3414,3 +3415,126 @@ Native file oracle 消费27个原版案例中适用于应用固定文件名的13
 核对FEC/画质/码率及unknown保留。SDL用dummy设备，没有认证主机或Switch显示证明。
 原版播放器 overlay/hardware/microphone 的设备动作不因文件持久化而自动获得验证；
 它们与调度、发送缓存、可靠媒体和统计窗口分别有独立协议契约。
+
+
+## 37. 发送窗口、失败事务与连接调度
+
+### 37.1 客户端来源与完整执行边界
+
+【证据】同一官方 Android 1.3.32 main ELF（SHA256
+`50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e`）中，
+`audit-steam-outgoing.py` 不再把 channel sender 和 Socket::Send 都替换为事件：
+
+| 入口 | 地址 | 本节执行/适配范围 |
+|---|---|---|
+| SendReliablePackets | 0x7f8ac4 | 原始候选扫描、RTO、失败停止、发送计数 |
+| SendUnreliablePackets | 0x7f8cbc | 原始退休、新包cursor、补发阶段和计数 |
+| HandleNackPacket | 0x7f95dc | 原始包龄/echo/位图/水位分支，随后真实sender |
+| Socket::Send | 0x7ff1dc | 原始时间戳、双类准入、CRC与成功后的预算更新 |
+| Connection::Update | 0x7fc108 | 原始排序和两轮调度；两类sender本体均执行 |
+
+108个固定场景含18个发送/预算/transport组合、42个可靠RTO/计数场景、16个不可靠
+退休/补发场景、20个NACK→两轮发送场景、8个可靠失败时序，以及4个连续连接更新
+场景。窗口存储是按本节前置状态预置的ring；Advance/Release只执行请求的释放并
+维护存储，原版引用计数/销毁、接收消费者、空FEC队列、统计、最终transport及静态
+初始化注册是明确适配器。排序、sender、Socket预算和CRC不是模型替身。
+
+原版二进制不入仓，固定参考保存input/observed；本地测试不需要ELF或Unicorn。
+这些受控ring与最终I/O替身不证明原版完整分配机制、系统背压或真实网络公平性。
+
+### 37.2 初发入口与预算失败的区别
+
+【证据／静态反汇编】`CStreamChannel::Send 0x7f89dc` 和
+`SendUnreliable 0x7f8bd8` 在各自发送mutex下，先设置普通包类型、零发送计数、
+连接/channel标识，调用 `AddToOutgoingPacketWindow 0x7f6f94`，再立即调用对应
+sender（不可靠传false）。因此“全部初发只在下一次Connection::Update排队发送”
+不符合该客户端。AddToOutgoingPacketWindow以当前时间写入头、按window tail分配
+连续packet ID并处理分片；本节只静态核对该入窗/分片入口，不将预置ring当成其执行验收。
+
+【证据／原指令】sender→Socket::Send会先写本次尝试的timestamp，再检查deadline。
+未到预算时返回1、置blocked、不调用transport；到达等号可发送。进入transport前
+清blocked，transport返回非零时不增加预算。0成功后才推进对应deadline并增加
+packet发送计数（255饱和）；CRC实际字节也在本路径核对。预算按不含额外CRC尾的
+packet长度计费，类型7/10/11绕过这两类deadline；这些规则仍以§28–29的类表为准。
+
+sender遇非零结果停止本channel当前扫描，不继续跳过失败包发送后面的包；返回1
+在sender出口归一化为0，其他非零原样返回。Connection::Update不因一个channel
+的sender返回非零而跳过其他channel。不能将“API没有报告失败”解释成已上网，
+也不能让一次本地失败消耗整批待发包的计数或期限。
+
+### 37.3 可靠包失败、RTO和项目接线
+
+【证据】已有计数的可靠包在失败的Socket尝试中也已改写timestamp，但计数不变。
+例如retained count=1、smoothed RTT=100时：失败当次只尝试窗口首包；下次update
+可以尝试后面的旧包，首包在age=125仍不重传、126才再尝试，wire count仍是1。
+count=0则无包龄限制，下一次update可再次尝试，仍发0；成功后才存为1。
+
+【撤回旧实现等价推断】原项目 `IHS_RetransmissionProcessAt` 在I/O前为全部到期
+候选增加计数、推进deadline，并在失败后继续发送同channel后续包。其公式/正向
+成功案例不能证明与本节失败事务相同。生产路径现以“实际尝试→按结果提交”处理：
+失败不加计数、同channel本轮停止、未尝试项不变，其他channel继续。pending对象
+在快照期间持有独立引用；ACK可移除其窗口所有权，不造成悬空指针；已观察到ACK
+的后续快照项跳过。I/O期间的新NACK通过generation保留，完成发送不覆盖更晚反馈。
+这是多线程交付机制，不冒称原版单线程Update也有相同的并发实现。
+
+生产timer调用 `IHS_RetransmissionProcessTicks`，普通可靠类型5/6直接使用：
+
+```text
+c = clamp(smoothedRTT, 65, 3276)
+delay = c + floor(c / 4)
+count==0 或 timestamp==0 或已标NACK：可尝试
+否则：int32(timestamp + delay - now) < 0 时可尝试
+```
+
+保留uint32回绕和严格负号判断；RTT每次处理只取一次快照，不能在候选计数和填充
+之间读取变化的估计而越过分配容量。旧 `ProcessAt` 毫秒入口为独立兼容入口，不再
+代表生产普通可靠包准入。实际timer仍每5ms运行；条件精度不证明墙钟执行逐tick等价。
+Connect类型1有自己的官方100ms连接调度，本项目该类型仍走既有毫秒路径；不能把
+普通可靠包的RTO修正扩大成连接握手重试策略也已对齐。
+
+### 37.4 不可靠窗口与连续轮转的契约
+
+【证据】新包从 `m_nUnreliableSendCursor` 扫至tail；失败位置保留为下一次新包
+起点，成功后才前进。已发送包只在bool=true阶段扫描，timestamp为0才尝试。
+NACK只标记/释放，不同步重发；先普通阶段再补发阶段，实际缺包与位图释放结果、
+16位packet ID回绕均在同一fixture内执行。
+
+退休使用window保存的入窗时间，而非Socket重写的最后尝试时间，按§25的200ms
+加RTT保留量检查。边界相等保留，超过一tick退休。已标记的旧包若补发遇预算/本地
+失败，Socket仍将零timestamp改成本次时间；它不会因计数未增加而自动在下一次
+补发扫描重试，需要后续NACK重新标记（可靠包另有RTO）。不能擅自把两者统一成
+“所有失败永远保持待立即重试”。
+
+【证据】Connection按优先级降序排列，第一轮逐channel先接收状态更新、可靠
+sender、不可靠false、FEC队列，第二轮从cursor扫描不可靠true。连续执行还确认
+原版轮转值允许暂存等于channel数N：3通道存储值为1→2→3→0→1，而非模3的
+1→2→0→1；扫描时值N映射回起点0。因此不能仅用三个合法起点的单次结果推出
+长期轮转实现。本节两种priority组合均连续执行5次Update，并保存实际报文顺序。
+此轮转细节属于原版行为，未据此推断必然出现肉眼停顿。
+
+### 37.5 验证入口与精确覆盖范围
+
+```sh
+python3 scripts/audit-steam-outgoing.py \
+  --binary /path/to/official/libmain-arm64.so \
+  --output build/video-recovery-re/outgoing.json
+python3 scripts/check-steam-outgoing.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-retry-sender-oracle
+ctest --test-dir build/desktop \
+  -R 'reliable_sender_official_vectors|retry_sender|retransmission_state_machine' --output-on-failure
+```
+
+生产oracle消费108个官方场景中50个可靠RTO/失败输入：实际session retained packets
+进入生产tick准入和Socket序列化，逐字节比较CRC、timestamp、packet ID、wire计数
+及各轮发送数量/停止位置。仅时钟与最终UDP I/O为替身；预置retained状态记录前次
+成功/失败初发，不把该准备步骤冒称实际联网发送。其余58个涉及不可靠缓存、整形
+和连接两轮调度的场景不包含在此生产等价验收中。
+
+`retransmission_state_machine` 额外覆盖失败不越过同channel后包、其他channel
+继续、ACK释放当前/后续snapshot和I/O中新NACK不被覆盖。`retry_sender` 用真实
+pthread使ACK发生在send callback等待期间，并在4000次生产tick处理期间并发修改
+RTT；结束后join再销毁。它们是项目所有权/线程验证，不替代官方策略来源。
+
+统一初发FIFO、独立重传timer与媒体feedback worker仍不同于原版Connection::Update；
+本节不将可靠重传条件的修正称为完整优先级/整形/普通不可靠发送缓存的生产实现。
+真实认证会话、系统背压时序、Switch输入/解码显示及用户原始停顿因果均无本节证据。
