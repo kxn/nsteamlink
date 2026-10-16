@@ -81,3 +81,9 @@ Switch curl 使用 libnx SSL，不引入应用自己的根证书文件或关闭 
 Makefile、hbl.json、source/main.c、source/trampoline.s 和 LICENSE.md，均未修改。
 `scripts/build-shortcut.py` 在 build 副本应用固定路径和返回 HOME 调整，见 decisions D-049。
 不使用 Nintendo/Steam 原生图标，不提交机器密钥、生成的 NCA 或模板二进制。
+
+IHSlib 的 `src/session/outgoing_sort.c` 参考
+[LLVM libc++19 sort.h](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/libcxx/include/__algorithm/sort.h)
+实现至多32个通道的排序，单文件使用 Apache-2.0 WITH LLVM-exception；完整许可位于
+`third_party/ihslib/src/session/LLVM-LICENSE.txt`。排序策略与同优先级结果以固定官方
+Steam Link 客户端原指令对照为准，开源实现只用于算法实现参考。

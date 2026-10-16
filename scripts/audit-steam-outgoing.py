@@ -353,6 +353,81 @@ def audit(base):
                     [marked, ordinary, retry],
                 )
 
+    # Raw header fallback uses a signed 32-bit subtraction of the zero-extended
+    # IDs, rather than a signed 16-bit wrapped difference. Exercise both sides
+    # of wrap/half-range without an out-of-cursor selective ACK assertion.
+    for head in (100, 65534):
+        for offset in (-1, 0, 4, 32768):
+            for bitmap in (None, b""):
+                r = Sender(rate=0)
+                ch = r.channel(
+                    1,
+                    0,
+                    unreliable=[(1, 999000, 999000)] * 4,
+                    head=head,
+                    cursor=(head + 4) & 65535,
+                )
+                packet = r.alloc(4096)
+                r.packet(
+                    packet, typ=10, stamp=r.now, retry=0, id=(head + offset) & 65535
+                )
+                body = (
+                    b""
+                    if bitmap is None
+                    else struct.pack("<IH", r.now - 100, (head - 1) & 65535)
+                )
+                r.w32(packet + 52, 13 + len(body))
+                if body:
+                    r.u.mem_write(packet + 77, body)
+                r.call(0x7F95DC, ch, ch + 176, packet)
+                values = [r.observe()]
+                values.append(r.observe(r.call(0x7F8CBC, ch, 0)))
+                values.append(r.observe(r.call(0x7F8CBC, ch, 1)))
+                record(
+                    f"nack_fallback_head{head}_offset{offset}_extended{int(bitmap is not None)}",
+                    "nack",
+                    dict(
+                        head=head,
+                        base_offset=offset,
+                        bitmap=None if bitmap is None else "",
+                        echo_age=100,
+                    ),
+                    values,
+                )
+
+    # Malformed bodies still consume the feedback timestamp; zero is the
+    # original sentinel, so a first timestamp zero does not reject the next -1.
+    for first_stamp, first_body, second_stamp in (
+        (1000010, b"\x00", 1000000),
+        (1000000, b"", 999999),
+        (0, b"", 0xFFFFFFFF),
+    ):
+        r = Sender(rate=0)
+        ch = r.channel(1, 0, unreliable=[(1, 999000, 999000)] * 4, cursor=104)
+        values = []
+        for stamp, body, ident in (
+            (first_stamp, first_body, 100),
+            (second_stamp, b"", 101),
+        ):
+            packet = r.alloc(4096)
+            r.packet(packet, typ=10, stamp=stamp, retry=0, id=ident)
+            r.w32(packet + 52, 13 + len(body))
+            if body:
+                r.u.mem_write(packet + 77, body)
+            r.call(0x7F95DC, ch, ch + 176, packet)
+            values.append(r.observe())
+        values.append(r.observe(r.call(0x7F8CBC, ch, 1)))
+        record(
+            f"nack_timestamp_first{first_stamp}_body{first_body.hex()}_second{second_stamp}",
+            "nack_sequence",
+            dict(
+                first_stamp=first_stamp,
+                first_body=first_body.hex(),
+                second_stamp=second_stamp,
+            ),
+            values,
+        )
+
     # A failed attempt writes the socket timestamp but does not increment the
     # count. With an existing count it must wait the strict RTO; an unsent count
     # zero is attempted again immediately. Later packets do not pass the failure.
@@ -405,6 +480,92 @@ def audit(base):
                 dict(priorities=priorities, blocked=blocked),
                 values,
             )
+    # Rebuilding priorities starts from the connection's creation-order table,
+    # not the previously sorted view. Run the actual setter as the trigger.
+    for total in (3, 16, 32):
+        r = Sender(rate=0)
+        entries = [(ident, ident % 3 - 1) for ident in reversed(range(total))]
+        for ident, priority in entries:
+            r.channel(ident, priority, reliable=[(0, r.now, r.now)])
+        r.call(0x7FC108, r.conn, r.now)
+        values = [r.observe()]
+        r.callbacks[0xC0E390] = lambda: r.ret(r.channels.get(r.r(1), 0))
+        for ident, _ in entries:
+            r.call(0x7FBC68, r.conn, ident, 0)
+        r.now += 126
+        r.call(0x7FC108, r.conn, r.now)
+        values.append(r.observe())
+        record(
+            f"connection_priority_reset_count{total}",
+            "priority_reset",
+            dict(entries=entries),
+            values,
+        )
+    # Actual comparator/sort instructions for the bounded 32-channel domain.
+    # These synthetic keys cover small-sort and the 24-element partition switch.
+    for total in (0, 1, 2, 3, 4, 5, 23, 24, 25, 31, 32):
+        patterns = [
+            list(range(total)),
+            list(reversed(range(total))),
+            [0] * total,
+            [i % 3 - 1 for i in range(total)],
+            [(i * 5) % 7 - 3 for i in range(total)],
+            [(-2147483648 if i & 1 else 2147483647) for i in range(total)],
+        ]
+        for pattern, priorities in enumerate(patterns):
+            r = Sender(rate=0)
+            array = r.alloc(4096)
+            for i, priority in enumerate(priorities):
+                ch = r.alloc(4096)
+                r.b(ch + 16, i)
+                r.w32(ch + 20, priority)
+                r.wq(array + 8 * i, ch)
+            r.call(
+                0x7FD464,
+                array,
+                array + 8 * total,
+                2 * (total.bit_length() - 1) if total else 0,
+                1,
+            )
+            order = [r.u.mem_read(r.q(array + 8 * i) + 16, 1)[0] for i in range(total)]
+            record(
+                f"sort_count{total}_pattern{pattern}",
+                "sort",
+                dict(priorities=priorities),
+                dict(order=order),
+            )
+    # Real factory fills a dense prefix; only allocation/constructor are adapters.
+    for requests in ((3, 1, 7, 0), (0, 31, 31), (32, 255, 3)):
+        r = Sender(rate=0)
+        created = []
+        values = []
+
+        def construct():
+            p = r.r(0)
+            ident = r.r(3)
+            r.wq(p, r.r(1))
+            r.wq(p + 8, r.r(2))
+            r.b(p + 16, ident)
+            r.w32(p + 20, 0)
+            created.append(ident)
+            r.ret()
+
+        r.callbacks[0xC11470] = construct
+        r.callbacks[0xC097E0] = lambda: r.ret(1)
+        for ident in requests:
+            result = r.call(0x7FBA34, r.conn, ident)
+            values.append(
+                dict(
+                    order=list(created),
+                    returned=None if not result else r.u.mem_read(result + 16, 1)[0],
+                )
+            )
+        record(
+            f"channel_factory_{list(requests)}",
+            "factory",
+            dict(requests=requests),
+            values,
+        )
     return cases
 
 

@@ -2105,7 +2105,7 @@ packet constructor、allocation/refcount、CUtl 容器、socket、路由目标�
 | 路径 | 官方证据 | 项目差异／证据边界 |
 |---|---|---|
 | 普通不可靠接收 3/4 → 反馈 10 | §25，HandleDataPacket/UpdateUnreliableState | 有生产函数差分；F/U 冻结快照不证明并发全轨迹等价 |
-| 普通不可靠发送 → 反馈 10 → 有限保留补发 | §25.3，SendUnreliablePackets/HandleNackPacket | 客户端 outgoing 包未完整接入这种缓存、标记、调度与退休；不能用可靠控制包重传代替 |
+| 普通不可靠发送 → 反馈 10 → 有限保留补发 | §25.3，SendUnreliablePackets/HandleNackPacket | §38接入普通缓存、标记、双轮调度与退休；不以可靠控制重传或FEC队列代替 |
 | FEC 类型 11 | §26，独立队列与 RS 编解码 | 配置未启用、解析器拒绝 11、无组恢复；是一整条能力缺口 |
 | 可靠媒体 5/6 | OnNegotiationInit 0x7ad710 与通用可靠窗口 | 项目媒体只接纳 3/4，故明确协商 reliable_data=false；不应冒报相同能力 |
 | 可靠控制/统计 5/6 → 7/8 | §14 的证据及本地 ch_control/retransmission | 已有独立实现，但本次未对所有 ACK/NACK、发送预算和并发轨迹做与 §25 同等级的穷举对比 |
@@ -2243,11 +2243,11 @@ SendReliablePackets、SendUnreliablePackets(false)、FEC SendPackets。
 三个案例使用真实排序及调度指令，验证三通道顺序和三个轮转起点；通道函数本体
 为事件替身，不测试并发/系统背压下的整体公平性。
 
-【本地源码差异】`session.c::IHS_SessionQueuePacket` 将初发包 append 到统一
-sendQueue，`SessionSendWorker` poll 首项；该初发队列没有同样的通道优先级排序和
-双类 deadline 整形。本地可靠重传定时器、媒体反馈 worker 和 HID 合并仍是各自
-机制，不能凭它们存在就视为已拥有官方连接级调度。是否有实际输入/反馈饥饿仍需
-负载日志；不能从调度差异直接推算会卡一两秒。
+【实现边界，见§38】统一sendQueue承担跨线程生产者交付；sender接入发送窗口后，
+初发尝试和周期Update使用通道优先级、两类deadline和两轮不可靠发送。旧版“本地
+只有FIFO且无整形”的描述不再代表当前实现。接收状态更新/媒体反馈仍由独立worker
+执行，上行FEC队列、Connect重试和墙钟执行仍有独立边界；不能据此称整个官方
+Connection::Update已等价。是否存在实际饥饿或一两秒停顿仍需负载/设备证据。
 
 ### 28.4 连接超时、暂停及 CRC 协商
 
@@ -2496,9 +2496,9 @@ counter == 0 或 last_send == 0：跳过包龄条件，立即尝试
 1250 不重传、1251 重传。33 个 `reliable_retry` 覆盖 RTT clamp、严格边界、
 counter=1/255 与三个立即尝试反例。Socket send 是显式替身；真实预算拒绝/发送
 失败另在 `send_budget` 验证，不能据此称重传线程调度逐 tick 等价。
-本地普通可靠包生产 timer 已改为直接判断16.16时间戳的严格边界，见§37；
-`ProcessAt` 毫秒入口仅保留兼容用途。5ms timer 的实际调用间隔仍不同于官方连接
-Update，不把条件相同写成墙钟触发时刻完全一致。
+本地普通可靠包由发送worker按通道调用16.16严格边界，见§37–38；`ProcessAt`
+毫秒入口仅保留兼容用途。5ms timer只唤醒sender，后者还进行约1ms有界等待；
+实际调用时刻仍不同于官方连接Update，不把条件相同写成墙钟逐tick一致。
 
 **累计 ACK 触发**：类型 7 进入可靠 state 的 HandleAckPacket；包头 sequence 是
 累计确认号，13…16B 是 echo。先计算 `int16(ack - head + 1)`，正值时按已占用范围
@@ -3433,9 +3433,10 @@ Native file oracle 消费27个原版案例中适用于应用固定文件名的13
 | Socket::Send | 0x7ff1dc | 原始时间戳、双类准入、CRC与成功后的预算更新 |
 | Connection::Update | 0x7fc108 | 原始排序和两轮调度；两类sender本体均执行 |
 
-108个固定场景含18个发送/预算/transport组合、42个可靠RTO/计数场景、16个不可靠
-退休/补发场景、20个NACK→两轮发送场景、8个可靠失败时序，以及4个连续连接更新
-场景。窗口存储是按本节前置状态预置的ring；Advance/Release只执行请求的释放并
+199个固定场景含18个发送/预算/transport组合、42个可靠RTO/计数场景、16个不可靠
+退休/补发场景、39个NACK/顺序边界场景、8个可靠失败时序、4个连续连接更新、
+3个优先级重设、66个排序输入和3个实际GetChannel场景。GetChannel的分配/构造
+适配器与这些新增分支的准确范围见§38。窗口存储是按本节前置状态预置的ring；Advance/Release只执行请求的释放并
 维护存储，原版引用计数/销毁、接收消费者、空FEC队列、统计、最终transport及静态
 初始化注册是明确适配器。排序、sender、Socket预算和CRC不是模型替身。
 
@@ -3477,7 +3478,7 @@ count=0则无包龄限制，下一次update可再次尝试，仍发0；成功后
 的后续快照项跳过。I/O期间的新NACK通过generation保留，完成发送不覆盖更晚反馈。
 这是多线程交付机制，不冒称原版单线程Update也有相同的并发实现。
 
-生产timer调用 `IHS_RetransmissionProcessTicks`，普通可靠类型5/6直接使用：
+发送worker按通道调用 `IHS_RetransmissionProcessChannel`，普通可靠类型5/6直接使用：
 
 ```text
 c = clamp(smoothedRTT, 65, 3276)
@@ -3488,7 +3489,8 @@ count==0 或 timestamp==0 或已标NACK：可尝试
 
 保留uint32回绕和严格负号判断；RTT每次处理只取一次快照，不能在候选计数和填充
 之间读取变化的估计而越过分配容量。旧 `ProcessAt` 毫秒入口为独立兼容入口，不再
-代表生产普通可靠包准入。实际timer仍每5ms运行；条件精度不证明墙钟执行逐tick等价。
+代表生产普通可靠包准入。5ms timer只负责唤醒，不在timer线程直接发包；worker
+自身进行约1ms有界等待。条件精度不证明墙钟执行逐tick等价。
 Connect类型1有自己的官方100ms连接调度，本项目该类型仍走既有毫秒路径；不能把
 普通可靠包的RTO修正扩大成连接握手重试策略也已对齐。
 
@@ -3524,17 +3526,136 @@ ctest --test-dir build/desktop \
   -R 'reliable_sender_official_vectors|retry_sender|retransmission_state_machine' --output-on-failure
 ```
 
-生产oracle消费108个官方场景中50个可靠RTO/失败输入：实际session retained packets
+可靠重传oracle消费199个官方场景中50个可靠RTO/失败输入：实际session retained packets
 进入生产tick准入和Socket序列化，逐字节比较CRC、timestamp、packet ID、wire计数
 及各轮发送数量/停止位置。仅时钟与最终UDP I/O为替身；预置retained状态记录前次
-成功/失败初发，不把该准备步骤冒称实际联网发送。其余58个涉及不可靠缓存、整形
-和连接两轮调度的场景不包含在此生产等价验收中。
+成功/失败初发，不把该准备步骤冒称实际联网发送。其余149个缓存/整形/发送阶段、
+排序与factory场景由§38的生产oracle消费；两类oracle的精确比较字段分开列明。
 
 `retransmission_state_machine` 额外覆盖失败不越过同channel后包、其他channel
 继续、ACK释放当前/后续snapshot和I/O中新NACK不被覆盖。`retry_sender` 用真实
 pthread使ACK发生在send callback等待期间，并在4000次生产tick处理期间并发修改
 RTT；结束后join再销毁。它们是项目所有权/线程验证，不替代官方策略来源。
 
-统一初发FIFO、独立重传timer与媒体feedback worker仍不同于原版Connection::Update；
-本节不将可靠重传条件的修正称为完整优先级/整形/普通不可靠发送缓存的生产实现。
+FIFO交付后的窗口/整形/发送阶段接线见§38；接收更新和媒体feedback worker仍
+不同于原版Connection::Update，不将发送阶段对照扩大成整个连接循环的墙钟等价。
 真实认证会话、系统背压时序、Switch输入/解码显示及用户原始停顿因果均无本节证据。
+
+
+## 38. 普通发送缓存、整形与发送worker
+
+### 38.1 官方入口、实际factory与排序反例
+
+【证据】§37的sender/Socket/Connection Update链仍是策略来源。补充执行
+`GetChannel 0x7fba34`：已有slot直接返回；请求新ID时逐个补齐0…ID的缺slot，
+每次构造标记dirty。请求3→1→7→0与0→31→31均固定为原指令输入，32/255不构造。
+分配与channel构造为适配器；请求边界、循环、存储、复用和dirty由原指令执行。
+`HandlePacket 0x7fb164–0x7fb1c0` 在CRC/ID/范围准入后、channel分派前调用该factory，
+所以未知type也可以创建传输channel，而不是只有Start*Data才创建。
+
+【证据】SetChannelPriority改变的是channel内的key和dirty。下一次Update从原始
+slot表重建排序视图，不能沿用上次已排序顺序作为稳定排序输入。3/16/32通道的
+实际setter→连续Update均核对。24个及以上元素会走另一排序分支；32通道存在
+同key次序变化，普通稳定排序无法复现。
+
+`outgoing_sort.c` 专门处理至多32个ID，使用LLVM libc++19算法实现参考，许可见
+third_party/README；其行为标准仍是官方客户端`0x7fd464`的执行结果。66个输入
+覆盖0/1/2/3/4/5/23/24/25/31/32长度、正反序、全等、重复key和int32极值；不因
+ELF中出现不同clang版本字符串就宣称全部函数来自某一工具链。没有使用第三方
+Remote Play实现或Host支持某API来反推客户端排序策略。
+
+组件sender/排序fixture可以直接预置channel表，包括不符合真实factory创建顺序的
+合成表；生产oracle同样预置该组件前态。实际GetChannel的密集前缀另有独立输入，
+不把预置表测试当成整个上层创建链的执行证据。
+
+### 38.2 队列交付、序号与真实保存的包
+
+`sendQueue`只负责把生产者数据交付给既有sender线程。普通不可靠3/4进入owned
+发送window，保存完整header/payload和独立入窗时间；立即尝试false阶段。初发
+发送失败或预算不足时保留原包，cursor停在失败位置。可靠5/6在公开给worker前
+已注册owned待确认包，worker的首次实际尝试后才激活后续发送；避免快速ACK先于
+注册或timer越过尚未入队的初发。
+
+可靠/不可靠各自的16位ID计数归connection/channel所有；移除并重建媒体channel
+对象不重置它们。NEXT只作为入队请求，实际排队时分配ID；整帧分片在queue mutex
+下连续分配/发布，不能在两个线程分别“准备frame”时先各占一个head，随后把
+续片交叉插入。autoPacketId只是本地元数据，不上线；显式ACK/NACK等引用ID保留。
+可靠control的加密序列仍受原sendLock保护，与传输packet ID是不同序列。
+
+cache采用64起始、二次幂增长的ring并保存独立created数组，选择性释放保留该
+slot时间、Advance才清除。跨65535增长重排和payload所有权有本地测试。累计跨度
+到模糊的16位半区间之外拒绝，分配失败不转移原body；这是项目资源/坏输入防护，
+不把原版EnsureCapacity的断言/异常当成已经复制的故障策略。
+
+### 38.3 type10准入、标记和退休
+
+type10经实际datagram CRC/连接准入后进入缓存NACK处理，transport已连接才应用；
+不把它交给音频/视频decoder或普通接收window，也不因callback未知就丢掉反馈。
+新channel注册遵守0…ID的factory前缀，合法未知type只建立传输状态后仍忽略payload。
+
+NACK先检查旧feedback timestamp（0为原版sentinel），再保存本次timestamp；
+1…5B坏body没有位图动作，但已消耗该时间水位。因此一个较新的坏NACK仍可使
+随后的旧有效NACK被忽略；不能把检查长度提前后声称异常分支完全相同。
+完整body先处理连续水位/已有空head，再按非零bitmap字节扫描到最高set bit；
+1选择性释放已发送packet，0只把足够老且已有计数/非零timestamp的包标为0。
+最后处理base之前的包。cutoff采用本机RTT准入与echo的较新者。
+
+【证据／边界】header-only fallback用的是两个零扩展ID的signed int32减法，
+不能擅自换成int16回绕比较。head=65534而base=2时该差为负，不标记；其他字段
+如连续水位与cursor准入仍各自使用原来的int16规则。新增16个base前/等于/尾后/
+半区间与两侧回绕输入，以及3个零sentinel/旧feedback/坏body时序，都实际执行
+原NACK→普通阶段→补发阶段。
+
+退休和重发条件沿用§37：入窗时间超过200ms加RTT保留量才Advance，等号保留。
+旧包只有true阶段且timestamp=0才尝试；失败的Socket仍会写timestamp，不保证
+下次立即重试。新包失败则cursor不前进，后续false/true阶段仍可重试该位置。
+现有clock平均值供这些公式使用；完整PingStats/TimeOffsetStats采样窗口另见§29.5，
+不能把固定RTT输入对照算成整个统计过程等价。
+
+### 38.4 双类预算、优先级与worker执行
+
+Socket序列化入口采用§28构造默认限额12,500,000/625,000 B/s，3/4与5/6各有
+独立deadline。每次尝试先stamp，未到deadline返回1、不调用UDP；成功才扣预算，
+空闲后最多追赶65tick。按不含CRC额外尾部的packet长度计费，CRC本身实际生成。
+bool旧入口仍表示发送成功；内部保留0/1/2供sender控制，EAGAIN/EWOULDBLOCK与
+硬错误都不会消耗成功额度。不把host消息94擅自接到预算setter。
+
+初发交付后周期发送按priority降序：每channel可靠发送→不可靠false，再从轮转
+位置执行所有channel的不可靠true；保留N暂存值的轮转规则。首次协商完成入口
+按官方HandleStreamStarting将控制1设2、统计2设−1；麦克风Start/Stop入口设1/0。
+channel优先级只改dirty，下一次Update重建，不逐packet重排。
+
+可靠timer不再与sender同时直接发送，它只唤醒sender。sender在无交付数据时
+有界等待约1ms；持续有数据也按至少65tick间隔执行周期发送，初发交付仍逐项尝试。
+序号/整帧发布只持queue mutex，不持Base/socket锁；缓存、注册、排序和socket事务
+由Base锁序列化，避免生产者持control sendLock再等待socket锁的倒置。没有新增
+线程、detached worker或文件I/O。停止/join现有收发/媒体生产者、销毁timers后，
+才释放待发队列、cache和锁；NRO显示/loader属性仍须独立设备证据。
+
+这是发送阶段的接线：官方同Update内的接收状态更新，本项目仍由原媒体/feedback
+worker执行；上行FEC队列和Connect类型1的100ms专用重试亦有独立契约。不能把
+本节称为整个Connection::Update、系统背压、网络时序或所有发送模式均已等价。
+
+### 38.5 验证入口与比较字段
+
+```sh
+python3 scripts/audit-steam-outgoing.py \
+  --binary /path/to/official/libmain-arm64.so \
+  --output build/video-recovery-re/outgoing.json
+python3 scripts/check-steam-outgoing-engine.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-outgoing-oracle
+ctest --test-dir build/desktop \
+  -R 'outgoing|reliable_sender_official_vectors' --output-on-failure
+```
+
+199个原指令场景由两个生产oracle消费：50个可靠RTO/失败场景见§37；149个发送
+引擎输入包括80个逐轮wire/预算/阻塞/轮转及不可靠head/tail/cursor/retained内容
+对照，66个sort和3个factory比较ID顺序。已释放slot不读取原版残留对象字节；
+私有可靠window metadata和原版接收消费者动作不在此oracle比较字段内。
+NACK输入在本地从真实CRC datagram进入生产session，不直接调用缓存setter。
+
+`outgoing`测试4个线程同时准备并发布多分片frame、两类序号独立、跨65535的100包
+ring增长和销毁。`outgoing_worker`启动实际收发线程，验证预算拒绝仍缓存、一次
+EAGAIN后wire计数仍0、真实type10重发同ID/payload且计数为1、过期后不再补发；
+受控时钟/recvfrom/最终sendto是替身，完整跑两次并join。既无认证Steam主机，
+也无Switch串流/解码/显示或原用户停顿因果证明。
