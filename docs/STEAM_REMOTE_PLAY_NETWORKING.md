@@ -1332,7 +1332,8 @@ data 分支还要求至少 9 字节。
 之后依次为：flag bit0 存在时 `varint(stats_length) || stats_protobuf`；bit1 存在时的可选时间数据；
 最后为 SNS 端到端 encrypted data chunk。客户端发送函数在 bit1 时追加一个 uint16_le，值为距前包
 微秒数右移 4（只在非负且至多 250000 微秒等条件成立时）；不为每个包强行添加。
-stats 编码设置 bit0，空间不足会裁减 quality 字段或省略 inline stats（`0x84ff68–0x850328`）。
+stats 编码设置 bit0，空间不足会裁减 quality 字段或省略 inline stats（`0x84ff68–0x850328`）；具体顺序、严格容量
+边界和内联发送登记早于 socket 的行为见 §21.23。
 
 Router→Client 的 data 首字节匹配 `(byte0 & 0xe0)==0x40`，同为 9 字节基础头和两个独立序号，
 connection_id 位于偏移 5（`0x8163ac–0x81642c`）。bit0 按最多 5 字节 varint 取长度并检查剩余空间；
@@ -1434,7 +1435,8 @@ Route 携带 my_pop_id、your_pop_id 和 interior_score，整个快照有 revisi
 - **peer routes revision**：RecvRoutes `0x834df0` 解析成功后仅当新 revision 严格大于已保存 revision
   才替换快照并要求重算。即使旧/重复快照也设置待 ACK 标志。PopulateRendezvousMsg `0x834bc0`
   带 ack_peer_routes_revision；本地快照未获 ACK 且到期时重发。rendezvous 填入快照后把期限设为
-  当前+1秒，relay stats 成功发送快照后则设为当前+500ms；两条入口的到期比较见 §21.14。
+  当前+1秒，relay stats 登记快照后则设为当前+500ms（控制消息成功后，或数据内联封包时）；
+  两条入口的到期比较见 §21.14，内联提交点见 §21.23。
   收到超过自己最新 revision 的 ACK 只报告错误；等于最新值才清除重发期限
   （`0x834c90–0x834cf0`、`0x83d920–0x83da74`）。
 - **forward target revision**：对某个本端 RelaySession 选定对端路由令牌后，如果目标令牌发生变化，
@@ -2074,7 +2076,9 @@ revision 已改变时重建。它记录新 revision、清原因、标记本地 r
 它不是收到 BadRoute 立即销毁所有该 POP session。§21.1 的基础 backup 保留行为只适用于
 已经通过这层清理的输入。路由候选不可用、active 角色消失和底层 session 销毁是三个不同事件。
 
-`BSetSessionForwardTargetToken 0x83505c–0x835290` 则区分 desired 与最后发送的目标：
+`BSetSessionForwardTargetToken 0x83505c–0x835290` 区分 desired 与用于构造报文的已登记目标
+（字段简称 sent）。**撤回将 sent 理解为“最后成功发出的目标”的描述**：本函数在 Populate
+阶段更新它，随后 socket 发送失败也不回滚 token、POP 或 revision（§21.22）。其字段规则为：
 
 - desired token 为空时返回 false，保留旧 sent token、sent POP、revision 和 ACKed。
 - desired token 非空、字节与 sent token 相同时返回 true，以上状态均保持；即使 desired POP
@@ -2103,8 +2107,9 @@ peer routes/ACK 仅在该 session 是 active primary，或调用者显式 force 
   是否为 active primary、是否为当前 transport 分别生成非主 session/非主 transport 标志，
   不能把这两个主路概念合并。
 - Populate 仅构造待发送内容，不清待 ACK、不推进 routes 重发时钟。
-  `TrackSentStatsToSession 0x835f00–0x835fbc` 在成功发送后才清已发送的 peer ACK 标志，
-  已发送 routes 则将期限设为 `now+500000` 微秒。
+  `TrackSentStatsToSession 0x835f00–0x835fbc` 清已登记的 peer ACK 标志，
+  登记 routes 时将期限设为 `now+500000` 微秒。该函数在控制消息成功后调用，数据内联则
+  在封包阶段调用，早于实际 socket 结果；不能把前一种调用时机推广到后一种（§21.23）。
 
 **rendezvous Evidence**：`PopulateRendezvousMsg 0x834bc0–0x834d04` 总填 peer routes ACK 并清
 待 ACK 标志，包含 connection_closed 时也执行这一步，但不继续附加本地 routes。
@@ -2113,7 +2118,8 @@ peer routes/ACK 仅在该 session 是 active primary，或调用者显式 force 
 但发送间隔和等号不同。`BNeedToSendRoutesNow 0x834dd4–0x834df0` 的到期判断也是 `<=`。
 
 **Conclusion**：撤回“一律每秒重发 routes”的概括。实现须保留“构造上下文”和“成功发送后登记”
-两个阶段；rendezvous 在填消息时就推进一秒期限，stats 在成功发送后推进半秒期限。旧 peer ACK
+两个阶段；rendezvous 在填消息时就推进一秒期限，stats 在 TrackSent 登记时推进半秒期限
+（控制消息成功后，或内联数据封包时）。旧 peer ACK
 导致 lastAcked 倒退、forward ACK 不匹配会撤销确认等接收行为按 §21.12 保留，不能自行规范化。
 
 ### 21.15 P2P stats 的双序号、短暂乱序等待与可达性标志
@@ -2149,7 +2155,8 @@ peer routes/ACK 仅在该 session 是 active primary，或调用者显式 force 
 SDR base 的 +264 子对象，因此其 +24 对应 SDR +288。Confirmed `0x87877c–0x8788b0` 在可发送
 且标志为 1 时清标志并通知选路；不可发送时只诊断。与此同时，固定 APK 的 NotConfirmed
 `0x878698–0x87877c` 在标志为 **0** 时直接返回；为 1 时才写 1 并通知。
-这与开源 GNS 同名函数不能互换推导；原始指令的 8 个输入及外层组合的 4 个输入均覆盖该行为。
+所固定 GNS 源码同名函数也有相同提前返回；这不是已证明的 APK 特有差异，不能推广到其他
+版本。原始指令的 8 个输入及外层组合的 4 个输入覆盖该行为。超时调用方另有直接通知，见 §21.20。
 
 **Conclusion**：§21.13 的“无 active 且标志为 0”调用在该固定版本中不会把标志恢复为 1。
 不可仅凭日志 “Will re-confirm” 或函数名称宣称已经发生状态改变。若实现决定修正这一行为，
@@ -2197,8 +2204,9 @@ GetStatsSendNeed 与主动调度器的 lifetime 参考时钟确实不同，固�
 
 `PutAcksIntoRepeatedField 0x840fd8` 将每项编码为
 `(uint16(sequence)<<16) | floor((now-received)/64)`；延迟部分超过 65535 时饱和为 65535，
-负延迟经诊断也走饱和分支。构造字段不消费 pending 队列；成功发送后才由 TrackSentAck/
-TrackSentStatsToSessionCommon 清理相应项，不能在 Populate 阶段丢失待回复内容。
+负延迟经诊断也走饱和分支。构造 ACK 字段不消费 pending 队列；由后续 TrackSentAck/
+TrackSentStatsToSessionCommon 清理相应项。控制消息成功后触发，数据内联在封包时触发，
+不能把 Populate、inline 封包和 socket 成功混成同一个阶段（§21.23）。
 
 `RecvPackedAckInternal 0x84f1f0–0x84f424` 先将 wire ACK 的高 16 位扩展为发送序号：
 匹配统计 in-flight 时先更新已确认的 instantaneous/lifetime 基准并清 in-flight 标志，然后查
@@ -2234,7 +2242,9 @@ socket 返回失败也**不回滚**已分配的 sequence；成功才登记 Track
 
 **Conclusion**：一次控制 stats 不等于一条永远独立于数据包的固定心跳。实现需要允许与 SNP
 同发及控制消息回退；“发送失败后重试”必须分清原来构造的内容、已消耗的序号和成功后才提交
-的确认/重发状态。本节的原始函数用例明确替代上下文生产、SNP 与 socket 返回值，以验证承载
+的确认/重发状态。**该成功后登记规则仅指独立 type 26 控制消息，撤回将它推广到所有 stats
+承载的解释**；数据包内联 stats 在 UDP 发送前已登记，见 §21.23。本节的原始函数用例明确替代
+上下文生产、SNP 与 socket 返回值，以验证承载
 选择和失败状态；§21.14/§21.16 分别核对其生产者和发送登记，不能据此声称整个 SNP 已互操作。
 
 
@@ -2279,7 +2289,8 @@ mode>=1 且该侧超时时要求 1|2|4。Idle 不按此方式 aggressive 探测�
 | SharedCluster/POP | front 的最近三样本及有效桶、direct/estimate、interior cache 的 ping/penalty/flags/测量时刻、最近候选 | §21.1、§21.4、§21.10 |
 | RelayServer | 地址、root/alternate 关系、cookie、challenge/server_time/本地收到时刻、公网映射、ping/申请 pending 及各自失败计数、shutdownTime/avoidTime | §18.2–§18.3、§21.3、§21.7、§21.11 |
 | 连接的 SDR transport | 全部 session、active primary/backup、两组 per-POP 路线、peer routes 快照及 revision、本地快照及 latest/ACK/retry、重算原因和全局 revision、migration state/target、need-confirm | §21.1–§21.2、§21.7、§21.9、§21.12–§21.15 |
-| 每个 RelaySession | relay 签发的本端 token、desired 对端 token/POP、sent 对端 token/POP/revision/ACKed、relay 序号及 LinkStats/待 ACK/期待 ACK | §18.4、§21.12–§21.18 |
+| 每个 RelaySession | relay 签发的本端 token、desired 对端 token/POP、构造阶段登记的 sent token/POP/revision/ACKed、relay 序号及 LinkStats/待 ACK/期待 ACK | §18.4、§21.12–§21.18、§21.22 |
+| P2P transport 子对象 | 自己的 end-to-end ping tracker、pending reply、失败次数、继续采样额度和独立 thinker；与连接 LinkStats 分离 | §21.20 |
 | SNS 端到端连接 | E2E 序号/统计/加密/SNP、当前 transport；与 relay/session 的生命周期分离 | §12–§15、§18.1、§21.15–§21.18 |
 
 外部输入与调度入口也应明确区分：
@@ -2293,10 +2304,151 @@ mode>=1 且该侧超时时要求 1|2|4。Idle 不按此方式 aggressive 探测�
 | 全局约 100ms thinker 或提前唤醒 | 更新超时/失败缓存/探测预算/readiness；再按连接的 good-enough 条件 pursue |
 | 连接选路 | CleanRoutes → 基础 active selector → 本地 routing message 检查；端到端确认标志保留固定版本的实际行为 |
 | session thinker / stats ACK / RTT 样本 | 收紧最早 deadline，处理 LinkStats 失败/统计/ACK/保活；relay 与 E2E 两侧分别维护 |
-| 构造待发包 | token/quality/ACK/metadata 进入上下文；除明确写明的 rendezvous 规则外，不因构造就消费 pending 状态 |
-| SNP 或控制 socket 的发送结果 | 失败保留成功后才提交的状态，但不回滚已经分配的 wire sequence；成功运行相应 TrackSent 登记 |
+| 构造待发包 | Populate 上下文、rendezvous 填充和 inline 封包是三个阶段；后两者分别可以推进 routes 期限或触发 TrackSent 登记，不能一律视作无副作用（§21.14、§21.23） |
+| SNP 或控制 socket 的发送结果 | 按承载区分登记点：独立控制消息成功后登记；数据内联 stats 在 gather 前已登记，失败不回滚。两者都不回滚已分配的 wire sequence（§21.23） |
 
 **实现一致性约束**：不同层使用同一单调时钟来源，但不能统一它们的期限、严格/非严格比较、
 失败额度或 revision 比较方式。随机避让、配置、对端 token 和服务器目标作为明确输入；公网与
 局域网是这些输入和测量结果的差异，以上路径中没有据“公网”另换一套选路/ACK 协议的分支。
 不同 transport、活动级别、network test 与普通播放器的分派仍分别按 §9–§16 执行。
+
+
+### 21.20 P2P transport 的独立确认、采样额度与后台探测
+
+**Evidence**：`CConnectionTransportP2PBase` 构造 `0x87806c–0x8780fc` 的 +536/+540 初始化
+为 0/5，+528 deadline 清零，+24 need-confirm=1。这里的 transport 探测状态与 §21.16 的
+connection/session LinkStats 分开；不能把相同的“end-to-end”名字理解成同一组 deadline/counter。
+
+`P2PTransportTrackSentEndToEndPingRequest 0x8782a0–0x878404` 总更新本 transport 的最后请求
+时刻；没有 pending 时才递减非零采样额度、用自己的近期 RTT 建立期限（未知 RTT 1250000µs，
+允许延迟再加 200000µs）并调度 thinker。已有 pending 则不递减、不延长期限。
+构造时的 5 不是连接总共只能探测五次：连接的
+`TransportEndToEndConnectivityChanged 0x874c2c–0x874d80` 会把该额度提高到至少 5。
+
+**thinker Evidence**：`P2PTransportThink 0x878404–0x878698`：
+
+1. 仅内部连接状态 -2/2/3 处理；其他状态直接返回。基础复查时间为 now+2秒，再按以下 deadline
+   收紧，不等同于全局 100ms thinker 或 §14 的路径评估间隔。
+2. pending 非零且 `<=now` 时清零、失败次数加一；第三次起、need-confirm=0 时调用
+   NotConfirmed，随后**直接**通知 TransportEndToEndConnectivityChanged。因此 §21.15 的提前
+   返回仍不置 flag，但这条调用方会清/收紧选路状态并补采样额度，不能推广为“超时完全没副作用”。
+3. 没有 pending 且 BCanSendEndToEndData=true 时，采样额度>0 就发 immediate（request=3）。
+4. 额度耗尽后，当前选中自己、尚无当前路径或当前路径 need-confirm 时，只要自己 need-confirm、
+   有失败、smoothed ping<0、最近样本不足 3 或**累计 ping 接收量<10**，仍发 immediate。
+   这项 10 是 tracker 的累计样本量（子对象+516），不是 §14/§21.2 的 15 个有效时间桶。
+   都满足健康条件时由普通 E2E 保活维护，不额外造此层探测。
+5. 当前已有另一条确认可用的路径时，本 transport 改为每 `lastRequest+10秒 <=now` 才发
+   delayed-OK（request=2）；未到期则收紧下次唤醒。不能因为它是备用 transport 就完全停止测量。
+6. 发送回调可能建立新的 pending；thinker 在回调后重新读取，下一次取 pending 与 now+2秒的
+   较早者。发送失败且未建立 pending 时保留两秒复查，不自行制造一个“已发探测”的期限。
+
+`TransportEndToEndConnectivityChanged` 总提高额度至至少 5、立即唤醒 connection。
+need-confirm 与“是否当前选中”相等时清 sticky 并把下一次评估置 ASAP：包括当前路径需确认、
+或另一条路径刚确认可用。状态活跃且已确认时，还按相应 transport 首次记录协商可用耗时，
+已有记录不重写。这是客户端响应状态变化的策略，不是 SDR 服务器的资源分配。
+
+**有效 E2E 收包 Evidence**：`RecvValidEndToEndPacket 0x83f314–0x83f748` 先清本 transport 的
+pending 和连续失败。need-confirm=1 时先要求重选已有 session，再在有 active 路径且可发送时
+确认；无 active 时不会只凭一个迟到包清 need-confirm。首次 smoothed ping<0 时可用选中路线的
+front+interior+remote 作为初值，应用本地 override（-1 禁止、>=0 替代）并登记一个桶内样本。
+连接的路径评估已到期时再运行 ThinkSelectTransport。清 pending 不表示重新初始化采样额度，
+也不是清掉所有 session 的序号/ACK 窗口。
+
+这些入口均有原始指令输入断言；thinker 的发送返回/调度服务、首次样本 PingTracker 回调及连接
+路径选择提供者在对应组中明确替代。不能把已有单个保活间隔当作这层完整策略。
+
+### 21.21 本地 routes/ACK 在 relay stats 与 CM 信令之间的回退
+
+**Evidence**：P2P SDR 外层 `ThinkSelectServer 0x837a90–0x837f2c` 在内部状态 -2/2/3 运行
+基础选路，并取得当前 primary 的已登记目标。定义：
+
+- `routesDue = lastAckedLocalRevision != latestLocalRevision && retryDeadline<=now`。
+- `ackPending` 为待回复 peer routes 的标志。
+- `probeWanted` 要求 primary/目标可用、need-confirm=1，且 connection E2E 没有 pending reply，
+  或 `lastImmediateRequest+200000<=now`。
+
+三者都为 false 就返回。只有 probeWanted、没有 routesDue/ackPending 时直接对 primary 发
+request=3、force E2E 的 stats；这条专用分支不先发 CM。发送后期望 connection E2E pending
+已建立；发送失败且没有 pending 时走诊断，不能凭空假设转为 CM。
+
+需要 routes 或 ACK 时先设置待 ACK；有 primary 且 wire state=3 才先尝试 relay stats。
+probeWanted 时 request=3；否则 routesDue 时 request=2，只有 ACK 时 request=1；均 force E2E。
+成功后还要同时满足以下条件才省略 CM：待 ACK 已清、local routes 已确认或 retry 尚未到期、
+need-confirm=0、relay 没有失败且最后收包严格在 10 秒内、connection E2E 也没有失败且最后收包
+严格在 10 秒内。恰好 10 秒会回退；仅 socket 返回成功不充分。
+
+没有 primary、不在 wire state=3、stats 失败，或上述健康条件任一不满足时，经
+SetRendezvousCommonFieldsAndSendSignal 发送 CM/rendezvous。若本轮开始时 routesDue，还先将
+共享 retry deadline 清 0，使 PopulateRendezvousMsg 能立即附加快照；这也可能发生在前一次
+stats 成功、已经写过半秒期限之后。CM 填消息的后续一秒规则仍按 §21.14。
+特别是 deadline==now、need-confirm=0 时，外层视为 routesDue，但实际 stats 构造器的严格
+小于检查不带 routes；即使该 stats 成功，仍经 CM 附加快照，最终期限变为一秒。
+`native_outer_stats_signal_chain` 已串接实际 stats 与 rendezvous 填充核对该等号，不能用会
+无条件写半秒期限的发送桩替代这一组合结论。
+
+若同轮还需要探测而第一次 stats 未成功，CM 分派之后可再次请求 immediate stats：一次外层调用
+最多因此出现“stats → signal → stats”，不能自行去掉后一次并声称与官方相同。
+外层完整函数用例明确替代基础选路、实际 stats/socket 和信令发送，覆盖单独探测、十秒/200ms
+等号、ACK-only、缺少目标、健康状态以及失败回退；§21.14/§21.22 另核对实际 stats 生产/提交。
+
+### 21.22 同一对象图上的接收与发送组合约束
+
+**接收 Evidence**：输入为已由外层定位 session、解析后的 stats；离线
+`native_receive_sequence_chain` 连续调用原始 ProcessMessage_P2PStats，
+串接 relay/E2E Expand、两侧 TrackProcess、RecvNonDataSequencedPacket、RecvStats/Common、
+待 ACK/ACK 调度、有效 E2E 处理；仅替代 SNP 交接、E2E ACK 服务、socket/线程调度和连接层
+ThinkSelectTransport。初始化及跨包状态都保留在同一合成对象图，不每包重置窗口。
+
+一侧新序号、另一侧重复时，扩展/诊断计数可以变化，但两个接收高水位都不提前提交。
+例如 `(relay=101,e2e=201) → (102,201) → (102,202)` 中第二包拒绝，第三包仍能接受；把 relay
+的 TrackProcess 放到 E2E 校验前会错误吞掉第三包。反向混合也如此。已经拒绝的重复 stats 不
+重复进入 pending ACK 队列；quality 的隐式 ACK 仍对有效包生效。
+
+TrackProcess 的小缺口先按 gap-1 记暂定丢失，迟到的未重复包可减少该计数并增加乱序计数，
+不倒退最高序号或最高序号对应时刻。gap>=100 则记 lurch 并 InitMaxRecvPktNum，重建窗口，
+不是将整个 gap-1 计作普通丢包。初始化将新高水位之前的相应位图标为已登记，因此大跳后的
+旧缺口包可能被拒绝；不能只移一个空窗口再允许它们逐个补入。
+
+**发送 Evidence**：`native_stats_send_chain` 串接原始 BSendStats、Populate、BSet target、通用
+生产器、GetStatsSendNeed、ACK 编码、TrackSentStats/Common、期待 ACK 登记、relay 与 transport
+的探测登记。quality 对象构造/ByteSize、序列化容器、SNP/socket 和 thinker 服务是明确提供者。
+发送失败时仍已消耗 wire sequence，且 BSet 阶段登记的新 sent token/POP/revision 保留；这不是
+最后成功发送快照。成功后才消费待 ACK、启动对应 reply/期待 ACK 记录、清已发 routes ACK 并
+推进 routes 的半秒期限。这里指独立控制消息；内联数据包的另一提交点见 §21.23。
+一次“提交或回滚整个发送事务”会同时违反这两类状态的规则。
+
+两组组合输入覆盖重复/迟到/双序号不一致/环绕/大跳及发包失败、空目标、隐式统计 ACK；它们
+加强函数间顺序的证据，仍不声称执行了真实网络、整个 SNP 或不同进程/线程的所有交错。
+
+
+### 21.23 内联 stats 的空间裁减与发送前登记
+
+**Evidence**：`SerializeSDRInlineStatsGeneric 0x84ff68–0x850374` 读取上下文缓存的 body 长度和
+包含 varint 前缀的长度。长度为 0 时不附加；包含前缀的长度必须**严格小于**剩余空间才附加，
+恰好相等也进入裁减。裁减策略不区分公网/局域网，也不按字段名称任意挑最不重要者：
+
+1. 只要有 relay quality，优先处理它。该 quality 同时有 instantaneous 和 lifetime 时先移除
+   instantaneous；只有其中一种或为空时清整个 relay quality。
+2. relay quality 已不存在后，才用同样规则处理 E2E quality。因此可以先丢掉 relay lifetime，
+   而仍保留 E2E instantaneous，不是“先删所有 instantaneous，再删所有 lifetime”。
+3. 每次裁减后重新计算 quality 所隐含的 ACK 与显式 flags、protobuf ByteSize 和 varint 长度，
+   再判断是否放得下。若原显式请求需要保持 ACK，即使删除 quality 也会补显式 flags；
+   仅由被删除 quality 隐含的请求则可以随它消失。新增 flags 自身占空间，不能只减旧字段长度。
+4. 两类 quality 都移除仍放不下时，整个 inline stats 省略；这里不继续删路由 token、routes 或
+   ACK 数组来强塞，也不在该函数中另发控制消息。省略不设置数据头的 stats bit，不推进写指针，
+   不调用本次 TrackSentStats。
+5. 放得下时先写 `varint(body_length)` 和 body，检查写入长度，设置数据头 bit0、推进写指针，
+   随即调用 TrackSentStatsToSession。
+
+**提交顺序 Evidence**：`SendEncryptedDataChunkGeneric 0x83ed9c–0x83f0a8` 先分配 relay/E2E
+序号、调用上述 serializer，最后才调用 BSendPacketGather（`0x83f068`）。因此包含 inline stats
+时，TrackSentStats 已经消费待 ACK、清已发送的 peer routes ACK、推进 routes 半秒期限及登记
+reply/期待 ACK；即使随后 gather 返回 false，这些状态也保留，返回值只是 0。
+这与 §21.17 的独立 type 26 控制消息不同。发送字节/包计数也在 gather 前增加，不能直接当作
+物理网卡成功交付数量，更不能当作对端确认数量。
+
+`native_inline_stats_send_chain` 在实际发送回调入口读取对象状态，确认这些变更确实已经发生，
+覆盖 gather 成功/失败；它串接原始数据头、inline serializer、ACK/探测/路由登记函数。
+`inline_stats_budget` 另执行原始裁减与 varint 前缀指令，覆盖恰好放满、两类 quality 的优先级和
+127/128 字节边界；ByteSize、quality 容器清理和 body 序列化由明确提供者返回，不能据此宣称
+原始 protobuf 编码器或 SNP 加密已验证。数据发送测试的输入为已加密 chunk，不重做端到端握手。

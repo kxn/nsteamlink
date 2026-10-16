@@ -1870,6 +1870,490 @@ def expected_ack_removal(elf, sequences, incoming):
     assert [m.read(tracker+24+index*8, 2) for index in range(m.read(tracker, 8))] == remaining
 
 
+
+def native_call(m, start, end, *args):
+    """Enter a fresh ABI call on the same object graph, preserving protocol state."""
+    m.uc.reg_write(arm.UC_ARM64_REG_LR, policy.RETURN)
+    m.run(start, end, *args, budget=150000)
+
+
+def receive_sequence_chain(elf, packets, delivered, expected, initial=(100, 200), flags=0,
+                           relay_quality=False, e2e_quality=False):
+    fixture = SDR(elf, [{}])
+    fixture.active([0])
+    m, session = fixture.m, fixture.sessions[0]
+    relay_tracker, e2e_tracker = session+112, fixture.connection+392
+    m.write(fixture.connection+6848, 3)
+    m.write(fixture.connection+4912, 1)
+    m.write(fixture.connection+40, fixture.base, 8)
+    msg, packet, quality, config, reasons = [m.alloc(256) for _ in range(5)]
+    m.write(0xc80000+2360, config, 8)  # A zero reordering delay is an explicit input.
+    m.write(0xc80000+3064, reasons, 8)
+    for index in range(1, 4):
+        m.write(reasons+index*8, m.string(b'statistics'), 8)
+    m.write(msg+16, 2048 | 4096 | (2 if relay_quality else 0) | (4 if e2e_quality else 0))
+    m.write(msg+96, flags)
+    m.write(msg+64, quality, 8)
+    m.write(msg+72, quality, 8)
+    m.write(packet+8, 123)
+    m.write(session+2512, NOW, 8)
+    for tracker in (relay_tracker, e2e_tracker):
+        m.write(tracker+4088, NOW, 8)
+        m.write(tracker+4080, NOW, 8)
+    for tracker, sequence in zip((relay_tracker, e2e_tracker), initial):
+        native_call(m, 0x8b29e0, 0x8b2a64, tracker, sequence)
+    redirects = {0xc124f0: (0x819e08, 0x819f9c), 0xc12c80: (0x83d3ac, 0x83d540),
+                 0xc12ca0: (0x83d540, 0x83d860), 0xc12c90: (0x85597c, 0x8559d4),
+                 0xc131b0: (0x8559d4, 0x855d04), 0xc12cb0: (0x83d860, 0x83dac8),
+                 0xc12ce0: (0x83e034, 0x83e624), 0xc12500: (0x86a844, 0x86ab88),
+                 0xc12cc0: (0x8b3204, 0x8b33d8), 0xc12cd0: (0x8b29e0, 0x8b2a64),
+                 0xc12430: (0x822c9c, 0x822e84), 0xc128f0: (0x8b36c4, 0x8b38bc),
+                 0xc12900: (0x822e84, 0x822f94)}
+    for call, (start, end) in redirects.items():
+        m.redirects[call] = start
+        m.allowed.append((start, end))
+    m.write(fixture.vt+224, 0x83f314, 8)
+    m.allowed.append((0x83f314, 0x83f748))
+    m.write(fixture.vt+136, policy.RETURN+0x800, 8)
+    m.stubs.update({0xc12e00: lambda m: None,  # SNP diagnostic invariant; not the tracker.
+                    0xc131c0: lambda m: m.events.append(('snp_receive', m.reg(1))),
+                    0xc12d10: lambda m: m.events.append(('queue_e2e_ack', m.reg(1))),
+                    0xc12de0: lambda m: m.events.append(('select_transport',)),
+                    policy.RETURN+0x800: lambda m: m.events.append(('send_stats',))})
+    for index, (relay_sequence, e2e_sequence) in enumerate(packets):
+        m.write(msg+112, relay_sequence & 65535)
+        m.write(msg+116, e2e_sequence & 65535)
+        m.write(packet+16, NOW+index*1000, 8)
+        m.write(fixture.base+792, NOW+123, 8)
+        m.write(fixture.base+800, 2)
+        native_call(m, 0x83cf94, 0x83d3ac, fixture.base, session, msg, packet)
+        assert m.read(fixture.base+792, 8) == (0 if index in delivered else NOW+123)
+        assert m.read(fixture.base+800) == (0 if index in delivered else 2)
+        actual = [event[1] for event in m.events if event[0] == 'snp_receive']
+        wanted = [packets[n][1] for n in delivered if n <= index]
+        assert actual == wanted, (packets, index, actual, wanted)
+    # Explicit traces specify final high-water marks and loss/late/lurch counters.
+    latest_relay, latest_e2e, dropped, late, lurch = expected
+    assert [m.read(t+2200, 8) for t in (relay_tracker, e2e_tracker)] == [latest_relay, latest_e2e]
+    for tracker in (relay_tracker, e2e_tracker):
+        assert [m.read(tracker+off) for off in (2488, 2492, 2500)] == [dropped, late, lurch]
+        assert m.read(tracker+2528, 8) == len(packets)
+    assert len([e for e in m.events if e[0] == 'select_transport']) == len(delivered)
+    assert len([e for e in m.events if e[0] == 'queue_e2e_ack']) == (len(delivered) if flags & 2 or e2e_quality else 0)
+    assert len([e for e in m.events if e[0] == 'send_stats']) == (len(delivered) if flags & 4 and (flags & 2 or e2e_quality) else 0)
+    requested = [packets[n][0] & 65535 for n in delivered] if flags & 1 or relay_quality else []
+    queued = requested[:5] if not flags & 4 else requested[:4]+requested[-1:] if len(requested) > 5 else requested
+    assert [m.read(session+4504+n*8, 2) for n in range(m.read(session+4500))] == queued
+    assert bool(m.read(session+4496, 1)) == bool(requested and flags & 4)
+
+
+
+def p2p_confirmation_think(elf, expected_request, *, state=3, pending_delta=None, failures=0,
+                           need=False, quota=0, selected='self', selected_need=False,
+                           smoothed=20, samples=3, total=10, probe_age=0, can_send=True,
+                           sends=True):
+    fixture = SDR(elf, [])
+    m, p2p = fixture.m, fixture.base+264
+    other = m.alloc(1024)
+    m.write(p2p+8, fixture.base, 8)
+    m.write(fixture.connection+6848, state)
+    m.write(fixture.connection+4912, 1)
+    m.write(fixture.connection+7288, p2p if selected == 'self' else other if selected == 'other' else 0, 8)
+    m.write(other+24, int(selected_need), 1)
+    m.write(p2p+24, int(need), 1)
+    m.write(p2p+80, samples)
+    m.write(p2p+84, smoothed)
+    m.write(p2p+88, NOW-probe_age, 8)
+    m.write(p2p+516, total)
+    m.write(p2p+528, 0 if pending_delta is None else NOW+pending_delta, 8)
+    m.write(p2p+536, failures)
+    m.write(p2p+540, quota)
+    m.write(p2p+592, 0x7fffffffffffffff, 8)
+    m.write(fixture.vt+32, METRICS, 8)
+    m.write(fixture.vt+48, REQUEST, 8)
+    def send(m):
+        request = m.reg(1)
+        m.events.append(('probe', request))
+        if sends:
+            m.write(p2p+528, NOW+1000000, 8)  # Explicit transport send result.
+    def schedule(m):
+        m.write(m.reg(0)+8, m.reg(1), 8)
+        m.events.append(('schedule', m.reg(1)))
+    m.stubs.update({METRICS: lambda m: m.reg(0, int(can_send)), REQUEST: send,
+                    0xc138b0: lambda m: m.events.append(('changed',)), 0xc11de0: schedule})
+    m.redirects[0xc12ba0] = 0x878698
+    m.allowed.append((0x878698, 0x87877c))
+    native_call(m, 0x878404, 0x878698, p2p, NOW)
+    active = state in (-2, 2, 3)
+    expired = active and pending_delta is not None and pending_delta <= 0
+    assert m.read(p2p+536) == failures+int(expired)
+    assert m.read(p2p+24, 1) == int(need)
+    assert [e for e in m.events if e[0] == 'probe'] == ([('probe', expected_request)] if expected_request else [])
+    assert [e for e in m.events if e[0] == 'changed'] == ([('changed',)] if expired and failures >= 2 and not need else [])
+    if active:
+        deadline = NOW+2000000
+        if expected_request and sends:
+            deadline = min(deadline, NOW+1000000)
+        elif pending_delta is not None and pending_delta > 0:
+            deadline = min(deadline, NOW+pending_delta)
+        elif can_send and not expected_request and selected == 'other' and not selected_need:
+            deadline = min(deadline, NOW-probe_age+10000000)
+        assert m.read(p2p+592, 8) == deadline, m.events
+    else:
+        assert not m.events
+
+
+def p2p_track_request(elf, pending, delayed, quota):
+    fixture = SDR(elf, [])
+    m, p2p = fixture.m, fixture.base+264
+    m.write(p2p+84, -1)
+    m.write(p2p+528, NOW+99 if pending else 0, 8)
+    m.write(p2p+540, quota)
+    m.write(p2p+592, 0x7fffffffffffffff, 8)
+    def schedule(m):
+        m.write(m.reg(0)+8, m.reg(1), 8)
+    m.stubs[0xc11de0] = schedule
+    native_call(m, 0x8782a0, 0x878404, p2p, NOW, int(delayed))
+    expected_deadline = NOW+99 if pending else NOW+1250000+int(delayed)*200000
+    assert m.read(p2p+528, 8) == expected_deadline
+    assert m.read(p2p+88, 8) == NOW
+    assert m.read(p2p+540) == (quota if pending else max(0, quota-1))
+    assert m.read(p2p+592, 8) == (0x7fffffffffffffff if pending else expected_deadline)
+
+
+def outer_routes_delivery(elf, expected_events, *, state=3, active=True, token=True, acked=False,
+                          deadline_delta=-1, pending_ack=False, need=False, reply_pending=False,
+                          immediate_age=0, relay_age=0, e2e_age=0, relay_fail=0, e2e_fail=0,
+                          stats_ok=True):
+    fixture = SDR(elf, [{}])
+    fixture.active([0] if active else [])
+    m = fixture.m
+    m.write(fixture.connection+6848, state)
+    m.write(fixture.connection+6852, state)
+    m.write(fixture.connection+4912, 1)
+    m.write(fixture.connection+4400, NOW+1000000 if reply_pending else 0, 8)
+    m.write(fixture.connection+4408, NOW-immediate_age, 8)
+    m.write(fixture.connection+4416, e2e_fail)
+    m.write(fixture.connection+2792, NOW-e2e_age, 8)
+    m.write(fixture.base+288, int(need), 1)
+    m.write(fixture.base+1232, 10 if acked else 9)
+    m.write(fixture.base+1048, 10)
+    m.write(fixture.base+1224, NOW+deadline_delta, 8)
+    m.write(fixture.base+1096, int(pending_ack), 1)
+    m.write(fixture.relays[0]+248, NOW-relay_age, 8)
+    m.write(fixture.relays[0]+256, relay_fail)
+    m.write(fixture.vt+136, REQUEST, 8)
+    def stats(m):
+        m.events.append(('stats', m.reg(2)))
+        if stats_ok:
+            m.write(fixture.base+1096, 0, 1)
+            m.write(fixture.base+1224, NOW+500000, 8)
+            m.write(fixture.connection+4400, NOW+1000000, 8)
+        m.reg(0, int(stats_ok))
+    m.stubs.update({0xc125d0: lambda m: None,
+                    0xc12aa0: lambda m: m.reg(0, int(token)), REQUEST: stats,
+                    0xc11c90: lambda m: m.uc.mem_write(m.reg(0), b'route\0'),
+                    0xc0a230: lambda m: None,
+                    0xc08f60: lambda m: None, 0xc09530: lambda m: None,
+                    0xc12c00: lambda m: m.events.append(('signal',)),
+                    0xc097e0: lambda m: (m.events.append(('diagnostic',)), m.reg(0, 1))})
+    native_call(m, 0x837a90, 0x837f2c, fixture.base, NOW)
+    assert m.events == expected_events, (m.events, expected_events)
+
+
+
+def native_stats_send_chain(elf, socket_ok, *, desired=b'new-target', force=False, request=2,
+                            routes_due=True, queued=3, instantaneous=False, outer=False,
+                            deadline_delta=-1, pending_ack=True, inline=False, payload_size=1000):
+    fixture = SDR(elf, [{}])
+    fixture.active([0])
+    m, session = fixture.m, fixture.sessions[0]
+    connection, transport = fixture.connection, fixture.base
+    relay_tracker, e2e_tracker = session+112, connection+392
+    m.write(connection+40, transport, 8)
+    m.write(connection+4912, 1)
+    m.write(connection+5340, 1200)
+    m.write(connection+2528, 200, 8)
+    m.write(session+2248, 100, 8)
+    m.write(session+64, 123)
+    m.set_string(session+40, desired)
+    m.set_string(session+72, b'old-target')
+    m.write(session+96, 122)
+    m.write(session+100, 5)
+    m.write(session+104, 1, 1)
+    m.write(transport+968, 7)
+    m.write(transport+1048, 10)
+    m.write(transport+1232, 9 if routes_due else 10)
+    m.write(transport+1224, NOW+deadline_delta, 8)
+    m.write(transport+1096, int(pending_ack), 1)
+    m.write(transport+348, -1)
+    m.write(transport+856, 0x7fffffffffffffff, 8)
+    for tracker in (relay_tracker, e2e_tracker):
+        m.write(tracker+68, -1)
+        m.write(tracker+4088, NOW-30000000 if instantaneous else NOW, 8)
+        m.write(tracker+4080, NOW, 8)
+        m.write(tracker+2528, 100 if instantaneous else 0, 8)
+        m.write(tracker+24, NOW, 8)
+        m.write(tracker+72, NOW, 8)
+        m.write(tracker+2400, NOW, 8)
+    m.write(relay_tracker+4432, session, 8)
+    m.write(relay_tracker+4112, 16, 8)
+    m.write(relay_tracker+4120, m.alloc(128), 8)
+    m.write(session+4496, 1, 1)
+    m.write(session+4500, queued)
+    for index in range(queued):
+        m.write(session+4504+index*8, index+1 | (NOW-1000) << 16, 8)
+    def construct(m):
+        obj = m.reg(0)
+        m.uc.mem_write(obj, bytes(128))
+        for offset in (56, 64):
+            m.write(obj+offset, m.string(b''), 8)
+    def populate(m):
+        mask = m.reg(1)
+        m.write(m.reg(2)+16, int(bool(mask & 3)) | (int(bool(mask & 12)) << 1))
+    messages = []
+    def socket(m):
+        msg = m.reg(2)
+        messages.append((m.read(msg+16), m.read(msg+96), m.read(msg+112), m.read(msg+116)))
+        m.reg(0, 100 if socket_ok else -1)
+    def reserve(m):
+        m.write(m.reg(0)+4, max(16, m.reg(1)))
+        m.write(m.reg(0)+8, m.alloc(max(16, m.reg(1))*4), 8)
+    def schedule(m):
+        m.write(m.reg(0)+8, m.reg(1), 8)
+    m.stubs.update({0xbffb30: construct, 0xc009b0: lambda m: None,
+                    0xbff410: lambda m: m.set_string(m.reg(0), m.get_string(m.reg(1))),
+                    0xc0a110: lambda m: m.reg(0, int(bytes(m.uc.mem_read(m.reg(0), m.reg(2))) != bytes(m.uc.mem_read(m.reg(1), m.reg(2))))),
+                    0xc0acd0: lambda m: m.set_string(m.reg(1), b'synthetic-routes'),
+                    0xc006d0: lambda m: m.reg(0, m.alloc(128)), 0xc12ae0: populate,
+                    0xc009d0: lambda m: m.reg(0, 100), 0xbffe80: reserve,
+                    0xc12b00: lambda m: m.reg(0, 0),
+                    0xc12b30: lambda m: m.reg(0, 0x7fffffffffffffff),
+                    0xc12390: socket, 0xc12b10: lambda m: None, 0xc11de0: schedule,
+                    0xc097e0: lambda m: m.reg(0, 1)})
+    calls = {0xc12ab0: (0x835400, 0x8355f8), 0xc12aa0: (0x83505c, 0x835290),
+             0xc12ac0: (0x8355f8, 0x835c64), 0xc12ad0: (0x8b3580, 0x8b36c4),
+             0xc14d30: (0x8b33e8, 0x8b34f0), 0xc12af0: (0x840fd8, 0x8411c4),
+             0xc12b20: (0x835f00, 0x835fbc), 0xc12b40: (0x83e624, 0x83e8f4),
+             0xc12d20: (0x84f8b4, 0x84fb9c), 0xc12d30: (0x8b4108, 0x8b420c),
+             0xc12370: (0x817304, 0x817330), 0xc12e40: (0x84fb9c, 0x84fd5c),
+             0xc12d40: (0x84fd5c, 0x84fe20), 0xc12b50: (0x8782a0, 0x878404)}
+    for call, (start, end) in calls.items():
+        m.redirects[call] = start
+        m.allowed.append((start, end))
+    if inline:
+        context, chunk = m.alloc(256), m.alloc(payload_size)
+        m.reg(0, context+32)
+        construct(m)
+        m.write(context, NOW, 8)
+        m.write(context+16, m.empty, 8)
+        m.write(context+160, session, 8)
+        m.write(connection+4832, 1)
+        m.write(connection+4836, 0)
+        m.allowed.append((0x84ff68, 0x850374))
+        m.redirects[0xc12d90] = 0x84ff68
+        def serialize(m):
+            m.uc.mem_write(m.reg(1), bytes(100))
+            m.reg(0, m.reg(1)+100)
+        gathered = []
+        def gather(m):
+            vectors = m.reg(2)
+            header, length = m.read(vectors, 8), m.read(vectors+8, 8)
+            gathered.append((m.reg(3), length, m.read(header, 1), m.read(transport+1224, 8), m.read(session+4500)))
+            m.reg(0, int(socket_ok))
+        m.stubs.update({0xc0be20: serialize, 0xc12380: gather})
+        native_call(m, 0x835400, 0x8355f8, transport, context, request, int(force))
+        native_call(m, 0x83ed9c, 0x83f0a8, transport, chunk, payload_size, context)
+        attached = 101 < 1291-payload_size
+        header_size = 110 if attached else 9
+        packet_size = header_size+payload_size
+        assert gathered == [(packet_size, header_size, 0xa1 if attached else 0xa0,
+                             NOW+500000 if attached else NOW-1, 0 if attached else queued)], gathered
+        assert m.reg(0) == (packet_size if socket_ok else 0)
+        # Included inline stats commit before gather; omitted stats never register.
+        assert m.read(session+4500) == (0 if attached else queued)
+        assert m.read(session+4496, 1) == int(not attached)
+        assert m.read(transport+1096, 1) == int(not attached)
+        assert m.read(transport+1224, 8) == (NOW+500000 if attached else NOW-1)
+        assert m.read(session+2248, 8) == 101 and m.read(connection+2528, 8) == 201
+        assert m.read(relay_tracker+4104, 8) == int(attached)
+        assert bool(m.read(relay_tracker+4008, 8)) == attached
+        assert bool(m.read(transport+792, 8)) == attached
+        return
+    if outer:
+        # ABI bridge: CM service's (connection,msg,now) -> PopulateRendezvous(transport,msg,now).
+        bridge = policy.RETURN+0x900
+        m.uc.mem_write(bridge, struct.pack('<IIIQ', 0xf9400000 | ((6888//8) << 10),
+                                          0x58000050, 0xd61f0200, 0x834bc0))
+        m.allowed.extend([(bridge, bridge+12), (0x834bc0, 0x834d04), (0x835c64, 0x835f00)])
+        m.redirects[0xc12c00] = bridge
+        m.write(connection+6888, transport, 8)
+        m.write(fixture.vt+136, 0x835c64, 8)
+        m.write(0xc80000+2824, m.alloc(128), 8)
+        m.write(connection+6848, 3)
+        m.write(connection+2792, NOW, 8)
+        m.write(connection+4912, 1)
+        def rendezvous(m):
+            msg = m.reg(0)
+            m.uc.mem_write(msg, bytes(144))
+            m.write(msg+72, m.string(b''), 8)
+        m.stubs.update({0xc125d0: lambda m: None, 0xc12a80: lambda m: None,
+                        0xc11c90: lambda m: m.uc.mem_write(m.reg(0), b'route\0'),
+                        0xc0a230: lambda m: None, 0xc08f60: rendezvous,
+                        0xc09530: lambda m: None})
+        native_call(m, 0x837a90, 0x837f2c, transport, NOW)
+        due = routes_due and deadline_delta <= 0
+        attempted = due or pending_ack
+        signal = attempted and (not socket_ok or due and deadline_delta == 0)
+        assert len(messages) == int(attempted), (deadline_delta, pending_ack, messages)
+        assert (bridge in m.visited) == signal, (deadline_delta, socket_ok, messages, bridge in m.visited)
+        wanted_deadline = NOW+1000000 if signal and due else NOW+500000 if attempted and socket_ok and due else NOW+deadline_delta
+        assert m.read(transport+1224, 8) == wanted_deadline
+        assert m.read(transport+1096, 1) == (0 if attempted else int(pending_ack))
+        if attempted:
+            assert bool(messages[0][0] & 2) == (due and deadline_delta < 0)
+        return
+    native_call(m, 0x835c64, 0x835f00, transport, session, request, int(force), NOW, m.empty)
+    assert len(messages) == 1 and bool(m.reg(0)) == socket_ok
+    presence, wire_flags, relay_seq, e2e_seq = messages[0]
+    assert relay_seq == 100 and (e2e_seq == 200 if presence & 1024 else e2e_seq == 0)
+    assert m.read(session+2248, 8) == 101
+    assert m.read(connection+2528, 8) == 200+int(bool(presence & 1024))
+    # Target registration occurs during Populate, even when the socket fails.
+    assert m.get_string(session+72) == (desired if desired else b'old-target')
+    assert m.read(session+100) == (6 if desired else 5)
+    assert bool(m.read(session+104, 1)) == (not bool(desired))
+    assert m.read(transport+1224, 8) == (NOW+500000 if socket_ok and presence & 2 else NOW-1)
+    assert m.read(transport+1096, 1) == (0 if socket_ok and presence & 128 else 1)
+    assert m.read(session+4500) == (0 if socket_ok else queued)
+    assert m.read(session+4496, 1) == (0 if socket_ok and queued else 1)
+    relay_ack = bool(wire_flags & 1 or presence & 4)
+    e2e_ack = bool(wire_flags & 2 or presence & 8)
+    assert m.read(relay_tracker+4104, 8) == int(socket_ok and relay_ack)
+    assert m.read(relay_tracker+4008, 8) != 0 if socket_ok and relay_ack else m.read(relay_tracker+4008, 8) == 0
+    assert bool(m.read(transport+792, 8)) == bool(socket_ok and e2e_ack)
+    assert m.read(relay_tracker+3984, 8) == (100 if socket_ok and presence & 4 else 0)
+    assert m.read(e2e_tracker+3984, 8) == (200 if socket_ok and presence & 8 else 0)
+
+
+
+def valid_end_to_end(elf, need, active, smoothed, override=-2, can_send=True, evaluation_future=False):
+    fixture = SDR(elf, [{}])
+    fixture.active([0] if active else [])
+    m, base, session = fixture.m, fixture.base, fixture.sessions[0]
+    m.write(base+272, base, 8)
+    m.write(base+288, int(need), 1)
+    m.write(base+348, smoothed)
+    m.write(base+784, override)
+    m.write(base+792, NOW+1000, 8)
+    m.write(base+800, 2)
+    m.write(fixture.connection+4912, 1)
+    m.write(fixture.connection+7312, NOW+1 if evaluation_future else 0, 8)
+    for offset, value in [(4564, 10), (4580, 20), (4584, 30)]:
+        m.write(session+offset, value)
+    m.write(fixture.vt+112, REQUEST, 8)
+    m.write(fixture.vt+32, METRICS, 8)
+    m.stubs.update({REQUEST: lambda m: m.events.append(('select_sessions',)),
+                    METRICS: lambda m: m.reg(0, int(can_send)),
+                    0xc138b0: lambda m: m.events.append(('confirmed_changed',)),
+                    0xc12de0: lambda m: m.events.append(('select_transport',)),
+                    0xc120d0: lambda m: m.events.append(('ping_seed', m.reg(1))),
+                    0xc09b00: lambda m: (m.events.append(('diagnostic',)), m.reg(0, 1))})
+    m.redirects[0xc12dd0] = 0x87877c
+    m.allowed.append((0x87877c, 0x8788b0))
+    native_call(m, 0x83f314, 0x83f748, base, NOW, m.empty, session)
+    events = []
+    if need:
+        events.append(('select_sessions',))
+        if active:
+            events.append(('confirmed_changed',) if can_send else ('diagnostic',))
+            if smoothed < 0 and override != -1:
+                events.append(('ping_seed', 60 if override < -1 else override))
+    if (not need or active) and not evaluation_future:
+        events.append(('select_transport',))
+    assert m.events == events, (need, active, smoothed, override, m.events, events)
+    assert m.read(base+792, 8) == 0 and m.read(base+800) == 0
+    assert bool(m.read(base+288, 1)) == (need and (not active or not can_send))
+    assert m.read(base+780) == int(need and active and smoothed < 0 and override != -1)
+
+
+
+def connectivity_change_callback(elf, need, selected, quota, wire_state=3, recorded=False, age=12345):
+    fixture = SDR(elf, [])
+    m, p2p, connection = fixture.m, fixture.base+264, fixture.connection
+    m.write(p2p+24, int(need), 1)
+    m.write(p2p+540, quota)
+    m.write(connection+7288, p2p if selected else 0, 8)
+    m.write(connection+6888, fixture.base, 8)
+    m.write(connection+7304, NOW-age, 8)
+    m.write(connection+6852, wire_state)
+    m.write(connection+7320, 1, 1)
+    m.write(connection+7312, NOW+1000000, 8)
+    m.write(connection+6912, 64 if recorded else 0)
+    m.write(connection+6944, 999 if recorded else 0)
+    native_call(m, 0x874c2c, 0x874d80, connection, p2p, NOW)
+    urgent = need == selected
+    assert m.read(connection+7320, 1) == int(not urgent)
+    assert m.read(connection+7312, 8) == (1 if urgent else NOW+1000000)
+    assert m.read(p2p+540) == max(5, quota)
+    assert m.events == [('think', 1)]
+    records = not need and 1 <= wire_state <= 3
+    assert m.read(connection+6912) == (64 if recorded or records else 0)
+    assert m.read(connection+6944) == (999 if recorded else max(1, (age+500)//1000) if records else 0)
+
+
+
+def inline_stats_budget(elf, relay_mask, e2e_mask, room, expected_masks, encoded, body_base=10, flags=3):
+    fixture = SDR(elf, [{}])
+    m, context, serializer, buffer = fixture.m, fixture.m.alloc(256), fixture.m.alloc(32), fixture.m.alloc(1024)
+    relay, e2e = m.alloc(128), m.alloc(128)
+    m.write(context, NOW, 8)
+    m.write(context+160, fixture.sessions[0], 8)
+    m.write(context+24, flags)
+    presence = (4 if relay_mask is not None else 0) | (8 if e2e_mask is not None else 0)
+    implicit = (presence >> 2) & 3
+    explicit = bool(flags & ~implicit)
+    m.write(context+48, presence | (32 if explicit else 0))
+    m.write(context+128, flags | implicit if explicit else 0)
+    for offset, obj, mask in [(104, relay, relay_mask), (112, e2e, e2e_mask)]:
+        m.write(context+offset, obj, 8)
+        m.write(obj+16, mask or 0)
+    def size():
+        result = body_base+int(bool(m.read(context+48) & 32))*2
+        for parent_bit, obj in [(4, relay), (8, e2e)]:
+            if m.read(context+48) & parent_bit:
+                result += 6*int(bool(m.read(obj+16) & 1))+12*int(bool(m.read(obj+16) & 2))
+        return result
+    initial = size()
+    m.write(context+152, initial)
+    m.write(context+156, initial+(1 if initial < 128 else 2))
+    m.write(serializer, buffer+9, 8)
+    m.write(serializer+8, buffer+9+room, 8)
+    m.write(serializer+16, buffer, 8)
+    m.write(buffer, 0xa0, 1)
+    def clear(m, bit):
+        m.write(context+48, m.read(context+48) & ~bit)
+    def serialize(m):
+        count = size()
+        m.uc.mem_write(m.reg(1), bytes([0x55])*count)
+        m.reg(0, m.reg(1)+count)
+    m.stubs.update({0xc00990: lambda m: clear(m, 4), 0xc009a0: lambda m: clear(m, 8),
+                    0xc009d0: lambda m: m.reg(0, size()), 0xc0be20: serialize,
+                    0xc12b20: lambda m: m.events.append(('track_inline',))})
+    native_call(m, 0x84ff68, 0x850374, fixture.base, serializer, context)
+    actual = tuple(m.read(obj+16) if m.read(context+48) & bit else None for bit, obj in [(4, relay), (8, e2e)])
+    assert actual == expected_masks, (relay_mask, e2e_mask, room, actual, expected_masks)
+    assert m.events == ([('track_inline',)] if encoded else [])
+    assert bool(m.read(buffer, 1) & 1) == encoded
+    if encoded:
+        count = size()
+        prefix = bytes([count]) if count < 128 else bytes([(count & 127) | 128, count >> 7])
+        assert bytes(m.uc.mem_read(buffer+9, len(prefix))) == prefix
+        assert m.read(serializer, 8) == buffer+9+len(prefix)+count
+    else:
+        assert m.read(serializer, 8) == buffer+9
+
+
 def audit(elf, groups=None):
     counts = {}
 
@@ -2294,6 +2778,102 @@ def audit(elf, groups=None):
                                    ((90, 42, 17, NOW-1), (90, 42, 17, NOW-1))]:
         case('reverse_latency_estimation', receive_latencies, {}, [(200, 40)], [], [], 1,
              {200: (40, 0, 0, NOW)}, True, reverse={200: (old, expected_reverse)})
+    traces = [
+        ([(101, 201), (102, 202)], [0, 1], (102, 202, 0, 0, 0)),
+        ([(102, 202), (101, 201)], [0, 1], (102, 202, 0, 1, 0)),
+        ([(102, 202), (102, 202)], [0], (102, 202, 1, 0, 0)),
+        ([(101, 201), (102, 201), (102, 202)], [0, 2], (102, 202, 0, 0, 0)),
+        ([(101, 201), (101, 202), (102, 202)], [0, 2], (102, 202, 0, 0, 0)),
+        ([(199, 299), (298, 398)], [0, 1], (298, 398, 196, 0, 0)),
+        ([(200, 300), (201, 301), (199, 299)], [0, 1], (201, 301, 0, 0, 1)),
+        ([(101+n, 201+n) for n in range(7)], list(range(7)), (107, 207, 0, 0, 0)),
+    ]
+    for packets, delivered, expected in traces:
+        for flags in (0, 3, 7):
+            case('native_receive_sequence_chain', receive_sequence_chain, packets, delivered, expected, flags=flags)
+    case('native_receive_sequence_chain', receive_sequence_chain,
+         [(65535, 65535), (65536, 65536), (65537, 65537)], [0, 1, 2],
+         (65537, 65537, 0, 0, 0), initial=(65534, 65534), flags=3)
+    for relay_quality, e2e_quality in itertools.product((False, True), (False, True)):
+        case('native_receive_sequence_chain', receive_sequence_chain,
+             [(101, 201), (102, 202)], [0, 1], (102, 202, 0, 0, 0),
+             relay_quality=relay_quality, e2e_quality=e2e_quality)
+    for request, params in [
+        (0, {}), (3, {'quota': 1}), (3, {'need': True}), (3, {'failures': 1}),
+        (3, {'smoothed': -1}), (3, {'samples': 2}), (3, {'total': 9}),
+        (0, {'samples': 3, 'total': 10}),
+        (0, {'selected': 'other', 'probe_age': 9999999}),
+        (2, {'selected': 'other', 'probe_age': 10000000}),
+        (0, {'selected': 'other', 'selected_need': True}),
+        (3, {'selected': 'other', 'selected_need': True, 'samples': 2}),
+        (0, {'pending_delta': 1, 'need': True}),
+        (3, {'pending_delta': 0}), (3, {'pending_delta': -1}),
+        (3, {'pending_delta': 0, 'failures': 2}),
+        (3, {'pending_delta': 0, 'failures': 2, 'need': True}),
+        (3, {'need': True, 'sends': False}), (0, {'need': True, 'can_send': False}),
+    ]:
+        case('p2p_confirmation_thinker', p2p_confirmation_think, request, **params)
+    for state in (-2, -1, 0, 1, 2, 3, 4, 5):
+        case('p2p_confirmation_thinker', p2p_confirmation_think,
+             3 if state in (-2, 2, 3) else 0, state=state, need=True)
+    for pending, delayed, quota in itertools.product((False, True), (False, True), (0, 1, 5)):
+        case('p2p_probe_request_tracking', p2p_track_request, pending, delayed, quota)
+    for events, params in [
+        ([('stats', 2)], {}), ([('stats', 2)], {'deadline_delta': 0}),
+        ([], {'deadline_delta': 1}), ([], {'acked': True}),
+        ([('stats', 1)], {'acked': True, 'pending_ack': True}),
+        ([('stats', 2), ('signal',)], {'stats_ok': False}),
+        ([('signal',)], {'state': 2}), ([('signal',)], {'active': False}),
+        ([('diagnostic',), ('signal',)], {'token': False}),
+        ([('stats', 2), ('signal',)], {'relay_age': 10000000}),
+        ([('stats', 2)], {'relay_age': 9999999}),
+        ([('stats', 2), ('signal',)], {'e2e_age': 10000000}),
+        ([('stats', 2), ('signal',)], {'relay_fail': 1}),
+        ([('stats', 2), ('signal',)], {'e2e_fail': 1}),
+        ([('stats', 3)], {'acked': True, 'need': True}),
+        ([('stats', 3), ('diagnostic',)], {'acked': True, 'need': True, 'stats_ok': False}),
+        ([('stats', 3), ('signal',)], {'need': True}),
+        ([], {'acked': True, 'need': True, 'reply_pending': True, 'immediate_age': 199999}),
+        ([('stats', 3)], {'acked': True, 'need': True, 'reply_pending': True, 'immediate_age': 200000}),
+        ([('stats', 3), ('signal',), ('stats', 3), ('diagnostic',)], {'need': True, 'stats_ok': False}),
+    ]:
+        case('outer_routes_delivery', outer_routes_delivery, events, **params)
+    for ok, force, request in itertools.product((False, True), (False, True), (0, 2, 3)):
+        case('native_stats_send_chain', native_stats_send_chain, ok, force=force, request=request)
+    for ok, token, instantaneous in itertools.product((False, True), (b'', b'new-target'), (False, True)):
+        case('native_stats_send_chain', native_stats_send_chain, ok, desired=token,
+             instantaneous=instantaneous)
+    case('native_stats_send_chain', native_stats_send_chain, True, routes_due=False, queued=0)
+    for need, active, smoothed in itertools.product((False, True), (False, True), (-1, 20)):
+        case('valid_end_to_end_recovery', valid_end_to_end, need, active, smoothed)
+    for override, can_send, future in itertools.product((-1, 123), (False, True), (False, True)):
+        case('valid_end_to_end_recovery', valid_end_to_end, True, True, -1, override, can_send, future)
+    for need, selected, quota in itertools.product((False, True), (False, True), (0, 5, 8)):
+        case('connectivity_change_callback', connectivity_change_callback, need, selected, quota)
+    for state, recorded, age in itertools.product((1, 4), (False, True), (1, 1500)):
+        case('connectivity_change_callback', connectivity_change_callback, False, True, 0,
+             wire_state=state, recorded=recorded, age=age)
+    for ok, deadline, pending_ack, due in itertools.product((False, True), (-1, 0, 1), (False, True), (False, True)):
+        case('native_outer_stats_signal_chain', native_stats_send_chain, ok, outer=True,
+             deadline_delta=deadline, pending_ack=pending_ack, routes_due=due)
+    for ok, instantaneous in itertools.product((False, True), (False, True)):
+        case('native_inline_stats_send_chain', native_stats_send_chain, ok, inline=True,
+             force=True, instantaneous=instantaneous)
+    for room, masks, encoded in [(48, (3, 3), True), (47, (2, 3), True),
+                                  (41, (None, 3), True), (31, (None, 2), True),
+                                  (25, (None, None), True), (13, (None, None), False)]:
+        case('inline_stats_budget', inline_stats_budget, 3, 3, room, masks, encoded)
+    for relay, e2e, room, masks, encoded in [
+        (1, None, 17, (None, None), True), (1, None, 13, (None, None), False),
+        (2, 2, 35, (None, 2), True), (None, 3, 29, (None, 2), True),
+        (None, None, 14, (None, None), True), (None, None, 13, (None, None), False),
+    ]:
+        case('inline_stats_budget', inline_stats_budget, relay, e2e, room, masks, encoded)
+    for body, room, encoded in [(127, 129, True), (127, 128, False), (128, 131, True), (128, 130, False)]:
+        case('inline_stats_budget', inline_stats_budget, None, None, room, (None, None), encoded, body_base=body, flags=0)
+    for ok, payload in itertools.product((False, True), (1189, 1190, 1291)):
+        case('native_inline_stats_send_chain', native_stats_send_chain, ok, inline=True,
+             force=True, payload_size=payload)
     return counts
 
 
