@@ -231,9 +231,11 @@ data[13] = messageType；若 hasExtHeader：data[14..25] = 扩展头 12 字节
 - `Send`（0x7f89dc）：全局字节预算检查（超限返回 2）→ 填包头
   （data[0]=5 类型、data[1]=重试计数清零、data[2..3]=conn+12、data[4]=通道号）
   → `AddToOutgoingPacketWindow(+0x70)`（分配包号入窗）→ 立即 `SendReliablePackets(now)`。
-- `SendReliablePackets`（0x7f8ac4）：按预算批量遍历发送窗口；重发条件 =
-  `now - 上次发送时间(data+9 u32) ≥ 超时`；超时随连接状态（conn+744 与全局
-  [f47000+2436/2440] 参与计算，运行时量）。**重试计数 data[1] 只计数不决策，
+- `SendReliablePackets`（0x7f8ac4）：按预算批量遍历发送窗口。
+  【更正，见 §29.5】撤回旧文 `包龄 ≥ 超时` 的等号：已有发送计数和非零发送时间时，
+  触发条件是包龄**严格大于** `c + floor(c/4)`，其中
+  `c = clamp(conn+744, 65, 3276)`；计数为 0 或发送时间为 0 另走立即尝试分支。
+  **重试计数 data[1] 只计数不作放弃决策，
   封顶 0xFF（0xFF 时连自增都停，但照样重发）。全函数无任何"按重试次数放弃/移除"分支。**
 - `HandleAckPacket`（0x7f94b8）：累计 ACK——先推进到 `min(ackseq+1-head, 已用)`，
   再逐格跳过空槽；**被洞卡住的槽不会越过**（只有 ACK/NACK 能释放它）。
@@ -2098,7 +2100,7 @@ packet constructor、allocation/refcount、CUtl 容器、socket、路由目标�
 | 可靠媒体 5/6 | OnNegotiationInit 0x7ad710 与通用可靠窗口 | 项目媒体只接纳 3/4，故明确协商 reliable_data=false；不应冒报相同能力 |
 | 可靠控制/统计 5/6 → 7/8 | §14 的证据及本地 ch_control/retransmission | 已有独立实现，但本次未对所有 ACK/NACK、发送预算和并发轨迹做与 §25 同等级的穷举对比 |
 | 配置 25、运行时消息 99、channel 冗余百分比 | §23/26 | schema、配置工厂、发送/接收机制不等于 host 生效策略；host 默认值/自适应规则仍无直接证据 |
-| CRC、连接 ID、地址、类型分派 | §27.2 及 Socket/Connection/Channel 分层 | 分派与部分 guard 有原指令断言；CRC 算术、连接 flags 的全部赋值来源及真实连线不在这些断言内 |
+| CRC、连接 ID、地址、类型分派 | §27.2 及 Socket/Connection/Channel 分层 | §29 补充真实 CRC 指令及握手→后续数据序列；完整 flags 来源与真实连线仍不由这些断言证明 |
 | RTT、时钟与发送时机 | §25.2–25.3、25.14 | 给定 mean/smoothed RTT 的预算已对比；实时采样/时钟拟合和操作系统唤醒时序不是同一证明 |
 | 媒体完整性 → 解码恢复 | §24–25 | 平台后端、内容模式位及 GPU/显示生命周期不能由传输层一致性推出 |
 
@@ -2304,3 +2306,217 @@ python3 scripts/audit-steam-protocol-inventory.py \
 全边界、时钟/RTT 拟合、真实背压并发、所有控制 payload/delegate、SNS/SDR 内部及
 平台解码/显示仍没有同等覆盖。新发现的状态/调度差异、已知 FEC/发送缓存能力缺口
 与原用户故障的因果关系保持待验证；本节本身不改变生产协议流或开启任何配置。
+
+## 29. 可用于实现的触发契约与复播输入
+
+### 29.1 测试入口和状态的含义
+
+【证据范围】继续固定 §28 的 ELF 与 IHSlib `5fe67f4`。本节把“函数存在”细化为
+**输入层 → 前置状态 → 条件 → 动作/状态变化 → 反例**。fixture 的 `observed`
+是原始指令结果，不是本地实现的期望生成器。未取到上层触发证据的能力不能用一个
+setter 的单元测试冒充已经接线。
+
+| fixture group / 入口 | 输入与替身边界 | 可检验的结果 |
+|---|---|---|
+| connected、crc_requirement、crc_policy / Socket::HandlePacket | 完整 datagram；真实 CRC32C、Socket HandleMessage、Connection HandlePacket/Connected；地址比较与最终 transport 为替身 | 握手状态、CRC 要求、后续数据准入、断连动作、last receive |
+| mtu / HandleIncomingPackets | 已可靠重组的明文传输包；真实 frame 构造/信封提取/分派；按原版描述符用 Python 解析 protobuf 并填已知布局 | 是否解析、是否改变 MTU、是否进入 StartAuthentication |
+| lifecycle、pause_resume / SDL event、Client::Pause/Resume | 真实事件分派和本地状态分支；控制发送/DataLost 为动作记录器 | 动作顺序、次数、client/connection 暂停位、时间刷新 |
+| send_budget / Socket::Send | 包、时钟、两类 quota、模拟 transport 返回值；真实准入、CRC、预算扣除 | 是否真正尝试发送、返回码、blocked 标志及两个 deadline |
+| fec_ingress / Socket::HandlePacket | §26 原版字节向量选择的完整分片；真实 connection/channel/FEC/RS 路径 | 交付数、恢复 payload；不含视频解码 |
+| reliable_retry / SendReliablePackets | 已存在的单包发送窗口及 RTT/时钟快照；Socket send 只记录并模拟时间戳写入 | 等号边界、首次尝试、计数饱和、窗口保留 |
+| reliable_ack / Channel::HandlePacket | ACK wire、发送窗口；真实 ACK 与 Advance；时间戳处理及对象引用为替身 | 累计退休、空槽跳过、回绕/半区间比较 |
+| timestamp / ProcessTimestamp | echo、peer send、now 与统计快照；采样队列仅记录样本 | 接受/拒绝、最小/平滑 RTT、是否产生 offset 样本 |
+| control_actions / OnSetQoS、OnSetTargetBitrate | 解密后的 control payload；真实 handler；protobuf 解析、最终 delegate/SetQOS 为替身 | 必需字段、对象存在条件、更新值与动作参数 |
+
+数值状态分层不能混用：client `+256` 的 2/3/4/6 对应握手/认证/协商/串流；
+connection `+16` 的 0/1/3 对应连接中/已连接/关闭状态。client 的暂停标志
+`+19` 与 connection 的暂停标志 `+8` 也是两个状态，不应合成一个无条件切换。
+
+这些复播输入属于各自声明的层。`reassembled_plaintext_packet` 不是可直接发送给
+已加密 Steam 会话的 UDP 包；控制编号 7 也不是传输 ACK 类型 7。所有时间除明确
+写 ms/us 的字段外，使用 uint32 16.16 秒；对计时应比较回绕差，不能换成 epoch ms。
+
+### 29.2 MTU 与连接 CRC 的具体输入
+
+**MTU 正常触发**：client state=2，control channel=1，消息编号 7，
+CServerHandshakeMsg.info 存在且 protobuf 解析成功。以传输头后开始的明文为例：
+
+```text
+07 0a 00                  # info 存在，mtu 可选字段省略 → 512
+07 0a 03 08 a0 0b         # info.mtu=1440 → 1440
+07 0a 03 08 a8 46         # info.mtu=9000 → 1472
+```
+
+首字节是 control type，后续是 protobuf；不附 protobuf 长度前缀。
+本节脚本使用完整包中的实际 channel/type 经原始 frame 构造器提取这些字段，
+不再仅从 MTU clamp 中间地址起跑。`mtu_missing_info`、`mtu_bad_proto` 无效解析
+不改 MTU且不启动认证；state=3、channel=2、消息=9 的反例不进入该握手分支。
+required info 缺失不能解释为“mtu 省略”，后者是有效消息。
+
+**CRC 正常触发**：连接 state=0、本地 ID=12，收到来自匹配地址的 Connected
+（transport type=2、dst ID=12、src ID=34），剥除 CRC 后长度恰为 17B，
+即 13B 头 + 4B echo。wire bit 7 决定接受后 connection 的 CRC 要求；
+若置位，Socket 先校验完整包尾 CRC32C，校验失败不能进入连接 handler。
+fixture 保存 3/4/5B body、CRC 开关的正反例，以及先握手后送第二包的完整序列。
+
+**后续数据**：类型 3 等普通数据要求匹配双方 ID/地址、channel<32；连接要求
+CRC 而包未带标志时，不进入 channel，也不刷新 last receive。已带但 CRC 错误
+则在更早的 socket 层拒绝。错误 ID/地址若未匹配其他连接，Socket 可能回复
+类型 9，不能一概期望“所有拒收都完全静默”。
+
+**特殊路径反例**：类型 9 在 connection 的 CRC 要求检查之前分派；ID/地址匹配
+且连接已建立时，即使该连接要求数据 CRC，未带 CRC 的类型 9 仍能进入 Disconnect。
+但若类型 9 自己带了 CRC，错误 CRC 仍被 Socket 拦截。`crc_policy_*` 验证两种连接
+要求 × 类型 3/9 × 无/正确/错误 CRC。不能在实现中把普通数据的要求机械移到所有
+包之前，再宣称和原版等价。新增的防护策略若选择不同处理，必须单独注明。
+
+**接线边界**：IHSlib `packet.c` 处理字节校验和剥尾；`ch_discovery.c::OnConnectACK`
+处理连接接受；`session.c` 接收分派在普通 channel 路径施加连接要求。MTU 的应用
+位置是 `ch_control.c::OnServerHandshake`，分片容量消费者在 `channel.c`。
+官方 MTU 是进程全局值；项目若保留每 session 存储，应明确这是多会话隔离选择。
+
+### 29.3 暂停恢复必须由生命周期边缘触发
+
+【证据】`CStreamPlayer::BHandleEvent 0x7b8248–0x7b8254` 对 SDL 事件 **0x103**
+调用 Client::Pause；`0x7b85ac–0x7b85b8` 对 **0x106** 调 Resume。
+本地 SDL2 头 `SDL_events.h` 对应 WILLENTERBACKGROUND / DIDENTERFOREGROUND，
+不是 DIDENTERBACKGROUND(0x104) 或 WILLENTERFOREGROUND(0x105)。四种事件均有
+原始指令对照。不能由“游戏暂停”“打开 Steam 大屏菜单”推导出这些生命周期事件。
+
+Client::Pause 的可实现条件/顺序（`0x7b02d8–0x7b0338`）：
+
+1. client 已暂停则直接返回，重复后台事件不重复发送。
+2. connection 存在且 state=1 时：若 client state=6，先发送空 CPauseMsg(122)；
+   然后调用 connection OnStreamPaused，设置其暂停位。
+3. 无论 connection 是否存在/已连接，首次调用最终将 client 暂停位置 1。
+   非串流 client 状态不发送 122，但已连接的 connection 仍可被标记暂停。
+
+Client::Resume 的条件/顺序（`0x7b03a0–0x7b0420`）：
+
+1. client 未暂停则直接返回，重复前台事件不重复发送。
+2. connection 存在且 state=1，先 OnStreamResumed：清 connection 暂停位，
+   用 connection 当前 update 时间刷新 last receive 和 last echo。
+3. 若 client state=6，依次发送空 CResumeMsg(123)、SendDataLost(audio=0, empty
+   frame IDs)、SendDataLost(video=1, empty frame IDs)。这不等于直接调用两次
+   后端 Reset，不能凭函数名改成销毁音视频解码器。
+4. 最后清 client 暂停位；即使 connection 已不存在，也清该本地状态。
+
+`pause_resume` 的 32 个输入覆盖两种动作、暂停位 0/1、connection 不存在/0/1/3、
+client state 2/6；fixture 保留动作有序列表。`lifecycle` 再从真实 SDL 事件进入，
+验证上层接线。§28 的 15/180 秒只规定持续无有效接收时的连接 deadline；仅调用
+Pause、仍持续收到合法数据，不应凭空在 180 秒断开。
+
+【项目接线证据】Switch `events.c::sl_events_next` 已把 applet 焦点变化转成上述
+0x103/0x106；`application.c` 也调用 `sl_runtime_foreground`，但该函数只原子保存
+foreground。原版消息/连接时钟动作尚未由此证明存在。实现应在**前后台变化边缘**
+向 session worker 交付动作，保留重复事件幂等性；不在每次主循环重复发包，不在
+渲染/输入热路径同步阻塞。是否触发系统暂停及唤醒后的实际时序仍需设备验证。
+
+### 29.4 限速、优先级与 FEC 的可触发边界
+
+**Socket 预算触发**：先把包 timestamp 改为当前时间，再检查所属类 deadline；
+当前时间小于 deadline 的类型 3/4/5/6 返回 1、置 socket blocked 标志，
+**不调用 transport**。到达等号即可尝试。类型 7/10/11 不进这两个额度检查。
+transport 若自己返回非零，函数原样返回且不推进该类 deadline；这与整形拒绝是
+两条分支，后者置 blocked，前者不因此置 blocked。
+
+成功发送（返回 0）后才按 §28.3 推进 deadline。打开 connection CRC 时，实际
+Socket send 先写 bit 7 和 CRC 尾；本层整形用 packet 长度字段计算，不因加尾而
+自动多计 4B。45 个 `send_budget` 案例覆盖类型 3/5/7/10/11、deadline 前/等于/后、
+transport 返回 0/1/2，并校验真实 CRC 指令输出和两个额度的变化。完整类型 4/6
+对应关系另由 §28 的类表案例验证。
+
+**优先级的真实上层来源**：串流启动 `HandleStreamStarting` 将控制=2、统计=−1；
+`StartMicrophoneStream 0x7a8990–0x7a899c` 取 client `+627` 麦克风 channel，设为
+1；`StopMicrophoneStream 0x7a8b34–0x7a8b4c` 在该 channel 非零时设回 0。
+setter 标记 connection 待排序，下次 Update 才重排，而非收到任意数据包就排序。
+第一轮更新/发送全部通道，第二轮才从轮转起点扫描不可靠补发；不能在 NACK handler
+里无界同步发完。三轮转测试见 §28 fixture；阶段选择与包龄/退休输入见 §25。
+
+**限额 setter 与 host 码率消息不应合并**：OnSetTargetBitrate(94) 解析成功后写
+client `+664`，通知可选 delegate/observer；`CStreamPlayer::SetTargetBitrate
+@0x7c9df4` 在这个 ELF 是 ret。尚无此消息调用连接限额 setter 的上层证据。
+SetQoS(87) 则要求 use_qos 必需字段、UDP 对象和 connection 均存在，向实际 UDP
+SetQOS 传 `use_qos << 1` 和连接地址。12 个 `control_actions` 验证字段缺失与对象
+存在/缺失；测试 delegate 是替身，不声称完成所有 observer 的调用链。
+
+**FEC 接收触发**：匹配的活动连接收到 type=11、channel 有效，先走独立 FEC
+分组检查；收到足够的不同 shard 后重建/交付。5 个 `fec_ingress` 案例从 Socket
+进入真实 connection/channel/FEC/RS，不再仅直接调用 BAddPacket：3 个数据片齐全、
+缺 1/2 数据片但总计足够 k、仅有 2 片、重复同一片 3 次。最后一个保留原版错误
+交付的反例，不能把它作为项目必须照抄的成功行为。
+
+这些案例的 connection outgoing FEC 启用位始终为 0，仍可接收恢复；不能拿发送
+启用位拒收这条接收路径。§26 的三组量仍须分开：配置字段 25 请求 host 行为、
+connection outgoing 启用位选择自身发送路径、channel percentage 决定自身冗余量。
+向后两者注入测试值能触发发送器，不证明 UI/host 会把它们设成那些值。未取证的
+Windows 激活/自适应规则不能靠猜测补成默认 20%/50%。接收器、信封集成与有界防护
+可按已有 wire 契约独立实现；自动开启配置仍需单独的协商证据和互通验收。
+
+### 29.5 可靠重传、累计确认及时间戳采样
+
+【更正】§9.1 的等号描述撤回。真实 `SendReliablePackets 0x7f8b04–0x7f8b88`
+对已有发送计数、非零发送时间的包使用：
+
+```text
+c = clamp(smoothed_rtt_ticks, 65, 3276)
+retry_threshold = c + floor(c / 4)
+可重传 iff signed_wrap(now - last_send) > retry_threshold
+counter == 0 或 last_send == 0：跳过包龄条件，立即尝试
+发送成功：counter 加 1，达到 255 则保留 255；不按次数退休
+```
+
+例如 smoothed RTT=65 tick，包龄 80/81 不重传、82 重传；smoothed=1000 时，
+1250 不重传、1251 重传。33 个 `reliable_retry` 覆盖 RTT clamp、严格边界、
+counter=1/255 与三个立即尝试反例。Socket send 是显式替身；真实预算拒绝/发送
+失败另在 `send_budget` 验证，不能据此称重传线程调度逐 tick 等价。
+本地 `RetryTicks` 数值公式相同，但 `retransmission.c` 转成向上取整毫秒 deadline
+后由 timer 判断；精度/调度不同，不能把数值公式相同写成触发时刻完全一致。
+
+**累计 ACK 触发**：类型 7 进入可靠 state 的 HandleAckPacket；包头 sequence 是
+累计确认号，13…16B 是 echo。先计算 `int16(ack - head + 1)`，正值时按已占用范围
+长度截断推进；随后继续跳过已有空槽。8 个 `reliable_ack` 验证旧 ACK、确认一/多
+包、越过 tail 的截断、旧 ACK 也可清理已有空头槽、65535 回绕及 32768 半区间。
+不是任意巨大 ACK 都按无限精度“大于 head”处理；空槽推进也不是接收端丢弃缺洞。
+这些是合法长度 ACK 的证据，新增 parser 的短包防护不能冒称原版全面具备。
+
+**时间戳触发**：ACK/NACK/Connected 等合法分派调用 ProcessTimestamp(echo,
+peer_send, receive_now)。`0x7f9a60–0x7f9a68` 只拒绝比已记录 echo 老**超过 130
+ tick** 的值；老 130 tick 恰好允许，并可把 last echo 更新到较小值。这不是普通
+接收窗口保留 newest sender timestamp 的逻辑，两者不能共用一个“只增不减”规则。
+正 RTT 参与最小值；采样 RTT 钳为非负，已有平滑值时取 `(old+sample)/2`。
+只有 RTT≤minRTT+65 的样本进入时钟 offset 队列：min=935、RTT=1000 可进，1001
+不进。offset 使用 `peer_send - echo - trunc((now-echo)/2)`；负数保留 uint32 位型
+和 int32 解释区别。最小 RTT 的慢速上调与更新时间也由案例记录。
+
+9 个 `timestamp` 验证 echo 旧/新边界、未来 echo、平滑、offset 准入及 min 更新。
+PingStats/TimeOffsetStats 的容器在此为样本记录器，**没有证明完整 3s/10s 窗口
+淘汰、均值更新与线程轨迹等价**；实现实时统计时仍须单独核对那些容器。
+
+### 29.6 实现接线与验收资产
+
+```sh
+python3 scripts/audit-steam-protocol-triggers.py \
+  --binary build/video-recovery-re/libmain-arm64.so \
+  --output build/video-recovery-re/protocol-triggers.json
+```
+
+181 个场景及所有具名输入保存在 `scripts/fixtures/steam-protocol-trigger-reference.json`。
+脚本比较固定原版参考，不自动改写期望；另复跑原有 36 个恢复与 71 个 FEC 案例。
+普通实现测试可直接消费 JSON 的 `input` 和 `observed`，无需分发官方 ELF：
+
+- packet/连接层测试用 mock transport 注入 `datagrams`，检查是否交付/发包及状态；
+  地址比较替身需同时设置为 fixture 指定的匹配/不匹配结果。
+- control 层先建立 fixture 的 client 状态，再提交 `reassembled_plaintext_packet`，
+  检查消息/状态动作；不得绕过接线只调用 clamp 后声称已验证控制分派。
+- lifecycle 测试注入 SDL 事件并检查有序动作列表；计时测试注入假时钟及明确的
+  last receive/echo/RTT，而非靠真实 sleep 赌定时分支。
+- 发送测试准备占用窗口、counter/last_send、两类额度和 transport 返回值；区分
+  “没有调用底层”“底层失败”“已发但未确认”“收到 ACK 退休”。
+- FEC 验收必须检查恢复 payload 的逐字节内容与唯一交付数；原版 duplicate 反例
+  属于兼容性观察，项目防护应另设“重复片不增加唯一计数、恢复失败不交付”判据。
+
+这些是可运行的原版触发契约和后续实现的对照资产，不是未实现功能的本地通过
+证明。§28 的 12 项 UI/外设入口仅有路由清单，尚不具备各 delegate 的完整语义；
+SNS/SDR 内部、Windows host 配置策略也不在本节的实现契约内。不得以场景数替代
+这些层的证据，也不得宣称静态复播已经证明真实链路和物理显示。
