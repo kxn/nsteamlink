@@ -182,6 +182,7 @@ static void emit(sl_ui_model *m, sl_command_type type) {
     m->command.generation = m->generation;
     m->command.quality = m->store.quality;
     m->command.bitrate_kbps = m->store.bitrate_kbps;
+    m->command.unreliable_fec = m->store.unreliable_fec;
     m->command.language = sl_i18n_language();
     m->command.update_check = m->update_check;
 }
@@ -484,6 +485,12 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
     case SL_SOUND:
         m->store.sound = !m->store.sound;
         emit(m, SL_CMD_SAVE);
+        break;
+    case SL_FEC:
+        if (m->page == SL_SETTINGS) {
+            m->store.unreliable_fec = !m->store.unreliable_fec;
+            emit(m, SL_CMD_SAVE);
+        }
         break;
     case SL_RETRY:
         if (m->page == SL_ERROR && !m->ending_game) {

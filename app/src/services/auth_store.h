@@ -9,6 +9,7 @@ typedef struct sl_auth_store {
     uint32_t quality;
     bool sound;
     uint32_t bitrate_kbps;
+    bool unreliable_fec;
 } sl_auth_store;
 /* Explicit bandwidth choices; independent of the quality preference. */
 static inline bool sl_bitrate_valid(uint32_t kbps) {

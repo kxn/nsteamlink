@@ -15,6 +15,7 @@ import json
 from pathlib import Path
 import runpy
 import struct
+import subprocess
 import sys
 
 
@@ -31,6 +32,11 @@ def main():
     parser.add_argument("--host64-binary", type=Path, required=True)
     parser.add_argument("--android-binary", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--native-receiver",
+        type=Path,
+        help="Also compare the production receiver with actual Windows type-11 output",
+    )
     args = parser.parse_args()
     directory = Path(__file__).parent
     modules = {
@@ -152,6 +158,23 @@ def main():
             f, sock = receiver()
             actual = receive(f, sock, [datagrams[i] for i in order])
             assert actual == ([payload] if len(dropped) <= 1 else [])
+            if args.native_receiver:
+                native = subprocess.run(
+                    [str(args.native_receiver.resolve())],
+                    input="\n".join(datagrams[i].hex() for i in order) + "\n",
+                    text=True,
+                    capture_output=True,
+                    timeout=10,
+                    check=True,
+                )
+                recovered = [
+                    bytes.fromhex(line.split()[-1])
+                    for line in native.stdout.splitlines()
+                    if line != "-"
+                ]
+                assert (
+                    recovered == actual
+                ), f"production/official receive mismatch: {arch}, {order}"
             cases.append(
                 {
                     "name": f"win{arch}_erase_{dropped}_order_{order}",

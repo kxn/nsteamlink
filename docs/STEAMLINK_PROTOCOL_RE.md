@@ -2,6 +2,8 @@
 
 > 范围补充：§30–31 纳入哈希固定的 Windows x86/x64 Host 和跨二进制互通。
 > §32 回到官方 Android shell/core 核对 FEC 的用户入口、测试推荐与配置生效链。
+> §33 定义本项目 type 11 接收和手动设置接线；§26–27 对旧 IHSlib 的缺口描述
+> 仍限各段标注的历史提交，不能再解释为新接收器继续拒绝 type 11。
 > 早期章节的地址/不存在声明限于各自样本，不作为所有官方版本的协议全集。
 
 > **证据更正（2026-09-07）**：本文历史段落的“已验证”不能整体沿用。
@@ -2941,3 +2943,93 @@ generated config 构造/复制/Clear；不是直接注入 recommendation 后就�
 预设的嵌套 resolution limit 构造仍执行原版指令。完整 Save/启动参数/core Load
 链在本节为静态反汇编证据，**不是本脚本的端到端文件/wire 测试**；也没有真实
 Qt 事件循环、Steam 认证会话、并发、Switch 解码或显示的证明。
+
+## 33. 类型 11 接收与用户设置的接线契约
+
+### 33.1 接收边界与官方策略
+
+`third_party/ihslib/src/session/fec.c` 独立处理 §26 的传输组，
+`packet.h` 明确命名类型 11，未知类型 12 仍拒绝。raw datagram 经
+SessionRecvCallback 的地址/连接 ID 检查后进入媒体 channel；早到的 type 11
+与普通媒体一起等待 Start*Data 确定 channel 身份，不猜 codec。
+
+- 一条 channel 一个活动 FEC 组，以最近已交付组为水位，uint16 差为 1…32767
+  才接纳。不同有效组替换未完成组，包括晚到的旧未完成组；不自行增加多组窗口。
+- 从 L/S 计算 k，检查完整的 8+S 字节 shard body；按唯一 index 收集。
+  系统数据全到即交付；缺数据且有 k 个不同 shard 才执行同一 GF(256)/Cauchy
+  码字的恢复。实现只求解缺失数据列，不改变官方系数、数据分片或 parity 字节。
+- 输出沿用首个有效 shard 的传输 header（type=11、组 ID 和时钟），媒体 frame ID
+  仍由内部信封解析。FEC 不进入普通类型 3/4 窗口，不推进普通水位、更新时间回显
+  或产生类型 10 NACK；FEC 序号和媒体 frame ID 也不混用。
+- 组替换、未达恢复门槛或解码失败不交付不完整 payload；不增加同组 shard
+  重请求定时器，不据失败自行切字段 25、清普通窗口或重连。
+
+独立 C 实现从多项式 0x11d 生成乘法/逆元表，没有复制二进制表或依赖一个仅名称
+相同的通用 RS 库。parity 非零的 k+m≤255；m=0 不进 RS，支持包含 65536 个数据
+shard 的 16 位 index 全范围（index=65535），不能把 index 当有符号 fragment count。
+
+### 33.2 有界资源与明确的实现差异
+
+以下是本项目的边界，不能标为原客户端逐指令等价：
+
+- `IHS_FEC_MAX_PAYLOAD=2MiB`，拒绝零长、过大、无效 index、坏 shard 长度及
+  同组元数据变化。输入先校验再替换组；失败分配不交付。parity 组上限约束也限制
+  矩阵尺寸，m=0 的总 shard 数最多 65536。
+- 按唯一片计数，重复片不改变已存数据或满足 k；检查恢复成功才交付。
+  这是对 §26.4 原版重复计数错误的有意防护，不复制其错误 payload 上交行为。
+- 重建结果通过既有媒体 worker 消费；不在收包线程调用 decoder。受 windowLock
+  保护的完成 FIFO，项数≤windowCapacity，分配字节（含节点）≤windowCapacity×2048。
+  超预算淘汰最旧完整项；单项超预算或分配失败直接释放。这是线程桥的背压资源策略，
+  不是 Steam 的额外网络补包算法。视频后续帧 ID 的断裂仍由既有恢复层处理。
+- worker 停止/唤醒/join 后才释放 FIFO、活动分组、GF 表、接收窗口及锁。
+  不增加 detach 线程，也不把 stop 后的 packet 留在组或 FIFO 中。
+
+### 33.3 手动开关、默认值与持久化
+
+应用 **设置 → 网络纠错** 对应官方 `OnUnreliableFECChanged` 已取证的保存入口。
+默认关闭；改动保存为 profile v5 的 `unreliable_fec`，由启动 command 交给 runtime，
+配置回调赋给 `IHS_SessionConfig.enableUnreliableFec`。首次协商 true 时显式写字段 25；
+false 时使用 optional 默认值。串流中改设置只保存供下一次用户正常连接使用，
+不由设置动作主动重连。该开关不设置百分比，也不是接收 type 11 的本地准入开关。
+
+旧 v2/v3/v4 配置迁移的 FEC 值为 false；v4 的设备身份、逐主机授权密钥、画质和
+码率逐字段迁移。不能把旧结构 padding 解释成新开关，也不以升级为由重新生成密钥。
+现有画质偏好仍与 FEC 独立：Fast quality 枚举不等于 §32 的 FastPreset 工厂。
+§32 的官方增强预设/网络测试推荐不由这个手动开关代替，也不因支持接收而隐式应用。
+运行时完整配置 99 和它的产品触发仍按 §29/§32 的契约分别核对。
+
+### 33.4 验证入口和证明范围
+
+```sh
+cmake --build build/desktop -j4
+ctest --test-dir build/desktop --output-on-failure
+python3 scripts/check-steam-fec-receiver.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-fec-oracle
+python3 scripts/audit-steam-fec-interoperability.py \
+  --host32-binary build/video-recovery-re/official-host/win32/SteamUI.dll \
+  --host64-binary build/video-recovery-re/official-host/win64/SteamUI.dll \
+  --android-binary build/video-recovery-re/libmain-arm64.so \
+  --native-receiver build/desktop/third_party/ihslib/tests/session/ihs-fec-oracle \
+  --output build/video-recovery-re/production-fec-interop.json
+```
+
+`fec_official_vectors` 用固定官方 k3/m2 全片字节验证 2-erasure 的全部 60 种幸存
+顺序和全片的 120 种排列，并覆盖不足 k、重复、元数据冲突、组回绕/替换、CRC、
+类型 12 拒绝及 m=0 超过 255 片/完整 16 位 index。期望来自官方固定向量，不用
+本地编码器生成 parity 再证明自身正确。
+坏元数据和 m=0 的大分组边界由测试构造，不冒充官方发送器导出的字节向量。
+
+跨二进制脚本在既有 12 场景之外，将其中 8 个 Windows 5% FEC 场景的真实发包字节
+同时交给本地 receiver，对照官方 Android 的恢复 payload；原版配置 parser/apply、
+发包及 RS 仍执行，不把手写 codeword 当作 Host 发包证明。
+
+`fec_channel` 从 raw datagram 进入 session，覆盖早包缓存→添加 channel→媒体
+信封→真实 worker 的 dataFrame 回调，解码阻塞时 FIFO 上限、无 FEC NACK、普通
+sequence=0 未被 FEC ID 消耗及 stop/join 清理。回调为受控消费者，**不是 H.264
+图像解码或屏幕显示**。`client_capabilities` 解密真正排队的消息 4，核对 false/true
+字段 25；UI 测试核对保存/command、迁移和不主动重连，不能合称认证会话实测。
+
+CTest、sanitizer、Switch 交叉构建分别证明对应的 CPU 路径、内存/并发检查和构建
+兼容性；不能据此声称 Switch 上的纠错时延、负载下输入/显示、所有协议策略或原用户
+停顿已经验证。普通发送缓存/补发、可靠媒体、完整配置更新、MTU/CRC/暂停/调度
+等契约依然独立于 type 11 接收，不以这个接线覆盖其他层。

@@ -330,6 +330,7 @@ static void configuring(IHS_Session *s, IHS_SessionConfig *c, void *ctx) {
     sl_runtime *r = ctx;
     c->enableAudio = true;
     c->enableHevc = false;
+    c->enableUnreliableFec = r->active.unreliable_fec;
     c->maxWidth = 1280;
     c->maxHeight = 720;
     c->maxFps = 60;

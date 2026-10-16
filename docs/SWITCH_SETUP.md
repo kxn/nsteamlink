@@ -91,6 +91,9 @@ tools/switch-debugctl.py 10.10.10.17 diag current
 - 仅诊断构建：游玩菜单内单独长按 X 一秒切换 Debug 浮层。完整诊断接口见 [UDP_DEBUG](UDP_DEBUG.md)。
 - 设备身份、逐电脑授权和设置保存在 `sdmc:/switch/nsteamlink/profile.bin`。
   旧 `auth.bin` 迁移保留设备身份；旧格式无法证明主机唯一身份，因此首次连接需重新配对。
+- **设置 → 网络纠错**默认关闭。开启后，下次连接会向 Steam 请求 FEC，使用额外
+  数据帮助恢复部分丢片；超出纠错能力的丢包仍会影响串流。串流中修改会保存设置，
+  在下次连接生效，不会自动断开重连。升级已有 profile 会保留配对和密钥。
 - `switch-stream-selftest.nro` 使用同一 runtime，默认 600 个渲染帧后清理退出，无自动串流。
 - 本机 Switch 调试地址为 `10.10.10.17`，netloader 端口为 `28280`；直接使用 nxlink，不发空 TCP 探测。
 - 涉及生命周期的验证要区分日志清理完成和屏幕返回 hbmenu；后一项必须由实机观察确认。
