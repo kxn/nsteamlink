@@ -2647,3 +2647,73 @@ POP 未给该字段则跳过本地公钥解析、使用全局；显式空串则�
 同一公钥须用于 X25519 和 `encryption_your_public_key_lead_byte`，不能一个用 POP key、
 另一个仍用 global key。离线 key 选择用例显式提供 IsValid 结果，验证指针选择/分支，不
 借此宣称验证了密码 provider。实际 crypto 答案与认证失败用例另行验证。
+
+### 21.28 官方运行时的主路中断对照与观测边界
+
+**Evidence**：同版 x86_64 `libshell_x86_64.so` 的 SHA-256 为
+`195025601c2b17194a4d8b3debd674aca3377290fe3851986656c49bc973f907`。
+`tools/steam-sdr-runtime-audit.py` 在已 root 的指定模拟器上先核对该文件及进程架构，再挂钩
+主备选择和 RecvValidEndToEndPacket。它只采集地址、POP、角色、计数和时间元数据；不采集
+凭据、protobuf 业务缓冲或编码帧。主路/备用字段和两组 failure count 使用该固定库的布局，
+不能拿这些偏移直接挂到其他版本。
+
+只阻断已知 IPv4 直连地址仍可能走 IPv6 ICE，SDR 初始化或 primary session 存在并不能证明
+业务选中了 SDR。运行时对照在 ConnectP2PCustomSignaling 真正收到的配置数组中，将 Int32
+配置 104（ICE Enable）改为 0，同时记录原值与实际值；还要核对 SDK 的实际 Connected SDR
+日志。此前只挂小型 getter 的尝试没有命中该调用，不能据挂钩安装成功宣称已禁用 ICE。
+导出函数可能在内部调用点被内联，其他入口的回调缺席同样不是“原版没做这个动作”的证据。
+
+**应用层窗口**：§8.6 的 HandleNetworkTest `0xcff6b6–0xcff6c9` 比较 `this+0x150`
+与 GetStreamTimestamp，使用 `0x30000` 的帧等待窗口。实际纯 SDR 网络测试在主路中断后
+约 3 秒就进入 NetworkTestDone 并销毁 transport；这早于后续 SDK 主备切换，不能把应用
+提前结束解释为 SDK 已尝试并耗尽所有路线。
+
+为了单独观测 SDK，可显式使用 `--hold-test-timeout 45`：只在注入后暂时更新上述
+CNetworkTest 的帧时钟，本例 45 秒（工具上限 60 秒）；不改 SDR 的评分、角色、失败数或
+探测 deadline。
+这是**测试外壳覆盖**，不是官方产品原本的等待策略，相关网络测试质量数字不用于性能结论。
+默认不覆盖此时钟。`--force-sdr` 是另一项明确的连接配置覆盖，也不隐瞒为原厂默认配置。
+
+**一次受控样例**：`build/anywhere-research/official-recovery-20261017-022617/`
+的 events 与 app 日志记录了以下事实：
+
+- 实际 ICE 配置由 `0x7fffffff` 改成 0；SDK 选择 SDR，香港 primary 与东京 backup 均存在，
+  首先有经香港的有效 E2E 收包。该客户端的 controlling 字节为 0。
+- 仅在模拟器内部双向丢弃该香港 UDP endpoint。OUTPUT 另以 Steam Link UID 限定；INPUT
+  以来源 IP/port 限定。计数记录确认两向 DROP 都命中；开发机防火墙没有改动。
+- 注入后约 6.4 秒，官方 selector 将东京提升为 primary。此前 RelayServer failure 已为 1，
+  RelaySession failure 仍为 0；这直接支持 §18.5 的所有者区分。
+- 在保持测试外壳存活的这次窗口中，没有观察到经新 primary 的有效 E2E 恢复；SDK/IHS
+  日志随后出现 peer Destroyed 和约 15 秒 inactivity。不能把 primary 指针改变当作恢复。
+
+**Evidence correction**：整理后的工具在 `build/anywhere-research/official-runtime-fault/`
+再次运行同一覆盖，捕捉到东京成为 primary 后的一个有效 E2E 样本；随后仍因 IHS inactivity
+结束。撤回将前一份“没有采到新 E2E”推广为“官方 SDK 完全不会恢复 E2E”的判断。不同
+样例或采样缺席都不能证明零包。该包是统计应答还是业务数据仍待分类；仅凭这次调用不能
+证明业务回程、编码帧或持续收流恢复。
+新的本地 fixture 被动跟踪 E2E 计数，要求五秒角色保持的末尾一秒内仍有新计数增长，不
+用单包把整个保持窗口判为成功。SDK/relay/业务帧的失败与超时仍按各自所有者解释。
+
+**Conclusion**：这份证据说明“只换 POP 并保持 Connected”不足以验收恢复；也不能仅因本地
+适配器的同类样例失败就把根因归给新增快照代码。它没有证明正常游戏串流也有同样结果，
+没有证明服务器内部的回程选择规则，更不能由两个失败样例推定客户端实现已经全等。
+Frida 与应用帧时钟覆盖的影响须保留在结论范围内。
+
+复现时先用 `android-network-sandbox.py` 在模拟器内阻断新鲜的 peer 地址，再冷启动应用，
+自动定位 Computer Settings 的 Network Test 按钮；避免沿用已缓存的内网直连。下列坐标仅
+适用于本次已核对的 2340×1080 界面，工具本身不猜测当前页面：
+
+```sh
+python3 tools/steam-sdr-runtime-audit.py \
+  --serial emulator-5554 --remote 127.0.0.1:27043 \
+  --output build/official-sdr-runtime \
+  --peer-file /private/current-peer-addresses.json \
+  --force-sdr --fault --hold-test-timeout 45 \
+  --tap 480 945 --seconds 60 --stop-app
+```
+
+前置条件是已运行的 frida-server 和 adb forward。工具核验实际配置覆盖成功后，才在首次有效
+E2E 后至少 3 秒、有 primary/backup 时注入丢包；有布局读取错误则停止。有效 E2E 最多每
+250ms 采样一次，并保留每个 session 的首个样本，注入时重新登记首样本。结果只记录是否
+注入、是否见到新 primary 的 E2E 样本与清理错误，不自行输出恢复 PASS。采样不能替代逐包
+统计；`--stop-app` 是实验清理，也不是 SDK 析构/loader 生命周期通过的证据。
