@@ -15,6 +15,16 @@
 #include <time.h>
 #include <unistd.h>
 #include <stdatomic.h>
+#ifdef NSL_LIVE_EXTERNAL_LOG
+int sl_live_printf(const char *, ...);
+#define printf sl_live_printf
+#define puts(text) sl_live_printf("%s\n", text)
+#define fprintf(stream, ...) sl_live_printf(__VA_ARGS__)
+#define fflush(stream) ((void)0)
+#endif
+#ifndef NSL_REMOTE_LIVE_ENTRY
+#define NSL_REMOTE_LIVE_ENTRY main
+#endif
 typedef struct live {
     sl_auth_store store;
     const char *profile;
@@ -157,7 +167,7 @@ static uint64_t now_ms(void) {
     clock_gettime(CLOCK_MONOTONIC, &t);
     return (uint64_t)t.tv_sec * 1000 + (uint64_t)t.tv_nsec / 1000000;
 }
-int main(int argc, char **argv) {
+int NSL_REMOTE_LIVE_ENTRY(int argc, char **argv) {
     uint8_t secret[32] = {0};
     IHS_ClientConfig config = {
         .deviceId = 1, .secretKey = secret, .deviceName = "NSteamLink probe"};
@@ -196,7 +206,9 @@ int main(int argc, char **argv) {
     atomic_init(&l.session_connected, false);
     atomic_init(&l.video_frames, 0);
 #endif
+#ifndef __SWITCH__
     umask(0077);
+#endif
     if (l.profile) {
         if (sl_auth_load(&l.store, l.profile) < 0)
             return 1;

@@ -2303,3 +2303,45 @@ PC=`0x1e5930`；按首版源码重建的 ELF 在此处为从空设备函数表�
 第 2 版取消重定向后，下一次成功启动读回 `sdk_atexit_returned`，并再次完成两轮
 收发；最近 crash report 未改变。这支持修正后的前一轮 loader 返回/再次启动路径，
 不能替代正式客户端串流生命周期验收，也不能仅凭最后一次 nxlink 退出推断屏幕状态。
+
+---
+
+## D-064 Switch SNS 私有身份 fixture 的交付和加密回读
+
+日期：2026-10-16
+
+Evidence：AGENTS.md 的自包含真机测试/自动交付约束，D-015 的独立日志 socket，
+AUTH/NETWORKING 的 Proof 前密钥持久化契约；`auth_store.c` 的 v4 布局与 checksum。
+[hbmenu netloader](https://github.com/switchbrew/nx-hbmenu/blob/master/common/netloader.c)
+将上传名拼到根目录并将实际路径放入 argv[0]，
+[menuStartupPath](https://github.com/switchbrew/nx-hbmenu/blob/master/common/menu.c) 的
+Switch 根目录是 `sdmc:/switch`。这只指导已知路径的交付/清理；设备实际 argv[0]
+仍须通过精确文件名、目录和无 traversal 的检查，不能盲删猜测路径。
+
+Decision：
+
+1. 专用 `nsl-sns-network-private` 只在显式设置 `NSL_PRIVATE_SNS_ROMFS` 且开启工具时
+   构建。RomFS 仅包含本项目已授权的独立测试 profile 和本次构建随机 key，全部输入/
+   产物留在忽略的私有 build。不得发布此 NRO；release collector 只收正常客户端。
+   NRO 打包显式依赖 profile/key 文件，避免只更新 ELF 或 RomFS 目录时间而误部署旧包。
+2. Probe 自动使用独立 SD 测试目录，按 embedded device identity 的摘要区分目录；
+   不读写正常客户端 profile。允许的模式仅为网络测试、relay loss 与 terminal fixtures，
+   不允许通过此入口请求桌面/游戏/媒体。身份在目标侧先由正式 auth_store 校验，再使用
+   同一匿名控制、证书和 SNS 代码；密钥更新照常先持久化，不因测试跳过 Proof 的契约。
+3. 私有结果从独立 TCP channel 用 AES-256-GCM 回传：每构建随机 32-byte key、每次
+   启动新随机 12-byte nonce；`NSP1` 和长度 header 作为 AAD。明文包含有界 profile 与
+   有界私有 error，不进入 nxlink transcript。接收端限制设备 IP，验证 tag、长度、
+   profile checksum、device identity 和布局，并检查本地 profile 未在测试中被别人修改。
+4. PC 原子保存 profile 并 fsync 后，才返回绑定完整密文 transcript 的 HMAC-SHA256
+   ACK。Switch 收到正确 ACK 才删除临时 profile/error；缺失/错误 ACK 保留可能已轮换的
+   密钥并报告失败，下一次使用同一设备 fixture 可自动恢复，不能静默丢弃密钥更新。
+5. 日志仍使用有界非阻塞独立 socket，不重定向 stdio。先退出 IHS/SNS/云端 provider，
+   完成并关闭回读 TCP，再卸载 RomFS、只删除已核对的私有上传文件，最后关闭日志与
+   socket 服务。保存退出阶段、下次启动自动读回；退出日志不能单独证明 loader 返回。
+
+Evidence correction：首个完整网络 fixture 在 `embedded_profile` 阶段退出，未进入云端
+测试。其 `sl_auth_load("romfs:/")` 与 auth_store 自动追加的 `/profile.bin` 合成双斜线；
+[libnx navigateToDir](https://github.com/switchbrew/libnx/blob/master/nx/source/runtime/devices/romfs_dev.c)
+在跳过首个根斜线后拒绝空目录段（EILSEQ）。目录参数改为 `romfs:`，并在部署前从实际
+NRO 的 RomFS 文件表核对完整 profile/key 字节，而非仅核对输入目录或文件时间。
+这个错误属于测试交付路径，不能当作 TLS、证书或 SDR 失败证据。
