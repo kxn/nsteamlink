@@ -246,6 +246,16 @@ static void cancel_and_failure(void) {
     a.auth_key = (ProtobufCBinaryData){32, key};
     reply(f, 4, &a.base);
     assert(f->failed == 2 && !f->saves);
+    sl_remote_update(f->remote, 100);
+    assert(sl_remote_pair(f->remote));
+    sl_remote_cancel(f->remote);
+    sl_remote_update(f->remote, 119);
+    assert(!sl_remote_failed(f->remote));
+    sl_remote_update(f->remote, 120);
+    assert(sl_remote_failed(f->remote));
+    sl_remote_close(f->remote);
+    open_session(f, 3);
+    assert(sl_remote_pair(f->remote));
     sl_remote_destroy(f->remote);
     free(f);
 }

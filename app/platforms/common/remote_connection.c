@@ -146,7 +146,7 @@ static void fail_connection(sl_remote_connection *c, uint64_t now) {
      * official 10–30s jitter. Pending pairing is never replayed. */
     bool established = sl_remote_ready(c->protocol);
     if (c->callbacks.diagnostic)
-        c->callbacks.diagnostic(established ? "cloud: WebSocket lost; reconnecting"
+        c->callbacks.diagnostic(established ? "cloud: session reset; reconnecting"
                                             : "cloud: initialization failed; retry scheduled",
                                 c->ctx);
     clear_easy(c);

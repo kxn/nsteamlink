@@ -20,6 +20,7 @@ struct sl_remote {
     bool opening, failed;
     bool pending_start, pending_set;
     unsigned pending_cancel;
+    int64_t wall_time, rpc_deadline;
     sl_remote_peer peers[SL_REMOTE_PEERS];
     size_t count;
     int pairing;
@@ -71,7 +72,10 @@ static bool subscription(sl_remote *r, const sl_remote_peer *peer, bool enable) 
         sl_proto_fixed64(&w, 3, r->config.deviceId);
         sl_proto_uint(&w, 4, 1);
     }
-    return envelope(r, enable ? 5 : 6, body, w.size);
+    bool ok = envelope(r, enable ? 5 : 6, body, w.size);
+    if (!ok)
+        r->failed = true; /* Recreate the complete subscription set, not a partial one. */
+    return ok;
 }
 sl_remote *sl_remote_create(const IHS_ClientConfig *config, const sl_remote_callbacks *cb,
                             void *ctx) {
@@ -104,7 +108,7 @@ bool sl_remote_open(sl_remote *r) {
     return envelope(r, 1, NULL, 0);
 }
 bool sl_remote_ready(const sl_remote *r) {
-    return r && r->session != 0;
+    return r && r->session != 0 && !r->failed;
 }
 bool sl_remote_failed(const sl_remote *r) {
     return r && r->failed;
@@ -170,7 +174,7 @@ bool sl_remote_watch(sl_remote *r, const sl_remote_peer *peers, size_t count) {
     return ok;
 }
 bool sl_remote_packet(sl_remote *r, uint64_t account, const uint8_t *data, size_t size) {
-    if (!r->session || !account || size > SL_REMOTE_FRAME_MAX - 64)
+    if (!sl_remote_ready(r) || !account || size > SL_REMOTE_FRAME_MAX - 64)
         return false;
     uint8_t *body = malloc(size + 64);
     if (!body)
@@ -209,14 +213,15 @@ static bool send_message(sl_remote *r, uint64_t account, ERemoteClientBroadcastM
     return ok;
 }
 bool sl_remote_pair(sl_remote *r) {
-    if (!r->session || r->pairing || r->stream.active || r->pending_start || r->pending_set ||
-        r->pending_cancel)
+    if (!sl_remote_ready(r) || r->pairing || r->stream.active || r->pending_start ||
+        r->pending_set || r->pending_cancel)
         return false;
     r->pairing = PAIR_PIN;
     r->have_auth = false;
     r->exchanges = 0;
     erase(r->pin, sizeof(r->pin));
     r->pending_start = true;
+    r->rpc_deadline = r->wall_time + 20;
     if (session_request(r, 2))
         return true;
     r->pending_start = false;
@@ -224,8 +229,11 @@ bool sl_remote_pair(sl_remote *r) {
     return false;
 }
 static void cancel_pair_slot(sl_remote *r) {
-    if (r->session && session_request(r, 4))
+    if (r->session && session_request(r, 4)) {
+        if (!r->pending_start && !r->pending_set && !r->pending_cancel)
+            r->rpc_deadline = r->wall_time + 20;
         ++r->pending_cancel;
+    }
 }
 void sl_remote_cancel(sl_remote *r) {
     bool known = r->pairing == PAIR_KNOWN;
@@ -314,6 +322,8 @@ static bool send_authorization(sl_remote *r, bool publish) {
     erase(raw, sizeof(raw));
     erase(body, sizeof(body));
     if (ok) {
+        if (!r->pending_start && !r->pending_set && !r->pending_cancel)
+            r->rpc_deadline = r->wall_time + 20;
         r->pending_set = true;
         r->pairing = PAIR_AUTH;
         if (r->cb.pair_code)
@@ -336,6 +346,11 @@ static void authorization(sl_remote *r, uint64_t client_id, const uint8_t *data,
         cmsg_remote_device_authorization_response__unpack(NULL, size, data);
     if (!a)
         return;
+    if (r->cb.diagnostic) {
+        char line[80];
+        snprintf(line, sizeof(line), "cloud: authorization response result=%d", (int)a->result);
+        r->cb.diagnostic(line, r->ctx);
+    }
     CMsgRemoteDeviceAuthorizationConfirmed confirm =
         CMSG_REMOTE_DEVICE_AUTHORIZATION_CONFIRMED__INIT;
     uint64_t account = a->steamid;
@@ -440,6 +455,15 @@ static void status(sl_remote *r, const CMsgRemoteClientBroadcastHeader *h, const
         IHS_IPAddress ip;
         if (strlen(s->ip_addresses[i]) < 64 && IHS_IPAddressFromString(&ip, s->ip_addresses[i]))
             snprintf(host.addresses[host.address_count++], 64, "%s", s->ip_addresses[i]);
+    }
+    if (s->public_ip_address && host.address_count < SL_REMOTE_ADDRESSES) {
+        IHS_IPAddress ip;
+        bool duplicate = false;
+        for (size_t i = 0; i < host.address_count; ++i)
+            duplicate |= !strcmp(host.addresses[i], s->public_ip_address);
+        if (!duplicate && strlen(s->public_ip_address) < 64 &&
+            IHS_IPAddressFromString(&ip, s->public_ip_address))
+            snprintf(host.addresses[host.address_count++], 64, "%s", s->public_ip_address);
     }
     if (r->cb.host)
         r->cb.host(&host, r->ctx);
@@ -607,7 +631,7 @@ bool sl_remote_receive(sl_remote *r, const uint8_t *data, size_t size) {
 }
 
 bool sl_remote_stream(sl_remote *r, uint64_t id, const IHS_StreamingRequest *request) {
-    if (!r->session || r->pairing || r->stream.active || !request)
+    if (!sl_remote_ready(r) || r->pairing || r->stream.active || !request)
         return false;
     const sl_remote_peer *peer = NULL;
     for (size_t i = 0; i < r->count; ++i)
@@ -643,6 +667,18 @@ bool sl_remote_stream(sl_remote *r, uint64_t id, const IHS_StreamingRequest *req
     return true;
 }
 void sl_remote_update(sl_remote *r, int64_t now) {
+    r->wall_time = now;
+    if (r->session && (r->pending_start || r->pending_set || r->pending_cancel) &&
+        now >= r->rpc_deadline) {
+        if (r->cb.diagnostic)
+            r->cb.diagnostic("cloud: pairing service response deadline expired", r->ctx);
+        if (r->pairing == PAIR_PIN || r->pairing == PAIR_AUTH)
+            pairing_failed(r, IHS_AuthorizationTimedOut);
+        /* No transaction ID exists for these RPCs. A new WebSocket, rather than
+         * reusing a possibly occupied slot, makes a fresh user attempt safe. */
+        r->failed = true;
+        return;
+    }
     if (!r->session || !r->stream.active || now < r->stream.next_send)
         return;
     if (r->pairing == PAIR_KNOWN) {
