@@ -1502,7 +1502,7 @@ host-stop，避免丢失清理期间到达的完成事实。这个检查只覆�
   因此阈值为 `6553 * 1000 / 65536 = 99.9908ms`，不是 200ms 或 1–2 秒。
 
 【结论】这版官方客户端在持续收包时约每 100ms 重请求；该检查由收包驱动。
-本项目 `ch_data_video.c:313–334` 使用 200ms。二者在关键帧标记到达时都立即
+对照基线 v0.3.0 的 `ch_data_video.c:313–334` 使用 200ms。二者在关键帧标记到达时都立即
 解除等待，没有在此处额外等待一个重试周期；但标记属于视频片段，完整组装、
 后端解码和显示仍是必要条件，不能把“看到关键帧标记”视为已恢复显示。
 该函数没有重试次数上限，不能由此推断整个官方会话不存在其他超时。
@@ -1520,7 +1520,7 @@ host-stop，避免丢失清理期间到达的完成事实。这个检查只覆�
 | 关键帧 | 清理旧 pending，清零两个状态位，按新序列继续 | 清理旧 pending，清零等待，按新序列继续 |
 
 【结论】“官方所有恢复路径都立即停止接收普通视频，等关键帧”不成立。
-本项目把序列缺口和组装积压合并为严格等待，相比这版官方更保守。
+对照基线 v0.3.0 把序列缺口和组装积压合并为严格等待，相比这版官方更保守。
 官方仍接纳片段不证明所有片段都能显示；`OnThink @0x7b24dc` 的
 `0x7b2540–0x7b2570` 检查 slice 范围连续，`0x7b2588/0x7b2644` 检查
 FrameFinish，完整帧才进入 `0x7b2738–0x7b2750` 的后端解码调用。
@@ -1549,7 +1549,7 @@ FrameFinish，完整帧才进入 `0x7b2738–0x7b2750` 的后端解码调用。
   `0x7f9880–0x7f98d0` 对位图缺失且满足包龄条件的包清零发送时间；
   `SendUnreliablePackets @0x7f9054–0x7f9084` 会重发这些零发送时间的包。
 
-【证据】项目 IHSlib 的 `IHS_SessionPacketTypeUnreliableNack = 10` 只出现于
+【证据】对照基线 v0.3.0 的 IHSlib 中，`IHS_SessionPacketTypeUnreliableNack = 10` 只出现于
 `src/session/packet.h` 枚举；`ch_data.c` 的下行窗口实现没有构造这种反馈。
 `ch_control.c` 的 ACK/NACK 属于另一可靠窗口；视频 `ReportVideoStats` 的每秒
 帧结果报告也是另一条路径，不能当作类型 10 的替代实现。
@@ -1643,9 +1643,9 @@ connection `+640` 的统计对象，`PingStats::OnSampleAdded @0x7fc7b4`
 ### 25.3 类型 10 的反馈、补发与退休时序
 
 【证据】`UpdateUnreliableState` 的 `0x7fa700–0x7fa778` 同时检查反馈截止时间
-和乱序宽限；第一个可用后继包发送计数为 1 时，要自其接收时间等待 65 tick
-（约 0.992ms）；不足时重新置 dirty，后续 update 继续检查。已重传包不走这项
-首次发送宽限。`0x7fa970–0x7fa9b8` 在发送后以 RTT 派生值设置下一次反馈期限。
+和乱序宽限；第一个可用后继包的 wire 计数字节恰为 1 时，要自其接收时间等待
+65 tick（约 0.992ms）；不足时重新置 dirty，后续 update 继续检查。其他计数值
+不走该项宽限。计数不能泛称为“首次发送”，详见 §25.12 的更正。`0x7fa970–0x7fa9b8` 在发送后以 RTT 派生值设置下一次反馈期限。
 这里使用 connection `+744` 的平滑 tick 值，经约 1–50ms clamp 后取四分之一、
 再至少取 65 tick；它与关键帧请求约 100ms 的定时不是一回事。
 
@@ -1736,7 +1736,7 @@ code=3（`0x7c9d00–0x7c9d1c`）；`CStreamPlayer::BHandleEvent`
 
 【结论】已证明官方区分局部失败、重置和 fatal，但不能据此为 Switch 的
 FFmpeg/NVTEGRA 直接制定“某个 AVERROR 都应该重试／都应该断开”。
-当前 `sl_video_submit` 的 false 还混有身份／所有权失败、分配失败、解码失败，
+对照基线 v0.3.0 的 `sl_video_submit` 的 false 混有身份／所有权失败、分配失败、解码失败，
 必须先分清错误来源才能映射。此前建议中的通用错误分类是工程设计要求，
 不是已经逆向出的 FFmpeg 对照表。
 
@@ -1758,7 +1758,7 @@ FFmpeg/NVTEGRA 直接制定“某个 AVERROR 都应该重试／都应该断开�
 
 `scripts/audit-steam-video-recovery.py` 用 Unicorn 加载哈希固定的原始 ELF，
 直接执行官方分支，并拦截外部依赖；没有把重写的 C/Python 恢复算法当作官方代码。
-32 个断言场景覆盖准入状态、关键帧清理、100ms 重请求边界、活动视频窗口的
+36 个断言场景覆盖准入状态、关键帧清理、100ms 重请求边界、活动视频窗口的
 RTT/包龄边界、乱序宽限、反馈水位/位图、补发标记、补发阶段与退休边界、
 积压 150ms 边界与消息 148，以及 FinalDecode 的反馈／重置／交付分支。
 
@@ -1771,12 +1771,12 @@ python3 scripts/audit-steam-video-recovery.py \
 输入库按 §24.1 从已有 XAPK 解包；脚本需要 Python `unicorn`，不作为产品运行依赖。
 日志／socket／分配／锁／部分窗口 helper 和后端行为使用替身；例如窗口 Pop 在反馈
 测试里返回“尚不可交付”，Advance 只模拟水位前进，后端 decode 的成功／失败由
-场景输入控制。因此这 32 项不是完整传输集成、真实硬件解码或显示验证。
+场景输入控制。因此这 36 项不是完整传输集成、真实硬件解码或显示验证。
 
 【未证明】Windows host 的实际补包响应与时限；这些差异是否造成用户的一两秒卡顿；
 Switch 上 FFmpeg 错误分类、reset 的正确资源顺序及实际耗时；恢复期间物理显示结果。
 软件输入、退出、音频不被诊断阻塞仍是本项目既有运行时约束，不能冒称为这次已测得的
-官方时延保证。本节没有改变协议、回滚恢复实现，也不构成上述未证明事项的验收。
+官方时延保证。静态和指令仿真证据不构成上述未证明事项的验收。
 
 ### 25.10 安卓是否自行判断参考帧依赖
 
@@ -1823,3 +1823,88 @@ ClearAndRestartWindow(0)，与 reliable 的 `0x7f8720–0x7f8734` 相同。因�
 通道也从 packetId 0 建立接收水位，首个包丢失时不能把第一个续片当作新的起点。
 项目固定容量窗口溢出（含前跳超过容量）后 ReleaseAll 再锚定当前包属于本项目资源
 恢复策略；不声称与官方动态窗口的容量管理完全一致。
+
+### 25.11 VideoOverflow 比较单位与实现更正
+
+【证据】`CheckOverflow 0x7b2988–0x7b29b8` 读取两个 uint16 frameId，
+以 32 位有符号运算计算 `lastId - firstId + 1`，与对象偏移 `+412` 保存的
+上次范围比较；相等也发消息。`0x7b29b8` 无论是否发消息都会保存这次范围。
+`FlushPendingData 0x7b2bc8` 将此记录清零。
+
+【更正】撤回把此前 PR 实现描述为已完整对齐消息 148 的说法：`6c5f695`
+误把成员偏移 `+412` 写成时间增量常数，以时间跨度作了比较。正确单位是
+包含两端的 frame ID 范围，且应在抑制一次报告后也更新记录。§25.4 的逆向
+记录支持上述更正；原来的生产实现测试没有覆盖“小时间差、相同/缩小帧范围”边界。
+
+### 25.12 接收反馈与包龄的逐指令更正
+
+【证据与更正】`0x7fa750–0x7fa770` 比较的是 wire 计数字节**恰好等于 1**，
+不能解释成通用的“首次发送”语义；`SendUnreliablePackets 0x7f8f08–0x7f8f2c`
+在 socket 发送之后才增加计数，零初始化的首个包在这条发送路径上携带 0。
+撤回 §25.3 中“首次发送宽限”的解释，保留实际判断 `counter == 1` 和 65 tick。
+
+【证据】`HandleDataPacket 0x7f9434–0x7f9444` 仅在新发送时间更晚时更新回显，
+旧包/补包不能令它倒退；`UpdateUnreliableState 0x7fa3d0–0x7fa3e4` 先消费 dirty，
+只有期限/65 tick 未到的 `0x7fa774–0x7fa778` 重新置 dirty。一次成功反馈后，
+没有新输入不会自动周期性再发同一 NACK。位图长度在 `0x7fa898–0x7fa8d0`
+为 `ceil(min(tailExclusive-base,320)/8)`，不是固定 40 字节。
+
+【证据】`BInsertPacket 0x7f73d0–0x7f7430` 的包龄时间是独立槽位元数据：
+当前槽仅在未赋值或新时间更晚时更新；向前回填时仅覆盖 0 或比当前时间更晚的
+槽位，且**不以该槽是否持有 packet 为界**。真实 header.sendTimestamp 不能
+被这个包龄元数据替代。此前实现“直接改写前面的空槽直到遇到已收包”不足以
+复现此规则，会在带有不同发送时间的乱序/重传后推迟过期处理。
+
+【证据】`DecodeFrame 0x7b22e4–0x7b2338` 在软同步期间遇到新序列缺口时设置
+严格等待，但不额外重复发送初始 DataLost、不重置上次请求时间；顶部按已有
+请求时间决定是否重试。该时间依据 32 位 16.16 stream tick 的有符号差与
+6553 比较，不是本地整毫秒计时。
+
+### 25.13 补齐后积压的完整帧不能依赖新包触发
+
+【证据】`OnThink 0x7b27dc–0x7b27f4` 在提交一帧后依据 pending count 将
+返回值设为 1（仍有 pending）或 -1（空）；`RunDecodeLoop 0x766e30–0x766e48`
+把返回值用作等待 timeout。因此还有 pending 时，后续 think 可在约 1ms 后运行，
+不依赖再收一个视频包。原始指令用两个完整 pending 节点验证，连续 think 交付
+61/62，分别返回 1/-1；该案例的 append/backend/链表释放和诊断函数为替身，
+证明的是调度控制流，不是 H.264 或原始链表实现正确性。
+
+【结论】本项目在补齐较老帧后也要继续提交 pending 中已完整的后续帧。项目在
+同一个可中断 worker 中排空可组装帧，不另起官方的 1ms think 调度；这是明确的
+调度实现差异。单帧失败仍按 ReportLost 继续，致命错误或 interrupted 则停止排空。
+
+### 25.14 证据边界与实现差异矩阵
+
+以下范围限定为本节固定 SHA-256 的 Android ARM64 客户端及本项目媒体恢复路径，
+不代表全套 Steam 协议、Windows host 或 MediaCodec/NVTEGRA 内部已经等价还原。
+
+| 核验对象 | 原始证据／本地入口 | 结论与边界 |
+|---|---|---|
+| 类型 10 的头、水位、回显、位图 | UpdateUnreliableState；DataBuildFeedback / WindowMediaFeedback | 比较完整输出字节；位图可变长度且最多 320 位，水位和 base 独立 |
+| wire 计数、dirty、重反馈期限 | §25.12；DataBuildFeedback | counter==1 才额外宽限 65 tick；成功发送后要新输入才重新激活；RTT 期限和回绕有同输入对比 |
+| 包龄与完整传输帧 | HandleDataPacket / BInsertPacket / PopHead / Advance / UpdateUnreliableState；window.c | 执行这些原始函数，比较发送时间、帧字节及交付后的窗口头；限本项目容量以内 |
+| 视频准入与恢复请求 | DecodeFrame、FinalDecode；DataReceived / SubmitFrame | 同输入比较严格/软同步、6553 tick 边界、关键帧及后端失败反馈；原始视频 slice 组装和实际 codec 不在这组对比内 |
+| 积压范围消息 148 | §25.11；CheckPartialOverflow | 帧 ID 的有符号含端点范围；相等可报告，较小范围也保存；不是时间阈值加 412 |
+| 已完整 pending 的后续处理 | §25.13；DataReceived 的排空循环 | 官方仍有 pending 时约 1ms think；本项目在同 worker 中排空，不等新包；调度方式不同 |
+| 帧损坏的判断 | §25.5/25.10；video_pipeline.c | FFmpeg 明确 INVALIDDATA/损坏标记是项目映射，不是从 MediaCodec 逆向出的错误码对照表 |
+| 后端重建 | Android 输入 buffer 超时/参数变化/Surface 变化与 Reset 调用链 | 项目未等价实现这些异步重建分支；FFmpeg flush 不等于销毁/重建 MediaCodec；不能照搬 200ms 输入 timeout |
+| 视频标志 bit 6 的内容模式变化 | OnThink 0x7b2648–0x7b26f8 / CheckContentMode 0x7b2804 | 官方存在依据该位及已记录模式请求 Reset 的分支；其完整语义未确认，项目未据此新增重建逻辑，不将它解释为缺参考帧标记 |
+| 关键帧清理／显示引用 | FlushPendingData / FlushVideoStream；video_pipeline.c | 官方在关键帧片段入口清后端；项目完整关键帧提交前 flush，并保留外部显示/GPU 引用；时机与所有权不同，硬件行为待真机 |
+| 窗口容量与坏分片 | §25.10；window.c | 官方动态窗口；项目视频固定 2048 槽、积压 256 片段/2MiB，溢出重新锚定，并增加 continuation 类型/ordinal 检查；这些是明确的项目策略 |
+| 项目身份／所有权及坏数据防护 | frame ticket、帧 ID/ordinal、解密返回值检查 | 属于项目防护策略，不声称原版拥有相同检查及错误分类；未以此推导官方会接受坏密文 |
+| 客户端发送方向的不可靠缓存 | §25.3 的 SendUnreliablePackets / HandleNackPacket | 官方有保留及补发；本次只移植主机到客户端的接收反馈，DataLost 仍 queue(false)，没有给客户端所有 outgoing unreliable 包实现同样缓存 |
+| FEC | 官方 SendUnreliableFEC / HandleFECPacket；本地 packet enum/接收分派 | 未实现官方 FEC 路径，本次不能宣称覆盖 FEC |
+
+可复核方式：父仓 `scripts/compare-steam-video-recovery.py` 将相同输入交给固定
+ELF 原始指令和编译后的 `ihs-media-oracle` / `ihstest_decoder_loss --oracle`。
+289 组输入含随机乱序、位图长度、回绕、包龄与视频准入边界。F 步骤在双方冻结
+帧交付，只核反馈快照；U 步骤真实执行原始 PopHead/Advance 并比较帧字节与窗口头。
+allocation/refcount/锁/memcpy/memset/socket 等外部函数为替身；socket 仅复现已核对的
+发送时刻时间戳写入，CRC 连接选项关闭。视频软/严格状态在本地由真实片段建立，
+原始准入函数从对应已知状态开始；未将这个边界包装成完整视频组装端到端证明。
+
+导出的 `third_party/ihslib/tests/session/recovery_oracle.json` 只保存原始指令的
+输入、输出和 ELF 哈希，不从本地实现生成期望值；普通 CI 用
+`check_recovery_oracle.py` 复播，不需要分发 ELF 或安装 Unicorn。实现对比与
+原始指令分支测试是两类证据，不能用其中一个替代另一个。实际线程调度及毫秒级
+条件等待仍可能使发包时刻晚于逻辑 deadline；不承诺逐微秒相同的物理时序。
