@@ -3821,10 +3821,9 @@ lastConnect/lastReceive、CRC要求、逻辑socket/delegate存在性及UDP返回
 预置计数器案例使用初始化/预热建立相同前置状态，不比较随机来源内部状态。
 两个BInit案例只有原版syscall轨迹，没有纳入生产协议等价数量。
 
-本节发送准入对照限关闭阶段：本地内部Queue在首次未连接阶段仍可接受部分调用，
-actor会抑制发送；这不等于原版Connection::Send即时返回3及其调用者的错误传播。
-该已知差异不因本节关闭/UDP对照通过而消失，完整收发Update与播放器消费者也
-不在本节的等价范围。
+本节发送准入对照限关闭阶段。旧内部Queue曾在首次未连接阶段接受部分调用再由
+actor抑制发送；该差异由§41的独立准入/调用者对照纠正，不能倒过来用本节结果
+代替该证据。完整收发Update与播放器消费者不在本节的等价范围。
 
 `disconnect_worker`实际收发线程覆盖12次关闭：并发8个退出请求及控制生产者、
 peer无CRC断连、15秒超时，协商CRC开/关、goodbye EAGAIN且不重试；另32次启动即
@@ -3840,4 +3839,73 @@ python3 scripts/audit-steam-disconnect.py \
 python3 scripts/check-steam-disconnect.py \
   --receiver build/desktop/third_party/ihslib/tests/session/ihs-disconnect-oracle
 ctest --test-dir build/desktop -R 'disconnect|connection_id|udp_send' --output-on-failure
+```
+
+## 41. 发送准入、控制调用者与失败分类
+
+### 41.1 官方客户端证据
+
+`audit-steam-send-admission.py`执行固定ELF的Frame构造`0x7f2af4`、Frame::Send
+`0x7f3078`、Connection::Send/SendUnreliable `0x7fb9b4/0x7fbb58`和Client
+SendControlMessage `0x7a7d90`。protobuf Put、普通加密、channel查找/返回值与析构
+为明确替身；本节测试准入/调用者动作，不把这些替身当作真实窗口、wire或protobuf。
+
+【证据/结论】Frame::Send的connection为空返回3；connection存在但state不是1，
+两种Send均在进入channel前返回3。该返回不能占用packet ID、跟踪窗口或发送队列。
+client控制调用者的明文分支`0x7a7e04`与加密分支`0x7a7e74`都没有检查Send返回值，
+随后直接析构/解锁；channel返回0/1/2/3/4时，当前client和connection状态均不改变。
+临时Socket失败的retained窗口与后续RTO见§37，不能把“初次没写出去”改为强制断连。
+
+【证据】控制类型1/2/6/7走明文分支，其他类型先获取channel并递增64位加密序列，
+再调用加密和Frame::Send。因此即使连接此时未建立、最终被返回3拒绝，加密序列
+仍已消耗；不能为了提前返回在Client准备消息之前增加transport guard。
+
+【证据/独立项目防护】另8例实际执行BEncrypt `0x7f342c`，在HMAC或AES helper返回
+false时原版未改写原始payload，而上层仍调用Frame::Send。state1可把原始payload
+交给channel。这里的helper失败是故障注入，不是正常Steam会话的观测。
+本地继续保留加密/分配失败不发布payload的防护；这些本地资源/密码错误与普通
+transport返回码分开，不能把此防护冒称已复制原版失败行为。
+
+### 41.2 实现边界
+
+内部queue/frame准入使用结果0（已接纳）、2（本地frame边界拒绝）、3（未连接）、
+4（本地分配/加密/保留失败），原bool API保留为“已接纳”含义。它不是原版同步
+Channel::Send的Socket返回值：项目sender actor负责实际发送并按§37保留/重试。
+控制调用者只把明确的本地资源/密码故障交给项目关闭保护；2/3不再由bool false
+概括为断连。完整frame在分配ID之前检查连接状态，消息准备/加密序列的时机不变。
+
+### 41.3 对照范围与触发
+
+固定参考170例：Frame::Send的4个transport状态×两种发送方式×5种channel返回
+40例、null connection 2例，控制调用者的4状态×类型1/2/6/7/8/106×5返回120例，
+以及HMAC/AES失败×4状态8例。channel发送是结果注入点，不包含真实窗口/RTO，
+正文不能据此宣称这些不可能正常共存的client/connection组合均由UI可触发。
+
+生产oracle消费前162个契约投影：相同transport状态下的准入、拒绝不消耗ID、
+加密准备/序列消耗、control不因ordinary socket返回码断连。生产侧真实protobuf/
+加密/排队后单独执行Socket和NoteInitialSend，核对0..4分类、未退出与可靠保留；
+bool已接纳不冒充官方同步Frame返回码。不同合成payload不比较wire；窗口保留的
+官方原指令证据仍在§37的独立sender对照，不把channel替身说成已执行窗口。
+
+2个本地保护案例分别注入加密失败、reliable Track分配/保留失败，要求不发布明文/
+不继续使用可能出现ID空洞的连接。这些保护会关闭transport，是保留的项目差异，
+没有计入162个普通契约等价数量。官方8个crypto故障例未做相同行为的生产实现。
+
+`send_admission`还从真实packet入口验证拒绝时buffer仍归调用者、独立Unconnected
+discovery准入、本地frame边界在ID分配前返回2，2不触发关闭。
+`send_admission_worker`两次启动真实收发线程：先提交被拒绝的握手消息，再正常
+Connect；实际ClientHandshake经历EAGAIN/EIO/EMSGSIZE/EBADF四次失败后第5次成功，
+期间无断连/ID变化/计数增加，再接收真实ACK退休并停止/join。只有时间与最终UDP
+I/O受控；它证明项目发送actor的恢复接线，不证明全收发循环墙钟时序等价。
+
+既有媒体/反馈/HID队列测试明确把transport设为已连接再运行其组件；涉及首次
+Connect的测试继续从未连接状态启动，不能把公共fixture统一改成已连接来绕开准入。
+
+```sh
+python3 scripts/audit-steam-send-admission.py \
+  --binary /path/to/official/libmain-arm64.so \
+  --output build/video-recovery-re/send-admission.json
+python3 scripts/check-steam-send-admission.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-send-admission-oracle
+ctest --test-dir build/desktop -R 'send_admission' --output-on-failure
 ```

@@ -1,0 +1,4396 @@
+{
+  "binary_sha256": "50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e",
+  "scope": "Execute official Frame/Connection send gates and control caller error policy.\n\nFrame constructor, Frame::Send, Connection::Send/SendUnreliable and the client\ncaller execute pinned ARM64 instructions. Protobuf Put, packet allocation,\nchannel lookup/send result, destructor and ordinary encryption are adapters.\nCrypto-fault cases execute original BEncrypt with HMAC/AES failure adapters;\nthey expose an unsafe official failure path, not a production-equivalence claim.\nNo packet window, final wire, real Steam host or decoder is exercised here.\n",
+  "cases": [
+    {
+      "case": "frame_state0_reliable0_channel0",
+      "group": "frame_gate",
+      "input": {
+        "state": 0,
+        "reliable": false,
+        "channel_result": 0,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state0_reliable0_channel1",
+      "group": "frame_gate",
+      "input": {
+        "state": 0,
+        "reliable": false,
+        "channel_result": 1,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state0_reliable0_channel2",
+      "group": "frame_gate",
+      "input": {
+        "state": 0,
+        "reliable": false,
+        "channel_result": 2,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state0_reliable0_channel3",
+      "group": "frame_gate",
+      "input": {
+        "state": 0,
+        "reliable": false,
+        "channel_result": 3,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state0_reliable0_channel4",
+      "group": "frame_gate",
+      "input": {
+        "state": 0,
+        "reliable": false,
+        "channel_result": 4,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state0_reliable1_channel0",
+      "group": "frame_gate",
+      "input": {
+        "state": 0,
+        "reliable": true,
+        "channel_result": 0,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state0_reliable1_channel1",
+      "group": "frame_gate",
+      "input": {
+        "state": 0,
+        "reliable": true,
+        "channel_result": 1,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state0_reliable1_channel2",
+      "group": "frame_gate",
+      "input": {
+        "state": 0,
+        "reliable": true,
+        "channel_result": 2,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state0_reliable1_channel3",
+      "group": "frame_gate",
+      "input": {
+        "state": 0,
+        "reliable": true,
+        "channel_result": 3,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state0_reliable1_channel4",
+      "group": "frame_gate",
+      "input": {
+        "state": 0,
+        "reliable": true,
+        "channel_result": 4,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state1_reliable0_channel0",
+      "group": "frame_gate",
+      "input": {
+        "state": 1,
+        "reliable": false,
+        "channel_result": 0,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 0,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "unreliable",
+            "body": "06aabb"
+          }
+        ]
+      }
+    },
+    {
+      "case": "frame_state1_reliable0_channel1",
+      "group": "frame_gate",
+      "input": {
+        "state": 1,
+        "reliable": false,
+        "channel_result": 1,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 1,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "unreliable",
+            "body": "06aabb"
+          }
+        ]
+      }
+    },
+    {
+      "case": "frame_state1_reliable0_channel2",
+      "group": "frame_gate",
+      "input": {
+        "state": 1,
+        "reliable": false,
+        "channel_result": 2,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 2,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "unreliable",
+            "body": "06aabb"
+          }
+        ]
+      }
+    },
+    {
+      "case": "frame_state1_reliable0_channel3",
+      "group": "frame_gate",
+      "input": {
+        "state": 1,
+        "reliable": false,
+        "channel_result": 3,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "unreliable",
+            "body": "06aabb"
+          }
+        ]
+      }
+    },
+    {
+      "case": "frame_state1_reliable0_channel4",
+      "group": "frame_gate",
+      "input": {
+        "state": 1,
+        "reliable": false,
+        "channel_result": 4,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 4,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "unreliable",
+            "body": "06aabb"
+          }
+        ]
+      }
+    },
+    {
+      "case": "frame_state1_reliable1_channel0",
+      "group": "frame_gate",
+      "input": {
+        "state": 1,
+        "reliable": true,
+        "channel_result": 0,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 0,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "06aabb"
+          }
+        ]
+      }
+    },
+    {
+      "case": "frame_state1_reliable1_channel1",
+      "group": "frame_gate",
+      "input": {
+        "state": 1,
+        "reliable": true,
+        "channel_result": 1,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 1,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "06aabb"
+          }
+        ]
+      }
+    },
+    {
+      "case": "frame_state1_reliable1_channel2",
+      "group": "frame_gate",
+      "input": {
+        "state": 1,
+        "reliable": true,
+        "channel_result": 2,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 2,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "06aabb"
+          }
+        ]
+      }
+    },
+    {
+      "case": "frame_state1_reliable1_channel3",
+      "group": "frame_gate",
+      "input": {
+        "state": 1,
+        "reliable": true,
+        "channel_result": 3,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "06aabb"
+          }
+        ]
+      }
+    },
+    {
+      "case": "frame_state1_reliable1_channel4",
+      "group": "frame_gate",
+      "input": {
+        "state": 1,
+        "reliable": true,
+        "channel_result": 4,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 4,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "06aabb"
+          }
+        ]
+      }
+    },
+    {
+      "case": "frame_state2_reliable0_channel0",
+      "group": "frame_gate",
+      "input": {
+        "state": 2,
+        "reliable": false,
+        "channel_result": 0,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state2_reliable0_channel1",
+      "group": "frame_gate",
+      "input": {
+        "state": 2,
+        "reliable": false,
+        "channel_result": 1,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state2_reliable0_channel2",
+      "group": "frame_gate",
+      "input": {
+        "state": 2,
+        "reliable": false,
+        "channel_result": 2,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state2_reliable0_channel3",
+      "group": "frame_gate",
+      "input": {
+        "state": 2,
+        "reliable": false,
+        "channel_result": 3,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state2_reliable0_channel4",
+      "group": "frame_gate",
+      "input": {
+        "state": 2,
+        "reliable": false,
+        "channel_result": 4,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state2_reliable1_channel0",
+      "group": "frame_gate",
+      "input": {
+        "state": 2,
+        "reliable": true,
+        "channel_result": 0,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state2_reliable1_channel1",
+      "group": "frame_gate",
+      "input": {
+        "state": 2,
+        "reliable": true,
+        "channel_result": 1,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state2_reliable1_channel2",
+      "group": "frame_gate",
+      "input": {
+        "state": 2,
+        "reliable": true,
+        "channel_result": 2,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state2_reliable1_channel3",
+      "group": "frame_gate",
+      "input": {
+        "state": 2,
+        "reliable": true,
+        "channel_result": 3,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state2_reliable1_channel4",
+      "group": "frame_gate",
+      "input": {
+        "state": 2,
+        "reliable": true,
+        "channel_result": 4,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state3_reliable0_channel0",
+      "group": "frame_gate",
+      "input": {
+        "state": 3,
+        "reliable": false,
+        "channel_result": 0,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state3_reliable0_channel1",
+      "group": "frame_gate",
+      "input": {
+        "state": 3,
+        "reliable": false,
+        "channel_result": 1,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state3_reliable0_channel2",
+      "group": "frame_gate",
+      "input": {
+        "state": 3,
+        "reliable": false,
+        "channel_result": 2,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state3_reliable0_channel3",
+      "group": "frame_gate",
+      "input": {
+        "state": 3,
+        "reliable": false,
+        "channel_result": 3,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state3_reliable0_channel4",
+      "group": "frame_gate",
+      "input": {
+        "state": 3,
+        "reliable": false,
+        "channel_result": 4,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state3_reliable1_channel0",
+      "group": "frame_gate",
+      "input": {
+        "state": 3,
+        "reliable": true,
+        "channel_result": 0,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state3_reliable1_channel1",
+      "group": "frame_gate",
+      "input": {
+        "state": 3,
+        "reliable": true,
+        "channel_result": 1,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state3_reliable1_channel2",
+      "group": "frame_gate",
+      "input": {
+        "state": 3,
+        "reliable": true,
+        "channel_result": 2,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state3_reliable1_channel3",
+      "group": "frame_gate",
+      "input": {
+        "state": 3,
+        "reliable": true,
+        "channel_result": 3,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_state3_reliable1_channel4",
+      "group": "frame_gate",
+      "input": {
+        "state": 3,
+        "reliable": true,
+        "channel_result": 4,
+        "connection": true
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_null_reliable0",
+      "group": "frame_gate",
+      "input": {
+        "state": 1,
+        "reliable": false,
+        "channel_result": 0,
+        "connection": false
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "frame_null_reliable1",
+      "group": "frame_gate",
+      "input": {
+        "state": 1,
+        "reliable": true,
+        "channel_result": 0,
+        "connection": false
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": []
+      }
+    },
+    {
+      "case": "control_state0_type1_channel0",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 1,
+        "channel_result": 0
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type1_channel1",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 1,
+        "channel_result": 1
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type1_channel2",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 1,
+        "channel_result": 2
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type1_channel3",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 1,
+        "channel_result": 3
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type1_channel4",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 1,
+        "channel_result": 4
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type2_channel0",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 2,
+        "channel_result": 0
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type2_channel1",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 2,
+        "channel_result": 1
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type2_channel2",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 2,
+        "channel_result": 2
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type2_channel3",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 2,
+        "channel_result": 3
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type2_channel4",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 2,
+        "channel_result": 4
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type6_channel0",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 6,
+        "channel_result": 0
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type6_channel1",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 6,
+        "channel_result": 1
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type6_channel2",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 6,
+        "channel_result": 2
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type6_channel3",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 6,
+        "channel_result": 3
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type6_channel4",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 6,
+        "channel_result": 4
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type7_channel0",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 7,
+        "channel_result": 0
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type7_channel1",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 7,
+        "channel_result": 1
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type7_channel2",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 7,
+        "channel_result": 2
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type7_channel3",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 7,
+        "channel_result": 3
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type7_channel4",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 7,
+        "channel_result": 4
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type8_channel0",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 8,
+        "channel_result": 0
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type8_channel1",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 8,
+        "channel_result": 1
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type8_channel2",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 8,
+        "channel_result": 2
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type8_channel3",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 8,
+        "channel_result": 3
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type8_channel4",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 8,
+        "channel_result": 4
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type106_channel0",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 106,
+        "channel_result": 0
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type106_channel1",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 106,
+        "channel_result": 1
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type106_channel2",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 106,
+        "channel_result": 2
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type106_channel3",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 106,
+        "channel_result": 3
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state0_type106_channel4",
+      "group": "control_caller",
+      "input": {
+        "state": 0,
+        "message": 106,
+        "channel_result": 4
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type1_channel0",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 1,
+        "channel_result": 0
+      },
+      "observed": {
+        "frame_result": 0,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "01aabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type1_channel1",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 1,
+        "channel_result": 1
+      },
+      "observed": {
+        "frame_result": 1,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "01aabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type1_channel2",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 1,
+        "channel_result": 2
+      },
+      "observed": {
+        "frame_result": 2,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "01aabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type1_channel3",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 1,
+        "channel_result": 3
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "01aabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type1_channel4",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 1,
+        "channel_result": 4
+      },
+      "observed": {
+        "frame_result": 4,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "01aabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type2_channel0",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 2,
+        "channel_result": 0
+      },
+      "observed": {
+        "frame_result": 0,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "02aabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type2_channel1",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 2,
+        "channel_result": 1
+      },
+      "observed": {
+        "frame_result": 1,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "02aabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type2_channel2",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 2,
+        "channel_result": 2
+      },
+      "observed": {
+        "frame_result": 2,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "02aabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type2_channel3",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 2,
+        "channel_result": 3
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "02aabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type2_channel4",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 2,
+        "channel_result": 4
+      },
+      "observed": {
+        "frame_result": 4,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "02aabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type6_channel0",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 6,
+        "channel_result": 0
+      },
+      "observed": {
+        "frame_result": 0,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "06aabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type6_channel1",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 6,
+        "channel_result": 1
+      },
+      "observed": {
+        "frame_result": 1,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "06aabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type6_channel2",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 6,
+        "channel_result": 2
+      },
+      "observed": {
+        "frame_result": 2,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "06aabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type6_channel3",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 6,
+        "channel_result": 3
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "06aabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type6_channel4",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 6,
+        "channel_result": 4
+      },
+      "observed": {
+        "frame_result": 4,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "06aabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type7_channel0",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 7,
+        "channel_result": 0
+      },
+      "observed": {
+        "frame_result": 0,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "07aabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type7_channel1",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 7,
+        "channel_result": 1
+      },
+      "observed": {
+        "frame_result": 1,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "07aabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type7_channel2",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 7,
+        "channel_result": 2
+      },
+      "observed": {
+        "frame_result": 2,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "07aabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type7_channel3",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 7,
+        "channel_result": 3
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "07aabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type7_channel4",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 7,
+        "channel_result": 4
+      },
+      "observed": {
+        "frame_result": 4,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "07aabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type8_channel0",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 8,
+        "channel_result": 0
+      },
+      "observed": {
+        "frame_result": 0,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "08aabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type8_channel1",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 8,
+        "channel_result": 1
+      },
+      "observed": {
+        "frame_result": 1,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "08aabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type8_channel2",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 8,
+        "channel_result": 2
+      },
+      "observed": {
+        "frame_result": 2,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "08aabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type8_channel3",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 8,
+        "channel_result": 3
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "08aabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type8_channel4",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 8,
+        "channel_result": 4
+      },
+      "observed": {
+        "frame_result": 4,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "08aabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type106_channel0",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 106,
+        "channel_result": 0
+      },
+      "observed": {
+        "frame_result": 0,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "6aaabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type106_channel1",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 106,
+        "channel_result": 1
+      },
+      "observed": {
+        "frame_result": 1,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "6aaabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type106_channel2",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 106,
+        "channel_result": 2
+      },
+      "observed": {
+        "frame_result": 2,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "6aaabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type106_channel3",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 106,
+        "channel_result": 3
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "6aaabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state1_type106_channel4",
+      "group": "control_caller",
+      "input": {
+        "state": 1,
+        "message": 106,
+        "channel_result": 4
+      },
+      "observed": {
+        "frame_result": 4,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "6aaabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type1_channel0",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 1,
+        "channel_result": 0
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type1_channel1",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 1,
+        "channel_result": 1
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type1_channel2",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 1,
+        "channel_result": 2
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type1_channel3",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 1,
+        "channel_result": 3
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type1_channel4",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 1,
+        "channel_result": 4
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type2_channel0",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 2,
+        "channel_result": 0
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type2_channel1",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 2,
+        "channel_result": 1
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type2_channel2",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 2,
+        "channel_result": 2
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type2_channel3",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 2,
+        "channel_result": 3
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type2_channel4",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 2,
+        "channel_result": 4
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type6_channel0",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 6,
+        "channel_result": 0
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type6_channel1",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 6,
+        "channel_result": 1
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type6_channel2",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 6,
+        "channel_result": 2
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type6_channel3",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 6,
+        "channel_result": 3
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type6_channel4",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 6,
+        "channel_result": 4
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type7_channel0",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 7,
+        "channel_result": 0
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type7_channel1",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 7,
+        "channel_result": 1
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type7_channel2",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 7,
+        "channel_result": 2
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type7_channel3",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 7,
+        "channel_result": 3
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type7_channel4",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 7,
+        "channel_result": 4
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type8_channel0",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 8,
+        "channel_result": 0
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type8_channel1",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 8,
+        "channel_result": 1
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type8_channel2",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 8,
+        "channel_result": 2
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type8_channel3",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 8,
+        "channel_result": 3
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type8_channel4",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 8,
+        "channel_result": 4
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type106_channel0",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 106,
+        "channel_result": 0
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type106_channel1",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 106,
+        "channel_result": 1
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type106_channel2",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 106,
+        "channel_result": 2
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type106_channel3",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 106,
+        "channel_result": 3
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state2_type106_channel4",
+      "group": "control_caller",
+      "input": {
+        "state": 2,
+        "message": 106,
+        "channel_result": 4
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type1_channel0",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 1,
+        "channel_result": 0
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type1_channel1",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 1,
+        "channel_result": 1
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type1_channel2",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 1,
+        "channel_result": 2
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type1_channel3",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 1,
+        "channel_result": 3
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type1_channel4",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 1,
+        "channel_result": 4
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type2_channel0",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 2,
+        "channel_result": 0
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type2_channel1",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 2,
+        "channel_result": 1
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type2_channel2",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 2,
+        "channel_result": 2
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type2_channel3",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 2,
+        "channel_result": 3
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type2_channel4",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 2,
+        "channel_result": 4
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type6_channel0",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 6,
+        "channel_result": 0
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type6_channel1",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 6,
+        "channel_result": 1
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type6_channel2",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 6,
+        "channel_result": 2
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type6_channel3",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 6,
+        "channel_result": 3
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type6_channel4",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 6,
+        "channel_result": 4
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type7_channel0",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 7,
+        "channel_result": 0
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type7_channel1",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 7,
+        "channel_result": 1
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type7_channel2",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 7,
+        "channel_result": 2
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type7_channel3",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 7,
+        "channel_result": 3
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type7_channel4",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 7,
+        "channel_result": 4
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 7,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type8_channel0",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 8,
+        "channel_result": 0
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type8_channel1",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 8,
+        "channel_result": 1
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type8_channel2",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 8,
+        "channel_result": 2
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type8_channel3",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 8,
+        "channel_result": 3
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type8_channel4",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 8,
+        "channel_result": 4
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type106_channel0",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 106,
+        "channel_result": 0
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type106_channel1",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 106,
+        "channel_result": 1
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type106_channel2",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 106,
+        "channel_result": 2
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type106_channel3",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 106,
+        "channel_result": 3
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "control_state3_type106_channel4",
+      "group": "control_caller",
+      "input": {
+        "state": 3,
+        "message": 106,
+        "channel_result": 4
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "encrypt",
+            "sequence": 7
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "crypto_fault_state0_hmac",
+      "group": "crypto_fault",
+      "input": {
+        "state": 0,
+        "stage": "hmac"
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "crypto_fault_state0_aes",
+      "group": "crypto_fault",
+      "input": {
+        "state": 0,
+        "stage": "aes"
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 0,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "crypto_fault_state1_hmac",
+      "group": "crypto_fault",
+      "input": {
+        "state": 1,
+        "stage": "hmac"
+      },
+      "observed": {
+        "frame_result": 0,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "6aaabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "crypto_fault_state1_aes",
+      "group": "crypto_fault",
+      "input": {
+        "state": 1,
+        "stage": "aes"
+      },
+      "observed": {
+        "frame_result": 0,
+        "state": 1,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "channel_send",
+            "kind": "reliable",
+            "body": "6aaabb"
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "crypto_fault_state2_hmac",
+      "group": "crypto_fault",
+      "input": {
+        "state": 2,
+        "stage": "hmac"
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "crypto_fault_state2_aes",
+      "group": "crypto_fault",
+      "input": {
+        "state": 2,
+        "stage": "aes"
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 2,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "crypto_fault_state3_hmac",
+      "group": "crypto_fault",
+      "input": {
+        "state": 3,
+        "stage": "hmac"
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    },
+    {
+      "case": "crypto_fault_state3_aes",
+      "group": "crypto_fault",
+      "input": {
+        "state": 3,
+        "stage": "aes"
+      },
+      "observed": {
+        "frame_result": 3,
+        "state": 3,
+        "client_state": 6,
+        "sequence": 8,
+        "actions": [
+          {
+            "action": "put"
+          },
+          {
+            "action": "lookup",
+            "channel": 1
+          },
+          {
+            "action": "destroy"
+          }
+        ]
+      }
+    }
+  ]
+}
