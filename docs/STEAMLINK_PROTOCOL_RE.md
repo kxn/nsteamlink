@@ -221,7 +221,7 @@ data[13] = messageType；若 hasExtHeader：data[14..25] = 扩展头 12 字节
 传输引擎在 `CStreamChannel`（每通道一个；`CStreamConnection::Send/SendUnreliable` 只是锁内转派）。
 包类型（包头 byte0 & 0x7F，bit7 为独立标志位，与 ihslib packet.h 命名一致）：
 3=Unreliable、4=UnreliableFrag、5=Reliable、6=ReliableFrag、7=ACK、8=NACK、11=FEC
-（9/10 存在但 9 在 HandlePacket 被忽略，10 为第二 NACK 变体）。
+（9 在 channel 的 HandlePacket 被忽略，但更早的 connection 层会处理断连，见 §27.2；10 为不可靠窗口 NACK）。
 
 ### 9.1 发送侧：重传永不放弃
 
@@ -272,7 +272,7 @@ data[13] = messageType；若 hasExtHeader：data[14..25] = 扩展头 12 字节
 | 3 | 在途限制 | 无（窗口制，ACK/NACK 驱动滑动，掩码覆盖 ≤320 包） | 单在途（D-040）+ 100ms 心跳 | **自创行为**；单在途把"高频 delta 容忍丢失"变成"串行等待" | 输入包速率/在途数与官方 pcap 对齐（31/s 批量、无 1 包往返） |
 | 4 | ACK 语义 | 累计 ACK+空槽跳跃+周期重发+时间回显（0x7f94b8） | ihslib window.c 自实现 | 行为需逐项核对（互操作已通，疑似大体一致） | host ACK 延迟统计正常（≤99ms 已观测） |
 | 5 | 接收窗口交付 | 只弹连续头部，无弃洞（0x7f9d0c 第 1 步） | 同构 | 一致 | — |
-| 6 | FEC | 不可靠通道带 FEC（SendUnreliableFEC 0x7f90e4、CFECOutgoing/IncomingQueue） | 未实现（enable_unreliable_fec 未协商） | 待评估（视频/音频下行方向，与输入卡死无直接关系） | — |
+| 6 | FEC | 独立类型 11、系统式 RS 编解码及组恢复，详见 §26 | 字段 25 默认 false，类型 11 在解析器被拒绝 | 明确的抗丢包能力差异；与具体故障的因果关系未证明 | — |
 
 **原 P0 因果模型部分撤回**：主动放弃可靠包会制造永久缺口，有源码依据；
 “Host 固定等 20 秒”“官方一定在一个 RTT 内恢复”没有 Host 端实现或故障包序列证明。
@@ -509,7 +509,7 @@ PersonalizationResponse(2)/ActiveConfigChange(3)/RequestActiveConfig(4)，客户
   走 benign-ignore，与官方未匹配类型的处理一致；
 - ACK 政策：逐包 → 每批交付点一次（0x7f9e70），线上格式不变；
 - 数据通道：溢出→ReleaseAll+DataLost 上报（对等 SendDataLost）✓；FEC 未实现
-  ——但我们从未协商 enable_unreliable_fec，host 不应发送 FEC 包（assert 仅 debug 生效）；
+  ——配置字段 25 默认 false，但不能以此否认抗丢包能力差异，也不能替代实际 host 配置/抓包证据；更正及完整 FEC 路径见 §26。
 - 加密边界/ACK wire 格式/信封/合批：逐字节等价 ✓。
 
 ### 13.2c 跨线程锁审计（2026-09-04，真机卡死定位后）
@@ -1913,3 +1913,213 @@ allocation/refcount/锁/memcpy/memset/socket 等外部函数为替身；socket �
 RTT 对比向双方注入相同的 mean/smoothed 值，只证明给定 RTT 下的预算计算；
 不证明实时 RTT 采样、平滑与时钟拟合全过程等价。线程调度允许反馈先于本地
 交付/退休，故即使每个冻结快照的输出一致，也不能据此推导完整网络轨迹一致。
+
+## 26. FEC：协商、线格式、编码与交付（Android 1.3.32 原始指令）
+
+### 26.1 证据身份与启用条件
+
+本节继续使用 §24.1 的 `libmain.so` SHA-256；shell 的 SHA-256 见 §23.1。
+区分“协议声明”“实际存在的客户端通用传输实现”“Windows host 的运行策略”：
+前两者可由这些材料证明，第三者不能仅由 Android ELF 推出。
+
+【证据】从同一 ELF 的 `0x3e5474` 文件偏移读取 FileDescriptorProto：
+`CStreamingClientConfig.enable_unreliable_fec` 是字段 **25**、optional bool，
+显式 default 为 **false**。它与 `CNegotiatedConfig.reliable_data` 不是同一个开关。
+`OnNegotiationInit 0x7ada6c–0x7ada9c` 把本机 streaming_client_config 复制进消息 4 的响应；
+`SetStreamingClientConfig 0x7b0220–0x7b0264` 在相应会话状态且调用参数允许时
+还能用消息 **99** 发送 CSetStreamingClientConfig。
+
+【证据】shell `CreateStreamingConfigFastPreset 0xc85bb4–0xc85bd4` 设置
+quality、HEVC、配置 `+113` 的 FEC 值和对应 hasbit；`0xc85868–0xc85b70`
+保留旧配置的 helper 不覆盖 `+113`。字段定位与 `OnUnreliableFECChanged`
+（§23.1）一致。这证明 FEC 有产品配置入口，不只是未使用的枚举；不证明任意
+用户的最终配置、任意 host 均已启用，也不证明预设使用固定冗余百分比。
+
+【证据】`CStreamConnection::SendUnreliable 0x7fbbc8–0x7fbc00` 依据
+connection `+11` 选择 `SendUnreliableFEC` 或普通 `SendUnreliable`。
+`SetChannelFECPercentage 0x7fbcbc–0x7fbcdc` 只把传入整数写 channel `+32`；
+它自身不设置 connection 的启用位。百分比、启用位和客户端配置字段是不同层的量。
+该 ELF 的 channel 构造 `0x7f865c` 初始百分比为 0；仅调用百分比 setter 不足以启用 FEC。
+**尚未证明** Windows host 如何把配置字段映射到实际启用状态、如何选择/调整百分比。
+
+【本地源码】对照 IHSlib `5fe67f4`：`ch_control_negotiation.c` 用
+CSTREAMING_CLIENT_CONFIG__INIT 且不写字段 25，因此请求的语义为默认 false；
+`packet.h` 的 type Max=11、`packet.c` 拒绝 `type >= Max`，故类型 11 在包头解析
+阶段就失败。新增类型 10 NACK 并没有带来 FEC 能力。正常遵守该配置的 host
+预期使用非 FEC 路径，但没有该用户的配置/抓包，不能把此预期称为实际 host 证据。
+
+【更正】撤回 §13.2b 以“未协商所以 host 不应发送”就将 FEC 缺口视为不重要的
+推论。配置兼容与抗丢包能力是两回事：即使 host 正确回落普通路径，本项目仍缺少
+官方可用的一整条纠错机制；是否造成原反馈中的停顿仍是待验证假设。
+
+### 26.2 类型 11 的线格式及分组单位
+
+【证据】`SendUnreliableFEC 0x7f9104–0x7f9144` 写类型 **11**、连接 ID 和
+channel；`CFECOutgoingQueue::AddPacket 0x7f798c–0x7f79a0` 增加独立的
+uint16 group ID；`0x7f7a64–0x7f7a70` 写分片序号及 8 字节元数据。
+以下位置包含通常的 13 字节传输包头，数值为 little endian：
+
+| 偏移 | 大小 | 含义 |
+|---|---|---|
+| 0 | 1 | 类型 11；bit 7 仍为外层 CRC 标志 |
+| 1 | 1 | 此路径初始化为 0；不是数据/冗余分片类型位 |
+| 2–4 | 3 | src/dst connection ID 与 channel |
+| 5–6 | 2 | shard index，数据在前、冗余在后，从 0 开始 |
+| 7–8 | 2 | 本 channel FEC 分组序号，不是视频 frameId |
+| 9–12 | 4 | 通常的 stream send timestamp，由 socket send 填写 |
+| 13–16 | 4 | 原始传输消息 payload 的字节数 L，不含 13B 头 |
+| 17–18 | 2 | 每个 shard 的字节数 S |
+| 19–20 | 2 | 冗余 shard 数 m；数据数 k 由 ceil(L/S) 得到 |
+| 21… | S | 一个 shard，尾部不足补零 |
+
+【证据】原始 `AddPacket 0x7f793c–0x7f79c0` 在正常非负百分比、有效 MTU 下：
+
+```text
+W = 13 + L
+S = min((W + 10) & ~15, (MTU - 25) & ~15) & 0xfff0
+k = ceil(L / S)
+m = ceil(k * FEC_percentage / 100)
+若 k + m > 255：m = 0，仍发送数据分片
+```
+
+`0x7f7a1c–0x7f7b90` 为 k+m 个 shard 建包；前 k 个复制原 payload 并补零，
+余下由编码器填写。保护单位是**一次交给 SendUnreliable 的传输消息 payload**，
+不是任意相邻 UDP 包混成一组，也不能直接等同于一整个最终显示帧。
+`CStreamFrame::Send 0x7f3118–0x7f314c` 连接到此通用发送入口；视频自身另有
+slice/FrameFinish 组装层。FEC 不是从 H.264 参考帧推算丢失的图像。
+
+MTU 来自 `CStreamPacket::s_nMTU @0xf34d48`，本 ELF 数据初始化值为 **1024**；
+这不证明会话运行中未被改变。测试中 1500/64 是显式注入值，不能冒称官方默认值。
+`Socket::Send 0x7ff280–0x7ff2bc` 在 connection `+10` 要求时另加 CRC 标志及
+4B CRC32C；CRC 是外层完整性检查，不是冗余编码的一部分。
+
+### 26.3 编码不是任意 Reed–Solomon 库可互换
+
+【证据】`AddPacket 0x7f7c10–0x7f7c90` 构造系统式编码的冗余系数矩阵，
+然后调用真实 `reed_solomon_encode @0x7f6b7c`。逆元表在 `0x4640e8`，乘法表在
+`0x4641e8`；原表的 65536 个乘法条目全部符合 GF(256) 模多项式 **0x11d**，
+255 个非零逆元也经独立域运算验证。冗余行 i、数据列 j 的系数是：
+
+```text
+coefficient[i][j] = inverse[(m + j) XOR i]
+0 <= i < m, 0 <= j < k
+parity[i][byte] = XOR_j GF_multiply(coefficient[i][j], data[j][byte])
+```
+
+这是一种确定的 Cauchy 系数布局。相同 k/m 的另一种 RS/Vandermonde 布局未必
+产生相同 parity；将通用库名字相同当作 wire 兼容证据不成立。
+`scripts/fixtures/steam-fec-reference.json` 保存原始指令生成的 k=3/m=2/S=32
+完整分片字节（位于 socket timestamp/CRC 加工之前），供独立实现核对。
+
+### 26.4 接收、重建与普通不可靠窗口是不同路径
+
+【证据】`CStreamChannel::HandlePacket 0x7f9314–0x7f932c` 将类型 11 送入
+`HandleFECPacket @0x7f9940`。`BAddPacket @0x7f7fcc` 的入口检查包括：
+
+- group ID 与最近已交付 group ID 的**有符号 16 位差**必须大于 0；支持回绕。
+- payload 至少 9B；L 非负、S 非零；index 小于本组 k+m。
+- shard 实际长度必须恰为 `8 + S`（去掉通常 13B 头以后）。
+
+`0x7f8024–0x7f805c` 只保留一个活动组。不同 group 到来会 Reset 未完成组；
+入口只对“最近已交付组”做上述新旧判断，并不另外保证新包比当前未完成组更新。
+原始指令已验证：组 1 未完成→组 2 未完成→晚到的组 1，可把活动组替换回 1。
+不能将此描述为支持多个乱序 FEC 组的接收窗口。
+
+`0x7f8304–0x7f834c` 记录收到分片并计数，达到 k 后检查数据分片是否齐全；
+数据已齐全即交付，不额外等 parity。缺数据则调用
+`ReconstructData @0x7f84dc`→`reed_solomon_decode @0x7f609c`。
+`0x7f8404–0x7f8428` 更新最近交付组并 Reset。
+本接收队列的这些函数没有“再等 100ms 请求相同 FEC shard”的定时分支。
+
+`HandleFECPacket 0x7f9974–0x7f998c` 把重建结果直接交给 connection player 回调，
+**不插入普通类型 3/4 接收窗口，不经过类型 10 NACK 的窗口补包流程**。
+重建保留 type 11 和组序号；`CStreamFrame::SetPacket 0x7f2c44–0x7f2cdc`
+依据 channel/消息信封解析实际媒体 frameId、timestamp、input mark，而不要求
+外层 type 改成 3。项目若只放行 type 11 并塞进普通 window，既不能重建，也会
+混淆两套序号；本地 ReceivedFrame 的 type 3 断言也需要明确的集成边界。
+
+【接收实现防护边界】`0x7f830c–0x7f8320` 在该原版中无独立的去重计数条件；
+`0x7f85fc` 的 decode 返回值在调用链中没有被用于抑制交付。原始指令案例重复
+送入同一数据 shard 三次（k=3，仅 1 个唯一 shard），会触发重建/上交，且结果
+不等于原 payload。这是受控输入下的原版行为证据，不是实际用户故障证据，
+也不是建议新实现照抄。独立实现应按唯一 shard 计数、验证同组元数据一致性、
+限制内存/乘法长度并检查解码成功；这些防护需要明确记录为实现策略。
+
+### 26.5 发送生命周期与恢复能力边界
+
+【证据】`CFECOutgoingQueue::SendPackets 0x7f7dd4–0x7f7dfc` 在 socket 返回
+1 时把该包放回队首并结束本轮（`0x7f7e28–0x7f7e3c`）；成功发送后释放该包。
+这处理的是本地发送暂不能完成，不是收到对端缺片反馈后的重传缓存。
+发送成功后重复调用不会再次发送该组；不能给它套用 §25.3 普通不可靠包的
+约 200ms+RTT 保留机制。更不能描述成“FEC 失败后必然自动重传同一组”。
+
+【结论】在有效、不同的 shard 条件下，k 个数据 shard 加 m 个冗余 shard，
+收到其中足够的 k 个可恢复原传输消息；无需重传往返。3+2 的 10 种“两处丢失”
+组合及反向到达顺序均由原始编解码指令恢复出逐字节相同数据。
+丢失超过 m、整个组丢失、未完成组被替换，均不能由 FEC 保证恢复。
+即使传输 payload 恢复，视频完整组装、参考链、后端解码和显示仍是独立条件。
+20%/50% 是审计注入的发送参数，不是已逆向出的 host 实际默认冗余率。
+
+### 26.6 复核方式与证据限度
+
+```sh
+python3 scripts/audit-steam-fec.py \
+  --binary build/video-recovery-re/libmain-arm64.so \
+  --output build/video-recovery-re/fec-audit.json
+```
+
+脚本需要 Python unicorn、protobuf，执行固定 SHA-256 的原始
+AddPacket/BAddPacket/Reset/ReconstructData/HandleFECPacket、RS encode/decode、
+媒体信封解析以及发送/路由分支。71 个断言案例包括配置描述符、GF 表、线格式、
+丢片边界、乱序、组回绕/替换、重复、坏长度、总分片上限和本地发送重试。
+
+packet constructor、allocation/refcount、CUtl 容器、socket、路由目标等使用
+显式替身；RS 编解码并未替换成 Python 模型。发送队列使用受控 ring 布局。
+这不是原版内存安全证明，不是本地 FEC 实现的对齐测试；没有 Windows host、
+实链路、Switch 性能、码流解码/显示证据。host 的百分比选择、实际配置生效链和
+强丢包时的策略不能用这些案例替代。
+
+## 27. 传输协议的分层证据边界
+
+### 27.1 协议支持与项目支持必须分别陈述
+
+下表对照同一 Android ELF 与 IHSlib `5fe67f4`，不是以 protobuf 字段存在来
+宣称相应运行机制已实现。§9/13 等较早审计的历史实现列不自动代表此版本现状。
+
+| 路径 | 官方证据 | 项目差异／证据边界 |
+|---|---|---|
+| 普通不可靠接收 3/4 → 反馈 10 | §25，HandleDataPacket/UpdateUnreliableState | 有生产函数差分；F/U 冻结快照不证明并发全轨迹等价 |
+| 普通不可靠发送 → 反馈 10 → 有限保留补发 | §25.3，SendUnreliablePackets/HandleNackPacket | 客户端 outgoing 包未完整接入这种缓存、标记、调度与退休；不能用可靠控制包重传代替 |
+| FEC 类型 11 | §26，独立队列与 RS 编解码 | 配置未启用、解析器拒绝 11、无组恢复；是一整条能力缺口 |
+| 可靠媒体 5/6 | OnNegotiationInit 0x7ad710 与通用可靠窗口 | 项目媒体只接纳 3/4，故明确协商 reliable_data=false；不应冒报相同能力 |
+| 可靠控制/统计 5/6 → 7/8 | §14 的证据及本地 ch_control/retransmission | 已有独立实现，但本次未对所有 ACK/NACK、发送预算和并发轨迹做与 §25 同等级的穷举对比 |
+| 配置 25、运行时消息 99、channel 冗余百分比 | §23/26 | schema、配置工厂、发送/接收机制不等于 host 生效策略；host 默认值/自适应规则仍无直接证据 |
+| CRC、连接 ID、地址、类型分派 | §27.2 及 Socket/Connection/Channel 分层 | 分派与部分 guard 有原指令断言；CRC 算术、连接 flags 的全部赋值来源及真实连线不在这些断言内 |
+| RTT、时钟与发送时机 | §25.2–25.3、25.14 | 给定 mean/smoothed RTT 的预算已对比；实时采样/时钟拟合和操作系统唤醒时序不是同一证明 |
+| 媒体完整性 → 解码恢复 | §24–25 | 平台后端、内容模式位及 GPU/显示生命周期不能由传输层一致性推出 |
+
+### 27.2 对类型 9 的分派范围更正与连接 guard
+
+【证据与更正】§9 中“9 在 HandlePacket 被忽略”只能指
+**CStreamChannel::HandlePacket**。`CStreamConnection::HandlePacket`
+在 `0x7fad38–0x7fad3c` 更早拦截类型 9，经
+`0x7faf08–0x7faf40` 验证 src/dst ID 和对端地址；连接 state=1 时
+`0x7fafd8–0x7fafe8` 调用 Disconnect。因此撤回将类型 9 泛化为全链路忽略的
+解释。包类型 9 与控制消息编号 9（KeepAlive）也不是同一层的枚举。
+
+【证据】普通连接数据的 `0x7faff0–0x7fb028` 检查 ID/地址；
+`0x7fb02c–0x7fb064` 在 connection `+10` 要求 CRC 时拒绝未带 CRC 标志的数据；
+`0x7fb094–0x7fb09c` 把合法 channel 限定为小于 32。CRC 计算/比对及剥除尾部在
+更早的 `Socket::HandlePacket 0x7ff4c8–0x7ff550`；不能把只验证 CRC 标志的
+connection 分支当作已经验证 CRC32C 算术。
+
+```sh
+python3 scripts/audit-steam-transport-dispatch.py \
+  --binary build/video-recovery-re/libmain-arm64.so \
+  --output build/video-recovery-re/transport-dispatch.json
+```
+
+16 个原始指令案例分别验证类型 9 的 connection/channel 差异、连接状态、
+错误 ID/地址、CRC 要求位、类型 7/8/10/11 的路由与 channel 上界。地址比较
+结果、统计、目标处理器及 Disconnect 动作为替身；不模拟真实断连资源清理。
+本节对实际执行的函数层次作出限定，不构成整套 Steam 协议等价实现的声明。
