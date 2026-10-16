@@ -34,6 +34,14 @@ POP_SIGNAL = RETURN + 0x400
 WANTS_CLOUD = RETURN + 0x500
 KEY_VALID = RETURN + 0x600
 KEY_RAW = RETURN + 0x700
+QUERY_STATE = RETURN + 0x800
+NOTIFY_DISCONNECT = RETURN + 0x900
+UTIL_TIME = RETURN + 0xa00
+CONNECTION_INFO = RETURN + 0xb00
+QUICK_STATUS = RETURN + 0xc00
+SDK_CLOSE = RETURN + 0xd00
+SDK_SEND = RETURN + 0xe00
+RELIABLE_DELIVER = RETURN + 0xf00
 NOW = 100000000
 
 
@@ -555,6 +563,507 @@ def pairing(elf, cloud_state, manager_state, cancel):
     assert m.events == expected, (cloud_state, manager_state, cancel, m.events)
 
 
+def cloud_update(elf, state, underlying, expected, now=100.0, deadline=100.0):
+    m = Machine(elf)
+    session, request, delegate, vt, dvt = [m.alloc(256) for _ in range(5)]
+    m.write(session, delegate, 8)
+    m.write(session+24, state)
+    m.uc.mem_write(session+28, struct.pack('<f', deadline))
+    m.write(session+40, request, 8)
+    m.write(session+72, request, 8)
+    m.write(request, vt, 8)
+    m.write(vt+16, QUERY_STATE, 8)
+    m.write(delegate, dvt, 8)
+    m.write(dvt+8, NOTIFY_DISCONNECT, 8)
+    m.stubs[QUERY_STATE] = lambda m: m.reg(0, underlying)
+    m.stubs[NOTIFY_DISCONNECT] = lambda m: m.events.append('notify_disconnected')
+    m.stubs[0xc0d360] = lambda m: m.uc.reg_write(
+        arm.UC_ARM64_REG_D0, int.from_bytes(struct.pack('<d', now), 'little'))
+    for target, event in [(0xc0d2f0, 'disconnect'), (0xc0d310, 'connect'),
+                          (0xc0d340, 'finish_resolving'), (0xc0d350, 'next_endpoint'),
+                          (0xc0d380, 'create_session'), (0xc0d3b0, 'consume_packets')]:
+        m.stubs[target] = lambda m, event=event: m.events.append(event)
+    m.run(0x791bdc, 0x791d24, session)
+    assert m.events == expected, (state, underlying, now, deadline, m.events, expected)
+
+
+def manager_update(elf, state=1, now=100, next_round=200, extra=200, sent=3,
+                   age=None, cloud_online=False, reentrant=False):
+    m = Machine(elf)
+    manager, _ = common_manager(m, state)
+    m.write(manager+48, next_round, 8)
+    m.write(manager+80, sent)
+    m.write(manager+88, extra, 8)
+    m.write(manager+520, 100, 8)
+    m.write(manager+376, int(reentrant), 1)
+    m.stubs[0xc0a5b0] = lambda m: m.reg(0, now)
+    m.stubs[0xc0da20] = lambda m: m.events.append('discover')
+    m.stubs[0xc0da40] = lambda m: m.events.append('stream_request')
+    m.stubs[0xc0da50] = lambda m: m.events.append('authorize_request')
+
+    def random(m):
+        low, high = m.reg(0), m.reg(1)
+        assert (low, high) in ((1, 5), (1, 3), (4, 7))
+        m.reg(0, low)  # Controlled RNG provider; test scheduling, not RNG.
+
+    m.stubs[0xc0da10] = random
+    if age is not None:
+        records = m.alloc(104)
+        m.write(manager+144, records, 8)
+        m.write(manager+168, 1)
+        m.write(records+8, 0x1234, 8)
+        m.write(records+40, now-age, 8)
+        m.stubs[0xc0da30] = lambda m: m.reg(0, 0 if cloud_online else -1)
+        m.stubs[0xc0d4f0] = lambda m: m.reg(0, 0)
+        m.stubs[0xc0d910] = lambda m: m.events.append('remove_visible')
+
+        def grow(m):
+            m.write(m.reg(0), m.alloc(64), 8)
+            m.write(m.reg(0)+8, 8)
+
+        m.stubs[0xc0d6d0] = grow
+        m.stubs[0xc09990] = lambda m: None
+    m.run(0x79890c, 0x798d10, manager)
+    expected = []
+    active = state != 0 and not reentrant
+    if active:
+        if now >= next_round:
+            expected.append('discover')
+            assert m.read(manager+48, 8) == now+13
+            assert m.read(manager+80) == 1 and m.read(manager+88, 8) == now+1
+        elif sent <= 2 and now >= extra:
+            expected.append('discover')
+            assert m.read(manager+80) == sent+1 and m.read(manager+88, 8) == now+4
+        if age is not None and not cloud_online and age >= 30:
+            expected.append('remove_visible')
+        if now >= 100 and state in (4, 5):
+            expected.append('authorize_request' if state == 4 else 'stream_request')
+    assert m.events == expected, (state, now, age, cloud_online, m.events, expected)
+    assert m.read(manager+376, 1) == int(reentrant)
+
+
+def sns_send(elf, state, handle, sdk_result, packet_flags=0):
+    m = Machine(elf)
+    transport, packet, header, data, sdk, vt = [m.alloc(256) for _ in range(6)]
+    m.write(transport+20, state)
+    m.write(transport+48, handle)
+    m.write(transport+56, sdk, 8)
+    m.write(sdk, vt, 8)
+    m.write(vt+88, SDK_SEND, 8)
+    m.write(packet+40, header, 8)
+    m.write(packet+52, 32)
+    m.write(packet+56, data, 8)
+    m.write(header, packet_flags, 1)
+
+    def send(m):
+        assert tuple(m.reg(i) for i in range(6)) == (
+            sdk, handle, data, 36 if packet_flags & 128 else 32, 0x15, 0)
+        m.events.append('send')
+        m.reg(0, sdk_result)
+
+    m.stubs[SDK_SEND] = send
+    m.run(0x800224, 0x8002c0, transport, packet)
+    if not handle:
+        expected = 3
+    elif state < 2:
+        expected = 1
+    elif state == 3:
+        expected = 4
+    elif state != 2:
+        expected = 3
+    else:
+        expected = 0 if sdk_result == 1 else 1 if sdk_result in (25, 41) else 3
+    assert m.reg(0) == expected
+    assert m.events == (['send'] if handle and state == 2 else [])
+
+
+def sns_check(elf, state, handle=True, sns_state=3, info_ok=True, quick_ok=True,
+              elapsed=1000000):
+    m = Machine(elf)
+    transport, sdk, utils, vt, uvt, tvt = [m.alloc(512) for _ in range(6)]
+    m.write(transport, tvt, 8)
+    m.write(tvt+120, 0x800f94, 8)  # Execute original SDR close, not a state-changing stub.
+    m.allowed.append((0x800f94, 0x801084))
+    m.write(transport+20, state)
+    m.write(transport+48, int(handle))
+    m.write(transport+56, sdk, 8)
+    m.write(transport+64, utils, 8)
+    m.write(transport+264, NOW-elapsed, 8)
+    m.write(sdk, vt, 8)
+    m.write(utils, uvt, 8)
+    m.write(uvt+96, UTIL_TIME, 8)
+    m.write(vt+120, CONNECTION_INFO, 8)
+    m.write(vt+128, QUICK_STATUS, 8)
+    m.write(vt+40, SDK_CLOSE, 8)
+    m.stubs[UTIL_TIME] = lambda m: m.reg(0, NOW)
+    for address in (0xc09c30, 0xc0a680, 0xc11620, 0xc11630, 0xc11640):
+        m.stubs[address] = lambda m: None  # Diagnostic string operations only.
+    m.stubs[0xc09b00] = lambda m: m.reg(0, 1)  # Assert handler: no debugger trap.
+
+    def info(m):
+        m.events.append('info')
+        m.uc.mem_write(m.reg(2), bytes(512))
+        m.write(m.reg(2)+176, sns_state)
+        m.reg(0, int(info_ok))
+
+    def quick(m):
+        m.events.append('quick')
+        m.uc.mem_write(m.reg(2), bytes(128))
+        m.write(m.reg(2)+4, -1)
+        for offset in (16, 20, 24, 28):
+            m.uc.mem_write(m.reg(2)+offset, struct.pack('<f', -1.0))
+        m.reg(0, int(quick_ok))
+
+    def close(m):
+        assert (m.reg(1), m.reg(4)) == (1, 0)  # handle, linger=false
+        m.events.append(('close', m.reg(2)))
+        m.reg(0, 1)
+
+    m.stubs.update({CONNECTION_INFO: info, QUICK_STATUS: quick, SDK_CLOSE: close})
+    m.run(0x800348, 0x800960, transport)
+    expected_events = []
+    expected_handle = int(handle)
+    if not handle:
+        expected_state, expected_return = (3 if state == 3 else 4), 0
+    elif state == 2 and elapsed < 1000000:
+        expected_state, expected_return = 2, 1
+    else:
+        expected_events.append('info')
+        if not info_ok:
+            expected_state, expected_handle, expected_return = 3, 0, 0
+        elif sns_state in (1, 2):
+            expected_state, expected_return = 1, 1
+        elif sns_state == 3:
+            expected_events.append('quick')
+            expected_state, expected_return = (2, 1) if quick_ok else (3, 0)
+            if not quick_ok:
+                expected_handle = 0
+        else:
+            reason = 0 if sns_state in (4, 5) else 2001
+            expected_events.append(('close', reason))
+            expected_state = 3 if sns_state == 5 or state == 3 else 4
+            expected_handle, expected_return = 0, 0
+    assert m.read(transport+20) == expected_state, (state, handle, sns_state, m.read(transport+20))
+    assert m.read(transport+48) == expected_handle and m.reg(0) == expected_return
+    assert m.events == expected_events, (m.events, expected_events)
+
+
+def address_lookup(elf, verified, count):
+    m = Machine(elf)
+    manager, _ = common_manager(m)
+    record, entries, addresses, out = [m.alloc(128) for _ in range(4)]
+    m.write(manager+1152, entries, 8)
+    m.write(entries+8, record, 8)
+    m.write(record+32, addresses, 8)
+    m.write(record+48, count)
+    m.write(addresses, int(verified), 1)
+    value = bytes(range(24))
+    m.uc.mem_write(addresses+16, value)
+    m.stubs[0xc0d8b0] = lambda m: None
+    m.stubs[0xc0d950] = lambda m: m.reg(0, 0)
+    m.reg(8, out)  # AAPCS indirect aggregate return.
+    m.run(0x79c25c, 0x79c308, manager, 0x1234)
+    expected = value if verified and count else bytes(20)+struct.pack('<HH', 3, 0)
+    assert bytes(m.uc.mem_read(out, 24)) == expected
+
+
+def address_compare(elf, left, right, expected):
+    m = Machine(elf)
+    entries = [m.alloc(64), m.alloc(64)]
+    strings = {}
+    for obj, (verified, remote, kind, timestamp, ip) in zip(entries, (left, right)):
+        m.write(obj, verified, 1)
+        m.write(obj+1, remote, 1)
+        m.write(obj+8, timestamp, 8)
+        m.write(obj+36, kind, 2)
+        if kind == 3:
+            m.write(obj+16, ip)
+        else:
+            strings[obj+16] = ip.encode()+b'\0'
+
+    def to_string(m):
+        m.uc.mem_write(m.reg(1), strings[m.reg(0)])
+
+    def compare_strings(m):
+        def read_string(address):
+            return bytes(m.uc.mem_read(address, 48)).split(b'\0')[0]
+        a, b = read_string(m.reg(0)), read_string(m.reg(1))
+        m.reg(0, (a > b)-(a < b))
+
+    m.stubs.update({0xc0de90: lambda m: m.reg(0, m.read(m.reg(0))),
+                    0xc0da00: to_string, 0xc09fb0: compare_strings})
+    m.run(0x7a3140, 0x7a3260, *entries)
+    assert m.reg(0) == int(expected), (left, right, expected, m.reg(0))
+
+
+def initial_routing(elf, expected, *, age=0, pending=True, sdr=False,
+                    config_ready=True, route_state=3, peer_clusters=0,
+                    relay_ready=False, ice=False, ice_ready=False,
+                    permitted=0, gathered=0, ice_failed=False):
+    m = Machine(elf)
+    connection, relay, candidate, vt, config = [m.alloc(8192) for _ in range(5)]
+    m.write(connection+6882, int(pending), 1)
+    m.write(connection+6888, relay if sdr else 0, 8)
+    m.write(connection+6848, route_state)
+    m.write(connection+6856, NOW-age, 8)
+    m.write(relay+56, int(relay_ready))
+    m.write(relay+928, peer_clusters)
+    m.write(0xc80000+3016, config, 8)
+    m.write(config, int(config_ready), 1)
+    m.write(connection+6984, candidate if ice else 0, 8)
+    m.write(connection+7072, int(ice_failed))
+    m.write(connection+7088, permitted)
+    m.write(connection+7048, gathered)
+    m.write(candidate, vt, 8)
+    m.write(vt+32, QUERY_STATE, 8)
+    m.stubs[QUERY_STATE] = lambda m: m.reg(0, int(ice_ready))
+    m.run(0x875c08, 0x875d5c, connection, NOW)
+    assert m.reg(0) == (1 if expected == 0 else NOW+expected), (age, expected, m.reg(0))
+    assert m.read(connection+6882, 1) == (int(pending) if expected else 0)
+
+
+def reliable_receive(elf, first, count, last, expected_delivery, *, ack=0,
+                     has_first=True, existing_deadline=0):
+    m = Machine(elf)
+    connection, msg, queue, repeated, ice, vt = [m.alloc(8192) for _ in range(6)]
+    m.write(connection+6848, 3)
+    m.write(connection+6984, ice, 8)
+    m.write(connection+7380, last)
+    m.write(connection+7328, queue, 8)
+    m.write(connection+7336, queue+3*48, 8)
+    if existing_deadline:
+        m.write(connection+7352, m.empty, 8)
+        m.write(connection+7360, existing_deadline, 8)
+    for index in range(3):
+        m.write(queue+index*48, index+1)
+    m.write(ice, vt, 8)
+    m.write(vt+144, RELIABLE_DELIVER, 8)
+    m.write(msg+16, (1 << 12) if has_first else 0)
+    m.write(msg+136, 1, 1)  # ICE enabled; bypass no-ICE teardown.
+    m.write(msg+144, ack)
+    m.write(msg+148, first)
+    m.write(msg+32, count)
+    m.write(msg+40, repeated, 8)
+    for index in range(count):
+        item, payload = m.alloc(32), m.alloc(32)
+        m.write(repeated+8+index*8, item, 8)
+        m.write(item+16, 1, 1)
+        m.write(item+24, payload, 8)
+        m.write(payload, first+index)
+
+    def swap(m):
+        a, b = m.reg(0), m.reg(1)
+        av, bv = bytes(m.uc.mem_read(a, 32)), bytes(m.uc.mem_read(b, 32))
+        m.uc.mem_write(a, bv)
+        m.uc.mem_write(b, av)
+
+    m.stubs.update({0xc09420: swap, 0xc093b0: lambda m: None,
+                    0xc119d0: lambda m: m.reg(0, NOW),
+                    0xc11df0: lambda m: m.events.append(('think', m.reg(1))),
+                    RELIABLE_DELIVER: lambda m: m.events.append(('deliver', m.read(m.reg(1))))})
+    m.run(0x877614, 0x877c30, connection, msg, NOW)
+    assert m.reg(0) == 1
+    assert [event[1] for event in m.events if event[0] == 'deliver'] == expected_delivery
+    assert m.read(connection+7380) == (expected_delivery[-1] if expected_delivery else last)
+    remaining = (m.read(connection+7336, 8)-queue)//48
+    assert [m.read(queue+i*48) for i in range(remaining)] == [i for i in (1, 2, 3) if i > ack]
+    think = [event for event in m.events if event[0] == 'think']
+    if has_first:
+        deadline = min(existing_deadline or NOW+10000, NOW+10000)
+        assert think == [('think', deadline)] and m.read(connection+7360, 8) == deadline
+    else:
+        assert not think
+
+
+def sns_wait_receive(elf, wait_ms, batches, handle=True, queued=False):
+    m = Machine(elf)
+    transport, sdk, utils, vt, uvt, pending = [m.alloc(4096) for _ in range(6)]
+    m.write(transport+48, int(handle))
+    m.write(transport+56, sdk, 8)
+    m.write(transport+64, utils, 8)
+    m.write(transport+244, 0 if queued else -1)
+    m.write(sdk, vt, 8)
+    m.write(utils, uvt, 8)
+    m.write(uvt+224, 0x82244c, 8)
+    m.allowed.append((0x82244c, 0x822454))  # Original Poll(int) argument adapter.
+    m.write(vt+112, CONNECTION_INFO, 8)
+    m.stubs[0xc128d0] = lambda m: m.events.append(('poll', m.reg(0)))
+    m.stubs[0xbff420] = lambda m: m.reg(0, m.alloc(m.reg(0)))
+    m.stubs[0xc10fd0] = lambda m: None
+    m.stubs[0xc110e0] = lambda m: m.events.append(('wrap',))
+    remaining = list(batches)
+
+    def receive(m):
+        assert (m.reg(1), m.reg(3)) == (1, 128)
+        count = remaining.pop(0)
+        m.events.append(('receive', count))
+        for index in range(max(0, count)):
+            m.write(m.reg(2)+8*index, m.empty, 8)
+        m.reg(0, count)
+
+    def enqueue(m):
+        m.write(transport+244, 0)
+        m.write(m.reg(1), m.empty, 8)
+        m.reg(0, pending)
+
+    m.stubs.update({CONNECTION_INFO: receive, 0xc09e50: enqueue, 0xc09e60: lambda m: None})
+    m.run(0x80010c, 0x800224, transport, wait_ms)
+    actual_batches = [e[1] for e in m.events if e[0] == 'receive']
+    assert m.events[0] == ('poll', wait_ms)
+    assert actual_batches == (batches if handle else []) and (not remaining if handle else True)
+    assert sum(e[0] == 'wrap' for e in m.events) == sum(max(0, n) for n in actual_batches)
+    assert m.reg(0) == int(queued or any(n > 0 for n in actual_batches))
+
+
+def sns_recv_queue(elf, handle, count, output=True):
+    m = Machine(elf)
+    transport, entries, out = [m.alloc(512) for _ in range(3)]
+    m.write(transport+48, int(handle))
+    m.write(transport+240, 3)  # Queue index mask.
+    m.write(transport+244, 0 if count else -1)
+    m.write(transport+248, count-1)
+    m.write(transport+256, entries, 8)
+    m.write(entries, 0x12345678, 8)
+    m.run(0x8002c0, 0x800328, transport, out if output else 0)
+    assert m.reg(0) == (2 if not handle else 1 if not count else 0)
+    if handle and count:
+        assert m.read(transport+244) == (0xffffffff if count == 1 else 1)
+        assert m.read(transport+248) == (0xffffffff if count == 1 else count-1)
+        assert m.read(out, 8) == (0x12345678 if output else 0)
+    else:
+        assert m.read(transport+244) == (0 if count else 0xffffffff)
+
+
+def poll_wait_budget(elf, wait_ms, next_delta, expected):
+    m = Machine(elf)
+    m.stubs[0xc13c30] = lambda m: m.reg(0, (1 << 63)-1 if next_delta is None else NOW+next_delta)
+    m.stubs[0xc119d0] = lambda m: m.reg(0, NOW)
+    m.stops[0x86e2a4] = ('wait_computed',)
+    m.run(0x86e200, 0x86e2a4, wait_ms, 1)
+    assert m.reg(20) == expected, (wait_ms, next_delta, expected, m.reg(20))
+
+
+def ice_route_metrics(elf, smooth, minimum, maximum, kind, penalty, ready=True):
+    m = Machine(elf)
+    route, connection, vt = [m.alloc(8192) for _ in range(3)]
+    m.write(route, vt, 8)
+    m.write(route+8, connection, 8)
+    m.write(route+100, smooth)
+    m.write(route+676, kind)
+    m.write(vt+32, QUERY_STATE, 8)
+    m.write(connection+5008, 1)
+    m.write(connection+5012, penalty)
+    m.write(connection+5488, NOW, 8)
+    m.stubs[QUERY_STATE] = lambda m: m.reg(0, int(ready))
+
+    def ping_range(m):
+        m.write(m.reg(1), minimum)
+        m.write(m.reg(2), maximum)
+        m.reg(0, 15)
+
+    m.stubs[0xc125f0] = ping_range
+    m.run(0x87e4c4, 0x87e734, route, NOW)
+    metrics = [m.read(route+offset) for offset in (576, 580, 584, 588, 592)]
+    if not ready or smooth < 0:
+        expected = [268435455]*3+[0, 0]
+    elif minimum <= 4 and kind == 4:
+        expected = [smooth, minimum, maximum, penalty, 15]
+    else:
+        expected = [value+value//10 for value in (smooth, minimum, maximum)]+[10+penalty, 15]
+    assert metrics == expected, (smooth, minimum, maximum, kind, penalty, metrics, expected)
+
+
+def start_stream_guard(elf, state, same):
+    m = Machine(elf)
+    manager, _ = common_manager(m, state)
+    records = m.alloc(104)
+    m.write(manager+144, records, 8)
+    m.write(manager+168, 1)
+    m.write(records+8, 0x1234, 8)
+    m.write(records+16, 0x5678, 8)
+    m.write(manager+528, 1, 1)
+    m.stubs[0xc0d4f0] = lambda m: m.reg(0, 0)
+    m.stubs[0xc0da10] = lambda m: m.reg(0, 456)
+    m.stubs[0xc0da70] = lambda m: None
+    m.stubs[0xc0da80] = lambda m: m.reg(0, 1)
+    m.stops[0x798ec8] = ('new_transaction',)
+    m.run(0x798d94, 0x798f5c, manager, 0x1234 if same else 0x9999, m.empty)
+    duplicate = state == 5 and same
+    assert m.events == ([] if duplicate else [('new_transaction',)])
+    assert m.read(manager+512) == (123 if duplicate else 456)
+    assert m.read(manager+528, 1) == int(duplicate)
+
+
+def network_changed(elf, state):
+    m = Machine(elf)
+    manager, _ = common_manager(m, state)
+    records = m.alloc(208)
+    m.write(manager+144, records, 8)
+    m.write(manager+168, 2)
+    m.write(records+40, 123, 8)
+    m.write(records+104+40, 456, 8)
+    m.write(records+104+96, -2)  # A vacant hash-map slot must not be touched.
+    m.write(manager+48, 789, 8)
+    m.stubs[0xc0d9e0] = lambda m: m.events.append('update')
+    m.run(0x79a614, 0x79a668, manager)
+    assert m.events == (['update'] if state == 1 else [])
+    assert m.read(records+40, 8) == (0 if state == 1 else 123)
+    assert m.read(records+104+40, 8) == 456
+    assert m.read(manager+48, 8) == (0 if state == 1 else 789)
+
+
+def control_route(elf, has_ip, port, local, cloud, *, socket=True, start_ok=True,
+                  steamid=True, udp_ok=True):
+    m = Machine(elf)
+    manager, address = common_manager(m)
+    session, record, identities, packet = [m.alloc(128) for _ in range(4)]
+    m.write(manager+12, int(local), 1)
+    m.write(manager+32, m.empty if socket else 0, 8)
+    m.write(address+22, port, 2)
+    if cloud is not None:
+        m.write(manager+24, session, 8)
+        m.write(session+24, cloud)
+    m.write(record+8, identities, 8)
+    m.write(record+24, int(steamid))
+    m.write(identities, 0x5678, 8)
+    sp = m.uc.reg_read(arm.UC_ARM64_REG_SP)
+    m.write(sp+8, packet, 8)
+    m.write(sp+28, 32)
+    m.reg(19, manager)
+    m.reg(20, 0x1234)
+    m.reg(21, address)
+    m.stubs[0xc0dba0] = lambda m: m.reg(0, int(has_ip))
+    m.stubs[0xc0db60] = lambda m: m.reg(0, record)
+
+    def start(m):
+        m.events.append('start_socket')
+        if start_ok:
+            m.write(manager+32, m.empty, 8)
+        m.reg(0, int(start_ok))
+
+    def udp(m):
+        m.events.append('udp')
+        m.reg(0, int(udp_ok))
+
+    def send_cloud(m):
+        assert tuple(m.reg(i) for i in range(4)) == (session, 0x5678, packet, 32)
+        m.events.append('cloud')
+
+    m.stubs.update({0xc0d9c0: start, 0xc0d770: udp, 0xc0d410: send_cloud})
+    m.stops[0x79b024] = 'done'
+    m.run(0x79b118, 0x79b1a4)
+    expected = []
+    use_udp = has_ip and port and local
+    if use_udp and not socket:
+        expected.append('start_socket')
+    if use_udp and (socket or start_ok):
+        expected.append('udp')
+    elif cloud == 5 and steamid:
+        expected.append('cloud')
+    expected.append('done')
+    assert m.events == expected, (has_ip, port, local, cloud, m.events, expected)
+
+
 def relay_cipher_context(elf, context, challenge):
     m = Machine(elf)
     private = bytes(range(32))
@@ -650,7 +1159,10 @@ def audit(elf):
     counts = {}
 
     def case(group, fn, *args, **kwargs):
-        fn(elf, *args, **kwargs)
+        try:
+            fn(elf, *args, **kwargs)
+        except Exception as error:
+            raise RuntimeError('audit group='+group+' function='+fn.__name__) from error
         counts[group] = counts.get(group, 0)+1
 
     stops = {2: 11, 3: 16, 6: 7, 7: 9, 8: 8, 9: 12, 10: 13, 11: 14,
@@ -680,6 +1192,15 @@ def audit(elf):
          [('key_exchange',), ('confirmation', 0), ('confirmation', 8)], foreign=True)
     case('authorization_result', authorization, 4, 0, True,
          [('key_exchange',), ('confirmation', 0)], exchange_ok=False)
+    for state in (3, 4):
+        for result in (9, 0xffffffff):
+            for auth_key in (False, True):
+                case('authorization_result', authorization, state, result, auth_key, [('stop', 1)])
+    for state in (0, 1, 2, 5, 6):
+        for result in (0, 4):
+            for auth_key in (False, True):
+                case('authorization_out_of_context', authorization, state, result, auth_key,
+                     [('confirmation', 8)] if auth_key else [])
     for attempts in (0, 3):
         for result in (0, 1):
             case('authorization_cache', authorization_cache, True, attempts, result)
@@ -732,7 +1253,131 @@ def audit(elf):
         case('pairing_dispatch', pairing, cloud, 1, False)
         for state in range(7):
             case('pairing_dispatch', pairing, cloud, state, True)
-    for context, challenge in [(b'identity:test', 0), (b'identity:test', 1),
+    for state in range(6):
+        for underlying in range(5):
+            expected = []
+            if state == 1 and underlying != 1:
+                expected = ['finish_resolving']
+            elif state == 2 and underlying != 2:
+                expected = ['create_session' if underlying == 3 else 'next_endpoint']
+            elif state == 3:
+                expected = ['consume_packets' if underlying == 3 else 'next_endpoint']
+            elif state == 4:
+                expected = ['connect']
+            elif state == 5:
+                expected = ['consume_packets'] if underlying == 3 else ['notify_disconnected', 'disconnect', 'connect']
+            case('cloud_session_update', cloud_update, state, underlying, expected)
+    for now, expected in [(99.999, []), (100.0, ['connect']), (100.001, ['connect'])]:
+        case('cloud_session_update', cloud_update, 4, 0, expected, now=now)
+    for state in range(7):
+        for now in (99, 100):
+            case('manager_update', manager_update, state, now=now)
+    for kw in [{'next_round': 100}, {'next_round': 99},
+               {'extra': 100, 'sent': 1}, {'extra': 100, 'sent': 2},
+               {'extra': 100, 'sent': 3}, {'extra': 101, 'sent': 1},
+               {'state': 0, 'next_round': 0}, {'reentrant': True, 'next_round': 0}]:
+        case('manager_update', manager_update, **kw)
+    for age in (29, 30, 31):
+        for online in (False, True):
+            case('manager_expiration', manager_update, age=age, cloud_online=online)
+    for state in range(5):
+        for handle in (0, 1):
+            case('sns_send', sns_send, state, handle, 1)
+    for result in (0, 2, 25, 41, 42, 0xffffffff):
+        case('sns_send', sns_send, 2, 1, result)
+    case('sns_send', sns_send, 2, 1, 1, packet_flags=128)
+    for state in range(5):
+        case('sns_connection_state', sns_check, state, handle=False)
+    for state in (1, 2, 3):
+        for sns_state in range(6):
+            case('sns_connection_state', sns_check, state, sns_state=sns_state)
+    for kw in [{'info_ok': False}, {'quick_ok': False}, {'elapsed': 999999},
+               {'elapsed': 1000000}, {'elapsed': 1000001}]:
+        case('sns_connection_state', sns_check, 2, **kw)
+    for verified in (False, True):
+        for count in (0, 1):
+            case('address_lookup', address_lookup, verified, count)
+    address_cases = [
+        ((1, 1, 4, 100, '::2'), (0, 0, 3, 200, 1), True),
+        ((0, 0, 3, 200, 1), (1, 1, 4, 100, '::2'), False),
+        ((1, 1, 3, 100, 2), (1, 0, 4, 200, '::1'), True),
+        ((1, 1, 4, 200, '::1'), (1, 0, 3, 100, 2), False),
+        ((1, 0, 3, 100, 2), (1, 1, 3, 200, 1), True),
+        ((1, 1, 3, 200, 1), (1, 0, 3, 100, 2), False),
+        ((1, 0, 3, 104, 3), (1, 0, 3, 100, 1), True),
+        ((1, 0, 3, 100, 1), (1, 0, 3, 104, 3), False),
+        ((1, 0, 3, 103, 3), (1, 0, 3, 100, 1), False),
+        ((1, 0, 3, 100, 1), (1, 0, 3, 103, 3), True),
+        ((1, 0, 3, 100, 1), (1, 0, 3, 102, 2), True),
+        ((1, 0, 3, 102, 2), (1, 0, 3, 104, 3), True),
+        ((1, 0, 4, 100, '::1'), (1, 0, 4, 100, '::2'), True),
+        ((1, 0, 4, 100, '::2'), (1, 0, 4, 100, '::1'), False),
+        ((1, 0, 3, 100, 1), (1, 0, 3, 100, 1), False),
+    ]
+    for left, right, expected in address_cases:
+        case('address_comparator', address_compare, left, right, expected)
+    for kw, expected in [({}, 0), ({'pending': False}, 0),
+                         ({'sdr': True, 'config_ready': False}, 20000),
+                         ({'sdr': True, 'config_ready': False, 'age': 1999999}, 1),
+                         ({'sdr': True, 'config_ready': False, 'age': 2000000}, 0),
+                         ({'sdr': True, 'route_state': 2, 'peer_clusters': 1}, 20000),
+                         ({'sdr': True, 'route_state': 2, 'peer_clusters': 1, 'age': 99999}, 1),
+                         ({'sdr': True, 'route_state': 2, 'peer_clusters': 1, 'age': 100000}, 0),
+                         ({'sdr': True, 'route_state': 2, 'peer_clusters': 1, 'relay_ready': True}, 0),
+                         ({'ice': True, 'permitted': 0x808}, 10000),
+                         ({'ice': True, 'permitted': 0x808, 'age': 99999}, 1),
+                         ({'ice': True, 'permitted': 0x808, 'age': 100000}, 0),
+                         ({'ice': True, 'permitted': 0x606}, 10000),
+                         ({'ice': True, 'permitted': 0x606, 'age': 9999}, 1),
+                         ({'ice': True, 'permitted': 0x606, 'age': 10000}, 0),
+                         ({'ice': True, 'permitted': 0x808, 'gathered': 8}, 0),
+                         ({'ice': True, 'permitted': 0x606, 'gathered': 2}, 0),
+                         ({'ice': True, 'permitted': 0x808, 'ice_ready': True}, 0),
+                         ({'ice': True, 'permitted': 0x808, 'ice_failed': True}, 0)]:
+        case('initial_routing_wait', initial_routing, expected, **kw)
+    for first, count, last, delivery in [(1, 3, 0, [1, 2, 3]), (1, 4, 2, [3, 4]),
+                                         (1, 2, 2, []), (4, 2, 2, []), (3, 0, 2, [])]:
+        for ack in (0, 1, 2, 3, 4):
+            case('reliable_receive', reliable_receive, first, count, last, delivery, ack=ack)
+    case('reliable_receive', reliable_receive, 1, 3, 0, [], has_first=False)
+    for deadline in (NOW+9999, NOW+10000, NOW+10001):
+        case('reliable_receive', reliable_receive, 4, 2, 2, [], existing_deadline=deadline)
+    for wait_ms in (0, 1, 7, 1000, 0xffffffff):
+        case('sns_wait_receive', sns_wait_receive, wait_ms, [0])
+    for batches in ([1], [127], [128, 0], [128, 1], [-1]):
+        case('sns_wait_receive', sns_wait_receive, 7, batches)
+    for queued in (False, True):
+        case('sns_wait_receive', sns_wait_receive, 7, [], handle=False, queued=queued)
+    for handle in (False, True):
+        for count in (0, 1, 2):
+            for output in (False, True):
+                case('sns_recv_queue', sns_recv_queue, handle, count, output)
+    for wait_ms, delta, expected in [(0, None, 0), (7, None, 7), (1000, None, 1000),
+                                     (1500, None, 1000), (7, 0, 0), (7, -1, 0),
+                                     (7, 1, 1), (7, 499, 1), (7, 500, 1),
+                                     (7, 1499, 1), (7, 1500, 2), (7, 100000, 7),
+                                     (0xffffffff, None, 0xffffffff), (0xffffffff, 0, 0)]:
+        case('poll_wait_budget', poll_wait_budget, wait_ms, delta, expected)
+    for smooth, minimum, maximum, kind, penalty in [(20, 4, 30, 4, 0), (20, 5, 30, 4, 0),
+                                                   (20, 4, 30, 3, 0), (19, 9, 29, 3, 7),
+                                                   (20, 4, 30, 4, 7), (-1, 4, 30, 4, 0)]:
+        case('ice_route_metrics', ice_route_metrics, smooth, minimum, maximum, kind, penalty)
+    case('ice_route_metrics', ice_route_metrics, 20, 4, 30, 4, 0, ready=False)
+    for state in range(7):
+        for same in (False, True):
+            case('start_stream_guard', start_stream_guard, state, same)
+        case('network_changed', network_changed, state)
+    for has_ip in (False, True):
+        for port in (0, 27036):
+            for local in (False, True):
+                for cloud in (None, 4, 5):
+                    case('control_route', control_route, has_ip, port, local, cloud)
+    for kw in [{'socket': False}, {'socket': False, 'start_ok': False},
+               {'udp_ok': False}, {'steamid': False}]:
+        case('control_route', control_route, True, 27036, True, 5, **kw)
+    case('control_route', control_route, False, 0, True, 5, steamid=False)
+    for context, challenge in [(b'', 0), (b'x'*22, 1), (b'x'*23, 1),
+                               (b'identity:test', 0), (b'identity:test', 1),
                                (b'long-synthetic-identity:'*3, 0x0123456789abcdef),
                                (b'identity\0tail', 0xffffffffffffffff)]:
         case('relay_key_derivation', relay_cipher_context, context, challenge)

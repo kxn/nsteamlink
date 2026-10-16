@@ -4,7 +4,8 @@
 
 实现入口：§9–§11 定义发现、云端会话和授权/开流事务；§12–§14 定义传输接入、信令桥和
 路径选择；§15–§18 定义网络配置、模块契约、固定版本 schema 和底层 SDR 线格式。
-§19 明确这些证据能够支持的实现边界。协议字段以仓内固定样本导出定义为准，策略以调用点为准。
+§19 明确这些证据能够支持的实现边界，§20 给出原始指令离线复核方法。
+协议字段以仓内固定样本导出定义为准，策略以调用点为准。
 
 ## 证据范围与结论
 
@@ -717,6 +718,12 @@ IP/类型/端口。这里给字段取的中文名来自写入调用点，不是�
 更新时间差不超过 3 秒时不会单靠时间决定排序。匹配已有 IP 时不重复插入；实际回复会更新
 可达标志、时间、端口；已有 remote_ip 标志只置位不清零。排序是地址管理规则，不是 ICE 候选排序。
 
+**比较器的适用边界**：上述时间容差按每一对地址比较，不是能直接展开成全局 tuple 的排序键。
+合成输入 A=(time=104, IPv4=3)、B=(102,2)、C=(100,1)，其余标志相同时，原始比较器返回
+`A<C`、`C<B`、`B<A` 均为 true：前一对由时间决定，后两对由 IP 决定。这里存在不传递的
+两两比较，不能声称所有地址集合都有唯一的规范顺序；测试只证明比较器结果，不证明某种
+标准库 sort 对这组输入的最终排列。实现若改用确定的全局顺序，须注明本项目差异。
+
 `GetAddress` 和 `SendMessage` 的隐式选址只取排序后第一条且要求实际回复标志为 true。
 `SendMessage @0x79ae04–0x79ae9c` 仅在调用方没有提供完整 IP+port 且 client_id 非零时查缓存。
 选不到则保留空地址，经过 §9.4 的云端分支。显式传入的 IP+port 会跳过缓存选择。
@@ -754,7 +761,8 @@ else if sends_in_round <= 2 and now >= next_extra_send:
 
 接收到的 status 每次更新可见表；内容变化才发“主机变化”delegate，时间仍会刷新。
 云端到达的 status 会另把主机放入云端在线集合（`0x799e74–0x799ea0`）。
-普通记录超过 30 秒没有 status 才从可见表删除；在云端在线集合里的记录不受这条 30 秒规则
+**边界修正**：撤回“超过 30 秒才过期”的严格大于表述；普通记录在 `now-last_status >= 30`
+时即从可见表删除（`0x798b48–0x798b50`），恰好 30 秒也删除。在云端在线集合里的记录不受这条规则
 删除（`0x798b2c–0x798b50`）。Offline（云端通知或 discovery type 2）清除可见记录和云端在线集合，
 通知删除；不会删除长期配对密钥或触发重新配对（`0x79a03c–0x79a0a4`、`0x79f240–0x79f2f0`）。
 云端断开清空云端在线集合，随后普通过期规则重新生效（`0x79eef0–0x79ef54`）。
@@ -983,14 +991,41 @@ remote identity 参数为空、virtual port=0，初始参数和连接配置见 �
 transport 的 `this+20`：0=初始化后尚未开始连接，1=Connecting/FindingRoute，2=Connected，
 3=Failed，4=Closed。`CheckConnection @0x800348` 把 SNS 1/2 映射为 transport 1；
 SNS 3 映射为 2；SNS 4（ClosedByPeer）关闭本地句柄并进入 Closed；SNS 5（ProblemDetectedLocally）
-先设 Failed 再关闭，保留 Failed。句柄失效/查询失败也进入 Failed。已 Connected 时状态查询最密
-约每 1 秒一次（`0x80039c–0x8003b4`），不是每个媒体包都查一次。
+先设 Failed 再关闭，保留 Failed。**证据修订**：撤回“句柄失效/查询失败都进入 Failed”。
+没有句柄时保留既有 Failed，其余状态变 Closed，返回 false（`0x800374–0x800378`、
+`0x80044c–0x80045c`）；GetConnectionInfo 失败或 Connected 后 GetQuickConnectionStatus 失败
+才清空句柄并置 Failed（`0x800460–0x8004b8`、`0x800724–0x800780`），这两条分支不调用
+CloseConnection。SNS 未识别状态则以 reason=2001 调 CloseConnection；其规则是保留既有 Failed，
+其余变 Closed，不能自行改成所有未知状态都设 Failed。已 Connected 时仅在
+`now >= last_check+1000000μs` 查询 SDK，否则直接返回 true（`0x80039c–0x8003b4`）。
 
-`BWait @0x80010c` 每次先 Poll(0)，以最多 128 条为一批取 ReceiveMessagesOnConnection，
+**证据修订**：撤回此前 BWait 固定 Poll(0)、不按等待参数阻塞的表述。
+`BWait(wait_ms) @0x80010c` 把传入的 `wait_ms` 保留在 w1，直接交给 Utils::Poll(int)，
+`0x800138–0x800144` 没有清零它。虚表目标 `0x82244c` 将 w1 转给 SteamNetworkingSockets_Poll
+（`0x86e12c`），后者进入原生 poll 实现，按该预算、下一个 thinker 期限和单次 1000 ms 上限
+收紧 epoll_wait 的 timeout（`0x86e238–0x86e2a0`、`0x86e348–0x86e35c`）。这个 1000 ms 上限
+适用于非负 Poll 预算；BWait 的 uint32 参数原样转为 Poll 的 int，`0xffffffff` 会成为 -1，
+未到期/没有 thinker 时不会被这个正值上限截断。有到期 thinker 时
+timeout=0；未来 thinker 的剩余时间先四舍五入到毫秒、至少 1 ms，再与调用预算取较小值。
+获取全局锁本身还按 1 ms 尝试，不能把传 0
+解释为整个调用绝对不会阻塞。独立运行线程/主循环必须据此选择等待预算。
+实际 x86 shell 的 BWait 同样保留第二参数 esi，直接调用 Utils+224
+（`0xd27654–0xd2765b`）；无句柄分支也同样保留 Failed、其余转 Closed
+（`0xd27982–0xd2798f`）。30 秒过期边界的 x86 比较是 `<30` 才跳过删除（`0xd05982–0xd05986`），
+地址比较器的三秒容差分支也一致（`0xd115c4–0xd115de`）。
+
+Poll 后以最多 128 条为一批取 ReceiveMessagesOnConnection，
 每条 SNS message 对应一个 CStreamPacket；满批继续取，进入接收 FIFO。
-该函数没有按传入的等待毫秒阻塞。Send 在 transport<2 时返回稍后重试，2 时用 flags=0x15，
+BWait 返回值只看本地队列非空；无句柄仍会 Poll，且可能因旧队列非空返回 true，但 Recv
+会先因无句柄返回 2。不能把 BWait=true 当作连接有效或下一次 Recv 必定成功。
+Send **先检查句柄**：无句柄直接返回发送失败(3)，即使状态为
+Failed 也不返回终止错误(4)。有句柄才按状态判断：transport<2 时返回稍后重试(1)，2 时用 flags=0x15，
 SDK result=1 视为成功，25/41 视为可重试，其余视为发送失败；transport=3 单独返回终止错误
-（`0x800224–0x8002bc`）。SDK 25/41 的名称以对应结果枚举为准，不把两者写成“对端已断开”。
+（`0x800224–0x8002bc`），Closed 则发送失败。报文头 bit7 置位时，交给 SDK 的长度为
+packet 的已存长度加 4，否则不加；这不是 SNS 自动添加的字节。Recv 同样先检查句柄：无句柄
+返回 2，不消费本地已排队包；有句柄但空队列返回 1，出队成功返回 0
+（`0x8002c0–0x800324`），传空输出指针也会消费一条包。SDK 25/41 的名称以对应结果枚举为准，
+不把两者写成“对端已断开”。
 
 `SetMaximumMTU @0x801084` 设置连接级 MTU_PacketSize(32)，再查询 MTU_DataSize(33)，
 返回后者，查询失败返回 -1。应按此结果确定交给 SNS 的应用包预算，不能把普通 UDP 的 MTU
@@ -1129,7 +1164,10 @@ ProcessSignal `0x877614`。这是候选/认证信令的可靠机制，与媒体 
 - 每个已发送项的 RTO 更新到 **now+1000000μs**。发包常带累计 ack_reliable_msg；
   解析 ACK 后删除所有 ID<=ACK 的未确认项。
 - 接收 first_reliable_msg 大于期望 ID（last_received+1）时不越过缺口；部分重复则跳过已处理
-  前缀，顺序处理后面的新元素，再安排 ACK。不能把 reliable_messages 当无序候选集合。
+  前缀，顺序处理后面的新元素。**顺序修正**：ACK 调度在序号缺口/重复检查之前；只要存在
+  first_reliable_msg 字段，先安排最迟 now+10000μs 的信令（已有更早 deadline 则保留），再检查
+  缺口并处理内容（`0x8778e8–0x877940`）。因此全重复、未来缺口乃至空 reliable_messages
+  也会促成累计 ACK，不能把“不处理内容”写成“完全不回复”。不能把 reliable_messages 当无序候选集合。
 - 收到/发送 connection_closed 清空未确认队列。特殊 NoConnection 原因码 **9999** 用来阻止
   双方相互无限回复关闭信令（`0x877844–0x877890`）。
 - SDK SendSignal 回调返回 false 会置 ProblemDetectedLocally(error=5002)
@@ -1540,7 +1578,15 @@ python3 tools/steam-remote-policy-audit.py \
 | StreamingResponse `0x79e828` | 0–15 及未知结果、session key 解密失败、迟到/零 request_id |
 | ProofRequest `0x79e1c0` | 更新标志、SHA 输入、持久化/加密/发送顺序、身份/ID 不匹配、加密失败 |
 | Start/CancelPairing `0x79c514`、`0x79c540` | 云端各状态、缺失 session、manager 状态的分派 |
+| cloud UpdateWebSocket `0x791bdc`、manager Update `0x79890c` | 连接/重连、deadline 等号、发现补发、30 秒过期与云端在线豁免、重入守卫 |
+| 地址查询 `0x79c25c`、比较器 `0x7a3140` | 首地址实际回复标志、IPv4 优先、三秒容差、成环的两两比较 |
+| SNS Send/Recv `0x800224`、`0x8002c0` | 句柄/状态优先级、SDK 结果映射、长度附加值、空输出指针出队 |
+| SNS CheckConnection `0x800348`、原始 SDR Close `0x800f94` | 状态映射、查询失败、无句柄、一次检查期限及保留 Failed |
+| BWait `0x80010c`、Poll wrapper `0x82244c`、内部 wait 计算 `0x86e200` | 等待参数传递、批次 128/129、空/错误接收、旧队列、正/负预算和 thinker 期限 |
 | transport selection `0x8755a4`、cloud bridge | 迟滞、15 个采样桶、受控端首次等待边界、队列及重连分派 |
+| 初始路由 `0x875c08`、ICE metrics `0x87e4c4` | 2 秒/100ms/10ms 边界及提前就绪、近期范围、低延迟类别与惩罚 |
+| reliable ProcessSignal `0x877614` | 累计 ACK 删除、部分/全重复、未来缺口、空消息及先调度 ACK 的顺序 |
+| 开流入口 `0x798d94`、网络变化 `0x79a614`、控制发送尾部 `0x79b118` | 重复事务、非 Idle 忽略网络变化、UDP/云端分派、UDP 发送失败不追加云端 |
 | POP penalty `0x81c3f0`、relay receive `0x816344` | 30 秒衰减、500000/1750000 us 边界、5–1300 字节长度守卫 |
 | relay data `0x83ed9c`、ping `0x8176d8` | 线格式、序号截断、时间差边界、100/1300 字节及未决 deadline |
 | cipher context `0x8a094c`、key exchange `0x74610c`、curve25519 `0x8b88fc` | 执行原始 X25519 指令，独立实现对照共享值、两次 SHA256 的输入、context 字节、nonce 和 GCM 参数 |
@@ -1551,6 +1597,9 @@ hashlib，X25519 对照和 GCM 桩输出使用 cryptography。日志、容器、
 构造/发送、SDK/服务回调和 EVP provider 按测试显式替代。Proof 的 SymmetricEncrypt 也是桩，
 不用于证明 CBC 算法；GCM 测试证明 wrapper 的布局与调用，不证明原始 OpenSSL provider。
 key-exchange 缓存测试在进入新密码计算前停止，不证明整个授权密码实现。
+控制发送测试只执行已完成序列化后的选路尾部，不验证它的完整 header/body 构造；开流入口测试
+在进入新事务的随机码/密钥生成前停止。BWait 的 Poll provider 使用桩；内部 wait 测试仅执行
+预算计算到 `0x86e2a4`，没有真的等待 socket，因此不证明实际线程调度或墙钟耗时。
 
 **Conclusion**：离线复核支持本文所列分支、顺序和封装规则，并揭示 §11 中已明确撤回的泛化。
 它不等于完整客户端执行、主机互操作或真实公网丢包测试，也不能把未覆盖输入当成已验证。
