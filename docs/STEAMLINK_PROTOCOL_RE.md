@@ -2949,7 +2949,8 @@ Qt 事件循环、Steam 认证会话、并发、Switch 解码或显示的证明�
 ### 33.1 接收边界与官方策略
 
 `third_party/ihslib/src/session/fec.c` 独立处理 §26 的传输组，
-`packet.h` 明确命名类型 11，未知类型 12 仍拒绝。raw datagram 经
+`packet.h` 明确命名类型 11，未知类型 12 不进入 FEC。包头拒绝未知类型的旧实现
+与官方连接保活顺序存在差异，撤回“包头直接拒绝即对齐”的含义，修正见 §34。raw datagram 经
 SessionRecvCallback 的地址/连接 ID 检查后进入媒体 channel；早到的 type 11
 与普通媒体一起等待 Start*Data 确定 channel 身份，不猜 codec。
 
@@ -3015,7 +3016,7 @@ python3 scripts/audit-steam-fec-interoperability.py \
 
 `fec_official_vectors` 用固定官方 k3/m2 全片字节验证 2-erasure 的全部 60 种幸存
 顺序和全片的 120 种排列，并覆盖不足 k、重复、元数据冲突、组回绕/替换、CRC、
-类型 12 拒绝及 m=0 超过 255 片/完整 16 位 index。期望来自官方固定向量，不用
+类型 12 不交付 FEC 及 m=0 超过 255 片/完整 16 位 index。期望来自官方固定向量，不用
 本地编码器生成 parity 再证明自身正确。
 坏元数据和 m=0 的大分组边界由测试构造，不冒充官方发送器导出的字节向量。
 
@@ -3033,3 +3034,122 @@ CTest、sanitizer、Switch 交叉构建分别证明对应的 CPU 路径、内存
 兼容性；不能据此声称 Switch 上的纠错时延、负载下输入/显示、所有协议策略或原用户
 停顿已经验证。普通发送缓存/补发、可靠媒体、完整配置更新、MTU/CRC/暂停/调度
 等契约依然独立于 type 11 接收，不以这个接线覆盖其他层。
+
+## 34. 官方连接准入、MTU 和生命周期的生产契约
+
+### 34.1 证据来源和接收时间的先后顺序
+
+【证据】本节依据官方 Steam Link Android 1.3.32 ARM64 `libmain.so`，SHA256
+`50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e`。
+沿用 §28–29 的 Socket/Connection 原指令复播；新增 `transport_lease` 八个输入，
+原有 181 个 input/observed 保持不变。固定参考保存完整 datagram，原版地址比较、
+channel 查找、delegate 回调和最终网络 I/O 的替身范围仍然适用。
+
+`Connection::HandlePacket 0x7fae30–0x7fae64` 的 Connected 专门分支先刷新
+`last_receive`，随后 `0x7faefc` 才调用 HandleConnected。后者在
+`0x7fbef4–0x7fbf58` 检查 state=0、去 CRC 后总长=17B，成功才设置 peer ID、
+CRC 要求并通知连接完成。**刷新连接计时与完成握手是两件事**：已匹配的短/长包和
+重复 Connected 仍可刷新时间，但不能重复握手。普通数据在
+`0x7fb094–0x7fb09c` 检查 channel<32，之后才在 `0x7fb0d8` 写接收时间。
+
+Socket `HandleMessage 0x7ff660–0x7ff6f0` 将 channel=0 的 type0 直接交
+`HandleUnconnectedPacket 0x7fbd14`，该函数只转发 delegate，不刷新连接时间。
+§29 已核实 type9 在普通数据 CRC 要求之前分派；它自己带 CRC 时仍须通过算术校验。
+
+【结论】普通未知编号 12–127 虽然没有媒体处理入口，只要通过地址/ID、channel
+和连接 CRC 要求，仍会刷新连接时间。撤回将“没有处理入口”扩大为“Socket 可在
+包头直接拒绝”的解释。`packet.c` 现在解析七位编号并验证 CRC；`session.c` 完成
+连接准入和刷新后丢弃未知编号，**不把 type12 当 FEC 或可解码的视频**。
+八个新增原版场景涵盖重复 Connected 的 3/4/5B body、channel31/32/255、未知12、
+discovery。channel31 在官方 harness 中有查找替身，本地没有该通道，因此这组只
+比较连接时间和不重复握手，不拿替身的 channel 回调数量冒称生产媒体交付一致。
+
+### 34.2 MTU 和 Connected CRC 的接线
+
+| 官方条件与动作 | 项目生产入口 |
+| --- | --- |
+| state2 + control7 + 有效 required info：optional int32 mtu（省略为0）有符号限制到512–1472，再开始认证；`0x7a64cc–0x7a64f8` | `ch_control.c::OnServerHandshake` 经真实可靠重组和 protobuf parser 进入；错误状态/消息/通道/缺 required info 不应用 |
+| Connected 去尾 body 恰4B，连接尚未建立；记录 peer ID、CRC bit、echo 并开始 ClientHandshake | `ch_discovery.c::OnConnectACK`；重复包不再次开始握手 |
+| 已协商 required CRC 的普通数据不能无 CRC 进入；错误 CRC 在 Socket 更早拒绝 | `session.c::SessionRecvCallback` + `packet.c`；type9 单列，不套普通数据条件 |
+| 发送时按连接要求附 CRC | `IHS_SessionSendPacket` 在最终填头/CRC 前补 suffix；保留调用者原有 CRC 标志 |
+
+MTU 初值1024来自同一 ELF 初始化；握手缺字段得到512，不再取1500。
+项目保留每 session 的 MTU，官方该值是进程全局；这是明确的存储范围差异。
+connectionState、MTU、双方 ID、CRC 要求由接收路径更新，又被发送/重传路径读取，
+以 C11 atomic 保存；接收时间/暂停状态由接收 worker 拥有，不给 UI 线程直接修改。
+
+`check-steam-transport.py` 把固定官方输入交给 `ihs-transport-oracle` 的真实收包
+入口，不直接调用 clamp。MTU 的10个值另外排队4000B受控明文，核对生产分片数量、
+每片线上长度和完整字节；较大测试 frame 显式扩充 fixture 缓冲区，不改变生产包上限。
+CRC 测试从 Connected 进入，再实际序列化一个未预置 CRC 的上行包，核对要求位、
+长度和 CRC32C。这里没有声称所有发包构造入口或时间戳统计都已逐条等价。
+分片前还按连接要求预留4B CRC，避免到最终发送才补尾导致满片超出 MTU；测试同时
+覆盖初始 frame 未请求 CRC、连接要求位为0/1的实际分片结果。上行附 CRC 的官方
+来源是 `Socket::Send 0x7ff1dc`，§29.4 的45个原指令预算场景亦执行了该分支。
+
+### 34.3 暂停、恢复和连接 deadline
+
+【证据】官方 `Client::Pause 0x7b02bc` / `Resume 0x7b0384` 与
+`OnStreamResumed 0x7fb99c` 的条件和顺序见 §29.3；普通/暂停15/180秒阈值
+见 `Connection::Update 0x7fc43c`。`SendDataLost 0x7abd4c` 发送空 frame IDs
+的 type2 媒体信封，audio/video channel ID 来自 client 字段；Start* 前初始为0，
+不以 decoder 对象存在为发送前提。
+
+`application.c::event` 仅由 SDL 0x103/0x106 逐事件发布协议前后台边缘，不把桌面
+window focus/minimize 或 SDL 0x104/0x105 额外推导为协议 Pause/Resume。Switch 的
+焦点适配仍由 `events.c` 合成0x103/0x106；实际系统行为须设备验证。
+`sl_runtime_foreground` 将前后台变化写入 atomic generation，偶数为前台；重复值
+不生成事件。runtime worker 按序将变化交给 `IHS_SessionSetForeground`，接收
+worker 的 `lifecycle.c` 执行动作。同一轮间快速后台→前台保留两条边缘；UI 热路径
+没有网络发送、锁等待、decoder reset 或日志。新 session 按当时前后台状态初始化，
+不向新连接重播此前其他会话的历史事件。
+
+生产动作保持原版顺序：
+
+- 首次 Pause：已连接且串流时排队122；标记 connection paused；最终标记 client paused。
+- Resume：已暂停且连接仍成立时清 connection paused，用连接**上一轮 update 时间**
+  刷新 last receive/echo；串流中依次排队123、audio DataLost、video DataLost；最终清
+  client paused。没有相应媒体 channel 时使用初始 channel0，不销毁解码器。
+- 接收循环 update 用 uint32(now−last_receive) 比较15或180乘65536，达到阈值即
+  发起本地断连；不会将本地超时写成 HostRequestedStop。
+
+这里刷新的是 `clock.lastEcho`，即后续 `ProcessTimestamp` 准入实际使用的水位，
+不另存只供展示的副本。官方 constructor `0x7fb28c–0x7fb290` 也用当前时间初始化
+该水位；项目在 TransportBegin 时初始化。Resume 后构造旧 echo 验证−200被拒、
+−130边界接受；这只核对水位衔接，不代表统计窗口淘汰和均值过程已全部等价。
+
+这些动作在既有接收 worker 的 recv 轮询中执行，没有新建脱离生命周期的线程。
+每个 worker 每轮最多处理32条边缘，积压留到下一轮；这是项目避免热路径阻塞的
+执行机制，不宣称与官方 SDL 主循环的墙钟调度逐 tick 等价。socket 的10ms轮询
+不是连接超时；阈值触发后复用已有断连 timer，正常清理约1.1秒后通知并中断 worker。
+这也不等于官方 Disconnect 的收尾延迟完全一致。
+
+接收错误退出路径先 Interrupt 唤醒发送队列，再 join send worker，避免空队列下
+无限等待。session Destroy 继续停止/join timer 和媒体 worker，再释放各自依赖。
+应用现有视频首帧/空闲 watchdog 与这里的连接 deadline 分属不同层，没有把它们
+解释成官方15/180秒策略。系统真正暂停线程后的时序仍需 Switch 设备证据。
+
+### 34.4 验证契约和边界
+
+```sh
+python3 scripts/audit-steam-protocol-triggers.py \
+  --binary /path/to/official/libmain-arm64.so \
+  --output build/video-recovery-re/transport-official-recheck.json
+python3 scripts/check-steam-transport.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-transport-oracle
+ctest --test-dir build/desktop --output-on-failure
+```
+
+官方原指令189个场景与固定参考比较；本地连接入口98组包括官方 Connected/CRC/
+MTU/Pause/Resume/lease 参考、10个MTU边界及实际分片、发送 CRC、deadline前/等于/
+后、uint32回绕和快速前后台事件。最后一类及资源边界是受控构造输入，不冒充实机
+网络事件。Pause/Resume 核对真正排队的消息编号、加密空 protobuf 和 DataLost 顺序；
+本地最终断连动作为记录替身，时间和媒体消费者也受控，不是屏幕渲染证据。
+
+`transport_worker` 另行启动真实收发 worker，合成 Connected 后使虚拟时间依次走到
+阈值前一tick/阈值，经过真实断连 timer、回调和 join；分别覆盖前台/后台。第三个
+输入模拟致命接收错误，验证发送 worker 被唤醒且两线程结束。它不使用外部 Steam
+主机，不把 CPU 测试当作真实会话抓包。
+
+本节只定义这些连接分支。完整配置99、调度整形、发送缓存、可靠媒体及完整 RTT/
+时钟采样窗口仍需各自的官方客户端证据和接线验收，不能从这里推导整体等价。

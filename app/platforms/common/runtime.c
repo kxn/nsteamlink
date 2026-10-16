@@ -27,7 +27,8 @@ struct sl_runtime {
     pthread_t worker;
     atomic_bool exit_requested, worker_finished;
     bool waiting_video;
-    atomic_bool foreground;
+    atomic_uint foreground_generation;
+    unsigned foreground_applied; /* Runtime worker only. */
     uint64_t session_id;
     sl_runtime_facts facts;
     pthread_mutex_t lock;
@@ -510,6 +511,8 @@ static bool launch_session(sl_runtime *r, IHS_SessionInfo info) {
     }
     if (!r->session)
         return false;
+    r->foreground_applied = atomic_load(&r->foreground_generation);
+    IHS_SessionSetForeground(r->session, !(r->foreground_applied & 1u));
     sl_system_stream_info platform = sl_system_streaming_info();
     IHS_StreamClientCapabilities caps = {
         .systemInfo = platform.system_info[0] ? platform.system_info : NULL,
@@ -1086,8 +1089,15 @@ static void *worker_main(void *ctx) {
                                (ProtobufCMessage *)&probe);
             }
         }
+        unsigned foreground_requested = atomic_load(&r->foreground_generation);
+        for (unsigned count = 0; count < 32 && r->foreground_applied != foreground_requested;
+             ++count) {
+            unsigned edge = ++r->foreground_applied;
+            if (r->session)
+                IHS_SessionSetForeground(r->session, !(edge & 1u));
+        }
         bool video_suspended =
-            !atomic_load(&r->foreground) || (r->session && IHS_SessionHostVideoStopped(r->session));
+            (foreground_requested & 1u) || (r->session && IHS_SessionHostVideoStopped(r->session));
         if (r->video_suspended && !video_suspended) {
             r->frame_at = now;
             if (!r->first_reported)
@@ -1159,7 +1169,7 @@ sl_runtime *sl_runtime_create(const sl_auth_store *store) {
     r->store = *store;
     r->udp = -1;
     atomic_init(&r->exit_requested, false);
-    atomic_init(&r->foreground, true);
+    atomic_init(&r->foreground_generation, 0);
     atomic_init(&r->worker_finished, false);
     pthread_mutex_init(&r->lock, NULL);
     pthread_cond_init(&r->wake, NULL);
@@ -1273,8 +1283,14 @@ void sl_runtime_destroy(sl_runtime *r) {
 }
 
 void sl_runtime_foreground(sl_runtime *r, bool foreground) {
-    if (r)
-        atomic_store(&r->foreground, foreground);
+    if (!r)
+        return;
+    unsigned generation = atomic_load(&r->foreground_generation);
+    while ((generation & 1u) != (unsigned)!foreground) {
+        if (atomic_compare_exchange_weak(&r->foreground_generation, &generation,
+                                         generation + 1u))
+            break;
+    }
 }
 
 bool sl_runtime_read_facts(sl_runtime *r, sl_runtime_facts *facts) {

@@ -20,6 +20,11 @@ from google.protobuf.message import DecodeError
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--binary", type=Path, required=True)
 parser.add_argument("--output", type=Path, required=True)
+parser.add_argument(
+    "--refresh-reference",
+    action="store_true",
+    help="Save original-instruction results as the fixed reference",
+)
 args = parser.parse_args()
 saved_argv = sys.argv
 sys.argv = [
@@ -138,6 +143,7 @@ def transport_fixture():
     r.wq(conn + 368, delegate)
     r.wq(delegate, vt)
     r.wq(vt + 40, STOP + 0x100)
+    r.wq(vt + 32, STOP + 0x300)
     r.wq(sock, transport)
     r.wq(transport, tvt)
     r.wq(tvt + 72, STOP + 0x200)
@@ -154,6 +160,7 @@ def transport_fixture():
             0xC115A0: lambda: r.jump(0x7FF640),
             0xC11350: lambda: r.jump(0x7FACFC),
             0xC11390: lambda: r.jump(0x7FBEF4),
+            0xC11480: lambda: r.jump(0x7FBD14),
             0xC0DC80: lambda: r.ret(1),
             0xC0DA00: lambda: r.ret(),
             0xC11360: lambda: r.ret(),
@@ -161,6 +168,7 @@ def transport_fixture():
             0xC112A0: lambda: action("timestamp"),
             STOP + 0x100: lambda: action("connected"),
             STOP + 0x200: lambda: action("transport_send"),
+            STOP + 0x300: lambda: action("discovery"),
             0xC0E390: lambda: r.ret(ch),
             0xC11250: lambda: action("channel"),
             0xC0E030: lambda: action("disconnect"),
@@ -264,6 +272,33 @@ for required in (False, True):
                 ),
                 dict(actions=list(r.actions), last_receive=r.i(conn + 52)),
             )
+
+# Matched transport acceptance refreshes the lease before Connected's payload
+# guard. Ordinary channel bounds precede the refresh; discovery is independent.
+for name, kind, body, channel, refresh in (
+    ("connected_short", 2, bytes(3), 0, True),
+    ("connected_replay", 2, bytes(4), 0, True),
+    ("connected_long", 2, bytes(5), 0, True),
+    ("data_channel31", 3, b"payload", 31, True),
+    ("data_channel32", 3, b"payload", 32, False),
+    ("data_channel255", 3, b"payload", 255, False),
+    ("unknown_channel3", 12, b"payload", 3, True),
+    ("discovery", 0, b"", 0, False),
+):
+    r, sock, conn = transport_fixture()
+    handshake = wire(2, bytes(4), crc=True)
+    r.call(0x7FF3E0, sock, r.packet_bytes(handshake), r.now)
+    r.actions.clear()
+    data = wire(kind, body, crc=True, channel=channel)
+    r.call(0x7FF3E0, sock, r.packet_bytes(data), r.now + 100)
+    assert r.i(conn + 52) == r.now + (100 if refresh else 0), name
+    assert r.i(conn + 16) == 1 and "connected" not in r.actions, name
+    record(
+        "lease_" + name,
+        "transport_lease",
+        dict(datagrams=[handshake.hex(), data.hex()], peer_address_matches=True),
+        dict(actions=list(r.actions), last_receive=r.i(conn + 52)),
+    )
 
 # Plaintext control envelope after reliable reassembly; execute actual packet
 # frame constructor and queued dispatcher. Only protobuf parse/layout is doubled.
@@ -947,7 +982,25 @@ reference_path = (
 )
 reference = json.loads(reference_path.read_text())
 assert report["binary_sha256"] == reference["binary_sha256"]
-assert cases == reference["cases"], "original trigger reference changed"
+if args.refresh_reference:
+    # Refresh only after executing the original code; keep reviewable fixed data.
+    old_cases = {case["case"]: case for case in reference["cases"]}
+    for case in cases:
+        if case["case"] in old_cases:
+            assert case == old_cases[case["case"]], "existing observation changed"
+    metadata = {key: value for key, value in reference.items() if key != "cases"}
+    metadata["entry_contracts"]["transport_lease"] = {
+        "entry": "socket_datagram_sequence",
+        "initial_connection_state": 0,
+        "comparison": "last receive and no repeated handshake; channel/delegate lookup are doubles",
+    }
+    header = json.dumps(metadata, indent=2)[:-2]
+    rows = ",\n".join(
+        "    " + json.dumps(case, separators=(",", ":")) for case in cases
+    )
+    reference_path.write_text(header + ',\n  "cases": [\n' + rows + "\n  ]\n}\n")
+else:
+    assert cases == reference["cases"], "original trigger reference changed"
 args.output.write_text(json.dumps(report, indent=2) + "\n")
 print(
     json.dumps(

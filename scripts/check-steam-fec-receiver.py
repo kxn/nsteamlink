@@ -127,7 +127,7 @@ def main():
             wire, output(crc_wires[0]) if i == 2 else "-", "CRC-wrapped official shards"
         )
     reset()
-    send(bytes([12]) + wires[0][1:], "invalid", "type12 is not FEC")
+    send(bytes([12]) + wires[0][1:], "-", "type12 is not FEC")
     # Sender m=0 bypasses RS; non-aligned payload and >255 data shards remain valid.
     for count in (1, 256, 65536):
         reset()

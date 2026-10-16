@@ -98,6 +98,11 @@
       "entry": "control_handler_after_decryption",
       "observer_present": false,
       "parsing": "Python original-schema required-field validation; C++ layout injection"
+    },
+    "transport_lease": {
+      "entry": "socket_datagram_sequence",
+      "initial_connection_state": 0,
+      "comparison": "last receive and no repeated handshake; channel/delegate lookup are doubles"
     }
   },
   "cases": [
@@ -126,6 +131,14 @@
     {"case":"crc_policy_requiredTrue_type9_none","group":"crc_policy","input":{"datagrams":["8200220c0000000000a0bb0d00000000009507a542","0900220c0000000000a0bb0d00"],"peer_address_matches":true},"observed":{"actions":["disconnect"],"last_receive":1000100}},
     {"case":"crc_policy_requiredTrue_type9_valid","group":"crc_policy","input":{"datagrams":["8200220c0000000000a0bb0d00000000009507a542","8900220c0000000000a0bb0d00a457d26f"],"peer_address_matches":true},"observed":{"actions":["disconnect"],"last_receive":1000100}},
     {"case":"crc_policy_requiredTrue_type9_bad_crc","group":"crc_policy","input":{"datagrams":["8200220c0000000000a0bb0d00000000009507a542","8900220c0000000000a0bb0d00a457d26e"],"peer_address_matches":true},"observed":{"actions":[],"last_receive":1000000}},
+    {"case":"lease_connected_short","group":"transport_lease","input":{"datagrams":["8200220c0000000000a0bb0d00000000009507a542","8200220c0000000000a0bb0d0000000010ab9386"],"peer_address_matches":true},"observed":{"actions":[],"last_receive":1000100}},
+    {"case":"lease_connected_replay","group":"transport_lease","input":{"datagrams":["8200220c0000000000a0bb0d00000000009507a542","8200220c0000000000a0bb0d00000000009507a542"],"peer_address_matches":true},"observed":{"actions":[],"last_receive":1000100}},
+    {"case":"lease_connected_long","group":"transport_lease","input":{"datagrams":["8200220c0000000000a0bb0d00000000009507a542","8200220c0000000000a0bb0d0000000000005d1e66f5"],"peer_address_matches":true},"observed":{"actions":[],"last_receive":1000100}},
+    {"case":"lease_data_channel31","group":"transport_lease","input":{"datagrams":["8200220c0000000000a0bb0d00000000009507a542","8300220c1f00000000a0bb0d007061796c6f61644ac8087f"],"peer_address_matches":true},"observed":{"actions":["channel"],"last_receive":1000100}},
+    {"case":"lease_data_channel32","group":"transport_lease","input":{"datagrams":["8200220c0000000000a0bb0d00000000009507a542","8300220c2000000000a0bb0d007061796c6f6164b4527b19"],"peer_address_matches":true},"observed":{"actions":[],"last_receive":1000000}},
+    {"case":"lease_data_channel255","group":"transport_lease","input":{"datagrams":["8200220c0000000000a0bb0d00000000009507a542","8300220cff00000000a0bb0d007061796c6f6164307eedba"],"peer_address_matches":true},"observed":{"actions":[],"last_receive":1000000}},
+    {"case":"lease_unknown_channel3","group":"transport_lease","input":{"datagrams":["8200220c0000000000a0bb0d00000000009507a542","8c00220c0300000000a0bb0d007061796c6f6164136ef71d"],"peer_address_matches":true},"observed":{"actions":["channel"],"last_receive":1000100}},
+    {"case":"lease_discovery","group":"transport_lease","input":{"datagrams":["8200220c0000000000a0bb0d00000000009507a542","8000220c0000000000a0bb0d0018da7ddc"],"peer_address_matches":true},"observed":{"actions":["discovery"],"last_receive":1000000}},
     {"case":"mtu_low","group":"mtu","input":{"reassembled_plaintext_packet":"0500220c0100000000a0bb0d00070a020800","client_state":2,"initial_mtu":1024},"observed":{"mtu":512,"actions":["parse_ok","start_authentication"]}},
     {"case":"mtu_high","group":"mtu","input":{"reassembled_plaintext_packet":"0500220c0100000000a0bb0d00070a0308a846","client_state":2,"initial_mtu":1024},"observed":{"mtu":1472,"actions":["parse_ok","start_authentication"]}},
     {"case":"mtu_absent","group":"mtu","input":{"reassembled_plaintext_packet":"0500220c0100000000a0bb0d00070a00","client_state":2,"initial_mtu":1024},"observed":{"mtu":512,"actions":["parse_ok","start_authentication"]}},

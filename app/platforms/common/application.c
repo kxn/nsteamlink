@@ -47,6 +47,13 @@ static void draw(void *native, void *ctx) {
 }
 static void event(const void *native, void *ctx) {
     application *a = ctx;
+    const SDL_Event *e = native;
+    /* Official BHandleEvent uses these two lifecycle events specifically.
+     * Publish each edge while draining SDL, including a quick pause/resume. */
+    if (e->type == SDL_APP_WILLENTERBACKGROUND)
+        sl_runtime_foreground(a->runtime, false);
+    else if (e->type == SDL_APP_DIDENTERFOREGROUND)
+        sl_runtime_foreground(a->runtime, true);
     sl_sdl_input(native, &a->input);
     if (!sl_app_allow_remote(&a->lifecycle, sl_ui_remote(&a->ui)))
         sl_media_gate(false);
@@ -263,7 +270,6 @@ int sl_application_run(int argc, char **argv) {
 #endif
         }
         sl_app_foreground(&a->lifecycle, sl_events_foreground());
-        sl_runtime_foreground(a->runtime, sl_events_foreground());
         sl_artwork_pause(a->artwork, a->ui.streaming || a->ui.page != SL_HOME);
         sl_input_tick(&a->input, a->ui.now);
         sl_media_gate(sl_app_allow_remote(&a->lifecycle, sl_ui_remote(&a->ui)) &&

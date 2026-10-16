@@ -55,5 +55,9 @@ if(NSL_PLATFORM STREQUAL "desktop")
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-fec-receiver.py"
             --receiver $<TARGET_FILE:ihs-fec-oracle>)
         set_tests_properties(fec_official_vectors PROPERTIES TIMEOUT 60)
+        add_test(NAME transport_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-transport.py"
+            --receiver $<TARGET_FILE:ihs-transport-oracle>)
+        set_tests_properties(transport_official_vectors PROPERTIES TIMEOUT 60)
     endif()
 endif()
