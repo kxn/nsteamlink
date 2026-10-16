@@ -1,6 +1,6 @@
 {
   "binary_sha256": "50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e",
-  "scope": "Execute official Android client Connect, retries, Connected and Disconnect.\n\nOriginal BConnect/Create/constructor/Connect/Update/SendConnectPacket/SocketSend\ninstructions decide policy and wire bytes. Allocation, socket construction,\ntransport activation/I/O, stats and client delegates are\nexplicit adapters. No Steam host or Switch is involved.\n",
+  "scope": "Execute official Android client Connect, retries, Connected and Disconnect.\n\nOriginal BConnect/Create/constructor/Connect/Update/SendConnectPacket/SocketSend\ninstructions decide policy and wire bytes. Allocation, packet constructor/refcount,\nsocket construction,\ntransport activation/I/O, stats and client delegates are\nexplicit adapters. No Steam host or Switch is involved.\n",
   "cases": [
     {
       "case": "retry_start0_result0",

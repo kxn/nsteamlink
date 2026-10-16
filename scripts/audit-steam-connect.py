@@ -2,7 +2,8 @@
 """Execute official Android client Connect, retries, Connected and Disconnect.
 
 Original BConnect/Create/constructor/Connect/Update/SendConnectPacket/SocketSend
-instructions decide policy and wire bytes. Allocation, socket construction,
+instructions decide policy and wire bytes. Allocation, packet constructor/refcount,
+socket construction,
 transport activation/I/O, stats and client delegates are
 explicit adapters. No Steam host or Switch is involved.
 """

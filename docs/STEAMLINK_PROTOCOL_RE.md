@@ -3668,8 +3668,9 @@ EAGAIN后wire计数仍0、真实type10重发同ID/payload且计数为1、过期�
 `scripts/audit-steam-connect.py`实际执行客户端`BConnect @0x7a7808`的UDP分支，
 进入`Create @0x7faaf8`、connection constructor `@0x7fb23c`、
 `Connect @0x7fb62c`、`SendConnectPacket @0x7fb84c`和Socket Send `@0x7ff1dc`。
-内存分配、socket构造、transport激活/最终I/O、统计构造/记录、client delegate
-为明确替身；连接构造、状态写入、cookie CRC32C和序列化执行原指令。
+内存分配、packet基础构造/引用计数、socket构造、transport激活/最终I/O、统计
+构造/记录、client delegate为明确替身；connection构造、状态写入、packet header/
+cookie填充、CRC32C和Socket序列化执行原指令。
 
 【结论】新的connection构造时CRC要求为false，`BConnect`没有提前打开它。
 线上首发为17B：type=1、count=0、local ID、destination/channel/fragment/packet
