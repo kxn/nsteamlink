@@ -3084,9 +3084,10 @@ connectionState、MTU、双方 ID、CRC 要求由接收路径更新，又被发�
 每片线上长度和完整字节；较大测试 frame 显式扩充 fixture 缓冲区，不改变生产包上限。
 CRC 测试从 Connected 进入，再实际序列化一个未预置 CRC 的上行包，核对要求位、
 长度和 CRC32C。这里没有声称所有发包构造入口或时间戳统计都已逐条等价。
-分片前还按连接要求预留4B CRC，避免到最终发送才补尾导致满片超出 MTU；测试同时
-覆盖初始 frame 未请求 CRC、连接要求位为0/1的实际分片结果。上行附 CRC 的官方
-来源是 `Socket::Send 0x7ff1dc`，§29.4 的45个原指令预算场景亦执行了该分支。
+上行附 CRC 的官方来源是 `Socket::Send 0x7ff1dc`，§29.4 的45个原指令预算场景
+亦执行了该分支。撤回此处原先按CRC要求位选择分片容量的实现假定：Socket测试
+没有证明入窗分片的计算规则。§42的原指令全链确认，无论该位为0/1，普通分片
+容量均为MTU−17；预留空间和是否真的发送CRC是两个独立决定。
 
 ### 34.3 暂停、恢复和连接 deadline
 
@@ -3451,6 +3452,7 @@ Native file oracle 消费27个原版案例中适用于应用固定文件名的13
 sender（不可靠传false）。因此“全部初发只在下一次Connection::Update排队发送”
 不符合该客户端。AddToOutgoingPacketWindow以当前时间写入头、按window tail分配
 连续packet ID并处理分片；本节只静态核对该入窗/分片入口，不将预置ring当成其执行验收。
+§42另从实际控制调用者/Frame::Put接通该入口和真实window插入，覆盖普通可靠发包。
 
 【证据／原指令】sender→Socket::Send会先写本次尝试的timestamp，再检查deadline。
 未到预算时返回1、置blocked、不调用transport；到达等号可发送。进入transport前
@@ -3908,4 +3910,66 @@ python3 scripts/audit-steam-send-admission.py \
 python3 scripts/check-steam-send-admission.py \
   --receiver build/desktop/third_party/ihslib/tests/session/ihs-send-admission-oracle
 ctest --test-dir build/desktop -R 'send_admission' --output-on-failure
+```
+
+## 42. 客户端控制生产者到实际报文字节
+
+### 42.1 官方证据和推导范围
+
+【证据】固定Android 1.3.32 ARM64 ELF（SHA256同§41），执行
+`CStreamClient::SendControlMessage 0x7a7d90` 或 `OnStreamConnected 0x7ace2c`，
+经真实Frame构造/Put `0x7f321c` / Resize `0x7f2ef8` / Send `0x7f3078`，
+Connection::Send `0x7fb9b4` / GetChannel `0x7fba34` / Channel::Send `0x7f89dc`，
+进入 AddToOutgoingPacketWindow `0x7f6f94` / BInsertPacket `0x7f7230`，
+再由可靠sender `0x7f8ac4` 和Socket::Send `0x7ff1dc` 形成最终wire。
+CRC32C仍执行 `0x8e1610`。`s_nMTU`的GLOB_DAT `0xc806c8`指向`0xf34d48`，
+不以未重定位的GOT零值替代实际MTU。
+
+【证据】Channel::Send `0x7f8a58–0x7f8a6c` 清空13B头再写type5、两端ID和
+channel，因此不会从Frame携带强制CRC位。Socket按connection+10添加CRC。
+在ID12/34、timestamp1000000、message6含空required info的受控输入下：
+
+```text
+CRC=false: 05 00 0c 22 01 00 00 00 00 40 42 0f 00 06 0a 00
+CRC=true:  85 00 0c 22 01 00 00 00 00 40 42 0f 00 06 0a 00 86 78 6f c6
+```
+
+【证据】AddToOutgoingPacketWindow `0x7f6fec` 无条件减17计算body容量，
+`0x7f6ff8` 在body<=容量时不分片；大于时head.fragment=(body−1)/容量，
+后片type6、fragment从0起、packet ID连续，head的packet长度缩到MTU−4。
+因此CRC=false的满片线上比MTU少4B，CRC=true满片恰为MTU。
+
+【证据】可靠sender `0x7f8bcc–0x7f8bd0` 把Socket返回1变成0；其他非零值
+保留。包已入窗，失败不增加count，不退休。撤回把§41注入的Channel结果1直接
+等同于真实可靠Socket结果1的推论；§41本身只证明上层如何处理给定Channel返回，
+没有执行本节实际映射。项目bool队列准入和最终Socket结果仍分开比较。
+
+【证据】空channel表前态下，实际OnStreamConnected构造message6并可靠发送，
+经真实GetChannel只创建0、1密集前缀。channel构造器是显式内存布局适配器，
+不执行其全部初始化。
+本地协议消费者预建0/1/2同时注册outgoing，不能据GetChannel独立用例宣称上层
+创建时机已相同；本节仅记录此差异，不将wire对照计为factory时机等价。
+
+### 42.2 固定向量与替身边界
+
+`audit-steam-control-wire.py` 固化78例：CRC两值×MTU512/1024/1472×6个body
+边界36例、真实控制调用者类型1/2/6/7×Socket返回0..4×CRC两值40例、
+OnStreamConnected两例。检查完整wire、Frame返回、真实window tail和创建顺序。
+protobuf的ByteSize/Serialize输出是显式适配器：控制例提供空消息或required空info
+的确定字节，frame边界例提供不解释schema的受控字节。原指令负责Put写入位置、
+envelope、分片及后续所有报文决策，不把序列化替身称为已执行完整protobuf。
+内存、channel构造器、mutex/refcount、destructor、统计和最终transport同样为适配器。
+没有加密例，不能把此处明文全链推广到crypto实现或所有上层调用者。
+
+生产oracle执行真实control/handshake生产入口及真实protobuf-c、frame队列/保留、
+分片和Socket；只有时钟/最终UDP受控。边界frame输入与原版Put输出相同的字节，
+不比较不存在的protobuf语义。wire/ID投影不包含全worker调度、factory创建时机、
+真实网络认证或Switch解码显示，亦不证明用户停顿的因果。
+
+```sh
+python3 scripts/audit-steam-control-wire.py \
+  --binary /path/to/official/libmain-arm64.so \
+  --output build/video-recovery-re/control-wire.json
+python3 scripts/check-steam-control-wire.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-control-wire-oracle
 ```

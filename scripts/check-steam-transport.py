@@ -159,8 +159,10 @@ def main():
         assert actual[1]["sent_crc"] == crc and actual[1]["sent_bytes"] == (
             20 if crc else 16
         )
-        limit = 512 - 13 - (4 if crc else 0)
-        assert actual[2]["max_wire"] <= 512
+        # Official AddToOutgoingPacketWindow always reserves the four bytes;
+        # Socket appends them only with CRC. Full producer/wire proof: §42.
+        limit = 512 - 17
+        assert actual[2]["max_wire"] == (512 if crc else 508)
         assert actual[2]["fragments"] == (4000 + limit - 1) // limit
 
     # Actual worker callback, controlled clock, no real-time 15/180-second sleeps.

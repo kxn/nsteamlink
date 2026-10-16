@@ -566,6 +566,7 @@ def audit(base):
             dict(requests=requests),
             values,
         )
+    audit.Sender = Sender
     return cases
 
 
