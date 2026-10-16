@@ -1433,7 +1433,8 @@ Route 携带 my_pop_id、your_pop_id 和 interior_score，整个快照有 revisi
 
 - **peer routes revision**：RecvRoutes `0x834df0` 解析成功后仅当新 revision 严格大于已保存 revision
   才替换快照并要求重算。即使旧/重复快照也设置待 ACK 标志。PopulateRendezvousMsg `0x834bc0`
-  带 ack_peer_routes_revision；本地快照未获 ACK 且到期时重发，发送后把下次期限设为当前+1秒。
+  带 ack_peer_routes_revision；本地快照未获 ACK 且到期时重发。rendezvous 填入快照后把期限设为
+  当前+1秒，relay stats 成功发送快照后则设为当前+500ms；两条入口的到期比较见 §21.14。
   收到超过自己最新 revision 的 ACK 只报告错误；等于最新值才清除重发期限
   （`0x834c90–0x834cf0`、`0x83d920–0x83da74`）。
 - **forward target revision**：对某个本端 RelaySession 选定对端路由令牌后，如果目标令牌发生变化，
@@ -1661,8 +1662,10 @@ key-exchange 缓存测试在进入新密码计算前停止，不证明整个授�
 
 active 列表最多两项（primary、backup），但全部 session 可以更多；退出 active 列表不立即销毁。
 backup 尽量来自与 primary **不同 SharedClusterData 对象**的 POP。
-找不到这种候选时，该轮不主动清除已有 backup，甚至会保留本轮 P2P metrics 不再合格的旧 backup
-（`0x81d810–0x81d93c`；离线输入覆盖这一行为）。
+基础 selector 找不到这种候选时不主动清除已有 backup，可能保留本轮 P2P metrics 不合格的旧
+backup（`0x81d810–0x81d93c`）。**撤回将此推广为完整 P2P 行为的解释**：P2P 外层先运行
+CleanRoutesForServerSelection，已失去目标 token 的 active 项会先被移出；随后才执行基础 selector
+（§21.13）。离线用例分别覆盖这两个阶段，不能把基础函数单测当成外层的最终结果。
 
 **两种数量不可混用**：cluster 的 front tracker 只保存最近 3 次独立 ping；
 session metrics 的 +16 是近期**有效时间桶数**。切路门槛 15 是有效桶数，不能用短时连收 15 包替代。
@@ -1854,7 +1857,10 @@ python3 tools/steam-sdr-policy-audit.py \
 active 选择完整执行 `0x81c55c–0x81ddb8`，其排序/comparator 使用原始指令；
 pursue、ReceivedPacket、BuildListsForServerSelection、具体 relay chooser、停机预警和迁移校验
 同样执行完整函数。metrics provider、POP 地址查询、随机数、申请发送、锁和外部通知是明确的桩。
-因此 selector 的用例证明“给定这些 metrics 后如何决策”，不替代 §18.5 对 metrics 生产者的核对。
+默认 selector 用例证明“给定这些 metrics 后如何决策”。另有 integrated_metrics_and_selection
+组串接原始 base metrics、有效桶范围、P2P metrics、排序和 selector，覆盖三段 penalty、两端 front、
+interior、目标 token 与迟滞；该组仍直接构造已整理的 per-POP 路线数组，不冒充 protobuf 回复到
+完整选路的端到端验证。CleanRoutes 用例明确替代路线构建器，单独验证目标更新与 active 剪除。
 
 全局 probe priority/budget/readiness、超时和缓存测试分别执行函数中的明确片段，
 到指定控制点即停止；不声称执行整个全局 thinker、实际线程、socket 或跨 tick 的调度。
@@ -1919,3 +1925,228 @@ Route 的旧 interior_score 与当前 interiorPing+interiorPenalty 按同一阈�
 约束：只有 wire state 1..3 执行；先取消无效迁移，再评估已有 active sessions，
 仅在全局 good-enough 为真后才 pursue 新 session。不能把 good-enough=false 解释为停止维护
 已经建立的路径。该分派、快照筛选及其原始排序器也包含在 §21.8 的离线执行入口中。
+
+### 21.10 延迟缓存的完整/增量回复与未知 POP 的估计
+
+**Evidence**：`RecvDataCenterLatencies 0x812f40–0x8134d8` 的输入是已完成来源与数组长度检查的
+RouterPingReply；容器操作与 canonical POP 查询不改变以下字段语义：
+
+- 没有 FLAG_MAYBE_MORE_DATA_CENTERS（bit 0）时，先将旧条目的直接测量时刻置 0，
+  保留旧 ping/penalty/flags，记录本轮完整回复时刻。它不是清空缓存；旧值变为估计质量。
+  有该标志时保留旧测量时刻，按增量更新。
+- 普通 latency_datacenter_ids/ping_ms 写 ping、测量时刻=now，清 penalty 和 flags。
+  随后的 P2P 数组写相同数据并设置 flags=0x20000000。重复 canonical POP 后项覆盖前项；
+  同包同时出现在两类数组中时，P2P 数组后写。
+- 存在反向 cluster 缓存时，允许把 ping 复制为反向估计，但不能覆盖反向已有非零直接测量时刻的条目。
+  反向估计不伪造一个“now 已实测”的时间。
+- route_exceptions 只修改找到的条目：flags 按位 OR，penalty 替换；未知条目不凭 exception 新增。
+  本函数在两个延迟数组都为空时不走 exception 循环：完整回复仍降级旧测量并要求重算，
+  增量空回复直接返回。不能仅凭字段存在就假定任何分支都会应用它。
+- 有更新时要求路线缓存重算；bit 0 不是“稍后一定再收到一包”的保证。
+
+**Evidence**：`EnsureDataCenterRoutesValidLocked 0x810e70–0x8113c4` 生成未直接探测 POP 的
+route estimate，供 §21.5 排序使用，同时维护各 POP 最近的实际 relay 候选：
+
+1. 可达且 front ping>=0 的 cluster 以自身 ping 初始化 direct front 和 route estimate；
+   其余为 direct=-1、estimate=0x0fffffff。已知节点取 cluster penalty（负 override 额外+1000），
+   未直接测量的初值 penalty 为 10。
+2. 按配置中的 cluster 顺序，最多做 **3 轮原位松弛**，一轮没有改进就结束。
+   只从 route estimate<=2000 的 source 扩展非负 interior ping：
+   `rawCandidate=source.estimate+interiorPing`，
+   `selectionScore=F(source.estimate)+interiorPing+interiorPenalty+sourcePenalty`。
+   前者收紧未知目标的 estimate 上界，后者用于挑选入口 relay。
+3. 第一轮中，source 有直接 front 且边有非零直接测量时刻时，可更新目标的实际最近候选：
+   普通 datacenter 候选排除 0x20000000 标志的 P2P-only 边，P2P 候选保留最好的 3 个。
+   估计边不冒充这些实际候选。
+4. 对未直接测量目标，直接 source 还贡献非负下界 `max(0, source.estimate-interiorPing)`。
+   最后同时有上下界时，estimate 改为两者之和右移 1；没有下界就保留最小 rawCandidate。
+   直接 front 的 estimate 不被路径推断覆盖。
+
+“3 轮”不是完整最短路算法，也不是严格最多 3 跳：原位更新允许本轮后面的 source 继续传播。
+离线输入中，正序的五节点链可一次传到末端；逆序链在第三轮后仍有一个节点未知。
+因此不能换成任意 Dijkstra/无限循环收敛并宣称与原客户端相同。
+
+### 21.11 alternate 地址的公布、探测与淘汰
+
+**Evidence**：`RecvAltTransports 0x8134d8–0x813bd0` 仅处理 root relay 的公布：
+
+- 无 FLAG_MAYBE_MORE_ALT_ADDRESSES（bit 1）时，先给旧项标记删除候选；增量回复保留未提及项。
+- 按完整 IP/port 查找项。未带 ipv4 时继承 root IPv4；port 为本包给值。更新 id 字符串和 protocol。
+  新项和重新公布项的内部 penalty 都设为 **8191**；AltAddress.penalty 不在此函数中直接成为可用
+  线路评分。不能把未测的 alternate 当作零惩罚的正式路径。
+- protocol 改变时移除旧探测 relay；非 DefaultProtocol（0）的项在该固定样本的清理阶段被移除。
+  完整回复未再公布的 DefaultProtocol 项也被移除；必要时销毁其关联 relay。
+  vector 压缩后会修复仍存活 child relay 的 AltTransport 指针，避免引用旧槽位。
+
+`CheckCreatedAltTransportByIndex 0x810d38–0x810e70`：已有 probe relay 直接返回；
+没有时须 `lastFailure+120秒 < now` 才尝试 New。创建失败记 lastFailure=now；
+等号仍受冷却限制，不能每次 thinker 都重建失败 socket。
+
+全局 thinker 完成初始测量后，按 root front ping 升序检查最多 5 个合格 root，创建其
+DefaultProtocol alternate 探测（`0x8247d0–0x824b34`、`0x824f94–0x825104`）。
+`RecvPingReply 0x812afc–0x812b78` 在测量足够准确时保存 alternate 的实际 ping 并清除失败时间；
+这里的门槛仍使用 MinPingsBeforePingAccurate 配置，和 active 切路的 15 桶不是一个量。
+
+**探测调度 Evidence**：`0x824d38–0x824ea8`：
+
+- alternate 连续失败达到一般阈值时，该片段跳过它，移除由前面的全局失败处理负责。
+- 收到至少 8 个 ping（可配置）且保存的测量有效时，移除临时探测 relay，保留测量槽位。
+  不能把 probe 对象删除误解成服务端撤销了 alternate 广告。
+- 任一未完成的 alternate 最近发送尚未满 90ms，该轮结束，不发送此前选中的其他 probe。
+  否则从无 pending ping 且最后发送至少 500ms 的项中取最久未探测的一个，每轮最多发送 1 次；
+  恰好 500ms 可发送。同一发送时刻的平局取后遍历项。
+- 若该 alternate 的 root 已有失败，优先探测 root，仍检查 root 的 pending 和发送年龄。
+  这些是探测辅助路径的节流，不替代 §21.5 的普通 POP 探测预算。
+
+### 21.12 错误响应、session 成立与 ACK 的精确状态变化
+
+**NoSession Evidence**：`ProcessMessage_NoSession 0x81a290–0x81a358` 先应用存在的停机预警，
+再调用 SaveChallenge，随后持锁销毁对应 session，最后重新选路。SaveChallenge 仅在 challenge
+字段 presence 存在时更新 challenge/server_time/本地接收时间和非零公网映射；没有该字段时保留旧值。
+不能因为收到 NoSession 就先清全部凭据，也不能等重建 session 后才保存 challenge。
+
+**P2PSessionEstablished Evidence**：`0x83dac8–0x83e034` 要求非空 token；空 token 诊断后返回，
+甚至不清 pending session request。非空 token 先清 relay.pendingRequest，处理存在的停机预警。
+内部连接状态 -2/1/2/3 可复用本连接已有 session，或创建一个新 session，再保存 token、刷新
+session 的最后接收/计数并清 relay 的申请失败次数；随后立即重新选路。
+内部状态 -1/4/5 则发 NoConnection，不把迟到成立消息变成新的活动 session。
+这些是内部状态域，不可直接当成应用/CM 状态值使用。
+`next_r2c_packet_number !=0` 才将该 relay 序号窗口初始化到 next-1，扩展 next 并登记此次接收；
+0 跳过这段，不是无条件重置。connection_id 的匹配还依赖上层分派的定位与前置条件。
+
+**BadRoute Evidence**：`0x83cd68–0x83cf94` 按 token 字节匹配，清除**第一个**相同 peer cluster 的
+token 和其 presence bit，然后设置重算原因。重复 token 不会一包清掉所有副本；该函数没有额外
+排除空 token 的判断。没找到时不改其他 cluster。BadRoute 中的 ack_forward_target_revision
+不能仅因 schema 含有该字段就假定本函数应用了它。
+
+**补充 §18.4 的 revision 边界**：
+
+- `RecvRoutes 0x834df0` 在 parse 前设置待 ACK 标志，因此解析失败也会留下该标志。
+  解析成功且 revision 严格大于已保存值才替换快照、要求重算；比较是普通 uint32 大小比较，
+  不是环绕序列号比较，已到 UINT32_MAX 不会把 0 当成新版本。
+- `RecvStats 0x83d860` 中 forward ACK 等于当前 revision 时置已确认；不等于且此前已确认时，
+  **清除已确认标志**。不能把旧 ACK 一律当作无副作用忽略。
+- peer ACK 大于本地最新 revision 时忽略；<=最新时写入 lastAckedPeerRevision，
+  因而迟到旧 ACK 可以让该值倒退。等于最新才清重发期限；旧 ACK 不主动写新的期限。
+  后续 thinker 仍按“是否等于最新”决定重发，不能自行改成 monotonic max。
+- stats 的 routes、revision ACK、通用 stats 依次处理。要求 end-to-end ACK 或携带 E2E quality
+  时，当前主 transport 可交给普通 ACK 调度；非主 transport 或要求 immediate 时立即发 stats。
+  relay ACK 与 end-to-end ACK 是两个独立队列/回调。
+
+`RecvStatsCommon 0x83e034–0x83e624` 只对当前 primary relay 收到的非零 migrate_request_ip/port
+接受新目标；地址发生变化才写入 relay 并将迁移 state/target 改为 1/-1。
+没有字段、零 IP/port、backup 的通知以及重复的同地址通知不会清除或重启已有迁移。
+port 先按 uint32 检查非零，再截到 16 位组成地址；超范围值不可擅自假定已通过有效端口校验。
+§18.6 的“primary 不再有目标”指内部保存的地址不再有效，**不是某一包 stats 没带迁移字段**。
+
+通用 stats 维护最多 5 项 relay 待 ACK 记录（uint16 sequence +48 位接收微秒）：
+只与队尾去重，不与整个队列去重；满队列时普通新增 ACK 丢弃，immediate 请求覆盖队尾再登记，
+不会自动丢队首。immediate 同时设置强制回复标志。E2E ACK 根据 E2E 序号和请求/quality 条件
+单独排队。具体发送 deadline 仍由 LinkStatsTracker 和 session thinker 收紧；不能把该待 ACK
+队列误写成 CM/SNS reliable 信令的累计 ACK 队列。
+
+本节及 §21.10–§21.11 的函数/片段已加入 §21.8 的原始指令执行工具。
+protobuf 对象构造/解析、hash 容器插入、socket/RelaySession 构造、部分统计转换及实际发包使用
+明确桩，不能据此宣称消息 parser、序号窗口提供者或完整网络互操作已通过。
+
+
+### 21.13 重算后的目标 token、active 清理与发送 revision
+
+**Evidence**：P2P 的 `ThinkSelectServer_SelectActiveSessions 0x836a60–0x836ae4` 先运行
+`CleanRoutesForServerSelection 0x83627c–0x836980`，再调用基础 active selector，最后检查是否
+需要重建 routing message。它在 +288 标志为 0 且没有 active session 时调用
+P2PTransportEndToEndConnectivityNotConfirmed；**撤回根据函数名直接推定该调用会置位标志
+的解释**。固定 APK 的被调函数在标志为 0 时直接返回，实际组合行为见 §21.15。
+
+CleanRoutes 的前置条件为全局存在 cluster、wire state 在 1..3；仅在本地有重算原因或全局 route
+revision 已改变时重建。它记录新 revision、清原因、标记本地 routing message 需要检查；
+初始化 route selector，global good-enough 时才导入 peer routes，随后建立两组 per-POP 候选表。
+对每个已建立 session，以其本地 POP 对应的最佳有 token 路线选择**对端 POP**的 token 和 POP ID。
+缺少有效目标时清 desired token 并将 desired POP 置 0，然后从 active 列表移出 desired token
+为空的项。移除保持余项顺序，原 backup 可以临时成为 slot 0；全部 session 列表不因此缩短。
+未触发重算或不在上述 wire state 时不执行这次剪除。
+
+**Conclusion**：BadRoute 清掉 token 后先要求重算，重算再使受影响路径失去 active 资格；
+它不是收到 BadRoute 立即销毁所有该 POP session。§21.1 的基础 backup 保留行为只适用于
+已经通过这层清理的输入。路由候选不可用、active 角色消失和底层 session 销毁是三个不同事件。
+
+`BSetSessionForwardTargetToken 0x83505c–0x835290` 则区分 desired 与最后发送的目标：
+
+- desired token 为空时返回 false，保留旧 sent token、sent POP、revision 和 ACKed。
+- desired token 非空、字节与 sent token 相同时返回 true，以上状态均保持；即使 desired POP
+  与 sent POP 不同也不单独增 revision。
+- 非空 token 的字节确实改变才复制 token 和 POP，revision 按 uint32 加一并清 ACKed。
+  UINT32_MAX 加一得到 0；这里和 §21.12 的 peer routes 普通大小比较是不同的规则。
+
+因此清 desired token 不能顺手清掉发送历史；目标随后恢复为相同 token 时可能复用旧 revision
+和 ACK 状态。该行为与收到旧 forward ACK 会清 ACKed 的接收规则共同约束重发。
+这些分支以及原始 metrics→selector 组合已纳入离线审计；它们不证明服务器接受任意 token，
+token 的签发和目标选择仍作为外部输入。
+
+
+### 21.14 routes/目标确认的发送条件与两种重发时钟
+
+**Evidence**：`PopulateSendPacketContext 0x835400–0x8355f8` 先执行 §21.13 的目标 token 更新。
+无 desired token 时本次不填 forward token，也不经该入口填 peer routes/ACK；仍继续填通用 stats。
+有目标且尚未确认 forward revision 时，每次都带 sent token 和 revision，不另设“一秒才带一次”。
+
+peer routes/ACK 仅在该 session 是 active primary，或调用者显式 force end-to-end 时加入：
+
+- 有待 ACK 标志，或 +288 的 need-confirm 标志为真时，带当前 peer routes revision 的 ACK。
+- 本地 routes 最新 revision 与 last ACK 不同时，`resendDeadline < now` 才填本地快照；
+  need-confirm 为真可绕过期限。这里**等于 deadline 时不发送**。
+- force end-to-end 要求携带 E2E stats/请求；普通 backup 可只携带 relay 级信息。
+  是否为 active primary、是否为当前 transport 分别生成非主 session/非主 transport 标志，
+  不能把这两个主路概念合并。
+- Populate 仅构造待发送内容，不清待 ACK、不推进 routes 重发时钟。
+  `TrackSentStatsToSession 0x835f00–0x835fbc` 在成功发送后才清已发送的 peer ACK 标志，
+  已发送 routes 则将期限设为 `now+500000` 微秒。
+
+**rendezvous Evidence**：`PopulateRendezvousMsg 0x834bc0–0x834d04` 总填 peer routes ACK 并清
+待 ACK 标志，包含 connection_closed 时也执行这一步，但不继续附加本地 routes。
+正常消息检查并刷新本地 routing message；当本地最新 revision 未获 ACK 且 `deadline <= now`，
+填本地 routes 并将 deadline 设为 `now+1000000` 微秒。因此它与 stats 入口共享一份 deadline，
+但发送间隔和等号不同。`BNeedToSendRoutesNow 0x834dd4–0x834df0` 的到期判断也是 `<=`。
+
+**Conclusion**：撤回“一律每秒重发 routes”的概括。实现须保留“构造上下文”和“成功发送后登记”
+两个阶段；rendezvous 在填消息时就推进一秒期限，stats 在成功发送后推进半秒期限。旧 peer ACK
+导致 lastAcked 倒退、forward ACK 不匹配会撤销确认等接收行为按 §21.12 保留，不能自行规范化。
+
+### 21.15 P2P stats 的双序号、短暂乱序等待与可达性标志
+
+**Evidence**：`ProcessMessage_P2PStats 0x83cf94–0x83d3ac` 先按内部连接状态分派：
+
+- -2/2/3 可处理；1 在特定握手上下文仍存在时诊断并返回，否则可处理，带 E2E sequence 时先通知
+  收到连接阶段的 E2E 流量。-1/4/5 回复 connection closed；其余状态诊断后返回。
+- relay wire sequence 独立扩展、查重；有 E2E sequence 时再独立扩展 E2E 序号。
+  两者都返回正扩展序号才更新 E2E 收包统计、登记 relay 序号并进入 RecvStats。
+  仅 relay 序号有效不能绕过 E2E 重复/无效检查；没有 E2E 序号时只要求 relay 序号有效。
+- 在扩展前，用 E2E wire sequence 相对最后接收值的 signed-16 gap 检查小缺口：
+  gap 为 2 或 3 且与 relay 的 uint16 gap 相同，或已经存在待判乱序包时，先调用乱序处理器。
+  gap 不相同、gap>=4 且无待判包时不执行这段短等待。
+  返回 0 时此包暂不进入 stats，1/2 才继续；不能把 0 当作永久网络丢弃。
+
+`HandleOutOfOrderPacket 0x86a844–0x86ab88` 的客户端动作：
+
+| 已有待判包 | 当前包已经延迟后重投 | 结果 |
+|---|---|---|
+| 无 | 是 | 立即继续，不再次延迟 |
+| 无 | 否 | 配置窗口<1 时继续；否则复制包，安排到接收时间+窗口，记录 owner，返回暂缓 |
+| 有，signed16(待判序号−当前序号)>=2 | 任意 | 保留待判包，当前包继续 |
+| 有，差值<2 | 任意 | 先从旧队列移除、解除 owner，将旧包放回近队首；然后按下两行处理当前包 |
+| 差值<2 | 是 | 当前包继续，避免无限重复延迟 |
+| 差值=1 | 否 | 确认发生一次乱序，当前包继续，返回 2 |
+| 其他差值<2 | 否 | 将当前包也复制并放到近队首，返回暂缓 |
+
+这里的复制、owner 与重投调度属于 packet lagger；离线用例执行原始决策，显式替代分配/队列调用。
+延迟窗口是全局配置输入，不能凭“公网”标签额外加一个自创的重排时长。
+
+**固定版本可达性标志 Evidence**：P2P base 构造 `0x8780d8` 将 need-confirm 置 1；该对象作为
+SDR base 的 +264 子对象，因此其 +24 对应 SDR +288。Confirmed `0x87877c–0x8788b0` 在可发送
+且标志为 1 时清标志并通知选路；不可发送时只诊断。与此同时，固定 APK 的 NotConfirmed
+`0x878698–0x87877c` 在标志为 **0** 时直接返回；为 1 时才写 1 并通知。
+这与开源 GNS 同名函数不能互换推导；原始指令的 8 个输入及外层组合的 4 个输入均覆盖该行为。
+
+**Conclusion**：§21.13 的“无 active 且标志为 0”调用在该固定版本中不会把标志恢复为 1。
+不可仅凭日志 “Will re-confirm” 或函数名称宣称已经发生状态改变。若实现决定修正这一行为，
+应明确记录为与固定官方版本的差异，不能伪称二进制本来就这么做。

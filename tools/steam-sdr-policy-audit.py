@@ -711,6 +711,823 @@ def cancel_migration(elf, state, expected, target=1, active=True, requested=2, p
     assert (m.read(fixture.base+64), m.read(fixture.base+68)) == expected
 
 
+def receive_latencies(elf, initial, ordinary, p2p, exceptions, flags, expected, dirty):
+    m = Machine(elf)
+    cluster, relay, pb, pop, other_clusters = [m.alloc(8192) for _ in range(5)]
+    nodes, buckets = m.alloc(16*40), m.alloc(64*4)
+    m.uc.mem_write(buckets, b'\xff'*(64*4))
+    logging = m.alloc(128)
+    m.write(0xc80000+2184, logging, 8)
+    m.write(0xc80000+2824, other_clusters, 8)
+    m.write(cluster+8, pop, 8)
+    m.write(pop+8, 100)
+    m.write(cluster+664, buckets, 8)
+    m.write(cluster+680, 64)
+    m.write(cluster+712, nodes, 8)
+    m.write(cluster+748, 64)  # All buckets rehashed; no secondary-table fallback.
+    indices = {}
+    def insert_entry(key):
+        if key in indices:
+            return indices[key], False
+        index = len(indices)
+        assert index < 16
+        indices[key] = index
+        previous = m.read(buckets+(key & 63)*4)
+        m.write(buckets+(key & 63)*4, index)
+        m.write(nodes+index*40, key)
+        m.write(nodes+index*40+32, previous)
+        m.write(cluster+732, len(indices))
+        m.write(cluster+736, len(indices))
+        return index, True
+    for key, values in initial.items():
+        index, _ = insert_entry(key)
+        ping, penalty, bits, stamp = values
+        for offset, value in [(8, ping), (12, penalty), (16, bits)]:
+            m.write(nodes+index*40+offset, value)
+        m.write(nodes+index*40+24, stamp, 8)
+    def insert(m):
+        assert m.reg(0) == cluster+664
+        index, added = insert_entry(m.read(m.reg(1)))
+        m.write(m.reg(2), index)
+        m.reg(0, index if added else -1)
+    m.stubs[0xc11f00] = insert
+    m.stubs[0xc120e0] = lambda m: None
+    m.stubs[0xc120f0] = lambda m: m.reg(0, m.reg(1))
+    m.stubs[0x810c34] = lambda m: m.events.append(('routing_dirty',))
+    for values, count_offset, id_offset, ping_offset in [(ordinary, 24, 32, 56), (p2p, 120, 128, 152)]:
+        ids, pings = m.alloc(max(1, len(values))*4), m.alloc(max(1, len(values))*4)
+        m.write(pb+count_offset, len(values))
+        m.write(pb+count_offset+24, len(values))
+        m.write(pb+id_offset, ids, 8)
+        m.write(pb+ping_offset, pings, 8)
+        for index, (key, ping) in enumerate(values):
+            m.write(ids+index*4, key)
+            m.write(pings+index*4, ping)
+    elements = m.alloc(8+len(exceptions)*8)
+    m.write(pb+80, len(exceptions))
+    m.write(pb+88, elements, 8)
+    for index, (key, bits, penalty) in enumerate(exceptions):
+        item = m.alloc(40)
+        m.write(elements+8+index*8, item, 8)
+        for offset, value in [(24, key), (28, bits), (32, penalty)]:
+            m.write(item+offset, value)
+    m.write(pb+212, flags)
+    m.run(0x812f40, 0x8134d8, cluster, relay, pb, NOW)
+    actual = {key: tuple(m.read(nodes+index*40+offset, 8 if offset == 24 else 4)
+                         for offset in (8, 12, 16, 24)) for key, index in indices.items()}
+    assert actual == expected, (actual, expected)
+    assert bool(m.events) == dirty
+
+
+def datacenter_routes(elf, fronts, edges, expected, measured=True):
+    m = Machine(elf)
+    network, vector, logging = m.alloc(128), m.alloc(24), m.alloc(128)
+    pops, pointers = m.alloc(len(fronts)*120), m.alloc(len(fronts)*8)
+    m.write(0xc80000+2816, network, 8)
+    m.write(0xc80000+2856, vector, 8)
+    m.write(0xc80000+2880, logging, 8)
+    m.write(network+8, pops, 8)
+    m.write(network+16, pops+len(fronts)*120, 8)
+    m.write(vector, pointers, 8)
+    m.write(vector+8, pointers+len(fronts)*8, 8)
+    clusters = []
+    for index, front in enumerate(fronts):
+        cluster = m.alloc(8192)
+        clusters.append(cluster)
+        m.write(pointers+index*8, cluster, 8)
+        m.write(cluster, index)
+        m.write(cluster+8, pops+index*120, 8)
+        m.write(pops+index*120+8, 100+index)
+        m.write(cluster+560, int(front >= 0))
+        m.write(cluster+76, front)
+        outgoing = [edge for edge in edges if edge[0] == index]
+        nodes = m.alloc(max(1, len(outgoing))*40)
+        m.write(cluster+712, nodes, 8)
+        m.write(cluster+736, len(outgoing))
+        for number, (_, remote, ping) in enumerate(outgoing):
+            ptr = nodes+number*40
+            m.write(ptr, 100+remote)
+            m.write(ptr+8, ping)
+            m.write(ptr+24, NOW if measured else 0, 8)
+            m.write(ptr+32, -1)
+    m.stubs[0xc11f50] = lambda m: m.reg(0, m.reg(1)-100 if 100 <= m.reg(1) < 100+len(fronts) else -1)
+    m.run(0x810e70, 0x8113c4, budget=100000)
+    assert [m.read(c+832) for c in clusters] == expected
+    assert m.read(0xf49000+1016, 1) == 1
+    # Only directly measured edges seed nearest-route slots, never estimates.
+    for index, cluster in enumerate(clusters):
+        nearest = m.read(cluster+806, 2)
+        eligible = [(fronts[a]+ping+(fronts[a]//10), a) for a, b, ping in edges
+                    if b == index and fronts[a] >= 0 and measured]
+        assert nearest == (min(eligible)[1] if eligible else 0xffff), (index, nearest, eligible)
+
+
+def alternate_updates(elf, initial, advertised, partial, expected, removed=()):
+    fixture = SDR(elf, [{}])
+    m, relay = fixture.m, fixture.relays[0]
+    m.buffers()
+    address_stubs(m)
+    entries, pb = m.alloc(16*80), m.alloc(256)
+    m.write(relay+768, entries, 8)
+    m.write(relay+776, entries+len(initial)*80, 8)
+    m.write(relay+784, entries+16*80, 8)
+    children = {}
+    for index, (ip, port, protocol, penalty, child) in enumerate(initial):
+        ptr = entries+index*80
+        m.uc.mem_write(ptr, address(ip, port))
+        m.write(ptr+24, protocol)
+        m.write(ptr+28, penalty)
+        m.set_string(ptr+32, b'old')
+        m.write(ptr+64, -1)
+        if child:
+            child_ptr = m.alloc(8192)
+            children[100+index] = child_ptr
+            m.write(child_ptr, 100+index)
+            m.write(child_ptr+792, ptr, 8)
+            m.write(ptr+56, child_ptr, 8)
+    m.stubs[0xbff410] = lambda m: m.set_string(m.reg(0), m.get_string(m.reg(1)))
+    def append(m):
+        vector = m.reg(0)
+        assert vector == relay+768 and m.reg(1) == 1
+        end = m.read(vector+8, 8)
+        m.uc.mem_write(end, bytes(80))
+        m.write(end+64, -1)
+        m.write(vector+8, end+80, 8)
+    m.stubs[0x82b42c] = append
+    def remove(m):
+        handle = m.reg(0)
+        m.events.append(('remove', handle))
+        child = children[handle]
+        entry = m.read(child+792, 8)
+        m.write(entry+56, 0, 8)
+    m.stubs[0xc11e10] = remove
+    m.write(pb+212, 2 if partial else 0)
+    elements = m.alloc(8+len(advertised)*8)
+    m.write(pb+104, len(advertised))
+    m.write(pb+112, elements, 8)
+    for index, (ip, port, protocol, legacy_penalty) in enumerate(advertised):
+        item = m.alloc(64)
+        m.write(elements+8+index*8, item, 8)
+        m.write(item+24, m.string(b'new'), 8)
+        if ip is not None:
+            m.write(item+16, 2)
+            m.write(item+32, ip)
+        m.write(item+36, port)
+        m.write(item+40, legacy_penalty)
+        m.write(item+44, protocol)
+    m.run(0x8134d8, 0x813bd0, relay, pb, NOW, budget=100000)
+    begin, end = m.read(relay+768, 8), m.read(relay+776, 8)
+    result = []
+    for ptr in range(begin, end, 80):
+        result.append((m.read(ptr), m.read(ptr+22, 2), m.read(ptr+24), m.read(ptr+28), m.get_string(ptr+32)))
+        child = m.read(ptr+56, 8)
+        if child:
+            assert m.read(child+792, 8) == ptr
+    assert result == expected, (result, expected)
+    assert [e[1] for e in m.events if e[0] == 'remove'] == list(removed)
+
+
+def create_alternate(elf, failure_age, expected_created, existing=False, create_ok=True):
+    fixture = SDR(elf, [{}])
+    m, relay, cluster = fixture.m, fixture.relays[0], fixture.clusters[0]
+    entry, created, tick = m.alloc(80), m.alloc(8192), NOW+200000000
+    m.uc.mem_write(entry, address(2))
+    m.write(relay+768, entry, 8)
+    m.write(relay+776, entry+80, 8)
+    m.write(entry+72, tick-failure_age, 8)
+    if existing:
+        m.write(entry+56, created, 8)
+    def create(m):
+        assert m.reg(0) == 0 and m.reg(1) == entry and m.reg(2) == cluster
+        assert m.reg(3) == relay and m.reg(4) == entry
+        m.events.append(('create',))
+        m.reg(0, created if create_ok else 0)
+    m.stubs[0xc11f30] = create
+    m.run(0x810d38, 0x810e70, relay, 0, tick)
+    assert bool(m.events) == expected_created
+    assert m.reg(0) == (created if existing or (expected_created and create_ok) else 0)
+    assert m.read(entry+72, 8) == (tick if expected_created and not create_ok else tick-failure_age)
+
+
+def alternate_probe_schedule(elf, routes, expected):
+    fixture = SDR(elf, routes)
+    m, tick = fixture.m, NOW+200000000
+    roots = []
+    for index, route in enumerate(routes):
+        relay, root, entry = fixture.relays[index], m.alloc(8192), m.alloc(80)
+        roots.append(root)
+        m.write(relay+760, root, 8)
+        m.write(relay+792, entry, 8)
+        m.write(entry+28, 8191)
+        m.write(entry+64, route.get('measured', -1))
+        m.write(relay+256, route.get('failures', 0))
+        m.write(relay+748, route.get('received', 0))
+        m.write(relay+320, tick-route.get('age', 1000000), 8)
+        m.write(relay+136, tick+1 if route.get('pending', False) else 0, 8)
+        m.write(root+256, route.get('root_failures', 0))
+        m.write(root+320, tick-route.get('root_age', 1000000), 8)
+        m.write(root+136, tick+1 if route.get('root_pending', False) else 0, 8)
+    for slot, value in ((3080, 4), (2920, 8)):
+        config = m.alloc(128)
+        m.write(0xc80000+slot, config, 8)
+        m.write(config+60, value)
+    def ping(m):
+        ptr = m.reg(0)
+        m.events.append(('root_ping', roots.index(ptr)) if ptr in roots else ('ping', fixture.relays.index(ptr)))
+    m.stubs[0xc123a0] = ping
+    def remove(m):
+        m.events.append(('probe_done', m.reg(0)))
+        m.write(fixture.map_nodes+m.reg(0)*40+32, -2)
+    m.stubs[0xc11e10] = remove
+    m.reg(19, tick)
+    m.reg(24, fixture.global_map)
+    m.stops[0x824ea8] = ('alternate_probes_complete',)
+    m.run(0x824d38, 0x824ea8)
+    assert [e for e in m.events if e[0] != 'alternate_probes_complete'] == expected, m.events
+
+
+def bad_route(elf, tokens, failed):
+    fixture = SDR(elf, [{}])
+    m = fixture.m
+    pb, elements = m.alloc(64), m.alloc(8+len(tokens)*8)
+    m.write(pb+24, m.string(failed), 8)
+    m.write(fixture.base+928, len(tokens))
+    m.write(fixture.base+936, elements, 8)
+    clusters = []
+    for index, token in enumerate(tokens):
+        item = m.alloc(64)
+        clusters.append(item)
+        m.write(elements+8+index*8, item, 8)
+        m.write(item+24, m.string(token), 8)
+        m.write(item+16, 15)
+    m.stubs[0xc0a110] = lambda m: m.reg(0, int(bytes(m.uc.mem_read(m.reg(0), m.reg(2))) != bytes(m.uc.mem_read(m.reg(1), m.reg(2)))))
+    m.run(0x83cd68, 0x83cf94, fixture.base, fixture.sessions[0], pb, 10, NOW)
+    match = tokens.index(failed) if failed in tokens else -1
+    assert [m.get_string(m.read(item+24, 8)) for item in clusters] == [b'' if i == match else value for i, value in enumerate(tokens)]
+    assert [m.read(item+16) for item in clusters] == [14 if i == match else 15 for i in range(len(tokens))]
+    assert bool(m.read(fixture.base+1088, 8)) == (match >= 0)
+
+
+def no_session(elf, presence, challenge):
+    fixture = SDR(elf, [{}])
+    m, relay = fixture.m, fixture.relays[0]
+    pb = m.alloc(64)
+    m.write(fixture.connection+24, m.alloc(64), 8)
+    m.write(pb+16, presence)
+    m.write(pb+24, 123)
+    m.write(pb+28, 456)
+    m.write(pb+32, challenge, 8)
+    m.write(pb+40, 120)
+    m.write(pb+44, 23456)
+    m.write(relay+192, 1)
+    m.write(relay+200, 2, 8)
+    m.write(relay+208, NOW-1, 8)
+    m.redirects[0xc12550] = 0x81a358
+    m.allowed.append((0x81a358, 0x81a4c8))
+    m.stubs[0xc12080] = lambda m: m.events.append(('warning', m.reg(1)))
+    m.stubs[0xc117e0] = lambda m: m.events.append(('lock',))
+    m.stubs[0xc117b0] = lambda m: m.events.append(('unlock',))
+    def destroyed(m):
+        assert m.reg(0) == fixture.base and m.reg(1) == fixture.sessions[0]
+        assert m.read(relay+200, 8) == (challenge if presence & 4 else 2)
+        m.events.append(('destroy_session',))
+    m.write(fixture.vt+120, policy.RETURN+0x500, 8)
+    m.write(fixture.vt+112, policy.RETURN+0x600, 8)
+    m.stubs[policy.RETURN+0x500] = destroyed
+    m.stubs[policy.RETURN+0x600] = lambda m: m.events.append(('rethink',))
+    m.run(0x81a290, 0x81a358, fixture.base, fixture.sessions[0], pb, 10, NOW, 0)
+    expected = [('warning', 120)] if presence & 8 else []
+    assert m.events == expected+[('lock',), ('destroy_session',), ('unlock',), ('rethink',)]
+    assert m.read(relay+192) == (456 if presence & 4 else 1)
+    assert m.read(relay+208, 8) == (NOW if presence & 4 else NOW-1)
+    assert m.read(relay+168) == (123 if presence & 4 else 0)
+
+
+def session_established(elf, state, token, next_sequence, existing=True, warning=False):
+    fixture = SDR(elf, [{}])
+    m, relay, session = fixture.m, fixture.relays[0], fixture.sessions[0]
+    m.buffers()
+    pb = m.alloc(64)
+    m.write(pb+24, m.string(token), 8)
+    m.write(pb+32, 123)
+    m.write(pb+36, 120)
+    m.write(pb+40, next_sequence)
+    m.write(pb+16, 4 if warning else 0)
+    m.write(fixture.connection+384, 123)
+    m.write(fixture.connection+6848, state)
+    m.write(fixture.connection+4912, 1)
+    m.write(relay+144, NOW+1, 8)
+    m.write(relay+152, 7)
+    relay_sessions = m.alloc(8)
+    m.write(relay_sessions, session, 8)
+    m.write(relay+112, relay_sessions, 8)
+    m.write(relay+128, int(existing))
+    accepted = bool(token) and state in (-2, 1, 2, 3)
+    session_result = [session]
+    def construct(m):
+        assert m.reg(1) == relay and m.reg(2) == fixture.base
+        session_result[0] = m.reg(0)
+        m.write(m.reg(0), relay, 8)
+        m.write(m.reg(0)+8, fixture.base, 8)
+        m.events.append(('construct',))
+    m.stubs[0xc12a10] = construct
+    m.stubs[0xbff410] = lambda m: m.set_string(m.reg(0), m.get_string(m.reg(1)))
+    m.stubs[0xc12080] = lambda m: m.events.append(('warning',))
+    m.stubs[0xc12cd0] = lambda m: m.events.append(('init_sequence', m.reg(1)))
+    m.stubs[0xc124f0] = lambda m: m.reg(0, m.reg(1) & 65535)
+    m.stubs[0xc12ca0] = lambda m: m.events.append(('track_sequence', m.reg(1)))
+    m.stubs[0xc124d0] = lambda m: m.events.append(('no_connection',))
+    def diagnostic(m):
+        m.events.append(('diagnostic', m.reg(1)))
+        m.reg(0, 1)
+    m.stubs[0xc097e0] = diagnostic
+    m.write(fixture.vt+112, policy.RETURN+0x600, 8)
+    m.stubs[policy.RETURN+0x600] = lambda m: m.events.append(('rethink',))
+    m.run(0x83dac8, 0x83e034, fixture.base, relay, pb, 50, NOW)
+    expected = [('warning',)] if token and warning else []
+    if accepted:
+        if not existing:
+            expected.append(('construct',))
+        if next_sequence:
+            expected += [('init_sequence', (next_sequence-1) & 65535), ('track_sequence', next_sequence)]
+        expected.append(('rethink',))
+    elif not token:
+        expected.append(('diagnostic', 2166))
+    elif state in (-1, 4, 5):
+        expected.append(('no_connection',))
+    else:
+        expected.append(('diagnostic', 2182))
+    assert m.events == expected, m.events
+    assert m.read(relay+144, 8) == (0 if token else NOW+1)
+    assert m.read(relay+152) == (0 if accepted else 7)
+    if accepted:
+        out = session_result[0]
+        assert m.get_string(out+16) == token
+        assert m.read(out+2512, 8) == NOW
+        assert m.read(out+2320, 8) == 1 and m.read(out+2344, 8) == 50
+
+
+def stats_migration(elf, requested, port, old, active=True, source=0, state=0, target=-1):
+    fixture = SDR(elf, [{}, {}])
+    m, pb = fixture.m, fixture.m.alloc(128)
+    fixture.active([0] if active else [])
+    relay = fixture.relays[source]
+    m.uc.mem_write(relay+216, address(old, 27015 if old else 0))
+    m.write(fixture.base+64, state)
+    m.write(fixture.base+68, target)
+    m.write(pb+84, requested)
+    m.write(pb+88, port)
+    m.write(fixture.sessions[source]+4152, 2)  # No per-session keepalive work in this case.
+    address_stubs(m)
+    m.run(0x83e034, 0x83e624, fixture.base, fixture.sessions[source], pb, 0, NOW)
+    changed = requested != 0 and port != 0 and active and source == 0 and (requested != old or port & 65535 != (27015 if old else 0))
+    expected_pair = (1, 0xffffffff) if changed else (state, target & 0xffffffff)
+    assert (m.read(fixture.base+64), m.read(fixture.base+68)) == expected_pair
+    assert bytes(m.uc.mem_read(relay+216, 24)) == (address(requested, port & 65535) if changed else address(old, 27015 if old else 0))
+
+
+def stats_revisions(elf, forward_ack, old_forward_acked, peer_ack, old_peer_ack=5, deadline=NOW+1,
+                     flags=0, primary_transport=True, quality=False):
+    fixture = SDR(elf, [{}])
+    m, session = fixture.m, fixture.sessions[0]
+    pb = m.alloc(128)
+    presence = (256 if forward_ack is not None else 0) | (512 if peer_ack is not None else 0) | (4 if quality else 0)
+    m.write(pb+16, presence)
+    m.write(pb+100, forward_ack or 0)
+    m.write(pb+104, peer_ack or 0)
+    m.write(pb+96, flags)
+    m.write(session+100, 5)
+    m.write(session+104, int(old_forward_acked), 1)
+    m.write(fixture.base+1048, 10)
+    m.write(fixture.base+1232, old_peer_ack)
+    m.write(fixture.base+1224, deadline, 8)
+    m.write(fixture.connection+4912, 1)
+    m.write(fixture.connection+40, fixture.base if primary_transport else 0, 8)
+    m.stubs[0xc12ce0] = lambda m: m.events.append(('common',))
+    m.write(fixture.vt+136, policy.RETURN+0x700, 8)
+    m.stubs[policy.RETURN+0x700] = lambda m: m.events.append(('send_stats',))
+    m.run(0x83d860, 0x83dac8, fixture.base, session, pb, 0, NOW)
+    assert bool(m.read(session+104, 1)) == (old_forward_acked if forward_ack is None else forward_ack == 5)
+    assert m.read(fixture.base+1232) == (peer_ack if peer_ack is not None and peer_ack <= 10 else old_peer_ack)
+    assert m.read(fixture.base+1224, 8) == (0 if peer_ack == 10 else deadline)
+    send = bool((flags & 2 or quality) and (flags & 4 or not primary_transport))
+    assert m.events == [('common',)]+([('send_stats',)] if send else [])
+
+
+def receive_routes(elf, old_revision, new_revision, valid):
+    fixture = SDR(elf, [])
+    m = fixture.m
+    m.write(fixture.base+968, old_revision)
+    m.write(fixture.connection+4912, 1)
+    m.stubs[0xbffc10] = lambda m: m.uc.mem_write(m.reg(0), bytes(80))
+    m.stubs[0xc00b50] = lambda m: None
+    def parse(m):
+        m.write(m.reg(0)+72, new_revision)
+        m.reg(0, int(valid))
+    m.stubs[0xc11bf0] = parse
+    m.stubs[0xc00b80] = lambda m: m.write(m.reg(0)+72, m.read(m.reg(1)+72))
+    m.stubs[0xc09b00] = lambda m: m.reg(0, 1)
+    m.run(0x834df0, 0x834f94, fixture.base, m.string(b'synthetic'))
+    updated = valid and new_revision > old_revision
+    assert m.read(fixture.base+968) == (new_revision if updated else old_revision)
+    assert m.read(fixture.base+1096, 1) == 1
+    assert bool(m.read(fixture.base+1088, 8)) == updated
+
+
+def stats_ack_queue(elf, queued, incoming, flags, e2e=False):
+    fixture = SDR(elf, [{}])
+    m, session = fixture.m, fixture.sessions[0]
+    pb = m.alloc(128)
+    m.write(pb+16, 4096 if e2e else 2048)
+    m.write(pb+112, incoming)
+    m.write(pb+116, incoming)
+    m.write(pb+96, flags)
+    m.write(session+4152, 2)
+    m.write(session+4500, len(queued))
+    for index, value in enumerate(queued):
+        m.write(session+4504+index*8, value | (NOW-1) << 16, 8)
+    m.stubs[0xc12d10] = lambda m: m.events.append(('e2e_ack', m.reg(1)))
+    m.write(fixture.vt+224, policy.RETURN+0x800, 8)
+    m.stubs[policy.RETURN+0x800] = lambda m: m.events.append(('valid_e2e',))
+    m.run(0x83e034, 0x83e624, fixture.base, session, pb, 0, NOW)
+    expected = list(queued)
+    if flags & 1 and (not expected or expected[-1] != incoming):
+        if len(expected) == 5:
+            if flags & 4:
+                expected[-1] = incoming
+        else:
+            expected.append(incoming)
+    assert [m.read(session+4504+i*8, 2) for i in range(m.read(session+4500))] == expected
+    assert bool(m.read(session+4496, 1)) == bool(flags & 1 and flags & 4)
+    assert [e for e in m.events if e[0] == 'e2e_ack'] == ([('e2e_ack', int(bool(flags & 4)))] if e2e and flags & 2 else [])
+
+
+def integrated_select(elf, routes, active, expected):
+    """Compose original base metrics, bucket ranges, P2P metrics, sort and selector."""
+    fixture = SDR(elf, routes)
+    fixture.active(active)
+    m = fixture.m
+    m.stubs.pop(0xc12610)
+    m.stubs.pop(METRICS)
+    m.redirects.update({0xc12610: 0x81c3f0, 0xc125e0: 0x81c0e4,
+                        0xc125f0: 0x81c1f4, METRICS: 0x837f2c})
+    m.allowed.extend([(0x81c0e4, 0x81c55c), (0x837f2c, 0x8381b4)])
+    cluster_metrics, route_metrics = m.alloc(len(routes)*56), m.alloc(len(routes)*32)
+    m.write(fixture.base+1104, cluster_metrics, 8)
+    m.write(fixture.base+1128, route_metrics, 8)
+    for index, route in enumerate(routes):
+        cluster, relay = fixture.clusters[index], fixture.relays[index]
+        pop = m.alloc(128)
+        ping, remote, interior = route.get('ping', 20), route.get('remote', 30), route.get('interior', 40)
+        local_penalty, remote_penalty, interior_penalty = [route.get(key, 0) for key in ('local_penalty', 'remote_penalty', 'interior_penalty')]
+        m.write(cluster+8, pop, 8)
+        m.write(pop+52, 1)
+        m.write(cluster+560, 1)
+        m.write(cluster+760, local_penalty)
+        m.write(cluster+504, 16)
+        m.write(relay+800, route.get('shutdown_seconds', 0x7fffffff))
+        m.write(relay+256, route.get('failures', 0))
+        count = route.get('buckets', 15)
+        for number in range(17):
+            bucket = cluster+96+number*24
+            end = NOW-(16-number)*1000000 if number >= 17-count else NOW-16000001
+            m.write(bucket, end, 8)
+            m.write(bucket+8, 1)
+            m.write(bucket+12, route.get('minimum', ping))
+            m.write(bucket+16, route.get('maximum', ping))
+        c, r = cluster_metrics+index*56, route_metrics+index*32
+        m.write(c, cluster, 8)
+        for offset, value in [(8, ping), (12, local_penalty), (16, remote), (20, remote_penalty)]:
+            m.write(c+offset, value)
+        internet = ping+remote
+        score = internet+internet//10+interior+local_penalty+remote_penalty+interior_penalty
+        for offset, value in [(0, index), (4, index), (8, interior), (12, 0), (16, interior_penalty), (24, score)]:
+            m.write(r+offset, value)
+        m.write(r+20, int(route.get('token', True)), 1)
+    m.run(0x81c55c, 0x81ddb8, fixture.base, NOW, budget=100000)
+    assert fixture.selected() == expected, (routes, fixture.selected(), expected)
+    for index, route in enumerate(routes):
+        if route.get('token', True):
+            assert m.read(fixture.sessions[index]+4576) == route.get('buckets', 15)
+
+
+def clean_routes(elf, tokens, active, expected_active, fresh=False, state=3):
+    fixture = SDR(elf, [{} for _ in tokens])
+    fixture.active(active)
+    m = fixture.m
+    count = len(tokens)
+    network, pops, shared, pointers, revision, good = [m.alloc(max(128, count*120)) for _ in range(6)]
+    m.write(0xc80000+2816, network, 8)
+    m.write(network+8, pops, 8)
+    m.write(network+16, pops+count*120, 8)
+    m.write(0xc80000+2856, shared, 8)
+    m.write(shared, pointers, 8)
+    m.write(shared+8, pointers+count*8, 8)
+    table = m.alloc(128)
+    m.write(0xc80000+2824, table, 8)
+    m.write(table+68, count)
+    m.write(0xc80000+2864, revision, 8)
+    m.write(revision, 10)
+    m.write(0xc80000+3016, good, 8)
+    m.write(good, 1, 1)
+    m.write(fixture.base+1080, 10 if fresh else 9)
+    m.write(fixture.connection+4912, 1)
+    m.write(fixture.connection+6852, state)
+    clusters, best = m.alloc(count*56), m.alloc(count*32)
+    m.write(fixture.base+1104, clusters, 8)
+    m.write(fixture.base+1128, best, 8)
+    for index, token in enumerate(tokens):
+        cluster = fixture.clusters[index]
+        m.write(pointers+index*8, cluster, 8)
+        m.write(cluster+8, pops+index*120, 8)
+        m.write(pops+index*120+8, 1000+index)
+        m.write(clusters+index*56, cluster, 8)
+        m.set_string(clusters+index*56+24, token or b'')
+        m.write(best+index*32+4, index if token else -1)
+        m.write(best+index*32+20, int(bool(token)), 1)
+        m.set_string(fixture.sessions[index]+40, b'old'*10)
+        m.write(fixture.sessions[index]+64, 2000+index)
+    m.stubs.update({0xc12b70: lambda m: m.events.append(('init',)),
+                    0xc12b80: lambda m: m.events.append(('mark_remote',)),
+                    0xc12b90: lambda m: m.events.append(('build_lists',)),
+                    0xbff410: lambda m: m.set_string(m.reg(0), m.get_string(m.reg(1))),
+                    0xc0a110: lambda m: m.reg(0, int(bytes(m.uc.mem_read(m.reg(0), m.reg(2))) != bytes(m.uc.mem_read(m.reg(1), m.reg(2))))),
+                    0xbff660: lambda m: m.uc.mem_write(m.reg(0), bytes(m.uc.mem_read(m.reg(1), m.reg(2))))})
+    m.run(0x83627c, 0x836980, fixture.base)
+    rebuilt = not fresh and 1 <= state <= 3
+    assert m.events == ([('init',), ('mark_remote',), ('build_lists',)] if rebuilt else [])
+    assert fixture.selected() == expected_active
+    assert m.read(fixture.base+56) == count  # Removing an active role never destroys the session.
+    for index, token in enumerate(tokens):
+        session = fixture.sessions[index]
+        assert m.get_string(session+40) == ((token or b'') if rebuilt else b'old'*10)
+        assert m.read(session+64) == ((1000+index if token else 0) if rebuilt else 2000+index)
+
+
+def forward_target(elf, old, desired, acked, revision, desired_pop=123, old_pop=122):
+    fixture = SDR(elf, [{}])
+    m, session = fixture.m, fixture.sessions[0]
+    m.set_string(session+40, desired)
+    m.set_string(session+72, old)
+    m.write(session+64, desired_pop)
+    m.write(session+96, old_pop)
+    m.write(session+100, revision)
+    m.write(session+104, int(acked), 1)
+    m.write(fixture.connection+4912, 1)
+    m.stubs[0xbff410] = lambda m: m.set_string(m.reg(0), m.get_string(m.reg(1)))
+    m.stubs[0xc0a110] = lambda m: m.reg(0, int(bytes(m.uc.mem_read(m.reg(0), m.reg(2))) != bytes(m.uc.mem_read(m.reg(1), m.reg(2)))))
+    m.run(0x83505c, 0x835290, fixture.base, session)
+    changed = bool(desired) and desired != old
+    assert bool(m.reg(0)) == bool(desired)
+    assert m.get_string(session+72) == (desired if changed else old)
+    assert m.read(session+100) == ((revision+1) & 0xffffffff if changed else revision)
+    assert m.read(session+96) == (desired_pop if changed else old_pop)
+    assert bool(m.read(session+104, 1)) == (False if changed else acked)
+
+
+
+def populate_context(elf, primary, force, needs_confirm, pending_ack, deadline_delta,
+                     own_acked=False, token=True, primary_transport=True):
+    fixture = SDR(elf, [{}])
+    fixture.active([0] if primary else [])
+    m, session = fixture.m, fixture.sessions[0]
+    context = m.alloc(256)
+    for offset in (88, 96):
+        m.write(context+offset, m.string(b''), 8)
+    m.write(context, NOW, 8)
+    m.write(context+160, session, 8)
+    m.write(fixture.connection+4912, 1)
+    m.write(fixture.connection+40, fixture.base if primary_transport else 0, 8)
+    m.set_string(session+40, b'target' if token else b'')
+    m.set_string(session+72, b'target')
+    m.write(session+100, 5)
+    m.write(session+104, 0, 1)
+    m.write(fixture.base+288, int(needs_confirm), 1)
+    m.write(fixture.base+1096, int(pending_ack), 1)
+    m.write(fixture.base+968, 7)
+    m.write(fixture.base+1048, 10)
+    m.write(fixture.base+1232, 10 if own_acked else 9)
+    m.write(fixture.base+1224, NOW+deadline_delta, 8)
+    m.stubs.update({0xc12ac0: lambda m: m.events.append(('generic', m.reg(2), m.reg(3), m.reg(4), m.reg(5), m.reg(6))),
+                    0xc0acd0: lambda m: m.events.append(('serialize',)),
+                    0xc097e0: lambda m: m.reg(0, 1)})
+    m.stubs[0xbff410] = lambda m: m.set_string(m.reg(0), m.get_string(m.reg(1)))
+    m.stubs[0xc0a110] = lambda m: m.reg(0, int(bytes(m.uc.mem_read(m.reg(0), m.reg(2))) != bytes(m.uc.mem_read(m.reg(1), m.reg(2)))))
+    m.redirects[0xc12aa0] = 0x83505c
+    m.allowed.append((0x83505c, 0x835290))
+    m.run(0x835400, 0x8355f8, fixture.base, context, 0, int(force))
+    eligible = token and (primary or force)
+    ack = eligible and (pending_ack or needs_confirm)
+    routes = eligible and not own_acked and (deadline_delta < 0 or needs_confirm)
+    mode = 0 if not token else 2 if force or ack or routes else 1 if primary else 0
+    flags = (0 if primary else 8) | (0 if primary_transport else 16)
+    assert m.events == ([('serialize',)] if routes else [])+[('generic', 0, mode, 9, flags, 0)], m.events
+    presence = m.read(context+48)
+    assert bool(presence & 1) == token
+    assert bool(presence & 64) == token
+    assert bool(presence & 128) == bool(ack)
+    assert bool(presence & 2) == bool(routes)
+    assert m.read(fixture.base+1224, 8) == NOW+deadline_delta  # Populate alone does not start the timer.
+    assert bool(m.read(fixture.base+1096, 1)) == pending_ack
+
+
+def rendezvous_routes(elf, deadline_delta, own_acked=False, disconnect=False):
+    fixture = SDR(elf, [])
+    m = fixture.m
+    msg = m.alloc(256)
+    m.write(msg+16, 64 if disconnect else 0)
+    m.write(msg+72, m.string(b''), 8)
+    m.write(fixture.base+968, 7)
+    m.write(fixture.base+1096, 1, 1)
+    m.write(fixture.base+1048, 10)
+    m.write(fixture.base+1232, 10 if own_acked else 9)
+    m.write(fixture.base+1224, NOW+deadline_delta, 8)
+    table = m.alloc(128)
+    m.write(0xc80000+2824, table, 8)
+    m.stubs.update({0xc12a80: lambda m: m.events.append(('rebuild_check',)),
+                    0xc0acd0: lambda m: m.events.append(('serialize',))})
+    m.run(0x834bc0, 0x834d04, fixture.base, msg, NOW)
+    sending = not disconnect and not own_acked and deadline_delta <= 0
+    assert m.events == ([] if disconnect else [('rebuild_check',)])+([('serialize',)] if sending else [])
+    assert bool(m.read(msg+16) & 1) == sending
+    assert m.read(msg+132) == 7 and m.read(msg+16) & 256
+    assert m.read(fixture.base+1096, 1) == 0
+    assert m.read(fixture.base+1224, 8) == (NOW+1000000 if sending else NOW+deadline_delta)
+
+
+def track_sent_routes(elf, presence, flags):
+    fixture = SDR(elf, [{}])
+    m = fixture.m
+    msg = m.alloc(256)
+    m.write(msg+16, presence)
+    m.write(msg+104, 7)
+    m.write(msg+96, flags)
+    m.write(fixture.base+968, 7)
+    m.write(fixture.base+1096, 1, 1)
+    m.write(fixture.base+1224, 12345, 8)
+    m.stubs.update({0xc12b40: lambda m: m.events.append(('track_common',)),
+                    0xc12b50: lambda m: m.events.append(('track_e2e', m.reg(2)))})
+    m.run(0x835f00, 0x835fbc, fixture.base, fixture.sessions[0], msg, m.empty, NOW)
+    assert m.read(fixture.base+1096, 1) == int(not bool(presence & 128))
+    assert m.read(fixture.base+1224, 8) == (NOW+500000 if presence & 2 else 12345)
+    assert m.events == [('track_common',)]+([('track_e2e', int(not flags & 4))] if presence & 8 or flags & 2 else [])
+
+
+def connectivity_transition(elf, confirmed_call, needs_confirm, can_send=True):
+    fixture = SDR(elf, [])
+    m = fixture.m
+    m.write(fixture.base+272, fixture.base, 8)
+    m.write(fixture.base+288, int(needs_confirm), 1)
+    m.write(fixture.connection+4912, 1)
+    m.write(fixture.vt+32, METRICS, 8)
+    m.stubs.update({METRICS: lambda m: m.reg(0, int(can_send)),
+                    0xc138b0: lambda m: m.events.append(('changed',)),
+                    0xc09b00: lambda m: m.reg(0, 1)})
+    if confirmed_call:
+        m.run(0x87877c, 0x8788b0, fixture.base+264, NOW)
+        assert bool(m.read(fixture.base+288, 1)) == (needs_confirm and not can_send)
+        assert m.events == ([('changed',)] if needs_confirm and can_send else [])
+    else:
+        m.run(0x878698, 0x87877c, fixture.base+264, NOW)
+        # The pinned APK really returns immediately when the flag is zero.
+        assert bool(m.read(fixture.base+288, 1)) == needs_confirm
+        assert m.events == ([('changed',)] if needs_confirm else [])
+
+
+
+def stats_sequence_dispatch(elf, state, e2e, relay_result=101, e2e_result=201,
+                            gap=1, relay_gap=1, delayed=False, reorder_result=1, auth_context=False):
+    fixture = SDR(elf, [{}])
+    m, session = fixture.m, fixture.sessions[0]
+    msg, packet = m.alloc(160), m.alloc(48)
+    m.write(msg+16, 4096 if e2e else 0)
+    m.write(msg+112, (100+relay_gap) & 65535)
+    m.write(msg+116, (200+gap) & 65535)
+    m.write(session+2312, 100, 2)
+    m.write(fixture.connection+2592, 200, 2)
+    m.write(fixture.connection+4488, int(delayed), 8)
+    m.write(fixture.connection+6848, state)
+    m.write(fixture.connection+328, int(auth_context), 8)
+    m.write(packet+8, 123)
+    m.write(packet+16, NOW, 8)
+    m.write(fixture.vt+40, REQUEST, 8)
+    m.stubs.update({0xc124f0: lambda m: (m.events.append(('expand_relay',)), m.reg(0, relay_result)),
+                    0xc12c80: lambda m: (m.events.append(('expand_e2e',)), m.reg(0, e2e_result)),
+                    0xc12c90: lambda m: m.events.append(('receive_e2e',)),
+                    0xc12ca0: lambda m: m.events.append(('track_relay',)),
+                    0xc12cb0: lambda m: m.events.append(('receive_stats',)),
+                    0xc12500: lambda m: (m.events.append(('out_of_order',)), m.reg(0, reorder_result)),
+                    0xc12510: lambda m: m.events.append(('closed', m.reg(2))),
+                    REQUEST: lambda m: m.events.append(('connecting_e2e',)),
+                    0xc097e0: lambda m: (m.events.append(('diagnostic',)), m.reg(0, 1))})
+    m.run(0x83cf94, 0x83d3ac, fixture.base, session, msg, packet)
+    closed, accepted = state in (-1, 4, 5), state in (-2, 1, 2, 3)
+    expected = []
+    if closed:
+        expected = [('closed', int(e2e))]
+    elif not accepted or (state == 1 and auth_context):
+        expected = [('diagnostic',)]
+    else:
+        if state == 1 and e2e:
+            expected.append(('connecting_e2e',))
+        needs_reorder = e2e and (delayed or (gap >= 2 and gap == relay_gap and gap <= 3))
+        if needs_reorder:
+            expected.append(('out_of_order',))
+        if not needs_reorder or reorder_result in (1, 2):
+            expected.append(('expand_relay',))
+            if e2e:
+                expected.append(('expand_e2e',))
+            if relay_result > 0 and (not e2e or e2e_result > 0):
+                if e2e:
+                    expected.append(('receive_e2e',))
+                expected.extend([('track_relay',), ('receive_stats',)])
+        elif reorder_result != 0:
+            expected.append(('diagnostic',))
+    assert m.events == expected, (state, e2e, gap, relay_gap, delayed, m.events, expected)
+    accepted_e2e = ('receive_e2e',) in expected
+    assert m.read(fixture.connection+2600, 8) == int(accepted_e2e)
+    assert m.read(fixture.connection+2624, 8) == (123 if accepted_e2e else 0)
+
+
+def outer_active_cleanup(elf, needs_confirm, active):
+    fixture = SDR(elf, [{}])
+    fixture.active([0] if active else [])
+    m = fixture.m
+    m.write(fixture.base+272, fixture.base, 8)
+    m.write(fixture.base+288, int(needs_confirm), 1)
+    m.stubs.update({0xc12b60: lambda m: m.events.append(('clean',)),
+                    0xc12620: lambda m: m.events.append(('select',)),
+                    0xc12a80: lambda m: m.events.append(('rebuild_check',))})
+    m.redirects[0xc12ba0] = 0x878698
+    m.allowed.append((0x878698, 0x87877c))
+    m.run(0x836a60, 0x836ae4, fixture.base, NOW)
+    assert m.events == [('clean',), ('select',), ('rebuild_check',)]
+    assert (0x878698 in m.visited) == (not needs_confirm and not active)
+    assert bool(m.read(fixture.base+288, 1)) == needs_confirm
+
+
+
+def out_of_order(elf, pending_gap, redelivered, window):
+    m = Machine(elf)
+    tracker, packet, vtable, pending, config = [m.alloc(8192) for _ in range(5)]
+    m.write(tracker, vtable, 8)
+    m.write(vtable+16, METRICS, 8)
+    m.write(packet+16, NOW, 8)
+    m.write(packet+48, int(redelivered), 1)
+    m.write(0xc80000+2360, config, 8)
+    m.write(config+60, window)
+    log = m.alloc(128)
+    m.write(0xc80000+2184, log, 8)
+    if pending_gap is not None:
+        m.write(tracker+4096, pending, 8)
+        m.write(pending+104, (200+pending_gap) & 65535)
+        m.write(pending+64, 1, 1)
+    def detach(m):
+        m.events.append(('detach',))
+        m.write(tracker+4096, 0, 8)
+    def construct(m):
+        m.events.append(('construct', m.reg(2), m.reg(3)))
+    def own(m):
+        m.events.append(('own',))
+        m.write(m.reg(1)+4096, m.reg(0), 8)
+    m.stubs.update({0xbff420: lambda m: m.reg(0, m.alloc(m.reg(0))),
+                    0xc13950: lambda m: m.events.append(('remove',)),
+                    0xc13980: detach,
+                    0xc13990: lambda m: m.events.append(('queue',)),
+                    0xc139a0: construct, 0xc139b0: own,
+                    METRICS: lambda m: m.events.append(('confirmed_reorder',))})
+    m.run(0x86a844, 0x86ab88, 200, tracker, packet)
+    if pending_gap is None:
+        events = [] if redelivered or window < 1 else [('construct', NOW+window, 200), ('own',), ('queue',)]
+        result = 1 if not events else 0
+    elif pending_gap >= 2:
+        events, result = [], 1
+    else:
+        events = [('remove',), ('detach',), ('queue',)]
+        if redelivered:
+            result = 1
+        elif pending_gap == 1:
+            events += [('confirmed_reorder',)]
+            result = 2
+        else:
+            events += [('construct', 1, 200), ('queue',)]
+            result = 0
+    assert m.events == events, (pending_gap, redelivered, window, m.events, events)
+    assert m.reg(0) == result
+
+
+def cluster_penalty(elf, old, incoming):
+    fixture = SDR(elf, [{}])
+    m = fixture.m
+    m.write(fixture.clusters[0]+760, old)
+    m.stubs.update({0xc097e0: lambda m: (m.events.append(('diagnostic',)), m.reg(0, 1)),
+                    0x810c34: lambda m: m.events.append(('dirty',))})
+    m.run(0x812cb4, 0x812dd4, fixture.relays[0], incoming)
+    clamped = max(0, min(incoming, 5000))
+    assert m.read(fixture.clusters[0]+760) == clamped
+    assert m.events == ([('diagnostic',)] if incoming < 0 or incoming >= 5000 else [])+([('dirty',)] if old != clamped else [])
+
+
 def audit(elf, groups=None):
     counts = {}
 
@@ -928,6 +1745,149 @@ def audit(elf, groups=None):
     case('migration_cancellation', cancel_migration, 2, cancelled, draining=True)
     case('migration_cancellation', cancel_migration, 2, (2, 1), penalty=8190)
     case('migration_cancellation', cancel_migration, 2, cancelled, penalty=8191)
+    initial = {200: (30, 7, 8, NOW-100)}
+    for flags in (0, 1):
+        retained = (30, 7, 8, NOW-100 if flags else 0)
+        case('datacenter_latency_updates', receive_latencies, initial, [], [], [], flags,
+             {200: retained}, flags == 0)
+        case('datacenter_latency_updates', receive_latencies, initial, [(201, 40)], [], [], flags,
+             {200: retained, 201: (40, 0, 0, NOW)}, True)
+        case('datacenter_latency_updates', receive_latencies, initial, [(200, 40)], [], [], flags,
+             {200: (40, 0, 0, NOW)}, True)
+        case('datacenter_latency_updates', receive_latencies, initial, [], [(200, 40)], [], flags,
+             {200: (40, 0, 0x20000000, NOW)}, True)
+        case('datacenter_latency_updates', receive_latencies, initial, [(200, 40)], [(200, 50)],
+             [(200, 4, 9)], flags, {200: (50, 9, 0x20000004, NOW)}, True)
+        case('datacenter_latency_updates', receive_latencies, initial, [], [], [(200, 4, 9)], flags,
+             {200: retained}, flags == 0)
+    case('datacenter_latency_updates', receive_latencies, {}, [(200, 40), (200, 50)], [], [], 0,
+         {200: (50, 0, 0, NOW)}, True)
+    for measured in (False, True):
+        case('datacenter_route_estimation', datacenter_routes, [20, -1], [(0, 1, 10)], [20, 20], measured)
+        case('datacenter_route_estimation', datacenter_routes, [20, -1], [(0, 1, 100)], [20, 60], measured)
+    case('datacenter_route_estimation', datacenter_routes, [-1, -1], [(0, 1, 10)], [0x0fffffff]*2)
+    case('datacenter_route_estimation', datacenter_routes, [20, 50], [(0, 1, 10)], [20, 50])
+    case('datacenter_route_estimation', datacenter_routes, [20, -1, -1, -1, -1],
+         [(0, 1, 10), (1, 2, 10), (2, 3, 10), (3, 4, 10)], [20, 20, 40, 50, 60])
+    case('datacenter_route_estimation', datacenter_routes, [-1, -1, -1, -1, 20],
+         [(4, 3, 10), (3, 2, 10), (2, 1, 10), (1, 0, 10)], [0x0fffffff, 50, 40, 20, 20])
+    initial_alt = [(2, 27016, 0, 25, True)]
+    case('alternate_updates', alternate_updates, initial_alt, [], True, [(2, 27016, 0, 25, b'old')])
+    case('alternate_updates', alternate_updates, initial_alt, [], False, [], removed=[100])
+    for penalty in (0, 99999):
+        case('alternate_updates', alternate_updates, initial_alt, [(2, 27016, 0, penalty)], False,
+             [(2, 27016, 0, 8191, b'new')])
+    case('alternate_updates', alternate_updates, [], [(None, 27016, 0, 0)], False,
+         [(1, 27016, 0, 8191, b'new')])
+    case('alternate_updates', alternate_updates, initial_alt, [(2, 27016, 1, 0)], False, [], removed=[100])
+    case('alternate_updates', alternate_updates, [(2, 27016, 0, 25, True), (3, 27017, 0, 25, True)],
+         [(3, 27017, 0, 0)], False, [(3, 27017, 0, 8191, b'new')], removed=[100])
+    for age, expected in [(119999999, False), (120000000, False), (120000001, True)]:
+        case('alternate_creation', create_alternate, age, expected)
+    case('alternate_creation', create_alternate, 1, False, existing=True)
+    case('alternate_creation', create_alternate, 120000001, True, create_ok=False)
+    for routes, expected in [
+        ([{'age': 499999}], []), ([{'age': 500000}], [('ping', 0)]),
+        ([{'age': 1000000, 'pending': True}], []),
+        ([{'age': 1000000}, {'age': 89999}], []),
+        ([{'age': 1000000}, {'age': 90000}], [('ping', 0)]),
+        ([{'age': 1000000}, {'age': 1500000}], [('ping', 1)]),
+        ([{'age': 1000000}, {'age': 1000000}], [('ping', 1)]),
+        ([{'received': 7, 'measured': 20}], [('ping', 0)]),
+        ([{'received': 8, 'measured': 20}], [('probe_done', 0)]),
+        ([{'failures': 4}], []),
+        ([{'root_failures': 1}], [('root_ping', 0)]),
+        ([{'root_failures': 1, 'root_pending': True}], []),
+    ]:
+        case('alternate_probe_schedule', alternate_probe_schedule, routes, expected)
+    for tokens, failed in [([], b'x'), ([b'a', b'b'], b'b'), ([b'a', b'b'], b'x'),
+                            ([b'a', b'a'], b'a'), ([b'', b'b'], b''),
+                            ([b'a'*40, b'b'*40], b'b'*40), ([b'a'*40], b'x'*40)]:
+        case('bad_route_token_invalidation', bad_route, tokens, failed)
+    for presence, challenge in itertools.product((0, 4, 8, 12), (0, 123456789)):
+        case('no_session_recovery', no_session, presence, challenge)
+    for state, token in itertools.product((-2, -1, 0, 1, 2, 3, 4, 5, 6), (b'', b'token')):
+        case('session_established', session_established, state, token, 0)
+    for sequence in (1, 65535):
+        case('session_established', session_established, 3, b'token', sequence)
+    case('session_established', session_established, 3, b'token', 1, existing=False, warning=True)
+    for requested, port, old, active, source in [
+        (2, 27015, 0, True, 0), (2, 27015, 2, True, 0), (3, 27015, 2, True, 0),
+        (0, 27015, 2, True, 0), (3, 0, 2, True, 0), (3, 27015, 2, False, 0),
+        (3, 27015, 2, True, 1),
+        (2, 92551, 2, True, 0), (3, 65536, 2, True, 0),
+    ]:
+        case('stats_migration_updates', stats_migration, requested, port, old, active, source, state=2, target=1)
+    for forward_ack, old_acked, peer_ack in itertools.product((None, 4, 5, 6), (False, True), (None, 9, 10, 11)):
+        case('stats_revision_acks', stats_revisions, forward_ack, old_acked, peer_ack)
+    case('stats_revision_acks', stats_revisions, None, False, 9, old_peer_ack=10, deadline=0)
+    for flags, primary, quality in itertools.product((0, 2, 4, 6), (False, True), (False, True)):
+        case('stats_ack_sending', stats_revisions, None, False, None, flags=flags,
+             primary_transport=primary, quality=quality)
+    for old, new, valid in [(5, 4, True), (5, 5, True), (5, 6, True), (5, 6, False),
+                              (5, 0xffffffff, True), (0xffffffff, 0, True)]:
+        case('routes_revision_receive', receive_routes, old, new, valid)
+    for queued, incoming, flags in [([], 10, 1), ([10], 10, 1), ([10, 11], 10, 1),
+                                     ([1, 2, 3, 4, 5], 6, 1), ([1, 2, 3, 4, 5], 6, 5),
+                                     ([1, 2, 3, 4, 5], 5, 5), ([], 10, 0)]:
+        case('stats_pending_ack_queue', stats_ack_queue, queued, incoming, flags)
+    for flags in (0, 2, 4, 6):
+        case('stats_pending_ack_queue', stats_ack_queue, [], 10, flags, e2e=True)
+    for routes, active, expected in [
+        ([{'ping': 40}, {'ping': 20}], [], [1, 0]),
+        ([{'ping': 40}, {'ping': 20}], [0, 1], [1, 0]),
+        ([{'ping': 30}, {'ping': 20}], [0, 1], [0, 1]),
+        ([{'ping': 20, 'remote': 200}, {'ping': 40, 'remote': 20}], [], [1, 0]),
+        ([{'shutdown_seconds': 29}, {}], [0, 1], [1, 0]),
+        ([{'ping': 40, 'token': False}, {'ping': 20}], [], [1]),
+        ([{'ping': 20, 'local_penalty': 30}, {'ping': 40}], [], [1, 0]),
+        ([{'ping': 20, 'remote_penalty': 30}, {'ping': 40}], [], [1, 0]),
+        ([{'ping': 20, 'interior_penalty': 30}, {'ping': 40}], [], [1, 0]),
+    ]:
+        case('integrated_metrics_and_selection', integrated_select, routes, active, expected)
+    for tokens, active, expected in [([b'a', b'b'], [0, 1], [0, 1]),
+                                      ([None, b'b'], [0, 1], [1]),
+                                      ([b'a', None], [0, 1], [0]),
+                                      ([None, None], [0, 1], []),
+                                      ([None, b'b', None], [0, 1], [1])]:
+        case('clean_route_targets', clean_routes, tokens, active, expected)
+    case('clean_route_targets', clean_routes, [None, None], [0, 1], [0, 1], fresh=True)
+    case('clean_route_targets', clean_routes, [None, None], [0, 1], [0, 1], state=4)
+    for old, desired, acked, revision in [(b'', b'a', False, 0), (b'a', b'a', True, 5),
+                                          (b'a', b'', True, 5), (b'a', b'b', True, 5),
+                                          (b'a', b'b', True, 0xffffffff),
+                                          (b'a'*40, b'a'*40, False, 5), (b'a'*40, b'b'*40, True, 5)]:
+        case('forward_target_revision', forward_target, old, desired, acked, revision)
+    for primary, force, need, pending, deadline in itertools.product((False, True), (False, True), (False, True), (False, True), (-1, 0, 1)):
+        case('stats_context_routes', populate_context, primary, force, need, pending, deadline)
+    for token, transport, acked in itertools.product((False, True), (False, True), (False, True)):
+        case('stats_context_routes', populate_context, True, True, False, True, -1,
+             own_acked=acked, token=token, primary_transport=transport)
+    for deadline, acked, closed in itertools.product((-1, 0, 1), (False, True), (False, True)):
+        case('rendezvous_routes_sending', rendezvous_routes, deadline, acked, closed)
+    for presence, flags in itertools.product((0, 2, 8, 128, 138), (0, 2, 4, 6)):
+        case('stats_routes_sent', track_sent_routes, presence, flags)
+    for confirmed_call, need, can_send in itertools.product((False, True), (False, True), (False, True)):
+        case('connectivity_transition', connectivity_transition, confirmed_call, need, can_send)
+    for state, e2e in itertools.product((-2, -1, 0, 1, 2, 3, 4, 5, 6), (False, True)):
+        case('stats_sequence_dispatch', stats_sequence_dispatch, state, e2e)
+    case('stats_sequence_dispatch', stats_sequence_dispatch, 1, True, auth_context=True)
+    for relay_result, e2e_result in itertools.product((-1, 0, 101), (-1, 0, 201)):
+        case('stats_sequence_dispatch', stats_sequence_dispatch, 3, True, relay_result, e2e_result)
+    for gap, relay_gap, delayed, outcome in [
+        (2, 2, False, 0), (3, 3, False, 0), (4, 4, False, 0),
+        (2, 1, False, 0), (2, 1, False, 1), (2, 1, False, 2), (2, 1, False, 3),
+        (1, 1, True, 0), (1, 1, True, 1), (-1, -1, False, 0),
+    ]:
+        case('stats_sequence_dispatch', stats_sequence_dispatch, 3, True,
+             gap=gap, relay_gap=relay_gap, delayed=delayed, reorder_result=outcome)
+    for need, active in itertools.product((False, True), (False, True)):
+        case('outer_active_connectivity', outer_active_cleanup, need, active)
+    for pending, redelivered, window in itertools.product((None, -1, 0, 1, 2, 3), (False, True), (0, 1000)):
+        case('out_of_order_handling', out_of_order, pending, redelivered, window)
+    for old, incoming in [(0, -1), (20, -1), (0, 0), (20, 20), (20, 4999), (20, 5000),
+                             (5000, 5000), (5000, 5001), (0, 0x7fffffff)]:
+        case('cluster_penalty_updates', cluster_penalty, old, incoming)
     return counts
 
 
