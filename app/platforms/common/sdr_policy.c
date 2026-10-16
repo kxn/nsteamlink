@@ -189,3 +189,41 @@ bool sl_sdr_clean_active(const bool *desired, size_t count, int32_t *primary, in
     if (*primary < 0) { *primary = *backup; *backup = -1; }
     return true;
 }
+static sl_sdr_latency *latency_get(sl_sdr_latencies *cache, uint32_t pop, bool create) {
+    if (!cache || cache->count > SL_SDR_CANDIDATES) return NULL;
+    for (size_t i=0; i<cache->count; ++i)
+        if (cache->entries[i].pop == pop) return &cache->entries[i];
+    if (!create || cache->count == SL_SDR_CANDIDATES) return NULL;
+    sl_sdr_latency *entry=&cache->entries[cache->count++];
+    *entry=(sl_sdr_latency){.pop=pop,.ping=-1};
+    return entry;
+}
+const sl_sdr_latency *sl_sdr_latency_find(const sl_sdr_latencies *cache, uint32_t pop) {
+    if (!cache || cache->count > SL_SDR_CANDIDATES) return NULL;
+    for (size_t i=0; i<cache->count; ++i)
+        if (cache->entries[i].pop == pop) return &cache->entries[i];
+    return NULL;
+}
+bool sl_sdr_latencies_begin(sl_sdr_latencies *cache, uint32_t flags, int64_t now) {
+    if (!cache || cache->count > SL_SDR_CANDIDATES || (flags & 1)) return false;
+    for (size_t i=0; i<cache->count; ++i) cache->entries[i].measured=0;
+    cache->last_full=now;
+    return true;
+}
+bool sl_sdr_latency_measure(sl_sdr_latencies *cache, uint32_t pop, int32_t ping, bool p2p, int64_t now) {
+    sl_sdr_latency *entry=latency_get(cache,pop,true);
+    if (!entry) return false;
+    *entry=(sl_sdr_latency){.pop=pop,.ping=ping,.flags=p2p ? 0x20000000u : 0,.measured=now};
+    return true;
+}
+void sl_sdr_latency_estimate(sl_sdr_latencies *cache, uint32_t pop, int32_t ping) {
+    sl_sdr_latency *entry=latency_get(cache,pop,true);
+    if (entry && !entry->measured) entry->ping=ping;
+}
+void sl_sdr_latency_exception(sl_sdr_latencies *cache, uint32_t pop, uint32_t flags, int32_t penalty) {
+    sl_sdr_latency *entry=latency_get(cache,pop,false);
+    if (entry) { entry->flags |= flags; entry->penalty=penalty; }
+}
+int32_t sl_sdr_cluster_penalty(int32_t incoming) {
+    return incoming < 0 ? 0 : incoming > 5000 ? 5000 : incoming;
+}

@@ -38,7 +38,7 @@ struct ProbeRelay {
     LinkStatsTracker<LinkStatsTrackerEndToEnd> stats;
     std::deque<std::pair<uint16_t, SteamNetworkingMicroseconds>> sent_acks;
     SteamNetworkingMicroseconds last_received = 0;
-    std::unordered_map<uint32_t, int> interior;
+    sl_sdr_latencies interior{};
     int penalty = 0;
     ProbeRelay() {
         front.Reset();
@@ -213,11 +213,25 @@ static void receive_packet(const RecvPktInfo_t &packet, sl_sdr_probe *probe) {
         r->ping_ms = r->front.m_nSmoothedPing;
         r->ping_deadline = 0;
         r->received(packet.m_usecNow);
-        r->penalty = std::min(5000u, reply.scoring_penalty_relay_cluster());
+        r->penalty = sl_sdr_cluster_penalty(int32_t(reply.scoring_penalty_relay_cluster()));
+        sl_sdr_latencies_begin(&r->interior, reply.flags(), packet.m_usecNow);
         for (int i = 0; i < reply.latency_datacenter_ids_size(); ++i)
-            r->interior[reply.latency_datacenter_ids(i)] = int(reply.latency_ping_ms(i));
+            sl_sdr_latency_measure(&r->interior, reply.latency_datacenter_ids(i),
+                int32_t(reply.latency_ping_ms(i)), false, packet.m_usecNow);
         for (int i = 0; i < reply.latency_datacenter_ids_p2p_size(); ++i)
-            r->interior[reply.latency_datacenter_ids_p2p(i)] = int(reply.latency_ping_ms_p2p(i));
+            sl_sdr_latency_measure(&r->interior, reply.latency_datacenter_ids_p2p(i),
+                int32_t(reply.latency_ping_ms_p2p(i)), true, packet.m_usecNow);
+        if (reply.latency_datacenter_ids_size() || reply.latency_datacenter_ids_p2p_size()) {
+            /* The original propagates all cached edges, before exceptions,
+             * without replacing a reverse edge measured directly. */
+            for (size_t i=0; i<r->interior.count; ++i)
+                for (auto &other : probe->relays)
+                    if (other.pop_id == r->interior.entries[i].pop)
+                        sl_sdr_latency_estimate(&other.interior, r->pop_id, r->interior.entries[i].ping);
+            for (const auto &exception : reply.route_exceptions())
+                sl_sdr_latency_exception(&r->interior, exception.data_center_id(), exception.flags(),
+                    int32_t(exception.penalty()));
+        }
         if (reply.has_challenge()) {
             r->challenge = reply.challenge();
             r->server_time = reply.server_time();
@@ -578,12 +592,14 @@ public:
                     peer.session_relay_routing_token().size() > SL_SDR_TOKEN_MAX) continue;
                 int interior = 0;
                 if (peer.pop_id() != r.pop_id) {
-                    auto it = r.interior.find(peer.pop_id());
-                    if (it == r.interior.end() || it->second < 0 || it->second > 10000) continue;
-                    interior = it->second;
+                    const auto *edge = sl_sdr_latency_find(&r.interior, peer.pop_id());
+                    if (!edge || edge->ping < 0 || edge->ping > 10000) continue;
+                    interior = edge->ping;
                 }
+                const auto *edge = sl_sdr_latency_find(&r.interior, peer.pop_id());
+                int edge_penalty = peer.pop_id() != r.pop_id && edge ? edge->penalty : 0;
                 int front = r.ping_ms + int(peer.ping_ms());
-                int64 forward = int64(front) + front / 10 + interior + r.penalty + peer.score_penalty();
+                int64 forward = int64(front) + front / 10 + interior + edge_penalty + r.penalty + peer.score_penalty();
                 if (forward >= SL_SDR_UNKNOWN) continue;
                 int reverse = SL_SDR_UNKNOWN;
                 for (const auto &route : peer_routes.routes()) {
@@ -597,7 +613,7 @@ public:
                 any_comparison = std::min(any_comparison, combined);
                 if (!peer.session_relay_routing_token().empty() && combined < comparison) {
                     comparison = combined; score = int(forward); ping = front + interior;
-                    interior_score = interior;
+                    interior_score = interior + edge_penalty;
                     target = &peer;
                 }
             }
@@ -679,13 +695,15 @@ public:
             cluster->set_score_penalty(r.penalty);
             cluster->set_session_relay_routing_token(r.routing_token);
             for (const auto &peer : peer_routes.relay_clusters()) {
-                auto interior = r.interior.find(peer.pop_id());
-                if (peer.pop_id() != r.pop_id && (interior == r.interior.end() || interior->second < 0))
+                const auto *interior = sl_sdr_latency_find(&r.interior, peer.pop_id());
+                if (peer.pop_id() != r.pop_id && (!interior || interior->ping < 0))
                     continue;
+                int64 interior_score = peer.pop_id() == r.pop_id ? 0 : int64(interior->ping)+interior->penalty;
+                if (interior_score < INT_MIN || interior_score > INT_MAX) continue;
                 auto *route = snapshot.add_routes();
                 route->set_my_pop_id(r.pop_id);
                 route->set_your_pop_id(peer.pop_id());
-                route->set_interior_score(peer.pop_id() == r.pop_id ? 0 : interior->second);
+                route->set_interior_score(int(interior_score));
             }
         }
         std::string bytes = snapshot.SerializeAsString();

@@ -2631,6 +2631,12 @@ def audit(elf, groups=None):
              {200: retained}, flags == 0)
     case('datacenter_latency_updates', receive_latencies, {}, [(200, 40), (200, 50)], [], [], 0,
          {200: (50, 0, 0, NOW)}, True)
+    case('datacenter_latency_updates', receive_latencies, {}, [(200, 40)], [], [(201, 4, 9)], 0,
+         {200: (40, 0, 0, NOW)}, True)
+    case('datacenter_latency_updates', receive_latencies, {}, [(200, 40)], [], [(200, 4, 9000)], 0,
+         {200: (40, 9000, 4, NOW)}, True)
+    case('datacenter_latency_updates', receive_latencies, {}, [(200, 0xffffffff)], [], [], 1,
+         {200: (0xffffffff, 0, 0, NOW)}, True)
     for measured in (False, True):
         case('datacenter_route_estimation', datacenter_routes, [20, -1], [(0, 1, 10)], [20, 20], measured)
         case('datacenter_route_estimation', datacenter_routes, [20, -1], [(0, 1, 100)], [20, 60], measured)
@@ -2759,7 +2765,7 @@ def audit(elf, groups=None):
     for pending, redelivered, window in itertools.product((None, -1, 0, 1, 2, 3), (False, True), (0, 1000)):
         case('out_of_order_handling', out_of_order, pending, redelivered, window)
     for old, incoming in [(0, -1), (20, -1), (0, 0), (20, 20), (20, 4999), (20, 5000),
-                             (5000, 5000), (5000, 5001), (0, 0x7fffffff)]:
+                             (5000, 5000), (5000, 5001), (0, 0x7fffffff), (0, -0x80000000)]:
         case('cluster_penalty_updates', cluster_penalty, old, incoming)
     for reason, instant_age, lifetime_age, rx_count, sent in itertools.product(
             (False, True), (19999999, 20000000, 29999999, 30000000, 140000000),

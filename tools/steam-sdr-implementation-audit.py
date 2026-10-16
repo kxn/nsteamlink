@@ -46,6 +46,13 @@ class Cache(c.Structure):
     _fields_ = [('entries', FailedAddress * 3), ('count', c.c_uint), ('failures', c.c_uint),
         ('reachability', c.c_int), ('last_probe', c.c_int64)]
 
+class Latency(c.Structure):
+    _fields_ = [('pop', c.c_uint32), ('ping', c.c_int32), ('penalty', c.c_int32),
+        ('flags', c.c_uint32), ('measured', c.c_int64)]
+
+class Latencies(c.Structure):
+    _fields_ = [('entries', Latency*128), ('count', c.c_size_t), ('last_full', c.c_int64)]
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--elf', required=True, type=Path)
@@ -194,12 +201,51 @@ def main():
             assert lib.sl_sdr_clean_active(desired,len(tokens),c.byref(primary),c.byref(backup))
             assert [i for i in (primary.value,backup.value) if i>=0] == expected
         audit.clean_routes = clean
+        original_latencies, original_penalty = audit.receive_latencies, audit.cluster_penalty
+        lib.sl_sdr_latencies_begin.argtypes = [c.POINTER(Latencies), c.c_uint32, c.c_int64]
+        lib.sl_sdr_latencies_begin.restype = c.c_bool
+        lib.sl_sdr_latency_measure.argtypes = [c.POINTER(Latencies), c.c_uint32, c.c_int32, c.c_bool, c.c_int64]
+        lib.sl_sdr_latency_measure.restype = c.c_bool
+        lib.sl_sdr_latency_estimate.argtypes = [c.POINTER(Latencies), c.c_uint32, c.c_int32]
+        lib.sl_sdr_latency_exception.argtypes = [c.POINTER(Latencies), c.c_uint32, c.c_uint32, c.c_int32]
+        lib.sl_sdr_cluster_penalty.argtypes = [c.c_int32]
+        lib.sl_sdr_cluster_penalty.restype = c.c_int32
+        def receive_latencies(elf, initial, ordinary, p2p, exceptions, flags, expected, dirty, reverse=None):
+            original_latencies(elf,initial,ordinary,p2p,exceptions,flags,expected,dirty,reverse)
+            cache=Latencies()
+            for key, values in initial.items():
+                cache.entries[cache.count]=Latency(key,*values); cache.count+=1
+            actual_dirty=lib.sl_sdr_latencies_begin(c.byref(cache),flags,audit.NOW)
+            for values, is_p2p in ((ordinary,False),(p2p,True)):
+                for key, ping in values:
+                    assert lib.sl_sdr_latency_measure(c.byref(cache),key,ping,is_p2p,audit.NOW)
+            if ordinary or p2p:
+                if reverse:
+                    for key, (old,result) in reverse.items():
+                        other=Latencies()
+                        if old is not None:
+                            other.entries[0]=Latency(100,*old); other.count=1
+                        source=next(e for e in cache.entries[:cache.count] if e.pop==key)
+                        lib.sl_sdr_latency_estimate(c.byref(other),100,source.ping)
+                        entry=other.entries[0]
+                        assert (entry.ping,entry.penalty,entry.flags,entry.measured)==result
+                for key, bits, penalty in exceptions:
+                    lib.sl_sdr_latency_exception(c.byref(cache),key,bits,penalty)
+                actual_dirty=True
+            actual={e.pop:(e.ping & 0xffffffff,e.penalty & 0xffffffff,e.flags,e.measured)
+                    for e in cache.entries[:cache.count]}
+            assert actual==expected and bool(actual_dirty)==dirty,(actual,expected)
+        def cluster_penalty(elf,old,incoming):
+            original_penalty(elf,old,incoming)
+            assert lib.sl_sdr_cluster_penalty(incoming)==max(0,min(5000,incoming))
+        audit.receive_latencies, audit.cluster_penalty = receive_latencies, cluster_penalty
         audit.select, audit.timeout_decision = select, timeout
         audit.downtime, audit.probe_priorities, audit.routing_readiness = downtime, priorities, ready
         audit.failed_cache_add, audit.failed_cache_expire, audit.received = add, expire, received
         elf = audit.policy.descriptors.SampleELF(args.elf.read_bytes())
         groups = {'active_selection', 'active_switch_confirmation', 'active_candidate_order', 'timeout_decisions', 'downtime_warning', 'global_probe_priority_matrix',
-            'global_routing_readiness', 'failed_cache_insertion', 'failed_cache_expiry', 'received_packet_recovery', 'transport_state_change', 'session_established', 'clean_route_targets'}
+            'global_routing_readiness', 'failed_cache_insertion', 'failed_cache_expiry', 'received_packet_recovery', 'transport_state_change', 'session_established', 'clean_route_targets',
+            'datacenter_latency_updates', 'reverse_latency_estimation', 'cluster_penalty_updates'}
         # Select group names from the existing audit; fail if they are renamed.
         counts = audit.audit(elf, groups)
         assert set(counts) == groups, counts

@@ -60,3 +60,24 @@ int sl_sdr_established_action(int state);
  * Keeping survivor order promotes a surviving backup to the current primary,
  * so its switching hysteresis still applies. NETWORKING 21.13. */
 bool sl_sdr_clean_active(const bool *desired, size_t count, int32_t *primary, int32_t *backup);
+
+/* NETWORKING 21.10. Canonical POP mapping is supplied by the caller. The
+ * capacity is local memory policy, not a wire limit. Estimated entries retain
+ * ping/penalty/flags when a complete reply invalidates direct timestamps. */
+typedef struct sl_sdr_latency {
+    uint32_t pop;
+    int32_t ping, penalty;
+    uint32_t flags;
+    int64_t measured;
+} sl_sdr_latency;
+typedef struct sl_sdr_latencies {
+    sl_sdr_latency entries[SL_SDR_CANDIDATES];
+    size_t count;
+    int64_t last_full;
+} sl_sdr_latencies;
+bool sl_sdr_latencies_begin(sl_sdr_latencies *, uint32_t reply_flags, int64_t now);
+bool sl_sdr_latency_measure(sl_sdr_latencies *, uint32_t pop, int32_t ping, bool p2p, int64_t now);
+void sl_sdr_latency_estimate(sl_sdr_latencies *, uint32_t pop, int32_t ping);
+void sl_sdr_latency_exception(sl_sdr_latencies *, uint32_t pop, uint32_t flags, int32_t penalty);
+const sl_sdr_latency *sl_sdr_latency_find(const sl_sdr_latencies *, uint32_t pop);
+int32_t sl_sdr_cluster_penalty(int32_t incoming);
