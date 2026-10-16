@@ -1,0 +1,87 @@
+{
+  "sample_sha256": "50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e",
+  "files": [
+    {
+      "name": "steammessages_remoteclient_discovery.proto",
+      "symbol": "descriptor_table_steammessages_5fremoteclient_5fdiscovery_2eproto",
+      "table_va": "0xc2b118",
+      "descriptor_va": "0x3df6f8",
+      "bytes": 6700,
+      "sha256": "74ca7b79c4f48f2379663faaccf47d865700afb20a120c2d6f79a8e718f173ce",
+      "dependencies": []
+    },
+    {
+      "name": "steammessages_remoteclient_service_messages.proto",
+      "symbol": "descriptor_table_steammessages_5fremoteclient_5fservice_5fmessages_2eproto",
+      "table_va": "0xc2c5e0",
+      "descriptor_va": "0x3e1d84",
+      "bytes": 5982,
+      "sha256": "2823ae7a0573880c5ea46cf92c6bcdb6134a7c6a2fba7837ea56b9999b7781cf",
+      "dependencies": []
+    },
+    {
+      "name": "steammessages_remoteplay.proto",
+      "symbol": "descriptor_table_steammessages_5fremoteplay_2eproto",
+      "table_va": "0xc2fbd0",
+      "descriptor_va": "0x3e5474",
+      "bytes": 21560,
+      "sha256": "a8a97cc76440224048e02d7605f6427b5cc48868f3be0789f4f99bd37aceb626",
+      "dependencies": []
+    },
+    {
+      "name": "steamdatagram_messages_sdr.proto",
+      "symbol": "descriptor_table_steamdatagram_5fmessages_5fsdr_2eproto",
+      "table_va": "0xc21bc0",
+      "descriptor_va": "0x3ceb6c",
+      "bytes": 13793,
+      "sha256": "fdb2e8ac10915953c15fd2363b2f1d9371dc490d8def87e669482c51f12e2fe4",
+      "dependencies": [
+        "steamnetworkingsockets_messages_certs.proto",
+        "steamnetworkingsockets_messages.proto"
+      ]
+    },
+    {
+      "name": "steamnetworkingsockets_messages_certs.proto",
+      "symbol": "descriptor_table_steamnetworkingsockets_5fmessages_5fcerts_2eproto",
+      "table_va": "0xc3aba0",
+      "descriptor_va": "0x3f9b08",
+      "bytes": 775,
+      "sha256": "9e8ca0362674abc8b23b32c5eacbab0fad6fef08cb56901bdcd9df5cf5607cdc",
+      "dependencies": []
+    },
+    {
+      "name": "steamnetworkingsockets_messages.proto",
+      "symbol": "descriptor_table_steamnetworkingsockets_5fmessages_2eproto",
+      "table_va": "0xc3b760",
+      "descriptor_va": "0x3faecc",
+      "bytes": 4253,
+      "sha256": "99cf231d8565f58317418a75b0ada2bc17f0c83fd8c5cff9c092074ad0aa85c2",
+      "dependencies": [
+        "steamnetworkingsockets_messages_certs.proto"
+      ]
+    },
+    {
+      "name": "steamdatagram_messages_auth.proto",
+      "symbol": "descriptor_table_steamdatagram_5fmessages_5fauth_2eproto",
+      "table_va": "0xc212b0",
+      "descriptor_va": "0x3cd564",
+      "bytes": 1441,
+      "sha256": "8ec4d7a127234c28a51b01497b435c6e653d66b8ae2e72e0998ce74c4cef779c",
+      "dependencies": [
+        "steamnetworkingsockets_messages_certs.proto"
+      ]
+    },
+    {
+      "name": "steamnetworkingsockets_messages_udp.proto",
+      "symbol": "descriptor_table_steamnetworkingsockets_5fmessages_5fudp_2eproto",
+      "table_va": "0xc3aff8",
+      "descriptor_va": "0x3fa08c",
+      "bytes": 1870,
+      "sha256": "2a832b54b934e49bfa564baa695046996a9496c9d410f94b9bbd6dc6f31bf30f",
+      "dependencies": [
+        "steamnetworkingsockets_messages_certs.proto",
+        "steamnetworkingsockets_messages.proto"
+      ]
+    }
+  ]
+}
