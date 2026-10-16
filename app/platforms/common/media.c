@@ -1048,16 +1048,18 @@ sl_media_video_submit_tracked(IHS_Session *session, const IHS_VideoEpochInfo *ep
                               IHS_StreamVideoFrameFlag flags, bool *taken) {
     (void)session;
     (void)id;
-    (void)flags;
     if (!video) {
         *taken = false;
         return IHS_StreamVideoSubmitError;
     }
-    bool ok = sl_video_submit(video, (sl_video_key){epoch->session_id, epoch->video_epoch},
-                              IHS_BufferPointer(data), data->size, ticket, taken);
-    if (!ok)
-        media_set_error("video packet ownership or decode failure");
-    return ok ? IHS_StreamVideoSubmitOK : IHS_StreamVideoSubmitError;
+    sl_video_submit_result result = sl_video_submit(
+        video, (sl_video_key){epoch->session_id, epoch->video_epoch}, IHS_BufferPointer(data),
+        data->size, ticket, taken, flags & IHS_StreamVideoFrameKeyFrame);
+    if (result == SL_VIDEO_SUBMIT_CORRUPT)
+        return IHS_StreamVideoSubmitReportLost;
+    if (result == SL_VIDEO_SUBMIT_ERROR)
+        media_set_error("video packet ownership or decoder resource failure");
+    return result == SL_VIDEO_SUBMIT_OK ? IHS_StreamVideoSubmitOK : IHS_StreamVideoSubmitError;
 }
 void sl_media_video_stop_tracked(IHS_Session *session, const IHS_VideoEpochInfo *epoch) {
     (void)session;

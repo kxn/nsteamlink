@@ -314,25 +314,37 @@ static int receive_frames(sl_video_pipeline *p, domain *d) {
             return result;
         if (result < 0)
             return result;
+        if ((d->scratch->flags & AV_FRAME_FLAG_CORRUPT) || d->scratch->decode_error_flags) {
+            av_frame_unref(d->scratch);
+            return AVERROR_INVALIDDATA;
+        }
         bool ok = publish(p, d);
         av_frame_unref(d->scratch);
         if (!ok)
-            return AVERROR_INVALIDDATA;
+            return AVERROR_BUG; /* identity/ownership/resource failure is NOT codec corruption */
     }
-    return AVERROR_INVALIDDATA;
+    return AVERROR_BUG;
 }
-bool sl_video_submit(sl_video_pipeline *p, sl_video_key key, const unsigned char *data, size_t size,
-                     IHS_FrameTicket *ticket, bool *taken) {
+sl_video_submit_result sl_video_submit(sl_video_pipeline *p, sl_video_key key,
+                                       const unsigned char *data, size_t size,
+                                       IHS_FrameTicket *ticket, bool *taken, bool keyframe) {
     *taken = false;
     if (!data || !size || size > MAX_PACKET || !ticket)
-        return false;
+        return SL_VIDEO_SUBMIT_ERROR;
     IHS_FrameIdentity identity = IHS_FrameTicketIdentity(ticket);
     if (identity.sessionId != key.session || identity.epoch != key.epoch)
-        return false;
+        return SL_VIDEO_SUBMIT_ERROR;
     pthread_mutex_lock(&p->decoder);
     domain *d = find_domain(p, key);
     if (!d || d->stopped || !sl_video_is_current(p, key))
         goto fail;
+    /* Standalone FlushPendingData 0x7b124c clears backend pending state on a
+     * protocol keyframe. FFmpeg keeps caller-held AVFrame buffers valid. Never
+     * destroy/reopen the hardware domain or renderer mappings here. */
+    if (keyframe) {
+        av_frame_unref(d->scratch);
+        avcodec_flush_buffers(d->codec);
+    }
     AVPacket *packet = av_packet_alloc();
     if (!packet)
         goto fail;
@@ -385,14 +397,19 @@ bool sl_video_submit(sl_video_pipeline *p, sl_video_key key, const unsigned char
             result = drained;
     }
     av_packet_free(&packet);
-    if (result < 0)
-        goto fail;
-    result = receive_frames(p, d);
+    sl_video_submit_result status = SL_VIDEO_SUBMIT_ERROR;
+    if (result >= 0) {
+        result = receive_frames(p, d);
+        if (result == AVERROR(EAGAIN) || result == AVERROR_EOF)
+            status = SL_VIDEO_SUBMIT_OK;
+    }
+    if (result == AVERROR_INVALIDDATA)
+        status = SL_VIDEO_SUBMIT_CORRUPT;
     pthread_mutex_unlock(&p->decoder);
-    return result == AVERROR(EAGAIN) || result == AVERROR_EOF;
+    return status;
 fail:
     pthread_mutex_unlock(&p->decoder);
-    return false;
+    return SL_VIDEO_SUBMIT_ERROR;
 }
 bool sl_video_flush(sl_video_pipeline *p, sl_video_key key) {
     pthread_mutex_lock(&p->decoder);

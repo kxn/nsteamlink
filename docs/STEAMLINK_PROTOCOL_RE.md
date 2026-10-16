@@ -1470,3 +1470,356 @@ host-stop，避免丢失清理期间到达的完成事实。这个检查只覆�
   迁移保留旧码率，但旧 Fast/Beautiful 从此真正发送相应偏好，行为并非完全不变。
 - 协议测试解密实际 NegotiationSetConfig 并反序列化，交叉检查各画质与独立
   码率、分辨率、帧率、编解码器；存储测试覆盖三种旧偏好和配对身份迁移。
+
+## 24. 视频丢失、关键帧同步与不可靠通道反馈（2026-10-16 独立复核）
+
+### 24.1 证据身份与方法
+
+从仓库根目录 `Steam Link_1.3.32_apkcombo.com.xapk` 重新解包
+`config.arm64_v8a.apk!lib/arm64-v8a/libmain.so`，SHA-256 仍为
+`50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e`。
+本节地址属于这个 Android ARM64 ELF；IHSlib 注释引用的 `streaming_client`
+`0x205xxx` 地址来自另一参考程序，不能混用或据此宣称两版所有分支完全相同。
+
+用 `aarch64-linux-gnu-objdump -dC`、`nm -DC`、`readelf -Wr` 复核函数、分支和
+虚表重定位；直接读取 ELF 内嵌 FileDescriptorProto，未以旧文档的“已验证”标签
+代替原始证据。原始输出保存在忽略的 `build/video-recovery-re/`；这是静态分析，
+不包含新的 Switch 测试或 Windows Steam host 响应测量。本项目对照基线为
+`v0.3.0`（主仓 `1a06981`，IHSlib `04688d1`）。
+
+### 24.2 重请求约 100ms；关键帧到达时立即解除等待
+
+【证据】`CStreamDecoderVideo::DecodeFrame @0x7b2000`：
+
+- `0x7b2074` 检查视频标志 bit 4；关键帧路径 `0x7b20b4–0x7b20d8`
+  调用清理 pending 的虚函数，清零对象 `+404/+405` 的两个字节，并以新片段序列号
+  重设 `+416`。虚表 `0xc44340` 指向 `FlushPendingData @0x7b2a68`；
+  Standalone 虚表 `0xc44118` 指向 `0x7b124c`，它先调用相同的基础清理，再清理后端。
+- `0x7b20f8–0x7b2150` 在收到后续视频数据时检查等待时间，超过阈值则发送
+  空 packet 列表的 `SendDataLost(video)`，更新最后请求时间。
+- `0x7b2488–0x7b2494` 初始化阈值为 `0x1999 = 6553`。
+  `GetStreamTimestamp @0x802a88` 的 `0x802ab4–0x802ac4` 采用 16.16 秒；
+  因此阈值为 `6553 * 1000 / 65536 = 99.9908ms`，不是 200ms 或 1–2 秒。
+
+【结论】这版官方客户端在持续收包时约每 100ms 重请求；该检查由收包驱动。
+本项目 `ch_data_video.c:313–334` 使用 200ms。二者在关键帧标记到达时都立即
+解除等待，没有在此处额外等待一个重试周期；但标记属于视频片段，完整组装、
+后端解码和显示仍是必要条件，不能把“看到关键帧标记”视为已恢复显示。
+该函数没有重试次数上限，不能由此推断整个官方会话不存在其他超时。
+
+### 24.3 序列缺口与组装积压不是同一种等待
+
+【证据】官方对象 `+404` 与 `+405` 是两个独立状态位；下列名称只是依据分支行为
+重建的含义，不声称恢复了原始 C++ 成员名：
+
+| 路径 | 官方 ARM64 行为 | 本项目 v0.3.0 行为 |
+|---|---|---|
+| 视频序列缺口 | `0x7b22e4–0x7b2348` 设置 `+404`；`0x7b216c` 在该位非零时丢弃后续普通片段，等关键帧 | 设置 `waitingKeyFrame`，丢弃后续非关键帧片段 |
+| pending 片段时间跨度过大 | `CheckOverflow @0x7b2854`，常数 `0x2666 = 9830` tick（约 150ms）；`0x7b2974` 只设置 `+405`，并请求同步 | 同为约 150ms，但直接设置相同的 `waitingKeyFrame` |
+| 仅 `+405` 非零且序列连续 | `0x7b2154–0x7b2170` 只用 `+404` 阻止提交，因此仍能进入 pending；同时继续约 100ms 的同步请求 | 一律在 `waitingKeyFrame > 0` 时跳过片段 |
+| 关键帧 | 清理旧 pending，清零两个状态位，按新序列继续 | 清理旧 pending，清零等待，按新序列继续 |
+
+【结论】“官方所有恢复路径都立即停止接收普通视频，等关键帧”不成立。
+本项目把序列缺口和组装积压合并为严格等待，相比这版官方更保守。
+官方仍接纳片段不证明所有片段都能显示；`OnThink @0x7b24dc` 的
+`0x7b2540–0x7b2570` 检查 slice 范围连续，`0x7b2588/0x7b2644` 检查
+FrameFinish，完整帧才进入 `0x7b2738–0x7b2750` 的后端解码调用。
+
+【假设／待验证】本项目在纯积压且参考链仍有效时，可能不必要地停止视频并等待
+关键帧，从而放大一次短抖动。没有故障窗口日志或对照实验，不能将其定为用户
+报告的一两秒停顿的根因；也不能把缺参考帧后的普通帧一律当作可安全显示。
+
+### 24.4 关键帧恢复反馈与传输窗口反馈必须分开
+
+【证据】官方 `SendDataLost @0x7abd4c` 在 `0x7abe0c` 构造数据类型 2，
+`0x7abe2c` 以 `Send(connection, false)` 发送；`CStreamFrame::Send` 的
+`0x7f3118/0x7f3140–0x7f314c` 将 false 路由到 `SendUnreliable`。
+前述关键帧路径传空 packet 列表，报文中没有 GOP 或关键帧周期参数。
+
+【证据】不可靠传输另外具有接收窗口反馈：
+
+- `CStreamChannel::HandlePacket @0x7f9250` 在 `0x7f9330–0x7f9364`
+  将类型 3/4 的视频等数据放入不可靠接收窗口，同时标记需要更新状态。
+- `UpdateUnreliableState @0x7fa3b0` 负责窗口交付、缺口处理及反馈；
+  `0x7fa79c/0x7fa7cc` 构造包类型 10，`0x7fa7e4/0x7fa82c` 写时间回显和
+  交付水位，`0x7fa89c` 将窗口位图范围限制为 320 包，`0x7fa920` 发送。
+  这不是逐视频帧的“成功渲染 ACK”，也不是可靠控制通道的类型 7 ACK。
+- `HandlePacket @0x7f9310/0x7f93bc` 将类型 10 送入不可靠状态的
+  `HandleNackPacket @0x7f95dc`。该通用处理器在 `0x7f985c` 释放已确认包，
+  `0x7f9880–0x7f98d0` 对位图缺失且满足包龄条件的包清零发送时间；
+  `SendUnreliablePackets @0x7f9054–0x7f9084` 会重发这些零发送时间的包。
+
+【证据】项目 IHSlib 的 `IHS_SessionPacketTypeUnreliableNack = 10` 只出现于
+`src/session/packet.h` 枚举；`ch_data.c` 的下行窗口实现没有构造这种反馈。
+`ch_control.c` 的 ACK/NACK 属于另一可靠窗口；视频 `ReportVideoStats` 的每秒
+帧结果报告也是另一条路径，不能当作类型 10 的替代实现。
+
+【结论】目前存在“官方有不可靠窗口反馈，而本项目未接线”的确定性实现差异。
+不能简单描述成“渲染慢了，所以没有及时 ACK”；官方窗口反馈本身并不以实际
+显示成功为前提。此 Android 客户端的通用发送端证明了这种反馈可驱动补包；
+本次没有反汇编 Windows host，也未实测 host 对本项目发送类型 10 的响应。
+
+【假设／待验证】缺少类型 10 可能使可修补的视频片段缺口更容易升级为视频序列
+缺口和关键帧等待。这比仅调整关键帧重试间隔更值得核对，但不是当前卡顿根因证明。
+
+### 24.5 内嵌协议没有显式关键帧间隔字段
+
+【证据】同一 ELF 文件偏移 `0x3e5474` 的 FileDescriptorProto 长 `21560` 字节，
+SHA-256 为 `a8a97cc76440224048e02d7605f6427b5cc48868f3be0789f4f99bd37aceb626`。
+从 wire 数据解析出 106 个顶层消息。`CStreamingClientConfig` 的字段到 35，
+包含 quality、码率、帧率、编解码器与 `enable_unreliable_fec`；
+`CStreamingServerConfig` 的字段到 13；`CStreamDataLostMsg` 只有 `packets=1`。
+没有显式 GOP 长度、关键帧间隔或 I/P 帧比例字段，与本项目 proto 对照一致。
+
+【结论】在这版官方协议与上述客户端调用链中，没有发现可以协商“每 N 帧一个
+关键帧”的接口。不能外推为 Windows host 没有内部 GOP 策略，也没有证据支持
+“默认每一两秒必有关键帧”。更密的关键帧与传输补包是不同的恢复手段。
+
+### 24.6 解码错误的本地接线边界
+
+【证据】官方 `FinalDecode @0x7b1088` 失败时记录帧结果，后端存在的分支
+`0x7b1154–0x7b1168` 请求 DataLost；后端不可用分支 `0x7b1188–0x7b118c`
+请求 ResetVideoDecoder。Android 后端 `0x906a7c/0x906a9c` 也有重置请求。
+`HandlePendingResets @0x7a61e4–0x7a620c` 在实际 reset 后再请求 DataLost。
+因此“所有解码失败都无条件连续发两次请求并重置”不是该 ARM64 版本的统一规则。
+
+【证据】v0.3.0 `sl_media_video_submit_tracked` 将 `sl_video_submit=false`
+统一映射为 `IHS_StreamVideoSubmitError`；IHSlib `SubmitFrame` 对 Error 断开
+session，只有 ReportLost 才进入恢复分支。应用没有从该入口返回 ReportLost。
+
+【结论】D-057 所述恢复存在于库内，不等于正式应用的所有解码失败都走该恢复。
+这项差异可影响断流行为，但单独不能解释保持会话的一两秒停顿。
+
+## 25. 视频恢复策略的调用链、边界与原始指令验证（2026-10-16）
+
+### 25.1 对策略建议的证据更正
+
+本节继续使用 §24.1 的同一 ARM64 ELF。撤回把“先补包、积压继续、缺口等待、
+解码失败分类、保持上一帧”整张建议表统称为已经完整还原的官方策略：
+官方存在相应分支，但等待预算、反馈时序、不同后端的错误分类和物理显示结果
+必须分别取证。尤其不能把“资源／设备错误才断开”当作已证明的通用分类规则，
+也不能把组装层约 150ms 阈值直接当成传输窗口的丢包等待期限。
+
+以下结论来自实际函数、调用者、常量初始化与虚表；§25.7 的模拟执行只验证
+被选中的原始指令分支，不替代真实 Steam 会话或 Switch 解码／显示测试。
+
+### 25.2 接收窗口：先等缺包，但预算由通道与 RTT 共同决定
+
+【证据】`OnStartVideoData @0x7ae074` 在 `0x7ae11c–0x7ae128` 给主机指定的
+视频 channel 调用 `SetChannelMaxRecvDelay(channel, 6553)`；音频启动
+`0x7ade40–0x7ade4c` 也设置同一值。`SetChannelMaxRecvDelay @0x7fbc98`
+在 `0x7fbcac` 写入 channel `+28`。这覆盖构造时的默认 65 tick，不能仅凭
+`CStreamChannel` 构造函数把活动视频通道等待解释为约 1ms。
+
+【证据】`CStreamPacketWindow::BInsertPacket @0x7f7230` 的
+`0x7f73cc–0x7f73e4` 存储包头 sendTimestamp；`0x7f7404–0x7f7434`
+向窗口前面的槽位回填时间。因此窗口包龄不是“从本机这次循环开始”的墙钟时间。
+`PopHeadOfPacketWindow_WithRef @0x7f743c` 的 `0x7f7474–0x7f7494`
+在头包缺失或头部为孤立续片时不交付；`0x7f74bc–0x7f74f8`
+还要确认头包声明的后续传输分片全部存在，才合并交付。
+
+【证据】`UpdateUnreliableState @0x7fa3b0` 先在 `0x7fa470–0x7fa4b0`
+尝试交付可用的完整传输数据，再于 `0x7fa590–0x7fa680` 扫描过期缺口。
+在正常正值 RTT 下，截止点可按下式重建（实际代码保留 32-bit 回绕和有符号比较）：
+
+```text
+T(ms) = floor(ms / 1000) * 65536 + floor((ms % 1000) * 65536 / 1000)
+cutoff = newest_slot_sender_timestamp
+         - channel_max_recv_delay_ticks
+         - T(trunc((average_rtt_ms + 2) * 0.5))
+```
+
+RTT 字段位于 connection `+732`；`ProcessTimestamp @0x7f9a2c` 把 RTT 样本加入
+connection `+640` 的统计对象，`PingStats::OnSampleAdded @0x7fc7b4`
+的 `0x7fc7cc–0x7fc7e8` 将 16.16 平均值转为毫秒浮点、写对象 `+92`，
+即 connection `+732`。这证明上式 RTT 的单位，不依赖成员名猜测。
+
+【结论】活动视频通道的基础等待约 100ms，另加约半个 RTT（含源码中的 2ms
+修正与截断）；以窗口内发送时间跨度决定何时放弃，不能说“固定等 100ms／200ms”。
+例如 average RTT=10ms 时，边界为 `6553 + 393 = 6946` tick（约 105.99ms）；
+模拟执行中恰好等于边界仍保留缺口，超过一 tick 后前进窗口。相同 8000 tick
+跨度在 RTT=10ms 时被放弃，在 RTT=60ms 时仍保留。
+
+### 25.3 类型 10 的反馈、补发与退休时序
+
+【证据】`UpdateUnreliableState` 的 `0x7fa700–0x7fa778` 同时检查反馈截止时间
+和乱序宽限；第一个可用后继包发送计数为 1 时，要自其接收时间等待 65 tick
+（约 0.992ms）；不足时重新置 dirty，后续 update 继续检查。已重传包不走这项
+首次发送宽限。`0x7fa970–0x7fa9b8` 在发送后以 RTT 派生值设置下一次反馈期限。
+这里使用 connection `+744` 的平滑 tick 值，经约 1–50ms clamp 后取四分之一、
+再至少取 65 tick；它与关键帧请求约 100ms 的定时不是一回事。
+
+【证据】类型 10 的包布局由 `0x7fa79c–0x7fa920` 构造：
+
+| 字节位置（含 13B 包头） | 实际用途 |
+|---|---|
+| `0` | 类型 10，即不可靠通道 NACK |
+| `7..8` | 位图起点：首个可用后继包的 packet ID |
+| `13..16` | 对端发送时间的回显 |
+| `17..18` | 首个未修复缺口之前的连续水位，不能误用位图起点 |
+| `19..` | 最多 320 包的占位位图，低位先行 |
+
+模拟输入：head=100，包 100/102 缺失、101/103 存在，官方原始指令输出
+位图起点 101、水位 99、位图 `05`。`HandleNackPacket @0x7f95dc`
+对这一反馈释放 101/103，把满足包龄条件的 100/102 标为补发。
+`0x7f9764–0x7f9780` 组合本机 RTT 截止点与反馈回显；实际取较新的截止点，
+不是盲目将所有缺失位立刻重发。`0x7f983c` 的整字节零值跳过、无位图的
+fallback 与回绕比较亦是实际实现的一部分，不能只移植“0 丢失／1 收到”的口号。
+
+【证据】补发和新包发送分阶段：
+
+- `Connection::Update @0x7fc108` 的 `0x7fc3a8–0x7fc3b0` 先调
+  `SendUnreliablePackets(false)`；它不扫描已发送包的补发标记。
+- `0x7fc3d0–0x7fc40c` 再按轮转起点对 channel 调
+  `SendUnreliablePackets(true)`；`UpdateLowPriority @0x7faa38` 也传 true。
+  真正扫描零发送时间、调用 socket send 的位置是 `0x7f9000–0x7f9084`。
+  因此 NACK 处理器只是标记补发，不是同步进行一轮无限重传。
+- `SendUnreliablePackets` 入口 `0x7f8cf4–0x7f8d9c` 在发送前退休过期包。
+  常数 `0x7f90cc = 13107` tick（约 200ms），再加
+  `2 * T(trunc(average_rtt_ms + 2))` 的保留余量。RTT=10ms 时合计 14679 tick
+  （约 223.98ms）；原始指令边界验证中，相等仍可补发，再老一个 tick 则退休。
+
+【结论】补包是一条有反馈限频、包龄检查、调度阶段和退休期限的完整路径。
+单独新增类型 10 报文或缩短 DataLost 重请求间隔，不等价于实现官方恢复。
+这里证明的是官方客户端内的通用协议实现；Windows Steam host 是否按相同条件
+补包、实际链路是否来得及补齐，仍需 host 证据，不能从客户端汇编直接推出。
+
+### 25.4 组装积压、序列缺口和主机通知
+
+【证据】§24.3 的两个状态位已经用实际 `DecodeFrame` 指令交叉验证：
+`+405=1/+404=0` 且序列连续时到达组装准入点 `0x7b2170`；同样状态下出现
+新序列缺口则设置 `+404=1`，从 `0x7b2448` 返回。严格等待时普通数据即使序列
+连续仍丢弃。关键帧先清除两个状态，重设序列，再进入相同准入点。
+这些结果只证明“进入组装”，不等于通过解码或已经显示。
+
+【证据】`CheckOverflow @0x7b2854` 首先要求两个等待状态均未置位、pending
+节点至少两个；在节点记录的帧时间跨度严格超过 9830 tick 时请求 DataLost，
+只设置 `+405`，不设置 `+404`，也不在此清空所有 pending。
+它不检查“本机距离上次显示已过去 150ms”，也不是自动丢弃所有过时已解码帧。
+
+【证据】`0x7b2988–0x7b29b8` 另计算 pending 两端的 frame ID 跨度；
+跨度大于或等于对象 `+412` 的记录值时，还调用 `SendVideoOverflow(first,last)`，
+再保存跨度。它可在未达到 150ms 时发生；相等时也可以报告，不能写成“只在新峰值报告”。
+`SendVideoOverflow @0x7abc90` 对应控制消息 148。项目 v0.3.0 的业务代码没有
+发送这条消息，只有生成的协议类型。主机收到 148 后如何调整编码，本次未取证。
+
+【结论】此前“积压继续处理”必须限定为序列连续、分片完整、解码后端仍能处理；
+官方并没有许可显示缺损片段或任意缺参考帧的普通帧。其积压响应也包含主机通知，
+不能认为仅拆出两个本地 bool 就已经完整对齐。
+
+### 25.5 解码错误：已查明具体触发，尚无 FFmpeg 错误码映射
+
+【证据】`CAndroidAccel::BDecodeFrame @0x906570` 的
+`0x9065f8–0x906614` 在 BSubmitFrame 成功时交出 dummy frame；失败时
+`0x906618–0x906630` 返回 false、结果 7（DroppedReset）。这里的“成功”可以
+是异步提交成功，不保证硬件图像已出队，因此不能把 FinalDecode 的返回当物理显示时刻。
+
+| 官方触发条件 | 实际处理与地址 |
+|---|---|
+| 后端存在，BDecodeFrame 返回 false | `FinalDecode 0x7b1134–0x7b1168` 记录失败帧结果并请求 DataLost；这一分支本身不直接 Disconnect，也不无条件 Reset |
+| 后端不存在 | `0x7b1188–0x7b118c` 请求异步 ResetVideoDecoder(false) |
+| Android 编码参数尺寸／Surface 发生需重置的变化 | `BSubmitFrame 0x906988–0x9069a4` 判断，`0x906a5c–0x906a7c` 更新参数并请求 Reset |
+| 无法取得输入 buffer index | `0x9069e0–0x9069e8` 的 MediaCodec dequeue 最多等待 200000 微秒；返回负值走 `0x906a88–0x906a9c` 请求 Reset |
+| 输入 index 存在，但 getInputBuffer 返回空 | `0x906a0c/0x906aa8–0x906ac0` 发致命错误通知 |
+| queueInputBuffer 返回非零 | `0x906b84–0x906ba0` 记录错误并返回失败，进入上层相应反馈路径 |
+
+【证据】`NotifyFatalDecoderError @0x7c9cec` 构造 SDL 用户事件类型 `0x8000`、
+code=3（`0x7c9d00–0x7c9d1c`）；`CStreamPlayer::BHandleEvent`
+的 `0x7b8308–0x7b8348` 对 code=3 设置 fatal 标记并 Disconnect。
+这补齐“致命通知最后是否真的断开”的调用链，不仅以函数名称作判断。
+
+【证据】ResetVideoDecoder(false) 设置 reset 请求；`HandlePendingResets`
+的 `0x7a61e4–0x7a620c` 执行实际 Reset 后再发 DataLost。
+`IStreamDecoder::Reset @0x7671e4` 会停准入、唤醒并 join 自有解码线程、清队列、
+调用 StopDecoding、重新 StartDecoding/线程。`StopDecoding @0x7b1fbc`
+设置严格等待状态。该过程不是“只切一个等待标志”，也没有静态证据保证它瞬时完成。
+
+【结论】已证明官方区分局部失败、重置和 fatal，但不能据此为 Switch 的
+FFmpeg/NVTEGRA 直接制定“某个 AVERROR 都应该重试／都应该断开”。
+当前 `sl_video_submit` 的 false 还混有身份／所有权失败、分配失败、解码失败，
+必须先分清错误来源才能映射。此前建议中的通用错误分类是工程设计要求，
+不是已经逆向出的 FFmpeg 对照表。
+
+### 25.6 关键帧恢复与呈现的边界
+
+【证据】关键帧分支立即清等待，但后续仍有组装范围／FrameFinish 检查和后端提交。
+`IStreamPlayer::GetNextVideoFrame @0x767fe0` 在 `0x768000–0x76802c`
+持续取可用帧，并以结果 6（DroppedLate）结算被更新帧替代的旧候选，最终交出最新候选。
+`FlushVideoStream @0x7681ec` 会清理排队及暂存 frame 引用
+（`0x768244–0x7682c8`），不能描述为“官方 reset 始终保留最后一个 AVFrame”。
+
+【结论】没有在关键帧准入分支发现额外固定 1–2 秒门槛；但解码器输入等待、重建、
+异步输出及呈现调度是独立边界。“下一个完整可用关键帧之后应能恢复”合理，
+“关键帧标记到达就立刻显示”或“必然保持同一物理画面”不由这些指令证明。
+本项目保留 current_frame 是自己的显示／资源策略；Switch Surface 生命周期和
+损坏恢复不能照搬 Android MediaCodec 的所有权操作。
+
+### 25.7 可复核性与仍未证明的事项
+
+`scripts/audit-steam-video-recovery.py` 用 Unicorn 加载哈希固定的原始 ELF，
+直接执行官方分支，并拦截外部依赖；没有把重写的 C/Python 恢复算法当作官方代码。
+32 个断言场景覆盖准入状态、关键帧清理、100ms 重请求边界、活动视频窗口的
+RTT/包龄边界、乱序宽限、反馈水位/位图、补发标记、补发阶段与退休边界、
+积压 150ms 边界与消息 148，以及 FinalDecode 的反馈／重置／交付分支。
+
+```sh
+python3 scripts/audit-steam-video-recovery.py \
+  --binary build/video-recovery-re/libmain-arm64.so \
+  --output build/video-recovery-re/emulated-branches.json
+```
+
+输入库按 §24.1 从已有 XAPK 解包；脚本需要 Python `unicorn`，不作为产品运行依赖。
+日志／socket／分配／锁／部分窗口 helper 和后端行为使用替身；例如窗口 Pop 在反馈
+测试里返回“尚不可交付”，Advance 只模拟水位前进，后端 decode 的成功／失败由
+场景输入控制。因此这 32 项不是完整传输集成、真实硬件解码或显示验证。
+
+【未证明】Windows host 的实际补包响应与时限；这些差异是否造成用户的一两秒卡顿；
+Switch 上 FFmpeg 错误分类、reset 的正确资源顺序及实际耗时；恢复期间物理显示结果。
+软件输入、退出、音频不被诊断阻塞仍是本项目既有运行时约束，不能冒称为这次已测得的
+官方时延保证。本节没有改变协议、回滚恢复实现，也不构成上述未证明事项的验收。
+
+### 25.10 安卓是否自行判断参考帧依赖
+
+【证据】同一 SHA-256 固定 ELF 的 `CAndroidVideoDecoder::BSubmitFrame @0x906660`：
+`0x90673c` 枚举 NAL，H.264 分支 `0x9067a8–0x9067b8` 只有 type 7（SPS）
+进入 `h264_new/read_nal_unit/CalculateVideoSize`；`0x9068d0–0x906934` 释放临时
+解析器，收集 type 7/8（SPS/PPS）作为参数。普通 slice 不进入此解析路径。
+尺寸或 Surface 变化在 `0x906988–0x906aa4` 触发 ResetVideoDecoder；
+`0x906b80` 的 queueInputBuffer 最后一个 flags 参数为 0。
+这说明此处并未从每个 slice 重建跨帧参考关系；不能把“官方会解析 H.264”
+等同于“官方在网络接收层判断缺失的是参考帧还是可丢弃帧”。
+
+【证据】输出两条显示分支是同一个 MediaCodec 的 VideoSurface / Texture 展示方式，
+不是两个解码后端。`BRenderFrameVideoSurface @0x908494` 用零 timeout dequeue，
+按输出 presentationTimeUs 查输入 frameId、选择/丢弃过时输出；Texture 分支
+`0x908e04` 首次等待 200000us 后继续零 timeout dequeue、丢弃时间戳不匹配的输出。
+`BHandleOutputBuffer @0x9080c4` 处理 buffer index、format/buffer-change 与 release
+返回值。上述函数中未发现按参考帧损坏标记决定恢复的分支。此结论仅覆盖列出的包装层，
+不覆盖闭源设备 MediaCodec 内部的 DPB / 错误隐藏。
+
+【结论】本客户端不另造 H.264 参考链分析器。先对齐已证实的传输/组装状态；
+FFmpeg 返回 AVERROR_INVALIDDATA 或输出显式 AV_FRAME_FLAG_CORRUPT / decode_error_flags
+时才作为可恢复码流损坏反馈，上层不将该结果等同于“后端已重建”。
+身份校验、资源分配与输出所有权失败仍为致命错误。关键帧入口清理 FFmpeg 内部缓存，
+保留显示/GPU持有的外部 AVFrame 引用：本机与 Switch 的 avcodec.h 对
+avcodec_flush_buffers 明确约定调用方引用仍有效。硬件实际恢复能力仍需真机验证。
+
+本实现的额外资源边界（项目策略，不声称是官方常数）：软同步时 pending 最多
+256 个片段，含已组装部分的编码数据最多 2MiB；超限清理 pending 并转为严格等待，
+以防主机不响应时无限积累。完整帧的 transport continuation 必须类型/序号一致，
+不能把另一帧的 head 拼成缺失的 fragment。媒体反馈使用单独的可 join worker，
+只持有短时 windowLock，不等待解码、不使用全局 timer 锁，不输出逐包日志。
+退出先置 interrupted 并唤醒两个 worker，join 后才销毁 window/cond/mutex。
+
+传输续片 ordinal 的来源：同一 ELF `AddToOutgoingPacketWindow @0x7f6f94` 在
+`0x7f7018` 给 head 写入续片数；`0x7f7024` 从 ordinal 0 开始，
+`0x7f7034` 每次加 1，`0x7f7090–0x7f70bc` 将续片类型置为 4/6，
+`0x7f70f8` 写入 ordinal，`0x7f7160` 使用窗口下一个 packetId。
+这为接收端拒绝错类型/错 ordinal 的跨帧拼接提供发送端证据；不声称官方
+PopHeadOfPacketWindow 本身做了同样的额外检查。
+
+初始丢包：`CStreamChannel` 的 `0x7f86f8–0x7f870c` 将 unreliable 的收发窗口
+ClearAndRestartWindow(0)，与 reliable 的 `0x7f8720–0x7f8734` 相同。因此新建媒体
+通道也从 packetId 0 建立接收水位，首个包丢失时不能把第一个续片当作新的起点。
+项目固定容量窗口溢出（含前跳超过容量）后 ReleaseAll 再锚定当前包属于本项目资源
+恢复策略；不声称与官方动态窗口的容量管理完全一致。
