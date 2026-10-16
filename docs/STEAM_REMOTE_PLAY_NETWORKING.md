@@ -1816,6 +1816,11 @@ POP 的 tier（默认 1）与 ping-only 类型由网络配置 JSON 解析（`0x8
   主备齐全且有活动连接时最多 1 次。找不到 relay 或已有 pending ping 的项不消耗发送预算。
   本路径 EProbeTOSCase=4；不能擅自对全部探测使用不同 TOS。
 
+本轮探测的失败分类另读取失败地址缓存：cluster 累计失败 >=4，或累计失败 >=2 且
+失败地址缓存非空，或 reachability<0，任一满足即使用失败重测分支
+（`0x823f20–0x823f68`，缓存数量为 SharedClusterData+660）。这不等于 §21.6 的
+持久 reachability 置 -1 条件；不能仅因字段仍为可达就忽略已有地址失败历史。
+
 **路由数据可用**与“已经连上某个 relay”分开保存（`0x824bbc–0x824cc8`）：
 初始化已开始且已测普通 POP 数 >= `min(15, trunc(totalOrdinaryPOPs*80/100))` 时，
 再满足任一条件即可允许选路：初始测量已超过 7 秒；至少一个保守 ping<30ms；

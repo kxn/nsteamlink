@@ -275,7 +275,7 @@ def probe_priorities(elf, routes, expected, need_any=False, need_backup=False):
         m.write(pop+12, route.get('pop_tier', 1))
         for offset, value in [(552, route.get('failures', 0)), (556, route.get('probes', 8)),
                               (560, route.get('reachable', 1)), (764, route.get('special', 0)),
-                              (508, route.get('received', 8))]:
+                              (508, route.get('received', 8)), (660,route.get('failed_addresses',0))]:
             m.write(cluster+offset, value)
         m.write(entries+index*24+8, cluster, 8)
         m.write(ordered+index*8, index)
@@ -526,7 +526,8 @@ def expected_probe(route, need_any, need_backup):
     ping, probes = route.get('ping', 20), route.get('probes', 8)
     ordinary, special = route.get('pop_type', 1) == 1, route.get('special', 0)
     tiered = route.get('pop_tier', 1) >= 1 and special <= 0
-    unreachable = route.get('failures', 0) >= 4 or route.get('reachable', 1) < 0
+    failures=route.get('failures',0)
+    unreachable = failures >= 4 or (failures >= 2 and route.get('failed_addresses',0)>0) or route.get('reachable',1)<0
     if special > 0 and probes < 8:
         return [(0, -1e30, 4)]
     estimate = route.get('estimate', 5000)
@@ -2618,6 +2619,10 @@ def audit(elf, groups=None):
                  'probes': probes, 'failures': failures}
         case('global_probe_priority_matrix', probe_priorities, [route],
              expected_probe(route, active, backup), need_any=active, need_backup=backup)
+    for failures, cached, probes, active, backup in itertools.product((1,2,3),(0,1),(3,4,7,8),(False,True),(False,True)):
+        route={'ping':-1,'failures':failures,'failed_addresses':cached,'probes':probes}
+        case('probe_failure_history',probe_priorities,[route],expected_probe(route,active,backup),
+             need_any=active,need_backup=backup)
     case('route_advertisement', advertise, [20], [], {0: 3}, {})
     case('route_advertisement', advertise, [20, 30], [(0, 1, 70, inf)],
          {0: 3, 1: 3}, {(0, 1): 3})

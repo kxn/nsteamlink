@@ -36,7 +36,7 @@ class Downtime(c.Structure):
 
 class ProbeInput(c.Structure):
     _fields_ = [(n, c.c_int) for n in ('ping', 'probes', 'received', 'front_samples',
-        'failures', 'reachability', 'pop_type', 'tier', 'special')]
+        'failures', 'reachability', 'pop_type', 'tier', 'special','failed_addresses')]
     _fields_ += [('estimate', c.c_float), ('since_sent', c.c_int64), ('since_received', c.c_int64)]
 
 class FailedAddress(c.Structure):
@@ -156,7 +156,7 @@ def main():
             for i, r in enumerate(routes):
                 p = ProbeInput(r.get('ping', 20), r.get('probes', 8), r.get('received', 8),
                     r.get('front_samples', 3), r.get('failures', 0), r.get('reachable', 1),
-                    r.get('pop_type', 1), r.get('pop_tier', 1), r.get('special', 0),
+                    r.get('pop_type', 1), r.get('pop_tier', 1), r.get('special', 0),r.get('failed_addresses',0),
                     r.get('estimate', 5000), r.get('probe_age', 0), r.get('front_newest_age', 0))
                 value = c.c_float()
                 if lib.sl_sdr_probe_priority(c.byref(p), need_any, need_backup, c.byref(value)):
@@ -305,7 +305,7 @@ def main():
         groups = {'active_selection', 'active_switch_confirmation', 'active_candidate_order', 'timeout_decisions', 'downtime_warning', 'global_probe_priority_matrix',
             'global_routing_readiness', 'failed_cache_insertion', 'failed_cache_expiry', 'received_packet_recovery', 'transport_state_change', 'session_established', 'clean_route_targets',
             'datacenter_latency_updates', 'reverse_latency_estimation', 'cluster_penalty_updates', 'canonical_pop_mapping',
-            'datacenter_route_estimation','router_ping_reply_dispatch','ping_request_size'}
+            'datacenter_route_estimation','router_ping_reply_dispatch','ping_request_size','probe_failure_history'}
         # Select group names from the existing audit; fail if they are renamed.
         counts = audit.audit(elf, groups)
         assert set(counts) == groups, counts

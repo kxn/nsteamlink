@@ -467,7 +467,7 @@ static void update_network(sl_sdr_probe *p, CSteamNetworkConnectionBase *connect
         }
         sl_sdr_probe_input input{r.ping_ms, int(r.probes_sent), r.front.m_nTotalPingsReceived,
             r.front.m_nValidPings, int(r.failures.failures), r.failures.reachability, 1,
-            pop ? pop->tier : 1, 0, ordering,
+            pop ? pop->tier : 1, 0, int(r.failures.count), ordering,
             now-r.ping_sent, now-r.front.TimeRecvMostRecentPing()};
         float priority;
         if (!r.ping_deadline && sl_sdr_probe_priority(&input, !p->have_primary, !p->have_backup, &priority))

@@ -35,7 +35,7 @@ typedef struct sl_sdr_downtime { int64_t shutdown, avoid; bool known; } sl_sdr_d
 /* Random input is supplied by the caller, in the sample's [45,60] interval. */
 bool sl_sdr_warn_downtime(sl_sdr_downtime *, int32_t seconds, float random_seconds, int64_t now);
 typedef struct sl_sdr_probe_input {
-    int ping, probes, received, front_samples, failures, reachability, pop_type, tier, special;
+    int ping, probes, received, front_samples, failures, reachability, pop_type, tier, special, failed_addresses;
     float estimate;
     int64_t since_sent, since_received;
 } sl_sdr_probe_input;
