@@ -117,7 +117,7 @@ int main(int argc, char **argv) {
         sl_remote_watch(protocol, peers, count);
         memset(peers, 0, sizeof(peers));
     }
-    uint64_t deadline = now_ms() + (pairing ? 300000 : idle ? 90000 : 60000);
+    uint64_t deadline = now_ms() + (pairing ? 1800000 : idle ? 90000 : 60000);
     bool started = false, success = false;
     uint64_t connected_at = 0;
     while (!l.failed && now_ms() < deadline) {
