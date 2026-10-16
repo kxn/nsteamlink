@@ -67,6 +67,16 @@ static void save_stage(const char *name) {
     if (f) { fprintf(f, "%s\n", name); fclose(f); }
 }
 static void sdk_atexit_returned(void) { save_stage("sdk_atexit_returned"); }
+static void previous_stage(const char *path, const char *label) {
+    FILE *previous=fopen(path,"r");
+    if (!previous) return;
+    char line[96]={0};
+    if (fgets(line,sizeof(line),previous)) {
+        line[strcspn(line,"\r\n")]=0;
+        sl_live_printf("%s=%s\n",label,line);
+    }
+    fclose(previous);
+}
 static unsigned char *read_file(const char *path, size_t limit, size_t *size) {
     *size = 0;
     FILE *f = fopen(path, "rb");
@@ -172,15 +182,10 @@ int main(int argc, char **argv) {
     if (!sockets) return 1;
     log_fd = nxlinkConnectToHost(false, false);
     if (log_fd >= 0) fcntl(log_fd, F_SETFL, O_NONBLOCK);
-    FILE *previous = fopen(stage_path,"r");
-    if (previous) {
-        char line[96]={0};
-        if (fgets(line,sizeof(line),previous)) {
-            line[strcspn(line,"\r\n")]=0;
-            sl_live_printf("PREVIOUS_EXIT_STAGE=%s\n",line);
-        }
-        fclose(previous);
-    }
+    previous_stage(stage_path,"PREVIOUS_EXIT_STAGE");
+#if !NSL_PRIVATE_MEDIA_FIXTURE
+    previous_stage("sdmc:/switch/nsl-sns-media.stage","PREVIOUS_MEDIA_EXIT_STAGE");
+#endif
     atexit(sdk_atexit_returned);
     save_stage("started");
     int result=1; unsigned char key[32]={0}, digest[32];

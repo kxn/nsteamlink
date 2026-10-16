@@ -232,7 +232,7 @@ def main(media=False):
         'loader_return_verified': False,
         'events': [line for line in text.splitlines() if line.startswith(('CLOUD_', 'SNS_', 'SDR_',
             'SWITCH_SNS_', 'PROFILE_READBACK_', 'PREVIOUS_EXIT_', 'PRIVATE_NRO_', 'PRIVATE_FIXTURE_',
-            'PRIVATE_EMBEDDED_', 'IHS_CONNECTED='))
+            'PRIVATE_EMBEDDED_', 'IHS_CONNECTED=', 'PREVIOUS_MEDIA_EXIT_'))
             and 'SNS_ERROR_FILE' not in line]}
     (build / (kind+'-result.json')).write_text(json.dumps(report, indent=2)+'\n')
     print(json.dumps(report))
