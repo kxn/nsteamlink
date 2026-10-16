@@ -1,5 +1,8 @@
 # Steam Link Android 客户端协议逆向参考（v1.3.32 / libmain.so）
 
+> 范围补充：§30–31 纳入哈希固定的 Windows x86/x64 Host 和跨二进制互通。
+> 早期章节的地址/不存在声明限于各自样本，不作为所有官方版本的协议全集。
+
 > **证据更正（2026-09-07）**：本文历史段落的“已验证”不能整体沿用。
 > §14 记录从同一 ELF 重新反汇编得到的反例：解密计数器在调用前递增；
 > FrameEvents 首项加偏移、后续项为差分；NACK 的确认水位与掩码基址是两个字段。
@@ -1945,7 +1948,9 @@ connection `+11` 选择 `SendUnreliableFEC` 或普通 `SendUnreliable`。
 `SetChannelFECPercentage 0x7fbcbc–0x7fbcdc` 只把传入整数写 channel `+32`；
 它自身不设置 connection 的启用位。百分比、启用位和客户端配置字段是不同层的量。
 该 ELF 的 channel 构造 `0x7f865c` 初始百分比为 0；仅调用百分比 setter 不足以启用 FEC。
-**尚未证明** Windows host 如何把配置字段映射到实际启用状态、如何选择/调整百分比。
+本节 Android 样本本身**不能证明** Windows host 如何映射该字段及选择百分比。
+新增 Windows x86/x64 的实际赋值、调用者和版本差异见 §30；不要再把这项历史
+证据缺口理解为所有已取证样本都仍未知，也不要把 Android 的 connection 布局套到新 host。
 
 【本地源码】对照 IHSlib `5fe67f4`：`ch_control_negotiation.c` 用
 CSTREAMING_CLIENT_CONFIG__INIT 且不写字段 25，因此请求的语义为默认 false；
@@ -2314,6 +2319,8 @@ python3 scripts/audit-steam-protocol-inventory.py \
 特别是 FEC 的配置请求、host 实际启用、运行中切换/回退和在途数据过渡尚未连成
 闭环；不能由 RS/接收器可复播，或消息 99 存在，就认定生产启停策略已经明确。
 后续实现就绪必须逐项核对真实上层触发和状态传播，不能用案例数量替代。
+这里记录的是本节取证时的缺口。§30–31 后续加入两版 Windows host 的真实
+控制链和跨二进制反例，并未恢复“整体实现就绪”的判断。
 
 ### 29.1 测试入口和状态的含义
 
@@ -2465,6 +2472,7 @@ Windows 激活/自适应规则不能靠猜测补成默认 20%/50%。已知 wire 
 delegate 并保存；该 handler 本身没有设置 connection outgoing FEC 启用位。
 这证明串流中有配置更新请求和接收路径，不证明 host 会把其中字段 25 立即生效，
 也不证明 host 根据网络状况要求客户端开启、自适应切换阈值或双方存在确认流程。
+这只是本节 Android 证据的限度；两个 Host 的实际生效与切换反例见 §30–31。
 
 ### 29.5 可靠重传、累计确认及时间戳采样
 
@@ -2533,3 +2541,249 @@ python3 scripts/audit-steam-protocol-triggers.py \
 证明。§28 的 12 项 UI/外设入口仅有路由清单，尚不具备各 delegate 的完整语义；
 SNS/SDR 内部、Windows host 配置策略也不在本节的实现契约内。不得以场景数替代
 这些层的证据，也不得宣称静态复播已经证明真实链路和物理显示。
+
+## 30. Windows Host：FEC 激活、发送模式与版本差异
+
+### 30.1 样本身份与可复核来源
+
+【证据】从 Valve 官方更新 CDN 获取 manifest、校验 manifest 里的归档 SHA256，
+再提取 `SteamUI.dll`。实际 streaming server 位于此 DLL，不能因为在
+`steamclient.dll` 找不到 FEC 字符串就判断 host 不支持。
+
+| 样本 | 清单版本 | 归档 SHA256 | DLL SHA256 |
+|---|---|---|---|
+| PE32 x86，基址 `0x3a000000` | `1769731672` | `8b712b2a3412a9066b7725f4e1c5cef9a7ca5b187b6585a5b92d25d09df0ba62` | `0cad7c69ace13e802be17beb06df299f7f733f01b4450a74bc68709494b21ddb` |
+| PE32+ x64，基址 `0x13a000000` | `1791918634` | `2378aa4845fea7b08d3cc33a88db240db20e33cf8bb934f7f4037d89a1bac1e9` | `1b9457943205dc3af0bd53463ba331cbd2a381388699705c02271aac7a2b1252` |
+
+来源是 [win32 清单](https://client-update.steamstatic.com/steam_client_win32)、
+[win64 清单](https://client-update.steamstatic.com/steam_client_win64)，归档固定为
+[bins_win32](https://client-update.steamstatic.com/bins_win32.zip.23e34a6d4b10596a44561a5100dac5585d2517da)、
+[bins_win64](https://client-update.steamstatic.com/bins_win64.zip.0ed643edc3bd395674066241d556cd970f4bdc19)。
+清单会更新，审计按上述内容哈希固定，不把较老 win32 包冒称为当前 win64 行为。
+
+x86 embedded FileDescriptorProto 位于文件 `0xaaaad0`，长度 20634，SHA256
+`eee83a5c4445e8fb1e394c600c0371ef99ac69062422002c74c7768c154c6bd8`；
+x64 位于 `0xd55800`，长度 21827，SHA256
+`9e7fd2cc5ce5496049014c8dc2195c9fcece4ef5b931b0cee684d084ecde53a4`。
+两者字段 25 均为 optional bool、default=false。GF(256) 65536B 乘法表和 256B
+逆元表与 §26 Android 表逐字节一致；x86 VA=`0x3aa2a3f8/0x3aa3a3f8`，
+x64 VA=`0x13acb1580/0x13acc1580`。表一致之外，§31 还验证实际发包和恢复字节。
+
+### 30.2 配置从哪里进入 Host
+
+【证据】Android UI 的 `OnUnreliableFECChanged @0xc911a8` 更新配置 `+113`
+和 hasbit，尾调用 `CShellApplication::SaveStreamingSettings @0xc99a98`；该保存
+函数序列化/写设置文件，没有在函数内直接更改活动 connection。Fast preset
+会预先写 true，故不能把“先观察到丢包”当作 FEC 的必要前提。
+
+客户端 `OnNegotiationInit @0x7ada6c–0x7ada9c` 将本地配置放进消息 4；
+`SetStreamingClientConfig @0x7b01c4` 的串流中发送条件见 §29.4：client state=6、
+bool 参数 bit0=0 才发 99。**协议/API 可更新，不等于该 UI checkbox 必然立即热更新。**
+
+| 实际入口 | x86 | x64 | 已执行的前提与动作 |
+|---|---|---|---|
+| 初始消息 4，`CNegotiationSetConfigMsg` | dispatcher `0x3a16a4a0` → handler `0x3a16c870` | `0x13a1eca00` → `0x13a1ef170` | host state=6；required `config` 存在且 protobuf 有效；复制 `streaming_client_config` 后 apply |
+| 运行中消息 99，`CSetStreamingClientConfig` | handler `0x3a16a882` | dispatcher 的 `case 99`，调用 `0x13a47cd90` | host state=7/8；解析成功才 CopyFrom → apply → 可选 delegate |
+| Host 本地配置 setter | `0x3a171470` | `0x13a1f4d70`（静态调用链） | 先复制并 apply；x86 原指令复播还验证 bool=false 且 state=7/8 时向 client 发 99，bool=true 抑制发送 |
+
+Host state 与 Android client state 是不同枚举，不要因为数字不同修改会话顺序。
+x86 的消息 99 跳表索引从 80 开始，`0x3a16b138[99-80]=2`，
+`0x3a16b0ec[2]=0x3a16a882`，不是只凭相邻字符串给 handler 命名。
+
+【结论】这是客户端设置/请求驱动的实际接线，不是通过向 connection 人工写 flag
+模拟“已启用”。两个固定 host 样本均能在运行中接收并应用字段 25。
+这些 receive handler 没有发送 FEC 专用的接受/拒绝/回显消息；这不否认可靠控制
+通道本来存在的传输 ACK，也不证明所有 delegate 都不会另发其他消息。
+
+【证据】CopyFrom 先 Clear 再 Merge；x86 `0x3a388a60` 调用
+`0x3a371460/0x3a38a0c0`，x64 `0x13a47cd90` 调用
+`0x13a4620d0/0x13a47e420`。消息中给了一个不含字段 25 的空 config，
+会恢复 false，**不是保留原值的局部 patch**。x86 坏 protobuf 不执行 apply、保留
+上次值；固定案例区分省略字段的有效消息与字节截断的无效消息。
+
+### 30.3 x86：连接级发送开关和固定冗余率
+
+【证据】apply `0x3a171e40` 的 `0x3a17228b–0x3a172298`：
+
+```text
+connection = server[+0x18]
+if connection != null:
+    connection[+7] = server[+0x165]  // config(+0x11c) 的 bool(+0x49)
+```
+
+`SendUnreliable @0x3a166b70` 要求 connection state=1，读取该 byte；true 时
+构造 type 11，取 channel `+0x18` 比例，调用 `AddPacket @0x3a163a30` 和
+`Drain @0x3a1668f0`；false 时走 type 3/4 发送窗口。
+
+真正的 percentage setter `0x3a167200` 只有两个已定位的直接调用者：
+`StartAudioData @0x3a1715d0`（消息 50）在 `0x3a171856` 传 5，codec=3
+（Opus）改为 0；`StartVideoData @0x3a171880`（消息 52）在
+`0x3a171b06` 传 5。channel 构造 `0x3a162b40` 的默认比例是 0。
+这里的 5 是 **5%**，不是每 5 片补一片，也不是以前审计注入的 20%/50%。
+
+【结论与边界】已定位的音视频初始化采用上述常量，没有找到这些调用者按丢包率
+改成 20%/50% 的证据；不能把这个有限的静态范围扩大成所有 host 都绝无自适应。
+连接开关 true、Opus 比例 0 时仍用 type 11，只生成数据片，不额外生成 parity。
+字段 25、选择 type 11 的模式、生成多少 parity 必须分别建模。
+
+x86 apply 只赋 flag，不重置普通窗口或 FEC 队列；真实开关后分别 drain 已排队的
+旧类型仍能发出。FEC → 普通 → FEC 不重置 FEC group ID。§31 明确区分此行为
+与新 x64，不把“保留在途/排队数据”写成跨版本统一策略。
+
+### 30.4 当前 x64：逐通道模式、Pyrowave/type 12 和模式清理
+
+【证据】`ApplyConfig @0x13a1f5c10` 尾部读取 server 的 current video channel
+`+0x2fe`、current codec `+0x248`、config FEC bool `+0x201`，调用
+`SetChannelMode @0x13a1e82b0`：
+
+```text
+codec == 9 (Pyrowave) : mode = 2
+否则 config.enable_unreliable_fec == true : mode = 1
+否则 : mode = 0
+```
+
+`GetChannel @0x13a1e5b60` / constructor `0x13a1e31d0` 给新 channel 的
+`+0x20` mode、`+0x24` percentage 均置 0。`StartVideoData @0x13a1f5580`
+先分配 channel ID 再 apply，因此真实启动 H.264(4)/HEVC(5)/AV1(8) 时会将该
+**视频通道**设为 0/1，Pyrowave(9) 则设为 2；`0x13a1f583c` 调用比例 setter 传 5。
+`ChannelSend @0x13a1e7ad0` 实际读取 mode：0 → 普通 type 3/4，1 → type 11
+和 RS，2 → type **12** 原始队列（`0x13a1e7800`），不是 type 11 的一种 shard。
+
+【更正】“传输编号 12…127 没有入口”只成立于 §28 的 Android ELF，撤回其
+可能被理解为所有官方版本 wire 全集的说法。此 x64 的 socket assert 接受
+`type < 13`（`0x13a1f6c10`），确有 type 12 发送路径。
+
+另一个实际模式来源是 host state=5 的消息 8（网络测试）：dispatcher
+`0x13a1ecc68–0x13a1ecc74` 将 channel **3** 设置为 mode 1；该入口的调试线程
+未在本节仿真中启动。不能由“field25=false”否认测试会话存在 FEC 包装。
+
+x64 `StartAudioData @0x13a1f4f00` 仍给 Opus 0、其他音频 5 的 percentage，
+但它没有设置音频 channel mode。固定新连接上的音频案例实际得到 mode 0、
+type 3；不能用 percentage=5 推断音频已走 FEC，也不能把视频 mode 当作连接全局位。
+复用 channel 的既有模式还须按实际先前状态解释。
+该 percentage setter `0x13a1e8240` 的已定位直接调用点是视频的
+`0x13a1f583c` 和音频的 `0x13a1f519d`；未发现这些调用者按丢包率改变比例。
+这仍是固定样本的静态直接调用范围，不是任意版本/任意间接调用不存在的证明。
+
+【证据】`SetChannelMode` 只有在新旧 mode 不同时调用
+`ResetPreviousMode @0x13a1e5ab0`，再写新 mode：
+
+| 旧 mode | 真实清理动作 |
+|---|---|
+| 0 | 清普通发送/重传状态；`ClearWindow @0x13a1e52b0` 将两个窗口重启到 sequence 0 |
+| 1 | `0x13a1e7220` 释放旧 FEC 发送队列的 packet 引用 |
+| 2 | `0x13a1e72d0` 释放旧 raw 发送队列的 packet 引用 |
+
+重复设置同一 mode 不清队列。codec=9 时只开关字段 25 不会离开 mode 2，也不会
+清 raw 队列。视频 channel ID 按 3…31 分配，超过 31 回到 3；StartVideo 停用
+旧 channel 的优先级后在新 ID 上 apply，不因 codec 变化就清理所有旧 channel。
+真实连续 29 次重启到 H.264，复用原来 Pyrowave 的 ID=3 时才触发该 ID 的 raw
+队列清理。模式清理不是“在途网络包撤回”，接收端仍须能分类到达的旧类型。
+
+【协议清单差异】x64 descriptor 相对 Android 样本增加 config 字段 36…40
+（Pyrowave 相关参数）、`CStartVideoDataMsg.colorspace=6` 和
+`CVideoFrameHeader`（frame_id/timestamp/codec/pixel_bits/YUV/colorspace/亮度/尺寸）。
+两者已有字段 35 `enable_video_pyrowave`，故不能说 Pyrowave 这个 codec 名称到
+x64 才出现。本项目 `ch_control_negotiation.c` 仅选择/声明 H.264 或可选 HEVC，
+没有声明 codec 9；新增 descriptor 名称不等于必须让 Switch 支持该编码器。
+相对 Android 的 codec 枚举，此 x64 descriptor 还移除了 VP8/VP9 的枚举项，不能
+把任一旧客户端的枚举表当作所有 host 的编码能力声明。
+从 codec=9 的 StartVideo API 到 type 12 已验证；其完整编码器选择、GPU payload、
+codec 私有 parity/interleave 与新增 frame header 不属于这里的 type 11 接收契约。
+
+## 31. Host 发包与 Android 接收的交叉验证、实现约束
+
+### 31.1 原始指令复播与边界
+
+```sh
+python3 scripts/fetch-steam-host-audit.py \
+  --output-dir build/video-recovery-re/official-host
+python3 scripts/audit-steam-host-fec.py \
+  --binary build/video-recovery-re/official-host/win32/SteamUI.dll \
+  --output build/video-recovery-re/host-fec-activation.json
+python3 scripts/audit-steam-host64-fec.py \
+  --binary build/video-recovery-re/official-host/win64/SteamUI.dll \
+  --output build/video-recovery-re/host64-fec-activation.json
+python3 scripts/audit-steam-fec-interoperability.py \
+  --host32-binary build/video-recovery-re/official-host/win32/SteamUI.dll \
+  --host64-binary build/video-recovery-re/official-host/win64/SteamUI.dll \
+  --android-binary build/video-recovery-re/libmain-arm64.so \
+  --output build/video-recovery-re/fec-interoperability.json
+```
+
+需要 Python `unicorn`、`pefile`、`protobuf`；Android ELF 的取得/身份见 §24。
+DLL 及归档保留在 ignored build 目录，不提交/再分发。固定参考分别为
+`steam-host-fec-reference.json`（52 场景）、`steam-host64-fec-reference.json`
+（37 场景）和 `steam-fec-interoperability-reference.json`（12 场景）。
+脚本只比较固定参考，不在普通运行时生成或改写期望。
+
+【证据】两个 Windows harness 执行原版的 frame 提取、protobuf parser、
+generated CopyFrom、server dispatcher、apply、stream/channel 构造/设置、
+RS/FEC 和队列处理，不再以 Python protobuf 替代 wire parser。
+Python 只根据同一二进制内 schema 构造具名输入。
+替身是分配/释放、OS 锁、日志/消息名、时钟、最终 socket send，以及出站
+控制消息的加密和可靠发送；x64 还替换与 FEC 无关的平台 ID/码率上限查询。
+`AssertFailed` 在 harness 中直接令案例失败，不通过吞断言使错误路径“通过”。
+
+交叉脚本把 **Windows 实际生成的 datagram 字节**交给 Android 原版
+Socket → Connection → Channel → Window/FEC/RS。地址匹配、分配、引用计数等
+仍继承各 harness 的替身；没有认证会话、真实网络、视频解码、物理显示和并发证明。
+它会额外复跑既有 36 个恢复断言及 71 个 Android FEC 案例作为基础装载审计。
+
+### 31.2 5% 保护的对象和可恢复范围
+
+【证据】两个 Host 经消息 99 和 H.264 StartVideo 的真实发包，对于相同输入，
+type 11 的 header/meta/shard/parity 字节相同。MTU=1500、L=3000 时
+S=1472、k=3、m=1，共 4 片；送给 Android 原版接收器：全到达、丢中间一片、
+parity 先到都各交付一份**逐字节正确**的原 payload，丢两数据片则不交付。
+这证明 5% rounding 后的实际保护能力，不是把审计注入的 50% 当作默认。
+
+| 输入 L，MTU=1500 | k | m=`ceil(k*5/100)` |
+|---|---|---|
+| 100 | 1 | 1 |
+| 3000 | 3 | 1 |
+| 29440 | 20 | 1 |
+| 29441 | 21 | 2 |
+
+【结论】5% 是按传输组的 shard 数向上取整，并不保证每组恰好 5% 开销。
+保护单位来自一次 SendUnreliable 的分组，不能未经上层 packetizer 证据就等同于
+“一整个视频帧”。丢片数不超过 m 且总计有 k 个不同有效 shard 才可能恢复；
+整组都丢、超预算、组被替换、或参考图像本来已损坏，不由 FEC 自动解决。
+该用户“一两秒卡顿”的因果关系仍无设备日志支持。
+
+### 31.3 动态开关的跨版本反例
+
+【证据】交叉场景从新通道普通 sequence=0 开始，先交付 N=1 或 3 份普通
+payload，再通过真实消息 99 开 FEC、交付一组，然后再用 99 关 FEC：
+
+- x86 后续普通 sequence 从 N 继续，Android 原版继续逐份交付。
+- x64 进入 FEC 时清旧普通窗口到 0，切回普通后也从 0 发。Android 保留的普通
+  接收水位为 N，前 N 份被判为旧序号；发送到 sequence=N 时恢复交付。
+
+这不是仅观察一个 Reset 函数后的猜测：固定 fixture 包含 Host 生成的每个
+sequence、Android 接收水位和实际交付数。payload 为确定性字节，不声称已复现
+H.264 参考依赖或真实 Steam UI 的热切换流程；客户端 UI 仅保存设置的路径见 §30.2。
+
+【结论】撤回“消息 99 可更新配置，所以运行中可以随时无缝开关 FEC”的推论。
+Host 接受字段、发送器已切模式、对端接收水位兼容，是三项不同条件。
+这里已经出现实际跨版本反例，不能以“旧队列保留/清掉即可”代替对端状态同步。
+也不能把这当成现有用户停顿的根因：当前本项目并未请求字段 25=true。
+
+### 31.4 接线约束
+
+依据上述直接证据，type 11 接收实现的边界为：
+
+- 先具备独立 type 11 分组/RS 和唯一 shard 计数，再在**初始协商**声明字段 25。
+  不在包头 parser 尚拒绝 11 时先发 true；不以本机 outgoing flag 拒收 host 的 11。
+- 启动时按本机能够实现的 codec 宣告能力。H.264/HEVC 的 type 11 与 Pyrowave
+  的 type 12 分开；未知类型/codec 保持明确的不支持路径，不把 12 当 11 猜着解。
+- 配置收到/发送使用完整配置语义；省略字段会恢复默认。发送反馈、连接 ACK、
+  FEC 开关和比例不合并；5% 由这里的 Host 决定，不自创一个客户端协商 percentage。
+- 不据丢包率自行热切字段 25，也不因收到 99 就重置本地全部接收序号。动态开关
+  需要明确的通道重建或经两端验证的同步契约；现有消息 99 本身不提供该保证。
+- FEC 失败后仍按已核对的媒体序列/关键帧恢复处理完整组，不向 decoder 投喂
+  未补齐 payload；保留 §26 原版重复片错误交付的反例作为项目必须防护的输入。
+
+这些约束限定 type 11 的接收/启动声明及已取证控制链，不恢复整体协议、所有
+平台/版本或生产集成的就绪判断。SNS/SDR、Pyrowave 私有编码、真实背压和 Switch
+解码/显示不被这些指令复播代替。
