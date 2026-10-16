@@ -792,16 +792,52 @@ AuthorizationResponse。session 的 SetPairingInfo/CancelPairing 成功 callback
 （`0x791ac4`、`0x791b00`）。
 
 `CancelPairing @0x79c540` 在云端 Connected 且 manager 为 2/3 时先发服务 CancelPairing，
-再 StopStreaming(0)。manager OnDisconnected 仅显式中止状态 3（`0x79ef58–0x79ef6c`）；
+再 StopStreaming(0)。**边界修正**：撤回可将此处理解为“取消总会清理本地事务”的表述。
+session 不存在、未 Connected 或 manager 不在 2/3 时，函数直接返回，连本地 StopStreaming
+也不执行（`0x79c540–0x79c594`）。StartPairing 则先写状态 2，未 Connected 时以 error=18
+停止事务；两者的离线处理不对称。manager OnDisconnected 仅显式中止状态 3（`0x79ef58–0x79ef6c`）；
 OnConnected 只恢复主机订阅，不重放 StartPairing/SetPairingInfo。
 **实现约束**：不能靠重新创建 session 延续旧配对 PIN。断线后的 UI 退出/重新开始需有明确事务
 归属。为阻止旧 callback 影响新事务而增加 generation 标识，属于本项目并发控制，非线上字段。
 
 ### 11.2 授权回复、重复密钥交换及持久化
 
-**Evidence：** `HandleDeviceAuthorizationResponse @0x79d680` 只在 manager 3/4 接受当前授权；
-其他状态下收到带 auth_key 的回复，会发送 AuthorizationConfirmed(result=8, Canceled)，然后退出
-（`0x79d9c0–0x79da44`）。密钥交换算法仍按认证参考：
+**证据修订**：撤回此前“只在 manager 3/4 接受当前授权”可被理解为入口已校验当前主机、
+以及“带 auth_key 就交换”的泛化规则。`HandleDeviceAuthorizationResponse @0x79d680` 的实际顺序是：
+
+1. 仅 manager 3/4 进入授权处理，其余状态转到过期回复分支。
+2. 在检查 auth_key 前先检查 `result==0`（`0x79d6c8–0x79d6cc`）。非 Success 不做密钥交换，
+   即使消息带 auth_key，也按下表处理。
+3. Success 时读取持久化记录、steamid 和 auth_key。带 auth_key 则调用密钥交换并发送 type 14
+   确认；交换函数返回 false 时退出，不推进事务。不带 auth_key 且状态 3 则保存已有 secret，
+   属于另一个兼容分支（`0x79d7f8–0x79d830`）。
+4. 然后才按 manager 状态分派；状态 4 在此处校验来源 client_id 等于当前目标
+   （`0x79d954–0x79d968`）。它不是整函数的入口过滤器。
+
+| authorization_result | manager 3：云端配对 | manager 4：已知主机授权，来源匹配 |
+|---|---|---|
+| 0 Success | 完成授权、通知 delegate、结束配对事务 | 转状态 5 并立即发送 StreamingRequest |
+| 1 Denied | StopStreaming(error=2) | 同左 |
+| 2 NotLoggedIn | StopStreaming(error=3) | 同左 |
+| 3 Offline | StopStreaming(error=4) | 同左 |
+| 4 Busy | StopStreaming(error=5) | 同左 |
+| 5 InProgress | **StopStreaming(error=1)** | **保留事务，直接返回** |
+| 6 TimedOut | StopStreaming(error=6) | 同左 |
+| 7 Failed、8 Canceled、其他值 | StopStreaming(error=1) | 同左 |
+
+表中 result 是 ERemoteDeviceAuthorizationResult，error 是内部 EServerError；不能套用 §11.3 的
+StreamingResult。尤其 Busy 在授权路径终止，InProgress 在两种授权事务中的行为也不同。
+arm64 的结果比较分支位于 `0x79d92c`、`0x79d998` 起的指令中，并非与开流响应共用跳转表。
+实际承担模拟器 UI 的 x86_64 shell 同样先检查 result（`0xd0a100`），两表分别为 `0x518e28`、
+`0x518e0c`；InProgress 分别跳到 StopStreaming(1)（`0xd0a643`）和直接返回（`0xd0a65e`）。
+
+过期回复分支对带 auth_key 的消息发送 AuthorizationConfirmed(result=8, Canceled)，无 auth_key
+则忽略（`0x79d9c0–0x79da44`）。**函数级观察**：在外部密钥交换桩返回成功的离线输入中，
+状态 4 收到非目标来源的 Success+auth_key，会先交换并确认 Success，再因来源不匹配确认 Canceled。
+这证明检查顺序，不能据此宣称真实网络可绕过授权；上游分派能否到达该输入、真实密码校验是否
+接受，均未作该实测。
+
+密钥交换算法仍按认证参考：
 
 ```text
 peer_public = response.auth_key XOR SHA256(pairing_pin 的四位 ASCII)
@@ -810,9 +846,15 @@ decrypt(response.device_token, paired_secret) 必须为 8 字节且等于本机 
 ```
 
 `BHandleKeyExchangeAuthorization @0x79dbfc` 缓存上一次 auth_key 及其校验结果；同一 auth_key
-重复到达直接复用结果，不重复执行昂贵的密钥交换。只有不同 auth_key 才增加尝试计数；前三次
-允许计算，第四个不同值触发失败（`0x79dc38–0x79dcb0`）。校验成功后按主机 client_id 和 steamid
-保存新 secret，并发送 type 14 确认。不能按收到数据包总数限制三包，也不能重复派生新 secret。
+重复到达直接复用结果，不重复执行昂贵的密钥交换。**计数修正**：这里只与最近缓存值比较，
+不是维护所有出现过的 key 的集合；A→B→A 会计作三次。每次不匹配缓存值都先递增计数，
+旧计数小于 3 才允许计算，否则令输出授权结果为 1 并 StopStreaming(error=2)
+（`0x79dc38–0x79dcb0`）。
+
+**重复确认与事务推进必须分开**：缓存命中将缓存结果写入输出参数，但函数 bool 返回 false
+（memcmp 的 0 保留到返回，`0x79dd5c–0x79dd64`、`0x79dee4–0x79df0c`）。调用者仍发送 type 14
+确认，随后退出，因此重复的成功 auth_key 也不会重复完成配对或再次启动开流。校验新 key 成功后
+才按主机 client_id 和 steamid 保存新 secret。不能按收到数据包总数限制三包，也不能重复派生新 secret。
 云端配对成功后注册 status，通知授权成功 delegate，再结束当前事务；状态 4 的授权成功则回到
 状态 5，保持当前开流事务并再次发送 StreamingRequest（`0x79db80–0x79db90`）。
 
@@ -1324,6 +1366,11 @@ plaintext = protobuf EncryptedData{ peer_identity_string }
 encrypted_data = AES-256-GCM(aes_key, nonce, plaintext, AAD=empty, tag_length=16)
 ```
 
+这里 `encrypted_data` 的字节布局是 `ciphertext || 16字节tag`，**不含 nonce 前缀**。
+`AES_GCM_EncryptContext::Encrypt @0x74b6dc–0x74b9f0` 先写密文，再把 GET_TAG 的输出写到
+密文末尾，并将输出长度加 16。nonce 由 challenge 派生，不沿用 Remote Play CBC 包的 IV 封装。
+§20 用原始 wrapper 指令及可控 EVP 桩复核了这一布局；密码 provider 本身不在该测试证明范围内。
+
 同时携带 ephemeral 公钥原始 32 字节（f16）和所选 relay 公钥首字节的整数值（f15），清除外层明文
 peer_identity_string（f11）。原始 X25519 的 SHA256 包装由 `CCrypto::PerformKeyExchange
 0x7461fc–0x746318` 确认，不能漏掉这第一次 hash。第二次 hash、12 字节 nonce 和 16 字节 tag
@@ -1469,3 +1516,43 @@ migration 由 stats 中 migrate_request_ip/port 触发，客户端分别保存 p
 **不应追求的假完整性**：选择兼容 SNS/SDR backend 时，应用层复刻和该库内部全部私有协议的
 重新实现是不同交付边界。选择完全自有的 Switch backend 时，必须连同后者定义并实现，不能因
 本文已描述上层行为而把一个 codec 冒充可工作的 SDR。相关实现/验证任务仅在 GitHub Issues 维护。
+
+## 20. 原始指令的离线复核与证明边界
+
+仅凭反汇编阅读容易遗漏前置判断、返回寄存器及相邻跳转表。仓内
+[`tools/steam-remote-policy-audit.py`](../tools/steam-remote-policy-audit.py) 用 Unicorn 执行固定样本
+的原始 AArch64 指令，输入为人工构造对象；不连接 Steam、不使用抓包中的凭据。加载时沿用
+descriptor 提取器的 ELF SHA256/架构检查，应用相对重定位；遇到未建模调用、越界控制流或指令
+预算耗尽即失败，不能静默跳过未知分支。Python `-O` 被拒绝，以保证断言生效。
+
+```sh
+python3 tools/steam-remote-policy-audit.py \
+  --elf /absolute/path/to/libmain.so \
+  --report build/steam-remote-policy-audit.json
+```
+
+依赖 Python 3、google.protobuf、unicorn、cryptography；报告目录须预先存在。
+核心覆盖范围如下，精确的输入矩阵和计数由脚本及 JSON 报告给出：
+
+| 原始函数/指令 | 核对内容 |
+|---|---|
+| AuthorizationResponse `0x79d680`、key-exchange guard `0x79dbfc` | result/状态矩阵、auth_key 前置条件、来源检查顺序、重复确认、三次计算限制 |
+| StreamingResponse `0x79e828` | 0–15 及未知结果、session key 解密失败、迟到/零 request_id |
+| ProofRequest `0x79e1c0` | 更新标志、SHA 输入、持久化/加密/发送顺序、身份/ID 不匹配、加密失败 |
+| Start/CancelPairing `0x79c514`、`0x79c540` | 云端各状态、缺失 session、manager 状态的分派 |
+| transport selection `0x8755a4`、cloud bridge | 迟滞、15 个采样桶、受控端首次等待边界、队列及重连分派 |
+| POP penalty `0x81c3f0`、relay receive `0x816344` | 30 秒衰减、500000/1750000 us 边界、5–1300 字节长度守卫 |
+| relay data `0x83ed9c`、ping `0x8176d8` | 线格式、序号截断、时间差边界、100/1300 字节及未决 deadline |
+| cipher context `0x8a094c`、key exchange `0x74610c`、curve25519 `0x8b88fc` | 执行原始 X25519 指令，独立实现对照共享值、两次 SHA256 的输入、context 字节、nonce 和 GCM 参数 |
+| GCM wrapper `0x74b6dc` | EVP 调用参数、密文/tag 的目标偏移和输出长度，无 nonce 前缀 |
+
+**Evidence**：断言检查的是这些原始指令在明确输入和外部返回值下的行为；SHA provider 使用
+hashlib，X25519 对照和 GCM 桩输出使用 cryptography。日志、容器、内存工具、部分 protobuf
+构造/发送、SDK/服务回调和 EVP provider 按测试显式替代。Proof 的 SymmetricEncrypt 也是桩，
+不用于证明 CBC 算法；GCM 测试证明 wrapper 的布局与调用，不证明原始 OpenSSL provider。
+key-exchange 缓存测试在进入新密码计算前停止，不证明整个授权密码实现。
+
+**Conclusion**：离线复核支持本文所列分支、顺序和封装规则，并揭示 §11 中已明确撤回的泛化。
+它不等于完整客户端执行、主机互操作或真实公网丢包测试，也不能把未覆盖输入当成已验证。
+不同架构/版本需要单独核对；本文 x86 shell 的授权分派另有静态指令证据，不能用 arm64 仿真
+替代 shell 的全部运行时验证。

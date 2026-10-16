@@ -12,7 +12,11 @@
   继续要求“设备上的四位数授权代码”；IHSlib 回调最终给出 `result=6`。
 - 逆向与主机日志证据（2026-10-04）：官方 Steam Link 1.3.32.316 Linux x86_64 `bin/steamlink`
   （SHA256 95482ca6120f90bb90798b27206b7946ab732e079f008d7fc90ea58a8b0074e1）反汇编，下文地址均为
-  该文件的虚拟地址；Linux Steam 主机 `logs/remote_connections.txt` 的配对与串流记录。
+  该文件的虚拟地址，明确标为 Android 的地址除外；Linux Steam 主机 `logs/remote_connections.txt`
+  的配对与串流记录。
+- Android 复核证据（2026-10-16）：官方 1.3.32 arm64 `libmain.so` 原始指令离线仿真及 x86_64
+  `libshell.so` 静态分支对照，样本 hash、地址和复现方法见
+  [公网协议参考 §11.2、§20](STEAM_REMOTE_PLAY_NETWORKING.md#112-授权回复重复密钥交换及持久化)。
 - 旁证：Steam 社区讨论、ValveSoftware/steam-for-linux issue 中的 Remote Play
   “Authorize Device”/authorization code UI 现象。旁证只能辅助解释 UI 名词，不能单独决定协议实现。
 
@@ -117,19 +121,28 @@ Steam host 的 Remote Play 配对窗口。
 
 本仓 `third_party/ihslib/src/client/authorization.c` 当前处理 `AuthorizationResponse`：
 
-- `InProgress` 调 progress 回调并继续等待。
-- `Success` 调 success 回调并停止任务。
-- 其他结果调 failed 回调并停止任务。
+- 不带 auth_key 的普通结果分支：`InProgress` 调 progress 回调并继续等待；`Success` 调 success
+  回调并停止任务；其他结果调 failed 回调并停止任务。
 - 当前代码会把 response 中的 `result`、`steamid`、`auth_key` 长度和 `device_token` 长度写入日志。
-- 带 `auth_key` 的 response 不看 `result`，直接按密钥交换处理（官方在 @0x18c8c9 检查 `auth_key` 存在后，
-  于 @0x18c992 调用 @0x18b110）：`主机公钥 = auth_key XOR SHA256(配对码)`；
+- 当前 IHSlib 对带 `auth_key` 的 response 不看 `result`，直接按密钥交换处理。此前依据的 Linux
+  局部指令是在 @0x18c8c9 检查 `auth_key` 存在后，
+  于 @0x18c992 调用 @0x18b110：`主机公钥 = auth_key XOR SHA256(配对码)`；
   `secret = SHA256(X25519(本机私钥, 主机公钥))`（@0x1ad110，X25519 后在 @0x1ad25a 调用 SHA256）；
   用该 secret 对 `device_token` 做 SymmetricDecrypt，结果必须恰为 8 字节且等于本机 deviceId
   （@0x18b2b4–0x18b382）。校验成功后该 secret 成为此主机的 secretKey（@0x18b3ce），官方按主机持久化
   （@0x183830，日志 `Saved persistent client key for Client ID %llu, Steam ID %llu`）。官方每次配对
   最多处理 3 次（@0x18b169）。
-- IHSlib 按同样步骤处理；成功后 client 切换到该主机 secret。应用用 `IHS_ClientGetSecretKey()`
+- IHSlib 按上述密码步骤处理；成功后 client 切换到该主机 secret。应用用 `IHS_ClientGetSecretKey()`
   取得并保存到 profile 中对应主机记录，后续串流前用 `IHS_ClientSetSecretKey()` 选择。
+
+**证据修订（2026-10-16）**：撤回将“不看 result、带 auth_key 直接交换”推广为所有官方客户端
+入口规则的表述。Android arm64 `HandleDeviceAuthorizationResponse @0x79d680` 在
+`@0x79d6c8–0x79d6cc` 先要求 `result==Success`，之后才检查 auth_key；实际模拟器使用的 x86_64
+shell `@0xd0a100` 也有这个前置判断。Android 云端配对状态收到 InProgress 会以通用错误终止，
+已知主机授权状态则继续等待；不能统一套用 IHSlib 的回调表。完整分支见
+[公网协议参考 §11.2](STEAM_REMOTE_PLAY_NETWORKING.md#112-授权回复重复密钥交换及持久化)。
+本轮未重新取得上述 Linux ELF 来复核其完整入口，保留旧局部密码证据，不能据此断言 Linux 的
+完整分派也忽略 result。本修订记录样本行为差异与证据范围，不直接更改当前 IHSlib 的协议流。
 
 真机日志里的 `authorization failed result=6` 可以确定映射到
 `IHS_AuthorizationTimedOut`，因为本仓 `include/ihslib/client.h:40-49` 和 proto

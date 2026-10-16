@@ -44,3 +44,12 @@ protoc -I docs/protocol/steamlink-1.3.32 \
 
 本目录只含静态协议事实与来源清单，不含 APK/ELF、会话凭据或抓包。SignedCertificate 的
 private_key_data 字段可能带私钥；运行时数据不能因为消息名带 Certificate 就公开记录。
+
+## 行为复核
+
+字段定义不能证明策略。
+[`tools/steam-remote-policy-audit.py`](../../../tools/steam-remote-policy-audit.py) 可对同一固定 ELF
+执行原始 AArch64 指令，核对授权、开流、Proof、选路和 relay 封装的合成输入矩阵。
+它需要 google.protobuf、unicorn、cryptography；外部调用使用明确的桩，不是网络互操作测试。
+运行方式、原始地址及证明边界见
+[公网协议参考 §20](../../STEAM_REMOTE_PLAY_NETWORKING.md#20-原始指令的离线复核与证明边界)。
