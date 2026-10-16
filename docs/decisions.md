@@ -2386,7 +2386,9 @@ Switch 同类旧记录保留其角色/状态证据范围，不自动升级为 E2
 4. 同时写 interior_score（interior ping + penalty）和 legacy_score（完整 forward 总分）；
    POP/token 使用 canonical 绑定，相同 local/remote 组合先合并。
 5. 故障恢复 fixture 必须在注入后从当前新 primary POP 收到有效 E2E 包，再连续保持
-   可发送、不同 POP 和角色条件 5 秒；任一条件丢失就重新计时。本地 promotion、relay-only
+   可发送、不同 POP 和角色条件至少 5 秒，且验收末尾 1 秒内仍须有新的有效 E2E 收包；
+   任一角色条件丢失就重新计时。它被动观察 SDK，不额外强发探测。30 秒是 fixture 总恢复
+   上限，不是官方协议常量。本地 promotion、relay-only
    ACK 或 socket 成功均不能替代该要求。诊断字段只在 probe 构建存在，不在热路径打印。
 
 本决定不声称候选图和官方全等，也不宣称通过媒体或 NAT 变化下的恢复。nearest-three
@@ -2397,3 +2399,9 @@ D-065 的所有者校正：SetSessionSelectQualityMetrics 的 `0x81c49c` 从 Rel
 base gap/100 分惩罚的适配。使用 root ping failure 及 root lastReceived，不能因两者通常
 同涨同落就合并。原始完整 base 函数用相反计数和 500000/1750000 微秒边界执行核对；
 这项修正不是端到端恢复完成的声明。
+
+D-065 的单包校正：官方受控样例的第二次复核捕捉到经新 primary 的一个有效 E2E 包，
+随后 IHS 业务仍因 inactivity 结束。因此撤回将“一包有效 E2E + Connected 保持”当作
+持续恢复证明的判断。fixture 改为暴露有效 E2E 观察计数，并在五秒保持的末尾检查新计数
+是否仍在一秒内增长；第一次见包只报告 OBSERVED，达到全部条件才报告 RECOVERED。
+这仍是控制通路的证据，不替代故障中的编码帧/业务流验收。

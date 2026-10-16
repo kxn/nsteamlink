@@ -254,6 +254,9 @@ int NSL_REMOTE_LIVE_ENTRY(int argc, char **argv) {
     bool sdr_success = false, fault_success = false, injected = false;
     unsigned fault_generation = 0;
     uint64_t fault_at = 0, recovered_at = 0;
+    unsigned observed_e2e = 0, recovery_generation = 0;
+    uint64_t e2e_received_at = 0;
+    bool reported_e2e = false;
     unsigned terminal_stage = 0;
     uint64_t terminal_at = 0;
     while (!l.failed && now_ms() < deadline) {
@@ -312,19 +315,39 @@ int NSL_REMOTE_LIVE_ENTRY(int argc, char **argv) {
                     fflush(stdout);
                 } else if (injected && sl_sns_test_relay_loss(l.sns, -1, fault)) {
                     if (fault[0] != fault_generation && fault[3] && fault[4] && fault[1]+fault[2]) {
-                        if (!recovered_at) {
+                        if (!recovered_at || recovery_generation != fault[0]) {
+                            recovery_generation = fault[0];
                             recovered_at = now_ms();
-                            printf("SDR_BACKUP_RECOVERED=1 post_fault_e2e=1 milliseconds=%llu dropped_tx=%u dropped_rx=%u\n",
-                                (unsigned long long)(recovered_at-fault_at), fault[1], fault[2]);
+                            observed_e2e = fault[3];
+                            e2e_received_at = recovered_at;
+                        } else if (observed_e2e != fault[3]) {
+                            observed_e2e = fault[3];
+                            e2e_received_at = now_ms();
+                        }
+                        if (!reported_e2e) {
+                            reported_e2e = true;
+                            printf("SDR_BACKUP_E2E_OBSERVED=1 milliseconds=%llu\n",
+                                (unsigned long long)(recovered_at-fault_at));
                             fflush(stdout);
                         }
-                        fault_success = now_ms()-recovered_at >= 5000;
+                        /* A single reply can precede another stall. Require
+                         * a fresh reply at the end of the five-second hold. */
+                        fault_success = now_ms()-recovered_at >= 5000 &&
+                            now_ms()-e2e_received_at <= 1000;
+                        if (fault_success) {
+                            printf("SDR_BACKUP_RECOVERED=1 post_fault_e2e=1 held_ms=%llu fresh_e2e_ms=%llu dropped_tx=%u dropped_rx=%u\n",
+                                (unsigned long long)(now_ms()-recovered_at),
+                                (unsigned long long)(now_ms()-e2e_received_at), fault[1], fault[2]);
+                            fflush(stdout);
+                        }
                     } else {
                         recovered_at = 0;
+                        observed_e2e = 0;
+                        e2e_received_at = 0;
                     }
                 }
-                if (injected && now_ms()-fault_at > 20000 && !fault_success) {
-                    printf("SDR_RECOVERY_TIMEOUT=1 generation=%u dropped_tx=%u dropped_rx=%u usable_e2e_primary=%u different_pop=%u\n",
+                if (injected && now_ms()-fault_at > 30000 && !fault_success) {
+                    printf("SDR_RECOVERY_TIMEOUT=1 generation=%u dropped_tx=%u dropped_rx=%u e2e_observations=%u different_pop=%u\n",
                         fault[0], fault[1], fault[2], fault[3], fault[4]);
                     l.failed = true;
                 }

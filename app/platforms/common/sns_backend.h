@@ -28,8 +28,9 @@ void sl_sns_get_stats(const sl_sns *, sl_sns_stats *);
 bool sl_sns_start_relay_probe(sl_sns *);
 void sl_sns_relay_probe_stats(const sl_sns *, unsigned out[5]);
 void sl_sns_sdr_debug(const sl_sns *, unsigned out[16]);
-/* out: generation, dropped TX/RX, usable new primary with a valid post-fault
- * E2E packet from its POP, different POP. Local promotion alone is insufficient. */
+/* out: generation, dropped TX/RX, observed E2E counter while the new primary
+ * is usable (zero otherwise), different POP. The fixture checks fresh counter
+ * progress at the end of its hold; a lone packet cannot prove recovery. */
 bool sl_sns_test_relay_loss(sl_sns *, int mode, unsigned out[5]);
 bool sl_sns_test_terminal(sl_sns *, int packet_case);
 #endif

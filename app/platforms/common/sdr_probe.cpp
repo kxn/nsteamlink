@@ -40,6 +40,10 @@ struct ProbeRelay {
     SteamNetworkingMicroseconds last_received = 0;
     sl_sdr_latencies interior{};
     int penalty = 0;
+#if NSL_SNS_PROBES
+    SteamNetworkingMicroseconds last_valid_e2e = 0;
+    unsigned post_fault_e2e_count = 0;
+#endif
     ProbeRelay() {
         front.Reset();
         stats.Init(SteamNetworkingSockets_GetLocalTimestamp(), ELinkActivityLevel::Idle);
@@ -66,8 +70,7 @@ struct sl_sdr_probe {
     bool drop_enabled = false;
     netadr_t drop_address;
     uint32_t drop_pop = 0;
-    SteamNetworkingMicroseconds drop_started = 0, last_valid_e2e = 0;
-    uint32_t last_valid_e2e_pop = 0;
+    SteamNetworkingMicroseconds drop_started = 0;
     unsigned dropped_tx = 0, dropped_rx = 0;
 #endif
 };
@@ -458,6 +461,9 @@ static void update_network(sl_sdr_probe *p, CSteamNetworkConnectionBase *connect
             r.challenge = 0; r.ping_deadline = r.request_until = 0;
             r.ping_failures = r.request_failures = 0; r.last_received = 0;
             r.stats.Init(now, ELinkActivityLevel::Idle); r.sent_acks.clear();
+#if NSL_SNS_PROBES
+            r.last_valid_e2e = 0; r.post_fault_e2e_count = 0;
+#endif
             if (choose_address(p, r, now)) { r.downtime = {}; r.force_ping = true; }
         }
         if (r.established && r.last_received + 60000000 < now) {
@@ -1026,8 +1032,11 @@ public:
     }
     void valid_e2e(ProbeRelay &r, SteamNetworkingMicroseconds now, uint32_t flags) {
 #if NSL_SNS_PROBES
-        network->last_valid_e2e = now;
-        network->last_valid_e2e_pop = r.pop_id;
+        // Inline data and its stats can visit this helper at the same receive
+        // time. The fixture needs fresh observations, not callback counts.
+        if (network->drop_enabled && now != r.last_valid_e2e)
+            ++r.post_fault_e2e_count;
+        r.last_valid_e2e = now;
 #else
         (void)r;
 #endif
@@ -1363,12 +1372,13 @@ extern "C" bool sl_gns_sdr_test_loss(uint32_t handle, int mode, unsigned out[5])
         n.drop_address = t.primary->address;
         n.drop_pop = t.primary->pop_id;
         n.drop_started = SteamNetworkingSockets_GetLocalTimestamp();
+        for (auto &r : n.relays) r.post_fault_e2e_count = 0;
         n.drop_enabled = true;
     } else if (mode == 0) n.drop_enabled = false;
     out[0] = t.route_generation; out[1] = n.dropped_tx; out[2] = n.dropped_rx;
-    out[3] = t.BCanSendEndToEndData() && (!n.drop_enabled ||
-        (t.primary->address != n.drop_address && n.last_valid_e2e > n.drop_started &&
-         n.last_valid_e2e_pop == t.primary->pop_id));
+    bool usable = t.BCanSendEndToEndData() && (!n.drop_enabled ||
+        (t.primary->address != n.drop_address && t.primary->last_valid_e2e > n.drop_started));
+    out[3] = usable ? (n.drop_enabled ? t.primary->post_fault_e2e_count : 1u) : 0u;
     out[4] = t.primary && t.primary->pop_id != n.drop_pop;
     return true;
 }
