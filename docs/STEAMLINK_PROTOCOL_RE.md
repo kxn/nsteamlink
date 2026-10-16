@@ -266,10 +266,12 @@ data[13] = messageType；若 hasExtHeader：data[14..25] = 扩展头 12 字节
 
 `UpdateReliableState`（0x7f9d0c，由 `CStreamChannel::Update`→`Update` 0x7f9c9c 周期调用）：
 1. 按序上送：弹出接收窗口连续头部全部包，经 conn 虚表上交（统计到 PacketStats）；
-2. ACK：连续交付点前进（+42 u16）即置 +41 标志并发 ACK
+2. ACK：连续收包水位变化（+42 u16）即置 +41 标志，到期后发 ACK（§45）
    （data[0]=7、data[4]=通道、data[7..8]=连续交付点、+56 区 data[13]=时间回显；
    长度 17 字节级——与 pcap 观测 21B 同量级，UDP 连接头另计）；
-   另有周期性重发 ACK（时间偏移对时用）；
+   **撤回原“另有周期性重发 ACK”结论**：完整构造器、HandlePacket和Channel::Update
+   的原指令执行证明没有新接收事件就不重复ACK；旧包重到会重新置待确认标志，
+   反馈到期前会延后。初始水位0导致首次单独交付ID0不发ACK。详见§45；
 3. NACK：扫描接收窗口 (lastAcked..next)，发现空槽且满足速率条件
    （全局 [f47000+2444] 参与限频）→ 构造扩展 NACK（含占位掩码，窗口覆盖上限 0x140=320 包）
    发给对方。
@@ -279,9 +281,9 @@ data[13] = messageType；若 hasExtHeader：data[14..25] = 扩展头 12 字节
 | # | 项 | 官方（地址） | 我们当前 | 差异判定 | 真机判据 |
 |---|---|---|---|---|---|
 | 1 | 重传放弃 | 无放弃，重传到 ACK/NACK 确认（0x7f8ac4/0x7f94b8/0x7f95dc 全路径） | 3s 放弃（D-039），放弃=从发送窗口除名 | **自创行为**；放弃制造永久洞，但 Host 的 20 秒恢复机制未证实 | 不再出现"重传 25 次后放弃"；卡死时长消失或 <1s 级 |
-| 2 | NACK | 收到洞即发扩展 NACK（掩码），收到 NACK 快速重发（0x7f9d0c/0x7f95dc） | ihslib 无 NACK 机制 | **缺失整个快速恢复通道**；host 只能靠自己的重复 ACK/计时发现洞 | tcpdump 可见我们发出的 type-8 NACK 包 |
+| 2 | NACK | 洞后有老包且反馈到期才发扩展 NACK（§45）；收到 NACK 触发候选重发（0x7f9d0c/0x7f95dc） | ihslib 无 NACK 机制 | **缺失整个快速恢复通道**；host 只能靠自己的重复 ACK/计时发现洞 | tcpdump 可见我们发出的 type-8 NACK 包 |
 | 3 | 在途限制 | 无（窗口制，ACK/NACK 驱动滑动，掩码覆盖 ≤320 包） | 单在途（D-040）+ 100ms 心跳 | **自创行为**；单在途把"高频 delta 容忍丢失"变成"串行等待" | 输入包速率/在途数与官方 pcap 对齐（31/s 批量、无 1 包往返） |
-| 4 | ACK 语义 | 累计 ACK+空槽跳跃+周期重发+时间回显（0x7f94b8） | ihslib window.c 自实现 | 行为需逐项核对（互操作已通，疑似大体一致） | host ACK 延迟统计正常（≤99ms 已观测） |
+| 4 | ACK 语义 | 累计收包水位+旧包重到触发+限流+时间回显（§45；撤回周期重发） | ihslib window.c 自实现 | 行为需逐项核对（互操作已通，疑似大体一致） | host ACK 延迟统计正常（≤99ms 已观测） |
 | 5 | 接收窗口交付 | 只弹连续头部，无弃洞（0x7f9d0c 第 1 步） | 同构 | 一致 | — |
 | 6 | FEC | 独立类型 11、系统式 RS 编解码及组恢复，详见 §26 | 字段 25 默认 false，类型 11 在解析器被拒绝 | 明确的抗丢包能力差异；与具体故障的因果关系未证明 | — |
 
@@ -302,7 +304,7 @@ data[13] = messageType；若 hasExtHeader：data[14..25] = 扩展头 12 字节
 |---|---|---|
 | 重传节奏 | RTO=`1.25×clamp(srtt)`；NACK age 另算（§14.11–12） | 5ms tick，25ms 起倍增封顶 100ms |
 | 放弃 | **无**（重传至 ACK/NACK 确认） | `RETRANSMISSION_GIVE_UP_MS=3000`，放弃=退休（D-039） |
-| ACK | **累计**（连续交付点 data[7..8]）+ 周期重发 + 时间回显（RTT 对时） | 逐包 ACK（packetId+fragmentId+body 时间戳） |
+| ACK | **累计**（连续收包水位 data[7..8]）+ 旧包重到触发 + 时间回显（§45，撤回周期重发） | 逐包 ACK（packetId+fragmentId+body 时间戳） |
 | NACK 发送 | 洞检测→扩展 NACK：首洞序号+连续交付点+320 包占位掩码，限频 | 仅单包校验失败时发（ok=false），无窗口状态报告 |
 | NACK 接收 | bit=1→ReleasePacketByID；bit=0→超时则强制重发 | （session.c 有分支，语义未对齐官方掩码协议） |
 | 窗口 | 按需扩容，累计 ACK 滑动+原地释放（§14.11） | 自实现 window.c |
@@ -467,7 +469,8 @@ PersonalizationResponse(2)/ActiveConfigChange(3)/RequestActiveConfig(4)，客户
 1. 可靠重传：超时重发**永不放弃**（重试计数只统计）；超时参考 srtt。
 2. NACK：收到洞 → 扩展 NACK{基序号 data[7], 连续点 data[17], 掩码 data[19..]}（限频）；
    收到 NACK：bit=1→窗口移除，bit=0→超时强制重发。
-3. ACK：累计（连续交付点）+ 1s 内周期重发 + 时间回显。
+3. ACK：累计收包水位变化或旧包重到置pending，反馈到期发送并回显时间。
+   **撤回原“1s内周期重发”要求**，完整客户端执行结果见§45。
 4. 接收：只按序交付；解密在交付路径上（seq 按交付推进）；扩展 NACK 掩码窗口 ≤320 包。
 5. 输入：125Hz 线程、单消息多设备合批、无在途限制、无空批。
 
@@ -636,7 +639,9 @@ TX feedback after 102 (101 missing): NACK base=101 contiguous=101 (required 100)
 Conclusion：该报文同时说“101 缺失”和“已连续收到 101”。按官方接收算法会先释放
 101，随后 bitmap 的 0 位不能恢复已释放的包。正确字段应为 `confirmed=100`。
 这可破坏 host→client 的补洞；它与 §18 的下行加密失配有机制上的关联，但尚无故障包序列证明。
-此外 `needed==0` 直接返回会在 16 位 ID 回绕处漏发 NACK；0 是合法包号。
+此外 `needed==0` 直接返回会在16位ID回绕处漏发NACK；0是合法包号。
+本节只证明confirmed字段；§45进一步以真实客户端证明NACK base应为缺口之后
+第一个已存在包，本例是102，不能继续把首个缺包101当作官方base。
 
 ### 14.3 解密计数器：“成功才推进”与汇编相反（P1）
 
@@ -835,7 +840,8 @@ IHS_Init/Quit 显式创建销毁；每条记录分别标出捕获长度、wire_l
 `floor((meanRTT_ms+2)×0.75)` 毫秒后换算 ticks，最大 3276；
 扩展体的 echo 时间还约束重发候选的最近发送时刻（0x7f976c–0x7f9780）。
 不能用固定倍增重传代替这两个不同条件。当前定时器精度为毫秒，周期为 5ms，
-因此与 Android 调度时刻并非逐 tick 相同。
+因此可靠**发送方RTO**与Android调度时刻并非逐tick相同；可靠接收反馈改由
+接收worker的Update驱动，详见§45。
 
 **Evidence / Conclusion：媒体必须等待配置。** `OnDataPacket 0x7ad1d0–0x7ad214`
 暂存尚无消费者的数据；`OnStartVideoData 0x7ae0c8` 停旧解码器，
@@ -4110,3 +4116,74 @@ retained状态锁（快照期间），I/O时不持retained状态锁。TSan在“
 RTO Socket回调”的受控输入中检出了原混合入口的潜在Base/sendLock反序；没有观察
 到真实死锁，不能把warning称为设备故障。共同Process入口对有session的扫描先持
 Base，调用者已持Base时递归进入；无session的独立窗口测试保留原锁域。
+
+
+## 45. 官方可靠接收事件、反馈节流与线包
+
+【证据】`audit-steam-reliable-feedback.py` 固定执行本文件相同SHA的Android
+1.3.32 ARM64客户端，真实入口为Channel构造器`0x7f8630`、
+HandlePacket `0x7f9250`和完整Channel::Update `0x7f9c9c`。
+可靠更新`0x7f9d0c`、BInsert `0x7f7230`、PopHead `0x7f743c`、
+Advance `0x7f76f4`以及Socket/CRC均执行原指令。142个固定案例覆盖CRC两值、
+连续/重复/分片/乱序、ACK到期边界、RTT钳位及32位clock回绕、
+Socket结果1..4、位图1/7/8/9/319/320/321位，以及旧时间戳和混合缺口年龄。
+
+【适配器边界】真实构造器完成后只预分配空RX环的存储，逻辑头尾仍由真实Clear
+初始化；真实BInsert/PopHead/Advance操作该环。分配/refcount/释放、mutex/queue
+构造、帧上交delegate、统计、诊断和最终UDP为显式适配器；时钟和Socket错误受控。
+输入为Socket已接受后的通道包，不冒称原始UDP接收、完整Connection::Update、
+实际主机应答、真实解密或设备渲染。某些首包有缺口案例触发原版“increasing”诊断；
+探针保存原文、让非debug release路径继续，不能把诊断报告为客户端必然崩溃。
+
+【结论：初始状态与ACK】构造器将dirty/+40、pending/+41、ACK水位/+42和
+peer时间/+44、接收时间/+48清零，deadline/+104设为构造时间。
+HandlePacket对5/6置dirty；只有peer时间为0或新的有符号时间差大于0，才同时更新
+peer时间与该包的本地接收时间。相同/旧peer时间不刷新接收时间。
+已经在窗口头之前的重复包置pending；仍留在窗口内的重复片不置pending。
+Update只在dirty时进入，先清dirty并上交所有完整连续帧，再扫描连续**收包**水位。
+水位变化置pending；pending且达到deadline才发送累计ACK并清pending，否则重置dirty。
+因此单独收到并交付ID0仍保持初始水位0，不发ACK；ID0重到或之后ID1推进才会发。
+ACK body是`peerTimestamp + GetTimestamp() - peerReceiveTime`，不是接收包ID的独立确认。
+
+【结论：NACK】缺口只在已观测的头尾范围内判定。header.packetId是第一个缺口
+**之后的第一个已存在包**；body依次是未经elapsed调整的peerTimestamp、累计水位u16、
+从该base起的presence位图。位图长度为`ceil(min(tailExclusive-base,320)/8)`，
+不是固定40字节。base及后面任一已存在包的本地接收年龄严格大于65 ticks，就满足
+缺口年龄条件；不能只检查base，也不能把年龄扫描截到320位内。
+一个Update允许先ACK再NACK；二者共用本轮进入时的deadline。只要尝试了任意反馈，
+下一deadline设为`updateNow + max(clamp(smoothedRTT,65,3276)/4,65)`（整数除法）。
+缺口太年轻或还未到deadline时保留dirty，后续Update继续检查。
+成熟NACK尝试后不自行重置dirty；没有新接收时不会周期重发NACK。
+Socket返回1..4同样清除此次ACK pending/成熟缺口dirty，并推进deadline；新接收事件
+才能再次触发反馈，发送方自己的可靠RTO是独立恢复入口。
+包头CRC初值清零，由Socket根据连接的CRC协商状态添加。
+
+【更正与设计约束】撤回旧§9.2的周期ACK说明，撤回旧控制实现“无新输入必须每5ms
+重复NACK”的测试断言；§14的窗口水位证据本身不能证明每包立即ACK或初始0必须ACK。
+可靠接收应将入窗事件和Update分开，所有上交/解密仍在接收worker执行；
+调用应用delegate时不新增持有Base传输锁的约束。反馈状态/Socket段使用Base→
+receiveLock的统一锁序，避免收包锁反向等待Base。
+反馈应在该Update中通过已设为nonblocking的Socket直接尝试，避免发送FIFO排队期间
+ACK回显时间与实际发包时间脱节；Socket失败不另造反馈重试策略。
+本地接收超时设为1000微秒，避免原10ms空闲阻塞推迟反馈；这只是唤醒粒度，
+不能将操作系统实际调度保证为精确1ms。真实收发worker测试覆盖CRC×ACK/NACK
+首轮失败×四种errno共16组：接收、交付、到期边界、空闲不重复、重复包重触发、
+补洞和stop/join；Poll只记录交付并验证回调仍属于接收线程，没有替换真实Poll。
+本地内存耗尽仍沿用显式关闭保护，不冒称官方故障分配分支已执行。
+平台worker的轮询粒度不等同于官方墙钟调度，固定clock对照只能证明相同事件/Update
+输入下的状态和线包；完整Connection各通道顺序与真实网络时延必须分开核验。
+
+```sh
+python3 scripts/audit-steam-reliable-feedback.py \
+  --binary /path/to/official/libmain-arm64.so \
+  --output build/video-recovery-re/reliable-feedback.json
+python3 scripts/check-steam-reliable-feedback.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-reliable-feedback-oracle
+ctest --test-dir build/desktop -R 'reliable_feedback' --output-on-failure
+```
+
+本地oracle仅控制时钟和最终UDP，并在真实Poll返回后记录未解析帧。
+初始状态及每个Receive/Update后的dirty、pending、水位、peer/local时间、deadline、
+窗口头尾、完整帧body和完整线包均与官方fixture比较；只有诊断assert文本不属于
+本地协议状态，明确排除。配置/传输层旧oracle分别补上显式通道Update，
+不把已入窗但尚未交付的输入误算成配置接收完成，也不额外重复Connect Update。

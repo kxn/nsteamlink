@@ -87,6 +87,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-control-wire.py"
             --receiver $<TARGET_FILE:ihs-control-wire-oracle>)
         set_tests_properties(control_wire_official_vectors PROPERTIES TIMEOUT 60)
+        add_test(NAME reliable_feedback_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-reliable-feedback.py"
+            --receiver $<TARGET_FILE:ihs-reliable-feedback-oracle>)
+        set_tests_properties(reliable_feedback_official_vectors PROPERTIES TIMEOUT 60)
         add_test(NAME initial_send_official_vectors COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-initial-send.py"
             --receiver $<TARGET_FILE:ihs-initial-send-oracle>)

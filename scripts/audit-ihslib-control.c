@@ -27,8 +27,6 @@ static void init_packet(IHS_SessionPacket *p, int type, unsigned id) {
 static IHS_Session *session_new(void) {
     IHS_Session *s = IHS_TestSessionCreate();
     IHS_TimerTaskStopImmediate(s->retransmission.timer);
-    IHS_SessionChannelControl *c = (void *) IHS_SessionChannelFor(s, 1);
-    IHS_TimerTaskStopImmediate(c->feedbackTimer);
     return s;
 }
 static void nack_receive(void) {

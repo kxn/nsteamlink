@@ -167,7 +167,6 @@ static IHS_Session *session(sl_stream_settings *settings) {
     IHS_Session *s = IHS_SessionCreate(&client, &info);
     assert(s);
     IHS_TimerTaskStopImmediate(s->retransmission.timer);
-    IHS_TimerTaskStopImmediate(((IHS_SessionChannelControl *)s->channels[1])->feedbackTimer);
     assert(sl_stream_settings_apply(settings, s));
     static const IHS_StreamSessionCallbacks callbacks = {.saveClientConfig =
                                                              sl_stream_settings_receive};
