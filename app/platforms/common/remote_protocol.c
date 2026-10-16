@@ -35,6 +35,7 @@ struct sl_remote {
         bool active, updated;
         sl_remote_peer peer;
         IHS_StreamingRequest request;
+        sl_remote_stream_options options;
         uint8_t pin_cipher[64];
         size_t pin_size;
         uint32_t id;
@@ -210,6 +211,17 @@ static bool send_message(sl_remote *r, uint64_t account, ERemoteClientBroadcastM
     bool ok = sl_remote_packet(r, account, packet, hs + ms + 16);
     erase(packet, hs + ms + 16);
     free(packet);
+    return ok;
+}
+bool sl_remote_send_signal(sl_remote *r, uint64_t account, const uint8_t *body, size_t size) {
+    if (!r || !body || size > SL_REMOTE_FRAME_MAX - 128)
+        return false;
+    CMsgRemoteDeviceStreamTransportSignal *message =
+        cmsg_remote_device_stream_transport_signal__unpack(NULL, size, body);
+    if (!message)
+        return false;
+    bool ok = send_message(r, account, k_ERemoteDeviceStreamTransportSignal, &message->base);
+    cmsg_remote_device_stream_transport_signal__free_unpacked(message, NULL);
     return ok;
 }
 bool sl_remote_pair(sl_remote *r) {
@@ -491,7 +503,10 @@ static bool discovery(sl_remote *r, const uint8_t *data, size_t size) {
     const uint8_t *body = data + 16 + hs;
     if (h->msg_type == k_ERemoteClientBroadcastMsgStatus)
         status(r, h, body, ms);
-    else if (h->msg_type == k_ERemoteDeviceAuthorizationResponse)
+    else if (h->msg_type == k_ERemoteDeviceStreamTransportSignal) {
+        if (r->cb.transport_signal)
+            r->cb.transport_signal(h->client_id, body, ms, r->ctx);
+    } else if (h->msg_type == k_ERemoteDeviceAuthorizationResponse)
         authorization(r, h->client_id, body, ms);
     else if (h->msg_type == k_ERemoteClientBroadcastMsgOffline) {
         if (r->cb.offline)
@@ -631,6 +646,10 @@ bool sl_remote_receive(sl_remote *r, const uint8_t *data, size_t size) {
 }
 
 bool sl_remote_stream(sl_remote *r, uint64_t id, const IHS_StreamingRequest *request) {
+    return sl_remote_stream_ex(r, id, request, NULL);
+}
+bool sl_remote_stream_ex(sl_remote *r, uint64_t id, const IHS_StreamingRequest *request,
+                          const sl_remote_stream_options *options) {
     if (!sl_remote_ready(r) || r->pairing || r->stream.active || !request)
         return false;
     const sl_remote_peer *peer = NULL;
@@ -642,6 +661,8 @@ bool sl_remote_stream(sl_remote *r, uint64_t id, const IHS_StreamingRequest *req
     memset(&r->stream, 0, sizeof(r->stream));
     r->stream.peer = *peer;
     r->stream.request = *request;
+    if (options)
+        r->stream.options = *options;
     if (request->pin[0]) {
         r->stream.pin_size = sizeof(r->stream.pin_cipher);
         if (IHS_CryptoSymmetricEncrypt((const uint8_t *)request->pin,
@@ -730,8 +751,12 @@ void sl_remote_update(sl_remote *r, int64_t now) {
             pad_pointers[i] = &pads[i];
         }
     }
-    /* Only completed media backends may be advertised. */
-    EStreamTransport transports[] = {k_EStreamTransportUDP};
+    msg.has_network_test = true;
+    msg.network_test = r->stream.options.network_test;
+    /* Runtime default stays UDP. The explicit diagnostic SNS path never
+     * accepts a final UDP choice that would bypass the backend under test. */
+    EStreamTransport transports[] = {r->stream.options.sns ? k_EStreamTransportSDR
+                                                           : k_EStreamTransportUDP};
     msg.n_supported_transport = 1;
     msg.supported_transport = transports;
     send_message(r, r->stream.peer.steam_id, k_ERemoteDeviceStreamingRequest, &msg.base);
@@ -848,8 +873,8 @@ static void streaming_reply(sl_remote *r, const CMsgRemoteClientBroadcastHeader 
                                            .stun_servers = a->relay_server};
             IHS_StreamingResult result = (IHS_StreamingResult)a->result;
             if (result == IHS_StreamingSuccess &&
-                (!a->has_encrypted_session_key || !a->has_port || a->port == 0 ||
-                 a->port > UINT16_MAX ||
+                (!a->has_encrypted_session_key || a->port > UINT16_MAX ||
+                 (a->transport == k_EStreamTransportUDP && (!a->has_port || a->port == 0)) ||
                  IHS_CryptoSymmetricDecrypt(a->encrypted_session_key.data,
                                             a->encrypted_session_key.len, r->stream.peer.secret, 32,
                                             material.key, &material.key_size) ||

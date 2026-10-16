@@ -24,6 +24,7 @@ struct sl_remote_connection {
     CURLM *multi;
     CURL *easy;
     bool easy_added, global;
+    bool bridge_mode, suspended;
     int state;
     uint64_t retry_at, deadline;
     char endpoints[CM_LIMIT][128];
@@ -119,6 +120,11 @@ static void stream_result(IHS_StreamingResult result, const sl_remote_material *
     sl_remote_connection *c = ctx;
     if (c->callbacks.stream_result)
         c->callbacks.stream_result(result, m, c->ctx);
+}
+static void transport_signal(uint64_t id, const uint8_t *p, size_t n, void *ctx) {
+    sl_remote_connection *c = ctx;
+    if (c->callbacks.transport_signal)
+        c->callbacks.transport_signal(id, p, n, c->ctx);
 }
 static void clear_easy(sl_remote_connection *c) {
     if (c->easy) {
@@ -377,7 +383,8 @@ sl_remote_connection *sl_remote_connection_create(const IHS_ClientConfig *config
                                     .save_key = save_key,
                                     .paired = paired,
                                     .pair_failed = pair_failed,
-                                    .stream_result = stream_result};
+                                    .stream_result = stream_result,
+                                    .transport_signal = transport_signal};
     c->protocol = sl_remote_create(config, &adapters, c);
     if (!c->receive || !c->message || !c->multi || !c->protocol) {
         sl_remote_connection_destroy(c);
@@ -389,10 +396,10 @@ sl_remote *sl_remote_connection_protocol(sl_remote_connection *c) {
     return c ? c->protocol : NULL;
 }
 void sl_remote_connection_update(sl_remote_connection *c, uint64_t now) {
-    if (!c)
+    if (!c || c->suspended)
         return;
     if (c->state == NET_IDLE) {
-        if (now < c->retry_at)
+        if (!c->bridge_mode && now < c->retry_at)
             return;
         c->state = NET_DIRECTORY;
         c->deadline = now + 20000;
@@ -457,6 +464,22 @@ void sl_remote_connection_update(sl_remote_connection *c, uint64_t now) {
     }
     if (c->state != NET_IDLE && now >= c->deadline && !sl_remote_ready(c->protocol))
         fail_connection(c, now);
+}
+void sl_remote_connection_set_bridge_mode(sl_remote_connection *c, bool enabled) {
+    if (c)
+        c->bridge_mode = enabled;
+}
+void sl_remote_connection_set_active(sl_remote_connection *c, bool active) {
+    if (!c || c->suspended == !active)
+        return;
+    c->suspended = !active;
+    if (!active) {
+        clear_easy(c);
+        sl_remote_close(c->protocol);
+        c->state = NET_IDLE;
+    } else {
+        c->retry_at = 0;
+    }
 }
 void sl_remote_connection_destroy(sl_remote_connection *c) {
     if (!c)

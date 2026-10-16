@@ -20,6 +20,7 @@ typedef struct fixture {
     IHS_StreamingResult result;
     uint8_t stream_key[128];
     size_t stream_key_size;
+    int stream_transport;
 } fixture;
 static bool send_frame(const uint8_t *p, size_t size, void *ctx) {
     fixture *f = ctx;
@@ -74,6 +75,7 @@ static void stream_result(IHS_StreamingResult result, const sl_remote_material *
     if (m) {
         f->stream_key_size = m->key_size;
         memcpy(f->stream_key, m->key, m->key_size);
+        f->stream_transport = m->transport;
     }
 }
 static fixture *create(void) {
@@ -429,6 +431,52 @@ static void pairing_and_rotation(void) {
     sl_remote_destroy(f->remote);
     free(f);
 }
+static void sns_network_test_material(void) {
+    fixture *f = create();
+    sl_remote_peer peer = {.client_id = 77, .steam_id = 88, .secret = {1}};
+    assert(sl_remote_watch(f->remote, &peer, 1));
+    open_session(f, 44);
+    IHS_StreamingRequest q = {0};
+    sl_remote_stream_options options = {.network_test = true, .sns = true};
+    assert(sl_remote_stream_ex(f->remote, 77, &q, &options));
+    sl_remote_update(f->remote, 100);
+    sl_proto_field out = sent(f, f->count - 1, 7);
+    sl_proto_field packet = field(out.bytes, out.size, 4);
+    uint32_t hs, ms;
+    IHS_ReadUInt32LE(packet.bytes + 8, &hs);
+    IHS_ReadUInt32LE(packet.bytes + 12 + hs, &ms);
+    CMsgRemoteDeviceStreamingRequest *request =
+        cmsg_remote_device_streaming_request__unpack(NULL, ms, packet.bytes + 16 + hs);
+    assert(request && request->has_network_test && request->network_test);
+    assert(request->n_supported_transport == 1 && request->supported_transport[0] == k_EStreamTransportSDR);
+    uint32_t id = request->request_id;
+    cmsg_remote_device_streaming_request__free_unpacked(request, NULL);
+    uint8_t key[16] = {7}, encrypted[64];
+    size_t length = sizeof(encrypted);
+    assert(!IHS_CryptoSymmetricEncrypt(key, sizeof(key), peer.secret, 32, encrypted, &length));
+    CMsgRemoteDeviceStreamingResponse a = CMSG_REMOTE_DEVICE_STREAMING_RESPONSE__INIT;
+    a.request_id = id;
+    a.result = k_ERemoteDeviceStreamingSuccess;
+    a.has_transport = true;
+    a.transport = k_EStreamTransportSDR;
+    a.has_encrypted_session_key = true;
+    a.encrypted_session_key = (ProtobufCBinaryData){length, encrypted};
+    a.cert = "synthetic-cert";
+    /* Official capture 042 returns port=0 for SDR. It is not a UDP route. */
+    a.has_port = true;
+    a.port = 0;
+    reply(f, 6, &a.base);
+    assert(f->streams == 1 && f->result == IHS_StreamingSuccess && f->stream_transport == 4);
+    assert(f->stream_key_size == sizeof(key) && !memcmp(f->stream_key, key, sizeof(key)));
+    assert(sl_remote_stream(f->remote, 77, &q));
+    sl_remote_update(f->remote, 101);
+    a.request_id = stream_request_id(f);
+    a.transport = k_EStreamTransportUDP;
+    reply(f, 6, &a.base);
+    assert(f->streams == 2 && f->result == IHS_StreamingFailed);
+    sl_remote_destroy(f->remote);
+    free(f);
+}
 static void wire(void) {
     char accept[29];
     assert(sl_ws_accept("dGhlIHNhbXBsZSBub25jZQ==", accept));
@@ -457,6 +505,7 @@ static void wire(void) {
     assert(!sl_proto_next(&r, &p) && !sl_proto_done(&r));
 }
 int main(void) {
+    sns_network_test_material();
     wire();
     lifecycle();
     cancel_and_failure();

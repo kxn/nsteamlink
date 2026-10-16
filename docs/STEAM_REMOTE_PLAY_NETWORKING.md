@@ -961,6 +961,15 @@ CStreamTransportClient；该 buffer 也用于 StartAuthentication 的 HMAC（`0x
 （`054/071.bin`）带签名证书但无该字段。样本证明这个 blob 不能按普通公开证书随意输出到日志。
 私有证据仅保存字段存在性、长度和时间差，不发布 key/身份。
 
+该份 `042.bin` 还直接给出 `transport=4, port=0`，证书 app_ids 包含 353380。
+**Conclusion**：不能把“有非零 UDP port”作为 SDR 材料的成功条件。AppID 必须与证书及
+网络配置一致；本项目 Steam Link SDK 实例使用 353380，不能沿用开源库的默认 0。
+
+**版本差异证据**：开源固定 `d534c19` 的 `CertStore_CheckCert` 先验证 CA 签名，成功后才
+解析 outMsgCert；CA 未加载时，`InternalSetCertificate` 的后续公钥检查因此得到空证书。
+这与 APK 的继续导入分支不能直接等同。本项目先获取 353380 的 SDR 网络配置并导入
+certs/revoked_keys，再调用 SetCertificate，保留原有公私钥匹配、AppID 和远端证书检查。
+
 `InternalSetCertificate @0x804958` 解析 signed cert，检查身份、公钥类型/长度、私钥一致性、
 公私钥匹配和 AppID 范围（`0x804b14–0x804d4c`），然后安装身份/证书。
 证书没有 private_key_data 时必须已有对应私钥；自行生成一个无关私钥再导入这个证书会失败。

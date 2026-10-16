@@ -9,6 +9,15 @@
 | 库 | 版本 | 说明 |
 |---|---|---|
 | IHSlib | `kxn/ihslib` `master` 分支，基线 `8c5a17c`（fork 自 `beudbeud/ihslib` plume） | 协议层依赖；改动进入 fork 主分支（D-037/D-055） |
+| GameNetworkingSockets | `ValveSoftware/GameNetworkingSockets` 固定 `d534c19aa760df3fb75fd20db13ba1932b8a5463` | BSD-3；SNS 的 SNP、ICE、证书/P2P；不包含 Valve 生产 SDR 的私有实现 |
+
+## SNS 构建边界
+
+`NSL_BUILD_SNS` 编译单独的网络后端与互操作探针，桌面默认开启，Switch 构建默认关闭。
+正常客户端只声明已接入的媒体能力；此选项本身不改变用户界面或开流能力声明。
+GNS 需要 C++17、protobuf C++ 和 crypto provider；桌面使用系统 protobuf/OpenSSL。
+它不替代原有 mbedTLS/C protobuf/IHS 会话。官方 SDK 源码保持原样，项目私有接入在
+`app/platforms/common`，新增 SDK 补丁仍须走本文的 patch 流程。设计依据见 D-062。
 
 ## IHSlib fork（kxn/ihslib，分支 master）
 

@@ -2220,3 +2220,39 @@ Decision：
 6. supported_transport 只能包含可实际使用的媒体 backend。信令经过本次 streaming
    session key 验证；新增后端保留 IHS 会话的消息边界和认证、音视频、输入语义，不能把
    WebSocket 控制转发当作媒体中继。
+
+---
+
+## D-062 IHS 数据报适配与 SNS 的实例、信令和信任边界
+
+日期：2026-10-16
+
+Evidence：`STEAM_REMOTE_PLAY_NETWORKING.md` §8.8–8.9、§9.5、§12–§15；IHS
+`src/base.c`/`src/session/session.c` 的 UDP 耦合；固定 Valve GNS `d534c19` 的 custom
+signaling、manual poll、SNP/ICE 和 CertStore 接口。官方响应 `042.bin` 的 SDR port=0、
+证书 AppID=353380；开源 CertStore 在未知 CA 时于证书解析前返回。
+
+Decision：
+
+1. IHS 提供 Connect 前选择的 copied `IHS_DatagramTransport` vtable；完整 datagram
+   交给外部 backend，保留 IHS CRC、认证和 ACK/NACK，不增加可靠字节流。Context 由
+   应用持有到 IHS stop/join 完成，不允许 provider 回调重入 session API。Receive 等待
+   最多 10ms；终止错误关闭发送入口并唤醒/汇合发送线程，再销毁依赖。
+2. GNS 以固定官方 submodule 引入，保留源码和全部许可证。仅使用已有 SNP、ICE、
+   P2P 状态机和证书机制；Valve 生产 SDR extension 不由开源库提供，不能把此依赖视作
+   已实现所有中继。SDK 的内置 ICE provider 是相对于 APK WebRTC factory 的明确差异。
+3. 每条 SNS 流拥有独立 Remote Client 连接。SDK signaling 回调只在 mutex 内复制消息，
+   owner worker 排空后用实际长度的 stream key 做 HMAC-SHA256。内部消息跨云端重连
+   保留 FIFO/重复项；每次发送用新的 cloud ID 包装。坏 HMAC/坏 protobuf 丢弃，合法
+   HMAC 内的信令被 SDK 拒绝才使媒体 backend Failed。
+4. SDK 全局实例仅允许一位 owner；初始化前开启 manual poll，IHS 回调只访问有界
+   datagram 队列。销毁前先停/汇合 IHS，再解除 signaling owner、关闭 SDK 连接、销毁
+   独立云端连接和配置请求、Kill SDK，最后关闭 manual mode。禁止遗留服务线程。
+5. AppID=353380。网络配置 HTTPS 保持 TLS 校验，先导入 CA 与十进制 revoked key ID，
+   再安装包含私钥的主机返回证书。不得记录证书、身份、密钥，或关闭 peer 证书检查。
+   SDR 不要求 UDP port 非零；连接和 security PIN 仍遵守 D-061/认证参考。
+6. 64 项/256KiB 外层信令队列、60000 字节单信令、4096 项 datagram 队列及 1MiB
+   配置 JSON/32768 tokens 是本地资源限制，不是 Valve 协议常量。耗尽显式拒绝/失败，
+   不按候选或哈希静默覆盖。异步配置请求的 10s connect/25s 总预算也属于本地策略。
+7. `NSL_BUILD_SNS` 隔离 SDK 构建与互操作工具，正常 runtime 不因选项开启就声明新
+   媒体能力。依赖移植、真正的 relay extension 和应用接入分别以实际可运行能力验收。

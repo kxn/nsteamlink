@@ -39,6 +39,24 @@ set(IHSLIB_HID_SDL ON CACHE BOOL "Build ihslib SDL HID provider" FORCE)
 set(IHSLIB_HID_SDL_USE_SDL2 ON CACHE BOOL "Build ihslib SDL HID provider against SDL2" FORCE)
 add_subdirectory(third_party/ihslib)
 
+# The compatible SNS backend is staged separately until its target port and
+# relay extension pass interop; normal streaming does not advertise it yet.
+if(NSL_PLATFORM STREQUAL "desktop")
+    option(NSL_BUILD_SNS "Build SNS backend and interoperability probes" ON)
+else()
+    option(NSL_BUILD_SNS "Build SNS backend and interoperability probes" OFF)
+endif()
+if(NSL_BUILD_SNS)
+    set(BUILD_STATIC_LIB ON CACHE BOOL "" FORCE)
+    set(BUILD_SHARED_LIB OFF CACHE BOOL "" FORCE)
+    set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+    set(ENABLE_ICE ON CACHE BOOL "" FORCE)
+    set(USE_STEAMWEBRTC OFF CACHE BOOL "" FORCE)
+    add_subdirectory(third_party/GameNetworkingSockets)
+endif()
+
 enable_testing()
 add_subdirectory(app)
 

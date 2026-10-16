@@ -37,6 +37,9 @@ typedef struct sl_remote_callbacks {
     void (*paired)(const sl_remote_peer *, void *);
     void (*pair_failed)(IHS_AuthorizationResult, void *);
     void (*stream_result)(IHS_StreamingResult, const sl_remote_material *, void *);
+    /* Framing and header have been parsed; body is borrowed for this callback.
+     * Stream signal integrity/inner parsing belongs to the per-stream bridge. */
+    void (*transport_signal)(uint64_t client_id, const uint8_t *body, size_t, void *);
 } sl_remote_callbacks;
 
 /* All methods and callbacks run on one owner thread. No sockets or threads are
@@ -52,6 +55,17 @@ bool sl_remote_receive(sl_remote *, const uint8_t *, size_t);
 bool sl_remote_pair(sl_remote *);
 void sl_remote_cancel(sl_remote *);
 bool sl_remote_stream(sl_remote *, uint64_t client_id, const IHS_StreamingRequest *);
+typedef struct sl_remote_stream_options {
+    bool network_test;
+    /* Explicit backend capability. The runtime leaves this false until its
+     * SNS backend passes interop. Diagnostic probes can exercise it alone. */
+    bool sns;
+} sl_remote_stream_options;
+bool sl_remote_stream_ex(sl_remote *, uint64_t client_id, const IHS_StreamingRequest *,
+                          const sl_remote_stream_options *);
 void sl_remote_update(sl_remote *, int64_t wall_seconds);
 /* Forward an already-framed discovery/control/signal to a known Steam account. */
 bool sl_remote_packet(sl_remote *, uint64_t steam_id, const uint8_t *, size_t);
+/* Wrap a type-12 body with this session's local client identity. The bridge
+ * retains inner messages, never an envelope containing an old cloud ID. */
+bool sl_remote_send_signal(sl_remote *, uint64_t steam_id, const uint8_t *, size_t);
