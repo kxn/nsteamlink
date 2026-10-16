@@ -4019,3 +4019,31 @@ response字段写入、padding、信封及发送链均执行原指令。无真�
 或fragment初发失败时整个actor与官方同步sender的动作顺序。
 后者仍须独立验证：现有原版可靠sender遇失败停止本轮扫描，本地worker直接
 初发后续FIFO项的架构不能仅凭重传阶段测试宣称整体相同。
+
+### 43.3 独立的真实C++ protobuf核验
+
+【证据】`audit-steam-discovery-protobuf.py` 另用已重定位ELF和原版生成的
+CDiscoveryPingRequest/Response构造器、真实Frame::Get/parser、ByteSize/serializer、
+Frame::Put/Resize与padding复播5例：两字段存在(requested=0/64)、都省略、只保留
+sequence、只保留requested。不是复用§43.2的protobuf输出适配器。
+每例在真实Put调用记录传入对象相对SP偏移88，并截取final SendUnconnected之前
+的Frame正文（4B长度+protobuf+padding）；5例都确认序列化的是原request对象。
+内存/libc存储和最终SendUnconnected为适配器，input Frame/packet布局预置，
+没有执行完整网络入包，也未把没有执行的header/message-byte/CRC写入算进来。
+
+这5个独立正文向量与§43.2的相应CRC=false报文、生产真实discovery回调三方对照，
+不把5例再计作新增的完整wire输入。原140例仍保留各自的适配器/字段边界。
+
+```sh
+python3 scripts/audit-steam-discovery-protobuf.py \
+  --binary /path/to/official/libmain-arm64.so \
+  --output build/video-recovery-re/discovery-protobuf.json
+```
+
+【证据／未对齐范围】§42导出的原指令Sender，以CLogMsg字符串1000B、MTU512、
+CRC=true从真实SendStatsMessage进入；Socket返回1或4时均只尝试head，window tail
+为3。生产`ihs-control-wire-oracle 1 512 3 3 1 1000`（或错误码4）的FIFO投影却尝试
+3片，首片字节与原版相同。这是初发事务次序差异，不是CRC/分片字节差异。
+该oracle不启动worker，不能据此宣称负载/墙钟下真实worker序列已取证；现有worker
+逐FIFO项直接初发的接线也不能被重传阶段“失败停止扫描”用例替代。多片初发失败
+的生产事务验证须单独覆盖整帧入窗、失败停止及后续Update/新Frame触发。

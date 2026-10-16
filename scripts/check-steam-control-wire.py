@@ -21,6 +21,15 @@ def main():
     fixture = json.loads(
         (ROOT / "scripts/fixtures/steam-control-wire-reference.json").read_text()
     )
+    cpp = json.loads(
+        (ROOT / "scripts/fixtures/steam-discovery-protobuf-reference.json").read_text()
+    )
+    assert cpp["binary_sha256"] == fixture["binary_sha256"]
+    cpp_cases = {
+        (case["input"]["requested"], case["input"]["presence"]): case["observed"]
+        for case in cpp["cases"]
+    }
+    cpp_checked = set()
     for number, case in enumerate(fixture["cases"]):
         group, inp, want = case["group"], case["input"], case["observed"]
         kind = {"frame": 0, "control": 1, "connected": 2, "stats": 3, "discovery": 4}[
@@ -56,7 +65,15 @@ def main():
         assert got["socket_result"] == code
         assert got["wire"] == want["wire"], (number, group, inp, got, want)
         assert got["next_id"] == want["next_id"], (number, got, want)
+        key = (inp.get("requested"), inp.get("presence", 3))
+        if group == "discovery" and not inp["crc"] and not code and key in cpp_cases:
+            # Full wire above matches the first harness. Also compare the real
+            # generated C++ protobuf/Frame output from an independent harness.
+            assert got["wire"][0][28:] == cpp_cases[key]["frame_body"], (number, got)
+            cpp_checked.add(key)
+    assert cpp_checked == set(cpp_cases)
     print(f"Production control wire: {len(fixture['cases'])} official vectors passed")
+    print(f"Independent C++ discovery body projections: {len(cpp_checked)} passed")
 
 
 if __name__ == "__main__":
