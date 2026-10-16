@@ -59,5 +59,9 @@ if(NSL_PLATFORM STREQUAL "desktop")
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-transport.py"
             --receiver $<TARGET_FILE:ihs-transport-oracle>)
         set_tests_properties(transport_official_vectors PROPERTIES TIMEOUT 60)
+        add_test(NAME client_config_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-client-config.py"
+            --receiver $<TARGET_FILE:ihs-client-config-oracle>)
+        set_tests_properties(client_config_official_vectors PROPERTIES TIMEOUT 60)
     endif()
 endif()

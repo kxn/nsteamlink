@@ -3153,3 +3153,139 @@ MTU/Pause/Resume/lease 参考、10个MTU边界及实际分片、发送 CRC、dea
 
 本节只定义这些连接分支。完整配置99、调度整形、发送缓存、可靠媒体及完整 RTT/
 时钟采样窗口仍需各自的官方客户端证据和接线验收，不能从这里推导整体等价。
+
+## 35. 官方客户端完整配置值与消息 99 的双向契约
+
+### 35.1 原指令来源与字段映射
+
+【证据】仍固定 Android 1.3.32 ARM64 main，SHA256
+`50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e`。
+`audit-steam-client-config.py` 使用同一包的嵌入 schema 构造输入，但不代替其解析：
+queued packet → 原版 CStreamFrame 构造/Get → 原版 C++ ParseFromArray、
+IsInitialized、CopyFrom、序列化及 client dispatcher 均实际执行。
+34 个独立字段输入还记录原版 parser 对对象内存的写入差异，避免按成员邻接猜字段。
+
+| 字段 | 官方 C++ config 值偏移 | has 位 / 默认值 |
+| --- | --- | --- |
+| enable_unreliable_fec（25） | +113 | has word +16 的 bit14；false |
+| enable_hardware_decoding（7） | +156 | bit28；true |
+| enable_input_streaming（11） | +159 | bit31；true |
+| enable_audio_streaming（10） | +158 | bit30；true |
+| enable_video_streaming（9） | +157 | bit29；true |
+| enable_performance_overlay（8） | +104 | bit8；false |
+| enable_microphone_streaming（15） | +106 | bit10；false |
+| windowed（27） | +115 | bit16；false |
+
+【撤回】把播放器读取 config+156 的分支解释成 windowed 的临时推断不成立。
+原版 parser 实际把 hardware decoding 写到+156，windowed 写到+115；后续 decoder
+reset 的判断必须用这一映射。它也不能作为“切换 FEC 会重置 decoder”的证据。
+
+### 35.2 本地 setter：复制、通知、保存，然后按条件发送
+
+【证据】`CStreamClient::SetStreamingClientConfig 0x7b01c4–0x7b0290`：
+
+1. CopyFrom 输入到 client+456（`0x7b01f4`）；这是完整值，不是 patch。
+2. delegate 存在则调用 vtable+128，传存储值及 bool 参数的 bit0
+   （`0x7b01f8–0x7b0210`）。
+3. 调用 SaveStreamingClientConfig（`0x7b0218`）。
+4. 仅 bool bit0=0 且 client state=6，才构造 CSetStreamingClientConfig，复制
+   **原输入引用**并发送99（`0x7b021c–0x7b0264`）。其余状态依然复制/通知/保存。
+
+setter 的 bool 不是 FEC 值，也不是 host 接受结果。固定案例包含 ABI 值0/1/2/3，
+2 的 bit0=0、3 的 bit0=1；普通 C/C++ bool 调用者只应传规范0/1，本地 bool API
+只对照这两者，不拿 C 的 true 宣称可以模拟非规范 ABI 值2。
+
+【证据】`SaveStreamingClientConfig 0x7a5b34–0x7a5c20` 先检查 client+144
+文件名指针及首字节。为空则返回；非空时 SerializeAsString 完整配置，按
+ByteSizeLong 把原始 protobuf 字节放入 CUtlBuffer，再调用 BSaveFile。文件不带
+99 编号、外层 CSet 消息、传输头或额外长度前缀。写失败只 Warning，不回滚配置。
+该文件 I/O 过程的证据是反汇编；配置审计中的 Save 调用是记录替身，不是磁盘测试。
+
+### 35.3 接收 99：缺字段回默认；delegate 可能产生后续动作
+
+【证据】queued dispatcher 只在 client state=6 进入
+`OnSetStreamingClientConfig 0x7af08c–0x7af13c`。原版 Get/ParseFromArray 成功，
+且 required config（及嵌套 required mode 宽高）满足后，CopyFrom → delegate(bool=true)
+→ Save。坏 protobuf、缺 required config、无效嵌套 mode 都保留旧值、不通知、不保存。
+空 **config** 是有效值，会把已有 FEC=true 恢复 false，已有 input/audio/video=false
+恢复各自默认 true；空 **外层消息** 缺 required config，是无效值。两者不能混同。
+
+【结论】§29.4 的“接收 handler 自身没有设置 connection outgoing FEC”仍成立；
+不能把它扩大成“接收99绝不会再发送控制消息”。实际
+`CStreamPlayer::SetStreamingClientConfig 0x7c5504–0x7c55ec` 的九个正反例显示：
+
+- overlay 比较实际值（包括省略后的 false），变化则更新播放器统计浮层状态。
+- hardware decoding **has 位存在**且值与播放器旧值不同，调用
+  ResetVideoDecoder(false)。该字段省略时不以默认 true 强制触发此分支。
+- microphone 实际值变化：有旧 audio stream 则销毁，shutdown microphone encoder，
+  修改当前 config 的 microphone 字段/has 位，再 SetStreamingClientConfig(false)，
+  最后 BOpenMicrophone。嵌套 setter 会再次通知/保存，并在串流中发送99。
+  外层接收 handler 返回 delegate 后还会保存一次。
+- 仅 FEC 改变的输入不触发 decoder reset、麦克风重开或嵌套99。
+
+例如 incoming config 的 microphone=true，从旧 false 变化时，原指令动作依次是
+notify(true) → microphone shutdown → notify(false) → save → send99 →
+microphone open → save。最终 send99 保留同份完整配置中的 FEC；这不是 FEC ACK。
+麦克风设备的实际打开、音频转换器和 codec 重置均为尾部替身，只证明条件及动作顺序，
+不证明设备操作成功。不能因不存在麦克风外设而删掉协议/API分支，也不能假装 Switch
+已实现这些 Android 播放器行为。
+
+### 35.4 生产完整值、所有权和协商复用
+
+`session/client_config.c` 在 base 的递归锁下保存 owned CStreamingClientConfig，
+通过 protobuf-C pack/unpack 深复制字符串、嵌套/重复结构及 unknown fields。
+`IHS_SessionSetStreamingClientConfig` 接受独立的完整 protobuf 值；接收99以
+localOnly=true 调用同一应用逻辑，核心不会无条件回显、重连或清接收窗口。
+input/audio/video 状态按完整值的有效默认值刷新，并以 atomic 提供给其他线程。
+
+库 callback 顺序为 clientConfigChanged → saveClientConfig → 条件发送99。
+callback 字节只在调用期间有效；持久化消费者必须复制后排队，不能在 RX worker
+同步做文件/设备操作。delegate 可以递归调用配置 API；保存取 delegate 返回后的
+当前值，发送则取本次 API 的独立输入。这与官方 setter 传独立输入对象时的行为
+一致；该 serialized-value API 不暴露 C++ 内部对象的可变别名。
+`GetStreamingClientConfig` 返回所需长度，目标容量不足时不写入。
+
+初始协商从存储的完整值深复制出本次配置，再应用既有 configuring callback 的
+显式选择；复用 FEC、未知字段、重复 limits、hotkey，以及未被修改的60000/1001
+帧率和−1码率。旧 IHS_SessionConfig 是精简的、以平台请求参数为主的接口；其默认
+请求字段不等于 Android 硬件能力，不能将此包装层称为完整官方 UI。
+控件配置不在 worker 间共享裸 proto 指针，session Destroy 在各 worker/timer 结束
+后释放 owned proto。protobuf 赋值宏包装为单语句，保证条件分支同时约束 has/value。
+
+控制 frame 允许保存多包 payload，之后由 channel 按 MTU 分片；packet 缓冲区仍按
+单包处理。这修正了“整份配置必须小于2048B”的隐藏断言。4096B hotkey 的实际接收、
+API发送和初始消息4均核对了分片→重组→解密后的完整内容，没有用 setter 镜像代替。
+可靠队列资源/调度和发送失败策略仍属于独立契约，不据此声称所有发送边界已等价。
+
+### 35.5 验证范围
+
+```sh
+python3 scripts/audit-steam-client-config.py \
+  --binary /path/to/official/libmain-arm64.so \
+  --output build/video-recovery-re/client-config.json
+python3 scripts/check-steam-client-config.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-client-config-oracle
+ctest --test-dir build/desktop -R 'client_config|client_capabilities' --output-on-failure
+```
+
+固定参考包含111个原指令场景：36个 setter、32个 queued receive、34个逐字段
+parser/接收和9个实际 player delegate。对象静态初始化采用原始标量默认值；
+allocator、libc++字符串存储、packet refcounts、文件/最终网络调用和设备动作是
+明确替身；protobuf 初始化错误的诊断文本格式化也排除，但 IsInitialized 拒绝分支
+实际执行。回调记录复制消息头后用原版 serializer 读取保留的对象；fixture 不做
+销毁/释放等价验证。官方二进制不入仓，SHA固定在脚本入口。
+
+生产对照使用其中86个适用于核心层和规范 bool 的官方输入，另加3个无效 API输入
+及3个初始协商复用输入，共92组。Native incoming 从实际CRC datagram进入真实
+session、可靠窗口、加密/解密和控制解析，消息字节来自固定官方 plaintext fixture；
+加密输入由受控测试会话构造，不冒称真实 host 抓包。输出从真实 sendQueue 重组并
+解密后比较字段 presence、重复顺序、nested及unknown，不依赖 Python protobuf 包。
+
+`client_config` 额外验证 delegate 递归替换、保存与发送输入的区别、容量不足不写、
+session 销毁后的应用自有快照，以及4000次写入与并发读取/解析，停止后 join reader。
+这些是项目内存/并发验证，不代替原版播放器行为的生产验收。
+
+持久化 callback 的调用不等于 nsteamlink 已写出/重新加载整个设置文件；应用对该
+回调、overlay/hardware/microphone及窗口事件的接线须分别从真实入口验收。§32的
+保存手动 FEC 开关继续有效，不把库 API 可发送99扩大成该 checkbox 会热切换。
+本节不会把消息99核心覆盖、默认值与发送条件的一致扩大成所有播放器/设备行为一致。
