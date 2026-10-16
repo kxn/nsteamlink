@@ -166,7 +166,7 @@ data[13] = messageType；若 hasExtHeader：data[14..25] = 扩展头 12 字节
 
 | InitMsg 字段 | 官方处理 |
 |---|---|
-| reliable_data (bool) | **无条件字节回显**进自身 CNegotiatedConfig.reliable_data（含 hasbit），随 SetConfig 发回 host |
+| reliable_data (bool) | **无条件字节复制bool值**进自身CNegotiatedConfig.reliable_data；撤回“含输入hasbit回显”的说法，输出hasbit独立置位，详见§47 |
 | supported_audio_codecs | 顺序扫描，取首个 ∈ {1, 3}（Raw/Opus）为 selected_audio_codec；无匹配记 0 并在日志使能时告警 |
 | supported_video_codecs | 顺序扫描，按客户端解码能力掩码 0x330（位 4,5,8,9 = HEVC/AV1 族，再过
   `CStreamDecoderH264Standalone::BAvailable` 硬解检测）取首个为 selected_video_codec |
@@ -4261,3 +4261,33 @@ pending同单元内dispatcher调用另在真实data handoff处观察，GNU wrap�
 共80组，验证非控制反馈、到期边界、重复输入、补洞和stop/join。
 历史`audit-ihslib-control.sh`探针补上明确的连接前态、激活窗口、Receive→Update和
 最终Socket/clock替身，不再从旧FIFO接口推断反馈发生；仍保留诊断buffer canary。
+
+
+## 47. reliable_data值与presence的直接C++核验边界
+
+【证据】`audit-steam-negotiated-reliable.py`使用同SHA官方客户端的真实
+CNegotiationInitMsg/CNegotiatedConfig构造器、Frame::Get与原C++ protobuf parser，
+执行OnNegotiationInit `0x7ad698`到`0x7ad720`。`0x7ad6fc/0x7ad710`
+无条件读取已解析bool值并复制；`0x7ad704–0x7ad71c`将目标hasbits独立OR 5。
+初始codec选择尚未继续，目标partial config由原C++ ByteSize/serializer生成：
+
+| 输入protobuf | 输入hasbits | 目标reliable_data | 目标hasbits | 此处partial config |
+|---|---:|---|---:|---|
+| 空 | 0 | false | 5 | 08001000 |
+| 0800 | 1 | false | 5 | 08001000 |
+| 0801 | 1 | true | 5 | 08011000 |
+
+【结论／撤回】§5原“含hasbit回显”的表述没有依据，现明确撤回。该地址复制的是
+值；缺省false与显式false在这个checkpoint的输出相同，输出presence不是输入presence。
+不能再将输入字段省略直接等同于目标config字段省略。
+
+【边界】这是完整解析器后的初始复制checkpoint，使用已解密明文Frame；codec选择、
+最终SetConfig的原始调用者/序列化wire、真实主机协商及decoder均不在此3例范围。
+停止点及分配/libc为显式适配器；不把partial config当作最终协商报文，亦不由此
+宣称协商声明和完整媒体模式已对齐。
+
+```sh
+python3 scripts/audit-steam-negotiated-reliable.py \
+  --binary /path/to/official/libmain-arm64.so \
+  --output build/video-recovery-re/negotiated-reliable.json
+```
