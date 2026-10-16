@@ -15,14 +15,17 @@
 
 ## 1. 控制消息方向总表
 
-### 1.1 官方客户端→host 发送全集【已验证】
+### 1.1 官方客户端→host 发送入口清单（静态范围）
 
 方法：枚举 `CStreamClient::SendControlMessage(EStreamControlMessage, MessageLite const&)`（0x7a7d90）
-的全部 35 个调用点（`bl c0e110 <SendControlMessage@plt>`），逐点提取 w1 类型常量与所属函数；
-另有 1 个不走 SendControlMessage 的发送点（ClientHandshake，见 3.3）。
+的直接调用点，逐点提取 w1 类型常量与所属函数。
+【更正，见 §28】该 ELF 有 35 个 `bl` 和 1 个尾调用 `b` 到 `c0e110`；
+绕开此函数的路径至少还有 AuthenticationRequest 和 ClientHandshake 两处。
+撤回旧文“发送全集／只有一个绕开点”的完整性声明；静态直接调用清单不覆盖任意间接调用。
 
 | 类型 | 消息 | 发送函数（0x7axxxx） | 备注 |
 |---|---|---|---|
+| 1 | AuthenticationRequest | StartAuthentication (0x7a7b7c) | **不走 SendControlMessage**；在 0x7a7ce4–0x7a7d0c 构造 control/type=1、Put(false)、Send(true) |
 | 4 | NegotiationSetConfig | OnNegotiationInit (0x7ad698) | 收到 Init 后立即回应，见第 6 节 |
 | 5 | NegotiationComplete | HandleStreamStarting (0x7a6f9c) | |
 | 6 | ClientHandshake | OnStreamConnected (0x7ace2c) | **不走 SendControlMessage**，明文直发 |
@@ -49,7 +52,7 @@
 | 148 | VideoOverflow | 0x7abc90 | 解码溢出上报 |
 | — | （回放）任意 | PlayNextRecordedInput (0x7a6234) | 类型取自录制条目，白名单 {3,4,5,6,7,9,10,11,12,13} |
 
-**官方客户端从不发送**（静态全集内不存在构造点）：50/51/52/53（Start/StopAudio/VideoData）、
+**在上述静态发送入口未见构造点**：50/51/52/53（Start/StopAudio/VideoData）、
 **87 SetQoS、90 VideoEncoderInfo、94 SetTargetBitrate**、110/112/114/116（TouchConfig 下行族）、
 117 以外的 InputTouch 旧族、SetQuality/SetBitrateOverride（134/135，仅有接收 handler）。
 
@@ -1989,7 +1992,8 @@ m = ceil(k * FEC_percentage / 100)
 slice/FrameFinish 组装层。FEC 不是从 H.264 参考帧推算丢失的图像。
 
 MTU 来自 `CStreamPacket::s_nMTU @0xf34d48`，本 ELF 数据初始化值为 **1024**；
-这不证明会话运行中未被改变。测试中 1500/64 是显式注入值，不能冒称官方默认值。
+§28.2 补齐 ServerHandshake 运行时赋值，范围限制为 512～1472。
+FEC 测试中 1500/64 是显式注入值，不能冒称官方默认值。
 `Socket::Send 0x7ff280–0x7ff2bc` 在 connection `+10` 要求时另加 CRC 标志及
 4B CRC32C；CRC 是外层完整性检查，不是冗余编码的一部分。
 
@@ -2123,3 +2127,180 @@ python3 scripts/audit-steam-transport-dispatch.py \
 错误 ID/地址、CRC 要求位、类型 7/8/10/11 的路由与 channel 上界。地址比较
 结果、统计、目标处理器及 Disconnect 动作为替身；不模拟真实断连资源清理。
 本节对实际执行的函数层次作出限定，不构成整套 Steam 协议等价实现的声明。
+
+## 28. 控制入口与传输状态规则的横向核对
+
+### 28.1 审计范围与消息清单
+
+【证据范围】同一 SHA-256 固定的 Android 1.3.32 ARM64 ELF；本地实现对照
+IHSlib `5fe67f4`。下述案例执行原始指令，替换平台依赖，不是仅搜索 protobuf
+名称，也不是 Windows host 或 GitHub 所有历史版本的行为证明。
+
+`HandleIncomingPackets @0x7a6368` 在 client state=2/3/4/6 的所有 byte 编号
+0～255 上共执行 1024 次。到首个 On handler 或 protobuf 构造器即停止，故证明
+**入口选择**，不证明 payload 被接受或 delegate 完整执行。实际入口为：
+
+- state 2：ServerHandshake(7)。
+- state 3：AuthenticationResponse(2)。
+- state 4：NegotiationInit(3)、NegotiationSetConfig(4)。
+- state 6：40 个非默认分派入口，清单保存在 fixture。
+
+`OnStreamPacket @0x7acfa8` 另对 state 6/control channel 的全部 256 编号以及
+5 个 state/channel 边界执行验证：KeepAlive(9) 在该层提前消费；RemoteHID(106)
+提前交给 delegate；其他控制消息排队进入前述分派。state 0/7 丢弃数据；媒体
+channel >=3 要求 state=6。crypto 的成功结果、信封构造及最终动作在这些案例中
+为替身，不能拿入口扫描证明加密、媒体解析或 HID 的所有状态语义。
+
+【本地源码差异】`ch_control.c` 的顶层 `IHS_SessionChannelControlOnMessageReceived`
+缺少下列 12 个 state 6 入口；脚本从当前源码重算差集，而不是硬编码本地缺项：
+
+| 编号 | 消息 | 所属功能 |
+|---|---|---|
+| 74 | OverlayEnabled | 叠加层状态 |
+| 89 | SetGammaRamp | 色彩/gamma |
+| 103 | VirtualHereReady | USB 转发 |
+| 110/112/116 | TouchConfigActive / SetTouchConfigData / SetTouchIconData | 触摸配置及资源 |
+| 121 | SetFlashState | 窗口提示状态 |
+| 126 | ToggleMagnification | 放大显示 |
+| 132 | RemotePlayTogetherGroupUpdate | 远程同乐组信息 |
+| 136 | ShowOnScreenKeyboard | 屏幕键盘 |
+| 145 | VRConnectionReady | VR 连接 |
+| 146 | SetCursorScale | 光标缩放 |
+
+这些多是 §13 已提及但未接入的界面/外设功能，不应包装成 12 种新发现的抗丢包
+协议。相反，有 `case` 也不代表行为对齐，例如本地 OnSetQoS 只记录日志；官方
+`OnSetQoS 0x7add24–0x7add30` 实际调用 transport SetQOS，参见 §14.16。
+也不能将上述差集直接解释为 Steam 大屏底栏闪烁的原因。
+
+【更正】§1.1 原来的完整性声明不成立。全量反汇编中，对
+`SendControlMessage@plt 0xc0e110` 有 35 个 `bl` 和 1 个 `b`；尾调用在
+`SendControllerConfigMessage 0x7abb44`。此外 `StartAuthentication` 的
+`0x7a7ce4–0x7a7d0c` 直接构造 control/type=1 信封、Put(false)、Send(true)，
+和 ClientHandshake 一样绕开该函数。§1.1 已补消息 1 并撤回“全集/只有一处绕开”
+的说法；这不改变 pairing authorization 与 streaming connect/security PIN 的
+区别，认证语义仍以 STEAM_REMOTE_PLAY_AUTH.md 为准。
+
+### 28.2 ServerHandshake 的 MTU 是运行时限制值
+
+【证据】`HandleIncomingPackets 0x7a64cc–0x7a64f0` 取 ServerHandshakeInfo
+的可选 int32 字段 mtu（字段 1），先按有符号数限制下界 512，再限制上界 1472，
+写 `s_nMTU @0xf34d48`；`0x7a64f8` 随后调用 StartAuthentication。
+省略该可选字段时 protobuf 值为 0，走同样的限制后得到 **512**。
+10 个原始指令案例覆盖 −1/0/511/512/1024/1472/1473/1500/9000 以及字段省略。
+这里始终提供有效的 required info；没有将 malformed/missing info 等同于省略 mtu。
+
+【本地源码差异】`ch_control.c::OnServerHandshake` 有 mtu 就原样保存，否则取
+1500；`channel.c` 再用该值减传输头和 CRC 计算分片容量。既无上述上下界，也没有
+相同的缺省结果。仅从 ELF 初始数据值 1024 推断最终会话 MTU 会遗漏这条路径。
+
+【结论】这是可定位的分片参数差异。【待验证】过大的包在特定链路上可能产生
+IP 分片等影响；没有该用户抓包，不能断言此差异造成下行停顿，也不能把修改
+客户端上行分片自动等同于修复 host 下行。
+
+### 28.3 发包限速与通道调度
+
+【证据】`CTrafficShaper @0x7fe348` 的构造值为不可靠类 **12,500,000 B/s**、
+可靠类 **625,000 B/s**；这是构造值，不是任意运行会话的最终有效带宽。
+`BCanSendPacket @0x7fe38c` 先去掉 CRC bit，再将类型 3/4 归到 deadline `+8`，
+5/6 归到 `+12`；7/10/11 在此函数直接允许，不受这两个 deadline 限制。
+它只证明本层规则，不证明 FEC 不受其他层/系统发送能力约束。
+
+`SentPacket 0x7fe3f0–0x7fe480` 按实际包长推进相应 deadline。
+在正 rate、正常包长范围内，可写为以下 stream tick 规则（65536 tick/s）：
+
+```text
+若 rate == 0：deadline = packet_timestamp
+否则：
+    deadline = max_by_signed_wrap(deadline, packet_timestamp - 65)
+               + trunc((wire_bytes << 16) / rate)
+```
+
+加减结果为 uint32；比较用带符号差处理回绕，不能直接用无限精度整数 max。
+`Socket::Send 0x7ff244–0x7ff274` 做准入，`0x7ff33c–0x7ff3c4` 更新已发送预算。
+`Socket::SetBandwidthLimit @0x7ff1d0` 写不可靠类限额，不等同于改两类所有限额。
+66 个原始指令案例验证两类不同 deadline、等号准入、零 rate、空闲后的 65 tick
+追赶上限、已有预算保留、uint32 回绕，以及 7/10/11 对该函数的绕行。
+
+【证据】`SetChannelPriority 0x7fbc68–0x7fbc8c` 写 channel `+20` 并标记
+connection `+376` 待重排。`HandleStreamStarting 0x7a7070–0x7a708c` 将控制
+channel 1 设为 2、统计 channel 2 设为 −1。Connection Update 的实际排序调用在
+`0x7fc338–0x7fc358`，按优先级降序；第一轮每通道依次执行接收状态更新、
+SendReliablePackets、SendUnreliablePackets(false)、FEC SendPackets。
+`0x7fc3d0–0x7fc410` 第二轮从轮转索引出发执行 SendUnreliablePackets(true)。
+此处 bool 的具体发送/保留行为与 §25.3 连读，不能把两轮简称为相同的 FIFO 出队。
+三个案例使用真实排序及调度指令，验证三通道顺序和三个轮转起点；通道函数本体
+为事件替身，不测试并发/系统背压下的整体公平性。
+
+【本地源码差异】`session.c::IHS_SessionQueuePacket` 将初发包 append 到统一
+sendQueue，`SessionSendWorker` poll 首项；该初发队列没有同样的通道优先级排序和
+双类 deadline 整形。本地可靠重传定时器、媒体反馈 worker 和 HID 合并仍是各自
+机制，不能凭它们存在就视为已拥有官方连接级调度。是否有实际输入/反馈饥饿仍需
+负载日志；不能从调度差异直接推算会卡一两秒。
+
+### 28.4 连接超时、暂停及 CRC 协商
+
+【证据】静态初始化 `0x7fe284` 设置 connect retry=6553 tick、RTO 最小/最大
+65/3276 tick、普通连接超时 **15×65536 tick**、暂停超时 **180×65536 tick**。
+`Connection::Update 0x7fc43c–0x7fc4c0` 按 connection `+8` 选择超时，比较
+uint32(now−last_receive@+52)，**达到**阈值即进入超时分支，state 0/1 会调用
+Disconnect。原指令断言覆盖 state 1 下两个阈值各自的前/等于/后边界。
+`Pause @0x7fb990` 设置暂停字节；`Resume @0x7fb99c` 清除它，并以 connection
+当前 `+48` 时间刷新 `+52/+56`，也有原指令断言。
+
+这是 Android 客户端的连接级计时，不是视频缺包等待、关键帧请求周期，更不是
+Windows host 会在 15 秒或 180 秒执行某动作的证据。本地 `session.c` 的接收
+socket timeout 为工作线程定期检查退出服务，不等同于此状态化连接 deadline；
+该版本没有找到对应的暂停/恢复计时规则。
+
+【证据】`HandleConnected 0x7fbf10–0x7fbf58` 仅在 connection state=0、包长
+恰为 **17B** 时接受，记录对端 ID、将该包的 CRC 标志写 connection `+10`，再处理
+时间戳并通知连接成功。长度指 Socket 校验/剥除 CRC 尾部之后，不能误认成线上
+含 CRC 总长必须 17B。12 个原始指令案例覆盖 state 0/1、16/17/18B、CRC bit 0/1；
+时间戳处理和连接成功回调为替身，CRC 算术不在这些案例内。
+
+上行 `SendConnectPacket @0x7fb84c` 的 4B cookie 是字符串 Connect 的 CRC32C；
+`HandleConnect 0x7fbd68–0x7fbdc8` 接受旧式无 cookie 形式，拒绝不足 4B 的非空
+cookie，验证 cookie 成功时才设置连接 CRC 要求位。后续数据的“要求 CRC 却未带
+CRC 标志即拒绝”见 §27.2。这属于传输连接协商，不是 pairing/security PIN。
+
+【本地源码差异】`ch_discovery.c::OnConnectACK` 有连接 ID/阶段检查，但没有同样
+的 4B body 长度约束，也未持久化 peer 协商的 connection CRC 要求；`packet.c`
+会校验**已带** CRC 的包，不代表拒收“按此连接要求本应有 CRC、实际未带”的包。
+这是一项握手/完整性策略差异，不是已证实的媒体损坏来源。
+
+### 28.5 包类型与底层 transport 不能混为一谈
+
+【证据】实际调用 `GetStreamPacketTypeName @0x7fe318` 得到 0～11 的类型名，
+12 为 UNKNOWN；更进一步，对 `Connection::HandlePacket` 和
+`Channel::HandlePacket` 各自的类型 12～127 运行原始指令，共 232 个案例均未进入
+媒体、ACK、NACK、FEC 等目标处理器。结合既有 0～11 分派证据，在这两个分派器和
+固定 ELF 范围内，没有找到编号大于 11 的隐藏媒体包入口。这不证明未来版本、
+其他输入层、其他 backend 也没有自己的消息编号。
+
+同一 ELF 另有 `CStreamTransportUDP`（Send/Recv `0x802754/0x80286c`）、
+`CStreamTransportUDP_SNS`（UpdateState `0x800c28`）、
+`CStreamTransportSDR`（UpdateState `0x8011f0`、信令 `0x801754`），以及共用的
+SteamNetworkingSocketsBase Send/Recv `0x800224/0x8002c0`。
+这些是更下层的承载/连接路线；不能把 SNS/SDR 内部的确认、拥塞或信令编号直接
+填进本节 13B 头的 channel 协议。此处记录边界与地址，不冒充完成 SNS/SDR 内部
+协议逆向，也不证明原报告用户实际选择了哪条 transport。
+
+### 28.6 可复核产物及未覆盖内容
+
+```sh
+python3 scripts/audit-steam-protocol-inventory.py \
+  --binary build/video-recovery-re/libmain-arm64.so \
+  --output build/video-recovery-re/protocol-inventory.json
+```
+
+脚本需 unicorn、protobuf 和 aarch64-linux-gnu-objdump；复用固定 ELF 的审计装载器。
+分组案例数为控制分派 1024、快速入口 261、MTU 10、连接超时/恢复 7、整形 66、
+排序/轮转 3、Connected 12、未知传输编号 232；另复跑装载器的 36 个恢复断言和
+既有 16 个分层分派断言。`scripts/fixtures/steam-protocol-inventory.json` 固化原版
+已处理的控制入口、MTU、常量、构造带宽、类型名和轮转结果；运行时只比较，不自动
+改写期望值。本地缺项另外从源码计算，不写进“官方期望值”。
+
+【边界】不是“协议已全部逆向”的证明：host 配置生效/自适应冗余率、可靠窗口的
+全边界、时钟/RTT 拟合、真实背压并发、所有控制 payload/delegate、SNS/SDR 内部及
+平台解码/显示仍没有同等覆盖。新发现的状态/调度差异、已知 FEC/发送缓存能力缺口
+与原用户故障的因果关系保持待验证；本节本身不改变生产协议流或开启任何配置。
