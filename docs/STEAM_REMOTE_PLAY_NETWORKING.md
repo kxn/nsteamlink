@@ -12,7 +12,7 @@
   没有这条完整链路，不能通过增加一个 transport 枚举值就启用。
 - **Conclusion**：独立探针已实际完成生产服务的会话创建、开始/取消配对，以及复用本设备
   配对身份的云端主机状态订阅。官方 Android 客户端已完成云端配对并进行首次网络测试。
-- **未验证**：独立客户端的完整配对/SDR/媒体实现、不同公网出口之间的穿透、强制中继、
+- **未验证**：独立客户端的完整配对/SDR/媒体实现、不同公网出口之间的穿透、
   CGNAT/对称 NAT、稳定游戏串流和 Switch 接入。模拟器 NAT 的上游与主机同在一个局域网。
 
 **证据修订（2026-10-16）**：撤回本文早期静态草稿中“本次没有调用生产配对服务”的描述。
@@ -334,8 +334,8 @@ Android 日志记录 `Connecting` → `Handshake` → `Authenticating` → `Netw
 - `CStreamTransportClient` 构造函数 `0x7d42ec` 复制末尾 `CUtlBuffer const&` 参数到
   `this+24`，长度保存于 `this+44`。`SendTransportSignal` 将序列化后的 `CTransportSignalMsg`
   放入外层 payload（字段 2），在 `0x7d4838` 使用该 buffer 作为 HMAC-SHA256 key，
-  payload 原始字节为输入，32 字节摘要写入 token（字段 1）。**key 上游来源仍待跟踪**，
-  不能仅凭长度把它认定为持久化 secret 或媒体 session key。
+  payload 原始字节为输入，32 字节摘要写入 token（字段 1）。key 的上游在本次网络测试路径
+  已由 §8.8 的调用链和实际验签确认，是解密后的 streaming session key。
 - 接收 `BProcessReply @0x7d4b30` 校验 framing、长度、类型 12，解外层 proto；
   `0x7d4ce8` 重算 HMAC，`0x7d4d04–0x7d4d38` 要求 token 长 32 并比较，
   校验后才在 `0x7d4d68` 解析内层信令并交给 transport。只转发裸 SDP 不符合这层格式。
@@ -364,7 +364,7 @@ Android 日志记录 `Connecting` → `Handshake` → `Authenticating` → `Netw
 这支持公开 rendezvous schema 可用于分析该样本，但不证明所有版本字段均兼容。
 候选出现不等于该候选连通；仍需网络库实际选择的路径和数据包证据。
 
-**待验证**：HMAC key 的完整派生/生命周期、证书签发身份与有效期、SDR 私有线路协议、
+**待验证**：其他播放器入口的 key 生命周期、证书签发身份与有效期、SDR 私有线路协议、
 无官方网络库时的服务接入兼容性。开源 GNS 的 ICE 示例可供参考，不能替代这些验证。
 
 ### 8.4 NAT 拓扑与互相独立的发现实验
@@ -469,3 +469,91 @@ UI 持续绘制测试曲线，并显示测试目标速率达到 125 Mb/s（目�
 **待验证假设**包括首次连接的 SDR/ICE 选路或传输处理、测试模式兼容性、模拟器及采集开销；
 需在相同模式/路径下对照后才能归因。相关原始日志和反汇编位于私有目录
 `build/wan-research/official-uninstrumented/`。
+
+### 8.7 单一出口下的中继隔离实验
+
+**Evidence（2026-10-16）**：Android 34 AVD 支持 root adb、iptables/ip6tables。
+`tools/android-network-sandbox.py` 仅在明确选择的 `emulator-*` 中，按 Steam Link 应用 UID
+挂接随机命名的 OUTPUT 子链；阻断 trace 中的 7 个主机/共享出口候选地址（IPv4 5 个、IPv6 2 个）。
+DNS、Steam CM 和其他 SDR 节点地址仍允许。未修改开发机或 Steam PC 的防火墙。
+
+同一主机与模拟器、同一个互联网出口，未挂 Frida 的官方手动网络测试记录：
+
+- 云端获得主机状态并收到 StreamingSuccess；网络库选择 `hkg#458` 为 primary。
+- 对端 primary 为 SDR，连接日志为 `P2P SDR ... connected`，之后完成 Handshake/Authenticating。
+- 进入 NetworkTest 后持续接收约 18 秒，UI 测试目标速率达到 40 Mb/s；
+  日志平均网络时间 55.39 ms、stddev 3.56 ms。目标速率不等于已测可用吞吐。
+- 未出现 ICE writable/receiving 或转为 `P2P ICE` 的记录；退出仍为 `P2P SDR ... closed by app`，
+  同时报告 ICE failure：`No public or relay candidates from remote host`。
+- 阻断规则计数：IPv4 271 包、IPv6 108 包。实验结束删除所有自建链与 owner 跳转；
+  同一应用 UID 下的 UDP 单播探针恢复收到主机的 2 个回复。
+
+**Conclusion**：单一公网出口不妨碍双方经 Valve SDR 节点通信。上述证据支持这次选中了中继
+并有持续测试数据，补上了 §8.4 中纯中继方向的受限网络对照；它仍不能代替两个独立 NAT
+之间 ICE 公网打洞的测试，也不构成稳定游戏串流或精确丢包率证明。
+连续测试本次仍报告负 frame loss（-51.83%），按 §8.6 处理，不将其解读为无丢包。
+
+```sh
+# peer-addresses-private.json 是从自己会话候选地址整理的 JSON 字符串数组。
+# 同一出口时也需覆盖双方可能使用的公网回流地址；新增候选需要重新核对。
+python3 tools/android-network-sandbox.py --serial emulator-5580 \
+  --peer-file build/wan-research/peer-addresses-private.json \
+  --output build/wan-research/relay-firewall --seconds 90
+
+# 另一种独立实验：只对该 app 的出向 UDP 施加 2% 随机丢包。
+python3 tools/android-network-sandbox.py --serial emulator-5580 \
+  --udp-loss 0.02 --output build/wan-research/outgoing-loss --seconds 30
+```
+
+随机丢包规则的内核支持已通过实际创建/删除验证；尚未由该规则完成丢包率统计或抗丢包性能验证。
+规则只作用于该应用出向流量，不伪装成双向丢包。工具记录原始规则、命中计数及清理结果到私有目录，
+正常退出、异常及 SIGINT/SIGTERM 均执行清理；不 flush/restore Android 的全局规则。
+
+### 8.8 信令 key 的来源与独立 codec
+
+**证据修订（2026-10-16）**：撤回早期“本次网络测试的 HMAC key 来源未明”的范围声明。
+以下地址均为 x86_64 shell，不能与 arm64 对象偏移混用：
+
+1. `CServerManager::BSaveEncryptedSessionKey @0xd098a0` 在 `0xd09921` 调 SymmetricDecrypt，
+   用 manager 的配对 key buffer（`this+0x218`）解密开流响应中的 encrypted_session_key；
+   明文存入 `this+0x398`，长度在 `this+0x3ac`。
+2. `CPanelConnect::SetPanelStateNetworkTest @0xcc78f0` 在 `0xcc7a1a–0xcc7a2f` 取该明文和长度，
+   调 `CNetworkTest::SetAuthToken`；后者写入 network test 的 `CUtlBuffer`（`this+0x90`）。
+3. `CNetworkTest::BConnect @0xcff330` 在 `0xcff473–0xcff487` 把此 buffer 作为构造参数传入
+   `CStreamTransportClient`，接上 §8.3 的 HMAC 调用链。
+4. 使用该设备保存的配对 secret，按本仓既有 AES 加密 IV + CBC/PKCS7 算法解密此前捕获的
+   StreamingResponse，得到 **16 字节** session key；独立 HMAC 校验通过 9 个出向信令及
+   3 个入向信令（后者分别含 3、2、1 个 rendezvous 消息）。未打印或提交 key。
+
+**Conclusion**：在已验证的网络测试链路，长期 pairing secret 用来解密 session key；
+session key 用来认证 transport signal。不能把 32 字节的 HMAC 摘要长度当作 key 长度，
+也不能直接拿持久化 pairing secret 对信令做 HMAC。
+
+`tools/steam-remote-signaling.py` 是实验版封装/验签实现：输入 session key 和原始
+`CTransportSignalMsg`，输出 type-12 discovery 包；接收时先校验完整 framing 和 HMAC，
+再解析内层。GNS rendezvous 按不透明 bytes 保留，交给将来的网络后端。
+它和云端探针组成已实现的协议部分；不包含证书服务、GNS 连接或音视频接收后端。
+
+### 8.9 LAN/WAN 的丢包恢复是否共用
+
+**Evidence：** UDP 和 SDR/SNS 对象均传给 `CStreamConnection::Create(IStreamTransport*)`，
+该函数在 x86_64 shell `0xd21890` 创建相同的 CStreamSocket/CStreamConnection。
+上层 CStreamChannel 可靠窗口、ACK/NACK、帧序号与反馈机制见
+[既有协议参考 §9、§14](STEAMLINK_PROTOCOL_RE.md)。IHSlib 的 `session/clock.c`、
+`session/retransmission.c` 已按该证据处理 RTT、可靠重传和 NACK；它们不是只因 LAN 就能省略的逻辑。
+
+**Evidence：** `CStreamTransportSteamNetworkingSocketsBase::Send @0xd27760`
+在 `0xd277ad` 将 flags 设为 **0x15**，在 `0xd277b6` 经虚表偏移 88 调 SendMessageToConnection。
+`CSteamNetworkingSockets` address point `0x146a9b8` 的槽 `0x146aa10` 有 ELF 重定位指向
+`SendMessageToConnection @0xd41800`。Valve 公开头文件中 0x15 是
+Unreliable + NoNagle(1) + NoDelay(4) + UseCurrentThread(16)，不含 Reliable(8)。
+
+**Conclusion**：该样本将流协议包通过 SNS 不可靠消息发送，上层流协议仍处理自己的可靠通道；
+不能因为 GNS 支持可靠消息，就把本项目控制包改成双层可靠传输，或删除上层 ACK/NACK。
+ICE 直连与 SDR 中继共用 SNS backend；普通 UDP 与 SNS backend 的封装、加密、MTU、
+连接维护和网络库拥塞处理有差异，上层也可依据 RTT/丢帧反馈调整策略。
+这支持“共用流会话逻辑、替换传输后端并按测量适配”，不支持“LAN/WAN 所有处理完全相同”，
+也没有证据要求重写一套专属公网音视频协议。
+
+**待验证**：所有传输下的参数默认值、主机端码率/FEC/可靠媒体决策与动态变化。
+本仓仍未实现官方全部媒体能力，尤其不能把官方 FEC/可靠媒体能力直接声明为本项目已支持。
