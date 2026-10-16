@@ -252,7 +252,7 @@ def route_lists(elf, clusters, routes, expected_any, expected_token):
     assert result(48) == expected_token, (routes, result(48), expected_token)
 
 
-def probe_priorities(elf, routes, expected, need_any=False, need_backup=False):
+def probe_priorities(elf, routes, expected, need_any=False, need_backup=False, nearest_limit=20):
     fixture = SDR(elf, routes)
     m = fixture.m
     m.buffers()
@@ -281,7 +281,7 @@ def probe_priorities(elf, routes, expected, need_any=False, need_backup=False):
         m.write(ordered+index*8, index)
         m.uc.mem_write(ordered+index*8+4, struct.pack('<f', route.get('estimate', 5000)))
     sp = m.uc.reg_read(arm.UC_ARM64_REG_SP)
-    for offset, value in [(28, 20), (40, int(need_backup)), (48, int(need_any))]:
+    for offset, value in [(28, max(5,nearest_limit)), (40, int(need_backup)), (48, int(need_any))]:
         m.write(sp+offset, value)
     m.write(sp+56, ordered, 8)
     for reg, value in [(19, NOW), (20, len(routes)), (22, table),
@@ -292,10 +292,16 @@ def probe_priorities(elf, routes, expected, need_any=False, need_backup=False):
     for ptr in range(m.reg(28), m.reg(21), 16):
         priority = struct.unpack('<f', bytes(m.uc.mem_read(ptr+4, 4)))[0]
         output.append((m.read(ptr), priority, m.read(ptr+12)))
-    assert len(output) == len(expected), (routes, output, expected)
-    for actual, wanted in zip(output, expected):
-        assert actual[0] == wanted[0] and abs(actual[1]-wanted[1]) <= max(0.01, abs(wanted[1])*1e-6), output
-        assert actual[2] == wanted[2], output
+    if expected is not None:
+        assert len(output) == len(expected), (routes, output, expected)
+        for actual, wanted in zip(output, expected):
+            assert actual[0] == wanted[0] and abs(actual[1]-wanted[1]) <= max(0.01, abs(wanted[1])*1e-6), output
+            assert actual[2] == wanted[2], output
+    m.stops.pop(0x82445c)
+    m.stops[0x8244ac]=('probe_cutoff_selected',)
+    m.run(0x82445c,0x8244ac)  # Includes the actual counter compare/fcsel, before sort.
+    cutoff=struct.unpack('<f',struct.pack('<I',m.uc.reg_read(arm.UC_ARM64_REG_S8)))[0]
+    return {'candidates':output,'cutoff':cutoff}
 
 
 def probe_budget(elf, count, need_any, need_backup, expected, pending=()):
@@ -2623,6 +2629,29 @@ def audit(elf, groups=None):
         route={'ping':-1,'failures':failures,'failed_addresses':cached,'probes':probes}
         case('probe_failure_history',probe_priorities,[route],expected_probe(route,active,backup),
              need_any=active,need_backup=backup)
+    # These are already in routing-score order, as at 0x823e84. Execute the
+    # original nearest-N walk, including its prefix count and tier-zero cutoff
+    # counters. The implementation audit compares the returned native oracle.
+    unknown={'ping':-1,'probes':0,'reachable':0}
+    planning=[([dict(unknown) for _ in range(24)],n) for n in (-1,5,6,20,21,30)]
+    for changed in ({'reachable':-1},{'failures':4},{'failures':2,'failed_addresses':1},
+                    {'failures':1,'failed_addresses':1},{'pop_tier':0},{'special':1},
+                    {'special':-1},{'pop_type':2},{'pop_type':2,'pop_tier':0}):
+        routes=[dict(unknown) for _ in range(24)]
+        for i in (0,5,19,20,23): routes[i].update(changed)
+        planning.append((routes,20))
+    for other in ([{'ping':-1,'probes':0,'pop_tier':0}],
+                  [{'ping':-1,'probes':0,'pop_type':2,'pop_tier':0}],
+                  [{'ping':-1,'probes':0,'special':1}],
+                  [{'ping':-1,'probes':0,'pop_tier':0},{'pop_tier':0}],
+                  [{'ping':-1,'probes':0,'pop_tier':0},{'pop_type':2,'pop_tier':0}],
+                  [{'ping':-1,'probes':0,'pop_tier':0},{'pop_tier':0,'reachable':-1}],
+                  [{'ping':-1,'probes':0,'pop_tier':0},{'pop_tier':0,'failures':4}]):
+        planning.append((other+[dict(unknown) for _ in range(21)],20))
+    for routes,limit in planning:
+        for active,backup in itertools.product((False,True),(False,True)):
+            case('nearest_probe_planning',probe_priorities,routes,None,need_any=active,
+                 need_backup=backup,nearest_limit=limit)
     case('route_advertisement', advertise, [20], [], {0: 3}, {})
     case('route_advertisement', advertise, [20, 30], [(0, 1, 70, inf)],
          {0: 3, 1: 3}, {(0, 1): 3})

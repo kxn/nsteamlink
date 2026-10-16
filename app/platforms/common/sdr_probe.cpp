@@ -419,6 +419,7 @@ static void update_network(sl_sdr_probe *p, CSteamNetworkConnectionBase *connect
     if (now < p->last_round + 100000) return;
     p->last_round = now;
     std::vector<std::pair<float, ProbeRelay *>> priorities;
+    std::vector<std::pair<sl_sdr_probe_input,ProbeRelay *>> ordered;
     int32_t front[SL_SDR_POP_MAX], estimates[SL_SDR_POP_MAX];
     std::fill_n(front,p->config.pop_count,-1);
     std::vector<sl_sdr_edge> edges;
@@ -460,8 +461,9 @@ static void update_network(sl_sdr_probe *p, CSteamNetworkConnectionBase *connect
         int estimate=have_estimates && pop ? estimates[pop-p->config.pops] : SL_SDR_UNKNOWN;
         float ordering=estimate >= 5001 ? 5000.0f+random_below(101) : float(estimate);
         ++ordinary;
-        if (r.front.m_nTotalPingsReceived >= 2) ++measured;
-        if (r.front.m_nTotalPingsReceived > 2 && r.front.m_nValidPings >= 2 && r.failures.reachability == 1) {
+        if (r.failures.reachability >= 1 && r.ping_ms >= 0 && r.front.m_nTotalPingsReceived >= 2) ++measured;
+        if (r.front.m_nTotalPingsReceived > 2 && r.front.m_nValidPings >= 2 &&
+            r.failures.reachability >= 1 && r.ping_ms >= 0) {
             int conservative = r.front.WorstPingInRecentSample();
             fast += conservative < 30; medium += conservative < 75; broad += conservative < 150;
         }
@@ -469,14 +471,28 @@ static void update_network(sl_sdr_probe *p, CSteamNetworkConnectionBase *connect
             r.front.m_nValidPings, int(r.failures.failures), r.failures.reachability, 1,
             pop ? pop->tier : 1, 0, int(r.failures.count), ordering,
             now-r.ping_sent, now-r.front.TimeRecvMostRecentPing()};
-        float priority;
-        if (!r.ping_deadline && sl_sdr_probe_priority(&input, !p->have_primary, !p->have_backup, &priority))
-            priorities.emplace_back(priority, &r);
+        ordered.emplace_back(input,&r);
+    }
+    // 823b78/823e70: activity is a live connection, not the absence of a
+    // primary. Accuracy/120-second retry gates use this independent flag.
+    auto state=connection->GetWireState();
+    bool active=state >= k_ESteamNetworkingConnectionState_Connecting &&
+        state <= k_ESteamNetworkingConnectionState_Connected;
+    std::stable_sort(ordered.begin(),ordered.end(),[](const auto &a,const auto &b) {
+        return a.first.estimate < b.first.estimate;
+    });
+    sl_sdr_probe_input inputs[SL_SDR_CANDIDATES];
+    for (size_t i=0; i<ordered.size(); ++i) inputs[i]=ordered[i].first;
+    sl_sdr_probe_plan plan;
+    if (!sl_sdr_plan_probes(inputs,ordered.size(),20,active,!p->have_backup,&plan)) return;
+    for (size_t i=0; i<plan.count; ++i) {
+        const auto &candidate=plan.candidates[i];
+        priorities.emplace_back(candidate.priority,ordered[candidate.index].second);
     }
     std::stable_sort(priorities.begin(), priorities.end(), [](const auto &a, const auto &b) { return a.first < b.first; });
-    unsigned budget = (!p->have_primary || !p->have_backup) ? 10 : 1;
+    unsigned budget=plan.budget;
     for (const auto &entry : priorities) {
-        if (!budget) break;
+        if (!budget || entry.first >= plan.cutoff) break;
         if (send_ping(p, *entry.second, now)) --budget;
     }
     p->good_enough |= sl_sdr_routing_ready(ordinary, measured, fast, medium, broad, now-p->initialized_at);

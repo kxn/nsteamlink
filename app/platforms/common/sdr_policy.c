@@ -113,10 +113,13 @@ bool sl_sdr_warn_downtime(sl_sdr_downtime *t, int32_t seconds, float random_seco
     t->avoid = shutdown - (int64_t)(random_seconds * 1000000.0f);
     return true;
 }
-bool sl_sdr_probe_priority(const sl_sdr_probe_input *p, bool need_primary, bool need_backup, float *out) {
+static bool probe_unreachable(const sl_sdr_probe_input *p) {
+    return p->failures >= 4 || (p->failures >= 2 && p->failed_addresses > 0) || p->reachability < 0;
+}
+bool sl_sdr_probe_priority(const sl_sdr_probe_input *p, bool active_connection, bool need_backup, float *out) {
     if (p->special > 0 && p->probes < 8) { *out = -1e30f; return true; }
     bool ordinary = p->pop_type == 1;
-    bool unreachable = p->failures >= 4 || (p->failures >= 2 && p->failed_addresses > 0) || p->reachability < 0;
+    bool unreachable = probe_unreachable(p);
     float numerator;
     if (p->ping < 0) {
         if (p->probes < 4 || !unreachable) {
@@ -126,14 +129,38 @@ bool sl_sdr_probe_priority(const sl_sdr_probe_input *p, bool need_primary, bool 
         numerator = (float)(int)(p->estimate + 2000.0f);
     } else numerator = (float)(p->ping + 50);
     if (p->probes >= 8) {
-        if (!ordinary && !need_primary && p->special < 1) return false;
+        if (!ordinary && !active_connection && p->special < 1) return false;
         if (p->ping >= 0 && p->front_samples >= 3 && p->received >= 8 &&
-            (!need_primary || p->since_received <= 120000000)) return false;
+            (!active_connection || p->since_received <= 120000000)) return false;
         if (!need_backup && unreachable && p->since_sent < 120000000) return false;
     }
     numerator += ordinary ? 0.0f : 75.0f;
     float age = p->since_sent > 0 ? (float)p->since_sent / 1000000.0f : 0.0f;
     *out = 20000.0f + numerator / (age + 0.5f);
+    return true;
+}
+bool sl_sdr_plan_probes(const sl_sdr_probe_input *inputs, size_t count, int nearest_limit,
+    bool active_connection, bool need_backup, sl_sdr_probe_plan *out) {
+    if (!out || count > SL_SDR_CANDIDATES || (count && !inputs)) return false;
+    sl_sdr_probe_plan plan = {.cutoff=1e30f,.budget=need_backup || !active_connection ? 10u : 1u};
+    unsigned nonfailed = 0, initial_other = 0, measured_tier_zero = 0;
+    unsigned limit = nearest_limit > 5 ? (unsigned)nearest_limit : 5;
+    for (size_t i=0; i<count; ++i) {
+        const sl_sdr_probe_input *p=&inputs[i];
+        bool unreachable=probe_unreachable(p);
+        nonfailed += !unreachable;
+        bool ordinary=p->pop_type == 1;
+        if (ordinary && p->tier == 0) measured_tier_zero += p->ping >= 0;
+        else if (p->special <= 0 && p->tier >= 1 && nonfailed > limit) continue;
+        float priority;
+        if (!sl_sdr_probe_priority(p,active_connection,need_backup,&priority)) continue;
+        plan.candidates[plan.count++]=(sl_sdr_probe_candidate){(unsigned)i,priority};
+        if (!(p->special > 0 && p->probes < 8) && p->ping < 0 &&
+            (p->probes < 4 || !unreachable) && !(p->tier >= 1 && p->special <= 0))
+            ++initial_other;
+    }
+    if (initial_other > measured_tier_zero) plan.cutoff=10000.0f;
+    *out=plan;
     return true;
 }
 bool sl_sdr_routing_ready(int ordinary, int measured, int fast, int medium, int broad, int64_t age) {

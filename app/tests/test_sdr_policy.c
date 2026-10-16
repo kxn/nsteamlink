@@ -98,6 +98,27 @@ int main(void) {
     assert(!sl_sdr_routing_ready(20, 14, 1, 2, 4, 8000000));
     assert(!sl_sdr_routing_ready(20, 15, 0, 0, 0, 7000000));
     assert(sl_sdr_routing_ready(20, 15, 0, 0, 0, 7000001));
+    /* Native nearest-N fixtures: healthy/unknown clusters count toward the
+     * prefix, failed clusters do not, and tier zero bypasses that limit. */
+    sl_sdr_probe_input probes[7];
+    for (unsigned i=0; i<7; ++i)
+        probes[i]=(sl_sdr_probe_input){.ping=-1,.pop_type=1,.tier=1,.estimate=5000};
+    sl_sdr_probe_plan plan;
+    assert(sl_sdr_plan_probes(probes,7,0,true,false,&plan) && plan.count==5 && plan.budget==1);
+    probes[0].reachability=-1;
+    assert(sl_sdr_plan_probes(probes,7,5,true,true,&plan) && plan.count==6 && plan.budget==10);
+    probes[6].tier=0;
+    assert(sl_sdr_plan_probes(probes,7,5,true,false,&plan) && plan.count==7 && plan.cutoff==10000);
+    probes[0].tier=0; probes[0].ping=20;
+    assert(sl_sdr_plan_probes(probes,7,5,true,false,&plan) && plan.cutoff>10000);
+    assert(!sl_sdr_plan_probes(NULL,1,20,true,false,&plan));
+    /* A connected client can remeasure stale accurate samples even while
+     * retaining its primary. Activity is independent of primary absence. */
+    sl_sdr_probe_input stale={.ping=20,.probes=8,.received=8,.front_samples=3,
+        .pop_type=1,.tier=1,.since_received=120000001};
+    float priority;
+    assert(sl_sdr_probe_priority(&stale,true,false,&priority));
+    assert(!sl_sdr_probe_priority(&stale,false,false,&priority));
     assert(sl_sdr_established_action(-2)==SL_SDR_STATE_THINK);
     assert(sl_sdr_established_action(-1)==SL_SDR_STATE_CLOSE);
     assert(sl_sdr_established_action(0)==SL_SDR_STATE_INVALID);

@@ -39,7 +39,19 @@ typedef struct sl_sdr_probe_input {
     float estimate;
     int64_t since_sent, since_received;
 } sl_sdr_probe_input;
-bool sl_sdr_probe_priority(const sl_sdr_probe_input *, bool need_primary, bool need_backup, float *);
+bool sl_sdr_probe_priority(const sl_sdr_probe_input *, bool active_connection, bool need_backup, float *);
+typedef struct sl_sdr_probe_candidate { unsigned index; float priority; } sl_sdr_probe_candidate;
+typedef struct sl_sdr_probe_plan {
+    sl_sdr_probe_candidate candidates[SL_SDR_CANDIDATES];
+    size_t count;
+    float cutoff;
+    unsigned budget;
+} sl_sdr_probe_plan;
+/* Input is already ordered by routing estimate, with the caller supplying the
+ * sample's random ordering for unknown estimates. Nearest-N counts nonfailed
+ * clusters, including unknown reachability, rather than emitted probes. */
+bool sl_sdr_plan_probes(const sl_sdr_probe_input *, size_t count, int nearest_limit,
+    bool active_connection, bool need_backup, sl_sdr_probe_plan *);
 bool sl_sdr_routing_ready(int ordinary, int measured, int fast, int medium, int broad, int64_t age);
 typedef struct sl_sdr_failed_address { uint64_t address; int64_t failed; } sl_sdr_failed_address;
 typedef struct sl_sdr_failure_cache {

@@ -38,6 +38,10 @@ class ProbeInput(c.Structure):
     _fields_ = [(n, c.c_int) for n in ('ping', 'probes', 'received', 'front_samples',
         'failures', 'reachability', 'pop_type', 'tier', 'special','failed_addresses')]
     _fields_ += [('estimate', c.c_float), ('since_sent', c.c_int64), ('since_received', c.c_int64)]
+class ProbeCandidate(c.Structure):
+    _fields_=[('index',c.c_uint),('priority',c.c_float)]
+class ProbePlan(c.Structure):
+    _fields_=[('candidates',ProbeCandidate*128),('count',c.c_size_t),('cutoff',c.c_float),('budget',c.c_uint)]
 
 class FailedAddress(c.Structure):
     _fields_ = [('address', c.c_uint64), ('failed', c.c_int64)]
@@ -138,6 +142,8 @@ def main():
         lib.sl_sdr_warn_downtime.restype = c.c_bool
         lib.sl_sdr_probe_priority.argtypes = [c.POINTER(ProbeInput), c.c_bool, c.c_bool, c.POINTER(c.c_float)]
         lib.sl_sdr_probe_priority.restype = c.c_bool
+        lib.sl_sdr_plan_probes.argtypes=[c.POINTER(ProbeInput),c.c_size_t,c.c_int,c.c_bool,c.c_bool,c.POINTER(ProbePlan)]
+        lib.sl_sdr_plan_probes.restype=c.c_bool
         lib.sl_sdr_routing_ready.argtypes = [c.c_int] * 5 + [c.c_int64]
         lib.sl_sdr_routing_ready.restype = c.c_bool
         lib.sl_sdr_fail_address.argtypes = [c.POINTER(Cache), c.c_uint64, c.c_uint, c.c_int64]
@@ -150,17 +156,22 @@ def main():
             assert changed == (old is None or seconds < old-3)
             assert t.shutdown == audit.NOW+expected*1000000
             assert t.avoid == (audit.NOW+(seconds-random_seconds)*1000000 if changed else 123)
-        def priorities(elf, routes, expected, need_any=False, need_backup=False):
-            original_probe(elf, routes, expected, need_any, need_backup)
+        def priorities(elf, routes, expected, need_any=False, need_backup=False, nearest_limit=20):
+            native=original_probe(elf, routes, expected, need_any, need_backup,nearest_limit)
             actual = []
+            inputs=(ProbeInput*len(routes))()
             for i, r in enumerate(routes):
                 p = ProbeInput(r.get('ping', 20), r.get('probes', 8), r.get('received', 8),
                     r.get('front_samples', 3), r.get('failures', 0), r.get('reachable', 1),
                     r.get('pop_type', 1), r.get('pop_tier', 1), r.get('special', 0),r.get('failed_addresses',0),
                     r.get('estimate', 5000), r.get('probe_age', 0), r.get('front_newest_age', 0))
-                value = c.c_float()
-                if lib.sl_sdr_probe_priority(c.byref(p), need_any, need_backup, c.byref(value)):
-                    actual.append((i, value.value, 4))
+                inputs[i]=p
+            plan=ProbePlan()
+            assert lib.sl_sdr_plan_probes(inputs,len(routes),nearest_limit,need_any,need_backup,c.byref(plan))
+            actual=[(plan.candidates[i].index,plan.candidates[i].priority,4) for i in range(plan.count)]
+            expected=native['candidates']
+            assert abs(plan.cutoff-native['cutoff']) <= native['cutoff']*1e-6,(routes,plan.cutoff,native)
+            assert plan.budget == (10 if need_backup or not need_any else 1)
             assert len(actual) == len(expected), (routes, actual, expected)
             for a, b in zip(actual, expected):
                 assert a[0] == b[0] and abs(a[1]-b[1]) <= max(0.01, abs(b[1])*1e-6), (routes, actual, expected)
@@ -305,7 +316,8 @@ def main():
         groups = {'active_selection', 'active_switch_confirmation', 'active_candidate_order', 'timeout_decisions', 'downtime_warning', 'global_probe_priority_matrix',
             'global_routing_readiness', 'failed_cache_insertion', 'failed_cache_expiry', 'received_packet_recovery', 'transport_state_change', 'session_established', 'clean_route_targets',
             'datacenter_latency_updates', 'reverse_latency_estimation', 'cluster_penalty_updates', 'canonical_pop_mapping',
-            'datacenter_route_estimation','router_ping_reply_dispatch','ping_request_size','probe_failure_history'}
+            'datacenter_route_estimation','router_ping_reply_dispatch','ping_request_size','probe_failure_history',
+            'nearest_probe_planning'}
         # Select group names from the existing audit; fail if they are renamed.
         counts = audit.audit(elf, groups)
         assert set(counts) == groups, counts

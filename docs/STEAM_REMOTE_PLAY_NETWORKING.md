@@ -1802,6 +1802,10 @@ POP 的 tier（默认 1）与 ping-only 类型由网络配置 JSON 解析（`0x8
 调度先按 cluster 的 routing score 排序，未知/过大值（>=5001）用随机 5000..5100 排序值打散。
 对合格 POP 构造探测优先级，较小者优先（`0x823d24–0x82445c`）：
 
+- nearest-N 使用**排序前缀中的非失败 cluster 数**，而非已发探测数或列表下标：每项先按
+  下述失败分类决定是否增加计数（`0x823f20–0x823f64`），再进行数量门槛判断。
+  普通 tier=0 或 special>0 候选绕过数量门槛；其余 tier>=1 且前缀计数>N 的候选跳过
+  （`0x824008–0x82409c`）。因此失败项本身不增加计数，但在计数已经>N 后仍可被跳过。
 - 受本地 override 影响的 cluster 初始探测不足 8 次时使用约 -1e30 的紧急优先级。
 - 无 ping 的初始候选采用上述排序值；普通 tier>=1 候选再加 10000，先为其他层的初始测量让路。
   已多次失败的候选走较低优先级的重测分支。
@@ -1815,6 +1819,17 @@ POP 的 tier（默认 1）与 ping-only 类型由网络配置 JSON 解析（`0x8
   否则约 1e30；priority>=cutoff 不发。每轮最多发 10 次（缺少 primary/backup 或无活动连接），
   主备齐全且有活动连接时最多 1 次。找不到 relay 或已有 pending ping 的项不消耗发送预算。
   本路径 EProbeTOSCase=4；不能擅自对全部探测使用不同 TOS。
+
+cutoff 的具体比较为 `initialOther > measuredTierZero`（`0x82445c–0x8244ac`）：
+initialOther 统计进入无 ping 初始候选分支且未加 10000 的项；紧急 override 分支不计入。
+measuredTierZero 统计普通 tier=0 且 ping>=0 的项，不额外要求该项仍可达。
+二者并不是同一列表的“待测项减已测项”。本地实现须先完成整轮计数再发送，不能遇到
+一个 tier=0 未测项就立即截断普通 POP，也不能在收到一个回复后无条件解除 cutoff。
+
+**活动连接标志的语义**：`0x823b78–0x823ca8` 检查连接 wire state 1..3，保存到本轮
+sp+48；它独立于 primary 是否存在。sp+40 则记录仍需补充活动 session/路线的条件。
+本地曾把前者误接成 `!have_primary`；撤回该接法，准确样本的 120 秒重测条件须使用
+活动连接标志。上述每轮预算为 `needRoutes || !activeConnection ? 10 : 1`。
 
 本轮探测的失败分类另读取失败地址缓存：cluster 累计失败 >=4，或累计失败 >=2 且
 失败地址缓存非空，或 reachability<0，任一满足即使用失败重测分支
