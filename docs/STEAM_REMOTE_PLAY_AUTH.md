@@ -20,8 +20,13 @@
 
 ### 1. Pairing PIN / authorization code
 
-结论：首次授权配对时，最有证据支撑的流程是客户端生成并显示四位码，用户把这个码输入到 Steam host
-的 Remote Play 配对窗口。
+结论（局域网 IHSlib/plume 路径）：首次授权配对时，客户端生成并显示四位码，用户把这个码输入到
+Steam host 的 Remote Play 配对窗口。
+
+证据修订（2026-10-16）：撤回上述生成方式适用于所有官方配对入口的泛化。官方 Android 1.3.32
+的云端路径由 `StartPairing` 服务响应提供 PIN，客户端随后构造并发布授权请求；生产服务探针和
+官方模拟器配对已验证此路径，见 [公网协议参考 §2.2、§8](STEAM_REMOTE_PLAY_NETWORKING.md)。
+两种来源的码都属于首次 pairing authorization，均不等于后续 connect/security PIN。
 
 证据：
 
