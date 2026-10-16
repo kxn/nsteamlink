@@ -4130,7 +4130,8 @@ Socket结果1..4、位图1/7/8/9/319/320/321位，以及旧时间戳和混合缺
 
 【适配器边界】真实构造器完成后只预分配空RX环的存储，逻辑头尾仍由真实Clear
 初始化；真实BInsert/PopHead/Advance操作该环。分配/refcount/释放、mutex/queue
-构造、帧上交delegate、统计、诊断和最终UDP为显式适配器；时钟和Socket错误受控。
+构造、帧上交delegate、统计、诊断和最终UDP为显式适配器；空FEC发送器按空操作
+适配，不由此证明实际FEC发送策略。时钟和Socket错误受控。
 输入为Socket已接受后的通道包，不冒称原始UDP接收、完整Connection::Update、
 实际主机应答、真实解密或设备渲染。某些首包有缺口案例触发原版“increasing”诊断；
 探针保存原文、让非debug release路径继续，不能把诊断报告为客户端必然崩溃。
