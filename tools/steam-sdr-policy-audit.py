@@ -711,7 +711,7 @@ def cancel_migration(elf, state, expected, target=1, active=True, requested=2, p
     assert (m.read(fixture.base+64), m.read(fixture.base+68)) == expected
 
 
-def receive_latencies(elf, initial, ordinary, p2p, exceptions, flags, expected, dirty):
+def receive_latencies(elf, initial, ordinary, p2p, exceptions, flags, expected, dirty, reverse=None):
     m = Machine(elf)
     cluster, relay, pb, pop, other_clusters = [m.alloc(8192) for _ in range(5)]
     nodes, buckets = m.alloc(16*40), m.alloc(64*4)
@@ -745,7 +745,34 @@ def receive_latencies(elf, initial, ordinary, p2p, exceptions, flags, expected, 
         for offset, value in [(8, ping), (12, penalty), (16, bits)]:
             m.write(nodes+index*40+offset, value)
         m.write(nodes+index*40+24, stamp, 8)
+    reverse_objects = {}
+    if reverse:
+        global_buckets, global_nodes = m.alloc(64*4), m.alloc(len(reverse)*24)
+        m.uc.mem_write(global_buckets, b'\xff'*(64*4))
+        m.write(other_clusters, global_buckets, 8)
+        m.write(other_clusters+16, 64)
+        m.write(other_clusters+48, global_nodes, 8)
+        m.write(other_clusters+68, len(reverse))
+        m.write(other_clusters+84, 64)
+        for index, (key, (old, result)) in enumerate(reverse.items()):
+            obj, node = m.alloc(8192), m.alloc(40)
+            reverse_objects[obj+664] = [obj, node, old is None, result]
+            m.write(obj+712, node, 8)
+            m.write(global_nodes+index*24, key)
+            m.write(global_nodes+index*24+8, obj, 8)
+            m.write(global_nodes+index*24+16, m.read(global_buckets+(key & 63)*4))
+            m.write(global_buckets+(key & 63)*4, index)
+            if old is not None:
+                for offset, value in zip((8, 12, 16, 24), old):
+                    m.write(node+offset, value, 8 if offset == 24 else 4)
     def insert(m):
+        if m.reg(0) in reverse_objects:
+            obj, node, added, result = reverse_objects[m.reg(0)]
+            assert m.read(m.reg(1)) == 100
+            m.write(m.reg(2), 0)
+            m.reg(0, 0 if added else -1)
+            reverse_objects[obj+664][2] = False
+            return
         assert m.reg(0) == cluster+664
         index, added = insert_entry(m.read(m.reg(1)))
         m.write(m.reg(2), index)
@@ -777,6 +804,9 @@ def receive_latencies(elf, initial, ordinary, p2p, exceptions, flags, expected, 
                          for offset in (8, 12, 16, 24)) for key, index in indices.items()}
     assert actual == expected, (actual, expected)
     assert bool(m.events) == dirty
+    for obj, node, added, result in reverse_objects.values():
+        actual_reverse = tuple(m.read(node+offset, 8 if offset == 24 else 4) for offset in (8, 12, 16, 24))
+        assert actual_reverse == result, (actual_reverse, result)
 
 
 def datacenter_routes(elf, fronts, edges, expected, measured=True):
@@ -1211,11 +1241,12 @@ def integrated_select(elf, routes, active, expected):
             assert m.read(fixture.sessions[index]+4576) == route.get('buckets', 15)
 
 
-def clean_routes(elf, tokens, active, expected_active, fresh=False, state=3):
+def clean_routes(elf, tokens, active, expected_active, fresh=False, state=3, targets=None):
     fixture = SDR(elf, [{} for _ in tokens])
     fixture.active(active)
     m = fixture.m
     count = len(tokens)
+    targets = list(range(count)) if targets is None else targets
     network, pops, shared, pointers, revision, good = [m.alloc(max(128, count*120)) for _ in range(6)]
     m.write(0xc80000+2816, network, 8)
     m.write(network+8, pops, 8)
@@ -1243,8 +1274,10 @@ def clean_routes(elf, tokens, active, expected_active, fresh=False, state=3):
         m.write(pops+index*120+8, 1000+index)
         m.write(clusters+index*56, cluster, 8)
         m.set_string(clusters+index*56+24, token or b'')
-        m.write(best+index*32+4, index if token else -1)
-        m.write(best+index*32+20, int(bool(token)), 1)
+        target = targets[index]
+        valid = target is not None and bool(tokens[target])
+        m.write(best+index*32+4, target if valid else -1)
+        m.write(best+index*32+20, int(valid), 1)
         m.set_string(fixture.sessions[index]+40, b'old'*10)
         m.write(fixture.sessions[index]+64, 2000+index)
     m.stubs.update({0xc12b70: lambda m: m.events.append(('init',)),
@@ -1260,8 +1293,10 @@ def clean_routes(elf, tokens, active, expected_active, fresh=False, state=3):
     assert m.read(fixture.base+56) == count  # Removing an active role never destroys the session.
     for index, token in enumerate(tokens):
         session = fixture.sessions[index]
-        assert m.get_string(session+40) == ((token or b'') if rebuilt else b'old'*10)
-        assert m.read(session+64) == ((1000+index if token else 0) if rebuilt else 2000+index)
+        target = targets[index]
+        selected = tokens[target] if target is not None else None
+        assert m.get_string(session+40) == ((selected or b'') if rebuilt else b'old'*10)
+        assert m.read(session+64) == ((1000+target if selected else 0) if rebuilt else 2000+index)
 
 
 def forward_target(elf, old, desired, acked, revision, desired_pop=123, old_pop=122):
@@ -1526,6 +1561,313 @@ def cluster_penalty(elf, old, incoming):
     clamped = max(0, min(incoming, 5000))
     assert m.read(fixture.clusters[0]+760) == clamped
     assert m.events == ([('diagnostic',)] if incoming < 0 or incoming >= 5000 else [])+([('dirty',)] if old != clamped else [])
+
+
+
+def statistics_schedule(elf, instantaneous_age, lifetime_age, received, sent,
+                        activity=0, in_flight=False, reason=False, reply_delta=None):
+    m = Machine(elf)
+    tracker, reasons, next_time = m.alloc(8192), m.alloc(32), m.alloc(8)
+    clock = NOW*10
+    m.write(tracker+4088, clock-instantaneous_age, 8)
+    m.write(tracker+4080, clock-lifetime_age, 8)
+    m.write(tracker+2528, received, 8)
+    m.write(tracker+2144, sent, 8)
+    m.write(tracker+4040, activity)
+    m.write(tracker+3984, int(in_flight), 8)
+    m.write(next_time, clock+200000000, 8)
+    if reply_delta is not None:
+        m.write(tracker+4008, clock+reply_delta, 8)
+    for index in range(4):
+        m.write(reasons+index*8, 0 if index == 0 else policy.RETURN+index*8, 8)
+    m.redirects[0xc14d30] = 0x8b33e8
+    m.allowed.append((0x8b33e8, 0x8b34f0))
+    m.stubs[0xc097e0] = lambda m: m.reg(0, 1)
+    result, effective_instant, effective_lifetime = 0, instantaneous_age, lifetime_age
+    next_delta = min(200000000, reply_delta) if reply_delta is not None else 200000000
+    if activity == 0 and not in_flight:
+        inst_limit = 30000000 if reason else 20000000
+        if instantaneous_age >= inst_limit:
+            if max(received, sent) > instantaneous_age//3000000:
+                result |= 1 if reason or instantaneous_age >= 30000000 else 2
+            else:
+                effective_instant = 0
+        if reason and not result & 1:
+            next_delta = min(next_delta, 30000000-effective_instant)
+        life_limit = 140000000 if reason else 120000000
+        if lifetime_age >= life_limit:
+            if max(received, sent) > 100:
+                result |= 2 if reason else 4 if effective_instant >= 140000000 else 8
+            else:
+                effective_lifetime = 0
+        if reason and not result & 2:
+            next_delta = min(next_delta, 140000000-effective_lifetime)
+    if reason:
+        m.run(0x8b36c4, 0x8b38bc, tracker, clock, reasons, next_time)
+        assert m.reg(0) == (policy.RETURN+result*8 if result else 0)
+        assert m.read(next_time, 8) == clock+next_delta
+    else:
+        m.run(0x8b3580, 0x8b36c4, tracker, clock)
+        assert m.reg(0) == result, (instantaneous_age, lifetime_age, received, sent, m.reg(0), result)
+    assert m.read(tracker+4088, 8) == clock-effective_instant
+    assert m.read(tracker+4080, 8) == clock-effective_lifetime
+    if effective_instant != instantaneous_age:
+        assert m.read(tracker+4048, 8) == received and m.read(tracker+4056, 8) == sent
+    assert m.read(tracker+4064, 8) == 0 and m.read(tracker+4072, 8) == 0
+
+
+def reply_deadline(elf, smoothed, samples, delayed, pending=False):
+    m = Machine(elf)
+    tracker = m.alloc(8192)
+    m.write(tracker+68, smoothed)
+    m.write(tracker+64, len(samples))
+    for index, value in enumerate(samples):
+        m.write(tracker+16+index*16, value)
+    m.write(tracker+4008, NOW+99 if pending else 0, 8)
+    m.write(tracker+4016, 1234, 8)
+    m.run(0x8b4108, 0x8b420c, tracker, NOW, int(delayed))
+    maximum = max(samples) if samples else smoothed
+    timeout = 1250000 if smoothed < 0 else min(maximum*2000, 1000000)+250000
+    assert m.read(tracker+4008, 8) == (NOW+99 if pending else NOW+timeout+(200000 if delayed else 0))
+    assert m.read(tracker+4016, 8) == (1234 if delayed else NOW)
+
+
+def sequence_window(elf, latest, incoming, already_received, cross_path=False, kind='e2e'):
+    m = Machine(elf)
+    tracker = m.alloc(8192)
+    m.write(tracker+2200, latest, 8)
+    expanded = latest+((incoming-latest+32768) % 65536-32768)
+    block = (expanded-(latest & ~63))//64
+    if already_received and -1 <= block <= 0:
+        mask = 1 << (expanded & 63)
+        m.write(tracker+2336+(block+1)*8, mask, 8)
+        if not cross_path:
+            m.write(tracker+2416+(block+1)*8, mask, 8)
+    m.stubs[0xc097e0] = lambda m: m.reg(0, 1)
+    start, end = (0x83d3ac, 0x83d540) if kind == 'e2e' else (0x819e08, 0x819f9c)
+    m.run(start, end, tracker, incoming & 65535, 0)
+    too_old = expanded <= latest and block <= -2
+    duplicate = already_received and expanded <= latest and -1 <= block <= 0
+    expected = 0 if too_old or duplicate else expanded
+    assert m.reg(0) == expected, (kind, latest, incoming, m.reg(0), expected)
+    assert m.read(tracker+2528, 8) == 1 and m.read(tracker+2484) == 1
+    assert m.read(tracker+2500) == int(too_old)
+    assert m.read(tracker+2504) == int(duplicate and not cross_path)
+    assert m.read(tracker+2448, 8) == int(duplicate and cross_path)
+    assert m.read(tracker+2200, 8) == latest  # Expansion itself never advances the received high-water mark.
+
+
+
+def packed_ack_encoding(elf, ages):
+    m = Machine(elf)
+    queue, repeated, tracker, vt = [m.alloc(8192) for _ in range(4)]
+    m.write(tracker, vt, 8)
+    m.write(vt+8, METRICS, 8)
+    m.write(queue, 1, 1)
+    m.write(queue+4, len(ages))
+    for index, age in enumerate(ages):
+        m.write(queue+8+index*8, ((NOW-age) << 16) | (100+index), 8)
+    def reserve(m):
+        m.write(m.reg(0)+4, max(16, m.reg(1)))
+        m.write(m.reg(0)+8, m.alloc(max(16, m.reg(1))*4), 8)
+    m.stubs.update({0xbffe80: reserve, METRICS: lambda m: m.set_string(m.reg(8), b'tracker'),
+                    0xc09b00: lambda m: m.reg(0, 1)})
+    m.run(0x840fd8, 0x841190, queue, repeated, NOW, tracker)
+    expected = [(100+index) << 16 | (age//64 if 0 <= age < 65536*64 else 65535)
+                for index, age in enumerate(ages)]
+    assert [m.read(m.read(repeated+8, 8)+index*4) for index in range(m.read(repeated))] == expected
+    assert m.read(queue+4) == len(ages) and m.read(queue, 1) == 1
+
+
+def receive_packed_ack(elf, elapsed, delay, matching=True, override=-2):
+    fixture = SDR(elf, [{}])
+    m, tracker = fixture.m, fixture.sessions[0]+112
+    m.write(tracker+4432, fixture.sessions[0], 8)
+    m.write(fixture.clusters[0]+512, override)
+    m.write(tracker+2136, 1001, 8)
+    m.write(tracker+3984, 1000, 8)
+    m.write(tracker+3992, 1, 1)
+    m.write(tracker+3993, 1, 1)
+    m.write(tracker+2528, 77, 8)
+    m.write(tracker+2144, 88, 8)
+    m.write(tracker+4088, 1234, 8)
+    m.write(tracker+4080, 1234, 8)
+    m.stubs.update({0xc12e20: lambda m: (m.events.append(('lookup', m.reg(1))),
+                                       m.reg(0, 0 if elapsed is None else -1 if elapsed == 'invalid' else NOW-elapsed)),
+                    0xc12070: lambda m: m.events.append(('relay_ping', m.reg(1))),
+                    0xc120d0: lambda m: m.events.append(('tracker_ping', m.reg(1)))})
+    sequence = 1000 if matching else 999
+    m.run(0x84f1f0, 0x84f424, tracker, (sequence << 16) | delay, NOW)
+    measured = None
+    valid = elapsed != 'invalid'
+    if isinstance(elapsed, int) and elapsed >= 1:
+        corrected = elapsed-delay*64
+        measured = abs(corrected)//1000 * (-1 if corrected < 0 else 1)
+        valid = -1 <= measured <= 3000
+        measured = max(measured, 0) if override == -2 else override
+    samples = isinstance(elapsed, int) and elapsed >= 1 and valid
+    assert m.events == [('lookup', sequence)]+([('relay_ping', measured), ('tracker_ping', measured)] if samples else [])
+    assert bool(m.reg(0)) == valid
+    assert m.read(tracker+3984, 8) == (0 if matching else 1000)
+    assert m.read(tracker+4088, 8) == (NOW if matching else 1234)
+    assert m.read(tracker+4080, 8) == (NOW if matching else 1234)
+    assert m.read(tracker+3992, 2) == (0 if matching else 257)
+    if matching:
+        assert [m.read(tracker+offset, 8) for offset in (4048, 4064)] == [77, 77]
+        assert [m.read(tracker+offset, 8) for offset in (4056, 4072)] == [88, 88]
+
+
+def relay_stats_timeout(elf, activity, reply_delta, failures=0, interval_age=0):
+    m = Machine(elf)
+    tracker = m.alloc(8192)
+    m.write(tracker+4040, activity)
+    m.write(tracker+4000, NOW-interval_age, 8)
+    m.write(tracker+4008, 0 if reply_delta is None else NOW+reply_delta, 8)
+    m.write(tracker+4024, failures)
+    m.write(tracker+4032, NOW-10 if failures else 0, 8)
+    m.stubs[0xc129f0] = lambda m: m.events.append(('update_interval',))
+    m.run(0x83235c, 0x8324e0, tracker, NOW)
+    expired = reply_delta is not None and reply_delta <= 0
+    assert m.read(tracker+4008, 8) == (0 if expired or reply_delta is None else NOW+reply_delta)
+    assert m.read(tracker+4024) == failures+int(expired)
+    assert m.read(tracker+4032, 8) == (NOW-10 if failures else NOW if expired else 0)
+    assert m.events == ([('update_interval',)] if activity == 0 and interval_age >= 5000000 else [])
+
+
+def relay_ack_schedule(elf, age, queued, force=False, statistics=False):
+    m = Machine(elf)
+    tracker, reply, next_time = m.alloc(8192), m.alloc(8), m.alloc(8)
+    m.write(tracker+4388, queued)
+    m.write(tracker+4384, int(force), 1)
+    m.write(next_time, NOW+2000000, 8)
+    m.stubs.update({0xc128f0: lambda m: m.reg(0, policy.RETURN+16 if statistics else 0),
+                    0xc12900: lambda m: m.reg(0, age)})
+    m.run(0x822c9c, 0x822e84, tracker, NOW, reply, next_time)
+    sending = statistics or queued > 0 and (force or age >= 250000 or queued >= 5)
+    assert m.read(reply) == (2 if statistics else 1 if sending else 0)
+    assert bool(m.reg(0)) == sending
+    expected_next = NOW+250000-age if queued and not sending else NOW+2000000
+    assert m.read(next_time, 8) == expected_next
+
+
+
+def send_stats_path(elf, state, primary, current, force, flags, quality, scheduled, snp_ok, socket_ok):
+    fixture = SDR(elf, [{}])
+    fixture.active([0] if primary else [])
+    m, session = fixture.m, fixture.sessions[0]
+    m.write(fixture.connection+6852, state)
+    m.write(fixture.connection+40, fixture.base if current else 0, 8)
+    m.write(session+2248, 100, 8)
+    m.write(fixture.connection+2528, 200, 8)
+    m.write(fixture.connection+384, 123)
+    def populate(m):
+        context = m.reg(1)
+        m.write(context+24, flags)
+        m.write(context+128, flags)
+        m.write(context+48, (32 if flags else 0) | (8 if quality else 0))
+    def send(m):
+        msg = m.reg(2)
+        m.events.append(('send_control', m.reg(1), m.read(msg+108), m.read(msg+112),
+                         m.read(msg+116) if m.read(msg+16) & 1024 else None))
+        m.reg(0, 60 if socket_ok else -1)
+    m.stubs.update({0xbffb30: lambda m: m.uc.mem_write(m.reg(0), bytes(128)),
+                    0xc009b0: lambda m: None, 0xc12ab0: populate,
+                    0xc12b00: lambda m: (m.events.append(('snp',)), m.reg(0, int(snp_ok))),
+                    0xc12b30: lambda m: m.reg(0, NOW if scheduled else 0x7fffffffffffffff),
+                    0xc12390: send,
+                    0xc12b10: lambda m: m.events.append(('snp_non_data',)),
+                    0xc12b20: lambda m: m.events.append(('track_sent',)),
+                    0xc097e0: lambda m: m.reg(0, 1)})
+    m.run(0x835c64, 0x835f00, fixture.base, session, 0, int(force), NOW, m.empty)
+    e2e = bool(flags & 2 or quality or force)
+    attempt = state == 3 and (e2e or primary and current and scheduled)
+    control = not (attempt and snp_ok)
+    expected = [('snp',)] if attempt else []
+    if control:
+        expected += [('send_control', 26, 123, 100, 200 if e2e else None)]
+        if socket_ok:
+            if e2e:
+                expected += [('snp_non_data',)]
+            expected += [('track_sent',)]
+    assert m.events == expected, (state, primary, current, force, flags, quality, scheduled, m.events, expected)
+    assert bool(m.reg(0)) == (attempt and snp_ok or control and socket_ok)
+    assert m.read(session+2248, 8) == 100+int(control)
+    assert m.read(fixture.connection+2528, 8) == 200+int(control and e2e)
+
+
+
+def generic_stats_producer(elf, expected, mode=0, request=0, relay_age=0, e2e_age=0,
+                           relay_fail=0, e2e_fail=0, immediate_age=0, queued=0,
+                           relay_recv_age=0, pending=False, activity=0,
+                           instant_age=0, e2e_instant_age=0):
+    fixture = SDR(elf, [{}])
+    m, session = fixture.m, fixture.sessions[0]
+    context = m.alloc(256)
+    m.write(context, NOW, 8)
+    m.write(context+160, session, 8)
+    m.write(fixture.connection+5340, 1200)
+    for tracker, age in [(session+112, instant_age), (fixture.connection+392, e2e_instant_age)]:
+        m.write(tracker+4088, NOW-age, 8)
+        m.write(tracker+4080, NOW, 8)
+        m.write(tracker+2528, 100 if age else 0, 8)
+        m.write(tracker+4040, activity)
+    for offset, value in [(136, NOW-relay_age), (184, NOW-relay_age),
+                          (2512, NOW-relay_recv_age), (4128, NOW-immediate_age)]:
+        m.write(session+offset, value, 8)
+    m.write(session+4136, relay_fail)
+    m.write(session+4120, NOW+1000000 if pending else 0, 8)
+    m.write(session+4500, queued)
+    for offset in (416, 464):
+        m.write(fixture.connection+offset, NOW-e2e_age, 8)
+    m.write(fixture.connection+2792, NOW, 8)
+    m.write(fixture.connection+4408, NOW-immediate_age, 8)
+    m.write(fixture.connection+4416, e2e_fail)
+    def quality(m):
+        need = m.reg(1)
+        m.write(m.reg(2)+16, int(bool(need & 3)) | int(bool(need & 12)) << 1)
+        m.events.append(('quality', 'relay' if m.reg(0) == session+112 else 'e2e', need))
+    m.redirects.update({0xc12ad0: 0x8b3580, 0xc14d30: 0x8b33e8})
+    m.allowed.extend([(0x8b33e8, 0x8b34f0), (0x8b3580, 0x8b36c4)])
+    m.stubs.update({0xc006d0: lambda m: m.reg(0, m.alloc(128)), 0xc12ae0: quality,
+                    0xc12af0: lambda m: m.events.append(('put_acks',)),
+                    0xc009d0: lambda m: m.reg(0, 10)})
+    m.run(0x8355f8, 0x835c64, fixture.base, context, request, mode, 9, 0, 0)
+    assert m.read(context+24) == expected, (expected, m.read(context+24), m.events)
+    expected_quality = []
+    for label, age in [('relay', instant_age), ('e2e', e2e_instant_age if mode else 0)]:
+        if age >= 20000000:
+            expected_quality.append(('quality', label, 1 if age >= 30000000 else 2))
+    assert sorted(e for e in m.events if e[0] == 'quality') == sorted(expected_quality)
+    assert (('put_acks',) in m.events) == bool(queued)
+    presence = m.read(context+48)
+    quality_flags = int(instant_age >= 20000000) | (int(bool(mode) and e2e_instant_age >= 20000000) << 1)
+    assert ((m.read(context+128) if presence & 32 else 0) | ((presence >> 2) & 3)) == expected | quality_flags
+
+
+
+def expected_ack_removal(elf, sequences, incoming):
+    m = Machine(elf)
+    tracker = m.alloc(8192)
+    m.write(tracker, len(sequences), 8)
+    for index, sequence in enumerate(sequences):
+        m.write(tracker+24+index*8, ((NOW-1000-index) << 16) | sequence, 8)
+    m.stubs.update({0xbff660: lambda m: m.uc.mem_write(m.reg(0), bytes(m.uc.mem_read(m.reg(1), m.reg(2)))),
+                    0xc12900: lambda m: m.reg(0, 1000)})
+    m.run(0x84f424, 0x84f5cc, tracker, incoming, NOW)
+    expected, remaining = 0, sequences[:]
+    for index, sequence in enumerate(sequences):
+        diff = (sequence-incoming+32768) % 65536-32768
+        if diff == 0:
+            expected = NOW-1000-index
+            remaining.pop(index)
+            break
+        if diff < -16384 or diff > 16384:
+            expected = -1
+            break
+        if diff > 0:
+            break
+    assert m.reg(0) == expected & 0xffffffffffffffff
+    assert [m.read(tracker+24+index*8, 2) for index in range(m.read(tracker, 8))] == remaining
 
 
 def audit(elf, groups=None):
@@ -1888,6 +2230,70 @@ def audit(elf, groups=None):
     for old, incoming in [(0, -1), (20, -1), (0, 0), (20, 20), (20, 4999), (20, 5000),
                              (5000, 5000), (5000, 5001), (0, 0x7fffffff)]:
         case('cluster_penalty_updates', cluster_penalty, old, incoming)
+    for reason, instant_age, lifetime_age, rx_count, sent in itertools.product(
+            (False, True), (19999999, 20000000, 29999999, 30000000, 140000000),
+            (119999999, 120000000, 139999999, 140000000), (0, 101), (0, 101)):
+        case('linkstats_scheduling', statistics_schedule, instant_age, lifetime_age,
+             rx_count, sent, reason=reason)
+    for reason, activity, flight in itertools.product((False, True), (0, 1, 2), (False, True)):
+        case('linkstats_scheduling', statistics_schedule, 30000000, 140000000, 101, 101,
+             activity=activity, in_flight=flight, reason=reason, reply_delta=1000)
+    for smoothed, samples, delayed, pending in itertools.product(
+            (-1, 0, 20, 600), ([], [20], [20, 40, 30]), (False, True), (False, True)):
+        case('reply_deadlines', reply_deadline, smoothed, samples, delayed, pending)
+    for kind, latest, delta, seen, cross in itertools.product(('e2e', 'relay'), (65535, 65536+127),
+            (1, 0, -1, -64, -127, -128, 32767, 32768), (False, True), (False, True)):
+        case('sequence_windows', sequence_window, latest, latest+delta, seen, cross, kind)
+    for ages in ([], [0], [63, 64, 65], [4194303, 4194304], [-1]):
+        case('packed_ack_encoding', packed_ack_encoding, ages)
+    for elapsed, delay, matching in itertools.product((None, 'invalid', -1, 0, 1, 999, 1000, 3000000, 3001000),
+                                                     (0, 32, 65535), (False, True)):
+        case('packed_ack_receiving', receive_packed_ack, elapsed, delay, matching)
+    case('packed_ack_receiving', receive_packed_ack, 50000, 0, override=100)
+    for activity, delta, failures in itertools.product((0, 1, 2), (None, -1, 0, 1), (0, 2)):
+        case('relay_stats_timeouts', relay_stats_timeout, activity, delta, failures)
+    for age in (4999999, 5000000, 5000001):
+        case('relay_stats_timeouts', relay_stats_timeout, 0, None, interval_age=age)
+    for age, queued, force, statistics in itertools.product((249999, 250000), (0, 1, 4, 5), (False, True), (False, True)):
+        case('relay_ack_scheduling', relay_ack_schedule, age, queued, force, statistics)
+    for primary, current, force, scheduled, snp_ok, socket_ok in itertools.product((False, True), repeat=6):
+        case('stats_send_paths', send_stats_path, 3, primary, current, force, 0, False,
+             scheduled, snp_ok, socket_ok)
+    for state, flags, quality, snp_ok in itertools.product((1, 2, 3), (0, 2), (False, True), (False, True)):
+        case('stats_send_paths', send_stats_path, state, False, False, False, flags, quality,
+             False, snp_ok, True)
+    for expected, params in [
+        (0, {}), (0, {'relay_age': 5000000}), (0, {'relay_age': 5000001}),
+        (1, {'relay_age': 5000001, 'queued': 1}), (0, {'relay_age': 7000000}),
+        (1, {'relay_age': 7000001}), (2, {'mode': 1, 'e2e_age': 7000001}),
+        (3, {'mode': 1, 'relay_age': 7000001, 'e2e_age': 7000001}),
+        (1, {'request': 2, 'mode': 1}), (3, {'request': 2, 'mode': 2}),
+        (5, {'request': 3}), (5, {'request': 3, 'mode': 1}), (7, {'request': 3, 'mode': 2}),
+        (0, {'relay_fail': 1, 'immediate_age': 199999}),
+        (5, {'relay_fail': 1, 'immediate_age': 200000}),
+        (7, {'mode': 1, 'e2e_fail': 1, 'immediate_age': 200000}),
+        (0, {'e2e_fail': 1, 'immediate_age': 200000}),
+        (0, {'relay_recv_age': 10000000}),
+        (1, {'relay_recv_age': 10000000, 'pending': True}),
+        (0, {'relay_recv_age': 59999999, 'pending': True, 'activity': 1}),
+        (1, {'relay_recv_age': 60000000, 'pending': True, 'activity': 1}),
+        (0, {'relay_recv_age': 60000000, 'pending': True, 'activity': 2}),
+        (0, {'instant_age': 20000000}), (0, {'instant_age': 30000000}),
+        (0, {'mode': 1, 'instant_age': 30000000, 'e2e_instant_age': 30000000}),
+    ]:
+        case('generic_stats_production', generic_stats_producer, expected, **params)
+    case('clean_route_targets', clean_routes, [b'a', b'b'], [0, 1], [0, 1], targets=[1, 0])
+    case('clean_route_targets', clean_routes, [b'a', b'b'], [0, 1], [1], targets=[None, 0])
+    for sequences, incoming in [([], 1000), ([1000, 1001, 1002], 1001),
+                                 ([1000, 1001, 1002], 999), ([1000, 1001, 1002], 1003),
+                                 ([65535, 0, 1], 0), ([0], 16384), ([0], 16385),
+                                 ([16384], 0), ([16385], 0), ([32768], 0)]:
+        case('expected_ack_removal', expected_ack_removal, sequences, incoming)
+    for old, expected_reverse in [(None, (40, 0, 0, 0)),
+                                   ((90, 42, 17, 0), (40, 42, 17, 0)),
+                                   ((90, 42, 17, NOW-1), (90, 42, 17, NOW-1))]:
+        case('reverse_latency_estimation', receive_latencies, {}, [(200, 40)], [], [], 1,
+             {200: (40, 0, 0, NOW)}, True, reverse={200: (old, expected_reverse)})
     return counts
 
 
@@ -1903,6 +2309,9 @@ def main():
     counts = audit(elf, set(args.group) if args.group else None)
     if not counts:
         parser.error('no audit cases selected')
+    unknown = set(args.group or ())-set(counts)
+    if unknown:
+        parser.error('unknown audit group(s): '+', '.join(sorted(unknown)))
     report = {'sample_sha256': policy.descriptors.SAMPLE_SHA256,
               'method': 'offline original SDR client instructions with explicit external stubs',
               'selection': args.group or 'all',

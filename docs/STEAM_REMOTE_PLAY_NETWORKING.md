@@ -1943,6 +1943,9 @@ RouterPingReply；容器操作与 canonical POP 查询不改变以下字段语�
   本函数在两个延迟数组都为空时不走 exception 循环：完整回复仍降级旧测量并要求重算，
   增量空回复直接返回。不能仅凭字段存在就假定任何分支都会应用它。
 - 有更新时要求路线缓存重算；bit 0 不是“稍后一定再收到一包”的保证。
+- 独立的 `RecvClusterScoringPenalty 0x812cb4–0x812dd4` 将输入钳到 0..5000；负数或 >=5000
+  先诊断再继续钳位。钳后值等于旧值时不要求重算；改变时先通知 dirty 再保存值。
+  不要把这条校验自动套给 route_exceptions 的 penalty 字段。
 
 **Evidence**：`EnsureDataCenterRoutesValidLocked 0x810e70–0x8113c4` 生成未直接探测 POP 的
 route estimate，供 §21.5 排序使用，同时维护各 POP 最近的实际 relay 候选：
@@ -2047,7 +2050,8 @@ port 先按 uint32 检查非零，再截到 16 位组成地址；超范围值不
 
 本节及 §21.10–§21.11 的函数/片段已加入 §21.8 的原始指令执行工具。
 protobuf 对象构造/解析、hash 容器插入、socket/RelaySession 构造、部分统计转换及实际发包使用
-明确桩，不能据此宣称消息 parser、序号窗口提供者或完整网络互操作已通过。
+明确桩，不能据此宣称消息 parser 或完整网络互操作已通过。接收入口用例替代序号窗口提供者；
+§21.16 另对 relay/E2E 窗口的原始函数执行合成输入，不把两种证明范围混为一谈。
 
 
 ### 21.13 重算后的目标 token、active 清理与发送 revision
@@ -2150,3 +2154,149 @@ SDR base 的 +264 子对象，因此其 +24 对应 SDR +288。Confirmed `0x87877
 **Conclusion**：§21.13 的“无 active 且标志为 0”调用在该固定版本中不会把标志恢复为 1。
 不可仅凭日志 “Will re-confirm” 或函数名称宣称已经发生状态改变。若实现决定修正这一行为，
 应明确记录为与固定官方版本的差异，不能伪称二进制本来就这么做。
+
+
+### 21.16 LinkStats 的上报、ACK、序号窗口和回复期限
+
+**Evidence**：`GetStatsSendNeed 0x8b3580–0x8b36c4` 与
+`InternalGetSendStatsReasonOrUpdateNextThinkTime 0x8b36c4–0x8b38bc` 使用独立的 LinkStats 状态，
+不复用 peer routes / forward target revision：
+
+| 项目 | 可顺带发送 | 到期主动发送 |
+|---|---|---|
+| instantaneous stats | 上次确认后 >=20 秒，返回 Ready=2 | >=30 秒，返回 Due=1 |
+| lifetime stats | 上次确认后 >=120 秒，返回 Ready=8 | GetStatsSendNeed 按**上次 instantaneous 确认**后 >=140 秒返回 Due=4；主动调度器按 lifetime 确认后 >=140 秒 |
+
+仅 Active=0 且没有统计包 in-flight 时生成上述需求；Idle=1 可维护 ACK/保活，Disconnected=2
+不据此产生新的统计上报。期限比较为 >=，不是严格超过。主动调度器先将已有 reply deadline
+纳入最早唤醒时刻，再分别检查 30/140 秒；没有立即发送理由时收紧下一次检查时刻。
+GetStatsSendNeed 与主动调度器的 lifetime 参考时钟确实不同，固定开源 GNS 也有同样的区分；
+不得把两个函数合并成一个“上次发送后 140 秒”的计时器。
+
+上报还要求有足够新流量。`BCheckHaveDataToSendInstantaneous 0x8b33e8–0x8b34f0` 取
+`threshold=floor((now-lastInstantAck)/3000000)`；自上次确认以来，sequenced 收包增量或发包
+增量**严格大于** threshold 才有内容。否则更新 instantaneous 的确认时刻和计数基准，等同于
+空闲期间无需发送。lifetime 要求对应任一增量严格大于 100；不足时只更新时间，不清累计计数
+基准。这里的 sequenced 计数包含扩展/检查时的登记，不能用成功解码的视频帧数替代。
+
+**回复期限 Evidence**：`TrackSentMessageExpectingReply 0x8b4108–0x8b420c`：
+
+- 没有 pending deadline 时，尚无 smoothed ping 使用 1250000µs；有 ping 时取
+  `min(worstRecentPingMs*2000, 1000000)+250000`。recent 为最近最多 3 个样本；没有有效样本
+  时回用 smoothed 值。允许 delayed reply 再加 200000µs。
+- 已有 deadline 时不因新请求继续延后；要求 immediate reply 仍更新 lastImmediateRequest，
+  允许延迟的请求不改该时刻。
+- relay tracker thinker `0x83235c–0x8324e0` 在 `deadline>0 && deadline<=now` 时清 deadline，
+  首次失败保存 firstTimeout，失败次数加一。一个 thinker 即使晚到也只记一次，不能补算每个
+  错过周期一次失败；没有新请求就不会再凭空增加失败数。Active 的统计 interval 每 >=5 秒更新。
+
+**relay ACK Evidence**：`RelayBaseGetSendReasonOrUpdateNextThinkTime 0x822c9c–0x822e84` 优先
+处理到期统计，reply request=2。否则有待 ACK 且 force、最老年龄 >=250000µs、或队列至少 5 项
+时发 ACK，reply request=1；其余将下一次唤醒收紧到最老记录接收+250000µs。
+这不把 Idle 升成 Active；它也不取代外层的 10/45/60 秒保活和 200ms aggressive probe。
+
+`PutAcksIntoRepeatedField 0x840fd8` 将每项编码为
+`(uint16(sequence)<<16) | floor((now-received)/64)`；延迟部分超过 65535 时饱和为 65535，
+负延迟经诊断也走饱和分支。构造字段不消费 pending 队列；成功发送后才由 TrackSentAck/
+TrackSentStatsToSessionCommon 清理相应项，不能在 Populate 阶段丢失待回复内容。
+
+`RecvPackedAckInternal 0x84f1f0–0x84f424` 先将 wire ACK 的高 16 位扩展为发送序号：
+匹配统计 in-flight 时先更新已确认的 instantaneous/lifetime 基准并清 in-flight 标志，然后查
+期待 ACK 的发送时刻、计算 RTT。`GetTimeSentAndRemoveAck 0x84f424–0x84f5cc` 只移除
+精确匹配的一项，保留更早未确认项，不是累计 ACK；16 位相对距离超出 ±16384 的异常查找返回
+错误，范围内未找到返回 0。未登记的 ACK 不形成 ping 样本；有时刻才减低 16 位×64µs 的
+远端延迟，向零截断到毫秒，允许 -1..3000ms（-1 作为 0 使用），超界拒绝样本。
+因此无效 RTT 不会回滚已经完成的统计确认；不能把 RTT 有效性当作前面确认状态的前置门槛。
+有效 RTT 再交给 relay/front tracker 和本 session tracker，进入随后选路的测量输入。
+
+**序号窗口 Evidence**：relay `ExpandWirePacketNumberAndCheck 0x819e08–0x819f9c` 与 E2E
+`0x83d3ac–0x83d540` 都用
+`expanded=latest+int16(wire16-uint16(latest))`，以 latest 对齐 64 的当前块和前一块维护位图；
+早于前一块的旧包拒绝，已登记重复返回 0，不伪造新的有效收包。跨 path 的重复另登记该 path
+位图/计数，仍不再次交付。扩展函数本身不推进 latest；后续 TrackProcessSequencedPacket 才登记。
+半圈差值 32768 按 -32768 处理，不按“更大的 uint16 就是新包”处理。
+
+上述提供者均有原始指令输入覆盖。接收入口与提供者各自的断言不代表实际 socket、线程时序、
+protobuf 解析或跨设备的网络互操作。
+
+### 21.17 stats 的承载选择、发送失败与 sequence 消耗
+
+**Evidence**：`BSendStatsMsgToRelayLocked 0x835c64–0x835f00` 构造上下文后，若 wire state=3
+且带 E2E 请求/quality 或调用者 force，先尝试 SNP_SendPacket，以便统计可与端到端数据同发。
+普通 relay-only stats 也可在当前 transport 的 primary session 上、SNP 确实有待发数据时走这条
+入口。非当前 transport、backup、没有待发数据时不因此强造业务包。
+
+SNP 成功即结束本次发送；SNP 失败，或不满足该路径条件时，退回 type 26 的控制消息。
+非 state=3 不尝试 SNP，但仍可发送控制 stats。退回路径分配 relay sequence 并递增计数；本次
+需要 E2E 时也分配独立 E2E sequence、递增对应计数，再调用 RelayServer::SendMsg。
+socket 返回失败也**不回滚**已分配的 sequence；成功才登记 TrackSentStats、消费已发送 ACK，
+以及 §21.14 的半秒 routes 期限。成功发送的 E2E 非数据包还通知 SNP 的统计状态。
+
+**Conclusion**：一次控制 stats 不等于一条永远独立于数据包的固定心跳。实现需要允许与 SNP
+同发及控制消息回退；“发送失败后重试”必须分清原来构造的内容、已消耗的序号和成功后才提交
+的确认/重发状态。本节的原始函数用例明确替代上下文生产、SNP 与 socket 返回值，以验证承载
+选择和失败状态；§21.14/§21.16 分别核对其生产者和发送登记，不能据此声称整个 SNP 已互操作。
+
+
+### 21.18 通用 stats 生产器的探测与隐式 ACK
+
+**Evidence**：`PopulateSDRSendPacketContextGeneric 0x8355f8–0x835c64` 同时使用 relay tracker 和
+connection 的 E2E tracker；§21.14 传入 E2E mode=0/1/2，分别为不加入、可顺带加入、要求加入。
+reply request=3 在 relay 侧置 ACK_RELAY|IMMEDIATE（1|4）；mode=2 再要求 ACK_E2E（2）。
+reply request=2 请求 ACK_RELAY，mode=2 再请求 ACK_E2E。它们和反方向收到的 ACK 不是一回事。
+
+在没有显式要求立即回复时，Active tracker 已经发生至少一次回复超时，且
+`lastImmediateRequest+200000 <= now` 仍会生成 aggressive 请求；relay 侧要求 1|4，E2E
+mode>=1 且该侧超时时要求 1|2|4。Idle 不按此方式 aggressive 探测。
+保活分支保留独立判断：已有在途 reply timeout、最近收包至少 10 秒时 Active 要求回复；Idle
+需达到 60 秒。没有 pending 时的外层保活由 §18.6 处理，不能删除任一层并假定完全等价。
+
+普通 Active tracer 使用最近 ping 接收/请求发送两者较晚时刻：严格超过 5 秒为可顺带探测，
+严格超过 7 秒为需要探测。恰好 5/7 秒不晋级。仅“可顺带”且没有其他 flags、待 ACK、统计需求时
+不独立造请求；已有其他内容时可以一起请求 relay/E2E 回复。E2E 仅在 mode>=1 时参与这一计算。
+这就是正常收流也会测量 RTT、而非等整段连接失败才开始探测的客户端策略。
+
+生产器先取得 §21.16 的需求，将 Due 部分填入 quality，再处理 pending ACK 和回复 flags；
+后面允许把 Ready 部分作为附加统计加入。**存在 relay/E2E quality 本身就隐含对应 ACK 请求**。
+如果没有额外 flags 需要表达，可省略 flags 字段；解析端不能把 flags 缺失解释为不必 ACK。
+上下文中显式要求的 flags、protobuf 实际序列化的 flags，以及 quality 所隐含的 ACK 是三个值，
+不要求它们逐位相同。额外非主路径 flags 和 immediate 仍需显式表达。
+
+离线组合用例执行该原始生产器及原始 GetStatsSendNeed/BCheckHaveDataToSendInstantaneous，
+另以明确桩提供 quality 字段构造、protobuf ByteSize 与 ACK 数组写入；覆盖 5/7 秒、200ms、
+10/60 秒边界、E2E mode 和隐式 ACK。它证明请求/选择分支，不以固定 ByteSize 桩证明编码长度
+或完整 SNP 的 MTU 处理。
+
+
+### 21.19 实现时必须分开的状态与事件接口
+
+下表是以上指令契约的状态划分，不要求复制官方 C++ 内存布局。把状态合并会改变前面已经核对的
+行为，例如清 desired token 不等于清 sent token、移出 active 不等于销毁 session。
+
+| 状态所有者 | 必须独立保存的内容 | 主要契约 |
+|---|---|---|
+| 全局网络 | 配置/POP canonical 映射、路由修订号、good-enough、失败地址缓存和全局探测预算 | §15、§21.5–§21.6 |
+| SharedCluster/POP | front 的最近三样本及有效桶、direct/estimate、interior cache 的 ping/penalty/flags/测量时刻、最近候选 | §21.1、§21.4、§21.10 |
+| RelayServer | 地址、root/alternate 关系、cookie、challenge/server_time/本地收到时刻、公网映射、ping/申请 pending 及各自失败计数、shutdownTime/avoidTime | §18.2–§18.3、§21.3、§21.7、§21.11 |
+| 连接的 SDR transport | 全部 session、active primary/backup、两组 per-POP 路线、peer routes 快照及 revision、本地快照及 latest/ACK/retry、重算原因和全局 revision、migration state/target、need-confirm | §21.1–§21.2、§21.7、§21.9、§21.12–§21.15 |
+| 每个 RelaySession | relay 签发的本端 token、desired 对端 token/POP、sent 对端 token/POP/revision/ACKed、relay 序号及 LinkStats/待 ACK/期待 ACK | §18.4、§21.12–§21.18 |
+| SNS 端到端连接 | E2E 序号/统计/加密/SNP、当前 transport；与 relay/session 的生命周期分离 | §12–§15、§18.1、§21.15–§21.18 |
+
+外部输入与调度入口也应明确区分：
+
+| 输入/到期事件 | 客户端入口的约束 |
+|---|---|
+| 配置/POP 或统计材料变化 | 标记重算；按全局 revision 和本地原因决定重建，不在每个 Tick 无条件重置快照 |
+| RouterPingReply / NoSession / Established / BadRoute | 按各自的来源、presence、连接状态和字段校验进入处理；不能统一成“连接失败后全清重连” |
+| peer routes / stats revision ACK | 区分两个 revision、last ACK、待回复标志和发送后 retry clock；按 §21.12 的旧 ACK 副作用处理 |
+| shutdown / migration | 保存服务器给定目标与预警，再执行客户端资格校验、avoid/真正关闭/取消规则；不预测服务器算法 |
+| 全局约 100ms thinker 或提前唤醒 | 更新超时/失败缓存/探测预算/readiness；再按连接的 good-enough 条件 pursue |
+| 连接选路 | CleanRoutes → 基础 active selector → 本地 routing message 检查；端到端确认标志保留固定版本的实际行为 |
+| session thinker / stats ACK / RTT 样本 | 收紧最早 deadline，处理 LinkStats 失败/统计/ACK/保活；relay 与 E2E 两侧分别维护 |
+| 构造待发包 | token/quality/ACK/metadata 进入上下文；除明确写明的 rendezvous 规则外，不因构造就消费 pending 状态 |
+| SNP 或控制 socket 的发送结果 | 失败保留成功后才提交的状态，但不回滚已经分配的 wire sequence；成功运行相应 TrackSent 登记 |
+
+**实现一致性约束**：不同层使用同一单调时钟来源，但不能统一它们的期限、严格/非严格比较、
+失败额度或 revision 比较方式。随机避让、配置、对端 token 和服务器目标作为明确输入；公网与
+局域网是这些输入和测量结果的差异，以上路径中没有据“公网”另换一套选路/ACK 协议的分支。
+不同 transport、活动级别、network test 与普通播放器的分派仍分别按 §9–§16 执行。
