@@ -6,6 +6,8 @@ assign header/IDs, fragment, insert into the reliable window, select packets,
 stamp, shape and append CRC. Protobuf bytes/ByteSize/serialization, allocation,
 channel constructor, mutex/refcount/stats/destructors and final transport are
 explicit adapters. Factory selection itself executes original GetChannel.
+Discovery additionally adapts protobuf parsing; its response fields, padding,
+Frame/Connection SendUnconnected and Socket execute original instructions.
 No encryption, real UDP, Steam session or decoder is exercised.
 """
 
@@ -20,6 +22,15 @@ spec = importlib.util.spec_from_file_location(
 )
 outgoing = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(outgoing)
+
+
+def varint(value):
+    result = bytearray()
+    while value > 127:
+        result.append((value & 127) | 128)
+        value >>= 7
+    result.append(value)
+    return bytes(result)
 
 
 def audit(base):
@@ -108,8 +119,8 @@ def audit(base):
             self.sent.append(bytes(self.u.mem_read(ptr, size)).hex())
             self.ret(self.transport_result)
 
-        def snapshot(self):
-            channel = self.channels.get(1)
+        def snapshot(self, ident=1):
+            channel = self.channels.get(ident)
             window = channel + 112 if channel else 0
             return dict(
                 wire=self.sent,
@@ -125,6 +136,77 @@ def audit(base):
             self.call(0x7F2AF4, self.frame, 1, 6)
             self.call(0x7F321C, self.frame, self.message, 0)
             self.frame_result = self.call(0x7F3078, self.frame, self.conn, 1)
+
+    def discovery_case(
+        crc, requested, result, sequence_present=True, requested_present=True
+    ):
+        request = b"\x08\x07" if sequence_present else b""
+        request += b"\x10" + varint(requested) if requested_present else b""
+        r = Sender(crc, 1024, request, result)
+        r.call(0x7F2AF4, r.frame, 0, 1)
+        r.call(0x7F321C, r.frame, r.message, 1)
+        request_packet = r.q(r.frame + 8)
+        address = r.alloc(4096)
+
+        request_obj, response_obj = [], []
+        serialized_objects = []
+
+        def ctor(objects):
+            objects.append(r.r(0))
+            r.wq(r.r(0), r.msgvt)
+            r.ret()
+
+        def parse():
+            dest = r.r(1)
+            r.w32(dest + 16, int(sequence_present) | (int(requested_present) << 1))
+            r.w32(dest + 24, 7 if sequence_present else 0)
+            r.w32(dest + 28, requested if requested_present else 0)
+            r.ret(1)
+
+        def response_size():
+            msg = r.r(0)
+            serialized_objects.append("request" if msg in request_obj else "response")
+            mask = r.i(msg + 16)
+            r.payload = b"\x08" + varint(r.i(msg + 24)) if mask & 1 else b""
+            if mask & 2:
+                r.payload += b"\x10" + varint(r.i(msg + 28))
+            r.ret(len(r.payload))
+
+        def memset():
+            if r.r(2):
+                r.u.mem_write(r.r(0), bytes([r.r(1) & 255]) * r.r(2))
+            r.ret(r.r(0))
+
+        r.callbacks.update(
+            {
+                0xC03BB0: lambda: ctor(request_obj),
+                0xC03BC0: lambda: ctor(response_obj),
+                0xC0E160: parse,
+                STOP + 0x300: response_size,
+                0xC0BA50: lambda: r.jump(0x7F2FD0),
+                0xC09980: memset,
+                0xC0E760: lambda: r.jump(0x7F3160),
+                0xC11010: lambda: r.jump(0x7FBC04),
+                0xC042C0: lambda: r.ret(),
+                0xC042A0: lambda: r.ret(),
+                0x7ACD9C: r.capture_result,
+            }
+        )
+        assert r.call(0x7ACC20, r.client, r.frame, address) == 1
+        observed = r.snapshot(0)
+        assert observed["result"] == result
+        assert observed["channels"] == []
+        assert serialized_objects == ["request"]
+        assert r.payload == request
+        assert r.i(response_obj[0] + 24) == (7 if sequence_present else 0)
+        assert r.i(response_obj[0] + 28) == r.i(request_packet + 52)
+        observed["serialized"] = serialized_objects[0]
+        observed["computed_received"] = r.i(response_obj[0] + 28)
+        return dict(
+            group="discovery",
+            input=dict(crc=crc, mtu=1024, requested=requested, socket_result=result),
+            observed=observed,
+        )
 
     cases = []
     for crc in (0, 1):
@@ -184,6 +266,54 @@ def audit(base):
         cases.append(
             dict(group="connected", input=dict(crc=crc, mtu=1024), observed=observed)
         )
+    # Append, preserving every original control vector unchanged.
+    for crc in (0, 1):
+        for mtu in (512, 1024):
+            for length in (0, 491, 492, 493, 1004, 1005, 1006, 2048):
+                payload = b"\x12" + varint(length) + b"x" * length
+                r = Sender(crc, mtu, payload)
+                r.callbacks[0x7A8C14] = r.capture_result
+                r.call(0x7A8BBC, r.client, 3, r.message)
+                observed = r.snapshot(2)
+                assert observed["channels"] == [0, 1, 2]
+                assert observed["next_id"] == len(observed["wire"])
+                cases.append(
+                    dict(
+                        group="stats",
+                        input=dict(
+                            crc=crc, mtu=mtu, text_length=length, socket_result=0
+                        ),
+                        observed=observed,
+                    )
+                )
+        for result in range(1, 5):
+            r = Sender(crc, 1024, b"\x12\x00", result)
+            r.callbacks[0x7A8C14] = r.capture_result
+            r.call(0x7A8BBC, r.client, 3, r.message)
+            observed = r.snapshot(2)
+            assert observed["result"] == (0 if result == 1 else result)
+            cases.append(
+                dict(
+                    group="stats",
+                    input=dict(crc=crc, mtu=1024, text_length=0, socket_result=result),
+                    observed=observed,
+                )
+            )
+        for requested in (0, 64, 1024, 1472):
+            for result in (0, 1):
+                cases.append(discovery_case(crc, requested, result))
+    for crc in (0, 1):
+        for presence in (0, 1, 2):
+            case = discovery_case(
+                crc,
+                64 if presence == 2 else 0,
+                0,
+                bool(presence & 1),
+                bool(presence & 2),
+            )
+            case["input"]["presence"] = presence
+            cases.append(case)
+    audit.Sender = Sender
     return cases
 
 

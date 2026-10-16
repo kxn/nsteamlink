@@ -23,13 +23,28 @@ def main():
     )
     for number, case in enumerate(fixture["cases"]):
         group, inp, want = case["group"], case["input"], case["observed"]
-        kind = {"frame": 0, "control": 1, "connected": 2}[group]
+        kind = {"frame": 0, "control": 1, "connected": 2, "stats": 3, "discovery": 4}[
+            group
+        ]
         code = inp.get("socket_result", 0)
         completed = subprocess.run(
             [
                 str(args.receiver.resolve()),
-                *map(str, (inp["crc"], inp["mtu"], kind, inp.get("type", 6), code)),
-                inp.get("payload", ""),
+                *map(
+                    str,
+                    (
+                        inp["crc"],
+                        inp["mtu"],
+                        kind,
+                        inp.get("presence", 3)
+                        if group == "discovery"
+                        else inp.get("type", 6),
+                        code,
+                    ),
+                ),
+                str(
+                    inp.get("text_length", inp.get("requested", inp.get("payload", "")))
+                ),
             ],
             text=True,
             capture_output=True,

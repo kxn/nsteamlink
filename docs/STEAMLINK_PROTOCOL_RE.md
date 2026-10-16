@@ -188,7 +188,7 @@ data[13] = messageType；若 hasExtHeader：data[14..25] = 扩展头 12 字节
 ## 6. 会话建立序列（client 视角）【已验证（函数级）/时序待动态确认】
 
 ```
-发现:  UDP 27036 广播 (31B) → OnPingRequest
+会话MTU探测: Unconnected type0 / message1 → OnPingRequest；首页主机发现为独立协议（§43更正）
 连接:  CStreamConnection 建立 (OnStreamConnected: state→2, 记 GetStreamTimestamp→+0x278)
 握手:  → ClientHandshake(6, 明文, 可靠) 载荷 CStreamingClientHandshakeInfo(成员 CopyFrom)
        ← ServerHandshake(7, 明文) → StartAuthentication (0x7a7b7c)
@@ -429,7 +429,7 @@ PersonalizationResponse(2)/ActiveConfigChange(3)/RequestActiveConfig(4)，客户
 
 | 步 | 方向 | 消息(类型) | 通道/加密/可靠 | 载荷字段（proto 号） |
 |---|---|---|---|---|
-| 0 | →/← | 发现广播 27036 | 明文 UDP | CDiscoveryPingRequest/Response（proto）；`gamesRunning` 注意事项见 AGENTS.md |
+| 0 | →/← | 会话MTU探测 Unconnected(0) | ch0 明文 UDP | CDiscoveryPingRequest/Response；实际应答回显request对象，见§43，不能与首页发现合并 |
 | 1 | →/← | Connect(1)/ConnectACK(2) | 明文 | 见 12.0 |
 | 2 | → | ClientHandshake(6) | ch1 明文可靠 | CClientHandshakeMsg.info = CStreamingClientHandshakeInfo（network_test 等） |
 | 3 | ← | ServerHandshake(7) | ch1 明文可靠 | CServerHandshakeMsg.info = CStreamingServerHandshakeInfo |
@@ -3973,3 +3973,49 @@ python3 scripts/audit-steam-control-wire.py \
 python3 scripts/check-steam-control-wire.py \
   --receiver build/desktop/third_party/ihslib/tests/session/ihs-control-wire-oracle
 ```
+
+## 43. 统计消息与会话MTU探测应答的生产入口
+
+### 43.1 官方客户端来源
+
+【证据】固定Android ELF的 `SendStatsMessage 0x7a8bbc–0x7a8c64` 构造channel2
+Frame，Put(message,false)，Send(connection,true)。它使用§42的同一可靠入窗/
+分片/Socket链，不能用本地ch_stats的“单个可靠packet”替代。原指令的CLogMsg
+受控序列化输出在MTU512/1024、空/边界/2048B字符串下核对完整wire；CRC=false时
+type5头不带bit7，较长消息切成5/6和连续ID。单包Socket失败仍按§42映射/保留。
+
+【证据】`OnPingRequest 0x7acc20` 先构造request于`x29−0x28`（sp+88），成功
+Frame::Get后构造response于sp+56，并把sequence/接收长度写到sp+80/sp+84。
+但 `0x7accf8` 传给Frame::Put的x1为`x29−0x28`，即request本身，不是response。
+原指令执行时分别记录两个构造器返回位置、ByteSize所用对象和未使用的response
+字段，确认线上type2的protobuf第二字段回显request.packet_size_requested。
+不能因schema把该field2命名为packet_size_received，就推断实际线上填写接收长度。
+这可能是该固定版本的实现疏漏（hypothesis），其wire行为本身是直接证据。
+
+【证据】应答使用Frame ctor(0,2)、Put(...,true)的4B protobuf长度前缀；非零
+requested触发GetWriteArea/memset(0xFE)填到请求的packet长度，之后
+`Frame::SendUnconnected 0x7f3160` → `Connection::SendUnconnected 0x7fbc04`
+清空13B头再走真实Socket。两端ID/channel/fragment/packet ID为0、不建channel，
+CRC仍由connection+10决定；因此开启CRC时最终线上长度是requested+4。
+OnPingRequest忽略SendUnconnected的结果，成功解析分支返回true；EAGAIN不会
+进入可靠窗口或自动重试。这里的input frame已剥CRC，不把它称为完整Socket入包。
+
+【更正】§6/§12早期把此OnPingRequest与UDP27036首页广播串成一条链的概括
+撤回。此处是会话Unconnected type0、discovery message1/2的MTU探测，不能与
+独立的首页主机发现协议合并。§7表格已有此分层说明，以这里的对象/线上证据为准。
+
+### 43.2 对照的范围
+
+§42的audit追加统计40例、discovery22例，原78个input/observed保持不变。
+统计32个成功多片/边界输入另加8个单包错误输入；discovery覆盖CRC两值、请求
+长度0/64/1024/1472和Socket成功/EAGAIN，另以6例省略sequence/requested或两者
+验证presence原样保留。总140个生产wire/ID对照。protobuf parser/ByteSize/serializer、
+构造器、内存/refcount和最终UDP为显式适配器；真正选择哪个protobuf对象、
+response字段写入、padding、信封及发送链均执行原指令。无真实网络测试UI。
+
+本地oracle从真实stats入口或实际discovery channel回调进入，使用protobuf-c
+解析/序列化、真实queue/retention/分片/Socket，核对wire和该通道的next ID。
+它不证明首页发现、解析失败/畸形小requested的所有路径、全部stats用户触发，
+或fragment初发失败时整个actor与官方同步sender的动作顺序。
+后者仍须独立验证：现有原版可靠sender遇失败停止本轮扫描，本地worker直接
+初发后续FIFO项的架构不能仅凭重传阶段测试宣称整体相同。
