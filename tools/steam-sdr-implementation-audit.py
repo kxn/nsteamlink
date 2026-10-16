@@ -182,12 +182,24 @@ def main():
             expected = 1 if state in (-2, 1, 2, 3) else 2 if state in (-1, 4, 5) else 3
             assert lib.sl_sdr_established_action(state) == expected
         audit.transport_state_change, audit.session_established = state_change, established
+        original_clean = audit.clean_routes
+        lib.sl_sdr_clean_active.argtypes = [c.POINTER(c.c_bool), c.c_size_t, c.POINTER(c.c_int32), c.POINTER(c.c_int32)]
+        lib.sl_sdr_clean_active.restype = c.c_bool
+        def clean(elf, tokens, active, expected, fresh=False, state=3, targets=None):
+            original_clean(elf, tokens, active, expected, fresh, state, targets)
+            if fresh or not 1 <= state <= 3: return
+            targets = list(range(len(tokens))) if targets is None else targets
+            desired = (c.c_bool*len(tokens))(*(target is not None and bool(tokens[target]) for target in targets))
+            primary, backup = c.c_int32(active[0] if active else -1), c.c_int32(active[1] if len(active)>1 else -1)
+            assert lib.sl_sdr_clean_active(desired,len(tokens),c.byref(primary),c.byref(backup))
+            assert [i for i in (primary.value,backup.value) if i>=0] == expected
+        audit.clean_routes = clean
         audit.select, audit.timeout_decision = select, timeout
         audit.downtime, audit.probe_priorities, audit.routing_readiness = downtime, priorities, ready
         audit.failed_cache_add, audit.failed_cache_expire, audit.received = add, expire, received
         elf = audit.policy.descriptors.SampleELF(args.elf.read_bytes())
         groups = {'active_selection', 'active_switch_confirmation', 'active_candidate_order', 'timeout_decisions', 'downtime_warning', 'global_probe_priority_matrix',
-            'global_routing_readiness', 'failed_cache_insertion', 'failed_cache_expiry', 'received_packet_recovery', 'transport_state_change', 'session_established'}
+            'global_routing_readiness', 'failed_cache_insertion', 'failed_cache_expiry', 'received_packet_recovery', 'transport_state_change', 'session_established', 'clean_route_targets'}
         # Select group names from the existing audit; fail if they are renamed.
         counts = audit.audit(elf, groups)
         assert set(counts) == groups, counts

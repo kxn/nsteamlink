@@ -56,3 +56,7 @@ enum { SL_SDR_STATE_IGNORE = 0, SL_SDR_STATE_THINK = 1, SL_SDR_STATE_CLOSE = 2,
        SL_SDR_STATE_INVALID = 3 };
 int sl_sdr_state_action(int state);
 int sl_sdr_established_action(int state);
+/* On a routes recomputation, prune empty desired targets before selection.
+ * Keeping survivor order promotes a surviving backup to the current primary,
+ * so its switching hysteresis still applies. NETWORKING 21.13. */
+bool sl_sdr_clean_active(const bool *desired, size_t count, int32_t *primary, int32_t *backup);

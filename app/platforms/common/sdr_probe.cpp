@@ -565,6 +565,7 @@ public:
         sl_sdr_candidate metrics[SL_SDR_CANDIDATES] = {};
         ProbeRelay *relays[SL_SDR_CANDIDATES] = {};
         int pings[SL_SDR_CANDIDATES] = {};
+        bool desired[SL_SDR_CANDIDATES] = {};
         int current = -1, old_backup = -1;
         size_t count = 0;
         for (auto &r : network->relays) {
@@ -609,6 +610,7 @@ public:
             else if (!peer_routes.relay_clusters_size() && r.ping_ms >= 0) any.emplace_back(r.ping_ms, &r);
             auto &m = metrics[count];
             relays[count] = &r; pings[count] = ping;
+            desired[count] = r.established && r.forward.desired_size;
             if (&r == primary) current = int(count);
             if (&r == backup && r.established && target) old_backup = int(count);
             int low, high;
@@ -647,6 +649,7 @@ public:
         for (const auto &candidate : any) network->pursue.push_back(candidate.second);
         for (const auto &candidate : token_routes) network->pursue_token.push_back(candidate.second);
         sl_sdr_selection selected;
+        sl_sdr_clean_active(desired, count, &current, &old_backup);
         if (!sl_sdr_select(metrics, count, current, old_backup, false, now, &selected)) return;
         ProbeRelay *next = selected.primary >= 0 ? relays[selected.primary] : nullptr;
         backup = selected.backup >= 0 ? relays[selected.backup] : nullptr;

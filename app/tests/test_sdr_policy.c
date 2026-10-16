@@ -40,6 +40,17 @@ int main(void) {
     same_pop[1].eligible = false;
     same_pop[2].score = same_pop[2].minimum = same_pop[2].maximum = 20;
     assert(sl_sdr_select(same_pop, 3, 0, 1, false, now, &s) && s.primary==2 && s.backup==-1);
+    bool target[3] = {false,true,true};
+    int32_t primary=0, backup=1;
+    assert(sl_sdr_clean_active(target,3,&primary,&backup) && primary==1 && backup==-1);
+    /* A surviving backup becomes current before hysteresis is evaluated.
+     * Its 33 ms score remains within the new 22 ms candidate's threshold. */
+    sl_sdr_candidate promoted[3] = {c[0], c[0], c[0]};
+    promoted[0].eligible=false;
+    promoted[1].score=promoted[1].minimum=promoted[1].maximum=33;
+    promoted[2].score=promoted[2].minimum=promoted[2].maximum=22;
+    promoted[1].cluster=1; promoted[2].cluster=2;
+    assert(sl_sdr_select(promoted,3,primary,backup,false,now,&s) && s.primary==1);
     sl_sdr_timeouts t = {.request_deadline=now,.request_failures=1};
     assert(sl_sdr_expire(&t, now) == (SL_SDR_TIMEOUT_REQUEST|SL_SDR_TIMEOUT_REPROBE));
     t = (sl_sdr_timeouts){.ping_deadline=now+1,.ping_failures=1};

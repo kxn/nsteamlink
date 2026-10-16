@@ -182,3 +182,10 @@ int sl_sdr_established_action(int state) {
     int action = sl_sdr_state_action(state);
     return action == SL_SDR_STATE_IGNORE ? SL_SDR_STATE_INVALID : action;
 }
+bool sl_sdr_clean_active(const bool *desired, size_t count, int32_t *primary, int32_t *backup) {
+    if (!primary || !backup || count > SL_SDR_CANDIDATES || (!desired && count)) return false;
+    if (*primary < 0 || (size_t)*primary >= count || !desired[*primary]) *primary = -1;
+    if (*backup < 0 || (size_t)*backup >= count || !desired[*backup] || *backup == *primary) *backup = -1;
+    if (*primary < 0) { *primary = *backup; *backup = -1; }
+    return true;
+}
