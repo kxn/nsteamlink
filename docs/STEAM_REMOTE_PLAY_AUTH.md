@@ -68,6 +68,13 @@ Steam host 的 Remote Play 配对窗口。
 
 ## 协议消息层事实
 
+官方 Android 固定样本的完整客户端事务规则见
+[公网协议参考 §11](STEAM_REMOTE_PLAY_NETWORKING.md#11-配对开流与-proof-的完整事务规则)，
+包含重复 auth_key、迟到授权确认、Busy/InProgress 和取消的区别。
+同文 §11.4 的静态证据还表明，开流 ProofRequest 的 update_secret 可以更新**按主机保存的长期 secret**，
+并在发送 proof 前落盘；重复请求在同一事务只派生一次。它不代表重新配对，也不改变两类 PIN 的语义。
+实现公网入口时不能只实现初次授权持久化而遗漏该轮换规则。
+
 ### AuthorizationRequest
 
 本仓 `third_party/ihslib/protobuf/discovery.proto:154-176` 定义
