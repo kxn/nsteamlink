@@ -711,6 +711,24 @@ def cancel_migration(elf, state, expected, target=1, active=True, requested=2, p
     assert (m.read(fixture.base+64), m.read(fixture.base+68)) == expected
 
 
+def canonical_pop(elf, pops, aliases, incoming, expected):
+    m=Machine(elf)
+    network, records=m.alloc(200),m.alloc(max(1,len(pops))*120)
+    m.write(network+8,records,8)
+    for i,pop in enumerate(pops): m.write(records+i*120+8,pop)
+    table={pop:i for i,pop in enumerate(pops)}
+    table.update(aliases)
+    def tree(items):
+        if not items: return 0
+        mid=len(items)//2; key,index=items[mid]; node=m.alloc(40)
+        m.write(node,tree(items[:mid]),8); m.write(node+8,tree(items[mid+1:]),8)
+        m.write(node+28,key); m.write(node+32,index)
+        return node
+    m.write(network+160,tree(sorted(table.items())),8)
+    m.run(0x897e70,0x897ed0,network,incoming)
+    assert m.reg(0)==expected,(pops,aliases,incoming,m.reg(0),expected)
+
+
 def receive_latencies(elf, initial, ordinary, p2p, exceptions, flags, expected, dirty, reverse=None):
     m = Machine(elf)
     cluster, relay, pb, pop, other_clusters = [m.alloc(8192) for _ in range(5)]
@@ -2615,6 +2633,10 @@ def audit(elf, groups=None):
     case('migration_cancellation', cancel_migration, 2, (2, 1), penalty=8190)
     case('migration_cancellation', cancel_migration, 2, cancelled, penalty=8191)
     initial = {200: (30, 7, 8, NOW-100)}
+    for incoming, expected in [(0,0),(50,50),(100,100),(150,150),(200,200),(201,200),
+                               (202,200),(300,300),(301,100),(400,400),(0xffffffff,0xffffffff)]:
+        case('canonical_pop_mapping',canonical_pop,[100,200,300],{201:1,202:1,301:0},incoming,expected)
+    case('canonical_pop_mapping',canonical_pop,[],{},100,100)
     for flags in (0, 1):
         retained = (30, 7, 8, NOW-100 if flags else 0)
         case('datacenter_latency_updates', receive_latencies, initial, [], [], [], flags,

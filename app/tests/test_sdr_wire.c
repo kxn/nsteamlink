@@ -120,7 +120,7 @@ static void config(void) {
         "\"relay_public_key\":\"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\","
         "\"pops\":{\"sin\":{\"geo\":[1.3,103.8],\"tier\":0,\"relays\":["
         "{\"ipv4\":\"192.0.2.1\",\"port_range\":[27015,27050]}]},"
-        "\"abcd\":{\"relays\":[{\"ipv4\":\"198.51.100.2\",\"port_range\":[443,443]}]}}}";
+        "\"abcd\":{\"aliases\":[\"old\",\"old4\",\"invalid\"],\"relays\":[{\"ipv4\":\"198.51.100.2\",\"port_range\":[443,443]}]}}}";
     sl_sdr_config *c = malloc(sizeof(*c));
     assert(c && sl_sdr_config_parse(sample, sizeof(sample) - 1, c));
     assert(c->revision == 1792003701 && c->pop_count == 2 && c->endpoint_count == 2);
@@ -128,12 +128,19 @@ static void config(void) {
     assert(c->pops[0].id == 0x0073696e && c->pops[1].id == 0x64616263);
     assert(c->pops[0].tier == 0 && c->pops[1].tier == 1);
     assert(c->pops[0].first_endpoint == 0 && c->pops[1].first_endpoint == 1);
+    assert(c->alias_count==2 && sl_sdr_config_pop(c,0x006f6c64)==&c->pops[1]);
+    assert(sl_sdr_config_canonical(c,0x346f6c64)==0x64616263);
+    assert(sl_sdr_config_canonical(c,0x0073696e)==0x0073696e);
+    assert(sl_sdr_config_canonical(c,0x00787878)==0x00787878 && !sl_sdr_config_pop(c,0x00787878));
     assert(c->endpoints[0].ipv4 == 0xc0000201 && c->endpoints[0].port_min == 27015 &&
         c->endpoints[0].port_max == 27050 && c->endpoints[1].ipv4 == 0xc6336402);
     const char invalid[] = "{\"success\":true,\"revision\":1,\"pops\":{\"sin\":{\"relays\":["
         "{\"ipv4\":\"192.0.2.1\",\"port_range\":[65536,65537]}]}}}";
     assert(!sl_sdr_config_parse(invalid, sizeof(invalid) - 1, c));
     assert(c->revision == 1792003701); /* Failed updates leave last config intact. */
+    const char collision[]="{\"success\":true,\"revision\":1,\"pops\":{\"sin\":{\"aliases\":[\"sin\"],\"relays\":["
+        "{\"ipv4\":\"192.0.2.1\",\"port_range\":[443,443]}]}}}";
+    assert(!sl_sdr_config_parse(collision,sizeof(collision)-1,c) && c->revision==1792003701);
     for (size_t i = 0; i < sizeof(sample) - 1; ++i)
         assert(!sl_sdr_config_parse(sample, i, c));
     free(c);

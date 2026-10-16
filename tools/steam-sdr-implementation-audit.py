@@ -53,6 +53,17 @@ class Latency(c.Structure):
 class Latencies(c.Structure):
     _fields_ = [('entries', Latency*128), ('count', c.c_size_t), ('last_full', c.c_int64)]
 
+class Pop(c.Structure):
+    _fields_ = [('id',c.c_uint32),('tier',c.c_int),('first_endpoint',c.c_size_t),('endpoint_count',c.c_size_t)]
+class Endpoint(c.Structure):
+    _fields_ = [('ipv4',c.c_uint32),('port_min',c.c_uint16),('port_max',c.c_uint16),('pop',c.c_uint)]
+class Alias(c.Structure):
+    _fields_ = [('id',c.c_uint32),('pop',c.c_uint)]
+class Config(c.Structure):
+    _fields_ = [('revision',c.c_uint64),('relay_public_key',c.c_uint8*32),('have_relay_key',c.c_bool),
+        ('pops',Pop*128),('endpoints',Endpoint*1024),('aliases',Alias*512),
+        ('pop_count',c.c_size_t),('endpoint_count',c.c_size_t),('alias_count',c.c_size_t)]
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--elf', required=True, type=Path)
@@ -65,6 +76,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='nsl-sdr-policy-') as temp:
         library = Path(temp) / 'policy.so'
         subprocess.run(['cc', '-std=c11', '-O2', '-shared', '-fPIC',
+            '-I'+str(root/'third_party/jsmn'),str(root/'app/platforms/common/sdr_config.c'),
             str(root / 'app/platforms/common/sdr_policy.c'), '-o', str(library)], check=True)
         lib = c.CDLL(str(library))
         lib.sl_sdr_select.argtypes = [c.POINTER(Candidate), c.c_size_t, c.c_int32, c.c_int32,
@@ -239,13 +251,23 @@ def main():
             original_penalty(elf,old,incoming)
             assert lib.sl_sdr_cluster_penalty(incoming)==max(0,min(5000,incoming))
         audit.receive_latencies, audit.cluster_penalty = receive_latencies, cluster_penalty
+        original_canonical=audit.canonical_pop
+        lib.sl_sdr_config_canonical.argtypes=[c.POINTER(Config),c.c_uint32]
+        lib.sl_sdr_config_canonical.restype=c.c_uint32
+        def canonical_pop(elf,pops,aliases,incoming,expected):
+            original_canonical(elf,pops,aliases,incoming,expected)
+            config=Config(); config.pop_count=len(pops); config.alias_count=len(aliases)
+            for i,pop in enumerate(pops): config.pops[i].id=pop
+            for i,(key,pop) in enumerate(aliases.items()): config.aliases[i]=Alias(key,pop)
+            assert lib.sl_sdr_config_canonical(c.byref(config),incoming)==expected
+        audit.canonical_pop=canonical_pop
         audit.select, audit.timeout_decision = select, timeout
         audit.downtime, audit.probe_priorities, audit.routing_readiness = downtime, priorities, ready
         audit.failed_cache_add, audit.failed_cache_expire, audit.received = add, expire, received
         elf = audit.policy.descriptors.SampleELF(args.elf.read_bytes())
         groups = {'active_selection', 'active_switch_confirmation', 'active_candidate_order', 'timeout_decisions', 'downtime_warning', 'global_probe_priority_matrix',
             'global_routing_readiness', 'failed_cache_insertion', 'failed_cache_expiry', 'received_packet_recovery', 'transport_state_change', 'session_established', 'clean_route_targets',
-            'datacenter_latency_updates', 'reverse_latency_estimation', 'cluster_penalty_updates'}
+            'datacenter_latency_updates', 'reverse_latency_estimation', 'cluster_penalty_updates', 'canonical_pop_mapping'}
         # Select group names from the existing audit; fail if they are renamed.
         counts = audit.audit(elf, groups)
         assert set(counts) == groups, counts

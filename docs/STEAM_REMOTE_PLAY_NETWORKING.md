@@ -2515,3 +2515,22 @@ end_to_end=true（`0x81b9ec–0x81ba8c`）。
 消息构造/派生 population 的显式桩范围由用例标明。对端统计/summary 的完整生成不能
 仅由这些 stub 通过推断。迟到 `P2PSessionEstablished` 的状态分支见 §21.12；空 token
 不得清 pending，非空 token 即使在关闭状态也先清 pending，再处理关闭通知。
+
+### 21.25 POP 别名的方向与 canonical 查询
+
+**Evidence**：`SetupFromJSON 0x898754–0x89a508` 以 `pops` 对象的 key 构造 POP 的
+主 ID（`0x898cbc–0x898cfc`），从该对象的 `aliases` 数组读取额外 ID
+（`0x8992d4–0x8994d4`）；仅接纳 3 或 4 字节别名，长度无效时忽略该别名。
+`BuildLookupTables 0x8981e4–0x898754` 把主 ID 与别名共同映射到这个 POP 的索引；
+已有 key 冲突进入错误路径（主 ID `0x898708`、别名 `0x898644`），不能以最后写入覆盖。
+
+`MapToCanonicalPOPID 0x897e70–0x897ed0` 先把返回值初始化为输入 ID，再查表；命中后
+取 POP record 的主 ID。未知 ID 原样返回，**不返回 0，也不选择相似 POP**。
+原始指令用例包含空表、主 ID、多个别名、别名映射到另一主 ID、低/中/高未知 ID 与
+UINT32_MAX，容器节点是显式构造的输入，不把 JSON parser 也算成已被离线执行。
+
+**Conclusion**：若配置为 `"eat":{"aliases":["mwh"]}`，映射方向是 **mwh → eat**。
+别名不会创建新的 POP、relay 地址或独立 session。延迟数组和 route exception 的 ID
+须在写入缓存前 canonical 化；同包多个名字映射到一个 POP 时，仍按 §21.10 的数组
+顺序后写覆盖。未知 ID 可以作为缓存 key 保留，但不能因此成为已知 POP 或获得建路资格。
+对端路线的 POP 按同一 lookup 映射到配置索引，目标 token 与对应 POP 必须保持绑定。

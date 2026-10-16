@@ -74,6 +74,16 @@ static int hex(char c) {
     return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10
          : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
 }
+static bool pop_id(const json *j, int index, uint32_t *out) {
+    if (index < 0 || j->tokens[index].type != JSMN_STRING) return false;
+    int length=j->tokens[index].end-j->tokens[index].start;
+    if (length != 3 && length != 4) return false;
+    const unsigned shifts[]={16,8,0,24};
+    *out=0;
+    for (int i=0; i<length; ++i)
+        *out |= (uint32_t)(uint8_t)j->text[j->tokens[index].start+i] << shifts[i];
+    return true;
+}
 static bool parse(const json *j, sl_sdr_config *c) {
     int index = key(j, 0, "revision"), success = key(j, 0, "success");
     if (!integer(j, index, &c->revision) || success < 0 || !equal(j, success, "true"))
@@ -100,15 +110,10 @@ static bool parse(const json *j, sl_sdr_config *c) {
         if (j->tokens[name].parent != pops || j->tokens[name].type != JSMN_STRING ||
             j->tokens[object].type != JSMN_OBJECT || c->pop_count == SL_SDR_POP_MAX)
             return false;
-        int length = j->tokens[name].end - j->tokens[name].start;
-        if (length < 1 || length > 4)
-            return false;
         sl_sdr_pop *pop = &c->pops[c->pop_count];
         /* Valve CalculateSteamNetworkingPOPIDFromString preserves its legacy
          * three-byte encoding; character four occupies the high byte. */
-        const unsigned shifts[] = {16, 8, 0, 24};
-        for (int k = 0; k < length; ++k)
-            pop->id |= (uint32_t)(uint8_t)j->text[j->tokens[name].start + k] << shifts[k];
+        if (!pop_id(j,name,&pop->id)) return false;
         pop->tier = 1;
         uint64_t tier;
         index = key(j, object, "tier");
@@ -140,8 +145,31 @@ static bool parse(const json *j, sl_sdr_config *c) {
             }
         }
         pop->endpoint_count = c->endpoint_count - pop->first_endpoint;
+        int aliases=key(j,object,"aliases");
+        if (aliases >= 0) {
+            if (j->tokens[aliases].type != JSMN_ARRAY) return false;
+            for (int alias=aliases+1; alias<j->count && j->tokens[alias].start<j->tokens[aliases].end;
+                 alias=next(j,alias)) {
+                uint32_t id;
+                if (j->tokens[alias].type != JSMN_STRING) return false;
+                if (!pop_id(j,alias,&id)) continue; /* Official parser ignores invalid alias lengths. */
+                if (c->alias_count == SL_SDR_ALIAS_MAX) return false;
+                c->aliases[c->alias_count++]=(sl_sdr_alias){id,(unsigned)c->pop_count};
+            }
+        }
         ++c->pop_count;
         name = next(j, object);
+    }
+    /* BuildLookupTables rejects collisions between canonical names/aliases.
+     * A collision must not silently redirect a signed token to another POP. */
+    for (size_t i=0; i<c->pop_count; ++i)
+        for (size_t k=0; k<i; ++k)
+            if (c->pops[i].id == c->pops[k].id) return false;
+    for (size_t i=0; i<c->alias_count; ++i) {
+        for (size_t k=0; k<c->pop_count; ++k)
+            if (c->aliases[i].id == c->pops[k].id) return false;
+        for (size_t k=0; k<i; ++k)
+            if (c->aliases[i].id == c->aliases[k].id) return false;
     }
     return c->pop_count && c->endpoint_count;
 }
@@ -163,4 +191,17 @@ bool sl_sdr_config_parse(const char *text, size_t size, sl_sdr_config *out) {
     free(j.tokens);
     free(c);
     return ok;
+}
+const sl_sdr_pop *sl_sdr_config_pop(const sl_sdr_config *config, uint32_t id) {
+    if (!config || config->pop_count > SL_SDR_POP_MAX || config->alias_count > SL_SDR_ALIAS_MAX) return NULL;
+    for (size_t i=0; i<config->pop_count; ++i)
+        if (config->pops[i].id == id) return &config->pops[i];
+    for (size_t i=0; i<config->alias_count; ++i)
+        if (config->aliases[i].id == id && config->aliases[i].pop < config->pop_count)
+            return &config->pops[config->aliases[i].pop];
+    return NULL;
+}
+uint32_t sl_sdr_config_canonical(const sl_sdr_config *config, uint32_t id) {
+    const sl_sdr_pop *pop=sl_sdr_config_pop(config,id);
+    return pop ? pop->id : id;
 }
