@@ -19,3 +19,5 @@ bool sl_gns_sdr_transport_stats(uint32_t connection, unsigned out[16]);
  * directions, leaving all other endpoints untouched. Captures one address;
  * changing primary does not retarget the filter. */
 bool sl_gns_sdr_test_loss(uint32_t connection, int mode, unsigned out[5]);
+
+bool sl_gns_sdr_test_terminal(uint32_t connection, int packet_case);

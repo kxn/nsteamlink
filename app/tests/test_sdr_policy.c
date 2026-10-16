@@ -60,6 +60,11 @@ int main(void) {
     assert(!sl_sdr_routing_ready(20, 14, 1, 2, 4, 8000000));
     assert(!sl_sdr_routing_ready(20, 15, 0, 0, 0, 7000000));
     assert(sl_sdr_routing_ready(20, 15, 0, 0, 0, 7000001));
+    assert(sl_sdr_established_action(-2)==SL_SDR_STATE_THINK);
+    assert(sl_sdr_established_action(-1)==SL_SDR_STATE_CLOSE);
+    assert(sl_sdr_established_action(0)==SL_SDR_STATE_INVALID);
+    assert(sl_sdr_state_action(-3)==SL_SDR_STATE_IGNORE);
+    assert(sl_sdr_state_action(5)==SL_SDR_STATE_CLOSE);
     puts("PASS SDR policy boundaries");
     return 0;
 }

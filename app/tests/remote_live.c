@@ -168,10 +168,15 @@ int main(int argc, char **argv) {
     bool desktop_stream = false;
     bool sdr_session = false;
     bool relay_only = false, fault_test = false;
+    int terminal_test = 0;
 #ifdef NSL_HAVE_SNS
     sns_test = argc == 3 && !strcmp(argv[1], "--sns-test");
     desktop_stream = argc == 3 && !strcmp(argv[1], "--sns-desktop");
     sdr_session = argc == 3 && !strcmp(argv[1], "--sdr-session");
+    if (argc == 3 && (!strcmp(argv[1], "--sdr-close-test") || !strcmp(argv[1], "--sdr-no-connection-test"))) {
+        terminal_test = !strcmp(argv[1], "--sdr-close-test") ? 1 : 2;
+        sns_test = relay_only = true;
+    }
     if (argc == 3 && !strcmp(argv[1], "--sdr-fault-test"))
         fault_test = sns_test = relay_only = true;
     if (argc == 3 && !strcmp(argv[1], "--sdr-only-test"))
@@ -237,6 +242,8 @@ int main(int argc, char **argv) {
     bool sdr_success = false, fault_success = false, injected = false;
     unsigned fault_generation = 0;
     uint64_t fault_at = 0, recovered_at = 0;
+    unsigned terminal_stage = 0;
+    uint64_t terminal_at = 0;
     while (!l.failed && now_ms() < deadline) {
         sl_remote_connection_update(c, now_ms());
         if (l.ready && !connected_at)
@@ -309,7 +316,21 @@ int main(int argc, char **argv) {
                 sl_sns_relay_probe_stats(l.sns, stats);
                 sdr_success = stats[3] > 0;
             }
+            if (terminal_test && sns_connected_at && state == SL_SNS_CONNECTED &&
+                now_ms()-sns_connected_at >= 1000 && now_ms()-terminal_at >= 200 && terminal_stage < 4) {
+                int packet_case = terminal_stage < 3 ? 3+terminal_stage : terminal_test;
+                if (!sl_sns_test_terminal(l.sns, packet_case)) l.failed = true;
+                ++terminal_stage; terminal_at = now_ms();
+                printf("SDR_TERMINAL_FIXTURE_CASE=%d ok=%d\n", packet_case, !l.failed);
+                fflush(stdout);
+            }
             if (state == SL_SNS_FAILED || state == SL_SNS_CLOSED) {
+                if (terminal_test && terminal_stage == 4 &&
+                    sl_sns_end_reason(l.sns) == (terminal_test == 1 ? 1042 : 5010)) {
+                    printf("SDR_TERMINAL_EXPECTED=1 reason=%d invalid_cases_ignored=3\n", sl_sns_end_reason(l.sns));
+                    success = !l.failed;
+                    break;
+                }
                 printf("SNS_TERMINAL_STATE=%d reason=%d\n", state, sl_sns_end_reason(l.sns));
                 l.failed = true;
                 break;
@@ -319,6 +340,7 @@ int main(int argc, char **argv) {
 #endif
         success = pairing  ? l.paired && l.status
                   : status ? l.status
+                  : terminal_test ? false
                   : fault_test ? fault_success && !l.failed
                   : sns_test ? sns_connected_at && now_ms() - sns_connected_at >= 5000
                   : desktop_stream ? desktop_success

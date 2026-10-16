@@ -170,3 +170,15 @@ void sl_sdr_address_received(sl_sdr_failure_cache *c, uint64_t address) {
     c->failures = 0;
     c->reachability = 1;
 }
+int sl_sdr_state_action(int state) {
+    switch (state) {
+    case -3: case 0: return SL_SDR_STATE_IGNORE;
+    case -2: case 1: case 2: case 3: return SL_SDR_STATE_THINK;
+    case -1: case 4: case 5: return SL_SDR_STATE_CLOSE;
+    default: return SL_SDR_STATE_INVALID;
+    }
+}
+int sl_sdr_established_action(int state) {
+    int action = sl_sdr_state_action(state);
+    return action == SL_SDR_STATE_IGNORE ? SL_SDR_STATE_INVALID : action;
+}

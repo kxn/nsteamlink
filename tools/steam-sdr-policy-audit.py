@@ -1097,6 +1097,25 @@ def session_established(elf, state, token, next_sequence, existing=True, warning
         assert m.read(out+2320, 8) == 1 and m.read(out+2344, 8) == 50
 
 
+def transport_state_change(elf, state, active, selected, peer_closed):
+    fixture = SDR(elf, [{}, {}])
+    fixture.active(active)
+    m = fixture.m
+    m.write(fixture.connection+6848, state)
+    m.write(fixture.connection+40, fixture.base if selected else fixture.base+1, 8)
+    for i in peer_closed: m.write(fixture.sessions[i]+4552, 1, 1)
+    m.stubs[0xc12590] = lambda m: None
+    m.stubs[0xc124d0] = lambda m: m.events.append(('closed', fixture.sessions.index(m.reg(2)), bool(m.reg(3))))
+    m.run(0x81ba8c, 0x81bbdc, fixture.base, 3)
+    if state in (-2, 1, 2, 3):
+        expected = [('set_think', 1)]
+    elif state in (-1, 4, 5):
+        expected = [('closed', i, bool(selected and (not active or active[0] == i)))
+                    for i in range(2) if i not in peer_closed]
+    else: expected = []
+    assert m.events == expected, (state, active, selected, peer_closed, m.events, expected)
+
+
 def connection_closed_sender(elf, remote_id, end_to_end):
     """Execute the sender hidden behind the old 'no_connection' event label.
 
@@ -2661,6 +2680,8 @@ def audit(elf, groups=None):
     for sequence in (1, 65535):
         case('session_established', session_established, 3, b'token', sequence)
     case('session_established', session_established, 3, b'token', 1, existing=False, warning=True)
+    for state, active, selected, closed in itertools.product(range(-3, 6), ([], [0], [0, 1]), (False, True), ([], [0])):
+        case('transport_state_change', transport_state_change, state, active, selected, closed)
     for remote_id, end_to_end in itertools.product((0, 456), (False, True)):
         case('connection_closed_sender', connection_closed_sender, remote_id, end_to_end)
     for requested, port, old, active, source in [

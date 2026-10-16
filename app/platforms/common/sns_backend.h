@@ -29,6 +29,7 @@ bool sl_sns_start_relay_probe(sl_sns *);
 void sl_sns_relay_probe_stats(const sl_sns *, unsigned out[5]);
 void sl_sns_sdr_debug(const sl_sns *, unsigned out[16]);
 bool sl_sns_test_relay_loss(sl_sns *, int mode, unsigned out[5]);
+bool sl_sns_test_terminal(sl_sns *, int packet_case);
 #endif
 /* Set packet MTU and return the resulting SDK application-message MTU. */
 int sl_sns_set_mtu(sl_sns *, int packet_mtu);

@@ -54,6 +54,18 @@ for entry in commands:
         continue
     argv = entry.get('arguments') or shlex.split(entry['command'])
     assert '-DNSL_SNS_PROBES=0' in argv, 'SNS probe API enabled in release product'
+for entry in commands:
+    if not entry['file'].endswith('/sdr_probe.cpp'):
+        continue
+    argv = entry.get('arguments') or shlex.split(entry['command'])
+    assert '-DNSL_SNS_PROBES=0' in argv, 'relay fixture enabled in release product'
+    compiler = Path(argv[0])
+    nm = compiler.with_name(re.sub(r'(?:clang\+\+|g\+\+|c\+\+)$', 'nm', compiler.name))
+    archive = build / 'third_party/GameNetworkingSockets/src/libGameNetworkingSockets_s.a'
+    symbols = subprocess.check_output([str(nm), '--defined-only', str(archive)], text=True)
+    for name in ('sl_gns_sdr_test_loss', 'sl_gns_sdr_test_terminal',
+                 'sl_gns_sdr_transport_stats', 'sl_gns_sdr_probe_create'):
+        assert name not in symbols, f'relay diagnostic API remains: {name}'
 manifest = json.loads((build / 'generated/graphics_manifest.json').read_text())
 if any(e['file'].endswith('/platforms/switch/gfx.c') for e in commands):
     assert manifest['backend'] == 'deko', 'Switch must use deko'

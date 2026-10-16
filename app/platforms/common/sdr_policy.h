@@ -52,3 +52,7 @@ void sl_sdr_fail_address(sl_sdr_failure_cache *, uint64_t address, unsigned adve
 void sl_sdr_expire_addresses(sl_sdr_failure_cache *, unsigned advertised, int64_t now);
 void sl_sdr_address_received(sl_sdr_failure_cache *, uint64_t address);
 bool sl_sdr_address_failed(const sl_sdr_failure_cache *, uint64_t address);
+enum { SL_SDR_STATE_IGNORE = 0, SL_SDR_STATE_THINK = 1, SL_SDR_STATE_CLOSE = 2,
+       SL_SDR_STATE_INVALID = 3 };
+int sl_sdr_state_action(int state);
+int sl_sdr_established_action(int state);

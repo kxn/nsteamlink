@@ -30,7 +30,7 @@ struct ProbeRelay {
     sl_sdr_failure_cache failures{};
     sl_sdr_downtime downtime{};
     int ping_ms = -1;
-    bool established = false;
+    bool established = false, closed_by_relay = false;
     uint32_t pop_id = 0;
     std::string routing_token;
     sl_sdr_target forward{};
@@ -79,6 +79,37 @@ static uint32_t random_below(uint32_t bound) {
     uint32_t n, threshold = uint32_t(-bound) % bound;
     do { CCrypto::GenerateRandomBlock(&n, sizeof(n)); } while (n < threshold);
     return n % bound;
+}
+/* Fixed APK 81b554/81b6a4 and 83e9a4: a terminal reply to a late
+ * session establishment is ConnectionClosed (20), not NoConnection (21). */
+static void send_closed(sl_sdr_probe *p, CSteamNetworkConnectionBase &connection,
+    ProbeRelay &r, bool end_to_end, bool primary_session, bool primary_transport, bool session) {
+    CMsgSteamDatagramConnectionClosed m;
+    m.set_from_connection_id(connection.m_unConnectionIDLocal);
+    if (connection.m_unConnectionIDRemote) m.set_to_connection_id(connection.m_unConnectionIDRemote);
+    m.set_reason_code(connection.GetConnectionEndReason());
+    m.set_debug(connection.GetConnectionEndDebugString());
+    if (connection.GetWireState() == k_ESteamNetworkingConnectionState_ClosedByPeer)
+        m.set_relay_mode(CMsgSteamDatagramConnectionClosed::ClosedByPeer);
+    else if (end_to_end) m.set_relay_mode(CMsgSteamDatagramConnectionClosed::EndToEnd);
+    m.set_not_primary_session(!primary_session);
+    m.set_not_primary_transport(!primary_transport);
+    m.set_relay_override_active(false);
+    if (session) {
+        if (sl_sdr_target_populate(&r.forward)) {
+            m.set_forward_target_relay_routing_token(r.forward.sent, r.forward.sent_size);
+            m.set_forward_target_revision(r.forward.revision);
+        }
+        r.stats.PopulateLifetimeMessage(*m.mutable_quality_relay()->mutable_lifetime());
+    }
+    if (end_to_end)
+        connection.m_statsEndToEnd.PopulateLifetimeMessage(*m.mutable_quality_e2e()->mutable_lifetime());
+    uint8_t packet[1300];
+    size_t size = m.ByteSizeLong();
+    if (size >= sizeof(packet)) return;
+    packet[0] = 20;
+    m.SerializeToArray(packet+1, int(size));
+    send_packet(p, packet, int(size+1), r.address);
 }
 static void warn_downtime(ProbeRelay &r, uint32_t wire_seconds, SteamNetworkingMicroseconds now) {
     int32_t seconds = int32_t(wire_seconds);
@@ -200,7 +231,17 @@ static void receive_packet(const RecvPktInfo_t &packet, sl_sdr_probe *probe) {
         if (!connection || !reply.ParseFromArray(data + 1, packet.m_cbPkt - 1) ||
             reply.connection_id() != connection->m_unConnectionIDLocal || reply.relay_routing_token().empty())
             return;
+        r->request_until = 0;
         if (reply.has_seconds_until_shutdown()) warn_downtime(*r, reply.seconds_until_shutdown(), packet.m_usecNow);
+        r->received(packet.m_usecNow);
+        int action = sl_sdr_established_action(int(connection->GetState()));
+        if (action != SL_SDR_STATE_THINK) {
+            if (action == SL_SDR_STATE_CLOSE)
+                send_closed(probe, *connection, *r, false, r->stats.IsActive(),
+                    static_cast<void *>(connection->m_pTransport) == probe->owner, false);
+            return;
+        }
+        r->closed_by_relay = false;
         if (!r->established)
             ++probe->counters.established;
         r->established = true;
@@ -497,6 +538,19 @@ public:
             network = nullptr;
         }
         primary = backup = nullptr;
+    }
+    void TransportConnectionStateChanged(ESteamNetworkingConnectionState old) override {
+        CConnectionTransport::TransportConnectionStateChanged(old);
+        int action = sl_sdr_state_action(int(ConnectionState()));
+        if (action == SL_SDR_STATE_THINK) EnsureP2PTransportThink(k_nThinkTime_ASAP);
+        if (action != SL_SDR_STATE_CLOSE || !network) return;
+        for (auto &r : network->relays)
+            if (r.established && !r.closed_by_relay) {
+                bool e2e = (!m_connection.m_pTransport || m_connection.m_pTransport == this) &&
+                    (!primary || &r == primary);
+                send_closed(network, m_connection, r, e2e, &r == primary,
+                    m_connection.m_pTransport == this, true);
+            }
     }
     bool BCanSendEndToEndData() const override {
         return primary && primary->established && primary->forward.desired_size;
@@ -887,7 +941,41 @@ public:
         }
         if (!r.established)
             return;
-        if (data[0] == 26) {
+        if (data[0] == 20) {
+            CMsgSteamDatagramConnectionClosed m;
+            if (!m.ParseFromArray(data+1, packet.m_cbPkt-1) || m.to_connection_id() != ConnectionIDLocal() ||
+                (m.from_connection_id() && m.from_connection_id() != ConnectionIDRemote())) return;
+            r.closed_by_relay = true;
+            r.received(now);
+            if (m.has_quality_relay()) r.stats.ProcessMessage(m.quality_relay(), now);
+            if (m.has_quality_e2e()) m_connection.m_statsEndToEnd.ProcessMessage(m.quality_e2e(), now);
+            if (m.relay_mode() == CMsgSteamDatagramConnectionClosed::EndToEnd)
+                m_connection.m_statsEndToEnd.TrackRecvPacket(packet.m_cbPkt, now);
+            m_connection.ConnectionState_ClosedByPeer(m.reason_code(), m.debug().c_str());
+            CMsgSteamDatagramNoConnection ack;
+            ack.set_from_connection_id(m.to_connection_id());
+            if (m.from_connection_id()) ack.set_to_connection_id(m.from_connection_id());
+            if (m.relay_mode() == CMsgSteamDatagramConnectionClosed::EndToEnd) ack.set_end_to_end(true);
+            ack.set_not_primary_session(&r != primary);
+            ack.set_not_primary_transport(m_connection.m_pTransport != this);
+            ack.set_relay_override_active(false);
+            r.stats.PopulateLifetimeMessage(*ack.mutable_quality_relay()->mutable_lifetime());
+            m_connection.m_statsEndToEnd.PopulateLifetimeMessage(*ack.mutable_quality_e2e()->mutable_lifetime());
+            uint8_t reply[1300]; size_t size = ack.ByteSizeLong();
+            if (size < sizeof(reply)) {
+                reply[0] = 21; ack.SerializeToArray(reply+1, int(size));
+                send_packet(network, reply, int(size+1), r.address);
+            }
+        } else if (data[0] == 21) {
+            CMsgSteamDatagramNoConnection m;
+            if (!m.ParseFromArray(data+1, packet.m_cbPkt-1) || m.to_connection_id() != ConnectionIDLocal() ||
+                (m.from_connection_id() && m.from_connection_id() != ConnectionIDRemote())) return;
+            r.closed_by_relay = true;
+            r.received(now);
+            if (m.has_quality_relay()) r.stats.ProcessMessage(m.quality_relay(), now);
+            if (m.has_quality_e2e()) m_connection.m_statsEndToEnd.ProcessMessage(m.quality_e2e(), now);
+            m_connection.ConnectionState_ClosedByPeer(5010, "Peer has no connection");
+        } else if (data[0] == 26) {
             count(7);
             CMsgSteamDatagramConnectionStatsP2PRouterToClient m;
             if (!m.ParseFromArray(data + 1, packet.m_cbPkt - 1) ||
@@ -954,7 +1042,8 @@ public:
         m_routeMetrics.m_nTotalPenalty = 10;
     }
     void P2PTransportThink(SteamNetworkingMicroseconds now) override {
-        if (!network)
+        if (!network || ConnectionWireState() < k_ESteamNetworkingConnectionState_Connecting ||
+            ConnectionWireState() > k_ESteamNetworkingConnectionState_Connected)
             return;
         update_network(network, &m_connection, now);
         select_routes(now);
@@ -1049,6 +1138,44 @@ long long NSL_SDR_Wait(CSteamNetworkConnectionP2P &connection, long long now) {
     return now;
 }
 #if NSL_SNS_PROBES
+extern "C" bool sl_gns_sdr_test_terminal(uint32_t handle, int which) {
+    if (which < 1 || which > 5) return false;
+    SteamNetworkingGlobalLock global("nsl SDR terminal fixture");
+    sl_sdr_probe *network = nullptr;
+    netadr_t source;
+    uint32_t local = 0, remote = 0;
+    {
+        ConnectionScopeLock lock;
+        auto *base = GetConnectionByHandle(handle, lock);
+        auto *connection = base ? base->AsSteamNetworkConnectionP2P() : nullptr;
+        auto it = transports.find(connection);
+        if (it == transports.end() || !it->second->primary) return false;
+        network = it->second->network; source = it->second->primary->address;
+        local = connection->m_unConnectionIDLocal; remote = connection->m_unConnectionIDRemote;
+    }
+    uint8_t packet[1300]; size_t size;
+    if (which == 2) {
+        CMsgSteamDatagramNoConnection m;
+        m.set_to_connection_id(local); m.set_from_connection_id(remote); m.set_end_to_end(true);
+        size = m.ByteSizeLong(); packet[0] = 21; m.SerializeToArray(packet+1, int(size));
+    } else {
+        CMsgSteamDatagramConnectionClosed m;
+        m.set_to_connection_id(which == 3 ? local^1 : local);
+        m.set_from_connection_id(which == 4 ? remote^1 : remote);
+        m.set_relay_mode(CMsgSteamDatagramConnectionClosed::EndToEnd);
+        m.set_reason_code(1042); m.set_debug("synthetic terminal fixture");
+        size = m.ByteSizeLong(); packet[0] = 20; m.SerializeToArray(packet+1, int(size));
+        if (which == 5) source.SetIPAndPort(0x7f000001, 1);
+    }
+    RecvPktInfo_t received{};
+    received.m_pPkt = packet; received.m_cbPkt = int(size+1); received.m_adrFrom = source;
+    received.m_usecNow = SteamNetworkingSockets_GetLocalTimestamp(); received.m_pSock = network->socket;
+    receive_packet(received, network);
+    ConnectionScopeLock lock;
+    auto *connection = GetConnectionByHandle(handle, lock);
+    return connection && (which >= 3 ? connection->GetState() == k_ESteamNetworkingConnectionState_Connected
+        : connection->GetState() == k_ESteamNetworkingConnectionState_ClosedByPeer);
+}
 extern "C" bool sl_gns_sdr_test_loss(uint32_t handle, int mode, unsigned out[5]) {
     if (mode < -1 || mode > 1 || !out) return false;
     SteamNetworkingGlobalLock global("nsl SDR loss fixture");

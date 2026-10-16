@@ -455,6 +455,14 @@ extern "C" bool sl_sns_test_relay_loss(sl_sns *b, int mode, unsigned out[5]) {
     return false;
 #endif
 }
+extern "C" bool sl_sns_test_terminal(sl_sns *b, int packet_case) {
+#if NSL_ENABLE_SDR
+    return b && b->connection && sl_gns_sdr_test_terminal(b->connection, packet_case);
+#else
+    (void)b; (void)packet_case;
+    return false;
+#endif
+}
 #endif
 extern "C" int sl_sns_set_mtu(sl_sns *b, int mtu) {
     if (!b || !b->connection || mtu <= 0 ||

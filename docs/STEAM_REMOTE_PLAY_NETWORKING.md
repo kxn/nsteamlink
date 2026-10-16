@@ -2482,3 +2482,36 @@ reply/期待 ACK；即使随后 gather 返回 false，这些状态也保留，�
 `inline_stats_budget` 另执行原始裁减与 varint 前缀指令，覆盖恰好放满、两类 quality 的优先级和
 127/128 字节边界；ByteSize、quality 容器清理和 body 序列化由明确提供者返回，不能据此宣称
 原始 protobuf 编码器或 SNP 加密已验证。数据发送测试的输入为已加密 chunk，不重做端到端握手。
+
+### 21.24 关闭通知、确认与迟到成立消息
+
+**Evidence**：`TransportConnectionStateChanged 0x81ba8c–0x81bbdc` 的分派使用真实
+connection state：-2/1/2/3 提前唤醒 thinker；-1/4/5 遍历本连接全部 relay sessions，
+跳过已由对端关闭的项，并发送 `ConnectionClosed`；-3/0 不发。仅在 SDR 是当前 transport
+或当前 transport 为空、同时该 session 是 primary 或尚无 primary 时，给此发送设置
+end-to-end 参数。backup 同样收到关闭通知，但不能一律带 end-to-end 参数。
+这个状态域与 `ThinkSelectServer` 仅维护 wire state 1..3 的条件应分别保留。
+
+`SendConnectionClosedToServer 0x81b554–0x81b6a4` 发送 type 20，设置本地
+from_connection_id、非零时设置对端 to_connection_id，然后执行派生 population。
+base population `0x81b6a4–0x81b878` 写入 connection reason/debug：wire state=4 时
+relay_mode=ClosedByPeer(2)，否则只在 end-to-end 参数为真时设置 EndToEnd(1)。携带
+session 时写 relay lifetime；end-to-end 参数为真时写 E2E lifetime。
+P2P population `0x83e9a4–0x83ebe8` 继续处理 desired/sent token 与 revision，填写
+not_primary_transport 及 routing summary。routing summary 是另一个明确的统计生产器，
+不能把“已有 routes 消息”当成它已经生成。
+
+**关闭确认与上面的 type 20 发送不同**：
+`ProcessMessage_ConnectionClosed 0x819f9c–0x81a160` 导入 quality，标记该 session 已由
+对端关闭，调用 `ConnectionState_ClosedByPeer(reason, debug)`，随后执行
+`RelayServer::SendNoConnection 0x817bb4–0x817db0`。后者发送 type **21**，交换刚收到
+消息的 to/from IDs；收到的 relay_mode=EndToEnd 时设置 end_to_end=true。存在 session
+时，base/P2P population 与 relay lifetime 也被写入；base 的 E2E lifetime 并不要求
+end_to_end=true（`0x81b9ec–0x81ba8c`）。
+`ProcessMessage_NoConnection 0x81a160–0x81a290` 则导入 quality、标记 session 已关闭，
+以固定 reason **5010** 结束连接，不再次发送关闭确认。
+
+本节的 sender 和 state-change 原始指令用例在 `tools/steam-sdr-policy-audit.py`；
+消息构造/派生 population 的显式桩范围由用例标明。对端统计/summary 的完整生成不能
+仅由这些 stub 通过推断。迟到 `P2PSessionEstablished` 的状态分支见 §21.12；空 token
+不得清 pending，非空 token 即使在关闭状态也先清 pending，再处理关闭通知。
