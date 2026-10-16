@@ -25,4 +25,5 @@ for NRO in "${NROS[@]}"; do
         echo "== 产物: $NRO =="
     fi
 done
-echo "   真机安装: 复制到 SD 卡 sd:/switch/ 下，经 Title Redirection 方式启动 hbmenu 后运行"
+echo "   真机部署: nxlink -a 10.10.10.17 -p nsteamlink/nsteamlink.nro $BUILD_DIR/app/nsteamlink.nro"
+echo "   相册 Applet 模式可先安装 HOME 入口；串流请从 HOME 入口或全内存 hbmenu 启动"

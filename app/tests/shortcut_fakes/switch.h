@@ -88,7 +88,7 @@ typedef enum {
 typedef struct {
     int unused;
 } PadState;
-enum { HidNpadStyleSet_NpadStandard = 1, HidNpadButton_B = 2 };
+enum { HidNpadStyleSet_NpadStandard = 1, HidNpadButton_A = 1, HidNpadButton_B = 2 };
 AppletType appletGetAppletType(void);
 void *consoleInit(void *);
 void consoleExit(void *);
@@ -98,6 +98,8 @@ void padInitializeDefault(PadState *);
 void padUpdate(PadState *);
 u64 padGetButtonsDown(PadState *);
 bool appletMainLoop(void);
+Result appletLockExit(void);
+Result appletUnlockExit(void);
 
 #define CUR_PROCESS_HANDLE 0xffff8001u
 #define InfoType_ProgramId 18u

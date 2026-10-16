@@ -32,10 +32,10 @@ Connect both devices to the same local network. Keep the PC on with Steam runnin
 
 1. Download the `.nro` file from [Releases](https://github.com/kxn/nsteamlink/releases/latest).
 2. Save it as `switch/nsteamlink/nsteamlink.nro` on your SD card.
-3. **Hold R while launching a game** to enter full-memory hbmenu, then open NSteamLink.
+3. Open hbmenu from Album and run NSteamLink. Press **A to add a HOME Menu shortcut** and confirm, then return and launch it from HOME. Alternatively, **hold R while launching a game** and open NSteamLink from full-memory hbmenu.
 4. Select your PC, enter the pairing code shown on your Switch into Steam on the PC, and follow the prompts.
 
-**Album applet mode is not supported.** The app will explain how to launch with enough memory and let you return with B.
+**Album applet mode supports shortcut installation, but cannot stream.** Press A to install or B to return. Installing the shortcut requires no game card; your CFW must support installing and launching homebrew applications.
 
 Use **Y to open Steam** on your first visit. Games played during streaming appear in your recent games for direct launch next time.
 

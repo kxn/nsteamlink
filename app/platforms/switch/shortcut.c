@@ -262,7 +262,7 @@ done:
         if (!rollback_ok || cleanup_failed)
             result = SL_T_SHORTCUT_CLEANUP_FAILED;
         if (capacity && (R_FAILED(rc) || result == SL_T_SHORTCUT_FAILED))
-            snprintf(detail, capacity, "%s · %08X", stage, rc);
+            snprintf(detail, capacity, "%s: %08X", stage, rc);
     }
     wipe(secret, sizeof(secret));
     sl_shortcut_package_free(&package);

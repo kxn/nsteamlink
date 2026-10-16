@@ -1821,6 +1821,7 @@ IHS_HIDDeviceLock` 读取 `device->managed`，与 `IHS_HIDManagerOpenDevice` 在
 软件 framebuffer console 显示启动方式，B 返回 loader。内置 console 字体只有 ASCII，
 这里明确使用英文资源，避免在门禁加载 SDL_ttf/Mesa 或尝试不可显示的中文。
 正常入口仍按用户语言设置工作。console 在返回 main 前销毁；全应用模式不初始化 console。
+2026-10-16 调整见 D-058：Applet 门禁仍禁止启动串流，但允许先用文本页安装 HOME 入口。
 
 **封装依据**：
 
@@ -2083,6 +2084,50 @@ Decision：
 
 待验证：这些能力字段省略后的不同 Steam host 实机行为，以及新恢复路径在真实网络/
 NVDEC 错误中的效果；主机侧序列化回归与交叉构建不能替代设备证据。
+
+
+## D-058：Applet 文本门禁允许安装 HOME 入口（2026-10-16）
+
+**Evidence**：用户指出只有相册 Applet 入口、没有游戏可用于 title takeover 时，原有
+“仅 B 返回”的门禁无法进入首次安装流程。`app/platforms/switch/preflight.c` 原本只显示
+启动说明；安装器 `app/platforms/switch/shortcut.c` 使用 SPL/NCM/NS，与完整图形、
+Steam 网络和串流运行时没有依赖。`app/platforms/common/shortcut_package.c` 的模板复制
+上限为 16 MiB，另有 64 KiB NRO 复制缓冲；无需解码帧和 GPU 资源。
+
+平台源码依据：
+
+- pinned [nx-hbloader hbl.json](https://github.com/switchbrew/nx-hbloader/blob/82b95122c5ae8dc059bf23893ba7623c72c86773/hbl.json)
+  的 `service_access` 为 `*`。
+- libnx v4.12.0 [ncm.c](https://github.com/switchbrew/libnx/blob/v4.12.0/nx/source/services/ncm.c)
+  的 `_ncmInitialize` 直接取得 NCM 服务；同版本
+  [ns.c](https://github.com/switchbrew/libnx/blob/v4.12.0/nx/source/services/ns.c)
+  初始化/取得 ApplicationManager 接口没有按 applet 类型拒绝调用。
+- libnx [applet.h](https://github.com/switchbrew/libnx/blob/v4.12.0/nx/include/switch/services/applet.h)
+  明确规定 lock exit 后 `appletMainLoop` 仍在退出请求时返回 false；收到请求后最多提供
+  15 秒清理窗口，返回 `main` 前必须 unlock。不能将它解释为无限延迟强制退出。
+
+**Conclusion**：从服务接口和资源依赖看，可以复用本机安装器，在 Applet 文本页提供
+安装入口而不启动完整图形界面。D-049 的“Applet 不能串流”保留；“必须先进全内存
+应用才能安装 HOME 入口”不再是入口设计要求。安装后需返回并从 HOME 重新启动，不能
+在同一个 Applet 进程里升级为全内存模式。实际 CFW 权限、安装与启动兼容性仍需设备证据，
+不能由源码或模拟服务测试证明；任务与设备验证证据记录在 Issue #44。
+
+**Decision**：preflight 接收启动参数，在 Applet 路径设置真实 NRO 来源。文本页 A 进入
+确认、A 安装；确认页 B 取消，提示页/结果页 B 返回。复用 D-049 的内容安装、同 ID 不覆盖、
+来源 NRO 校验和失败回滚；不新增协议或签名策略。结果复用既有安装返回值，显示保存路径
+及失败阶段/错误码；错误码分隔符使用 ASCII，兼容 console 字体。
+
+安装线程使用 joinable pthread，不开启应用 runtime、IHS、网络或媒体。确认时先取得 exit
+lock，失败则不启动事务；主线程继续 pump applet/input，安装期间不接受中断或重复提交。
+worker 完成全部安装器清理后以 release/acquire 发布结果，主线程 join 后才能显示结果。
+系统请求退出时继续等待事务结束，再按 `installer services/package released → worker joined
+→ consoleExit → appletUnlockExit → main return` 清理。不声称可抵抗服务永久阻塞或超过系统
+15 秒窗口的退出。该顺序由入口测试的 join/console/unlock 断言验证，设备上的 loader ABI
+及 HOME 屏幕行为仍须单独验证。文本页沿用英文 ASCII，不加载中文字体或完整 renderer。
+
+安装等待文字下方每 200 毫秒仅刷新一行 ASCII 转动字符和单调时钟测得的等待秒数，
+用于显示主循环仍在响应；不估算完成百分比，不在安装 worker 中打印，不改安装事务或
+退出清理顺序。设备实测与显示改动的验收边界记录在 Issue #44。
 
 
 ## D-059：移除独立 NSP 安装包（2026-10-13）

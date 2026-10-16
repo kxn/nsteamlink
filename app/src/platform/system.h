@@ -2,8 +2,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-/* Must run before SDL/Mesa, network or background workers. */
-bool sl_system_preflight(void);
+/* Before the application runtime. May offer a console-only, joined installer. */
+bool sl_system_preflight(int argc, char **argv);
 bool sl_system_init(void);
 bool sl_system_running(void);
 void sl_system_shutdown(void);

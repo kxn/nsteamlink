@@ -77,7 +77,9 @@ const char *sl_system_locale(void) {
 }
 
 #ifndef NSL_PREFLIGHT_TEST
-bool sl_system_preflight(void) {
+bool sl_system_preflight(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
     return true;
 }
 

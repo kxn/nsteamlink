@@ -32,10 +32,10 @@ NSteamLink 是一款面向 Nintendo Switch 自制系统的 Steam Remote Play 客
 
 1. 从 [Releases](https://github.com/kxn/nsteamlink/releases/latest) 下载 `.nro` 文件。
 2. 将它保存为 SD 卡上的 `switch/nsteamlink/nsteamlink.nro`。
-3. **按住 R 启动一个游戏**，进入全内存 hbmenu，再打开 NSteamLink。
+3. 从相册打开 hbmenu，运行 NSteamLink，按 **A 添加到 HOME 菜单**并确认；返回后从 HOME 入口启动。也可以**按住 R 启动一个游戏**，从全内存 hbmenu 打开。
 4. 选择发现的电脑，将 Switch 显示的配对码输入电脑上的 Steam，按提示完成连接。
 
-**不要从相册的 applet 模式启动。** 内存不足以运行串流，应用会显示提示并允许按 B 返回。
+**相册 applet 模式只用于安装 HOME 入口，不能串流。** 提示页按 A 安装、B 返回；安装入口不需要游戏卡，仍需自制系统支持自制应用的安装和启动。
 
 首次可以用 **Y 打开 Steam**。游玩后，首页会记录最近游戏；下次可以直接选择卡片启动。
 
