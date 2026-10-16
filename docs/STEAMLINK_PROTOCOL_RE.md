@@ -1885,6 +1885,7 @@ ClearAndRestartWindow(0)，与 reliable 的 `0x7f8720–0x7f8734` 相同。因�
 | 包龄与完整传输帧 | HandleDataPacket / BInsertPacket / PopHead / Advance / UpdateUnreliableState；window.c | 执行这些原始函数，比较发送时间、帧字节及交付后的窗口头；限本项目容量以内 |
 | 视频准入与恢复请求 | DecodeFrame、FinalDecode；DataReceived / SubmitFrame | 同输入比较严格/软同步、6553 tick 边界、关键帧及后端失败反馈；原始视频 slice 组装和实际 codec 不在这组对比内 |
 | 积压范围消息 148 | §25.11；CheckPartialOverflow | 帧 ID 的有符号含端点范围；相等可报告，较小范围也保存；不是时间阈值加 412 |
+| 接收窗口交付、退休与反馈的调度顺序 | UpdateUnreliableState 0x7fa470–0x7fa6fc；DataThreadWorker / FeedbackThreadWorker | 官方同一次 update 先交付/退休再构造反馈；本项目两个 worker 在 windowLock 下各自取快照，允许不同先后顺序。F/U 分步对比不能证明并发交错的反馈序列完全相同 |
 | 已完整 pending 的后续处理 | §25.13；DataReceived 的排空循环 | 官方仍有 pending 时约 1ms think；本项目在同 worker 中排空，不等新包；调度方式不同 |
 | 帧损坏的判断 | §25.5/25.10；video_pipeline.c | FFmpeg 明确 INVALIDDATA/损坏标记是项目映射，不是从 MediaCodec 逆向出的错误码对照表 |
 | 后端重建 | Android 输入 buffer 超时/参数变化/Surface 变化与 Reset 调用链 | 项目未等价实现这些异步重建分支；FFmpeg flush 不等于销毁/重建 MediaCodec；不能照搬 200ms 输入 timeout |
@@ -1908,3 +1909,7 @@ allocation/refcount/锁/memcpy/memset/socket 等外部函数为替身；socket �
 `check_recovery_oracle.py` 复播，不需要分发 ELF 或安装 Unicorn。实现对比与
 原始指令分支测试是两类证据，不能用其中一个替代另一个。实际线程调度及毫秒级
 条件等待仍可能使发包时刻晚于逻辑 deadline；不承诺逐微秒相同的物理时序。
+
+RTT 对比向双方注入相同的 mean/smoothed 值，只证明给定 RTT 下的预算计算；
+不证明实时 RTT 采样、平滑与时钟拟合全过程等价。线程调度允许反馈先于本地
+交付/退休，故即使每个冻结快照的输出一致，也不能据此推导完整网络轨迹一致。
