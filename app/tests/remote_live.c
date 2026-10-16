@@ -28,6 +28,7 @@ typedef struct live {
     atomic_bool session_connected;
     atomic_uint video_frames;
     bool desktop_stream;
+    bool relay_only;
 #endif
 } live;
 static void connected(bool ready, void *ctx) {
@@ -96,7 +97,7 @@ static void stream_result(IHS_StreamingResult result, const sl_remote_material *
     char error[1024];
     printf("SNS_MATERIAL transport=%d key_bytes=%zu cert_bytes=%zu\n", m->transport,
         m->key_size, m->cert ? strlen(m->cert) : 0);
-    l->sns = sl_sns_create(&config, m, true, error, sizeof(error));
+    l->sns = sl_sns_create(&config, m, !l->relay_only, error, sizeof(error));
     l->session_info = (IHS_SessionInfo){.steamId = m->steam_id, .sessionKeyLen = m->key_size};
     IHS_IPAddressFromString(&l->session_info.address.ip, "127.0.0.1");
     if (m->key_size <= sizeof(l->session_info.sessionKey))
@@ -165,18 +166,26 @@ int main(int argc, char **argv) {
     bool idle = argc == 2 && !strcmp(argv[1], "--idle");
     bool sns_test = false;
     bool desktop_stream = false;
+    bool sdr_session = false;
+    bool relay_only = false;
 #ifdef NSL_HAVE_SNS
     sns_test = argc == 3 && !strcmp(argv[1], "--sns-test");
     desktop_stream = argc == 3 && !strcmp(argv[1], "--sns-desktop");
+    sdr_session = argc == 3 && !strcmp(argv[1], "--sdr-session");
+    if (argc == 3 && !strcmp(argv[1], "--sdr-only-test"))
+        sns_test = relay_only = true;
+    if (argc == 3 && !strcmp(argv[1], "--sdr-only-desktop"))
+        desktop_stream = relay_only = true;
 #endif
-    if (argc != 1 && !pairing && !status && !idle && !sns_test && !desktop_stream) {
-        fprintf(stderr, "usage: %s [--idle | --pair|--status|--sns-test|--sns-desktop PRIVATE_PROFILE_DIRECTORY]\n",
+    if (argc != 1 && !pairing && !status && !idle && !sns_test && !desktop_stream && !sdr_session) {
+        fprintf(stderr, "usage: %s [--idle | --pair|--status|--sns-test|--sns-desktop|--sdr-session PRIVATE_PROFILE_DIRECTORY]\n",
                 argv[0]);
         return 2;
     }
     live l = {.profile = argc == 3 ? argv[2] : NULL};
 #ifdef NSL_HAVE_SNS
     l.desktop_stream = desktop_stream;
+    l.relay_only = relay_only;
     atomic_init(&l.session_connected, false);
     atomic_init(&l.video_frames, 0);
 #endif
@@ -223,6 +232,7 @@ int main(int argc, char **argv) {
     uint64_t connected_at = 0;
     uint64_t sns_connected_at = 0;
     bool desktop_success = false;
+    bool sdr_success = false;
     while (!l.failed && now_ms() < deadline) {
         sl_remote_connection_update(c, now_ms());
         if (l.ready && !connected_at)
@@ -237,12 +247,12 @@ int main(int argc, char **argv) {
                 break;
         }
 #ifdef NSL_HAVE_SNS
-        if ((sns_test || desktop_stream) && l.ready && l.status && !started) {
+        if ((sns_test || desktop_stream || sdr_session) && l.ready && l.status && !started) {
             started = true;
             IHS_StreamingRequest request = {.streamingEnable = {.video = true},
                 .maxResolution = {1280, 720}, .audioChannelCount = 2,
                 .streamDesktop = desktop_stream};
-            sl_remote_stream_options options = {.network_test = sns_test, .sns = true};
+            sl_remote_stream_options options = {.network_test = !desktop_stream, .sns = true};
             if (!sl_remote_stream_ex(protocol, l.peer_id, &request, &options))
                 break;
         }
@@ -257,6 +267,8 @@ int main(int argc, char **argv) {
                 sl_sns_get_stats(l.sns, &stats);
                 printf("SNS_PEER_AUTHENTICATED=%d SNS_ROUTE_RELAYED=%d\n",
                     stats.authenticated, stats.relayed);
+                if (relay_only && !stats.relayed)
+                    l.failed = true;
                 if (desktop_stream) {
                     l.session = IHS_SessionCreate(&config, &l.session_info);
                     IHS_SessionSetSessionCallbacks(l.session, &session_cb, &l);
@@ -265,7 +277,14 @@ int main(int argc, char **argv) {
                         !IHS_SessionConnect(l.session))
                         l.failed = true;
                 }
+                if (sdr_session && !sl_sns_start_relay_probe(l.sns))
+                    l.failed = true;
                 fflush(stdout);
+            }
+            if (sdr_session) {
+                unsigned stats[5];
+                sl_sns_relay_probe_stats(l.sns, stats);
+                sdr_success = stats[3] > 0;
             }
             if (state == SL_SNS_FAILED || state == SL_SNS_CLOSED) {
                 printf("SNS_TERMINAL_STATE=%d reason=%d\n", state, sl_sns_end_reason(l.sns));
@@ -279,6 +298,7 @@ int main(int argc, char **argv) {
                   : status ? l.status
                   : sns_test ? sns_connected_at && now_ms() - sns_connected_at >= 5000
                   : desktop_stream ? desktop_success
+                  : sdr_session ? sdr_success
                   : idle   ? connected_at && now_ms() - connected_at >= 65000
                            : l.ready;
         if (success)
@@ -298,6 +318,20 @@ int main(int argc, char **argv) {
         sl_sns_get_stats(l.sns, &stats);
         printf("SNS_DATAGRAMS_SENT=%llu RECEIVED=%llu\n",
             (unsigned long long)stats.datagrams_sent, (unsigned long long)stats.datagrams_received);
+        if (sdr_session) {
+            unsigned relay[5];
+            sl_sns_relay_probe_stats(l.sns, relay);
+            printf("SDR_PINGS_SENT=%u REPLIES=%u SESSION_REQUESTS=%u ESTABLISHED=%u REJECTED=%u\n",
+                relay[0], relay[1], relay[2], relay[3], relay[4]);
+        }
+        if (relay_only) {
+            unsigned debug[16];
+            sl_sns_sdr_debug(l.sns, debug);
+            printf("SDR_TRANSPORT_COUNTERS=");
+            for (unsigned i = 0; i < 16; ++i)
+                printf("%s%u", i ? "," : "", debug[i]);
+            puts("");
+        }
     }
     sl_sns_destroy(l.sns);
 #endif

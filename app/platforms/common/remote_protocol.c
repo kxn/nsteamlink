@@ -755,9 +755,12 @@ void sl_remote_update(sl_remote *r, int64_t now) {
     msg.network_test = r->stream.options.network_test;
     /* Runtime default stays UDP. The explicit diagnostic SNS path never
      * accepts a final UDP choice that would bypass the backend under test. */
-    EStreamTransport transports[] = {r->stream.options.sns ? k_EStreamTransportSDR
-                                                           : k_EStreamTransportUDP};
-    msg.n_supported_transport = 1;
+    EStreamTransport transports[2];
+    msg.n_supported_transport = 0;
+    if (!r->stream.options.sns || r->stream.options.udp)
+        transports[msg.n_supported_transport++] = k_EStreamTransportUDP;
+    if (r->stream.options.sns)
+        transports[msg.n_supported_transport++] = k_EStreamTransportSDR;
     msg.supported_transport = transports;
     send_message(r, r->stream.peer.steam_id, k_ERemoteDeviceStreamingRequest, &msg.base);
 }

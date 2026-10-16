@@ -5,6 +5,9 @@
 #include "platform/shortcut.h"
 #include "platform/system.h"
 #include "remote_connection.h"
+#if NSL_HAVE_SNS
+#include "sns_backend.h"
+#endif
 #include "services/i18n.h"
 #include "services/launch_watch.h"
 #include "services/update_config.h"
@@ -42,6 +45,11 @@ struct sl_runtime {
     int count;
     IHS_Client *client;
     sl_remote_connection *remote;
+#if NSL_HAVE_SNS
+    sl_sns *sns;
+    bool sns_waiting;
+    atomic_bool session_finalized;
+#endif
     sl_remote_host cloud_hosts[SL_REMOTE_PEERS];
     size_t cloud_count;
     IHS_HostInfo local_hosts[SL_REMOTE_PEERS];
@@ -446,8 +454,18 @@ static const IHS_ClientDiscoveryCallbacks discovery_cb = {.discovered = discover
 static const IHS_ClientAuthorizationCallbacks auth_cb = {.success = authorized,
                                                          .failed = auth_failed};
 static const IHS_ClientStreamingCallbacks stream_cb = {.success = accepted, .failed = rejected};
+#if NSL_HAVE_SNS
+static void session_finalized(IHS_Session *session, void *ctx) {
+    (void)session;
+    atomic_store(&((sl_runtime *)ctx)->session_finalized, true);
+}
+#endif
 static const IHS_StreamSessionCallbacks session_cb = {
-    .configuring = configuring, .connected = connected, .disconnected = disconnected};
+    .configuring = configuring, .connected = connected, .disconnected = disconnected,
+#if NSL_HAVE_SNS
+    .finalized = session_finalized,
+#endif
+};
 static const IHS_StreamVideoCallbacks video_cb = {
     .startTracked = video_start, .submitTracked = video_submit, .stopTracked = video_stop};
 static const IHS_StreamAudioCallbacks audio_cb = {
@@ -595,6 +613,28 @@ static void cloud_stream_result(IHS_StreamingResult result, const sl_remote_mate
         return;
     }
     IHS_HostInfo local;
+#if NSL_HAVE_SNS
+    if (m->transport == k_EStreamTransportSDR) {
+        if (r->sns || m->key_size > sizeof(r->session_info.sessionKey)) {
+            rejected(NULL, NULL, IHS_StreamingFailed, ctx);
+            return;
+        }
+        char error[1024];
+        r->sns = sl_sns_create(&r->config, m, true, error, sizeof(error));
+        memset(error, 0, sizeof(error)); /* SDK text may include an identity. */
+        if (!r->sns) {
+            rejected(NULL, NULL, IHS_StreamingTransportUnavailable, ctx);
+            return;
+        }
+        r->session_info = (IHS_SessionInfo){.steamId = m->steam_id, .sessionKeyLen = m->key_size};
+        memcpy(r->session_info.sessionKey, m->key, m->key_size);
+        /* Logical endpoint is stable across ICE/SDR route changes. The external
+         * provider never uses it as a physical UDP destination. */
+        IHS_IPAddressFromString(&r->session_info.address.ip, "127.0.0.1");
+        r->sns_waiting = true;
+        return;
+    }
+#endif
     if (m->transport != k_EStreamTransportUDP || !local_host(r, m->client_id, &local)) {
         rejected(NULL, NULL, IHS_StreamingTransportUnavailable, ctx);
         return;
@@ -650,6 +690,19 @@ static bool stop_session(sl_runtime *r) {
     if (r->session) {
         sl_log("cleanup: session disconnect/join");
         IHS_SessionDisconnect(r->session);
+#if NSL_HAVE_SNS
+        if (r->sns) {
+            /* Goodbye and control ACKs still need the owner to poll SNS while
+             * the IHS workers finish. Never block joining their dependency. */
+            uint64_t deadline = sl_system_now() + 1500;
+            while (!atomic_load(&r->session_finalized) && sl_system_now() < deadline) {
+                sl_sns_update(r->sns, sl_system_now());
+                usleep(1000);
+            }
+            if (!atomic_load(&r->session_finalized))
+                IHS_SessionInterrupt(r->session);
+        }
+#endif
         /* Discovery disconnect retries are bounded to ~1.1 s. Let the session
          * worker send them before joining; immediate interrupt drops the goodbye. */
         IHS_SessionThreadedJoin(r->session);
@@ -660,6 +713,11 @@ static bool stop_session(sl_runtime *r) {
         r->session = NULL;
         sl_log("cleanup: session destroyed");
     }
+#if NSL_HAVE_SNS
+    sl_sns_destroy(r->sns);
+    r->sns = NULL;
+    r->sns_waiting = false;
+#endif
     pthread_mutex_lock(&r->lock);
     host_completed = host_completed || (r->end_game.at && r->end_game.empty >= 2);
     r->end_game = (sl_end_game_watch){0};
@@ -674,6 +732,9 @@ static bool stop_session(sl_runtime *r) {
     return host_completed;
 }
 static bool launch_session(sl_runtime *r, IHS_SessionInfo info) {
+#if NSL_HAVE_SNS
+    atomic_store(&r->session_finalized, false);
+#endif
     r->session = IHS_SessionCreate(&r->config, &info);
     static atomic_uint_fast64_t next_session_id = 1;
     uint64_t next = atomic_load(&next_session_id);
@@ -715,6 +776,10 @@ static bool launch_session(sl_runtime *r, IHS_SessionInfo info) {
     IHS_SessionSetInputCallbacks(r->session, &input_cb, r);
     if (r->provider)
         IHS_SessionHIDAddProvider(r->session, r->provider);
+#if NSL_HAVE_SNS
+    if (r->sns && !IHS_SessionSetDatagramTransport(r->session, sl_sns_datagram_transport(), r->sns))
+        return false;
+#endif
     if (!IHS_SessionConnect(r->session))
         return false;
     IHS_ClientStreamingEstablished(r->client);
@@ -875,8 +940,9 @@ static void execute(sl_runtime *r, sl_command cmd) {
         snprintf(req.pin, sizeof(req.pin), "%.15s", cmd.text);
         IHS_HostInfo direct;
         if (cloud_online && !local_host(r, cmd.host.client_id, &direct)) {
-            if (!sl_remote_stream(sl_remote_connection_protocol(r->remote), cmd.host.client_id,
-                                  &req))
+            sl_remote_stream_options options = {.sns = NSL_HAVE_SNS};
+            if (!sl_remote_stream_ex(sl_remote_connection_protocol(r->remote), cmd.host.client_id,
+                                     &req, &options))
                 fail(r, sl_tr(SL_T_REQUEST_STREAM_FAILED));
         } else if (!IHS_ClientStreamingRequest(r->client, &h, &req))
             fail(r, sl_tr(SL_T_REQUEST_STREAM_FAILED));
@@ -1210,6 +1276,22 @@ static void *worker_main(void *ctx) {
             IHS_ClientStartDiscovery(r->client, 3000);
         }
         uint64_t now = sl_system_now();
+#if NSL_HAVE_SNS
+        if (r->sns) {
+            sl_sns_update(r->sns, now);
+            sl_sns_state state = sl_sns_get_state(r->sns);
+            if (state == SL_SNS_CONNECTED && r->sns_waiting) {
+                r->sns_waiting = false;
+                if (!launch_session(r, r->session_info)) {
+                    stop_session(r);
+                    fail(r, sl_tr(SL_T_SESSION_FAILED));
+                }
+            } else if (state == SL_SNS_FAILED || state == SL_SNS_CLOSED) {
+                stop_session(r);
+                fail(r, sl_tr(SL_T_CANNOT_CONNECT));
+            }
+        }
+#endif
         sl_remote_connection_update(r->remote, now);
         if (now - r->cloud_refresh >= 5000) {
             r->cloud_refresh = now;
@@ -1330,7 +1412,11 @@ static void *worker_main(void *ctx) {
         if (!r->request_pending && !r->quit) {
             struct timespec t;
             clock_gettime(CLOCK_REALTIME, &t);
-            t.tv_nsec += 20000000;
+            t.tv_nsec +=
+#if NSL_HAVE_SNS
+                r->sns ? 1000000 :
+#endif
+                20000000;
             if (t.tv_nsec >= 1000000000) {
                 t.tv_sec++;
                 t.tv_nsec -= 1000000000;
@@ -1368,6 +1454,9 @@ sl_runtime *sl_runtime_create(const sl_auth_store *store) {
     r->store = *store;
     r->udp = -1;
     atomic_init(&r->exit_requested, false);
+#if NSL_HAVE_SNS
+    atomic_init(&r->session_finalized, false);
+#endif
     atomic_init(&r->foreground, true);
     atomic_init(&r->worker_finished, false);
     pthread_mutex_init(&r->lock, NULL);

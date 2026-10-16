@@ -14,6 +14,9 @@ pkg_check_modules(OPUS REQUIRED IMPORTED_TARGET opus)
 pkg_check_modules(CURL REQUIRED IMPORTED_TARGET libcurl)
 pkg_check_modules(JPEG REQUIRED IMPORTED_TARGET libjpeg)
 find_package(Threads REQUIRED)
+add_library(nsl_sdr_core STATIC platforms/common/sdr_wire.c platforms/common/sdr_config.c)
+target_include_directories(nsl_sdr_core PUBLIC platforms/common PRIVATE ${CMAKE_SOURCE_DIR}/third_party/jsmn)
+target_compile_options(nsl_sdr_core PRIVATE -Wall -Wextra)
 add_library(nsl_remote STATIC platforms/common/remote_wire.c platforms/common/remote_protocol.c
     platforms/common/remote_connection.c platforms/common/stream_bridge.c)
 target_include_directories(nsl_remote PUBLIC platforms/common PRIVATE
@@ -21,13 +24,36 @@ target_include_directories(nsl_remote PUBLIC platforms/common PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client)
 target_include_directories(nsl_remote SYSTEM PRIVATE ${MBEDTLS_INCLUDE_DIRS})
 target_compile_options(nsl_remote PRIVATE -Wall -Wextra)
-target_link_libraries(nsl_remote PUBLIC ihslib PkgConfig::CURL ${MBEDCRYPTO_LIBRARY})
+target_link_libraries(nsl_remote PUBLIC ihslib nsl_sdr_core PkgConfig::CURL ${MBEDCRYPTO_LIBRARY})
 if(NSL_BUILD_SNS)
+    target_compile_definitions(GameNetworkingSockets_s PRIVATE NSL_SNS_PROBES=$<BOOL:${NSL_BUILD_TOOLS}>)
     target_sources(GameNetworkingSockets_s PRIVATE platforms/common/gns_hooks.cpp)
+    set(NSL_SDR_PROTO_DIR "${CMAKE_CURRENT_BINARY_DIR}/sdr-protobuf")
+    find_program(NSL_HOST_PROTOC NAMES protoc NO_CMAKE_FIND_ROOT_PATH REQUIRED)
+    file(MAKE_DIRECTORY "${NSL_SDR_PROTO_DIR}")
+    add_custom_command(OUTPUT "${NSL_SDR_PROTO_DIR}/steamdatagram_messages_sdr.pb.cc"
+        "${NSL_SDR_PROTO_DIR}/steamdatagram_messages_sdr.pb.h"
+        COMMAND "${NSL_HOST_PROTOC}" --cpp_out=${NSL_SDR_PROTO_DIR}
+            -I${CMAKE_SOURCE_DIR}/third_party/GameNetworkingSockets/src/common
+            -I${CMAKE_SOURCE_DIR}/docs/protocol/steamlink-1.3.32
+            ${CMAKE_SOURCE_DIR}/docs/protocol/steamlink-1.3.32/steamdatagram_messages_sdr.proto
+        DEPENDS ${CMAKE_SOURCE_DIR}/docs/protocol/steamlink-1.3.32/steamdatagram_messages_sdr.proto
+        VERBATIM)
+    add_custom_target(nsl_sdr_proto DEPENDS "${NSL_SDR_PROTO_DIR}/steamdatagram_messages_sdr.pb.cc"
+        "${NSL_SDR_PROTO_DIR}/steamdatagram_messages_sdr.pb.h")
+    add_dependencies(GameNetworkingSockets_s nsl_sdr_proto)
+    set_source_files_properties("${NSL_SDR_PROTO_DIR}/steamdatagram_messages_sdr.pb.cc"
+        TARGET_DIRECTORY GameNetworkingSockets_s PROPERTIES GENERATED TRUE)
+    target_sources(GameNetworkingSockets_s PRIVATE platforms/common/sdr_probe.cpp
+        "${NSL_SDR_PROTO_DIR}/steamdatagram_messages_sdr.pb.cc")
     target_include_directories(GameNetworkingSockets_s PRIVATE ${CMAKE_SOURCE_DIR}/third_party/jsmn
-        ${CMAKE_SOURCE_DIR}/third_party/GameNetworkingSockets/src)
+        ${NSL_GNS_SOURCE}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/platforms/common ${NSL_SDR_PROTO_DIR})
+    target_link_libraries(GameNetworkingSockets_s PRIVATE "$<BUILD_INTERFACE:nsl_sdr_core>")
     add_library(nsl_sns STATIC platforms/common/sns_backend.cpp)
     target_compile_features(nsl_sns PRIVATE cxx_std_17)
+    target_compile_definitions(nsl_sns PRIVATE NSL_ENABLE_SDR=$<BOOL:${NSL_ENABLE_SDR}>)
+    target_compile_definitions(nsl_sns PUBLIC NSL_SNS_PROBES=$<BOOL:${NSL_BUILD_TOOLS}>)
     target_compile_options(nsl_sns PRIVATE -Wall -Wextra)
     target_include_directories(nsl_sns PUBLIC platforms/common)
     target_link_libraries(nsl_sns PUBLIC nsl_remote GameNetworkingSockets::GameNetworkingSockets_s
@@ -45,6 +71,15 @@ target_link_libraries(nsl_video_pipeline PUBLIC nsl_video_contracts ihslib PkgCo
 # caches so an existing SDL Switch build directory also migrates to deko.
 unset(NSL_GFX_BACKEND CACHE)
 if(NSL_PLATFORM STREQUAL "switch")
+    if(NSL_BUILD_TOOLS AND NSL_BUILD_SNS)
+        add_executable(nsl-sns-switch-probe tests/switch_sns_probe.cpp)
+        target_compile_features(nsl-sns-switch-probe PRIVATE cxx_std_17)
+        target_link_libraries(nsl-sns-switch-probe PRIVATE GameNetworkingSockets::GameNetworkingSockets_s nx)
+        nx_generate_nacp("${CMAKE_CURRENT_BINARY_DIR}/sns-probe.nacp"
+            NAME "SNS transport probe" AUTHOR "nsteamlink" VERSION "1")
+        nx_create_nro(nsl-sns-switch-probe OUTPUT nsl-sns-switch-probe.nro
+            NACP "${CMAKE_CURRENT_BINARY_DIR}/sns-probe.nacp")
+    endif()
     set(NSL_GFX_BACKEND "deko")
 else()
     set(NSL_GFX_BACKEND "sdl")
@@ -117,6 +152,10 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/background.c"
 target_sources(nsl_platform PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/background.c")
 target_link_libraries(nsl_platform PUBLIC nsl_ui nsl_artwork nsl_updater ihslib ihslib-hid-sdl PkgConfig::SDL2 PkgConfig::SDL2_TTF
     PkgConfig::FFMPEG PkgConfig::OPUS Threads::Threads nsl_gfx nsl_remote)
+target_compile_definitions(nsl_platform PRIVATE NSL_HAVE_SNS=$<BOOL:${NSL_BUILD_SNS}>)
+if(NSL_BUILD_SNS)
+    target_link_libraries(nsl_platform PUBLIC nsl_sns)
+endif()
 add_executable(nsteamlink src/main.c)
 target_link_libraries(nsteamlink PRIVATE nsl_platform)
 if(NSL_PLATFORM STREQUAL "switch")
@@ -164,6 +203,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_compile_options(nsl-stream-bridge-tests PRIVATE -Wall -Wextra -UNDEBUG)
     target_link_libraries(nsl-stream-bridge-tests PRIVATE nsl_remote)
     add_test(NAME nsl-stream-bridge COMMAND nsl-stream-bridge-tests)
+    add_executable(nsl-sdr-wire-tests tests/test_sdr_wire.c)
+    target_compile_options(nsl-sdr-wire-tests PRIVATE -Wall -Wextra -UNDEBUG)
+    target_link_libraries(nsl-sdr-wire-tests PRIVATE nsl_remote)
+    add_test(NAME nsl-sdr-wire COMMAND nsl-sdr-wire-tests)
     set_tests_properties(nsl-remote PROPERTIES TIMEOUT 20)
     if(NSL_BUILD_TOOLS)
         add_executable(nsl-remote-live tests/remote_live.c platforms/desktop/system.c)

@@ -12,6 +12,9 @@
 #include <cstring>
 #include <memory>
 #include <string>
+#ifdef NSL_GNS_SDR
+#include "sdr_client.h"
+#endif
 
 extern "C" void sl_gns_set_steam_link_app_id() {
     using namespace SteamNetworkingSocketsLib;
@@ -70,5 +73,9 @@ extern "C" bool sl_gns_import_trust(const char *json, size_t size) {
             }
         }
     }
-    return certs && success;
+    bool valid = certs && success;
+#ifdef NSL_GNS_SDR
+    valid = valid && NSL_SDR_Configure(json, size);
+#endif
+    return valid;
 }

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import shlex
 import subprocess
+import re
 
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('build', type=Path)
@@ -20,8 +21,12 @@ for entry in commands:
     if '/app/platforms/' not in str(source) or source.name not in names:
         continue
     argv = entry.get('arguments') or shlex.split(entry['command'])
-    assert '-DNSL_DIAGNOSTICS=0' in argv, f'diagnostic macro missing: {source}'
     obj = Path(entry['directory']) / argv[argv.index('-o') + 1]
+    # Some release-tree unit tests intentionally compile a diagnostic variant
+    # of the same source. Inspect the product objects, not these test fixtures.
+    if not re.search(r'CMakeFiles/nsl_(?:platform|ui|video_pipeline|gfx)\.dir/', str(obj)):
+        continue
+    assert '-DNSL_DIAGNOSTICS=0' in argv, f'diagnostic macro missing: {source}'
     data = obj.read_bytes()
     for marker in (b'render-rate-test', b'--adaptive-pacing', b'--no-adaptive-pacing', b'vq1 ', b'vq7 ', b'vq8 ', b'vq9 '):
         assert marker not in data, f'diagnostic string {marker!r} in {obj}'
@@ -44,8 +49,13 @@ for entry in commands:
             assert required.encode() in data, f'product scheduler missing: {required}'
     checked += 1
 assert checked == 7, f'expected seven relevant translation units, got {checked}'
+for entry in commands:
+    if not entry['file'].endswith('/sns_backend.cpp'):
+        continue
+    argv = entry.get('arguments') or shlex.split(entry['command'])
+    assert '-DNSL_SNS_PROBES=0' in argv, 'SNS probe API enabled in release product'
 manifest = json.loads((build / 'generated/graphics_manifest.json').read_text())
-if any('/platforms/switch/' in e['file'] for e in commands):
+if any(e['file'].endswith('/platforms/switch/gfx.c') for e in commands):
     assert manifest['backend'] == 'deko', 'Switch must use deko'
     gfx_sources = [Path(e['file']) for e in commands if Path(e['file']).name == 'gfx.c']
     assert gfx_sources and all(p.parent.name == 'switch' for p in gfx_sources), 'SDL renderer in Switch build'

@@ -60,6 +60,7 @@ typedef struct sl_remote_stream_options {
     /* Explicit backend capability. The runtime leaves this false until its
      * SNS backend passes interop. Diagnostic probes can exercise it alone. */
     bool sns;
+    bool udp; /* Advertise UDP alongside SNS when the caller can use both. */
 } sl_remote_stream_options;
 bool sl_remote_stream_ex(sl_remote *, uint64_t client_id, const IHS_StreamingRequest *,
                           const sl_remote_stream_options *);

@@ -2256,3 +2256,50 @@ Decision：
    不按候选或哈希静默覆盖。异步配置请求的 10s connect/25s 总预算也属于本地策略。
 7. `NSL_BUILD_SNS` 隔离 SDK 构建与互操作工具，正常 runtime 不因选项开启就声明新
    媒体能力。依赖移植、真正的 relay extension 和应用接入分别以实际可运行能力验收。
+
+---
+
+## D-063 私有 SDR transport、Switch crypto 与 SDK 构建副本
+
+日期：2026-10-16
+
+Evidence：`STEAM_REMOTE_PLAY_NETWORKING.md` §17–§21；固定 GNS 的
+`CConnectionTransport`、`CConnectionTransportP2PBase` 和 SNP 接口；
+`sdr_wire.c`/`sdr_config.c` 的独立 wire/config 用例。真实服务在关闭 ICE 的独立客户端
+上返回 authenticated+relayed，IHS 完成鉴权并收到 30 个编码视频帧；同一实现使用
+mbedTLS provider 的桌面构建也获得该结果。它只证明被执行路径互操作，不证明所有
+选路、丢包、迁移行为均与官方相同。
+
+Decision：
+
+1. Relay 控制/数据线格式、签名 session request、routing token/revision、stats 与
+   SNP datagram 适配由项目实现；继续使用 SDK 的证书校验、端到端加密、SNP 和
+   P2P transport 选择。关闭 ICE 的诊断必须以 SDK relayed 标志及 IHS 鉴权/媒体结果
+   验收，不能把拿到 relay token 或看到公网 UDP 包当成中继串流成功。
+2. SDK submodule 保持固定 pin 且清洁。`cmake/prepare-gns.py` 在独立构建目录应用
+   哈希追踪的有序 patch，拒绝 fuzz；私有 headers、生成 protobuf 和项目扩展一起在
+   此构建配置内编译，避免把未打补丁的头文件与已打补丁的实现混用。
+3. Switch 使用 mbedTLS SHA/HMAC/AES-GCM/RNG provider，Ed25519/X25519 使用 SDK
+   原有 Donna/reference 实现。libnx 使用 POSIX poll、连接的 UDP loopback wake pair
+   和 nifm 地址查询，不引入专有 Nintendo SDK。固定 protobuf C++ v21.12 在工作区
+   prefix 交叉编译；host protoc 必须版本匹配且可在构建机执行。
+4. 取代 D-062 第 7 项的阶段性能力声明：SNS 构建时，只有云端可达的主机可请求
+   transport=4；正常 runtime 通过同一 backend 透明选择 ICE/SDR。已验证的 LAN
+   保留 IHS 原生 UDP。没有实际 UDP 目标的 SNS session 使用稳定的逻辑 endpoint，
+   不能将它误作物理发包地址，也不能将未验证的公布地址升格为 LAN 直连。
+5. Runtime owner 持续 manual poll；IHS worker 只用有界队列。停止时先关闭输入、
+   请求 IHS disconnect，在有界期限内继续 poll 以发送 goodbye/ACK，再 interrupt/join
+   IHS，最后销毁 SDK。SDK 文本可能含身份，正常运行不直接输出；独立探针及内部
+   counters 由 `NSL_BUILD_TOOLS` 编译开关控制。
+6. Switch 探针遵守 D-015，禁止 `nxlinkStdio()` 重定向；日志使用独立的非阻塞 socket。
+   保存退出阶段并在下一次启动自动读回，崩溃报告也自动读取，不要求人工复制 SD 文件。
+   NRO 使用 CMake 的 `*_nro` 打包目标，不能将只更新 ELF 当成已更新部署产物。
+
+Evidence correction：首版 SNS 探针虽输出两轮收发/SDK 销毁成功，用户随后两次明确
+报告“发生错误，软件已关闭”。撤回以这些输出证明 NRO 退出安全的判断；第二次部署
+误用了未重打包的同一旧 NRO，不能计为新修正的验证。自动取回的旧版 crash report
+`01792161920_010082f015576000.log` 给出 `exit → _fwalk_sglue → _fclose_r → _close_r`，
+PC=`0x1e5930`；按首版源码重建的 ELF 在此处为从空设备函数表加载 close 函数。
+第 2 版取消重定向后，下一次成功启动读回 `sdk_atexit_returned`，并再次完成两轮
+收发；最近 crash report 未改变。这支持修正后的前一轮 loader 返回/再次启动路径，
+不能替代正式客户端串流生命周期验收，也不能仅凭最后一次 nxlink 退出推断屏幕状态。

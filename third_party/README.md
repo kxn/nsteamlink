@@ -13,11 +13,23 @@
 
 ## SNS 构建边界
 
-`NSL_BUILD_SNS` 编译单独的网络后端与互操作探针，桌面默认开启，Switch 构建默认关闭。
-正常客户端只声明已接入的媒体能力；此选项本身不改变用户界面或开流能力声明。
-GNS 需要 C++17、protobuf C++ 和 crypto provider；桌面使用系统 protobuf/OpenSSL。
-它不替代原有 mbedTLS/C protobuf/IHS 会话。官方 SDK 源码保持原样，项目私有接入在
-`app/platforms/common`，新增 SDK 补丁仍须走本文的 patch 流程。设计依据见 D-062。
+`NSL_BUILD_SNS` 在桌面和 Switch 默认开启。runtime 对只有云端可达的主机声明 SNS，
+后端自动选择 ICE/SDR；已验证的 LAN 继续使用 IHS 原生 UDP。用户界面不增加路径选择。
+`NSL_ENABLE_SDR` 控制本项目重建的 Valve relay extension；它不属于公开 GNS 上游。
+互操作工具由 `NSL_BUILD_TOOLS` 单独控制。
+
+GNS 需要 C++17、protobuf C++ 和 crypto provider；桌面默认使用系统 protobuf/OpenSSL。
+Switch 使用本项目 mbedTLS provider、SDK 原有 Donna Ed25519/X25519，以及固定 protobuf
+v21.12（`f0dc78d7e6e331b8c6bb2d5283e06aa26883ca7c`，BSD-3）。
+`scripts/setup-sns-deps.sh` 在忽略的 `build/deps` 下载/交叉编译，安装到工作区内的
+`sns-switch` prefix，同时选择或构建版本一致的 host protoc，不修改系统 portlibs。
+它不替代原有 C protobuf/IHS 会话。
+
+官方 SDK submodule 保持原样；`cmake/prepare-gns.py` 检查固定 pin 和源码清洁状态，
+在每个构建目录复制源码并按顺序应用 `patches/GameNetworkingSockets/*.patch`，禁止 fuzz。
+补丁只提供私有 transport hooks、mbedTLS 构建接入和 libnx POSIX 适配；relay 实现在
+`app/platforms/common`。protobuf 的 libnx endian include 补丁单独保存在
+`patches/protobuf`。设计依据见 D-062/D-063。
 
 ## IHSlib fork（kxn/ihslib，分支 master）
 

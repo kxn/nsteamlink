@@ -24,6 +24,7 @@ cmake -S "$ROOT/cmake/deps/protobuf-c" -B "$DEPS/protobuf-build" \
     -DCMAKE_INSTALL_PREFIX="$DEVKITPRO/portlibs/switch"
 cmake --build "$DEPS/protobuf-build" -j"$(nproc)"
 cmake --install "$DEPS/protobuf-build"
+"$ROOT/scripts/setup-sns-deps.sh"
 dkp-pacman -Q > "$DEPS/devkitpro-packages.txt"
 checkout https://github.com/dragonflylee/hacBrewPack.git 745b16ecfc9ce055743067d200572204cb2aac6c "$DEPS/hacBrewPack"
 cp "$DEPS/hacBrewPack/config.mk.template" "$DEPS/hacBrewPack/config.mk"

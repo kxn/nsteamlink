@@ -1,6 +1,7 @@
 extern "C" {
 #include "sns_backend.h"
 #include "stream_bridge.h"
+#include "sdr_probe.h"
 }
 #include <steam/steamnetworkingsockets.h>
 #include <steam/steamnetworkingcustomsignaling.h>
@@ -103,6 +104,10 @@ struct sl_sns {
     Message certificate;
     int end_reason = 0;
     sl_sns_stats stats{};
+#if NSL_SNS_PROBES
+    sl_sdr_probe *relay_probe = nullptr;
+    unsigned sdr_debug[16] = {};
+#endif
 };
 static void close_backend(sl_sns *b, sl_sns_state state) {
     {
@@ -243,6 +248,7 @@ extern "C" sl_sns *sl_sns_create(const IHS_ClientConfig *config, const sl_remote
             goto fail;
         b->initialized = true;
         b->sockets = SteamNetworkingSockets();
+        SteamNetworkingUtils()->SetDebugOutputFunction(k_ESteamNetworkingSocketsDebugOutputType_None, nullptr);
         sl_gns_set_steam_link_app_id();
         b->share_ip = share_ip;
         b->sockets->ResetIdentity(nullptr);
@@ -320,8 +326,15 @@ static void update_backend(sl_sns *b, uint64_t now) {
     if (!b || !b->initialized)
         return;
     SteamNetworkingSockets_Poll(0);
+#if NSL_SNS_PROBES
+    sl_gns_sdr_probe_update(b->relay_probe);
+#endif
     b->sockets->RunCallbacks();
     pump_config(b);
+#if NSL_ENABLE_SDR && NSL_SNS_PROBES
+    if (b->connection)
+        sl_gns_sdr_transport_stats(b->connection, b->sdr_debug);
+#endif
     bool connected = check_connection(b, now);
     {
         /* SDK callbacks only enqueue. Never hold this mutex across an SDK call
@@ -411,6 +424,30 @@ extern "C" void sl_sns_get_stats(const sl_sns *b, sl_sns_stats *out) {
     if (out)
         *out = b ? b->stats : sl_sns_stats{};
 }
+#if NSL_SNS_PROBES
+extern "C" bool sl_sns_start_relay_probe(sl_sns *b) {
+    if (!b || !b->connection || b->relay_probe || b->q->state != SL_SNS_CONNECTED)
+        return false;
+    b->relay_probe = sl_gns_sdr_probe_create(b->connection, b->config.data(), b->config.size());
+    return b->relay_probe != nullptr;
+}
+extern "C" void sl_sns_relay_probe_stats(const sl_sns *b, unsigned out[5]) {
+    if (!out)
+        return;
+    sl_sdr_probe_stats s{};
+    if (b)
+        sl_gns_sdr_probe_stats(b->relay_probe, &s);
+    out[0] = s.sent_pings;
+    out[1] = s.valid_ping_replies;
+    out[2] = s.requests;
+    out[3] = s.established;
+    out[4] = s.rejected;
+}
+extern "C" void sl_sns_sdr_debug(const sl_sns *b, unsigned out[16]) {
+    if (b && out)
+        memcpy(out, b->sdr_debug, sizeof(b->sdr_debug));
+}
+#endif
 extern "C" int sl_sns_set_mtu(sl_sns *b, int mtu) {
     if (!b || !b->connection || mtu <= 0 ||
         !SteamNetworkingUtils()->SetConnectionConfigValueInt32(b->connection,
@@ -470,6 +507,9 @@ extern "C" void sl_sns_destroy(sl_sns *b) {
         b->q->owner = false;
     }
     close_backend(b, SL_SNS_CLOSED);
+#if NSL_SNS_PROBES
+    sl_gns_sdr_probe_destroy(b->relay_probe);
+#endif
     if (!b->certificate.empty())
         wipe(b->certificate.data(), b->certificate.size());
     if (b->request) {
