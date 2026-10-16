@@ -83,6 +83,11 @@ target_link_libraries(nsl_ui PUBLIC m)
 add_dependencies(nsl_ui nsl_identity nsl_i18n)
 target_include_directories(nsl_ui PUBLIC ${NSL_IDENTITY_DIR} ${NSL_I18N_DIR})
 target_compile_definitions(nsl_ui PUBLIC NSL_DIAGNOSTICS=$<BOOL:${NSL_DIAGNOSTICS}> NSL_ADAPTIVE_PACING=$<BOOL:${NSL_ADAPTIVE_PACING}>)
+add_library(nsl_stream_settings STATIC platforms/common/stream_settings.c)
+target_include_directories(nsl_stream_settings PUBLIC src platforms/common
+    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+target_link_libraries(nsl_stream_settings PUBLIC ihslib Threads::Threads PRIVATE ihs-protobuf)
+target_compile_options(nsl_stream_settings PRIVATE -Wall -Wextra)
 add_library(nsl_platform STATIC platforms/common/application.c platforms/common/sdl_input.c platforms/common/media.c
     platforms/common/shortcut_package.c platforms/${NSL_PLATFORM}/shortcut.c
     platforms/common/ui_renderer.c platforms/common/ui_audio.c platforms/common/runtime.c platforms/${NSL_PLATFORM}/system.c
@@ -96,7 +101,7 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/background.c"
     DEPENDS ${CMAKE_SOURCE_DIR}/assets/branding/background.bmp ${CMAKE_SOURCE_DIR}/cmake/EmbedAsset.cmake
     VERBATIM)
 target_sources(nsl_platform PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/background.c")
-target_link_libraries(nsl_platform PUBLIC nsl_ui nsl_artwork nsl_updater ihslib ihslib-hid-sdl PkgConfig::SDL2 PkgConfig::SDL2_TTF
+target_link_libraries(nsl_platform PUBLIC nsl_ui nsl_artwork nsl_updater nsl_stream_settings ihslib ihslib-hid-sdl PkgConfig::SDL2 PkgConfig::SDL2_TTF
     PkgConfig::FFMPEG PkgConfig::OPUS Threads::Threads nsl_gfx)
 add_executable(nsteamlink src/main.c)
 target_link_libraries(nsteamlink PRIVATE nsl_platform)
@@ -152,6 +157,20 @@ if(NSL_PLATFORM STREQUAL "desktop")
     set_tests_properties(nsl-updater PROPERTIES TIMEOUT 30)
 endif()
 if(NSL_PLATFORM STREQUAL "desktop")
+    add_executable(nsl-stream-settings-tests tests/test_stream_settings.c platforms/desktop/system.c)
+    target_include_directories(nsl-stream-settings-tests PRIVATE ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+    target_link_libraries(nsl-stream-settings-tests PRIVATE nsl_stream_settings nsl_ui ihs-protobuf)
+    target_link_options(nsl-stream-settings-tests PRIVATE -Wl,--wrap=rename -Wl,--wrap=fclose)
+    target_compile_options(nsl-stream-settings-tests PRIVATE -Wall -Wextra -UNDEBUG)
+    add_test(NAME nsl-stream-settings COMMAND nsl-stream-settings-tests)
+    set_tests_properties(nsl-stream-settings PROPERTIES TIMEOUT 20)
+    add_executable(nsl-stream-settings-oracle tests/stream_settings_oracle.c)
+    target_link_libraries(nsl-stream-settings-oracle PRIVATE nsl_stream_settings)
+    target_compile_options(nsl-stream-settings-oracle PRIVATE -UNDEBUG)
+    add_test(NAME stream_settings_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-client-settings-io.py"
+        --receiver $<TARGET_FILE:nsl-stream-settings-oracle>)
+    set_tests_properties(stream_settings_official_vectors PROPERTIES TIMEOUT 60)
     add_executable(nsl-native-tests tests/test_native.c)
     target_include_directories(nsl-native-tests PRIVATE platforms/common)
     target_compile_options(nsl-native-tests PRIVATE -UNDEBUG)

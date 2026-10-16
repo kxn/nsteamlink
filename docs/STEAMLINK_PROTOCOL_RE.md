@@ -3276,7 +3276,7 @@ allocator、libc++字符串存储、packet refcounts、文件/最终网络调用
 销毁/释放等价验证。官方二进制不入仓，SHA固定在脚本入口。
 
 生产对照使用其中86个适用于核心层和规范 bool 的官方输入，另加3个无效 API输入
-及3个初始协商复用输入，共92组。Native incoming 从实际CRC datagram进入真实
+及5个初始协商复用/默认值输入，共94组。Native incoming 从实际CRC datagram进入真实
 session、可靠窗口、加密/解密和控制解析，消息字节来自固定官方 plaintext fixture；
 加密输入由受控测试会话构造，不冒称真实 host 抓包。输出从真实 sendQueue 重组并
 解密后比较字段 presence、重复顺序、nested及unknown，不依赖 Python protobuf 包。
@@ -3285,7 +3285,132 @@ session、可靠窗口、加密/解密和控制解析，消息字节来自固定
 session 销毁后的应用自有快照，以及4000次写入与并发读取/解析，停止后 join reader。
 这些是项目内存/并发验证，不代替原版播放器行为的生产验收。
 
-持久化 callback 的调用不等于 nsteamlink 已写出/重新加载整个设置文件；应用对该
-回调、overlay/hardware/microphone及窗口事件的接线须分别从真实入口验收。§32的
-保存手动 FEC 开关继续有效，不把库 API 可发送99扩大成该 checkbox 会热切换。
-本节不会把消息99核心覆盖、默认值与发送条件的一致扩大成所有播放器/设备行为一致。
+完整文件保存/重载的实际应用入口、文件故障和 UI 视图契约见 §36；本节 callback
+计数不代替那些文件证据。overlay/hardware/microphone及窗口事件的设备副作用与
+配置存储分属不同层。§32的手动 FEC 保存策略仍适用，不把库 API 可发送99扩大成
+checkbox 热切换；配置值覆盖不等于所有播放器/设备行为均已验证。
+
+## 36. 完整设置文件与应用持久化边界
+
+### 36.1 原版 Load/Save 的完整入口
+
+【证据】`audit-steam-client-settings-io.py` 从同一 SHA 固定的官方 Android main
+执行 `SetSettingsFile 0x7a5a28`、`LoadStreamingClientConfig 0x7a5a50` 和
+`SaveStreamingClientConfig 0x7a5b34`。共27个固定案例覆盖7个加载输入、18个
+文件名/写入结果/配置值组合及2个 setter→load 输入。
+C++ protobuf parser/CopyFrom/SerializeAsString/ByteSizeLong 和分支仍执行原指令；
+BLoadFile/BSaveFile、CUtlBuffer 与 libc++ 内存存储是明确适配器，没有执行 Android
+文件系统的真实读写或断电耐久性测试。
+
+- SetSettingsFile 先替换文件名字符串，再直接调用 Load；不发控制消息。
+- Load 调用 BLoadFile；返回 false 时不解析、不改变当前 config。成功读取零字节
+  是有效空 protobuf，恢复完整默认值。这里没有 delegate、Save 或99调用。
+- Save 仅在文件名非空时执行。写的是完整 config 的原始 protobuf，不带控制编号、
+  CSet 外层、传输头或长度前缀。写失败 Warning，内存配置不回滚、不主动断连。
+
+【证据／明确差异】Load 直接把 ParseFromArray 的目标设为 client+456。
+原版输入 `c8 01 00 80` 先把 FEC 改成 false，然后遇到截断 varint 并 Warning，
+不会回滚；单独 `80` 失败后也已清成默认值。因此不能把原版文件加载失败描述成
+“事务性保留旧值”。项目文件 loader 先解析独立候选，所有读取/关闭/恢复步骤成功
+才替换当前值；失败保留旧完整配置，并不自动覆盖损坏的源文件。这是明确的坏文件
+防护差异，不冒称与原版异常路径逐字节等价。
+
+### 36.2 文件、兼容 profile 和初始协商
+
+`stream_settings.c` 在平台数据目录中使用 `streaming_settings.bin` 作为完整配置
+来源。首次缺文件时从现有 profile 的画质、码率、FEC 选择迁移，保留既有用户选择；
+不把旧 profile padding 当作新配置，也不重建设备身份或逐主机配对密钥。
+已有有效文件（包括空文件）优先于 profile 中那三个历史字段。
+
+应用启动时 preview 为 UI 提供视图，不保存新配置；若有可恢复备份，loader 可恢复
+其文件名。runtime worker 在创建 session 前加载完整值，随后调用
+`sl_stream_settings_apply_limited`，再注册 session callbacks、建立连接。
+因此读取文件本身不触发 delegate、Save 或99；初始消息4由 §35 的完整值路径构造。
+应用先在独立的本次 session 副本应用 H.264、1280×720、60fps 请求限制，
+不改写完整文件/cache；60000/1001 等未超限分数不被取整。configuring callback 再限幅，
+不再用每条 UI command 的旧默认值覆盖 FEC/quality/bitrate。
+这些平台请求限制是项目能力边界，不是 Android Default 预设的数值复制。
+
+完整配置省略字段仍采用 protobuf 默认语义，例如省略 bitrate 是−1自动、overlay
+是false；不能因字段缺省就注入旧包装层的15 Mbps、overlay=true或hotkey="auto"。
+显式提供空配置和只带FEC的配置均核对消息4与存储结果没有这些额外字段。未调用
+完整配置 API 的兼容调用方仍走既有精简接口默认值，二者不能混为一谈。
+
+配置中的 unknown fields、嵌套/重复 limits、字符串、分数帧率及有符号码率保留在
+完整文件中。profile 的 bitrate 字段继续占32位，以相同比特表示 int32；不再把
+菜单外的值强制归一化到6000。四个手动菜单选项的验证仍与“完整配置可以携带任何
+int32”分开；自动−1、无限制0及其他数值在 UI 显示当前值而不假装选择了6 Mbps。
+这不改变 profile v2/v3/v4/v5 的身份、校验和及密钥迁移语义。
+
+### 36.3 Save 回调、UI 编辑和先后顺序
+
+生产 session 的 saveClientConfig 已注册到 `client_config_saved`。接收线程只将
+借用的 protobuf 字节复制进单项 mailbox，再唤醒 runtime；没有文件写入、fsync、
+设备操作或 session 重入。mailbox 合并的是待落盘快照，不合并核心层的收包、
+delegate 或控制消息动作。配置文件和 cache 的读取/解析/写入归 runtime worker。
+
+UI 保存只按最后一次实际显示/提交的视图判断变化，修改画质、码率、FEC 中实际
+变更的字段；语言、声音、主机列表和配对身份的保存不会重建完整 proto。
+完整99与 UI 编辑按生产者顺序应用，各编辑字段分别记录序号：
+
+```text
+UI FEC=true → 完整配置 FEC=false → UI quality=Beautiful
+最终 FEC=false、quality=Beautiful
+```
+
+不能把两个 UI 编辑共用最后一个序号，否则旧 FEC 编辑会因稍后的画质编辑而错误
+覆盖完整配置。同理，更晚的完整配置会完整覆盖更早的 UI 选择，不自创“profile
+永远优先”或“省略 FEC 就保留”的规则。
+
+设置视图通过持久 snapshot 提供给 UI，不占用可能拥塞的通知队列。提交编辑时
+发布 revision；待提交的 UI command 和旧 revision 不能把控件改回旧值。UI 真正
+接受新视图后 ACK 它作为下一次编辑的基准，才能识别“先看到 true、再改回 false”
+这种值恰好等于更早旧快照的编辑。revision 是项目内线程交付标记，不上协议线，
+不与 Steam 时间戳或消息序号混用。
+
+设置页手动更改依然只更新保存值，不调用活动 session 的配置 API；串流中的 FEC
+不会因此热切、按丢包率自适应、清窗口或重连。当前 session 保留其现值，下次
+正常连接从完整文件/cache 取值。后续收到更晚的完整配置仍按其正常覆盖语义保存。
+
+### 36.4 文件发布、失败和退出
+
+文件保存用临时文件、flush/fsync、rename 发布；Horizon 不能替换目标时，先保留
+backup 再发布，失败尽量恢复旧文件。加载只在主文件不存在时恢复有效 backup。
+这是本项目的文件发布/恢复机制，原指令 I/O 适配器不证明 Android 底层也如此。
+写入/关闭/发布失败保留内存配置和旧磁盘记录，仅记录错误，不新增协议响应或断连。
+坏文件不被启动流程自动覆盖；有效空文件则按原版默认值加载。
+
+退出时先停止并 join session 等生产者，再 drain 最后一次配置/编辑并保存，之后
+runtime worker 才结束；销毁 settings mutex、待保存字节和 owned proto 发生在
+runtime join 后。没有新增 detached thread。启动 preview 位于首次 UI 渲染之前，
+运行时文件 I/O 不在渲染、输入或 session 收包热路径上。
+
+### 36.5 证据和验收入口
+
+```sh
+python3 scripts/audit-steam-client-settings-io.py \
+  --binary /path/to/official/libmain-arm64.so \
+  --output build/video-recovery-re/client-settings-io.json
+python3 scripts/check-steam-client-settings-io.py \
+  --receiver build/desktop/app/nsl-stream-settings-oracle
+ctest --test-dir build/desktop \
+  -R 'nsl-stream-settings|stream_settings_official_vectors|nsl-native' --output-on-failure
+```
+
+Native file oracle 消费27个原版案例中适用于应用固定文件名的13个输入，实际读取/
+写入临时目录、经过 session apply/Get 取出配置；11个正常/失败写入契约与原版对照，
+另2个失败 parser 输入明确断言“原版部分改动／项目保留旧值”两侧结果。
+其余空文件名 guard/SetSettingsFile 证据不被冒称是本产品任意路径 API 的验收。
+
+`nsl-stream-settings` 覆盖关闭/发布失败、Horizon rename 行为、backup恢复、零字节/
+坏文件、超过单包的配置所有权及磁盘重载、unknown/nested/repeated/分数fps、
+本次请求限幅不改源配置/自动码率/未超限分数fps、
+手动 FEC 保存不修改受控串流状态（无主机连接）的当前 session、不排队99、逐字段时序、旧UI快照、
+4000次跨线程发布以及生产者 join。大字符串长度为4096B，不把测试生成的数据称为
+官方真实会话。profile 读回与 UI 投影同时核对身份/密钥未改变。
+
+`nsl-native` 在真实 runtime/discovery worker 中完成两次取消/退出，证明旧 UI
+快照不覆盖完整文件；再通过真实 SAVE command 修改、关闭 runtime、重新从磁盘读取，
+核对FEC/画质/码率及unknown保留。SDL用dummy设备，没有认证主机或Switch显示证明。
+原版播放器 overlay/hardware/microphone 的设备动作不因文件持久化而自动获得验证；
+它们与调度、发送缓存、可靠媒体和统计窗口分别有独立协议契约。

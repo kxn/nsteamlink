@@ -137,6 +137,7 @@ typedef enum sl_ui_cue {
     SL_CUE_COUNT
 } sl_ui_cue;
 typedef struct sl_ui_model {
+    uint64_t settings_revision;
     sl_ui_cue cue;
     uint64_t cue_serial, move_sound_at;
     sl_auth_store store;

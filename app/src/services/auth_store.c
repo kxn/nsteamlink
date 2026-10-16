@@ -71,8 +71,6 @@ bool sl_auth_save(const sl_auth_store *s, const char *dir) {
     d.version = 5;
     d.size = sizeof(d);
     d.data = *s;
-    if (!sl_bitrate_valid(d.data.bitrate_kbps))
-        d.data.bitrate_kbps = 6000;
     for (int i = 0; i < d.data.registry.count; ++i) {
         d.data.registry.hosts[i].observed = false;
         d.data.registry.hosts[i].last_seen = 0;
@@ -168,8 +166,7 @@ int sl_auth_load(sl_auth_store *s, const char *dir) {
         }
         fclose(f);
         if (!ok || !d.data.device_id || d.data.registry.count < 0 ||
-            d.data.registry.count > SL_HOST_LIMIT || d.data.quality > 2 ||
-            !sl_bitrate_valid(d.data.bitrate_kbps))
+            d.data.registry.count > SL_HOST_LIMIT || d.data.quality > 2)
             return -2;
         if (recovered && rename(backup, path)) {
             store_error("recover");

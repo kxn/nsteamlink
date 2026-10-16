@@ -152,5 +152,7 @@
   "UPDATE_FAILED_VERIFY": "下载内容校验失败，\n未做任何更改。",
   "UPDATE_FAILED_WRITE": "无法将更新写入 SD 卡。",
   "ERROR_CORRECTION": "网络纠错",
-  "ERROR_CORRECTION_NEXT": "网络纠错将在下次连接生效"
+  "ERROR_CORRECTION_NEXT": "网络纠错将在下次连接生效",
+  "BANDWIDTH_AUTO": "自动",
+  "BANDWIDTH_UNLIMITED": "无限制"
 }

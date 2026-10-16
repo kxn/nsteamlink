@@ -155,6 +155,16 @@ def main():
         message = fields(bytes.fromhex(actual["events"][0]["payload"]), "negotiation")
         assert fields(message[2][0][1]) == actual_fields
 
+    # Full protobuf absence means the official optional defaults, rather than
+    # a request to materialize legacy 15 Mbps/overlay/hotkey conveniences.
+    for payload in ("", "c80101"):
+        actual = run([f"SEED {payload or '-'}", "PHASE 4", "NEGOTIATE -"])[-1]
+        expected_fields = fields(bytes.fromhex(payload))
+        assert fields(bytes.fromhex(actual["config"])) == expected_fields
+        assert len(actual["events"]) == 1 and actual["events"][0]["send"] == 4
+        message = fields(bytes.fromhex(actual["events"][0]["payload"]), "negotiation")
+        assert fields(message[2][0][1]) == expected_fields
+
     # Invalid API input is not a valid C++ message argument. These are native
     # parser guards, not invented official setter observations.
     for payload in ("0a08", "80", "aa0103120100"):

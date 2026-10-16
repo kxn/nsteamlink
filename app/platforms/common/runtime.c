@@ -7,6 +7,7 @@
 #include "services/i18n.h"
 #include "services/launch_watch.h"
 #include "services/update_config.h"
+#include "stream_settings.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -38,6 +39,10 @@ struct sl_runtime {
     bool save_update_check;
     sl_command pending, active;
     sl_auth_store store, save;
+    sl_stream_settings settings;
+    sl_stream_preferences settings_view;
+    uint64_t settings_view_revision;
+    bool settings_view_ready;
     sl_runtime_event events[48];
     int count;
     IHS_Client *client;
@@ -328,25 +333,16 @@ static void rejected(IHS_Client *c, const IHS_HostInfo *h, IHS_StreamingResult r
 }
 static void configuring(IHS_Session *s, IHS_SessionConfig *c, void *ctx) {
     (void)s;
-    sl_runtime *r = ctx;
-    c->enableAudio = true;
+    (void)ctx;
+    /* The full saved config supplies preferences. Only apply actual platform
+     * limits here; copying legacy command defaults would erase saved fields. */
     c->enableHevc = false;
-    c->enableUnreliableFec = r->active.unreliable_fec;
-    c->maxWidth = 1280;
-    c->maxHeight = 720;
-    c->maxFps = 60;
-    switch (r->active.quality) {
-    case 1:
-        c->quality = IHS_StreamQualityFast;
-        break;
-    case 2:
-        c->quality = IHS_StreamQualityBeautiful;
-        break;
-    default:
-        c->quality = IHS_StreamQualityBalanced;
-        break;
-    }
-    c->maxBitrateKbps = sl_bitrate_valid(r->active.bitrate_kbps) ? r->active.bitrate_kbps : 6000;
+    if (!c->maxWidth || c->maxWidth > 1280)
+        c->maxWidth = 1280;
+    if (!c->maxHeight || c->maxHeight > 720)
+        c->maxHeight = 720;
+    if (!c->maxFps || c->maxFps > 60)
+        c->maxFps = 60;
 }
 static void connected(IHS_Session *s, void *ctx) {
     (void)s;
@@ -432,8 +428,38 @@ static const IHS_ClientDiscoveryCallbacks discovery_cb = {.discovered = discover
 static const IHS_ClientAuthorizationCallbacks auth_cb = {.success = authorized,
                                                          .failed = auth_failed};
 static const IHS_ClientStreamingCallbacks stream_cb = {.success = accepted, .failed = rejected};
-static const IHS_StreamSessionCallbacks session_cb = {
-    .configuring = configuring, .connected = connected, .disconnected = disconnected};
+static void client_config_saved(IHS_Session *session, const uint8_t *wire, size_t size, void *ctx) {
+    sl_runtime *r = ctx;
+    sl_stream_settings_receive(session, wire, size, &r->settings);
+    pthread_cond_signal(&r->wake);
+}
+static bool same_preferences(sl_stream_preferences a, sl_stream_preferences b) {
+    return a.quality == b.quality && a.bitrate_kbps == b.bitrate_kbps &&
+           a.unreliable_fec == b.unreliable_fec;
+}
+static void sync_stream_settings(sl_runtime *r, bool refresh) {
+    bool changed = sl_stream_settings_drain(&r->settings);
+    if (!changed && !refresh)
+        return;
+    sl_stream_preferences before = {r->store.quality, r->store.bitrate_kbps,
+                                    r->store.unreliable_fec};
+    sl_stream_settings_project(&r->settings, &r->store);
+    sl_stream_preferences after = {r->store.quality, r->store.bitrate_kbps,
+                                   r->store.unreliable_fec};
+    if (r->settings.dirty && !sl_stream_settings_save(&r->settings, sl_system_data_dir()))
+        sl_log("settings: full configuration save failed");
+    if (!same_preferences(before, after) && !sl_auth_save(&r->store, sl_system_data_dir()))
+        sl_log("settings: profile projection save failed");
+    pthread_mutex_lock(&r->lock);
+    r->settings_view = after;
+    r->settings_view_revision = r->settings.applied_revision;
+    r->settings_view_ready = true;
+    pthread_mutex_unlock(&r->lock);
+}
+static const IHS_StreamSessionCallbacks session_cb = {.configuring = configuring,
+                                                      .connected = connected,
+                                                      .disconnected = disconnected,
+                                                      .saveClientConfig = client_config_saved};
 static const IHS_StreamVideoCallbacks video_cb = {
     .startTracked = video_start, .submitTracked = video_submit, .stopTracked = video_stop};
 static const IHS_StreamAudioCallbacks audio_cb = {
@@ -511,6 +537,13 @@ static bool launch_session(sl_runtime *r, IHS_SessionInfo info) {
     }
     if (!r->session)
         return false;
+    const sl_stream_request_limits limits = {
+        .width = 1280, .height = 720, .fps = 60, .hevc = false};
+    if (!sl_stream_settings_apply_limited(&r->settings, r->session, &limits)) {
+        IHS_SessionDestroy(r->session);
+        r->session = NULL;
+        return false;
+    }
     r->foreground_applied = atomic_load(&r->foreground_generation);
     IHS_SessionSetForeground(r->session, !(r->foreground_applied & 1u));
     sl_system_stream_info platform = sl_system_streaming_info();
@@ -907,6 +940,9 @@ static void *worker_main(void *ctx) {
     uint32_t discovery_seq = 0;
     IHS_Init();
     sl_log("runtime: IHS initialized");
+    if (sl_stream_settings_load(&r->settings, sl_system_data_dir()) < 0)
+        sl_log("settings: load failed, retaining the previous complete value");
+    sync_stream_settings(r, true);
     if (!start_client(r))
         fail(r, sl_tr(SL_T_NETWORK_UNAVAILABLE));
     while (!r->quit) {
@@ -966,8 +1002,9 @@ static void *worker_main(void *ctx) {
             sl_host_registry_keep_secrets(&save.registry, &r->store.registry);
             r->store = save;
         }
+        sync_stream_settings(r, snapshot_pending);
         if (save_pending) {
-            bool profile_saved = sl_auth_save(&save, sl_system_data_dir());
+            bool profile_saved = sl_auth_save(&r->store, sl_system_data_dir());
             bool language_saved = sl_i18n_save(sl_system_data_dir(), save_language);
             bool update_saved = sl_update_config_save(sl_system_data_dir(), save_update_check);
             if (!profile_saved || !language_saved || !update_saved)
@@ -1144,6 +1181,7 @@ static void *worker_main(void *ctx) {
         pthread_mutex_unlock(&r->lock);
     }
     stop_session(r);
+    sync_stream_settings(r, true); /* Producers joined; include the final callback/edit. */
     while (!sl_media_video_clean()) {
         struct timespec pause = {0, 1000000};
         nanosleep(&pause, NULL);
@@ -1173,6 +1211,12 @@ sl_runtime *sl_runtime_create(const sl_auth_store *store) {
     atomic_init(&r->worker_finished, false);
     pthread_mutex_init(&r->lock, NULL);
     pthread_cond_init(&r->wake, NULL);
+    if (!sl_stream_settings_init(&r->settings, store)) {
+        pthread_cond_destroy(&r->wake);
+        pthread_mutex_destroy(&r->lock);
+        free(r);
+        return NULL;
+    }
     r->config = (IHS_ClientConfig){.deviceId = r->store.device_id,
                                    .secretKey = r->store.secret,
                                    .deviceName = r->store.device_name};
@@ -1222,6 +1266,7 @@ bool sl_runtime_submit(sl_runtime *r, const sl_command *cmd, const sl_auth_store
         r->save = *store;
         r->snapshot_pending = true;
     }
+    sl_stream_settings_note_ui(&r->settings, store);
     pthread_cond_signal(&r->wake);
     pthread_mutex_unlock(&r->lock);
     return true;
@@ -1277,6 +1322,7 @@ void sl_runtime_destroy(sl_runtime *r) {
     if (r->udp >= 0)
         close(r->udp);
     sl_log("cleanup: runtime worker joined");
+    sl_stream_settings_destroy(&r->settings);
     pthread_cond_destroy(&r->wake);
     pthread_mutex_destroy(&r->lock);
     free(r);
@@ -1299,4 +1345,25 @@ bool sl_runtime_read_facts(sl_runtime *r, sl_runtime_facts *facts) {
     *facts = r->facts;
     pthread_mutex_unlock(&r->lock);
     return true;
+}
+
+bool sl_runtime_stream_settings(sl_runtime *r, sl_stream_preferences *view, uint64_t *revision) {
+    if (!r || pthread_mutex_trylock(&r->lock))
+        return false;
+    bool ready = r->settings_view_ready;
+    if (ready) {
+        *view = r->settings_view;
+        *revision = r->settings_view_revision;
+    }
+    pthread_mutex_unlock(&r->lock);
+    return ready;
+}
+uint64_t sl_runtime_settings_revision(sl_runtime *r) {
+    return r ? sl_stream_settings_revision(&r->settings) : 0;
+}
+
+void sl_runtime_ack_stream_settings(sl_runtime *r, const sl_stream_preferences *view,
+                                    uint64_t revision) {
+    if (r)
+        sl_stream_settings_ack_ui(&r->settings, view, revision);
 }
