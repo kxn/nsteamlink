@@ -89,12 +89,9 @@ def main():
                 for action in observed["actions"]
             ]
             assert actual["host_stop"] == ("D" in expected_actions), case["case"]
-            # HostStopped runs inside session.c, so its same-object-file call
-            # does not pass through the link wrapper. Observe the real stop
-            # flag rather than manufacture an outgoing action for this branch.
-            assert actual["actions"].split() == [
-                x for x in expected_actions if x != "D"
-            ], case["case"]
+            # Transport Disconnect is now a distinct operation. Its wrapper
+            # observes dispatch; the shutdown oracle checks the real reply/close.
+            assert actual["actions"].split() == expected_actions, case["case"]
             assert actual["last_receive"] == observed["last_receive"], case["case"]
         elif group == "mtu":
             phase = 2 if entry["client_state"] == 2 else 3

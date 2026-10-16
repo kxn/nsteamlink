@@ -500,8 +500,8 @@ static bool stop_session(sl_runtime *r) {
     if (r->session) {
         sl_log("cleanup: session disconnect/join");
         IHS_SessionDisconnect(r->session);
-        /* Discovery disconnect retries are bounded to ~1.1 s. Let the session
-         * worker send them before joining; immediate interrupt drops the goodbye. */
+        /* Disconnect attempts one goodbye before stopping workers. Join before
+         * releasing session, sockets and decoder dependencies. */
         IHS_SessionThreadedJoin(r->session);
         host_completed = IHS_SessionHostRequestedStop(r->session);
         /* Workers are joined. Detached frame tickets can outlive the session. */

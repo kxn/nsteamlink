@@ -75,5 +75,9 @@ if(NSL_PLATFORM STREQUAL "desktop")
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-connect.py"
             --receiver $<TARGET_FILE:ihs-connect-oracle>)
         set_tests_properties(connect_official_vectors PROPERTIES TIMEOUT 60)
+        add_test(NAME disconnect_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-disconnect.py"
+            --receiver $<TARGET_FILE:ihs-disconnect-oracle>)
+        set_tests_properties(disconnect_official_vectors PROPERTIES TIMEOUT 60)
     endif()
 endif()

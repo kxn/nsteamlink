@@ -263,6 +263,7 @@ def audit(base):
                 dict(state=state, result=result),
                 observed,
             )
+    audit.Client = Client  # Reuse the original connection fixture in shutdown audits.
     return cases
 
 

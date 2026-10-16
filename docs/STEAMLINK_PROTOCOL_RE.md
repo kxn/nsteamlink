@@ -3122,8 +3122,8 @@ worker 的 `lifecycle.c` 执行动作。同一轮间快速后台→前台保留�
 这些动作在既有接收 worker 的 recv 轮询中执行，没有新建脱离生命周期的线程。
 每个 worker 每轮最多处理32条边缘，积压留到下一轮；这是项目避免热路径阻塞的
 执行机制，不宣称与官方 SDL 主循环的墙钟调度逐 tick 等价。socket 的10ms轮询
-不是连接超时；阈值触发后复用已有断连 timer，正常清理约1.1秒后通知并中断 worker。
-这也不等于官方 Disconnect 的收尾延迟完全一致。
+不是连接超时。旧接线曾复用约1.1秒的重复断连timer；该做法与官方分层不同，
+按§40的Disconnect/Close契约撤销，接收超时改走连接层、下一Update通知并停止worker。
 
 接收错误退出路径先 Interrupt 唤醒发送队列，再 join send worker，避免空队列下
 无限等待。session Destroy 继续停止/join timer 和媒体 worker，再释放各自依赖。
@@ -3690,9 +3690,10 @@ Update时间。返回码0/1/2均遵循这一规则；不是普通可靠包RTO、
 【证据】同一次Update先执行上述发送，再在`@0x7fc43c`检查15/180秒接收租约。
 达到边界的连接可以先发一个Connect，再调用Disconnect；不能把超时检查搬到
 专用重试之前。`Disconnect @0x7fb724`只有state=1时发送一个type9，随后转state=2；
-连接尚未建立时不发送type9，下一Update通知closed并转state=3。这与本地现有
-Discovery disconnect timer的多次type9及延迟收尾是另一项差异，不能用Connect
-重试对照冒称断连生命周期已等价。
+连接尚未建立时不发送type9，下一Update在delegate仍存在时通知closed并转state=3。
+上层Close可能先清delegate，不能概括成所有路径都回调closed。这与本地现有
+旧Discovery disconnect timer的多次type9及延迟收尾有差异；§40以独立证据/生产
+对照替换该路径，不能用Connect重试对照冒称断连生命周期已等价。
 
 ### 39.2 固定案例与范围
 
@@ -3732,4 +3733,111 @@ python3 scripts/audit-steam-connect.py \
 python3 scripts/check-steam-connect.py \
   --receiver build/desktop/third_party/ihslib/tests/session/ihs-connect-oracle
 ctest --test-dir build/desktop -R 'connect|transport_worker' --output-on-failure
+```
+
+## 40. 官方客户端 Disconnect、Close 与上层停止
+
+### 40.1 原始调用链与证据边界
+
+证据仍为固定Android官方客户端ELF。`audit-steam-disconnect.py`执行Connection
+Disconnect `@0x7fb724`、Close `@0x7fbce0`、Update `@0x7fc108`、Client Disconnect
+`@0x7a7acc`、HandleStreamStopping `@0x7a7238`、ResetConnection `@0x7a527c`，
+以及实际Socket入包/CRC/HandleMessage/Connection HandlePacket的type9路径。
+内存分配、packet基础构造/引用、空client队列、缺省空decoder/设备指针、统计、
+地址比较和底层transport销毁/I/O为明确替身；未执行平台解码器、真实socket销毁。
+
+【证据/结论】连接层Disconnect仅state=1发送一个全新type9：count、channel、
+fragment和packet ID均0，source/destination使用该连接两端ID，CRC由连接协商位
+决定。即使底层返回1或2，也不重试；state0/2不发，state3保持3，其他转state2。
+重复调用state2不再发。Update遇state2先通知仍存在的delegate，再清peer地址/ID、
+获取新的local ID并进入state3；回调看到的是关闭前的state2和旧两端ID。
+
+【证据/结论】上层Client::Disconnect先调用上述Disconnect，仅client state6/7
+进入HandleStreamStopping（停止音视频decoder、外设/统计消费者），随后ResetConnection。
+ResetConnection调用Close，Close再次调用Disconnect后清connection的socket和delegate；
+第二次Disconnect此时为state2，不会重复发type9。随后Update不能再通知已清的delegate。
+撤回“上层主动退出必然等下一Update的closed回调”这一概括；底层断连与上层关闭需
+分别实现，不能加一个统一1.1秒等待或type9循环来近似。
+
+【证据/结论】对端type9先通过Socket CRC（有CRC时）、两端ID和地址校验，按
+`HandlePacket @0x7faf08–0x7fafec`刷新接收时间；只有state1才调用Disconnect。
+该类型不要求已经协商CRC的连接也必须带CRC，但有CRC却错误仍在Socket拒绝。
+收到有效type9并不是StopRequest(129)，没有证据从这里推断host游戏进程已经退出。
+本项目可保留“host请求结束transport”的UI事实，不能据此生成129。
+
+【证据】`Connection::Send @0x7fb9b4`和`SendUnreliable @0x7fbb58`都只在state1
+进入channel；其他状态返回3。关闭后的生产者不能继续由sender发普通数据。
+这不表示Socket低层对任何type9发送再加一次“必须state1”检查；Disconnect本体
+先送一次goodbye，再改状态，Close再清socket。
+
+【证据】`TransportUDP::BInit @0x802580–0x8025a0`对fd执行F_GETFL并把O_NONBLOCK
+位并入F_SETFL；`TransportUDP::Send @0x802754`只尝试一次sendto，完整长度才算成功。
+Android errno EAGAIN/EMSGSIZE/EBADF/其他分别返回1/2/3/4，EINTR也没有内部循环。
+因此“只发一个goodbye”还要求发送本身非阻塞，不能在应用退出路径等待socket写缓冲。
+本地POSIX backend的接收保持有界阻塞，发送使用每次MSG_DONTWAIT实现同样的出站
+非阻塞语义；这不是整个UDP BInit/BWait/IPv6路径与原版等价的结论。
+
+【证据】`GetNextConnectionID @0x7fab70`全进程共享计数，首次取非零的rand()%255
+（1～254），随后按1…255回绕跳过0；构造和退休都会分配。项目使用自有entropy
+provider供给同范围初值，用atomic CAS保证相同的进程内序号策略，不声明libc
+PRNG状态、随机样本与官方相同。
+
+### 40.2 接线约束
+
+本项目session认证阶段与官方transport四状态分开：Connecting映射0、Handshaking
+至Connected映射1，另存closing/closed。普通主动退出选择上层Close语义；接收超时
+与入站type9选择连接层Disconnect，下一Update再通知并停止现有workers。应用
+disconnected回调是项目API，主动Close可以通知应用收尾，不冒充已清除的官方delegate。
+Stop/join producer、收发线程、销毁依赖的顺序由现有runtime保证；不能在timer线程
+持全局timer锁做跨线程join，也不能在关闭后仍由heartbeat/feedback发送数据。
+
+### 40.3 实现和验证投影
+
+`shutdown.c`把transport四状态与认证阶段分开，用Base锁串行化一次goodbye与
+socket脱离。周期sender和初发交付在同锁内检查状态，queue/整帧发布在关闭时拒绝
+继续入窗，控制生产者不会将“已经在关闭”升级为另一次上层Close。正式关闭后
+Socket入口拒绝发送；退休保留不可变host配置，用addressCleared表示连接地址已清。
+`connection_id.c`实现进程内非零递增分配，初始Connect和退休分别消费ID。
+
+接收超时/type9调用TransportDisconnect；下一receive Update在清ID之前通知应用、
+退休并interrupt。主动SessionDisconnect选择Client Close语义，同步尝试一次goodbye
+并停止现有worker；应用回调在finalized通知一次。无worker的项目API回调可以同步
+发出，它是应用收尾通知，不能冒充被Close清除的官方transport delegate。
+finalized不持Base/socket/timer锁停止heartbeat、join sender；Destroy再停止/join
+媒体和应用拥有的生产者，最后释放timer/cache/socket依赖。没有新增线程或timer。
+启动尚未完成时取消会在两个初始化检查点保持关闭，不重开连接；未创建sendThread
+时不调用SDL的非空ThreadJoin。资源清理与官方平台decoder析构不能混称逐指令等价。
+
+固定参考138场景：连接层重复Disconnect 24、原始Close 8、上层Client Disconnect
+32个client/transport状态组合、入站type9的ID/地址/CRC与两种接收时刻48、退休后
+越过15秒期限8、ID分配/回绕4、UDP BInit系统调用2、UDP发送错误/CRC 12。
+上层状态交叉组合属于人工前置状态，不表示所有组合在正常UI均可达。
+
+生产oracle消费其中136个：逐轮比较wire、transport状态、关闭/ID动作先后、
+lastConnect/lastReceive、CRC要求、逻辑socket/delegate存在性及UDP返回码。
+其中32个上层组合仅比较transport投影，排除原版stats_stop/save、transport析构
+替身与client枚举；项目应用通知另验仅一次。GetNextID为单独依赖，关闭oracle
+使用固定12适配；另4组直接调用生产allocator，核对260个连续ID与首次零余数重取。
+预置计数器案例使用初始化/预热建立相同前置状态，不比较随机来源内部状态。
+两个BInit案例只有原版syscall轨迹，没有纳入生产协议等价数量。
+
+本节发送准入对照限关闭阶段：本地内部Queue在首次未连接阶段仍可接受部分调用，
+actor会抑制发送；这不等于原版Connection::Send即时返回3及其调用者的错误传播。
+该已知差异不因本节关闭/UDP对照通过而消失，完整收发Update与播放器消费者也
+不在本节的等价范围。
+
+`disconnect_worker`实际收发线程覆盖12次关闭：并发8个退出请求及控制生产者、
+peer无CRC断连、15秒超时，协商CRC开/关、goodbye EAGAIN且不重试；另32次启动即
+取消。核对一次goodbye、一次通知、先回调后清ID、关闭后不再有普通wire，收发均
+join。`connection_id`以4线程分配40000次检查计数器无零/连续分布并跨IHS_Quit保留。
+`udp_send`控制最终sendto，验证MSG_DONTWAIT、完整长度、EAGAIN/EINTR各仅一次尝试，
+保持接收阻塞属性。它们不证明真实内核拥塞、Switch显示/loader或真实Steam会话。
+
+```sh
+python3 scripts/audit-steam-disconnect.py \
+  --binary /path/to/official/libmain-arm64.so \
+  --output build/video-recovery-re/disconnect.json
+python3 scripts/check-steam-disconnect.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-disconnect-oracle
+ctest --test-dir build/desktop -R 'disconnect|connection_id|udp_send' --output-on-failure
 ```
