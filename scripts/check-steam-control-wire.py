@@ -2,8 +2,8 @@
 """Compare actual production control/frame wire bytes with official client vectors.
 
 Native protobuf, fragmentation, admission/retention and Socket serialization run;
-only time/final UDP are controlled. Queue admission is separate from Socket's
-result. Original factory creation is recorded but not claimed equivalent here.
+only time/final UDP are controlled. Queue admission is separate from completion.
+Original factory creation is recorded but not claimed equivalent here.
 """
 
 import argparse
@@ -62,7 +62,7 @@ def main():
         assert completed.returncode == 0, (number, completed.stderr)
         got = json.loads(completed.stdout)
         assert got["admitted"]
-        assert got["socket_result"] == code
+        assert got["attempts"] == len(want["wire"])
         assert got["wire"] == want["wire"], (number, group, inp, got, want)
         assert got["next_id"] == want["next_id"], (number, got, want)
         key = (inp.get("requested"), inp.get("presence", 3))

@@ -3575,8 +3575,8 @@ Remote Play实现或Host支持某API来反推客户端排序策略。
 `sendQueue`只负责把生产者数据交付给既有sender线程。普通不可靠3/4进入owned
 发送window，保存完整header/payload和独立入窗时间；立即尝试false阶段。初发
 发送失败或预算不足时保留原包，cursor停在失败位置。可靠5/6在公开给worker前
-已注册owned待确认包，worker的首次实际尝试后才激活后续发送；避免快速ACK先于
-注册或timer越过尚未入队的初发。
+已注册owned待确认包；§44将可靠初发改为完整frame交付后一次激活该batch，
+与RTO共用扫描。未交付的未来batch保持未激活，timer不提前发送、ACK不提前退休。
 
 可靠/不可靠各自的16位ID计数归connection/channel所有；移除并重建媒体channel
 对象不重置它们。NEXT只作为入队请求，实际排队时分配ID；整帧分片在queue mutex
@@ -3628,7 +3628,8 @@ bool旧入口仍表示发送成功；内部保留0/1/2供sender控制，EAGAIN/E
 channel优先级只改dirty，下一次Update重建，不逐packet重排。
 
 可靠timer不再与sender同时直接发送，它只唤醒sender。sender在无交付数据时
-有界等待约1ms；持续有数据也按至少65tick间隔执行周期发送，初发交付仍逐项尝试。
+有界等待约1ms；持续有数据也按至少65tick间隔执行周期发送。撤回旧可靠初发
+“逐项尝试”的接线：§44改为每个完整可靠frame触发一次扫描；3/4路径另计。
 序号/整帧发布只持queue mutex，不持Base/socket锁；缓存、注册、排序和socket事务
 由Base锁序列化，避免生产者持control sendLock再等待socket锁的倒置。没有新增
 线程、detached worker或文件I/O。停止/join现有收发/媒体生产者、销毁timers后，
@@ -4017,8 +4018,8 @@ response字段写入、padding、信封及发送链均执行原指令。无真�
 解析/序列化、真实queue/retention/分片/Socket，核对wire和该通道的next ID。
 它不证明首页发现、解析失败/畸形小requested的所有路径、全部stats用户触发，
 或fragment初发失败时整个actor与官方同步sender的动作顺序。
-后者仍须独立验证：现有原版可靠sender遇失败停止本轮扫描，本地worker直接
-初发后续FIFO项的架构不能仅凭重传阶段测试宣称整体相同。
+后者不能仅凭重传阶段测试宣称相同：这里记录的81846be/IHSlib437d763旧worker
+仍直接初发后续FIFO项；§44以整帧事务替换该接线，明确追加初发/续发对照。
 
 ### 43.3 独立的真实C++ protobuf核验
 
@@ -4042,8 +4043,70 @@ python3 scripts/audit-steam-discovery-protobuf.py \
 
 【证据／未对齐范围】§42导出的原指令Sender，以CLogMsg字符串1000B、MTU512、
 CRC=true从真实SendStatsMessage进入；Socket返回1或4时均只尝试head，window tail
-为3。生产`ihs-control-wire-oracle 1 512 3 3 1 1000`（或错误码4）的FIFO投影却尝试
+为3。81846be/IHSlib437d763时生产`ihs-control-wire-oracle 1 512 3 3 1 1000`
+（或错误码4）的FIFO投影却尝试
 3片，首片字节与原版相同。这是初发事务次序差异，不是CRC/分片字节差异。
 该oracle不启动worker，不能据此宣称负载/墙钟下真实worker序列已取证；现有worker
-逐FIFO项直接初发的接线也不能被重传阶段“失败停止扫描”用例替代。多片初发失败
-的生产事务验证须单独覆盖整帧入窗、失败停止及后续Update/新Frame触发。
+逐FIFO项直接初发的接线也不能被重传阶段“失败停止扫描”用例替代。§44的独立
+事务对照覆盖整帧入窗、失败停止及后续Update/新Frame触发，不沿用此旧FIFO投影。
+
+## 44. 可靠整帧初发事务与后续触发
+
+【证据】固定Android客户端的Channel::Send先完整执行AddToOutgoingPacketWindow，
+再调用SendReliablePackets；该扫描在第一个非零Socket结果停止，Socket返回1映射为
+Channel返回0，包和后续片留在同一窗口。§43的真实worker探针已证明原FIFO逐片
+初发与此不同。`audit-steam-initial-send.py` 从真实SendStatsMessage/Frame入口
+构造1000B字符串、MTU512的三片消息，固化64例：CRC两值、失败位置0/1/2、
+Socket错误1..4，以及下一次sender Update、新Frame、成功前缀ACK后Update。
+ACK只确认已成功发送的前缀（失败位置0不构造此场景）。
+
+【证据】初轮只尝试0..失败位置；下一次sender扫描跳过尚未超过RTO的已成功片，
+从count=0的失败位置继续。新Frame的Send先扫描旧窗口，再发新增ID3，不把它
+排在旧失败片之前。ACK确认前缀后，失败片和未发送片仍可继续。时间仅增加1tick，
+未达到125tick的RTO，因此不能将原本的初发绕行解释成正常RTO触发。
+
+真实client/Frame/Connection/Channel/入窗/Socket/CRC及ACK分支执行原指令；
+protobuf输出、channel构造器、window释放、时钟feedback、分配/refcount/mutex/
+统计和最终UDP是显式适配器。Update案例调用真实可靠sender组件，不冒称完整
+Connection::Update，也不把受控ACK/固定clock称为真实主机或墙钟延迟。
+
+【设计约束】生产者必须在queue mutex保护下准备完整可靠frame后再公开；分配/
+保留失败不能公开残缺batch。每帧仅一个初发扫描触发，后续片不是新的Frame触发。
+发送worker先将该batch全部激活，再使用既有窗口的统一初发/RTO扫描；失败停止
+该通道本轮，剩余片仍为count=0。尚未由worker接收的其他batch不得被提前发送。
+ACK在I/O期间仍允许退休，持有引用的snapshot不得在ACK后写回已退休项。
+此交付机制不是官方同步API/主循环的墙钟执行复制；本节只核对帧事务和触发顺序。
+
+生产接线使用仅由queue mutex保护的staging队列，成功后整体公开；失败则销毁暂存
+body并撤销未激活的retained登记。head携本地batch长度，continuation不再单独触发
+扫描；该元数据不上协议线。worker先取完整batch，释放queue mutex后才持Base锁，
+一次激活ID区间并调用与RTO相同的可靠扫描；生产者不新增反向等待Base锁。
+
+【证据／边界】HandleAckPacket `0x7f9554–0x7f9560`按实际window tail截断确认。
+尚未由worker激活的producer准备记录不属于该窗口；累计/选择确认不能提前退休
+未来batch。初发I/O中的ACK仍能退休已激活项，引用snapshot之后不复活它。
+`initial_send`验证未来帧不提前发送/确认、staging分配失败、第二片Track/queue-item
+失败回滚。`retry_sender`分别在初发和重传I/O中并发ACK全部snapshot项。
+`initial_send_worker`真实收发线程完成24组CRC×失败位置×errno的Connect/三片恢复/
+累计ACK/stop/join，固定时钟避免将旧成功片的RTO误当初发恢复。
+
+本地资源故障不能与Socket返回码4混用：整帧准备失败不公开残片，Control沿用既有
+关闭保护，Stats也在释放producer锁后关闭，防止ID已消耗后继续使用有缺口的连接。
+这是明确项目防护，不把原版分配故障路径宣称为已复现；64个普通写错误输入不会
+触发这条关闭保护。既有140个wire向量改由真实worker transaction步骤消费，仍与
+原版相同；Socket分类另有§40–41独立对照，不由此oracle重述输入errno冒充返回值。
+
+```sh
+python3 scripts/audit-steam-initial-send.py \
+  --binary /path/to/official/libmain-arm64.so \
+  --output build/video-recovery-re/initial-send.json
+python3 scripts/check-steam-initial-send.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-initial-send-oracle
+ctest --test-dir build/desktop -R 'initial_send|retry_sender|control_wire' --output-on-failure
+```
+
+【线程约束】整帧dispatch与独立RTO入口共享扫描时，锁序统一为Base→sendLock→
+retained状态锁（快照期间），I/O时不持retained状态锁。TSan在“先dispatch、后独立
+RTO Socket回调”的受控输入中检出了原混合入口的潜在Base/sendLock反序；没有观察
+到真实死锁，不能把warning称为设备故障。共同Process入口对有session的扫描先持
+Base，调用者已持Base时递归进入；无session的独立窗口测试保留原锁域。
