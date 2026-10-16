@@ -4,6 +4,7 @@
 #include "media.h"
 #include "platform/shortcut.h"
 #include "platform/system.h"
+#include "remote_connection.h"
 #include "services/i18n.h"
 #include "services/launch_watch.h"
 #include "services/update_config.h"
@@ -40,6 +41,12 @@ struct sl_runtime {
     sl_runtime_event events[48];
     int count;
     IHS_Client *client;
+    sl_remote_connection *remote;
+    sl_remote_host cloud_hosts[SL_REMOTE_PEERS];
+    size_t cloud_count;
+    IHS_HostInfo local_hosts[SL_REMOTE_PEERS];
+    uint64_t local_seen[SL_REMOTE_PEERS], cloud_refresh;
+    size_t local_count;
     IHS_Session *session;
     IHS_HIDProvider *provider;
     IHS_ClientConfig config;
@@ -242,6 +249,15 @@ static void discovered(IHS_Client *client, const IHS_HostInfo *h, void *ctx) {
     (void)client;
     sl_runtime *r = ctx;
     pthread_mutex_lock(&r->lock);
+    size_t local = 0;
+    while (local < r->local_count && r->local_hosts[local].clientId != h->clientId)
+        ++local;
+    if (local < SL_REMOTE_PEERS) {
+        if (local == r->local_count)
+            ++r->local_count;
+        r->local_hosts[local] = *h;
+        r->local_seen[local] = sl_system_now();
+    }
     if (r->active.type == SL_CMD_STREAM && h->clientId == r->active.host.client_id &&
         h->instanceId == r->active.host.instance_id && h->address.port == 27036) {
         char *ip = IHS_IPAddressToString(&h->address.ip);
@@ -437,6 +453,168 @@ static const IHS_StreamVideoCallbacks video_cb = {
 static const IHS_StreamAudioCallbacks audio_cb = {
     .start = audio_start, .submit = audio_submit, .stop = audio_stop};
 static const IHS_StreamInputCallbacks input_cb = {.activityState = activity};
+
+static sl_host *saved_host(sl_runtime *r, uint64_t id) {
+    for (int i = 0; i < r->store.registry.count; ++i)
+        if (r->store.registry.hosts[i].client_id == id)
+            return &r->store.registry.hosts[i];
+    return NULL;
+}
+static void cloud_watch(sl_runtime *r) {
+    if (!r->remote)
+        return;
+    sl_remote_peer peers[SL_REMOTE_PEERS];
+    size_t count = 0;
+    for (int i = 0; i < r->store.registry.count; ++i) {
+        const sl_host *h = &r->store.registry.hosts[i];
+        if (!h->paired || !h->account || !h->client_id)
+            continue;
+        peers[count] = (sl_remote_peer){.client_id = h->client_id, .steam_id = h->account};
+        memcpy(peers[count++].secret, h->has_secret ? h->secret : r->store.secret, 32);
+    }
+    sl_remote_watch(sl_remote_connection_protocol(r->remote), peers, count);
+    memset(peers, 0, sizeof(peers));
+}
+static bool local_host(sl_runtime *r, uint64_t id, IHS_HostInfo *out) {
+    uint64_t now = sl_system_now();
+    bool found = false;
+    pthread_mutex_lock(&r->lock);
+    for (size_t i = 0; i < r->local_count; ++i)
+        if (r->local_hosts[i].clientId == id && now >= r->local_seen[i] &&
+            now - r->local_seen[i] < 30000) {
+            *out = r->local_hosts[i];
+            found = true;
+            break;
+        }
+    pthread_mutex_unlock(&r->lock);
+    return found;
+}
+static void cloud_connected(bool connected, void *ctx) {
+    sl_runtime *r = ctx;
+    if (!connected)
+        r->cloud_count = 0;
+    sl_log(connected ? "cloud: anonymous session connected" : "cloud: disconnected");
+}
+static void cloud_diagnostic(const char *message, void *ctx) {
+    (void)ctx;
+    sl_log(message);
+}
+static void cloud_code(const char *pin, void *ctx) {
+    sl_runtime *r = ctx;
+    if (r->active.type != SL_CMD_REMOTE_PAIR)
+        return;
+    sl_runtime_event event = {.type = SL_EVENT_CODE};
+    snprintf(event.text, sizeof(event.text), "%.4s", pin);
+    post(r, event);
+}
+static bool cloud_save_key(const sl_remote_peer *peer, void *ctx) {
+    sl_runtime *r = ctx;
+    sl_host_registry before = r->store.registry;
+    sl_host *h = saved_host(r, peer->client_id);
+    if (!h) {
+        if (r->store.registry.count == SL_HOST_LIMIT)
+            return false;
+        h = &r->store.registry.hosts[r->store.registry.count++];
+        *h = (sl_host){.id = r->store.registry.next_id++, .client_id = peer->client_id};
+        snprintf(h->name, sizeof(h->name), "Steam");
+        if (r->store.registry.selected < 0)
+            r->store.registry.selected = (int)(h - r->store.registry.hosts);
+    }
+    if (h->account != peer->steam_id)
+        memset(h->games, 0, sizeof(h->games));
+    h->account = peer->steam_id;
+    h->paired = h->has_secret = true;
+    memcpy(h->secret, peer->secret, 32);
+    if (!sl_auth_save(&r->store, sl_system_data_dir())) {
+        r->store.registry = before;
+        return false;
+    }
+    post(r, (sl_runtime_event){.type = SL_EVENT_KEY_UPDATED, .host = *h});
+    return true;
+}
+static void cloud_paired(const sl_remote_peer *peer, void *ctx) {
+    sl_runtime *r = ctx;
+    sl_host *h = saved_host(r, peer->client_id);
+    if (h && r->active.type == SL_CMD_REMOTE_PAIR)
+        post(r, (sl_runtime_event){.type = SL_EVENT_AUTHORIZED, .host = *h, .account = h->account});
+    r->request_at = 0;
+}
+static void cloud_pair_failed(IHS_AuthorizationResult result, void *ctx) {
+    sl_runtime *r = ctx;
+    if (r->active.type == SL_CMD_REMOTE_PAIR) {
+        r->request_at = 0;
+        auth_failed(NULL, NULL, result, ctx);
+    }
+}
+static void cloud_observed(const sl_remote_host *host, void *ctx) {
+    sl_runtime *r = ctx;
+    size_t index = 0;
+    while (index < r->cloud_count && r->cloud_hosts[index].info.clientId != host->info.clientId)
+        ++index;
+    if (index < SL_REMOTE_PEERS) {
+        if (index == r->cloud_count)
+            ++r->cloud_count;
+        r->cloud_hosts[index] = *host;
+    }
+    /* Advertised addresses are only hints. The UDP discovery callback alone
+     * records a verified direct route; receiving cloud status never does. */
+    if (r->client) {
+        CMsgRemoteClientBroadcastDiscovery probe = CMSG_REMOTE_CLIENT_BROADCAST_DISCOVERY__INIT;
+        for (size_t i = 0; i < host->address_count; ++i) {
+            IHS_SocketAddress address = {.port = 27036};
+            if (IHS_IPAddressFromString(&address.ip, host->addresses[i]))
+                IHS_ClientSend(r->client, address, k_ERemoteClientBroadcastMsgDiscovery,
+                               &probe.base);
+        }
+    }
+    sl_host h = host_from(&host->info);
+    sl_host *known = saved_host(r, host->info.clientId);
+    if (known)
+        snprintf(h.address, sizeof(h.address), "%s", known->address);
+    post(r, (sl_runtime_event){.type = SL_EVENT_HOST, .host = h});
+}
+static void cloud_offline(uint64_t id, void *ctx) {
+    sl_runtime *r = ctx;
+    for (size_t i = 0; i < r->cloud_count; ++i)
+        if (r->cloud_hosts[i].info.clientId == id) {
+            memmove(r->cloud_hosts + i, r->cloud_hosts + i + 1,
+                    (--r->cloud_count - i) * sizeof(*r->cloud_hosts));
+            break;
+        }
+    IHS_HostInfo local;
+    if (!local_host(r, id, &local))
+        post(r, (sl_runtime_event){.type = SL_EVENT_HOST_OFFLINE, .host = {.client_id = id}});
+}
+static void cloud_stream_result(IHS_StreamingResult result, const sl_remote_material *m,
+                                void *ctx) {
+    sl_runtime *r = ctx;
+    if (r->active.type != SL_CMD_STREAM)
+        return;
+    if (result != IHS_StreamingSuccess) {
+        rejected(NULL, NULL, result, ctx);
+        return;
+    }
+    IHS_HostInfo local;
+    if (m->transport != k_EStreamTransportUDP || !local_host(r, m->client_id, &local)) {
+        rejected(NULL, NULL, IHS_StreamingTransportUnavailable, ctx);
+        return;
+    }
+    local.address.port = m->port;
+    accepted(NULL, NULL, &local.address, m->key, m->key_size, ctx);
+}
+static void start_cloud(sl_runtime *r) {
+    const sl_remote_callbacks cb = {.diagnostic = cloud_diagnostic,
+                                    .connected = cloud_connected,
+                                    .host = cloud_observed,
+                                    .offline = cloud_offline,
+                                    .pair_code = cloud_code,
+                                    .save_key = cloud_save_key,
+                                    .paired = cloud_paired,
+                                    .pair_failed = cloud_pair_failed,
+                                    .stream_result = cloud_stream_result};
+    r->remote = sl_remote_connection_create(&r->config, &cb, r);
+    cloud_watch(r);
+}
 static void stop_client(sl_runtime *r) {
     if (!r->client)
         return;
@@ -594,6 +772,8 @@ static void execute(sl_runtime *r, sl_command cmd) {
         IHS_ClientStreamingCancel(r->client);
         IHS_ClientAuthorizationCancel(r->client);
     }
+    if (r->remote)
+        sl_remote_cancel(sl_remote_connection_protocol(r->remote));
     stop_session(r);
     if (!sl_media_video_clean()) {
         pthread_mutex_lock(&r->lock);
@@ -647,8 +827,16 @@ static void execute(sl_runtime *r, sl_command cmd) {
             r->request_at = sl_system_now();
         return;
     }
+    if (cmd.type == SL_CMD_REMOTE_PAIR) {
+        if (!r->remote || !sl_remote_pair(sl_remote_connection_protocol(r->remote)))
+            fail(r, sl_tr(SL_T_CLOUD_UNAVAILABLE));
+        return;
+    }
+    bool cloud_online = false;
+    for (size_t i = 0; i < r->cloud_count; ++i)
+        cloud_online |= r->cloud_hosts[i].info.clientId == cmd.host.client_id;
     IHS_HostInfo h;
-    if (!host_info(&cmd.host, &h)) {
+    if (!host_info(&cmd.host, &h) && !(cmd.type == SL_CMD_STREAM && cloud_online)) {
         fail(r, sl_tr(SL_T_ADDRESS_UNAVAILABLE));
         return;
     }
@@ -685,7 +873,12 @@ static void execute(sl_runtime *r, sl_command cmd) {
                                     .gamepadCount = 1,
                                     .gameId = cmd.game_id};
         snprintf(req.pin, sizeof(req.pin), "%.15s", cmd.text);
-        if (!IHS_ClientStreamingRequest(r->client, &h, &req))
+        IHS_HostInfo direct;
+        if (cloud_online && !local_host(r, cmd.host.client_id, &direct)) {
+            if (!sl_remote_stream(sl_remote_connection_protocol(r->remote), cmd.host.client_id,
+                                  &req))
+                fail(r, sl_tr(SL_T_REQUEST_STREAM_FAILED));
+        } else if (!IHS_ClientStreamingRequest(r->client, &h, &req))
             fail(r, sl_tr(SL_T_REQUEST_STREAM_FAILED));
     }
 }
@@ -791,13 +984,13 @@ static void sample(sl_runtime *r, uint64_t now) {
         sl_log(line);
 #if NSL_GFX_DEKO
         snprintf(line, sizeof(line),
-                 "vq1 id=%llu attempts=%llu nobatch=%llu acquire=%llu acquire_us=%llu",
-                 U(now), U(m->resources.begin_attempts), U(m->resources.no_free_batch),
+                 "vq1 id=%llu attempts=%llu nobatch=%llu acquire=%llu acquire_us=%llu", U(now),
+                 U(m->resources.begin_attempts), U(m->resources.no_free_batch),
                  U(m->resources.acquires), U(m->resources.acquire_us));
         sl_log(line);
         snprintf(line, sizeof(line),
-                 "vq2 id=%llu polls=%llu timeout=%llu done=%llu residence_us=%llu",
-                 U(now), U(m->resources.fence_polls), U(m->resources.fence_timeouts),
+                 "vq2 id=%llu polls=%llu timeout=%llu done=%llu residence_us=%llu", U(now),
+                 U(m->resources.fence_polls), U(m->resources.fence_timeouts),
                  U(m->resources.completed_batches), U(m->resources.batch_residence_us));
         sl_log(line);
 #endif
@@ -807,14 +1000,14 @@ static void sample(sl_runtime *r, uint64_t now) {
                  U(m->resources.gpu_wait_ns), U(m->resources.gpu_work_ns),
                  U(m->resources.gpu_wait_max_ns), U(m->resources.gpu_work_max_ns));
         sl_log(line);
-        snprintf(line, sizeof(line),
-                 "vq4 id=%llu short=%llu long=%llu gapmax=%llu empty=%llu one=%llu many=%llu tmax=%llu",
-                 U(now), U(s.pacing.publish_short), U(s.pacing.publish_long),
-                 U(s.pacing.publish_gap_max_us), U(s.pacing.take_empty), U(s.pacing.take_one),
-                 U(s.pacing.take_many), U(s.pacing.take_gap_max_us));
+        snprintf(
+            line, sizeof(line),
+            "vq4 id=%llu short=%llu long=%llu gapmax=%llu empty=%llu one=%llu many=%llu tmax=%llu",
+            U(now), U(s.pacing.publish_short), U(s.pacing.publish_long),
+            U(s.pacing.publish_gap_max_us), U(s.pacing.take_empty), U(s.pacing.take_one),
+            U(s.pacing.take_many), U(s.pacing.take_gap_max_us));
         sl_log(line);
-        snprintf(line, sizeof(line),
-                 "vq5 id=%llu submit=%llu bytes=%llu long=%llu gapmax=%llu",
+        snprintf(line, sizeof(line), "vq5 id=%llu submit=%llu bytes=%llu long=%llu gapmax=%llu",
                  U(now), U(s.pacing.submits), U(s.pacing.submit_bytes), U(s.pacing.submit_long),
                  U(s.pacing.submit_gap_max_us));
         sl_log(line);
@@ -823,19 +1016,20 @@ static void sample(sl_runtime *r, uint64_t now) {
                  U(now), U(s.loop.loops), U(s.loop.control_us), U(s.loop.media_us),
                  U(s.loop.tail_us), U(s.loop.sleep_us), U(s.loop.collect_us));
         sl_log(line);
-        snprintf(line, sizeof(line), "vq7 id=%llu cpu=%llu wall=%llu rc=%u",
-                 U(now), U(s.loop.cpu_ticks), U(s.loop.cpu_wall_ticks), s.loop.cpu_result);
+        snprintf(line, sizeof(line), "vq7 id=%llu cpu=%llu wall=%llu rc=%u", U(now),
+                 U(s.loop.cpu_ticks), U(s.loop.cpu_wall_ticks), s.loop.cpu_result);
         sl_log(line);
         snprintf(line, sizeof(line),
-                 "vq8 id=%llu epoch=%llu a=%llu p=%llu ca=%llu cp=%llu defer=%llu tv=%u ts=%u active=%u unknown=%llu",
-                 U(now),U(s.video_epoch),U(m->available_frames),U(m->submitted_frames),
-                 U(m->cohort_frames),U(m->cohort_presented),U(m->deferred),
-                 m->input_period_us,m->output_period_us,m->adaptive_active,U(m->unobserved));
+                 "vq8 id=%llu epoch=%llu a=%llu p=%llu ca=%llu cp=%llu defer=%llu tv=%u ts=%u "
+                 "active=%u unknown=%llu",
+                 U(now), U(s.video_epoch), U(m->available_frames), U(m->submitted_frames),
+                 U(m->cohort_frames), U(m->cohort_presented), U(m->deferred), m->input_period_us,
+                 m->output_period_us, m->adaptive_active, U(m->unobserved));
         sl_log(line);
         snprintf(line, sizeof(line),
-                 "vq9 id=%llu ready_us=%llu wait_us=%llu start_us=%llu hold=%llu",
-                 U(now),U(m->adaptive_ready_us),U(m->adaptive_wait_us),
-                 U(m->adaptive_start_us),U(m->adaptive_holdovers));
+                 "vq9 id=%llu ready_us=%llu wait_us=%llu start_us=%llu hold=%llu", U(now),
+                 U(m->adaptive_ready_us), U(m->adaptive_wait_us), U(m->adaptive_start_us),
+                 U(m->adaptive_holdovers));
         sl_log(line);
 #undef U
     }
@@ -905,6 +1099,7 @@ static void *worker_main(void *ctx) {
     sl_log("runtime: IHS initialized");
     if (!start_client(r))
         fail(r, sl_tr(SL_T_NETWORK_UNAVAILABLE));
+    start_cloud(r);
     while (!r->quit) {
         if (r->waiting_video) {
             if (!sl_media_video_clean()) {
@@ -961,6 +1156,7 @@ static void *worker_main(void *ctx) {
         if (snapshot_pending) {
             sl_host_registry_keep_secrets(&save.registry, &r->store.registry);
             r->store = save;
+            cloud_watch(r);
         }
         if (save_pending) {
             bool profile_saved = sl_auth_save(&save, sl_system_data_dir());
@@ -1014,6 +1210,17 @@ static void *worker_main(void *ctx) {
             IHS_ClientStartDiscovery(r->client, 3000);
         }
         uint64_t now = sl_system_now();
+        sl_remote_connection_update(r->remote, now);
+        if (now - r->cloud_refresh >= 5000) {
+            r->cloud_refresh = now;
+            for (size_t i = 0; i < r->cloud_count; ++i) {
+                sl_host h = host_from(&r->cloud_hosts[i].info);
+                sl_host *known = saved_host(r, h.client_id);
+                if (known)
+                    snprintf(h.address, sizeof(h.address), "%s", known->address);
+                post(r, (sl_runtime_event){.type = SL_EVENT_HOST, .host = h});
+            }
+        }
         if (r->client && !r->session && !r->request_at && now - last_probe >= 3000) {
             last_probe = now;
             CMsgRemoteClientBroadcastDiscovery probe = CMSG_REMOTE_CLIENT_BROADCAST_DISCOVERY__INIT;
@@ -1041,8 +1248,8 @@ static void *worker_main(void *ctx) {
         r->activity_changed = false;
         bool desktop = r->launch.kind == 3 || r->launch.kind == 4;
         bool ending_game = r->end_game.at != 0;
-        sl_end_game_result end_result = sl_end_game_poll(&r->end_game, now,
-            r->session && IHS_SessionHostRequestedStop(r->session));
+        sl_end_game_result end_result = sl_end_game_poll(
+            &r->end_game, now, r->session && IHS_SessionHostRequestedStop(r->session));
         bool end_game_done = end_result == SL_END_GAME_DONE;
         bool end_game_timeout = end_result == SL_END_GAME_TIMEOUT;
         bool probe_launch =
@@ -1140,6 +1347,9 @@ static void *worker_main(void *ctx) {
     pthread_mutex_lock(&r->lock);
     r->facts.video_clean = true;
     pthread_mutex_unlock(&r->lock);
+    sl_log("cleanup: cloud connection close");
+    sl_remote_connection_destroy(r->remote);
+    r->remote = NULL;
     stop_client(r);
     if (r->provider) {
         stream_media_destroy_hid_provider(r->provider);

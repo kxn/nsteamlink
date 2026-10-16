@@ -22,7 +22,8 @@ sl_host *sl_host_observe(sl_host_registry *r, const sl_host *o, uint64_t now) {
         /* clientId identifies the host installation; concurrent collisions never
          * transfer authorization. instanceId is a launch, address is not identity. */
         if (o->client_id && candidate->client_id == o->client_id &&
-            (!sl_host_online(candidate, now) || candidate->instance_id == o->instance_id)) {
+            (!sl_host_online(candidate, now) || !candidate->instance_id || !o->instance_id ||
+             candidate->instance_id == o->instance_id)) {
             h = candidate;
             break;
         }
@@ -37,7 +38,10 @@ sl_host *sl_host_observe(sl_host_registry *r, const sl_host *o, uint64_t now) {
             r->selected = 0;
     }
     h->client_id = o->client_id;
-    h->instance_id = o->instance_id;
+    /* Missing cloud instance_id does not identify a second launch or erase a
+     * known launch. Different present IDs still remain collision records. */
+    if (o->instance_id)
+        h->instance_id = o->instance_id;
     memcpy(h->name, o->name, sizeof(h->name));
     memcpy(h->address, o->address, sizeof(h->address));
     memcpy(h->system, o->system, sizeof(h->system));
@@ -75,11 +79,12 @@ void sl_host_activity(sl_host *h, uint64_t account, const sl_game *game) {
 void sl_host_registry_keep_secrets(sl_host_registry *dst, const sl_host_registry *src) {
     for (int i = 0; i < dst->count; ++i) {
         sl_host *h = &dst->hosts[i];
-        if (!h->paired || h->has_secret)
+        if (!h->paired)
             continue;
         for (int j = 0; j < src->count; ++j) {
             const sl_host *known = &src->hosts[j];
-            if (known->id == h->id && known->client_id == h->client_id && known->has_secret) {
+            if (known->id == h->id && known->client_id == h->client_id &&
+                known->account == h->account && known->has_secret) {
                 h->has_secret = true;
                 memcpy(h->secret, known->secret, sizeof(h->secret));
                 break;

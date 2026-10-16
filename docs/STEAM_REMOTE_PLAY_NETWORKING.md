@@ -925,6 +925,17 @@ request_id=2:uint32、update_secret=3:bool。处理规则：
 `0x79e454–0x79e530`，加密 `0x79e244–0x79e2b0`。密钥持久化先于发送 proof，不能等媒体连接成功
 才落盘，否则重启后的授权材料可能落后于主机。故障中断时主机是否回滚属于主机端规则，不能臆造。
 
+### 11.5 连接 security PIN 的加密与重发
+
+**Evidence**：`StartStreaming @0x798eb4–0x798ec0` 先加载目标主机的长期 secret，再调
+`BSetStreamingPIN @0x7991a0`。后者对非空 PIN 调 SymmetricEncrypt，key 来自 manager+536、
+长度来自 +556，密文存入 +856 的 buffer（`0x7991fc–0x799228`）；空 PIN 清空该 buffer。
+`SendStartStreamingRequest @0x799638–0x799700` 将该已保存密文复制到请求的 pin 字段。
+
+**Conclusion**：security PIN 使用开流开始时的长期 secret 加密一次，应用级重试复用该密文；
+每轮重建的 device_token 则使用当时的 secret。Proof 更新长期 secret 后，不能因此重新加密已保存
+的 PIN，或将 PIN 明文放入云端请求。此规则不改变首次 pairing authorization PIN 的用途。
+
 ## 12. 从 StreamingSuccess 到可用传输的适配契约
 
 ### 12.1 三类密钥与证书数据流

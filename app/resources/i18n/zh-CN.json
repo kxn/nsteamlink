@@ -150,5 +150,7 @@
   "UPDATE_DONE": "已更新到 %s。\n请退出并重新打开 NSteamLink。",
   "UPDATE_FAILED_DOWNLOAD": "下载失败。\n请检查网络后重试。",
   "UPDATE_FAILED_VERIFY": "下载内容校验失败，\n未做任何更改。",
-  "UPDATE_FAILED_WRITE": "无法将更新写入 SD 卡。"
+  "UPDATE_FAILED_WRITE": "无法将更新写入 SD 卡。",
+  "PAIR_NEW_PC": "配对新电脑",
+  "CLOUD_UNAVAILABLE": "暂时无法连接配对服务，请稍后重试"
 }

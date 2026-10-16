@@ -154,8 +154,10 @@ void sl_ui_layout(sl_ui_model *m) {
             row(l, 1, sl_tr(SL_T_BANDWIDTH), SL_OPEN_BANDWIDTH, 0);
             row(l, 2, m->store.sound ? sl_tr(SL_T_SOUND_ON) : sl_tr(SL_T_SOUND_OFF), SL_SOUND, 0);
             row(l, 3, sl_tr(SL_T_LANGUAGE), SL_OPEN_LANGUAGE, 0);
-            if (!m->streaming)
+            if (!m->streaming) {
                 row(l, 4, sl_tr(SL_T_MANUAL), SL_OPEN_MANUAL, 0);
+                row(l, 5, sl_tr(SL_T_PAIR_NEW_PC), SL_OPEN_REMOTE_PAIR, 0);
+            }
             break;
         case SL_LANGUAGE:
             strcpy(l->title, sl_tr(SL_T_LANGUAGE));
@@ -241,11 +243,11 @@ void sl_ui_layout(sl_ui_model *m) {
             row(l, 1, sl_tr(SL_T_EXIT), SL_CONFIRM_EXIT, 0);
             break;
         case SL_ERROR:
-            strcpy(l->title,
-                   m->ending_game ? sl_tr(SL_T_END_GAME)
-                   : m->had_stream ? sl_tr(SL_T_STREAM_INTERRUPTED) : sl_tr(SL_T_CONNECT_FAILED));
+            strcpy(l->title, m->ending_game  ? sl_tr(SL_T_END_GAME)
+                             : m->had_stream ? sl_tr(SL_T_STREAM_INTERRUPTED)
+                                             : sl_tr(SL_T_CONNECT_FAILED));
             text(l, 320, 232, 30, m->error);
-            if (m->intent.host.id && !m->ending_game)
+            if ((m->intent.host.id || m->intent.type == SL_CMD_REMOTE_PAIR) && !m->ending_game)
                 row(l, 2, sl_tr(SL_T_RETRY), SL_RETRY, 0);
             break;
         default:
@@ -278,8 +280,9 @@ void sl_ui_layout(sl_ui_model *m) {
                 sl_control *c = &l->controls[i];
                 c->x = 776;
                 c->w = 472;
-                c->y = c->id == 9 ? 624 : 172 + (c->id - 100) * 88;
-                c->h = 72;
+                int step = m->page == SL_SETTINGS && !m->streaming ? 72 : 88;
+                c->y = c->id == 9 ? 624 : 172 + (c->id - 100) * step;
+                c->h = step == 72 ? 64 : 72;
             }
             for (int i = 0; i < l->label_count; ++i)
                 l->labels[i].x = 784;

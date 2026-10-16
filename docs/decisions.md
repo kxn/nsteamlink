@@ -2187,3 +2187,35 @@ Decision：
 
 待验证：Switch 真机上的完整查询、下载、替换与重新启动；hbmenu 与 HOME 入口两种启动方式下
 argv[0] 的实际取值；下载中途断网、SD 卡空间不足时的提示与回滚结果。
+
+## D-061：免登录云端配对入口与控制通道的所有权（2026-10-16）
+
+Evidence：官方云端 CreateSession/StartPairing/SetPairingInfo 不要求 Steam 登录；
+授权使用主机端输入的四位配对码和设备 X25519 密钥交换。固定样本的调用链、独立服务探针、
+持久化和 Proof 更新规则见 `STEAM_REMOTE_PLAY_NETWORKING.md` §8–§13。
+现有 profile v4 已保存 device_id、主机 client_id、account 和每主机 secret；
+runtime 已用单独 worker 接收 UI command，现有设置包含手动添加电脑入口。
+用户要求将不常使用的配对码入口放在设置中，日常连接自动选择传输方式。
+
+Conclusion：可复用既有身份、配对弹窗和主机列表；云端控制通道、临时 session 和媒体传输
+不能合成一个状态域，也不能以“已连到云端”代替媒体后端能力。
+
+Decision：
+
+1. 「设置 → 配对新电脑」主动申请云端配对码；退出取消，成功后返回主机列表。
+   不新增 Steam 账号登录或直连/中继选择开关。已发现的局域网电脑保留首次连接配对流程。
+2. runtime worker 是云端状态、TLS 连接和发送队列的唯一 owner；用非阻塞 curl multi
+   和 CONNECT_ONLY TLS 后的 RFC6455，不引入额外驻留线程。退出先停止 pump，再释放连接，
+   随原有 worker join 完成清理。协议层依赖可替换的发送/事件/持久化 callback。
+3. 复用 profile v4，不保存 PIN、临时 cloud session_id 或开流事务。密钥更新先原子保存再回
+   Proof；UI 的旧快照不得覆盖 runtime 已保存的轮换密钥。云端在线集合驻留内存，
+   断线清空、重连用新 session 重建订阅；忘记电脑发送退订。
+4. 公布 IP 只用于单播探测，实际 UDP 回复才能登记本次直连地址。云端 status 缺少
+   instance_id 时保留已知 launch ID；两个非零且不同的 instance ID 仍分别处理。
+   主机卡片复用既有 UI 在线策略，不将广播失败当作授权失效。
+5. 以下是本项目资源/并发策略，不是反汇编得出的 Valve 常量：64 KiB 帧上限、32 项发送
+   FIFO、20 秒初始化预算、30 秒 RFC6455 ping/15 秒 pong 等待；无线上事务 ID 的配对 RPC
+   取消后先收齐旧响应再允许新配对。异常 protobuf 不影响健康云端会话。
+6. supported_transport 只能包含可实际使用的媒体 backend。信令经过本次 streaming
+   session key 验证；新增后端保留 IHS 会话的消息边界和认证、音视频、输入语义，不能把
+   WebSocket 控制转发当作媒体中继。

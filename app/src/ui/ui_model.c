@@ -324,6 +324,17 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
     case SL_OPEN_SETTINGS:
         push(m, SL_SETTINGS);
         break;
+    case SL_OPEN_REMOTE_PAIR:
+        if (!m->streaming && m->page == SL_SETTINGS) {
+            ++m->generation;
+            m->intent = (sl_command){.type = SL_CMD_REMOTE_PAIR, .generation = m->generation};
+            m->depth = 0;
+            m->pairing_code[0] = 0;
+            m->had_stream = false;
+            page(m, SL_PAIRING);
+            emit(m, SL_CMD_REMOTE_PAIR);
+        }
+        break;
     case SL_OPEN_MANUAL:
         if (!m->streaming && m->page == SL_SETTINGS) {
             m->input[0] = 0;
@@ -491,8 +502,9 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
             m->pairing_code[0] = 0;
             ++m->generation;
             page(m, m->intent.host.paired ? SL_CONNECTING : SL_PAIRING);
-            emit(m, m->intent.host.id ? (m->intent.host.paired ? SL_CMD_STREAM : SL_CMD_PAIR)
-                                      : SL_CMD_CANCEL);
+            emit(m, m->intent.type == SL_CMD_REMOTE_PAIR ? SL_CMD_REMOTE_PAIR
+                    : m->intent.host.id ? (m->intent.host.paired ? SL_CMD_STREAM : SL_CMD_PAIR)
+                                        : SL_CMD_CANCEL);
         }
         break;
     default:

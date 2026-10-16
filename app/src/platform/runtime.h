@@ -3,6 +3,8 @@
 typedef struct sl_runtime sl_runtime;
 typedef enum sl_event_type {
     SL_EVENT_HOST,
+    SL_EVENT_HOST_OFFLINE,
+    SL_EVENT_KEY_UPDATED,
     SL_EVENT_CODE,
     SL_EVENT_SAVING,
     SL_EVENT_AUTHORIZED,

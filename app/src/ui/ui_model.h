@@ -48,6 +48,7 @@ typedef enum sl_action {
     SL_DEBUG,
     SL_OPEN_OPTIONS,
     SL_OPEN_SETTINGS,
+    SL_OPEN_REMOTE_PAIR,
     SL_OPEN_SHORTCUT,
     SL_CONFIRM_SHORTCUT,
     SL_OPEN_MANUAL,
@@ -84,7 +85,8 @@ typedef enum sl_command_type {
     SL_CMD_SAVE,
     SL_CMD_SHORTCUT,
     SL_CMD_MANUAL,
-    SL_CMD_UPDATE
+    SL_CMD_UPDATE,
+    SL_CMD_REMOTE_PAIR
 } sl_command_type;
 typedef struct sl_command {
     sl_command_type type;

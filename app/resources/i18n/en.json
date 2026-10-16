@@ -150,5 +150,7 @@
   "UPDATE_DONE": "Updated to %s.\nExit and start NSteamLink again.",
   "UPDATE_FAILED_DOWNLOAD": "Download failed.\nCheck the connection and retry.",
   "UPDATE_FAILED_VERIFY": "The download failed its checksum.\nNothing was changed.",
-  "UPDATE_FAILED_WRITE": "Could not write the update\nto the SD card."
+  "UPDATE_FAILED_WRITE": "Could not write the update\nto the SD card.",
+  "PAIR_NEW_PC": "Pair a new computer",
+  "CLOUD_UNAVAILABLE": "Pairing service is unavailable. Please try again shortly."
 }

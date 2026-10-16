@@ -43,6 +43,11 @@ UI 替换的目标模块边界见 `docs/UI_UX_DESIGN.md` §5：`app/src/ui/` 负
 `app/platforms/common/` 提供双目标共用的 SDL2/FFmpeg/IHS runtime adapter，平台初始化与字体来源
 位于 `app/platforms/<plat>/system.c`。`app/tests/` 包含业务状态与原生事件／媒体测试。UI 替换任务在 Issue #9 维护。
 
+`app/platforms/common/remote_{wire,protocol,connection}.*` 分别负责有界 wire/RFC6455 编码、
+免登录 Remote Client 状态机与 curl TLS provider。协议状态由 runtime worker 单线程持有；
+UI 只接收主机、配对和连接事件，不包含 WebSocket、证书或 transport 类型。
+云端控制与媒体的边界、设备身份持久化见 D-061 和 `STEAM_REMOTE_PLAY_NETWORKING.md` §16。
+
 Switch 图形后端迁移的目标边界见 [VIDEO_RENDERING_DESIGN](docs/VIDEO_RENDERING_DESIGN.md) 与 D-051：
 `platform/gfx.h` / `platform/events.h` 定义图形与事件 HAL；`platforms/common/video_pipeline.*`
 和 `frame_lifetime.*` 管理 decoder domain、FrameLease 与 GpuBatch 的引用契约；

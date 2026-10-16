@@ -395,8 +395,10 @@ static void actionable_settings(void) {
     assert(m.layout.count == 4); /* Settings, HOME shortcut, update check and back. */
     assert(m.layout.controls[2].action == SL_UPDATE_CHECK);
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
-    assert(m.layout.count == 6); /* Quality, bandwidth, sound, language, manual address, back. */
+    assert(m.layout.count == 7); /* Settings, manual address, explicit cloud pairing and back. */
     assert(m.layout.controls[4].action == SL_OPEN_MANUAL);
+    assert(m.layout.controls[5].action == SL_OPEN_REMOTE_PAIR);
+    layout_check(&m);
     sl_ui_action(&m, SL_OPEN_MANUAL, 0);
     assert(m.page == SL_MANUAL);
     sl_ui_action(&m, SL_BACK, 0);
@@ -424,9 +426,62 @@ static void actionable_settings(void) {
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
     assert(m.layout.count == 5); /* Sound, quality, bandwidth, language and back. */
     for (int i = 0; i < m.layout.count; ++i)
-        assert(m.layout.controls[i].action != SL_OPEN_MANUAL);
+        assert(m.layout.controls[i].action != SL_OPEN_MANUAL &&
+               m.layout.controls[i].action != SL_OPEN_REMOTE_PAIR);
     sl_ui_action(&m, SL_OPEN_MANUAL, 0);
     assert(m.page == SL_SETTINGS); /* No empty advanced page or stream-time host entry. */
+}
+
+static void explicit_cloud_pairing(void) {
+    sl_ui_model m = model();
+    sl_command cmd;
+    sl_ui_action(&m, SL_OPEN_REMOTE_PAIR, 0);
+    assert(m.page == SL_HOME && !sl_ui_take_command(&m, &cmd));
+    sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
+    sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
+    sl_ui_action(&m, SL_OPEN_REMOTE_PAIR, 0);
+    assert(m.page == SL_PAIRING && sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_REMOTE_PAIR &&
+           !cmd.host.id);
+    sl_runtime_event code = {.type = SL_EVENT_CODE, .generation = m.generation};
+    strcpy(code.text, "1234");
+    sl_ui_runtime_event(&m, &code);
+    assert(!strcmp(m.pairing_code, "1234"));
+    sl_runtime_event authorized = {.type = SL_EVENT_AUTHORIZED,
+                                   .generation = m.generation,
+                                   .account = 88,
+                                   .host = {.client_id = 77, .has_secret = true}};
+    strcpy(authorized.host.name, "Steam");
+    authorized.host.secret[0] = 7;
+    sl_ui_runtime_event(&m, &authorized);
+    assert(m.page == SL_HOME && m.store.registry.count == 1 && m.store.registry.hosts[0].paired &&
+           !m.store.registry.hosts[0].observed &&
+           !sl_ui_take_command(&m, &cmd)); /* Pairing does not auto-start streaming. */
+    sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
+    sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
+    sl_ui_action(&m, SL_OPEN_REMOTE_PAIR, 0);
+    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_REMOTE_PAIR);
+    uint64_t generation = m.generation;
+    sl_ui_action(&m, SL_BACK, 0);
+    sl_ui_tick(&m, m.now + 200);
+    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_CANCEL);
+    code.generation = generation;
+    sl_ui_runtime_event(&m, &code);
+    assert(m.page == SL_STOPPING);
+    sl_host_registry older = m.store.registry;
+    m.store.registry.hosts[0].secret[0] = 9;
+    sl_host_registry_keep_secrets(&older, &m.store.registry);
+    assert(older.hosts[0].secret[0] == 9); /* An existing stale key also gets replaced. */
+    sl_host cloud = {.client_id = 77};
+    sl_host *known = sl_host_observe(&m.store.registry, &cloud, m.now);
+    assert(known && m.store.registry.count == 1);
+    sl_host direct = {.client_id = 77, .instance_id = 10};
+    known = sl_host_observe(&m.store.registry, &direct, m.now);
+    assert(known && m.store.registry.count == 1 && known->paired);
+    known = sl_host_observe(&m.store.registry, &cloud, m.now);
+    assert(known && known->instance_id == 10 && m.store.registry.count == 1);
+    direct.instance_id = 11;
+    known = sl_host_observe(&m.store.registry, &direct, m.now);
+    assert(known && m.store.registry.count == 2 && !known->paired);
 }
 static void end_game_failure(void) {
     sl_ui_model m = model();
@@ -627,6 +682,7 @@ int main(void) {
     wait_screen_cancel_shortcut();
     confirmation_shortcuts();
     actionable_settings();
+    explicit_cloud_pairing();
     overlay_interaction();
     sl_ui_model m = model();
     sl_input_router r;
