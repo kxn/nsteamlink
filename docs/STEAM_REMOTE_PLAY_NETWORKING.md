@@ -431,3 +431,41 @@ TLS 验证保持开启；Frida 最多记录 512 帧，并明确报告预算耗�
 8 个帧、0 解码错误。CM 与 RemotePacket 两层 hook 也会重复记录同一 payload，
 不能将记录数当作实际网络包数。模拟器内置 pcap 未覆盖探针的 UDP 路径，
 其接口覆盖范围未确认；不能用 pcap 中缺包推翻 socket 接收记录。
+
+### 8.6 网络测试指标的含义与对照边界
+
+**Evidence（2026-10-16，x86_64 `libshell_x86_64.so`，地址不沿用前文 arm64 表）：**
+
+- 首次配对的日志在 `Authenticating → NetworkTest` 约 3.1 秒后打印
+  `Timed out waiting for frame, marking test complete`，随后报告 99.83% frame loss。
+  此次是官方客户端自行协商并运行；独立探针未发送 StreamingRequest，采集 hook 未替换返回值。
+- `CNetworkTest` 构造函数 `0xcfeb90` 在 `0xcfec70` 将预设测试帧数设为 600（`this+0x14c`）。
+  `CompleteNetworkTest @0xcff790` 在 `0xcff837–0xcff867` 使用下式生成日志中的 frame loss：
+  `100 - 100 * 已记录测试帧数 / 预设测试帧数`。
+  分子是 `CNetworkStats` 的计数（`this+0x24`），不是网络库的 UDP 丢包计数。
+  `RecordFrameReceived @0xd00d10` 将帧交给 stats；
+  `CNetworkStats::RecordFrameReceived @0xcfe000` 在 `0xcfe043–0xcfe050` 递增对应计数。
+- `HandleNetworkTest @0xcff630` 在 `0xcff6b6–0xcff6d4` 根据最近帧时间检测超时，
+  打印上述日志并结束测试；这不同于统计网络库实际发送和接收的数据包之差。
+
+**Conclusion**：首次配对的 99.83% 与该公式下仅记录到 600 个预设帧中的 1 个相符。
+这是根据计数公式与四舍五入数值的推论，不是读取到了实时计数器。
+它证明该次测试没有按预期完成测试帧接收/记录，不能直接解释为公网链路有 99.83% UDP 丢包，
+更不能由它判定官方协议整体性能或本项目选择了错误协议。
+
+**Evidence：未挂 Frida 的官方手动网络测试。** 冷启动同一 AVD，未启动 Frida server、
+未注入进程、未启用模拟器 pcap。在设置的 Computer → Network Test 入口测试同一主机，
+日志连接地址为 `10.10.10.166:27031`，没有 SteamNetworkingSockets 初始化/选路记录。
+UI 持续绘制测试曲线，并显示测试目标速率达到 125 Mb/s（目标值不等于已测可用吞吐）。
+从进入 NetworkTest 至结束约 54 秒，日志报告平均网络时间 8.27 ms、stddev 2.99 ms，
+同时报告 **-410.17% frame loss** 和 `excellent`。
+
+**Conclusion**：直接地址与网络库日志支持将该次作为普通内网直连的基线；它展示了持续测试
+数据接收。负的 frame loss 无法作为真实丢帧率使用：预设分母 600 用于持续测试时，接收帧数
+可超过分母。`excellent` 标签也不能代替实际丢包/吞吐测量。不得把负值截断成 0% 并宣称无丢包。
+
+两次实验同时改变了采集工具、测试模式和传输路径（首次为已捕获的 transport=4，
+对照为内网直连），因此它们不构成严格的 Frida 开销 A/B。
+**待验证假设**包括首次连接的 SDR/ICE 选路或传输处理、测试模式兼容性、模拟器及采集开销；
+需在相同模式/路径下对照后才能归因。相关原始日志和反汇编位于私有目录
+`build/wan-research/official-uninstrumented/`。
