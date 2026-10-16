@@ -1,0 +1,1457 @@
+{
+  "binary_sha256": "50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e",
+  "scope": "Execute official Android client Connect, retries, Connected and Disconnect.\n\nOriginal BConnect/Create/constructor/Connect/Update/SendConnectPacket/SocketSend\ninstructions decide policy and wire bytes. Allocation, socket construction,\ntransport activation/I/O, stats and client delegates are\nexplicit adapters. No Steam host or Switch is involved.\n",
+  "cases": [
+    {
+      "case": "retry_start0_result0",
+      "group": "retry",
+      "input": {
+        "start": 0,
+        "result": 0,
+        "updates": [
+          0,
+          1,
+          6552,
+          6553,
+          6554,
+          13106
+        ]
+      },
+      "observed": [
+        {
+          "state": 0,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c00000000000000000000c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c00000000000000000000c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c00000000000001000000c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 6554,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c0000000000009a190000c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 6554,
+          "actions": [],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "retry_start1000000_result0",
+      "group": "retry",
+      "input": {
+        "start": 1000000,
+        "result": 0,
+        "updates": [
+          1000000,
+          1000001,
+          1006552,
+          1006553,
+          1006554,
+          1013106
+        ]
+      },
+      "observed": [
+        {
+          "state": 0,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c00000000000040420f00c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1000000,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c00000000000040420f00c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1000000,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1000000,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1006553,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c000000000000d95b0f00c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1006553,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1013106,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c00000000000072750f00c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "retry_start4294967280_result0",
+      "group": "retry",
+      "input": {
+        "start": 4294967280,
+        "result": 0,
+        "updates": [
+          4294967280,
+          4294967281,
+          6536,
+          6537,
+          6538,
+          13090
+        ]
+      },
+      "observed": [
+        {
+          "state": 0,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c000000000000f0ffffffc73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 4294967280,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c000000000000f0ffffffc73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 4294967280,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 4294967280,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 6537,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c00000000000089190000c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 6537,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 13090,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c00000000000022330000c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "retry_start0_result1",
+      "group": "retry",
+      "input": {
+        "start": 0,
+        "result": 1,
+        "updates": [
+          0,
+          1,
+          6552,
+          6553,
+          6554,
+          13106
+        ]
+      },
+      "observed": [
+        {
+          "state": 0,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c00000000000000000000c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c00000000000000000000c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c00000000000001000000c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 6554,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c0000000000009a190000c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 6554,
+          "actions": [],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "retry_start1000000_result1",
+      "group": "retry",
+      "input": {
+        "start": 1000000,
+        "result": 1,
+        "updates": [
+          1000000,
+          1000001,
+          1006552,
+          1006553,
+          1006554,
+          1013106
+        ]
+      },
+      "observed": [
+        {
+          "state": 0,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c00000000000040420f00c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1000000,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c00000000000040420f00c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1000000,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1000000,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1006553,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c000000000000d95b0f00c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1006553,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1013106,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c00000000000072750f00c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "retry_start4294967280_result1",
+      "group": "retry",
+      "input": {
+        "start": 4294967280,
+        "result": 1,
+        "updates": [
+          4294967280,
+          4294967281,
+          6536,
+          6537,
+          6538,
+          13090
+        ]
+      },
+      "observed": [
+        {
+          "state": 0,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c000000000000f0ffffffc73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 4294967280,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c000000000000f0ffffffc73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 4294967280,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 4294967280,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 6537,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c00000000000089190000c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 6537,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 13090,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c00000000000022330000c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "retry_start0_result2",
+      "group": "retry",
+      "input": {
+        "start": 0,
+        "result": 2,
+        "updates": [
+          0,
+          1,
+          6552,
+          6553,
+          6554,
+          13106
+        ]
+      },
+      "observed": [
+        {
+          "state": 0,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c00000000000000000000c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c00000000000000000000c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c00000000000001000000c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 6554,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c0000000000009a190000c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 6554,
+          "actions": [],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "retry_start1000000_result2",
+      "group": "retry",
+      "input": {
+        "start": 1000000,
+        "result": 2,
+        "updates": [
+          1000000,
+          1000001,
+          1006552,
+          1006553,
+          1006554,
+          1013106
+        ]
+      },
+      "observed": [
+        {
+          "state": 0,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c00000000000040420f00c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1000000,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c00000000000040420f00c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1000000,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1000000,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1006553,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c000000000000d95b0f00c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1006553,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1013106,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c00000000000072750f00c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "retry_start4294967280_result2",
+      "group": "retry",
+      "input": {
+        "start": 4294967280,
+        "result": 2,
+        "updates": [
+          4294967280,
+          4294967281,
+          6536,
+          6537,
+          6538,
+          13090
+        ]
+      },
+      "observed": [
+        {
+          "state": 0,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c000000000000f0ffffffc73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 4294967280,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c000000000000f0ffffffc73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 4294967280,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 4294967280,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 6537,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c00000000000089190000c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 6537,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 13090,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c00000000000022330000c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "connected_size3_crc0",
+      "group": "connected",
+      "input": {
+        "size": 3,
+        "crc": false
+      },
+      "observed": [
+        {
+          "state": 0,
+          "last_connect": 1000000,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1006553,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c000000000000d95b0f00c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "connected_size3_crc1",
+      "group": "connected",
+      "input": {
+        "size": 3,
+        "crc": true
+      },
+      "observed": [
+        {
+          "state": 0,
+          "last_connect": 1000000,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1006553,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c000000000000d95b0f00c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "connected_size4_crc0",
+      "group": "connected",
+      "input": {
+        "size": 4,
+        "crc": false
+      },
+      "observed": [
+        {
+          "state": 1,
+          "last_connect": 1000000,
+          "actions": [
+            {
+              "action": "connected"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 1,
+          "last_connect": 1000000,
+          "actions": [],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "connected_size4_crc1",
+      "group": "connected",
+      "input": {
+        "size": 4,
+        "crc": true
+      },
+      "observed": [
+        {
+          "state": 1,
+          "last_connect": 1000000,
+          "actions": [
+            {
+              "action": "connected"
+            }
+          ],
+          "crc_required": true
+        },
+        {
+          "state": 1,
+          "last_connect": 1000000,
+          "actions": [],
+          "crc_required": true
+        }
+      ]
+    },
+    {
+      "case": "connected_size5_crc0",
+      "group": "connected",
+      "input": {
+        "size": 5,
+        "crc": false
+      },
+      "observed": [
+        {
+          "state": 0,
+          "last_connect": 1000000,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1006553,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c000000000000d95b0f00c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "connected_size5_crc1",
+      "group": "connected",
+      "input": {
+        "size": 5,
+        "crc": true
+      },
+      "observed": [
+        {
+          "state": 0,
+          "last_connect": 1000000,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 0,
+          "last_connect": 1006553,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c000000000000d95b0f00c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "timeout_paused0_delta-1",
+      "group": "timeout",
+      "input": {
+        "paused": false,
+        "now": 1983039
+      },
+      "observed": [
+        {
+          "state": 0,
+          "last_connect": 1983039,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c0000000000003f421e00c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 2,
+          "last_connect": 1983039,
+          "actions": [
+            {
+              "action": "disconnect"
+            }
+          ],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "timeout_paused0_delta0",
+      "group": "timeout",
+      "input": {
+        "paused": false,
+        "now": 1983040
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 1983040,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c00000000000040421e00c73d8f3c"
+            },
+            {
+              "action": "disconnect"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 3,
+          "last_connect": 1983040,
+          "actions": [
+            {
+              "action": "closed"
+            }
+          ],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "timeout_paused0_delta1",
+      "group": "timeout",
+      "input": {
+        "paused": false,
+        "now": 1983041
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 1983041,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c00000000000041421e00c73d8f3c"
+            },
+            {
+              "action": "disconnect"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 3,
+          "last_connect": 1983041,
+          "actions": [
+            {
+              "action": "closed"
+            }
+          ],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "timeout_paused1_delta-1",
+      "group": "timeout",
+      "input": {
+        "paused": true,
+        "now": 12796479
+      },
+      "observed": [
+        {
+          "state": 0,
+          "last_connect": 12796479,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c0000000000003f42c300c73d8f3c"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 2,
+          "last_connect": 12796479,
+          "actions": [
+            {
+              "action": "disconnect"
+            }
+          ],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "timeout_paused1_delta0",
+      "group": "timeout",
+      "input": {
+        "paused": true,
+        "now": 12796480
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 12796480,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c0000000000004042c300c73d8f3c"
+            },
+            {
+              "action": "disconnect"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 3,
+          "last_connect": 12796480,
+          "actions": [
+            {
+              "action": "closed"
+            }
+          ],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "timeout_paused1_delta1",
+      "group": "timeout",
+      "input": {
+        "paused": true,
+        "now": 12796481
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 12796481,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c0000000000004142c300c73d8f3c"
+            },
+            {
+              "action": "disconnect"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 3,
+          "last_connect": 12796481,
+          "actions": [
+            {
+              "action": "closed"
+            }
+          ],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "late_connected_crc0",
+      "group": "late_connected",
+      "input": {
+        "crc": false
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 1983040,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c00000000000040421e00c73d8f3c"
+            },
+            {
+              "action": "disconnect"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 2,
+          "last_connect": 1983040,
+          "actions": [],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "late_connected_crc1",
+      "group": "late_connected",
+      "input": {
+        "crc": true
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 1983040,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "01000c00000000000040421e00c73d8f3c"
+            },
+            {
+              "action": "disconnect"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 2,
+          "last_connect": 1983040,
+          "actions": [],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state0_result0",
+      "group": "disconnect",
+      "input": {
+        "state": 0,
+        "result": 0
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed"
+            }
+          ],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state0_result1",
+      "group": "disconnect",
+      "input": {
+        "state": 0,
+        "result": 1
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed"
+            }
+          ],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state0_result2",
+      "group": "disconnect",
+      "input": {
+        "state": 0,
+        "result": 2
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed"
+            }
+          ],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state1_result0",
+      "group": "disconnect",
+      "input": {
+        "state": 1,
+        "result": 0
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "09000c00000000000040420f00"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed"
+            }
+          ],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state1_result1",
+      "group": "disconnect",
+      "input": {
+        "state": 1,
+        "result": 1
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "09000c00000000000040420f00"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed"
+            }
+          ],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state1_result2",
+      "group": "disconnect",
+      "input": {
+        "state": 1,
+        "result": 2
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "09000c00000000000040420f00"
+            }
+          ],
+          "crc_required": false
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed"
+            }
+          ],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state2_result0",
+      "group": "disconnect",
+      "input": {
+        "state": 2,
+        "result": 0
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed"
+            }
+          ],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state2_result1",
+      "group": "disconnect",
+      "input": {
+        "state": 2,
+        "result": 1
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed"
+            }
+          ],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state2_result2",
+      "group": "disconnect",
+      "input": {
+        "state": 2,
+        "result": 2
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed"
+            }
+          ],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state3_result0",
+      "group": "disconnect",
+      "input": {
+        "state": 3,
+        "result": 0
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state3_result1",
+      "group": "disconnect",
+      "input": {
+        "state": 3,
+        "result": 1
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state3_result2",
+      "group": "disconnect",
+      "input": {
+        "state": 3,
+        "result": 2
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false
+        }
+      ]
+    }
+  ]
+}

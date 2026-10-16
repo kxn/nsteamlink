@@ -3491,8 +3491,8 @@ count==0 或 timestamp==0 或已标NACK：可尝试
 之间读取变化的估计而越过分配容量。旧 `ProcessAt` 毫秒入口为独立兼容入口，不再
 代表生产普通可靠包准入。5ms timer只负责唤醒，不在timer线程直接发包；worker
 自身进行约1ms有界等待。条件精度不证明墙钟执行逐tick等价。
-Connect类型1有自己的官方100ms连接调度，本项目该类型仍走既有毫秒路径；不能把
-普通可靠包的RTO修正扩大成连接握手重试策略也已对齐。
+Connect类型1不属于普通可靠窗口；专用连接调度、生产入口和独立对照见§39。
+不能用普通可靠包的RTO断言替代连接握手重试验证。
 
 ### 37.4 不可靠窗口与连续轮转的契约
 
@@ -3659,3 +3659,76 @@ ring增长和销毁。`outgoing_worker`启动实际收发线程，验证预算�
 EAGAIN后wire计数仍0、真实type10重发同ID/payload且计数为1、过期后不再补发；
 受控时钟/recvfrom/最终sendto是替身，完整跑两次并join。既无认证Steam主机，
 也无Switch串流/解码/显示或原用户停顿因果证明。
+
+## 39. 官方客户端 Connect 的独立重试契约
+
+### 39.1 原指令证据与触发链
+
+证据固定为本文件既有SHA256的Android官方`libmain.so`，不是Steam host API。
+`scripts/audit-steam-connect.py`实际执行客户端`BConnect @0x7a7808`的UDP分支，
+进入`Create @0x7faaf8`、connection constructor `@0x7fb23c`、
+`Connect @0x7fb62c`、`SendConnectPacket @0x7fb84c`和Socket Send `@0x7ff1dc`。
+内存分配、socket构造、transport激活/最终I/O、统计构造/记录、client delegate
+为明确替身；连接构造、状态写入、cookie CRC32C和序列化执行原指令。
+
+【结论】新的connection构造时CRC要求为false，`BConnect`没有提前打开它。
+线上首发为17B：type=1、count=0、local ID、destination/channel/fragment/packet
+ID均0、新发送时间戳、`CRC32C("Connect")=c7 3d 8f 3c`。这4B是body cookie，
+不等于设置CRC header bit并在尾部再附4B。撤回“首发Connect强制CRC尾部与官方
+相同”的隐含假定；原本`SessionInitialized`传`hasCrc=true`属于本地差异。
+Connected恰4B body才记录peer/CRC并进入已连接transport，见§34的完整入包校验。
+
+【证据】`Connect @0x7fb6dc–0x7fb700`设state=0、lastConnect=0并立即首发；
+`BConnect @0x7a79f4–0x7a79fc`忽略该首发返回值，返回true。
+`Update @0x7fc190–0x7fc1b8`只在state=0进入专用重试：lastConnect为0，或
+uint32(now−lastConnect)≥6553时，新建Connect并尝试发送，随后无条件写入本次
+Update时间。返回码0/1/2均遵循这一规则；不是普通可靠包RTO、指数退避或count递增。
+首发不更新lastConnect，因此首次Update可立即重发；now=0的sentinel和uint32
+回绕均保留原行为。Connected之后的state=1不再进入此分支。
+
+【证据】同一次Update先执行上述发送，再在`@0x7fc43c`检查15/180秒接收租约。
+达到边界的连接可以先发一个Connect，再调用Disconnect；不能把超时检查搬到
+专用重试之前。`Disconnect @0x7fb724`只有state=1时发送一个type9，随后转state=2；
+连接尚未建立时不发送type9，下一Update通知closed并转state=3。这与本地现有
+Discovery disconnect timer的多次type9及延迟收尾是另一项差异，不能用Connect
+重试对照冒称断连生命周期已等价。
+
+### 39.2 固定案例与范围
+
+固定参考`scripts/fixtures/steam-connect-reference.json`保留35个原指令场景：
+9组首发/重试（起点0、普通、回绕×发送返回0/1/2），6组Connected长度/CRC guard，
+6组15/180秒边界及下一Update，2组超时后迟到Connected，12组四种transport状态下
+主动Disconnect/发送结果。
+Connected测试入口从已剥CRC的HandleConnected执行；完整datagram CRC与地址/ID
+guard仍由§34的原指令及生产oracle覆盖。这里不证明真实Steam应答时间、Switch
+运行时延迟，也不证明原截图停顿由Connect引起。
+
+### 39.3 生产接线与比较范围
+
+`lifecycle.c::TransportSendConnect`构造新的17B初始包直接经Socket序列化，不进入
+普通retransmission tracker。`SessionInitialized`在receive worker初始化连接ID、
+CRC初值并首发；该worker的TransportUpdate执行6553tick周期尝试，再检查接收
+deadline。lastConnect由Update而非Socket采样时间写入，失败不改变规则。
+Connected的4B guard成功后阶段转Handshaking，自然停止Connect；超时已发生时
+迟到的Connected不能启动ClientHandshake。移除旧毫秒重传和伪discovery ACK退休。
+
+`connect_oracle.c`运行真实初始包序列化、receive worker Update及完整Connected
+datagram入口，消费23个官方参考场景，比较每轮wire/action顺序、lastConnect、CRC
+与transport阶段，且Connect始终不占可靠窗口。最终Disconnect清理为替身，原版
+下一Update的closed回调不在比较范围，12个主动Disconnect案例也未计入本地对齐。
+源代码的session握手枚举与官方transport状态不同，oracle明确将Handshaking及以后
+映射为transport connected，将timedOut映射为closing；这不证明完整关闭状态机。
+
+`connect_worker`实际启动现有收发线程：首发EIO→首次Update EAGAIN→6552tick不发
+→6553tick重发→3B Connected拒绝后继续重试→4B Connected停止；完整执行两次、
+join收发线程并销毁session，时钟/最终UDP I/O受控。此CPU集成测试不需要也不等于
+Switch hbmenu两次启动验证。
+
+```sh
+python3 scripts/audit-steam-connect.py \
+  --binary /path/to/official/libmain-arm64.so \
+  --output build/video-recovery-re/connect.json
+python3 scripts/check-steam-connect.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-connect-oracle
+ctest --test-dir build/desktop -R 'connect|transport_worker' --output-on-failure
+```
