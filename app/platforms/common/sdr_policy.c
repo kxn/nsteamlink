@@ -267,3 +267,15 @@ bool sl_sdr_route_estimates(const int32_t *front, size_t count, const sl_sdr_edg
     if (count) memcpy(out,upper,count*sizeof(*out));
     return true;
 }
+bool sl_sdr_router_ping_ms(uint32_t timestamp, int64_t now, int32_t *ping) {
+    int32_t age=(int32_t)((uint32_t)now-timestamp);
+    if (!ping || age > 10000000 || (age < 0 && ((timestamp & 1) || age < -2000))) return false;
+    *ping=age < 0 ? 0 : age/1000;
+    return true;
+}
+bool sl_sdr_router_cookie(uint32_t cookie, uint32_t root_cookie, uint32_t session_id, bool have_session) {
+    return cookie==root_cookie || (have_session && cookie==session_id);
+}
+size_t sl_sdr_ping_request_size(int64_t last_full, int64_t now) {
+    return last_full > now-5000000 ? 100 : 1300;
+}

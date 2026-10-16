@@ -21,7 +21,7 @@ extern "C" {
 using namespace SteamNetworkingSocketsLib;
 struct ProbeRelay {
     netadr_t address;
-    uint32_t cookie = 0, server_time = 0, ping_timestamp = 0;
+    uint32_t cookie = 0, server_time = 0;
     uint64_t challenge = 0;
     SteamNetworkingMicroseconds challenge_at = 0, ping_sent = 0, request_until = 0, ping_deadline = 0;
     unsigned ping_failures = 0, request_failures = 0, probes_sent = 0;
@@ -198,18 +198,24 @@ static void receive_packet(const RecvPktInfo_t &packet, sl_sdr_probe *probe) {
     const uint8_t *data = static_cast<const uint8_t *>(packet.m_pPkt);
     if (data[0] == 2) {
         CMsgSteamDatagramRouterPingReply reply;
-        if (!reply.ParseFromArray(data + 1, packet.m_cbPkt - 1) || reply.client_cookie() != r->cookie ||
-            reply.client_timestamp() != r->ping_timestamp ||
+        if (!reply.ParseFromArray(data + 1, packet.m_cbPkt - 1) ||
             reply.latency_datacenter_ids_size() != reply.latency_ping_ms_size() ||
             reply.latency_datacenter_ids_p2p_size() != reply.latency_ping_ms_p2p_size())
             return;
-        int32_t delay = int32_t(uint32_t(packet.m_usecNow) - reply.client_timestamp());
-        if (delay < -2000 || delay > 10000000)
-            return; /* Diagnostic resource bound; no routing score is inferred. */
-        if (!r->ping_deadline)
-            return; /* A measurement must match a live ping, once. */
+        uint32_t session_id=0;
+        bool have_session=false;
+        if (reply.client_cookie() != r->cookie && r->established) {
+            ConnectionScopeLock connection_lock;
+            auto *connection=GetConnectionByHandle(probe->connection,connection_lock);
+            if (connection) { session_id=connection->m_unConnectionIDLocal; have_session=true; }
+        }
+        if (!sl_sdr_router_cookie(reply.client_cookie(),r->cookie,session_id,have_session)) return;
+        int32_t ping;
+        if (!sl_sdr_router_ping_ms(reply.client_timestamp(),packet.m_usecNow,&ping)) return;
+        /* No pending/latest-timestamp gate: one request can receive multiple
+         * valid latency fragments. NETWORKING 18.2 / 21.26. */
         if (reply.has_seconds_until_shutdown()) warn_downtime(*r, reply.seconds_until_shutdown(), packet.m_usecNow);
-        r->front.ReceivedPing(std::max(0, delay / 1000), packet.m_usecNow);
+        r->front.ReceivedPing(ping, packet.m_usecNow);
         r->ping_ms = r->front.m_nSmoothedPing;
         r->ping_deadline = 0;
         r->received(packet.m_usecNow);
@@ -366,13 +372,13 @@ static bool choose_address(sl_sdr_probe *p, ProbeRelay &r, SteamNetworkingMicros
 static bool send_ping(sl_sdr_probe *p, ProbeRelay &r, SteamNetworkingMicroseconds now) {
     if (r.ping_deadline || (r.downtime.known && r.downtime.avoid < now)) return false;
     uint8_t ping[1300];
-    sl_sdr_ping(ping, sizeof(ping), false, now, r.cookie, uint32_t(p->config.revision),
+    size_t size=sl_sdr_ping_request_size(r.interior.last_full,now);
+    sl_sdr_ping(ping, sizeof(ping), size==100, now, r.cookie, uint32_t(p->config.revision),
         r.address.GetIPv4(), r.address.GetPort());
-    r.ping_timestamp = uint32_t(now);
     r.ping_sent = r.failures.last_probe = r.front.m_usecTimeLastSentPingRequest = now;
     r.ping_deadline = now + r.front.CalcConservativeTimeout();
     ++r.probes_sent;
-    if (!send_packet(p, ping, sizeof(ping), r.address)) return false;
+    if (!send_packet(p, ping, size, r.address)) return false;
     ++p->counters.sent_pings;
     return true;
 }

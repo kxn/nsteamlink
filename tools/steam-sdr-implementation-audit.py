@@ -274,6 +274,30 @@ def main():
             assert lib.sl_sdr_route_estimates(inputs,len(fronts),links,len(edges),result)
             assert list(result)==native,(fronts,edges,list(result),native)
         audit.datacenter_routes=datacenter_routes
+        original_router=audit.router_ping_reply
+        lib.sl_sdr_router_ping_ms.argtypes=[c.c_uint32,c.c_int64,c.POINTER(c.c_int32)]
+        lib.sl_sdr_router_ping_ms.restype=c.c_bool
+        lib.sl_sdr_router_cookie.argtypes=[c.c_uint32,c.c_uint32,c.c_uint32,c.c_bool]
+        lib.sl_sdr_router_cookie.restype=c.c_bool
+        def router_ping_reply(elf,delay,expected_ping,**kwargs):
+            original_router(elf,delay,expected_ping,**kwargs)
+            now=kwargs.get('clock',audit.NOW); ping=c.c_int32(-1234)
+            accepted=lib.sl_sdr_router_ping_ms((now-delay)&0xffffffff,now,c.byref(ping))
+            assert bool(accepted)==(expected_ping is not None)
+            assert ping.value==(expected_ping if accepted else -1234)
+            cookie=kwargs.get('cookie',11); session=kwargs.get('session',False)
+            counts=kwargs.get('counts',(1,1))
+            actual_dispatch=accepted and lib.sl_sdr_router_cookie(cookie,11,22,session) and counts[0]==counts[1]
+            expected_dispatch=expected_ping is not None and (cookie==11 or (session and cookie==22)) and counts[0]==counts[1]
+            assert bool(actual_dispatch)==expected_dispatch
+        audit.router_ping_reply=router_ping_reply
+        original_ping_size=audit.ping_request_size
+        lib.sl_sdr_ping_request_size.argtypes=[c.c_int64,c.c_int64]
+        lib.sl_sdr_ping_request_size.restype=c.c_size_t
+        def ping_request_size(elf,last_full,expected):
+            original_ping_size(elf,last_full,expected)
+            assert lib.sl_sdr_ping_request_size(last_full,audit.NOW)==expected
+        audit.ping_request_size=ping_request_size
         audit.select, audit.timeout_decision = select, timeout
         audit.downtime, audit.probe_priorities, audit.routing_readiness = downtime, priorities, ready
         audit.failed_cache_add, audit.failed_cache_expire, audit.received = add, expire, received
@@ -281,7 +305,7 @@ def main():
         groups = {'active_selection', 'active_switch_confirmation', 'active_candidate_order', 'timeout_decisions', 'downtime_warning', 'global_probe_priority_matrix',
             'global_routing_readiness', 'failed_cache_insertion', 'failed_cache_expiry', 'received_packet_recovery', 'transport_state_change', 'session_established', 'clean_route_targets',
             'datacenter_latency_updates', 'reverse_latency_estimation', 'cluster_penalty_updates', 'canonical_pop_mapping',
-            'datacenter_route_estimation'}
+            'datacenter_route_estimation','router_ping_reply_dispatch','ping_request_size'}
         # Select group names from the existing audit; fail if they are renamed.
         counts = audit.audit(elf, groups)
         assert set(counts) == groups, counts

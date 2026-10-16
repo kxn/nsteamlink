@@ -73,6 +73,11 @@ int main(void) {
     assert(estimate[0]==SL_SDR_UNKNOWN && estimate[1]==50 && estimate[2]==40 && estimate[3]==20 && estimate[4]==20);
     const sl_sdr_edge invalid_edge={4,5,10};
     assert(!sl_sdr_route_estimates(fronts,5,&invalid_edge,1,estimate) && estimate[1]==50);
+    int32_t ping;
+    assert(sl_sdr_router_ping_ms((uint32_t)now+2000,now,&ping) && ping==0);
+    assert(!sl_sdr_router_ping_ms((uint32_t)now+1,now,&ping));
+    assert(sl_sdr_router_ping_ms((uint32_t)now-10000000,now,&ping) && ping==10000);
+    assert(!sl_sdr_router_ping_ms((uint32_t)now-10000001,now,&ping));
     sl_sdr_timeouts t = {.request_deadline=now,.request_failures=1};
     assert(sl_sdr_expire(&t, now) == (SL_SDR_TIMEOUT_REQUEST|SL_SDR_TIMEOUT_REPROBE));
     t = (sl_sdr_timeouts){.ping_deadline=now+1,.ping_failures=1};

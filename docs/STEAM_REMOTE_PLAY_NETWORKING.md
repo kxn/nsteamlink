@@ -2537,3 +2537,29 @@ UINT32_MAX，容器节点是显式构造的输入，不把 JSON parser 也算成
 须在写入缓存前 canonical 化；同包多个名字映射到一个 POP 时，仍按 §21.10 的数组
 顺序后写覆盖。未知 ID 可以作为缓存 key 保留，但不能因此成为已知 POP 或获得建路资格。
 对端路线的 POP 按同一 lookup 映射到配置索引，目标 token 与对应 POP 必须保持绑定。
+
+### 21.26 RouterPingReply 的接收门槛与后续回复
+
+**Evidence**：外层 `ProcessMessage_RouterPingReply 0x812178–0x812794` 先核对 root
+cookie，失败时还遍历该 relay 的 sessions，接受本地 connection_id；随后核对普通延迟
+数组数量并计算低 32 位时间差。它**没有**将 client_timestamp 与最近发送时间逐字比较，
+也**没有**要求 ping deadline 非零。其 RTT 分支为：
+
+- 有符号低 32 位差值 0..10000000µs：整除 1000 得毫秒；10000001 拒绝。
+- 负差值：只有 timestamp 偶数且差值 >=-2000µs 才按 0ms 接纳；其他拒绝。
+- 通过后依次 ReceivedPacket、RecvPingReply、可选 downtime、cluster penalty、
+  SaveChallenge、latency 更新、alternate 更新；cluster penalty 在此入口无 presence 条件。
+
+**Evidence correction**：撤回实现中“测量必须匹配最新在途 ping，且只处理一次”的注释
+和门槛。这会漏掉时间范围内、cookie 正确的后续回复，也可能丢掉 §21.10 允许的增量信息；
+不能因为首包已清 deadline 就跳过后续 metadata。是否在某次真实测试中实际分包，仍需抓包证明。
+实现额外检查 P2P 延迟数组的等长边界是本地解析防御，不能据此声称原版外层也有同一检查。
+
+原始入口审计显式替代 ReceivedPacket、PingTracker、challenge/latency/alternate 处理器，
+验证上述分派次序与 cookie/RTT/普通数组门槛。分别在有/无 pending 的输入执行同一组时间边界，
+另测 session cookie、错误 cookie、普通数组不等长、downtime presence 与低 32 位回绕。
+下游处理器自己的策略由其他用例验证，不能由这些调用桩推断。
+完整延迟回复时刻还控制 §18.2 的短 ping：`lastFull+5000000 > now` 发 100 字节，等号
+发 1300 字节；不能虽然正确记了 full/incremental 状态，发送时仍无条件用长包。
+独立的原始 `0x8178ec–0x81793c` 片段用例核对了送入 BSendPacketGather 的长度与 0x82 标志，
+没有把其他 sender 分支或 socket 发送结果算作已验证。

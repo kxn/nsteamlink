@@ -711,6 +711,54 @@ def cancel_migration(elf, state, expected, target=1, active=True, requested=2, p
     assert (m.read(fixture.base+64), m.read(fixture.base+68)) == expected
 
 
+def ping_request_size(elf,last_full,expected):
+    fixture=SDR(elf,[{}]); m=fixture.m
+    m.write(fixture.clusters[0]+768,last_full,8)
+    sp=m.uc.reg_read(arm.UC_ARM64_REG_SP)
+    m.write(sp+37,2,1)
+    m.reg(19,fixture.relays[0]); m.reg(20,NOW)
+    def send(m):
+        iov=m.reg(2); ptr=m.read(iov,8); size=m.read(iov+8,8)
+        m.events.append((size,m.read(ptr+1,1)))
+        m.reg(0,1)
+    m.stubs[0xc12380]=send
+    m.stops[0x81793c]=('sender_fragment_complete',)
+    m.run(0x8178ec,0x81793c)
+    assert m.events==[(expected,0x82 if expected==100 else 2),('sender_fragment_complete',)],m.events
+
+
+def router_ping_reply(elf, delay, expected_ping, cookie=11, session=False, pending=False,
+                      counts=(1,1), warning=False, clock=NOW):
+    fixture=SDR(elf,[{}]); m=fixture.m
+    relay, cluster=fixture.relays[0],fixture.clusters[0]
+    pb,packet,clients=m.alloc(256),m.alloc(64),m.alloc(24)
+    m.write(0xc80000+2808,clients,8)
+    m.write(relay+104,11); m.write(cluster+512,-2)
+    m.write(relay+136,clock+100000 if pending else 0,8)
+    m.write(relay+320,clock-123456,8) # Last send differs; handler does not match it.
+    sessions=m.alloc(8); m.write(sessions,fixture.sessions[0],8)
+    m.write(relay+112,sessions,8); m.write(relay+128,int(session))
+    m.write(fixture.connection+384,22)
+    m.write(pb+200,cookie); m.write(pb+176,clock-delay)
+    m.write(pb+24,counts[0]); m.write(pb+48,counts[1])
+    m.write(pb+16,32 if warning else 0); m.write(pb+196,120); m.write(pb+204,17)
+    m.write(packet+16,clock,8)
+    m.stubs.update({0xc12060:lambda m:m.events.append(('received',)),
+        0xc12070:lambda m:m.events.append(('ping',m.reg(1))),
+        0xc12080:lambda m:m.events.append(('warning',)),
+        0xc12090:lambda m:m.events.append(('penalty',m.reg(1))),
+        0xc120a0:lambda m:m.events.append(('challenge',)),
+        0xc120b0:lambda m:m.events.append(('latencies',)),
+        0xc120c0:lambda m:m.events.append(('alternates',))})
+    m.run(0x812178,0x812794,relay,pb,packet)
+    accepted=expected_ping is not None and (cookie==11 or (session and cookie==22)) and counts[0]==counts[1]
+    expected=[]
+    if accepted:
+        expected=[('received',),('ping',expected_ping)]+([('warning',)] if warning else [])
+        expected += [('penalty',17),('challenge',),('latencies',),('alternates',)]
+    assert m.events==expected,(delay,cookie,session,pending,m.events,expected)
+
+
 def canonical_pop(elf, pops, aliases, incoming, expected):
     m=Machine(elf)
     network, records=m.alloc(200),m.alloc(max(1,len(pops))*120)
@@ -2635,6 +2683,18 @@ def audit(elf, groups=None):
     case('migration_cancellation', cancel_migration, 2, (2, 1), penalty=8190)
     case('migration_cancellation', cancel_migration, 2, cancelled, penalty=8191)
     initial = {200: (30, 7, 8, NOW-100)}
+    for full,size in [(0,1300),(NOW-5000001,1300),(NOW-5000000,1300),(NOW-4999999,100),(NOW,100)]:
+        case('ping_request_size',ping_request_size,full,size)
+    for pending in (False,True):
+        for delay,ping in [(0,0),(999,0),(1000,1),(10000000,10000),(10000001,None),
+                           (-1,None),(-2,0),(-1999,None),(-2000,0),(-2002,None)]:
+            case('router_ping_reply_dispatch',router_ping_reply,delay,ping,pending=pending)
+    case('router_ping_reply_dispatch',router_ping_reply,1000,1,cookie=22,session=True)
+    case('router_ping_reply_dispatch',router_ping_reply,1000,1,cookie=22,session=False)
+    case('router_ping_reply_dispatch',router_ping_reply,1000,1,cookie=33,session=True)
+    case('router_ping_reply_dispatch',router_ping_reply,1000,1,counts=(1,0))
+    case('router_ping_reply_dispatch',router_ping_reply,1000,1,warning=True)
+    case('router_ping_reply_dispatch',router_ping_reply,1000,1,clock=NOW+0x100000000)
     for incoming, expected in [(0,0),(50,50),(100,100),(150,150),(200,200),(201,200),
                                (202,200),(300,300),(301,100),(400,400),(0xffffffff,0xffffffff)]:
         case('canonical_pop_mapping',canonical_pop,[100,200,300],{201:1,202:1,301:0},incoming,expected)
