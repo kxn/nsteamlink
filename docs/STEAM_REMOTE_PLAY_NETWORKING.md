@@ -557,3 +557,128 @@ ICE 直连与 SDR 中继共用 SNS backend；普通 UDP 与 SNS backend 的封�
 
 **待验证**：所有传输下的参数默认值、主机端码率/FEC/可靠媒体决策与动态变化。
 本仓仍未实现官方全部媒体能力，尤其不能把官方 FEC/可靠媒体能力直接声明为本项目已支持。
+
+## 9. 官方客户端行为规格：状态机与策略证据
+
+本节描述固定样本的行为，不将协议字段存在、编解码测试通过或一次成功连接扩大为完整策略兼容。
+除明确注明外，地址均为 §1 固定 SHA256 的 arm64 `libmain.so`；x86_64 shell 的交叉核对另列。
+**静态证据**证明分支与常量存在；**动态证据**证明指定输入下实际走过该分支。
+实现需要依据触发条件、状态迁移、动作和计时规则处理；尚无证据的默认值不得冒充官方策略。
+
+### 9.1 云端会话状态机
+
+`CRemoteClientSession` 的状态保存在 `this+24`：0=Idle，1=Resolving，2=连接 WebSocket，
+3=创建服务会话，4=ConnectionFailed，5=Connected。0/4 的名字由 `BConnect` 断言支持，
+其余由各 Start 函数及成功分支支持。这套数字不同于 manager、transport 和底层 WebRequest 的状态。
+
+| 触发条件 | 官方动作/迁移 | Evidence | 证据范围 |
+|---|---|---|---|
+| Idle/ConnectionFailed 调 BConnect | 在 WebSocket 能力可用时进入 Resolving，取 CM 目录 | `0x790ce8–0x790d04`、`0x790d88–0x790dac` | 静态；正常创建有动态记录 |
+| 正在连接的底层 WebSocket 尚未就绪 | 底层状态值 2 时继续等待；值 3 时进入创建服务会话；其他值换 CM endpoint | `UpdateWebSocket 0x791c54–0x791c90`、`0x791d04–0x791d10` | 故障分支为静态 |
+| CM endpoint 切换 | 先清理旧 WebSocket，再从候选队列取下一个；队列耗尽进入 ConnectionFailed | `StartConnectingWebSocket 0x79106c–0x791100` | 静态 |
+| 无可用目录候选/候选耗尽/创建服务会话失败 | 清理 WebSocket；设置重试时刻 `Plat_FloatTime()+10+20*WeakRandomFloat(0,1)` | `0x790fa8–0x790fe4`、`0x7910b0–0x7910f4`、`0x7918cc–0x79190c`；公共失败函数 `0x79125c` | 静态，约 10–30 秒随机等待；不是按尝试次数倍增 |
+| ConnectionFailed 到达重试时刻 | 调 BConnect，重新进入目录解析/连接流程 | `0x791cbc–0x791cdc` | 静态 |
+| CreateSession 服务成功 | 保存 session_id/universe，进入 Connected，通知 delegate | `0x791800–0x79182c` | 静态＋动态 |
+| 已 Connected 的底层 WebSocket 不再报告值 3 | 先通知 delegate 断开，Disconnect 清理，再直接调 BConnect | `0x791c10–0x791c40`、`0x791cd0–0x791cdc` | 静态；此分支本身不使用上面的随机等待 |
+| 新的云端会话建立 | manager 按保存的主机 Steam ID/device ID 重新注册状态 | `OnConnected 0x79ee30–0x79eea8` | 静态＋冷启动动态；断线重订阅未单独实测 |
+
+公共失败函数在 x86_64 shell `SetConnectionFailed @0xd01760` 也使用 10、20、
+WeakRandomFloat(0,1)，与 arm64 一致。不能由此假定底层 DNS/TLS/HTTP 连接也使用同一个超时；
+它们的超时归 WebRequest 实现，尚未逐项还原。
+
+**实现约束**：新连接必须取得新的 session_id 并恢复订阅；持久化配对关系与临时云端 session
+分别处理。上述证据不证明正在进行的配对会自动恢复，也不授权把旧 session 的请求原样重放到新 session。
+
+### 9.2 事务与错误不能统一处理
+
+**Evidence：`HandleWebSocketPackets @0x7916a0`。**
+
+- protobuf 解析失败只记录日志并继续消费下一帧（`0x79177c–0x7917c8`）。
+- CreateSession 服务失败清理 WebSocket 并进入随机等待（`0x7918cc–0x79190c`）。
+- StartPairing、SetPairingInfo、CancelPairing 的服务失败通知 pairing-failed delegate
+  （`0x7917ac–0x7917bc`、`0x791830–0x791840`、`0x791914–0x791930`），该分支没有重建云端连接。
+- ReplyPacket 失败只记 GetReplies failed；成功则遍历全部 payload 交给 delegate
+  （`0x791868–0x7918c8`、`0x791938–0x79193c`）。Offline 走独立 delegate。
+
+**Conclusion**：解析错误、服务会话错误、配对事务错误、主机 offline 是不同事件。
+不能给所有错误套同一个“断开→重配对→重试”动作。协议中的三套 result 仍按 §8.1 区分。
+这些错误分支的具体 UI 表现、失败后是否由上层触发再次配对仍须另证。
+
+### 9.3 开流请求重试与底层可靠包重传
+
+**Evidence：** `StartStreaming @0x798d94` 仅在不是“同一主机的正在开流事务”时建立新事务，
+在 `0x798e80–0x798ea0` 设置 manager 状态 5 并生成/保存 request_id（manager+512）。
+`SendStartStreamingRequest` 每次从同一字段读取 request_id（`0x79941c`），
+再次调用 `BGetDeviceToken`（`0x7993d8`），发送后将下一次时刻设为 **`time(NULL)+1`**
+（`0x79979c–0x7997ac`）。manager Update 仅在状态 5 且到达该时刻重发（`0x798c58–0x798c78`）。
+
+**动态证据：** `official-host-pair` 的三次 CM StreamingRequest（`019.bin`、`025.bin`、`037.bin`）
+request_id 相同，相邻采集时刻差 0.299 秒、1.000 秒；body 的变化仅在字段 7（device_token）。
+这与按整秒 `time()` 调度、每次重新构造 token 相符。三次响应（`032.bin`、`038.bin`、`042.bin`）
+均匹配当前 request_id，结果依次为 InProgress、InProgress、Success。
+
+**Conclusion**：应用级“再次请求开流”保留事务 ID，但可以重建认证材料；它不等于重发完全相同的
+网络包。也不能把 `time()+1` 写成“从上次发送完成起精确等待 1000 ms”的官方行为。
+底层可靠通道的加密帧/包重传则按既有协议参考处理，不能重新分配加密序号或随意替换密文。
+
+**静态证据：** `HandleStartStreamingResponse 0x79e884–0x79e88c` 比较非零 request_id；
+不匹配分支在收到 InProgress 时构造 StreamingCancel（`0x79e94c–0x79e9b8`）。
+最终成功后才保存所选 transport/relay/cert，并解密 session key。
+不能把迟到响应与当前事务合并，也不能把 InProgress 中的默认 transport 当最终协商结果。
+上述迟到响应的取消分支尚无故障注入动态记录。
+
+### 9.4 控制消息承载与传输信令队列
+
+**Evidence：** manager SendMessage 在 `0x79b118–0x79b154` 按 HasIP、port、
+本地发送开关和 discovery socket 是否可创建选择 UDP；否则走 `0x79b15c–0x79b19c` 的云端分支。
+`BSend` 返回后直接结束该分支（`0x79b158`），此处没有按发送返回值追加一次云端转发。
+因此“UDP 发失败便马上自动改走云端”不是此函数已有的策略；更上层的地址失效处理需单独跟踪。
+
+`CStreamTransportClient` 是另一套信令桥接生命周期：
+
+- Update 先更新 transport，再循环取出 backend 已产生的信令（`0x7d451c–0x7d4558`）。
+- 云端未 Connected 时，SendTransportSignal 深拷贝内层消息并入 FIFO
+  （`0x7d4670–0x7d467c`、`0x7d4730–0x7d4758`）。
+- OnConnected 按队列顺序发送并销毁待发消息（`0x7d49e8–0x7d4a60`）；不是仅保留最后一条候选。
+- 是否保持云端会话由 backend 是否需要信令或待发队列是否非空共同决定
+  （`0x7d455c–0x7d45e4`）。该对象的重连调度还受自身 Update 的调用条件约束，
+  不能直接把 manager 的生命周期套到它上面。
+- SDR backend 会批量 swap 出 pending `sdr`，然后 Clear 暂存 message
+  （`0x801630–0x8016b4`）。每个 cloud payload 可以包含多条 rendezvous，不能当作重复包丢弃。
+
+队列上限、消息过期淘汰及并发关闭的完整行为尚未全部确认。若本地实现增加内存上限，
+必须记录为本项目资源策略并验证失败处理，不能把这个上限说成官方协议常量。
+
+### 9.5 SDR 初始化参数与网络库职责
+
+**Evidence：arm64 `UpdateState 0x801330–0x801448`，x86_64 shell `0xd28829–0xd28945` 交叉对应。**
+配置编号/语义依据 Valve 公开 `steamnetworkingtypes.h`，数值为样本显式传入的值：
+
+| 配置 | 官方样本值 | 调用证据与边界 |
+|---|---|---|
+| Unencrypted (34) | 2 | 创建 ConnectP2PCustomSignaling 时的第一个配置；公开 API 表示允许并偏好未加密网络库连接。仍取决于对端协商，不证明某次实际未加密，也不表示可跳过上层认证或证书 |
+| P2P_Transport_ICE_Enable (104) | 开关决定 0 / `0x7fffffff` | 创建连接时传入第二个配置；不能一直用库默认值替代用户/配置的 IP-sharing 策略 |
+| SendRateMin (10) | 104857600 bytes/s | `0x80139c–0x8013c8`；为网络库发送速率边界，不等于串流目标码率或实际吞吐 |
+| SendRateMax (11) | 104857600 bytes/s | `0x8013cc–0x8013f0`；与最小值相同，不能假设采用开源库默认速率即可复现 |
+| TimeoutInitial (24) | 20000 ms | `0x8013f4–0x80141c`；这是 SNS 初次连接超时，不是目录、配对、开流请求或等待测试帧的统一超时 |
+| EnableDiagnosticsUI (46) | 0 | `0x801420–0x801444`；诊断设置不属于线上消息字段 |
+
+此函数没有自行排序 ICE candidate 或按固定 RTT 差值切换中继；候选检查与路径选择交给网络库。
+`ConnectP2PCustomSignaling` 返回无效 handle 时设置 transport 失败状态 3
+（`0x801480–0x8014c4`）。收到不能处理的 custom signal 也会关闭连接并设失败
+（`0x801800–0x801864`），此处未实现自动换成普通 UDP 的重试。
+
+**Conclusion**：不能只实现相同 API 调用却忽略显式参数，也不能按 SDK 某个接口“支持可靠发送”
+就替换样本的 flags=0x15。上层流协议、SNS 网络库和 Steam 服务各自承担一部分策略；
+尚未还原的中继排序、路径切换迟滞、主机端媒体/FEC 决策不能凭一份成功 trace 补成固定规则。
+
+### 9.6 复刻范围与验证判据
+
+现有探针的最多 3 个候选、10 秒默认等待、64 KiB 帧限制、32 个异步通知预算，以及 Frida 的
+512 帧采集预算，均是**研究工具的运行边界**。它们没有被证明是官方限制，不能直接移入产品状态机。
+本地 codec/清理测试通过，只支持相关编解码、验签和工具清理，不支持“策略复刻已经完成”的判断。
+
+行为对照需能判断：故障发生在哪个状态、保留/重建哪些身份和事务、是否通知上层、何时重试、
+如何处理迟到/重复消息，以及取消后是否仍有旧 worker/消息影响新连接。
+需要偏离官方样本时，记录证据、理由及互操作结果；例如不应把连续测试的负丢帧指标照搬为产品统计。
+静态尚未覆盖的部分继续标记待验证，动态实验的单次成功不能扩展为所有异常路径的兼容性。
