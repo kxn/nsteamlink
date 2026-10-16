@@ -22,6 +22,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 ROOT = Path(__file__).resolve().parent.parent
 MODES = {'ice': '--sns-test', 'sdr': '--sdr-only-test', 'loss': '--sdr-fault-test',
          'close': '--sdr-close-test', 'no-connection': '--sdr-no-connection-test'}
+MEDIA_MODES = {'ice': '--sns-desktop', 'sdr': '--sdr-only-desktop'}
 LIMIT = 8+65536+8192+16
 
 def profile_valid(data, original=None):
@@ -153,31 +154,37 @@ class Receiver:
     def close(self):
         self.stop.set(); self.thread.join(); self.server.close()
 
-def prepare(build, profile):
+def prepare(build, profile, media=False):
     original = profile.read_bytes(); profile_valid(original)
     romfs = build / 'private-romfs'; romfs.mkdir(parents=True, exist_ok=True); os.chmod(romfs, 0o700)
     write_private(romfs / 'profile.bin', original)
     write_private(romfs / 'return.key', os.urandom(32))
     log = build / 'private-build.log'
+    target = 'nsl-sns-media-private' if media else 'nsl-sns-network-private'
     with log.open('w') as output:
         subprocess.run(['cmake', '-S', str(ROOT), '-B', str(build),
             '-DCMAKE_TOOLCHAIN_FILE=/opt/devkitpro/cmake/Switch.cmake', '-DCMAKE_BUILD_TYPE=Release',
             '-DNSL_DIAGNOSTICS=ON', '-DNSL_BUILD_TOOLS=ON', '-DNSL_BUILD_SNS=ON', '-DNSL_ENABLE_SDR=ON',
+            '-DNSL_PRIVATE_SNS_MEDIA='+('ON' if media else 'OFF'),
             '-DNSL_PRIVATE_SNS_ROMFS='+str(romfs)], stdout=output, stderr=subprocess.STDOUT, check=True)
-        subprocess.run(['cmake', '--build', str(build), '--target', 'nsl-sns-network-private_nro', '-j8'],
+        subprocess.run(['cmake', '--build', str(build), '--target', target+'_nro', '-j8'],
                        stdout=output, stderr=subprocess.STDOUT, check=True)
-    nro = build / 'app/nsl-sns-network-private.nro'
+    nro = build / ('app/'+target+'.nro')
     for source in (romfs / 'profile.bin', romfs / 'return.key', nro.with_suffix('.elf')):
         if source.stat().st_mtime_ns > nro.stat().st_mtime_ns:
             raise ValueError('private NRO is stale')
     return nro
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+def main(media=False):
+    description = 'Request a Steam desktop stream on Switch, receive 30 encoded frames, then disconnect.' if media else __doc__
+    parser = argparse.ArgumentParser(description=description)
+    modes = MEDIA_MODES if media else MODES
+    kind = 'media' if media else 'network'
+    target = 'nsl-sns-'+kind+'-private'
     parser.add_argument('--address', required=True, help='explicit Switch IPv4 address')
     parser.add_argument('--profile', required=True, type=Path, help='our isolated paired test profile directory')
-    parser.add_argument('--build', type=Path, default=ROOT / 'build/switch-sns-private')
-    parser.add_argument('--mode', choices=MODES, default='sdr')
+    parser.add_argument('--build', type=Path, default=ROOT / ('build/switch-sns-media-private' if media else 'build/switch-sns-private'))
+    parser.add_argument('--mode', choices=modes, default='sdr')
     group = parser.add_mutually_exclusive_group()
     group.add_argument('--prepare-only', action='store_true')
     group.add_argument('--run-only', action='store_true')
@@ -187,7 +194,7 @@ def main():
     if ROOT / 'build' not in build.parents:
         parser.error('private fixture builds must stay inside the ignored project build directory')
     build.mkdir(parents=True, exist_ok=True); os.chmod(build, 0o700)
-    nro = build / 'app/nsl-sns-network-private.nro' if args.run_only else prepare(build, profile)
+    nro = build / ('app/'+target+'.nro') if args.run_only else prepare(build, profile, media)
     key_file, embedded = build / 'private-romfs/return.key', build / 'private-romfs/profile.bin'
     key = key_file.read_bytes()
     if len(key) != 32: raise ValueError('invalid private readback key')
@@ -202,14 +209,14 @@ def main():
         return
     receiver = Receiver(key, profile, args.address)
     receiver.thread.start()
-    log = build / 'network-probe.private.log'
+    log = build / (kind+'-probe.private.log')
     exit_code, timed_out = None, False
     try:
         with log.open('w') as output:
             try:
                 result = subprocess.run(['/opt/devkitpro/tools/bin/nxlink', '-a', args.address, '-s',
-                    '-p', 'nsl-sns-network-private.nro', '--args',
-                    MODES[args.mode]+' '+str(receiver.port), str(nro)], stdout=output, stderr=subprocess.STDOUT,
+                    '-p', target+'.nro', '--args',
+                    modes[args.mode]+' '+str(receiver.port), str(nro)], stdout=output, stderr=subprocess.STDOUT,
                     timeout=120)
                 exit_code = result.returncode
             except subprocess.TimeoutExpired:
@@ -217,18 +224,19 @@ def main():
     finally:
         receiver.close()
     text = log.read_text()
-    report = {'mode': args.mode, 'nro_sha256': digest, 'nxlink_exit': exit_code, 'timed_out': timed_out,
+    passed = 'SWITCH_SNS_'+kind.upper()+'_RESULT=0' in text
+    report = {'fixture': kind, 'mode': args.mode, 'nro_sha256': digest, 'nxlink_exit': exit_code, 'timed_out': timed_out,
         'profile_readback': receiver.received, 'readback_error': receiver.error,
-        'network_result': 'SWITCH_SNS_NETWORK_RESULT=0' in text,
+        kind+'_result': passed,
         'private_upload_removed': 'PRIVATE_NRO_REMOVED=1' in text,
         'loader_return_verified': False,
         'events': [line for line in text.splitlines() if line.startswith(('CLOUD_', 'SNS_', 'SDR_',
             'SWITCH_SNS_', 'PROFILE_READBACK_', 'PREVIOUS_EXIT_', 'PRIVATE_NRO_', 'PRIVATE_FIXTURE_',
-            'PRIVATE_EMBEDDED_'))
+            'PRIVATE_EMBEDDED_', 'IHS_CONNECTED='))
             and 'SNS_ERROR_FILE' not in line]}
-    (build / 'network-result.json').write_text(json.dumps(report, indent=2)+'\n')
+    (build / (kind+'-result.json')).write_text(json.dumps(report, indent=2)+'\n')
     print(json.dumps(report))
-    if timed_out or not report['network_result'] or not receiver.received or not report['private_upload_removed']:
+    if timed_out or not passed or not receiver.received or not report['private_upload_removed']:
         raise SystemExit(1)
 
 if __name__ == '__main__':

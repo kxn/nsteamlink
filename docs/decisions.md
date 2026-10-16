@@ -2338,6 +2338,11 @@ Decision：
 5. 日志仍使用有界非阻塞独立 socket，不重定向 stdio。先退出 IHS/SNS/云端 provider，
    完成并关闭回读 TCP，再卸载 RomFS、只删除已核对的私有上传文件，最后关闭日志与
    socket 服务。保存退出阶段、下次启动自动读回；退出日志不能单独证明 loader 返回。
+6. `NSL_PRIVATE_SNS_MEDIA=ON` 可另建 `nsl-sns-media-private`，只接纳已有的两种
+   encoded-frame 测试模式；网络 NRO 的编译期白名单保持仅 network_test。媒体 fixture
+   使用独立 NRO 文件名、SD 目录及退出 stage，复用加密回读与清理。它请求主机桌面并
+   接收至少 30 个编码帧，不解码/渲染/保存帧；不能据此证明画面、音频、输入或正式 UI。
+   媒体测试时机遵守用户的主机使用安排；网络测试入口不隐式请求媒体。
 
 Evidence correction：首个完整网络 fixture 在 `embedded_profile` 阶段退出，未进入云端
 测试。其 `sl_auth_load("romfs:/")` 与 auth_store 自动追加的 `/profile.bin` 合成双斜线；

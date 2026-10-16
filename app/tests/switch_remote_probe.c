@@ -1,4 +1,5 @@
-/* Private, network-only fixture. RomFS is supplied explicitly at build time.
+/* Private fixture. The default target accepts network-only modes; the separate
+ * opt-in media target receives 30 encoded frames. RomFS is supplied explicitly.
  * Never redirect stdio, publish this NRO, or use the normal application store. */
 #include "services/auth_store.h"
 #include <switch.h>
@@ -18,10 +19,24 @@
 #include <unistd.h>
 
 int sl_network_probe_run(int, char **);
+#ifndef NSL_PRIVATE_MEDIA_FIXTURE
+#define NSL_PRIVATE_MEDIA_FIXTURE 0
+#endif
+#if NSL_PRIVATE_MEDIA_FIXTURE
+#define FIXTURE_KIND "MEDIA"
+#define FIXTURE_NRO "nsl-sns-media-private.nro"
+#define FIXTURE_DIRECTORY "sdmc:/switch/nsl-sns-media-private-%s"
+#define FIXTURE_STAGE "sdmc:/switch/nsl-sns-media.stage"
+#else
+#define FIXTURE_KIND "NETWORK"
+#define FIXTURE_NRO "nsl-sns-network-private.nro"
+#define FIXTURE_DIRECTORY "sdmc:/switch/nsl-sns-private-%s"
+#define FIXTURE_STAGE "sdmc:/switch/nsl-sns-network.stage"
+#endif
 static int log_fd = -1;
 static char transcript[65536];
 static size_t logged, delivered;
-static const char *stage_path = "sdmc:/switch/nsl-sns-network.stage";
+static const char *stage_path = FIXTURE_STAGE;
 static uint64_t now_ms(void) {
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
@@ -143,12 +158,16 @@ cleanup:
     return ok;
 }
 int main(int argc, char **argv) {
-    const char *mode = argc > 1 ? argv[1] : "--sdr-only-test";
+    const char *mode = argc > 1 ? argv[1] : "";
+#if NSL_PRIVATE_MEDIA_FIXTURE
+    bool allowed = !strcmp(mode,"--sns-desktop") || !strcmp(mode,"--sdr-only-desktop");
+#else
     bool allowed = !strcmp(mode,"--sns-test") || !strcmp(mode,"--sdr-only-test") ||
         !strcmp(mode,"--sdr-fault-test") || !strcmp(mode,"--sdr-close-test") ||
         !strcmp(mode,"--sdr-no-connection-test");
+#endif
     char *end = NULL; unsigned long port = argc > 2 ? strtoul(argv[2], &end, 10) : 0;
-    if (!allowed || !port || port > 65535 || !end || *end) return 2;
+    bool valid=allowed && port && port <= 65535 && end && !*end;
     bool sockets = R_SUCCEEDED(socketInitializeDefault()), romfs = false;
     if (!sockets) return 1;
     log_fd = nxlinkConnectToHost(false, false);
@@ -167,6 +186,7 @@ int main(int argc, char **argv) {
     int result=1; unsigned char key[32]={0}, digest[32];
     const char *phase="romfs";
     sl_auth_store embedded={0}, existing={0}; char directory[128]={0};
+    if (!valid) { result=2; phase="arguments"; goto cleanup; }
     romfs = R_SUCCEEDED(romfsInit());
     if (!romfs) goto cleanup;
     phase="embedded_profile";
@@ -184,7 +204,7 @@ int main(int argc, char **argv) {
     if (!sha || mbedtls_md(sha,(void *)&embedded.device_id,sizeof(embedded.device_id),digest)) goto cleanup;
     char suffix[17];
     for (unsigned i=0; i<8; ++i) snprintf(suffix+2*i,3,"%02x",digest[i]);
-    snprintf(directory,sizeof(directory),"sdmc:/switch/nsl-sns-private-%s",suffix);
+    snprintf(directory,sizeof(directory),FIXTURE_DIRECTORY,suffix);
     char profile_path[192]; snprintf(profile_path,sizeof(profile_path),"%s/profile.bin",directory);
     phase="private_store";
     FILE *present=fopen(profile_path,"rb");
@@ -192,12 +212,12 @@ int main(int argc, char **argv) {
         fclose(present);
         if (sl_auth_load(&existing,directory) != 0 || existing.device_id != embedded.device_id) goto cleanup;
     } else if (!sl_auth_save(&embedded,directory)) goto cleanup;
-    save_stage("network_test");
+    save_stage(NSL_PRIVATE_MEDIA_FIXTURE ? "media_test" : "network_test");
     char *arguments[]={(char *)"sns-network-fixture",(char *)mode,directory,NULL};
-    sl_live_printf("SWITCH_SNS_NETWORK_BEGIN mode=%s network_only=1\n",mode);
-    phase="network_test";
+    sl_live_printf("SWITCH_SNS_" FIXTURE_KIND "_BEGIN mode=%s network_only=%d\n",mode,!NSL_PRIVATE_MEDIA_FIXTURE);
+    phase=NSL_PRIVATE_MEDIA_FIXTURE ? "media_test" : "network_test";
     result=sl_network_probe_run(3,arguments);
-    save_stage("network_destroyed");
+    save_stage(NSL_PRIVATE_MEDIA_FIXTURE ? "media_destroyed" : "network_destroyed");
     bool returned=return_profile(directory,key,(uint16_t)port);
     sl_live_printf("PROFILE_READBACK_ACK=%d\n",returned);
     if (returned) {
@@ -208,7 +228,7 @@ int main(int argc, char **argv) {
         }
         rmdir(directory);
     } else result=1; /* Preserve a possibly rotated identity for recovery. */
-    sl_live_printf("SWITCH_SNS_NETWORK_RESULT=%d\n",result);
+    sl_live_printf("SWITCH_SNS_" FIXTURE_KIND "_RESULT=%d\n",result);
 cleanup:
     sl_live_printf("PRIVATE_FIXTURE_CLEANUP phase=%s result=%d\n",phase,result);
     wipe(key,sizeof(key)); wipe(&embedded,sizeof(embedded)); wipe(&existing,sizeof(existing));
@@ -217,7 +237,7 @@ cleanup:
      * exact file, after unmounting RomFS, and report what could be observed. */
     const char *uploaded=argc ? argv[0] : "";
     const char *base=strrchr(uploaded,'/'); base=base ? base+1 : uploaded;
-    bool safe_name=!strcmp(base,"nsl-sns-network-private.nro") &&
+    bool safe_name=!strcmp(base,FIXTURE_NRO) &&
         !strncmp(uploaded,"sdmc:/switch/",13) && !strstr(uploaded,"/../");
     bool removed=safe_name && (unlink(uploaded) == 0 || errno == ENOENT);
     sl_live_printf("PRIVATE_NRO_REMOVED=%d known_path=%d\n",removed,safe_name);

@@ -190,7 +190,8 @@ if(NSL_PLATFORM STREQUAL "switch")
             "${CMAKE_SOURCE_DIR}/scripts/switch-metadata.py" VERBATIM)
     nx_create_nro(nsteamlink OUTPUT nsteamlink.nro NACP "${NSL_NACP}"
         ICON "${CMAKE_SOURCE_DIR}/assets/branding/icon.jpg")
-    set(NSL_PRIVATE_SNS_ROMFS "" CACHE PATH "Private network fixture RomFS; never a release artifact")
+    set(NSL_PRIVATE_SNS_ROMFS "" CACHE PATH "Private SNS fixture RomFS; never a release artifact")
+    option(NSL_PRIVATE_SNS_MEDIA "Build the separate private encoded-frame fixture" OFF)
     if(NSL_PRIVATE_SNS_ROMFS)
         if(NOT NSL_BUILD_TOOLS OR NOT NSL_BUILD_SNS)
             message(FATAL_ERROR "Private SNS fixture requires SNS and diagnostic tools")
@@ -200,20 +201,25 @@ if(NSL_PLATFORM STREQUAL "switch")
                 message(FATAL_ERROR "Private SNS fixture input is missing")
             endif()
         endforeach()
-        add_executable(nsl-sns-network-private tests/switch_remote_probe.c tests/remote_live.c
-            platforms/switch/system.c)
-        target_compile_definitions(nsl-sns-network-private PRIVATE NSL_HAVE_SNS=1
-            NSL_LIVE_EXTERNAL_LOG=1 NSL_REMOTE_LIVE_ENTRY=sl_network_probe_run NSL_DIAGNOSTICS=1)
-        target_include_directories(nsl-sns-network-private SYSTEM PRIVATE ${MBEDTLS_INCLUDE_DIRS})
-        target_link_libraries(nsl-sns-network-private PRIVATE nsl_sns nsl_ui nx)
-        nx_generate_nacp("${CMAKE_CURRENT_BINARY_DIR}/sns-network-private.nacp"
-            NAME "SNS private network test" AUTHOR "nsteamlink" VERSION "1")
-        nx_create_nro(nsl-sns-network-private OUTPUT nsl-sns-network-private.nro
-            NACP "${CMAKE_CURRENT_BINARY_DIR}/sns-network-private.nacp" ROMFS "${NSL_PRIVATE_SNS_ROMFS}")
-        # A raw RomFS directory alone does not make elf2nro notice changed
-        # file contents. Include both private inputs as explicit dependencies.
-        add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/nsl-sns-network-private.nro" APPEND
-            DEPENDS "${NSL_PRIVATE_SNS_ROMFS}/profile.bin" "${NSL_PRIVATE_SNS_ROMFS}/return.key")
+        foreach(kind network media)
+            if(kind STREQUAL "media" AND NOT NSL_PRIVATE_SNS_MEDIA)
+                continue()
+            endif()
+            set(fixture "nsl-sns-${kind}-private")
+            add_executable(${fixture} tests/switch_remote_probe.c tests/remote_live.c platforms/switch/system.c)
+            target_compile_definitions(${fixture} PRIVATE NSL_HAVE_SNS=1
+                NSL_LIVE_EXTERNAL_LOG=1 NSL_REMOTE_LIVE_ENTRY=sl_network_probe_run NSL_DIAGNOSTICS=1
+                NSL_PRIVATE_MEDIA_FIXTURE=$<STREQUAL:${kind},media>)
+            target_include_directories(${fixture} SYSTEM PRIVATE ${MBEDTLS_INCLUDE_DIRS})
+            target_link_libraries(${fixture} PRIVATE nsl_sns nsl_ui nx)
+            nx_generate_nacp("${CMAKE_CURRENT_BINARY_DIR}/sns-${kind}-private.nacp"
+                NAME "SNS private ${kind} test" AUTHOR "nsteamlink" VERSION "1")
+            nx_create_nro(${fixture} OUTPUT "${fixture}.nro"
+                NACP "${CMAKE_CURRENT_BINARY_DIR}/sns-${kind}-private.nacp" ROMFS "${NSL_PRIVATE_SNS_ROMFS}")
+            # A raw RomFS directory alone does not track changed file contents.
+            add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${fixture}.nro" APPEND
+                DEPENDS "${NSL_PRIVATE_SNS_ROMFS}/profile.bin" "${NSL_PRIVATE_SNS_ROMFS}/return.key")
+        endforeach()
     endif()
 endif()
 if(NSL_PLATFORM STREQUAL "desktop")
