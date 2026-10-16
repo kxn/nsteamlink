@@ -1,6 +1,7 @@
 # Steam Link Android 客户端协议逆向参考（v1.3.32 / libmain.so）
 
 > 范围补充：§30–31 纳入哈希固定的 Windows x86/x64 Host 和跨二进制互通。
+> §32 回到官方 Android shell/core 核对 FEC 的用户入口、测试推荐与配置生效链。
 > 早期章节的地址/不存在声明限于各自样本，不作为所有官方版本的协议全集。
 
 > **证据更正（2026-09-07）**：本文历史段落的“已验证”不能整体沿用。
@@ -1451,6 +1452,8 @@ host-stop，避免丢失清理期间到达的完成事实。这个检查只覆�
 `CPanelStreaming::OnPresetClicked` (`0xc9182c`) 直接调用上述 preset 工厂并保存设置。
 这里的 **EStreamingConfigPreset 与协议 EStreamQualityPreference 是不同枚举**，
 不能把 preset=1/2/3 当作 Fast/Balanced/Beautiful 的映射。
+`CPresetWidget` 构造函数 `0xc85d70` 的 UI 文本进一步将 preset=1/2/3
+对应为 **Default / Enhanced 1080p / Enhanced 4K**；原指令复播与推荐入口见 §32。
 辅助函数保留硬件解码、音频、输入等部分设置；因此上述写入也不是所有设备最终配置的完整清单。
 
 【结论】没有证据支持本项目旧有的“流畅=4M、均衡=6M、清晰=10M”是官方 profile。
@@ -2575,6 +2578,8 @@ x64 VA=`0x13acb1580/0x13acc1580`。表一致之外，§31 还验证实际发包�
 和 hasbit，尾调用 `CShellApplication::SaveStreamingSettings @0xc99a98`；该保存
 函数序列化/写设置文件，没有在函数内直接更改活动 connection。Fast preset
 会预先写 true，故不能把“先观察到丢包”当作 FEC 的必要前提。
+保存文件到串流核心启动/初始协商的完整静态链、其他预设与测试推荐条件见 §32；
+不能据 Host 接受运行时消息 99 反推客户端 checkbox 自动发送 99 或主动重连。
 
 客户端 `OnNegotiationInit @0x7ada6c–0x7ada9c` 将本地配置放进消息 4；
 `SetStreamingClientConfig @0x7b01c4` 的串流中发送条件见 §29.4：client state=6、
@@ -2773,17 +2778,166 @@ Host 接受字段、发送器已切模式、对端接收水位兼容，是三项
 
 依据上述直接证据，type 11 接收实现的边界为：
 
-- 先具备独立 type 11 分组/RS 和唯一 shard 计数，再在**初始协商**声明字段 25。
+- 先具备独立 type 11 分组/RS 和唯一 shard 计数，再按 §32 官方设置来源在初始
+  协商携带字段 25；不以“实现了接收能力”为理由强制该字段恒为 true。
   不在包头 parser 尚拒绝 11 时先发 true；不以本机 outgoing flag 拒收 host 的 11。
 - 启动时按本机能够实现的 codec 宣告能力。H.264/HEVC 的 type 11 与 Pyrowave
   的 type 12 分开；未知类型/codec 保持明确的不支持路径，不把 12 当 11 猜着解。
 - 配置收到/发送使用完整配置语义；省略字段会恢复默认。发送反馈、连接 ACK、
   FEC 开关和比例不合并；5% 由这里的 Host 决定，不自创一个客户端协商 percentage。
-- 不据丢包率自行热切字段 25，也不因收到 99 就重置本地全部接收序号。动态开关
-  需要明确的通道重建或经两端验证的同步契约；现有消息 99 本身不提供该保证。
+- 不据丢包率自行热切字段 25，也不因收到 99 就重置本地全部接收序号。
+  §31.3 的反例只否定无条件无缝切换的推论；它不证明官方主动重连、重建通道
+  或重置对端水位。动态行为须追到官方客户端实际触发/处理入口，不能自行补一套策略。
 - FEC 失败后仍按已核对的媒体序列/关键帧恢复处理完整组，不向 decoder 投喂
   未补齐 payload；保留 §26 原版重复片错误交付的反例作为项目必须防护的输入。
 
 这些约束限定 type 11 的接收/启动声明及已取证控制链，不恢复整体协议、所有
 平台/版本或生产集成的就绪判断。SNS/SDR、Pyrowave 私有编码、真实背压和 Switch
 解码/显示不被这些指令复播代替。
+
+## 32. 官方客户端 FEC 策略：设置、测试推荐与启动链
+
+### 32.1 材料与结论更正
+
+【证据】官方 Android 1.3.32 ARM64 同一安装包内的两份库：
+
+| 材料 | SHA-256 | 本节用途 |
+|---|---|---|
+| `libshell_arm64-v8a.so` | `15b2d79881eef0c47ed2f96c17d1d60a5f42d3285abcf9f512cfffdac5b238a2` | Qt 设置页、预设、连接前网络测试、保存/启动参数 |
+| `libmain.so` | `50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e` | 读取设置、串流核心的消息 4/99 |
+
+【撤回】“中途改变 FEC 就重建会话”是项目侧的建议，没有官方客户端入口证据，
+不作为官方策略或实现要求。§31.3 的 Host/Android 交叉反例也不能证明官方这样做。
+同样，具备 FEC 接收器不意味着官方默认恒开，不能据此把初始字段 25 强制改为 true。
+
+本节的“官方”明确限定为以上客户端样本。UI 中已有入口的静态链与原指令复播，
+不扩大为所有官方平台/版本、不存在任意间接调用的证明，也不等于实机抓包。
+
+### 32.2 用户入口与预设的实际 FEC 值
+
+【证据】`OnUnreliableFECChanged @0xc911a8` 将 QString 新值转为 uint，
+以 `value != 0` 写 panel+313（config+113），置 hasbit `0x4000`，尾调用
+`SaveStreamingSettings`。`OnPresetClicked @0xc9182c` 在点击对象不是当前活动
+预设时，读 widget+48 的预设编号，执行工厂 → Save → UpdatePresetState。
+点击当前活动预设直接返回。
+
+`CPresetWidget::CPresetWidget @0xc85d70` 明确包含下表三个 UI 名称。
+工厂和保留 helper 的地址为 `0xc8562c/0xc85b74/0xc85868`。
+
+| 实际入口 | FEC 结果 | 相关配置 |
+|---|---|---|
+| 手动设置 FEC=0 / 非 0 | false / true，并显式置字段存在位 | 保存用户选择 |
+| preset=0 | 保留输入值 | 不 Clear；不对应本节三个有名按钮 |
+| preset=1，Default | false，字段不存在 | Clear 后的默认 quality=Balanced(2) |
+| preset=2，Enhanced 1080p | true | quality=Beautiful(3)、HEVC、1920×1080 限制 |
+| preset=3，Enhanced 4K | true | quality=Beautiful(3)、HEVC、3840×2160 限制 |
+| `CreateStreamingConfigFastPreset` | true | quality=Fast(1)、HEVC；是网络测试推荐的工厂，不能等同于 Default 按钮 |
+| 没有设置文件 / ResetStreamingSettings | false，字段不存在 | 配置默认值；Reset 还保存结果 |
+
+helper 保留硬解/音频/输入/窗口等部分字段，**不覆盖 FEC**；所以不能声称工厂
+设置 true 后又被旧 FEC=false 恢复。预设的其他 codec 字段不代替 Switch 能力探测，
+不能为了复制 FEC 策略宣告本机没有的 HEVC/4K 能力。
+
+### 32.3 哪种网络测试会推荐、什么时候保存
+
+【证据】`SetPanelStateNetworkTest @0xc7029c` 读取已保存的
+`desired_bitrate_kbps`，决定 panel+272 的测试 mode：
+
+| 带宽设置 | mode | panel+600 的测试目标 kbps |
+|---|---|---|
+| -1，自动，quality=1/2/3 | 2 | 10000 / 15000 / 30000 |
+| 0，无限制 | 2 | 250000 |
+| 明确正值，例如 20000 | 1 | 该正值 |
+
+这个分支由带宽设置决定，不是由 FEC 开关决定。表内值是客户端给测试的目标，
+不是本项目应固定使用的串流码率。`CNetworkTest::StartNetworkTest @0xcaa778`
+发送消息 8；其中字段 5 叫 **bandwidth_test**，取 `mode == 2`，不是 FEC 请求位。
+Host 为测试设置 FEC 的另一个入口见 §30.4，不能混成正常会话字段 25 的自动调整。
+
+【证据】`HandleNetworkTestComplete @0xc71078` 先将 recommendation
+（panel+704）清为 0，再区分测试模式。mode=2 的 `0xc711dc–0xc71468`：
+
+| 测试结果 panel+596，kbps | 当前 quality | recommendation / 对话框 |
+|---|---|---|
+| <100000 | 已为 Fast(1) | 0，不推荐修改 |
+| <100000 | 不是 Fast(1) | 1，询问是否优化为 low bandwidth |
+| ≥100000 | 已为 Beautiful(3) | 0，不推荐修改 |
+| ≥100000 | 不是 Beautiful(3) | 2，询问是否优化为 high quality |
+
+单位由同一函数的 `"Streaming bandwidth test successful up to %1 Mb/s"` 与
+`value / 1000` 交叉确定；因此 100000 对应 100 Mb/s。该值所在成员还由
+`CNetworkTest::OnSetTargetBitrate @0xcab700` 从 `CSetTargetBitrateMsg.bitrate`
+记录；不能把这个门槛改写为实测丢包率或所有网络质量的总评分。
+
+mode=1 的丢帧/网络波动评分经 `CNetworkStats::GetResult @0xca930c` 选择结果
+说明，不写 recommendation=1/2，也不直接保存 FEC；复播包含零丢帧、轻微丢帧、
+10% 丢帧和完全没收到帧。不能从“网络结果不好”泛化出必然开启 FEC。
+
+【证据】结果页把 `finished(int)` 连到
+`OnNetworkTestComplete(int) @0xc72164`。有推荐时显示 OK/Cancel；只有
+`result == 1` 且 recommendation=1/2 时，才 Load → 应用预设 → Save：
+
+- recommendation=1：`CreateStreamingConfigFastPreset`。
+- recommendation=2：`BCanDisplay4KVideo` 为真选 preset=3，否则 preset=2。
+- 取消，或 recommendation=0：不改/保存配置；既有 FEC=false 可以继续保持 false。
+
+确认值也来自此客户端自身：`CPanelDialog::accept @0xc7ec28` 发出
+`accepted` 和 `finished(1)`；`reject @0xc7ec60` 发出 `rejected` 和 `finished(0)`。
+不是仅凭 Qt 常规约定把数字 1 命名为“用户确认”。
+
+之后关闭结果页、保存网络统计。处于连接流程（panel+208=3）时，清掉本次测试
+标志 panel+212，再回 `SetPanelStateConnecting`；另一个入口（=2）返回应用状态。
+这是连接前测试结果页的流程，**不是运行中改变 FEC 强制断线重连**。
+
+### 32.4 保存值如何进入串流、消息 99 能证明什么
+
+【证据】保存/启动/核心链如下，各地址仍分别属于各自库：
+
+1. shell `SaveStreamingSettings @0xc99a98` 序列化 config，向 storage path 的
+   `streaming_settings.bin` 调用 BSaveFile；其完整成功/失败分支没有调用活动
+   CStreamClient、发送配置消息或启动重连。
+2. shell `StartStreaming(QStringList) @0xc98f08` 重新 Load；
+   `BUpdateStreamingSettingsForCodec @0xc9d7f8` 补 codec capture limit，
+   不改 FEC。随后 helper `0xc9de50` 构造
+   `streaming_client --settings <storage>/streaming_settings.bin ...` 参数。
+   `0xc99780–0xc9980c` 保存启动参数、标记 s_bStreaming 并退出 shell Qt 主循环。
+3. core `SDL_main` 的 `--settings` 分支 `0x75b588–0x75b63c` 调用
+   `SetSettingsFile @0x7a5a28`；无指定路径时 `0x75c418–0x75c484` 使用同名文件。
+   setter 调 `LoadStreamingClientConfig @0x7a5a50`，解析到 client+456。
+4. core `OnNegotiationInit @0x7ada6c–0x7ada9c` 把这个配置复制入消息 4。
+   Host 如何接收并应用字段 25 已在 §30 的原指令案例中独立验证。
+
+【证据范围】固定 core 的 LoadStreamingClientConfig 直接调用点只有
+SetSettingsFile；SetSettingsFile 的两个直接调用都在 SDL_main。
+已枚举 `SetStreamingClientConfig @0x7b01c4` 的 13 个直接/尾调用，涉及 Init、
+桌面/窗口尺寸、缩放、降低视频分辨率、性能浮层、麦克风和 player delegate；
+这些已定位调用不是“丢包率触发 FEC 开关”的入口。这个范围不覆盖未知间接
+调用或其他版本，不能把未发现说成全局不存在。
+
+运行时消息 99 仍是官方真实配置通路，不能删除：client state=6 且 bool bit0=0
+才发送；incoming 99 CopyFrom/通知 delegate/保存，见 §29.4。**完整配置中的 FEC
+应跟随已有值**；改变窗口、麦克风等其他字段时，不应因省略字段 25 意外关闭 FEC。
+API 能更新配置不能推导为 UI 热切换；也没有客户端证据支持项目主动添加
+“丢包自动开关、自动重连、收到 99 就清全窗口”的策略。
+
+### 32.5 原始指令复播与边界
+
+```sh
+python3 scripts/audit-steam-client-fec-policy.py \
+  --binary build/video-recovery-re/libshell-arm64.so \
+  --output build/video-recovery-re/client-fec-policy.json
+```
+
+需要 `unicorn`、`pyelftools`，材料 SHA 在入口固定校验。
+`scripts/fixtures/steam-client-fec-policy-reference.json` 固定 73 场景：
+10 个预设、3 个手动 FEC、9 个测试 mode/目标选择、9 个 100000 边界/quality、
+4 个固定码率丢帧评分、12 个预设点击、缺文件/Reset 各 1、24 个确认/取消回调。
+所有场景都从相应完整官方函数入口进入，未替换推荐条件、preset 写值或
+generated config 构造/复制/Clear；不是直接注入 recommendation 后就宣称触发链完整。
+确认回调的 recommendation 输入由独立结果页场景核对。
+
+替身为 Qt 渲染/字符串值/平台能力、分配/析构、已完成的 protobuf 进程初始化、
+空 repeated limit 容器操作、文件输入/保存边界，以及后续连接/页面切换。
+预设的嵌套 resolution limit 构造仍执行原版指令。完整 Save/启动参数/core Load
+链在本节为静态反汇编证据，**不是本脚本的端到端文件/wire 测试**；也没有真实
+Qt 事件循环、Steam 认证会话、并发、Switch 解码或显示的证明。
