@@ -1512,13 +1512,19 @@ outer thinker 初始取当前+2秒，再收紧到每个 session 的最早期限�
 migration 由 stats 中 migrate_request_ip/port 触发，客户端分别保存 pending 状态及 target relay index。
 `ThinkPendingMigrationRequest 0x8190a8` 先清除待处理标志，然后验证：目标地址必须与当前 relay 不同；
 必须属于网络配置中已知 POP，而且与当前节点属于同一 POP；拒绝记录过通信问题的目标地址，以及
-关闭节点缓存中 shutdown 时间已过的目标。有效目标可创建/取得 RelayServer，进入等待该 target 的状态
+关闭节点缓存中停止接纳新连接期限已过的目标。有效目标可创建/取得 RelayServer，进入等待该 target 的状态
 （`0x819148–0x8193c0`）。不是收到任意 IP/port 就转发媒体。
 
 `CheckCancelMigrationRequest 0x818c7c` 在没有 active primary、primary 不再公布迁移目标、
-已保存 target 与当前公布地址不符、目标已收到 shutdown warning 或 alternate penalty>=8191 时
+已保存 target 与当前公布地址不符、目标 root 已进入 draining 或 alternate penalty>=8191 时
 清除 migration state/target（`0x818ca4–0x818ed4`）。该状态仍属于同一个端到端连接；
 不生成新的配对 PIN、开流 request_id 或 pairing secret。
+
+**更正**：此前把迁移校验所读的缓存期限笼统写成 shutdown 时间，应撤回该等同。
+`RecvDowntimeWarning 0x817db0` 分别保存真正停机时刻和随机提前 45–60 秒的避让时刻；
+`0x819318` 读取后者（entry+32），`0x823590` 才使用真正停机时刻（entry+24）。
+同样撤回“收到任何 shutdown warning 就取消迁移”的宽泛表述：取消函数检查 root.draining；
+尚未到避让时刻的未来预警不自动满足这个条件。具体更新、等号及调度规则见 §21.7。
 
 ### 18.7 SDR 客户端复刻的范围与接口
 
@@ -1534,9 +1540,10 @@ session、记住失败地址、探测、重试、保活及接受/取消迁移，
 
 **客户端策略的覆盖要求**：包括 POP 内候选的全部比较、备用 session 的创建/淘汰、
 失败地址缓存期限及探测频率的全部分支。`ThinkSelectServer_SelectActiveSessions
-0x81c55c–0x81ddb8` 与 P2P override `0x837a90` 表明其还比较 min/current/max、额外 penalty、
+0x81c55c–0x81ddb8` 与 P2P metrics override `0x837f2c` 表明其还比较 min/current/max、额外 penalty、
 当前 primary、待确认探测、样本数与网络配置；这些函数就在固定客户端 ELF 中，不是不可见的
-服务端选择器。§18.5 列出的常量和分支不足以定义这两个完整函数，不能据此宣称该层已完整复刻。
+服务端选择器。§21 展开这些客户端决策并执行原始指令复核；§18.5 的常量表单独不足以实现它们。
+§18.7 早先将 P2P override 标为 `0x837a90` 的地址有误，该处是外层 ThinkSelectServer，现予纠正。
 本文不把未完整命名的对象偏移硬写为公式。使用自有简化策略时应明确为本项目策略，和 §14
 已确认的 transport 选择分开；只恢复字段而自行猜这些策略不满足官方客户端行为一致的目标。
 
@@ -1563,8 +1570,9 @@ session、记住失败地址、探测、重试、保活及接受/取消迁移，
 
 - PC 主机/Steam 服务内部的配对槽位寿命、风控、Proof 更新中断后的主机回滚及证书签发策略。
   客户端按实际返回结果处理，不自行伪造服务端政策。
-- 不依赖官方网络库的完整 SDR **客户端**实现。§17–§18 已给出 schema、challenge、签名申请、
-  数据封装和 revision/错误恢复规则；§18.7 所列客户端库内调度规则仍不能由这些局部证据证明完整。
+- 不依赖官方网络库的完整 SDR **客户端**实现。§17–§18 给出 schema、challenge、签名申请、
+  数据封装和 revision/错误恢复规则，§21 给出客户端选择、探测、缓存、迁移与快照契约；
+  静态规格和合成对象执行仍不证明一个独立 backend 已能互操作。
   它们属于客户端复刻范围，不能用 §14 的 P2P transport 选择替代。relay 服务端内部算法则不属于
   本项目复刻或验收要求；所需的是正确处理其可见输入及返回结果。
 - 不同出口 NAT/CGNAT/对称 NAT、路径变化及长时间串流的互操作实测；静态分支存在不能证明
@@ -1626,3 +1634,288 @@ key-exchange 缓存测试在进入新密码计算前停止，不证明整个授�
 它不等于完整客户端执行、主机互操作或真实公网丢包测试，也不能把未覆盖输入当成已验证。
 不同架构/版本需要单独核对；本文 x86 shell 的授权分派另有静态指令证据，不能用 arm64 仿真
 替代 shell 的全部运行时验证。
+
+## 21. SDR 客户端的选路、探测与故障策略
+
+本节将 §18 的客户端内部分支展开为实现约束。Evidence 均来自 §17 固定 AArch64 样本；
+函数名、地址和字段偏移用于定位证据，不要求新实现复制 C++ 对象布局。
+时间比较使用客户端单调微秒时钟；网络配置、对端 routes、服务器响应和随机数都是输入。
+初始化默认值不能从 ELF 的零填充 BSS 推断，必须读取配置注册代码。
+
+### 21.1 三组列表与两种 ping 数量
+
+**Evidence**：`CConnectionTransportSDRBase` 的 active 列表位于 +20/+28，数量 +36；
+全部已建立 session 列表位于 +40/+56。`CP2PRouteSelector::BuildListsForServerSelection
+0x83a124–0x83a8c8` 另生成两份按本地 POP 去重的候选列表：
+
+- `selector+72`：每个本地 POP 取所有已知方向组合中的最佳路线。
+- `selector+48`：每个本地 POP 只在**远端 POP 有非空 routing token**的组合中取最佳路线。
+
+选择组合和排序使用的分数为：forward score 不是 INT_MAX、reverse score 为 INT_MAX 时取 forward；
+二者都不是 INT_MAX 时取向零截断的平均数；forward 为 INT_MAX 时仍为 INT_MAX。
+这里必须区分占位值 INT_MAX 和新路线尚未取得 reverse score 时写入的 `0x0fffffff`：
+后者仍参与平均，会形成很大的比较值，不能把所有“大数/未知”统一改为“忽略 reverse”。
+只接受 forward score < `0x0fffffff` 的结果。相同分数不另加 POP ID 排序条件。
+`0x8381b4–0x8381f4` 先对 `selector+72` pursue 最多 2 个，再对 `selector+48` pursue 最多 1 个。
+这是两个调用各自的配额，不是“全局只建立两个 session”。
+
+active 列表最多两项（primary、backup），但全部 session 可以更多；退出 active 列表不立即销毁。
+backup 尽量来自与 primary **不同 SharedClusterData 对象**的 POP。
+找不到这种候选时，该轮不主动清除已有 backup，甚至会保留本轮 P2P metrics 不再合格的旧 backup
+（`0x81d810–0x81d93c`；离线输入覆盖这一行为）。
+
+**两种数量不可混用**：cluster 的 front tracker 只保存最近 3 次独立 ping；
+session metrics 的 +16 是近期**有效时间桶数**。切路门槛 15 是有效桶数，不能用短时连收 15 包替代。
+cluster+32 为最近一次 ping 接收时刻，+64 为三次样本中最老一次的接收时刻；
+因此读取 +64 的 5 秒分支是在要求三次样本都足够新。
+类型布局可由开源 `steamnetworking_statsutils.h` 的 PingTracker / PingTrackerForRouteSelection
+交叉理解，实际常量与分支仍以固定 APK 指令为准。
+
+### 21.2 路线分数与 active 主路切换
+
+**Evidence**：`ThinkSelectServer_SelectActiveSessions 0x81c55c–0x81ddb8`：
+
+1. 先将所有已建立 session 的 score 重置为 `0x0fffffff`、排序序号置 -1。
+   遍历全局 RelayServer，调用 base metrics 和 P2P override。base metrics 失败且 relay 仍有
+   session 时走 RemoveRelayServer；P2P override 失败只是不列入候选，不等同于销毁 session。
+2. 对合格候选计算 §18.5 的 current/min/max score。排序键是
+   **current score 升序、migration 标志升序、shutdown 剩余秒数降序**；
+   不是按 min score 排序（原始 comparator 位于 `0x8327c0–0x834000`）。
+3. 尚无合格 primary 时直接取排序第一项。已有 primary 时，依序检查排在它之前的候选，
+   遇到 primary 即停止。下文 `best` 始终指排序第一项，`candidate` 指本轮正在比较的项。
+4. 若没有 pending migration，而且
+   `current.minScore < trunc_f32(candidate.maxScore + 10 + 0.1f*candidate.maxScore)`，
+   同时 `current.shutdownSeconds >= best.shutdownSeconds`，停止比较并保留 current。
+   f32 运算及最终向零截断属于该样本的规则。
+5. candidate 的 `lastReceived+250000 < now` 才算 stale；恰好 250 ms 仍为 fresh。
+   下列情况允许跳过常规 15 桶确认，但仍要求 fresh；stale 时只请求探测并继续保留 current：
+   current 的 root 已进入避让、current alternate penalty >8190、best migration=-1、
+   current migration=1。
+6. current 有接收空档时，仅当 candidate 的 lastReceived 不早于 current 且 candidate fresh
+   才切换；否则探测 candidate。空档使用 metrics+64，不能用“没有新视频帧”代替。
+7. 若 `candidate.maxScore+50 < current.minScore` 且
+   `best.otherPenalty+50 < current.otherPenalty`，也走第 5 项的强制新鲜度路径。
+   两个条件都为严格小于；该分支不是“ping 好 50 ms 就无条件切换”。
+8. 常规确认要求 candidate cluster 至少 3 个 front 样本，且最老一个 `received+5秒 >= now`。
+   不满足则 candidate 需要补探测。满足时，best 的有效桶数 >=15 且 candidate fresh 才算
+   candidate 已确认；桶数不足且尚未到 probe 时刻，即使 fresh 也不立即切换。
+9. current 也须 >=15 有效桶才能正常切换。current 不足时，检查
+   `min(candidateCluster.lastPingSent+200ms, candidateCluster.currentBucket.end) <= now`，
+   到期则探测 current；candidate 需要补探测时也探测 candidate，保留 current。
+   此处读取的是 candidate cluster 的 tracker，移植时不能擅自改读 current tracker。
+
+上述请求探测的分支都先检查 RelayServer 是否已有 pending ping，避免重复发送。
+切换可复用现有 backup；旧 primary 是否留为 backup 由随后不同 POP 的选择决定。
+主路改变会重置该主路统计快照/接收计数/失联原因，并提前调度 connection 和 session thinker。
+跨 POP 时用 local front+remote front+interior 为端到端 ping 提供初值。
+ClientSwitchedPrimary（type 16）遥测还要求旧主路时间非零、旧主路收到至少 101 包且旧地址/POP
+有效（`0x81d4b0–0x81d7dc`）；不能据缺少该遥测判定没有发生切路。
+
+### 21.3 pursue session 的配额、准备与重试
+
+**Evidence**：`ThinkSelectServer_PursueSessionsOnClusters 0x81df30–0x81e504`：
+
+- 每项路线记录本轮序号；配额计算的是可继续使用或正在取得的候选，不是扫描过的项数。
+  已有本连接、同 POP 的合格 session 可直接占一份配额，不重复申请。
+  root 避让、alternate penalty>=8191 或不满足地址限制的旧 session 不走该复用路径。
+- 配额尚为 0 且迁移目标属于本轮 POP 时，优先追求迁移目标；否则由 §21.4 的共享 chooser 选 relay。
+- 申请前要求 challenge 非零、server_time 非零；challenge 接收年龄 <=10秒；
+  relay lastReceived 非零且年龄 <=20秒；cluster 至少 3 个 front 样本、最新样本年龄 <=20秒；
+  relay 连续 ping 失败数为 0。challenge 超过 10 秒会先清零。
+- 缺少这些条件时，没有 pending ping 才发准备探测；有 pending 则等待。
+  连续 ping 失败 <2 时，这条等待/探测中的路线仍占配额；>=2 不占，可继续追求后面的路线。
+- 一次 pursue 调用中，前一条路线已启动/等待取得时，后续路线不会再实际发新的 session request。
+  已有 session 的直接复用本身不触发此限制。
+- 满足准备条件且该 relay 没有 pending session request 时，调用派生申请函数，随后设置
+  `requestDeadline=now+750000`。此期限由调用方无条件写入，不能由发送返回值擅自省略。
+  deadline 超时由全局 thinker 处理，不能只在应用再次发媒体时检查。
+
+全局 thinker 对 session request 第 1/3 次超时只清 pending 并增加计数，
+第 2 次额外发 ping，第 4 次移除 relay；真正重申请由随后选路/pursue 驱动。
+这一交替探测规则来自递增前的失败数奇偶判断（`0x823394–0x8233bc`、`0x8234e8–0x823508`）。
+
+### 21.4 一个 POP 内选择具体 relay 地址
+
+**Evidence**：共享 helper `0x81e504–0x81eb90`，同时被连接选路和全局探测使用：
+
+1. 遍历所有 SDR clients；任何客户端已有同 POP 的 migration target 时优先返回它。
+2. 再检查该 POP 已创建的 relay。排除 root 避让、alternate penalty>=8191，以及不满足
+   调试地址限制的项。按其任意 session 在 owner active 列表中的最小序号选择：primary=0、
+   backup=1、未激活=INT_MAX。序号相同时，优先真正停机剩余时间更长的 root；完全相同保留先遇项。
+3. 没有可复用项时，先尝试 cluster last-good address；它须有 IP/port、不在最近失败缓存，
+   且没有已过避让期限的停机记录，并符合地址限制。
+4. last-good 不可用时，最多 **99 次**随机选地址。过滤无效 IP/port、最近失败缓存和已经
+   过避让期限的停机记录；确认地址归属当前 POP，再创建/查找 RelayServer。耗尽返回 -1。
+   不要写成无限重试或把 99 次改为“直到找到一个”。
+
+`SharedClusterData::SelectRandomAddress 0x8155cc–0x815730` 在没有调试限制时从 POP 广告的
+扁平地址空间均匀选 index，再由 POP::GetRelayAddressAtIndex 解出 IP/port。
+有地址限制时，对属于该 POP 的 IP/port 区间按可选端口数加权抽样；没有有效限制结果才退回
+普通随机选择。复现随机路径要求把随机数源也作为输入，不能期待不同随机数产生相同目的地址。
+
+### 21.5 全局探测、初始化与路由可用判定
+
+**Evidence**：`SteamDatagramClientThinker::Think 0x82318c–0x825370` 每轮将自己调度到
+now+100ms，另由外部事件提前唤醒。固定 APK 在 `0x83410c` 的配置注册代码给出：
+
+| 配置 | 默认值 | 使用方式 |
+|---|---:|---|
+| SDRClient_ConsecutitivePingTimeoutsFailInitial | 2 | 从未收到回复且无 session 的 root，达到该连续失败数即可移除 |
+| SDRClient_ConsecutitivePingTimeoutsFail | 4 | 一般 relay 达到该连续失败数移除 |
+| SDRClient_MinPingsBeforePingAccurate | 8 | 初始探测次数及测量准确性门槛 |
+| SDRClient_LimitPingProbesToNearestN | 20 | 实际取 max(5, 配置值) |
+
+配置名中的 `Consecutitive` 是样本本身的拼写。字段可能被配置覆盖，默认值不是硬编码协议字段。
+POP 的 tier（默认 1）与 ping-only 类型由网络配置 JSON 解析（`0x898d74–0x898e0c`），
+不能简单地探测列表里的前 20 个 IP。
+
+调度先按 cluster 的 routing score 排序，未知/过大值（>=5001）用随机 5000..5100 排序值打散。
+对合格 POP 构造探测优先级，较小者优先（`0x823d24–0x82445c`）：
+
+- 受本地 override 影响的 cluster 初始探测不足 8 次时使用约 -1e30 的紧急优先级。
+- 无 ping 的初始候选采用上述排序值；普通 tier>=1 候选再加 10000，先为其他层的初始测量让路。
+  已多次失败的候选走较低优先级的重测分支。
+- 普通重测优先级为
+  `20000 + (ping+50+typeAdjustment)/(max(0, secondsSinceLastPingSent)+0.5)`；
+  `typeAdjustment=0` 用于普通 relay POP，其他类型为 75；ping 未知的退避分支另取排序值+2000。
+  所有这些优先级都用 f32，不能直接改成整数延迟排序。
+- 完成准确测量且无活动连接时不持续密集探测；有活动连接时，足量样本且最近一次 ping 接收
+  不超过 120 秒仍跳过重测。不可达节点在主备齐全时还受最后探测发送+120秒约束。
+- 发送前对候选优先级升序排序。尚欠其他层初始测量时将 cutoff 收紧为 10000，
+  否则约 1e30；priority>=cutoff 不发。每轮最多发 10 次（缺少 primary/backup 或无活动连接），
+  主备齐全且有活动连接时最多 1 次。找不到 relay 或已有 pending ping 的项不消耗发送预算。
+  本路径 EProbeTOSCase=4；不能擅自对全部探测使用不同 TOS。
+
+**路由数据可用**与“已经连上某个 relay”分开保存（`0x824bbc–0x824cc8`）：
+初始化已开始且已测普通 POP 数 >= `min(15, trunc(totalOrdinaryPOPs*80/100))` 时，
+再满足任一条件即可允许选路：初始测量已超过 7 秒；至少一个保守 ping<30ms；
+至少两个 <75ms；至少四个 <150ms。
+普通 POP 的已测计数允许总接收样本数=2，延迟直方图计数则要求 >2，且 front ping 有效、
+tracker 至少两次接收、cluster 已判可达（`0x823f8c–0x823ff0`）。
+完成整轮初始测量也会置 good-enough，并提前唤醒各连接 thinker
+（`0x82468c–0x8246dc`）。这不是要求应用等待所有 POP 或等一个固定超时才连接。
+
+### 21.6 超时、失败缓存与恢复
+
+**Evidence**：全局 thinker `0x8232ec–0x823a04` 和 ReceivedPacket `0x812834–0x812a28`：
+
+- pending ping 的 deadline<=now 时清除 pending、relay 连续失败+1；root 同时增加 cluster
+  连续失败计数。初始 2 次/一般 4 次的移除判定使用配置值。成功收包会清零 relay/cluster 失败。
+- root 被失败策略移除时更新该 POP 的失败地址缓存；alternate 的失败另记其状态，不能把
+  alternate 的地址失败一律记成 root UDP 地址失败。
+- 失败缓存最多 3 项，每项为完整 IP/port 和失败时刻。同地址重记先移除旧项再追加；
+  否则数量已有 3 项，或已覆盖 POP 的全部广告地址时，先丢最老一项再追加。
+- 只有 cluster 失败累计>4 或此前失败地址已有至少 2 项时，才在这次失败处理把 cluster
+  reachability 置 -1；不能把一次地址失败直接解释成整个 POP 不可达。
+- 缓存项在 `failedTime+120秒 < now` 时过期，等号保留。
+  清理后若仍覆盖 POP 全部广告地址，则另丢最老一项，使至少一个地址可以重试。
+  cluster 最后发送探测超过 120 秒时，重置其累计失败状态；等号不重置。
+- 任何通过上层来源/格式检查而进入 ReceivedPacket 的有效包都会刷新 relay lastReceived、
+  保存 root 地址为 last-good、移除匹配的失败缓存项，并将 cluster reachability 改为 1。
+  这一步不只针对带 ping 样本的 RouterPingReply。
+- 全部已建立 session（包括当前不活跃的项）在 `lastReceived+60秒 < now` 时销毁；
+  等号保留，按倒序删除，以免列表变动跳过元素（`0x82350c–0x82358c`）。
+
+### 21.7 停机预警与迁移输入
+
+**Evidence**：`RecvDowntimeWarning 0x817db0–0x817fc0` 保存两个期限：
+
+```text
+shutdownTime = now + signed_secondsUntilShutdown * 1000000
+avoidTime = shutdownTime - trunc(WeakRandomFloat(45,60) * 1000000)
+```
+
+首次插入取一次随机值；已有记录仅在新 shutdownTime **严格早于旧值 3 秒以上**时更新并重取随机值。
+推迟、相同、只提前 3 秒均不更新。全局 thinker 到 avoidTime（<=now）后设置 root draining 并
+通知关联 session；到 shutdownTime（<=now）移除 relay，并非等 ping 超时后才避开。
+同时维护 `floor((shutdownTime-now)/1秒)`，供 §18.5 的渐进惩罚使用。
+
+chooser 和迁移校验的排除条件为匹配记录的 `avoidTime < now`；恰好相等仍可通过该局部校验，
+而全局 thinker 的 draining 更新使用 <=。复现边界需保留事件处理顺序。
+停机记录在 `shutdownTime+180秒 < now` 后清除；样本快速测试开关启用时为 60 秒。
+因此“记录还存在”不等于“节点当前一定不可选”。
+
+迁移请求从 state=1 开始处理时，先清除 pending 和旧 target；未知 POP、跨 POP、失败缓存命中、
+已经过 avoidTime 都终止此次请求。合法且取得目标 relay 后转为 state=2、保存 target index；
+创建失败保留 state=0/target=-1。目标是否成功建立 session 由随后 pursue 和 active 选择完成。
+这是客户端响应服务器迁移输入的行为；服务器为什么挑中这个 IP 不属于客户端复刻目标。
+
+### 21.8 原始指令复核的入口与替代边界
+
+[`tools/steam-sdr-policy-audit.py`](../tools/steam-sdr-policy-audit.py) 对固定 ELF 执行上述客户端指令：
+
+```sh
+python3 tools/steam-sdr-policy-audit.py \
+  --elf /absolute/path/to/libmain.so \
+  --report build/steam-sdr-policy-audit.json
+```
+
+报告逐组给出用例数，不读取真实凭据、不连接网络、不改变模拟器或防火墙。
+active 选择完整执行 `0x81c55c–0x81ddb8`，其排序/comparator 使用原始指令；
+pursue、ReceivedPacket、BuildListsForServerSelection、具体 relay chooser、停机预警和迁移校验
+同样执行完整函数。metrics provider、POP 地址查询、随机数、申请发送、锁和外部通知是明确的桩。
+因此 selector 的用例证明“给定这些 metrics 后如何决策”，不替代 §18.5 对 metrics 生产者的核对。
+
+全局 probe priority/budget/readiness、超时和缓存测试分别执行函数中的明确片段，
+到指定控制点即停止；不声称执行整个全局 thinker、实际线程、socket 或跨 tick 的调度。
+缓存和 schema 以外的 SDK 未建模分支不会被静默跳过。
+原始指令结果与手写预期不符时应修正规格或查明 fixture 输入，不能让桩替代被核对的策略。
+
+### 21.9 对端路线信息的生成、筛选与快照迟滞
+
+**Evidence**：路线建立 `FindOrAddRoute 0x83988c–0x839b9c`、对端快照导入
+`MarkRemoteRelaysAndRoutes 0x839b9c–0x83a124`：
+
+- POP 先映射为网络配置中的索引。未知 POP 不生成路线；canonical POP 映射用于查 interior ping。
+  本地 front 不可用、interior ping 不可用时不能新增路线；远端 front 不可用在调用方过滤。
+- 新路线的 forward score 为
+  `F(localFront+remoteFront)+interiorPing+localPenalty+remotePenalty+interiorPenalty`，
+  `F(x)=x+trunc(x/10)`。route 另保存 interior ping/quality/penalty 和远端 token 是否非空；
+  reverse score 初始为 `0x0fffffff`，不是 INT_MAX。
+- interior ping 从 SharedClusterData 缓存取得；不存在或 ping<0 时返回 -1、quality=2、penalty=0。
+  有有效条目时保留其 penalty；条目的测量时间非零时 quality=0，否则 quality=1。
+  `EDataCenterPingType=1` 还过滤缓存中的相应禁止标志，但 P2P FindOrAddRoute 调用使用 type=0
+  （`GetPingToDataCenter 0x8159dc–0x815aa0`）。
+- 对端 RelayCluster 的 ping、penalty、token 更新 remote metrics。对远端有 token 的 POP，
+  允许枚举所有本地 POP；另加入配置给出的最近候选及调试 POP 限制内候选，合并重复组合。
+- 对端 Route 的 my_pop_id 是**它的**本地 POP，对应本端 remote；your_pop_id 对应本端 local。
+  有 interior_score 时重新计算 reverse score：
+  `F(localFront+remoteFront)+localPenalty+remotePenalty+peer.interior_score`。
+  没有 interior_score 才使用兼容 legacy_score；缺失两个分数字段的项不能作为有效反向分数。
+
+**Evidence**：`MarkItemsToSend 0x83b1d8–0x83c848` 与
+`MessageToPeerBuilder::TruncateLists 0x83c848–0x83c920`：
+
+1. 每条路线维护 forward/reverse 的用于公布比较的分数。原值>9999 按 `0x0fffffff` 处理；
+   验证旧快照时，新出现且旧快照没有的项额外增加 `trunc(score/15)+5`，给旧内容迟滞优势。
+2. 当前使用的路线被标为强制公布，临时 rank=4，比较分数设为 `-0x0fffffff`。
+   其余路线执行四次排序：优先内部标志/forward/reverse、优先内部标志/reverse/forward、
+   reverse/forward/内部标志、forward/reverse/内部标志；数字分数升序，内部标志 true 在前，
+   最后按 local/remote POP 索引升序打破平局。该 builder 在初始化时将内部标志清零；
+   强制使用标志是另一个字节，不能与之混淆。
+3. 每轮排序的前两条**写为 rank=3**，包括此前临时 rank=4 的强制项；
+   接下来的两条在尚无 rank 时设为 1。
+   四轮的结果取并集；不能简化为“最终只发送 4 条路线”。调试 POP 限制启用时只取符合限制的前缀。
+4. cluster 初始比较分数为 local front+local penalty；对端明确使用的 cluster 初始 rank=2。
+   已选路线将其**本地端** cluster 的 rank 提高到路线 rank，确保必需的 token/POP 信息同批公布。
+5. cluster 按比较分数、POP 索引选择，前四个提高到至少 rank=3，接下来两个在尚无 rank 时设为 1；
+   不可用 front 或负 override 状态使这段选择停止。它与路线带来的必需 cluster 也是取并集。
+6. TruncateLists 按 rank 优先排序，在第一个 rank=0 处缩短列表。
+   它没有再施加一个固定“最多 4 routes / 6 clusters”的总数上限。
+7. RelayCluster 序列化携带所选 session 的 token、POP、ping 和 penalty；Route 公布
+   `interior_score=interiorPing+interiorPenalty`，不是把包含两端 front 的总分填进去。
+   真正重建后才 revision+1，清除旧的重发期限，并要求对端获知新快照
+   （`0x837468–0x8378c4`）。
+
+**旧快照复用**：`CheckOldMessageValid 0x83aa9c–0x83b1d8` 先逐项校验旧内容，再检查它是否
+覆盖仍必须公布的内容。penalty 差值达到 `5+trunc(min(old,new)/15)` 就重建（等号重建）。
+ping 差值到达同一阈值时不立即重建：若旧 ping 仍在当前近期 min/max 区间内，可继续复用；
+超出区间才重建。token 必须逐字节相同；旧快照有 token 而当前没有匹配 session 也不能复用。
+Route 的旧 interior_score 与当前 interiorPing+interiorPenalty 按同一阈值校验。
+最后以“验证旧快照”模式重新执行 MarkItemsToSend；旧快照漏掉任何 rank>=3 的必要项就失效。
+这些迟滞只控制 routes 快照更新，不改变 §21.2 的 active 切路阈值。
+
+连接层的调用顺序由 `CConnectionTransportSDRBase::ThinkSelectServer 0x81bf60–0x81c0e4`
+约束：只有 wire state 1..3 执行；先取消无效迁移，再评估已有 active sessions，
+仅在全局 good-enough 为真后才 pursue 新 session。不能把 good-enough=false 解释为停止维护
+已经建立的路径。该分派、快照筛选及其原始排序器也包含在 §21.8 的离线执行入口中。
