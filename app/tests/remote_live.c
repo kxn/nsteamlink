@@ -324,7 +324,8 @@ int NSL_REMOTE_LIVE_ENTRY(int argc, char **argv) {
                     }
                 }
                 if (injected && now_ms()-fault_at > 20000 && !fault_success) {
-                    puts("SDR_RECOVERY_TIMEOUT=1");
+                    printf("SDR_RECOVERY_TIMEOUT=1 generation=%u dropped_tx=%u dropped_rx=%u usable_e2e_primary=%u different_pop=%u\n",
+                        fault[0], fault[1], fault[2], fault[3], fault[4]);
                     l.failed = true;
                 }
             }

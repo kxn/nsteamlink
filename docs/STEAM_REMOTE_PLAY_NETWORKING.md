@@ -1504,8 +1504,12 @@ base metrics `SetSessionSelectQualityMetrics 0x81c3f0` 还执行：
 - shutdown 剩余秒数大于 29 无额外惩罚；<=0 加 1000；1..29 时加
   `floor((30-seconds)*1000/30)`，另叠加 alternate transport penalty
   （整数实现 `0x81c43c–0x81c4a8`）。
-- relay 已记录连续接收失败且距最后接收至少 500001 微秒，记录 connection gap；达到
+- RelayServer 已记录连续接收失败且距最后接收至少 500001 微秒，记录 connection gap；达到
   1750001 微秒再加 100 分（`0x81c4ac–0x81c4e4`）。单纯媒体没新帧不是该条件的替代。
+  **Evidence correction**：失败数来自参数 RelayServer+256（`0x81c49c`），不是该连接的
+  RelaySession LinkStats+4136。此前适配器读取 session 的计数，会由另一层超时提前影响
+  active 选择。原始函数使用 root/session 失败数相反的输入覆盖这两者和严格时间边界。
+  换成正确所有者本身不证明故障恢复成功。
 - migration flag 用于区分迁移目标与发出迁移请求的节点，不是新的设备配对状态。
 
 active session 候选会计算 min-score/current-score/max-score 并排序，然后才考虑保留当前 primary、

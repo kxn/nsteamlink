@@ -2391,3 +2391,9 @@ Switch 同类旧记录保留其角色/状态证据范围，不自动升级为 E2
 
 本决定不声称候选图和官方全等，也不宣称通过媒体或 NAT 变化下的恢复。nearest-three
 实际入口、同 POP 多 relay 及迁移的完整行为契约见 NETWORKING §21.19；验收状态只记 Issues。
+
+D-065 的所有者校正：SetSessionSelectQualityMetrics 的 `0x81c49c` 从 RelayServer+256 取
+失败计数；RelaySession LinkStats+4136 是另一组状态。撤回此前用 session timeout 推动
+base gap/100 分惩罚的适配。使用 root ping failure 及 root lastReceived，不能因两者通常
+同涨同落就合并。原始完整 base 函数用相反计数和 500000/1750000 微秒边界执行核对；
+这项修正不是端到端恢复完成的声明。

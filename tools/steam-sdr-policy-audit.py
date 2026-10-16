@@ -824,6 +824,25 @@ def forward_score(elf, local, remote, interior, penalties, token, expected, stam
     assert m.read(raw_routes+12) == int(stamp == 0)
 
 
+def base_metrics_failure_owner(elf, relay_failures, session_failures, age):
+    """Run actual base metrics with contradictory root/session failure state."""
+    fixture=SDR(elf,[{}])
+    m=fixture.m
+    relay,session=fixture.relays[0],fixture.sessions[0]
+    out=m.alloc(80)
+    m.write(fixture.base+68,-1)
+    m.write(relay+800,0x7fffffff)
+    m.write(relay+256,relay_failures)
+    m.write(relay+248,NOW-age,8)
+    m.write(session+4136,session_failures)
+    # Front/bucket metrics are external here; owner/penalty/gap are native.
+    m.stubs[0xc125e0]=lambda m:m.reg(0,1)
+    m.run(0x81c3f0,0x81c55c,fixture.base,relay,out,NOW)
+    assert m.reg(0)==1
+    assert m.read(out+48)==(100 if relay_failures and age>1750000 else 0)
+    assert m.read(out+64,8)==(age if relay_failures and age>500000 else 0)
+
+
 def base_think(elf, state, good):
     fixture = SDR(elf, [])
     m = fixture.m
@@ -2861,6 +2880,8 @@ def audit(elf, groups=None):
     for interior,penalty,forward in [(0,0,30),(10,0,65),(10,3,80),(999,5000,6100)]:
         case('route_serialization_fields',route_serialization_fields,interior,penalty,forward)
     for good in (False,True): case('snapshot_readiness_gate',snapshot_readiness_gate,good)
+    for rf,sf,age in itertools.product((0,1),(0,5),(500000,500001,1750000,1750001)):
+        case('base_metrics_failure_owner',base_metrics_failure_owner,rf,sf,age)
     for controlling,role in itertools.product((False,True),(0,1,0x7fffffff)):
         case('snapshot_primary_contract',snapshot_primary_contract,controlling,role)
     for old,count,first in itertools.product((False,True),(0,1),((123,456),(999,456),(123,999))):

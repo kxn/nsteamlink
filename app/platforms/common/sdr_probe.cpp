@@ -692,7 +692,8 @@ public:
                 else if (m.shutdown_seconds < 30) other += (30 - m.shutdown_seconds) * 1000 / 30;
                 m.draining = r.downtime.avoid <= now;
             }
-            if (r.stats.m_nReplyTimeoutsSinceLastRecv && r.last_received + 500000 < now) {
+            // 81c49c reads RelayServer+256, not RelaySession LinkStats+4136.
+            if (r.ping_failures && r.last_received + 500000 < now) {
                 m.gap = now-r.last_received;
                 if (m.gap > 1750000) other += 100;
             }
