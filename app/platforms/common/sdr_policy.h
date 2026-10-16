@@ -81,3 +81,8 @@ void sl_sdr_latency_estimate(sl_sdr_latencies *, uint32_t pop, int32_t ping);
 void sl_sdr_latency_exception(sl_sdr_latencies *, uint32_t pop, uint32_t flags, int32_t penalty);
 const sl_sdr_latency *sl_sdr_latency_find(const sl_sdr_latencies *, uint32_t pop);
 int32_t sl_sdr_cluster_penalty(int32_t incoming);
+typedef struct sl_sdr_edge { unsigned source, target; int32_t ping; } sl_sdr_edge;
+/* Fixed client's three in-place passes, followed by the direct-source lower
+ * bound midpoint. Output is unchanged on invalid/bounded-resource input. */
+bool sl_sdr_route_estimates(const int32_t *front, size_t count, const sl_sdr_edge *,
+    size_t edge_count, int32_t *estimates);

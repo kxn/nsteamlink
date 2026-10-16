@@ -860,14 +860,16 @@ def datacenter_routes(elf, fronts, edges, expected, measured=True):
             m.write(ptr+32, -1)
     m.stubs[0xc11f50] = lambda m: m.reg(0, m.reg(1)-100 if 100 <= m.reg(1) < 100+len(fronts) else -1)
     m.run(0x810e70, 0x8113c4, budget=100000)
-    assert [m.read(c+832) for c in clusters] == expected
+    result=[m.read(c+832) for c in clusters]
+    if expected is not None: assert result == expected,(result,expected)
     assert m.read(0xf49000+1016, 1) == 1
     # Only directly measured edges seed nearest-route slots, never estimates.
     for index, cluster in enumerate(clusters):
         nearest = m.read(cluster+806, 2)
         eligible = [(fronts[a]+ping+(fronts[a]//10), a) for a, b, ping in edges
-                    if b == index and fronts[a] >= 0 and measured]
+                    if b == index and 0 <= fronts[a] <= 2000 and ping >= 0 and measured]
         assert nearest == (min(eligible)[1] if eligible else 0xffff), (index, nearest, eligible)
+    return result
 
 
 def alternate_updates(elf, initial, advertised, partial, expected, removed=()):
@@ -2664,6 +2666,9 @@ def audit(elf, groups=None):
         case('datacenter_route_estimation', datacenter_routes, [20, -1], [(0, 1, 100)], [20, 60], measured)
     case('datacenter_route_estimation', datacenter_routes, [-1, -1], [(0, 1, 10)], [0x0fffffff]*2)
     case('datacenter_route_estimation', datacenter_routes, [20, 50], [(0, 1, 10)], [20, 50])
+    case('datacenter_route_estimation', datacenter_routes, [2000,-1], [(0,1,100)], [2000,2000])
+    case('datacenter_route_estimation', datacenter_routes, [2001,-1], [(0,1,100)], [2001,0x0fffffff])
+    case('datacenter_route_estimation', datacenter_routes, [20,-1], [(0,1,-1)], [20,0x0fffffff])
     case('datacenter_route_estimation', datacenter_routes, [20, -1, -1, -1, -1],
          [(0, 1, 10), (1, 2, 10), (2, 3, 10), (3, 4, 10)], [20, 20, 40, 50, 60])
     case('datacenter_route_estimation', datacenter_routes, [-1, -1, -1, -1, 20],

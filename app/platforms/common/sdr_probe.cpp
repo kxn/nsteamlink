@@ -413,6 +413,20 @@ static void update_network(sl_sdr_probe *p, CSteamNetworkConnectionBase *connect
     if (now < p->last_round + 100000) return;
     p->last_round = now;
     std::vector<std::pair<float, ProbeRelay *>> priorities;
+    int32_t front[SL_SDR_POP_MAX], estimates[SL_SDR_POP_MAX];
+    std::fill_n(front,p->config.pop_count,-1);
+    std::vector<sl_sdr_edge> edges;
+    for (const auto &r : p->relays) {
+        const auto *pop=find_pop(p->config,r.pop_id);
+        if (!pop) continue;
+        unsigned index=unsigned(pop-p->config.pops);
+        if (r.failures.reachability >= 1) front[index]=r.ping_ms;
+        for (size_t i=0; i<r.interior.count; ++i) {
+            const auto *target=find_pop(p->config,r.interior.entries[i].pop);
+            if (target) edges.push_back({index,unsigned(target-p->config.pops),r.interior.entries[i].ping});
+        }
+    }
+    bool have_estimates=sl_sdr_route_estimates(front,p->config.pop_count,edges.data(),edges.size(),estimates);
     int ordinary = 0, measured = 0, fast = 0, medium = 0, broad = 0;
     for (auto &r : p->relays) {
         sl_sdr_expire_addresses(&r.failures, address_count(p, r), now);
@@ -437,6 +451,8 @@ static void update_network(sl_sdr_probe *p, CSteamNetworkConnectionBase *connect
         if (events & SL_SDR_TIMEOUT_REPROBE) r.force_ping = true;
         if (r.force_ping && !r.ping_deadline) { send_ping(p, r, now); r.force_ping = false; }
         const auto *pop = find_pop(p->config, r.pop_id);
+        int estimate=have_estimates && pop ? estimates[pop-p->config.pops] : SL_SDR_UNKNOWN;
+        float ordering=estimate >= 5001 ? 5000.0f+random_below(101) : float(estimate);
         ++ordinary;
         if (r.front.m_nTotalPingsReceived >= 2) ++measured;
         if (r.front.m_nTotalPingsReceived > 2 && r.front.m_nValidPings >= 2 && r.failures.reachability == 1) {
@@ -445,7 +461,7 @@ static void update_network(sl_sdr_probe *p, CSteamNetworkConnectionBase *connect
         }
         sl_sdr_probe_input input{r.ping_ms, int(r.probes_sent), r.front.m_nTotalPingsReceived,
             r.front.m_nValidPings, int(r.failures.failures), r.failures.reachability, 1,
-            pop ? pop->tier : 1, 0, r.ping_ms < 0 ? 5000.0f + random_below(101) : float(r.ping_ms),
+            pop ? pop->tier : 1, 0, ordering,
             now-r.ping_sent, now-r.front.TimeRecvMostRecentPing()};
         float priority;
         if (!r.ping_deadline && sl_sdr_probe_priority(&input, !p->have_primary, !p->have_backup, &priority))

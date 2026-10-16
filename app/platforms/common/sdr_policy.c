@@ -227,3 +227,43 @@ void sl_sdr_latency_exception(sl_sdr_latencies *cache, uint32_t pop, uint32_t fl
 int32_t sl_sdr_cluster_penalty(int32_t incoming) {
     return incoming < 0 ? 0 : incoming > 5000 ? 5000 : incoming;
 }
+bool sl_sdr_route_estimates(const int32_t *front, size_t count, const sl_sdr_edge *edges,
+    size_t edge_count, int32_t *out) {
+    if (count > SL_SDR_CANDIDATES || edge_count > SL_SDR_CANDIDATES*SL_SDR_CANDIDATES ||
+        (!front && count) || (!out && count) || (!edges && edge_count)) return false;
+    for (size_t i=0; i<edge_count; ++i)
+        if (edges[i].source >= count || edges[i].target >= count) return false;
+    int32_t upper[SL_SDR_CANDIDATES], lower[SL_SDR_CANDIDATES];
+    for (size_t i=0; i<count; ++i) {
+        upper[i]=front[i] >= 0 ? front[i] : SL_SDR_UNKNOWN;
+        lower[i]=front[i];
+    }
+    for (unsigned pass=0; pass<3; ++pass) {
+        bool changed=false;
+        for (size_t source=0; source<count; ++source) {
+            if ((uint32_t)upper[source] > 2000) continue;
+            for (size_t i=0; i<edge_count; ++i) {
+                const sl_sdr_edge *edge=&edges[i];
+                if (edge->source != source || edge->ping < 0 || front[edge->target] >= 0) continue;
+                int64_t candidate=(int64_t)upper[source]+edge->ping;
+                /* Such an overflow makes the original assert that the
+                 * estimate is non-negative; reject this invalid graph. */
+                if (candidate > INT_MAX) return false;
+                if (candidate < upper[edge->target]) {
+                    upper[edge->target]=(int32_t)candidate; changed=true;
+                }
+                if (front[source] >= 0) {
+                    int32_t bound=upper[source]-edge->ping;
+                    if (bound < 0) bound=0;
+                    if (bound > lower[edge->target]) lower[edge->target]=bound;
+                }
+            }
+        }
+        if (!changed) break;
+    }
+    for (size_t i=0; i<count; ++i)
+        if (front[i] < 0 && upper[i] < SL_SDR_UNKNOWN && lower[i] >= 0)
+            upper[i]=(int32_t)(((int64_t)upper[i]+lower[i])/2);
+    if (count) memcpy(out,upper,count*sizeof(*out));
+    return true;
+}

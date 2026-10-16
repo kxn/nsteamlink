@@ -63,6 +63,8 @@ class Config(c.Structure):
     _fields_ = [('revision',c.c_uint64),('relay_public_key',c.c_uint8*32),('have_relay_key',c.c_bool),
         ('pops',Pop*128),('endpoints',Endpoint*1024),('aliases',Alias*512),
         ('pop_count',c.c_size_t),('endpoint_count',c.c_size_t),('alias_count',c.c_size_t)]
+class Edge(c.Structure):
+    _fields_=[('source',c.c_uint),('target',c.c_uint),('ping',c.c_int32)]
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -261,13 +263,25 @@ def main():
             for i,(key,pop) in enumerate(aliases.items()): config.aliases[i]=Alias(key,pop)
             assert lib.sl_sdr_config_canonical(c.byref(config),incoming)==expected
         audit.canonical_pop=canonical_pop
+        original_estimates=audit.datacenter_routes
+        lib.sl_sdr_route_estimates.argtypes=[c.POINTER(c.c_int32),c.c_size_t,c.POINTER(Edge),c.c_size_t,c.POINTER(c.c_int32)]
+        lib.sl_sdr_route_estimates.restype=c.c_bool
+        def datacenter_routes(elf,fronts,edges,expected,measured=True):
+            native=original_estimates(elf,fronts,edges,expected,measured)
+            inputs=(c.c_int32*len(fronts))(*fronts)
+            links=(Edge*len(edges))(*(Edge(*edge) for edge in edges))
+            result=(c.c_int32*len(fronts))()
+            assert lib.sl_sdr_route_estimates(inputs,len(fronts),links,len(edges),result)
+            assert list(result)==native,(fronts,edges,list(result),native)
+        audit.datacenter_routes=datacenter_routes
         audit.select, audit.timeout_decision = select, timeout
         audit.downtime, audit.probe_priorities, audit.routing_readiness = downtime, priorities, ready
         audit.failed_cache_add, audit.failed_cache_expire, audit.received = add, expire, received
         elf = audit.policy.descriptors.SampleELF(args.elf.read_bytes())
         groups = {'active_selection', 'active_switch_confirmation', 'active_candidate_order', 'timeout_decisions', 'downtime_warning', 'global_probe_priority_matrix',
             'global_routing_readiness', 'failed_cache_insertion', 'failed_cache_expiry', 'received_packet_recovery', 'transport_state_change', 'session_established', 'clean_route_targets',
-            'datacenter_latency_updates', 'reverse_latency_estimation', 'cluster_penalty_updates', 'canonical_pop_mapping'}
+            'datacenter_latency_updates', 'reverse_latency_estimation', 'cluster_penalty_updates', 'canonical_pop_mapping',
+            'datacenter_route_estimation'}
         # Select group names from the existing audit; fail if they are renamed.
         counts = audit.audit(elf, groups)
         assert set(counts) == groups, counts
@@ -305,6 +319,12 @@ def main():
             select(elf, routes, active, expected, probes, migrating)
             generated += 1
         counts['generated_active_selection'] = generated
+        for _ in range(64):
+            fronts=[rng.choice((-1,-1,0,20,50,100,500,2000,2001)) for _ in range(rng.randrange(2,7))]
+            edges=[(a,b,rng.choice((-1,0,10,50,100,300))) for a in range(len(fronts))
+                   for b in range(len(fronts)) if a != b and rng.randrange(3)==0]
+            datacenter_routes(elf,fronts,edges,None,measured=rng.choice((False,True)))
+        counts['generated_route_estimation']=64
         report = {'sample_sha256': audit.policy.descriptors.SAMPLE_SHA256,
             'method': 'production C policy versus original APK instructions on identical inputs',
             'passed': sum(counts.values()), 'groups': counts, 'generated_inputs_rejected_by_native_assert': rejected,

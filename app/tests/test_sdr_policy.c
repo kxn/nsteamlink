@@ -66,6 +66,13 @@ int main(void) {
     assert(!sl_sdr_latency_find(&latency,20));
     assert(!sl_sdr_latencies_begin(&latency,1,now+3) && edge->measured==now+2);
     assert(sl_sdr_cluster_penalty(-1)==0 && sl_sdr_cluster_penalty(7000)==5000);
+    const int32_t fronts[]={-1,-1,-1,-1,20};
+    const sl_sdr_edge edges[]={{4,3,10},{3,2,10},{2,1,10},{1,0,10}};
+    int32_t estimate[5];
+    assert(sl_sdr_route_estimates(fronts,5,edges,4,estimate));
+    assert(estimate[0]==SL_SDR_UNKNOWN && estimate[1]==50 && estimate[2]==40 && estimate[3]==20 && estimate[4]==20);
+    const sl_sdr_edge invalid_edge={4,5,10};
+    assert(!sl_sdr_route_estimates(fronts,5,&invalid_edge,1,estimate) && estimate[1]==50);
     sl_sdr_timeouts t = {.request_deadline=now,.request_failures=1};
     assert(sl_sdr_expire(&t, now) == (SL_SDR_TIMEOUT_REQUEST|SL_SDR_TIMEOUT_REPROBE));
     t = (sl_sdr_timeouts){.ping_deadline=now+1,.ping_failures=1};
