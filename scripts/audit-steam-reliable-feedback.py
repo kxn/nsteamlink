@@ -83,6 +83,9 @@ def audit(base):
             )
             self.ret()
 
+        def handle_packet(self, p):
+            self.call(0x7F9250, self.ch, p, self.now)
+
         def receive(self, op):
             self.now = op[1] & 0xFFFFFFFF
             p = self.alloc(4096)
@@ -100,7 +103,7 @@ def audit(base):
             self.wh(p + 69, op[4])
             self.w32(p + 52, 16)
             self.u.mem_write(p + 77, bytes([6, 0xAA, 0xBB]))
-            self.call(0x7F9250, self.ch, p, self.now)
+            self.handle_packet(p)
 
         def observe(self):
             ch = self.ch
@@ -325,6 +328,7 @@ def audit(base):
                 observed=outputs,
             )
         )
+    audit.Receiver = Receiver
     return cases
 
 

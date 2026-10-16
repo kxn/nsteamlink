@@ -3,7 +3,7 @@
 
 Native protobuf, fragmentation, admission/retention and Socket serialization run;
 only time/final UDP are controlled. Queue admission is separate from completion.
-Original factory creation is recorded but not claimed equivalent here.
+Factory creation IDs are compared as well as wire bytes.
 """
 
 import argparse
@@ -61,6 +61,7 @@ def main():
         )
         assert completed.returncode == 0, (number, completed.stderr)
         got = json.loads(completed.stdout)
+        assert got["channels"] == want["channels"], (number, inp, got, want)
         assert got["admitted"]
         assert got["attempts"] == len(want["wire"])
         assert got["wire"] == want["wire"], (number, group, inp, got, want)

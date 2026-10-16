@@ -4188,3 +4188,76 @@ ctest --test-dir build/desktop -R 'reliable_feedback' --output-on-failure
 窗口头尾、完整帧body和完整线包均与官方fixture比较；只有诊断assert文本不属于
 本地协议状态，明确排除。配置/传输层旧oracle分别补上显式通道Update，
 不把已入窗但尚未交付的输入误算成配置接收完成，也不额外重复Connect Update。
+
+
+## 46. 通用可靠通道、客户端消费与通道构造边界
+
+【证据】`audit-steam-reliable-channels.py`接续§45的固定官方Android客户端。
+输入通过真实Connection::HandlePacket `0x7facfc`进入真实GetChannel/ctor和
+Channel::HandlePacket/Update；可靠窗口/ACK/NACK/Socket/CRC执行原指令。
+交付不再停在虚delegate：执行真实OnStreamPacket `0x7acfa8`、Frame构造与
+SetPacket `0x7f2b98/0x7f2bac`、HandleIncomingPackets `0x7a6368`、
+HandlePendingDataPackets `0x7aff74`和
+OnDataPacket `0x7ad148`。100例覆盖CRC两值、channel0/2/3/31、客户端state0/2/6/7、
+错误消息类型，以及有效媒体头在已配置/未配置时的区别。
+
+【结论】可靠传输状态属于通用channel，不属于Control消费者。即使上层忽略
+channel0/2的未知消息，接收窗口和ACK/NACK仍正常推进。客户端state0/7不消费
+帧；媒体类型1要求state6，尚无匹配audio/video消费者时保存完整packet；匹配时
+先规范化时间戳，再RecordFrameReceived，最后调用decoder的OnReceiveFrame。
+先收到ID1、后补ID0时，两个帧按0→1上交，保留各自transport发送/本地接收时间。
+因此不能用Stats消费者Noop替代可靠接收，也不能把已重组帧重新送回transport窗口。
+
+【证据】GetChannel `0x7fba34`只在请求新ID时创建缺失的0..ID前缀，构造时间决定
+§45的初始反馈deadline。控制/统计消费者预建不证明官方transport channel已创建。
+§42的140个真实生产入口已记录factory：discovery不用channel，Handshake创建0/1，
+Stats创建0/1/2；加密控制在Frame准入前GetChannel，明文Frame在连接准入后GetChannel。
+生产者创建transport状态不能反向等待持Base的sender；factory/发送排序快照可由
+queue mutex保护，Socket I/O时不得持queue mutex阻塞生产者。
+
+【边界】队列append、最终decoder入口、统计记录、地址比较、空FEC发送器、分配/
+refcount/释放、mutex、诊断与最终UDP为明确适配器；接收环预分配空存储。
+真实HandleIncomingPackets从队列取帧并执行未知消息的丢弃分支；真实OnDataPacket
+执行未配置缓存和已配置时间转换。没有实际decoder、真实Steam主机或完整应用主循环。
+固定状态可独立于连接状态设置，是函数边界验证，不冒称每个组合均由实际UI触发。
+平台的异步decoder交付和完整Connection循环顺序必须与本节逐事件结果分开核验。
+
+【证据／更正】共享HandleNackPacket在`0x7f9614–0x7f9624`以lastTimestamp=0
+为哨兵，并在任何body长度校验之前存入新header时间；短畸形体也消耗水位。
+可靠通道原实现的独立haveTimestamp位和先拒绝短体的顺序与原版不同。
+新向量同时执行首次畸形后较旧有效NACK、首次时间0后0xffffffff的反例，
+从Connection入口核对到后续原版可靠sender的实际wire，不能只测字段setter。
+另有媒体三片缺口与补洞、未配置完整帧到消费者注册后原始pending处理函数的案例。
+临时vector CopyArray、pending存储预分配及最终decoder仍是显式适配器，未调用真实设备。
+
+生产接线将32个protocol可靠状态放在session中，独立于consumer的创建/替换；
+入窗、累计/选择确认、NACK及反馈复用§45机制，可靠媒体完整帧复用decoder worker
+的完整帧FIFO；等待消费者的帧带完整标记，注册后直接上交而不重新入窗。
+消费者预建不再注册outgoing；明文Frame和加密控制按上述各自实际时机触发factory，
+初始deadline也跟随该逻辑构造时刻。queue锁只保护factory/排序快照，不包围Socket。
+临时资源失败沿用明确项目关闭/有界队列保护，不冒称原版内存耗尽分支已等价执行。
+
+本节媒体数据采用有效完整头，peer−local offset固定0；实机codec、非零offset的
+跨层转换、完整应用循环与协商声明不能由这些数据头样本自动推出。
+`reliable_data=false`仍是协议能力声明差异，其完整negotiation/decoder契约独立于
+通用可靠接收状态机。原§14.11/§24中“只接纳3/4”说明由此更正：5/6可以重组并
+交给consumer，但不能仅凭本节宣称完整协商和设备消费已经与Android相同。
+
+```sh
+python3 scripts/audit-steam-reliable-channels.py \
+  --binary /path/to/official/libmain-arm64.so \
+  --output build/video-recovery-re/reliable-channels.json
+python3 scripts/check-steam-reliable-channels.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-reliable-channels-oracle
+ctest --test-dir build/desktop -R 'reliable|control_wire' --output-on-failure
+```
+
+Native oracle从实际session wire回调进入，逐事件比较完整反馈wire、原始交付帧、
+客户端最终忽略/媒体回调、pending内容、factory前缀和NACK时间水位。
+真实媒体worker消费队列，终端dataFrame只记录头/载荷，不替换重组或FIFO；
+pending同单元内dispatcher调用另在真实data handoff处观察，GNU wrap不冒充内部调用拦截。
+控制§45的142例保持原结果，§42的140例另比较完整factory列表；五个独立C++ protobuf
+输出比较继续保留。真实收发worker在channel0/1/2/3/31执行CRC×ACK/NACK失败×四种errno
+共80组，验证非控制反馈、到期边界、重复输入、补洞和stop/join。
+历史`audit-ihslib-control.sh`探针补上明确的连接前态、激活窗口、Receive→Update和
+最终Socket/clock替身，不再从旧FIFO接口推断反馈发生；仍保留诊断buffer canary。
