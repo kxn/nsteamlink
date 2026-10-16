@@ -252,6 +252,80 @@ def route_lists(elf, clusters, routes, expected_any, expected_token):
     assert result(48) == expected_token, (routes, result(48), expected_token)
 
 
+def config_pop_type(elf, ping_only, relay_ping_only):
+    m=Machine(elf)
+    pop,source,frame=m.alloc(128),m.alloc(32),m.alloc(256)
+    def value(raw):
+        obj=m.alloc(32)
+        if raw is None: kind=0
+        elif isinstance(raw,bool): kind=5; m.write(obj+8,int(raw),1)
+        elif isinstance(raw,(int,float)): kind=4; m.uc.mem_write(obj+8,struct.pack('<d',raw))
+        elif isinstance(raw,str): kind=3; m.set_string(obj+8,raw.encode())
+        elif isinstance(raw,list): kind=2
+        else: kind=1
+        m.write(obj,kind)
+        return obj
+    values={b'ping_only':value(ping_only),b'relay_ping_only':value(relay_ping_only)}
+    def lookup(m):
+        key=bytes(m.uc.mem_read(m.reg(1),32)).split(b'\0')[0]
+        m.reg(0,values[key])
+    m.stubs[0xc14820]=lookup
+    m.redirects[0xc14840]=0x8dc880
+    m.allowed.append((0x8dc880,0x8dca4c))
+    m.reg(20,pop); m.reg(24,source); m.reg(29,frame+128)
+    m.stops[0x898e10]=('pop_type_parsed',)
+    m.run(0x898da0,0x898e10)
+    return m.read(pop+52)
+
+
+def relay_key_selection(elf, cluster_key, global_key):
+    m=Machine(elf)
+    cluster,network,pop,vt=m.alloc(128),m.alloc(128),m.alloc(128),m.alloc(32)
+    m.write(cluster+8,pop,8)
+    m.write(pop+80,vt,8); m.write(network+32,vt,8); m.write(vt+16,METRICS,8)
+    def valid(m):
+        m.reg(0,int(cluster_key if m.reg(0)==pop+80 else global_key))
+    m.stubs[METRICS]=valid # Explicit IsValid results; not a crypto-provider audit.
+    m.reg(10,cluster); m.reg(23,network)
+    m.stops[0x8384dc]=('encrypt',); m.stops[0x838894]=('plaintext',)
+    m.run(0x8384a4,0x8384dc)
+    expected='cluster' if cluster_key else 'global' if global_key else None
+    assert m.events[-1]==(('encrypt',) if expected else ('plaintext',))
+    if expected: assert m.reg(22)==(pop+80 if cluster_key else network+32)
+    return expected
+
+
+def config_hex_key(elf, text):
+    m=Machine(elf)
+    obj,vt,raw=m.alloc(64),m.alloc(64),m.alloc(len(text.encode())+1)
+    m.uc.mem_write(raw,text.encode()+b'\0'); m.write(obj,vt,8)
+    m.write(vt+24,METRICS,8); m.write(vt+48,0x746508,8)
+    m.stubs[METRICS]=lambda m: None # Wipe; raw storage itself is external.
+    decoded=[]
+    def store(m):
+        assert m.reg(2)==32
+        decoded.append(bytes(m.uc.mem_read(m.reg(1),32)))
+        m.reg(0,1)
+    m.stubs[0xc09890]=store
+    m.stubs[0xc09a90]=lambda m: m.reg(0,len(bytes(m.uc.mem_read(m.reg(0),len(text.encode())+1)).split(b'\0')[0]))
+    m.redirects[0xc09bd0]=0x74c78c
+    m.allowed.extend([(0x74c78c,0x74c994),(0x746508,0x74651c)])
+    m.run(0x757208,0x7572f8,obj,raw)
+    assert bool(m.reg(0))==bool(decoded)
+    return decoded[0] if decoded else None
+
+
+def front_eligibility(elf, kind, ping, reachability, special):
+    m=Machine(elf)
+    cluster,pop,record=m.alloc(1024),m.alloc(128),m.alloc(64)
+    for offset,value in [(76,ping),(560,reachability),(764,special)]: m.write(cluster+offset,value)
+    m.write(cluster+8,pop,8); m.write(pop+52,kind)
+    m.reg(10,0); m.reg(11,record); m.reg(12,cluster)
+    m.stops[0x8396ec]=('ineligible',); m.stops[0x839790]=('eligible',)
+    m.run(0x839750,0x839790)
+    return m.events[-1]==('eligible',)
+
+
 def probe_priorities(elf, routes, expected, need_any=False, need_backup=False, nearest_limit=20):
     fixture = SDR(elf, routes)
     m = fixture.m
@@ -2652,6 +2726,17 @@ def audit(elf, groups=None):
         for active,backup in itertools.product((False,True),(False,True)):
             case('nearest_probe_planning',probe_priorities,routes,None,need_any=active,
                  need_backup=backup,nearest_limit=limit)
+    values=(None,False,True,0,1,-1,0.5,"true","TRUE","TrUe","false","1","0","truex","",[],{},"true\0x")
+    for first,second in itertools.product(values,(None,False,True,"true")):
+        case('config_pop_type',config_pop_type,first,second)
+    for cluster_key,global_key in itertools.product((False,True),(False,True)):
+        case('relay_key_selection',relay_key_selection,cluster_key,global_key)
+    key='0123456789abcdef'*4
+    for text in ('',key,key.upper(),'gg'+key,' '.join(key),key+'f',key+'ff',key[:-1],key[:-2],
+                 'bad',key+'\0junk','é'+key,'\\'+key,':'.join(key[i:i+2] for i in range(0,64,2))):
+        case('config_hex_key',config_hex_key,text)
+    for kind,ping,reachable,special in itertools.product((0,1,2),(-1,0,20),(-1,0,1,2),(-1,0,1)):
+        case('p2p_front_eligibility',front_eligibility,kind,ping,reachable,special)
     case('route_advertisement', advertise, [20], [], {0: 3}, {})
     case('route_advertisement', advertise, [20, 30], [(0, 1, 70, inf)],
          {0: 3, 1: 3}, {(0, 1): 3})

@@ -116,6 +116,9 @@ bool sl_sdr_warn_downtime(sl_sdr_downtime *t, int32_t seconds, float random_seco
 static bool probe_unreachable(const sl_sdr_probe_input *p) {
     return p->failures >= 4 || (p->failures >= 2 && p->failed_addresses > 0) || p->reachability < 0;
 }
+bool sl_sdr_front_eligible(int pop_type, int ping, int reachability, int special) {
+    return ping >= 0 && ((reachability >= 1 && pop_type == 1) || special >= 1);
+}
 bool sl_sdr_probe_priority(const sl_sdr_probe_input *p, bool active_connection, bool need_backup, float *out) {
     if (p->special > 0 && p->probes < 8) { *out = -1e30f; return true; }
     bool ordinary = p->pop_type == 1;

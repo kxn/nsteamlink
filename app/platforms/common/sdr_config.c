@@ -5,6 +5,7 @@
 #include "jsmn.h"
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 typedef struct json {
     const char *text;
@@ -74,6 +75,92 @@ static int hex(char c) {
     return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10
          : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
 }
+static bool ascii_string(const json *j, int index, char *out, size_t capacity) {
+    const jsmntok_t *t=&j->tokens[index];
+    size_t length=0;
+    for (int at=t->start; at<t->end; ++at) {
+        unsigned byte=(unsigned char)j->text[at];
+        if (byte == '\\') {
+            if (++at >= t->end) return false;
+            byte=(unsigned char)j->text[at];
+            if (byte == 'u') {
+                if (t->end-at <= 4) return false;
+                byte=0;
+                for (int k=0; k<4; ++k) {
+                    int digit=hex(j->text[++at]);
+                    if (digit < 0) return false;
+                    byte=byte*16+(unsigned)digit;
+                }
+            } else if (byte == 'b') byte='\b';
+            else if (byte == 'f') byte='\f';
+            else if (byte == 'n') byte='\n';
+            else if (byte == 'r') byte='\r';
+            else if (byte == 't') byte='\t';
+            else if (byte != '"' && byte != '\\' && byte != '/') return false;
+        }
+        // Native string consumers use C strings, including embedded NUL.
+        if (!byte) break;
+        if (length+1 >= capacity) return false;
+        if (byte > 127) byte=255; /* Non-ASCII cannot match a flag or hex digit. */
+        out[length++]=(char)byte;
+    }
+    out[length]=0;
+    return true;
+}
+/* Missing/wrong JSON type leaves a POP key unavailable. An explicit string
+ * must decode to 32 bytes, including an empty string being invalid. The native
+ * HexDecode skips nonhex characters and discards a final unpaired nibble. */
+static bool public_key(const json *j, int index, uint8_t *out, bool *have) {
+    *have=false;
+    if (index < 0 || j->tokens[index].type != JSMN_STRING) return true;
+    size_t size=(size_t)(j->tokens[index].end-j->tokens[index].start)+1;
+    char *text=malloc(size);
+    if (!text) return false;
+    if (!ascii_string(j,index,text,size)) { free(text); return false; }
+    unsigned count=0;
+    int high=-1;
+    for (char *at=text; *at; ++at) {
+        int digit=hex(*at);
+        if (digit < 0) continue;
+        if (high < 0) high=digit;
+        else {
+            if (count == 32) { free(text); return false; }
+            out[count++]=(uint8_t)(high*16+digit);
+            high=-1;
+        }
+    }
+    free(text);
+    if (count != 32) return false;
+    *have=true;
+    return true;
+}
+static bool interpreted_bool(const json *j, int index) {
+    if (index < 0) return false;
+    const jsmntok_t *t=&j->tokens[index];
+    if (t->type == JSMN_PRIMITIVE) {
+        if (equal(j,index,"true")) return true;
+        if (equal(j,index,"false") || equal(j,index,"null")) return false;
+        size_t size=(size_t)(t->end-t->start);
+        for (size_t i=0; i<size; ++i) {
+            char byte=j->text[t->start+i];
+            if (!(byte >= '0' && byte <= '9') && byte != '-' && byte != '+' &&
+                byte != '.' && byte != 'e' && byte != 'E') return false;
+        }
+        char *text=malloc(size+1), *end;
+        if (!text) return false;
+        memcpy(text,j->text+t->start,size); text[size]=0;
+        double value=strtod(text,&end);
+        bool result=end==text+size && !isnan(value) && value!=0.0;
+        free(text);
+        return result;
+    }
+    if (t->type != JSMN_STRING) return false;
+    char value[5];
+    if (!ascii_string(j,index,value,sizeof(value))) return false;
+    for (char *at=value; *at; ++at)
+        if (*at >= 'A' && *at <= 'Z') *at+=(char)('a'-'A');
+    return !strcmp(value,"true") || !strcmp(value,"1");
+}
 static bool pop_id(const json *j, int index, uint32_t *out) {
     if (index < 0 || j->tokens[index].type != JSMN_STRING) return false;
     int length=j->tokens[index].end-j->tokens[index].start;
@@ -88,20 +175,8 @@ static bool parse(const json *j, sl_sdr_config *c) {
     int index = key(j, 0, "revision"), success = key(j, 0, "success");
     if (!integer(j, index, &c->revision) || success < 0 || !equal(j, success, "true"))
         return false;
-    index = key(j, 0, "relay_public_key");
-    if (index >= 0 && j->tokens[index].type == JSMN_STRING &&
-        j->tokens[index].end - j->tokens[index].start == 64) {
-        c->have_relay_key = true;
-        for (int k = 0; k < 32; ++k) {
-            int a = hex(j->text[j->tokens[index].start + k * 2]);
-            int b = hex(j->text[j->tokens[index].start + k * 2 + 1]);
-            if (a < 0 || b < 0) {
-                c->have_relay_key = false;
-                break;
-            }
-            c->relay_public_key[k] = (uint8_t)(a * 16 + b);
-        }
-    }
+    if (!public_key(j,key(j,0,"relay_public_key"),c->relay_public_key,&c->have_relay_key) ||
+        !c->have_relay_key) return false;
     int pops = key(j, 0, "pops");
     if (pops < 0 || j->tokens[pops].type != JSMN_OBJECT)
         return false;
@@ -145,6 +220,14 @@ static bool parse(const json *j, sl_sdr_config *c) {
             }
         }
         pop->endpoint_count = c->endpoint_count - pop->first_endpoint;
+        pop->type=1+(interpreted_bool(j,key(j,object,"ping_only")) ||
+                     interpreted_bool(j,key(j,object,"relay_ping_only")));
+        if (!public_key(j,key(j,object,"relay_public_key"),pop->relay_public_key,&pop->have_relay_key) ||
+            !pop->endpoint_count) {
+            pop->type=0;
+            c->endpoint_count=pop->first_endpoint;
+            pop->endpoint_count=0;
+        }
         int aliases=key(j,object,"aliases");
         if (aliases >= 0) {
             if (j->tokens[aliases].type != JSMN_ARRAY) return false;
@@ -204,4 +287,10 @@ const sl_sdr_pop *sl_sdr_config_pop(const sl_sdr_config *config, uint32_t id) {
 uint32_t sl_sdr_config_canonical(const sl_sdr_config *config, uint32_t id) {
     const sl_sdr_pop *pop=sl_sdr_config_pop(config,id);
     return pop ? pop->id : id;
+}
+const uint8_t *sl_sdr_config_relay_key(const sl_sdr_config *config, uint32_t id) {
+    const sl_sdr_pop *pop=sl_sdr_config_pop(config,id);
+    if (!pop) return NULL;
+    if (pop->have_relay_key) return pop->relay_public_key;
+    return config->have_relay_key ? config->relay_public_key : NULL;
 }

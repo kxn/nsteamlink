@@ -100,4 +100,5 @@ bool sl_sdr_route_estimates(const int32_t *front, size_t count, const sl_sdr_edg
     size_t edge_count, int32_t *estimates);
 bool sl_sdr_router_ping_ms(uint32_t timestamp, int64_t now, int32_t *ping);
 bool sl_sdr_router_cookie(uint32_t cookie, uint32_t root_cookie, uint32_t session_id, bool have_session);
+bool sl_sdr_front_eligible(int pop_type, int ping, int reachability, int special);
 size_t sl_sdr_ping_request_size(int64_t last_full_latencies, int64_t now);

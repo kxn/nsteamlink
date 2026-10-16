@@ -11,7 +11,9 @@ typedef struct sl_sdr_endpoint {
 } sl_sdr_endpoint;
 typedef struct sl_sdr_pop {
     uint32_t id;
-    int tier;
+    int tier, type; /* 0 disabled/no endpoints, 1 relay, 2 ping-only. */
+    uint8_t relay_public_key[32];
+    bool have_relay_key;
     size_t first_endpoint, endpoint_count;
 } sl_sdr_pop;
 typedef struct sl_sdr_alias { uint32_t id; unsigned pop; } sl_sdr_alias;
@@ -31,3 +33,6 @@ bool sl_sdr_config_parse(const char *, size_t, sl_sdr_config *);
 const sl_sdr_pop *sl_sdr_config_pop(const sl_sdr_config *, uint32_t id);
 /* Map known aliases once; preserve unknown IDs, as MapToCanonicalPOPID does. */
 uint32_t sl_sdr_config_canonical(const sl_sdr_config *, uint32_t id);
+/* Session request encryption prefers the canonical POP's key, then global.
+ * NULL means neither has a key, or the requested POP is unknown. */
+const uint8_t *sl_sdr_config_relay_key(const sl_sdr_config *, uint32_t pop);

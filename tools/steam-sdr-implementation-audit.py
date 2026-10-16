@@ -58,7 +58,8 @@ class Latencies(c.Structure):
     _fields_ = [('entries', Latency*128), ('count', c.c_size_t), ('last_full', c.c_int64)]
 
 class Pop(c.Structure):
-    _fields_ = [('id',c.c_uint32),('tier',c.c_int),('first_endpoint',c.c_size_t),('endpoint_count',c.c_size_t)]
+    _fields_ = [('id',c.c_uint32),('tier',c.c_int),('type',c.c_int),('relay_public_key',c.c_uint8*32),
+        ('have_relay_key',c.c_bool),('first_endpoint',c.c_size_t),('endpoint_count',c.c_size_t)]
 class Endpoint(c.Structure):
     _fields_ = [('ipv4',c.c_uint32),('port_min',c.c_uint16),('port_max',c.c_uint16),('pop',c.c_uint)]
 class Alias(c.Structure):
@@ -274,6 +275,42 @@ def main():
             for i,(key,pop) in enumerate(aliases.items()): config.aliases[i]=Alias(key,pop)
             assert lib.sl_sdr_config_canonical(c.byref(config),incoming)==expected
         audit.canonical_pop=canonical_pop
+        native_pop_type,native_key,native_front=audit.config_pop_type,audit.relay_key_selection,audit.front_eligibility
+        lib.sl_sdr_config_parse.argtypes=[c.c_char_p,c.c_size_t,c.POINTER(Config)]
+        lib.sl_sdr_config_parse.restype=c.c_bool
+        lib.sl_sdr_config_relay_key.argtypes=[c.POINTER(Config),c.c_uint32]
+        lib.sl_sdr_config_relay_key.restype=c.POINTER(c.c_uint8)
+        lib.sl_sdr_front_eligible.argtypes=[c.c_int]*4
+        lib.sl_sdr_front_eligible.restype=c.c_bool
+        def pop_type(elf,first,second):
+            expected=native_pop_type(elf,first,second)
+            raw=json.dumps({'success':True,'revision':1,'relay_public_key':'01'*32,'pops':{'sin':{'ping_only':first,'relay_ping_only':second,
+                'relays':[{'ipv4':'192.0.2.1','port_range':[27015,27015]}]}}}).encode()
+            config=Config()
+            assert lib.sl_sdr_config_parse(raw,len(raw),c.byref(config))
+            assert config.pops[0].type==expected,(first,second,config.pops[0].type,expected)
+        def key_selection(elf,cluster,global_key):
+            expected=native_key(elf,cluster,global_key)
+            config=Config(); config.pop_count=1; config.pops[0].id=100
+            config.pops[0].have_relay_key=cluster; config.have_relay_key=global_key
+            config.pops[0].relay_public_key[:]=bytes([2])*32; config.relay_public_key[:]=bytes([1])*32
+            result=lib.sl_sdr_config_relay_key(c.byref(config),100)
+            assert bool(result)==bool(expected)
+            if result: assert bytes(result[:32])==bytes([2 if expected=='cluster' else 1])*32
+        def front_eligibility(elf,kind,ping,reachability,special):
+            expected=native_front(elf,kind,ping,reachability,special)
+            assert lib.sl_sdr_front_eligible(kind,ping,reachability,special)==expected
+        audit.config_pop_type,audit.relay_key_selection,audit.front_eligibility=pop_type,key_selection,front_eligibility
+        native_hex_key=audit.config_hex_key
+        def hex_key(elf,text):
+            expected=native_hex_key(elf,text)
+            raw=json.dumps({'success':True,'revision':1,'relay_public_key':text,
+                'pops':{'sin':{'relays':[{'ipv4':'192.0.2.1','port_range':[443,443]}]}}}).encode()
+            config=Config()
+            actual=lib.sl_sdr_config_parse(raw,len(raw),c.byref(config))
+            assert actual==(expected is not None),(text,actual,expected)
+            if actual: assert bytes(config.relay_public_key)==expected
+        audit.config_hex_key=hex_key
         original_estimates=audit.datacenter_routes
         lib.sl_sdr_route_estimates.argtypes=[c.POINTER(c.c_int32),c.c_size_t,c.POINTER(Edge),c.c_size_t,c.POINTER(c.c_int32)]
         lib.sl_sdr_route_estimates.restype=c.c_bool
@@ -317,7 +354,7 @@ def main():
             'global_routing_readiness', 'failed_cache_insertion', 'failed_cache_expiry', 'received_packet_recovery', 'transport_state_change', 'session_established', 'clean_route_targets',
             'datacenter_latency_updates', 'reverse_latency_estimation', 'cluster_penalty_updates', 'canonical_pop_mapping',
             'datacenter_route_estimation','router_ping_reply_dispatch','ping_request_size','probe_failure_history',
-            'nearest_probe_planning'}
+            'nearest_probe_planning','config_pop_type','relay_key_selection','p2p_front_eligibility','config_hex_key'}
         # Select group names from the existing audit; fail if they are renamed.
         counts = audit.audit(elf, groups)
         assert set(counts) == groups, counts

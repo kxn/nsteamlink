@@ -135,11 +135,12 @@ static bool build_request(CSteamNetworkConnectionBase &connection, const ProbeRe
     body.set_build("nsteamlink");
     SteamNetworkingIdentityRender peer(connection.m_identityRemote);
     body.set_peer_identity_string(peer.c_str());
-    if (config.have_relay_key) {
+    const uint8_t *request_key=sl_sdr_config_relay_key(&config,r.pop_id);
+    if (request_key) {
         CECKeyExchangePrivateKey private_key;
         CECKeyExchangePublicKey public_key, relay_key;
         CCrypto::GenerateKeyExchangeKeyPair(&public_key, &private_key);
-        if (!relay_key.SetRawDataWithoutWipingInput(config.relay_public_key, 32))
+        if (!relay_key.SetRawDataWithoutWipingInput(request_key, 32))
             return false;
         SHA256Digest_t shared, aes_key;
         if (!CCrypto::PerformKeyExchange(private_key, relay_key, &shared))
@@ -167,7 +168,7 @@ static bool build_request(CSteamNetworkConnectionBase &connection, const ProbeRe
         if (!ok)
             return false;
         body.set_encrypted_data(ciphertext, size);
-        body.set_encryption_your_public_key_lead_byte(config.relay_public_key[0]);
+        body.set_encryption_your_public_key_lead_byte(request_key[0]);
         uint8_t raw_public[32];
         if (public_key.GetRawData(raw_public) != 32)
             return false;
@@ -340,6 +341,10 @@ static sl_sdr_probe *make_network(uint32_t handle, const sl_sdr_config &config) 
 static const sl_sdr_pop *find_pop(const sl_sdr_config &config, uint32_t id) {
     return sl_sdr_config_pop(&config,id);
 }
+static bool front_eligible(const sl_sdr_probe *p, const ProbeRelay &r) {
+    const auto *pop=find_pop(p->config,r.pop_id);
+    return pop && sl_sdr_front_eligible(pop->type,r.ping_ms,r.failures.reachability,0);
+}
 static unsigned address_count(const sl_sdr_probe *p, const ProbeRelay &r) {
     const auto *pop = find_pop(p->config, r.pop_id);
     unsigned count = 0;
@@ -387,6 +392,7 @@ static bool pursue_sessions(sl_sdr_probe *p, CSteamNetworkConnectionBase *connec
     bool started = false;
     for (ProbeRelay *r : candidates) {
         if (!quota) break;
+        if (!front_eligible(p,*r)) continue;
         if (r->established && !(r->downtime.known && r->downtime.avoid <= now)) { --quota; continue; }
         if (r->downtime.known && r->downtime.avoid < now) continue;
         if (r->challenge && r->challenge_at + 10000000 < now) r->challenge = 0;
@@ -460,15 +466,16 @@ static void update_network(sl_sdr_probe *p, CSteamNetworkConnectionBase *connect
         const auto *pop = find_pop(p->config, r.pop_id);
         int estimate=have_estimates && pop ? estimates[pop-p->config.pops] : SL_SDR_UNKNOWN;
         float ordering=estimate >= 5001 ? 5000.0f+random_below(101) : float(estimate);
-        ++ordinary;
-        if (r.failures.reachability >= 1 && r.ping_ms >= 0 && r.front.m_nTotalPingsReceived >= 2) ++measured;
-        if (r.front.m_nTotalPingsReceived > 2 && r.front.m_nValidPings >= 2 &&
+        bool relay_pop=pop && pop->type == 1;
+        ordinary += relay_pop;
+        if (relay_pop && r.failures.reachability >= 1 && r.ping_ms >= 0 && r.front.m_nTotalPingsReceived >= 2) ++measured;
+        if (relay_pop && r.front.m_nTotalPingsReceived > 2 && r.front.m_nValidPings >= 2 &&
             r.failures.reachability >= 1 && r.ping_ms >= 0) {
             int conservative = r.front.WorstPingInRecentSample();
             fast += conservative < 30; medium += conservative < 75; broad += conservative < 150;
         }
         sl_sdr_probe_input input{r.ping_ms, int(r.probes_sent), r.front.m_nTotalPingsReceived,
-            r.front.m_nValidPings, int(r.failures.failures), r.failures.reachability, 1,
+            r.front.m_nValidPings, int(r.failures.failures), r.failures.reachability, pop ? pop->type : 0,
             pop ? pop->tier : 1, 0, int(r.failures.count), ordering,
             now-r.ping_sent, now-r.front.TimeRecvMostRecentPing()};
         ordered.emplace_back(input,&r);
@@ -625,7 +632,7 @@ public:
             int interior_score = 0;
             for (const auto &peer : peer_routes.relay_clusters()) {
                 uint32_t peer_pop=sl_sdr_config_canonical(&network->config,peer.pop_id());
-                if (r.ping_ms < 0 || !find_pop(network->config, peer.pop_id()) || peer.ping_ms() > 10000 ||
+                if (!front_eligible(network,r) || !find_pop(network->config, peer.pop_id()) || peer.ping_ms() > 10000 ||
                     peer.session_relay_routing_token().size() > SL_SDR_TOKEN_MAX) continue;
                 int interior = 0;
                 if (peer_pop != r.pop_id) {
@@ -662,7 +669,7 @@ public:
                 token_routes.emplace_back(comparison, &r);
             } else sl_sdr_target_desire(&r.forward, nullptr, 0, 0);
             if (any_comparison < INT_MAX) any.emplace_back(any_comparison, &r);
-            else if (!peer_routes.relay_clusters_size() && r.ping_ms >= 0) any.emplace_back(r.ping_ms, &r);
+            else if (!peer_routes.relay_clusters_size() && front_eligible(network,r)) any.emplace_back(r.ping_ms, &r);
             auto &m = metrics[count];
             relays[count] = &r; pings[count] = ping;
             desired[count] = r.established && r.forward.desired_size;
@@ -726,7 +733,7 @@ public:
     void rebuild_routes() {
         CMsgSteamDatagramP2PRoutes snapshot;
         for (const auto &r : network->relays) {
-            if (!r.established || r.routing_token.empty())
+            if (!r.established || r.routing_token.empty() || !front_eligible(network,r))
                 continue;
             auto *cluster = snapshot.add_relay_clusters();
             cluster->set_pop_id(r.pop_id);

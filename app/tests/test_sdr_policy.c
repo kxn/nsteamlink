@@ -119,6 +119,11 @@ int main(void) {
     float priority;
     assert(sl_sdr_probe_priority(&stale,true,false,&priority));
     assert(!sl_sdr_probe_priority(&stale,false,false,&priority));
+    assert(!sl_sdr_front_eligible(2,20,1,0));
+    assert(sl_sdr_front_eligible(2,20,-1,1));
+    assert(!sl_sdr_front_eligible(1,-1,1,1));
+    assert(!sl_sdr_front_eligible(1,20,0,0));
+    assert(sl_sdr_front_eligible(1,20,1,0));
     assert(sl_sdr_established_action(-2)==SL_SDR_STATE_THINK);
     assert(sl_sdr_established_action(-1)==SL_SDR_STATE_CLOSE);
     assert(sl_sdr_established_action(0)==SL_SDR_STATE_INVALID);

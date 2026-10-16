@@ -118,7 +118,8 @@ static void routing(void) {
 static void config(void) {
     const char sample[] = "{\"success\":true,\"revision\":1792003701,"
         "\"relay_public_key\":\"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\","
-        "\"pops\":{\"sin\":{\"geo\":[1.3,103.8],\"tier\":0,\"relays\":["
+        "\"pops\":{\"sin\":{\"geo\":[1.3,103.8],\"tier\":0,\"ping_only\":\"\\u0074rue\","
+        "\"relay_public_key\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"relays\":["
         "{\"ipv4\":\"192.0.2.1\",\"port_range\":[27015,27050]}]},"
         "\"abcd\":{\"aliases\":[\"old\",\"old4\",\"invalid\"],\"relays\":[{\"ipv4\":\"198.51.100.2\",\"port_range\":[443,443]}]}}}";
     sl_sdr_config *c = malloc(sizeof(*c));
@@ -127,6 +128,10 @@ static void config(void) {
     assert(c->have_relay_key && c->relay_public_key[0] == 0 && c->relay_public_key[31] == 31);
     assert(c->pops[0].id == 0x0073696e && c->pops[1].id == 0x64616263);
     assert(c->pops[0].tier == 0 && c->pops[1].tier == 1);
+    assert(c->pops[0].type==2 && c->pops[1].type==1);
+    assert(sl_sdr_config_relay_key(c,0x0073696e)[0]==0xaa);
+    assert(sl_sdr_config_relay_key(c,0x006f6c64)[31]==31);
+    assert(!sl_sdr_config_relay_key(c,0x00787878));
     assert(c->pops[0].first_endpoint == 0 && c->pops[1].first_endpoint == 1);
     assert(c->alias_count==2 && sl_sdr_config_pop(c,0x006f6c64)==&c->pops[1]);
     assert(sl_sdr_config_canonical(c,0x346f6c64)==0x64616263);
@@ -134,15 +139,28 @@ static void config(void) {
     assert(sl_sdr_config_canonical(c,0x00787878)==0x00787878 && !sl_sdr_config_pop(c,0x00787878));
     assert(c->endpoints[0].ipv4 == 0xc0000201 && c->endpoints[0].port_min == 27015 &&
         c->endpoints[0].port_max == 27050 && c->endpoints[1].ipv4 == 0xc6336402);
-    const char invalid[] = "{\"success\":true,\"revision\":1,\"pops\":{\"sin\":{\"relays\":["
+    const char invalid[] = "{\"success\":true,\"revision\":1,"
+        "\"relay_public_key\":\"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\",\"pops\":{\"sin\":{\"relays\":["
         "{\"ipv4\":\"192.0.2.1\",\"port_range\":[65536,65537]}]}}}";
     assert(!sl_sdr_config_parse(invalid, sizeof(invalid) - 1, c));
     assert(c->revision == 1792003701); /* Failed updates leave last config intact. */
-    const char collision[]="{\"success\":true,\"revision\":1,\"pops\":{\"sin\":{\"aliases\":[\"sin\"],\"relays\":["
+    const char collision[]="{\"success\":true,\"revision\":1,"
+        "\"relay_public_key\":\"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\",\"pops\":{\"sin\":{\"aliases\":[\"sin\"],\"relays\":["
         "{\"ipv4\":\"192.0.2.1\",\"port_range\":[443,443]}]}}}";
     assert(!sl_sdr_config_parse(collision,sizeof(collision)-1,c) && c->revision==1792003701);
+    const char bad_key[]="{\"success\":true,\"revision\":2,\"relay_public_key\":\"bad\",\"pops\":{\"sin\":{}}}";
+    assert(!sl_sdr_config_parse(bad_key,sizeof(bad_key)-1,c) && c->revision==1792003701);
     for (size_t i = 0; i < sizeof(sample) - 1; ++i)
         assert(!sl_sdr_config_parse(sample, i, c));
+    const char disabled[]="{\"success\":true,\"revision\":2,"
+        "\"relay_public_key\":\"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\",\"pops\":{"
+        "\"bad\":{\"relay_public_key\":\"malformed\",\"aliases\":[\"old\"],\"relays\":["
+        "{\"ipv4\":\"192.0.2.1\",\"port_range\":[443,443]}]},\"sin\":{\"relay_ping_only\":1,\"relays\":["
+        "{\"ipv4\":\"192.0.2.2\",\"port_range\":[443,443]}]}}}";
+    assert(sl_sdr_config_parse(disabled,sizeof(disabled)-1,c) && c->endpoint_count==1);
+    assert(c->pops[0].type==0 && c->pops[0].endpoint_count==0 && c->pops[1].type==2);
+    assert(sl_sdr_config_pop(c,0x006f6c64)==&c->pops[0] && c->have_relay_key);
+    assert(sl_sdr_config_relay_key(c,0x0073696e)[31]==31);
     free(c);
 }
 int main(int argc, char **argv) {

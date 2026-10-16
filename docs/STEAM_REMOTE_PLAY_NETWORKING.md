@@ -2583,3 +2583,38 @@ cookie，失败时还遍历该 relay 的 sessions，接受本地 connection_id�
 发 1300 字节；不能虽然正确记了 full/incremental 状态，发送时仍无条件用长包。
 独立的原始 `0x8178ec–0x81793c` 片段用例核对了送入 BSendPacketGather 的长度与 0x82 标志，
 没有把其他 sender 分支或 socket 发送结果算作已验证。
+
+### 21.27 POP 用途、front 资格与 session 加密公钥
+
+**Evidence**：`SetupFromJSON 0x898da0–0x898e0c` 分别读取 `ping_only` 与
+`relay_ping_only`，任一解释为 true 时将 POP type 设为 2，否则为 1。
+它调用 `vjson::Value::TryInterpret(bool&) 0x8dc880–0x8dca4c`，不是直接检查 JSON
+类型：布尔值、非零数字、大小写不敏感的字符串 `true` 和字符串 `1` 可得到 true。
+null、无法解释的字符串、object/array 保留调用方初始化的 false。C 字符串消费在嵌入 NUL
+处停止。离线配置分支用例执行原始 TryInterpret，vjson key 查询使用显式输入桩；并未把
+整个官方 JSON parser 也计作被执行。
+
+`0x89924c–0x8992d0` 在 POP 无 relay 地址或其显式 `relay_public_key` 解析失败时将
+type 置 0；后者还清空该 POP 的 relay 地址向量。主 ID 和 aliases 仍可查询，不能把禁用
+POP 的别名指向其他 POP。全局公钥在 `0x899940–0x899988` 单独解析，失败走整个配置错误
+路径。本地配置接受至少一个可用 endpoint；拒绝更新时保留原配置，属于本地可用性边界。
+
+**Evidence correction**：撤回实现曾将空/缺失全局公钥视为有效配置的接法。全局字段缺失或
+类型不符时传入空串，`SetFromHexEncodedString 0x757208–0x7572f8` 解码后仍经
+`CEC25519KeyBase::SetRawData 0x746508–0x74651c` 的严格 32 字节门槛；空串失败。
+POP 未给该字段则跳过本地公钥解析、使用全局；显式空串则使该 POP 禁用。
+`HexDecode 0x74c78c–0x74c990` 会跳过非十六进制字符并丢弃末尾孤立半字节，故不能用
+“字符串必须恰好 64 个 hex 字符”替代解码后的 32 字节检查。该解码与 32 字节门槛也执行
+原始指令对照；raw buffer 的实际存储为显式桩，不宣称重测了密码 provider。
+
+**P2P front 资格**：`CP2PRouteSelector::Init 0x839750–0x839790` 要求 ping>=0，且
+满足 `(reachability>=1 && type==1) || special>=1`。因此 type=2 仍可参与全局探测和延迟
+估计，不能因为回复了 ping 就作为普通本地 P2P 入口。正 override 是单独例外，不能覆盖
+负 front ping。该规则有包含 type=0/1/2、负/零/正 ping、未知/可达/不可达与 override 的
+原始分支输入；项目未提供 override UI 时应传 0。
+
+**session 申请用钥**：`0x8384a4–0x8384dc` 先检查 canonical POP 的公钥是否有效，
+仅在无效时检查全局公钥；两者均不可用才进入 §18.3 的明文 peer identity 分支。选定的
+同一公钥须用于 X25519 和 `encryption_your_public_key_lead_byte`，不能一个用 POP key、
+另一个仍用 global key。离线 key 选择用例显式提供 IsValid 结果，验证指针选择/分支，不
+借此宣称验证了密码 provider。实际 crypto 答案与认证失败用例另行验证。
