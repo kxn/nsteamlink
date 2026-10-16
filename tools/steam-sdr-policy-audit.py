@@ -1066,7 +1066,7 @@ def session_established(elf, state, token, next_sequence, existing=True, warning
     m.stubs[0xc12cd0] = lambda m: m.events.append(('init_sequence', m.reg(1)))
     m.stubs[0xc124f0] = lambda m: m.reg(0, m.reg(1) & 65535)
     m.stubs[0xc12ca0] = lambda m: m.events.append(('track_sequence', m.reg(1)))
-    m.stubs[0xc124d0] = lambda m: m.events.append(('no_connection',))
+    m.stubs[0xc124d0] = lambda m: m.events.append(('connection_closed',))
     def diagnostic(m):
         m.events.append(('diagnostic', m.reg(1)))
         m.reg(0, 1)
@@ -1084,7 +1084,7 @@ def session_established(elf, state, token, next_sequence, existing=True, warning
     elif not token:
         expected.append(('diagnostic', 2166))
     elif state in (-1, 4, 5):
-        expected.append(('no_connection',))
+        expected.append(('connection_closed',))
     else:
         expected.append(('diagnostic', 2182))
     assert m.events == expected, m.events
@@ -1095,6 +1095,30 @@ def session_established(elf, state, token, next_sequence, existing=True, warning
         assert m.get_string(out+16) == token
         assert m.read(out+2512, 8) == NOW
         assert m.read(out+2320, 8) == 1 and m.read(out+2344, 8) == 50
+
+
+def connection_closed_sender(elf, remote_id, end_to_end):
+    """Execute the sender hidden behind the old 'no_connection' event label.
+
+    Message allocation/derived population are explicit stubs; the original
+    sender sets the IDs and chooses the wire message type itself.
+    """
+    fixture = SDR(elf, [{}])
+    m = fixture.m
+    relay, session = fixture.relays[0], fixture.sessions[0]
+    m.write(fixture.connection+384, 123)
+    m.write(fixture.connection+388, remote_id)
+    def initialize(m): m.uc.mem_write(m.reg(0), bytes(136))
+    def send(m):
+        message = m.reg(2)
+        m.events.append(('send', m.reg(1), m.read(message+104), m.read(message+100)))
+        m.reg(0, 50)
+    populate = policy.RETURN+0x700
+    m.write(fixture.vt+176, populate, 8)
+    m.stubs.update({0xbffb10: initialize, 0xc00690: lambda m: None,
+        0xc12390: send, populate: lambda m: m.events.append(('populate', m.reg(3), m.reg(4)))})
+    m.run(0x81b554, 0x81b6a4, fixture.base, relay, session, int(end_to_end))
+    assert m.events == [('populate', session, int(end_to_end)), ('send', 20, 123, remote_id)]
 
 
 def stats_migration(elf, requested, port, old, active=True, source=0, state=0, target=-1):
@@ -2637,6 +2661,8 @@ def audit(elf, groups=None):
     for sequence in (1, 65535):
         case('session_established', session_established, 3, b'token', sequence)
     case('session_established', session_established, 3, b'token', 1, existing=False, warning=True)
+    for remote_id, end_to_end in itertools.product((0, 456), (False, True)):
+        case('connection_closed_sender', connection_closed_sender, remote_id, end_to_end)
     for requested, port, old, active, source in [
         (2, 27015, 0, True, 0), (2, 27015, 2, True, 0), (3, 27015, 2, True, 0),
         (0, 27015, 2, True, 0), (3, 0, 2, True, 0), (3, 27015, 2, False, 0),

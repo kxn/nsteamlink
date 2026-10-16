@@ -9,6 +9,7 @@ extern "C" {
 #include "sdr_probe.h"
 #include "sdr_wire.h"
 #include "sdr_config.h"
+#include "sdr_policy.h"
 }
 #include <memory>
 #include <string>
@@ -22,7 +23,12 @@ struct ProbeRelay {
     netadr_t address;
     uint32_t cookie = 0, server_time = 0, ping_timestamp = 0;
     uint64_t challenge = 0;
-    SteamNetworkingMicroseconds challenge_at = 0, ping_sent = 0, request_until = 0;
+    SteamNetworkingMicroseconds challenge_at = 0, ping_sent = 0, request_until = 0, ping_deadline = 0;
+    unsigned ping_failures = 0, request_failures = 0, probes_sent = 0;
+    bool force_ping = false;
+    PingTrackerForRouteSelection front;
+    sl_sdr_failure_cache failures{};
+    sl_sdr_downtime downtime{};
     int ping_ms = -1;
     bool established = false;
     uint32_t pop_id = 0;
@@ -34,23 +40,53 @@ struct ProbeRelay {
     SteamNetworkingMicroseconds last_received = 0;
     std::unordered_map<uint32_t, int> interior;
     int penalty = 0;
-    ProbeRelay() { stats.Init(SteamNetworkingSockets_GetLocalTimestamp(), ELinkActivityLevel::Idle); }
+    ProbeRelay() {
+        front.Reset();
+        stats.Init(SteamNetworkingSockets_GetLocalTimestamp(), ELinkActivityLevel::Idle);
+    }
+    uint64_t address_key() const { return uint64_t(address.GetIPv4()) << 16 | address.GetPort(); }
+    void received(SteamNetworkingMicroseconds now) {
+        last_received = now;
+        ping_failures = 0;
+        sl_sdr_address_received(&failures, address_key());
+    }
 };
 struct sl_sdr_probe {
     HSteamNetConnection connection;
     sl_sdr_config config;
     IRawUDPSocket *socket = nullptr;
-    std::vector<ProbeRelay> relays;
+    std::deque<ProbeRelay> relays;
     sl_sdr_probe_stats counters{};
-    SteamNetworkingMicroseconds last_round = 0;
+    SteamNetworkingMicroseconds last_round = 0, initialized_at = 0;
+    bool good_enough = false, have_primary = false, have_backup = false;
     void *owner = nullptr;
     void (*owner_receive)(const RecvPktInfo_t &, ProbeRelay &, void *) = nullptr;
-    std::vector<ProbeRelay *> pursue;
+    std::vector<ProbeRelay *> pursue, pursue_token;
+#if NSL_SNS_PROBES
+    bool drop_enabled = false;
+    netadr_t drop_address;
+    uint32_t drop_pop = 0;
+    unsigned dropped_tx = 0, dropped_rx = 0;
+#endif
 };
+static bool send_packet(sl_sdr_probe *p, const void *data, int size, const netadr_t &address) {
+#if NSL_SNS_PROBES
+    if (p->drop_enabled && address == p->drop_address) { ++p->dropped_tx; return true; }
+#endif
+    return p->socket->BSendRawPacket(data, size, address);
+}
 static uint32_t random_below(uint32_t bound) {
     uint32_t n, threshold = uint32_t(-bound) % bound;
     do { CCrypto::GenerateRandomBlock(&n, sizeof(n)); } while (n < threshold);
     return n % bound;
+}
+static void warn_downtime(ProbeRelay &r, uint32_t wire_seconds, SteamNetworkingMicroseconds now) {
+    int32_t seconds = int32_t(wire_seconds);
+    if (r.downtime.known && now + int64(seconds) * 1000000 >= r.downtime.shutdown - 3000000) return;
+    uint32_t random;
+    CCrypto::GenerateRandomBlock(&random, sizeof(random));
+    float seconds_before = 45.0f + float(double(random) / 4294967296.0 * 15.0);
+    sl_sdr_warn_downtime(&r.downtime, seconds, seconds_before, now);
 }
 static bool build_request(CSteamNetworkConnectionBase &connection, const ProbeRelay &r,
     const sl_sdr_config &config, CMsgSteamDatagramP2PSessionRequest &message) {
@@ -117,6 +153,9 @@ static bool build_request(CSteamNetworkConnectionBase &connection, const ProbeRe
 static void receive_packet(const RecvPktInfo_t &packet, sl_sdr_probe *probe) {
     if (packet.m_cbPkt < 5 || packet.m_cbPkt > 1300)
         return;
+#if NSL_SNS_PROBES
+    if (probe->drop_enabled && packet.m_adrFrom == probe->drop_address) { ++probe->dropped_rx; return; }
+#endif
     ProbeRelay *r = nullptr;
     for (auto &candidate : probe->relays)
         if (candidate.address == packet.m_adrFrom) {
@@ -136,7 +175,13 @@ static void receive_packet(const RecvPktInfo_t &packet, sl_sdr_probe *probe) {
         int32_t delay = int32_t(uint32_t(packet.m_usecNow) - reply.client_timestamp());
         if (delay < -2000 || delay > 10000000)
             return; /* Diagnostic resource bound; no routing score is inferred. */
-        r->ping_ms = std::max(0, delay / 1000);
+        if (!r->ping_deadline)
+            return; /* A measurement must match a live ping, once. */
+        if (reply.has_seconds_until_shutdown()) warn_downtime(*r, reply.seconds_until_shutdown(), packet.m_usecNow);
+        r->front.ReceivedPing(std::max(0, delay / 1000), packet.m_usecNow);
+        r->ping_ms = r->front.m_nSmoothedPing;
+        r->ping_deadline = 0;
+        r->received(packet.m_usecNow);
         r->penalty = std::min(5000u, reply.scoring_penalty_relay_cluster());
         for (int i = 0; i < reply.latency_datacenter_ids_size(); ++i)
             r->interior[reply.latency_datacenter_ids(i)] = int(reply.latency_ping_ms(i));
@@ -155,6 +200,7 @@ static void receive_packet(const RecvPktInfo_t &packet, sl_sdr_probe *probe) {
         if (!connection || !reply.ParseFromArray(data + 1, packet.m_cbPkt - 1) ||
             reply.connection_id() != connection->m_unConnectionIDLocal || reply.relay_routing_token().empty())
             return;
+        if (reply.has_seconds_until_shutdown()) warn_downtime(*r, reply.seconds_until_shutdown(), packet.m_usecNow);
         if (!r->established)
             ++probe->counters.established;
         r->established = true;
@@ -165,8 +211,9 @@ static void receive_packet(const RecvPktInfo_t &packet, sl_sdr_probe *probe) {
             if (sequence > 0)
                 r->stats.TrackProcessSequencedPacket(sequence, packet.m_usecNow, 0, 0);
         }
-        r->last_received = packet.m_usecNow;
+        r->received(packet.m_usecNow);
         r->request_until = 0;
+        r->request_failures = 0;
         /* The token is deliberately not exposed or logged by this driver. */
     } else if (data[0] == 7) {
         CMsgSteamDatagramNoSessionRelayToClient reply;
@@ -180,7 +227,9 @@ static void receive_packet(const RecvPktInfo_t &packet, sl_sdr_probe *probe) {
             r->server_time = reply.server_time();
             r->challenge_at = packet.m_usecNow;
         }
+        if (reply.has_seconds_until_shutdown()) warn_downtime(*r, reply.seconds_until_shutdown(), packet.m_usecNow);
         ++probe->counters.rejected;
+        r->received(packet.m_usecNow);
         r->request_until = 0;
         r->established = false;
         r->routing_token.clear();
@@ -192,7 +241,7 @@ static sl_sdr_probe *make_network(uint32_t handle, const sl_sdr_config &config) 
     std::unique_ptr<sl_sdr_probe> p(new sl_sdr_probe);
     p->connection = handle;
     p->config = config;
-    p->relays.reserve(p->config.pop_count);
+    p->initialized_at = SteamNetworkingSockets_GetLocalTimestamp();
     for (size_t i = 0; i < p->config.pop_count; ++i) {
         const sl_sdr_pop &pop = p->config.pops[i];
         uint32_t slots = 0;
@@ -210,11 +259,11 @@ static sl_sdr_probe *make_network(uint32_t handle, const sl_sdr_config &config) 
                 slot -= count;
                 continue;
             }
-            ProbeRelay r;
+            p->relays.emplace_back();
+            ProbeRelay &r = p->relays.back();
             r.pop_id = pop.id;
             r.address.SetIPAndPort(ep.ipv4, uint16_t(ep.port_min + slot));
             CCrypto::GenerateRandomBlock(&r.cookie, sizeof(r.cookie));
-            p->relays.push_back(r);
             break;
         }
     }
@@ -227,60 +276,144 @@ static sl_sdr_probe *make_network(uint32_t handle, const sl_sdr_config &config) 
         return nullptr;
     return p.release();
 }
-static void update_network(sl_sdr_probe *p, CSteamNetworkConnectionBase *connection,
-                            SteamNetworkingMicroseconds now) {
-    if (now < p->last_round + 100000)
-        return;
-    p->last_round = now;
-    unsigned budget = 10;
-    for (auto &r : p->relays) {
-        if (r.ping_sent || !budget)
-            continue;
-        uint8_t ping[1300];
-        sl_sdr_ping(ping, sizeof(ping), false, now, r.cookie, uint32_t(p->config.revision),
-            r.address.GetIPv4(), r.address.GetPort());
-        r.ping_timestamp = uint32_t(now);
-        r.ping_sent = now;
-        if (p->socket->BSendRawPacket(ping, sizeof(ping), r.address)) {
-            ++p->counters.sent_pings;
-            --budget;
+static const sl_sdr_pop *find_pop(const sl_sdr_config &config, uint32_t id) {
+    for (size_t i = 0; i < config.pop_count; ++i)
+        if (config.pops[i].id == id) return &config.pops[i];
+    return nullptr;
+}
+static unsigned address_count(const sl_sdr_probe *p, const ProbeRelay &r) {
+    const auto *pop = find_pop(p->config, r.pop_id);
+    unsigned count = 0;
+    if (pop)
+        for (size_t k = 0; k < pop->endpoint_count; ++k) {
+            const auto &ep = p->config.endpoints[pop->first_endpoint + k];
+            count += unsigned(ep.port_max) - ep.port_min + 1;
+        }
+    return count;
+}
+static bool choose_address(sl_sdr_probe *p, ProbeRelay &r, SteamNetworkingMicroseconds now) {
+    const auto *pop = find_pop(p->config, r.pop_id);
+    unsigned total = address_count(p, r);
+    if (!pop || !total) return false;
+    sl_sdr_expire_addresses(&r.failures, total, now);
+    for (unsigned attempt = 0; attempt < 99; ++attempt) {
+        unsigned slot = random_below(total);
+        for (size_t k = 0; k < pop->endpoint_count; ++k) {
+            const auto &ep = p->config.endpoints[pop->first_endpoint + k];
+            unsigned count = unsigned(ep.port_max) - ep.port_min + 1;
+            if (slot >= count) { slot -= count; continue; }
+            uint16_t port = uint16_t(ep.port_min + slot);
+            if (sl_sdr_address_failed(&r.failures, uint64_t(ep.ipv4) << 16 | port)) break;
+            r.address.SetIPAndPort(ep.ipv4, port);
+            return true;
         }
     }
-    /* Diagnostic allocation is limited to two replies, and uses measured RTT.
-     * It exercises session authorization, not the full client route selector. */
-    std::vector<ProbeRelay *> candidates = p->owner ? p->pursue : std::vector<ProbeRelay *>{};
-    if (!p->owner) {
-        for (auto &r : p->relays)
-            if (r.challenge && now - r.challenge_at <= 10000000 && r.ping_ms >= 0)
-                candidates.push_back(&r);
-        std::stable_sort(candidates.begin(), candidates.end(), [](ProbeRelay *a, ProbeRelay *b) {
-            return a->ping_ms < b->ping_ms;
-        });
-    }
-    unsigned active = 0;
-    for (auto &r : p->relays)
-        active += !p->owner && (r.established || r.request_until > now);
+    return false;
+}
+static bool send_ping(sl_sdr_probe *p, ProbeRelay &r, SteamNetworkingMicroseconds now) {
+    if (r.ping_deadline || (r.downtime.known && r.downtime.avoid < now)) return false;
+    uint8_t ping[1300];
+    sl_sdr_ping(ping, sizeof(ping), false, now, r.cookie, uint32_t(p->config.revision),
+        r.address.GetIPv4(), r.address.GetPort());
+    r.ping_timestamp = uint32_t(now);
+    r.ping_sent = r.failures.last_probe = r.front.m_usecTimeLastSentPingRequest = now;
+    r.ping_deadline = now + r.front.CalcConservativeTimeout();
+    ++r.probes_sent;
+    if (!send_packet(p, ping, sizeof(ping), r.address)) return false;
+    ++p->counters.sent_pings;
+    return true;
+}
+static bool pursue_sessions(sl_sdr_probe *p, CSteamNetworkConnectionBase *connection,
+    const std::vector<ProbeRelay *> &candidates, unsigned quota, SteamNetworkingMicroseconds now) {
+    bool started = false;
     for (ProbeRelay *r : candidates) {
-        if (active >= 2)
-            break;
-        if (r->established || r->request_until > now)
+        if (!quota) break;
+        if (r->established && !(r->downtime.known && r->downtime.avoid <= now)) { --quota; continue; }
+        if (r->downtime.known && r->downtime.avoid < now) continue;
+        if (r->challenge && r->challenge_at + 10000000 < now) r->challenge = 0;
+        bool ready = r->challenge && r->server_time && r->last_received &&
+            r->last_received + 20000000 >= now && r->front.m_nValidPings >= 3 &&
+            r->front.TimeRecvMostRecentPing() + 20000000 >= now && !r->ping_failures;
+        if (!ready) {
+            send_ping(p, *r, now);
+            if (r->ping_failures < 2) { --quota; started = true; }
             continue;
-        if (!r->challenge || now - r->challenge_at > 10000000)
-            continue;
+        }
+        --quota;
+        if (r->request_until || started) { started = true; continue; }
         CMsgSteamDatagramP2PSessionRequest request;
-        if (!build_request(*connection, *r, p->config, request))
-            continue;
+        if (!build_request(*connection, *r, p->config, request)) continue;
         size_t bytes = request.ByteSizeLong();
-        if (bytes >= 1300)
-            continue;
+        if (bytes >= 1300) continue;
         uint8_t packet[1300];
         packet[0] = 24;
         request.SerializeToArray(packet + 1, int(bytes));
         r->request_until = now + 750000;
-        if (p->socket->BSendRawPacket(packet, int(bytes + 1), r->address))
-            ++p->counters.requests;
+        if (send_packet(p, packet, int(bytes + 1), r->address)) ++p->counters.requests;
         SecureZeroMemory(packet, sizeof(packet));
-        ++active;
+        started = true;
+    }
+    return started;
+}
+static void update_network(sl_sdr_probe *p, CSteamNetworkConnectionBase *connection,
+                            SteamNetworkingMicroseconds now) {
+    if (now < p->last_round + 100000) return;
+    p->last_round = now;
+    std::vector<std::pair<float, ProbeRelay *>> priorities;
+    int ordinary = 0, measured = 0, fast = 0, medium = 0, broad = 0;
+    for (auto &r : p->relays) {
+        sl_sdr_expire_addresses(&r.failures, address_count(p, r), now);
+        sl_sdr_timeouts timeouts{r.ping_deadline, r.request_until, r.last_received,
+            r.ping_failures, r.request_failures, r.established};
+        unsigned events = sl_sdr_expire(&timeouts, now);
+        r.ping_deadline = timeouts.ping_deadline; r.request_until = timeouts.request_deadline;
+        r.ping_failures = timeouts.ping_failures; r.request_failures = timeouts.request_failures;
+        if (events & SL_SDR_TIMEOUT_PING) ++r.failures.failures;
+        bool shutting_down = r.downtime.known && r.downtime.shutdown <= now;
+        if ((events & SL_SDR_TIMEOUT_REMOVE) || shutting_down) {
+            sl_sdr_fail_address(&r.failures, r.address_key(), address_count(p, r), now);
+            r.established = false; r.routing_token.clear(); r.forward = {};
+            r.challenge = 0; r.ping_deadline = r.request_until = 0;
+            r.ping_failures = r.request_failures = 0; r.last_received = 0;
+            r.stats.Init(now, ELinkActivityLevel::Idle); r.sent_acks.clear();
+            if (choose_address(p, r, now)) { r.downtime = {}; r.force_ping = true; }
+        }
+        if (r.established && r.last_received + 60000000 < now) {
+            r.established = false; r.routing_token.clear(); r.forward = {};
+        }
+        if (events & SL_SDR_TIMEOUT_REPROBE) r.force_ping = true;
+        if (r.force_ping && !r.ping_deadline) { send_ping(p, r, now); r.force_ping = false; }
+        const auto *pop = find_pop(p->config, r.pop_id);
+        ++ordinary;
+        if (r.front.m_nTotalPingsReceived >= 2) ++measured;
+        if (r.front.m_nTotalPingsReceived > 2 && r.front.m_nValidPings >= 2 && r.failures.reachability == 1) {
+            int conservative = r.front.WorstPingInRecentSample();
+            fast += conservative < 30; medium += conservative < 75; broad += conservative < 150;
+        }
+        sl_sdr_probe_input input{r.ping_ms, int(r.probes_sent), r.front.m_nTotalPingsReceived,
+            r.front.m_nValidPings, int(r.failures.failures), r.failures.reachability, 1,
+            pop ? pop->tier : 1, 0, r.ping_ms < 0 ? 5000.0f + random_below(101) : float(r.ping_ms),
+            now-r.ping_sent, now-r.front.TimeRecvMostRecentPing()};
+        float priority;
+        if (!r.ping_deadline && sl_sdr_probe_priority(&input, !p->have_primary, !p->have_backup, &priority))
+            priorities.emplace_back(priority, &r);
+    }
+    std::stable_sort(priorities.begin(), priorities.end(), [](const auto &a, const auto &b) { return a.first < b.first; });
+    unsigned budget = (!p->have_primary || !p->have_backup) ? 10 : 1;
+    for (const auto &entry : priorities) {
+        if (!budget) break;
+        if (send_ping(p, *entry.second, now)) --budget;
+    }
+    p->good_enough |= sl_sdr_routing_ready(ordinary, measured, fast, medium, broad, now-p->initialized_at);
+    if (!p->good_enough) return;
+    if (p->owner) {
+        pursue_sessions(p, connection, p->pursue, 2, now);
+        pursue_sessions(p, connection, p->pursue_token, 1, now);
+    } else {
+        std::vector<ProbeRelay *> candidates;
+        for (auto &r : p->relays) if (r.ping_ms >= 0) candidates.push_back(&r);
+        std::stable_sort(candidates.begin(), candidates.end(), [](ProbeRelay *a, ProbeRelay *b) { return a->ping_ms < b->ping_ms; });
+        pursue_sessions(p, connection, candidates, 2, now);
     }
 }
 #if NSL_SNS_PROBES
@@ -338,13 +471,13 @@ struct SDRSendContext : SendPacketContext<CMsgSteamDatagramConnectionStatsP2PCli
 class SDRTransport final : public CConnectionTransport, public CConnectionTransportP2PBase {
 public:
     sl_sdr_probe *network = nullptr;
-    ProbeRelay *primary = nullptr;
+    ProbeRelay *primary = nullptr, *backup = nullptr;
     sl_sdr_revisions revisions{};
     CMsgSteamDatagramP2PRoutes peer_routes, local_routes;
     std::string last_snapshot;
     int route_ping = 0, route_score = 0;
 #if NSL_SNS_PROBES
-    unsigned debug[16] = {};
+    unsigned debug[16] = {}, route_generation = 0;
     void count(unsigned index) { ++debug[index]; }
 #else
     void count(unsigned) {}
@@ -363,7 +496,7 @@ public:
             delete network;
             network = nullptr;
         }
-        primary = nullptr;
+        primary = backup = nullptr;
     }
     bool BCanSendEndToEndData() const override {
         return primary && primary->established && primary->forward.desired_size;
@@ -374,63 +507,107 @@ public:
             info.m_idPOPRelay = primary->pop_id;
     }
     void select_routes(SteamNetworkingMicroseconds now) {
-        ProbeRelay *best = nullptr;
-        int best_score = 0x0fffffff;
-        int best_ping = 0;
-        std::vector<std::pair<int, ProbeRelay *>> pursue;
+        std::vector<std::pair<int, ProbeRelay *>> any, token_routes;
+        sl_sdr_candidate metrics[SL_SDR_CANDIDATES] = {};
+        ProbeRelay *relays[SL_SDR_CANDIDATES] = {};
+        int pings[SL_SDR_CANDIDATES] = {};
+        int current = -1, old_backup = -1;
+        size_t count = 0;
         for (auto &r : network->relays) {
-            int score = 0x0fffffff, ping = 0;
+            if (count == SL_SDR_CANDIDATES) break;
+            int score = SL_SDR_UNKNOWN, comparison = INT_MAX, any_comparison = INT_MAX, ping = 0;
             const CMsgSteamDatagramP2PRoutes_RelayCluster *target = nullptr;
+            int interior_score = 0;
             for (const auto &peer : peer_routes.relay_clusters()) {
-                if (r.ping_ms < 0 || peer.session_relay_routing_token().empty() ||
-                    peer.session_relay_routing_token().size() > SL_SDR_TOKEN_MAX || peer.ping_ms() > 10000)
-                    continue;
+                if (r.ping_ms < 0 || !find_pop(network->config, peer.pop_id()) || peer.ping_ms() > 10000 ||
+                    peer.session_relay_routing_token().size() > SL_SDR_TOKEN_MAX) continue;
                 int interior = 0;
                 if (peer.pop_id() != r.pop_id) {
                     auto it = r.interior.find(peer.pop_id());
-                    if (it == r.interior.end() || it->second < 0 || it->second > 10000)
-                        continue;
+                    if (it == r.interior.end() || it->second < 0 || it->second > 10000) continue;
                     interior = it->second;
                 }
                 int front = r.ping_ms + int(peer.ping_ms());
-                int64 candidate = int64(front) + front / 10 + interior + r.penalty + peer.score_penalty();
-                if (candidate < score) {
-                    score = int(candidate);
-                    ping = front + interior;
+                int64 forward = int64(front) + front / 10 + interior + r.penalty + peer.score_penalty();
+                if (forward >= SL_SDR_UNKNOWN) continue;
+                int reverse = SL_SDR_UNKNOWN;
+                for (const auto &route : peer_routes.routes()) {
+                    if (route.my_pop_id() != peer.pop_id() || route.your_pop_id() != r.pop_id) continue;
+                    int64 value = route.has_interior_score()
+                        ? int64(front) + front / 10 + r.penalty + peer.score_penalty() + route.interior_score()
+                        : route.has_legacy_score() ? int64(route.legacy_score()) : INT_MAX;
+                    reverse = value < INT_MAX ? int(value) : INT_MAX;
+                }
+                int combined = sl_sdr_comparison_score(int(forward), reverse);
+                any_comparison = std::min(any_comparison, combined);
+                if (!peer.session_relay_routing_token().empty() && combined < comparison) {
+                    comparison = combined; score = int(forward); ping = front + interior;
+                    interior_score = interior;
                     target = &peer;
                 }
             }
             if (target) {
-                const std::string &token = target->session_relay_routing_token();
-                sl_sdr_target_desire(&r.forward, reinterpret_cast<const uint8_t *>(token.data()),
-                    token.size(), target->pop_id());
-            } else {
-                sl_sdr_target_desire(&r.forward, nullptr, 0, 0);
+                const auto &token = target->session_relay_routing_token();
+                sl_sdr_target_desire(&r.forward, reinterpret_cast<const uint8_t *>(token.data()), token.size(), target->pop_id());
+                token_routes.emplace_back(comparison, &r);
+            } else sl_sdr_target_desire(&r.forward, nullptr, 0, 0);
+            if (any_comparison < INT_MAX) any.emplace_back(any_comparison, &r);
+            else if (!peer_routes.relay_clusters_size() && r.ping_ms >= 0) any.emplace_back(r.ping_ms, &r);
+            auto &m = metrics[count];
+            relays[count] = &r; pings[count] = ping;
+            if (&r == primary) current = int(count);
+            if (&r == backup && r.established && target) old_backup = int(count);
+            int low, high;
+            m.buckets = r.front.GetPingRangeFromRecentBuckets(low, high, now);
+            int64 other = 0;
+            m.shutdown_seconds = INT_MAX;
+            if (r.downtime.known) {
+                int64 remaining = r.downtime.shutdown - now;
+                m.shutdown_seconds = int(remaining >= 0 ? remaining / 1000000 : -((-remaining + 999999) / 1000000));
+                if (m.shutdown_seconds <= 0) other += 1000;
+                else if (m.shutdown_seconds < 30) other += (30 - m.shutdown_seconds) * 1000 / 30;
+                m.draining = r.downtime.avoid <= now;
             }
-            if (target || (peer_routes.relay_clusters_size() == 0 && r.ping_ms >= 0))
-                pursue.emplace_back(target ? score : r.ping_ms, &r);
-            if (r.established && target && score < best_score) {
-                best = &r;
-                best_score = score;
-                best_ping = ping;
+            if (r.stats.m_nReplyTimeoutsSinceLastRecv && r.last_received + 500000 < now) {
+                m.gap = now-r.last_received;
+                if (m.gap > 1750000) other += 100;
             }
+            int remote = target ? int(target->ping_ms()) : 0;
+            int penalties = r.penalty + (target ? int(target->score_penalty()) : 0) + int(other);
+            auto value = [&](int local) { int internet = local + remote; return internet + internet/10 + interior_score + penalties; };
+            m.score = score + int(other); m.minimum = value(low); m.maximum = value(high);
+            m.other_penalty = int(other);
+            m.front_samples = r.front.m_nValidPings;
+            m.cluster = int(r.pop_id); m.eligible = r.established && target && m.score < SL_SDR_UNKNOWN;
+            m.last_received = r.last_received;
+            m.front_oldest = r.front.m_arPing[2].m_usecTimeRecv;
+            m.last_ping_sent = r.ping_sent;
+            m.bucket_end = r.front.m_arTimeBuckets[r.front.m_idxCurrentBucket].m_usecEnd;
+            m.ping_pending = r.ping_deadline != 0;
+            ++count;
         }
-        std::stable_sort(pursue.begin(), pursue.end(), [](const auto &a, const auto &b) {
-            return a.first < b.first;
-        });
-        network->pursue.clear();
-        for (const auto &candidate : pursue) {
-            if (network->pursue.size() == 2)
-                break;
-            network->pursue.push_back(candidate.second);
-        }
-        if (primary != best) {
-            primary = best;
+        auto order = [](const auto &a, const auto &b) { return a.first < b.first; };
+        std::stable_sort(any.begin(), any.end(), order);
+        std::stable_sort(token_routes.begin(), token_routes.end(), order);
+        network->pursue.clear(); network->pursue_token.clear();
+        for (const auto &candidate : any) network->pursue.push_back(candidate.second);
+        for (const auto &candidate : token_routes) network->pursue_token.push_back(candidate.second);
+        sl_sdr_selection selected;
+        if (!sl_sdr_select(metrics, count, current, old_backup, false, now, &selected)) return;
+        ProbeRelay *next = selected.primary >= 0 ? relays[selected.primary] : nullptr;
+        backup = selected.backup >= 0 ? relays[selected.backup] : nullptr;
+        for (size_t i = 0; i < count; ++i) if (selected.probe[i]) relays[i]->force_ping = true;
+        if (primary != next) {
+#if NSL_SNS_PROBES
+            ++route_generation;
+#endif
+            primary = next;
             conn().m_usecNextEvaluateTransport = k_nThinkTime_ASAP;
             conn().SetNextThinkTimeASAP();
         }
-        route_ping = best_ping;
-        route_score = best_score;
+        network->have_primary = primary != nullptr; network->have_backup = backup != nullptr;
+        route_ping = primary ? pings[selected.primary] : 0;
+        route_score = primary ? metrics[selected.primary].score : SL_SDR_UNKNOWN;
         for (auto &r : network->relays)
             r.stats.SetActivityLevel(&r == primary ? ELinkActivityLevel::Active : ELinkActivityLevel::Idle, now);
     }
@@ -589,7 +766,7 @@ public:
         data.chunk = static_cast<const uint8_t *>(chunk);
         data.chunk_size = size;
         size_t sent = sl_sdr_write_data(packet, sizeof(packet), &data);
-        if (!sent || !network->socket->BSendRawPacket(packet, int(sent), r.address))
+        if (!sent || !send_packet(network, packet, int(sent), r.address))
             return 0;
         count(8);
         r.stats.TrackSentPacket(int(sent));
@@ -615,7 +792,7 @@ public:
             return;
         packet[0] = 26;
         ctx.msg.SerializeToArray(packet + 1, int(size));
-        if (network->socket->BSendRawPacket(packet, int(size + 1), r.address)) {
+        if (send_packet(network, packet, int(size + 1), r.address)) {
             count(6);
             r.stats.TrackSentPacket(int(size + 1));
             track(ctx);
@@ -640,6 +817,9 @@ public:
     }
     void recv_stats(ProbeRelay &r, const CMsgSteamDatagramConnectionStatsP2PRouterToClient &m,
                     uint16_t relay_sequence, SteamNetworkingMicroseconds now) {
+        if (m.has_seconds_until_shutdown()) warn_downtime(r, m.seconds_until_shutdown(), now);
+        if (m.has_scoring_penalty_relay_cluster())
+            r.penalty = std::min(5000u, m.scoring_penalty_relay_cluster());
         if (m.has_ack_forward_target_revision())
             sl_sdr_target_ack(&r.forward, m.ack_forward_target_revision());
         if (m.has_routes())
@@ -669,8 +849,11 @@ public:
                 }
             }
         }
-        if (flags & 1)
+        if (flags & 1) {
             sl_sdr_ack_queue(&r.acks, relay_sequence, uint64_t(now), flags & 4);
+            uint64_t deadline = sl_sdr_ack_deadline(&r.acks);
+            EnsureP2PTransportThink(deadline ? SteamNetworkingMicroseconds(deadline) : k_nThinkTime_ASAP);
+        }
         if (m.has_seq_num_e2e()) {
             valid_e2e(now, flags);
             if (flags & 2) {
@@ -719,7 +902,7 @@ public:
                 m_connection.RecvNonDataSequencedPacket(e2e, now);
             r.stats.TrackRecvPacket(packet.m_cbPkt, now);
             r.stats.TrackProcessSequencedPacket(relay, now, 0, 0);
-            r.last_received = now;
+            r.received(now);
             recv_stats(r, m, uint16_t(m.seq_num_r2c()), now);
         } else if ((data[0] & 0xe0) == 0x40) {
             count(9);
@@ -741,7 +924,7 @@ public:
             }
             r.stats.TrackRecvPacket(packet.m_cbPkt, now);
             r.stats.TrackProcessSequencedPacket(relay, now, d.relay_spacing_us, 0);
-            r.last_received = now;
+            r.received(now);
             valid_e2e(now, m.flags());
             if (!m_connection.ProcessPlainTextDataChunk(d.sender_spacing_us, ctx))
                 return;
@@ -783,8 +966,22 @@ public:
             conn().ScheduleSendSignal("SDR routes retry");
         for (auto &r : network->relays) {
             r.stats.Think(now);
-            if (r.established && sl_sdr_ack_deadline(&r.acks) <= uint64_t(now))
-                send_stats(r, k_EStatsReplyRequest_NoReply, now, false);
+            if (!r.established) continue;
+            SteamNetworkingMicroseconds next = now + 2000000;
+            EStatsReplyRequest request;
+            bool send = r.stats.GetSendReasonOrUpdateNextThinkTime(now, request, next) != nullptr;
+            if (&r == backup && !r.stats.m_usecInFlightReplyTimeout) {
+                SteamNetworkingMicroseconds keepalive = r.last_received + 45000000;
+                if (keepalive <= now) { send = true; request = k_EStatsReplyRequest_DelayedOK; }
+                else next = std::min(next, keepalive);
+            }
+            uint64_t ack_deadline = sl_sdr_ack_deadline(&r.acks);
+            if (ack_deadline <= uint64_t(now)) {
+                if (!send) request = k_EStatsReplyRequest_NoReply;
+                send = true;
+            } else if (ack_deadline < uint64_t(next)) next = SteamNetworkingMicroseconds(ack_deadline);
+            if (send) send_stats(r, request, now, false);
+            EnsureP2PTransportThink(next);
         }
         CConnectionTransportP2PBase::P2PTransportThink(now);
         EnsureP2PTransportThink(now + 100000);
@@ -840,8 +1037,8 @@ long long NSL_SDR_Wait(CSteamNetworkConnectionP2P &connection, long long now) {
     if (it == transports.end())
         return now;
     auto &t = *it->second;
-    auto until = connection.GetTimeEnteredConnectionState() + 2000000;
-    if (t.network->counters.valid_ping_replies < 2 && now < until)
+    auto until = connection.GetTimeEnteredConnectionState() + 7000001;
+    if (!t.network->good_enough && now < until)
         return std::min<long long>(now + 20000, until);
     if (connection.GetState() == k_ESteamNetworkingConnectionState_FindingRoute &&
         t.network->counters.established == 0 && t.peer_routes.relay_clusters_size()) {
@@ -852,6 +1049,27 @@ long long NSL_SDR_Wait(CSteamNetworkConnectionP2P &connection, long long now) {
     return now;
 }
 #if NSL_SNS_PROBES
+extern "C" bool sl_gns_sdr_test_loss(uint32_t handle, int mode, unsigned out[5]) {
+    if (mode < -1 || mode > 1 || !out) return false;
+    SteamNetworkingGlobalLock global("nsl SDR loss fixture");
+    ConnectionScopeLock lock;
+    auto *base = GetConnectionByHandle(handle, lock);
+    auto *connection = base ? base->AsSteamNetworkConnectionP2P() : nullptr;
+    auto it = transports.find(connection);
+    if (it == transports.end()) return false;
+    auto &t = *it->second;
+    auto &n = *t.network;
+    if (mode == 1) {
+        if (!t.primary || !t.backup || !t.BCanSendEndToEndData() || n.drop_enabled) return false;
+        n.drop_address = t.primary->address;
+        n.drop_pop = t.primary->pop_id;
+        n.drop_enabled = true;
+    } else if (mode == 0) n.drop_enabled = false;
+    out[0] = t.route_generation; out[1] = n.dropped_tx; out[2] = n.dropped_rx;
+    out[3] = t.BCanSendEndToEndData() && (!n.drop_enabled || t.primary->address != n.drop_address);
+    out[4] = t.primary && t.primary->pop_id != n.drop_pop;
+    return true;
+}
 extern "C" bool sl_gns_sdr_transport_stats(uint32_t handle, unsigned out[16]) {
     SteamNetworkingGlobalLock global("nsl SDR diagnostics");
     ConnectionScopeLock lock;

@@ -1685,7 +1685,12 @@ key-exchange 缓存测试在进入新密码计算前停止，不证明整个授�
 active 列表最多两项（primary、backup），但全部 session 可以更多；退出 active 列表不立即销毁。
 backup 尽量来自与 primary **不同 SharedClusterData 对象**的 POP。
 基础 selector 找不到这种候选时不主动清除已有 backup，可能保留本轮 P2P metrics 不合格的旧
-backup（`0x81d810–0x81d93c`）。**撤回将此推广为完整 P2P 行为的解释**：P2P 外层先运行
+backup（选择扫描 `0x81d93c–0x81daf0`）。**收紧这一结论**：它要求 primary 未改变。
+primary 切换路径 `0x81dc8c–0x81dc98` 先把 active count 写成 1，再保存新 primary，
+然后重新运行不同 POP 的 backup 选择；旧 backup 不会仅因“本轮没有替代项”而跨此重置保留。
+原先将保留规则无条件用于 primary 切换的概括应撤回；生产 C 实现与原始指令的组合差分
+（`tools/steam-sdr-implementation-audit.py`）覆盖该重置边界。
+**撤回将基础函数规则推广为完整 P2P 行为的解释**：P2P 外层先运行
 CleanRoutesForServerSelection，已失去目标 token 的 active 项会先被移出；随后才执行基础 selector
 （§21.13）。离线用例分别覆盖这两个阶段，不能把基础函数单测当成外层的最终结果。
 
@@ -2034,7 +2039,12 @@ DefaultProtocol alternate 探测（`0x8247d0–0x824b34`、`0x824f94–0x825104`
 甚至不清 pending session request。非空 token 先清 relay.pendingRequest，处理存在的停机预警。
 内部连接状态 -2/1/2/3 可复用本连接已有 session，或创建一个新 session，再保存 token、刷新
 session 的最后接收/计数并清 relay 的申请失败次数；随后立即重新选路。
-内部状态 -1/4/5 则发 NoConnection，不把迟到成立消息变成新的活动 session。
+内部状态 -1/4/5 调用 `SendConnectionClosedToServer`，不把迟到成立消息变成新的活动 session。
+**撤回此前把该分支写成 wire NoConnection 的说法**：原审计事件 `no_connection` 只是桩名称，
+继续执行真实 sender `0x81b554–0x81b6a4` 后确认发送 type **20 / ConnectionClosed**，
+不是 type 21。Sender 设置本地 from_connection_id、存在时设置远端 to_connection_id，
+再调用派生 population，最后发给 relay；新增 `connection_closed_sender` 原始指令用例直接
+检查其消息类型和 ID。不得根据桩的文字标签推断实际 wire 类型。
 这些是内部状态域，不可直接当成应用/CM 状态值使用。
 `next_r2c_packet_number !=0` 才将该 relay 序号窗口初始化到 next-1，扩展 next 并登记此次接收；
 0 跳过这段，不是无条件重置。connection_id 的匹配还依赖上层分派的定位与前置条件。

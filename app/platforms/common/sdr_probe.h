@@ -14,3 +14,8 @@ void sl_gns_sdr_probe_update(sl_sdr_probe *);
 void sl_gns_sdr_probe_stats(const sl_sdr_probe *, sl_sdr_probe_stats *);
 void sl_gns_sdr_probe_destroy(sl_sdr_probe *);
 bool sl_gns_sdr_transport_stats(uint32_t connection, unsigned out[16]);
+
+/* Diagnostic only: -1 query, 0 clear, 1 drop the current primary in both
+ * directions, leaving all other endpoints untouched. Captures one address;
+ * changing primary does not retarget the filter. */
+bool sl_gns_sdr_test_loss(uint32_t connection, int mode, unsigned out[5]);

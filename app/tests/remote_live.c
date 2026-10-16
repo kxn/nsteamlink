@@ -167,18 +167,20 @@ int main(int argc, char **argv) {
     bool sns_test = false;
     bool desktop_stream = false;
     bool sdr_session = false;
-    bool relay_only = false;
+    bool relay_only = false, fault_test = false;
 #ifdef NSL_HAVE_SNS
     sns_test = argc == 3 && !strcmp(argv[1], "--sns-test");
     desktop_stream = argc == 3 && !strcmp(argv[1], "--sns-desktop");
     sdr_session = argc == 3 && !strcmp(argv[1], "--sdr-session");
+    if (argc == 3 && !strcmp(argv[1], "--sdr-fault-test"))
+        fault_test = sns_test = relay_only = true;
     if (argc == 3 && !strcmp(argv[1], "--sdr-only-test"))
         sns_test = relay_only = true;
     if (argc == 3 && !strcmp(argv[1], "--sdr-only-desktop"))
         desktop_stream = relay_only = true;
 #endif
     if (argc != 1 && !pairing && !status && !idle && !sns_test && !desktop_stream && !sdr_session) {
-        fprintf(stderr, "usage: %s [--idle | --pair|--status|--sns-test|--sns-desktop|--sdr-session PRIVATE_PROFILE_DIRECTORY]\n",
+        fprintf(stderr, "usage: %s [--idle | --pair|--status|--sns-test|--sns-desktop|--sdr-session|--sdr-only-test|--sdr-only-desktop|--sdr-fault-test PRIVATE_PROFILE_DIRECTORY]\n",
                 argv[0]);
         return 2;
     }
@@ -232,7 +234,9 @@ int main(int argc, char **argv) {
     uint64_t connected_at = 0;
     uint64_t sns_connected_at = 0;
     bool desktop_success = false;
-    bool sdr_success = false;
+    bool sdr_success = false, fault_success = false, injected = false;
+    unsigned fault_generation = 0;
+    uint64_t fault_at = 0, recovered_at = 0;
     while (!l.failed && now_ms() < deadline) {
         sl_remote_connection_update(c, now_ms());
         if (l.ready && !connected_at)
@@ -281,6 +285,25 @@ int main(int argc, char **argv) {
                     l.failed = true;
                 fflush(stdout);
             }
+            if (fault_test && sns_connected_at && now_ms()-sns_connected_at >= 3000) {
+                unsigned fault[5] = {};
+                if (!injected && sl_sns_test_relay_loss(l.sns, 1, fault)) {
+                    injected = true; fault_at = now_ms(); fault_generation = fault[0];
+                    printf("SDR_PRIMARY_LOSS_INJECTED=1 generation=%u\n", fault_generation);
+                    fflush(stdout);
+                } else if (injected && sl_sns_test_relay_loss(l.sns, -1, fault)) {
+                    if (fault[0] != fault_generation && fault[3] && fault[4] && fault[1]+fault[2]) {
+                        if (!recovered_at) {
+                            recovered_at = now_ms();
+                            printf("SDR_BACKUP_RECOVERED=1 milliseconds=%llu dropped_tx=%u dropped_rx=%u\n",
+                                (unsigned long long)(recovered_at-fault_at), fault[1], fault[2]);
+                            fflush(stdout);
+                        }
+                        fault_success = now_ms()-recovered_at >= 5000;
+                    }
+                }
+                if (injected && now_ms()-fault_at > 20000 && !fault_success) l.failed = true;
+            }
             if (sdr_session) {
                 unsigned stats[5];
                 sl_sns_relay_probe_stats(l.sns, stats);
@@ -296,6 +319,7 @@ int main(int argc, char **argv) {
 #endif
         success = pairing  ? l.paired && l.status
                   : status ? l.status
+                  : fault_test ? fault_success && !l.failed
                   : sns_test ? sns_connected_at && now_ms() - sns_connected_at >= 5000
                   : desktop_stream ? desktop_success
                   : sdr_session ? sdr_success
@@ -333,6 +357,7 @@ int main(int argc, char **argv) {
             puts("");
         }
     }
+    if (fault_test && l.sns) { unsigned final[5]; sl_sns_test_relay_loss(l.sns, 0, final); }
     sl_sns_destroy(l.sns);
 #endif
     sl_remote_cancel(protocol);

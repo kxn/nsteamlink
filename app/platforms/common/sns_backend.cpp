@@ -447,6 +447,14 @@ extern "C" void sl_sns_sdr_debug(const sl_sns *b, unsigned out[16]) {
     if (b && out)
         memcpy(out, b->sdr_debug, sizeof(b->sdr_debug));
 }
+extern "C" bool sl_sns_test_relay_loss(sl_sns *b, int mode, unsigned out[5]) {
+#if NSL_ENABLE_SDR
+    return b && b->connection && sl_gns_sdr_test_loss(b->connection, mode, out);
+#else
+    (void)b; (void)mode; (void)out;
+    return false;
+#endif
+}
 #endif
 extern "C" int sl_sns_set_mtu(sl_sns *b, int mtu) {
     if (!b || !b->connection || mtu <= 0 ||

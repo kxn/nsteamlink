@@ -50,7 +50,8 @@ UI 只接收主机、配对和连接事件，不包含 WebSocket、证书或 tra
 `stream_bridge.*` 持有单次流的信令 HMAC key、跨云端重连 FIFO 和独立 Remote Client
 连接；`sns_backend.*` 管理 SDK manual poll、证书/信任链、custom signaling 和跨 IHS
 线程的数据报队列。`gns_hooks.cpp` 在固定 SDK 的构建配置内编译，访问 AppID、证书库
-和私有 relay hooks；`sdr_wire.*`/`sdr_config.*` 负责有界线格式与网络配置解析，
+和私有 relay hooks；`sdr_wire.*`/`sdr_config.*` 负责有界线格式与网络配置解析，`sdr_policy.*` 提供
+可脱离网络执行的主备选择、探测优先级、readiness、超时和地址失败缓存，
 `sdr_probe.cpp` 实现 relay session、routes、stats 和 SNP datagram 适配。
 `gns_mbedtls.cpp` 与 `platforms/switch/gns_libnx.cpp` 分别提供 crypto 和 libnx socket 接入。
 IHS 的 `IHS_SessionSetDatagramTransport` 在 Connect 前选择消息传输；上层认证、媒体和
