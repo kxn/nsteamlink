@@ -2350,3 +2350,44 @@ Evidence correction：首个完整网络 fixture 在 `embedded_profile` 阶段�
 在跳过首个根斜线后拒绝空目录段（EILSEQ）。目录参数改为 `romfs:`，并在部署前从实际
 NRO 的 RomFS 文件表核对完整 profile/key 字节，而非仅核对输入目录或文件时间。
 这个错误属于测试交付路径，不能当作 TLS、证书或 SDR 失败证据。
+
+## D-065：SDR 路由快照与故障恢复的证据边界（2026-10-17）
+
+问题：原适配器公布已建立 session 的全部路线，每次 ping 变化都可能重发快照。
+固定客户端的四轮排序、rank 并集、最终发送顺序与旧消息迟滞可以独立验证；候选图来源、
+初始化时机和 session 绑定也属于协议行为，不能用排序函数通过代替完整链路证明。
+
+Evidence：NETWORKING §21.9 的 MarkItemsToSend / CheckOldMessageValid 与原始排序器给出
+rank、旧项优势、必要项覆盖及完整 TruncateLists 顺序。`0x837688–0x8376f0` 同时写
+interior_score 和 legacy_score；`0x836d7c–0x836de8` 限定 global-ready 门槛。
+`0x837190–0x8371a4` 只对 controlling primary 强制公布，不包括 backup；
+`0x837390–0x837400` 要求这一路线为旧快照首项。仅按 rank 与配置索引排序遗漏分数比较，
+仅比较必要项集合也遗漏首项契约。原始指令执行覆盖这些条件与序列化字段投影。
+
+本项目 ProbeRelay 把一个 POP 的 root 和单个 session 合并，尚不具备官方 SharedCluster /
+多个 RelayServer / session 的全部独立状态。真实网络对照中，新候选与旧快照构造均曾出现
+主中继丢包后无 E2E 恢复；新候选无丢包连接的 25 秒对照通过。独立控制 stats、不复用旧
+快照、补 legacy_score 或强制 primary 首项均没有单独证明修复。具体日志索引记 issue #51。
+
+**Evidence correction**：撤回将旧 fault fixture 的 PASS 解读为端到端恢复的判断。旧条件只
+核对本地主中继更换到另一 POP、Connected 状态与 5 秒保持，没有要求切换后的 E2E 收包。
+新旧快照版本在补充此要求后均有失败，因此不能用旧 PASS 确立某个广告门槛是根因或修复。
+Switch 同类旧记录保留其角色/状态证据范围，不自动升级为 E2E 恢复证据。
+
+决定：
+
+1. global good-enough 后才导入 peer routes 到 selector 并构造公布快照；原始 peer 消息仍缓存。
+   本地 front 候选保留用于初始 pursue，不把此门槛变成停止维护已有路径。
+2. front 测量可作为 RelayCluster 提示；本适配器从已有本地 session 生成 Route 候选。
+   这是受限对象模型的实现边界，不是官方协议限制，也不是已证明的超时修复。
+3. 候选执行四轮 rank 并集、cluster 必要项提升、完整 rank/分数/索引排序与旧消息迟滞。
+   仅 controlling primary 强制公布，并检查旧首项。token、penalty、近期 ping 区间与
+   interior score 校验和必要项覆盖共同决定复用；迟滞不改变 active 切路阈值。
+4. 同时写 interior_score（interior ping + penalty）和 legacy_score（完整 forward 总分）；
+   POP/token 使用 canonical 绑定，相同 local/remote 组合先合并。
+5. 故障恢复 fixture 必须在注入后从当前新 primary POP 收到有效 E2E 包，再连续保持
+   可发送、不同 POP 和角色条件 5 秒；任一条件丢失就重新计时。本地 promotion、relay-only
+   ACK 或 socket 成功均不能替代该要求。诊断字段只在 probe 构建存在，不在热路径打印。
+
+本决定不声称候选图和官方全等，也不宣称通过媒体或 NAT 变化下的恢复。nearest-three
+实际入口、同 POP 多 relay 及迁移的完整行为契约见 NETWORKING §21.19；验收状态只记 Issues。

@@ -124,6 +124,29 @@ int main(void) {
     assert(!sl_sdr_front_eligible(1,-1,1,1));
     assert(!sl_sdr_front_eligible(1,20,0,0));
     assert(sl_sdr_front_eligible(1,20,1,0));
+    sl_sdr_advert_cluster ac[8]; sl_sdr_advert_route ar[8];
+    uint8_t cr[8],rr[8];
+    for (unsigned i=0; i<8; ++i) {
+        ac[i]=(sl_sdr_advert_cluster){.ping=20+(int)i,.old_member=true};
+        ar[i]=(sl_sdr_advert_route){.local=i,.remote=(i+1)%8,.forward=70+(int)i,
+            .reverse=INT_MAX,.old_member=true};
+    }
+    assert(sl_sdr_mark_advertisement(ac,8,ar,8,false,cr,rr));
+    for (unsigned i=0; i<8; ++i) {
+        assert(cr[i]==(i<4 ? 3 : i<6 ? 1 : 0));
+        assert(rr[i]==(i<2 ? 3 : i<4 ? 1 : 0));
+    }
+    ar[7].forced=true;
+    assert(sl_sdr_mark_advertisement(ac,8,ar,8,false,cr,rr) && rr[7]==3 && cr[7]==3);
+    unsigned co[8],ro[8];
+    assert(sl_sdr_order_advertisement(ac,8,ar,8,false,cr,rr,co,ro));
+    /* The forced primary must lead the wire list even at a larger POP index. */
+    assert(ro[0]==7 && ro[1]==0 && co[0]==0 && co[4]==7);
+    ar[7].old_member=false;
+    assert(!sl_sdr_mark_advertisement(ac,8,ar,8,true,cr,rr) && rr[7]==3);
+    assert(sl_sdr_old_metric_valid(20,26,20,30));
+    assert(!sl_sdr_old_metric_valid(20,31,20,30));
+    assert(!sl_sdr_old_metric_valid(0,5,-1,-1));
     assert(sl_sdr_established_action(-2)==SL_SDR_STATE_THINK);
     assert(sl_sdr_established_action(-1)==SL_SDR_STATE_CLOSE);
     assert(sl_sdr_established_action(0)==SL_SDR_STATE_INVALID);

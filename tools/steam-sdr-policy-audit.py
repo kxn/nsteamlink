@@ -629,13 +629,17 @@ def expected_probe(route, need_any, need_backup):
     return [(0, 20000.0+numerator/(max(0, route.get('probe_age', 0)/1000000)+0.5), 4)]
 
 
-def advertise(elf, pings, routes, expected_clusters, expected_routes, old=False, forced=()):
+def advertise(elf, pings, routes, expected_clusters, expected_routes, old=False, forced=(),
+              metadata=None, internal=(), old_clusters=None, old_routes=None):
     m = Machine(elf)
     m.buffers()
     selector, builder, reason = m.alloc(256), m.alloc(64), m.alloc(1024)
     clusters, raw_routes = m.alloc(len(pings)*56), m.alloc(len(routes)*32)
     cluster_items, route_items = m.alloc(len(pings)*32), m.alloc(len(routes)*32)
     restrictions = m.alloc(24)
+    network,pops=m.alloc(128),m.alloc(max(1,len(pings))*120)
+    m.write(0xc80000+2816,network,8); m.write(network+8,pops,8)
+    m.stubs[0xc11910]=lambda m: None # Error-reason formatting only.
     m.write(0xc80000+2784, restrictions, 8)
     m.write(builder, cluster_items, 8)
     m.write(builder+8, cluster_items+len(pings)*32, 8)
@@ -643,35 +647,48 @@ def advertise(elf, pings, routes, expected_clusters, expected_routes, old=False,
     m.write(builder+32, route_items+len(routes)*32, 8)
     m.write(builder+48, int(old), 1)
     for index, ping in enumerate(pings):
+        info=(metadata or {}).get(index,{})
         shared = m.alloc(1024)
         m.write(clusters+index*56, shared, 8)
         m.write(shared, index)
+        m.write(shared+764,info.get('special',0))
         m.write(clusters+index*56+8, ping)
+        m.write(clusters+index*56+12,info.get('penalty',0))
+        m.write(clusters+index*56+48,int(info.get('remote_used',False)),1)
         m.write(cluster_items+index*32, clusters+index*56, 8)
-        if old:
+        if old and (old_clusters is None or index in old_clusters):
             m.write(cluster_items+index*32+24, m.alloc(64), 8)
     for index, (local, remote, forward, reverse) in enumerate(routes):
         ptr = raw_routes+index*32
         for offset, value in [(0, local), (4, remote), (24, forward), (28, reverse)]:
             m.write(ptr+offset, value)
         m.write(route_items+index*32, ptr, 8)
-        if old:
+        if index in internal: m.write(route_items+index*32+8,1,1)
+        if old and (old_routes is None or index in old_routes):
             m.write(route_items+index*32+24, m.alloc(64), 8)
         if index in forced:
             m.write(route_items+index*32+9, 1, 1)
     m.allowed.append((0x841578, 0x84c6f0))  # Original four route sorts and cluster sorts.
     m.run(0x83b1d8, 0x83c848, selector, builder, reason, budget=150000)
-    assert m.reg(0) == 1
+    if m.reg(0) != 1:
+        assert expected_clusters is None and expected_routes is None
+        return None
     actual_clusters = {i: m.read(cluster_items+i*32+20) for i in range(len(pings))}
     actual_routes = {((m.read(m.read(route_items+i*32, 8))),
                        m.read(m.read(route_items+i*32, 8)+4)): m.read(route_items+i*32+20)
                      for i in range(len(routes))}
-    assert actual_clusters == expected_clusters, (actual_clusters, expected_clusters)
-    assert actual_routes == expected_routes, (actual_routes, expected_routes)
+    if expected_clusters is not None:
+        assert actual_clusters == expected_clusters, (actual_clusters, expected_clusters)
+        assert actual_routes == expected_routes, (actual_routes, expected_routes)
     m.run(0x83c848, 0x83c920, builder)
     for offset in (0, 24):
         begin, end = m.read(builder+offset, 8), m.read(builder+offset+8, 8)
         assert all(m.read(ptr+20) > 0 for ptr in range(begin, end, 32))
+    begin,end=m.read(builder,8),m.read(builder+8,8)
+    cluster_order=[m.read(m.read(m.read(ptr,8),8)) for ptr in range(begin,end,32)]
+    begin,end=m.read(builder+24,8),m.read(builder+32,8)
+    route_order=[(m.read(m.read(ptr,8)),m.read(m.read(ptr,8)+4)) for ptr in range(begin,end,32)]
+    return actual_clusters,actual_routes,cluster_order,route_order
 
 
 def old_advertisement(elf, ping, old_ping, penalty, old_penalty, expected,
@@ -715,6 +732,55 @@ def old_advertisement(elf, ping, old_ping, penalty, old_penalty, expected,
     m.allowed.extend([(0x83b1d8, 0x83c848), (0x841578, 0x84c6f0)])
     m.run(0x83aa9c, 0x83b1d8, selector, builder, old, NOW, reason)
     assert bool(m.reg(0)) == expected, (ping, old_ping, penalty, old_penalty, token, old_token)
+
+
+def route_serialization_fields(elf, interior, penalty, forward):
+    m=Machine(elf)
+    pb,route,network,pops,item=m.alloc(64),m.alloc(32),m.alloc(128),m.alloc(240),m.alloc(32)
+    m.write(network+8,pops,8); m.write(pops+8,123); m.write(pops+128,456)
+    for offset,value in [(0,0),(4,1),(8,interior),(16,penalty),(24,forward)]: m.write(route+offset,value)
+    for reg,value in [(0,pb),(21,route),(22,11),(23,120),(25,item),(26,item+32),(27,network)]: m.reg(reg,value)
+    m.stops[0x8377c8]=('route_written',)
+    m.run(0x837688,0x8376f8)
+    actual=tuple(m.read(pb+offset) for offset in (16,24,28,32,36))
+    assert actual==(15,123,456,forward,interior+penalty),actual
+
+
+def snapshot_readiness_gate(elf, good):
+    m=Machine(elf)
+    transport,connection,state=m.alloc(8192),m.alloc(8192),m.alloc(8)
+    m.write(0xc80000+3016,state,8); m.write(state,int(good),1)
+    m.write(transport+8,connection,8); m.write(connection+4912,1)
+    m.reg(19,transport)
+    m.stubs[0xc12bb0]=lambda m: m.events.append(('init_builder',))
+    m.stops[0x836dd0]=('ready',); m.stops[0x836de8]=('not_ready',)
+    m.run(0x836d7c,0x836de8)
+    assert m.events==([('init_builder',),('ready',)] if good else [('not_ready',)]),m.events
+
+
+def snapshot_primary_contract(elf, controlling, role, old=True, count=1, first=(123,456)):
+    m=Machine(elf)
+    transport,connection,metrics,session=[m.alloc(8192) for _ in range(4)]
+    cluster,pop,item,old_array,old_route=[m.alloc(128) for _ in range(5)]
+    m.write(transport+8,connection,8); m.write(connection+344,int(controlling),1)
+    m.write(metrics,session,8); m.write(metrics+8,role)
+    m.reg(8,session); m.reg(19,transport); m.reg(21,metrics)
+    m.stops[0x8371a4]=('force_primary',); m.stops[0x837160]=('skip',)
+    m.run(0x837190,0x8371a4)
+    force=controlling and role==0
+    assert m.events[-1]==(('force_primary',) if force else ('skip',))
+    if not force: return
+    m.events.clear()
+    m.write(cluster+8,pop,8); m.write(pop+8,123)
+    m.write(transport+1032,count); m.write(transport+1040,old_array,8)
+    m.write(old_array+8,old_route,8)
+    m.write(old_route+24,first[0]); m.write(old_route+28,first[1])
+    sp=m.uc.reg_read(arm.UC_ARM64_REG_SP); m.write(sp+8,int(old))
+    m.reg(20,cluster); m.reg(26,item); m.reg(27,456)
+    m.stubs[0xc09f60]=lambda m: None # Rebuild-reason string only.
+    m.run(0x837384,0x837400)
+    assert m.read(item+9,1)==1
+    assert bool(m.read(sp+8))==(old and count>0 and first==(123,456))
 
 
 def forward_score(elf, local, remote, interior, penalties, token, expected, stamp=NOW):
@@ -2781,6 +2847,24 @@ def audit(elf, groups=None):
     for old in (False, True):
         case('route_advertisement', advertise, [20, 30], [(0, 1, 70, 60)],
              {0: 3, 1: 3}, {(0, 1): 3}, old=old)
+    for seed in range(12):
+        pings=[20+(i*7+seed*3)%25 for i in range(8)]
+        routes=[(i,(i+seed)%8,80+(i*37+seed*11)%200,80+(i*91+seed)%200) for i in range(8)]
+        metadata={7:{'remote_used':True},0:{'penalty':1000,'special':-1}} if seed%3==0 else {}
+        for old in (False,True):
+            case('advertisement_union',advertise,pings,routes,None,None,old=old,
+                 forced=[7] if seed%2 else [],internal=[0,4] if seed%4==0 else [],metadata=metadata)
+        case('advertisement_union',advertise,pings,routes,None,None,old=True,
+             old_clusters=[0,1,2,3,4,5],old_routes=[0,1,2,3,4,5])
+    case('advertisement_union',advertise,[-1,20,30],[],None,None,
+         metadata={0:{'penalty':0x10000000}})
+    for interior,penalty,forward in [(0,0,30),(10,0,65),(10,3,80),(999,5000,6100)]:
+        case('route_serialization_fields',route_serialization_fields,interior,penalty,forward)
+    for good in (False,True): case('snapshot_readiness_gate',snapshot_readiness_gate,good)
+    for controlling,role in itertools.product((False,True),(0,1,0x7fffffff)):
+        case('snapshot_primary_contract',snapshot_primary_contract,controlling,role)
+    for old,count,first in itertools.product((False,True),(0,1),((123,456),(999,456),(123,999))):
+        case('snapshot_primary_contract',snapshot_primary_contract,True,0,old,count,first)
     for current, proposed, expected in [
         ({'ping': 60, 'minimum': 41}, {'ping': 20, 'maximum': 30}, [0, 1]),
         ({'ping': 60, 'minimum': 42}, {'ping': 20, 'maximum': 30}, [1, 0]),

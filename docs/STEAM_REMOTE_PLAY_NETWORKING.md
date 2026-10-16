@@ -1941,7 +1941,9 @@ interior、目标 token 与迟滞；该组仍直接构造已整理的 per-POP �
 
 1. 每条路线维护 forward/reverse 的用于公布比较的分数。原值>9999 按 `0x0fffffff` 处理；
    验证旧快照时，新出现且旧快照没有的项额外增加 `trunc(score/15)+5`，给旧内容迟滞优势。
-2. 当前使用的路线被标为强制公布，临时 rank=4，比较分数设为 `-0x0fffffff`。
+2. 仅 controlling 一方当前 primary（active index=0）的路线被标为强制公布，临时 rank=4，
+   比较分数设为 `-0x0fffffff`；backup 和非 controlling 一方不因此强制。
+   角色/控制方门槛来自 `0x837190–0x8371a4`，置位来自 `0x837384`。
    其余路线执行四次排序：优先内部标志/forward/reverse、优先内部标志/reverse/forward、
    reverse/forward/内部标志、forward/reverse/内部标志；数字分数升序，内部标志 true 在前，
    最后按 local/remote POP 索引升序打破平局。该 builder 在初始化时将内部标志清零；
@@ -1953,12 +1955,21 @@ interior、目标 token 与迟滞；该组仍直接构造已整理的 per-POP �
    已选路线将其**本地端** cluster 的 rank 提高到路线 rank，确保必需的 token/POP 信息同批公布。
 5. cluster 按比较分数、POP 索引选择，前四个提高到至少 rank=3，接下来两个在尚无 rank 时设为 1；
    不可用 front 或负 override 状态使这段选择停止。它与路线带来的必需 cluster 也是取并集。
-6. TruncateLists 按 rank 优先排序，在第一个 rank=0 处缩短列表。
+6. TruncateLists 首先按 rank 降序，再按比较分数升序，最后用 POP 索引打破平局；
+   Route 使用 forward 比较分数及 local/remote 索引，RelayCluster 使用 front+penalty 及本地索引。
+   强制路线的负比较分数保证其在同 rank 中领先。最终在第一个 rank=0 处缩短列表。
    它没有再施加一个固定“最多 4 routes / 6 clusters”的总数上限。
-7. RelayCluster 序列化携带所选 session 的 token、POP、ping 和 penalty；Route 公布
-   `interior_score=interiorPing+interiorPenalty`，不是把包含两端 front 的总分填进去。
+7. RelayCluster 序列化携带所选 session 的 token、POP、ping 和 penalty；Route **同时**公布
+   `interior_score=interiorPing+interiorPenalty` 与 `legacy_score=forwardScore`。
+   前者不含两端 front，后者为 §21.9 的完整 forward 总分。
    真正重建后才 revision+1，清除旧的重发期限，并要求对端获知新快照
    （`0x837468–0x8378c4`）。
+
+**Evidence correction**：此前本地构造只写 interior_score，遗漏了仍被官方同时写出的
+legacy_score。`0x837688–0x8376f0` 设置四个字段的 presence bits，并将 raw route+24 的
+forward 分数写入 protobuf f3、raw route+8 和 +16 的和写入 f4。不能把“支持新字段”理解为
+发送方可以省掉旧字段。独立原始序列化字段投影片段验证两端 POP、两种分数与 presence，
+没有把 RepeatedPtrField 分配或完整 protobuf 编码算作被执行。
 
 **旧快照复用**：`CheckOldMessageValid 0x83aa9c–0x83b1d8` 先逐项校验旧内容，再检查它是否
 覆盖仍必须公布的内容。penalty 差值达到 `5+trunc(min(old,new)/15)` 就重建（等号重建）。
@@ -1966,7 +1977,16 @@ ping 差值到达同一阈值时不立即重建：若旧 ping 仍在当前近期
 超出区间才重建。token 必须逐字节相同；旧快照有 token 而当前没有匹配 session 也不能复用。
 Route 的旧 interior_score 与当前 interiorPing+interiorPenalty 按同一阈值校验。
 最后以“验证旧快照”模式重新执行 MarkItemsToSend；旧快照漏掉任何 rank>=3 的必要项就失效。
-这些迟滞只控制 routes 快照更新，不改变 §21.2 的 active 切路阈值。
+在逐项迟滞前另有 primary 契约：controlling 一方有当前 primary/目标时，旧 routes 必须
+非空，且首项 my/your POP 对等于该 primary 的本地/目标 POP，否则立即重建
+（`0x837390–0x837400`）。不能仅比较成员集合，也不能用 rank 后按配置索引排序替代完整
+TruncateLists 顺序。这些迟滞只控制 routes 快照更新，不改变 §21.2 的 active 切路阈值。
+
+**快照前置门槛**：`CheckRebuildRoutingMessage 0x836d7c–0x836de8` 在全局 routing
+good-enough 为真时才进入 InitMessageToPeer；未就绪分支不构造候选快照。它与 §21.13 中
+selector 只在同一门槛后导入 peer routes 的规则一致。仅收到几个 front ping 并不能开始公布
+完整路由图。原有本地“只公布已有 session”的路径间接满足了这个门槛；改为公布可测 front
+时必须保留显式门槛，不能从函数级排序通过推断调用时机也正确。
 
 连接层的调用顺序由 `CConnectionTransportSDRBase::ThinkSelectServer 0x81bf60–0x81c0e4`
 约束：只有 wire state 1..3 执行；先取消无效迁移，再评估已有 active sessions，
@@ -2612,6 +2632,11 @@ POP 未给该字段则跳过本地公钥解析、使用全局；显式空串则�
 估计，不能因为回复了 ping 就作为普通本地 P2P 入口。正 override 是单独例外，不能覆盖
 负 front ping。该规则有包含 type=0/1/2、负/零/正 ping、未知/可达/不可达与 override 的
 原始分支输入；项目未提供 override UI 时应传 0。
+
+资格失败时 `0x8396ec` 从常量 `0x3d2c68` 同时写入 `front=-1`、
+`penalty=0x10000000`，不是只把 front 设成 -1 并留下普通 penalty。
+后续 builder 比较 `front+penalty` 时，此组合映射到 unknown score 并排在有效项之后，
+防止负 front 以低分排到 cluster 选择前缀并提前截断有效候选。
 
 **session 申请用钥**：`0x8384a4–0x8384dc` 先检查 canonical POP 的公钥是否有效，
 仅在无效时检查全局公钥；两者均不可用才进入 §18.3 的明文 peer identity 分支。选定的

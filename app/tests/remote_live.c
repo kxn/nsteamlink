@@ -314,14 +314,19 @@ int NSL_REMOTE_LIVE_ENTRY(int argc, char **argv) {
                     if (fault[0] != fault_generation && fault[3] && fault[4] && fault[1]+fault[2]) {
                         if (!recovered_at) {
                             recovered_at = now_ms();
-                            printf("SDR_BACKUP_RECOVERED=1 milliseconds=%llu dropped_tx=%u dropped_rx=%u\n",
+                            printf("SDR_BACKUP_RECOVERED=1 post_fault_e2e=1 milliseconds=%llu dropped_tx=%u dropped_rx=%u\n",
                                 (unsigned long long)(recovered_at-fault_at), fault[1], fault[2]);
                             fflush(stdout);
                         }
                         fault_success = now_ms()-recovered_at >= 5000;
+                    } else {
+                        recovered_at = 0;
                     }
                 }
-                if (injected && now_ms()-fault_at > 20000 && !fault_success) l.failed = true;
+                if (injected && now_ms()-fault_at > 20000 && !fault_success) {
+                    puts("SDR_RECOVERY_TIMEOUT=1");
+                    l.failed = true;
+                }
             }
             if (sdr_session) {
                 unsigned stats[5];

@@ -101,4 +101,31 @@ bool sl_sdr_route_estimates(const int32_t *front, size_t count, const sl_sdr_edg
 bool sl_sdr_router_ping_ms(uint32_t timestamp, int64_t now, int32_t *ping);
 bool sl_sdr_router_cookie(uint32_t cookie, uint32_t root_cookie, uint32_t session_id, bool have_session);
 bool sl_sdr_front_eligible(int pop_type, int ping, int reachability, int special);
+enum { SL_SDR_ADVERT_ROUTES_MAX = SL_SDR_CANDIDATES*SL_SDR_CANDIDATES };
+typedef struct sl_sdr_advert_cluster {
+    int32_t ping, penalty, special;
+    bool remote_used, old_member;
+} sl_sdr_advert_cluster;
+typedef struct sl_sdr_advert_route {
+    unsigned local, remote;
+    int32_t forward, reverse;
+    bool internal, forced, old_member;
+} sl_sdr_advert_route;
+/* NETWORKING 21.9: union of four route sorts, then local-cluster requirements
+ * and the independent four-plus-two cluster selection. No debug POP override.
+ * Old mode fails if a rank>=3 item is missing from the old message. Outputs are
+ * indexed like the inputs and remain unchanged on failure. */
+bool sl_sdr_mark_advertisement(const sl_sdr_advert_cluster *, size_t clusters,
+    const sl_sdr_advert_route *, size_t routes, bool old_mode,
+    uint8_t *cluster_ranks, uint8_t *route_ranks);
+/* Strict difference threshold; an old ping inside the current recent range
+ * is retained even at/above that threshold. Pass low=high=-1 for penalties
+ * and interior scores, which have no range exception. */
+bool sl_sdr_old_metric_valid(int32_t current, int32_t previous, int32_t low, int32_t high);
+/* TruncateLists sorts rank descending, then comparison score ascending, then
+ * POP indices. All indices are returned; rank-zero items form the tail. */
+bool sl_sdr_order_advertisement(const sl_sdr_advert_cluster *, size_t clusters,
+    const sl_sdr_advert_route *, size_t routes, bool old_mode,
+    const uint8_t *cluster_ranks, const uint8_t *route_ranks,
+    unsigned *cluster_order, unsigned *route_order);
 size_t sl_sdr_ping_request_size(int64_t last_full_latencies, int64_t now);

@@ -1,6 +1,7 @@
 #include "sdr_policy.h"
 #include <limits.h>
 #include <string.h>
+#include <stdlib.h>
 
 int32_t sl_sdr_comparison_score(int32_t forward, int32_t reverse) {
     if (forward == INT_MAX || reverse == INT_MAX)
@@ -118,6 +119,124 @@ static bool probe_unreachable(const sl_sdr_probe_input *p) {
 }
 bool sl_sdr_front_eligible(int pop_type, int ping, int reachability, int special) {
     return ping >= 0 && ((reachability >= 1 && pop_type == 1) || special >= 1);
+}
+typedef struct advert_order { int32_t key[5]; unsigned index; } advert_order;
+static int advert_compare(const void *left, const void *right) {
+    const advert_order *a=left, *b=right;
+    for (unsigned i=0; i<5; ++i)
+        if (a->key[i] != b->key[i]) return a->key[i] < b->key[i] ? -1 : 1;
+    return (a->index > b->index)-(a->index < b->index);
+}
+static int32_t advert_score(int32_t value, bool new_item) {
+    if (value > 9999) return SL_SDR_UNKNOWN;
+    return new_item ? value+value/15+5 : value;
+}
+bool sl_sdr_old_metric_valid(int32_t current, int32_t previous, int32_t low, int32_t high) {
+    if (current < 0 || previous < 0) return false;
+    int32_t minimum=current < previous ? current : previous;
+    int64_t difference=(int64_t)current-previous;
+    if (difference < 0) difference=-difference;
+    return difference < 5+minimum/15 || (low >= 0 && previous >= low && previous <= high);
+}
+bool sl_sdr_mark_advertisement(const sl_sdr_advert_cluster *clusters, size_t nc,
+    const sl_sdr_advert_route *routes, size_t nr, bool old_mode,
+    uint8_t *cluster_ranks, uint8_t *route_ranks) {
+    if (nc > SL_SDR_CANDIDATES || nr > SL_SDR_ADVERT_ROUTES_MAX ||
+        (nc && (!clusters || !cluster_ranks)) || (nr && (!routes || !route_ranks))) return false;
+    advert_order *order=malloc((nr > nc ? nr : nc)*sizeof(*order)+1);
+    uint8_t *ranks=calloc(nr+1,1), cranks[SL_SDR_CANDIDATES]={0};
+    if (!order || !ranks) { free(order); free(ranks); return false; }
+    bool ok=false;
+    for (size_t i=0; i<nr; ++i) {
+        const sl_sdr_advert_route *r=&routes[i];
+        if (r->local >= nc || r->remote >= nc || r->forward < 0 || r->reverse < 0) goto done;
+        if (r->forced) {
+            if (old_mode && !r->old_member) goto done;
+            ranks[i]=4;
+        }
+    }
+    for (unsigned pass=0; pass<4; ++pass) {
+        for (size_t i=0; i<nr; ++i) {
+            const sl_sdr_advert_route *r=&routes[i];
+            int32_t forward=r->forced ? -SL_SDR_UNKNOWN : advert_score(r->forward,old_mode && !r->old_member);
+            int32_t reverse=r->forced ? -SL_SDR_UNKNOWN : advert_score(r->reverse,old_mode && !r->old_member);
+            int32_t first=(pass==1 || pass==2) ? reverse : forward;
+            int32_t second=(pass==1 || pass==2) ? forward : reverse;
+            advert_order entry={.index=(unsigned)i};
+            entry.key[0]=pass < 2 ? -r->internal : first;
+            entry.key[1]=pass < 2 ? first : second;
+            entry.key[2]=pass < 2 ? second : -r->internal;
+            entry.key[3]=(int32_t)r->local; entry.key[4]=(int32_t)r->remote;
+            order[i]=entry;
+        }
+        qsort(order,nr,sizeof(*order),advert_compare);
+        for (size_t position=0; position<nr && position<4; ++position) {
+            unsigned i=order[position].index;
+            if (position < 2) {
+                if (old_mode && !routes[i].old_member) goto done;
+                ranks[i]=3;
+            } else if (!ranks[i]) ranks[i]=1;
+        }
+    }
+    for (size_t i=0; i<nc; ++i) {
+        const sl_sdr_advert_cluster *c=&clusters[i];
+        cranks[i]=c->remote_used && c->ping >= 0 ? 2 : 0;
+        int64_t score=(int64_t)c->ping+c->penalty;
+        if (score < 0 || score > INT_MAX) goto done;
+        order[i]=(advert_order){.key={advert_score((int32_t)score,old_mode && !c->old_member),
+            (int32_t)i,0,0,0},.index=(unsigned)i};
+    }
+    for (size_t i=0; i<nr; ++i) {
+        unsigned local=routes[i].local;
+        if (ranks[i] > cranks[local]) cranks[local]=ranks[i];
+        if (old_mode && cranks[local] >= 3 && !clusters[local].old_member) goto done;
+    }
+    qsort(order,nc,sizeof(*order),advert_compare);
+    for (size_t position=0; position<nc && position<6; ++position) {
+        unsigned i=order[position].index;
+        if (clusters[i].ping < 0 || clusters[i].special < 0) break;
+        if (position < 4) {
+            if (old_mode && !clusters[i].old_member) goto done;
+            if (cranks[i] < 3) cranks[i]=3;
+        } else if (!cranks[i]) cranks[i]=1;
+    }
+    if (nc) memcpy(cluster_ranks,cranks,nc);
+    if (nr) memcpy(route_ranks,ranks,nr);
+    ok=true;
+done:
+    free(order); free(ranks);
+    return ok;
+}
+bool sl_sdr_order_advertisement(const sl_sdr_advert_cluster *clusters, size_t nc,
+    const sl_sdr_advert_route *routes, size_t nr, bool old_mode,
+    const uint8_t *cluster_ranks, const uint8_t *route_ranks,
+    unsigned *cluster_order, unsigned *route_order) {
+    if (nc > SL_SDR_CANDIDATES || nr > SL_SDR_ADVERT_ROUTES_MAX ||
+        (nc && (!clusters || !cluster_ranks || !cluster_order)) ||
+        (nr && (!routes || !route_ranks || !route_order))) return false;
+    for (size_t i=0; i<nc; ++i) {
+        int64_t value=(int64_t)clusters[i].ping+clusters[i].penalty;
+        if (value < 0 || value > INT_MAX) return false;
+    }
+    for (size_t i=0; i<nr; ++i)
+        if (routes[i].local >= nc || routes[i].remote >= nc ||
+            routes[i].forward < 0 || routes[i].reverse < 0) return false;
+    advert_order *order=malloc((nr > nc ? nr : nc)*sizeof(*order)+1);
+    if (!order) return false;
+    for (size_t i=0; i<nc; ++i)
+        order[i]=(advert_order){.key={-(int32_t)cluster_ranks[i],
+            advert_score(clusters[i].ping+clusters[i].penalty,old_mode && !clusters[i].old_member),
+            (int32_t)i,0,0},.index=(unsigned)i};
+    qsort(order,nc,sizeof(*order),advert_compare);
+    for (size_t i=0; i<nc; ++i) cluster_order[i]=order[i].index;
+    for (size_t i=0; i<nr; ++i)
+        order[i]=(advert_order){.key={-(int32_t)route_ranks[i],
+            routes[i].forced ? -SL_SDR_UNKNOWN : advert_score(routes[i].forward,old_mode && !routes[i].old_member),
+            (int32_t)routes[i].local,(int32_t)routes[i].remote,0},.index=(unsigned)i};
+    qsort(order,nr,sizeof(*order),advert_compare);
+    for (size_t i=0; i<nr; ++i) route_order[i]=order[i].index;
+    free(order);
+    return true;
 }
 bool sl_sdr_probe_priority(const sl_sdr_probe_input *p, bool active_connection, bool need_backup, float *out) {
     if (p->special > 0 && p->probes < 8) { *out = -1e30f; return true; }

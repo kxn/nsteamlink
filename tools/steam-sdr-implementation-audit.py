@@ -42,6 +42,11 @@ class ProbeCandidate(c.Structure):
     _fields_=[('index',c.c_uint),('priority',c.c_float)]
 class ProbePlan(c.Structure):
     _fields_=[('candidates',ProbeCandidate*128),('count',c.c_size_t),('cutoff',c.c_float),('budget',c.c_uint)]
+class AdvertCluster(c.Structure):
+    _fields_=[('ping',c.c_int32),('penalty',c.c_int32),('special',c.c_int32),('remote_used',c.c_bool),('old_member',c.c_bool)]
+class AdvertRoute(c.Structure):
+    _fields_=[('local',c.c_uint),('remote',c.c_uint),('forward',c.c_int32),('reverse',c.c_int32),
+        ('internal',c.c_bool),('forced',c.c_bool),('old_member',c.c_bool)]
 
 class FailedAddress(c.Structure):
     _fields_ = [('address', c.c_uint64), ('failed', c.c_int64)]
@@ -311,6 +316,48 @@ def main():
             assert actual==(expected is not None),(text,actual,expected)
             if actual: assert bytes(config.relay_public_key)==expected
         audit.config_hex_key=hex_key
+        original_advertise=audit.advertise
+        lib.sl_sdr_mark_advertisement.argtypes=[c.POINTER(AdvertCluster),c.c_size_t,c.POINTER(AdvertRoute),
+            c.c_size_t,c.c_bool,c.POINTER(c.c_uint8),c.POINTER(c.c_uint8)]
+        lib.sl_sdr_mark_advertisement.restype=c.c_bool
+        lib.sl_sdr_order_advertisement.argtypes=[c.POINTER(AdvertCluster),c.c_size_t,c.POINTER(AdvertRoute),
+            c.c_size_t,c.c_bool,c.POINTER(c.c_uint8),c.POINTER(c.c_uint8),c.POINTER(c.c_uint),c.POINTER(c.c_uint)]
+        lib.sl_sdr_order_advertisement.restype=c.c_bool
+        def advertise(elf,pings,routes,expected_clusters,expected_routes,old=False,forced=(),
+                      metadata=None,internal=(),old_clusters=None,old_routes=None):
+            native=original_advertise(elf,pings,routes,expected_clusters,expected_routes,old,forced,
+                metadata,internal,old_clusters,old_routes)
+            clusters=(AdvertCluster*len(pings))(); inputs=(AdvertRoute*len(routes))()
+            for i,ping in enumerate(pings):
+                info=(metadata or {}).get(i,{})
+                clusters[i]=AdvertCluster(ping,info.get('penalty',0),info.get('special',0),
+                    info.get('remote_used',False),old and (old_clusters is None or i in old_clusters))
+            for i,(local,remote,forward,reverse) in enumerate(routes):
+                inputs[i]=AdvertRoute(local,remote,forward,reverse,i in internal,i in forced,
+                    old and (old_routes is None or i in old_routes))
+            cr=(c.c_uint8*len(pings))(*([99]*len(pings))); rr=(c.c_uint8*len(routes))(*([99]*len(routes)))
+            ok=lib.sl_sdr_mark_advertisement(clusters,len(pings),inputs,len(routes),old,cr,rr)
+            assert ok==(native is not None),(pings,routes,ok,native)
+            if ok:
+                assert dict(enumerate(cr))==native[0],(list(cr),native)
+                actual={(r[0],r[1]):rr[i] for i,r in enumerate(routes)}
+                assert actual==native[1],(actual,native)
+                co=(c.c_uint*len(pings))(); ro=(c.c_uint*len(routes))()
+                assert lib.sl_sdr_order_advertisement(clusters,len(pings),inputs,len(routes),old,cr,rr,co,ro)
+                assert [i for i in co if cr[i]]==native[2],(list(co),native)
+                assert [(routes[i][0],routes[i][1]) for i in ro if rr[i]]==native[3],(list(ro),native)
+            else: assert all(x==99 for x in list(cr)+list(rr))
+        audit.advertise=advertise
+        native_old_advertisement=audit.old_advertisement
+        lib.sl_sdr_old_metric_valid.argtypes=[c.c_int32]*4
+        lib.sl_sdr_old_metric_valid.restype=c.c_bool
+        def old_advertisement(elf,ping,old_ping,penalty,old_penalty,expected,
+                              span=(20,30),token=b'',old_token=b'',known=True):
+            native_old_advertisement(elf,ping,old_ping,penalty,old_penalty,expected,span,token,old_token,known)
+            actual=known and token==old_token and lib.sl_sdr_old_metric_valid(ping,old_ping,*span) and \
+                lib.sl_sdr_old_metric_valid(penalty,old_penalty,-1,-1)
+            assert actual==expected
+        audit.old_advertisement=old_advertisement
         original_estimates=audit.datacenter_routes
         lib.sl_sdr_route_estimates.argtypes=[c.POINTER(c.c_int32),c.c_size_t,c.POINTER(Edge),c.c_size_t,c.POINTER(c.c_int32)]
         lib.sl_sdr_route_estimates.restype=c.c_bool
@@ -354,7 +401,8 @@ def main():
             'global_routing_readiness', 'failed_cache_insertion', 'failed_cache_expiry', 'received_packet_recovery', 'transport_state_change', 'session_established', 'clean_route_targets',
             'datacenter_latency_updates', 'reverse_latency_estimation', 'cluster_penalty_updates', 'canonical_pop_mapping',
             'datacenter_route_estimation','router_ping_reply_dispatch','ping_request_size','probe_failure_history',
-            'nearest_probe_planning','config_pop_type','relay_key_selection','p2p_front_eligibility','config_hex_key'}
+            'nearest_probe_planning','config_pop_type','relay_key_selection','p2p_front_eligibility','config_hex_key',
+            'route_advertisement','advertisement_union','old_advertisement_hysteresis'}
         # Select group names from the existing audit; fail if they are renamed.
         counts = audit.audit(elf, groups)
         assert set(counts) == groups, counts
