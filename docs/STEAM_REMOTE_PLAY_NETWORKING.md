@@ -2817,3 +2817,10 @@ ACK 窗口。随后提前调度 connection 与 session thinker。
 媒体故障 fixture 另提供 `--sdr-warm-fault-desktop`：在 SNS 连接至少 15 秒且已有 30 帧后才
 注入。15 秒只是用于比较建立初期和持续收流的实验条件，不是选路阈值；它与普通故障模式
 使用相同的切换后新帧、五秒保持及末尾收包新鲜度要求，不能用其中一组替代另一组。
+
+故障 fixture 的 `SDR_LOSS_SAMPLE/FEEDBACK/ROUTING` 是每秒最多一组的只读诊断：在 SDK
+锁内复制主备 POP、root/session 失败与时钟年龄、目标/peer 首路 POP、revision/ACK 和 E2E
+探测状态；时间单位毫秒，UINT32_MAX 表示没有对应时刻。它不读身份/地址/载荷，不产生新
+网络请求，也不改变选路。stdout 仅从 fixture owner 在一秒采样点输出；Switch 使用已有的
+非阻塞 64KiB transcript，生产 release 不编译此诊断 API。单纯 root ACK 持续正常与 E2E
+保持为零必须分开解释，不能把前者记作后者恢复。

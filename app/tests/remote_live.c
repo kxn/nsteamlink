@@ -262,7 +262,7 @@ int NSL_REMOTE_LIVE_ENTRY(int argc, char **argv) {
     uint64_t e2e_received_at = 0;
     bool reported_e2e = false;
     unsigned observed_frames = 0, recovery_frames = 0;
-    uint64_t video_received_at = 0;
+    uint64_t video_received_at = 0, snapshot_at = 0;
     unsigned terminal_stage = 0;
     uint64_t terminal_at = 0;
     while (!l.failed && now_ms() < deadline) {
@@ -368,6 +368,24 @@ int NSL_REMOTE_LIVE_ENTRY(int argc, char **argv) {
                     printf("SDR_RECOVERY_TIMEOUT=1 generation=%u dropped_tx=%u dropped_rx=%u e2e_observations=%u different_pop=%u\n",
                         fault[0], fault[1], fault[2], fault[3], fault[4]);
                     l.failed = true;
+                }
+            }
+            if (injected && now_ms()-snapshot_at >= 1000) {
+                snapshot_at=now_ms();
+                sl_sdr_loss_snapshot s;
+                if (sl_sns_loss_snapshot(l.sns,&s)) {
+                    printf("SDR_LOSS_SAMPLE time=%u gen=%u pop=%u backup=%u drop=%u/%u root=%u session=%u recv_age=%u/%u request_age=%u pending=%u front=%u/%u\n",
+                        s.elapsed,s.generation,s.primary_pop,s.backup_pop,s.dropped_tx,s.dropped_rx,
+                        s.root_failures,s.session_failures,s.root_received_age,s.session_received_age,
+                        s.root_request_age,s.root_pending,s.front_samples,s.front_oldest_age);
+                    printf("SDR_LOSS_FEEDBACK time=%u backup_fail=%u/%u backup_age=%u old_fail=%u old_age=%u e2e=%u/%u revisions=%u/%u/%u forward_ack=%u\n",
+                        s.elapsed,s.backup_root_failures,s.backup_session_failures,s.backup_received_age,
+                        s.previous_root_failures,s.previous_received_age,s.e2e_count,s.e2e_received_age,
+                        s.local_revision,s.peer_revision,s.pending_revision_ack,s.forward_ack);
+                    printf("SDR_LOSS_ROUTING time=%u target=%u/%u peer_first=%u/%u e2e_request_age=%u pending=%u failures=%u\n",
+                        s.elapsed,s.target_pop,s.target_revision,s.peer_first_local,s.peer_first_remote,
+                        s.e2e_request_age,s.e2e_pending,s.e2e_failures);
+                    fflush(stdout);
                 }
             }
             if (sdr_session) {

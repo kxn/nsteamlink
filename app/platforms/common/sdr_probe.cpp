@@ -1460,6 +1460,56 @@ extern "C" bool sl_gns_sdr_test_loss(uint32_t handle, int mode, unsigned out[5])
     out[4] = t.primary && t.primary->pop_id != n.drop_pop;
     return true;
 }
+extern "C" bool sl_gns_sdr_loss_snapshot(uint32_t handle, sl_sdr_loss_snapshot *out) {
+    if (!out) return false;
+    SteamNetworkingGlobalLock global("nsl SDR loss snapshot");
+    ConnectionScopeLock lock;
+    auto *base = GetConnectionByHandle(handle, lock);
+    auto *connection = base ? base->AsSteamNetworkConnectionP2P() : nullptr;
+    auto it = transports.find(connection);
+    if (it == transports.end()) return false;
+    auto &t = *it->second;
+    auto &n = *t.network;
+    auto now = SteamNetworkingSockets_GetLocalTimestamp();
+    auto age = [now](SteamNetworkingMicroseconds at) -> unsigned {
+        return !at ? UINT32_MAX : unsigned(std::min<int64_t>(UINT32_MAX-1, std::max<int64_t>(0,now-at)/1000));
+    };
+    *out = {};
+    out->generation=t.route_generation; out->elapsed=age(n.drop_started);
+    out->dropped_tx=n.dropped_tx; out->dropped_rx=n.dropped_rx;
+    if (t.primary) {
+        auto &r=*t.primary;
+        out->primary_pop=r.pop_id; out->root_failures=r.ping_failures;
+        out->session_failures=r.stats.m_nReplyTimeoutsSinceLastRecv;
+        out->root_received_age=age(r.last_received); out->session_received_age=age(r.stats.m_usecTimeLastRecv);
+        out->root_request_age=age(r.ping_sent); out->root_pending=r.ping_deadline!=0;
+        out->front_samples=r.front.m_nValidPings; out->front_oldest_age=age(r.front.m_arPing[2].m_usecTimeRecv);
+        out->e2e_count=r.post_fault_e2e_count; out->e2e_received_age=age(r.last_valid_e2e);
+        out->forward_ack=r.forward.acknowledged;
+        out->target_pop=r.forward.desired_pop; out->target_revision=r.forward.revision;
+    }
+    if (t.backup) {
+        auto &r=*t.backup;
+        out->backup_pop=r.pop_id; out->backup_root_failures=r.ping_failures;
+        out->backup_session_failures=r.stats.m_nReplyTimeoutsSinceLastRecv;
+        out->backup_received_age=age(r.last_received);
+    }
+    for (const auto &r:n.relays) if (r.address==n.drop_address) {
+        out->previous_root_failures=r.ping_failures; out->previous_received_age=age(r.last_received);
+        break;
+    }
+    out->local_revision=t.revisions.local; out->peer_revision=t.revisions.peer;
+    out->pending_revision_ack=t.revisions.ack_pending;
+    if (t.peer_routes.routes_size()) {
+        out->peer_first_local=t.peer_routes.routes(0).my_pop_id();
+        out->peer_first_remote=t.peer_routes.routes(0).your_pop_id();
+    }
+    const auto &stats=connection->m_statsEndToEnd;
+    out->e2e_request_age=age(stats.m_ping.m_usecTimeLastSentPingRequest);
+    out->e2e_pending=stats.m_usecInFlightReplyTimeout!=0;
+    out->e2e_failures=stats.m_nReplyTimeoutsSinceLastRecv;
+    return true;
+}
 extern "C" bool sl_gns_sdr_transport_stats(uint32_t handle, unsigned out[16]) {
     SteamNetworkingGlobalLock global("nsl SDR diagnostics");
     ConnectionScopeLock lock;

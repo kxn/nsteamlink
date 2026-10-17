@@ -21,3 +21,17 @@ bool sl_gns_sdr_transport_stats(uint32_t connection, unsigned out[16]);
 bool sl_gns_sdr_test_loss(uint32_t connection, int mode, unsigned out[5]);
 
 bool sl_gns_sdr_test_terminal(uint32_t connection, int packet_case);
+
+/* Fixture-only metadata snapshot. UINT32_MAX means no timestamp; ages are
+ * milliseconds. No addresses, identities, payloads, or SDK text are returned. */
+typedef struct sl_sdr_loss_snapshot {
+    unsigned generation, elapsed, dropped_tx, dropped_rx, primary_pop, backup_pop;
+    unsigned root_failures, session_failures, root_received_age, session_received_age;
+    unsigned root_request_age, root_pending, front_samples, front_oldest_age;
+    unsigned backup_root_failures, backup_session_failures, backup_received_age;
+    unsigned previous_root_failures, previous_received_age, e2e_count, e2e_received_age;
+    unsigned local_revision, peer_revision, pending_revision_ack, forward_ack;
+    unsigned target_pop, target_revision, peer_first_local, peer_first_remote;
+    unsigned e2e_request_age, e2e_pending, e2e_failures;
+} sl_sdr_loss_snapshot;
+bool sl_gns_sdr_loss_snapshot(uint32_t connection, sl_sdr_loss_snapshot *);

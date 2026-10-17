@@ -466,6 +466,13 @@ extern "C" bool sl_sns_test_relay_loss(sl_sns *b, int mode, unsigned out[5]) {
     return false;
 #endif
 }
+extern "C" bool sl_sns_loss_snapshot(sl_sns *b, sl_sdr_loss_snapshot *out) {
+#if NSL_ENABLE_SDR
+    return b && b->connection && sl_gns_sdr_loss_snapshot(b->connection, out);
+#else
+    (void)b; (void)out; return false;
+#endif
+}
 extern "C" bool sl_sns_test_terminal(sl_sns *b, int packet_case) {
 #if NSL_ENABLE_SDR
     return b && b->connection && sl_gns_sdr_test_terminal(b->connection, packet_case);
