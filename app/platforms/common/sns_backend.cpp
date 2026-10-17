@@ -107,13 +107,28 @@ struct sl_sns {
 #if NSL_SNS_PROBES
     sl_sdr_probe *relay_probe = nullptr;
     unsigned sdr_debug[16] = {};
+    sl_sdr_loss_snapshot terminal_loss{};
+    bool observe_loss = false, terminal_loss_valid = false;
 #endif
 };
 static void close_backend(sl_sns *b, sl_sns_state state,
     sl_sns_terminal_source source = SL_SNS_TERMINAL_NONE, int detail = 0) {
+    SteamNetConnectionInfo_t info{};
+    bool have_info = b->connection != k_HSteamNetConnection_Invalid &&
+        b->sockets->GetConnectionInfo(b->connection, &info);
+    if (have_info) {
+        b->stats.sdk_state = int(info.m_eState);
+        if (info.m_eEndReason) b->end_reason = info.m_eEndReason;
+    }
     if (b->stats.terminal_source == SL_SNS_TERMINAL_NONE && source != SL_SNS_TERMINAL_NONE) {
         b->stats.terminal_source = source;
         b->stats.terminal_detail = detail;
+        b->stats.terminal_sdk_state = have_info ? int(info.m_eState) : 0;
+        b->stats.terminal_end_reason = b->end_reason;
+#if NSL_SNS_PROBES && NSL_ENABLE_SDR
+        if (b->observe_loss && b->connection)
+            b->terminal_loss_valid = sl_gns_sdr_loss_snapshot(b->connection, &b->terminal_loss);
+#endif
     }
     {
         std::lock_guard<std::mutex> lock(b->q->mutex);
@@ -127,9 +142,6 @@ static void close_backend(sl_sns *b, sl_sns_state state,
     if (b->connection != k_HSteamNetConnection_Invalid) {
         // A send/receive can observe a terminal SDK state before the periodic
         // status poll. Preserve its reason before invalidating the handle.
-        SteamNetConnectionInfo_t info;
-        if (b->sockets->GetConnectionInfo(b->connection, &info) && info.m_eEndReason)
-            b->end_reason = info.m_eEndReason;
         b->sockets->CloseConnection(b->connection, 2001, "stream transport closed", false);
         b->connection = k_HSteamNetConnection_Invalid;
     }
@@ -307,6 +319,7 @@ static bool check_connection(sl_sns *b, uint64_t now) {
         return false;
     }
     b->end_reason = info.m_eEndReason;
+    b->stats.sdk_state = int(info.m_eState);
     b->stats.authenticated = !(info.m_nFlags & k_nSteamNetworkConnectionInfoFlags_Unauthenticated);
     b->stats.relayed = (info.m_nFlags & k_nSteamNetworkConnectionInfoFlags_Relayed) != 0;
     switch (info.m_eState) {
@@ -460,7 +473,9 @@ extern "C" void sl_sns_sdr_debug(const sl_sns *b, unsigned out[16]) {
 }
 extern "C" bool sl_sns_test_relay_loss(sl_sns *b, int mode, unsigned out[5]) {
 #if NSL_ENABLE_SDR
-    return b && b->connection && sl_gns_sdr_test_loss(b->connection, mode, out);
+    bool result=b && b->connection && sl_gns_sdr_test_loss(b->connection, mode, out);
+    if (result && mode>=0) b->observe_loss=mode!=0;
+    return result;
 #else
     (void)b; (void)mode; (void)out;
     return false;
@@ -475,7 +490,11 @@ extern "C" bool sl_sns_test_migration(sl_sns *b, bool start, unsigned out[6]) {
 }
 extern "C" bool sl_sns_loss_snapshot(sl_sns *b, sl_sdr_loss_snapshot *out) {
 #if NSL_ENABLE_SDR
-    return b && b->connection && sl_gns_sdr_loss_snapshot(b->connection, out);
+    if (!b || !out) return false;
+    if (b->connection && sl_gns_sdr_loss_snapshot(b->connection,out)) return true;
+    if (!b->terminal_loss_valid) return false;
+    *out=b->terminal_loss;
+    return true;
 #else
     (void)b; (void)out; return false;
 #endif

@@ -30,6 +30,9 @@ typedef struct sl_sns_stats {
     uint64_t datagrams_sent, datagrams_received;
     sl_sns_terminal_source terminal_source;
     int terminal_detail;
+    /* SDK connection state is independent of the adapter's Failed/Closed.
+     * Terminal values are captured before CloseConnection invalidates it. */
+    int sdk_state, terminal_sdk_state, terminal_end_reason;
 } sl_sns_stats;
 void sl_sns_get_stats(const sl_sns *, sl_sns_stats *);
 /* Explicit diagnostic: verify relay session authorization in parallel with the

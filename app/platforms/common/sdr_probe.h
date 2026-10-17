@@ -40,5 +40,9 @@ typedef struct sl_sdr_loss_snapshot {
     unsigned local_revision, peer_revision, pending_revision_ack, forward_ack;
     unsigned target_pop, target_revision, peer_first_local, peer_first_remote;
     unsigned e2e_request_age, e2e_pending, e2e_failures;
+    unsigned controlling, local_acked, local_first_local, local_first_remote;
+    unsigned local_primary_token, local_primary_route, peer_primary_route;
+    unsigned cm_routes_out, cm_routes_in, stats_routes_out, stats_routes_in;
+    unsigned relay_closed, relay_no_connection, cm_closed, close_reason, close_relay_mode, close_pop;
 } sl_sdr_loss_snapshot;
 bool sl_gns_sdr_loss_snapshot(uint32_t connection, sl_sdr_loss_snapshot *);

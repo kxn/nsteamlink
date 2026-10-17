@@ -990,6 +990,8 @@ public:
     int route_ping = 0, route_score = 0;
 #if NSL_SNS_PROBES
     unsigned debug[16] = {}, route_generation = 0;
+    unsigned cm_routes_out=0,cm_routes_in=0,stats_routes_out=0,stats_routes_in=0;
+    unsigned relay_closed=0,relay_no_connection=0,cm_closed=0,close_reason=0,close_relay_mode=0,close_pop=0;
     void count(unsigned index) { ++debug[index]; }
 #else
     void count(unsigned) {}
@@ -1444,6 +1446,9 @@ public:
             m_connection.m_statsEndToEnd.TrackSentMessageExpectingSeqNumAck(ctx.m_usecNow, delayed);
         if ((flags & 2) || m.has_quality_e2e())
             P2PTransportTrackSentEndToEndPingRequest(ctx.m_usecNow, delayed);
+#if NSL_SNS_PROBES
+        if (m.has_routes()) ++stats_routes_out;
+#endif
         sl_sdr_routes_track_stats(&revisions, ctx.routing, uint64_t(ctx.m_usecNow));
     }
     bool SendDataPacket(SteamNetworkingMicroseconds now) override {
@@ -1565,8 +1570,12 @@ public:
             r.penalty = sl_sdr_cluster_penalty(int32_t(m.scoring_penalty_relay_cluster()));
         if (m.has_ack_forward_target_revision())
             sl_sdr_target_ack(&r.forward, m.ack_forward_target_revision());
-        if (m.has_routes())
+        if (m.has_routes()) {
+#if NSL_SNS_PROBES
+            ++stats_routes_in;
+#endif
             recv_routes(m.routes());
+        }
         if (m.has_ack_peer_routes_revision())
             sl_sdr_routes_ack(&revisions, m.ack_peer_routes_revision());
         if (m.has_quality_relay())
@@ -1641,6 +1650,9 @@ public:
             CMsgSteamDatagramConnectionClosed m;
             if (!m.ParseFromArray(data+1, packet.m_cbPkt-1) || m.to_connection_id() != ConnectionIDLocal() ||
                 (m.from_connection_id() && m.from_connection_id() != ConnectionIDRemote())) return;
+#if NSL_SNS_PROBES
+            ++relay_closed; close_reason=m.reason_code(); close_relay_mode=m.relay_mode(); close_pop=r.pop_id;
+#endif
             r.closed_by_relay = true;
             r.received(now);
             if (m.has_quality_relay()) r.stats.ProcessMessage(m.quality_relay(), now);
@@ -1666,6 +1678,9 @@ public:
             CMsgSteamDatagramNoConnection m;
             if (!m.ParseFromArray(data+1, packet.m_cbPkt-1) || m.to_connection_id() != ConnectionIDLocal() ||
                 (m.from_connection_id() && m.from_connection_id() != ConnectionIDRemote())) return;
+#if NSL_SNS_PROBES
+            ++relay_no_connection; close_reason=5010; close_relay_mode=m.end_to_end(); close_pop=r.pop_id;
+#endif
             r.closed_by_relay = true;
             r.received(now);
             if (m.has_quality_relay()) r.stats.ProcessMessage(m.quality_relay(), now);
@@ -1838,14 +1853,22 @@ void NSL_SDR_Populate(CSteamNetworkConnectionP2P &connection, CMsgSteamNetworkin
     t.rebuild_routes();
     auto fields = sl_sdr_routes_rendezvous(&t.revisions, m.has_connection_closed(), uint64_t(now));
     m.set_ack_peer_routes_revision(t.revisions.peer);
-    if (fields.routes)
+    if (fields.routes) {
         m.set_sdr_routes(t.local_routes.SerializeAsString());
+#if NSL_SNS_PROBES
+        ++t.cm_routes_out;
+#endif
+    }
 }
 void NSL_SDR_Process(CSteamNetworkConnectionP2P &connection, const CMsgSteamNetworkingP2PRendezvous &m, long long) {
     auto it = transports.find(&connection);
     if (it == transports.end())
         return;
     auto &t = *it->second;
+#if NSL_SNS_PROBES
+    if (m.has_sdr_routes()) ++t.cm_routes_in;
+    if (m.has_connection_closed()) { ++t.cm_closed; t.close_reason=m.connection_closed().reason_code(); }
+#endif
     if (m.has_sdr_routes())
         t.recv_routes(m.sdr_routes());
     if (m.has_ack_peer_routes_revision())
@@ -2017,6 +2040,24 @@ extern "C" bool sl_gns_sdr_loss_snapshot(uint32_t handle, sl_sdr_loss_snapshot *
         out->previous_root_failures=r.ping_failures; out->previous_received_age=age(r.last_received);
         break;
     }
+    out->controlling=t.conn().IsControllingAgent(); out->local_acked=t.revisions.local_acked;
+    if (t.local_routes.routes_size()) {
+        out->local_first_local=t.local_routes.routes(0).my_pop_id();
+        out->local_first_remote=t.local_routes.routes(0).your_pop_id();
+    }
+    if (t.primary) {
+        for (const auto &c:t.local_routes.relay_clusters())
+            if (c.pop_id()==t.primary->pop_id && !c.session_relay_routing_token().empty()) out->local_primary_token=1;
+        for (const auto &r:t.local_routes.routes())
+            if (r.my_pop_id()==t.primary->pop_id) ++out->local_primary_route;
+        for (const auto &r:t.peer_routes.routes())
+            if (r.your_pop_id()==t.primary->pop_id) ++out->peer_primary_route;
+    }
+    out->cm_routes_out=t.cm_routes_out; out->cm_routes_in=t.cm_routes_in;
+    out->stats_routes_out=t.stats_routes_out; out->stats_routes_in=t.stats_routes_in;
+    out->relay_closed=t.relay_closed; out->relay_no_connection=t.relay_no_connection;
+    out->cm_closed=t.cm_closed; out->close_reason=t.close_reason;
+    out->close_relay_mode=t.close_relay_mode; out->close_pop=t.close_pop;
     out->local_revision=t.revisions.local; out->peer_revision=t.revisions.peer;
     out->pending_revision_ack=t.revisions.ack_pending;
     if (t.peer_routes.routes_size()) {

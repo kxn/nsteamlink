@@ -41,6 +41,16 @@ typedef struct live {
     bool relay_only;
 #endif
 } live;
+#if defined(NSL_HAVE_SNS) && NSL_SNS_PROBES
+static void loss_route_evidence(const char *phase, const sl_sdr_loss_snapshot *s) {
+    printf("SDR_ROUTE_EVIDENCE phase=%s time=%u controlling=%u local_ack=%u local_first=%u/%u primary_token=%u local_routes=%u peer_routes=%u cm_populated=%u cm_received=%u stats_committed=%u stats_received=%u relay_close=%u relay_no_connection=%u cm_close=%u close_reason=%u relay_mode=%u close_pop=%u\n",
+        phase, s->elapsed, s->controlling, s->local_acked, s->local_first_local,
+        s->local_first_remote, s->local_primary_token, s->local_primary_route,
+        s->peer_primary_route, s->cm_routes_out, s->cm_routes_in, s->stats_routes_out,
+        s->stats_routes_in, s->relay_closed, s->relay_no_connection, s->cm_closed,
+        s->close_reason, s->close_relay_mode, s->close_pop);
+}
+#endif
 static void connected(bool ready, void *ctx) {
     ((live *)ctx)->ready = ready;
     printf("CLOUD_CONNECTED=%d\n", ready);
@@ -440,6 +450,7 @@ int NSL_REMOTE_LIVE_ENTRY(int argc, char **argv) {
                     printf("SDR_LOSS_ROUTING time=%u target=%u/%u peer_first=%u/%u e2e_request_age=%u pending=%u failures=%u\n",
                         s.elapsed,s.target_pop,s.target_revision,s.peer_first_local,s.peer_first_remote,
                         s.e2e_request_age,s.e2e_pending,s.e2e_failures);
+                    loss_route_evidence("sample", &s);
                     fflush(stdout);
                 }
             }
@@ -499,6 +510,12 @@ int NSL_REMOTE_LIVE_ENTRY(int argc, char **argv) {
         sl_sns_stats stats;
         sl_sns_get_stats(l.sns, &stats);
         printf("SNS_TERMINAL_SOURCE=%d detail=%d\n", stats.terminal_source, stats.terminal_detail);
+        printf("SNS_SDK_TERMINAL state=%d reason=%d current_state=%d\n",
+            stats.terminal_sdk_state, stats.terminal_end_reason, stats.sdk_state);
+        if (fault_test) {
+            sl_sdr_loss_snapshot s;
+            if (sl_sns_loss_snapshot(l.sns, &s)) loss_route_evidence("final", &s);
+        }
         printf("SNS_DATAGRAMS_SENT=%llu RECEIVED=%llu\n",
             (unsigned long long)stats.datagrams_sent, (unsigned long long)stats.datagrams_received);
         if (sdr_session) {

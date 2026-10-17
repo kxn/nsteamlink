@@ -2784,8 +2784,10 @@ lastImmediateRequest、最近 RTT/请求时刻和 pending 状态分别交给
 生产器在相同输入下比较，包含非对称 relay/E2E 活动及 pending；并不因此扩大到 protobuf
 实际长度、MTU 裁剪及完整 SDK 策略全等的声明。
 
-后端诊断分别保存 SDK end reason 和首个本地 terminal source/detail；发送/接收可能早于
-一秒状态轮询发现关闭，销毁 SDK handle 前还要读取它的原始 end reason。数值来源分别为
+后端诊断分别保存 SDK state/end reason 和首个本地 terminal source/detail；发送/接收可能早于
+一秒状态轮询发现关闭，销毁 SDK handle 前还要读取并锁存原始 SDK state/end reason。适配器
+Failed 不等于 SDK ProblemDetectedLocally：SDK 已 ClosedByPeer 时，Send 同样可以先返回
+NoConnection，再由适配器记为 send/Failed。数值来源分别为
 signal、certificate/start/config、connection info/status/state、signal queue、send/receive、
 datagram bounds/queue、allocation；不把来源枚举当作线上协议错误码，不打印 SDK 调试文本。
 
@@ -2829,6 +2831,15 @@ ACK 窗口。随后提前调度 connection 与 session thinker。
 网络请求，也不改变选路。stdout 仅从 fixture owner 在一秒采样点输出；Switch 使用已有的
 非阻塞 64KiB transcript，生产 release 不编译此诊断 API。单纯 root ACK 持续正常与 E2E
 保持为零必须分开解释，不能把前者记作后者恢复。
+
+`SDR_ROUTE_EVIDENCE` 同时复制控制方、local revision 的 ACK、本地首路、当前 primary POP
+是否已有本地 token/双向 Route，以及 routes/关闭消息的计数。`cm_populated` 只计信令填充，
+`stats_committed` 只计 stats 的提交，不等于成功发送或对端接收；inline stats 在 UDP send
+之前提交（§21.22）。开始故障观测后，首个 terminal 在 CloseConnection 前保存最后一份
+快照，供句柄失效后的 final 读取；不继续访问已销毁 SDK 对象。关闭来源分别计已通过解析和
+connection ID 校验的 relay type 20、type 21 与 CM connection_closed；type 20 另保存原始
+relay_mode 和来源 POP。4001 是 SDK 的 Remote_Timeout 分类，不能仅据该数字断言是 Steam
+主机主动超时；relay_mode=0 也不能写成已经观测到 EndToEnd(1) 关闭。诊断不输出 debug 文本。
 
 ### 21.31 外层 routes 交付的实现接线
 
