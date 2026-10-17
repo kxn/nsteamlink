@@ -6419,11 +6419,80 @@ flush/delete错误、完整Main OnThink两轮时机、Texture/Surface及JNI释�
 原worker后再释放其依赖，保留连接的接收/反馈所有权，分别清decoder FIFO/partial/
 player引用、替换backend、恢复严格等待并请求DataLost。Native epoch/ticket/GPU
 lease和renderer mapgroup需要按本地生命周期证明，不能直接复制Android指针释放。
-当前Native尚无这一整条actor reset，Video start失败/资源保护和FFmpeg错误映射仍
-是独立边界；本节没有据SDK错误码猜测AVERROR映射或提前添加自动重连、FEC策略。
+【更正，见§80】撤回“Native尚无整条actor reset”的旧结论。Native actor reset
+的契约及本地所有权验证由§80定义；FFmpeg运行时错误与全部SDK producer的映射、
+物理解码/显示仍是独立边界，不据SDK错误码猜测AVERROR或添加自动重连/FEC阈值。
 
 ```sh
 python3 scripts/audit-steam-decoder-reset.py \
   /data/dl/nsteamlink/build/video-recovery-re/libmain-arm64.so \
   --check scripts/fixtures/steam-decoder-reset-reference.json
+```
+
+## 80. Video Start的播放器准备、backend状态与恢复入口
+
+【官方客户端证据】同§24.1固定SHA。`audit-steam-video-start.py`经真实控制FIFO、
+Frame/Get/protobuf与OnStartVideoData(52)进入真实StartVideoDecoding factory及
+H264 standalone ctor/SetUseThreads/尺寸/OnStreamStarted。播放器BStartVideoStream与
+新backend BCreateDecoder结果、OS线程、packet refs/libc及最终IO为声明终点。
+正式输入证明prepare失败时保留channel映射、重放并消费匹配pending、无decoder；
+prepare成功/backend失败时decoder仍active并启动消费线程，不发DecoderInfo；
+backend成功才发Info。省略codec使用client协商值+340，显式值不被回退覆盖。
+重复Start先stop/join/析构旧decoder再prepare新值，Stop(53)清映射/decoder；重复
+Stop无额外效果。完整codec_data保存在原decoder参数buffer，匹配pending按已声明
+边界进入实际FIFO。SDK/线程结果不构成真实硬件或物理显示证明。
+
+【对齐契约】Native将播放器prepare与decoder start分开；可恢复的backend不可用
+保留decoder actor，完整帧请求异步reset，按§79先于下一轮网络处理消费，join/purge
+旧worker、关闭旧epoch/player引用、替换backend、恢复strict等待后请求DataLost。
+不把backend不可用等同于播放器准备失败，也不从MediaCodec返回值猜测AVERROR。
+FFmpeg/NVTEGRA的配置失败归入本地backend不可用接口；无效身份/尺寸、内存分配
+失败仍为明确本地保护。尺寸在player prepare阶段受限，失败保留映射并丢帧；
+两个旧domain被picture/map引用占用是backend不可用，释放后可再次初始化，不能
+直接断连。平台真实GPU/物理解码与Steam/Switch验收独立。
+
+
+【正式输入与投射边界】26组52状态执行prepare/backend结果、SetUseThreads两值、
+显式H264/省略codec、协商HEVC而Start显式H264的优先级、二进制codec_data、
+早到/后续帧、跨channel重复Start、重复Stop、OS Thread Start失败及三种不合法
+Start protobuf。每状态确认无Source断言。Native对照执行实际control FIFO/drain、
+parser、factory、prepare/start/stop、pending replay，逐状态比较channel/phase/pause/
+完整pending和编码FIFO字节、配置/codec_data、prepare参数、Start/Info/Stop顺序。
+Native对照的OS视频线程Start固定失败，以观察未消费FIFO；它不是实际调度证明。
+Source packet引用仍是借用边界，不取代§79的拥有引用审计。DecoderInfo仅对照
+发出条件/顺序，Android字符串与Native平台信息不要求相同。实际覆盖的factory是
+H264 standalone；HEVC/AV1/Raw及所有BAvailable分支不得从这些案例外推。
+
+【Native生命周期契约】视频worker只产生原子reset请求，不自行stop/join/recreate。
+RX生命周期actor在receiveCycle入口、socket readiness/RX/network/control消费前处理。
+旧worker退出并join后，purge complete FIFO，再关闭旧ticket epoch/播放器backend
+及partial，清请求、打开新epoch、重建backend、启动worker，随后发DataLost。
+旧worker产生的多个请求合并；本轮control drain中实际worker新增的请求留到下一轮。
+reset不再次调用player prepare。Backend不可用时仍可接收完整帧，请求后续reset；
+等待关键帧的strict/soft语义沿§79。Info发送失败不使已创建backend回滚；OS线程
+启动失败保留actor和有界FIFO，直至Stop。取消发生在旧Stop回调中时不再创建新worker。
+
+`test_video_reset_worker.c`经实际control FIFO、tracked组帧、worker及receiveCycle
+校验上述顺序、严格等待、请求跨轮、阻塞callback时join、旧FIFO purge、重复drain、
+OS启动失败及Stop取消。非空connection RX window和半收FEC组跨reset后可继续完成，
+属于Native所有权不变量；§79没有非空connection输入，不能将此标为新的官方等价证明。
+`video_reset_runtime.c`使用生产runtime回调表、media和真实FFmpeg图像：受控首次
+avcodec_open2失败后恢复；后续submit reset结果是声明的平台输入，不声称这是任何
+实际AVERROR的协议映射。真实旧AVFrame/ticket和map lease跨epoch/最终session销毁
+保留，两旧domain占用时保持backend不可用，单独释放picture不足以越过map引用，
+map释放后初始化可恢复。真实GPU fence、NVTEGRA及物理显示/loader均不在此证明内。
+
+【本地接口保护】可选`prepare`分离player与backend；非零准备结果保留映射/丢帧，
+成功后start返回0为ready、1为backend不可用、负值为本地致命保护；reset复用配置
+而不重新prepare。无prepare的旧回调保留合并start失败语义，submit-only回调仍可收帧。
+无效callback组合、epoch/identity、OOM是本地保护；不冒充官方SDK处理分支。
+`sl_video_open_ex`区分保护、不可用、ready；FFmpeg查找/硬件初始化/open的非OOM失败
+归于初始化未就绪，OOM保持保护退出。旧bool及本地媒体fixture入口保留原成功约定。
+Start空消息拒绝时不得取空buffer指针，和官方Get失败不创建decoder的行为一致。
+
+```sh
+python3 scripts/audit-steam-video-start.py \
+  /data/dl/nsteamlink/build/video-recovery-re/libmain-arm64.so \
+  --check scripts/fixtures/steam-video-start-reference.json
+ctest --test-dir build/desktop -R 'video_start_official_vectors|video_reset_worker|video_reset_runtime|nsl-video-pipeline' --output-on-failure
 ```

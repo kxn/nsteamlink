@@ -173,6 +173,20 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-client-settings-io.py"
         --receiver $<TARGET_FILE:nsl-stream-settings-oracle>)
     set_tests_properties(stream_settings_official_vectors PROPERTIES TIMEOUT 60)
+    add_executable(nsl-video-reset-runtime tests/video_reset_runtime.c)
+    target_include_directories(nsl-video-reset-runtime PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf ${CMAKE_SOURCE_DIR}/third_party/ihslib/tests/common)
+    target_compile_definitions(nsl-video-reset-runtime PRIVATE NSL_DIAGNOSTICS=$<BOOL:${NSL_DIAGNOSTICS}>)
+    target_compile_options(nsl-video-reset-runtime PRIVATE -UNDEBUG -Wall -Wextra -Wno-unknown-pragmas)
+    target_link_libraries(nsl-video-reset-runtime PRIVATE nsl_platform ihs-test-session)
+    target_link_options(nsl-video-reset-runtime PRIVATE -Wl,--wrap=sl_video_create -Wl,--wrap=avcodec_open2
+        -Wl,--wrap=sl_media_video_submit_tracked -Wl,--wrap=IHS_SessionPacketsWindowReleaseFrame
+        -Wl,--wrap=IHS_SessionPacketTimestamp -Wl,--wrap=IHS_BaseSend
+        -Wl,--wrap=IHS_SessionSendControlMessage -Wl,--wrap=IHS_SessionChannelDataLost)
+    add_test(NAME video_reset_runtime COMMAND nsl-video-reset-runtime
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video/sequential.h264)
+    set_tests_properties(video_reset_runtime PROPERTIES TIMEOUT 20)
     add_executable(nsl-player-owner-runtime tests/player_owner_runtime.c)
     target_include_directories(nsl-player-owner-runtime PRIVATE platforms/common
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client

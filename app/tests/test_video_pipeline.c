@@ -14,6 +14,7 @@ static pthread_mutex_t open_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t open_cond = PTHREAD_COND_INITIALIZER;
 static bool block_open, entered_open, release_open;
 static int send_failure;
+static int open_failure;
 static bool flag_missing_reference;
 int __real_avcodec_receive_frame(AVCodecContext *, AVFrame *);
 int __wrap_avcodec_receive_frame(AVCodecContext *c, AVFrame *frame) {
@@ -36,6 +37,11 @@ int __wrap_avcodec_send_packet(AVCodecContext *c, const AVPacket *packet) {
 
 int __real_avcodec_open2(AVCodecContext *, const AVCodec *, AVDictionary **);
 int __wrap_avcodec_open2(AVCodecContext *c, const AVCodec *codec, AVDictionary **options) {
+    if (open_failure) {
+        int error = open_failure;
+        open_failure = 0;
+        return error;
+    }
     pthread_mutex_lock(&open_lock);
     if (block_open) {
         entered_open = true;
@@ -67,6 +73,22 @@ static void close_during_open(sl_video_pipeline *p) {
     assert(!sl_video_is_current(p, (sl_video_key){5, 1}));
     sl_video_reap(p);
     assert(sl_video_clean(p));
+}
+static void opening_results(void) {
+    sl_video_pipeline *p = sl_video_create();
+    sl_video_config config = {.width = 128, .height = 72};
+    assert(p);
+    assert(sl_video_open_ex(p, (sl_video_key){1, 0}, &config) == SL_VIDEO_OPEN_GUARD);
+    open_failure = AVERROR(EIO);
+    assert(sl_video_open_ex(p, (sl_video_key){1, 1}, &config) == SL_VIDEO_OPEN_UNAVAILABLE);
+    assert(sl_video_clean(p));
+    open_failure = AVERROR(ENOMEM);
+    assert(sl_video_open_ex(p, (sl_video_key){1, 2}, &config) == SL_VIDEO_OPEN_GUARD);
+    assert(sl_video_clean(p));
+    assert(sl_video_open_ex(p, (sl_video_key){1, 3}, &config) == SL_VIDEO_OPEN_READY);
+    sl_video_stop(p, (sl_video_key){1, 3});
+    sl_video_reap(p);
+    assert(sl_video_destroy(p));
 }
 #endif
 typedef struct run {
@@ -275,6 +297,9 @@ static void corruption_and_recovery(sl_video_pipeline *pipeline, const char *pat
 
 int main(int argc, char **argv) {
     assert(argc == 3);
+#if defined(__linux__)
+    opening_results();
+#endif
     sl_video_config config = {.width = 128, .height = 72};
     sl_video_pipeline *pipeline = sl_video_create();
     assert(pipeline);
@@ -296,7 +321,8 @@ int main(int argc, char **argv) {
     fixture(&b, argv[2]);
     assert(b.outputs == 12 && b.reordered == 0);
     sl_video_stop(pipeline, b.key);
-    assert(!sl_video_open(pipeline, (sl_video_key){3, 1}, &config)); /* two pinned domains */
+    assert(sl_video_open_ex(pipeline, (sl_video_key){3, 1}, &config) ==
+           SL_VIDEO_OPEN_UNAVAILABLE); /* two pinned domains */
     sl_resource_release(&a.held->ref);
     sl_video_reap(pipeline);
     assert(sl_video_open(pipeline, (sl_video_key){4, 1}, &config));

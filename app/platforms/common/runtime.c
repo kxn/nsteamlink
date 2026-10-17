@@ -362,12 +362,16 @@ static void disconnected(IHS_Session *s, void *ctx) {
                            : "session end: transport/local disconnect");
     pthread_mutex_unlock(&r->lock);
 }
+static int video_prepare(IHS_Session *s, const IHS_StreamVideoConfig *config, void *ctx) {
+    (void)ctx;
+    return sl_media_video_prepare(s, config);
+}
 static int video_start(IHS_Session *s, const IHS_VideoEpochInfo *epoch,
                        const IHS_StreamVideoConfig *c, void *ctx) {
     sl_runtime *r = ctx;
     int result = sl_media_video_start_tracked(s, epoch, c);
     pthread_mutex_lock(&r->lock);
-    if (!result && r->facts.session_id == epoch->session_id) {
+    if (result >= 0 && r->facts.session_id == epoch->session_id) {
         r->facts.epoch = epoch->video_epoch;
         ++r->facts.video_transition;
         r->facts.paused = false;
@@ -450,7 +454,8 @@ static const IHS_StreamSessionCallbacks session_cb = {.configuring = configuring
                                                       .disconnected = disconnected,
                                                       .saveClientConfig = client_config_saved};
 static const IHS_StreamVideoCallbacks video_cb = {
-    .startTracked = video_start, .submitTracked = video_submit, .stopTracked = video_stop};
+    .startTracked = video_start, .submitTracked = video_submit, .stopTracked = video_stop,
+    .prepare = video_prepare};
 static const IHS_StreamInputCallbacks input_cb = {.activityState = activity};
 static void stop_client(sl_runtime *r) {
     if (!r->client)

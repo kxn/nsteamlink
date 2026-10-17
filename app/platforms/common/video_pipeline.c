@@ -121,10 +121,13 @@ static domain *find_domain(sl_video_pipeline *p, sl_video_key key) {
     return NULL;
 }
 bool sl_video_open(sl_video_pipeline *p, sl_video_key key, const sl_video_config *config) {
+    return sl_video_open_ex(p, key, config) == SL_VIDEO_OPEN_READY;
+}
+sl_video_open_result sl_video_open_ex(sl_video_pipeline *p, sl_video_key key, const sl_video_config *config) {
     if (!key.session || !key.epoch || !config || !config->width || !config->height ||
         config->width > 1920 || config->height > 1080 || config->extradata_size > MAX_PACKET ||
         (config->extradata_size && !config->extradata))
-        return false;
+        return SL_VIDEO_OPEN_GUARD;
     pthread_mutex_lock(&p->decoder);
     pthread_mutex_lock(&p->mailbox);
     bool admissible = !p->frozen && !p->accepting &&
@@ -149,9 +152,14 @@ bool sl_video_open(sl_video_pipeline *p, sl_video_key key, const sl_video_config
             }
     if (!d) {
         pthread_mutex_unlock(&p->decoder);
-        return false;
+        return admissible ? SL_VIDEO_OPEN_UNAVAILABLE : SL_VIDEO_OPEN_GUARD;
     }
+    sl_video_open_result failure = SL_VIDEO_OPEN_GUARD;
     const AVCodec *codec = avcodec_find_decoder(AV_CODEC_ID_H264);
+    if (!codec) {
+        failure = SL_VIDEO_OPEN_UNAVAILABLE;
+        goto fail;
+    }
     d->codec = codec ? avcodec_alloc_context3(codec) : NULL;
     if (!d->codec)
         goto fail;
@@ -180,15 +188,22 @@ bool sl_video_open(sl_video_pipeline *p, sl_video_key key, const sl_video_config
                 break;
             }
         }
-        if (type == AV_HWDEVICE_TYPE_NONE || d->hardware_format == AV_PIX_FMT_NONE ||
-            av_hwdevice_ctx_create(&d->codec->hw_device_ctx, type, NULL, NULL, 0) < 0)
+        int opened = type == AV_HWDEVICE_TYPE_NONE || d->hardware_format == AV_PIX_FMT_NONE
+            ? AVERROR(ENOSYS)
+            : av_hwdevice_ctx_create(&d->codec->hw_device_ctx, type, NULL, NULL, 0);
+        if (opened < 0) {
+            failure = opened == AVERROR(ENOMEM) ? SL_VIDEO_OPEN_GUARD : SL_VIDEO_OPEN_UNAVAILABLE;
             goto fail;
+        }
         d->codec->opaque = d;
         d->codec->get_format = hardware_format;
         d->codec->extra_hw_frames = 6;
     }
-    if (avcodec_open2(d->codec, codec, NULL) < 0)
+    int opened = avcodec_open2(d->codec, codec, NULL);
+    if (opened < 0) {
+        failure = opened == AVERROR(ENOMEM) ? SL_VIDEO_OPEN_GUARD : SL_VIDEO_OPEN_UNAVAILABLE;
         goto fail;
+    }
     d->occupied = true;
     d->stopped = false;
     pthread_mutex_lock(&p->mailbox);
@@ -197,11 +212,11 @@ bool sl_video_open(sl_video_pipeline *p, sl_video_key key, const sl_video_config
     d->stopped = !accepted;
     pthread_mutex_unlock(&p->mailbox);
     pthread_mutex_unlock(&p->decoder);
-    return accepted;
+    return accepted ? SL_VIDEO_OPEN_READY : SL_VIDEO_OPEN_GUARD;
 fail:
     avcodec_free_context(&d->codec);
     pthread_mutex_unlock(&p->decoder);
-    return false;
+    return failure;
 }
 void sl_video_close(sl_video_pipeline *p, sl_video_key key) {
     sl_video_frame *old = NULL;

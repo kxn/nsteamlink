@@ -28,6 +28,10 @@ sl_video_pipeline *sl_video_create(void);
  * FFmpeg. stop joins the callback domain via the decoder lock, then freezes it.
  * Reap/destroy belong to the runtime worker after callbacks have been excluded. */
 bool sl_video_open(sl_video_pipeline *, sl_video_key, const sl_video_config *);
+typedef enum sl_video_open_result {
+    SL_VIDEO_OPEN_GUARD = -1, SL_VIDEO_OPEN_UNAVAILABLE = 0, SL_VIDEO_OPEN_READY = 1,
+} sl_video_open_result;
+sl_video_open_result sl_video_open_ex(sl_video_pipeline *, sl_video_key, const sl_video_config *);
 void sl_video_close(sl_video_pipeline *, sl_video_key);
 void sl_video_stop(sl_video_pipeline *, sl_video_key);
 typedef enum sl_video_submit_result {

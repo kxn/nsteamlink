@@ -1040,6 +1040,13 @@ void stream_media_destroy_hid_provider(IHS_HIDProvider *provider) {
     pthread_mutex_unlock(&state_lock);
 }
 
+int sl_media_video_prepare(IHS_Session *session, const IHS_StreamVideoConfig *config) {
+    (void)session;
+    /* The persistent platform player already exists; backend creation belongs
+     * to start. Invalid geometry is this port's bounded resource guard. */
+    return video && config && config->width && config->height && config->width <= 1920 &&
+                   config->height <= 1080 ? 0 : -1;
+}
 int sl_media_video_start_tracked(IHS_Session *session, const IHS_VideoEpochInfo *epoch,
                                  const IHS_StreamVideoConfig *config) {
     (void)session;
@@ -1070,17 +1077,19 @@ int sl_media_video_start_tracked(IHS_Session *session, const IHS_VideoEpochInfo 
     snapshot.width = config->width;
     snapshot.height = config->height;
     pthread_mutex_unlock(&state_lock);
-    if (!sl_video_open(video, key, &decoder)) {
-        media_set_error("video domain unavailable or decoder initialization failed");
+    sl_video_open_result opened = sl_video_open_ex(video, key, &decoder);
+    if (opened == SL_VIDEO_OPEN_GUARD) {
+        media_set_error("video identity or allocation guard rejected decoder start");
         return -1;
     }
     pthread_mutex_lock(&state_lock);
     snapshot.video_active = true;
-    snprintf(snapshot.decoder, sizeof(snapshot.decoder), "h264 %s",
-             decoder.hardware ? "nvtegra" : "software");
+    snprintf(snapshot.decoder, sizeof(snapshot.decoder), "h264 %s%s",
+             decoder.hardware ? "nvtegra" : "software",
+             opened == SL_VIDEO_OPEN_UNAVAILABLE ? " pending" : "");
     snapshot.last_error[0] = 0;
     pthread_mutex_unlock(&state_lock);
-    return 0;
+    return opened == SL_VIDEO_OPEN_UNAVAILABLE ? 1 : 0;
 }
 IHS_StreamVideoSubmitResult
 sl_media_video_submit_tracked(IHS_Session *session, const IHS_VideoEpochInfo *epoch, uint16_t id,
@@ -1790,7 +1799,7 @@ int stream_media_video_start(IHS_Session *session, const IHS_StreamVideoConfig *
     if (!test_tracker || !IHS_FrameTrackerOpenEpoch(test_tracker, 1))
         return -1;
     IHS_VideoEpochInfo epoch = {test_session_id, 1};
-    return sl_media_video_start_tracked(session, &epoch, config);
+    return sl_media_video_start_tracked(session, &epoch, config) == 0 ? 0 : -1;
 }
 IHS_StreamVideoSubmitResult stream_media_video_submit(IHS_Session *session, uint16_t id,
                                                       IHS_Buffer *data,

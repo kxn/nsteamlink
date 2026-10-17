@@ -204,6 +204,7 @@ void stream_media_audio_close(IHS_Session *session); /* join device, free player
 
 void sl_media_submitted(const IHS_HIDSDLLastSubmitted *value);
 
+int sl_media_video_prepare(IHS_Session *, const IHS_StreamVideoConfig *);
 int sl_media_video_start_tracked(IHS_Session *, const IHS_VideoEpochInfo *,
                                  const IHS_StreamVideoConfig *);
 IHS_StreamVideoSubmitResult sl_media_video_submit_tracked(IHS_Session *, const IHS_VideoEpochInfo *,
