@@ -931,13 +931,14 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
                 16 - inset, surface);
             discovery_icon(r, box.x + 16, box.y + 8, 64, source, status);
             sl_gfx_color paired = host->paired ? accent : amber;
-            sl_gfx_color badge_surface = mix(surface, paired, .12f);
-            rounded(r->renderer, (sl_gfx_rect){box.x + box.w - 68, box.y + 16, 48, 48}, 12,
-                    badge_surface);
             pairing_icon(r, box.x + box.w - 68, box.y + 16, host->paired, paired);
-            int name_y = centered_y(r, c->label, 26, box.y + 80, 28, box.w - 40);
+            int name_width = text_width(r, c->label, 26);
+            if (name_width > box.w - 40)
+                name_width = box.w - 40;
+            int name_x = box.x + (box.w - name_width) / 2;
+            int name_y = centered_y(r, c->label, 26, box.y + 80, 28, name_width);
             sl_gfx_clip(r->renderer, &box);
-            draw_text(r, c->label, box.x + 20, name_y, box.w - 40, 38, 26, online ? fg : muted);
+            draw_text(r, c->label, name_x, name_y, name_width, 38, 26, online ? fg : muted);
             sl_gfx_clip(r->renderer, NULL);
             continue;
         }

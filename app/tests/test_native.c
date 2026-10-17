@@ -238,6 +238,29 @@ int main(int argc, char **argv) {
         save_image("discovery-offline");
         uint64_t absent = region_hash(icon);
         assert(absent != lan && absent != internet);
+        for (int paired = 0; paired <= 1; ++paired) {
+            for (int route = SL_DISCOVERY_NONE; route <= SL_DISCOVERY_INTERNET; ++route) {
+                ui = saved;
+                sl_runtime_event state = {.type = SL_EVENT_HOST,
+                                          .host = saved.store.registry.hosts[0],
+                                          .discovery_source = route};
+                sl_ui_runtime_event(&ui, &state);
+                ui.store.registry.hosts[0].paired = paired;
+                if (route == SL_DISCOVERY_NONE) {
+                    state.type = SL_EVENT_HOST_OFFLINE;
+                    sl_ui_runtime_event(&ui, &state);
+                }
+                sl_ui_layout(&ui);
+                stream_media_present();
+                char name[64];
+                snprintf(name, sizeof(name), "status-%s-%s",
+                         route == SL_DISCOVERY_LAN        ? "lan"
+                         : route == SL_DISCOVERY_INTERNET ? "internet"
+                                                          : "offline",
+                         paired ? "paired" : "unpaired");
+                save_image(name);
+            }
+        }
         ui = saved;
         sl_ui_runtime_event(&ui, &source);
         ui.store.registry.hosts[0].paired = false;
@@ -256,6 +279,7 @@ int main(int argc, char **argv) {
                      i == 1 ? "客厅电脑" : "Gaming PC");
             other.discovery_source = SL_DISCOVERY_INTERNET;
             sl_ui_runtime_event(&ui, &other);
+            ui.store.registry.hosts[i].paired = i == 2;
             if (i == 2) {
                 other.type = SL_EVENT_HOST_OFFLINE;
                 sl_ui_runtime_event(&ui, &other);
