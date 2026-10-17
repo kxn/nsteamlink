@@ -95,15 +95,31 @@ typedef struct run {
     sl_video_pipeline *pipeline;
     IHS_FrameTracker *tracker;
     sl_video_key key;
-    unsigned packets, outputs, reordered;
+    unsigned packets, outputs, reordered, logical_tasks;
+    bool use_selection;
     sl_video_frame *held;
     char golden[16][33];
     unsigned golden_count, golden_cursor;
 } run;
 static void take(run *r) {
-    sl_video_frame *frame = sl_video_take(r->pipeline);
-    if (!frame)
-        return;
+    sl_video_selection selected={0};
+    sl_video_frame *frame;
+    if(r->use_selection) {
+        assert(sl_video_select(r->pipeline,&selected));
+        assert(IHS_FrameTicketIdentity(selected.ticket).frameId==r->packets);
+        ++r->logical_tasks;frame=selected.frame;
+        if(!frame) {
+            IHS_TrackedFrame stats[IHS_FRAME_TRACKER_CAPACITY];
+            size_t n=IHS_FrameTrackerCopyStats(r->tracker,stats,IHS_FRAME_TRACKER_CAPACITY);
+            bool found=false;
+            for(size_t j=0;j<n;++j) if(stats[j].identity.frameId==r->packets) {
+                assert(stats[j].statsComplete && stats[j].outcome.result==IHS_VideoFrameResultDroppedReset);
+                found=true;
+            }
+            assert(found);sl_video_selection_release(&selected);return;
+        }
+    } else frame=sl_video_take(r->pipeline);
+    if(!frame)return;
     sl_publication_snapshot history;
     assert(sl_video_publications(r->pipeline,(sl_video_key){0},0,&history));
     assert(history.key.session==r->key.session && history.pending==0);
@@ -117,7 +133,7 @@ static void take(run *r) {
     }
     assert(found);
     IHS_FrameIdentity identity = IHS_FrameTicketIdentity(frame->ticket);
-    assert(frame->pixels->pts == (int64_t)identity.receiveSerial);
+    assert(frame->pixels->pts == AV_NOPTS_VALUE);
     assert(frame->has_media_timestamp && frame->media_timestamp == 0x100000u + identity.frameId * 777u);
     assert(frame->pixels->width == 128 && frame->pixels->height == 72);
     assert(frame->pixels->format == AV_PIX_FMT_YUV420P);
@@ -139,7 +155,19 @@ static void take(run *r) {
     IHS_FrameOutcome result = {.result = IHS_VideoFrameResultDisplayed,
                                .completionUs = frame->decode_end_us,
                                .presentationSerial = r->outputs};
-    sl_video_frame_complete(frame, &result);
+    if(r->use_selection) {
+        sl_video_selection_complete(&selected,&result);
+        IHS_TrackedFrame current[IHS_FRAME_TRACKER_CAPACITY];
+        size_t count=IHS_FrameTrackerCopyStats(r->tracker,current,IHS_FRAME_TRACKER_CAPACITY);
+        bool done=false;
+        for(size_t j=0;j<count;++j) if(current[j].identity.frameId==r->packets) {
+            assert(current[j].statsComplete && current[j].outcome.result==IHS_VideoFrameResultDisplayed);
+            done=true;
+        }
+        assert(done); /* current task, even when physical pixels belong to an older input */
+        selected.frame=NULL; /* transfer actual pixel reference to held */
+        sl_video_selection_release(&selected);
+    } else sl_video_frame_complete(frame,&result);
     if (r->held)
         sl_resource_release(&r->held->ref);
     r->held = frame; /* old displayed frame remains pinned until replaced */
@@ -151,9 +179,8 @@ static void submit(run *r, const unsigned char *data, size_t size) {
            IHS_FrameBeginOK);
     IHS_FrameTicketSetVideoTimestamp(ticket, 0x100000u + r->packets * 777u);
     bool taken = false;
-    assert(sl_video_submit(r->pipeline, r->key, data, size, ticket, &taken, false) ==
-               SL_VIDEO_SUBMIT_OK &&
-           taken);
+    sl_video_submit_result submitted=sl_video_submit(r->pipeline,r->key,data,size,ticket,&taken,false,NULL,NULL);
+    assert(submitted!=SL_VIDEO_SUBMIT_ERROR && !(submitted&SL_VIDEO_SUBMIT_RESET) && taken);
     /* Outputs may be reordered and published after a later packet. The
      * presentation stamp belongs to the packet token, never a mutable ticket. */
     IHS_FrameTicketSetVideoTimestamp(ticket, 0xdeadbeefu);
@@ -204,8 +231,11 @@ static void fixture(run *r, const char *path) {
     if (bytes)
         submit(r, packet, bytes);
     assert(r->packets == 12);
-    assert(sl_video_flush(r->pipeline, r->key));
-    take(r);
+    assert(sl_video_flush(r->pipeline,r->key));
+    bool selecting=r->use_selection;r->use_selection=false;
+    take(r); /* explicit probe-only drain: no invented application task */
+    r->use_selection=selecting;
+    if(selecting) assert(r->logical_tasks==r->packets);
     assert(r->outputs >= 10 && r->outputs <= 12);
     av_parser_close(parser);
     avcodec_free_context(&context);
@@ -235,7 +265,7 @@ static void corruption_and_recovery(sl_video_pipeline *pipeline, const char *pat
     IHS_FrameTicket *ticket;
     bool taken;
     assert(IHS_FrameTrackerBegin(r.tracker, 1, 1, &received, &ticket) == IHS_FrameBeginOK);
-    assert(sl_video_submit(pipeline, r.key, first, bytes, ticket, &taken, true) ==
+    assert(sl_video_submit(pipeline, r.key, first, bytes, ticket, &taken, true, NULL, NULL) ==
                SL_VIDEO_SUBMIT_OK &&
            taken);
     IHS_FrameTicketRelease(ticket);
@@ -247,13 +277,12 @@ static void corruption_and_recovery(sl_video_pipeline *pipeline, const char *pat
                held->pixels->linesize, AV_PIX_FMT_YUV420P, 128, 72, 1) == sizeof(before));
     const uint8_t broken[] = {0, 0, 0, 1, 0x65, 0x80}; // truncated IDR slice
     assert(IHS_FrameTrackerBegin(r.tracker, 1, 2, &received, &ticket) == IHS_FrameBeginOK);
-    assert(sl_video_submit(pipeline, r.key, broken, sizeof(broken), ticket, &taken, false) ==
-               SL_VIDEO_SUBMIT_CORRUPT &&
-           taken);
+    sl_video_submit_result bad=sl_video_submit(pipeline,r.key,broken,sizeof(broken),ticket,&taken,false,NULL,NULL);
+    assert((bad&SL_VIDEO_SUBMIT_CORRUPT) && taken);
     IHS_FrameTicketRelease(ticket);
     assert(!sl_video_take(pipeline)); // damaged output never replaces displayed frame
     assert(IHS_FrameTrackerBegin(r.tracker, 1, 3, &received, &ticket) == IHS_FrameBeginOK);
-    assert(sl_video_submit(pipeline, r.key, first, bytes, ticket, &taken, true) ==
+    assert(sl_video_submit(pipeline, r.key, first, bytes, ticket, &taken, true, NULL, NULL) ==
                SL_VIDEO_SUBMIT_OK &&
            taken);
     IHS_FrameTicketRelease(ticket);
@@ -269,23 +298,26 @@ static void corruption_and_recovery(sl_video_pipeline *pipeline, const char *pat
                                    1) == sizeof(after));
     assert(!memcmp(before, after, sizeof(before)));
 #if defined(__linux__)
-    // A successful API return can still carry an explicit missing-reference
-    // marker. Inject that backend result and require no publication.
+    // Official AVCodec uses successful dimensions/format, not reference flags.
+    // This controlled marker changes no actual pixels; prove both publication
+    // and real image bytes rather than retaining the superseded veto.
     assert(IHS_FrameTrackerBegin(r.tracker, 1, 4, &received, &ticket) == IHS_FrameBeginOK);
     flag_missing_reference = true;
-    assert(sl_video_submit(pipeline, r.key, first, bytes, ticket, &taken, true) ==
-               SL_VIDEO_SUBMIT_CORRUPT &&
-           taken);
+    assert(sl_video_submit(pipeline, r.key, first, bytes, ticket, &taken, true, NULL, NULL) ==
+               SL_VIDEO_SUBMIT_OK && taken);
     IHS_FrameTicketRelease(ticket);
-    assert(!sl_video_take(pipeline) && !flag_missing_reference);
-    // Resource failure and a stale identity must not be downgraded to DataLost.
+    sl_video_frame *flagged=sl_video_take(pipeline);assert(flagged && !flag_missing_reference);
+    assert(av_image_copy_to_buffer(after,sizeof(after),(const uint8_t *const *)flagged->pixels->data,
+               flagged->pixels->linesize,AV_PIX_FMT_YUV420P,128,72,1)==sizeof(after));
+    assert(!memcmp(before,after,sizeof(before)));sl_resource_release(&flagged->ref);
+    // SDK send failure requests reset and still receives once; it is distinct
+    // from the port's local allocation/identity guard.
     assert(IHS_FrameTrackerBegin(r.tracker, 1, 5, &received, &ticket) == IHS_FrameBeginOK);
     send_failure = AVERROR(ENOMEM);
-    assert(sl_video_submit(pipeline, r.key, first, bytes, ticket, &taken, false) ==
-               SL_VIDEO_SUBMIT_ERROR &&
-           taken);
+    assert(sl_video_submit(pipeline, r.key, first, bytes, ticket, &taken, false, NULL, NULL) ==
+               (SL_VIDEO_SUBMIT_RESET | SL_VIDEO_SUBMIT_CORRUPT) && taken);
     taken = true;
-    assert(sl_video_submit(pipeline, (sl_video_key){7, 1}, first, bytes, ticket, &taken, false) ==
+    assert(sl_video_submit(pipeline, (sl_video_key){7, 1}, first, bytes, ticket, &taken, false, NULL, NULL) ==
                SL_VIDEO_SUBMIT_ERROR &&
            !taken);
     IHS_FrameTicketRelease(ticket);
@@ -308,7 +340,7 @@ int main(int argc, char **argv) {
     sl_video_config config = {.width = 128, .height = 72};
     sl_video_pipeline *pipeline = sl_video_create();
     assert(pipeline);
-    run a = {.pipeline = pipeline, .tracker = IHS_FrameTrackerCreate(1), .key = {1, 1}};
+    run a = {.pipeline = pipeline, .tracker = IHS_FrameTrackerCreate(1), .key = {1, 1}, .use_selection=true};
     assert(IHS_FrameTrackerOpenEpoch(a.tracker, 1));
     sl_video_freeze(pipeline);
     assert(!sl_video_open(pipeline, a.key, &config)); /* stop before begin */
@@ -320,7 +352,7 @@ int main(int argc, char **argv) {
     sl_video_reap(pipeline);
     assert(!sl_video_clean(pipeline)); /* held output keeps its codec domain alive */
     IHS_FrameTrackerClose(a.tracker);  /* displayed lease survives endpoint close */
-    run b = {.pipeline = pipeline, .tracker = IHS_FrameTrackerCreate(2), .key = {2, 1}};
+    run b = {.pipeline = pipeline, .tracker = IHS_FrameTrackerCreate(2), .key = {2, 1}, .use_selection=true};
     assert(IHS_FrameTrackerOpenEpoch(b.tracker, 1));
     assert(sl_video_open(pipeline, b.key, &config));
     fixture(&b, argv[2]);

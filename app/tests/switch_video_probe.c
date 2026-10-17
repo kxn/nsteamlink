@@ -259,8 +259,8 @@ static bool packet(sl_video_pipeline *pipeline, sl_gfx *gfx, IHS_FrameTracker *t
         IHS_FrameBeginOK)
         return false;
     bool taken = false;
-    bool ok =
-        sl_video_submit(pipeline, key, data, bytes, ticket, &taken, false) == SL_VIDEO_SUBMIT_OK;
+    sl_video_submit_result submitted=sl_video_submit(pipeline,key,data,bytes,ticket,&taken,false,NULL,NULL);
+    bool ok=submitted!=SL_VIDEO_SUBMIT_ERROR && !(submitted&SL_VIDEO_SUBMIT_RESET);
     IHS_FrameTicketRelease(ticket);
     return ok && taken && take(pipeline, gfx, hardware, held, outputs);
 }

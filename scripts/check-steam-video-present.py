@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Compare production input-task presentation with the official player caller.
+"""Historical Android/MediaCodec projection; not the AVCodec acceptance gate.
+
+The product now follows the separately replayed Linux AVCodec caller (§91–93).
+This retained helper documents the old Android projection and is not registered
+as a product CTest; current FFmpeg acceptance is check-steam-video-avcodec.py.
 
 Native runs actual control/parser/worker/FFmpeg/media/SDL and endpoint stages.
 SDK output availability and Native suppression are declared backend inputs. The

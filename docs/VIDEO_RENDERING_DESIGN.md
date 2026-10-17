@@ -560,7 +560,8 @@ DataStop 判断资源存在。channel/tracker 的发送使用退出必须早于�
 
 | 错误类别 | 处理与资源归属 |
 |---|---|
-| 单帧 corrupt / 暂无输出 | 保留 current，按既有丢帧/关键帧策略处理；不启动会话析构 |
+| 压缩帧尚未完整 | 继续普通界面重绘，保留已选像素；不提前创建完整解码任务 |
+| AVCodec收帧错误/占位 | 按§93结算7/5及空DataLost，消费format0任务；send错误独立请求actor重建 |
 | 非必要 UI cache miss / 容量不足 | renderer 使用常驻占位；不覆盖已录制内容，不使会话失败 |
 | 视频格式、导入或 domain/PoolGroup 容量失败 | 带 session_id/video_epoch 的不可丢关闭原因；application 更新 faulted 并进入统一 stop；IHS start 返回失败时接受其断开语义 |
 | device/queue 故障、无法归还输出 | application 级 sticky DeviceFailed，自 gfx 创建起就存在；不按旧视频代次忽略，不接受新会话或新 GPU 工作 |
@@ -892,6 +893,20 @@ legacy adapter 仍进入同一 tracker，但不为迟到、歧义的 16-bit id �
 
 ### 15.2 FFmpeg 输入输出关联
 
+AVCodec任务策略以`STEAMLINK_PROTOCOL_RE.md` §91–92的官方Linux客户端为依据：
+完整AU经complete-frame parser后只send一次、receive一次；send失败独立请求异步reset，
+仍尝试receive。receive EAGAIN首次记7，其他错误记5，并反馈空DataLost；无像素占位
+仍按普通jitter进入/离开任务队列。采样和事件15在receive及原错误处理之后。
+任务绑定本次receive交付的对象，不按Android输入PTS查找另一张texture；物理对象仍保留
+不可变的输入token身份。无有效宽高不入队，原format0占位不提交GPU。
+reset与DataLost允许同时表达；枚举/队列引用是本地接口设计，不新增协议消息或FEC策略。
+Linux原DecodeFrame @0x326225在关键标记上调用原FlushPendingData @0x325ec0，
+其完整路径清理partial/压缩buffer引用，不调用AVCodec SDK flush；已交付player的对象保留。
+`audit-steam-client-avcodec-key.py`以原Frame构造、完整DecodeFrame/Flush/OnThink执行
+分片、替换和已排队对象场景，并检测实际send AU字节；不能继续套用Android SDK flush。
+SDK分配/身份/固定资源上限的本地保护、send EIO的完整配置重协商及NVTEGRA特定错误映射
+不能冒称已由这一软件路径证明。生命周期保持stop/join后回收，parser先于codec销毁。
+
 【官方来源范围更正】以下资源/身份模型描述Native实现。撤回把“已接受但无输出继续pending”
 作为所有官方后端共有策略的判断：此前任务选择与完成投影来自Android/MediaCodec。
 `STEAMLINK_PROTOCOL_RE.md` §91另固定官方Linux AVCodec客户端，其receive EAGAIN实际先记7，
@@ -902,8 +917,8 @@ COPY_OPAQUE在本地证明物理输出的引用归属，不单独证明官方FFm
 
 §92另执行同一官方Linux客户端的完整OnThink、原Put/jitter/播放队列及video update调用者：
 采样与15位于receive之后；EAGAIN的format0占位任务正常出队、跳过像素上传并继续呈现，
-后续尝试完成1不能覆盖先前7。当前Native提前计时与无输出pending均有真实执行反例。
-以下“接受输入后独立入队/等待”的结构描述须限定为现有Native与Android投影，不能拿它
+后续尝试完成1不能覆盖先前7。§92记录过Native提前计时与无输出pending的真实反例，现行映射以§93为准。
+历史“接受输入后独立入队/等待”的结构只说明当时Native与Android投影，不能拿它
 覆盖这组AVCodec官方客户端策略；也不能把占位消费推断成物理屏幕必定保留旧图。
 
 历史问题：原 `video_submit_locked` 调 `receive_frames(frame_id, submit_us)`，缓存输出也沿用本次
@@ -917,45 +932,37 @@ decoder open 前设置 flag；packet PTS 可用于 fixture 辅助核对，但禁
 “最新输入 id”或只凭 16-bit PTS 猜测。token 元数据和 AVBuffer wrapper 的小额分配单独计量，
 不将其冒称整条解码链零分配；禁止的是应用稳态整帧像素分配/复制。
 
-支持经过fixture证明的一个组装输入至多一个可归因物理输出；已接受输入独立入任务队列，
-不能因零输出/token最后引用释放就自动回报corrupt。任务由呈现、跳过、关闭或endpoint过期结算。同一 token 第二个输出、非空输出无 token、跨 epoch token 均为
-归因契约失败：释放该输出并走视频故障收尾，不给两个并行 owner 同一个完成权。若实际支持的
-H.264 流不满足此形状，必须在接入前扩展组装/归因规格并验证，不静默丢弃第二个合法画面作为支持。
+任务策略按§93绑定本次receive返回的对象；原输入token只说明物理像素来源，不能代替当前
+任务完成owner。EAGAIN/EOF等按原客户端7/5与DataLost结算；占位对象正常出队，不等待另一
+任务将来出图。真实B帧fixture同时检验当前任务归因与旧物理身份/像素不变。单个token的多个
+输出、无token输出或跨epoch输出仍属于明确的本地归因/资源保护，不把这种保护当作已核实
+所有Host producer与多画面AU语法。
 
 ```text
-submit(input, ticket):                         // callback；decoder_lock 下
-  validate bytes <= INT_MAX - padding；检查实际压缩包上限
-  若 session 已关闭：不接管新输入，返回停止结果
-  保留既有 need_flush/关键帧恢复策略；flush 不得释放 renderer 持有的输出
-  准备 refcounted packet（压缩字节允许复制，尾部 padding 清零）
-  创建 token 并接管 ticket；packet.opaque_ref = token_ref
-  repeat:
-    rc = avcodec_send_packet(codec, packet)
-    if rc != EAGAIN: break
-    drain_available_outputs()                  // 取每个输出自己的 token
-    若 send/receive 双 EAGAIN 且无进展：API 契约错误，停止；不能 sleep 重试
-    若已关闭：终结仍未送入的 token，退出循环
-  若send成功：入独立输入任务队列、计算后端PTS、更新官方jitter并结束协议提交计时，再unref/drain输出
-  否则：按真实错误终结尚未接管输出的 token，unref packet
+submit(input, ticket):                         // 同步callback，decoder_lock下
+  校验session/epoch与本地资源上限；complete-frame parser处理有padding的AU
+  parser未消费全部输入：记5、释放packet；不Put、不DataLost
+  packet PTS保留NOPTS；opaque token保留不可变物理输入身份及引用
+  send一次；非0立即设置actor reset请求，仍继续receive一次
+  receive非0：EAGAIN先记7，再尝试5；其他错误记5
+              排入空DataLost，unref失败的SDK输出，创建format0元数据任务
+  receive为0：无有效宽高不Put；有效格式绑定这次实际输出，其余是format0
+  Put任务、采样jitter；释放packet并返回，由协议调用者记录15
 
-drain_available_outputs():
-  每次 receive 前 scratch 为空；receive 返回 EAGAIN 即结束本次 drain
-  成功输出：验证token/key；claim唯一物理输出归因；记录本地输出耗时（不覆盖协议提交结束）
-  获取空envelope；可先有界淘汰最旧排队引用；仍无容量则终结该输出、unref并继续drain
-  move_ref(scratch -> envelope.frame)，登记 external_frames 和只读 metadata
-  mailbox下复核session/epoch、追加物理输出FIFO；呈现侧按输入任务/后端PTS另选，未选像素只释放引用
-  关闭后输出不再发布，锁外释放；下次循环检查停止，不为 stop 主动 drain 全部延迟画面
+select_task():                                // mailbox下
+  按媒体timestamp/jitter选最新ready任务；旧ready记6，已完成结果不覆盖
+  绑定该任务的实际输出序号，不查找Android后端PTS或等待未来任务的像素
+  format0任务同样转交呈现，但不交无效AVFrame给GPU
+  任务ticket与物理输入token分别保留/释放，像素引用不会被重新归因
 ```
 
 物理输出claim在decoder串行域内，解除AVFrame opaque_ref时保留像素自己的CPU身份引用；
-不把物理输出claim当成呈现完成权。FFmpeg可继续持有token；accepted标记保证其最后释放不
-误报无输出corrupt。未接受输入的真实失败才按既有失败路径终结。token finalizer不获取
-session/GPU指针，不析构domain；FFmpeg内部线程仍可触发它，不能假定总在submit线程。
-
-decode_begin/end 用输出 token 关联；send/receive 调用墙钟另记 decode_cpu_wall，不能把解码器
-整体调用时间重复填给本次输出的所有帧。硬件帧直接 move_ref；软件 NV12/IYUV 使用同一 envelope，
-其他软件格式使用有界可复用转换缓冲。所有接管/分配失败分支都必须列出 packet、token、scratch、
-envelope 的唯一释放者。FFmpeg 内部缓冲的引用不计进 renderer external_frames。
+不把物理输出claim当成呈现完成权。FFmpeg可继续持有token；finalizer只释放引用，不根据
+最后释放时机猜测丢帧原因，也不获取session/GPU指针或析构domain。内部SDK线程可触发它。
+协议14/15对应本次提交；物理输出的begin/end仍描述原输入至实际取出像素的墙钟，二者独立。
+硬件帧直接move_ref；软件YUV420P/YUVJ420P使用同一envelope，未知格式遵循format0而不
+猜测像素布局。接管/分配失败分支须列出packet、token、scratch、envelope的释放者。
+FFmpeg内部缓冲引用不计进renderer external_frames。
 
 ## 16. FrameTracker 记录、发布与发送算法
 

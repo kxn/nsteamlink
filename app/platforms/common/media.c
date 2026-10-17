@@ -1091,25 +1091,37 @@ int sl_media_video_start_tracked(IHS_Session *session, const IHS_VideoEpochInfo 
     pthread_mutex_unlock(&state_lock);
     return opened == SL_VIDEO_OPEN_UNAVAILABLE ? 1 : 0;
 }
+typedef struct video_feedback_context {
+    IHS_Session *session;
+    const IHS_VideoEpochInfo *epoch;
+} video_feedback_context;
+static void video_decode_feedback(void *context, sl_video_submit_result result) {
+    video_feedback_context *borrowed = context;
+    unsigned flags = 0;
+    if (result & SL_VIDEO_SUBMIT_RESET) flags |= IHS_StreamVideoSubmitReset;
+    if (result & SL_VIDEO_SUBMIT_CORRUPT) flags |= IHS_StreamVideoSubmitReportLost;
+    IHS_SessionVideoDecodeFeedback(borrowed->session, borrowed->epoch,
+                                    (IHS_StreamVideoSubmitResult)flags);
+}
 IHS_StreamVideoSubmitResult
 sl_media_video_submit_tracked(IHS_Session *session, const IHS_VideoEpochInfo *epoch, uint16_t id,
                               IHS_FrameTicket *ticket, IHS_Buffer *data,
                               IHS_StreamVideoFrameFlag flags, bool *taken) {
-    (void)session;
     (void)id;
     if (!video) {
         *taken = false;
         return IHS_StreamVideoSubmitError;
     }
+    video_feedback_context feedback = {session, epoch}; /* borrowed only for this callback */
     sl_video_submit_result result = sl_video_submit(
         video, (sl_video_key){epoch->session_id, epoch->video_epoch}, IHS_BufferPointer(data),
         data->size, ticket, taken, (flags & IHS_StreamVideoFrameKeyFrame) &&
-                                  !(flags & IHS_StreamVideoFrameFlushHandled));
-    if (result == SL_VIDEO_SUBMIT_CORRUPT)
-        return IHS_StreamVideoSubmitReportLost;
+                                  !(flags & IHS_StreamVideoFrameFlushHandled),
+        video_decode_feedback, &feedback);
     if (result == SL_VIDEO_SUBMIT_ERROR)
         media_set_error("video packet ownership or decoder resource failure");
-    return result == SL_VIDEO_SUBMIT_OK ? IHS_StreamVideoSubmitOK : IHS_StreamVideoSubmitError;
+    /* Feedback already ran before player Put/sampling; do not send it twice. */
+    return result != SL_VIDEO_SUBMIT_ERROR ? IHS_StreamVideoSubmitOK : IHS_StreamVideoSubmitError;
 }
 void sl_media_video_flush_tracked(IHS_Session *session, const IHS_VideoEpochInfo *epoch,
                                   IHS_StreamVideoFlushPhase phase) {
@@ -1520,7 +1532,9 @@ void stream_media_present(void) {
         has_selection=false;
     }
     sl_video_frame *candidate = has_selection ? selection.frame : NULL;
-    sl_video_frame *frame = candidate ? candidate : current_frame;
+    /* An official format0 task skips game pixels, including when a previous
+     * image exists. Only an ordinary repaint with no new task reuses it. */
+    sl_video_frame *frame = has_selection ? candidate : current_frame;
     sl_gfx_draw_color(gfx, 0, 0, 0, 255);
     sl_gfx_clear(gfx);
 #if NSL_DIAGNOSTICS
@@ -1596,7 +1610,7 @@ void stream_media_present(void) {
     pthread_mutex_unlock(&state_lock);
 #endif
     if (has_selection) {
-        bool displayed = (!frame || drawn) && result.result == SL_GFX_READY && result.output_returned;
+        bool displayed = (!frame || drawn) && result.result == SL_GFX_READY;
         if (presentation_key.session != selection.key.session ||
             presentation_key.epoch != selection.key.epoch) {
             presentation_key = selection.key;
@@ -1652,7 +1666,7 @@ void stream_media_present(void) {
                 snapshot.dropped_frames++;
         }
         pthread_mutex_unlock(&state_lock);
-        if (displayed && active && candidate) {
+        if (displayed && active) {
             if (current_frame) sl_resource_release(&current_frame->ref);
             current_frame = candidate;
             selection.frame=NULL; /* transfer its pixel reference */

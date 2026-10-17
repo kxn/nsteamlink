@@ -7471,3 +7471,104 @@ python3 scripts/audit-steam-client-avcodec-player.py \
 python3 scripts/observe-native-avcodec-gap.py \
   --build build/desktop --output /tmp/native-avcodec-gap
 ```
+
+## 93. AVCodec Native任务、反馈与关键标记的映射
+
+### 93.1 官方客户端的补充证据与撤回
+
+来源沿用§91的Valve Linux客户端固定ELF/SHA，不使用Host发送端替代客户端策略。
+`audit-steam-client-avcodec-key.py`执行原默认Frame构造/reset、完整DecodeFrame @0x3260d0、
+FlushPendingData @0x325ec0、OnThink与FinalDecode。已解析的明文Frame描述符、carrier外部
+引用及SDK/OS/UI终点显式受控；不声称经过完整Socket/CRC/crypto/Frame接收解析或整条引用生命周期。
+四案例13状态保留六个完整FDE地址/长度/指令SHA；包含完整/分片标记、替换未完成AU、
+已排队画面后收到新标记。实际送入原parser/send的完整AU字节逐份读取。
+
+【证据】原DecodeFrame @0x326225调用slot15 → FlushPendingData。原完整函数清理partial与
+尚未提交的压缩buffer引用，所有这些轨迹的AVCodec SDK flush调用数为0；已进入原player队列
+的对象保留。漏掉该原虚调用的反事实完整返回，实际AU从2204B变成3304B，检出未清旧压缩片。
+这不是根据函数名推断“flush”的含义。
+
+【撤回】§79/87–89来自Android的“关键标记立即调用SDK flush、清未取走输出”不能泛化为
+Linux AVCodec策略。Native在每个标记上avcodec_flush_buffers及删除已发布像素的行为据此撤回。
+协议层仍在标记时清旧partial/组装数据；SDK状态在明确异步reset/stop销毁重建时退休。
+
+§92原18案例的全部逐状态前缀保持；同一原客户端复播扩展为23案例413状态，增加完整60样本
+预算、第二批平滑、send错误后pending reset阻止下一次FinalDecode，以及空AU/零parser输出的
+受控EOF分支。五项原指令反事实不变。这里的EOF等codec状态是明确输入，不冒称自然设备返回。
+原StartDecoding @0x324725–756写目标尺寸和32/16对齐的coded尺寸，@0x324774–77a置H264
+flags2 |=0x1（FAST），@0x3247b5置parser flags |=0x1（complete-frame）；这些初始化与§91的原函数复播一致。
+
+### 93.2 Native提交、任务与统计契约
+
+Native使用相同的complete-frame parser/send/receive策略。parser消费长度不等于AU长度时
+记5、不Put、不反馈DataLost；长度相等后只send一次、receive一次，不drain并重发同一个packet。
+send非0先同步设置异步reset请求，随后仍receive。receive EAGAIN先记7再尝试5，其他非0记5；
+首次完成门禁保留已有结果。空DataLost经真实channel serializer/queue排入，随后才采样/Put；
+事件15由协议调用者在提交返回后记录。不能把SDK输入接受时刻当作decode-end。
+
+`IHS_SessionVideoDecodeFeedback`只允许在同步submitTracked借用的session/epoch中调用，
+验证当前video类/epoch后设置请求或排入DataLost，不保存session。Return结果新增reset与lost
+组合值；应用已在正确时刻处理的反馈返回OK，避免在外层重复发送。send reset与receive lost
+在两个明确位置发生，不把组合值的方便接口误当作官方调用顺序。
+
+每次Put的CPU任务绑定这次receive得到的对象；任务身份/媒体时间取当前提交参数，实际像素
+仍持有原输入的不可变token/receiveSerial。AVPacket PTS保持AV_NOPTS_VALUE，不按Android
+SDK PTS累加/比较来重用另一张texture。SDK成功且有效尺寸的格式0对象、或错误后的无像素
+占位任务均可按普通jitter到期消费，不等待后续任务的像素。无效尺寸不入任务队列。
+成功返回的有效格式不再额外按FFmpeg missing-reference/corrupt标记淘汰；解码器内部如何
+处理参考关系仍由SDK决定，不把这点外推为主机所有参考帧/切片语法已经核实。
+
+正常选择使用最新ready任务及其实际输出序号；跳过旧ready记6，已有7/5不被覆盖。
+占位任务不上传或绘制无效AVFrame，也不把旧有效帧当作本次新对象。重复界面重绘不重复
+任务完成。呈现尝试后的统计不以output_returned这一返回标记定义物理成功；本地布局/import/
+固定资源上限错误仍是单列的移植保护，不能冒称官方SDL错误或所有GPU平台错误等价。
+不据这些控制调用证明必定黑屏、保留旧图或解释用户闪烁。
+
+固定20个像素lease与256个任务是本地资源界限。任务用发布序号关联输出，避免每个CPU任务
+额外锁住一张已淘汰像素；因本地上限丢失对象的任务明确记late。旧AVFrame与mapping引用不
+随编码partial清理失效。退出仍先停/join生产者，再清任务、pixel/mapping、parser和codec；
+parser在codec之前销毁，不新增后台线程或session异步借用。
+
+### 93.3 可复现的验证范围
+
+`check-steam-video-avcodec.py`直接消费上述原客户端两份fixture，真实Native runtime/control/
+parser/worker/FFmpeg/media/SDL执行27案例426状态。对照实际首次统计结果、任务选择、jitter
+count/budget、14/15与16/17、精确空DataLost正文02、SDK调用次数/状态/packet长度，以及
+send → reset → receive、失败 → DataLost → sample → 15的顺序。reset回调受理标记与实际
+pending gate的行为分别检查，未用一个观察者bool模拟其门禁。
+
+SDK状态、耗时、元数据/可用性及呈现返回标记是明确终点输入；每张被返回的物理图像先由
+真实FFmpeg生成，并在任何状态/元数据注入前与独立framemd5比较。重复重绘的缓存可避免
+无变化的像素复制，不把这当作所有SDL调用次数或物理显示等价。tracker的CopyStats是一次性
+消费；观察器仅保存实际消费过的完成历史，不能把后续“不重复报告”误记成重新pending。
+
+实际重排H264 fixture另证明：task3可使用input1的真实像素，完成归task3，input1已有7仍
+保留；每个逻辑任务都出队、像素MD5有序、不可变物理身份不被改写。旧帧/mapping跨四个
+decoder epoch的真实actor重建、session销毁及IHS_Quit后释放的资源契约由原runtime用例继续检查。
+真实AES-CBC的两个合法空明文在Native SDK中产生EOF；第一次反馈lost，第二次send失败
+再请求actor重建，重建后正常帧仍出图。没有为了维持旧Android断言而屏蔽SDK结果。
+
+六项隔离Native反事实分别去掉EAGAIN首结果、漏DataLost、提前结束计时、恢复标记SDK flush、
+漏真正reset atomic、错误完成物理输入ticket。均先成功编译/链接：前五由真实oracle正常返回
+后的官方对照拒绝，最后一项由真实B帧任务完成断言拒绝，不将编译失败或policy oracle崩溃
+算作检出。旧Android官方复播与fixture保留；旧Native texture投影不再是AVCodec验收门禁。
+无SDK耗时的共享timing检查另保留14个Android来源案例1538状态，不将它标成Linux完整策略证明。
+
+这些是条件分支与Native映射的证据。官方SDK在完整client启动中的实际工厂/许可/硬件可达性、
+send EIO的完整配置禁用/重协商、51/157等硬件格式的特殊reset与NVTEGRA对应关系、所有
+平台SDK/渲染失败、完整统计启停/并发和真实Steam/Switch/loader仍各需对应证据。直接加载随包
+libavcodec.so.61尝试软件H264 open返回-1，不能据此声称已运行官方SDK物理解码；没有更改
+该库或绕过这个结果。上述官方原码的codec API仍是受控终点，Native实际解码是另列证据。
+不新增根据丢包自动FEC的策略，§32/90的启用来源与上行能力区分保持。
+
+```sh
+python3 scripts/audit-steam-client-avcodec-player.py \
+  --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
+  --output /tmp/steam-client-avcodec-player.json
+python3 scripts/audit-steam-client-avcodec-key.py \
+  --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
+  --output /tmp/steam-client-avcodec-key.json
+python3 scripts/check-steam-video-avcodec.py --receiver build/desktop/app/nsl-video-timing-oracle
+python3 scripts/check-avcodec-native-mutations.py --build build/desktop --output /tmp/avcodec-mutants
+python3 scripts/observe-native-avcodec-gap.py --build build/desktop --output /tmp/avcodec-observation
+```

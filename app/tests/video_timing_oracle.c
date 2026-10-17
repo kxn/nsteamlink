@@ -9,6 +9,21 @@
 static sl_video_pipeline *pipeline;
 static uint32_t clockTick;
 static unsigned inputTicks, outputTicks;
+static bool recording;
+static unsigned action;
+static uint8_t golden[16];
+static int forcedSend=INT_MAX, forcedReceive=INT_MAX, parseDelta, parsedSize=-1;
+static int forcedWidth=-1, forcedHeight=-1, forcedFormat=-1;
+static bool resetRequested, presentReturned=true;
+static int64_t forcedPts=AV_NOPTS_VALUE;
+static unsigned eventCount;
+static int64_t events[8192][5];
+static void event(unsigned kind,int64_t a,int64_t b,int64_t c) {
+    if (!recording) return;
+    assert(eventCount<8192);
+    events[eventCount][0]=action;events[eventCount][1]=kind;
+    events[eventCount][2]=a;events[eventCount][3]=b;events[eventCount++][4]=c;
+}
 static unsigned action, pictureCount, submitCount, completionCount, selectCount, waitCount;
 static uint32_t pictures[512][3], submits[512][3], completed[2048][2];
 static unsigned decodeCount;
@@ -17,12 +32,12 @@ static int64_t selected[512][3], waits[512][2];
 static uint8_t payload[2204];
 static bool recording, presenting;
 static int suppressOutput = -1;
-static unsigned physicalCount, prepCount, codecCount;
-static uint64_t codecPts[512][4];
+static unsigned physicalCount, prepCount, inputCount;
+static uint64_t inputSerials[512][4];
 static uint32_t physical[1024][3], prep[1024][3];
 sl_video_pipeline *sl_video_create(void) { return pipeline = timing_create(); }
 sl_video_submit_result sl_video_submit(sl_video_pipeline *p, sl_video_key key, const unsigned char *data,
-                                       size_t size, IHS_FrameTicket *ticket, bool *taken, bool keyframe) {
+                                       size_t size, IHS_FrameTicket *ticket, bool *taken, bool keyframe, sl_video_feedback_fn feedback, void *context) {
     uint32_t stamp;
     assert(IHS_FrameTicketVideoTimestamp(ticket, &stamp));
     assert(!size || (size == sizeof(payload) && !memcmp(data, payload, size)));
@@ -31,14 +46,15 @@ sl_video_submit_result sl_video_submit(sl_video_pipeline *p, sl_video_key key, c
     submits[submitCount][0] = action; submits[submitCount][1] = identity.frameId;
     submits[submitCount++][2] = stamp;
     uint64_t before = p->publish_seq;
-    sl_video_submit_result result = timing_submit(p, key, data, size, ticket, taken, keyframe);
-    assert(result == SL_VIDEO_SUBMIT_OK && p->publish_seq <= before + (size != 0));
+    sl_video_submit_result result = timing_submit(p, key, data, size, ticket, taken, keyframe, feedback, context);
+    assert(result != SL_VIDEO_SUBMIT_ERROR && p->publish_seq <= before + (size != 0));
     pthread_mutex_lock(&p->mailbox);
-    assert(p->job_count && codecCount < 512);
+    assert(inputCount < 512);
+    if (!p->job_count) { pthread_mutex_unlock(&p->mailbox); return result; }
     input_job *job=&p->jobs[p->job_count-1];
     assert(IHS_FrameTicketIdentity(job->ticket).frameId==identity.frameId);
-    codecPts[codecCount][0]=action;codecPts[codecCount][1]=identity.frameId;
-    codecPts[codecCount][2]=stamp;codecPts[codecCount++][3]=job->codec_timestamp;
+    inputSerials[inputCount][0]=action;inputSerials[inputCount][1]=identity.frameId;
+    inputSerials[inputCount][2]=stamp;inputSerials[inputCount++][3]=job->input_serial;
     pthread_mutex_unlock(&p->mailbox);
     if (!size || p->publish_seq==before) return result;
     pthread_mutex_lock(&p->mailbox);
@@ -64,26 +80,81 @@ sl_video_submit_result sl_video_submit(sl_video_pipeline *p, sl_video_key key, c
 #include <libavutil/md5.h>
 #include <stdio.h>
 #include <unistd.h>
+sl_gfx_present_result __real_sl_gfx_present(sl_gfx *);
+sl_gfx_present_result __wrap_sl_gfx_present(sl_gfx *g) {
+    sl_gfx_present_result result=__real_sl_gfx_present(g);
+    result.output_returned=presentReturned;
+    return result;
+}
 static atomic_uint processed;
 static unsigned target;
 int __real_avcodec_send_packet(AVCodecContext *, const AVPacket *);
 int __wrap_avcodec_send_packet(AVCodecContext *c,const AVPacket *packet) {
     int result=__real_avcodec_send_packet(c,packet);
-    if (result>=0) clockTick+=inputTicks;
+    if (packet) clockTick+=inputTicks;
+    if (packet && forcedSend!=INT_MAX) result=forcedSend;
+    if(packet) assert(packet->pts==AV_NOPTS_VALUE);
+    event(4,result,packet?packet->size:0,clockTick);
     return result;
 }
+static void verify_pixels(AVFrame *frame) {
+    uint8_t bytes[128*72*3/2],digest[16];
+    assert(av_image_copy_to_buffer(bytes,sizeof(bytes),(const uint8_t *const *)frame->data,
+           frame->linesize,AV_PIX_FMT_YUV420P,128,72,1)==sizeof(bytes));
+    av_md5_sum(digest,bytes,sizeof(bytes));assert(!memcmp(digest,golden,16));
+}
 int __real_avcodec_receive_frame(AVCodecContext *, AVFrame *);
+void __real_avcodec_flush_buffers(AVCodecContext *);
+void __wrap_avcodec_flush_buffers(AVCodecContext *c) {
+    event(8,0,0,clockTick);__real_avcodec_flush_buffers(c);
+}
 int __wrap_avcodec_receive_frame(AVCodecContext *c,AVFrame *frame) {
     int result=__real_avcodec_receive_frame(c,frame);
-    if (result>=0 && suppressOutput>=0) {
+    if (!result) {
+        verify_pixels(frame);
         packet_token *token=(void *)frame->opaque_ref->data;
-        if (IHS_FrameTicketIdentity(token->ticket).frameId==suppressOutput) {
+        if (IHS_FrameTicketIdentity(token->ticket).frameId==suppressOutput ||
+            (forcedReceive!=INT_MAX && forcedReceive!=0)) {
             av_frame_unref(frame);
-            return AVERROR(EAGAIN);
+            result=forcedReceive!=INT_MAX?forcedReceive:AVERROR(EAGAIN);
+        } else {
+            frame->pts=forcedPts;
+            if (forcedWidth>=0) frame->width=forcedWidth;
+            if (forcedHeight>=0) frame->height=forcedHeight;
+            if (forcedFormat>=0) frame->format=forcedFormat;
         }
+    } else if (forcedReceive!=INT_MAX) {
+        assert(forcedReceive!=0); /* never fabricate a successful physical frame */
+        result=forcedReceive;
     }
-    if (result>=0) clockTick+=outputTicks;
+    clockTick+=outputTicks;
+    event(5,result,0,clockTick);
     return result;
+}
+int __real_av_parser_parse2(AVCodecParserContext *,AVCodecContext *,uint8_t **,int *,
+                           const uint8_t *,int,int64_t,int64_t,int64_t);
+int __wrap_av_parser_parse2(AVCodecParserContext *parser,AVCodecContext *context,uint8_t **out,int *size,
+                           const uint8_t *in,int count,int64_t pts,int64_t dts,int64_t pos) {
+    int result=__real_av_parser_parse2(parser,context,out,size,in,count,pts,dts,pos);
+    if(parsedSize>=0) { assert(parsedSize<=count);*size=parsedSize; }
+    return result+parseDelta;
+}
+void __real_sl_video_timing_update(sl_video_timing *,uint32_t,uint32_t,bool);
+void __wrap_sl_video_timing_update(sl_video_timing *t,uint32_t stamp,uint32_t now,bool surface) {
+    event(3,stamp,now,0);__real_sl_video_timing_update(t,stamp,now,surface);
+}
+bool __real_IHS_SessionVideoDecodeFeedback(IHS_Session *,const IHS_VideoEpochInfo *,IHS_StreamVideoSubmitResult);
+bool __wrap_IHS_SessionVideoDecodeFeedback(IHS_Session *s,const IHS_VideoEpochInfo *e,IHS_StreamVideoSubmitResult r) {
+    bool ok=__real_IHS_SessionVideoDecodeFeedback(s,e,r);
+    if(ok && (r&IHS_StreamVideoSubmitReset)) resetRequested=true;
+    event(7,r,ok,clockTick);
+    return ok;
+}
+bool __real_IHS_SessionChannelQueuePacket(IHS_SessionChannel *,IHS_SessionPacket *,bool);
+bool __wrap_IHS_SessionChannelQueuePacket(IHS_SessionChannel *ch,IHS_SessionPacket *packet,bool retry) {
+    if(packet->header.channelId==3 && packet->body.size==1 && IHS_BufferPointer(&packet->body)[0]==2)
+        event(2,3,2,clockTick); /* exact empty DataLost body, through real serializer/queue */
+    return __real_IHS_SessionChannelQueuePacket(ch,packet,retry);
 }
 uint32_t __wrap_IHS_SessionPacketTimestamp(void) { return clockTick; }
 bool __wrap_IHS_BaseSend(IHS_Base *b, IHS_SocketAddress a, const IHS_Buffer *data) {
@@ -101,6 +172,7 @@ void __wrap_IHS_SessionPacketsWindowReleaseFrame(IHS_SessionFrame *f) {
 bool __real_IHS_FrameTicketVideoDecodeStage(IHS_FrameTicket *, bool);
 bool __wrap_IHS_FrameTicketVideoDecodeStage(IHS_FrameTicket *ticket, bool end) {
     bool recorded = __real_IHS_FrameTicketVideoDecodeStage(ticket, end);
+    event(0,IHS_FrameTicketIdentity(ticket).frameId,end?15:14,clockTick);
     if (recording && recorded) {
         assert(decodeCount < 1024);
         decodeEvents[decodeCount][0] = action;
@@ -113,6 +185,7 @@ bool __wrap_IHS_FrameTicketVideoDecodeStage(IHS_FrameTicket *ticket, bool end) {
 bool __real_IHS_FrameTicketComplete(IHS_FrameTicket *, const IHS_FrameOutcome *);
 bool __wrap_IHS_FrameTicketComplete(IHS_FrameTicket *ticket, const IHS_FrameOutcome *outcome) {
     bool done = __real_IHS_FrameTicketComplete(ticket, outcome);
+    event(1,IHS_FrameTicketIdentity(ticket).frameId,outcome->result,done);
     if (recording && done && (outcome->result == IHS_VideoFrameResultDisplayed ||
                              outcome->result == IHS_VideoFrameResultDroppedLate)) {
         assert(completionCount < 2048);
@@ -157,7 +230,6 @@ static void hash(sl_video_frame *frame, uint8_t out[16]) {
                                   frame->pixels->linesize,AV_PIX_FMT_YUV420P,128,72,1)==sizeof(bytes));
     av_md5_sum(out,bytes,sizeof(bytes));
 }
-static uint8_t golden[16];
 static sl_video_scheduler scheduler;
 static void record_selection(const sl_video_selection *s, bool selectedJob) {
     assert(selectCount<512);
@@ -198,7 +270,10 @@ static void consume(void) {
     sl_video_selection_complete(&s,&out);
     sl_video_selection_release(&s);
 }
-static void observe(void) {
+/* CopyStats consumes each completion once. Retain that actual consumed
+ * record in observer history; a later non-repeat must not look pending again. */
+static IHS_TrackedFrame observedStats[IHS_FRAME_TRACKER_CAPACITY];
+static void observe(sl_runtime *runtime) {
     pthread_mutex_lock(&pipeline->mailbox);
     sl_video_timing *timing=&pipeline->timing;
     uint32_t sum; memcpy(&sum,&timing->sum,4);
@@ -231,9 +306,27 @@ static void observe(void) {
     for(unsigned n=0;n<physicalCount;++n) printf("%s[%u,%u,%u]",n?",":"",physical[n][0],physical[n][1],physical[n][2]);
     printf("],\"prep\":[");
     for(unsigned n=0;n<prepCount;++n) printf("%s[%u,%u,%u]",n?",":"",prep[n][0],prep[n][1],prep[n][2]);
-    printf("],\"codec_pts\":[");
-    for(unsigned n=0;n<codecCount;++n) printf("%s[%llu,%llu,%llu,%llu]",n?",":"",(unsigned long long)codecPts[n][0],(unsigned long long)codecPts[n][1],(unsigned long long)codecPts[n][2],(unsigned long long)codecPts[n][3]);
-    puts("]}");
+    printf("],\"input_serials\":[");
+    for(unsigned n=0;n<inputCount;++n) printf("%s[%llu,%llu,%llu,%llu]",n?",":"",(unsigned long long)inputSerials[n][0],(unsigned long long)inputSerials[n][1],(unsigned long long)inputSerials[n][2],(unsigned long long)inputSerials[n][3]);
+    printf("],\"events\":[");
+    for(unsigned n=0;n<eventCount;++n) printf("%s[%lld,%lld,%lld,%lld,%lld]",n?",":"",
+        (long long)events[n][0],(long long)events[n][1],(long long)events[n][2],(long long)events[n][3],(long long)events[n][4]);
+    printf("],\"tracker\":[");
+    IHS_TrackedFrame records[IHS_FRAME_TRACKER_CAPACITY];
+    size_t count=IHS_FrameTrackerCopyStats(runtime->session->frameTracker,records,IHS_FRAME_TRACKER_CAPACITY);
+    for(size_t n=0;n<count;++n) {
+        IHS_TrackedFrame *f=&records[n];
+        IHS_TrackedFrame *old=&observedStats[f->identity.frameId%IHS_FRAME_TRACKER_CAPACITY];
+        if(f->statsComplete) *old=*f;
+        else if(old->statsComplete && old->identity.epoch==f->identity.epoch &&
+                old->identity.receiveSerial==f->identity.receiveSerial) {
+            f->statsComplete=true;f->outcome=old->outcome;
+        }
+        printf("%s{\"id\":%u,\"complete\":%s,\"result\":%d,\"decode_begin\":%s,\"decode_end\":%s}",
+            n?",":"",f->identity.frameId,f->statsComplete?"true":"false",f->outcome.result,
+            f->hasDecodeBegin?"true":"false",f->hasDecodeEnd?"true":"false");
+    }
+    printf("],\"reset_feedback_applied\":%s}\n",resetRequested?"true":"false");
 }
 static sl_video_frame *resourceOld;
 static void *resourceMapping;
@@ -270,17 +363,16 @@ static void resources(sl_runtime *r) {
     assert(r->facts.epoch==2 && pipeline->timing.budget==9 && !pipeline->pending_count);
     packet(r->session,last+1,last+2,88,clockTick-655,0,sizeof(payload));
     consume();
-    /* Accepted input with no returned pixel keeps its task/metadata alive;
-     * Stop must cancel this separate waiting owner before session teardown. */
+    /* AVCodec EAGAIN is a completed error plus a consumable placeholder. */
     suppressOutput=(int)last+2;clockTick+=1092;
     packet(r->session,last+2,last+3,72,clockTick-655,0,sizeof(payload));
-    sl_video_selection waiting={0};assert(!sl_video_select(pipeline,&waiting));
-    assert(pipeline->waiting.ticket && IHS_FrameTicketIdentity(pipeline->waiting.ticket).frameId==last+2);
+    sl_video_selection waiting={0};assert(sl_video_select(pipeline,&waiting));
+    assert(waiting.ticket && !waiting.frame);sl_video_selection_release(&waiting);
     IHS_TrackedFrame records[IHS_FRAME_TRACKER_CAPACITY];
     size_t count=IHS_FrameTrackerCopyStats(r->session->frameTracker,records,IHS_FRAME_TRACKER_CAPACITY);
     bool pending=false;
     for(size_t n=0;n<count;++n) if(records[n].identity.frameId==last+2) {
-        assert(records[n].hasDecodeBegin && records[n].hasDecodeEnd && !records[n].statsComplete);
+        assert(records[n].hasDecodeBegin && records[n].hasDecodeEnd && records[n].statsComplete && records[n].outcome.result==IHS_VideoFrameResultDroppedReset);
         pending=true;
     }
     assert(pending);suppressOutput=-1;
@@ -321,7 +413,14 @@ int main(int argc,char **argv) {
     if (argc==3) resources(&r);
     char line[512];
     while (argc==2 && fgets(line,sizeof(line),stdin)) {
-        if (line[0]=='Q') {
+        if (line[0]=='T') {
+            long long value;assert(sscanf(line,"T %lld",&value)==1);forcedPts=value;
+        } else if (line[0]=='V') {
+            int value;assert(sscanf(line,"V %d",&value)==1);presentReturned=value!=0;
+        } else if (line[0]=='E') {
+            assert(sscanf(line,"E %d %d %d %d %d %d %d",&forcedSend,&forcedReceive,&parseDelta,&parsedSize,
+                &forcedWidth,&forcedHeight,&forcedFormat)==7);
+        } else if (line[0]=='Q') {
             assert(sscanf(line,"Q %u %u",&inputTicks,&outputTicks)==2);
         } else if (line[0]=='P') {
             unsigned fid,seq,flags,offset,size,stamp,now;
@@ -343,7 +442,7 @@ int main(int argc,char **argv) {
         } else {
             assert(line[0]=='R');IHS_SessionVideoHandlePendingReset(r.session);
         }
-        observe();++action;
+        observe(&r);++action;
     }
     recording=false;
     CStopVideoDataMsg stop=CSTOP_VIDEO_DATA_MSG__INIT;

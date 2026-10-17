@@ -215,7 +215,7 @@ class Player(codec.Client):
         # AppendBuffer retains it in the AU scatter list and OnThink releases it.
         # Refcount 2 accounts for this fixture's one external carrier owner.
         self.wi(self.carrier, 2)
-        self.wi(self.carrier + 0x34, 2204)
+        self.wi(self.carrier + 0x34, inp.get("size", 2204))
         self.wq(self.carrier + 0x38, self.raw)
         self.u.mem_write(self.node, bytes(40))
         self.u.mem_write(self.node + 2, fid.to_bytes(2, "little"))
@@ -313,6 +313,42 @@ def scenarios():
             ],
         ),
     ]
+    for name, count in (("jitter_batch", 60), ("jitter_smoothing", 120)):
+        actions = []
+        for fid in range(1, count + 1):
+            now = 1000000 + fid * 13108
+            age = (100, 655, 1100, 1300, 1900)[fid % 5]
+            if fid > 60:
+                age += 1200
+            actions += [
+                ["submit", dict(id=fid, timestamp=now - age, now=now)],
+                ["present", now + 6554],
+            ]
+        cases.append(dict(name=name, actions=actions))
+    cases.append(
+        dict(
+            name="send_error_gates_next_decode",
+            actions=[
+                ["submit", dict(id=1, send=-11)],
+                ["present", None],
+                ["submit", dict(id=2)],
+                ["present", 1001000],
+            ],
+        )
+    )
+    cases += [
+        dict(
+            name="empty_au_eof",
+            actions=[["submit", dict(size=0, receive=-541478725)], ["present", None]],
+        ),
+        dict(
+            name="zero_parser_output_eof",
+            actions=[
+                ["submit", dict(parsed_size=0, send=0, receive=-541478725)],
+                ["present", None],
+            ],
+        ),
+    ]
     return cases
 
 
@@ -405,7 +441,11 @@ def main():
     reference = ROOT / "scripts/fixtures/steam-client-avcodec-player-reference.json.gz"
     if args.refresh_reference:
         if reference.exists():
-            assert json.loads(gzip.decompress(reference.read_bytes())) == report
+            old = json.loads(gzip.decompress(reference.read_bytes()))
+            assert old["cases"] == report["cases"][: len(old["cases"])]
+            assert {k: v for k, v in old.items() if k != "cases"} == {
+                k: v for k, v in report.items() if k != "cases"
+            }
         reference.write_bytes(gzip.compress(encoded, mtime=0))
     else:
         assert json.loads(gzip.decompress(reference.read_bytes())) == report

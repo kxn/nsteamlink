@@ -20,7 +20,8 @@ static sl_video_pipeline *pipeline;
 static atomic_uint processed;
 static unsigned infos, losses, opens;
 static bool failOpen = true;
-static atomic_bool requestReset;
+static atomic_bool requestReset, requestBoth;
+static unsigned submitCallbacks;
 static bool watchStop, buffersDiscarded, recoveryMarked;
 static unsigned phaseOrder, playerAt, decoderAt, markAt, stopAt, codecFlushAt, codecFreeAt;
 void __real_sl_video_close(sl_video_pipeline *, sl_video_key);
@@ -98,6 +99,12 @@ IHS_StreamVideoSubmitResult
 __wrap_sl_media_video_submit_tracked(IHS_Session *s, const IHS_VideoEpochInfo *e, uint16_t id,
                                      IHS_FrameTicket *t, IHS_Buffer *b, IHS_StreamVideoFrameFlag f,
                                      bool *taken) {
+    ++submitCallbacks;
+    if (atomic_exchange(&requestBoth,false)) {
+        IHS_VideoEpochInfo stale=*e;--stale.video_epoch;
+        assert(!IHS_SessionVideoDecodeFeedback(s,&stale,IHS_StreamVideoSubmitResetAndReportLost));
+        *taken=false;return IHS_StreamVideoSubmitResetAndReportLost;
+    }
     if (atomic_exchange(&requestReset, false)) {
         *taken = false;
         return IHS_StreamVideoSubmitReset;
@@ -171,7 +178,6 @@ static void feed(IHS_Session *s, uint16_t id, bool key, const uint8_t *bytes, si
     assert(atomic_load(&processed) == target);
 }
 static void reset(sl_runtime *r, unsigned epoch, unsigned expectedOpens, unsigned expectedInfos) {
-    bool wasReady = sl_video_is_current(pipeline, (sl_video_key){90, r->facts.epoch});
     phaseOrder = playerAt = decoderAt = markAt = stopAt = codecFlushAt = codecFreeAt = 0;
     buffersDiscarded = recoveryMarked = false;
     watchStop = true;
@@ -179,9 +185,7 @@ static void reset(sl_runtime *r, unsigned epoch, unsigned expectedOpens, unsigne
                                            r->session->base.callbackContexts.run);
     watchStop = false;
     assert(playerAt && decoderAt > playerAt && markAt > decoderAt && stopAt > markAt);
-    assert((codecFlushAt != 0) == wasReady);
-    if (codecFlushAt)
-        assert(codecFlushAt > decoderAt && codecFlushAt < markAt);
+    assert(codecFlushAt==0); /* Linux FlushPendingData is an encoded-data purge. */
     if (codecFreeAt)
         assert(codecFreeAt > stopAt);
     assert(r->facts.epoch == epoch && !r->facts.paused && !r->session->base.interrupted);
@@ -269,6 +273,14 @@ int main(int argc, char **argv) {
     assert(b->pixels->data[0] && IHS_FrameTicketIdentity(b->ticket).epoch == 3);
     feed(r.session, 8, true, packet, bytes);
     sl_video_frame *c = take(6);
+    /* Combined legacy-return contract: exactly one immediate loss feedback,
+     * then the real pending gate excludes another complete submission. The
+     * stale-epoch helper call above must produce neither effect. */
+    unsigned beforeLoss=losses,beforeCallbacks=submitCallbacks;
+    atomic_store(&requestBoth,true);feed(r.session,9,false,packet,bytes);
+    assert(losses==beforeLoss+1 && submitCallbacks==beforeCallbacks+1);
+    feed(r.session,10,false,packet,bytes);
+    assert(losses==beforeLoss+1 && submitCallbacks==beforeCallbacks+1);
     CStopVideoDataMsg stop = CSTOP_VIDEO_DATA_MSG__INIT;
     control(r.session, k_EStreamControlStopVideoData, &stop.base);
     assert(r.facts.paused);

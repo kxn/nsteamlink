@@ -13,7 +13,7 @@ typedef struct sl_video_frame {
     sl_video_key key;
     IHS_FrameTicket *ticket; /* immutable decoded-input identity; not presentation ownership */
     uint64_t decode_begin_us, decode_end_us, publish_seq;
-    uint64_t codec_timestamp;
+    uint64_t input_serial;
     uint32_t media_timestamp;
     bool has_media_timestamp;
     void *domain;
@@ -37,17 +37,22 @@ typedef enum sl_video_open_result {
 sl_video_open_result sl_video_open_ex(sl_video_pipeline *, sl_video_key, const sl_video_config *);
 void sl_video_close(sl_video_pipeline *, sl_video_key);
 void sl_video_stop(sl_video_pipeline *, sl_video_key);
-/* After admission closes/consumer joins, discard codec's internal references;
- * this neither drains output nor destroys caller-held frames/map leases. */
+/* Decoder flush phase: the protocol owner purges encoded fragments. Linux
+ * AVCodec is not SDK-flushed; queued/held pixel objects survive until their
+ * owners release them. Stop/reap separately closes parser and codec. */
 void sl_video_discard_buffers(sl_video_pipeline *, sl_video_key);
 typedef enum sl_video_submit_result {
     SL_VIDEO_SUBMIT_ERROR = 0,
     SL_VIDEO_SUBMIT_OK = 1,
     SL_VIDEO_SUBMIT_CORRUPT = 2,
+    SL_VIDEO_SUBMIT_RESET = 4,
 } sl_video_submit_result;
+/* Synchronous borrowed callback, before player handoff/clock sampling. The
+ * backend never retains its context or a session after this call returns. */
+typedef void (*sl_video_feedback_fn)(void *, sl_video_submit_result);
 sl_video_submit_result sl_video_submit(sl_video_pipeline *, sl_video_key, const unsigned char *,
                                        size_t, IHS_FrameTicket *, bool *ticket_taken,
-                                       bool keyframe);
+                                       bool keyframe, sl_video_feedback_fn, void *);
 bool sl_video_flush(sl_video_pipeline *, sl_video_key);
 /* Decoded-output observation for codec/probe fixtures. Application playback
  * uses selection below: an input task and physical pixels have separate owners. */
@@ -58,9 +63,9 @@ typedef struct sl_video_selection {
     sl_video_key key;
     uint32_t media_timestamp;
 } sl_video_selection;
-/* Transfers the selected input ticket and a pixel reference (possibly NULL for
- * an original PTS reuse guard with no previous image). Empty output waits keep
- * the already selected task; the renderer remains free to repaint its UI. */
+/* Transfers the newest ready task and THIS submission's returned pixels, if
+ * any. A format0 placeholder is consumed with frame=NULL, never left waiting
+ * for a later task's output. Pixel input identity may differ from task identity. */
 bool sl_video_select(sl_video_pipeline *, sl_video_selection *);
 void sl_video_selection_complete(sl_video_selection *, const IHS_FrameOutcome *);
 void sl_video_selection_release(sl_video_selection *);

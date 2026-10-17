@@ -1,5 +1,5 @@
 /* Production runtime callback table + control parser + real IHS worker/FFmpeg.
- * Split/replaced/repeated key fragments must flush immediately and exactly once
+ * Split/replaced/repeated marks purge protocol partials immediately and exactly once
  * per wire mark, preserve the player/epoch and keep old pixels/map leases valid.
  * Bit6 transitions use the real actor; pending requests suppress SDK submission.
  * SDL dummy/software output is used; no physical GPU/Steam/loader claim. */
@@ -18,7 +18,8 @@
 #include <libavutil/md5.h>
 #include <unistd.h>
 static sl_video_pipeline *pipeline;
-static atomic_uint processed, flushes, sends, losses;
+static atomic_uint processed, flushes, protocolFlushes, sends, losses;
+static unsigned extraLosses;
 static unsigned target, opens;
 static unsigned expectedPacketSize = 2204;
 sl_video_pipeline *__real_sl_video_create(void);
@@ -34,6 +35,10 @@ void __real_avcodec_flush_buffers(AVCodecContext *);
 void __wrap_avcodec_flush_buffers(AVCodecContext *c) {
     atomic_fetch_add(&flushes, 1);
     __real_avcodec_flush_buffers(c);
+}
+void __real_sl_video_discard_buffers(sl_video_pipeline *,sl_video_key);
+void __wrap_sl_video_discard_buffers(sl_video_pipeline *p,sl_video_key key) {
+    atomic_fetch_add(&protocolFlushes,1);__real_sl_video_discard_buffers(p,key);
 }
 int __real_avcodec_send_packet(AVCodecContext *, const AVPacket *);
 int __wrap_avcodec_send_packet(AVCodecContext *c, const AVPacket *p) {
@@ -70,9 +75,9 @@ void __wrap_IHS_SessionChannelDataLost(IHS_SessionChannel *ch) {
 bool __real_IHS_FrameTicketComplete(IHS_FrameTicket *, const IHS_FrameOutcome *);
 bool __wrap_IHS_FrameTicketComplete(IHS_FrameTicket *t, const IHS_FrameOutcome *o) {
     uint16_t id = IHS_FrameTicketIdentity(t).frameId;
-    if (id == 13 || id == 14)
-        assert(o->result != IHS_VideoFrameResultDroppedDecodeCorrupt);
-    return __real_IHS_FrameTicketComplete(t, o);
+    bool done=__real_IHS_FrameTicketComplete(t,o);
+    if(done && (id==22 || id==23)) assert(o->result==IHS_VideoFrameResultDroppedDecodeCorrupt);
+    return done;
 }
 static void control(IHS_Session *s, EStreamControlMessage t, const ProtobufCMessage *m) {
     IHS_Buffer b = IHS_BUFFER_INIT(64, 4096);
@@ -120,7 +125,7 @@ static void hash(sl_video_frame *f, uint8_t out[16]) {
 }
 static void counts(sl_runtime *r, unsigned fs, unsigned ss, sl_video_frame *old,
                    const uint8_t saved[16]) {
-    assert(atomic_load(&flushes) == fs && atomic_load(&sends) == ss && opens == 1);
+    assert(atomic_load(&protocolFlushes) == fs && atomic_load(&flushes)==0 && atomic_load(&sends) == ss && opens == 1);
     assert(r->facts.epoch == 1 && !r->facts.paused && !r->session->base.interrupted &&
            sl_video_is_current(pipeline, (sl_video_key){90, 1}));
     if (old) {
@@ -136,10 +141,10 @@ static void output(unsigned epoch) {
 }
 static void modeCounts(sl_runtime *r, unsigned fs, unsigned ss, unsigned epoch,
                        sl_video_frame *old, const uint8_t saved[16]) {
-    assert(atomic_load(&flushes) == fs && atomic_load(&sends) == ss && opens == epoch);
+    assert(atomic_load(&protocolFlushes) == fs && atomic_load(&flushes)==0 && atomic_load(&sends) == ss && opens == epoch);
     assert(r->facts.epoch == epoch && !r->facts.paused && !r->session->base.interrupted &&
            sl_video_is_current(pipeline, (sl_video_key){90, epoch}));
-    assert(atomic_load(&losses) == epoch - 1);
+    assert(atomic_load(&losses) == epoch - 1 + extraLosses);
     uint8_t actual[16];
     hash(old, actual);
     assert(!memcmp(actual, saved, 16));
@@ -242,13 +247,13 @@ static unsigned rangeFrame(sl_runtime *r, const uint8_t *packet, uint16_t firstI
     sl_resource_release(&frame->ref);
     return sequence;
 }
-static void emptyPending(sl_runtime *r, uint16_t id) {
+static void emptyFailed(sl_runtime *r, uint16_t id) {
     IHS_TrackedFrame stats[IHS_FRAME_TRACKER_CAPACITY];
     size_t n = IHS_FrameTrackerCopyStats(r->session->frameTracker, stats, IHS_FRAME_TRACKER_CAPACITY);
     bool found = false;
     for (size_t j = 0; j < n; ++j)
         if (stats[j].identity.frameId == id) {
-            assert(!stats[j].statsComplete && stats[j].outcome.result == IHS_VideoFrameResultPending);
+            assert(stats[j].statsComplete && stats[j].outcome.result == IHS_VideoFrameResultDroppedDecodeCorrupt);
             assert(stats[j].hasDecodeBegin && stats[j].hasDecodeEnd);
             found = true;
         }
@@ -335,8 +340,7 @@ int main(int argc, char **argv) {
     feed(r.session, 11, 14, 24, packet, sizeof(packet));
     modeCounts(&r, 12, 6, 3, old, saved);
     output(3);
-    /* Real per-fragment AES-CBC, then two valid all-padding inputs. Empty
-     * plaintext must not become FFmpeg EOF or prevent the next real frame. */
+    /* Real per-fragment AES-CBC before packetization and empty AU coverage. */
     uint8_t encrypted[2224];
     for (unsigned n = 0; n < 16; ++n) r.session->info.sessionKey[n] = n;
     r.session->info.sessionKeyLen = 16;
@@ -348,35 +352,37 @@ int main(int argc, char **argv) {
     feed(r.session, 12, 15, 56, encrypted, encryptedSize);
     modeCounts(&r, 13, 7, 3, old, saved);
     output(3);
-    encryptedSize = sizeof(encrypted);
-    assert(!IHS_CryptoSymmetricEncryptWithIV(packet, 0, iv, sizeof(iv),
-              r.session->info.sessionKey, 16, false, encrypted, &encryptedSize));
-    assert(encryptedSize == 16);
-    feed(r.session, 13, 16, 56, encrypted, encryptedSize);
-    modeCounts(&r, 14, 7, 3, old, saved);
-    emptyPending(&r, 13);
-    assert(!sl_video_take(pipeline));
-    feed(r.session, 14, 17, 58, encrypted, encryptedSize);
-    modeCounts(&r, 15, 7, 3, old, saved);
-    emptyPending(&r, 14);
-    feed(r.session, 15, 18, 24, packet, sizeof(packet));
-    modeCounts(&r, 16, 8, 3, old, saved);
-    output(3);
     /* Rebuild all four NALs from RBSP, split at zero sequences, and require
      * the normalized original AU bytes/decoded image to survive each path. */
     expectedPacketSize = 2206;
     unsigned sequence = nalFrame(&r, packet, sizeof(packet), 16, 19, false, saved);
-    modeCounts(&r, 17, 9, 3, old, saved);
+    modeCounts(&r, 14, 8, 3, old, saved);
     sequence = nalFrame(&r, packet, sizeof(packet), 17, sequence, true, saved);
-    modeCounts(&r, 18, 10, 3, old, saved);
+    modeCounts(&r, 15, 9, 3, old, saved);
     expectedPacketSize = 2204;
     sequence = rangeFrame(&r, packet, 18, sequence, false, saved);
-    modeCounts(&r, 19, 11, 3, old, saved);
-    rangeFrame(&r, packet, 20, sequence, true, saved);
-    modeCounts(&r, 20, 12, 3, old, saved);
+    modeCounts(&r, 16, 10, 3, old, saved);
+    sequence=rangeFrame(&r, packet, 20, sequence, true, saved);
+    modeCounts(&r, 17, 11, 3, old, saved);
+    /* Linux original parser sends NULL/zero output to AVCodec. The actual
+     * Native SDK reaches EOF; original common error semantics apply. No key
+     * mark flushes AVCodec to conceal that status. The second send requests an
+     * actor rebuild; old AVFrame/map ownership must survive it. */
+    expectedPacketSize=0;
+    encryptedSize=sizeof(encrypted);
+    assert(!IHS_CryptoSymmetricEncryptWithIV(packet,0,iv,sizeof(iv),
+              r.session->info.sessionKey,16,false,encrypted,&encryptedSize));
+    feed(r.session,22,sequence++,56,encrypted,encryptedSize);extraLosses=1;
+    modeCounts(&r,18,12,3,old,saved);emptyFailed(&r,22);assert(!sl_video_take(pipeline));
+    feed(r.session,23,sequence++,58,encrypted,encryptedSize);extraLosses=2;
+    modeCounts(&r,19,13,3,old,saved);emptyFailed(&r,23);
+    reset(&r);modeCounts(&r,20,13,4,old,saved);
+    expectedPacketSize=2204;
+    feed(r.session,24,sequence++,24,packet,sizeof(packet));
+    modeCounts(&r,21,14,4,old,saved);output(4);
     CStopVideoDataMsg stop = CSTOP_VIDEO_DATA_MSG__INIT;
     control(r.session, k_EStreamControlStopVideoData, &stop.base);
-    assert(atomic_load(&flushes) == 21);
+    assert(atomic_load(&protocolFlushes)==22 && atomic_load(&flushes)==0);
     IHS_SessionDestroy(r.session);
     IHS_Quit();
     assert(!sl_media_video_clean());
