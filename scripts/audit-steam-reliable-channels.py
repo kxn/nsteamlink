@@ -89,8 +89,8 @@ def audit(base):
             self.w32(dest + 16, count)
             self.ret()
 
-        def configure(self):
-            self.b(self.player + 625, self.target)
+        def configure(self, channel=None):
+            self.b(self.player + 625, self.target if channel is None else channel)
             self.wq(self.player + 32, self.alloc(4096))
             self.call(0x7AFF74, self.player)
 
@@ -268,6 +268,38 @@ def audit(base):
                         ],
                     )
                 )
+    # Original HandlePendingDataPackets snapshots ALL complete packets and
+    # re-enters OnStreamPacket for each one, including unmatched channels.
+    for crc in (0, 1):
+        for channel in (3, 31):
+            other = 4 if channel == 3 else 3
+            for mode in (
+                "keep",
+                "pause",
+                "pause_matched",
+                "phase0",
+                "phase5",
+                "phase7",
+            ):
+                second = "012300f0ff0d003300f8ff0d00ccdd"
+                pending_ops = [
+                    ["R", 1000100, 0, 5, 0, 900000, 1000100, media],
+                    ["R", 1000101, 1, 5, 0, 900001, 1000101, second],
+                    ["U", 1000200],
+                ]
+                if mode.startswith("pause"):
+                    pending_ops.append(["P", 1000210, 1])
+                elif mode.startswith("phase"):
+                    pending_ops.append(["T", 1000210, int(mode[-1])])
+                pending_ops.append(
+                    ["C", 1000220, channel if mode == "pause_matched" else other]
+                )
+                if mode.startswith("pause"):
+                    pending_ops.append(["P", 1000230, 0])
+                elif mode.startswith("phase"):
+                    pending_ops.append(["T", 1000230, 6])
+                pending_ops.append(["C", 1000240, channel])
+                scenarios.append((crc, channel, 6, media, False, pending_ops))
     for crc, channel, state, payload, configured, ops in scenarios:
         r = Client(crc, state, channel, payload, configured)
         initial = r.observe_channel()
@@ -281,7 +313,13 @@ def audit(base):
                 r.nack(op)
             elif op[0] == "C":
                 r.now = op[1]
-                r.configure()
+                r.configure(op[2] if len(op) > 2 else None)
+            elif op[0] in ("P", "T"):
+                r.now = op[1]
+                if op[0] == "P":
+                    r.b(r.player + 19, op[2])
+                else:
+                    r.w32(r.player + 256, op[2])
             else:
                 r.now = op[1]
                 if r.target in r.channels:

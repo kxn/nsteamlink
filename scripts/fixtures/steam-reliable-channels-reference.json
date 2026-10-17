@@ -22105,6 +22105,7870 @@
           "pending": []
         }
       ]
+    },
+    {
+      "input": {
+        "crc": 0,
+        "channel": 3,
+        "state": 6,
+        "payload": "012200f0ff0d003300f8ff0d00aabb",
+        "configured": false,
+        "ops": [
+          [
+            "R",
+            1000100,
+            0,
+            5,
+            0,
+            900000,
+            1000100,
+            "012200f0ff0d003300f8ff0d00aabb"
+          ],
+          [
+            "R",
+            1000101,
+            1,
+            5,
+            0,
+            900001,
+            1000101,
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ],
+          [
+            "U",
+            1000200
+          ],
+          [
+            "C",
+            1000220,
+            4
+          ],
+          [
+            "C",
+            1000240,
+            3
+          ]
+        ]
+      },
+      "initial": null,
+      "observed": [
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900000,
+            "peer_received": 1000100,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 1,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [
+              "07000c22030000010008430f0004bc0d00"
+            ],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [
+            {
+              "data_type": 1,
+              "frame": "012200f0ff0d003300f8ff0d00aabb",
+              "id": 34,
+              "timestamp": 917488,
+              "send_timestamp": 900000,
+              "receive_timestamp": 1000100,
+              "input_mark": 51,
+              "input_received": 917496
+            },
+            {
+              "data_type": 1,
+              "frame": "012300f0ff0d003300f8ff0d00ccdd",
+              "id": 35,
+              "timestamp": 917488,
+              "send_timestamp": 900001,
+              "receive_timestamp": 1000101,
+              "input_mark": 51,
+              "input_received": 917496
+            }
+          ],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        }
+      ]
+    },
+    {
+      "input": {
+        "crc": 0,
+        "channel": 3,
+        "state": 6,
+        "payload": "012200f0ff0d003300f8ff0d00aabb",
+        "configured": false,
+        "ops": [
+          [
+            "R",
+            1000100,
+            0,
+            5,
+            0,
+            900000,
+            1000100,
+            "012200f0ff0d003300f8ff0d00aabb"
+          ],
+          [
+            "R",
+            1000101,
+            1,
+            5,
+            0,
+            900001,
+            1000101,
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ],
+          [
+            "U",
+            1000200
+          ],
+          [
+            "P",
+            1000210,
+            1
+          ],
+          [
+            "C",
+            1000220,
+            4
+          ],
+          [
+            "P",
+            1000230,
+            0
+          ],
+          [
+            "C",
+            1000240,
+            3
+          ]
+        ]
+      },
+      "initial": null,
+      "observed": [
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900000,
+            "peer_received": 1000100,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 1,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [
+              "07000c22030000010008430f0004bc0d00"
+            ],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        }
+      ]
+    },
+    {
+      "input": {
+        "crc": 0,
+        "channel": 3,
+        "state": 6,
+        "payload": "012200f0ff0d003300f8ff0d00aabb",
+        "configured": false,
+        "ops": [
+          [
+            "R",
+            1000100,
+            0,
+            5,
+            0,
+            900000,
+            1000100,
+            "012200f0ff0d003300f8ff0d00aabb"
+          ],
+          [
+            "R",
+            1000101,
+            1,
+            5,
+            0,
+            900001,
+            1000101,
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ],
+          [
+            "U",
+            1000200
+          ],
+          [
+            "P",
+            1000210,
+            1
+          ],
+          [
+            "C",
+            1000220,
+            3
+          ],
+          [
+            "P",
+            1000230,
+            0
+          ],
+          [
+            "C",
+            1000240,
+            3
+          ]
+        ]
+      },
+      "initial": null,
+      "observed": [
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900000,
+            "peer_received": 1000100,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 1,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [
+              "07000c22030000010008430f0004bc0d00"
+            ],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        }
+      ]
+    },
+    {
+      "input": {
+        "crc": 0,
+        "channel": 3,
+        "state": 6,
+        "payload": "012200f0ff0d003300f8ff0d00aabb",
+        "configured": false,
+        "ops": [
+          [
+            "R",
+            1000100,
+            0,
+            5,
+            0,
+            900000,
+            1000100,
+            "012200f0ff0d003300f8ff0d00aabb"
+          ],
+          [
+            "R",
+            1000101,
+            1,
+            5,
+            0,
+            900001,
+            1000101,
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ],
+          [
+            "U",
+            1000200
+          ],
+          [
+            "T",
+            1000210,
+            0
+          ],
+          [
+            "C",
+            1000220,
+            4
+          ],
+          [
+            "T",
+            1000230,
+            6
+          ],
+          [
+            "C",
+            1000240,
+            3
+          ]
+        ]
+      },
+      "initial": null,
+      "observed": [
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900000,
+            "peer_received": 1000100,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 1,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [
+              "07000c22030000010008430f0004bc0d00"
+            ],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        }
+      ]
+    },
+    {
+      "input": {
+        "crc": 0,
+        "channel": 3,
+        "state": 6,
+        "payload": "012200f0ff0d003300f8ff0d00aabb",
+        "configured": false,
+        "ops": [
+          [
+            "R",
+            1000100,
+            0,
+            5,
+            0,
+            900000,
+            1000100,
+            "012200f0ff0d003300f8ff0d00aabb"
+          ],
+          [
+            "R",
+            1000101,
+            1,
+            5,
+            0,
+            900001,
+            1000101,
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ],
+          [
+            "U",
+            1000200
+          ],
+          [
+            "T",
+            1000210,
+            5
+          ],
+          [
+            "C",
+            1000220,
+            4
+          ],
+          [
+            "T",
+            1000230,
+            6
+          ],
+          [
+            "C",
+            1000240,
+            3
+          ]
+        ]
+      },
+      "initial": null,
+      "observed": [
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900000,
+            "peer_received": 1000100,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 1,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [
+              "07000c22030000010008430f0004bc0d00"
+            ],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        }
+      ]
+    },
+    {
+      "input": {
+        "crc": 0,
+        "channel": 3,
+        "state": 6,
+        "payload": "012200f0ff0d003300f8ff0d00aabb",
+        "configured": false,
+        "ops": [
+          [
+            "R",
+            1000100,
+            0,
+            5,
+            0,
+            900000,
+            1000100,
+            "012200f0ff0d003300f8ff0d00aabb"
+          ],
+          [
+            "R",
+            1000101,
+            1,
+            5,
+            0,
+            900001,
+            1000101,
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ],
+          [
+            "U",
+            1000200
+          ],
+          [
+            "T",
+            1000210,
+            7
+          ],
+          [
+            "C",
+            1000220,
+            4
+          ],
+          [
+            "T",
+            1000230,
+            6
+          ],
+          [
+            "C",
+            1000240,
+            3
+          ]
+        ]
+      },
+      "initial": null,
+      "observed": [
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900000,
+            "peer_received": 1000100,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 1,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [
+              "07000c22030000010008430f0004bc0d00"
+            ],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        }
+      ]
+    },
+    {
+      "input": {
+        "crc": 0,
+        "channel": 31,
+        "state": 6,
+        "payload": "012200f0ff0d003300f8ff0d00aabb",
+        "configured": false,
+        "ops": [
+          [
+            "R",
+            1000100,
+            0,
+            5,
+            0,
+            900000,
+            1000100,
+            "012200f0ff0d003300f8ff0d00aabb"
+          ],
+          [
+            "R",
+            1000101,
+            1,
+            5,
+            0,
+            900001,
+            1000101,
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ],
+          [
+            "U",
+            1000200
+          ],
+          [
+            "C",
+            1000220,
+            3
+          ],
+          [
+            "C",
+            1000240,
+            31
+          ]
+        ]
+      },
+      "initial": null,
+      "observed": [
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900000,
+            "peer_received": 1000100,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 1,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [
+              "07000c221f0000010008430f0004bc0d00"
+            ],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [
+            {
+              "data_type": 1,
+              "frame": "012200f0ff0d003300f8ff0d00aabb",
+              "id": 34,
+              "timestamp": 917488,
+              "send_timestamp": 900000,
+              "receive_timestamp": 1000100,
+              "input_mark": 51,
+              "input_received": 917496
+            },
+            {
+              "data_type": 1,
+              "frame": "012300f0ff0d003300f8ff0d00ccdd",
+              "id": 35,
+              "timestamp": 917488,
+              "send_timestamp": 900001,
+              "receive_timestamp": 1000101,
+              "input_mark": 51,
+              "input_received": 917496
+            }
+          ],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        }
+      ]
+    },
+    {
+      "input": {
+        "crc": 0,
+        "channel": 31,
+        "state": 6,
+        "payload": "012200f0ff0d003300f8ff0d00aabb",
+        "configured": false,
+        "ops": [
+          [
+            "R",
+            1000100,
+            0,
+            5,
+            0,
+            900000,
+            1000100,
+            "012200f0ff0d003300f8ff0d00aabb"
+          ],
+          [
+            "R",
+            1000101,
+            1,
+            5,
+            0,
+            900001,
+            1000101,
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ],
+          [
+            "U",
+            1000200
+          ],
+          [
+            "P",
+            1000210,
+            1
+          ],
+          [
+            "C",
+            1000220,
+            3
+          ],
+          [
+            "P",
+            1000230,
+            0
+          ],
+          [
+            "C",
+            1000240,
+            31
+          ]
+        ]
+      },
+      "initial": null,
+      "observed": [
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900000,
+            "peer_received": 1000100,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 1,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [
+              "07000c221f0000010008430f0004bc0d00"
+            ],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        }
+      ]
+    },
+    {
+      "input": {
+        "crc": 0,
+        "channel": 31,
+        "state": 6,
+        "payload": "012200f0ff0d003300f8ff0d00aabb",
+        "configured": false,
+        "ops": [
+          [
+            "R",
+            1000100,
+            0,
+            5,
+            0,
+            900000,
+            1000100,
+            "012200f0ff0d003300f8ff0d00aabb"
+          ],
+          [
+            "R",
+            1000101,
+            1,
+            5,
+            0,
+            900001,
+            1000101,
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ],
+          [
+            "U",
+            1000200
+          ],
+          [
+            "P",
+            1000210,
+            1
+          ],
+          [
+            "C",
+            1000220,
+            31
+          ],
+          [
+            "P",
+            1000230,
+            0
+          ],
+          [
+            "C",
+            1000240,
+            31
+          ]
+        ]
+      },
+      "initial": null,
+      "observed": [
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900000,
+            "peer_received": 1000100,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 1,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [
+              "07000c221f0000010008430f0004bc0d00"
+            ],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        }
+      ]
+    },
+    {
+      "input": {
+        "crc": 0,
+        "channel": 31,
+        "state": 6,
+        "payload": "012200f0ff0d003300f8ff0d00aabb",
+        "configured": false,
+        "ops": [
+          [
+            "R",
+            1000100,
+            0,
+            5,
+            0,
+            900000,
+            1000100,
+            "012200f0ff0d003300f8ff0d00aabb"
+          ],
+          [
+            "R",
+            1000101,
+            1,
+            5,
+            0,
+            900001,
+            1000101,
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ],
+          [
+            "U",
+            1000200
+          ],
+          [
+            "T",
+            1000210,
+            0
+          ],
+          [
+            "C",
+            1000220,
+            3
+          ],
+          [
+            "T",
+            1000230,
+            6
+          ],
+          [
+            "C",
+            1000240,
+            31
+          ]
+        ]
+      },
+      "initial": null,
+      "observed": [
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900000,
+            "peer_received": 1000100,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 1,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [
+              "07000c221f0000010008430f0004bc0d00"
+            ],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        }
+      ]
+    },
+    {
+      "input": {
+        "crc": 0,
+        "channel": 31,
+        "state": 6,
+        "payload": "012200f0ff0d003300f8ff0d00aabb",
+        "configured": false,
+        "ops": [
+          [
+            "R",
+            1000100,
+            0,
+            5,
+            0,
+            900000,
+            1000100,
+            "012200f0ff0d003300f8ff0d00aabb"
+          ],
+          [
+            "R",
+            1000101,
+            1,
+            5,
+            0,
+            900001,
+            1000101,
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ],
+          [
+            "U",
+            1000200
+          ],
+          [
+            "T",
+            1000210,
+            5
+          ],
+          [
+            "C",
+            1000220,
+            3
+          ],
+          [
+            "T",
+            1000230,
+            6
+          ],
+          [
+            "C",
+            1000240,
+            31
+          ]
+        ]
+      },
+      "initial": null,
+      "observed": [
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900000,
+            "peer_received": 1000100,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 1,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [
+              "07000c221f0000010008430f0004bc0d00"
+            ],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        }
+      ]
+    },
+    {
+      "input": {
+        "crc": 0,
+        "channel": 31,
+        "state": 6,
+        "payload": "012200f0ff0d003300f8ff0d00aabb",
+        "configured": false,
+        "ops": [
+          [
+            "R",
+            1000100,
+            0,
+            5,
+            0,
+            900000,
+            1000100,
+            "012200f0ff0d003300f8ff0d00aabb"
+          ],
+          [
+            "R",
+            1000101,
+            1,
+            5,
+            0,
+            900001,
+            1000101,
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ],
+          [
+            "U",
+            1000200
+          ],
+          [
+            "T",
+            1000210,
+            7
+          ],
+          [
+            "C",
+            1000220,
+            3
+          ],
+          [
+            "T",
+            1000230,
+            6
+          ],
+          [
+            "C",
+            1000240,
+            31
+          ]
+        ]
+      },
+      "initial": null,
+      "observed": [
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900000,
+            "peer_received": 1000100,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 1,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [
+              "07000c221f0000010008430f0004bc0d00"
+            ],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        }
+      ]
+    },
+    {
+      "input": {
+        "crc": 1,
+        "channel": 3,
+        "state": 6,
+        "payload": "012200f0ff0d003300f8ff0d00aabb",
+        "configured": false,
+        "ops": [
+          [
+            "R",
+            1000100,
+            0,
+            5,
+            0,
+            900000,
+            1000100,
+            "012200f0ff0d003300f8ff0d00aabb"
+          ],
+          [
+            "R",
+            1000101,
+            1,
+            5,
+            0,
+            900001,
+            1000101,
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ],
+          [
+            "U",
+            1000200
+          ],
+          [
+            "C",
+            1000220,
+            4
+          ],
+          [
+            "C",
+            1000240,
+            3
+          ]
+        ]
+      },
+      "initial": null,
+      "observed": [
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900000,
+            "peer_received": 1000100,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 1,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [
+              "87000c22030000010008430f0004bc0d0010aec467"
+            ],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [
+            {
+              "data_type": 1,
+              "frame": "012200f0ff0d003300f8ff0d00aabb",
+              "id": 34,
+              "timestamp": 917488,
+              "send_timestamp": 900000,
+              "receive_timestamp": 1000100,
+              "input_mark": 51,
+              "input_received": 917496
+            },
+            {
+              "data_type": 1,
+              "frame": "012300f0ff0d003300f8ff0d00ccdd",
+              "id": 35,
+              "timestamp": 917488,
+              "send_timestamp": 900001,
+              "receive_timestamp": 1000101,
+              "input_mark": 51,
+              "input_received": 917496
+            }
+          ],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        }
+      ]
+    },
+    {
+      "input": {
+        "crc": 1,
+        "channel": 3,
+        "state": 6,
+        "payload": "012200f0ff0d003300f8ff0d00aabb",
+        "configured": false,
+        "ops": [
+          [
+            "R",
+            1000100,
+            0,
+            5,
+            0,
+            900000,
+            1000100,
+            "012200f0ff0d003300f8ff0d00aabb"
+          ],
+          [
+            "R",
+            1000101,
+            1,
+            5,
+            0,
+            900001,
+            1000101,
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ],
+          [
+            "U",
+            1000200
+          ],
+          [
+            "P",
+            1000210,
+            1
+          ],
+          [
+            "C",
+            1000220,
+            4
+          ],
+          [
+            "P",
+            1000230,
+            0
+          ],
+          [
+            "C",
+            1000240,
+            3
+          ]
+        ]
+      },
+      "initial": null,
+      "observed": [
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900000,
+            "peer_received": 1000100,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 1,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [
+              "87000c22030000010008430f0004bc0d0010aec467"
+            ],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        }
+      ]
+    },
+    {
+      "input": {
+        "crc": 1,
+        "channel": 3,
+        "state": 6,
+        "payload": "012200f0ff0d003300f8ff0d00aabb",
+        "configured": false,
+        "ops": [
+          [
+            "R",
+            1000100,
+            0,
+            5,
+            0,
+            900000,
+            1000100,
+            "012200f0ff0d003300f8ff0d00aabb"
+          ],
+          [
+            "R",
+            1000101,
+            1,
+            5,
+            0,
+            900001,
+            1000101,
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ],
+          [
+            "U",
+            1000200
+          ],
+          [
+            "P",
+            1000210,
+            1
+          ],
+          [
+            "C",
+            1000220,
+            3
+          ],
+          [
+            "P",
+            1000230,
+            0
+          ],
+          [
+            "C",
+            1000240,
+            3
+          ]
+        ]
+      },
+      "initial": null,
+      "observed": [
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900000,
+            "peer_received": 1000100,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 1,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [
+              "87000c22030000010008430f0004bc0d0010aec467"
+            ],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        }
+      ]
+    },
+    {
+      "input": {
+        "crc": 1,
+        "channel": 3,
+        "state": 6,
+        "payload": "012200f0ff0d003300f8ff0d00aabb",
+        "configured": false,
+        "ops": [
+          [
+            "R",
+            1000100,
+            0,
+            5,
+            0,
+            900000,
+            1000100,
+            "012200f0ff0d003300f8ff0d00aabb"
+          ],
+          [
+            "R",
+            1000101,
+            1,
+            5,
+            0,
+            900001,
+            1000101,
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ],
+          [
+            "U",
+            1000200
+          ],
+          [
+            "T",
+            1000210,
+            0
+          ],
+          [
+            "C",
+            1000220,
+            4
+          ],
+          [
+            "T",
+            1000230,
+            6
+          ],
+          [
+            "C",
+            1000240,
+            3
+          ]
+        ]
+      },
+      "initial": null,
+      "observed": [
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900000,
+            "peer_received": 1000100,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 1,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [
+              "87000c22030000010008430f0004bc0d0010aec467"
+            ],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        }
+      ]
+    },
+    {
+      "input": {
+        "crc": 1,
+        "channel": 3,
+        "state": 6,
+        "payload": "012200f0ff0d003300f8ff0d00aabb",
+        "configured": false,
+        "ops": [
+          [
+            "R",
+            1000100,
+            0,
+            5,
+            0,
+            900000,
+            1000100,
+            "012200f0ff0d003300f8ff0d00aabb"
+          ],
+          [
+            "R",
+            1000101,
+            1,
+            5,
+            0,
+            900001,
+            1000101,
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ],
+          [
+            "U",
+            1000200
+          ],
+          [
+            "T",
+            1000210,
+            5
+          ],
+          [
+            "C",
+            1000220,
+            4
+          ],
+          [
+            "T",
+            1000230,
+            6
+          ],
+          [
+            "C",
+            1000240,
+            3
+          ]
+        ]
+      },
+      "initial": null,
+      "observed": [
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900000,
+            "peer_received": 1000100,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 1,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [
+              "87000c22030000010008430f0004bc0d0010aec467"
+            ],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        }
+      ]
+    },
+    {
+      "input": {
+        "crc": 1,
+        "channel": 3,
+        "state": 6,
+        "payload": "012200f0ff0d003300f8ff0d00aabb",
+        "configured": false,
+        "ops": [
+          [
+            "R",
+            1000100,
+            0,
+            5,
+            0,
+            900000,
+            1000100,
+            "012200f0ff0d003300f8ff0d00aabb"
+          ],
+          [
+            "R",
+            1000101,
+            1,
+            5,
+            0,
+            900001,
+            1000101,
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ],
+          [
+            "U",
+            1000200
+          ],
+          [
+            "T",
+            1000210,
+            7
+          ],
+          [
+            "C",
+            1000220,
+            4
+          ],
+          [
+            "T",
+            1000230,
+            6
+          ],
+          [
+            "C",
+            1000240,
+            3
+          ]
+        ]
+      },
+      "initial": null,
+      "observed": [
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900000,
+            "peer_received": 1000100,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 1,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [
+              "87000c22030000010008430f0004bc0d0010aec467"
+            ],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "pending": []
+        }
+      ]
+    },
+    {
+      "input": {
+        "crc": 1,
+        "channel": 31,
+        "state": 6,
+        "payload": "012200f0ff0d003300f8ff0d00aabb",
+        "configured": false,
+        "ops": [
+          [
+            "R",
+            1000100,
+            0,
+            5,
+            0,
+            900000,
+            1000100,
+            "012200f0ff0d003300f8ff0d00aabb"
+          ],
+          [
+            "R",
+            1000101,
+            1,
+            5,
+            0,
+            900001,
+            1000101,
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ],
+          [
+            "U",
+            1000200
+          ],
+          [
+            "C",
+            1000220,
+            3
+          ],
+          [
+            "C",
+            1000240,
+            31
+          ]
+        ]
+      },
+      "initial": null,
+      "observed": [
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900000,
+            "peer_received": 1000100,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 1,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [
+              "87000c221f0000010008430f0004bc0d001ee7e624"
+            ],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [
+            {
+              "data_type": 1,
+              "frame": "012200f0ff0d003300f8ff0d00aabb",
+              "id": 34,
+              "timestamp": 917488,
+              "send_timestamp": 900000,
+              "receive_timestamp": 1000100,
+              "input_mark": 51,
+              "input_received": 917496
+            },
+            {
+              "data_type": 1,
+              "frame": "012300f0ff0d003300f8ff0d00ccdd",
+              "id": 35,
+              "timestamp": 917488,
+              "send_timestamp": 900001,
+              "receive_timestamp": 1000101,
+              "input_mark": 51,
+              "input_received": 917496
+            }
+          ],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        }
+      ]
+    },
+    {
+      "input": {
+        "crc": 1,
+        "channel": 31,
+        "state": 6,
+        "payload": "012200f0ff0d003300f8ff0d00aabb",
+        "configured": false,
+        "ops": [
+          [
+            "R",
+            1000100,
+            0,
+            5,
+            0,
+            900000,
+            1000100,
+            "012200f0ff0d003300f8ff0d00aabb"
+          ],
+          [
+            "R",
+            1000101,
+            1,
+            5,
+            0,
+            900001,
+            1000101,
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ],
+          [
+            "U",
+            1000200
+          ],
+          [
+            "P",
+            1000210,
+            1
+          ],
+          [
+            "C",
+            1000220,
+            3
+          ],
+          [
+            "P",
+            1000230,
+            0
+          ],
+          [
+            "C",
+            1000240,
+            31
+          ]
+        ]
+      },
+      "initial": null,
+      "observed": [
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900000,
+            "peer_received": 1000100,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 1,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [
+              "87000c221f0000010008430f0004bc0d001ee7e624"
+            ],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        }
+      ]
+    },
+    {
+      "input": {
+        "crc": 1,
+        "channel": 31,
+        "state": 6,
+        "payload": "012200f0ff0d003300f8ff0d00aabb",
+        "configured": false,
+        "ops": [
+          [
+            "R",
+            1000100,
+            0,
+            5,
+            0,
+            900000,
+            1000100,
+            "012200f0ff0d003300f8ff0d00aabb"
+          ],
+          [
+            "R",
+            1000101,
+            1,
+            5,
+            0,
+            900001,
+            1000101,
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ],
+          [
+            "U",
+            1000200
+          ],
+          [
+            "P",
+            1000210,
+            1
+          ],
+          [
+            "C",
+            1000220,
+            31
+          ],
+          [
+            "P",
+            1000230,
+            0
+          ],
+          [
+            "C",
+            1000240,
+            31
+          ]
+        ]
+      },
+      "initial": null,
+      "observed": [
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900000,
+            "peer_received": 1000100,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 1,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [
+              "87000c221f0000010008430f0004bc0d001ee7e624"
+            ],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        }
+      ]
+    },
+    {
+      "input": {
+        "crc": 1,
+        "channel": 31,
+        "state": 6,
+        "payload": "012200f0ff0d003300f8ff0d00aabb",
+        "configured": false,
+        "ops": [
+          [
+            "R",
+            1000100,
+            0,
+            5,
+            0,
+            900000,
+            1000100,
+            "012200f0ff0d003300f8ff0d00aabb"
+          ],
+          [
+            "R",
+            1000101,
+            1,
+            5,
+            0,
+            900001,
+            1000101,
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ],
+          [
+            "U",
+            1000200
+          ],
+          [
+            "T",
+            1000210,
+            0
+          ],
+          [
+            "C",
+            1000220,
+            3
+          ],
+          [
+            "T",
+            1000230,
+            6
+          ],
+          [
+            "C",
+            1000240,
+            31
+          ]
+        ]
+      },
+      "initial": null,
+      "observed": [
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900000,
+            "peer_received": 1000100,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 1,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [
+              "87000c221f0000010008430f0004bc0d001ee7e624"
+            ],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        }
+      ]
+    },
+    {
+      "input": {
+        "crc": 1,
+        "channel": 31,
+        "state": 6,
+        "payload": "012200f0ff0d003300f8ff0d00aabb",
+        "configured": false,
+        "ops": [
+          [
+            "R",
+            1000100,
+            0,
+            5,
+            0,
+            900000,
+            1000100,
+            "012200f0ff0d003300f8ff0d00aabb"
+          ],
+          [
+            "R",
+            1000101,
+            1,
+            5,
+            0,
+            900001,
+            1000101,
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ],
+          [
+            "U",
+            1000200
+          ],
+          [
+            "T",
+            1000210,
+            5
+          ],
+          [
+            "C",
+            1000220,
+            3
+          ],
+          [
+            "T",
+            1000230,
+            6
+          ],
+          [
+            "C",
+            1000240,
+            31
+          ]
+        ]
+      },
+      "initial": null,
+      "observed": [
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900000,
+            "peer_received": 1000100,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 1,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [
+              "87000c221f0000010008430f0004bc0d001ee7e624"
+            ],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        }
+      ]
+    },
+    {
+      "input": {
+        "crc": 1,
+        "channel": 31,
+        "state": 6,
+        "payload": "012200f0ff0d003300f8ff0d00aabb",
+        "configured": false,
+        "ops": [
+          [
+            "R",
+            1000100,
+            0,
+            5,
+            0,
+            900000,
+            1000100,
+            "012200f0ff0d003300f8ff0d00aabb"
+          ],
+          [
+            "R",
+            1000101,
+            1,
+            5,
+            0,
+            900001,
+            1000101,
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ],
+          [
+            "U",
+            1000200
+          ],
+          [
+            "T",
+            1000210,
+            7
+          ],
+          [
+            "C",
+            1000220,
+            3
+          ],
+          [
+            "T",
+            1000230,
+            6
+          ],
+          [
+            "C",
+            1000240,
+            31
+          ]
+        ]
+      },
+      "initial": null,
+      "observed": [
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900000,
+            "peer_received": 1000100,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 1,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": true,
+            "pending_ack": false,
+            "confirmed": 0,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000100,
+            "head": 0,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [
+              "87000c221f0000010008430f0004bc0d001ee7e624"
+            ],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": [
+            "012200f0ff0d003300f8ff0d00aabb",
+            "012300f0ff0d003300f8ff0d00ccdd"
+          ]
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [
+              "012200f0ff0d003300f8ff0d00aabb",
+              "012300f0ff0d003300f8ff0d00ccdd"
+            ],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        },
+        {
+          "state": {
+            "wire": [],
+            "delivered": [],
+            "dirty": false,
+            "pending_ack": false,
+            "confirmed": 1,
+            "peer_time": 900001,
+            "peer_received": 1000101,
+            "deadline": 1000265,
+            "head": 2,
+            "tail": 2,
+            "asserts": [],
+            "last_nack": 0
+          },
+          "actions": [],
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "pending": []
+        }
+      ]
     }
   ]
 }

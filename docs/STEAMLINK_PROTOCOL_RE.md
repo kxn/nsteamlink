@@ -5497,3 +5497,50 @@ FIFO前判断；可靠的未配置通道分支在存入完整帧pending前也先
 OnDataPacket/消费者入口frame ID；原§59的146例未作此投影或更改。
 本组适用已配置媒体通道，不证明早到普通3/4的raw pending缓存、未知tag路由、
 无decoder通道的完整pending生命周期、硬件解码/显示或全局线程交错已经等价。
+
+## 68. 待处理完整媒体帧的快照与重新准入
+
+【官方客户端证据】同§24.1固定Android客户端。OnDataPacket
+@0x7ad170–0x7ad218检查channel是否匹配audio/video ID；不匹配时增加完整
+CStreamPacket引用并追加client+744的vector，未在这里做时间归一化/帧统计。
+HandlePendingDataPackets @0x7aff74在0x7aff9c–0x7affb0复制整个vector，
+0x7affb8先将live count清零，0x7affec–0x7b0008逐项调用client虚函数+48，
+即原OnStreamPacket。原快照仅处理一次，尚不匹配且仍准入的帧进入新的live
+列表；暂停或client0/7则在本轮被丢弃，不会保留到之后恢复/串流时再显示。
+
+OnStartVideoData @0x7ae11c–0x7ae128在已有transport channel设置6553tick
+接收预算，0x7ae1f4调用HandlePendingDataPackets；没有在此创建新的接收序列
+或把完整帧重新送入网络窗口。Audio的预算setter在0x7ade40–0x7ade4c。
+原通道构造默认65tick与活动媒体6553tick应保持分立，不能因为decoder还没创建
+就延迟整个transport窗口、纠错和反馈。
+
+【执行对照】`audit-steam-reliable-channels.py`在原100例之后追加24例，原100例
+逐状态保持不变。CRC开/关×channel3/31×六种快照条件：仍在串流且未暂停、
+暂停后配置其他channel、暂停后配置匹配channel，以及受控client0/5/7下配置
+其他channel。先以真实可靠窗口交付两帧，再按各个条件调用原HandlePending，
+最后回到client6/未暂停并配置原channel。源client状态/暂停位/配置ID是显式输入，
+不宣称所有组合都由UI可达；配置动作是原pending函数边界，不是完整Start*Data
+handler或decoder设备执行。
+
+新增160个动作状态、104次完整packet delegate进入、8次decoder终点调用及24份
+完整ACK/NACK wire，与Native实际CRC RX/可靠窗口、pending/重新准入及真实媒体
+worker逐项一致。总计124例648个动作状态。CUtlVector CopyArray的临时内存复制、
+pending append、refcount/析构、mutex、统计和decoder终点仍为明确adapter；原
+快照清空/循环/OnStreamPacket/Frame解析/时间归一化分支执行真实指令。输入时钟
+偏移为0；不以此核验运行中offset变化与真实decoder采样的时序。
+
+【本地契约／撤回】撤回把旧Native“仅从pending取匹配channel项”视为官方快照
+行为等价的解释。配置其他channel的对照中，原版仍对两帧重新执行delegate；
+旧Native未进入delegate。在暂停或client0/5/7下，原版清掉完整待处理帧，旧
+Native却留下非匹配项，之后可能重放。Native现先取走整个live列表，使用已有
+queue item的本地链接保存一次性快照，再逐个交回完整帧分派；调用delegate前
+live count已清空，不在同一遍追逐重新追加的帧。模块独立编译保证golden观察的
+跨文件调用边界真实存在，不用observer伪造尚未调用的delegate事件。此本地链
+接不增加线程/分配，也不上协议线。
+
+【范围】完整pending目前来自可靠媒体；普通3/4与type11在未知decoder channel
+时仍缓存raw datagram，它们尚未成为官方的完整packet pending模型。该raw缓存
+暂保留其已有投递分支，不把原始FEC shard冒充已重建帧送入可靠分派器。320项
+缓存上限为本地资源约束，不是原CUtlVector策略的证明。完整Reset/中途输入回调
+重入/资源失败、transport与decoder生命周期分离、全部carrier的早到窗口及真实
+Steam/Switch仍各有独立证据范围；本节不证明原用户的停顿根因。
