@@ -14,6 +14,55 @@ pkg_check_modules(OPUS REQUIRED IMPORTED_TARGET opus)
 pkg_check_modules(CURL REQUIRED IMPORTED_TARGET libcurl)
 pkg_check_modules(JPEG REQUIRED IMPORTED_TARGET libjpeg)
 find_package(Threads REQUIRED)
+add_library(nsl_sdr_core STATIC platforms/common/sdr_wire.c platforms/common/sdr_config.c
+    platforms/common/sdr_policy.c)
+target_include_directories(nsl_sdr_core PUBLIC platforms/common PRIVATE ${CMAKE_SOURCE_DIR}/third_party/jsmn)
+target_compile_options(nsl_sdr_core PRIVATE -Wall -Wextra)
+add_library(nsl_remote STATIC platforms/common/remote_wire.c platforms/common/remote_protocol.c
+    platforms/common/remote_connection.c platforms/common/stream_bridge.c
+    platforms/common/dns_refresh.c platforms/common/dns_config.c platforms/common/dns_policy.c)
+target_include_directories(nsl_remote PUBLIC platforms/common PRIVATE
+    ${CMAKE_SOURCE_DIR}/third_party/jsmn ${CMAKE_SOURCE_DIR}/third_party/ihslib/src
+    ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client)
+target_include_directories(nsl_remote SYSTEM PRIVATE ${MBEDTLS_INCLUDE_DIRS})
+target_compile_options(nsl_remote PRIVATE -Wall -Wextra)
+target_compile_definitions(nsl_remote PRIVATE NSL_DIAGNOSTICS=$<BOOL:${NSL_DIAGNOSTICS}>)
+target_link_libraries(nsl_remote PUBLIC ihslib nsl_sdr_core PkgConfig::CURL ${MBEDCRYPTO_LIBRARY} Threads::Threads)
+if(NSL_BUILD_SNS)
+    target_compile_definitions(GameNetworkingSockets_s PRIVATE NSL_SNS_PROBES=$<BOOL:${NSL_BUILD_TOOLS}>)
+    target_sources(GameNetworkingSockets_s PRIVATE platforms/common/gns_hooks.cpp)
+    set(NSL_SDR_PROTO_DIR "${CMAKE_CURRENT_BINARY_DIR}/sdr-protobuf")
+    find_program(NSL_HOST_PROTOC NAMES protoc NO_CMAKE_FIND_ROOT_PATH REQUIRED)
+    file(MAKE_DIRECTORY "${NSL_SDR_PROTO_DIR}")
+    add_custom_command(OUTPUT "${NSL_SDR_PROTO_DIR}/steamdatagram_messages_sdr.pb.cc"
+        "${NSL_SDR_PROTO_DIR}/steamdatagram_messages_sdr.pb.h"
+        COMMAND "${NSL_HOST_PROTOC}" --cpp_out=${NSL_SDR_PROTO_DIR}
+            -I${CMAKE_SOURCE_DIR}/third_party/GameNetworkingSockets/src/common
+            -I${CMAKE_SOURCE_DIR}/docs/protocol/steamlink-1.3.32
+            ${CMAKE_SOURCE_DIR}/docs/protocol/steamlink-1.3.32/steamdatagram_messages_sdr.proto
+        DEPENDS ${CMAKE_SOURCE_DIR}/docs/protocol/steamlink-1.3.32/steamdatagram_messages_sdr.proto
+        VERBATIM)
+    add_custom_target(nsl_sdr_proto DEPENDS "${NSL_SDR_PROTO_DIR}/steamdatagram_messages_sdr.pb.cc"
+        "${NSL_SDR_PROTO_DIR}/steamdatagram_messages_sdr.pb.h")
+    add_dependencies(GameNetworkingSockets_s nsl_sdr_proto)
+    set_source_files_properties("${NSL_SDR_PROTO_DIR}/steamdatagram_messages_sdr.pb.cc"
+        TARGET_DIRECTORY GameNetworkingSockets_s PROPERTIES GENERATED TRUE)
+    target_sources(GameNetworkingSockets_s PRIVATE platforms/common/sdr_probe.cpp
+        "${NSL_SDR_PROTO_DIR}/steamdatagram_messages_sdr.pb.cc")
+    target_include_directories(GameNetworkingSockets_s PRIVATE ${CMAKE_SOURCE_DIR}/third_party/jsmn
+        ${NSL_GNS_SOURCE}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/platforms/common ${NSL_SDR_PROTO_DIR})
+    target_link_libraries(GameNetworkingSockets_s PRIVATE "$<BUILD_INTERFACE:nsl_sdr_core>")
+    add_library(nsl_sns STATIC platforms/common/sns_backend.cpp)
+    target_compile_features(nsl_sns PRIVATE cxx_std_17)
+    target_compile_definitions(nsl_sns PRIVATE NSL_ENABLE_SDR=$<BOOL:${NSL_ENABLE_SDR}>
+        NSL_DIAGNOSTICS=$<BOOL:${NSL_DIAGNOSTICS}>)
+    target_compile_definitions(nsl_sns PUBLIC NSL_SNS_PROBES=$<BOOL:${NSL_BUILD_TOOLS}>)
+    target_compile_options(nsl_sns PRIVATE -Wall -Wextra)
+    target_include_directories(nsl_sns PUBLIC platforms/common)
+    target_link_libraries(nsl_sns PUBLIC nsl_remote GameNetworkingSockets::GameNetworkingSockets_s
+        Threads::Threads)
+endif()
 add_library(nsl_video_contracts STATIC platforms/common/frame_lifetime.c platforms/common/app_lifecycle.c)
 target_include_directories(nsl_video_contracts PUBLIC platforms/common)
 target_compile_options(nsl_video_contracts PRIVATE -Wall -Wextra)
@@ -26,6 +75,16 @@ target_link_libraries(nsl_video_pipeline PUBLIC nsl_video_contracts ihslib PkgCo
 # caches so an existing SDL Switch build directory also migrates to deko.
 unset(NSL_GFX_BACKEND CACHE)
 if(NSL_PLATFORM STREQUAL "switch")
+    target_sources(nsl_remote PRIVATE platforms/common/dns_policy_wrap.c)
+    if(NSL_BUILD_TOOLS AND NSL_BUILD_SNS)
+        add_executable(nsl-sns-switch-probe tests/switch_sns_probe.cpp)
+        target_compile_features(nsl-sns-switch-probe PRIVATE cxx_std_17)
+        target_link_libraries(nsl-sns-switch-probe PRIVATE GameNetworkingSockets::GameNetworkingSockets_s nx)
+        nx_generate_nacp("${CMAKE_CURRENT_BINARY_DIR}/sns-probe.nacp"
+            NAME "SNS transport probe" AUTHOR "nsteamlink" VERSION "1")
+        nx_create_nro(nsl-sns-switch-probe OUTPUT nsl-sns-switch-probe.nro
+            NACP "${CMAKE_CURRENT_BINARY_DIR}/sns-probe.nacp")
+    endif()
     set(NSL_GFX_BACKEND "deko")
 else()
     set(NSL_GFX_BACKEND "sdl")
@@ -85,7 +144,8 @@ target_include_directories(nsl_ui PUBLIC ${NSL_IDENTITY_DIR} ${NSL_I18N_DIR})
 target_compile_definitions(nsl_ui PUBLIC NSL_DIAGNOSTICS=$<BOOL:${NSL_DIAGNOSTICS}> NSL_ADAPTIVE_PACING=$<BOOL:${NSL_ADAPTIVE_PACING}>)
 add_library(nsl_platform STATIC platforms/common/application.c platforms/common/sdl_input.c platforms/common/media.c
     platforms/common/shortcut_package.c platforms/${NSL_PLATFORM}/shortcut.c
-    platforms/common/ui_renderer.c platforms/common/ui_audio.c platforms/common/runtime.c platforms/${NSL_PLATFORM}/system.c
+    platforms/common/ui_renderer.c platforms/common/ui_audio.c platforms/common/runtime.c
+    platforms/common/diagnostic_log.c platforms/${NSL_PLATFORM}/system.c
     platforms/${NSL_PLATFORM}/events.c)
 target_include_directories(nsl_platform PRIVATE ${CMAKE_SOURCE_DIR}/third_party/ihslib/src
     ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf)
@@ -96,13 +156,34 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/background.c"
     DEPENDS ${CMAKE_SOURCE_DIR}/assets/branding/background.bmp ${CMAKE_SOURCE_DIR}/cmake/EmbedAsset.cmake
     VERBATIM)
 target_sources(nsl_platform PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/background.c")
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/connection_icons.c"
+    COMMAND "${CMAKE_COMMAND}" -DINPUT=${CMAKE_SOURCE_DIR}/assets/ui/connection-icons.alpha
+        -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/connection_icons.c -DSYMBOL=nsl_connection_icons
+        -P ${CMAKE_SOURCE_DIR}/cmake/EmbedAsset.cmake
+    DEPENDS ${CMAKE_SOURCE_DIR}/assets/ui/connection-icons.alpha ${CMAKE_SOURCE_DIR}/cmake/EmbedAsset.cmake
+    VERBATIM)
+target_sources(nsl_platform PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/connection_icons.c")
 target_link_libraries(nsl_platform PUBLIC nsl_ui nsl_artwork nsl_updater ihslib ihslib-hid-sdl PkgConfig::SDL2 PkgConfig::SDL2_TTF
-    PkgConfig::FFMPEG PkgConfig::OPUS Threads::Threads nsl_gfx)
+    PkgConfig::FFMPEG PkgConfig::OPUS Threads::Threads nsl_gfx nsl_remote)
+target_compile_definitions(nsl_platform PRIVATE NSL_HAVE_SNS=$<BOOL:${NSL_BUILD_SNS}>)
+if(NSL_BUILD_SNS)
+    target_link_libraries(nsl_platform PUBLIC nsl_sns)
+endif()
 add_executable(nsteamlink src/main.c)
 target_link_libraries(nsteamlink PRIVATE nsl_platform)
+if(NSL_DIAGNOSTICS)
+    target_sources(nsl_platform PRIVATE platforms/common/packet_diagnostics.c)
+    target_sources(nsteamlink PRIVATE platforms/common/packet_diagnostic_wrap.c)
+    target_include_directories(nsteamlink PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+    foreach(symbol IHS_SessionConnect IHS_UDPSocketReceive IHS_SessionChannelDataReceived IHS_SessionChannelQueuePacket)
+        target_link_options(nsteamlink PRIVATE "-Wl,--wrap=${symbol}")
+    endforeach()
+endif()
 if(NSL_PLATFORM STREQUAL "switch")
     target_sources(nsl_platform PRIVATE platforms/switch/rumble.c platforms/switch/preflight.c)
     target_link_options(nsl_platform INTERFACE -Wl,--wrap=SDL_GameControllerRumble)
+    target_link_options(nsl_platform INTERFACE -Wl,--wrap=getaddrinfo -Wl,--wrap=curl_easy_init)
     target_link_libraries(nsl_platform PUBLIC nx)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     set(NSL_NACP "${CMAKE_CURRENT_BINARY_DIR}/control.nacp")
@@ -131,8 +212,181 @@ if(NSL_PLATFORM STREQUAL "switch")
             "${CMAKE_SOURCE_DIR}/scripts/switch-metadata.py" VERBATIM)
     nx_create_nro(nsteamlink OUTPUT nsteamlink.nro NACP "${NSL_NACP}"
         ICON "${CMAKE_SOURCE_DIR}/assets/branding/icon.jpg")
+    set(NSL_PRIVATE_SNS_ROMFS "" CACHE PATH "Private SNS fixture RomFS; never a release artifact")
+    option(NSL_PRIVATE_SNS_MEDIA "Build the separate private encoded-frame fixture" OFF)
+    option(NSL_PRIVATE_SNS_RUNTIME "Build the private full application fixture" OFF)
+    if(NSL_PRIVATE_SNS_RUNTIME AND NOT NSL_DIAGNOSTICS)
+        message(FATAL_ERROR "Private runtime fixture requires diagnostics in the application objects")
+    endif()
+    if(NSL_PRIVATE_SNS_ROMFS)
+        if(NOT NSL_BUILD_TOOLS OR NOT NSL_BUILD_SNS)
+            message(FATAL_ERROR "Private SNS fixture requires SNS and diagnostic tools")
+        endif()
+        foreach(name profile.bin return.key)
+            if(NOT EXISTS "${NSL_PRIVATE_SNS_ROMFS}/${name}")
+                message(FATAL_ERROR "Private SNS fixture input is missing")
+            endif()
+        endforeach()
+        foreach(kind network media runtime)
+            if(kind STREQUAL "media" AND NOT NSL_PRIVATE_SNS_MEDIA)
+                continue()
+            endif()
+            if(kind STREQUAL "runtime" AND NOT NSL_PRIVATE_SNS_RUNTIME)
+                continue()
+            endif()
+            set(fixture "nsl-sns-${kind}-private")
+            add_executable(${fixture} tests/switch_remote_probe.c platforms/switch/system.c)
+            if(NOT kind STREQUAL "runtime")
+                target_sources(${fixture} PRIVATE tests/remote_live.c)
+            endif()
+            target_compile_definitions(${fixture} PRIVATE NSL_HAVE_SNS=1
+                NSL_LIVE_EXTERNAL_LOG=1 NSL_REMOTE_LIVE_ENTRY=sl_network_probe_run NSL_DIAGNOSTICS=1
+                NSL_PRIVATE_MEDIA_FIXTURE=$<STREQUAL:${kind},media>
+                NSL_PRIVATE_RUNTIME_FIXTURE=$<STREQUAL:${kind},runtime>)
+            target_compile_options(${fixture} PRIVATE -Wall -Wextra -Wno-unknown-pragmas)
+            target_include_directories(${fixture} SYSTEM PRIVATE ${MBEDTLS_INCLUDE_DIRS})
+            target_link_libraries(${fixture} PRIVATE nsl_sns nsl_ui nx)
+            if(kind STREQUAL "runtime")
+                target_sources(${fixture} PRIVATE tests/runtime_fixture.c)
+                # All fixture policy stays in this separate binary. The real
+                # application, media, runtime, decoder and SDK objects are reused.
+                target_link_libraries(${fixture} PRIVATE nsl_platform)
+                target_include_directories(${fixture} PRIVATE platforms/common
+                    ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+                foreach(symbol sl_system_init sl_system_shutdown sl_system_data_dir sl_system_running
+                        sl_update_config_load sl_ui_tick sl_runtime_create sl_sns_create sl_sns_update IHS_SessionGetReliabilityStats IHS_HIDSDLGetLastSubmittedReport IHS_HIDDeviceStartInputReports IHS_HIDDeviceSDLCreate IHS_HIDManagedDeviceClose
+                        IHS_HIDFlushSDLGameControllers IHS_HIDHandleSDLEvent sl_media_gate
+                        IHS_SessionConnect IHS_UDPSocketReceive IHS_SessionChannelDataReceived
+                        IHS_SessionChannelQueuePacket sl_remote_connection_update
+                        curl_easy_recv sendto recvfrom sendmsg recvmsg)
+                    target_link_options(${fixture} PRIVATE "-Wl,--wrap=${symbol}")
+                endforeach()
+            endif()
+            nx_generate_nacp("${CMAKE_CURRENT_BINARY_DIR}/sns-${kind}-private.nacp"
+                NAME "SNS private ${kind} test" AUTHOR "nsteamlink" VERSION "1")
+            nx_create_nro(${fixture} OUTPUT "${fixture}.nro"
+                NACP "${CMAKE_CURRENT_BINARY_DIR}/sns-${kind}-private.nacp" ROMFS "${NSL_PRIVATE_SNS_ROMFS}")
+            # A raw RomFS directory alone does not track changed file contents.
+            add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${fixture}.nro" APPEND
+                DEPENDS "${NSL_PRIVATE_SNS_ROMFS}/profile.bin" "${NSL_PRIVATE_SNS_ROMFS}/return.key")
+        endforeach()
+    endif()
 endif()
 if(NSL_PLATFORM STREQUAL "desktop")
+    add_executable(nsl-diagnostic-log-tests tests/test_diagnostic_log.c platforms/common/diagnostic_log.c)
+    add_dependencies(nsl-diagnostic-log-tests nsl_identity)
+    target_include_directories(nsl-diagnostic-log-tests PRIVATE src platforms/common ${NSL_IDENTITY_DIR})
+    target_compile_definitions(nsl-diagnostic-log-tests PRIVATE NSL_DIAGNOSTICS=1
+        NSL_DIAGNOSTIC_PORT=0 NSL_DIAGNOSTIC_SEGMENT_BYTES=4096)
+    target_compile_options(nsl-diagnostic-log-tests PRIVATE -Wall -Wextra -UNDEBUG)
+    target_link_libraries(nsl-diagnostic-log-tests PRIVATE Threads::Threads)
+    foreach(symbol accept fdopen fopen stat)
+        target_link_options(nsl-diagnostic-log-tests PRIVATE "-Wl,--wrap=${symbol}")
+    endforeach()
+    add_test(NAME nsl-diagnostic-log COMMAND nsl-diagnostic-log-tests)
+    set_tests_properties(nsl-diagnostic-log PROPERTIES TIMEOUT 20)
+    add_executable(nsl-lan-transport-tests tests/test_lan_transport.c)
+    target_include_directories(nsl-lan-transport-tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+    target_compile_options(nsl-lan-transport-tests PRIVATE -Wall -Wextra -Wno-unknown-pragmas -UNDEBUG)
+    target_link_libraries(nsl-lan-transport-tests PRIVATE ihslib)
+    if(NSL_DIAGNOSTICS)
+        target_sources(nsl-lan-transport-tests PRIVATE platforms/common/packet_diagnostics.c
+            platforms/common/packet_diagnostic_wrap.c)
+        target_include_directories(nsl-lan-transport-tests PRIVATE platforms/common)
+        target_compile_definitions(nsl-lan-transport-tests PRIVATE NSL_DIAGNOSTICS=1)
+        foreach(symbol IHS_SessionConnect IHS_UDPSocketReceive IHS_SessionChannelDataReceived IHS_SessionChannelQueuePacket)
+            target_link_options(nsl-lan-transport-tests PRIVATE "-Wl,--wrap=${symbol}")
+        endforeach()
+    endif()
+    add_test(NAME nsl-lan-transport COMMAND nsl-lan-transport-tests)
+    set_tests_properties(nsl-lan-transport PROPERTIES TIMEOUT 20)
+    if(NSL_BUILD_TOOLS AND NSL_BUILD_SNS AND NSL_DIAGNOSTICS)
+        add_executable(nsl-runtime-probe tests/runtime_probe.c tests/runtime_fixture.c)
+        target_link_libraries(nsl-runtime-probe PRIVATE nsl_platform)
+        target_include_directories(nsl-runtime-probe PRIVATE platforms/common
+            ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+        target_compile_options(nsl-runtime-probe PRIVATE -Wall -Wextra -Wno-unknown-pragmas)
+        foreach(symbol sl_system_data_dir sl_system_running sl_update_config_load sl_ui_tick
+                sl_runtime_create sl_sns_create sl_sns_update IHS_SessionGetReliabilityStats IHS_HIDSDLGetLastSubmittedReport IHS_HIDDeviceStartInputReports IHS_HIDDeviceSDLCreate IHS_HIDManagedDeviceClose
+                        IHS_HIDFlushSDLGameControllers IHS_HIDHandleSDLEvent sl_media_gate
+                        IHS_SessionConnect IHS_UDPSocketReceive IHS_SessionChannelDataReceived
+                        IHS_SessionChannelQueuePacket sl_remote_connection_update curl_easy_recv
+                        curl_multi_add_handle curl_multi_info_read sendto recvfrom sendmsg recvmsg SDL_Init SDL_Quit)
+            target_link_options(nsl-runtime-probe PRIVATE "-Wl,--wrap=${symbol}")
+        endforeach()
+    endif()
+    add_executable(nsl-remote-tests tests/test_remote.c platforms/desktop/system.c)
+    target_include_directories(nsl-remote-tests PRIVATE ${CMAKE_SOURCE_DIR}/third_party/ihslib/src
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client)
+    target_compile_options(nsl-remote-tests PRIVATE -Wall -Wextra -UNDEBUG)
+    target_link_libraries(nsl-remote-tests PRIVATE nsl_remote nsl_ui)
+    add_test(NAME nsl-remote COMMAND nsl-remote-tests)
+    add_executable(nsl-dns-refresh-tests tests/test_dns_refresh.c)
+    target_compile_options(nsl-dns-refresh-tests PRIVATE -Wall -Wextra -UNDEBUG)
+    target_link_libraries(nsl-dns-refresh-tests PRIVATE nsl_remote)
+    add_test(NAME nsl-dns-refresh COMMAND nsl-dns-refresh-tests)
+    add_executable(nsl-dns-policy-tests tests/test_dns_policy.c platforms/common/dns_policy_wrap.c)
+    target_compile_options(nsl-dns-policy-tests PRIVATE -Wall -Wextra -UNDEBUG)
+    target_link_libraries(nsl-dns-policy-tests PRIVATE nsl_remote)
+    target_link_options(nsl-dns-policy-tests PRIVATE -Wl,--wrap=sl_dns_current_config
+        -Wl,--wrap=curl_easy_setopt)
+    add_test(NAME nsl-dns-policy COMMAND nsl-dns-policy-tests)
+    if(NSL_DIAGNOSTICS)
+        add_executable(nsl-remote-diagnostics-tests tests/test_remote_diagnostics.c)
+        target_compile_definitions(nsl-remote-diagnostics-tests PRIVATE NSL_DIAGNOSTICS=1)
+        target_compile_options(nsl-remote-diagnostics-tests PRIVATE -Wall -Wextra -UNDEBUG)
+        target_link_libraries(nsl-remote-diagnostics-tests PRIVATE nsl_remote)
+        foreach(symbol curl_easy_init curl_easy_setopt curl_multi_perform curl_multi_info_read)
+            target_link_options(nsl-remote-diagnostics-tests PRIVATE "-Wl,--wrap=${symbol}")
+        endforeach()
+        add_test(NAME nsl-remote-diagnostics COMMAND nsl-remote-diagnostics-tests)
+    endif()
+    add_executable(nsl-stream-bridge-tests tests/test_stream_bridge.c)
+    target_include_directories(nsl-stream-bridge-tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+    target_compile_options(nsl-stream-bridge-tests PRIVATE -Wall -Wextra -UNDEBUG)
+    target_link_libraries(nsl-stream-bridge-tests PRIVATE nsl_remote)
+    add_test(NAME nsl-stream-bridge COMMAND nsl-stream-bridge-tests)
+    add_executable(nsl-sdr-wire-tests tests/test_sdr_wire.c)
+    target_compile_options(nsl-sdr-wire-tests PRIVATE -Wall -Wextra -UNDEBUG)
+    target_link_libraries(nsl-sdr-wire-tests PRIVATE nsl_remote)
+    add_test(NAME nsl-sdr-wire COMMAND nsl-sdr-wire-tests)
+    add_executable(nsl-sdr-policy-tests tests/test_sdr_policy.c)
+    target_compile_options(nsl-sdr-policy-tests PRIVATE -Wall -Wextra -UNDEBUG)
+    target_link_libraries(nsl-sdr-policy-tests PRIVATE nsl_sdr_core)
+    add_test(NAME nsl-sdr-policy COMMAND nsl-sdr-policy-tests)
+    if(NSL_BUILD_SNS)
+        add_executable(nsl-sns-crypto-tests tests/test_sns_crypto.cpp)
+        target_compile_features(nsl-sns-crypto-tests PRIVATE cxx_std_17)
+        target_compile_options(nsl-sns-crypto-tests PRIVATE -Wall -Wextra -UNDEBUG)
+        target_compile_definitions(nsl-sns-crypto-tests PRIVATE VALVE_CRYPTO_ENABLE_25519)
+        target_include_directories(nsl-sns-crypto-tests PRIVATE ${NSL_GNS_SOURCE}/src/common
+            ${NSL_GNS_SOURCE}/src/public)
+        target_link_libraries(nsl-sns-crypto-tests PRIVATE GameNetworkingSockets::GameNetworkingSockets_s)
+        add_test(NAME nsl-sns-crypto COMMAND nsl-sns-crypto-tests)
+        if(NSL_BUILD_TOOLS)
+            add_executable(nsl-sdr-topology-tests tests/test_sdr_topology.cpp)
+            target_include_directories(nsl-sdr-topology-tests PRIVATE platforms/common)
+            target_link_libraries(nsl-sdr-topology-tests PRIVATE GameNetworkingSockets::GameNetworkingSockets_s)
+            add_test(NAME nsl-sdr-topology COMMAND nsl-sdr-topology-tests)
+            set_tests_properties(nsl-sdr-topology PROPERTIES TIMEOUT 10)
+        endif()
+    endif()
+    set_tests_properties(nsl-remote PROPERTIES TIMEOUT 20)
+    if(NSL_BUILD_TOOLS)
+        add_executable(nsl-remote-lifecycle-live tests/remote_lifecycle_live.c platforms/desktop/system.c)
+        target_link_libraries(nsl-remote-lifecycle-live PRIVATE nsl_remote nsl_ui)
+        target_compile_options(nsl-remote-lifecycle-live PRIVATE -Wall -Wextra)
+        target_link_options(nsl-remote-lifecycle-live PRIVATE
+            -Wl,--wrap=sl_remote_receive -Wl,--wrap=sl_ws_encode)
+        add_executable(nsl-remote-live tests/remote_live.c platforms/desktop/system.c)
+        target_link_libraries(nsl-remote-live PRIVATE nsl_remote nsl_ui)
+        if(NSL_BUILD_SNS)
+            target_compile_definitions(nsl-remote-live PRIVATE NSL_HAVE_SNS=1)
+            target_link_libraries(nsl-remote-live PRIVATE nsl_sns)
+        endif()
+    endif()
     add_executable(nsl-video-contract-tests tests/test_video_contracts.c)
     target_link_libraries(nsl-video-contract-tests PRIVATE nsl_video_contracts Threads::Threads)
     target_compile_options(nsl-video-contract-tests PRIVATE -Wall -Wextra -UNDEBUG)

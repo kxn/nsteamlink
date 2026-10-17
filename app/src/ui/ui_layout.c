@@ -32,62 +32,89 @@ void sl_ui_layout(sl_ui_model *m) {
     sl_layout *l = &m->layout;
     memset(l, 0, sizeof(*l));
     sl_host_registry *r = &m->store.registry;
-    sl_host *h = r->selected >= 0 && r->selected < r->count ? &r->hosts[r->selected] : NULL;
+    bool adding = sl_ui_adding_host(m);
+    sl_host *h =
+        !adding && r->selected >= 0 && r->selected < r->count ? &r->hosts[r->selected] : NULL;
     l->fullscreen = m->streaming;
     bool connecting = m->page == SL_CONNECTING || m->page == SL_SAVING ||
                       (m->page == SL_PAIRING && !sl_ui_pair_prompt_visible(m));
     l->dialog = m->page != SL_HOME && m->page != SL_STREAM && !connecting;
     if (m->page == SL_HOME) {
         snprintf(l->title, sizeof(l->title), sl_tr(SL_T_APP_TITLE), NSL_APP_VERSION);
-        if (h) {
-            int begin = r->selected / 3 * 3, end = begin + 3;
-            if (end > r->count)
-                end = r->count;
-            if (r->count > 1)
-                button(l, 1, 40, 86, 64, 72, "LB", SL_PREV_HOST, 0, false);
-            int origin = (1280 - (end - begin) * 342 + 16) / 2;
+        {
+            int selected = adding ? r->count : r->selected;
+            int total = r->count + 1;
+            int begin = selected / 3 * 3, end = begin + 3;
+            if (end > total)
+                end = total;
+            if (total > 1)
+                button(l, 1, 40, 96, 64, 120, "LB", SL_PREV_HOST, 0, false);
+            int width = 326;
+            int step = width + 16;
+            int origin = (1280 - (end - begin) * step + 16) / 2;
             for (int i = begin; i < end; ++i)
-                button(l, 10 + i, origin + (i - begin) * 342, 86, 326, 72,
-                       r->hosts[i].name[0] ? r->hosts[i].name : r->hosts[i].address, SL_SELECT_HOST,
-                       i, i == r->selected);
-            if (r->count > 1)
-                button(l, 2, 1176, 86, 64, 72, "RB", SL_NEXT_HOST, 0, false);
-            char address[160];
-            snprintf(address, sizeof(address), "%s%s · %s",
-                     sl_host_online(h, m->now) ? "" : sl_tr(SL_T_LAST_ADDRESS), h->address,
-                     h->paired ? sl_tr(SL_T_PAIRED) : sl_tr(SL_T_UNPAIRED));
-            center(l, 170, 26, address);
-            if (!sl_host_online(h, m->now)) {
-                center(l, 300, 44, sl_tr(SL_T_HOST_OFFLINE));
-                center(l, 372, 30, sl_tr(SL_T_SEARCHING_AUTO));
-            } else if (h->paired && h->games[0].id) {
-                text(l, 52, 236, 36, sl_tr(SL_T_RECENT));
-                button(l, 30, 956, 220, 272, 72, sl_tr(SL_T_OPEN_STEAM), SL_START, 0, false);
-                for (int i = 0; i < sl_ui_game_count(m); ++i)
+                button(l, 10 + i, origin + (i - begin) * step, 96, width, 120,
+                       i == r->count         ? sl_tr(SL_T_ADD_PC)
+                       : r->hosts[i].name[0] ? r->hosts[i].name
+                                             : r->hosts[i].address,
+                       SL_SELECT_HOST, i, i == selected);
+            if (total > 1)
+                button(l, 2, 1176, 96, 64, 120, "RB", SL_NEXT_HOST, 0, false);
+        }
+        bool online = sl_host_online(h, m->now);
+        bool ready = h && h->paired && online;
+        int games = sl_ui_game_count(m);
+        if (adding) {
+            text(l, 52, 258, 36, sl_tr(SL_T_ADD_PC));
+            if (!r->count)
+                text(l, 52, 302, 24, sl_tr(SL_T_SEARCHING));
+            button(l, 30, 52, 350, 576, 220, sl_tr(SL_T_SHOW_PAIR_CODE), SL_OPEN_REMOTE_PAIR, 0,
+                   false);
+            button(l, 31, 652, 350, 576, 220, sl_tr(SL_T_ENTER_IP), SL_OPEN_MANUAL, 0, false);
+        } else if (h) {
+            if (games) {
+                char recent[sizeof(l->labels[0].text)];
+                snprintf(recent, sizeof(recent), "%s", sl_tr(SL_T_RECENT));
+                if (!ready) {
+                    snprintf(recent, sizeof(recent), "%s  ·  %s", sl_tr(SL_T_RECENT),
+                             sl_tr(!m->network_ok ? SL_T_NO_NETWORK
+                                   : !online      ? SL_T_HOST_UNAVAILABLE_SEARCHING
+                                                  : SL_T_UNPAIRED));
+                }
+                text(l, 52, 236, 36, recent);
+                if (online)
+                    button(l, 30, 956, 220, 272, 72,
+                           h->paired ? sl_tr(SL_T_OPEN_STEAM) : sl_tr(SL_T_PAIR_CONNECT), SL_START,
+                           0, !h->paired);
+                for (int i = 0; i < sl_ui_game_count(m); ++i) {
                     button(l, 40 + i, SL_GAMES_LEFT + i * SL_CARD_STEP - (int)m->games_scroll,
                            SL_CARD_Y, SL_CARD_WIDTH, SL_CARD_HEIGHT, h->games[i].name, SL_RECENT, i,
                            false);
+                    l->controls[l->count - 1].disabled = !ready;
+                }
             } else {
-                center(l, 284, 44, h->paired ? sl_tr(SL_T_READY) : sl_tr(SL_T_CONNECT_PC));
-                if (h->games_running)
-                    center(l, 404, 28, sl_tr(SL_T_GAME_RUNNING));
-                button(l, 30, 448, 472, 384, 80,
-                       h->paired ? sl_tr(SL_T_OPEN_STEAM) : sl_tr(SL_T_PAIR_CONNECT), SL_START, 0,
-                       true);
+                if (!ready)
+                    center(l, 410, 30,
+                           sl_tr(!m->network_ok ? SL_T_NO_NETWORK
+                                 : !online      ? SL_T_HOST_OFFLINE
+                                                : SL_T_UNPAIRED));
+                if (!online && m->network_ok)
+                    center(l, 456, 24, sl_tr(SL_T_SEARCHING_AUTO));
+                if (online)
+                    button(l, 30, 448, 504, 384, 72,
+                           h->paired ? sl_tr(SL_T_OPEN_STEAM) : sl_tr(SL_T_PAIR_CONNECT), SL_START,
+                           0, true);
             }
-        } else {
-            center(l, 292, 44,
-                   !m->network_ok                  ? sl_tr(SL_T_NO_NETWORK)
-                   : m->now - m->entered_at < 8000 ? sl_tr(SL_T_SEARCHING)
-                                                   : sl_tr(SL_T_NO_HOSTS));
-            center(l, 368, 30,
-                   m->network_ok ? sl_tr(SL_T_OPEN_SAME_NETWORK) : sl_tr(SL_T_SEARCH_WHEN_ONLINE));
         }
         button(l, 3, 1060, 632, 180, 64, sl_tr(SL_T_OPTIONS_KEY), SL_OPEN_OPTIONS, 0, false);
         button(l, 5, 40, 632, 180, 64, sl_tr(SL_T_EXIT_KEY), SL_BACK, 0, false);
-        if (h && sl_host_online(h, m->now))
+        if (adding)
+            text(l, 260, 648, 24, sl_tr(SL_T_CONFIRM_KEY));
+        else if (online)
             text(l, 260, 648, 24,
-                 sl_ui_game_count(m) ? sl_tr(SL_T_PLAY_KEY) : sl_tr(SL_T_CONNECT_KEY));
+                 !h->paired ? sl_tr(SL_T_PAIR_CONNECT_KEY)
+                 : games    ? sl_tr(SL_T_PLAY_KEY)
+                            : sl_tr(SL_T_OPEN_STEAM_KEY));
     } else if (m->page == SL_STREAM) {
         /* Full video, no persistent local touch target. */
     } else if (connecting) {
@@ -154,8 +181,9 @@ void sl_ui_layout(sl_ui_model *m) {
             row(l, 1, sl_tr(SL_T_BANDWIDTH), SL_OPEN_BANDWIDTH, 0);
             row(l, 2, m->store.sound ? sl_tr(SL_T_SOUND_ON) : sl_tr(SL_T_SOUND_OFF), SL_SOUND, 0);
             row(l, 3, sl_tr(SL_T_LANGUAGE), SL_OPEN_LANGUAGE, 0);
-            if (!m->streaming)
-                row(l, 4, sl_tr(SL_T_MANUAL), SL_OPEN_MANUAL, 0);
+            if (!m->streaming) {
+                row(l, 4, sl_tr(SL_T_MANUAL), SL_OPEN_ADD, 0);
+            }
             break;
         case SL_LANGUAGE:
             strcpy(l->title, sl_tr(SL_T_LANGUAGE));
@@ -241,11 +269,11 @@ void sl_ui_layout(sl_ui_model *m) {
             row(l, 1, sl_tr(SL_T_EXIT), SL_CONFIRM_EXIT, 0);
             break;
         case SL_ERROR:
-            strcpy(l->title,
-                   m->ending_game ? sl_tr(SL_T_END_GAME)
-                   : m->had_stream ? sl_tr(SL_T_STREAM_INTERRUPTED) : sl_tr(SL_T_CONNECT_FAILED));
+            strcpy(l->title, m->ending_game  ? sl_tr(SL_T_END_GAME)
+                             : m->had_stream ? sl_tr(SL_T_STREAM_INTERRUPTED)
+                                             : sl_tr(SL_T_CONNECT_FAILED));
             text(l, 320, 232, 30, m->error);
-            if (m->intent.host.id && !m->ending_game)
+            if ((m->intent.host.id || m->intent.type == SL_CMD_REMOTE_PAIR) && !m->ending_game)
                 row(l, 2, sl_tr(SL_T_RETRY), SL_RETRY, 0);
             break;
         default:
@@ -278,8 +306,9 @@ void sl_ui_layout(sl_ui_model *m) {
                 sl_control *c = &l->controls[i];
                 c->x = 776;
                 c->w = 472;
-                c->y = c->id == 9 ? 624 : 172 + (c->id - 100) * 88;
-                c->h = 72;
+                int step = m->page == SL_SETTINGS && !m->streaming ? 72 : 88;
+                c->y = c->id == 9 ? 624 : 172 + (c->id - 100) * step;
+                c->h = step == 72 ? 64 : 72;
             }
             for (int i = 0; i < l->label_count; ++i)
                 l->labels[i].x = 784;
@@ -390,7 +419,11 @@ void sl_ui_layout(sl_ui_model *m) {
         l->opacity = 1.f;
     if (m->page == SL_HOME) {
         int count = sl_ui_game_count(m);
-        if (m->focus < 40 || m->focus >= 40 + count)
+        if (adding) {
+            if (m->focus != 30 && m->focus != 31)
+                m->focus = m->add_focus == 31 ? 31 : 30;
+            m->add_focus = m->focus;
+        } else if (m->focus < 40 || m->focus >= 40 + count)
             m->focus = count ? (h->focus >= 40 && h->focus < 40 + count ? h->focus : 40) : 0;
         if (h)
             h->focus = m->focus;

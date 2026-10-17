@@ -925,6 +925,17 @@ request_id=2:uint32、update_secret=3:bool。处理规则：
 `0x79e454–0x79e530`，加密 `0x79e244–0x79e2b0`。密钥持久化先于发送 proof，不能等媒体连接成功
 才落盘，否则重启后的授权材料可能落后于主机。故障中断时主机是否回滚属于主机端规则，不能臆造。
 
+### 11.5 连接 security PIN 的加密与重发
+
+**Evidence**：`StartStreaming @0x798eb4–0x798ec0` 先加载目标主机的长期 secret，再调
+`BSetStreamingPIN @0x7991a0`。后者对非空 PIN 调 SymmetricEncrypt，key 来自 manager+536、
+长度来自 +556，密文存入 +856 的 buffer（`0x7991fc–0x799228`）；空 PIN 清空该 buffer。
+`SendStartStreamingRequest @0x799638–0x799700` 将该已保存密文复制到请求的 pin 字段。
+
+**Conclusion**：security PIN 使用开流开始时的长期 secret 加密一次，应用级重试复用该密文；
+每轮重建的 device_token 则使用当时的 secret。Proof 更新长期 secret 后，不能因此重新加密已保存
+的 PIN，或将 PIN 明文放入云端请求。此规则不改变首次 pairing authorization PIN 的用途。
+
 ## 12. 从 StreamingSuccess 到可用传输的适配契约
 
 ### 12.1 三类密钥与证书数据流
@@ -949,6 +960,15 @@ CStreamTransportClient；该 buffer 也用于 StartAuthentication 的 HMAC（`0x
 `049/051/053.bin` 的 connect_request 复制的证书同样带 private_key_data；主机的 connect_ok
 （`054/071.bin`）带签名证书但无该字段。样本证明这个 blob 不能按普通公开证书随意输出到日志。
 私有证据仅保存字段存在性、长度和时间差，不发布 key/身份。
+
+该份 `042.bin` 还直接给出 `transport=4, port=0`，证书 app_ids 包含 353380。
+**Conclusion**：不能把“有非零 UDP port”作为 SDR 材料的成功条件。AppID 必须与证书及
+网络配置一致；本项目 Steam Link SDK 实例使用 353380，不能沿用开源库的默认 0。
+
+**版本差异证据**：开源固定 `d534c19` 的 `CertStore_CheckCert` 先验证 CA 签名，成功后才
+解析 outMsgCert；CA 未加载时，`InternalSetCertificate` 的后续公钥检查因此得到空证书。
+这与 APK 的继续导入分支不能直接等同。本项目先获取 353380 的 SDR 网络配置并导入
+certs/revoked_keys，再调用 SetCertificate，保留原有公私钥匹配、AppID 和远端证书检查。
 
 `InternalSetCertificate @0x804958` 解析 signed cert，检查身份、公钥类型/长度、私钥一致性、
 公私钥匹配和 AppID 范围（`0x804b14–0x804d4c`），然后安装身份/证书。
@@ -1484,8 +1504,12 @@ base metrics `SetSessionSelectQualityMetrics 0x81c3f0` 还执行：
 - shutdown 剩余秒数大于 29 无额外惩罚；<=0 加 1000；1..29 时加
   `floor((30-seconds)*1000/30)`，另叠加 alternate transport penalty
   （整数实现 `0x81c43c–0x81c4a8`）。
-- relay 已记录连续接收失败且距最后接收至少 500001 微秒，记录 connection gap；达到
+- RelayServer 已记录连续接收失败且距最后接收至少 500001 微秒，记录 connection gap；达到
   1750001 微秒再加 100 分（`0x81c4ac–0x81c4e4`）。单纯媒体没新帧不是该条件的替代。
+  **Evidence correction**：失败数来自参数 RelayServer+256（`0x81c49c`），不是该连接的
+  RelaySession LinkStats+4136。此前适配器读取 session 的计数，会由另一层超时提前影响
+  active 选择。原始函数使用 root/session 失败数相反的输入覆盖这两者和严格时间边界。
+  换成正确所有者本身不证明故障恢复成功。
 - migration flag 用于区分迁移目标与发出迁移请求的节点，不是新的设备配对状态。
 
 active session 候选会计算 min-score/current-score/max-score 并排序，然后才考虑保留当前 primary、
@@ -1665,7 +1689,12 @@ key-exchange 缓存测试在进入新密码计算前停止，不证明整个授�
 active 列表最多两项（primary、backup），但全部 session 可以更多；退出 active 列表不立即销毁。
 backup 尽量来自与 primary **不同 SharedClusterData 对象**的 POP。
 基础 selector 找不到这种候选时不主动清除已有 backup，可能保留本轮 P2P metrics 不合格的旧
-backup（`0x81d810–0x81d93c`）。**撤回将此推广为完整 P2P 行为的解释**：P2P 外层先运行
+backup（选择扫描 `0x81d93c–0x81daf0`）。**收紧这一结论**：它要求 primary 未改变。
+primary 切换路径 `0x81dc8c–0x81dc98` 先把 active count 写成 1，再保存新 primary，
+然后重新运行不同 POP 的 backup 选择；旧 backup 不会仅因“本轮没有替代项”而跨此重置保留。
+原先将保留规则无条件用于 primary 切换的概括应撤回；生产 C 实现与原始指令的组合差分
+（`tools/steam-sdr-implementation-audit.py`）覆盖该重置边界。
+**撤回将基础函数规则推广为完整 P2P 行为的解释**：P2P 外层先运行
 CleanRoutesForServerSelection，已失去目标 token 的 active 项会先被移出；随后才执行基础 selector
 （§21.13）。离线用例分别覆盖这两个阶段，不能把基础函数单测当成外层的最终结果。
 
@@ -1723,7 +1752,8 @@ ClientSwitchedPrimary（type 16）遥测还要求旧主路时间非零、旧主�
 - 每项路线记录本轮序号；配额计算的是可继续使用或正在取得的候选，不是扫描过的项数。
   已有本连接、同 POP 的合格 session 可直接占一份配额，不重复申请。
   root 避让、alternate penalty>=8191 或不满足地址限制的旧 session 不走该复用路径。
-- 配额尚为 0 且迁移目标属于本轮 POP 时，优先追求迁移目标；否则由 §21.4 的共享 chooser 选 relay。
+- 本轮已消费的配额为 0 且迁移目标属于本轮 POP 时，优先追求迁移目标；否则先复用合格
+  session，再由 §21.4 的共享 chooser 选 relay。这是 consumed=0，不是 remaining=0。
 - 申请前要求 challenge 非零、server_time 非零；challenge 接收年龄 <=10秒；
   relay lastReceived 非零且年龄 <=20秒；cluster 至少 3 个 front 样本、最新样本年龄 <=20秒；
   relay 连续 ping 失败数为 0。challenge 超过 10 秒会先清零。
@@ -1777,6 +1807,10 @@ POP 的 tier（默认 1）与 ping-only 类型由网络配置 JSON 解析（`0x8
 调度先按 cluster 的 routing score 排序，未知/过大值（>=5001）用随机 5000..5100 排序值打散。
 对合格 POP 构造探测优先级，较小者优先（`0x823d24–0x82445c`）：
 
+- nearest-N 使用**排序前缀中的非失败 cluster 数**，而非已发探测数或列表下标：每项先按
+  下述失败分类决定是否增加计数（`0x823f20–0x823f64`），再进行数量门槛判断。
+  普通 tier=0 或 special>0 候选绕过数量门槛；其余 tier>=1 且前缀计数>N 的候选跳过
+  （`0x824008–0x82409c`）。因此失败项本身不增加计数，但在计数已经>N 后仍可被跳过。
 - 受本地 override 影响的 cluster 初始探测不足 8 次时使用约 -1e30 的紧急优先级。
 - 无 ping 的初始候选采用上述排序值；普通 tier>=1 候选再加 10000，先为其他层的初始测量让路。
   已多次失败的候选走较低优先级的重测分支。
@@ -1790,6 +1824,22 @@ POP 的 tier（默认 1）与 ping-only 类型由网络配置 JSON 解析（`0x8
   否则约 1e30；priority>=cutoff 不发。每轮最多发 10 次（缺少 primary/backup 或无活动连接），
   主备齐全且有活动连接时最多 1 次。找不到 relay 或已有 pending ping 的项不消耗发送预算。
   本路径 EProbeTOSCase=4；不能擅自对全部探测使用不同 TOS。
+
+cutoff 的具体比较为 `initialOther > measuredTierZero`（`0x82445c–0x8244ac`）：
+initialOther 统计进入无 ping 初始候选分支且未加 10000 的项；紧急 override 分支不计入。
+measuredTierZero 统计普通 tier=0 且 ping>=0 的项，不额外要求该项仍可达。
+二者并不是同一列表的“待测项减已测项”。本地实现须先完成整轮计数再发送，不能遇到
+一个 tier=0 未测项就立即截断普通 POP，也不能在收到一个回复后无条件解除 cutoff。
+
+**活动连接标志的语义**：`0x823b78–0x823ca8` 检查连接 wire state 1..3，保存到本轮
+sp+48；它独立于 primary 是否存在。sp+40 则记录仍需补充活动 session/路线的条件。
+本地曾把前者误接成 `!have_primary`；撤回该接法，准确样本的 120 秒重测条件须使用
+活动连接标志。上述每轮预算为 `needRoutes || !activeConnection ? 10 : 1`。
+
+本轮探测的失败分类另读取失败地址缓存：cluster 累计失败 >=4，或累计失败 >=2 且
+失败地址缓存非空，或 reachability<0，任一满足即使用失败重测分支
+（`0x823f20–0x823f68`，缓存数量为 SharedClusterData+660）。这不等于 §21.6 的
+持久 reachability 置 -1 条件；不能仅因字段仍为可达就忽略已有地址失败历史。
 
 **路由数据可用**与“已经连上某个 relay”分开保存（`0x824bbc–0x824cc8`）：
 初始化已开始且已测普通 POP 数 >= `min(15, trunc(totalOrdinaryPOPs*80/100))` 时，
@@ -1896,7 +1946,9 @@ interior、目标 token 与迟滞；该组仍直接构造已整理的 per-POP �
 
 1. 每条路线维护 forward/reverse 的用于公布比较的分数。原值>9999 按 `0x0fffffff` 处理；
    验证旧快照时，新出现且旧快照没有的项额外增加 `trunc(score/15)+5`，给旧内容迟滞优势。
-2. 当前使用的路线被标为强制公布，临时 rank=4，比较分数设为 `-0x0fffffff`。
+2. 仅 controlling 一方当前 primary（active index=0）的路线被标为强制公布，临时 rank=4，
+   比较分数设为 `-0x0fffffff`；backup 和非 controlling 一方不因此强制。
+   角色/控制方门槛来自 `0x837190–0x8371a4`，置位来自 `0x837384`。
    其余路线执行四次排序：优先内部标志/forward/reverse、优先内部标志/reverse/forward、
    reverse/forward/内部标志、forward/reverse/内部标志；数字分数升序，内部标志 true 在前，
    最后按 local/remote POP 索引升序打破平局。该 builder 在初始化时将内部标志清零；
@@ -1908,12 +1960,21 @@ interior、目标 token 与迟滞；该组仍直接构造已整理的 per-POP �
    已选路线将其**本地端** cluster 的 rank 提高到路线 rank，确保必需的 token/POP 信息同批公布。
 5. cluster 按比较分数、POP 索引选择，前四个提高到至少 rank=3，接下来两个在尚无 rank 时设为 1；
    不可用 front 或负 override 状态使这段选择停止。它与路线带来的必需 cluster 也是取并集。
-6. TruncateLists 按 rank 优先排序，在第一个 rank=0 处缩短列表。
+6. TruncateLists 首先按 rank 降序，再按比较分数升序，最后用 POP 索引打破平局；
+   Route 使用 forward 比较分数及 local/remote 索引，RelayCluster 使用 front+penalty 及本地索引。
+   强制路线的负比较分数保证其在同 rank 中领先。最终在第一个 rank=0 处缩短列表。
    它没有再施加一个固定“最多 4 routes / 6 clusters”的总数上限。
-7. RelayCluster 序列化携带所选 session 的 token、POP、ping 和 penalty；Route 公布
-   `interior_score=interiorPing+interiorPenalty`，不是把包含两端 front 的总分填进去。
+7. RelayCluster 序列化携带所选 session 的 token、POP、ping 和 penalty；Route **同时**公布
+   `interior_score=interiorPing+interiorPenalty` 与 `legacy_score=forwardScore`。
+   前者不含两端 front，后者为 §21.9 的完整 forward 总分。
    真正重建后才 revision+1，清除旧的重发期限，并要求对端获知新快照
    （`0x837468–0x8378c4`）。
+
+**Evidence correction**：此前本地构造只写 interior_score，遗漏了仍被官方同时写出的
+legacy_score。`0x837688–0x8376f0` 设置四个字段的 presence bits，并将 raw route+24 的
+forward 分数写入 protobuf f3、raw route+8 和 +16 的和写入 f4。不能把“支持新字段”理解为
+发送方可以省掉旧字段。独立原始序列化字段投影片段验证两端 POP、两种分数与 presence，
+没有把 RepeatedPtrField 分配或完整 protobuf 编码算作被执行。
 
 **旧快照复用**：`CheckOldMessageValid 0x83aa9c–0x83b1d8` 先逐项校验旧内容，再检查它是否
 覆盖仍必须公布的内容。penalty 差值达到 `5+trunc(min(old,new)/15)` 就重建（等号重建）。
@@ -1921,7 +1982,16 @@ ping 差值到达同一阈值时不立即重建：若旧 ping 仍在当前近期
 超出区间才重建。token 必须逐字节相同；旧快照有 token 而当前没有匹配 session 也不能复用。
 Route 的旧 interior_score 与当前 interiorPing+interiorPenalty 按同一阈值校验。
 最后以“验证旧快照”模式重新执行 MarkItemsToSend；旧快照漏掉任何 rank>=3 的必要项就失效。
-这些迟滞只控制 routes 快照更新，不改变 §21.2 的 active 切路阈值。
+在逐项迟滞前另有 primary 契约：controlling 一方有当前 primary/目标时，旧 routes 必须
+非空，且首项 my/your POP 对等于该 primary 的本地/目标 POP，否则立即重建
+（`0x837390–0x837400`）。不能仅比较成员集合，也不能用 rank 后按配置索引排序替代完整
+TruncateLists 顺序。这些迟滞只控制 routes 快照更新，不改变 §21.2 的 active 切路阈值。
+
+**快照前置门槛**：`CheckRebuildRoutingMessage 0x836d7c–0x836de8` 在全局 routing
+good-enough 为真时才进入 InitMessageToPeer；未就绪分支不构造候选快照。它与 §21.13 中
+selector 只在同一门槛后导入 peer routes 的规则一致。仅收到几个 front ping 并不能开始公布
+完整路由图。原有本地“只公布已有 session”的路径间接满足了这个门槛；改为公布可测 front
+时必须保留显式门槛，不能从函数级排序通过推断调用时机也正确。
 
 连接层的调用顺序由 `CConnectionTransportSDRBase::ThinkSelectServer 0x81bf60–0x81c0e4`
 约束：只有 wire state 1..3 执行；先取消无效迁移，再评估已有 active sessions，
@@ -1970,6 +2040,9 @@ route estimate，供 §21.5 排序使用，同时维护各 POP 最近的实际 r
 “3 轮”不是完整最短路算法，也不是严格最多 3 跳：原位更新允许本轮后面的 source 继续传播。
 离线输入中，正序的五节点链可一次传到末端；逆序链在第三轮后仍有一个节点未知。
 因此不能换成任意 Dijkstra/无限循环收敛并宣称与原客户端相同。
+source 的 2000 边界包含等号，2001 不扩展；负 interior ping 不参与。该估计也供全局
+探测排序使用（`0x823d4c–0x823d88`）：估计 >=5001 才换成 5000..5100 的随机排序值，
+不能对所有尚无直接 front ping 的 POP 一律使用随机高分。
 
 ### 21.11 alternate 地址的公布、探测与淘汰
 
@@ -2014,7 +2087,12 @@ DefaultProtocol alternate 探测（`0x8247d0–0x824b34`、`0x824f94–0x825104`
 甚至不清 pending session request。非空 token 先清 relay.pendingRequest，处理存在的停机预警。
 内部连接状态 -2/1/2/3 可复用本连接已有 session，或创建一个新 session，再保存 token、刷新
 session 的最后接收/计数并清 relay 的申请失败次数；随后立即重新选路。
-内部状态 -1/4/5 则发 NoConnection，不把迟到成立消息变成新的活动 session。
+内部状态 -1/4/5 调用 `SendConnectionClosedToServer`，不把迟到成立消息变成新的活动 session。
+**撤回此前把该分支写成 wire NoConnection 的说法**：原审计事件 `no_connection` 只是桩名称，
+继续执行真实 sender `0x81b554–0x81b6a4` 后确认发送 type **20 / ConnectionClosed**，
+不是 type 21。Sender 设置本地 from_connection_id、存在时设置远端 to_connection_id，
+再调用派生 population，最后发给 relay；新增 `connection_closed_sender` 原始指令用例直接
+检查其消息类型和 ID。不得根据桩的文字标签推断实际 wire 类型。
 这些是内部状态域，不可直接当成应用/CM 状态值使用。
 `next_r2c_packet_number !=0` 才将该 relay 序号窗口初始化到 next-1，扩展 next 并登记此次接收；
 0 跳过这段，不是无条件重置。connection_id 的匹配还依赖上层分派的定位与前置条件。
@@ -2367,6 +2445,8 @@ front+interior+remote 作为初值，应用本地 override（-1 禁止、>=0 替
 - `probeWanted` 要求 primary/目标可用、need-confirm=1，且 connection E2E 没有 pending reply，
   或 `lastImmediateRequest+200000<=now`。
 
+原始 `0x837b38–0x837b44` 在这些判断前调用 BSetSessionForwardTargetToken，
+因此本轮不发送时仍可登记 sent token/POP/revision，不只是无副作用地读取旧值。
 三者都为 false 就返回。只有 probeWanted、没有 routesDue/ackPending 时直接对 primary 发
 request=3、force E2E 的 stats；这条专用分支不先发 CM。发送后期望 connection E2E pending
 已建立；发送失败且没有 pending 时走诊断，不能凭空假设转为 CM。
@@ -2452,3 +2532,437 @@ reply/期待 ACK；即使随后 gather 返回 false，这些状态也保留，�
 `inline_stats_budget` 另执行原始裁减与 varint 前缀指令，覆盖恰好放满、两类 quality 的优先级和
 127/128 字节边界；ByteSize、quality 容器清理和 body 序列化由明确提供者返回，不能据此宣称
 原始 protobuf 编码器或 SNP 加密已验证。数据发送测试的输入为已加密 chunk，不重做端到端握手。
+
+### 21.24 关闭通知、确认与迟到成立消息
+
+**Evidence**：`TransportConnectionStateChanged 0x81ba8c–0x81bbdc` 的分派使用真实
+connection state：-2/1/2/3 提前唤醒 thinker；-1/4/5 遍历本连接全部 relay sessions，
+跳过已由对端关闭的项，并发送 `ConnectionClosed`；-3/0 不发。仅在 SDR 是当前 transport
+或当前 transport 为空、同时该 session 是 primary 或尚无 primary 时，给此发送设置
+end-to-end 参数。backup 同样收到关闭通知，但不能一律带 end-to-end 参数。
+这个状态域与 `ThinkSelectServer` 仅维护 wire state 1..3 的条件应分别保留。
+
+`SendConnectionClosedToServer 0x81b554–0x81b6a4` 发送 type 20，设置本地
+from_connection_id、非零时设置对端 to_connection_id，然后执行派生 population。
+base population `0x81b6a4–0x81b878` 写入 connection reason/debug：wire state=4 时
+relay_mode=ClosedByPeer(2)，否则只在 end-to-end 参数为真时设置 EndToEnd(1)。携带
+session 时写 relay lifetime；end-to-end 参数为真时写 E2E lifetime。
+P2P population `0x83e9a4–0x83ebe8` 继续处理 desired/sent token 与 revision，填写
+not_primary_transport 及 routing summary。routing summary 是另一个明确的统计生产器，
+不能把“已有 routes 消息”当成它已经生成。
+
+**关闭确认与上面的 type 20 发送不同**：
+`ProcessMessage_ConnectionClosed 0x819f9c–0x81a160` 导入 quality，标记该 session 已由
+对端关闭，调用 `ConnectionState_ClosedByPeer(reason, debug)`，随后执行
+`RelayServer::SendNoConnection 0x817bb4–0x817db0`。后者发送 type **21**，交换刚收到
+消息的 to/from IDs；收到的 relay_mode=EndToEnd 时设置 end_to_end=true。存在 session
+时，base/P2P population 与 relay lifetime 也被写入；base 的 E2E lifetime 并不要求
+end_to_end=true（`0x81b9ec–0x81ba8c`）。
+`ProcessMessage_NoConnection 0x81a160–0x81a290` 则导入 quality、标记 session 已关闭，
+以固定 reason **5010** 结束连接，不再次发送关闭确认。
+
+本节的 sender 和 state-change 原始指令用例在 `tools/steam-sdr-policy-audit.py`；
+消息构造/派生 population 的显式桩范围由用例标明。对端统计/summary 的完整生成不能
+仅由这些 stub 通过推断。迟到 `P2PSessionEstablished` 的状态分支见 §21.12；空 token
+不得清 pending，非空 token 即使在关闭状态也先清 pending，再处理关闭通知。
+
+### 21.25 POP 别名的方向与 canonical 查询
+
+**Evidence**：`SetupFromJSON 0x898754–0x89a508` 以 `pops` 对象的 key 构造 POP 的
+主 ID（`0x898cbc–0x898cfc`），从该对象的 `aliases` 数组读取额外 ID
+（`0x8992d4–0x8994d4`）；仅接纳 3 或 4 字节别名，长度无效时忽略该别名。
+`BuildLookupTables 0x8981e4–0x898754` 把主 ID 与别名共同映射到这个 POP 的索引；
+已有 key 冲突进入错误路径（主 ID `0x898708`、别名 `0x898644`），不能以最后写入覆盖。
+
+`MapToCanonicalPOPID 0x897e70–0x897ed0` 先把返回值初始化为输入 ID，再查表；命中后
+取 POP record 的主 ID。未知 ID 原样返回，**不返回 0，也不选择相似 POP**。
+原始指令用例包含空表、主 ID、多个别名、别名映射到另一主 ID、低/中/高未知 ID 与
+UINT32_MAX，容器节点是显式构造的输入，不把 JSON parser 也算成已被离线执行。
+
+**Conclusion**：若配置为 `"eat":{"aliases":["mwh"]}`，映射方向是 **mwh → eat**。
+别名不会创建新的 POP、relay 地址或独立 session。延迟数组和 route exception 的 ID
+须在写入缓存前 canonical 化；同包多个名字映射到一个 POP 时，仍按 §21.10 的数组
+顺序后写覆盖。未知 ID 可以作为缓存 key 保留，但不能因此成为已知 POP 或获得建路资格。
+对端路线的 POP 按同一 lookup 映射到配置索引，目标 token 与对应 POP 必须保持绑定。
+
+### 21.26 RouterPingReply 的接收门槛与后续回复
+
+**Evidence**：外层 `ProcessMessage_RouterPingReply 0x812178–0x812794` 先核对 root
+cookie，失败时还遍历该 relay 的 sessions，接受本地 connection_id；随后核对普通延迟
+数组数量并计算低 32 位时间差。它**没有**将 client_timestamp 与最近发送时间逐字比较，
+也**没有**要求 ping deadline 非零。其 RTT 分支为：
+
+- 有符号低 32 位差值 0..10000000µs：整除 1000 得毫秒；10000001 拒绝。
+- 负差值：只有 timestamp 偶数且差值 >=-2000µs 才按 0ms 接纳；其他拒绝。
+- 通过后依次 ReceivedPacket、RecvPingReply、可选 downtime、cluster penalty、
+  SaveChallenge、latency 更新、alternate 更新；cluster penalty 在此入口无 presence 条件。
+
+**Evidence correction**：撤回实现中“测量必须匹配最新在途 ping，且只处理一次”的注释
+和门槛。这会漏掉时间范围内、cookie 正确的后续回复，也可能丢掉 §21.10 允许的增量信息；
+不能因为首包已清 deadline 就跳过后续 metadata。是否在某次真实测试中实际分包，仍需抓包证明。
+实现额外检查 P2P 延迟数组的等长边界是本地解析防御，不能据此声称原版外层也有同一检查。
+
+原始入口审计显式替代 ReceivedPacket、PingTracker、challenge/latency/alternate 处理器，
+验证上述分派次序与 cookie/RTT/普通数组门槛。分别在有/无 pending 的输入执行同一组时间边界，
+另测 session cookie、错误 cookie、普通数组不等长、downtime presence 与低 32 位回绕。
+下游处理器自己的策略由其他用例验证，不能由这些调用桩推断。
+完整延迟回复时刻还控制 §18.2 的短 ping：`lastFull+5000000 > now` 发 100 字节，等号
+发 1300 字节；不能虽然正确记了 full/incremental 状态，发送时仍无条件用长包。
+独立的原始 `0x8178ec–0x81793c` 片段用例核对了送入 BSendPacketGather 的长度与 0x82 标志，
+没有把其他 sender 分支或 socket 发送结果算作已验证。
+
+### 21.27 POP 用途、front 资格与 session 加密公钥
+
+**Evidence**：`SetupFromJSON 0x898da0–0x898e0c` 分别读取 `ping_only` 与
+`relay_ping_only`，任一解释为 true 时将 POP type 设为 2，否则为 1。
+它调用 `vjson::Value::TryInterpret(bool&) 0x8dc880–0x8dca4c`，不是直接检查 JSON
+类型：布尔值、非零数字、大小写不敏感的字符串 `true` 和字符串 `1` 可得到 true。
+null、无法解释的字符串、object/array 保留调用方初始化的 false。C 字符串消费在嵌入 NUL
+处停止。离线配置分支用例执行原始 TryInterpret，vjson key 查询使用显式输入桩；并未把
+整个官方 JSON parser 也计作被执行。
+
+`0x89924c–0x8992d0` 在 POP 无 relay 地址或其显式 `relay_public_key` 解析失败时将
+type 置 0；后者还清空该 POP 的 relay 地址向量。主 ID 和 aliases 仍可查询，不能把禁用
+POP 的别名指向其他 POP。全局公钥在 `0x899940–0x899988` 单独解析，失败走整个配置错误
+路径。本地配置接受至少一个可用 endpoint；拒绝更新时保留原配置，属于本地可用性边界。
+
+**Evidence correction**：撤回实现曾将空/缺失全局公钥视为有效配置的接法。全局字段缺失或
+类型不符时传入空串，`SetFromHexEncodedString 0x757208–0x7572f8` 解码后仍经
+`CEC25519KeyBase::SetRawData 0x746508–0x74651c` 的严格 32 字节门槛；空串失败。
+POP 未给该字段则跳过本地公钥解析、使用全局；显式空串则使该 POP 禁用。
+`HexDecode 0x74c78c–0x74c990` 会跳过非十六进制字符并丢弃末尾孤立半字节，故不能用
+“字符串必须恰好 64 个 hex 字符”替代解码后的 32 字节检查。该解码与 32 字节门槛也执行
+原始指令对照；raw buffer 的实际存储为显式桩，不宣称重测了密码 provider。
+
+**P2P front 资格**：`CP2PRouteSelector::Init 0x839750–0x839790` 要求 ping>=0，且
+满足 `(reachability>=1 && type==1) || special>=1`。因此 type=2 仍可参与全局探测和延迟
+估计，不能因为回复了 ping 就作为普通本地 P2P 入口。正 override 是单独例外，不能覆盖
+负 front ping。该规则有包含 type=0/1/2、负/零/正 ping、未知/可达/不可达与 override 的
+原始分支输入；项目未提供 override UI 时应传 0。
+
+资格失败时 `0x8396ec` 从常量 `0x3d2c68` 同时写入 `front=-1`、
+`penalty=0x10000000`，不是只把 front 设成 -1 并留下普通 penalty。
+后续 builder 比较 `front+penalty` 时，此组合映射到 unknown score 并排在有效项之后，
+防止负 front 以低分排到 cluster 选择前缀并提前截断有效候选。
+
+**session 申请用钥**：`0x8384a4–0x8384dc` 先检查 canonical POP 的公钥是否有效，
+仅在无效时检查全局公钥；两者均不可用才进入 §18.3 的明文 peer identity 分支。选定的
+同一公钥须用于 X25519 和 `encryption_your_public_key_lead_byte`，不能一个用 POP key、
+另一个仍用 global key。离线 key 选择用例显式提供 IsValid 结果，验证指针选择/分支，不
+借此宣称验证了密码 provider。实际 crypto 答案与认证失败用例另行验证。
+
+### 21.28 官方运行时的主路中断对照与观测边界
+
+**Evidence**：同版 x86_64 `libshell_x86_64.so` 的 SHA-256 为
+`195025601c2b17194a4d8b3debd674aca3377290fe3851986656c49bc973f907`。
+`tools/steam-sdr-runtime-audit.py` 在已 root 的指定模拟器上先核对该文件及进程架构，再挂钩
+主备选择和 RecvValidEndToEndPacket。播放器库另核对 §0 的 x86_64 `libmain.so` 哈希，
+通过 module observer 在实际加载后、调用前安装对应挂钩；不能仅观察启动器库就宣称覆盖实际媒体。
+两份库的独立 stats 原因常量分别为 `0x4b2ed5` / `0x3b11eb`。它只采集地址、POP、角色、计数和时间元数据；不采集
+凭据、protobuf 业务缓冲或编码帧。主路/备用字段和两组 failure count 使用该固定库的布局，
+不能拿这些偏移直接挂到其他版本。
+
+只阻断已知 IPv4 直连地址仍可能走 IPv6 ICE，SDR 初始化或 primary session 存在并不能证明
+业务选中了 SDR。运行时对照在 ConnectP2PCustomSignaling 真正收到的配置数组中，将 Int32
+配置 104（ICE Enable）改为 0，同时记录原值与实际值；还要核对 SDK 的实际 Connected SDR
+日志。此前只挂小型 getter 的尝试没有命中该调用，不能据挂钩安装成功宣称已禁用 ICE。
+导出函数可能在内部调用点被内联，其他入口的回调缺席同样不是“原版没做这个动作”的证据。
+
+**应用层窗口**：§8.6 的 HandleNetworkTest `0xcff6b6–0xcff6c9` 比较 `this+0x150`
+与 GetStreamTimestamp，使用 `0x30000` 的帧等待窗口。实际纯 SDR 网络测试在主路中断后
+约 3 秒就进入 NetworkTestDone 并销毁 transport；这早于后续 SDK 主备切换，不能把应用
+提前结束解释为 SDK 已尝试并耗尽所有路线。
+
+为了单独观测 SDK，可显式使用 `--hold-test-timeout 45`：只在注入后暂时更新上述
+CNetworkTest 的帧时钟，本例 45 秒（工具上限 60 秒）；不改 SDR 的评分、角色、失败数或
+探测 deadline。
+这是**测试外壳覆盖**，不是官方产品原本的等待策略，相关网络测试质量数字不用于性能结论。
+默认不覆盖此时钟。`--force-sdr` 是另一项明确的连接配置覆盖，也不隐瞒为原厂默认配置。
+
+**一次受控样例**：`build/anywhere-research/official-recovery-20261017-022617/`
+的 events 与 app 日志记录了以下事实：
+
+- 实际 ICE 配置由 `0x7fffffff` 改成 0；SDK 选择 SDR，香港 primary 与东京 backup 均存在，
+  首先有经香港的有效 E2E 收包。该客户端的 controlling 字节为 0。
+- 仅在模拟器内部双向丢弃该香港 UDP endpoint。OUTPUT 另以 Steam Link UID 限定；INPUT
+  以来源 IP/port 限定。计数记录确认两向 DROP 都命中；开发机防火墙没有改动。
+- 注入后约 6.4 秒，官方 selector 将东京提升为 primary。此前 RelayServer failure 已为 1，
+  RelaySession failure 仍为 0；这直接支持 §18.5 的所有者区分。
+- 在保持测试外壳存活的这次窗口中，没有观察到经新 primary 的有效 E2E 恢复；SDK/IHS
+  日志随后出现 peer Destroyed 和约 15 秒 inactivity。不能把 primary 指针改变当作恢复。
+
+**Evidence correction**：整理后的工具在 `build/anywhere-research/official-runtime-fault/`
+再次运行同一覆盖，捕捉到东京成为 primary 后的一个有效 E2E 样本；随后仍因 IHS inactivity
+结束。撤回将前一份“没有采到新 E2E”推广为“官方 SDK 完全不会恢复 E2E”的判断。不同
+样例或采样缺席都不能证明零包。后续 `official-runtime-packet-category-v2/` 用 §21.29 的同线程入口分类，
+记录换路后的一个 `data` 样本；这仍可能只是 SNP ACK/控制，不能据此证明编码帧或持续收流恢复。
+新的本地 fixture 被动跟踪 E2E 计数，要求五秒角色保持的末尾一秒内仍有新计数增长，不
+用单包把整个保持窗口判为成功。SDK/relay/业务帧的失败与超时仍按各自所有者解释。
+
+**关闭元数据的布局证据**：播放器 x86_64 `ProcessMessage_ConnectionClosed 0x85bfd0`
+在 `0x85bfe7/0x85c12a` 分别读 protobuf+0x5c 的 relay_mode 和 +0x60 的 reason；
+启动器 `0xd55a20` 使用相同字段偏移。`ConnectionState_ClosedByPeer 0x89f5a0`
+读 connection+0x1ac0 的 SDK state、在 `0x89f613` 写 +0x1458 的 end reason；
+启动器对应 `0xd99550` 的 state 位于 +0x1ad8，end reason 仍为 +0x1458。
+两份 `ConnectionState_FinWait` 的读点分别为 `0x89eabe` / `0xd98ace`，再次支持该
+state 差异，不能沿用一个偏移观察两库。运行时工具在这些固定哈希的入口记录 type20
+reason/mode、type21、API close 及 peer/local_problem/FinWait 的 state 前后值，关闭类
+最多每库 32 项；另在 SetState 入口记录最多 64 项 before/next/reason。
+播放器 `APICloseConnection 0x89e710` 在 `0x89e843–0x89e84b` 直接令 SetState(-1)，
+没有经过具名 FinWait 入口；因此后者的挂钩缺席不能解释为应用没有请求关闭。
+不读取 SDK debug 字符串、peer identity 或 protobuf 业务缓冲；FinWait 的 reason 读已保存
+字段，其余两种终态另记录调用参数。以上仍只适用于 §0 的固定 x86_64 样本。
+session 的目标也只采数值 POP/revision/ACK：两份 x86_64 的
+`BSetSessionForwardTargetToken` 在 player `0x87798f–0x877998` / shell
+`0xd7294f–0xd72958` 将 +0x40 的 desired POP 复制到 +0x60 的 sent POP，再更新
++0x64 revision、清 +0x68 ACK；与 §21.13 的 ARM 输入对象一致。不读取 token 字节。
+
+**Conclusion**：这份证据说明“只换 POP 并保持 Connected”不足以验收恢复；也不能仅因本地
+适配器的同类样例失败就把根因归给新增快照代码。它没有证明正常游戏串流也有同样结果，
+没有证明服务器内部的回程选择规则，更不能由两个失败样例推定客户端实现已经全等。
+Frida 与应用帧时钟覆盖的影响须保留在结论范围内。
+
+复现时先用 `android-network-sandbox.py` 在模拟器内阻断新鲜的 peer 地址，再冷启动应用，
+自动定位 Computer Settings 的 Network Test 按钮；避免沿用已缓存的内网直连。下列坐标仅
+适用于本次已核对的 2340×1080 界面，工具本身不猜测当前页面：
+
+```sh
+python3 tools/steam-sdr-runtime-audit.py \
+  --serial emulator-5554 --remote 127.0.0.1:27043 \
+  --output build/official-sdr-runtime \
+  --peer-file /private/current-peer-addresses.json \
+  --force-sdr --fault --hold-test-timeout 45 \
+  --tap 480 945 --seconds 60 --stop-app
+```
+
+前置条件是已运行的 frida-server 和 adb forward。工具核验实际配置覆盖成功后，才在首次有效
+E2E 后至少 3 秒、有 primary/backup 时注入丢包；有布局读取错误则停止。有效 E2E 最多每
+250ms 采样一次，并保留每个 session/包类别的首个样本，注入时重新登记首样本。结果只记录是否
+注入、是否见到新 primary 的 E2E 样本与清理错误，不自行输出恢复 PASS。采样不能替代逐包
+统计；`--stop-app` 是实验清理，也不是 SDK 析构/loader 生命周期通过的证据。
+
+实际媒体是另一项显式实验：应用必须在 Home，使用 `--media --tap 480 450 --stop-app`。
+该模式禁止 `--hold-test-timeout`，启动 Start Playing 并在限定窗口结束时停止应用；未观察到
+真正 ICE 配置覆盖或未完成故障注入均记失败。只挂 shell 的首次媒体尝试没有命中播放器入口，
+日志实际选择 ICE，工具报告 `force_sdr_not_observed` / `fault_not_reached`；这份样例不参与
+SDR 故障比较。播放器挂钩还按每秒上限记录 `CStreamDecoderVideo::DecodeFrame` 的调用累计数，
+不读取帧缓冲。它证明视频进入该函数的次数，不能直接等同成功解码帧数或已显示帧数。
+
+**实际媒体 Evidence**：`build/anywhere-research/official-actual-media-fault-v2/` 核验两份
+ELF 并命中 `libmain.so` 的实际 ICE 配置，应用日志为 `Streaming`、业务选择 SDR。
+未覆盖帧时钟；故障在 elapsed=9.611s 注入，6.662s 后主路由香港换到东京。新主路在故障后
+6.789s 与 14.525s 分别采到 `data` E2E；切换后没有新的解码器输入采样，IHS 因 15 秒无活动
+从 Streaming 退出。注入前有持续的 decoder input，最后一个每秒采样累计值为 62；这个值
+不是完整帧计数。两向 DROP 命中、工具与规则清理无错误。
+
+**Conclusion**：在该主机/模拟器/强制 SDR/单 endpoint 中断的具体条件下，官方媒体同样没有
+完成持续恢复。它将“官方网络测试外壳提前结束”的边界扩展到一次未改时钟的实际串流观察，
+但仍不证明其他拓扑必然失败，也不证明适配器和官方 SDK 的所有请求、时序或断流原因相同。
+E2E 数据包可在 IHS inactivity 之前或附近到达，故仍不能用少量 E2E 代替视频帧验收。
+
+### 21.29 Session ACK 对 RelayServer 探测时钟和 front 测量的副作用
+
+**Evidence**：`TrackSentStatsToSessionCommon 0x83e624` 在 relay ACK 请求或隐式 relay quality
+需求下调用 `TrackSentMessageExpectingSeqNumAckInternal 0x84f8b4–0x84fb9c`。该函数不只更新
+session LinkStats：`0x84f98c–0x84f998` 还调用 `RelayServer::TrackSentPingRequest
+0x817304–0x817330`，更新 root 最后请求时刻、cluster 最后请求时刻及累计请求数；root
+没有 pending 时才建立期限，已有 pending 不被后续包延后。
+
+- session 原来没有 pending 时，root 使用刚建立的 session deadline 与 now 之差。
+- session 原来已有 pending 时，重新计算该 session tracker 的 conservative timeout，允许
+  delayed reply 再加 200000µs，再交给 root 的“不延长已有 pending”规则。
+- root 与 session 的失败计数、pending 和超时 thinker 始终独立；这里登记请求不直接增加失败。
+- 控制消息成功后登记；数据的 inline stats 在 gather 之前登记，gather 失败仍保留这些副作用。
+  没有附带 inline stats 时不凭数据头登记这一请求，见 §21.23。
+
+**接收 Evidence**：有效 packed relay ACK 的 RTT 经 `RecvPackedAckInternal 0x84f1f0`
+调用 `RelayServer::RecvPingReply 0x812a28–0x812cb4`，更新 relay 与 SharedCluster/front 的
+测量，并在 `0x812c90` 清 root pending；随后再交给 session tracker。缺少对应发送记录或
+RTT 不在允许范围内时，不产生这些测量/清 pending 的副作用。单纯 ReceivedPacket 清 root
+连续失败、记录 lastReceived，与 RTT 成功后清 pending 是两个动作，不能合并。
+
+**Conclusion / evidence correction**：§18.5 的 root/session 失败状态归属修正还必须与上述
+生产者/消费者相连。适配器此前只在显式 RouterPing 时建立 root pending，session ACK 请求
+没有登记；有效 ACK RTT 也只更新 session tracker，未反馈 front 或清 root pending。
+这会使已完成初始测量的 relay 在中断后缺少 root 失联输入，旧前台测量也得不到正常流量刷新。
+原始发送链核对现在同时断言 root 时钟/累计探测数；独立 root/session pending、延迟回复及
+ACK→root/front 回调使用完整原始指令组合覆盖。函数级 selector 对照不替代这些接线证据。
+
+**观测边界**：官方 `RecvValidEndToEndPacket` 的原因字符串 `Stats` 也可能来自数据包内联
+stats。运行时工具用同线程内 `RecvValidDataPacket` 的调用范围区分 `data` 与独立 `stats`，
+不读取 payload；固定 x86_64 的独立 stats 原因常量位于 `0x4b2ed5`。`data` 只说明加密数据
+承载被接收，仍可能只含 SNP ACK/控制，不证明交付了 IHS 视频帧。媒体故障 fixture 因此独立
+使用 `--sdr-fault-desktop`：首次至少收到 30 帧再注入；新角色的恢复观察窗口内再收到至少
+30 个编码帧，且窗口末尾一秒仍有新帧，同时满足五秒 E2E 验收。网络专用 NRO 不接受该模式。
+
+§21.18 的生产接线同样不能省略：`populate` 将两组 tracker 的活动级别、连续失败、最近收包、
+lastImmediateRequest、最近 RTT/请求时刻和 pending 状态分别交给
+`sl_sdr_stats_request_flags`，保留 5/7 秒严格边界、200ms 的包含等号、10/60 秒及 mode=0/1/2。
+此前只处理调用者显式 request 和 quality，不能实现这些自动探测分支。该 C 函数与原始通用
+生产器在相同输入下比较，包含非对称 relay/E2E 活动及 pending；并不因此扩大到 protobuf
+实际长度、MTU 裁剪及完整 SDK 策略全等的声明。
+
+后端诊断分别保存 SDK state/end reason 和首个本地 terminal source/detail；发送/接收可能早于
+一秒状态轮询发现关闭，销毁 SDK handle 前还要读取并锁存原始 SDK state/end reason。适配器
+Failed 不等于 SDK ProblemDetectedLocally：SDK 已 ClosedByPeer 时，Send 同样可以先返回
+NoConnection，再由适配器记为 send/Failed。数值来源分别为
+signal、certificate/start/config、connection info/status/state、signal queue、send/receive、
+datagram bounds/queue、allocation；不把来源枚举当作线上协议错误码，不打印 SDK 调试文本。
+
+### 21.30 primary 历史、切换报告与连接 RTT 初值
+
+**Evidence**：`ThinkSelectServer_SelectActiveSessions 0x81cddc–0x81ce18` 检查旧 primary 的
+开始时刻非零、数据接收数 >=101、地址有 IP/非零 port/非零 POP，才构造 type 16
+`CMsgSteamDatagramClientSwitchedPrimary`。`0x819854–0x819874` 的计数属于 active primary
+的数据包入口，不是所有 E2E 事件、独立 stats 或 IHS 视频帧数；数据内联 stats 不重复计数。
+
+消息由**新 primary relay** 发出（`0x81d678–0x81d688`），带 connection_id、旧地址/POP、
+旧 primary 活动秒数与数据接收数。gap 优先用已记录的失联起点，否则使用旧 current metrics
+的非零 gap。`from_quality_now` 使用旧地址本轮测量，`to_quality_now` 使用新 session 测量；
+`*_quality_then` 来自上次 primary 生效时保存的候选快照。RouterQuality 的 back_ping 是
+interior ping（session+4584），不是 remote front 与 interior 的和；score 包含两端 front、
+10% internet 项和各 penalty，seconds_until_down 为 INT_MAX 时省略。
+
+新节点的旧快照先在相同 POP 中找精确地址；找不到时按 score 升序、迁移标记升序、shutdown
+剩余时间降序选备用记录。**Evidence correction**：旧文将 `0x81d524` 的记录+96 误标为
+alternate penalty；它对应保存的 SessionSelectQualityMetrics+72 迁移标记。
+原单地址模型不再适用；多地址快照和所选 session 的接线见 §21.33。报告的 dropped_reason 取旧 primary 被
+移除时缓存的原因。原适配器没有保存这条字符串；该缺口由 §21.32 的移除事件接线补齐，
+不能用普通换路时当前候选的失败原因临时替代。
+
+`0x81d694–0x81d718` 在新 primary 生效时重置该历史计数并保存地址/POP/时刻/候选快照。
+跨 POP 时，`0x81d724–0x81d74c` 将**连接** RTT tracker 的最近样本数清零，再以
+local front+remote front+interior 生成样本；不是重置 P2P transport 独立确认状态或全部 session
+ACK 窗口。随后提前调度 connection 与 session thinker。
+
+**Conclusion**：这条客户端报告应按条件产生；把它称为遥测并不能据此断言服务端忽略它。
+它的服务端影响仍须单独验证，报告已发出也不代表媒体已恢复。原始发送组合覆盖 100/101 边界、
+缺少地址字段和首次 primary，并检查消息发送到新 relay 及 current quality 字段。
+
+媒体故障 fixture 另提供 `--sdr-warm-fault-desktop`：在 SNS 连接至少 15 秒且已有 30 帧后才
+注入。15 秒只是用于比较建立初期和持续收流的实验条件，不是选路阈值；它与普通故障模式
+使用相同的切换后新帧、五秒保持及末尾收包新鲜度要求，不能用其中一组替代另一组。
+
+故障 fixture 的 `SDR_LOSS_SAMPLE/FEEDBACK/ROUTING` 是每秒最多一组的只读诊断：在 SDK
+锁内复制主备 POP、root/session 失败与时钟年龄、目标/peer 首路 POP、revision/ACK 和 E2E
+探测状态；时间单位毫秒，UINT32_MAX 表示没有对应时刻。它不读身份/地址/载荷，不产生新
+网络请求，也不改变选路。stdout 仅从 fixture owner 在一秒采样点输出；Switch 使用已有的
+非阻塞 64KiB transcript，生产 release 不编译此诊断 API。单纯 root ACK 持续正常与 E2E
+保持为零必须分开解释，不能把前者记作后者恢复。
+
+`SDR_ROUTE_EVIDENCE` 同时复制控制方、local revision 的 ACK、本地首路、当前 primary POP
+是否已有本地 token/双向 Route，以及 routes/关闭消息的计数。`cm_populated` 只计信令填充，
+`stats_committed` 只计 stats 的提交，不等于成功发送或对端接收；inline stats 在 UDP send
+之前提交（§21.22）。开始故障观测后，首个 terminal 在 CloseConnection 前保存最后一份
+快照，供句柄失效后的 final 读取；不继续访问已销毁 SDK 对象。关闭来源分别计已通过解析和
+connection ID 校验的 relay type 20、type 21 与 CM connection_closed；type 20 另保存原始
+relay_mode 和来源 POP。4001 是 SDK 的 Remote_Timeout 分类，不能仅据该数字断言是 Steam
+主机主动超时；relay_mode=0 也不能写成已经观测到 EndToEnd(1) 关闭。诊断不输出 debug 文本。
+
+### 21.31 外层 routes 交付的实现接线
+
+**Evidence**：§21.21 的 `ThinkSelectServer 0x837a90–0x837f2c` 与 20 项原始指令用例覆盖
+单独探测、ACK-only request=1、200ms/10 秒等号、健康门槛及 stats→signal→stats 次序。
+适配器原来只在 routesDue/ackPending 时发送 stats，再按这两个标志是否剩余决定 CM，遗漏
+单独 probeWanted 和发送成功后的 E2E/root 健康判断；ACK-only 也错误地统一请求 delayed。
+
+**Conclusion**：`deliver_routes` 在基础选路及快照维护后准备 primary target，再按该独立
+交付契约执行。`send_stats` 返回实际承载发送结果；成功不代表健康、ACK/revision 已满足。
+需要 CM 且本轮 routesDue 时先清共享重试期限，随后由信令填充沿用一秒规则。生产 C helper
+分别判断 probeWanted 和 relay 是否足够，使用同一输入与原始函数的网络动作序列核对；
+原始诊断回调不当作网络动作。此处修正依据既有静态证据，不预先认定它是某次断流的根因。
+
+### 21.32 已移除 primary 的原因与断流时刻
+
+**Evidence**：`DestroySessionLocked 0x8188f4–0x818c78` 从所有 session 列表及对应 relay
+列表移除对象。若它是 active 列表首项，`0x818b98–0x818bac` 将原因以 64 字节有界字符串
+保存在 transport+124，并把移除时刻保存在 +112，active 数量置零。移除 backup 只截去该
+角色；移除非 active session 不改这段历史。P2P 的 token 清理 `0x8367b4–0x8368a0` 仅剪掉
+角色，不销毁 session，也不登记该原因/时刻，不能将两种事件合并。
+
+下一个 primary 的报告在 `0x81d2ec–0x81d334` 附上非空原因；存在移除时刻时优先用
+`(now-removedAt)/1000` 作为 gap_ms，即使结果为 0 仍设置字段。没有移除时刻才考虑旧
+current metrics 的正 gap；小于一毫秒的正值也保留一个存在的零字段。`0x81d694–0x81d6cc`
+在新 primary 生效时清空原因/断流时刻，即使 101 包报告门槛没有满足也会清空。
+
+原因生产者：NoSession `0x81a2f8` 的 `0x374190` 为 `received_nosession`；全局 thinker
+`0x8233f4` / `0x8233c4` / `0x8234bc` 分别使用 `consecutive_ping_timeout` /
+`session_request_timeout` / `initial_ping_timeout`；停机期限 `0x823594` 使用
+`downtime_warning_reached`；session 60 秒无活动 `0x823574` 使用 `0x383ea7` 的
+`session_inactivity_timeout`。这些是固定样本字符串，不从远端 debug 文本推测。
+
+**Conclusion / evidence correction**：撤回“只保存旧地址、开始时刻和包计数即可覆盖 primary
+历史”的概括。适配器在 NoSession、root 超时/停机和 session 无活动移除前通知 transport，
+先保存主路历史并清 active 角色，再清 session 状态或轮换地址；下次正常选择消费历史。
+这避免同一模型对象换了地址后失去旧路径原因。普通选路淘汰和 token 剪枝不伪造移除事件。
+
+原始指令新增 24 个 primary/backup/非 active 删除输入及 30 个报告输入（含空原因、63 字节
+截断、既有历史、0/999/1000 微秒及 metrics 回退）。C 状态函数对照使用相同原始对象输入；
+容器内存与有界字符串复制仍是显式提供者，不把它们计为 SDK 析构/网络验证。该修正不覆盖
+单 POP 多地址/alternate 的完整对象模型，也不证明持续媒体恢复。
+
+同一生产链还区分 session 和 root 的接收活动：`0x823540` 读取 session+2512，按严格
+`lastReceived+60秒 < now` 销毁 session；它没有读取 root+248。SessionEstablished
+`0x83dc14–0x83dc44` 即使没有非零初始序号，也会刷新 session 接收时刻/包数/字节数、清
+pending 与连续失败。原始现有建连用例已经断言这些副作用。原适配器用 root lastReceived
+判定 session 过期，并漏掉 SessionEstablished 的 LinkStats 收包登记；现改为分别接线。
+RouterPingReply 因而不能独自保持一个已无 session 流量的旧 session。
+
+NoSession 的 session 销毁、60 秒 session 销毁及 root 移除都清 session 的 forward/ACK/
+序号和 LinkStats；NoSession 保留 root challenge/front，后续新 session 重新登记。这对应
+`0x818bb0–0x818c20` 的销毁及 `0x83dbe4–0x83dbfc` 的重新创建，不将 transport 或 root
+整体重置。另加 12 个原始 thinker 输入覆盖 session 时钟的 60 秒两侧/等号、root 新鲜而
+session 过期、root 过期而 session 新鲜及倒序多项移除；显式锁/销毁回调不证明真实线程时序。
+
+### 21.33 多 relay 对象、迁移与 alternate 的生产接线
+
+**Evidence**：§21.3/21.4/21.7/21.11 的原始入口以及 `RecvPingReply 0x812a28–0x812c90`
+分别使用 RelayServer 的 own ping 和 SharedCluster 的 front ping。只有 root 的 RTT 更新
+POP front；alternate probe 的 RTT 更新它自己的测量槽位。有效收包把 root 地址保存为 POP
+last-good，但从失败缓存移除的是实际收包地址。§21.9 的 nearest 输入由
+`EnsureDataCenterRoutesValidLocked 0x810e70–0x8113c4` 的 SharedCluster+806/+812/+818
+生成；仅直接测量的 interior edge、有效 direct front<=2000 参与，按
+`front+front/10+clusterPenalty+interiorPing+interiorPenalty` 维护三个严格更小的 score。
+32767 是未填充的 short score；平局保留原遍历项。估计 edge 不填这些槽位。
+
+`MarkRemoteRelaysAndRoutes 0x839dc8–0x839e78` 先加入 nearest 三项；远端 token 非空时
+枚举全部本地 POP，另加入显式 POP 限制。对端明确公布的 Route 也尝试建立对应组合。
+这不是“本地必须已有 session 才能公布 Route”；session token 仍只从实际 session 取得。
+`CheckRebuildRoutingMessage 0x836f90–0x83718c` 对已有 session 按 active index、base score、
+迁移标记、shutdown 剩余时间排序，在每个 POP 取首个 session 的 token。排序的原始 helper
+`0x84c848` 和 `0x84e430` 与旧历史 fallback 的迁移标记字段交叉核对。
+
+**Conclusion / evidence correction**：撤回单 POP 单 relay 和原地覆盖地址的实现假设。
+`ProbeCluster` 保存共享 front、失败地址、interior、penalty、last-good；`ProbeRelay` 保存
+独立 IP/port、cookie/challenge、own ping、请求/pending、session ACK/序号/token。多个 relay
+可共用 POP，迁移目标与旧 primary 可以同时存活。移除前通知 transport 并剪除角色，随后
+清 session；回收前剪除 pursue 引用，root 移除同时移除 children，POP 缓存和按地址保存的
+停机记录继续存活。备用仍按不同 POP 选，不因同 POP 多对象就改为同 POP backup。
+
+迁移通知只由当前 primary 的非零 IP/port 触发，重复地址不重新启动事务；uint32 port
+仍截断到 uint16，截断为零由随后请求资格校验拒绝。state=1 经过同 POP、失败缓存及严格
+avoidTime 校验后创建/查找目标，state=2 在目标消失、root 避让、alternate penalty>=8191、
+主路/请求消失或不再匹配时取消。目标优先进入 chooser/pursue，并以 -1/1 迁移标记参与
+active 选择。全局维护后再处理迁移、active 和本轮 pursue，2/1 配额不消费重复 POP。
+
+alternate 地址按完整 IP/port 保留稳定槽位，遵守 bit 1 增量/完整回复、protocol 变化和撤销；
+公布的 wire penalty 不取代 8191 未测内部状态。仅合格 root 的前五个按 front 排序者创建
+DefaultProtocol 探测；失败冷却严格 120 秒，own RTT 达 8 次后保存测量。临时 probe 完成时
+只释放 child，保留测量和槽位；失败时才清测量、记录冷却。每轮 90ms/500ms/最多一次及
+失败 root 优先规则由独立 C planner 执行，不并入普通 POP 探测预算。
+
+本实现每个 SNS owner 只有一条活动媒体连接，图在该 owner 内维护；最多 512 个地址对象、
+每 root 128 个 alternate 是本地内存上限，耗尽返回创建失败，不覆盖活动对象。没有启用
+官方调试地址/POP override UI。函数级对照保留容器/provider/调度边界，不声称完整 SDK、
+所有容器平局顺序或多 owner 共享实例行为全等。
+
+`nsl-sdr-topology` 以合成 localhost 地址测试实际 C++ 对象图：共享/独立时钟、迁移重复与
+无效目标、增量/完整公布、probe 回收与稳定 child 引用、last-good 重建、停机缓存存活和
+nearest/token/显式 Route 门槛。它仅绑定一个 ephemeral UDP socket，不发送网络包；SDK
+使用 manual poll 并显式 Kill。此 fixture 及其 API 均不进入 release。
+
+独立 `--sdr-migrate-desktop` fixture 在收至少 30 编码帧后，将同 POP 的另一个配置地址
+作为合成迁移通知交给生产 consumer；跳过了通知的接收 parser，不伪称真实服务端发过该
+通知。后续 challenge、签名 session、routing 和媒体收发来自真实服务。只有指定目标主路
+已收到有效 E2E 才在进程内屏蔽旧 endpoint；屏蔽后要求目标的新 E2E、至少 30 个新编码帧、
+五秒保持及末尾一秒内的新 E2E/视频。它验证先建后拆，与直接断主路的 fault fixture 分开。

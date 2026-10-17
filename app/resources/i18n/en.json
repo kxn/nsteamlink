@@ -5,12 +5,18 @@
   "UNPAIRED": "Not paired",
   "HOST_OFFLINE": "PC not found",
   "SEARCHING_AUTO": "Searching automatically",
+  "HOST_UNAVAILABLE_SEARCHING": "PC unavailable, still searching",
   "RECENT": "Recently played",
   "OPEN_STEAM": "Y  Open Steam",
   "READY": "Ready to play",
   "CONNECT_PC": "Connect to this PC",
   "GAME_RUNNING": "A game is running on this PC",
-  "PAIR_CONNECT": "Y  Pair and connect",
+  "PAIR_CONNECT": "Pair and connect",
+  "PAIR_CONNECT_KEY": "A  Pair and connect",
+  "OPEN_STEAM_KEY": "A  Open Steam",
+  "ADD_PC": "Add computer",
+  "SHOW_PAIR_CODE": "Show pairing code",
+  "ENTER_IP": "Enter IP address",
   "NO_NETWORK": "No network connection",
   "SEARCHING": "Searching for PCs",
   "NO_HOSTS": "No PCs found",
@@ -150,5 +156,7 @@
   "UPDATE_DONE": "Updated to %s.\nExit and start NSteamLink again.",
   "UPDATE_FAILED_DOWNLOAD": "Download failed.\nCheck the connection and retry.",
   "UPDATE_FAILED_VERIFY": "The download failed its checksum.\nNothing was changed.",
-  "UPDATE_FAILED_WRITE": "Could not write the update\nto the SD card."
+  "UPDATE_FAILED_WRITE": "Could not write the update\nto the SD card.",
+  "PAIR_NEW_PC": "Pair a new computer",
+  "CLOUD_UNAVAILABLE": "Pairing service is unavailable. Please try again shortly."
 }

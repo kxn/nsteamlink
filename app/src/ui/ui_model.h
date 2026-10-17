@@ -48,6 +48,8 @@ typedef enum sl_action {
     SL_DEBUG,
     SL_OPEN_OPTIONS,
     SL_OPEN_SETTINGS,
+    SL_OPEN_ADD,
+    SL_OPEN_REMOTE_PAIR,
     SL_OPEN_SHORTCUT,
     SL_CONFIRM_SHORTCUT,
     SL_OPEN_MANUAL,
@@ -84,7 +86,8 @@ typedef enum sl_command_type {
     SL_CMD_SAVE,
     SL_CMD_SHORTCUT,
     SL_CMD_MANUAL,
-    SL_CMD_UPDATE
+    SL_CMD_UPDATE,
+    SL_CMD_REMOTE_PAIR
 } sl_command_type;
 typedef struct sl_command {
     sl_command_type type;
@@ -102,6 +105,7 @@ typedef struct sl_control {
     sl_action action;
     int arg;
     bool primary;
+    bool disabled; /* Cached history can be browsed but cannot launch while unavailable. */
     char label[160];
 } sl_control;
 typedef struct sl_label {
@@ -134,15 +138,29 @@ typedef enum sl_ui_cue {
     SL_CUE_TOGGLE,
     SL_CUE_COUNT
 } sl_ui_cue;
+/* Live discovery evidence only; never stored in the pairing profile. */
+typedef enum sl_discovery_source {
+    SL_DISCOVERY_NONE,
+    SL_DISCOVERY_LAN,
+    SL_DISCOVERY_INTERNET,
+    SL_DISCOVERY_UNKNOWN
+} sl_discovery_source;
+typedef struct sl_host_discovery {
+    uint64_t host_id;
+    sl_discovery_source source;
+} sl_host_discovery;
 typedef struct sl_ui_model {
     sl_ui_cue cue;
     uint64_t cue_serial, move_sound_at;
     sl_auth_store store;
+    sl_host_discovery discoveries[SL_HOST_LIMIT];
     sl_page page, stack[8];
     int focus_stack[8];
     bool repair_attempted;
     int depth;
     bool streaming, debug, network_ok, closing, leaving, ending_game;
+    bool adding_host; /* UI-only final tab; never a registry entry or persisted selection. */
+    int add_focus;
     uint64_t leave_at;
     float leave_opacity;
     int focus;
@@ -171,12 +189,14 @@ bool sl_ui_take_command(sl_ui_model *m, sl_command *out);
 int sl_ui_hit(const sl_layout *layout, int x, int y);
 void sl_ui_activate(sl_ui_model *m, int id);
 bool sl_ui_remote(const sl_ui_model *m);
+sl_discovery_source sl_ui_host_source(const sl_ui_model *, const sl_host *);
 
 bool sl_ui_pair_prompt_visible(const sl_ui_model *model);
 
 float sl_ui_overlay_opacity(const sl_ui_model *model);
 
 int sl_ui_game_count(const sl_ui_model *);
+bool sl_ui_adding_host(const sl_ui_model *);
 float sl_ui_scroll_limit(const sl_ui_model *);
 void sl_ui_drag_games(sl_ui_model *, float delta);
 void sl_ui_release_games(sl_ui_model *, float velocity);

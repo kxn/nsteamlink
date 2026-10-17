@@ -39,6 +39,47 @@ set(IHSLIB_HID_SDL ON CACHE BOOL "Build ihslib SDL HID provider" FORCE)
 set(IHSLIB_HID_SDL_USE_SDL2 ON CACHE BOOL "Build ihslib SDL HID provider against SDL2" FORCE)
 add_subdirectory(third_party/ihslib)
 
+# The runtime uses SNS for cloud-only hosts, with SDK-selected ICE/SDR routes.
+option(NSL_BUILD_SNS "Build the SNS media backend" ON)
+if(NSL_BUILD_SNS)
+    set(NSL_GNS_MBEDTLS_SOURCE "${CMAKE_SOURCE_DIR}/app/platforms/common/gns_mbedtls.cpp")
+    if(NSL_PLATFORM STREQUAL "switch")
+        set(USE_CRYPTO MbedTLS CACHE STRING "SNS crypto provider" FORCE)
+        set(USE_CRYPTO25519 Reference CACHE STRING "SNS 25519 provider" FORCE)
+        set(Protobuf_DIR "${CMAKE_SOURCE_DIR}/build/deps/sns-switch/lib/cmake/protobuf"
+            CACHE PATH "Switch SNS protobuf runtime" FORCE)
+        if(NOT EXISTS "${Protobuf_DIR}/protobuf-config.cmake")
+            message(FATAL_ERROR "Run scripts/setup-sns-deps.sh to build the Switch SNS protobuf runtime")
+        endif()
+        find_program(NSL_HOST_PROTOC NAMES protoc
+            HINTS "${CMAKE_SOURCE_DIR}/build/deps/sns-host/bin" NO_CMAKE_FIND_ROOT_PATH REQUIRED)
+        set(Protobuf_PROTOC_EXECUTABLE "${NSL_HOST_PROTOC}" CACHE FILEPATH "Host SNS protoc" FORCE)
+    endif()
+    set(BUILD_STATIC_LIB ON CACHE BOOL "" FORCE)
+    set(BUILD_SHARED_LIB OFF CACHE BOOL "" FORCE)
+    set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+    set(ENABLE_ICE ON CACHE BOOL "" FORCE)
+    set(USE_STEAMWEBRTC OFF CACHE BOOL "" FORCE)
+    option(NSL_ENABLE_SDR "Enable the reconstructed Valve relay transport" ON)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    set(NSL_GNS_SOURCE "${CMAKE_BINARY_DIR}/dependencies/GameNetworkingSockets")
+    execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/cmake/prepare-gns.py"
+        "${CMAKE_SOURCE_DIR}/third_party/GameNetworkingSockets" "${NSL_GNS_SOURCE}"
+        "${CMAKE_SOURCE_DIR}/third_party/patches/GameNetworkingSockets"
+        COMMAND_ERROR_IS_FATAL ANY)
+    add_subdirectory("${NSL_GNS_SOURCE}" third_party/GameNetworkingSockets)
+    if(NSL_PLATFORM STREQUAL "switch")
+        target_compile_definitions(GameNetworkingSockets_s PRIVATE VALVE_POSIX=1 PLATFORM_ARM=1
+            STEAMNETWORKINGSOCKETS_DISABLE_STEAMNETWORKINGMESSAGES)
+        target_sources(GameNetworkingSockets_s PRIVATE app/platforms/switch/gns_libnx.cpp)
+    endif()
+    if(NSL_ENABLE_SDR)
+        target_compile_definitions(GameNetworkingSockets_s PRIVATE NSL_GNS_SDR=1)
+    endif()
+endif()
+
 enable_testing()
 add_subdirectory(app)
 

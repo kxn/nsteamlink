@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import shlex
 import subprocess
+import re
 
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('build', type=Path)
@@ -13,17 +14,24 @@ build = a.build.resolve()
 cache = (build / 'CMakeCache.txt').read_text()
 assert 'NSL_DIAGNOSTICS:BOOL=OFF' in cache, 'configure with -DNSL_DIAGNOSTICS=OFF'
 commands = json.loads((build / 'compile_commands.json').read_text())
-names = {'application.c', 'media.c', 'runtime.c', 'video_pipeline.c', 'gfx.c', 'frame_pacer.c', 'video_scheduler.c'}
+names = {'application.c', 'media.c', 'runtime.c', 'diagnostic_log.c', 'video_pipeline.c', 'gfx.c', 'frame_pacer.c', 'video_scheduler.c'}
 checked = 0
 for entry in commands:
     source = Path(entry['file'])
     if '/app/platforms/' not in str(source) or source.name not in names:
         continue
     argv = entry.get('arguments') or shlex.split(entry['command'])
-    assert '-DNSL_DIAGNOSTICS=0' in argv, f'diagnostic macro missing: {source}'
     obj = Path(entry['directory']) / argv[argv.index('-o') + 1]
+    # Some release-tree unit tests intentionally compile a diagnostic variant
+    # of the same source. Inspect the product objects, not these test fixtures.
+    if not re.search(r'CMakeFiles/nsl_(?:platform|ui|video_pipeline|gfx)\.dir/', str(obj)):
+        continue
+    assert '-DNSL_DIAGNOSTICS=0' in argv, f'diagnostic macro missing: {source}'
     data = obj.read_bytes()
-    for marker in (b'render-rate-test', b'--adaptive-pacing', b'--no-adaptive-pacing', b'vq1 ', b'vq7 ', b'vq8 ', b'vq9 '):
+    if source.name == 'diagnostic_log.c':
+        for marker in (b'HTTP/1.1', b'storage_errno', b'GET required', b'session-%020'):
+            assert marker not in data, f'diagnostic log service remains in release: {marker!r}'
+    for marker in (b'render-rate-test', b'--adaptive-pacing', b'--no-adaptive-pacing', b'RUNTIME_FIXTURE_', b'CLOUD_FIXTURE_', b'vq1 ', b'vq7 ', b'vq8 ', b'vq9 ', b'cloud_watch saved=', b'cloud_update stall_ms', b'media_rx ch=', b'udp_rx observer='):
         assert marker not in data, f'diagnostic string {marker!r} in {obj}'
     if source.name == 'gfx.c' and source.parent.name == 'switch':
         nm = Path(argv[0]).with_name('aarch64-none-elf-nm')
@@ -43,9 +51,38 @@ for entry in commands:
         for required in ('sl_pacer_wait', 'sl_pacer_publish', 'sl_pacer_submit'):
             assert required.encode() in data, f'product scheduler missing: {required}'
     checked += 1
-assert checked == 7, f'expected seven relevant translation units, got {checked}'
+assert checked == 8, f'expected eight relevant translation units, got {checked}'
+for entry in commands:
+    if not entry['file'].endswith('/sns_backend.cpp'):
+        continue
+    argv = entry.get('arguments') or shlex.split(entry['command'])
+    assert '-DNSL_SNS_PROBES=0' in argv, 'SNS probe API enabled in release product'
+for entry in commands:
+    if not entry['file'].endswith('/sdr_probe.cpp'):
+        continue
+    argv = entry.get('arguments') or shlex.split(entry['command'])
+    assert '-DNSL_SNS_PROBES=0' in argv, 'relay fixture enabled in release product'
+    compiler = Path(argv[0])
+    nm = compiler.with_name(re.sub(r'(?:clang\+\+|g\+\+|c\+\+)$', 'nm', compiler.name))
+    archive = build / 'third_party/GameNetworkingSockets/src/libGameNetworkingSockets_s.a'
+    symbols = subprocess.check_output([str(nm), '--defined-only', str(archive)], text=True)
+    for name in ('sl_gns_sdr_test_loss', 'sl_gns_sdr_test_terminal', 'sl_gns_sdr_test_migration', 'sl_gns_sdr_topology_fixture',
+                 'sl_gns_sdr_transport_stats', 'sl_gns_sdr_probe_create'):
+        assert name not in symbols, f'relay diagnostic API remains: {name}'
+link = (build / 'app/CMakeFiles/nsteamlink.dir/link.txt').read_text()
+assert 'runtime_fixture' not in link and 'runtime_probe' not in link, 'runtime fixture linked into product'
+archive = build / 'app/libnsl_platform.a'
+assert b'RUNTIME_FIXTURE_' not in archive.read_bytes(), 'runtime driver included in product platform'
+assert b'sl_packet_diagnostics_' not in archive.read_bytes(), 'packet observers remain in release'
+remote_archive = build / 'app/libnsl_remote.a'
+for marker in (b'cloud_net event=', b'cloud_time total_ms=', b'cloud_subscription', b'cloud_addr local=',
+               b'cloud_try stage=', b'cloud_dns event=', b'dns_query event='):
+    assert marker not in remote_archive.read_bytes(), f'cloud diagnostics remain in release: {marker!r}'
+sns_archive = build / 'app/libnsl_sns.a'
+if sns_archive.exists():
+    assert b'sns_config event=' not in sns_archive.read_bytes(), 'SNS HTTP diagnostics remain in release'
 manifest = json.loads((build / 'generated/graphics_manifest.json').read_text())
-if any('/platforms/switch/' in e['file'] for e in commands):
+if any(e['file'].endswith('/platforms/switch/gfx.c') for e in commands):
     assert manifest['backend'] == 'deko', 'Switch must use deko'
     gfx_sources = [Path(e['file']) for e in commands if Path(e['file']).name == 'gfx.c']
     assert gfx_sources and all(p.parent.name == 'switch' for p in gfx_sources), 'SDL renderer in Switch build'

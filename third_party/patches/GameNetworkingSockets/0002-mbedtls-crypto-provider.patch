@@ -1,0 +1,57 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -89,7 +89,7 @@
+ #
+ # Primary crypto library (for AES, SHA256, etc)
+ #
+-set(useCryptoOptions OpenSSL libsodium BCrypt)
++set(useCryptoOptions OpenSSL libsodium BCrypt MbedTLS)
+ set(USE_CRYPTO "OpenSSL" CACHE STRING "Crypto library to use for AES/SHA256")
+ set_property(CACHE USE_CRYPTO PROPERTY STRINGS ${useCryptoOptions})
+ 
+@@ -163,6 +163,11 @@
+ 	message(FATAL_ERROR "Cannot find (EVP_PKEY_get_raw_public_key in OpenSSL headers/libs for the target architecture.  Please use -DUSE_CRYPTO25519=Reference or upgrade OpenSSL to 1.1.1 or later")
+ endif()
+ 
++if(USE_CRYPTO STREQUAL "MbedTLS")
++	find_path(MBEDTLS_INCLUDE_DIR mbedtls/gcm.h REQUIRED)
++	find_library(MBEDCRYPTO_LIBRARY mbedcrypto REQUIRED)
++endif()
++
+ if(USE_CRYPTO STREQUAL "libsodium" OR USE_CRYPTO25519 STREQUAL "libsodium")
+ 	find_package(sodium REQUIRED)
+ endif()
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -133,6 +133,20 @@
+ 	"common/keypair.cpp"
+ 	)
+ 
++if(USE_CRYPTO STREQUAL "MbedTLS")
++	if(NOT NSL_GNS_MBEDTLS_SOURCE)
++		message(FATAL_ERROR "MbedTLS requires the nsteamlink crypto provider source")
++	endif()
++	set(GNS_CRYPTO_DEFINES ${GNS_CRYPTO_DEFINES} VALVE_CRYPTO_MBEDTLS VALVE_CRYPTO_25519_DONNA ED25519_REFHASH)
++	set(GNS_CRYPTO_SRCS ${GNS_CRYPTO_SRCS}
++		"${NSL_GNS_MBEDTLS_SOURCE}"
++		"common/crypto_25519_donna.cpp"
++		"external/curve25519-donna/curve25519.c"
++		"external/curve25519-donna/curve25519_VALVE_sse2.c"
++		"external/ed25519-donna/ed25519_VALVE.c"
++		"external/ed25519-donna/ed25519_VALVE_sse2.c")
++endif()
++
+ if(USE_CRYPTO STREQUAL "BCrypt")
+ 	set(GNS_CRYPTO_DEFINES ${GNS_CRYPTO_DEFINES} VALVE_CRYPTO_BCRYPT VALVE_CRYPTO_25519_DONNA ED25519_HASH_BCRYPT)
+ 	set(GNS_CRYPTO_SRCS ${GNS_CRYPTO_SRCS}
+@@ -267,6 +281,10 @@
+ 
+ # Set the target properties (sources, link libs, defines) based on crypto settings
+ function(gns_set_target_crypto_properties TGT)
++	if(USE_CRYPTO STREQUAL "MbedTLS")
++		target_include_directories(${TGT} PRIVATE ${MBEDTLS_INCLUDE_DIR})
++		target_link_libraries(${TGT} PUBLIC ${MBEDCRYPTO_LIBRARY})
++	endif()
+ 	if(USE_CRYPTO STREQUAL "OpenSSL" OR USE_CRYPTO25519 STREQUAL "OpenSSL")
+ 		target_link_libraries(${TGT} PUBLIC
+ 			OpenSSL::Crypto

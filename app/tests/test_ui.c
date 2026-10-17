@@ -51,6 +51,48 @@ static sl_ui_model model(void) {
     m.now = 100;
     return m;
 }
+static bool has_label(const sl_ui_model *m, const char *label) {
+    for (int i = 0; i < m->layout.label_count; ++i)
+        if (!strcmp(m->layout.labels[i].text, label))
+            return true;
+    return false;
+}
+static void discovery_source_evidence(void) {
+    sl_ui_model m = model();
+    sl_runtime_event e = {.type = SL_EVENT_HOST, .host = {.client_id = 4321}};
+    strcpy(e.host.name, "PC");
+    strcpy(e.host.address, "10.10.10.166");
+    e.discovery_source = SL_DISCOVERY_INTERNET;
+    sl_ui_runtime_event(&m, &e);
+    sl_host *h = &m.store.registry.hosts[0];
+    assert(sl_ui_host_source(&m, h) == SL_DISCOVERY_INTERNET); /* Private IP is not LAN proof. */
+    e.discovery_source = SL_DISCOVERY_LAN;
+    sl_ui_runtime_event(&m, &e);
+    assert(sl_ui_host_source(&m, h) == SL_DISCOVERY_LAN);
+    e.discovery_source = SL_DISCOVERY_INTERNET;
+    sl_ui_runtime_event(&m, &e);
+    assert(sl_ui_host_source(&m, h) ==
+           SL_DISCOVERY_INTERNET); /* Fresh complete evidence replaces old. */
+    h->paired = true;
+    sl_ui_layout(&m);
+    assert(has_label(&m, sl_tr(SL_T_OPEN_STEAM_KEY)) && !has_label(&m, sl_tr(SL_T_HOST_OFFLINE)));
+    sl_ui_tick(&m, m.now + 15000);
+    assert(sl_ui_host_source(&m, h) == SL_DISCOVERY_NONE && h->paired);
+    assert(has_label(&m, sl_tr(SL_T_HOST_OFFLINE))); /* Saved pairing is not discovery. */
+    e.discovery_source = SL_DISCOVERY_INTERNET;
+    sl_ui_runtime_event(&m, &e);
+    sl_runtime_event off = {.type = SL_EVENT_HOST_OFFLINE, .host = {.client_id = 4321}};
+    sl_ui_runtime_event(&m, &off);
+    assert(sl_ui_host_source(&m, h) == SL_DISCOVERY_NONE);
+    sl_auth_store saved = m.store;
+    sl_ui_model restarted;
+    sl_ui_init(&restarted, &saved);
+    /* Store loaders clear observed; model never fabricates a source from old metadata. */
+    restarted.store.registry.hosts[0].observed = true;
+    restarted.store.registry.hosts[0].last_seen = restarted.now;
+    assert(sl_ui_host_source(&restarted, &restarted.store.registry.hosts[0]) ==
+           SL_DISCOVERY_UNKNOWN);
+}
 static void add(sl_ui_model *m, int id, const char *name) {
     sl_host h = {.client_id = id, .instance_id = 10};
     snprintf(h.name, 64, "%s", name);
@@ -72,6 +114,118 @@ static void layout_check(sl_ui_model *m) {
                    d->y >= c->y + c->h);
         }
     }
+}
+static void add_computer_navigation(void) {
+    sl_ui_model m = model();
+    sl_command command;
+    add(&m, 1, "First");
+    add(&m, 2, "Second");
+    sl_ui_action(&m, SL_NEXT_HOST, 0);
+    assert(m.store.registry.selected == 1);
+    sl_ui_action(&m, SL_NEXT_HOST, 0);
+    assert(sl_ui_adding_host(&m) && m.store.registry.count == 2 && m.store.registry.selected == 1 &&
+           !sl_ui_take_command(&m, &command));
+    add(&m, 3, "Found while adding");
+    assert(sl_ui_adding_host(&m)); /* Discovery must not steal the explicit Add tab. */
+    sl_ui_action(&m, SL_PREV_HOST, 0);
+    assert(!sl_ui_adding_host(&m) && m.store.registry.selected == 2);
+    sl_ui_action(&m, SL_NEXT_HOST, 0);
+    sl_ui_action(&m, SL_NEXT_HOST, 0);
+    assert(!sl_ui_adding_host(&m) && m.store.registry.selected == 0);
+
+    sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
+    sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
+    sl_ui_activate(&m, 104); /* Existing "Manual add computer" menu entry. */
+    assert(m.page == SL_HOME && sl_ui_adding_host(&m) && !m.depth &&
+           !sl_ui_take_command(&m, &command));
+    layout_check(&m);
+    sl_ui_action(&m, SL_RIGHT, 0);
+    assert(m.focus == 31);
+    sl_ui_action(&m, SL_ACCEPT, 0);
+    assert(m.page == SL_MANUAL && !sl_ui_take_command(&m, &command));
+    strcpy(m.input, "10.10.10.166");
+    sl_ui_action(&m, SL_SUBMIT, 0);
+    assert(sl_ui_take_command(&m, &command) && command.type == SL_CMD_MANUAL &&
+           !strcmp(command.text, "10.10.10.166"));
+    sl_runtime_event found = {
+        .type = SL_EVENT_HOST, .discovery_source = SL_DISCOVERY_LAN, .host = {.client_id = 903}};
+    strcpy(found.host.name, "Manual target");
+    strcpy(found.host.address, "10.10.10.166");
+    sl_ui_runtime_event(&m, &found);
+    assert(!sl_ui_adding_host(&m) && m.page == SL_PAIRING);
+    assert(sl_ui_take_command(&m, &command) && command.type == SL_CMD_PAIR &&
+           command.host.client_id == 903 && !command.game_id);
+
+    m = model();
+    sl_ui_action(&m, SL_ACCEPT, 0); /* First Add action: cloud code, no target host. */
+    assert(m.page == SL_PAIRING && sl_ui_take_command(&m, &command) &&
+           command.type == SL_CMD_REMOTE_PAIR && !command.host.id);
+    m = model();
+    for (int i = 0; i < SL_HOST_LIMIT; ++i)
+        add(&m, 100 + i, "Computer");
+    sl_ui_action(&m, SL_SELECT_HOST, SL_HOST_LIMIT);
+    assert(sl_ui_adding_host(&m) && m.store.registry.count == SL_HOST_LIMIT &&
+           m.store.registry.selected >= 0 && m.store.registry.selected < SL_HOST_LIMIT);
+    layout_check(&m); /* The Add tab does not consume registry capacity. */
+}
+static void cached_history_availability(void) {
+    sl_ui_model m = model();
+    add(&m, 1, "First");
+    add(&m, 2, "Second");
+    sl_host *h = &m.store.registry.hosts[0];
+    h->paired = true;
+    h->games[0].id = 123;
+    strcpy(h->games[0].name, "First computer's game");
+    m.store.registry.hosts[1].games[0].id = 456;
+    sl_ui_tick(&m, 20000);
+    assert(sl_ui_game_count(&m) == 1);
+    assert(!has_label(&m, sl_tr(SL_T_HOST_OFFLINE)) && !has_label(&m, sl_tr(SL_T_SEARCHING_AUTO)));
+    bool unavailable_caption = false;
+    for (int i = 0; i < m.layout.label_count; ++i)
+        if (strstr(m.layout.labels[i].text, sl_tr(SL_T_HOST_UNAVAILABLE_SEARCHING))) {
+            unavailable_caption = true;
+            assert(strstr(m.layout.labels[i].text, sl_tr(SL_T_RECENT)) &&
+                   m.layout.labels[i].y == 236 && m.layout.labels[i].size == 36);
+        }
+    assert(unavailable_caption);
+    const sl_control *card = NULL;
+    for (int i = 0; i < m.layout.count; ++i)
+        if (m.layout.controls[i].action == SL_RECENT)
+            card = &m.layout.controls[i];
+    assert(card && card->disabled && !strcmp(card->label, h->games[0].name));
+    sl_control unavailable_card = *card;
+    assert(!sl_ui_hit(&m.layout, card->x + 100, card->y + 50));
+    sl_ui_activate(&m, card->id);
+    sl_ui_action(&m, SL_ACCEPT, 0);
+    sl_ui_action(&m, SL_START, 0);
+    sl_ui_action(&m, SL_RECENT, 0);
+    sl_command command;
+    assert(!sl_ui_take_command(&m, &command));
+    assert(h->paired && h->games[0].id == 123);
+    assert(sl_ui_host_source(&m, h) == SL_DISCOVERY_NONE);
+
+    sl_runtime_event found = {
+        .type = SL_EVENT_HOST, .host = *h, .discovery_source = SL_DISCOVERY_LAN};
+    sl_ui_runtime_event(&m, &found);
+    sl_ui_layout(&m);
+    for (int i = 0; i < m.layout.count; ++i)
+        if (m.layout.controls[i].action == SL_RECENT)
+            assert(!m.layout.controls[i].disabled && m.layout.controls[i].x == unavailable_card.x &&
+                   m.layout.controls[i].y == unavailable_card.y &&
+                   m.layout.controls[i].w == unavailable_card.w &&
+                   m.layout.controls[i].h == unavailable_card.h);
+    sl_ui_action(&m, SL_ACCEPT, 0);
+    assert(sl_ui_take_command(&m, &command) && command.type == SL_CMD_STREAM &&
+           command.host.client_id == 1 && command.game_id == 123);
+
+    m.page = SL_HOME;
+    h->paired = false;
+    sl_ui_layout(&m);
+    sl_ui_action(&m, SL_RECENT, 0); /* A cached card cannot bypass authorization. */
+    assert(!sl_ui_take_command(&m, &command));
+    sl_ui_action(&m, SL_ACCEPT, 0); /* The current page's A shortcut pairs directly. */
+    assert(sl_ui_take_command(&m, &command) && command.type == SL_CMD_PAIR &&
+           command.host.client_id == 1 && !command.game_id);
 }
 static void session_end_events(void) {
     sl_ui_model m = model();
@@ -395,12 +549,18 @@ static void actionable_settings(void) {
     assert(m.layout.count == 4); /* Settings, HOME shortcut, update check and back. */
     assert(m.layout.controls[2].action == SL_UPDATE_CHECK);
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
-    assert(m.layout.count == 6); /* Quality, bandwidth, sound, language, manual address, back. */
-    assert(m.layout.controls[4].action == SL_OPEN_MANUAL);
+    assert(m.layout.count == 6); /* Preferences, one shared Add Computer entry and back. */
+    assert(m.layout.controls[4].action == SL_OPEN_ADD);
+    layout_check(&m);
+    sl_ui_action(&m, SL_OPEN_ADD, 0);
+    assert(m.page == SL_HOME && sl_ui_adding_host(&m));
     sl_ui_action(&m, SL_OPEN_MANUAL, 0);
     assert(m.page == SL_MANUAL);
     sl_ui_action(&m, SL_BACK, 0);
     sl_ui_tick(&m, m.now + 160);
+    assert(m.page == SL_HOME && sl_ui_adding_host(&m));
+    sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
+    sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
     sl_ui_action(&m, SL_SOUND, 0);
     sl_command command;
     assert(!m.store.sound && sl_ui_take_command(&m, &command) && command.type == SL_CMD_SAVE);
@@ -424,9 +584,66 @@ static void actionable_settings(void) {
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
     assert(m.layout.count == 5); /* Sound, quality, bandwidth, language and back. */
     for (int i = 0; i < m.layout.count; ++i)
-        assert(m.layout.controls[i].action != SL_OPEN_MANUAL);
+        assert(m.layout.controls[i].action != SL_OPEN_MANUAL &&
+               m.layout.controls[i].action != SL_OPEN_REMOTE_PAIR);
     sl_ui_action(&m, SL_OPEN_MANUAL, 0);
     assert(m.page == SL_SETTINGS); /* No empty advanced page or stream-time host entry. */
+}
+
+static void explicit_cloud_pairing(void) {
+    sl_ui_model m = model();
+    sl_command cmd;
+    sl_ui_action(&m, SL_START, 0);
+    assert(m.page == SL_HOME && !sl_ui_take_command(&m, &cmd));
+    sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
+    sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
+    sl_ui_action(&m, SL_OPEN_REMOTE_PAIR, 0);
+    assert(m.page == SL_SETTINGS && !sl_ui_take_command(&m, &cmd));
+    sl_ui_action(&m, SL_OPEN_ADD, 0);
+    sl_ui_action(&m, SL_OPEN_REMOTE_PAIR, 0);
+    assert(m.page == SL_PAIRING && sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_REMOTE_PAIR &&
+           !cmd.host.id);
+    sl_runtime_event code = {.type = SL_EVENT_CODE, .generation = m.generation};
+    strcpy(code.text, "1234");
+    sl_ui_runtime_event(&m, &code);
+    assert(!strcmp(m.pairing_code, "1234"));
+    sl_runtime_event authorized = {.type = SL_EVENT_AUTHORIZED,
+                                   .generation = m.generation,
+                                   .account = 88,
+                                   .host = {.client_id = 77, .has_secret = true}};
+    strcpy(authorized.host.name, "Steam");
+    authorized.host.secret[0] = 7;
+    sl_ui_runtime_event(&m, &authorized);
+    assert(m.page == SL_HOME && m.store.registry.count == 1 && m.store.registry.hosts[0].paired &&
+           !m.store.registry.hosts[0].observed &&
+           !sl_ui_take_command(&m, &cmd)); /* Pairing does not auto-start streaming. */
+    sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
+    sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
+    sl_ui_action(&m, SL_OPEN_ADD, 0);
+    sl_ui_action(&m, SL_OPEN_REMOTE_PAIR, 0);
+    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_REMOTE_PAIR);
+    uint64_t generation = m.generation;
+    sl_ui_action(&m, SL_BACK, 0);
+    sl_ui_tick(&m, m.now + 200);
+    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_CANCEL);
+    code.generation = generation;
+    sl_ui_runtime_event(&m, &code);
+    assert(m.page == SL_STOPPING);
+    sl_host_registry older = m.store.registry;
+    m.store.registry.hosts[0].secret[0] = 9;
+    sl_host_registry_keep_secrets(&older, &m.store.registry);
+    assert(older.hosts[0].secret[0] == 9); /* An existing stale key also gets replaced. */
+    sl_host cloud = {.client_id = 77};
+    sl_host *known = sl_host_observe(&m.store.registry, &cloud, m.now);
+    assert(known && m.store.registry.count == 1);
+    sl_host direct = {.client_id = 77, .instance_id = 10};
+    known = sl_host_observe(&m.store.registry, &direct, m.now);
+    assert(known && m.store.registry.count == 1 && known->paired);
+    known = sl_host_observe(&m.store.registry, &cloud, m.now);
+    assert(known && known->instance_id == 10 && m.store.registry.count == 1);
+    direct.instance_id = 11;
+    known = sl_host_observe(&m.store.registry, &direct, m.now);
+    assert(known && m.store.registry.count == 2 && !known->paired);
 }
 static void end_game_failure(void) {
     sl_ui_model m = model();
@@ -617,6 +834,9 @@ static void host_secrets(void) {
     assert(!snapshot.hosts[0].has_secret);
 }
 int main(void) {
+    discovery_source_evidence();
+    add_computer_navigation();
+    cached_history_availability();
     update_flow();
     profile_v2_migration();
     profile_v3_migration();
@@ -627,6 +847,7 @@ int main(void) {
     wait_screen_cancel_shortcut();
     confirmation_shortcuts();
     actionable_settings();
+    explicit_cloud_pairing();
     overlay_interaction();
     sl_ui_model m = model();
     sl_input_router r;

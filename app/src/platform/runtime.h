@@ -3,6 +3,8 @@
 typedef struct sl_runtime sl_runtime;
 typedef enum sl_event_type {
     SL_EVENT_HOST,
+    SL_EVENT_HOST_OFFLINE,
+    SL_EVENT_KEY_UPDATED,
     SL_EVENT_CODE,
     SL_EVENT_SAVING,
     SL_EVENT_AUTHORIZED,
@@ -21,6 +23,7 @@ typedef struct sl_runtime_event {
     sl_event_type type;
     uint64_t generation, account;
     sl_host host;
+    sl_discovery_source discovery_source; /* HOST event: verified LAN or cloud-only. */
     sl_game game;
     char text[192];
 } sl_runtime_event;

@@ -6,11 +6,41 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
     sl_runtime_event e = *event;
     if (e.type == SL_EVENT_HOST) {
         sl_host *h = sl_host_observe(&m->store.registry, &e.host, m->now);
+        if (h) {
+            sl_host_discovery *slot = NULL;
+            for (unsigned i = 0; i < SL_HOST_LIMIT; ++i) {
+                sl_host_discovery *d = &m->discoveries[i];
+                if (d->host_id == h->id) {
+                    slot = d;
+                    break;
+                }
+                if (!slot && (!d->host_id || !sl_host_find(&m->store.registry, d->host_id)))
+                    slot = d;
+            }
+            if (slot)
+                *slot = (sl_host_discovery){h->id, e.discovery_source ? e.discovery_source
+                                                                      : SL_DISCOVERY_UNKNOWN};
+        }
         if (h && m->page == SL_CONNECTING && !m->intent.host.id &&
             !strcmp(m->intent.text, h->address)) {
             m->store.registry.selected = (int)(h - m->store.registry.hosts);
+            m->adding_host = false;
             m->page = SL_HOME;
             sl_ui_action(m, SL_START, 0);
+        }
+        return;
+    }
+    if (e.type == SL_EVENT_HOST_OFFLINE || e.type == SL_EVENT_KEY_UPDATED) {
+        for (int i = 0; i < m->store.registry.count; ++i) {
+            sl_host *h = &m->store.registry.hosts[i];
+            if (h->client_id != e.host.client_id)
+                continue;
+            if (e.type == SL_EVENT_HOST_OFFLINE)
+                h->observed = false;
+            else if (h->paired && h->account == e.host.account) {
+                h->has_secret = e.host.has_secret;
+                memcpy(h->secret, e.host.secret, sizeof(h->secret));
+            }
         }
         return;
     }
@@ -51,7 +81,9 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
     case SL_EVENT_AUTHORIZED: {
         if (m->page != SL_PAIRING && m->page != SL_SAVING)
             break;
-        sl_host *h = sl_host_find(&m->store.registry, e.host.id);
+        bool remote_pair = m->intent.type == SL_CMD_REMOTE_PAIR;
+        sl_host *h = remote_pair ? sl_host_observe(&m->store.registry, &e.host, m->now)
+                                 : sl_host_find(&m->store.registry, e.host.id);
         if (h) {
             if (h->account != e.account)
                 memset(h->games, 0, sizeof(h->games));
@@ -60,6 +92,15 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
             h->has_secret = e.host.has_secret;
             memcpy(h->secret, e.host.secret, sizeof(h->secret));
             m->intent.host = *h;
+            if (remote_pair) {
+                h->observed = e.host.observed;
+                m->store.registry.selected = (int)(h - m->store.registry.hosts);
+                m->adding_host = false;
+                m->page = SL_HOME;
+                m->intent = (sl_command){0};
+                m->depth = 0;
+                break;
+            }
             m->page = SL_CONNECTING;
             m->command = m->intent;
             m->command.generation = m->generation;

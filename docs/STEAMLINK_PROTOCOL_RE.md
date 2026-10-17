@@ -1470,3 +1470,29 @@ host-stop，避免丢失清理期间到达的完成事实。这个检查只覆�
   迁移保留旧码率，但旧 Fast/Beautiful 从此真正发送相应偏好，行为并非完全不变。
 - 协议测试解密实际 NegotiationSetConfig 并反序列化，交叉检查各画质与独立
   码率、分辨率、帧率、编解码器；存储测试覆盖三种旧偏好和配对身份迁移。
+
+### 连接收包的无活动期限与客户端 Pause/Resume
+
+**Evidence**：固定 1.3.32 ARM ELF 的静态初始化 `0x7fe2bc–0x7fe2d4` 写入正常期限
+`0xf0000`（15 秒）和 stream-paused 期限 `0xb40000`（180 秒）；均使用 16.16 秒 ticks。
+`CStreamConnection::Update 0x7fc43c–0x7fc4c0` 按 connection+8 的 pause 标志选期限，计算
+`uint32(now-lastReceived)`，在达到等号且 connection state 为 0（连接中）或 1（已连接）时
+Disconnect。其他连接状态不因此重复断开；这是 IHS 连接状态，与 SDK 的枚举不同。
+
+构造器 `0x7fb27c–0x7fb290` 初始化当前、接收与发送时钟。`HandlePacket` 在通过对应分支的
+来源/connection ID 与头部门槛后刷新 connection+52，例如 `0x7fad90`（Connect）和
+`0x7fb0d8`（普通连接包）；该位置早于下游 channel/frame 处理，不能改为只有视频帧、成功
+解码帧或 SDK 的 E2E stats 才刷新。更详细的分支门槛应保留实际接收代码的检查顺序。
+
+`OnStreamPaused 0x7fb990` 只置 pause 标志；`OnStreamResumed 0x7fb99c–0x7fb9a8` 清标志，
+并用最近 Update 的 now 同时重设 lastReceived/lastSent，避免恢复后立即按旧活动时间超时。
+客户端 `Pause 0x7b02bc` / `Resume 0x7b0384` 还有上层状态门槛：已连接时通知 connection，
+客户端处于 Streaming=6 时分别发送控制消息 Pause(122)/Resume(123)。Resume 还按音频/视频
+两类发空 DataLost；重复 Pause/Resume 由 client+19 标志短路。它们与显式 StopVideoData、
+暂停某个解码器、无帧 UI watchdog 不是同一个动作。
+
+**Conclusion**：官方日志中的 15 秒 inactivity 有独立连接级来源。SDR 中继 ACK 或 SNP 控制
+仍然活跃时，IHS 业务连接仍可因没有有效连接包而退出；因此不能用 SDK Connected/E2E 计数
+替代 IHS 活动，也不能用没有显示新帧直接触发该超时。离线 `stream_inactivity` 用例执行原始
+初始化、pause/resume 和 Update 的期限片段，覆盖等号、uint32 回绕、状态及恢复时钟；只替代
+Log/Disconnect，不证明真实线程、网络、上层 Pause 消息或解码器生命周期已验证。

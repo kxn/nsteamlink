@@ -21,12 +21,12 @@ struct sl_ui_renderer {
     TTF_Font *fonts[3][9];
     glyph cache[512];
     uint64_t tick;
-    sl_gfx_texture *backdrop, *outline, *overlay;
+    sl_gfx_texture *backdrop, *outline, *overlay, *connection_icons;
     sl_ui_model *base_ui;
     sl_artwork *artwork;
     struct {
         uint64_t id, used, ready_at;
-        sl_gfx_texture *texture, *blurred;
+        sl_gfx_texture *texture, *blurred, *grayscale;
         int w, h;
     } covers[8];
     float text_alpha;
@@ -99,6 +99,60 @@ static void monitor(sl_gfx *r, int x, int y, int size, sl_gfx_color color) {
     line(r, x + size / 2, y + size * 2 / 3, x + size / 2, y + size * 2 / 3 + 7, color);
     line(r, x + size / 2 - 9, y + size * 2 / 3 + 8, x + size / 2 + 9, y + size * 2 / 3 + 8, color);
 }
+extern const unsigned char nsl_connection_icons[];
+extern const size_t nsl_connection_icons_size;
+/* Authored SVG masks are rasterized ahead of time. One owned atlas, no per-frame allocation. */
+static sl_gfx_texture *make_connection_icons(sl_gfx *gfx) {
+    if (nsl_connection_icons_size != 128 * 768)
+        return NULL;
+    unsigned char *pixels = malloc(nsl_connection_icons_size * 4);
+    if (!pixels)
+        return NULL;
+    for (size_t i = 0; i < nsl_connection_icons_size; ++i) {
+        pixels[i * 4] = pixels[i * 4 + 1] = pixels[i * 4 + 2] = 255;
+        pixels[i * 4 + 3] = nsl_connection_icons[i];
+    }
+    sl_gfx_texture *texture = sl_gfx_create_texture(gfx, SL_GFX_RGBA8, SL_GFX_STATIC, 128, 768);
+    if (texture && sl_gfx_upload(texture, NULL, pixels, 128 * 4)) {
+        sl_gfx_destroy_texture(texture);
+        texture = NULL;
+    }
+    free(pixels);
+    if (texture) {
+        sl_gfx_texture_blend(texture, SL_GFX_BLEND_ALPHA);
+        sl_gfx_texture_linear(texture, 1);
+    }
+    return texture;
+}
+static void connection_icon(sl_ui_renderer *r, int x, int y, int size, unsigned index,
+                            sl_gfx_color color) {
+    if (!r->connection_icons)
+        return;
+    sl_gfx_rect src = {0, (int)index * 128, 128, 128}, dst = {x, y, size, size};
+    sl_gfx_texture_color(r->connection_icons, color.r, color.g, color.b);
+    sl_gfx_texture_alpha(r->connection_icons, color.a);
+    sl_gfx_copy(r->renderer, r->connection_icons, &src, &dst);
+}
+static void host_icon(sl_ui_renderer *r, const sl_ui_model *m, const sl_host *host, int x, int y,
+                      int size) {
+    bool online = sl_host_online(host, m->now);
+    sl_discovery_source source = sl_ui_host_source(m, host);
+    sl_gfx_color color = !online ? muted : host->paired ? green : amber;
+    connection_icon(r, x, y, size, 0, color);
+    if (online && host->paired)
+        play_icon(r->renderer, x + size * 24 / 100, y + size * 44 / 100, size / 8, color);
+    else if (!online)
+        connection_icon(r, x + size / 5, y + size / 3, size / 4, 3, color);
+    /* Source is live evidence only. A cloud-discovered record is already paired. */
+    if (online &&
+        (source == SL_DISCOVERY_LAN || (source == SL_DISCOVERY_INTERNET && host->paired))) {
+        rounded(r->renderer, (sl_gfx_rect){x - 5, y + size - 27, 32, 32}, 16, bg);
+        connection_icon(r, x - 3, y + size - 25, 28, source == SL_DISCOVERY_LAN ? 1 : 2,
+                        source == SL_DISCOVERY_INTERNET ? accent : color);
+    }
+    rounded(r->renderer, (sl_gfx_rect){x + size - 12, y - 6, 38, 38}, 19, bg);
+    connection_icon(r, x + size - 10, y - 4, 34, host && host->paired ? 4 : 5, color);
+}
 extern const unsigned char nsl_background[];
 extern const size_t nsl_background_size;
 static sl_gfx_texture *make_backdrop(sl_gfx *r) {
@@ -159,7 +213,7 @@ static void animate_focus(sl_ui_renderer *r, const sl_ui_model *m) {
     r->painted = true;
     const sl_control *target = NULL;
     for (int i = 0; i < m->layout.count; ++i)
-        if (m->layout.controls[i].id == m->focus)
+        if (m->layout.controls[i].id == m->focus && !m->layout.controls[i].disabled)
             target = &m->layout.controls[i];
     if (!target) {
         r->focus_valid = false;
@@ -563,6 +617,7 @@ sl_ui_renderer *sl_ui_renderer_create(sl_gfx *native) {
     r->renderer = native;
     r->backdrop = make_backdrop(r->renderer);
     r->outline = make_outline(r->renderer);
+    r->connection_icons = make_connection_icons(r->renderer);
     r->text_alpha = 1.f;
     r->base_ui = calloc(1, sizeof(*r->base_ui));
     r->overlay = sl_gfx_create_texture(r->renderer, SL_GFX_RGBA8, SL_GFX_TARGET, 1280, 720);
@@ -579,7 +634,7 @@ sl_ui_renderer *sl_ui_renderer_create(sl_gfx *native) {
                 r->fonts[f][s] = TTF_OpenFont(path, sizes[s]);
         }
     }
-    if (!r->base_ui || !r->fonts[0][0] || !r->fonts[1][0]) {
+    if (!r->base_ui || !r->fonts[0][0] || !r->fonts[1][0] || !r->connection_icons) {
         sl_ui_renderer_destroy(r);
         return NULL;
     }
@@ -676,7 +731,8 @@ static bool launch_background(sl_ui_renderer *r, const sl_ui_model *m) {
          (sl_gfx_color){9, 12, 20, (Uint8)(120 * p * alpha)});
     return true;
 }
-static void draw_cover(sl_ui_renderer *r, uint64_t id, sl_gfx_rect box, uint64_t now) {
+static void draw_cover(sl_ui_renderer *r, uint64_t id, sl_gfx_rect box, uint64_t now,
+                       bool unavailable) {
     if (!r->artwork || !sl_artwork_appid(id))
         return;
     int index = -1;
@@ -696,12 +752,28 @@ static void draw_cover(sl_ui_renderer *r, uint64_t id, sl_gfx_rect box, uint64_t
                 index = i;
         sl_gfx_destroy_texture(r->covers[index].texture);
         sl_gfx_destroy_texture(r->covers[index].blurred);
+        sl_gfx_destroy_texture(r->covers[index].grayscale);
         r->covers[index].blurred = blurred_cover(r, &image);
         r->covers[index].texture = sl_gfx_create_texture(r->renderer, SL_GFX_RGBA8, SL_GFX_STATIC,
                                                          image.width, image.height);
         if (r->covers[index].texture) {
             sl_gfx_upload(r->covers[index].texture, NULL, image.pixels, image.width * 4);
             sl_gfx_texture_blend(r->covers[index].texture, SL_GFX_BLEND_ALPHA);
+        }
+        /* Reuse the decoded pixels once; no filtering or allocation on status changes. */
+        for (size_t i = 0; i < (size_t)image.width * image.height; ++i) {
+            unsigned char *pixel = image.pixels + i * 4;
+            unsigned char gray = (77U * pixel[0] + 150U * pixel[1] + 29U * pixel[2]) >> 8;
+            pixel[0] = pixel[1] = pixel[2] = gray;
+        }
+        r->covers[index].grayscale = sl_gfx_create_texture(r->renderer, SL_GFX_RGBA8, SL_GFX_STATIC,
+                                                           image.width, image.height);
+        if (r->covers[index].grayscale) {
+            if (sl_gfx_upload(r->covers[index].grayscale, NULL, image.pixels, image.width * 4)) {
+                sl_gfx_destroy_texture(r->covers[index].grayscale);
+                r->covers[index].grayscale = NULL;
+            } else
+                sl_gfx_texture_blend(r->covers[index].grayscale, SL_GFX_BLEND_ALPHA);
         }
         r->covers[index].w = image.width;
         r->covers[index].h = image.height;
@@ -710,15 +782,16 @@ static void draw_cover(sl_ui_renderer *r, uint64_t id, sl_gfx_rect box, uint64_t
         r->covers[index].ready_at = now;
     }
     r->covers[index].used = ++r->tick;
-    if (!r->covers[index].texture)
+    sl_gfx_texture *texture = unavailable ? r->covers[index].grayscale : r->covers[index].texture;
+    if (!texture)
         return;
     /* Contain the complete header artwork; never crop the game's logo. */
     float scale = fminf((float)box.w / r->covers[index].w, (float)box.h / r->covers[index].h);
     int w = (int)(r->covers[index].w * scale), h = (int)(r->covers[index].h * scale);
     sl_gfx_rect target = {box.x + (box.w - w) / 2, box.y + (box.h - h) / 2, w, h};
     Uint8 alpha = (Uint8)(255.f * fminf(1.f, (float)(now - r->covers[index].ready_at) / 180.f));
-    sl_gfx_texture_alpha(r->covers[index].texture, alpha);
-    sl_gfx_copy(r->renderer, r->covers[index].texture, NULL, &target);
+    sl_gfx_texture_alpha(texture, alpha);
+    sl_gfx_copy(r->renderer, texture, NULL, &target);
 }
 static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_snapshot *d,
                        bool focused_scene) {
@@ -795,11 +868,8 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
         const sl_host *host = hosts->selected >= 0 && hosts->selected < hosts->count
                                   ? &hosts->hosts[hosts->selected]
                                   : NULL;
-        if (!host || !host->paired || !host->games[0].id) {
-            sl_gfx_color state = !host ? accent : host->paired ? green : amber;
-            rounded(r->renderer, (sl_gfx_rect){588, 190, 104, 78}, 22, mix(bg, state, .13f));
-            monitor(r->renderer, 615, 208, 50, state);
-        }
+        if (!sl_ui_adding_host(m) && host && !host->games[0].id)
+            host_icon(r, m, host, 570, 270, 112);
         rect(r->renderer, (sl_gfx_rect){52, 612, 1176, 1}, (sl_gfx_color){78, 103, 124, 45});
     }
     if (m->page == SL_STOPPING || m->page == SL_INSTALLING || m->page == SL_UPDATING ||
@@ -853,8 +923,46 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
         bool footer = c->label[0] && c->label[1] == ' ' && c->label[2] == ' ';
         bool shoulder = c->action == SL_PREV_HOST || c->action == SL_NEXT_HOST;
         bool focused = focused_scene && c->id == m->focus;
+        if (c->disabled)
+            focused = false;
         bool menu_row = l->drawer && !footer;
         sl_gfx_color role = action_color(c->action);
+        if (tab) {
+            const sl_host *host =
+                c->arg < m->store.registry.count ? &m->store.registry.hosts[c->arg] : NULL;
+            bool online = sl_host_online(host, m->now);
+            if (host)
+                host_icon(r, m, host, box.x + box.w / 2 - 52, box.y + 2, 80);
+            else {
+                int cx = box.x + box.w / 2, cy = box.y + 36;
+                line(r->renderer, cx - 18, cy, cx + 18, cy, c->primary ? fg : muted);
+                line(r->renderer, cx, cy - 18, cx, cy + 18, c->primary ? fg : muted);
+            }
+            if (c->primary)
+                rounded(r->renderer,
+                        (sl_gfx_rect){box.x + box.w / 5, box.y + box.h - 3, box.w * 3 / 5, 3}, 1,
+                        accent);
+            int name_width = text_width(r, c->label, 26);
+            if (name_width > box.w - 40)
+                name_width = box.w - 40;
+            int name_x = box.x + (box.w - name_width) / 2;
+            int name_y = centered_y(r, c->label, 26, box.y + 80, 28, name_width);
+            sl_gfx_clip(r->renderer, &box);
+            draw_text(r, c->label, name_x, name_y, name_width, 38, 26,
+                      online || (!host && c->primary) ? fg : muted);
+            sl_gfx_clip(r->renderer, NULL);
+            continue;
+        }
+        if (m->page == SL_HOME && sl_ui_adding_host(m) &&
+            (c->action == SL_OPEN_REMOTE_PAIR || c->action == SL_OPEN_MANUAL)) {
+            rounded(r->renderer, box, 10, focused ? accent : (sl_gfx_color){62, 69, 81, 255});
+            rounded(r->renderer, (sl_gfx_rect){box.x + 1, box.y + 1, box.w - 2, box.h - 2}, 9,
+                    panel);
+            connection_icon(r, box.x + 28, box.y + 24, 44, c->action == SL_OPEN_MANUAL ? 0 : 4,
+                            accent);
+            draw_text(r, c->label, box.x + 28, box.y + 118, box.w - 56, 48, 32, fg);
+            continue;
+        }
         if (c->action == SL_START &&
             !m->store.registry
                  .hosts[m->store.registry.selected >= 0 ? m->store.registry.selected : 0]
@@ -898,11 +1006,6 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
                 fill = focused ? mix(role, fg, .18f) : role;
             rounded(r->renderer, box, c->action == SL_RECENT ? 14 : 9, fill);
         }
-        if (tab && c->primary) {
-            rounded(r->renderer, (sl_gfx_rect){c->x + 28, c->y + c->h - 4, c->w - 56, 4}, 2,
-                    accent);
-            ink = focused ? bg : accent;
-        }
         int size = c->action == SL_RECENT ? 30 : footer ? 26 : 30;
         const char *label = c->action == SL_SOUND ? sl_tr(SL_T_SOUND)
                             : footer              ? c->label + 3
@@ -910,16 +1013,6 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
         int x = c->x + (menu_row ? 78 : 24), width = c->w - (menu_row ? 110 : 48);
         bool centered = l->compact || tab || c->action == SL_START || c->action == SL_DIGIT ||
                         c->action == SL_SUBMIT || c->action == SL_ERASE || shoulder || footer;
-        if (tab) {
-            const sl_host *host = &m->store.registry.hosts[c->arg];
-            sl_gfx_color status = !sl_host_online(host, m->now) ? muted
-                                  : host->paired                ? green
-                                                                : amber;
-            rounded(r->renderer, (sl_gfx_rect){box.x + 18, box.y + (box.h - 12) / 2, 12, 12}, 6,
-                    status);
-            x = box.x + 44;
-            width = box.w - 60;
-        }
         int measured = text_width(r, label, size);
         if (footer) {
             int group = measured + 48;
@@ -930,7 +1023,8 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
             width = measured + 2;
         } else if (shoulder) {
             width = c->w - 8;
-            rounded(r->renderer, (sl_gfx_rect){box.x + 8, box.y + 20, box.w - 16, 32}, 9, muted);
+            rounded(r->renderer, (sl_gfx_rect){box.x + 8, box.y + (box.h - 32) / 2, box.w - 16, 32},
+                    9, muted);
             ink = bg;
             x = c->x + (c->w - measured) / 2;
         } else if (centered && !tab && measured < width) {
@@ -939,18 +1033,26 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
         }
         int y = centered_y(r, label, size, c->y, c->h, width);
         if (c->action == SL_RECENT) {
-            sl_gfx_color game_color = c->arg % 2 ? amber : violet;
-            sl_gfx_rect art = {box.x + 8, box.y + 8, box.w - 16, 198};
+            sl_gfx_color game_color = c->disabled ? muted : c->arg % 2 ? amber : violet;
+            sl_gfx_rect art = {box.x + 8, box.y + 8, box.w - 16, box.h - 72};
             rounded(r->renderer, art, 10, mix(panel, game_color, .16f));
-            play_icon(r->renderer, box.x + box.w / 2 - 10, box.y + 96, 28, game_color);
+            if (!c->disabled)
+                play_icon(r->renderer, box.x + box.w / 2 - 10, box.y + art.h / 2, 28, game_color);
             int selected = m->store.registry.selected;
             if (selected >= 0 && selected < m->store.registry.count && c->arg < SL_RECENT_LIMIT)
-                draw_cover(r, m->store.registry.hosts[selected].games[c->arg].id, art, m->now);
+                draw_cover(r, m->store.registry.hosts[selected].games[c->arg].id, art, m->now,
+                           c->disabled);
+            if (c->disabled)
+                rounded(r->renderer, art, 10, (sl_gfx_color){24, 24, 24, 112});
             if (selected >= 0 && selected < m->store.registry.count && c->arg < SL_RECENT_LIMIT)
                 label =
                     localized_title(r, m->store.registry.hosts[selected].games[c->arg].id, label);
+            float alpha = r->text_alpha;
+            if (c->disabled)
+                r->text_alpha *= .7f;
             card_title(r, label, (sl_gfx_rect){box.x + 24, box.y + box.h - 62, box.w - 48, 54},
                        viewport, focused, m);
+            r->text_alpha = alpha;
             continue;
         } else if (!centered && !footer) {
             width -= 28;
@@ -974,7 +1076,7 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
         /* Only the focus indicator moves; control layout and hit testing stay fixed. */
         sl_gfx_rect b = {(int)f.x - 3, (int)f.y - 3, (int)f.w + 6, (int)f.h + 6};
         sl_gfx_rect viewport = {40, SL_CARD_Y - 8, 1200, SL_CARD_HEIGHT + 16};
-        if (m->page == SL_HOME)
+        if (m->page == SL_HOME && !sl_ui_adding_host(m))
             sl_gfx_clip(r->renderer, &viewport);
         outline(r, b);
         sl_gfx_clip(r->renderer, NULL);
@@ -1067,11 +1169,13 @@ void sl_ui_renderer_destroy(sl_ui_renderer *r) {
     for (int i = 0; i < 8; ++i) {
         sl_gfx_destroy_texture(r->covers[i].texture);
         sl_gfx_destroy_texture(r->covers[i].blurred);
+        sl_gfx_destroy_texture(r->covers[i].grayscale);
     }
     sl_gfx_destroy_texture(r->overlay);
     free(r->base_ui);
     sl_gfx_destroy_texture(r->backdrop);
     sl_gfx_destroy_texture(r->outline);
+    sl_gfx_destroy_texture(r->connection_icons);
     for (int i = 0; i < 512; ++i)
         sl_gfx_destroy_texture(r->cache[i].texture);
     for (int f = 0; f < 3; ++f)
