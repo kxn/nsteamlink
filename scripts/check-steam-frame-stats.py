@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Compare native video ring and detail Save with original-client execution.
+"""Compare native ring and complete frame-stat producer body with original client.
 
 Each R/E/C/S entry compares the full visible slot and cursor state. Full reports
 also compare each CFrameStats row byte-for-byte with original C++ serialization.
-The source's accumulator/network rows, packet send, OnThink cadence, tracked
-ticket path and audio report suppression are NOT claimed by this harness.
+The actual native report consumer, float accumulator, protobuf and StatsSend
+run to frame admission. Network collector scalars and final admission results
+are controlled, matching the source adapters. Tracked modes exercise real ticket
+stages/completion/collection; batched mode checks only flush boundaries without
+intermediate observational collection. OnThink cadence, decoder/GPU, metric
+collector windows, Socket and audio suppression are excluded.
 """
 
 import argparse
@@ -21,20 +25,49 @@ wire = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(wire)
 
 
+def signed(value):
+    return (value + 2**31) % 2**32 - 2**31
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--receiver", type=Path, required=True)
+    p.add_argument("--tracked", action="store_true")
+    p.add_argument("--batched", action="store_true")
     a = p.parse_args()
+    a.tracked = a.tracked or a.batched
     fixture = json.loads(
         (ROOT / "scripts/fixtures/steam-frame-stats-reference.json").read_text()
     )
-    checked = stages = details = audio = 0
+    checked = stages = details = reports = audio = pending_only = 0
     for index, case in enumerate(fixture["cases"]):
         inp = case["input"]
         if inp.get("type", 1) == 0:
             audio += 1
             continue
+        if a.tracked and any(x[0] == "C" and x[2] == 0 for x in inp["actions"]):
+            pending_only += 1  # Only direct primitive accepts result Pending; ticket API rejects it.
+            continue
         commands = []
+        if "network" in inp:
+            n = inp["network"]
+            commands.append(
+                "N "
+                + " ".join(
+                    map(
+                        str,
+                        (
+                            n["ping"],
+                            n["server"],
+                            n["client"],
+                            n["link"],
+                            signed(n["total"]),
+                            signed(n["lost"]),
+                        ),
+                    )
+                )
+            )
+        commands.append("F " + str(int(inp.get("send_result", 0) != 0)))
         for action in inp["actions"]:
             if action[0] in ("R", "P"):
                 args = dict(
@@ -65,6 +98,7 @@ def main():
         r = subprocess.run(
             [
                 str(a.receiver.resolve()),
+                *(["tracked-batched" if a.batched else "tracked"] if a.tracked else []),
                 str(int(inp["full"])),
                 str(inp["offset"]),
                 str(inp.get("watermark", 0)),
@@ -79,6 +113,8 @@ def main():
         actual = [json.loads(line) for line in r.stdout.splitlines()]
         assert len(actual) == len(case["observed"])
         for n, (got, original) in enumerate(zip(actual, case["observed"])):
+            if a.batched and inp["actions"][n][0] != "S":
+                continue  # Inspect only flush boundaries; no observational intermediate collection.
             want = {
                 key: original[key]
                 for key in (
@@ -99,6 +135,7 @@ def main():
                 for s in want["slots"]
             ]
             want["details"] = []
+            want["frames"] = original["frames"]
             for frame in original["frames"]:
                 raw = bytes.fromhex(frame)
                 assert raw[0] == 1
@@ -107,10 +144,11 @@ def main():
                 ]
             assert got == want, (index, inp["case"], n, inp["actions"][n], got, want)
             details += len(want["details"])
+            reports += len(want["frames"])
             stages += 1
         checked += 1
     print(
-        f"Video ring/detail Save: {checked} original-client cases, {stages} states, {details} rows passed; {audio} audio case source-only"
+        f"Production {'batched tracked' if a.batched else 'tracked' if a.tracked else 'legacy'} frame stats: {checked} original-client cases, {stages} states, {reports} complete bodies, {details} detail rows passed; {audio} audio source-only; {pending_only} Pending-primitive cases excluded from ticket path"
     )
 
 

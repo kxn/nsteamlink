@@ -387,7 +387,7 @@ OFFICIAL_INPUT_RE §13.2 的"ms 修复"（ab8712d、包头 sendTimestamp）方�
 - 网络样本取自连接统计：srtt(conn+732)、conn+1152/+1000（×float32系数
   0x3A83126F=0.001f）、丢包 = conn+1252×100.0/conn+1248。撤回旧“≈2^-10／
   µs→定点秒”的系数及单位推断；这些参数还需按实际collector逐一确认来源；
-- `CFrameStatsAccumulator.Calculate()` 后追加最多 20 条 accumulated_stats
+- `CFrameStatsAccumulator.Calculate()` 后扫描0..18共19种 accumulated_stats（撤回旧“最多20条”）
   （EFrameAccumulatedStat：FPS 等）；
 - 发送节奏：`HandleStreaming`（0x7a7140）内 `now - last > 0x10000`，**单位即定点秒
   → 精确 1.0 秒一次**；`TriggerDebugDump`（0x7ac6b4）前置一次强制 flush。
@@ -4580,8 +4580,79 @@ Socket、OnThink调用周期、完整Client初始化或GPU/显示时序。初始
 
 六组另执行真实Frame::SetPacket与OnDataPacket，五组执行原CreateInputMark；重复事件、
 零时钟Pending→Displayed、旧input mark另有四组。原45组input/observed保持不变。
-`check-steam-frame-stats.py`只将Native video ring的逐动作状态、cursor、两个delta及
+`check-steam-frame-stats.py`在本节基础案例最初只将Native video ring的逐动作状态、cursor、两个delta及
 明细CFrameStats的完整protobuf字节与上述原输出比较；Native输入先按原packet案例
 给出的换算值调用record入口，不借此声称Native接包整链已由这些案例覆盖。Audio案例
-为source-only。累积network/帧样本、整包发送/失败策略、tracked ticket采集及OnThink
-周期均是显式排除范围；共用明细encoder不等于Root实际tracked统计已全面对齐。
+为source-only。§53另扩展为完整报告producer/body对照；tracked ticket采集及OnThink
+周期仍排除，共用encoder不等于Root实际tracked统计已全面对齐。
+
+## 53. 客户端累计样本、float计算与报告退休契约
+
+【证据／结论】同SHA客户端`AddFrameSample @0x7f5238`的client/source2分支以事件13、
+15是否非零决定network6=(13−12)、decode7=(15−14)采样，不要求begin非零。仅result1
+追加display8=(18−16)、client9=(18−13)、frame10=(18−5)；撤回本地“display=17−16”
+和“frame10=相邻完成间隔”的等价解释。FPS0分别从两个delta求1000/delta（0→0），
+正常取display FPS；两个rate差的平方>10000且frame FPS较小时取frame FPS。
+input0非零且result1时追加11/12/13：input仅当uint32(0−2)符号位置位时取uint32(2−0)，
+否则0（不能在半域边界简化成signed max）；game=uint32(5−2)，
+roundtrip=uint32(18−0)；后三者的毫秒换算按unsigned16.16进行。相关getter原指令为
+0x7f4354/0x7f44b0/0x7f4630，不把所有duration统一成unsigned或统一钳制。
+
+`CStatValue::AddSample @0x7f55e0`每次float32相加并保存float样本。`Calculate @0x7f5770`
+及CStatValue版本0x7f58d0在n≥2时用float(sum/n)，再两遍计算样本标准差(n−1)。
+整8个样本用分别舍入的平方后按样本顺序相加；尾部使用FMADD。Stddev非零才带presence，
+count1即使average0也必须输出。`AddNetworkSample @0x7f5700`追加14..18五个样本，
+由SendFrameEvents在有帧退休时取当次连接快照；这是collector输出消费规则，不证明
+连接各采样窗口已被Native采集。
+
+【证据／撤回】`SendFrameEvents @0x7a8378–0x7a8394`在调用最终Connection前已Reset槽并
+推进reported，0x7a863c后不检查发送结果。撤回本地“enqueue失败应重发同一旧报告快照”
+及将该行为称为官方策略的解释。应用层报告数据退休与底层可靠帧被接纳后的保留重传
+是两层不同的事务，不能因此删除可靠channel自己的重传。
+
+【执行证据】原60组input/observed不变，另追加25组，覆盖2/3/7/8/9/16/17个非均匀
+样本、FPS相差>100分支、缺少DecodeBegin、输入半域/unsigned差值、网络0分母/有符号
+计数，以及最终Connection受控返回1/5/FFFFFFFF后的重复flush。原85组执行输出固定在
+同一fixture，Native84组video逐动作比较960个状态、90份完整frame body、64条明细。
+Source的完整float累加器/C++ protobuf/Frame Send实际执行；Native经公开Stage/Complete、
+实际report consumer、float累加器、protobuf及StatsSend进入真实frame admission。
+报告正文不再过滤network/accumulated行；这取代了§52的局部输出比较范围。
+
+【边界】双方的网络collector输出仍是受控输入；Native完整报告的默认network快照为0，
+本节不把测试setter当成真实RTT/bitrate/loss采集接线。Native正常接纳走真实可靠队列；
+受控拒绝在最终Frame准入处返回，Source在Connection边界返回，不能从此证明各errno
+类别/Socket/整形等价。tracked采集仍独立settle，wall-clock timer/OnThink及统计窗口
+的实际触发另有契约。浮点向量的本地分配失败保护不冒称官方OOM策略。
+
+## 54. Tracked资源记录与协议统计的衔接约束
+
+【依据】§52–53原RecordReceived/Event/Complete按发生顺序更新240槽及previous-time，
+只在SendFrameEvents遍历时采样/退休。原协议统计取消不证明底层显示资源已释放。
+撤回本地将256个ticket的settle顺序/presentationSerial当作统计顺序的解释；没有显示
+水位时也不能在settle中无限追加float样本。资源记录与协议窗口必须各自维护生存期。
+
+【适配设计】公开Complete仍只读纯CLOCK_MONOTONIC、写ticket payload/完成序号并原子发布，
+不取得session/统计锁。已有packet.c时间函数不依赖IHS_Init/Quit状态，晚发布不解引用session。
+采集器在收下一份数据前、生成报告前及关闭epoch前，先取得已发布完成与阶段的快照；
+按完成序号应用RecordComplete，保留原显示水位与前帧/显示delta规则。数据接收仍独立
+记录R，资源拒绝/重复接收不能改变原record分支。采集预约/应用由独立锁串行，tracker锁
+仅保护快照复制，不能持有统计锁再等待tracker。GPU ticket的Claim/READY/过期/引用
+规则不由统计Reset或Cancelled更改；资源清理在协议采集之后进行。
+
+【执行对照】在§53的85个原版案例上，两个含Pending(result0)的直接入口案例不适用于
+公开ticket Complete（该资源API拒绝Pending）；audio仍为source-only。其余82例实际
+调用ticket Decode/UploadStage/Complete，转入同一ring/producer：938个观察状态、
+88份完整body、63条明细与原版逐项相同。另一个batched模式在事件间不做观察采集，
+让多次完成累积再按序采集；只比较129个flush边界及相同88份body/63条明细。
+这补充了§53对tracked collection的排除范围；不能把中间观察导致的逐次采集当作
+真实批量完成的替代证据。
+
+【资源边界】统计与资源共享clock/事件数据，不共享退休水位。1000个只丢帧序列不追加
+无限float样本，下一显示帧只报告最后240槽；协议Cancelled后仍可Claim/Publish原live
+ticket，旧统计不会因此复活。READY若在采集后、资源清理前发布，资源Settle必须等
+stats reservation，不能先复用槽而丢失完成记录。会话关闭/IHS_Quit后的旧ticket只持CPU
+endpoint，晚发布/释放不访问已销毁统计对象。这些资源检查不是官方GPU时序证明。
+
+软件upload的已有begin/end capture在实际发生时写入ticket阶段，避免到Complete才补。
+硬件zero-copy阶段、完整decoder错误/显示回调、OnThink周期、真实collector窗口与
+Steam/Switch仍有独立证据边界；不从上述给定事件对照推出所有平台事件来源均一致。

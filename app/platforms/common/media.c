@@ -1372,9 +1372,14 @@ void stream_media_present(void) {
     sl_gfx_counters before_video, after_video;
     sl_gfx_get_counters(gfx, &before_video);
 #endif
+    bool report_upload = candidate && (!NSL_GFX_DEKO || candidate->pixels->hw_frames_ctx == NULL);
     uint64_t upload_begin = media_monotonic_us();
+    if (report_upload)
+        IHS_FrameTicketUploadStage(candidate->ticket, false, upload_begin);
     bool drawn = frame && sl_gfx_video(gfx, frame);
     uint64_t upload_end = media_monotonic_us();
+    if (report_upload)
+        IHS_FrameTicketUploadStage(candidate->ticket, true, upload_end);
 #if NSL_DIAGNOSTICS
     sl_gfx_get_counters(gfx, &after_video);
 #endif

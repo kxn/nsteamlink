@@ -36,6 +36,7 @@ class Stats(config.Core):
         self.frames = []
         self.asserts = []
         self.offset = offset
+        self.send_result = 0
         connection = self.alloc(4096)
         self.connection = connection
         self.wq(config.CLIENT + 280, connection)
@@ -92,7 +93,7 @@ class Stats(config.Core):
         self.frames.append(
             bytes(self.u.mem_read(self.q(p + 56) + 13, self.i(p + 52) - 13)).hex()
         )
-        self.ret(0)
+        self.ret(self.send_result)
 
     def hook(self, uc, address, size, data):
         name = self.plts.get(address, "")
@@ -456,8 +457,100 @@ def audit(binary):
             [1, 2],
             full,
         )
+    for count in (2, 3, 7, 8, 9, 16, 17):
+        actions = []
+        for fid in range(1, count + 1):
+            base = 4000000 + fid * 991
+            sent = base + fid * fid * 3 + 17
+            received = sent + fid * 73
+            begin = received + 91
+            end = begin + fid * 37 + 3
+            upload = end + 40
+            actions += [
+                ["R", fid, base, sent, received],
+                ["E", fid, 14, begin],
+                ["E", fid, 15, end],
+                ["E", fid, 16, upload],
+                ["C", fid, 1, upload + fid * fid * 11 + 109],
+            ]
+        case(
+            f"nonuniform_{count}",
+            actions + [["S"], ["S"]],
+            list(range(1, count + 1)),
+            False,
+        )
+    case(
+        "fps_large_difference",
+        [
+            ["R", 1],
+            ["C", 1, 1, 905000],
+            ["R", 2, 904999, 905000, 905001],
+            ["C", 2, 1, 905002],
+            ["S"],
+        ],
+        [1, 2],
+        False,
+    )
+    case(
+        "missing_decode_begin",
+        [["R", 1], ["E", 1, 15, 903000], ["C", 1, 1, 905000], ["S"]],
+        [1],
+        False,
+    )
+    for begin, received in (
+        (890000, 892000),
+        (900000, 900010),
+        (0x80010000, 65536),
+        (900000, 899999),
+    ):
+        case(
+            "input_unsigned_deltas",
+            [
+                ["I", 17, begin, begin],
+                ["R", dict(fid=1, input_mark=17, input_received=received)],
+                ["C", 1, 1, 905000],
+                ["S"],
+            ],
+            [1],
+            False,
+        )
+    for total, lost in ((0, 3), (0x80000000, 4), (99, 7)):
+        for full in (False, True):
+            case(
+                "network_units_and_signed_counts",
+                [["R", 1], ["C", 1, 1, 905000], ["S"]],
+                [1],
+                full,
+                network=dict(
+                    ping=0.125,
+                    server=1234567,
+                    client=7654321,
+                    link=12345678,
+                    total=total,
+                    lost=lost,
+                ),
+            )
+    for result in (1, 5, 0xFFFFFFFF):
+        for full in (False, True):
+            case(
+                "send_rejection_retirement",
+                [
+                    ["R", 1],
+                    ["C", 1, 1, 905000],
+                    ["S"],
+                    ["S"],
+                    ["R", 2],
+                    ["C", 2, 1, 906000],
+                    ["S"],
+                    ["S"],
+                ],
+                [1, 2],
+                full,
+                send_result=result,
+            )
     for i in scenarios:
         r = Stats(binary, i["full"], i["offset"])
+        r.send_result = i.get("send_result", 0)
         typ = i.get("type", 1)
         if "watermark" in i:
             r.u.mem_write(
