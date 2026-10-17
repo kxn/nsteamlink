@@ -193,6 +193,7 @@ void stream_media_video_stop(IHS_Session *session);
 
 int stream_media_audio_start(IHS_Session *session, const IHS_StreamAudioConfig *config);
 int stream_media_audio_submit(IHS_Session *session, IHS_Buffer *data);
+int stream_media_audio_submit_frame(IHS_Session *, const IHS_StreamAudioFrameInfo *, IHS_Buffer *);
 void stream_media_audio_stop(IHS_Session *session);
 
 void sl_media_submitted(const IHS_HIDSDLLastSubmitted *value);

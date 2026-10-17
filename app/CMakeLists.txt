@@ -10,7 +10,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
 pkg_check_modules(SDL2_TTF REQUIRED IMPORTED_TARGET SDL2_ttf)
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavcodec libavutil libswscale)
-pkg_check_modules(OPUS REQUIRED IMPORTED_TARGET opus)
+include(${CMAKE_SOURCE_DIR}/cmake/Opus.cmake)
 pkg_check_modules(CURL REQUIRED IMPORTED_TARGET libcurl)
 pkg_check_modules(JPEG REQUIRED IMPORTED_TARGET libjpeg)
 find_package(Threads REQUIRED)
@@ -89,6 +89,7 @@ target_include_directories(nsl_stream_settings PUBLIC src platforms/common
 target_link_libraries(nsl_stream_settings PUBLIC ihslib Threads::Threads PRIVATE ihs-protobuf)
 target_compile_options(nsl_stream_settings PRIVATE -Wall -Wextra)
 add_library(nsl_platform STATIC platforms/common/application.c platforms/common/sdl_input.c platforms/common/media.c
+    platforms/common/audio_recovery.c
     platforms/common/shortcut_package.c platforms/${NSL_PLATFORM}/shortcut.c
     platforms/common/ui_renderer.c platforms/common/ui_audio.c platforms/common/runtime.c platforms/${NSL_PLATFORM}/system.c
     platforms/${NSL_PLATFORM}/events.c)
@@ -102,7 +103,7 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/background.c"
     VERBATIM)
 target_sources(nsl_platform PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/background.c")
 target_link_libraries(nsl_platform PUBLIC nsl_ui nsl_artwork nsl_updater nsl_stream_settings ihslib ihslib-hid-sdl PkgConfig::SDL2 PkgConfig::SDL2_TTF
-    PkgConfig::FFMPEG PkgConfig::OPUS Threads::Threads nsl_gfx)
+    PkgConfig::FFMPEG Opus::opus Threads::Threads nsl_gfx)
 add_executable(nsteamlink src/main.c)
 target_link_libraries(nsteamlink PRIVATE nsl_platform)
 if(NSL_PLATFORM STREQUAL "switch")
@@ -180,6 +181,19 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-raw-audio.py"
         --receiver $<TARGET_FILE:nsl-raw-audio-oracle>)
     set_tests_properties(raw_audio_official_vectors PROPERTIES TIMEOUT 60)
+    add_executable(nsl-opus-recovery-oracle tests/opus_recovery_oracle.c)
+    target_include_directories(nsl-opus-recovery-oracle PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/tests/common)
+    target_compile_options(nsl-opus-recovery-oracle PRIVATE -UNDEBUG -Wall -Wextra)
+    target_link_libraries(nsl-opus-recovery-oracle PRIVATE nsl_platform ihs-test-session)
+    target_link_options(nsl-opus-recovery-oracle PRIVATE -Wl,--wrap=SDL_QueueAudio
+        -Wl,--wrap=opus_multistream_decode_float -Wl,--wrap=opus_multistream_decoder_create
+        -Wl,--wrap=sl_audio_recovery_run -Wl,--wrap=sl_audio_recovery_reset)
+    add_test(NAME opus_recovery_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-opus-recovery.py"
+        --receiver $<TARGET_FILE:nsl-opus-recovery-oracle>)
+    set_tests_properties(opus_recovery_official_vectors PROPERTIES TIMEOUT 90)
     add_executable(nsl-native-tests tests/test_native.c)
     target_include_directories(nsl-native-tests PRIVATE platforms/common)
     target_compile_options(nsl-native-tests PRIVATE -UNDEBUG)

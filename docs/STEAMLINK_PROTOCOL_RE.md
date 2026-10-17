@@ -5737,3 +5737,92 @@ python3 scripts/audit-steam-client-fec-entry.py \
 脚本只读核验`steam-client-fec-entry-reference.json`；更新fixture必须显式传入
 `--refresh-reference`，已有结果仍要求完全一致。它是官方客户端来源审计，不是
 Native互操作或设备测试。
+
+## 72. 官方Opus音频缺帧恢复与元数据契约
+
+【官方客户端证据】同§24.1固定SHA的Android 1.3.32客户端。
+`CStreamDecoderOpus::StartDecoding @0x7b134c`调用原multistream decoder create，
+0x7b13d0–0x7b13d4将next ID置0、first置true。`DecodeFrame @0x7b1414`在
+decoder为空时直接返回；首帧以其ID初始化next，并清first。0x7b1460–0x7b146c
+按`int16(next-current)>0`拒绝旧帧，其余进入缺口循环。
+
+0x7b14d8–0x7b15dc对每个缺失ID创建AudioFrame，timestamp沿用当前到达帧的
+frame timestamp，不按采样率自行推算。非最后一帧调用原
+`opus_multistream_decode_float(NULL,0,...,480,0)`进行PLC；紧邻当前ID的一帧
+使用当前包payload、480、decode_fec=1。每补一帧后next按uint16递增。随后
+0x7b15e4–0x7b1688先设next=current+1，再用当前包、5760、decode_fec=0正常
+解码当前帧。这里的480和5760是实际每通道sample上限，不是传输tick或网络FEC
+冗余百分比。它与§26的type11 RS纠错不同，不需要把配置字段25当作此codec API
+分支的本地门禁。
+
+【差异】Native旧音频submit只有payload，丢失了媒体头的frame ID/timestamp；
+`stream_media_audio_submit`每包仅调用一次`opus_decode(...,5760,0)`，无法触发
+上述按ID补帧。单纯增加type11接收能力不等于补齐这条音频codec恢复策略。
+
+【错误边界】原缺口解码返回值不等于480时在0x7b15bc断言，但非调试继续路径
+仍提交所分配的缓冲；当前包decode返回负值时0x7b1694断言，随后仍把负sample
+数乘channels和4传给Resize。探针可记录这些原始请求，不能把分配替身产生的零
+内存当作官方静音输出或要求Native提交未初始化PCM。该不安全结果的内存/播放
+处理与正常恢复调用策略分开标注，不宣称错误分支的资源行为等价。
+
+【API与构建差异】原StartDecoding在48kHz mono/stereo分别传给
+opus_multistream_decoder_create的参数为`48000,1,1,0,[0]`和
+`48000,2,1,1,[0,1]`；解码调用实际进入内嵌的multistream float实现0x948024。
+旧Native的单流opus_decode不能视为等价：同一20ms包、480/FEC=1，单流返回480，
+原multistream返回-2。原`opus_get_version_string @0x93e07c`返回
+`libopus unknown-fixed`；不能据此编造一个官方精确版本号。
+
+本机系统Opus1.5.2浮点构建即使改为相同multistream float API，在立体声连续
+缺口向量仍与原输出相差最大94个S16单位。同一应用代码改用同版本的定点构建，
+原36份正常/有界错误场景的有效PCM转换后全部逐字节一致；追加时间戳案例后
+38份调度的固定构建对照仍全部一致。此处的构建对照定位了
+该组差异，不将其泛化为所有版本/浮点优化的完整证明。Native因此固定构建未修改
+的官方Opus1.5.2归档（SHA见third_party/README），保留float API，最后按已验证的
+SDL S16LE格式转换；该依赖版本是本地可复现选择，不是对unknown版本的命名。
+源码来源与归档SHA由[Opus官方发布记录](https://opus-codec.org/news/)交叉核对。
+1.5.2上游CMake在固定点AVX2分支包含未配置头路径的float-only encoder源，本地
+关闭该AVX2候选并保留SSE内核；Switch直接使用已知AArch64 NEON，不改上游源码。
+BSD许可随二进制收集，不把codec库的许可/构建动作当作Steam产品策略证据。
+
+【Native接线】AudioCallbacks追加可选submitFrame，带frame ID和本地frame timestamp；
+正常完整帧在RX捕获offset，经FIFO保留，到实际audio消费者只转换一次。旧submit
+仍在新回调未提供时使用。应用注册新回调，在既有audio_lock下按原ID规则依次
+执行PLC、末帧FEC、当前包解码；start/stop重置next/first，不引入后台线程或新的
+协议开关。有效PCM进入原SDL队列；保留本地已有300ms队列内存保护，按每份
+产出PCM应用，防止一个缺口循环绕过内存上限。这个保护**不是**官方jitter策略。
+原CAudioJitterBuffer在BOpenAudio0x7bed3c以16384容量构造，Push/Pop还包含部分
+接纳、overrun、淡入淡出和自适应处理；这些不能由本节的SDL队列对照判为等价。
+
+【原始执行证据】`audit-steam-opus-recovery.py`固定40例140状态，实际执行原
+Start/Decode/Stop、内嵌Opus创建和完整decode。38份可比较调度覆盖mono/stereo、
+10/20ms包、连续/缺一帧/缺三帧、重复旧帧、乱序、uint16回绕、首帧高ID、重启、
+零/回绕时间戳及非零SILK输入；另两份记录真实坏包和空decoder的Source边界。
+输入SILK数据由明确记录版本/设置的本地编码器生成，只是刺激，不是Host策略证据。
+立体声单缺口另将codec入口受控改为NULL/PLC，原输出hash与真实FEC分支不同，
+证明该输入实际区分了FEC数据与PLC；mono同组输出相同，不能把它也声称为独立
+FEC恢复成功。counterfactual不作为客户端生产触发入口。
+
+`opus_recovery_official_vectors`使用真实Native完整帧分派、offset cache、audio
+FIFO/线程、应用恢复函数、真实固定点Opus及SDL队列。38次进程调度比较134次
+实际metadata回调、168次完整codec参数/返回值、156份有效PCM，S16误差为0。
+codec配置、next/first及补帧id/timestamp也逐项核对；不是只比较观察者推算的计划。
+另三进程检查旧callback后备、当前坏包不提交PCM，以及暂停真实SDL设备后101份
+解码产物仍受本地队列上限约束。每个消费者stop/join后再销毁Session/SDL。
+
+【检测力】将Native末个缺帧的fec位临时由1改为0，真实worker/codec对照在
+one_gap_1_10立即拒绝：官方首个补帧id11/fec1，本地id11/fec0。该零PCM输入
+单看波形可能相同，完整调用参数比较仍能发现策略差异。恢复源文件并重建后，
+38份调度与三个Native控制进程均通过。
+
+【范围】Source测试从decoder-worker函数入口进入，ID/timestamp/包体为受控输入；
+player创建/提交、Frame存储、libc分配、断言显示为adapter。真实网络/FEC窗口、
+完整OnStartAudioData/UI/解码线程调度、所有声道/频率、半域超大缺口资源/退出延迟、
+audio统计ring与input-mark采样、jitter buffer/同步、设备声道转换及实际播放仍是
+独立契约。此处未新增网络丢包自动FEC或认定原用户停顿根因。
+
+```sh
+python3 scripts/audit-steam-opus-recovery.py \
+  --binary /data/dl/nsteamlink/build/video-recovery-re/libmain-arm64.so \
+  --output /tmp/steam-opus-recovery.json
+ctest --test-dir build/desktop -R 'opus_recovery_official_vectors|raw_audio_official_vectors' --output-on-failure
+```

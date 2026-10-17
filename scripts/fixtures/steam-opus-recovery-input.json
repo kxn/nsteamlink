@@ -1,0 +1,41 @@
+{
+  "source": "Synthetic encoder stimulus, not official host policy",
+  "encoder": "libopus 1.5.2",
+  "sample_rate": 48000,
+  "duration_ms": 10,
+  "settings": {
+    "application": 2048,
+    "bitrate_per_channel": 16000,
+    "bandwidth": 1103,
+    "fec": 1,
+    "loss_percent": 30
+  },
+  "cases": [
+    {
+      "channels": 1,
+      "packets": [
+        "4082b6937df0a48f832e586f8c652e287d7fe0",
+        "40af9c9379fc594f2c78e7a508d69cc4f7879becf030",
+        "40a4bb35088c1bfc02f13db806aa81162d40d082cd7d61f74d84051a14",
+        "40a3e4ad2696ee5efa8a43e64a4efdb585c49ab4702dcbd5b0a0f83ef60b3f",
+        "40a3e4ad269a2d8d17d6e486fbe785e04940b1d42dc2cb5a852e038f15bdcd10",
+        "40a3e4abc6e9e1f03f4bb4cac93af5f12736d9db247364845b5700936480",
+        "40a3e4ad2696448ec26d5d9d53acaf0cbf62bc62a952353e7566b18ded4728",
+        "40a3e4ad2696137c89db7b57d7f9ccda17ff20dc6651ebcef3c70189dee0e0"
+      ]
+    },
+    {
+      "channels": 2,
+      "packets": [
+        "44a778989b3325fc308ea5550c97a2041544216a8d217072c701cfe907699322ca80",
+        "44f778ba617b3cab8a65c54ffeffa969df1ad0722a3c171a2d42b9c8073fe795b955fad87c0247a7880f4d3369f35da113f0177d29108c",
+        "44f7d2e582f274a565880b2647ab42804cc06becb07c33069c831c8a474418e26a3853829b69019b46fde5598460089558d510008d5149052c75e436f748d577bbda9c34e08366fa938229f06d",
+        "44d7d26480b87b2ce8517651a6461dbe0eeba1c8b371f43f1bda3265424a1d4180eca69b0286c783a10b7d328459fdc82dcfe18e40",
+        "44c48c979aa73ee0dff10c228a8f56c95050abe993ede8609f9da5b4b7895fb146576be8",
+        "44c7d1bfb852cd080f609354e7440510236f8656a8736f748be5858417f8fa566798d901fe392bac317b72e807fc3a13fc",
+        "44c7712145059e97b8c37183433b53f23e76a022a2f4998930326d4b5b9ff4ba69df6c3ce8a82895c5f9922a3c6dc9bdf57c8675e74afdaef26be6",
+        "44c8382370fa90217e65c262fb465b32d6f56b8f3481027d9d0ac736157a7178849b53bcf83eef73d5f25b964e36d9a7137d3140"
+      ]
+    }
+  ]
+}

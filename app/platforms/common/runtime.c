@@ -400,6 +400,11 @@ static int audio_submit(IHS_Session *s, IHS_Buffer *b, void *ctx) {
     (void)ctx;
     return stream_media_audio_submit(s, b);
 }
+static int audio_submit_frame(IHS_Session *s, const IHS_StreamAudioFrameInfo *info, IHS_Buffer *b,
+                              void *ctx) {
+    (void)ctx;
+    return stream_media_audio_submit_frame(s, info, b);
+}
 static void audio_stop(IHS_Session *s, void *ctx) {
     (void)ctx;
     stream_media_audio_stop(s);
@@ -462,8 +467,10 @@ static const IHS_StreamSessionCallbacks session_cb = {.configuring = configuring
                                                       .saveClientConfig = client_config_saved};
 static const IHS_StreamVideoCallbacks video_cb = {
     .startTracked = video_start, .submitTracked = video_submit, .stopTracked = video_stop};
-static const IHS_StreamAudioCallbacks audio_cb = {
-    .start = audio_start, .submit = audio_submit, .stop = audio_stop};
+static const IHS_StreamAudioCallbacks audio_cb = {.start = audio_start,
+                                                  .submit = audio_submit,
+                                                  .stop = audio_stop,
+                                                  .submitFrame = audio_submit_frame};
 static const IHS_StreamInputCallbacks input_cb = {.activityState = activity};
 static void stop_client(sl_runtime *r) {
     if (!r->client)

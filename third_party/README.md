@@ -1,6 +1,7 @@
 # third_party — 第三方依赖目录
 
-所有外部库以 git submodule 或 vendored 源码形式放在这里，**禁止就地修改**。
+Git submodule与vendored源码放在这里；Opus的未修改归档由CMake核验并展开到
+构建目录，来源与许可见下文。第三方源码**禁止就地修改**。
 对一般第三方库的改动以 patch 文件放 `patches/<库名>/` 并在 `docs/decisions.md` 登记；
 **例外：IHSlib 使用本项目的 GitHub fork（D-037），改动直接提交到 fork 分支并推送**。
 
@@ -9,6 +10,7 @@
 | 库 | 版本 | 说明 |
 |---|---|---|
 | IHSlib | `kxn/ihslib` `master` 分支，基线 `8c5a17c`（fork 自 `beudbeud/ihslib` plume） | 协议层依赖；改动进入 fork 主分支（D-037/D-055） |
+| Opus | 1.5.2，SHA256 `65c1d2f78b9f2fb20082c38cbe47c951ad5839345876e46941612ee87f9a7ce1` | CMake核验官方归档，定点构建、保留float API；桌面/Switch共用，见协议参考§72 |
 
 ## IHSlib fork（kxn/ihslib，分支 master）
 
@@ -65,6 +67,16 @@ submodule 工作区逐字节一致。旧 patch 文件已删除，需要查阅时
   这会检出父仓库记录的确切提交；`branch = master` 仅供显式
   `git submodule update --remote` 使用，不能代替审核和提交 submodule pin。
 - 复用的任何第三方代码保留原版权与许可声明，并更新 `DEVELOPMENT.md` §7 的依赖表。
+
+## Opus：音频解码
+
+`cmake/Opus.cmake`从[Xiph官方归档](https://downloads.xiph.org/releases/opus/opus-1.5.2.tar.gz)
+下载未修改源码并核验SHA256，静态链接fixed-point decoder，调用multistream float API。
+官方客户端的实际恢复分支和定点输出证据见`docs/STEAMLINK_PROTOCOL_RE.md`§72。
+源码在构建目录中，无需全局安装；已有源码缓存可用CMake的
+`FETCHCONTENT_SOURCE_DIR_NSL_OPUS`指定，使用者负责其与固定归档一致。
+BSD许可原文保存为`third_party/opus-LICENSE.txt`，随发布NRO收集到同一输出目录。
+1.5.2是本项目的可复现依赖版本，不将官方库的`unknown-fixed`误称为已识别版本。
 
 ## jsmn：游戏封面元数据解析
 
