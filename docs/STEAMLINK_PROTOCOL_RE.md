@@ -5907,3 +5907,70 @@ python3 scripts/audit-steam-audio-jitter.py \
   --check scripts/fixtures/steam-audio-jitter-reference.json.gz
 ctest --test-dir build/desktop -R 'audio_jitter_official_vectors|audio_playback_official_vectors' --output-on-failure
 ```
+
+
+## 74. 音视频接收统计与共享input-mark消费
+
+【官方客户端证据】同§24.1固定SHA的Android 1.3.32。
+原`OnStreamPacket @0x7acfa8`以client0/7直接拒收，媒体只在client6且+19为0
+时进入`OnDataPacket @0x7ad148`。0x7ad220–0x7ad260对非零input-received及
+frame/send做原时钟转换，然后**音频和视频均调用RecordFrameReceived**；此后
+才在0x7ad274/0x7ad28c检查decoder是否存在并交付。decoder消费时间不能替代
+这项RX时间点。真实Frame构造/SetPacket也在此对照中执行；初始phase/channel
+和完整packet是受控输入，不把它扩大成UI/Socket/所有传输生产入口均已证明。
+
+`RecordFrameReceived @0x7abeb0`在0x7abefc按client+625选择audio/type0；
+否则0x7abf24按+626选择video/type1，其他channel返回。只有video进入
+0x7abf94的CNetworkStats::RecordFrameReceived和bitrate收集分支，audio跳到
+0x7ac054。两种媒体都执行后续槽处理：
+
+- 0x7ac064–0x7ac080按`client+1096+type×28812+12+(id%240)×120`选择
+  独立CFastFrameStats槽。audio和video相同ID不能别名到同一槽。
+- 0x7ac084相同ID只刷新event13/receive；既不改size/start/send，也不再次
+  查询mark。初始Reset的ID0亦遵守这一规则；不能用inUse改写。
+- 不同ID时先Reset、设id/size及event5/12/13；receive早于send时保持原
+  时间平移/零input-received规则，见§52。
+- 0x7ac118–0x7ac15c要求mark非0、`int16(mark-latestMark)<=0`，并且
+  `inputMarks[latestMark&1023].id==mark`。它查**latest所在槽**，不按收到的
+  mark另查旧槽；旧mark/未来mark不能因此误绑定。
+- 匹配时0x7ac160–0x7ac194复制begin/sent/input-received到event0/1/2，
+  0x7ac198只把该共享记录的id清0。begin/sent原值保留。表属于client，
+  并不属于media ring；哪个媒体先匹配就消费一次。
+
+【结论／差异更正】即使audio不发送视频FrameEvents报告，也不能跳过audio
+RecordFrameReceived。原Native media_receive.c在捕获offset后直接返回audio，
+会留下本应被音频消费的mark，让后到视频误绑定；反过来共用视频ring则会让
+相同ID的视频被当作重复音频。撤回从“音频不报告”推导“音频接收统计无副作用”
+的任何等价解释。本节只证明接收ring/共享mark和后续视频报告的契约，不把音频
+decoder complete或全局CNetworkStats的其他函数补成未经取证的本地事件。
+
+【Native契约】session内独立audioRing和既有video ring，共享1024-entry mark表
+及同一统计锁。IHS_FrameStatsRecordMediaReceived按media选择槽；旧video API
+委托该函数，保留既有调用方。完整帧在RX准备时对两种媒体记录，video才调用
+已有network/bitrate收集；FIFO metadata继续携带捕获的offset/已记录标志。
+不引入decoder时钟补录，不按收到的mark回查任意旧条目，也不清另一个media槽。
+现有video report/tracker消费路径继续使用视频ring；新增audio ring不被冒充视频
+明细发送。对象释放随原session统计owner，在消费者停止后进行。
+
+【可执行对照】`audit-steam-media-input.py`执行原CreateInputMark、整个
+OnStreamPacket门禁/Frame构造/OnDataPacket、接收统计、视频Complete、原报告
+累加器/protobuf及最终明文body。150例996状态覆盖音视频先后/相同ID、同媒体
+重复ID后新mark、240槽覆盖、0与uint16回绕、旧/未来/零mark、零时间、正负offset、
+receive早于send、full/aggregate报告，以及client0/5/7或paused时音频不得消费。
+完整mark记录、两种media的slot内容及138份视频报告body逐项比较；另在真实
+Native network采样函数入口计数，与Source实际video-only分支PC对照。
+
+原先126份直接OnDataPacket案例经更高层OnStreamPacket/Frame构造重播后，
+除新增的准入PC计数外全部观察保持一致。Source packet refcount、锁/libc、
+CNetworkStats/bitrate样本终点、最终send为adapter。Native对照执行实际完整帧
+分派/RX准备、mark创建、slot和视频报告，但decoder入队为终点adapter；它不
+冒称真实OS decoder线程/输入设备/Steam Host/全局统计Start/Stop或loader验收。
+当前latest counter由探针明确控制，再执行真实CreateInputMark（包括FFFF→1）；
+这不是证明每个输入producer均会生成这些标记。原完整协议/设备范围保持独立。
+
+```sh
+python3 scripts/audit-steam-media-input.py \
+  /data/dl/nsteamlink/build/video-recovery-re/libmain-arm64.so \
+  --check scripts/fixtures/steam-media-input-reference.json
+ctest --test-dir build/desktop -R 'media_input_official_vectors|frame_stats_.*vectors' --output-on-failure
+```
