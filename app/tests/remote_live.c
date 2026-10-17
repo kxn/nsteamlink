@@ -133,6 +133,9 @@ static void session_connected(IHS_Session *session, void *ctx) {
     (void)session;
     atomic_store(&((live *)ctx)->session_connected, true);
 }
+static void session_disconnected(IHS_Session *session, void *ctx) {
+    (void)session; atomic_store(&((live *)ctx)->session_connected,false);
+}
 static void configuring(IHS_Session *session, IHS_SessionConfig *config, void *ctx) {
     (void)session;
     (void)ctx;
@@ -158,7 +161,7 @@ static IHS_StreamVideoSubmitResult video_submit(IHS_Session *session, uint16_t i
 }
 static void video_stop(IHS_Session *session, void *ctx) { (void)session; (void)ctx; }
 static const IHS_StreamSessionCallbacks session_cb = {
-    .connected = session_connected, .configuring = configuring};
+    .connected = session_connected, .disconnected = session_disconnected, .configuring = configuring};
 static const IHS_StreamVideoCallbacks video_cb = {
     .start = video_start, .submit = video_submit, .stop = video_stop};
 #endif
@@ -177,7 +180,7 @@ int NSL_REMOTE_LIVE_ENTRY(int argc, char **argv) {
     bool sns_test = false;
     bool desktop_stream = false;
     bool sdr_session = false;
-    bool relay_only = false, fault_test = false, warm_fault = false;
+    bool relay_only = false, fault_test = false, warm_fault = false, pause_test = false;
     int terminal_test = 0;
 #ifdef NSL_HAVE_SNS
     sns_test = argc == 3 && !strcmp(argv[1], "--sns-test");
@@ -193,13 +196,15 @@ int NSL_REMOTE_LIVE_ENTRY(int argc, char **argv) {
         fault_test = desktop_stream = relay_only = true;
     if (argc == 3 && !strcmp(argv[1], "--sdr-warm-fault-desktop"))
         warm_fault = fault_test = desktop_stream = relay_only = true;
+    if (argc == 3 && !strcmp(argv[1], "--sdr-pause-desktop"))
+        pause_test = desktop_stream = relay_only = true;
     if (argc == 3 && !strcmp(argv[1], "--sdr-only-test"))
         sns_test = relay_only = true;
     if (argc == 3 && !strcmp(argv[1], "--sdr-only-desktop"))
         desktop_stream = relay_only = true;
 #endif
     if (argc != 1 && !pairing && !status && !idle && !sns_test && !desktop_stream && !sdr_session) {
-        fprintf(stderr, "usage: %s [--idle | --pair|--status|--sns-test|--sns-desktop|--sdr-session|--sdr-only-test|--sdr-only-desktop|--sdr-fault-test|--sdr-fault-desktop|--sdr-warm-fault-desktop PRIVATE_PROFILE_DIRECTORY]\n",
+        fprintf(stderr, "usage: %s [--idle | --pair|--status|--sns-test|--sns-desktop|--sdr-session|--sdr-only-test|--sdr-only-desktop|--sdr-fault-test|--sdr-fault-desktop|--sdr-warm-fault-desktop|--sdr-pause-desktop PRIVATE_PROFILE_DIRECTORY]\n",
                 argv[0]);
         return 2;
     }
@@ -262,6 +267,9 @@ int NSL_REMOTE_LIVE_ENTRY(int argc, char **argv) {
     uint64_t e2e_received_at = 0;
     bool reported_e2e = false;
     unsigned observed_frames = 0, recovery_frames = 0;
+    bool ihs_was_connected = false;
+    uint64_t pause_at = 0, resume_at = 0;
+    unsigned resume_frames = 0;
     uint64_t video_received_at = 0, snapshot_at = 0;
     unsigned terminal_stage = 0;
     uint64_t terminal_at = 0;
@@ -313,10 +321,25 @@ int NSL_REMOTE_LIVE_ENTRY(int argc, char **argv) {
                     l.failed = true;
                 fflush(stdout);
             }
+            bool ihs_connected=atomic_load(&l.session_connected);
+            if (ihs_connected) ihs_was_connected=true;
+            if (desktop_stream && ihs_was_connected && !ihs_connected) {
+                puts("IHS_DISCONNECTED=1");
+                l.failed=true;
+                break;
+            }
             unsigned frames = atomic_load(&l.video_frames);
             if (frames != observed_frames) {
                 observed_frames = frames;
                 video_received_at = now_ms();
+            }
+            if (pause_test && ihs_connected && frames>=30 && !pause_at) {
+                IHS_SessionSetPaused(l.session,true); pause_at=now_ms();
+                puts("IHS_PAUSE_REQUESTED=1"); fflush(stdout);
+            }
+            if (pause_at && !resume_at && now_ms()-pause_at>=2000) {
+                IHS_SessionSetPaused(l.session,false); resume_at=now_ms(); resume_frames=frames;
+                puts("IHS_RESUME_REQUESTED=1"); fflush(stdout);
             }
             if (fault_test && sns_connected_at && now_ms()-sns_connected_at >= (warm_fault ? 15000u : 3000u) &&
                 (!desktop_stream || (atomic_load(&l.session_connected) && frames >= 30))) {
@@ -413,7 +436,10 @@ int NSL_REMOTE_LIVE_ENTRY(int argc, char **argv) {
                 break;
             }
         }
-        desktop_success = atomic_load(&l.session_connected) && atomic_load(&l.video_frames) >= 30;
+        desktop_success = atomic_load(&l.session_connected) && atomic_load(&l.video_frames) >= 30 &&
+            (!pause_test || (resume_at && atomic_load(&l.video_frames)-resume_frames>=30));
+        if (pause_test && desktop_success)
+            printf("IHS_PAUSE_RESUME_OK=1 fresh_frames=%u\n",atomic_load(&l.video_frames)-resume_frames);
 #endif
         success = pairing  ? l.paired && l.status
                   : status ? l.status

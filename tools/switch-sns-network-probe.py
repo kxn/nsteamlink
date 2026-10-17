@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 MODES = {'ice': '--sns-test', 'sdr': '--sdr-only-test', 'loss': '--sdr-fault-test',
          'close': '--sdr-close-test', 'no-connection': '--sdr-no-connection-test'}
 MEDIA_MODES = {'ice': '--sns-desktop', 'sdr': '--sdr-only-desktop', 'loss': '--sdr-fault-desktop',
-               'loss-warm': '--sdr-warm-fault-desktop'}
+               'loss-warm': '--sdr-warm-fault-desktop', 'pause': '--sdr-pause-desktop'}
 LIMIT = 8+65536+8192+16
 
 def profile_valid(data, original=None):
@@ -233,7 +233,7 @@ def main(media=False):
         'loader_return_verified': False,
         'events': [line for line in text.splitlines() if line.startswith(('CLOUD_', 'SNS_', 'SDR_',
             'SWITCH_SNS_', 'PROFILE_READBACK_', 'PREVIOUS_EXIT_', 'PRIVATE_NRO_', 'PRIVATE_FIXTURE_',
-            'PRIVATE_EMBEDDED_', 'IHS_CONNECTED=', 'PREVIOUS_MEDIA_EXIT_'))
+            'PRIVATE_EMBEDDED_', 'IHS_CONNECTED=', 'IHS_DISCONNECTED=', 'IHS_PAUSE_', 'IHS_RESUME_', 'PREVIOUS_MEDIA_EXIT_'))
             and 'SNS_ERROR_FILE' not in line]}
     (build / (kind+'-result.json')).write_text(json.dumps(report, indent=2)+'\n')
     print(json.dumps(report))

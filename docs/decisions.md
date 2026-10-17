@@ -2438,3 +2438,22 @@ stats 成功后的 root/E2E 健康门槛与 CM 回退属于独立交付策略。
 后是否清空决定回退，也不能将纯探测等同新的 routes revision。保留 routesDue 时先清期限、
 必要时 stats→signal→stats 的调用顺序。发送函数返回承载结果，网络恢复另由真实输入验收；
 该静态修正不构成断流根因或恢复成功的声明。
+
+## D-069：IHS 连接活动与客户端 Pause/Resume 使用独立所有者
+
+STEAMLINK_PROTOCOL_RE 的“连接收包的无活动期限”由原始初始化、Update 和 Pause/Resume
+指令及 33 个输入确认。IHS 接收 worker 在现有循环的可选 update callback 检查连接级
+15/180 秒期限，不创建新线程或 timer owner；无包轮询也会检查。有效连接包通过来源/ID/头部
+检查后、进入 channel 处理前刷新活动，Unconnected 发现包和 SDK stats 不刷新该时钟。
+
+公开 SetPaused 仅原子提交请求，由接收 owner 顺序执行 Pause/Resume 及数据通道刷新请求，
+避免应用线程遍历正在创建/销毁的数据 channel。Resume 以本轮 tick 重设接收活动；每个真实
+发送包本来就使用新的本地 timestamp，无需另造未参与协议的 lastSent 副本。已请求 disconnect
+时不再应用 pause 或重复超时。超时沿用既有 owned disconnect timer 和 stop/join 退出路径，
+不把它伪装成主机正常停止游戏。
+
+Runtime 仅将应用 foreground 变化接入 whole-client pause，显式 StopVideoData 仍保持独立，
+保留原有视频生命周期规则。这是对两种数据报承载共用的 IHS 策略补全；LAN 也会在真实连接
+无活动时有界退出，不能仍概括为完全不改变旧 LAN 超时行为。既有 UI 使用原来的断开/错误
+事件，不增加网络模式选项。测试 fixture 的 pause 模式属于单独 media NRO，先收 30 帧、
+请求暂停两秒、恢复后要求再收到 30 个新编码帧；请求日志不冒充 owner 或主机已执行的确认。

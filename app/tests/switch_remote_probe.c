@@ -171,7 +171,8 @@ int main(int argc, char **argv) {
     const char *mode = argc > 1 ? argv[1] : "";
 #if NSL_PRIVATE_MEDIA_FIXTURE
     bool allowed = !strcmp(mode,"--sns-desktop") || !strcmp(mode,"--sdr-only-desktop") ||
-        !strcmp(mode,"--sdr-fault-desktop") || !strcmp(mode,"--sdr-warm-fault-desktop");
+        !strcmp(mode,"--sdr-fault-desktop") || !strcmp(mode,"--sdr-warm-fault-desktop") ||
+        !strcmp(mode,"--sdr-pause-desktop");
 #else
     bool allowed = !strcmp(mode,"--sns-test") || !strcmp(mode,"--sdr-only-test") ||
         !strcmp(mode,"--sdr-fault-test") || !strcmp(mode,"--sdr-close-test") ||

@@ -1276,6 +1276,8 @@ static void *worker_main(void *ctx) {
             IHS_ClientStartDiscovery(r->client, 3000);
         }
         uint64_t now = sl_system_now();
+        if (r->session)
+            IHS_SessionSetPaused(r->session,!atomic_load(&r->foreground));
 #if NSL_HAVE_SNS
         if (r->sns) {
             sl_sns_update(r->sns, now);
