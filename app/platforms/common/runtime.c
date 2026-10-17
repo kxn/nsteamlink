@@ -3,6 +3,7 @@
 #include "diagnostic_log.h"
 #include "discovery.pb-c.h"
 #include "media.h"
+#include "packet_diagnostics.h"
 #include "platform/shortcut.h"
 #include "platform/system.h"
 #include "remote_connection.h"
@@ -68,6 +69,9 @@ struct sl_runtime {
     bool session_ready, connected, finished, host_stopped, first_reported, auth_ready,
         auth_consumed, request_terminal;
     uint64_t auth_account, request_at, frame_at, last_diag;
+#if NSL_DIAGNOSTICS
+    uint64_t cloud_stall_at;
+#endif
     uint8_t auth_secret[32];
     uint32_t frames;
     sl_debug_snapshot debug;
@@ -122,6 +126,23 @@ static void diagnostic_state(sl_runtime *r, const char *phase) {
              route, sdk, relayed, end_reason, terminal, detail, (unsigned long long)tx,
              (unsigned long long)rx);
     sl_log(line);
+    if (r->session) {
+        sl_packet_snapshot packets;
+        sl_packet_diagnostics_read(&packets);
+        snprintf(line, sizeof(line), "udp_rx observer=%d total=%llu", packets.active,
+                 (unsigned long long)packets.raw_total);
+        sl_log(line);
+        for (unsigned channel = 0; channel < 32; ++channel) {
+            if (!packets.raw_media[channel] && !packets.admitted[channel] &&
+                !packets.recovery[channel])
+                continue;
+            snprintf(line, sizeof(line), "media_rx ch=%u raw=%llu admitted=%llu recovery=%llu",
+                     channel, (unsigned long long)packets.raw_media[channel],
+                     (unsigned long long)packets.admitted[channel],
+                     (unsigned long long)packets.recovery[channel]);
+            sl_log(line);
+        }
+    }
     snprintf(line, sizeof(line),
              "pipeline phase=%s session=%llu epoch=%llu active=%d submit=%llu decode=%u show=%u "
              "audio=%u audio_err=%u first=%d frame_idle_ms=%llu log_drop=%u",
@@ -457,7 +478,15 @@ static void cloud_watch(sl_runtime *r) {
         peers[count] = (sl_remote_peer){.client_id = h->client_id, .steam_id = h->account};
         memcpy(peers[count++].secret, h->has_secret ? h->secret : r->store.secret, 32);
     }
-    sl_remote_watch(sl_remote_connection_protocol(r->remote), peers, count);
+    bool watching = sl_remote_watch(sl_remote_connection_protocol(r->remote), peers, count);
+#if NSL_DIAGNOSTICS
+    char line[128];
+    snprintf(line, sizeof(line), "cloud_watch saved=%d eligible=%zu accepted=%d",
+             r->store.registry.count, count, watching);
+    sl_log(line);
+#else
+    (void)watching;
+#endif
     memset(peers, 0, sizeof(peers));
 }
 static bool local_host(sl_runtime *r, uint64_t id, IHS_HostInfo *out) {
@@ -536,6 +565,14 @@ static void cloud_observed(const sl_remote_host *host, void *ctx) {
     size_t index = 0;
     while (index < r->cloud_count && r->cloud_hosts[index].info.clientId != host->info.clientId)
         ++index;
+#if NSL_DIAGNOSTICS
+    if (index == r->cloud_count) {
+        char line[128];
+        snprintf(line, sizeof(line), "cloud_host event=online addresses=%zu known=%d",
+                 host->address_count, saved_host(r, host->info.clientId) != NULL);
+        sl_log(line);
+    }
+#endif
     if (index < SL_REMOTE_PEERS) {
         if (index == r->cloud_count)
             ++r->cloud_count;
@@ -565,6 +602,7 @@ static void cloud_observed(const sl_remote_host *host, void *ctx) {
 }
 static void cloud_offline(uint64_t id, void *ctx) {
     sl_runtime *r = ctx;
+    sl_log("cloud_host event=offline");
     for (size_t i = 0; i < r->cloud_count; ++i)
         if (r->cloud_hosts[i].info.clientId == id) {
             memmove(r->cloud_hosts + i, r->cloud_hosts + i + 1,
@@ -1109,6 +1147,16 @@ static void udp_poll(sl_runtime *r) {
                  "OK session=%d displayed=%u debug=%s fps=%s hid=%s ackMax=%s logs_port=%u",
                  r->session != NULL, r->debug.frames, r->debug.title, r->debug.values[0],
                  r->debug.values[4], r->debug.values[5], sl_log_http_port());
+    } else if (!strcmp(cmd, "cloud")) {
+        char connection[192];
+        sl_remote_connection_describe(r->remote, sl_system_now(), connection, sizeof(connection));
+        unsigned eligible = 0;
+        for (int i = 0; i < r->store.registry.count; ++i) {
+            sl_host *h = &r->store.registry.hosts[i];
+            eligible += h->paired && h->account && h->client_id;
+        }
+        snprintf(reply, sizeof(reply), "OK %s saved=%d eligible=%u online=%zu", connection,
+                 r->store.registry.count, eligible, r->cloud_count);
     } else if (!strcmp(cmd, "audio")) {
         stream_media_snapshot *s = &r->previous;
         snprintf(
@@ -1132,7 +1180,7 @@ static void udp_poll(sl_runtime *r) {
         stream_media_format_hid_history(reply, sizeof(reply), 16);
     } else {
         snprintf(reply, sizeof(reply),
-                 "ERR supported: ping state stats perf audio hid hidlog diag [current|prev]");
+                 "ERR supported: ping state stats perf cloud audio hid hidlog diag [current|prev]");
     }
     sendto(r->udp, reply, strlen(reply), MSG_DONTWAIT, (struct sockaddr *)&peer, len);
 }
@@ -1277,7 +1325,20 @@ static void *worker_main(void *ctx) {
             }
         }
 #endif
+#if NSL_DIAGNOSTICS
+        uint64_t cloud_began = sl_system_now();
+#endif
         sl_remote_connection_update(r->remote, now);
+#if NSL_DIAGNOSTICS
+        uint64_t cloud_ended = sl_system_now();
+        if (cloud_ended - cloud_began >= 250 && cloud_ended - r->cloud_stall_at >= 1000) {
+            r->cloud_stall_at = cloud_ended;
+            char line[96];
+            snprintf(line, sizeof(line), "cloud_update stall_ms=%llu",
+                     (unsigned long long)(cloud_ended - cloud_began));
+            sl_log(line);
+        }
+#endif
         if (now - r->cloud_refresh >= 5000) {
             r->cloud_refresh = now;
             for (size_t i = 0; i < r->cloud_count; ++i) {

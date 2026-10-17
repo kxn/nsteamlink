@@ -41,6 +41,59 @@ struct sl_remote_connection {
 };
 static const char directory_url[] = "https://api.steampowered.com/ISteamDirectory/"
                                     "GetCMListForConnect/v1/?cellid=0&cmtype=websockets";
+#if NSL_DIAGNOSTICS
+static const char *stage_name(int state) {
+    static const char *names[] = {"idle", "directory", "tls", "upgrade", "websocket"};
+    return state >= NET_IDLE && state <= NET_WEBSOCKET ? names[state] : "invalid";
+}
+static void network_event(sl_remote_connection *c, const char *event, int result) {
+    if (!c->callbacks.diagnostic)
+        return;
+    long http = 0, os_error = 0, verification = 0;
+    double total = 0, dns = 0, tcp = 0, tls = 0;
+    char *local = NULL, *remote = NULL;
+    if (c->easy) {
+        curl_easy_getinfo(c->easy, CURLINFO_RESPONSE_CODE, &http);
+        curl_easy_getinfo(c->easy, CURLINFO_OS_ERRNO, &os_error);
+        curl_easy_getinfo(c->easy, CURLINFO_SSL_VERIFYRESULT, &verification);
+        curl_easy_getinfo(c->easy, CURLINFO_TOTAL_TIME, &total);
+        curl_easy_getinfo(c->easy, CURLINFO_NAMELOOKUP_TIME, &dns);
+        curl_easy_getinfo(c->easy, CURLINFO_CONNECT_TIME, &tcp);
+        curl_easy_getinfo(c->easy, CURLINFO_APPCONNECT_TIME, &tls);
+        curl_easy_getinfo(c->easy, CURLINFO_LOCAL_IP, &local);
+        curl_easy_getinfo(c->easy, CURLINFO_PRIMARY_IP, &remote);
+    }
+    char line[224];
+    snprintf(line, sizeof(line),
+             "cloud_net event=%s stage=%s curl=%d http=%ld os=%ld verify=%ld candidate=%zu/%zu",
+             event, stage_name(c->state), (int)result, http, os_error, verification,
+             c->endpoint_index, c->endpoint_count);
+    c->callbacks.diagnostic(line, c->ctx);
+    snprintf(line, sizeof(line), "cloud_time total_ms=%.0f dns_ms=%.0f tcp_ms=%.0f tls_ms=%.0f",
+             total * 1000, dns * 1000, tcp * 1000, tls * 1000);
+    c->callbacks.diagnostic(line, c->ctx);
+    if ((local && local[0]) || (remote && remote[0])) {
+        snprintf(line, sizeof(line), "cloud_addr local=%.64s remote=%.64s", local ? local : "",
+                 remote ? remote : "");
+        c->callbacks.diagnostic(line, c->ctx);
+    }
+}
+void sl_remote_connection_describe(const sl_remote_connection *c, uint64_t now, char *out,
+                                   size_t capacity) {
+    if (!capacity)
+        return;
+    if (!c) {
+        snprintf(out, capacity, "state=absent ready=0");
+        return;
+    }
+    snprintf(out, capacity, "state=%s ready=%d candidate=%zu/%zu retry_ms=%llu suspended=%d",
+             stage_name(c->state), sl_remote_ready(c->protocol), c->endpoint_index,
+             c->endpoint_count, (unsigned long long)(c->retry_at > now ? c->retry_at - now : 0),
+             c->suspended);
+}
+#else
+#define network_event(c, event, result) ((void)0)
+#endif
 static void erase_free(void *p, size_t n) {
     if (p) {
         volatile uint8_t *q = p;
@@ -160,6 +213,14 @@ static void fail_connection(sl_remote_connection *c, uint64_t now) {
     c->state = NET_IDLE;
     uint32_t random = IHS_CryptoRandomUInt32();
     c->retry_at = established ? now : now + 10000 + (uint64_t)random * 20000 / UINT32_MAX;
+#if NSL_DIAGNOSTICS
+    if (c->callbacks.diagnostic) {
+        char line[128];
+        snprintf(line, sizeof(line), "cloud_net event=retry established=%d delay_ms=%llu",
+                 established, (unsigned long long)(c->retry_at - now));
+        c->callbacks.diagnostic(line, c->ctx);
+    }
+#endif
     c->endpoint_count = c->endpoint_index = 0;
 }
 static size_t directory_write(char *data, size_t size, size_t count, void *ctx) {
@@ -241,6 +302,14 @@ static bool next_endpoint(sl_remote_connection *c, uint64_t now) {
         return false;
     char url[192];
     snprintf(url, sizeof(url), "https://%s/remoteplay/", c->endpoints[c->endpoint_index++]);
+#if NSL_DIAGNOSTICS
+    if (c->callbacks.diagnostic) {
+        char line[192];
+        snprintf(line, sizeof(line), "cloud_net event=candidate index=%zu/%zu endpoint=%s",
+                 c->endpoint_index, c->endpoint_count, c->endpoints[c->endpoint_index - 1]);
+        c->callbacks.diagnostic(line, c->ctx);
+    }
+#endif
     c->state = NET_TLS;
     c->deadline = now + 20000;
     return setup_easy(c, url, true);
@@ -273,6 +342,7 @@ static bool drain_outgoing(sl_remote_connection *c) {
         if (result == CURLE_AGAIN)
             return true;
         if (result != CURLE_OK || !sent) {
+            network_event(c, "send_failed", result);
             if (c->callbacks.diagnostic)
                 c->callbacks.diagnostic(curl_easy_strerror(result), c->ctx);
             return false;
@@ -332,6 +402,7 @@ static bool receive_bytes(sl_remote_connection *c, uint64_t now) {
     CURLcode result = curl_easy_recv(c->easy, c->receive + c->received, available, &received);
     if (result != CURLE_AGAIN) {
         if (result != CURLE_OK || !received) {
+            network_event(c, "receive_failed", result);
             if (c->callbacks.diagnostic)
                 c->callbacks.diagnostic(
                     result != CURLE_OK ? curl_easy_strerror(result) : "cloud: TLS EOF", c->ctx);
@@ -403,7 +474,9 @@ void sl_remote_connection_update(sl_remote_connection *c, uint64_t now) {
             return;
         c->state = NET_DIRECTORY;
         c->deadline = now + 20000;
+        network_event(c, "directory_begin", -1);
         if (!setup_easy(c, directory_url, false)) {
+            network_event(c, "setup_failed", CURLE_FAILED_INIT);
             fail_connection(c, now);
             return;
         }
@@ -411,6 +484,7 @@ void sl_remote_connection_update(sl_remote_connection *c, uint64_t now) {
     if (c->state == NET_DIRECTORY || c->state == NET_TLS) {
         int running = 0;
         if (curl_multi_perform(c->multi, &running) != CURLM_OK) {
+            network_event(c, "multi_failed", CURLE_FAILED_INIT);
             fail_connection(c, now);
             return;
         }
@@ -420,6 +494,7 @@ void sl_remote_connection_update(sl_remote_connection *c, uint64_t now) {
             if (msg->msg != CURLMSG_DONE || msg->easy_handle != c->easy)
                 continue;
             CURLcode result = msg->data.result;
+            network_event(c, "transfer_done", result);
             if (c->state == NET_DIRECTORY) {
                 long status_code = 0;
                 curl_easy_getinfo(c->easy, CURLINFO_RESPONSE_CODE, &status_code);
@@ -435,6 +510,7 @@ void sl_remote_connection_update(sl_remote_connection *c, uint64_t now) {
     }
     if (c->state == NET_UPGRADE || c->state == NET_WEBSOCKET) {
         if (!drain_outgoing(c) || !receive_bytes(c, now) || sl_remote_failed(c->protocol)) {
+            network_event(c, "stream_failed", -1);
             if (c->state == NET_UPGRADE && next_endpoint(c, now))
                 return;
             fail_connection(c, now);
@@ -462,8 +538,10 @@ void sl_remote_connection_update(sl_remote_connection *c, uint64_t now) {
             }
         }
     }
-    if (c->state != NET_IDLE && now >= c->deadline && !sl_remote_ready(c->protocol))
+    if (c->state != NET_IDLE && now >= c->deadline && !sl_remote_ready(c->protocol)) {
+        network_event(c, "deadline", CURLE_OPERATION_TIMEDOUT);
         fail_connection(c, now);
+    }
 }
 void sl_remote_connection_set_bridge_mode(sl_remote_connection *c, bool enabled) {
     if (c)

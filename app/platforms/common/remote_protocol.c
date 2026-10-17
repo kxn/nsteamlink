@@ -74,6 +74,13 @@ static bool subscription(sl_remote *r, const sl_remote_peer *peer, bool enable) 
         sl_proto_uint(&w, 4, 1);
     }
     bool ok = envelope(r, enable ? 5 : 6, body, w.size);
+#if NSL_DIAGNOSTICS
+    if (r->cb.diagnostic) {
+        char line[96];
+        snprintf(line, sizeof(line), "cloud_subscription enable=%d queued=%d", enable, ok);
+        r->cb.diagnostic(line, r->ctx);
+    }
+#endif
     if (!ok)
         r->failed = true; /* Recreate the complete subscription set, not a partial one. */
     return ok;
@@ -649,7 +656,7 @@ bool sl_remote_stream(sl_remote *r, uint64_t id, const IHS_StreamingRequest *req
     return sl_remote_stream_ex(r, id, request, NULL);
 }
 bool sl_remote_stream_ex(sl_remote *r, uint64_t id, const IHS_StreamingRequest *request,
-                          const sl_remote_stream_options *options) {
+                         const sl_remote_stream_options *options) {
     if (!sl_remote_ready(r) || r->pairing || r->stream.active || !request)
         return false;
     const sl_remote_peer *peer = NULL;

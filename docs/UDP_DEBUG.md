@@ -6,6 +6,7 @@
 
 ```bash
 tools/switch-debugctl.py 10.10.10.17 state
+tools/switch-debugctl.py 10.10.10.17 cloud
 tools/switch-debugctl.py 10.10.10.17 stats
 tools/switch-debugctl.py 10.10.10.17 audio
 tools/switch-debugctl.py 10.10.10.17 hid
@@ -17,6 +18,7 @@ tools/switch-debugctl.py 10.10.10.17 diag prev
 | 命令 | 内容 |
 |---|---|
 | `ping` / `state` / `stats` / `perf` | 会话是否存在、实际呈现帧数、fps、HID 队列、最大 ACK 等待 |
+| `cloud` | 云端目录/TLS/Upgrade/WebSocket 阶段、会话是否就绪、候选位置、重试等待、可订阅及在线主机数 |
 | `audio` | 实际采样率／声道、队列字节数、解码帧数、丢弃及错误计数 |
 | `hid` | 提交／发送／确认计数、待发与在途数、重试次数、最大 ACK 等待 |
 | `hidlog` / `hid-history` | 有界的 SDL／原始输入及已提交报告历史 |
@@ -69,6 +71,24 @@ python3 tools/pull-switch-logs.py --address 10.10.10.17 --output build/device-lo
 ACK/NACK/重试/失败、待确认数量与最老项年龄。退出前及 IHS join 后再保存一次阶段快照。
 `log_drop` 是有界队列或 trylock 丢弃的诊断记录数，不能把它当作网络丢包数。
 这些记录只在诊断包启用，不包含 packet payload、配对材料或 SDK 原始身份文本。
+
+`cloud_net` 在目录请求、候选连接、失败/重试时记录具体阶段、libcurl result、HTTP 状态、
+系统网络错误和证书校验结果；`cloud_time` 的 DNS/TCP/TLS 数值是 curl 的阶段完成时间，
+均以请求开始为起点，不能将它们相加。`curl=-1` 表示该事件没有对应的 curl result，
+不是成功；`curl=0` 只说明那次 curl 操作完成，HTTP、Upgrade、protobuf 仍可能失败。
+常见 result：6=DNS、7=连接、28=超时、35=TLS、60=证书校验。`cloud_addr` 记录连接实际
+本地/远端 IP；`cloud_update stall_ms` 记录 owner 内一次云端更新超过 250 ms（最多每秒一条），
+用于核对是否阻塞了同线程的其他工作，不能仅凭使用 multi 就断言所有 DNS 路径均不阻塞。
+`cloud_watch` 记录保存主机中有多少具备配对/账户/设备信息；`cloud_subscription queued`
+仅代表订阅进入发送队列，`cloud_host event=online` 才代表收到并接纳主机状态。
+
+调试主应用另外每秒记录 `udp_rx` 与 `media_rx`。前者按本次会话的 IPv4 主机地址/端口
+统计 native UDP 返回的 datagram；后者按 channel 分开记录原始媒体报文头、通过 IHS
+校验后到达媒体通道入口的报文及已排队的恢复请求。入口计数不代表窗口接纳或完整组帧。
+原始计数尚未通过 CRC/连接身份检查，
+不能视为有效媒体；计数差也不能直接当作无线丢包率。协议线程只更新固定原子计数，
+不逐包输出、分配、复制 payload 或重新校验 CRC。SNS 的底层收发仍看既有 `connection`
+计数；测试驱动有自己的观察器，不能把其 `observer=0` 误读为没有收到包。
 
 清理日志包括 HID worker、session interrupt/join/destroy、IHS client、IHS_Quit、SDL_Quit。
 退出后 nxlink 结束仅是 PC 侧证据，Switch 返回 hbmenu 及再次启动结果仍以屏幕观察为准。

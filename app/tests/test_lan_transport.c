@@ -11,6 +11,9 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#if NSL_DIAGNOSTICS
+#include "packet_diagnostics.h"
+#endif
 
 static atomic_bool finalized;
 /* Bitwise Castagnoli oracle, independent of the library's optimized CRC path. */
@@ -102,6 +105,13 @@ static void run(void) {
     IHS_SessionThreadedJoin(session);
     assert(atomic_load(&finalized));
     assert(IHS_SessionHostRequestedStop(session));
+#if NSL_DIAGNOSTICS
+    sl_packet_snapshot observed;
+    sl_packet_diagnostics_read(&observed);
+    assert(observed.active && observed.raw_total == 4);
+    for (unsigned i = 0; i < 32; ++i)
+        assert(!observed.raw_media[i] && !observed.admitted[i] && !observed.recovery[i]);
+#endif
     IHS_SessionDestroy(session);
     close(peer);
 }

@@ -31,7 +31,7 @@ for entry in commands:
     if source.name == 'diagnostic_log.c':
         for marker in (b'HTTP/1.1', b'storage_errno', b'GET required', b'session-%020'):
             assert marker not in data, f'diagnostic log service remains in release: {marker!r}'
-    for marker in (b'render-rate-test', b'--adaptive-pacing', b'--no-adaptive-pacing', b'RUNTIME_FIXTURE_', b'CLOUD_FIXTURE_', b'vq1 ', b'vq7 ', b'vq8 ', b'vq9 '):
+    for marker in (b'render-rate-test', b'--adaptive-pacing', b'--no-adaptive-pacing', b'RUNTIME_FIXTURE_', b'CLOUD_FIXTURE_', b'vq1 ', b'vq7 ', b'vq8 ', b'vq9 ', b'cloud_watch saved=', b'cloud_update stall_ms', b'media_rx ch=', b'udp_rx observer='):
         assert marker not in data, f'diagnostic string {marker!r} in {obj}'
     if source.name == 'gfx.c' and source.parent.name == 'switch':
         nm = Path(argv[0]).with_name('aarch64-none-elf-nm')
@@ -73,6 +73,10 @@ link = (build / 'app/CMakeFiles/nsteamlink.dir/link.txt').read_text()
 assert 'runtime_fixture' not in link and 'runtime_probe' not in link, 'runtime fixture linked into product'
 archive = build / 'app/libnsl_platform.a'
 assert b'RUNTIME_FIXTURE_' not in archive.read_bytes(), 'runtime driver included in product platform'
+assert b'sl_packet_diagnostics_' not in archive.read_bytes(), 'packet observers remain in release'
+remote_archive = build / 'app/libnsl_remote.a'
+for marker in (b'cloud_net event=', b'cloud_time total_ms=', b'cloud_subscription', b'cloud_addr local='):
+    assert marker not in remote_archive.read_bytes(), f'cloud diagnostics remain in release: {marker!r}'
 manifest = json.loads((build / 'generated/graphics_manifest.json').read_text())
 if any(e['file'].endswith('/platforms/switch/gfx.c') for e in commands):
     assert manifest['backend'] == 'deko', 'Switch must use deko'
