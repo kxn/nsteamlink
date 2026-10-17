@@ -6465,8 +6465,9 @@ H264 standalone；HEVC/AV1/Raw及所有BAvailable分支不得从这些案例外�
 
 【Native生命周期契约】视频worker只产生原子reset请求，不自行stop/join/recreate。
 RX生命周期actor在receiveCycle入口、socket readiness/RX/network/control消费前处理。
-旧worker退出并join后，purge complete FIFO，再关闭旧ticket epoch/播放器backend
-及partial，清请求、打开新epoch、重建backend、启动worker，随后发DataLost。
+旧worker退出并join后，purge complete FIFO，再关闭旧ticket epoch；按§81依次
+flush播放器引用、清partial/编码buffers、flush backend、记录恢复mark、退休backend，
+随后清请求、打开新epoch、重建backend、启动worker并发DataLost。
 旧worker产生的多个请求合并；本轮control drain中实际worker新增的请求留到下一轮。
 reset不再次调用player prepare。Backend不可用时仍可接收完整帧，请求后续reset；
 等待关键帧的strict/soft语义沿§79。Info发送失败不使已创建backend回滚；OS线程
@@ -6495,4 +6496,61 @@ python3 scripts/audit-steam-video-start.py \
   /data/dl/nsteamlink/build/video-recovery-re/libmain-arm64.so \
   --check scripts/fixtures/steam-video-start-reference.json
 ctest --test-dir build/desktop -R 'video_start_official_vectors|video_reset_worker|video_reset_runtime|nsl-video-pipeline' --output-on-failure
+```
+
+## 81. Stop分阶段、backend退休与恢复计时原点
+
+【官方客户端证据】同§24.1固定SHA。`audit-steam-video-stop-phases.py`从§79的
+真实构造、非空解码FIFO/player queue/三个held slot、partial与编码buffers进入
+原Reset/Stop。原base Stop @0x7b1fbc依次调用player FlushVideoStream、虚表+120
+FlushPendingData（standalone继续flush backend），0x7b1fe8写strict=1/soft=0，
+0x7b1fec取GetStreamTimestamp、0x7b1ff0保存；返回standalone Stop之后才在
+0x7b1060 Quit、0x7b1074析构旧backend。原指令内存写hook确认计时原点在backend
+flush之后、旧backend delete之前。旧帧/FIFO/packet引用与编码buffers在delete前
+已经清理；SDK/线程/初始化结果、平台存储/引用 primitive边界沿§79。
+
+52例使用SDK flush/delete及新初始化终点的受控tick推进，覆盖两线程flag、
+有/无旧backend、新初始化成功/失败、6553/6554边界、组合耗时、linked/编码缓存
+以及uint32回绕。它们是受控输入，不是实测SDK耗时。旧backend delete耗6554 tick
+时，reset后的首个非关键DecodeFrame按原6553严格比较再次发DataLost；恰6553
+不发。flush耗6554单独存在时不产生该重试，因为mark是在flush完成后记录。
+新初始化耗时计入mark之后。无旧backend不凭空计入flush/delete耗时。
+
+【Native差异证据及更正】§80生产实现将backend stop和reap合并在stopTracked里，
+返回后才DiscardPending并记录mark。相同delete=6554输入，官方mark=1000000、
+DataLost计数[1,2]；修改前Native（应用2dc5126、子库42b6a5d）mark=1006554、计数[1,1]（本地baseline日志
+`/tmp/nsl-reset81-baseline.json`，正式Source fixture记录输入和原结果）。撤回
+§80可将这个合并stop投射视为内部顺序已经对齐的解释。单一固定时钟的§80测试
+证明其外层actor/跨轮顺序，不能证明耗时终点之间的计时边界。
+
+【对齐契约】stop由actor在worker join/purge之后执行：先flush播放器所有权，
+清协议partial/编码buffers，再flush backend内部引用，然后置strict/soft并记录
+恢复mark，最后退休backend。Native可选tracked flush阶段区分Player与Decoder；
+既有stopTracked负责最终退休，所有原有回调表需零初始化并同步源码重编译。
+本地epoch关闭与GPU map/fence安全引用独立；FFmpeg flush保留调用者AVFrame引用
+的API约束来自随工具链安装的libavcodec/avcodec.h，不能作为官方Android策略来源。
+真实SDK wall-clock、NVTEGRA/GPU fence/物理显示及全部reset producer仍独立。
+
+
+【对照与本地资源边界】正式52例逐项比较actual Player/Decoder/mark/retire四阶段
+及各自tick、active/backend、strict/soft、恢复mark、后续非关键帧前后的DataLost
+计数。Native observer直接包含生产video TU，访问私有字段仅用于观察/断言；真实
+组帧、tracked ticket、partial清理、worker join及actor Reset/Stop仍执行生产代码。
+Native输入在decoder边界给出，SDK/player/初始化回调为受控终点；不是完整socket
+排程或所有producer的证明。原Source非空FIFO、player queue/三个slot及packet引用
+的释放在各阶段保留完整观察；这些存储布局不投射为Native像素/GPU引用。
+
+生产runtime回调表连接分阶段media/pipeline：Player关闭准入/释放mailbox持有帧，
+Decoder在锁内丢弃scratch和codec内部引用，stopTracked才标记退休并按安全引用数
+reap。资源测试记录实际avcodec_flush_buffers、恢复取时、sl_video_stop及可发生的
+avcodec_free_context顺序，ready/未就绪分别判断是否进入SDK flush；跨重建与最终
+session销毁后持有的AVFrame可见像素MD5保持一致，map lease仍阻止域复用。
+调用者/GPU仍拥有的帧按引用及renderer fence退休，不能因复制Android顺序而提前
+释放。这是Native平台接口约束；真NVTEGRA/GPU fence仍不在这些离线案例内。
+
+```sh
+python3 scripts/audit-steam-video-stop-phases.py \
+  /data/dl/nsteamlink/build/video-recovery-re/libmain-arm64.so \
+  --check scripts/fixtures/steam-video-stop-phases-reference.json
+ctest --test-dir build/desktop -R 'video_stop_phases_official_vectors|video_reset_runtime|video_start_lifetime' --output-on-failure
 ```

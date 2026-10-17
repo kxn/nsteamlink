@@ -181,6 +181,8 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_compile_options(nsl-video-reset-runtime PRIVATE -UNDEBUG -Wall -Wextra -Wno-unknown-pragmas)
     target_link_libraries(nsl-video-reset-runtime PRIVATE nsl_platform ihs-test-session)
     target_link_options(nsl-video-reset-runtime PRIVATE -Wl,--wrap=sl_video_create -Wl,--wrap=avcodec_open2
+        -Wl,--wrap=sl_video_close -Wl,--wrap=sl_video_discard_buffers -Wl,--wrap=sl_video_stop
+        -Wl,--wrap=avcodec_flush_buffers -Wl,--wrap=avcodec_free_context
         -Wl,--wrap=sl_media_video_submit_tracked -Wl,--wrap=IHS_SessionPacketsWindowReleaseFrame
         -Wl,--wrap=IHS_SessionPacketTimestamp -Wl,--wrap=IHS_BaseSend
         -Wl,--wrap=IHS_SessionSendControlMessage -Wl,--wrap=IHS_SessionChannelDataLost)

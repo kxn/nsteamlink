@@ -397,6 +397,11 @@ static void video_stop(IHS_Session *s, const IHS_VideoEpochInfo *epoch, void *ct
     }
     pthread_mutex_unlock(&r->lock);
 }
+static void video_flush(IHS_Session *s, const IHS_VideoEpochInfo *epoch,
+                        IHS_StreamVideoFlushPhase phase, void *ctx) {
+    (void)ctx;
+    sl_media_video_flush_tracked(s, epoch, phase);
+}
 static void activity(IHS_Session *s, int kind, uint64_t id, const char *name, void *ctx) {
     (void)s;
     sl_runtime *r = ctx;
@@ -455,7 +460,7 @@ static const IHS_StreamSessionCallbacks session_cb = {.configuring = configuring
                                                       .saveClientConfig = client_config_saved};
 static const IHS_StreamVideoCallbacks video_cb = {
     .startTracked = video_start, .submitTracked = video_submit, .stopTracked = video_stop,
-    .prepare = video_prepare};
+    .prepare = video_prepare, .flushTracked = video_flush};
 static const IHS_StreamInputCallbacks input_cb = {.activityState = activity};
 static void stop_client(sl_runtime *r) {
     if (!r->client)

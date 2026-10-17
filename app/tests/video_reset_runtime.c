@@ -12,6 +12,8 @@
 #include "test_session.h"
 #include <assert.h>
 #include <libavcodec/avcodec.h>
+#include <libavutil/imgutils.h>
+#include <libavutil/md5.h>
 #include <unistd.h>
 
 static sl_video_pipeline *pipeline;
@@ -19,6 +21,60 @@ static atomic_uint processed;
 static unsigned infos, losses, opens;
 static bool failOpen = true;
 static atomic_bool requestReset;
+static bool watchStop, buffersDiscarded, recoveryMarked;
+static unsigned phaseOrder, playerAt, decoderAt, markAt, stopAt, codecFlushAt, codecFreeAt;
+void __real_sl_video_close(sl_video_pipeline *, sl_video_key);
+void __wrap_sl_video_close(sl_video_pipeline *p, sl_video_key key) {
+    if (watchStop)
+        playerAt = ++phaseOrder;
+    __real_sl_video_close(p, key);
+}
+void __real_sl_video_discard_buffers(sl_video_pipeline *, sl_video_key);
+void __wrap_sl_video_discard_buffers(sl_video_pipeline *p, sl_video_key key) {
+    if (watchStop) {
+        assert(playerAt && !recoveryMarked);
+        decoderAt = ++phaseOrder;
+    }
+    __real_sl_video_discard_buffers(p, key);
+    if (watchStop)
+        buffersDiscarded = true;
+}
+void __real_sl_video_stop(sl_video_pipeline *, sl_video_key);
+void __wrap_sl_video_stop(sl_video_pipeline *p, sl_video_key key) {
+    if (watchStop) {
+        assert(recoveryMarked);
+        stopAt = ++phaseOrder;
+    }
+    __real_sl_video_stop(p, key);
+}
+void __real_avcodec_flush_buffers(AVCodecContext *);
+void __wrap_avcodec_flush_buffers(AVCodecContext *codec) {
+    if (watchStop) {
+        assert(decoderAt && !recoveryMarked);
+        codecFlushAt = ++phaseOrder;
+    }
+    __real_avcodec_flush_buffers(codec);
+}
+void __real_avcodec_free_context(AVCodecContext **);
+void __wrap_avcodec_free_context(AVCodecContext **codec) {
+    if (watchStop && *codec) {
+        assert(recoveryMarked && stopAt);
+        codecFreeAt = ++phaseOrder;
+    }
+    __real_avcodec_free_context(codec);
+}
+static void pixelHash(sl_video_frame *frame, uint8_t hash[16]) {
+    uint8_t visible[128 * 72 * 3 / 2];
+    assert(av_image_copy_to_buffer(
+               visible, sizeof(visible), (const uint8_t *const *)frame->pixels->data,
+               frame->pixels->linesize, AV_PIX_FMT_YUV420P, 128, 72, 1) == sizeof(visible));
+    av_md5_sum(hash, visible, sizeof(visible));
+}
+static void unchanged(sl_video_frame *frame, const uint8_t saved[16]) {
+    uint8_t actual[16];
+    pixelHash(frame, actual);
+    assert(!memcmp(saved, actual, 16));
+}
 sl_video_pipeline *__real_sl_video_create(void);
 sl_video_pipeline *__wrap_sl_video_create(void) {
     pipeline = __real_sl_video_create();
@@ -54,6 +110,10 @@ void __wrap_IHS_SessionPacketsWindowReleaseFrame(IHS_SessionFrame *f) {
     atomic_fetch_add(&processed, 1);
 }
 uint32_t __wrap_IHS_SessionPacketTimestamp(void) {
+    if (watchStop && buffersDiscarded && !recoveryMarked) {
+        recoveryMarked = true;
+        markAt = ++phaseOrder;
+    }
     return 1000000;
 }
 bool __wrap_IHS_BaseSend(IHS_Base *b, IHS_SocketAddress a, const IHS_Buffer *p) {
@@ -111,8 +171,19 @@ static void feed(IHS_Session *s, uint16_t id, bool key, const uint8_t *bytes, si
     assert(atomic_load(&processed) == target);
 }
 static void reset(sl_runtime *r, unsigned epoch, unsigned expectedOpens, unsigned expectedInfos) {
+    bool wasReady = sl_video_is_current(pipeline, (sl_video_key){90, r->facts.epoch});
+    phaseOrder = playerAt = decoderAt = markAt = stopAt = codecFlushAt = codecFreeAt = 0;
+    buffersDiscarded = recoveryMarked = false;
+    watchStop = true;
     r->session->base.callbacks.run->update(&r->session->base,
                                            r->session->base.callbackContexts.run);
+    watchStop = false;
+    assert(playerAt && decoderAt > playerAt && markAt > decoderAt && stopAt > markAt);
+    assert((codecFlushAt != 0) == wasReady);
+    if (codecFlushAt)
+        assert(codecFlushAt > decoderAt && codecFlushAt < markAt);
+    if (codecFreeAt)
+        assert(codecFreeAt > stopAt);
     assert(r->facts.epoch == epoch && !r->facts.paused && !r->session->base.interrupted);
     assert(opens == expectedOpens && infos == expectedInfos && losses == epoch - 1);
     stream_media_snapshot snap;
@@ -170,14 +241,18 @@ int main(int argc, char **argv) {
     reset(&r, 2, 2, 1); /* Real initial open failure -> retained actor -> retry succeeds. */
     feed(r.session, 2, true, packet, bytes);
     sl_video_frame *a = take(2);
+    uint8_t hashA[16], hashB[16];
+    pixelHash(a, hashA);
     void *mapA = sl_video_hold_mapping(a);
     assert(mapA);
     atomic_store(&requestReset, true);
     feed(r.session, 3, false, packet, bytes);
     reset(&r, 3, 3, 2);
+    unchanged(a, hashA);
     assert(a->pixels->data[0] && IHS_FrameTicketIdentity(a->ticket).epoch == 2);
     feed(r.session, 4, true, packet, bytes);
     sl_video_frame *b = take(3);
+    pixelHash(b, hashB);
     void *mapB = sl_video_hold_mapping(b);
     assert(mapB && mapA != mapB);
     atomic_store(&requestReset, true);
@@ -190,6 +265,7 @@ int main(int argc, char **argv) {
     sl_video_release_mapping(mapA);
     feed(r.session, 7, true, packet, bytes);
     reset(&r, 6, 4, 3);
+    unchanged(b, hashB);
     assert(b->pixels->data[0] && IHS_FrameTicketIdentity(b->ticket).epoch == 3);
     feed(r.session, 8, true, packet, bytes);
     sl_video_frame *c = take(6);
@@ -200,6 +276,7 @@ int main(int argc, char **argv) {
     r.session = NULL;
     IHS_Quit();
     assert(!sl_media_video_clean());
+    unchanged(b, hashB);
     IHS_FrameOutcome shown = {.result = IHS_VideoFrameResultDisplayed, .presentationSerial = 99};
     sl_video_frame_complete(b, &shown);
     sl_resource_release(&b->ref);

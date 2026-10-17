@@ -34,6 +34,9 @@ typedef enum sl_video_open_result {
 sl_video_open_result sl_video_open_ex(sl_video_pipeline *, sl_video_key, const sl_video_config *);
 void sl_video_close(sl_video_pipeline *, sl_video_key);
 void sl_video_stop(sl_video_pipeline *, sl_video_key);
+/* After admission closes/consumer joins, discard codec's internal references;
+ * this neither drains output nor destroys caller-held frames/map leases. */
+void sl_video_discard_buffers(sl_video_pipeline *, sl_video_key);
 typedef enum sl_video_submit_result {
     SL_VIDEO_SUBMIT_ERROR = 0,
     SL_VIDEO_SUBMIT_OK = 1,

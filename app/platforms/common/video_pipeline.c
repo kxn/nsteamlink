@@ -241,6 +241,15 @@ void sl_video_stop(sl_video_pipeline *p, sl_video_key key) {
     }
     pthread_mutex_unlock(&p->decoder);
 }
+void sl_video_discard_buffers(sl_video_pipeline *p, sl_video_key key) {
+    pthread_mutex_lock(&p->decoder);
+    domain *d = find_domain(p, key);
+    if (d && d->codec && !d->stopped && !d->reaping) {
+        av_frame_unref(d->scratch);
+        avcodec_flush_buffers(d->codec);
+    }
+    pthread_mutex_unlock(&p->decoder);
+}
 bool sl_video_is_current(sl_video_pipeline *p, sl_video_key key) {
     pthread_mutex_lock(&p->mailbox);
     bool ok = p->accepting && same(p->active, key);

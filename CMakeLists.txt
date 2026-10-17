@@ -143,6 +143,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-video-start.py"
             --receiver $<TARGET_FILE:ihs-video-start-oracle>)
         set_tests_properties(video_start_official_vectors PROPERTIES TIMEOUT 60)
+        add_test(NAME video_stop_phases_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-video-stop-phases.py"
+            --receiver $<TARGET_FILE:ihs-video-stop-phases-oracle>)
+        set_tests_properties(video_stop_phases_official_vectors PROPERTIES TIMEOUT 60)
         add_test(NAME early_media_real_workers COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-early-media-worker.py"
             --receiver $<TARGET_FILE:ihs-early-media-worker>)

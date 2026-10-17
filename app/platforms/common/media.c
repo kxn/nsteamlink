@@ -1110,6 +1110,21 @@ sl_media_video_submit_tracked(IHS_Session *session, const IHS_VideoEpochInfo *ep
         media_set_error("video packet ownership or decoder resource failure");
     return result == SL_VIDEO_SUBMIT_OK ? IHS_StreamVideoSubmitOK : IHS_StreamVideoSubmitError;
 }
+void sl_media_video_flush_tracked(IHS_Session *session, const IHS_VideoEpochInfo *epoch,
+                                  IHS_StreamVideoFlushPhase phase) {
+    (void)session;
+    if (!video)
+        return;
+    sl_video_key key = {epoch->session_id, epoch->video_epoch};
+    if (phase == IHS_StreamVideoFlushPlayer) {
+        sl_video_close(video, key);
+        pthread_mutex_lock(&state_lock);
+        if (video_key.session == key.session && video_key.epoch == key.epoch)
+            snapshot.video_active = false;
+        pthread_mutex_unlock(&state_lock);
+    } else if (phase == IHS_StreamVideoFlushDecoder)
+        sl_video_discard_buffers(video, key);
+}
 void sl_media_video_stop_tracked(IHS_Session *session, const IHS_VideoEpochInfo *epoch) {
     (void)session;
     if (!video)
