@@ -7495,8 +7495,12 @@ Linux AVCodec策略。Native在每个标记上avcodec_flush_buffers及删除已�
 §92原18案例的全部逐状态前缀保持；同一原客户端复播扩展为23案例413状态，增加完整60样本
 预算、第二批平滑、send错误后pending reset阻止下一次FinalDecode，以及空AU/零parser输出的
 受控EOF分支。五项原指令反事实不变。这里的EOF等codec状态是明确输入，不冒称自然设备返回。
-原StartDecoding @0x324725–756写目标尺寸和32/16对齐的coded尺寸，@0x324774–77a置H264
-flags2 |=0x1（FAST），@0x3247b5置parser flags |=0x1（complete-frame）；这些初始化与§91的原函数复播一致。
+原StartDecoding @0x324725–756将decoder尺寸及32/16对齐值写入context原偏移
+0x70/0x74/0x78/0x7c，@0x324774–77a置context+0x44的0x1，@0x3247b5置parser+0xb8的0x1。
+【更正，§94】这些原指令写入已经复播，但此前直接将四个context偏移命名为SDK的
+width/height/coded_width/coded_height并称初始化一致，证据不足；随包SDK实际元数据API的
+读取位置存在差异。flags2选项+0x44已由真实SDK独立核验。Native采用目标ABI的命名尺寸字段
+及该对齐模式，不声称原客户端完整SDK启动或这四字段的原始布局已经对齐。
 
 ### 93.2 Native提交、任务与统计契约
 
@@ -7571,4 +7575,56 @@ python3 scripts/audit-steam-client-avcodec-key.py \
 python3 scripts/check-steam-video-avcodec.py --receiver build/desktop/app/nsl-video-timing-oracle
 python3 scripts/check-avcodec-native-mutations.py --build build/desktop --output /tmp/avcodec-mutants
 python3 scripts/observe-native-avcodec-gap.py --build build/desktop --output /tmp/avcodec-observation
+```
+
+## 94. 官方随包AVCodec的启动门禁与尺寸字段边界
+
+### 94.1 来源与可复现调用
+
+沿用§91固定Valve Linux客户端归档/ELF。随包`libavcodec.so.61`的SHA256为
+`c53a7e3d32a986323ec6bedd28df73a6e5842c4753b67b1d2aa0d6e4f524472f`，
+`libavutil.so.59`为`6df6556b6026144eb545dd95c0e2cc8c4568f462c9bd7e036531207d4172db34`。
+`audit-steam-client-sdk-boundary.py`分别记录六个SDK和两个client完整FDE的地址/长度/指令SHA，
+执行原client的StartDecoding（沿§91明确SDK/OS adapter），独立实调未改的随包SDK。
+不改进程名、token、门禁或二进制，不把库测试冒称完整原客户端factory/启动。
+
+### 94.2 H264初始化返回-1的本次证据
+
+【证据】SDK H264 availability入口@0x11d4e0跳到@0x258f20，H264 init @0x22579的
+@0x2258c也调用同一原函数；返回0时init沿@0x22593到失败出口，返回-1。
+完整gate @0x258f20–0x25900d检查缓存后，通过dlsym解析getauxval，参数31取得执行文件名；
+匹配`steamlink`或`streaming_client`会缓存允许。另一路检查`STEAMVIDEOTOKEN`；此处只记录
+分支存在，不复制token值、不将它与Steam配对/安全PIN或网络协议关联。
+
+本次普通Python进程的实际执行文件名不含上述client名称，也没有该环境变量。直接执行
+未改的原gate返回0，缓存由[0,0,0]成为[0,1,0]。原find_decoder(27)返回NULL；by_name("h264")
+能找到codec对象，仍经原open2/init得到-1。by_name查找原函数未经过availability分支，不能
+将“查得到对象”等同于解码器已经可用。所有context/parameters由原API释放并核对置NULL。
+
+【结论】本次独立Python调用的H264初始化受上述环境门禁限制。不能将这个-1当作官方
+Steam Link进程在真实启动中失败，也不能当作硬件错误/网络恢复策略。原完整应用自然启动
+是否使用该对象、其后的SDK调用结果及硬件可达性仍不由本次探针证明。
+
+### 94.3 原client写入与SDK实际参数读取的差异
+
+【证据】128×72受控decoder配置执行原StartDecoding，在open调用前观测到四次原写入：
+context+0x70=128、+0x74=72、+0x78=128、+0x7c=80。SDK真实av_opt_find返回
+flags2 offset=0x44、video_size offset=0x74、threads=0x290、thread_type=0x294。
+SDK原avcodec_parameters_from_context的视频分支@0xb79b9/0xb79bf读取context+0x74/+0x78，
+而非+0x70/+0x74。将上述四个原标量写入投影到另一个真实SDK分配的context，调用真实参数
+API成功，参数width/height实际为72×128；没有拷贝模拟器里的指针/callback或声称执行完整启动。
+
+【撤回】§93把原四偏移直接命名成随包SDK尺寸字段并称初始化一致的说法撤回。
+Native通过目标ABI命名字段设置128×72及32/16对齐值，其真实图片已有独立像素验证；
+这与原client raw layout如何进入真实SDK是两个证据范围。不能为了匹配偏移而将Switch尺寸
+改成72×128。确切ABI/构建原因、完整启动是否有额外适配仍待验证，不能据此认定官方发布
+存在可见尺寸bug。该差异不撤回已直接复播的FinalDecode控制分支及明确SDK终点下的对照，
+但禁止将其扩张为原完整SDK/硬件已经自然运行。
+
+```sh
+LD_LIBRARY_PATH="$PWD/build/video-recovery-re/linux-1.3.32.316/package/lib" \
+  python3 scripts/audit-steam-client-sdk-boundary.py \
+  --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
+  --sdk-directory build/video-recovery-re/linux-1.3.32.316/package/lib \
+  --output /tmp/steam-client-sdk-boundary.json
 ```

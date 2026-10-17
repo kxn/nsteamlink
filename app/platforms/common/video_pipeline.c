@@ -206,7 +206,9 @@ sl_video_open_result sl_video_open_ex(sl_video_pipeline *p, sl_video_key key, co
     d->hardware_format = AV_PIX_FMT_NONE;
     d->codec->width = config->width;
     d->codec->height = config->height;
-    /* Original Linux StartDecoding @324725–756 and @324774–77a. */
+    /* Target-ABI dimensions, using the original @324725–756 alignment pattern.
+     * Source raw offsets are not proof of bundled SDK field parity (§94);
+     * FAST is independently verified through the SDK flags2 option offset. */
     d->codec->coded_width = (config->width + 31u) & ~31u;
     d->codec->coded_height = (config->height + 15u) & ~15u;
     d->codec->flags2 |= AV_CODEC_FLAG2_FAST;
