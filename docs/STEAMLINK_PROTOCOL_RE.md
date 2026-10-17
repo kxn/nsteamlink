@@ -1909,13 +1909,13 @@ ClearAndRestartWindow(0)，与 reliable 的 `0x7f8720–0x7f8734` 相同。因�
 | 接收窗口交付、退休与反馈的调度顺序 | UpdateUnreliableState 0x7fa470–0x7fa6fc；DataUpdateAt / SessionReceiveUpdateAt | 撤回本项目仍由两个worker各自推进/反馈的当前状态；§62由同一接收批次按priority快照先推进窗口再反馈。F/U旧分步案例不能替代新增完整Socket批次对照；发送actor全局交错仍单列 |
 | 已完整 pending 的后续处理 | §25.13；DataReceived 的排空循环 | 官方仍有 pending 时约 1ms think；本项目在同 worker 中排空，不等新包；调度方式不同 |
 | 帧损坏的判断 | §25.5/25.10；video_pipeline.c | FFmpeg 明确 INVALIDDATA/损坏标记是项目映射，不是从 MediaCodec 逆向出的错误码对照表 |
-| 后端重建 | Android 输入 buffer 超时/参数变化/Surface 变化与 Reset 调用链 | 项目未等价实现这些异步重建分支；FFmpeg flush 不等于销毁/重建 MediaCodec；不能照搬 250ms 输入 timeout；常数更正见§78 |
+| 后端重建 | Android 输入 buffer 超时/参数变化/Surface 变化与 Reset 调用链 | 异步actor生命周期与已核实触发见§79–83；FFmpeg flush与backend重建分立，各SDK错误/平台producer映射仍独立；250ms常数边界见§78 |
 | 视频标志 bit 6 的内容模式变化 | OnThink 0x7b2648–0x7b26f8 / CheckContentMode 0x7b2804 | 原OnThink用末片bit6与已见模式判断转换，转换请求异步Reset并门控FinalDecode，执行对照与Native契约见§83；主机侧含义未确认，不解释为缺参考帧标记 |
-| 关键帧清理／显示引用 | FlushPendingData / FlushVideoStream；video_pipeline.c | 官方在关键帧片段入口清后端；项目完整关键帧提交前 flush，并保留外部显示/GPU 引用；时机与所有权不同，硬件行为待真机 |
+| 关键帧清理／显示引用 | FlushPendingData / FlushVideoStream；video_pipeline.c | §82按原首关键片段入口清protocol pending/flush backend，完整提交抑制重复flush；保留显示/GPU引用的本地所有权独立验证，真实硬件行为另验 |
 | 窗口容量与坏分片 | §25.10；window.c | 官方动态窗口；项目视频固定 2048 槽、积压 256 片段/2MiB，溢出重新锚定，并增加 continuation 类型/ordinal 检查；这些是明确的项目策略 |
 | 项目身份／所有权及坏数据防护 | frame ticket、帧 ID/ordinal、解密返回值检查 | 属于项目防护策略，不声称原版拥有相同检查及错误分类；未以此推导官方会接受坏密文 |
-| 客户端发送方向的不可靠缓存 | §25.3 的 SendUnreliablePackets / HandleNackPacket | 官方有保留及补发；本次只移植主机到客户端的接收反馈，DataLost 仍 queue(false)，没有给客户端所有 outgoing unreliable 包实现同样缓存 |
-| FEC | 官方 SendUnreliableFEC / HandleFECPacket；本地 packet enum/接收分派 | 未实现官方 FEC 路径，本次不能宣称覆盖 FEC |
+| 客户端发送方向的不可靠缓存 | §25.3 的 SendUnreliablePackets / HandleNackPacket | 客户端初发/保留/ACK/NACK补发及关闭的执行对照见§52–67；DataLost的queue(false)仍是独立producer语义，不能扩展为全部outgoing的准入约定 |
+| FEC | 官方 SendUnreliableFEC / HandleFECPacket；本地 packet enum/接收分派 | type11接收/恢复及配置请求见§27–32；接收能力不证明产品启用门，自身上行入口与明确边界见§71 |
 
 可复核方式：父仓 `scripts/compare-steam-video-recovery.py` 将相同输入交给固定
 ELF 原始指令和编译后的 `ihs-media-oracle` / `ihstest_decoder_loss --oracle`。
@@ -6696,3 +6696,9 @@ python3 scripts/audit-steam-video-content-mode.py \
   --check scripts/fixtures/steam-video-content-mode-reference.json
 ctest --test-dir build/desktop -R 'video_content_mode|video_keyframe_runtime|video_reset_worker' --output-on-failure
 ```
+
+
+【旧矩阵引用更正】§25.14的关键帧flush、backend重建、客户端outgoing与FEC行改为
+指向各自后续执行证据；撤回这些行仍代表初次接收恢复移植边界就是当前实现边界的
+解释。具体case/adapter/未证明范围以各节原证据为准，不能将表内引用合并成完整
+协议或全平台已经等价的声明。
