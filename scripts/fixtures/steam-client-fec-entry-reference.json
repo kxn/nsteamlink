@@ -1,0 +1,738 @@
+{
+  "scope": "Bound official client FEC entry evidence to two SHA-pinned Android libraries.\n\nStatic evidence enumerates all aligned B/BL instructions in .text, matching PLT\nentries and dynamic relocations for the selected functions. Original connection\nconstructors, percentage setters and send routing execute. Mutexes, registration,\nclock, channel lookup and terminal sends are adapters. An explicitly forced gate\nis a capability counterexample, never evidence of a product activation trigger.\nNo indirect-call, alias/inlined-write, other-library/version or device coverage\nis claimed. This does not establish an automatic loss-triggered FEC policy.\n",
+  "libraries": {
+    "core": {
+      "sha256": "50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e",
+      "static": {
+        "text_start": 6021120,
+        "text_size": 6558064,
+        "aligned_instructions": 1639516,
+        "exported_targets": {
+          "_ZN13CStreamClient24SetStreamingClientConfigERK22CStreamingClientConfigb": {
+            "address": 8061380,
+            "size": 248
+          },
+          "_ZN14CStreamChannel17SendUnreliableFECEP13CStreamPacket": {
+            "address": 8360164,
+            "size": 176
+          },
+          "_ZN17CFECOutgoingQueue11SendPacketsEP17CStreamConnectionP13CStreamSocket": {
+            "address": 8355136,
+            "size": 304
+          },
+          "_ZN17CFECOutgoingQueue9AddPacketEP13CStreamPacketi": {
+            "address": 8354052,
+            "size": 1084
+          },
+          "_ZN17CStreamConnection14SendUnreliableEP13CStreamPacketh": {
+            "address": 8371032,
+            "size": 172
+          },
+          "_ZN17CStreamConnection23SetChannelFECPercentageEhi": {
+            "address": 8371388,
+            "size": 36
+          }
+        },
+        "plt": [
+          {
+            "address": 12642288,
+            "symbol": "_ZN13CStreamClient24SetStreamingClientConfigERK22CStreamingClientConfigb"
+          },
+          {
+            "address": 12652544,
+            "symbol": "_ZN17CStreamConnection14SendUnreliableEP13CStreamPacketh"
+          },
+          {
+            "address": 12652864,
+            "symbol": "_ZN17CFECOutgoingQueue9AddPacketEP13CStreamPacketi"
+          },
+          {
+            "address": 12652896,
+            "symbol": "_ZN17CFECOutgoingQueue11SendPacketsEP17CStreamConnectionP13CStreamSocket"
+          },
+          {
+            "address": 12653104,
+            "symbol": "_ZN14CStreamChannel17SendUnreliableFECEP13CStreamPacket"
+          }
+        ],
+        "direct_calls": [
+          {
+            "pc": 8081900,
+            "word": 2484168065,
+            "kind": "BL",
+            "owners": [
+              "_ZN13CStreamPlayer4InitEv"
+            ],
+            "destination": 12642288,
+            "symbol": "_ZN13CStreamClient24SetStreamingClientConfigERK22CStreamingClientConfigb"
+          },
+          {
+            "pc": 8084580,
+            "word": 336683747,
+            "kind": "B",
+            "owners": [
+              "_ZN13CStreamPlayer17UpdateDesktopModeEv"
+            ],
+            "destination": 12642288,
+            "symbol": "_ZN13CStreamClient24SetStreamingClientConfigERK22CStreamingClientConfigb"
+          },
+          {
+            "pc": 8096036,
+            "word": 2484164531,
+            "kind": "BL",
+            "owners": [
+              "_ZN13CStreamPlayer12BHandleEventER9SDL_Event"
+            ],
+            "destination": 12642288,
+            "symbol": "_ZN13CStreamClient24SetStreamingClientConfigERK22CStreamingClientConfigb"
+          },
+          {
+            "pc": 8096964,
+            "word": 2484164299,
+            "kind": "BL",
+            "owners": [
+              "_ZN13CStreamPlayer12BHandleEventER9SDL_Event"
+            ],
+            "destination": 12642288,
+            "symbol": "_ZN13CStreamClient24SetStreamingClientConfigERK22CStreamingClientConfigb"
+          },
+          {
+            "pc": 8097228,
+            "word": 2484164233,
+            "kind": "BL",
+            "owners": [
+              "_ZN13CStreamPlayer12BHandleEventER9SDL_Event"
+            ],
+            "destination": 12642288,
+            "symbol": "_ZN13CStreamClient24SetStreamingClientConfigERK22CStreamingClientConfigb"
+          },
+          {
+            "pc": 8098996,
+            "word": 2484163791,
+            "kind": "BL",
+            "owners": [
+              "_ZN13CStreamPlayer13OnWindowMovedEv"
+            ],
+            "destination": 12642288,
+            "symbol": "_ZN13CStreamClient24SetStreamingClientConfigERK22CStreamingClientConfigb"
+          },
+          {
+            "pc": 8099164,
+            "word": 2484163749,
+            "kind": "BL",
+            "owners": [
+              "_ZN13CStreamPlayer15OnWindowResizedEv"
+            ],
+            "destination": 12642288,
+            "symbol": "_ZN13CStreamClient24SetStreamingClientConfigERK22CStreamingClientConfigb"
+          },
+          {
+            "pc": 8100132,
+            "word": 336679859,
+            "kind": "B",
+            "owners": [
+              "_ZN13CStreamPlayer21OnDisplayScaleChangedEv"
+            ],
+            "destination": 12642288,
+            "symbol": "_ZN13CStreamClient24SetStreamingClientConfigERK22CStreamingClientConfigb"
+          },
+          {
+            "pc": 8100728,
+            "word": 2484163358,
+            "kind": "BL",
+            "owners": [
+              "_ZN13CStreamPlayer21ReduceVideoResolutionEv"
+            ],
+            "destination": 12642288,
+            "symbol": "_ZN13CStreamClient24SetStreamingClientConfigERK22CStreamingClientConfigb"
+          },
+          {
+            "pc": 8100940,
+            "word": 336679657,
+            "kind": "B",
+            "owners": [
+              "_ZN13CStreamPlayer24TogglePerformanceOverlayEb"
+            ],
+            "destination": 12642288,
+            "symbol": "_ZN13CStreamClient24SetStreamingClientConfigERK22CStreamingClientConfigb"
+          },
+          {
+            "pc": 8111556,
+            "word": 336677003,
+            "kind": "B",
+            "owners": [
+              "_ZN13CStreamPlayer14ResizeOneToOneEv"
+            ],
+            "destination": 12642288,
+            "symbol": "_ZN13CStreamClient24SetStreamingClientConfigERK22CStreamingClientConfigb"
+          },
+          {
+            "pc": 8122420,
+            "word": 2484157935,
+            "kind": "BL",
+            "owners": [
+              "_ZN13CStreamPlayer25ToggleStreamingMicrophoneEv"
+            ],
+            "destination": 12642288,
+            "symbol": "_ZN13CStreamClient24SetStreamingClientConfigERK22CStreamingClientConfigb"
+          },
+          {
+            "pc": 8148440,
+            "word": 2484151430,
+            "kind": "BL",
+            "owners": [
+              "_ZN13CStreamPlayer24SetStreamingClientConfigERK22CStreamingClientConfigb"
+            ],
+            "destination": 12642288,
+            "symbol": "_ZN13CStreamClient24SetStreamingClientConfigERK22CStreamingClientConfigb"
+          },
+          {
+            "pc": 8335692,
+            "word": 336623533,
+            "kind": "B",
+            "owners": [
+              "_ZN12CStreamFrame4SendEP17CStreamConnectionb"
+            ],
+            "destination": 12652544,
+            "symbol": "_ZN17CStreamConnection14SendUnreliableEP13CStreamPacketh"
+          },
+          {
+            "pc": 8360272,
+            "word": 2484101116,
+            "kind": "BL",
+            "owners": [
+              "_ZN14CStreamChannel17SendUnreliableFECEP13CStreamPacket"
+            ],
+            "destination": 12652864,
+            "symbol": "_ZN17CFECOutgoingQueue9AddPacketEP13CStreamPacketi"
+          },
+          {
+            "pc": 8360284,
+            "word": 2484101121,
+            "kind": "BL",
+            "owners": [
+              "_ZN14CStreamChannel17SendUnreliableFECEP13CStreamPacket"
+            ],
+            "destination": 12652896,
+            "symbol": "_ZN17CFECOutgoingQueue11SendPacketsEP17CStreamConnectionP13CStreamSocket"
+          },
+          {
+            "pc": 8363256,
+            "word": 2484100378,
+            "kind": "BL",
+            "owners": [
+              "_ZN14CStreamChannel6UpdateEj"
+            ],
+            "destination": 12652896,
+            "symbol": "_ZN17CFECOutgoingQueue11SendPacketsEP17CStreamConnectionP13CStreamSocket"
+          },
+          {
+            "pc": 8371156,
+            "word": 2484098455,
+            "kind": "BL",
+            "owners": [
+              "_ZN17CStreamConnection14SendUnreliableEP13CStreamPacketh"
+            ],
+            "destination": 12653104,
+            "symbol": "_ZN14CStreamChannel17SendUnreliableFECEP13CStreamPacket"
+          },
+          {
+            "pc": 8373180,
+            "word": 2484097897,
+            "kind": "BL",
+            "owners": [
+              "_ZN17CStreamConnection6UpdateEj"
+            ],
+            "destination": 12652896,
+            "symbol": "_ZN17CFECOutgoingQueue11SendPacketsEP17CStreamConnectionP13CStreamSocket"
+          }
+        ],
+        "relocations": [
+          {
+            "section": ".rela.plt",
+            "offset": 13147032,
+            "type": 1026,
+            "symbol": "_ZN13CStreamClient24SetStreamingClientConfigERK22CStreamingClientConfigb",
+            "addend": 0
+          },
+          {
+            "section": ".rela.plt",
+            "offset": 13152160,
+            "type": 1026,
+            "symbol": "_ZN17CStreamConnection14SendUnreliableEP13CStreamPacketh",
+            "addend": 0
+          },
+          {
+            "section": ".rela.plt",
+            "offset": 13152320,
+            "type": 1026,
+            "symbol": "_ZN17CFECOutgoingQueue9AddPacketEP13CStreamPacketi",
+            "addend": 0
+          },
+          {
+            "section": ".rela.plt",
+            "offset": 13152336,
+            "type": 1026,
+            "symbol": "_ZN17CFECOutgoingQueue11SendPacketsEP17CStreamConnectionP13CStreamSocket",
+            "addend": 0
+          },
+          {
+            "section": ".rela.plt",
+            "offset": 13152440,
+            "type": 1026,
+            "symbol": "_ZN14CStreamChannel17SendUnreliableFECEP13CStreamPacket",
+            "addend": 0
+          }
+        ]
+      },
+      "replay": [
+        {
+          "percentage": 0,
+          "constructor_gate": 0,
+          "constructor_writes": [
+            {
+              "pc": 8368720,
+              "relative_address": 8,
+              "size": 4,
+              "value": 0
+            }
+          ],
+          "percentage_and_send_gate_writes": [],
+          "normal_routes": [
+            "_ZN14CStreamChannel14SendUnreliableEP13CStreamPacket"
+          ],
+          "forced_gate_routes": [
+            "_ZN14CStreamChannel17SendUnreliableFECEP13CStreamPacket"
+          ]
+        },
+        {
+          "percentage": 5,
+          "constructor_gate": 0,
+          "constructor_writes": [
+            {
+              "pc": 8368720,
+              "relative_address": 8,
+              "size": 4,
+              "value": 0
+            }
+          ],
+          "percentage_and_send_gate_writes": [],
+          "normal_routes": [
+            "_ZN14CStreamChannel14SendUnreliableEP13CStreamPacket"
+          ],
+          "forced_gate_routes": [
+            "_ZN14CStreamChannel17SendUnreliableFECEP13CStreamPacket"
+          ]
+        },
+        {
+          "percentage": 20,
+          "constructor_gate": 0,
+          "constructor_writes": [
+            {
+              "pc": 8368720,
+              "relative_address": 8,
+              "size": 4,
+              "value": 0
+            }
+          ],
+          "percentage_and_send_gate_writes": [],
+          "normal_routes": [
+            "_ZN14CStreamChannel14SendUnreliableEP13CStreamPacket"
+          ],
+          "forced_gate_routes": [
+            "_ZN14CStreamChannel17SendUnreliableFECEP13CStreamPacket"
+          ]
+        },
+        {
+          "percentage": 50,
+          "constructor_gate": 0,
+          "constructor_writes": [
+            {
+              "pc": 8368720,
+              "relative_address": 8,
+              "size": 4,
+              "value": 0
+            }
+          ],
+          "percentage_and_send_gate_writes": [],
+          "normal_routes": [
+            "_ZN14CStreamChannel14SendUnreliableEP13CStreamPacket"
+          ],
+          "forced_gate_routes": [
+            "_ZN14CStreamChannel17SendUnreliableFECEP13CStreamPacket"
+          ]
+        },
+        {
+          "percentage": 100,
+          "constructor_gate": 0,
+          "constructor_writes": [
+            {
+              "pc": 8368720,
+              "relative_address": 8,
+              "size": 4,
+              "value": 0
+            }
+          ],
+          "percentage_and_send_gate_writes": [],
+          "normal_routes": [
+            "_ZN14CStreamChannel14SendUnreliableEP13CStreamPacket"
+          ],
+          "forced_gate_routes": [
+            "_ZN14CStreamChannel17SendUnreliableFECEP13CStreamPacket"
+          ]
+        },
+        {
+          "percentage": -1,
+          "constructor_gate": 0,
+          "constructor_writes": [
+            {
+              "pc": 8368720,
+              "relative_address": 8,
+              "size": 4,
+              "value": 0
+            }
+          ],
+          "percentage_and_send_gate_writes": [],
+          "normal_routes": [
+            "_ZN14CStreamChannel14SendUnreliableEP13CStreamPacket"
+          ],
+          "forced_gate_routes": [
+            "_ZN14CStreamChannel17SendUnreliableFECEP13CStreamPacket"
+          ]
+        },
+        {
+          "percentage": 2147483647,
+          "constructor_gate": 0,
+          "constructor_writes": [
+            {
+              "pc": 8368720,
+              "relative_address": 8,
+              "size": 4,
+              "value": 0
+            }
+          ],
+          "percentage_and_send_gate_writes": [],
+          "normal_routes": [
+            "_ZN14CStreamChannel14SendUnreliableEP13CStreamPacket"
+          ],
+          "forced_gate_routes": [
+            "_ZN14CStreamChannel17SendUnreliableFECEP13CStreamPacket"
+          ]
+        },
+        {
+          "percentage": -2147483648,
+          "constructor_gate": 0,
+          "constructor_writes": [
+            {
+              "pc": 8368720,
+              "relative_address": 8,
+              "size": 4,
+              "value": 0
+            }
+          ],
+          "percentage_and_send_gate_writes": [],
+          "normal_routes": [
+            "_ZN14CStreamChannel14SendUnreliableEP13CStreamPacket"
+          ],
+          "forced_gate_routes": [
+            "_ZN14CStreamChannel17SendUnreliableFECEP13CStreamPacket"
+          ]
+        }
+      ]
+    },
+    "shell": {
+      "sha256": "15b2d79881eef0c47ed2f96c17d1d60a5f42d3285abcf9f512cfffdac5b238a2",
+      "static": {
+        "text_start": 12976128,
+        "text_size": 7119548,
+        "aligned_instructions": 1779887,
+        "exported_targets": {
+          "_ZN14CStreamChannel17SendUnreliableFECEP13CStreamPacket": {
+            "address": 13407692,
+            "size": 176
+          },
+          "_ZN17CFECOutgoingQueue11SendPacketsEP17CStreamConnectionP13CStreamSocket": {
+            "address": 13402976,
+            "size": 304
+          },
+          "_ZN17CFECOutgoingQueue9AddPacketEP13CStreamPacketi": {
+            "address": 13401508,
+            "size": 1468
+          },
+          "_ZN17CStreamConnection14SendUnreliableEP13CStreamPacketh": {
+            "address": 13418088,
+            "size": 172
+          },
+          "_ZN17CStreamConnection23SetChannelFECPercentageEhi": {
+            "address": 13418444,
+            "size": 36
+          }
+        },
+        "plt": [
+          {
+            "address": 20119920,
+            "symbol": "_ZN17CStreamConnection14SendUnreliableEP13CStreamPacketh"
+          },
+          {
+            "address": 20120528,
+            "symbol": "_ZN17CFECOutgoingQueue9AddPacketEP13CStreamPacketi"
+          },
+          {
+            "address": 20120560,
+            "symbol": "_ZN17CFECOutgoingQueue11SendPacketsEP17CStreamConnectionP13CStreamSocket"
+          },
+          {
+            "address": 20120800,
+            "symbol": "_ZN14CStreamChannel17SendUnreliableFECEP13CStreamPacket"
+          }
+        ],
+        "direct_calls": [
+          {
+            "pc": 13383168,
+            "word": 337228508,
+            "kind": "B",
+            "owners": [
+              "_ZN12CStreamFrame4SendEP17CStreamConnectionb"
+            ],
+            "destination": 20119920,
+            "symbol": "_ZN17CStreamConnection14SendUnreliableEP13CStreamPacketh"
+          },
+          {
+            "pc": 13407800,
+            "word": 2484706150,
+            "kind": "BL",
+            "owners": [
+              "_ZN14CStreamChannel17SendUnreliableFECEP13CStreamPacket"
+            ],
+            "destination": 20120528,
+            "symbol": "_ZN17CFECOutgoingQueue9AddPacketEP13CStreamPacketi"
+          },
+          {
+            "pc": 13407812,
+            "word": 2484706155,
+            "kind": "BL",
+            "owners": [
+              "_ZN14CStreamChannel17SendUnreliableFECEP13CStreamPacket"
+            ],
+            "destination": 20120560,
+            "symbol": "_ZN17CFECOutgoingQueue11SendPacketsEP17CStreamConnectionP13CStreamSocket"
+          },
+          {
+            "pc": 13410548,
+            "word": 2484705471,
+            "kind": "BL",
+            "owners": [
+              "_ZN14CStreamChannel6UpdateEj"
+            ],
+            "destination": 20120560,
+            "symbol": "_ZN17CFECOutgoingQueue11SendPacketsEP17CStreamConnectionP13CStreamSocket"
+          },
+          {
+            "pc": 13418212,
+            "word": 2484703615,
+            "kind": "BL",
+            "owners": [
+              "_ZN17CStreamConnection14SendUnreliableEP13CStreamPacketh"
+            ],
+            "destination": 20120800,
+            "symbol": "_ZN14CStreamChannel17SendUnreliableFECEP13CStreamPacket"
+          },
+          {
+            "pc": 13420232,
+            "word": 2484703050,
+            "kind": "BL",
+            "owners": [
+              "_ZN17CStreamConnection6UpdateEj"
+            ],
+            "destination": 20120560,
+            "symbol": "_ZN17CFECOutgoingQueue11SendPacketsEP17CStreamConnectionP13CStreamSocket"
+          }
+        ],
+        "relocations": [
+          {
+            "section": ".rela.plt",
+            "offset": 20874240,
+            "type": 1026,
+            "symbol": "_ZN17CStreamConnection14SendUnreliableEP13CStreamPacketh",
+            "addend": 0
+          },
+          {
+            "section": ".rela.plt",
+            "offset": 20874544,
+            "type": 1026,
+            "symbol": "_ZN17CFECOutgoingQueue9AddPacketEP13CStreamPacketi",
+            "addend": 0
+          },
+          {
+            "section": ".rela.plt",
+            "offset": 20874560,
+            "type": 1026,
+            "symbol": "_ZN17CFECOutgoingQueue11SendPacketsEP17CStreamConnectionP13CStreamSocket",
+            "addend": 0
+          },
+          {
+            "section": ".rela.plt",
+            "offset": 20874680,
+            "type": 1026,
+            "symbol": "_ZN14CStreamChannel17SendUnreliableFECEP13CStreamPacket",
+            "addend": 0
+          }
+        ]
+      },
+      "replay": [
+        {
+          "percentage": 0,
+          "constructor_gate": 0,
+          "constructor_writes": [
+            {
+              "pc": 13416012,
+              "relative_address": 8,
+              "size": 4,
+              "value": 0
+            }
+          ],
+          "percentage_and_send_gate_writes": [],
+          "normal_routes": [
+            "_ZN14CStreamChannel14SendUnreliableEP13CStreamPacket"
+          ],
+          "forced_gate_routes": [
+            "_ZN14CStreamChannel17SendUnreliableFECEP13CStreamPacket"
+          ]
+        },
+        {
+          "percentage": 5,
+          "constructor_gate": 0,
+          "constructor_writes": [
+            {
+              "pc": 13416012,
+              "relative_address": 8,
+              "size": 4,
+              "value": 0
+            }
+          ],
+          "percentage_and_send_gate_writes": [],
+          "normal_routes": [
+            "_ZN14CStreamChannel14SendUnreliableEP13CStreamPacket"
+          ],
+          "forced_gate_routes": [
+            "_ZN14CStreamChannel17SendUnreliableFECEP13CStreamPacket"
+          ]
+        },
+        {
+          "percentage": 20,
+          "constructor_gate": 0,
+          "constructor_writes": [
+            {
+              "pc": 13416012,
+              "relative_address": 8,
+              "size": 4,
+              "value": 0
+            }
+          ],
+          "percentage_and_send_gate_writes": [],
+          "normal_routes": [
+            "_ZN14CStreamChannel14SendUnreliableEP13CStreamPacket"
+          ],
+          "forced_gate_routes": [
+            "_ZN14CStreamChannel17SendUnreliableFECEP13CStreamPacket"
+          ]
+        },
+        {
+          "percentage": 50,
+          "constructor_gate": 0,
+          "constructor_writes": [
+            {
+              "pc": 13416012,
+              "relative_address": 8,
+              "size": 4,
+              "value": 0
+            }
+          ],
+          "percentage_and_send_gate_writes": [],
+          "normal_routes": [
+            "_ZN14CStreamChannel14SendUnreliableEP13CStreamPacket"
+          ],
+          "forced_gate_routes": [
+            "_ZN14CStreamChannel17SendUnreliableFECEP13CStreamPacket"
+          ]
+        },
+        {
+          "percentage": 100,
+          "constructor_gate": 0,
+          "constructor_writes": [
+            {
+              "pc": 13416012,
+              "relative_address": 8,
+              "size": 4,
+              "value": 0
+            }
+          ],
+          "percentage_and_send_gate_writes": [],
+          "normal_routes": [
+            "_ZN14CStreamChannel14SendUnreliableEP13CStreamPacket"
+          ],
+          "forced_gate_routes": [
+            "_ZN14CStreamChannel17SendUnreliableFECEP13CStreamPacket"
+          ]
+        },
+        {
+          "percentage": -1,
+          "constructor_gate": 0,
+          "constructor_writes": [
+            {
+              "pc": 13416012,
+              "relative_address": 8,
+              "size": 4,
+              "value": 0
+            }
+          ],
+          "percentage_and_send_gate_writes": [],
+          "normal_routes": [
+            "_ZN14CStreamChannel14SendUnreliableEP13CStreamPacket"
+          ],
+          "forced_gate_routes": [
+            "_ZN14CStreamChannel17SendUnreliableFECEP13CStreamPacket"
+          ]
+        },
+        {
+          "percentage": 2147483647,
+          "constructor_gate": 0,
+          "constructor_writes": [
+            {
+              "pc": 13416012,
+              "relative_address": 8,
+              "size": 4,
+              "value": 0
+            }
+          ],
+          "percentage_and_send_gate_writes": [],
+          "normal_routes": [
+            "_ZN14CStreamChannel14SendUnreliableEP13CStreamPacket"
+          ],
+          "forced_gate_routes": [
+            "_ZN14CStreamChannel17SendUnreliableFECEP13CStreamPacket"
+          ]
+        },
+        {
+          "percentage": -2147483648,
+          "constructor_gate": 0,
+          "constructor_writes": [
+            {
+              "pc": 13416012,
+              "relative_address": 8,
+              "size": 4,
+              "value": 0
+            }
+          ],
+          "percentage_and_send_gate_writes": [],
+          "normal_routes": [
+            "_ZN14CStreamChannel14SendUnreliableEP13CStreamPacket"
+          ],
+          "forced_gate_routes": [
+            "_ZN14CStreamChannel17SendUnreliableFECEP13CStreamPacket"
+          ]
+        }
+      ]
+    }
+  }
+}

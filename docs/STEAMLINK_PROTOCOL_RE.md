@@ -5675,3 +5675,65 @@ offset及反馈；消费者D再核对先前真实终点值。没有用Python公�
 原官方终点为1100549；测试明确拒绝。恢复后72次工作线程通过。这也区分了
 FIFO observer按cache自行计算与消费者实际收到正确header两种证据，不能用前者
 替代后者。
+
+## 71. 官方客户端上行FEC：产品入口与通用发送能力的证据边界
+
+【材料】继续固定§32.1的Android 1.3.32两份客户端库及各自SHA，不使用Host
+赋值或本地实现倒推客户端策略。core和shell均导出自己的Connection、Channel、
+FEC队列实现；shell的网络测试与core的串流配置入口不能只凭相似名称合成一条
+运行中自动调节链。这些符号的存在也不证明产品一定调用所有通用能力。
+
+【直接调用证据】`audit-steam-client-fec-entry.py`遍历两个ELF的整个`.text`，
+分别检查1,639,516和1,779,887个对齐指令位置，解出直接B/BL目标，同时枚举
+所选导出函数对应PLT及`.rela.dyn/.rela.plt`引用。函数归属按真实符号范围记录，
+不是只取最近的符号名称。六个关注目标共有core19处、shell6处直接调用；25处
+地址、原始指令字和目标均经独立objdump反汇编核对。
+
+| 入口/调用 | core地址 | shell地址 | 该范围内的证据 |
+|---|---|---|---|
+| Connection构造 | 0x7fb23c，清零0x7fb250 | 0xccb638，清零0xccb64c | `str wzr,[this,+8]`明确将包含+11的四字节清零 |
+| SetChannelFECPercentage | 0x7fbcbc | 0xccbfcc | 两份库均没有直接B/BL调用者，也没有对应PLT入口或动态重定位引用；函数本身仍是导出符号 |
+| Connection::SendUnreliable → Channel::SendUnreliableFEC | 0x7fbbd4 | 0xccbee4 | 两份库各只有这一处直接调用；先检查connection+11 |
+| Channel::SendUnreliableFEC → OutgoingQueue::AddPacket | 0x7f9150 | 0xcc9638 | 各一处，使用channel的percentage成员 |
+| OutgoingQueue::SendPackets | 0x7f915c/0x7f9cf8/0x7fc3bc | 0xcc9644/0xcca0f4/0xccc6c8 | 各三处，分别来自FEC初发、Channel::Update、Connection::Update；周期调用不等于有生产者入队 |
+
+core的SetStreamingClientConfig另有13处直接/尾调用，地址及真实调用者完整记录在
+fixture，与§32.4的Init、桌面/窗口事件、缩放、分辨率、性能浮层、麦克风和player
+delegate范围一致。shell没有该core类的导出入口；其FEC设置/推荐链仍由§32的
+原函数案例提供证据，不能用“没有这个同名方法”否定shell已有产品入口。
+
+【原始指令复播】两份库各从完整Connection构造入口执行，预先将+8…+15填为
+0xa5。实际内存写hook捕获构造清零+8的4B写入，+11变为0。随后分别传入
+percentage=0、5、20、50、100、-1、INT_MAX、INT_MIN，执行原setter及原
+Connection::SendUnreliable：setter仅保存原32位值，正常构造的gate始终为0，
+都选择普通发送终点。每例再**显式注入gate=1作为能力对照**，重复setter/send，
+才选择FEC终点。16例均直接观察gate内存写与终点；没有用观察者公式生成结果。
+
+该复播的socket注册、时间、mutex、GetChannel及两个最终channel发送终点为
+adapter；Ping/TimeOffset/Bitrate/PacketStats构造及Connection本体执行原指令。
+连接状态1是受控前置条件，没有声称重演完整协商。GetChannel返回受控channel
+存储，因此这组案例不替代§34的真实channel工厂或§26的非空RS/队列案例。
+极端percentage只验证setter没有clamp，不是建议发送这些值，更不是官方产品
+选择这些值的证据。强制gate分支只能证明能力，不能冒称触发条件已经找到。
+
+【结论】官方客户端**请求对端视频FEC**的产品策略，依据仍是§32的手动配置、
+预设、网络测试结果及用户确认，再经完整配置字段25进入协商/99；接收类型11
+也不要求本机outgoing gate为1。客户端**自身上行FEC**另受connection+11和
+channel percentage控制，不能把发送实现、周期空队列调用或Host的赋值直接
+当作客户端开启策略。此处没有新增“丢包达到阈值自动开FEC”或固定percentage。
+
+【范围】静态扫描只覆盖这两个固定ELF内的直接B/BL与指定动态重定位，不覆盖
+任意间接调用、dlsym、其他库/版本、指针别名或内联写入。未见直接调用不能
+改写为“永远不启用”；本节不以缺少调用者证明全局不可达，也不证明整段
+产品状态机、非空上行producer或真实Steam/Switch行为等价。
+
+```sh
+python3 scripts/audit-steam-client-fec-entry.py \
+  --core /data/dl/nsteamlink/build/video-recovery-re/libmain-arm64.so \
+  --shell /data/dl/nsteamlink/build/video-recovery-re/libshell-arm64.so \
+  --output /tmp/steam-client-fec-entry.json
+```
+
+脚本只读核验`steam-client-fec-entry-reference.json`；更新fixture必须显式传入
+`--refresh-reference`，已有结果仍要求完全一致。它是官方客户端来源审计，不是
+Native互操作或设备测试。
