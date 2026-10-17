@@ -5434,7 +5434,24 @@ Base锁，应用回调另创建/join能取得Base的线程，验证join/通知�
 【范围】AES/HMAC primitive、平台mutex/refcount、wait/read/final IO、decoder/input
 析构本体、StreamTransport Update为明确adapter；Starting/Streaming分支本体沿用
 独立证据，本组只观测它们的选择。Source NetworkStats Stop/结果/保存是Source-only
-hook，未把它们说成Native已具有相同评分/文件输出；client+19等未建模字段及完整
+hook，未把它们说成Native已具有相同评分/文件输出；client暂停标记的组合清理及完整
 ResetConnection的录制输入、pending媒体、复用状态也不由本节验收。全局producer/
 RemoteHID交错、真实decoder/资源、非空上行FEC启用、统计Start/Stop评分及真实
 Steam/Switch仍须各自证据。本节不证明用户一两秒停顿或菜单闪烁的根因。
+
+
+### 66.3 client+19暂停标记的清理更正
+
+【撤回与证据】原§66及Issue中将client+19笼统列为未知/未建模字段的说法不准确。
+Pause @0x7b02d8/0x7b0338和Resume @0x7b03a0/0x7b0420明确读取/写入它，它就是
+§29/34的clientPaused。OnStreamDisconnected的client6→7分支在0x7b0154清零此标记；
+其他受控client阶段仅回0，不在该分支清它。ResetConnection @0x7a52e8也清零。
+这个client标记与Connection+8的paused租约选择字节保持分立，不能通过Resume来
+伪造关闭清理，从而额外发送123/DataLost或刷新echo。
+
+在原96例之后追加CRC×timeout/type9/先closing再Think的6例paused输入，原96例
+逐状态不变，共102例306状态、150份wire。明确比较入口clientPaused/connectionPaused
+都为true；client6→7清clientPaused，connectionPaused仍true，未生成Resume或DataLost。
+Native16次实际worker场景同时检查retire时清client暂停标记，以及本地取消在player
+通知时仍保留它、到owner Close/Reset收尾后才清零。暂停时完整媒体帧的准入与解码
+调度不由这6个控制/关闭案例推定等价，须按OnStreamPacket自己的数据路径核对。

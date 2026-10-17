@@ -25,9 +25,10 @@ def main():
     for case in cases:
         i = case["input"]
         lines = [f"P {p[2]} {p[5]} {p[6]}" for p in i["controls"]] + ["N"]
+        boundary = 1000000 + (180 if i.get("paused") else 15) * 65536
         lines += [
-            f"B {1000000 + 15 * 65536} {dict(timeout=0, peer=1, retire=2)[i['action']]}",
-            f"B {1000000 + 15 * 65536 + 200} 0",
+            f"B {boundary} {dict(timeout=0, peer=1, retire=2)[i['action']]}",
+            f"B {boundary + 200} 0",
         ]
         r = subprocess.run(
             [
@@ -35,6 +36,7 @@ def main():
                 str(i["phase"]),
                 str(i["mask"]),
                 str(int(i["crc"])),
+                *(["1"] if i.get("paused") else []),
             ],
             input="\n".join(lines) + "\n",
             capture_output=True,

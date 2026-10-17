@@ -13601,6 +13601,796 @@
         ],
         []
       ]
+    },
+    {
+      "input": {
+        "name": "paused_timeout_crc0",
+        "mask": 7,
+        "phase": 6,
+        "crc": false,
+        "paused": true,
+        "action": "timeout",
+        "controls": [
+          [
+            5,
+            1,
+            0,
+            0,
+            0,
+            900000,
+            "635418d919e29e2dfb001a6ef6b93dc3355119d998964fb7d919e934699bc50c731c73c913611734c587af96a2eab962cf",
+            0,
+            0
+          ]
+        ],
+        "bodies": [
+          "0a0630b960c80101"
+        ]
+      },
+      "before": {
+        "client": 6,
+        "transport": 1,
+        "queue": [
+          {
+            "type": 99,
+            "body": "0a0630b960c80101",
+            "sent": 900000,
+            "receive": 1000000
+          }
+        ],
+        "events": [],
+        "config": "",
+        "sequence": 1,
+        "actions": [],
+        "audio": true,
+        "video": true,
+        "audio_id": 3,
+        "video_id": 4,
+        "local": 12,
+        "peer": 34,
+        "wires": [],
+        "config_events": [],
+        "client_paused": true,
+        "connection_paused": true
+      },
+      "observed": [
+        {
+          "client": 6,
+          "transport": 2,
+          "queue": [],
+          "events": [
+            {
+              "type": 99,
+              "body": "0a0630b960c80101",
+              "sent": 900000,
+              "receive": 1000000,
+              "phase": "drain"
+            }
+          ],
+          "config": "30b960c80101",
+          "sequence": 1,
+          "actions": [
+            "control_99",
+            "config_notify",
+            "config_save",
+            "streaming"
+          ],
+          "audio": true,
+          "video": true,
+          "audio_id": 3,
+          "video_id": 4,
+          "local": 12,
+          "peer": 34,
+          "wires": [
+            "09000c2200000000004042c300"
+          ],
+          "config_events": [
+            {
+              "kind": "notify",
+              "wire": "30b960c80101",
+              "local_only": true
+            },
+            {
+              "kind": "save",
+              "wire": "30b960c80101"
+            }
+          ],
+          "client_paused": true,
+          "connection_paused": true
+        },
+        {
+          "client": 0,
+          "transport": 3,
+          "queue": [],
+          "events": [],
+          "config": "30b960c80101",
+          "sequence": 1,
+          "actions": [
+            "transport_closed",
+            "stopping",
+            "audio_stop",
+            "audio_destroy",
+            "video_stop",
+            "video_destroy",
+            "player_stopped",
+            "input_destroy"
+          ],
+          "audio": false,
+          "video": false,
+          "audio_id": 0,
+          "video_id": 0,
+          "local": 12,
+          "peer": 0,
+          "wires": [],
+          "config_events": [],
+          "client_paused": false,
+          "connection_paused": true
+        }
+      ],
+      "source_stats": [
+        [],
+        [
+          "stop",
+          "save"
+        ]
+      ]
+    },
+    {
+      "input": {
+        "name": "paused_peer_crc0",
+        "mask": 7,
+        "phase": 6,
+        "crc": false,
+        "paused": true,
+        "action": "peer",
+        "controls": [
+          [
+            5,
+            1,
+            0,
+            0,
+            0,
+            900000,
+            "635418d919e29e2dfb001a6ef6b93dc3355119d998964fb7d919e934699bc50c731c73c913611734c587af96a2eab962cf",
+            0,
+            0
+          ]
+        ],
+        "bodies": [
+          "0a0630b960c80101"
+        ]
+      },
+      "before": {
+        "client": 6,
+        "transport": 1,
+        "queue": [
+          {
+            "type": 99,
+            "body": "0a0630b960c80101",
+            "sent": 900000,
+            "receive": 1000000
+          }
+        ],
+        "events": [],
+        "config": "",
+        "sequence": 1,
+        "actions": [],
+        "audio": true,
+        "video": true,
+        "audio_id": 3,
+        "video_id": 4,
+        "local": 12,
+        "peer": 34,
+        "wires": [],
+        "config_events": [],
+        "client_paused": true,
+        "connection_paused": true
+      },
+      "observed": [
+        {
+          "client": 0,
+          "transport": 3,
+          "queue": [],
+          "events": [
+            {
+              "type": 99,
+              "body": "0a0630b960c80101",
+              "sent": 900000,
+              "receive": 1000000,
+              "phase": "drain"
+            }
+          ],
+          "config": "30b960c80101",
+          "sequence": 1,
+          "actions": [
+            "transport_closed",
+            "control_99",
+            "config_notify",
+            "config_save",
+            "stopping",
+            "audio_stop",
+            "audio_destroy",
+            "video_stop",
+            "video_destroy",
+            "player_stopped",
+            "input_destroy"
+          ],
+          "audio": false,
+          "video": false,
+          "audio_id": 0,
+          "video_id": 0,
+          "local": 12,
+          "peer": 0,
+          "wires": [
+            "09000c2200000000004042c300"
+          ],
+          "config_events": [
+            {
+              "kind": "notify",
+              "wire": "30b960c80101",
+              "local_only": true
+            },
+            {
+              "kind": "save",
+              "wire": "30b960c80101"
+            }
+          ],
+          "client_paused": false,
+          "connection_paused": true
+        },
+        {
+          "client": 0,
+          "transport": 3,
+          "queue": [],
+          "events": [],
+          "config": "30b960c80101",
+          "sequence": 1,
+          "actions": [],
+          "audio": false,
+          "video": false,
+          "audio_id": 0,
+          "video_id": 0,
+          "local": 12,
+          "peer": 0,
+          "wires": [],
+          "config_events": [],
+          "client_paused": false,
+          "connection_paused": true
+        }
+      ],
+      "source_stats": [
+        [
+          "stop",
+          "save"
+        ],
+        []
+      ]
+    },
+    {
+      "input": {
+        "name": "paused_retire_crc0",
+        "mask": 7,
+        "phase": 6,
+        "crc": false,
+        "paused": true,
+        "action": "retire",
+        "controls": [
+          [
+            5,
+            1,
+            0,
+            0,
+            0,
+            900000,
+            "635418d919e29e2dfb001a6ef6b93dc3355119d998964fb7d919e934699bc50c731c73c913611734c587af96a2eab962cf",
+            0,
+            0
+          ]
+        ],
+        "bodies": [
+          "0a0630b960c80101"
+        ]
+      },
+      "before": {
+        "client": 6,
+        "transport": 1,
+        "queue": [
+          {
+            "type": 99,
+            "body": "0a0630b960c80101",
+            "sent": 900000,
+            "receive": 1000000
+          }
+        ],
+        "events": [],
+        "config": "",
+        "sequence": 1,
+        "actions": [],
+        "audio": true,
+        "video": true,
+        "audio_id": 3,
+        "video_id": 4,
+        "local": 12,
+        "peer": 34,
+        "wires": [],
+        "config_events": [],
+        "client_paused": true,
+        "connection_paused": true
+      },
+      "observed": [
+        {
+          "client": 0,
+          "transport": 3,
+          "queue": [],
+          "events": [
+            {
+              "type": 99,
+              "body": "0a0630b960c80101",
+              "sent": 900000,
+              "receive": 1000000,
+              "phase": "drain"
+            }
+          ],
+          "config": "30b960c80101",
+          "sequence": 1,
+          "actions": [
+            "transport_closed",
+            "control_99",
+            "config_notify",
+            "config_save",
+            "stopping",
+            "audio_stop",
+            "audio_destroy",
+            "video_stop",
+            "video_destroy",
+            "player_stopped",
+            "input_destroy"
+          ],
+          "audio": false,
+          "video": false,
+          "audio_id": 0,
+          "video_id": 0,
+          "local": 12,
+          "peer": 0,
+          "wires": [
+            "09000c2200000000004042c300"
+          ],
+          "config_events": [
+            {
+              "kind": "notify",
+              "wire": "30b960c80101",
+              "local_only": true
+            },
+            {
+              "kind": "save",
+              "wire": "30b960c80101"
+            }
+          ],
+          "client_paused": false,
+          "connection_paused": true
+        },
+        {
+          "client": 0,
+          "transport": 3,
+          "queue": [],
+          "events": [],
+          "config": "30b960c80101",
+          "sequence": 1,
+          "actions": [],
+          "audio": false,
+          "video": false,
+          "audio_id": 0,
+          "video_id": 0,
+          "local": 12,
+          "peer": 0,
+          "wires": [],
+          "config_events": [],
+          "client_paused": false,
+          "connection_paused": true
+        }
+      ],
+      "source_stats": [
+        [
+          "stop",
+          "save"
+        ],
+        []
+      ]
+    },
+    {
+      "input": {
+        "name": "paused_timeout_crc1",
+        "mask": 7,
+        "phase": 6,
+        "crc": true,
+        "paused": true,
+        "action": "timeout",
+        "controls": [
+          [
+            5,
+            1,
+            0,
+            0,
+            0,
+            900000,
+            "635418d919e29e2dfb001a6ef6b93dc3355119d998964fb7d919e934699bc50c731c73c913611734c587af96a2eab962cf",
+            0,
+            0
+          ]
+        ],
+        "bodies": [
+          "0a0630b960c80101"
+        ]
+      },
+      "before": {
+        "client": 6,
+        "transport": 1,
+        "queue": [
+          {
+            "type": 99,
+            "body": "0a0630b960c80101",
+            "sent": 900000,
+            "receive": 1000000
+          }
+        ],
+        "events": [],
+        "config": "",
+        "sequence": 1,
+        "actions": [],
+        "audio": true,
+        "video": true,
+        "audio_id": 3,
+        "video_id": 4,
+        "local": 12,
+        "peer": 34,
+        "wires": [],
+        "config_events": [],
+        "client_paused": true,
+        "connection_paused": true
+      },
+      "observed": [
+        {
+          "client": 6,
+          "transport": 2,
+          "queue": [],
+          "events": [
+            {
+              "type": 99,
+              "body": "0a0630b960c80101",
+              "sent": 900000,
+              "receive": 1000000,
+              "phase": "drain"
+            }
+          ],
+          "config": "30b960c80101",
+          "sequence": 1,
+          "actions": [
+            "control_99",
+            "config_notify",
+            "config_save",
+            "streaming"
+          ],
+          "audio": true,
+          "video": true,
+          "audio_id": 3,
+          "video_id": 4,
+          "local": 12,
+          "peer": 34,
+          "wires": [
+            "89000c2200000000004042c3004fd73573"
+          ],
+          "config_events": [
+            {
+              "kind": "notify",
+              "wire": "30b960c80101",
+              "local_only": true
+            },
+            {
+              "kind": "save",
+              "wire": "30b960c80101"
+            }
+          ],
+          "client_paused": true,
+          "connection_paused": true
+        },
+        {
+          "client": 0,
+          "transport": 3,
+          "queue": [],
+          "events": [],
+          "config": "30b960c80101",
+          "sequence": 1,
+          "actions": [
+            "transport_closed",
+            "stopping",
+            "audio_stop",
+            "audio_destroy",
+            "video_stop",
+            "video_destroy",
+            "player_stopped",
+            "input_destroy"
+          ],
+          "audio": false,
+          "video": false,
+          "audio_id": 0,
+          "video_id": 0,
+          "local": 12,
+          "peer": 0,
+          "wires": [],
+          "config_events": [],
+          "client_paused": false,
+          "connection_paused": true
+        }
+      ],
+      "source_stats": [
+        [],
+        [
+          "stop",
+          "save"
+        ]
+      ]
+    },
+    {
+      "input": {
+        "name": "paused_peer_crc1",
+        "mask": 7,
+        "phase": 6,
+        "crc": true,
+        "paused": true,
+        "action": "peer",
+        "controls": [
+          [
+            5,
+            1,
+            0,
+            0,
+            0,
+            900000,
+            "635418d919e29e2dfb001a6ef6b93dc3355119d998964fb7d919e934699bc50c731c73c913611734c587af96a2eab962cf",
+            0,
+            0
+          ]
+        ],
+        "bodies": [
+          "0a0630b960c80101"
+        ]
+      },
+      "before": {
+        "client": 6,
+        "transport": 1,
+        "queue": [
+          {
+            "type": 99,
+            "body": "0a0630b960c80101",
+            "sent": 900000,
+            "receive": 1000000
+          }
+        ],
+        "events": [],
+        "config": "",
+        "sequence": 1,
+        "actions": [],
+        "audio": true,
+        "video": true,
+        "audio_id": 3,
+        "video_id": 4,
+        "local": 12,
+        "peer": 34,
+        "wires": [],
+        "config_events": [],
+        "client_paused": true,
+        "connection_paused": true
+      },
+      "observed": [
+        {
+          "client": 0,
+          "transport": 3,
+          "queue": [],
+          "events": [
+            {
+              "type": 99,
+              "body": "0a0630b960c80101",
+              "sent": 900000,
+              "receive": 1000000,
+              "phase": "drain"
+            }
+          ],
+          "config": "30b960c80101",
+          "sequence": 1,
+          "actions": [
+            "transport_closed",
+            "control_99",
+            "config_notify",
+            "config_save",
+            "stopping",
+            "audio_stop",
+            "audio_destroy",
+            "video_stop",
+            "video_destroy",
+            "player_stopped",
+            "input_destroy"
+          ],
+          "audio": false,
+          "video": false,
+          "audio_id": 0,
+          "video_id": 0,
+          "local": 12,
+          "peer": 0,
+          "wires": [
+            "89000c2200000000004042c3004fd73573"
+          ],
+          "config_events": [
+            {
+              "kind": "notify",
+              "wire": "30b960c80101",
+              "local_only": true
+            },
+            {
+              "kind": "save",
+              "wire": "30b960c80101"
+            }
+          ],
+          "client_paused": false,
+          "connection_paused": true
+        },
+        {
+          "client": 0,
+          "transport": 3,
+          "queue": [],
+          "events": [],
+          "config": "30b960c80101",
+          "sequence": 1,
+          "actions": [],
+          "audio": false,
+          "video": false,
+          "audio_id": 0,
+          "video_id": 0,
+          "local": 12,
+          "peer": 0,
+          "wires": [],
+          "config_events": [],
+          "client_paused": false,
+          "connection_paused": true
+        }
+      ],
+      "source_stats": [
+        [
+          "stop",
+          "save"
+        ],
+        []
+      ]
+    },
+    {
+      "input": {
+        "name": "paused_retire_crc1",
+        "mask": 7,
+        "phase": 6,
+        "crc": true,
+        "paused": true,
+        "action": "retire",
+        "controls": [
+          [
+            5,
+            1,
+            0,
+            0,
+            0,
+            900000,
+            "635418d919e29e2dfb001a6ef6b93dc3355119d998964fb7d919e934699bc50c731c73c913611734c587af96a2eab962cf",
+            0,
+            0
+          ]
+        ],
+        "bodies": [
+          "0a0630b960c80101"
+        ]
+      },
+      "before": {
+        "client": 6,
+        "transport": 1,
+        "queue": [
+          {
+            "type": 99,
+            "body": "0a0630b960c80101",
+            "sent": 900000,
+            "receive": 1000000
+          }
+        ],
+        "events": [],
+        "config": "",
+        "sequence": 1,
+        "actions": [],
+        "audio": true,
+        "video": true,
+        "audio_id": 3,
+        "video_id": 4,
+        "local": 12,
+        "peer": 34,
+        "wires": [],
+        "config_events": [],
+        "client_paused": true,
+        "connection_paused": true
+      },
+      "observed": [
+        {
+          "client": 0,
+          "transport": 3,
+          "queue": [],
+          "events": [
+            {
+              "type": 99,
+              "body": "0a0630b960c80101",
+              "sent": 900000,
+              "receive": 1000000,
+              "phase": "drain"
+            }
+          ],
+          "config": "30b960c80101",
+          "sequence": 1,
+          "actions": [
+            "transport_closed",
+            "control_99",
+            "config_notify",
+            "config_save",
+            "stopping",
+            "audio_stop",
+            "audio_destroy",
+            "video_stop",
+            "video_destroy",
+            "player_stopped",
+            "input_destroy"
+          ],
+          "audio": false,
+          "video": false,
+          "audio_id": 0,
+          "video_id": 0,
+          "local": 12,
+          "peer": 0,
+          "wires": [
+            "89000c2200000000004042c3004fd73573"
+          ],
+          "config_events": [
+            {
+              "kind": "notify",
+              "wire": "30b960c80101",
+              "local_only": true
+            },
+            {
+              "kind": "save",
+              "wire": "30b960c80101"
+            }
+          ],
+          "client_paused": false,
+          "connection_paused": true
+        },
+        {
+          "client": 0,
+          "transport": 3,
+          "queue": [],
+          "events": [],
+          "config": "30b960c80101",
+          "sequence": 1,
+          "actions": [],
+          "audio": false,
+          "video": false,
+          "audio_id": 0,
+          "video_id": 0,
+          "local": 12,
+          "peer": 0,
+          "wires": [],
+          "config_events": [],
+          "client_paused": false,
+          "connection_paused": true
+        }
+      ],
+      "source_stats": [
+        [
+          "stop",
+          "save"
+        ],
+        []
+      ]
     }
   ]
 }

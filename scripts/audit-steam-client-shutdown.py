@@ -42,9 +42,12 @@ class Shutdown(network.Network):
     construct_frame = handoff.Handoff.construct_frame
     observe_handoff = handoff.Handoff.observe_handoff
 
-    def __init__(self, binary, phase, mask, crc):
+    def __init__(self, binary, phase, mask, crc, paused=False):
         super().__init__(binary, crc)
         self.init_handoff(phase)
+        self.track_paused = paused
+        self.b(c.CLIENT + 19, int(paused))
+        self.b(self.connection + 8, int(paused))
         self.call(self.symbols["_ZN17CUtlQueueBaseImplC2Ej"], c.CLIENT + 816, 8)
         self.actions = []
         self.source_stats = []
@@ -142,7 +145,7 @@ class Shutdown(network.Network):
 
     def snapshot(self):
         h = self.observe_handoff()
-        return dict(
+        result = dict(
             client=h["state"],
             transport=self.i(self.connection + 16),
             queue=h["queue"],
@@ -166,6 +169,13 @@ class Shutdown(network.Network):
                 for k, p, b in self.config_events
             ],
         )
+
+        if self.track_paused:
+            result["client_paused"] = bool(self.u.mem_read(c.CLIENT + 19, 1)[0])
+            result["connection_paused"] = bool(
+                self.u.mem_read(self.connection + 8, 1)[0]
+            )
+        return result
 
 
 def schedules(binary):
@@ -210,6 +220,28 @@ def schedules(binary):
                             bodies=[b.hex() for b in bodies[:count]],
                         )
                     )
+    for crc in (False, True):
+        for action in ("timeout", "peer", "retire"):
+            controls = [
+                network.cycle.packet(
+                    0,
+                    kind=5,
+                    channel=1,
+                    payload=handoff.ciphertext(99, bodies[0], sequence=0),
+                )
+            ]
+            cases.append(
+                dict(
+                    name=f"paused_{action}_crc{int(crc)}",
+                    mask=7,
+                    phase=6,
+                    crc=crc,
+                    paused=True,
+                    action=action,
+                    controls=controls,
+                    bodies=[bodies[0].hex()],
+                )
+            )
     return cases
 
 
@@ -217,7 +249,9 @@ def audit(binary):
     assert hashlib.sha256(binary).hexdigest() == c.SHA
     cases = []
     for inp in schedules(binary):
-        r = Shutdown(binary, inp["phase"], inp["mask"], inp["crc"])
+        r = Shutdown(
+            binary, inp["phase"], inp["mask"], inp["crc"], inp.get("paused", False)
+        )
         r.phase = "drain"
         r.wi(r.connection + 52, 1000000)
         r.wi(r.connection + 56, 1000000)
@@ -235,7 +269,7 @@ def audit(binary):
         r.wires.clear()
         r.events.clear()
         r.wi(r.connection + 52, 1000000)
-        r.now = 1000000 + 15 * 65536
+        r.now = 1000000 + (180 if inp.get("paused") else 15) * 65536
         r.prepare(
             [network.cycle.packet(0, kind=9, channel=0, payload="00")]
             if inp["action"] == "peer"
@@ -283,6 +317,9 @@ def audit(binary):
         assert stopping["actions"] == expected, (inp["name"], stopping["actions"])
         assert stopping["client"] == 0 and stopping["transport"] == 3
         assert len(before["queue"]) == len(inp["controls"]) and not stopping["queue"]
+        if inp.get("paused"):
+            assert before["client_paused"] and before["connection_paused"]
+            assert not stopping["client_paused"] and stopping["connection_paused"]
         assert source_stats[0 if inp["action"] in ("peer", "retire") else 1] == [
             "stop",
             "save",
