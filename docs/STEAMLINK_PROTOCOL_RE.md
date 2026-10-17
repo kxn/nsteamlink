@@ -3819,8 +3819,9 @@ socket脱离。周期sender和初发交付在同锁内检查状态，queue/整�
 Socket入口拒绝发送；退休保留不可变host配置，用addressCleared表示连接地址已清。
 `connection_id.c`实现进程内非零递增分配，初始Connect和退休分别消费ID。
 
-接收超时/type9调用TransportDisconnect；下一receive Update在清ID之前通知应用、
-退休并interrupt。主动SessionDisconnect选择Client Close语义，同步尝试一次goodbye
+接收超时/type9调用TransportDisconnect；下一Connection Update在清ID之前通知
+client连接delegate并退休。随后client队列/Stopping与应用完成通知按§66分层，撤回
+此处原先“立即通知应用并interrupt”的实现映射。主动SessionDisconnect选择Client Close语义，同步尝试一次goodbye
 并停止现有worker；应用回调在finalized通知一次。无worker的项目API回调可以同步
 发出，它是应用收尾通知，不能冒充被Close清除的官方transport delegate。
 finalized不持Base/socket/timer锁停止heartbeat、join sender；Destroy再停止/join
@@ -5345,8 +5346,8 @@ client阶段：受控state6进入7，0/2/7入口结果为0。回调保存transpo
 原OnThink @0x7a60c0–0x7a60d0在network/transport Update后直接调用
 HandleIncomingPackets，再于0x7a6134–0x7a616c按client阶段选择Starting/Streaming/
 Stopping。这里没有用transport state2/3跳过已经排队的控制消息；dispatcher按§63
-自己的client状态表选择。Native DrainIncoming现有shutdown==0保护，不能外推为
-官方正常closing的队列消费规则。§63的该项本地保护也不证明超时/对端断连与上层
+自己的client状态表选择。§65对应实现曾有Native DrainIncoming的shutdown==0保护，不能外推为
+官方正常closing的队列消费规则；§66撤回该过滤并接通客户端阶段。§63的该项本地保护也不证明超时/对端断连与上层
 Stopping的组合等价；本节Source-only关闭阶段与上述原指令顺序明确限定这一边界。
 
 
@@ -5355,3 +5356,85 @@ Stopping的组合等价；本节Source-only关闭阶段与上述原指令顺序�
 轮的queued control消费/后续client阶段、完整Stopping/Close/通知锁关系、全局所有
 producer/RemoteHID交错、早到媒体、decoder、FEC实际启用、统计评分及真实Steam/
 Switch会话不在本节等价结论内。本节没有把15/180秒租约解释为用户所见一两秒停顿。
+
+## 66. 连接关闭、已拥有的控制队列与客户端Stopping
+
+【官方客户端证据】仍为§24.1固定SHA。OnThink @0x7a5ff8先处理network及
+StreamTransport Update，0x7a60d0调用HandleIncomingPackets，然后才在
+0x7a6134–0x7a616c选择client阶段。不能用transport closing/closed替代客户端
+消息准入：已排队的99在client6或7仍进入通用dispatcher。新Frame的OnStreamPacket
+只以client0/7拒绝，接收入口本身没有transport2/3判断；后者是函数边界结论，
+不证明任意transport/client组合均可从正常网络到达。
+
+OnStreamDisconnected @0x7b00d0在原连接delegate回调中将client6设为7，其他
+受控client阶段设0；随后Connection::Update才清peer并重新分配local ID。
+HandleStreamStopping @0x7a7238的顺序为音频OnStreamStopped/析构、视频
+OnStreamStopped/析构、player delegate、input析构、NetworkStats Stop/结果/保存，
+最后client设0；625/626的媒体ID也清零。该函数**不调用Close或ResetConnection**。
+原CStreamPlayer::OnStreamStopped @0x7b76e4为ret，本节直接执行它。主动
+CStreamClient::Disconnect @0x7a7acc则先Connection Disconnect，client6/7时
+执行Stopping，再ResetConnection/Close；后者才清队列和连接对象引用。
+
+触发时机也需区分：租约到期在Connection Update的通道扫描末尾发生，下一次
+Connection Update才通知client；type9若在Socket Read中触发Disconnect，紧接着
+本批次的Connection Update已经能执行该通知。因此不能将两者都说成“下一次
+Socket收包循环才停止”，更不能在连接delegate中立即中断client队列消费。
+
+### 66.1 Native阶段、通知和所有权
+
+【更正】撤回§40/65实现说明中将应用disconnected callback当成原连接delegate、
+要求应用在该回调中观察旧ID的映射。连接delegate由独立
+IHS_SessionClientTransportClosed表示，在清ID之前变更client阶段；应用完成通知
+在Stopping中停止并join音频/视频后发出，随后停止输入，client回0。连接原语
+oracle现观测真实delegate边界，原wire、旧ID时序和退休结果不因错误的应用映射
+而放宽。前Streaming失败的应用完成通知仍是项目API扩展，单列为收尾机制。
+
+TransportFinish不再提前interrupt。SessionUpdateAt在本轮network/timeout之后，
+即使transport已2/3仍消费已有队列，再选择client阶段。Control Frame和Drain的
+shutdown==0过滤均撤回，改以client表及明确的本地interrupt/detached保护；正常
+closing不是本地取消。原0/7拒绝新Frame，与允许先前已排队的消息继续消费，两者
+保持独立。配置99仍按完整值替换、通知、保存，不因关闭而合并或丢掉FEC字段。
+
+Stopping通过原有消费者remove路径按audio→video stop/join/destroy，在Base和
+incoming锁外执行；播放器完成通知之后再CloseAll输入设备。它不发送StopRequest、
+重连或额外goodbye。会话owner结束时执行自己的Close/清队列/最终退休，这是平台
+会话所有权收尾，不能冒称原Stopping内部调用了Close。
+
+有RX owner时，外部/decoder线程的Interrupt只发布退出和唤醒初发队列，不并发
+遍历可能正被remove/free的消费者表。RX finalized按阶段停止并join消费者，再
+停止剩余channels、关闭输入和连接。主动SessionDisconnect先尝试一次goodbye，
+发布closeRequested，由RX owner在消费者停止后Close/清队列；无RX owner的独立
+取消API保留自身关闭保护，不以它证明完整原版UI/decoder调用栈相同。
+
+### 66.2 原指令组合对照与实际线程验证
+
+`audit-steam-client-shutdown.py`运行原Socket CRC/真实可靠窗口、实际控制
+OnStreamPacket/Frame解密/队列、OnThink、Connection Disconnect/退休、client
+OnStreamDisconnected、config99解析/复制及完整HandleStreamStopping控制流。
+96例288状态覆盖CRC开关、timeout/type9/已进入closing后再OnThink三种触发、
+单份FEC=true配置及连续true→false配置、audio/video/input八种有无组合。
+144次控制consumer、288次配置通知/保存及144份完整wire与Native一致；媒体ID、
+阶段、接收序号、队列body/顺序、完整配置与各动作相对位置逐项比较。
+
+初始受控network步骤先将完整控制帧交给client owned队列，再让OnThink执行关闭，
+模拟网络与主阶段之间的交付边界；它不是一个Source OS线程调度测量。每例明确
+断言关闭时是否仍应在本轮消费99、先后stop/destroy及仅一次Stopping；原日志队列
+也经真实ctor初始化，不将未初始化的零索引当作有效待发送日志。55例handoff参考
+保留原53例不变，再加transport2/3的两个assembled-Frame边界，防止在接收入口又
+引入同类隐含guard。这两个输入不冒称其carrier一定可由正常UI触发。
+
+Native真实RX/initial-send/audio/video worker测试按CRC×四个场景各连续两次，共
+16次：closing后消费配置、消费前退休至7、audio停止期间decoder请求取消、主动
+本地取消保留消息直到Close后丢弃。前两者先通知/保存配置，再audio/video stop并
+join，最后应用通知；本地取消不执行queued配置。两个实际data worker退出时取得
+Base锁，应用回调另创建/join能取得Base的线程，验证join/通知不持Base；callback
+还核对已无媒体消费者、通知仅一次、goodbye仅一次，随后owner join/destroy。
+恢复shutdown过滤的mutation会因缺少配置通知/保存而失败。
+
+【范围】AES/HMAC primitive、平台mutex/refcount、wait/read/final IO、decoder/input
+析构本体、StreamTransport Update为明确adapter；Starting/Streaming分支本体沿用
+独立证据，本组只观测它们的选择。Source NetworkStats Stop/结果/保存是Source-only
+hook，未把它们说成Native已具有相同评分/文件输出；client+19等未建模字段及完整
+ResetConnection的录制输入、pending媒体、复用状态也不由本节验收。全局producer/
+RemoteHID交错、真实decoder/资源、非空上行FEC启用、统计Start/Stop评分及真实
+Steam/Switch仍须各自证据。本节不证明用户一两秒停顿或菜单闪烁的根因。

@@ -265820,6 +265820,132 @@
         }
       ],
       "source_assertions": []
+    },
+    {
+      "input": {
+        "name": "transport_2_frame_boundary",
+        "state": 6,
+        "actions": [
+          [
+            "T",
+            2
+          ],
+          [
+            "R",
+            900000,
+            1000000,
+            "6394b6ba2de4ff6bc65e5d1146aa370c8d8576e039e77e4c423939d0a4bf60de605e985ca570b3edb46ed337d753c0da66"
+          ],
+          [
+            "D"
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "receive_sequence": 0,
+          "queue": [],
+          "events": [],
+          "negotiated": "",
+          "client_config": ""
+        },
+        {
+          "state": 6,
+          "receive_sequence": 1,
+          "queue": [
+            {
+              "type": 99,
+              "body": "0a0630e05dc80101",
+              "sent": 900000,
+              "receive": 1000000
+            }
+          ],
+          "events": [],
+          "negotiated": "",
+          "client_config": ""
+        },
+        {
+          "state": 6,
+          "receive_sequence": 1,
+          "queue": [],
+          "events": [
+            {
+              "type": 99,
+              "body": "0a0630e05dc80101",
+              "sent": 900000,
+              "receive": 1000000,
+              "phase": "drain"
+            }
+          ],
+          "negotiated": "",
+          "client_config": "30e05dc80101"
+        }
+      ],
+      "source_assertions": []
+    },
+    {
+      "input": {
+        "name": "transport_3_frame_boundary",
+        "state": 6,
+        "actions": [
+          [
+            "T",
+            3
+          ],
+          [
+            "R",
+            900000,
+            1000000,
+            "6394b6ba2de4ff6bc65e5d1146aa370c8d8576e039e77e4c423939d0a4bf60de605e985ca570b3edb46ed337d753c0da66"
+          ],
+          [
+            "D"
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "receive_sequence": 0,
+          "queue": [],
+          "events": [],
+          "negotiated": "",
+          "client_config": ""
+        },
+        {
+          "state": 6,
+          "receive_sequence": 1,
+          "queue": [
+            {
+              "type": 99,
+              "body": "0a0630e05dc80101",
+              "sent": 900000,
+              "receive": 1000000
+            }
+          ],
+          "events": [],
+          "negotiated": "",
+          "client_config": ""
+        },
+        {
+          "state": 6,
+          "receive_sequence": 1,
+          "queue": [],
+          "events": [
+            {
+              "type": 99,
+              "body": "0a0630e05dc80101",
+              "sent": 900000,
+              "receive": 1000000,
+              "phase": "drain"
+            }
+          ],
+          "negotiated": "",
+          "client_config": "30e05dc80101"
+        }
+      ],
+      "source_assertions": []
     }
   ],
   "empty_carriers": [

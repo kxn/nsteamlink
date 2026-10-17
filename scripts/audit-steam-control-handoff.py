@@ -42,6 +42,10 @@ HANDLERS = {
 class Handoff(stats.Stats):
     def __init__(self, binary, state):
         super().__init__(binary)
+        self.init_handoff(state)
+
+    def init_handoff(self, state):
+        """Initialize real client queues/crypto on an existing network runner."""
         self.events, self.phase = [], "receive"
         self.wi(config.CLIENT + 256, state)
         self.call(self.symbols["_ZN17CNegotiatedConfigC1Ev"], config.CLIENT + 288)
@@ -313,6 +317,18 @@ def schedules(binary):
             ],
         )
     )
+    for transport in (2, 3):
+        cases.append(
+            dict(
+                name=f"transport_{transport}_frame_boundary",
+                state=6,
+                actions=[
+                    ["T", transport],
+                    ["R", 900000, 1000000, ciphertext(99, fec_config, 0)],
+                    ["D"],
+                ],
+            )
+        )
     return cases
 
 
@@ -328,6 +344,8 @@ def audit(binary):
                 r.receive(*action[1:])
             elif action[0] == "S":
                 r.wi(config.CLIENT + 256, action[1])
+            elif action[0] == "T":
+                r.wi(r.connection + 16, action[1])
             else:
                 try:
                     r.call(0x7A6368, config.CLIENT)
