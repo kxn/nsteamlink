@@ -52,7 +52,7 @@ class Network(cycle.Cycle):
         super().write()
         self.now = (self.now + self.write_cost) & 0xFFFFFFFF
 
-    def tx_state(self):
+    def tx_state(self, include_order=True):
         windows = []
         for kind, channel, ident in self.seeds:
             ch = self.channels[channel]
@@ -75,16 +75,21 @@ class Network(cycle.Cycle):
                 )
             windows.append(state)
         shaper = self.q(self.sock + 64)
-        return dict(
+        result = dict(
             windows=windows,
             order=[
                 self.u.mem_read(self.q(self.connection + 384 + n * 8) + 16, 1)[0]
                 for n in range(len(self.channels))
-            ],
+            ]
+            if include_order
+            else [],
             rotation=self.u.mem_read(self.connection + 377, 1)[0],
             blocked=bool(self.u.mem_read(self.sock + 57, 1)[0]),
             deadlines=[self.i(shaper + 8), self.i(shaper + 12)],
         )
+        if not include_order:
+            del result["order"]
+        return result
 
 
 def batch(

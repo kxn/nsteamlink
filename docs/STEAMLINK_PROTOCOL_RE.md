@@ -3124,8 +3124,8 @@ worker 的 `lifecycle.c` 执行动作。同一轮间快速后台→前台保留�
 - Resume：已暂停且连接仍成立时清 connection paused，用连接**上一轮 update 时间**
   刷新 last receive/echo；串流中依次排队123、audio DataLost、video DataLost；最终清
   client paused。没有相应媒体 channel 时使用初始 channel0，不销毁解码器。
-- 接收循环 update 用 uint32(now−last_receive) 比较15或180乘65536，达到阈值即
-  发起本地断连；不会将本地超时写成 HostRequestedStop。
+- 接收循环在本轮通道收发之后，用保存的batch tick计算 uint32(now−last_receive)，
+  比较15或180乘65536；达到阈值发起本地断连，见§65。不会将本地超时写成HostRequestedStop。
 
 这里刷新的是 `clock.lastEcho`，即后续 `ProcessTimestamp` 准入实际使用的水位，
 不另存只供展示的副本。官方 constructor `0x7fb28c–0x7fb290` 也用当前时间初始化
@@ -5285,3 +5285,73 @@ FEC outgoing队列为空。该对照不证明上行FEC的真实生产入口或�
 自动开启FEC的策略。全局network锁与所有初发producer/内联RemoteHID设备线程交错、
 timeout/生命周期相对channel的完整顺序、早到媒体的窗口所有权/完整帧缓存、decoder、
 统计评分及真实Steam/Switch会话，不能由这些受控网络周期结果推定等价。
+
+## 65. 通道收发、连接deadline和下一轮关闭通知
+
+【官方客户端证据】同§24.1固定SHA。Connection::Update @0x7fc108在0x7fc120先
+保存传入tick；state1在0x7fc140进入§64的全部channel收发/轮转，直到0x7fc43c
+才判断接收租约。普通/暂停阈值仍分别15/180乘65536，使用uint32(batch tick−
+lastReceive)。达到边界时先前通道工作不会被撤销；一个到期的可靠包可以先产生
+一次type5重传，随后Disconnect @0x7fb724产生一次type9并转transport state2。
+Socket写失败不阻止状态转移，也不会使goodbye进入可靠重试窗口。
+
+下一次Update在0x7fc1c8–0x7fc204对state2调用仍存在的delegate，回调时连接state
+仍为2、两端ID仍为旧值；然后清地址/peer ID，分配新local ID，进入state3。
+该次Update不再执行state1的通道扫描。原默认IStreamConnectionHandler::OnStreamUpdate
+@0x7b0790是ret，本节直接执行它，不由该回调伪造关闭或推进时钟。
+
+【更正/实现约束】此前SessionUpdateAt在NetworkUpdate之前调用整个TransportUpdate，
+会在已达租约的这一轮提前断连，从而漏掉原版先执行的通道尝试。生产链拆为
+TransportPrepareUpdate（前后台边缘、保存tick、上一轮closing退休、connecting
+专用重试）、NetworkUpdateAt（state1时的收发）、TransportCheckTimeout（本轮
+deadline），随后才进入client消费。保留TransportUpdate作为不含channel工作的
+组件组合入口；旧transport oracle在该边界对照，不能用它代替实际receiveCycle。
+CheckTimeout只处理transport0/1，state2/3不再触发新超时动作。前后台边缘排队的
+本地执行机制仍按§34单列，不据此声称与官方UI线程调度完全等价。
+
+### 65.1 实际Socket整轮对照
+
+`audit-steam-network-deadline.py`基于§64执行真实初发窗口、Socket Wait/Read/Update、
+Connection::Update、真实Disconnect/CRC和下一Update的ID退休。固定68例128状态，
+84份初发/预置Disconnect wire、108份周期wire及64次关闭notice边界，与Native真实
+生产receiveCycle、收发/采样、Disconnect/Finish及callback前旧ID状态逐项比较。
+next local ID固定为12，证明重分配的时机及peer清零，不冒称原版PRNG状态相同。
+factory排序不在closing入口凭空初始化，因此此组不比较未经过state1扫描的排序数组；
+逐通道排序/完整wire顺序继续由§64的40例验证。
+
+案例覆盖CRC开/关×普通/暂停的deadline−1/0/+1、EOF耗时跨界、write耗时跨界、
+可靠budget阻塞仍可发type9、四种最终IO失败、有效可靠收包续期、同批对端type9、
+初始closing时的四个client阶段及uint32租约回绕。EOF/write跨界但batch tick未到
+期限的那轮只有type5、没有type9；恰到期的那轮为[type5,type9]，下一轮才有notice，
+notice观察到state2和旧ID，结果为state3。上述非空顺序另有Source断言，不仅将
+Native输出填回fixture。原§64的40例逐状态结果保持不变。
+
+实际RX/initial-send双worker在§64原CRC×ACK场景外追加CRC×普通/暂停超时：Read
+被阻塞时仍允许初发，EOF后到期轮先重传、再goodbye；下一轮应用notice看见closing
+和旧ID，随后退休并stop/join，goodbye只一次。把deadline检查移回通道扫描前的
+mutation会在goodbye处因缺少前一个重传而失败。此为Native运行证据，不外推为
+Source OS线程或Switch loader/显示验收。
+
+### 65.2 客户端主阶段与项目应用回调的区别
+
+原CStreamClient::OnStreamDisconnected @0x7b00d0也在本节执行并单独记录Source
+client阶段：受控state6进入7，0/2/7入口结果为0。回调保存transport notice后跳入
+原handler，原客户端阶段赋值/日志分支实际执行；这些是函数边界案例，不能声称
+所有组合均由正常UI连接可达。完整OnThink的Stopping消费、播放器通知、资源停止
+与Close不由此组执行。Native应用disconnected callback用来比较transport通知的
+位置及旧ID，不冒称是同一个官方client/player回调，也不把Source-only阶段记录
+描述成本地已经具有相同Stopping状态机。
+
+原OnThink @0x7a60c0–0x7a60d0在network/transport Update后直接调用
+HandleIncomingPackets，再于0x7a6134–0x7a616c按client阶段选择Starting/Streaming/
+Stopping。这里没有用transport state2/3跳过已经排队的控制消息；dispatcher按§63
+自己的client状态表选择。Native DrainIncoming现有shutdown==0保护，不能外推为
+官方正常closing的队列消费规则。§63的该项本地保护也不证明超时/对端断连与上层
+Stopping的组合等价；本节Source-only关闭阶段与上述原指令顺序明确限定这一边界。
+
+
+【证据范围】连接初态、暂停字节、时间/读写耗时、IO结果、next ID与delegate包装
+受控；锁、refcount和完整帧consumer仍为adapter，FEC outgoing队列为空。关闭这一
+轮的queued control消费/后续client阶段、完整Stopping/Close/通知锁关系、全局所有
+producer/RemoteHID交错、早到媒体、decoder、FEC实际启用、统计评分及真实Steam/
+Switch会话不在本节等价结论内。本节没有把15/180秒租约解释为用户所见一两秒停顿。
