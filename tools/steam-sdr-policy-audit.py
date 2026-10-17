@@ -133,7 +133,64 @@ class SDR:
         return [self.sessions.index(self.m.read(self.base+20+i*8, 8)) for i in range(count)]
 
 
-def primary_switch_report(elf, packets, since, ip=True, port=True, pop=True):
+def session_idle_expiry(elf, ages, root_age=0):
+    fixture = SDR(elf,[{} for _ in ages])
+    m, relay = fixture.m, fixture.relays[0]
+    slots = m.alloc(len(ages)*8)
+    m.write(relay+112,slots,8)
+    m.write(relay+128,len(ages))
+    m.write(relay+248,NOW-root_age,8)
+    m.write(fixture.connection+24,m.alloc(64),8)
+    for i,age in enumerate(ages):
+        m.write(slots+i*8,fixture.sessions[i],8)
+        m.write(fixture.sessions[i]+2512,NOW-age,8)
+    destroyed=[]
+    def destroy(m):
+        target=m.reg(1)
+        destroyed.append(fixture.sessions.index(target))
+        count=m.read(relay+128)
+        remaining=[m.read(slots+i*8,8) for i in range(count) if m.read(slots+i*8,8)!=target]
+        for i,item in enumerate(remaining): m.write(slots+i*8,item,8)
+        m.write(relay+128,len(remaining))
+    m.write(fixture.vt+120,policy.RETURN+0x500,8)
+    m.stubs.update({policy.RETURN+0x500:destroy,0xc117e0:lambda m:None,0xc117b0:lambda m:None})
+    m.reg(28,relay);m.reg(19,NOW);m.reg(23,0x383ea7)
+    m.stops[0x823228]=('done',)
+    m.run(0x82350c,0x823590)
+    expected=[i for i in reversed(range(len(ages))) if ages[i]>60000000]
+    assert destroyed==expected,(ages,root_age,destroyed,expected)
+    assert m.read(relay+248,8)==NOW-root_age
+    return destroyed
+
+
+def primary_loss_history(elf, removed, reason, seed=False):
+    fixture = SDR(elf, [{}, {}, {}])
+    fixture.active([0, 1])
+    m, base = fixture.m, fixture.base
+    before = b'previous' if seed else b''
+    m.uc.mem_write(base+124, before+b'\0')
+    m.write(base+112, NOW-7000000 if seed else 0, 8)
+    text = m.alloc(len(reason)+1)
+    m.uc.mem_write(text, reason+b'\0')
+    def copy_reason(m):
+        # Explicit bounded-copy provider; native instructions choose when to
+        # copy and whether a backup or the entire active list is discarded.
+        assert m.reg(2) == 64
+        value = bytes(m.uc.mem_read(m.reg(1),len(reason))).split(b'\0')[0][:63]
+        m.uc.mem_write(m.reg(0),value+b'\0')
+    m.stubs.update({0xc09f60:copy_reason,0xc12290:lambda m:None,0xbff250:lambda m:None})
+    m.run(0x8188f4,0x818c78,base,fixture.sessions[removed],text,NOW)
+    expected_active = [] if removed == 0 else [0] if removed == 1 else [0,1]
+    assert fixture.selected() == expected_active
+    assert m.read(base+56) == 2
+    actual = (m.read(base+112,8),bytes(m.uc.mem_read(base+124,64)).split(b'\0')[0])
+    expected = (NOW,reason[:63]) if removed == 0 else (NOW-7000000 if seed else 0,before)
+    assert actual == expected,(actual,expected)
+    return actual
+
+
+def primary_switch_report(elf, packets, since, ip=True, port=True, pop=True,
+                          dropped_reason=b'', lost_age=None, metrics_gap=0):
     fixture = SDR(elf, [{'ping':60}, {'ping':20}])
     fixture.active([0])
     m, base = fixture.m, fixture.base
@@ -145,7 +202,11 @@ def primary_switch_report(elf, packets, since, ip=True, port=True, pop=True):
     m.write(base+96, 100 if pop else 0)
     m.write(base+104, NOW-10000000 if since else 0, 8)
     m.write(base+120, packets)
+    m.uc.mem_write(base+124,dropped_reason[:63]+b'\0')
+    m.write(base+112,0 if lost_age is None else NOW-lost_age,8)
+    fixture.inputs[0]['gap'] = metrics_gap
     reports=[]
+    details=[]
     def constructor(m):
         m.uc.mem_write(m.reg(0), bytes(112))
     def send(m):
@@ -156,17 +217,27 @@ def primary_switch_report(elf, packets, since, ip=True, port=True, pop=True):
             q=m.read(obj+offset,8)
             qualities.append(tuple(m.read(q+i) for i in (16,24,28,32)))
         reports.append((m.read(obj+16),tuple(m.read(obj+i) for i in range(64,88,4)),qualities))
+        details.append((m.read(obj+16)&1 != 0,m.read(obj+16)&0x800 != 0,m.read(obj+88)))
         m.reg(0,100)
+    def set_reason(m):
+        obj=m.reg(0)
+        assert bytes(m.uc.mem_read(m.reg(1),64)).split(b'\0')[0] == dropped_reason[:63]
+        m.write(obj+16,m.read(obj+16)|1)
     m.stubs.update({0xbffad0:constructor,0xc003c0:lambda m:None,
         0xc0dba0:lambda m:m.reg(0,int(ip)),0xc003e0:lambda m:m.reg(0,m.alloc(128)),
-        0xc12390:send})
+        0xc12390:send,0xc12680:set_reason})
     m.run(0x81c55c,0x81ddb8,base,NOW,budget=100000)
     wanted=packets>=101 and since and ip and port and pop
     assert len(reports)==int(wanted),reports
     if wanted:
-        assert reports==[(0x7e6,(0,1,27015,100,10,packets),[(7,66,60,0),(7,22,20,0)])],reports
+        gap = lost_age if lost_age is not None else metrics_gap if metrics_gap > 0 else None
+        expected_mask = 0x7e6 | bool(dropped_reason) | (0x800 if gap is not None else 0)
+        assert reports==[(expected_mask,(0,1,27015,100,10,packets),[(7,66,60,0),(7,22,20,0)])],reports
+        assert details==[(bool(dropped_reason),gap is not None,0 if gap is None else (gap//1000)&0xffffffff)],details
     assert m.read(base+120)==0 and m.read(base+104,8)==NOW
     assert m.read(base+96)==101
+    assert m.read(base+112,8)==0 and m.read(base+124,1)==0
+    return details
 
 
 def select(elf, routes, active, expected, pings=(), migration_pending=False):
@@ -3222,6 +3293,16 @@ def audit(elf, groups=None):
         case('primary_switch_report',primary_switch_report,packets,since)
     for field in ('ip','port','pop'):
         case('primary_switch_report',primary_switch_report,101,True,**{field:False})
+    for removed, seed, reason in itertools.product(range(3),(False,True),
+            (b'',b'received_nosession',b'consecutive_ping_timeout',b'x'*80)):
+        case('primary_loss_history',primary_loss_history,removed,reason,seed)
+    for ages,root_age in itertools.product(((0,),(59999999,),(60000000,),(60000001,),
+            (60000001,0,60000002),(60000001,60000002,60000003)),(0,90000000)):
+        case('session_idle_expiry',session_idle_expiry,ages,root_age)
+    for reason, lost_age, metrics_gap in itertools.product((b'',b'received_nosession'),
+            (None,0,999,1000,1234567),(0,999,2000000)):
+        case('primary_switch_report',primary_switch_report,101,True,
+             dropped_reason=reason,lost_age=lost_age,metrics_gap=metrics_gap)
     case('clean_route_targets', clean_routes, [b'a', b'b'], [0, 1], [0, 1], targets=[1, 0])
     case('clean_route_targets', clean_routes, [b'a', b'b'], [0, 1], [1], targets=[None, 0])
     for sequences, incoming in [([], 1000), ([1000, 1001, 1002], 1001),

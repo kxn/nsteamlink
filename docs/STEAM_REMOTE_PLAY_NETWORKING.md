@@ -2805,7 +2805,8 @@ interior ping（session+4584），不是 remote front 与 interior 的和；scor
 新节点的旧快照先在相同 POP 中找精确地址；找不到时按 score、alternate penalty、shutdown
 剩余时间选备用记录。当前适配器每 POP 只有一个 relay，其旧记录同时也是该模型下的唯一
 fallback；不能把此简化推广到官方的多 relay 选择。报告的 dropped_reason 取旧 primary 被
-移除时缓存的原因；当前适配器尚未保存这条原因字符串，不能声称覆盖该可选字段的原厂行为。
+移除时缓存的原因。原适配器没有保存这条字符串；该缺口由 §21.32 的移除事件接线补齐，
+不能用普通换路时当前候选的失败原因临时替代。
 
 `0x81d694–0x81d718` 在新 primary 生效时重置该历史计数并保存地址/POP/时刻/候选快照。
 跨 POP 时，`0x81d724–0x81d74c` 将**连接** RTT tracker 的最近样本数清零，再以
@@ -2839,3 +2840,45 @@ ACK 窗口。随后提前调度 connection 与 session thinker。
 需要 CM 且本轮 routesDue 时先清共享重试期限，随后由信令填充沿用一秒规则。生产 C helper
 分别判断 probeWanted 和 relay 是否足够，使用同一输入与原始函数的网络动作序列核对；
 原始诊断回调不当作网络动作。此处修正依据既有静态证据，不预先认定它是某次断流的根因。
+
+### 21.32 已移除 primary 的原因与断流时刻
+
+**Evidence**：`DestroySessionLocked 0x8188f4–0x818c78` 从所有 session 列表及对应 relay
+列表移除对象。若它是 active 列表首项，`0x818b98–0x818bac` 将原因以 64 字节有界字符串
+保存在 transport+124，并把移除时刻保存在 +112，active 数量置零。移除 backup 只截去该
+角色；移除非 active session 不改这段历史。P2P 的 token 清理 `0x8367b4–0x8368a0` 仅剪掉
+角色，不销毁 session，也不登记该原因/时刻，不能将两种事件合并。
+
+下一个 primary 的报告在 `0x81d2ec–0x81d334` 附上非空原因；存在移除时刻时优先用
+`(now-removedAt)/1000` 作为 gap_ms，即使结果为 0 仍设置字段。没有移除时刻才考虑旧
+current metrics 的正 gap；小于一毫秒的正值也保留一个存在的零字段。`0x81d694–0x81d6cc`
+在新 primary 生效时清空原因/断流时刻，即使 101 包报告门槛没有满足也会清空。
+
+原因生产者：NoSession `0x81a2f8` 的 `0x374190` 为 `received_nosession`；全局 thinker
+`0x8233f4` / `0x8233c4` / `0x8234bc` 分别使用 `consecutive_ping_timeout` /
+`session_request_timeout` / `initial_ping_timeout`；停机期限 `0x823594` 使用
+`downtime_warning_reached`；session 60 秒无活动 `0x823574` 使用 `0x383ea7` 的
+`session_inactivity_timeout`。这些是固定样本字符串，不从远端 debug 文本推测。
+
+**Conclusion / evidence correction**：撤回“只保存旧地址、开始时刻和包计数即可覆盖 primary
+历史”的概括。适配器在 NoSession、root 超时/停机和 session 无活动移除前通知 transport，
+先保存主路历史并清 active 角色，再清 session 状态或轮换地址；下次正常选择消费历史。
+这避免同一模型对象换了地址后失去旧路径原因。普通选路淘汰和 token 剪枝不伪造移除事件。
+
+原始指令新增 24 个 primary/backup/非 active 删除输入及 30 个报告输入（含空原因、63 字节
+截断、既有历史、0/999/1000 微秒及 metrics 回退）。C 状态函数对照使用相同原始对象输入；
+容器内存与有界字符串复制仍是显式提供者，不把它们计为 SDK 析构/网络验证。该修正不覆盖
+单 POP 多地址/alternate 的完整对象模型，也不证明持续媒体恢复。
+
+同一生产链还区分 session 和 root 的接收活动：`0x823540` 读取 session+2512，按严格
+`lastReceived+60秒 < now` 销毁 session；它没有读取 root+248。SessionEstablished
+`0x83dc14–0x83dc44` 即使没有非零初始序号，也会刷新 session 接收时刻/包数/字节数、清
+pending 与连续失败。原始现有建连用例已经断言这些副作用。原适配器用 root lastReceived
+判定 session 过期，并漏掉 SessionEstablished 的 LinkStats 收包登记；现改为分别接线。
+RouterPingReply 因而不能独自保持一个已无 session 流量的旧 session。
+
+NoSession 的 session 销毁、60 秒 session 销毁及 root 移除都清 session 的 forward/ACK/
+序号和 LinkStats；NoSession 保留 root challenge/front，后续新 session 重新登记。这对应
+`0x818bb0–0x818c20` 的销毁及 `0x83dbe4–0x83dbfc` 的重新创建，不将 transport 或 root
+整体重置。另加 12 个原始 thinker 输入覆盖 session 时钟的 60 秒两侧/等号、root 新鲜而
+session 过期、root 过期而 session 新鲜及倒序多项移除；显式锁/销毁回调不证明真实线程时序。

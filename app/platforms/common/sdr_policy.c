@@ -3,6 +3,22 @@
 #include <string.h>
 #include <stdlib.h>
 
+void sl_sdr_primary_removed(sl_sdr_primary_loss *loss, bool primary, const char *reason, int64_t now) {
+    if (!primary) return;
+    size_t n = 0;
+    while (n < sizeof(loss->reason)-1 && reason[n]) ++n;
+    memcpy(loss->reason, reason, n);
+    loss->reason[n] = 0;
+    loss->since = now;
+}
+bool sl_sdr_primary_gap(const sl_sdr_primary_loss *loss, int64_t metrics_gap, int64_t now, uint32_t *ms) {
+    if (loss->since >= 1) { *ms = (uint32_t)((now-loss->since)/1000); return true; }
+    if (metrics_gap >= 1) { *ms = (uint32_t)(metrics_gap/1000); return true; }
+    return false;
+}
+bool sl_sdr_session_expired(int64_t last_received, int64_t now) {
+    return last_received + 60000000 < now;
+}
 int32_t sl_sdr_comparison_score(int32_t forward, int32_t reverse) {
     if (forward == INT_MAX || reverse == INT_MAX)
         return forward;

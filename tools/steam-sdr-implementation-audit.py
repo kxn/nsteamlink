@@ -32,6 +32,9 @@ class StatsProbe(c.Structure):
 class Selection(c.Structure):
     _fields_ = [('primary', c.c_int32), ('backup', c.c_int32), ('probe', c.c_bool * 128)]
 
+class PrimaryLoss(c.Structure):
+    _fields_ = [('since',c.c_int64),('reason',c.c_char*64)]
+
 class Timeouts(c.Structure):
     _fields_ = [(n, c.c_int64) for n in ('ping_deadline', 'request_deadline', 'last_received')]
     _fields_ += [('ping_failures', c.c_uint), ('request_failures', c.c_uint), ('established', c.c_bool)]
@@ -448,13 +451,43 @@ def main():
                 kw.get('mode',0),kw.get('base_flags',0),content,now)
             assert actual == native, (kw,actual,native)
         audit.generic_stats_producer = generic
+        original_loss = audit.primary_loss_history
+        lib.sl_sdr_primary_removed.argtypes = [c.POINTER(PrimaryLoss),c.c_bool,c.c_char_p,c.c_int64]
+        lib.sl_sdr_primary_gap.argtypes = [c.POINTER(PrimaryLoss),c.c_int64,c.c_int64,c.POINTER(c.c_uint32)]
+        lib.sl_sdr_primary_gap.restype = c.c_bool
+        def loss_history(elf,removed,reason,seed=False):
+            native = original_loss(elf,removed,reason,seed)
+            loss = PrimaryLoss(audit.NOW-7000000 if seed else 0,b'previous' if seed else b'')
+            lib.sl_sdr_primary_removed(c.byref(loss),removed==0,reason,audit.NOW)
+            assert (loss.since,loss.reason)==native,(removed,reason,seed,loss.since,loss.reason,native)
+        audit.primary_loss_history = loss_history
+        original_expiry = audit.session_idle_expiry
+        lib.sl_sdr_session_expired.argtypes = [c.c_int64,c.c_int64]
+        lib.sl_sdr_session_expired.restype = c.c_bool
+        def idle_expiry(elf,ages,root_age=0):
+            native = original_expiry(elf,ages,root_age)
+            actual = [i for i in reversed(range(len(ages))) if
+                      lib.sl_sdr_session_expired(audit.NOW-ages[i],audit.NOW)]
+            assert actual==native,(ages,root_age,actual,native)
+        audit.session_idle_expiry = idle_expiry
+        original_report = audit.primary_switch_report
+        def loss_report(elf,packets,since,**kw):
+            native = original_report(elf,packets,since,**kw)
+            if not native: return
+            age = kw.get('lost_age')
+            loss = PrimaryLoss(0 if age is None else audit.NOW-age,kw.get('dropped_reason',b'')[:63])
+            ms = c.c_uint32()
+            present = lib.sl_sdr_primary_gap(c.byref(loss),kw.get('metrics_gap',0),audit.NOW,c.byref(ms))
+            assert (present,ms.value)==native[0][1:],(kw,present,ms.value,native)
+        audit.primary_switch_report = loss_report
         elf = audit.policy.descriptors.SampleELF(args.elf.read_bytes())
         groups = {'active_selection', 'active_switch_confirmation', 'active_candidate_order', 'timeout_decisions', 'downtime_warning', 'global_probe_priority_matrix',
             'global_routing_readiness', 'failed_cache_insertion', 'failed_cache_expiry', 'received_packet_recovery', 'transport_state_change', 'session_established', 'clean_route_targets',
             'datacenter_latency_updates', 'reverse_latency_estimation', 'cluster_penalty_updates', 'canonical_pop_mapping',
             'datacenter_route_estimation','router_ping_reply_dispatch','ping_request_size','probe_failure_history',
             'nearest_probe_planning','config_pop_type','relay_key_selection','p2p_front_eligibility','config_hex_key',
-            'route_advertisement','advertisement_union','old_advertisement_hysteresis','generic_stats_production','outer_routes_delivery'}
+            'route_advertisement','advertisement_union','old_advertisement_hysteresis','generic_stats_production','outer_routes_delivery',
+            'primary_loss_history','primary_switch_report','session_idle_expiry'}
         # Select group names from the existing audit; fail if they are renamed.
         counts = audit.audit(elf, groups)
         assert set(counts) == groups, counts

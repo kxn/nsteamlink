@@ -61,6 +61,15 @@ struct ProbeRelay {
         ping_failures = 0;
         sl_sdr_address_received(&failures, address_key());
     }
+    void forget_session(SteamNetworkingMicroseconds now) {
+        // The native session object is destroyed. Root challenge/front state
+        // survives NoSession, while session sequence/ACK/stats do not.
+        established = false; routing_token.clear(); forward = {}; acks = {};
+        stats.Init(now, ELinkActivityLevel::Idle); sent_acks.clear();
+#if NSL_SNS_PROBES
+        last_valid_e2e = 0; post_fault_e2e_count = 0;
+#endif
+    }
 };
 struct sl_sdr_probe {
     HSteamNetConnection connection;
@@ -72,6 +81,7 @@ struct sl_sdr_probe {
     bool good_enough = false, have_primary = false, have_backup = false;
     void *owner = nullptr;
     void (*owner_receive)(const RecvPktInfo_t &, ProbeRelay &, void *) = nullptr;
+    void (*owner_session_removed)(ProbeRelay &, const char *, SteamNetworkingMicroseconds, void *) = nullptr;
     std::vector<ProbeRelay *> pursue, pursue_token;
 #if NSL_SNS_PROBES
     bool drop_enabled = false;
@@ -279,6 +289,9 @@ static void receive_packet(const RecvPktInfo_t &packet, sl_sdr_probe *probe) {
             ++probe->counters.established;
         r->established = true;
         r->routing_token = reply.relay_routing_token();
+        // 83dc14-83dc44 updates the session LinkStats receive clock/counters,
+        // independently of RelayServer::ReceivedPacket and sequence tracking.
+        r->stats.TrackRecvPacket(packet.m_cbPkt, packet.m_usecNow);
         if (reply.seq_num_r2c()) {
             r->stats.InitMaxRecvPktNum(reply.seq_num_r2c() - 1);
             int64 sequence = r->stats.ExpandWirePacketNumberAndCheck(uint16_t(reply.seq_num_r2c()), 0);
@@ -305,8 +318,9 @@ static void receive_packet(const RecvPktInfo_t &packet, sl_sdr_probe *probe) {
         ++probe->counters.rejected;
         r->received(packet.m_usecNow);
         r->request_until = 0;
-        r->established = false;
-        r->routing_token.clear();
+        if (probe->owner_session_removed)
+            probe->owner_session_removed(*r, "received_nosession", packet.m_usecNow, probe->owner);
+        r->forget_session(packet.m_usecNow);
     }
     if (probe->owner_receive)
         probe->owner_receive(packet, *r, probe->owner);
@@ -461,18 +475,20 @@ static void update_network(sl_sdr_probe *p, CSteamNetworkConnectionBase *connect
         if (events & SL_SDR_TIMEOUT_PING) ++r.failures.failures;
         bool shutting_down = r.downtime.known && r.downtime.shutdown <= now;
         if ((events & SL_SDR_TIMEOUT_REMOVE) || shutting_down) {
+            const char *reason = shutting_down ? "downtime_warning_reached" :
+                (events & SL_SDR_TIMEOUT_REQUEST) ? "session_request_timeout" :
+                (!r.last_received && !r.established) ? "initial_ping_timeout" : "consecutive_ping_timeout";
+            if (p->owner_session_removed) p->owner_session_removed(r, reason, now, p->owner);
             sl_sdr_fail_address(&r.failures, r.address_key(), address_count(p, r), now);
-            r.established = false; r.routing_token.clear(); r.forward = {};
+            r.forget_session(now);
             r.challenge = 0; r.ping_deadline = r.request_until = 0;
             r.ping_failures = r.request_failures = 0; r.last_received = 0;
-            r.stats.Init(now, ELinkActivityLevel::Idle); r.sent_acks.clear();
-#if NSL_SNS_PROBES
-            r.last_valid_e2e = 0; r.post_fault_e2e_count = 0;
-#endif
             if (choose_address(p, r, now)) { r.downtime = {}; r.force_ping = true; }
         }
-        if (r.established && r.last_received + 60000000 < now) {
-            r.established = false; r.routing_token.clear(); r.forward = {};
+        if (r.established && sl_sdr_session_expired(r.stats.m_usecTimeLastRecv, now)) {
+            if (p->owner_session_removed)
+                p->owner_session_removed(r, "session_inactivity_timeout", now, p->owner);
+            r.forget_session(now);
         }
         if (events & SL_SDR_TIMEOUT_REPROBE) r.force_ping = true;
         if (r.force_ping && !r.ping_deadline) { send_ping(p, r, now); r.force_ping = false; }
@@ -595,6 +611,7 @@ public:
     netadr_t previous_primary_address;
     uint32_t previous_primary_pop = 0, primary_packets_received = 0;
     SteamNetworkingMicroseconds primary_since = 0;
+    sl_sdr_primary_loss primary_loss{};
     int route_ping = 0, route_score = 0;
 #if NSL_SNS_PROBES
     unsigned debug[16] = {}, route_generation = 0;
@@ -612,6 +629,7 @@ public:
         if (network) {
             network->owner = nullptr;
             network->owner_receive = nullptr;
+            network->owner_session_removed = nullptr;
             network->socket->Close();
             delete network;
             network = nullptr;
@@ -643,6 +661,17 @@ public:
         out.set_score(q.score); out.set_front_ping(q.front); out.set_back_ping(q.back);
         if (q.shutdown != INT_MAX) out.set_seconds_until_down(q.shutdown);
     }
+    static void session_removed(ProbeRelay &r, const char *reason, SteamNetworkingMicroseconds now, void *owner) {
+        auto &t = *static_cast<SDRTransport *>(owner);
+        // 818af0-818bac: destroying the primary clears all active roles but
+        // retains its report history. Removing a backup preserves the primary.
+        sl_sdr_primary_removed(&t.primary_loss, &r == t.primary, reason, now);
+        if (&r == t.primary) t.primary = t.backup = nullptr;
+        else if (&r == t.backup) t.backup = nullptr;
+        t.network->have_primary = t.primary != nullptr;
+        t.network->have_backup = t.backup != nullptr;
+        t.EnsureP2PTransportThink(k_nThinkTime_ASAP);
+    }
     void changed_primary(ProbeRelay &next, const std::vector<PrimaryQuality> &current,
         int64_t gap, int ping, SteamNetworkingMicroseconds now) {
         // 81cddc-81d694: the report is sent to the new relay, only after
@@ -656,7 +685,9 @@ public:
             m.set_from_router_cluster(previous_primary_pop);
             m.set_from_active_time(uint32_t((now-primary_since)/1000000));
             m.set_from_active_packets_recv(primary_packets_received);
-            if (gap > 0) m.set_gap_ms(uint32_t(gap/1000));
+            uint32_t gap_ms;
+            if (sl_sdr_primary_gap(&primary_loss, gap, now, &gap_ms)) m.set_gap_ms(gap_ms);
+            if (primary_loss.reason[0]) m.set_from_dropped_reason(primary_loss.reason);
             for (const auto &q : current) {
                 if (q.address == previous_primary_address) fill_quality(*m.mutable_from_quality_now(), q);
                 if (q.address == next.address) fill_quality(*m.mutable_to_quality_now(), q);
@@ -681,6 +712,7 @@ public:
             m_connection.m_statsEndToEnd.m_ping.ReceivedPing(ping, now);
         }
         primary_snapshot = current;
+        primary_loss = {};
         primary_since = now; primary_packets_received = 0;
         previous_primary_address = next.address; previous_primary_pop = next.pop_id;
         EnsureP2PTransportThink(k_nThinkTime_ASAP);
@@ -1381,6 +1413,7 @@ bool NSL_SDR_Init(CSteamNetworkConnectionP2P &connection, char *error) {
     }
     t->network->owner = t;
     t->network->owner_receive = SDRTransport::received;
+    t->network->owner_session_removed = SDRTransport::session_removed;
     connection.m_vecAvailableTransports.push_back(t);
     transports[&connection] = t;
     t->EnsureP2PTransportThink(k_nThinkTime_ASAP);

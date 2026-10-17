@@ -22,6 +22,12 @@ bool sl_sdr_select(const sl_sdr_candidate *, size_t count, int32_t primary, int3
 /* INT_MAX means absent; 0x0fffffff is a distinct, very large initial reverse
  * score and participates in the average. */
 int32_t sl_sdr_comparison_score(int32_t forward, int32_t reverse);
+/* DestroySessionLocked caches only a removed primary. The next primary
+ * consumes this history, including a present zero-millisecond gap. */
+typedef struct sl_sdr_primary_loss { int64_t since; char reason[64]; } sl_sdr_primary_loss;
+void sl_sdr_primary_removed(sl_sdr_primary_loss *, bool primary, const char *reason, int64_t now);
+bool sl_sdr_primary_gap(const sl_sdr_primary_loss *, int64_t metrics_gap, int64_t now, uint32_t *ms);
+bool sl_sdr_session_expired(int64_t last_received, int64_t now);
 
 typedef struct sl_sdr_timeouts {
     int64_t ping_deadline, request_deadline, last_received;
