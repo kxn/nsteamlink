@@ -51,7 +51,12 @@ static void back(sl_ui_model *m) {
 }
 static sl_host *selected(sl_ui_model *m) {
     int i = m->store.registry.selected;
-    return i >= 0 && i < m->store.registry.count ? &m->store.registry.hosts[i] : NULL;
+    return !sl_ui_adding_host(m) && i >= 0 && i < m->store.registry.count
+               ? &m->store.registry.hosts[i]
+               : NULL;
+}
+bool sl_ui_adding_host(const sl_ui_model *m) {
+    return m->adding_host || !m->store.registry.count;
 }
 sl_discovery_source sl_ui_host_source(const sl_ui_model *m, const sl_host *h) {
     if (!sl_host_online(h, m->now))
@@ -63,11 +68,9 @@ sl_discovery_source sl_ui_host_source(const sl_ui_model *m, const sl_host *h) {
 }
 int sl_ui_game_count(const sl_ui_model *m) {
     int selected = m->store.registry.selected;
-    if (selected < 0 || selected >= m->store.registry.count)
+    if (sl_ui_adding_host(m) || selected < 0 || selected >= m->store.registry.count)
         return 0;
     const sl_host *h = &m->store.registry.hosts[selected];
-    if (!h->paired || !sl_host_online(h, m->now))
-        return 0;
     int n = 0;
     while (n < SL_RECENT_LIMIT && h->games[n].id)
         ++n;
@@ -249,7 +252,7 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
             m->page == SL_UPDATE_RESULT || m->page == SL_CONNECTING || m->page == SL_SAVING ||
             m->page == SL_PAIRING)
             return;
-        if (m->page == SL_HOME) {
+        if (m->page == SL_HOME && !sl_ui_adding_host(m)) {
             int count = sl_ui_game_count(m);
             if (count && !m->games_dragging && (a == SL_LEFT || a == SL_RIGHT)) {
                 int index = m->focus >= 40 && m->focus < 40 + count ? m->focus - 40 : 0;
@@ -270,7 +273,9 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
         /* A must not activate the only B-labelled control on a wait screen. */
         if (m->page == SL_CONNECTING || m->page == SL_SAVING || m->page == SL_PAIRING)
             return;
-        if (m->page == SL_HOME && !sl_ui_game_count(m)) {
+        sl_host *home_host = selected(m);
+        if (m->page == SL_HOME && !sl_ui_adding_host(m) &&
+            (!sl_ui_game_count(m) || (home_host && !home_host->paired))) {
             sl_ui_action(m, SL_START, 0);
             return;
         }
@@ -292,26 +297,32 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
     case SL_PREV_HOST:
     case SL_NEXT_HOST:
     case SL_SELECT_HOST:
-        if (m->page != SL_HOME || !m->store.registry.count)
+        if (m->page != SL_HOME)
             break;
         if (h)
             h->focus = m->focus;
+        else
+            m->add_focus = m->focus;
+        int target = sl_ui_adding_host(m) ? m->store.registry.count : m->store.registry.selected;
         if (a == SL_SELECT_HOST) {
-            if (arg < 0 || arg >= m->store.registry.count)
+            if (arg < 0 || arg > m->store.registry.count)
                 break;
-            m->store.registry.selected = arg;
+            target = arg;
         } else
-            m->store.registry.selected = (m->store.registry.selected +
-                                          (a == SL_PREV_HOST ? -1 : 1) + m->store.registry.count) %
-                                         m->store.registry.count;
-        m->focus = selected(m)->focus;
+            target = (target + (a == SL_PREV_HOST ? -1 : 1) + m->store.registry.count + 1) %
+                     (m->store.registry.count + 1);
+        m->adding_host = target == m->store.registry.count;
+        if (!m->adding_host)
+            m->store.registry.selected = target;
+        m->focus = m->adding_host ? m->add_focus : selected(m)->focus;
         break;
     case SL_START:
         if (m->page == SL_HOME)
             start(m, -1);
         break;
     case SL_RECENT:
-        if (m->page == SL_HOME && arg >= 0 && arg < sl_ui_game_count(m))
+        if (m->page == SL_HOME && h && h->paired && sl_host_online(h, m->now) && arg >= 0 &&
+            arg < sl_ui_game_count(m))
             start(m, arg);
         break;
     case SL_OPEN_OPTIONS:
@@ -332,8 +343,16 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
     case SL_OPEN_SETTINGS:
         push(m, SL_SETTINGS);
         break;
+    case SL_OPEN_ADD:
+        if (!m->streaming && (m->page == SL_SETTINGS || m->page == SL_HOME)) {
+            m->adding_host = true;
+            m->depth = 0;
+            page(m, SL_HOME);
+            m->focus = m->add_focus;
+        }
+        break;
     case SL_OPEN_REMOTE_PAIR:
-        if (!m->streaming && m->page == SL_SETTINGS) {
+        if (!m->streaming && m->page == SL_HOME && sl_ui_adding_host(m)) {
             ++m->generation;
             m->intent = (sl_command){.type = SL_CMD_REMOTE_PAIR, .generation = m->generation};
             m->depth = 0;
@@ -344,7 +363,7 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
         }
         break;
     case SL_OPEN_MANUAL:
-        if (!m->streaming && m->page == SL_SETTINGS) {
+        if (!m->streaming && m->page == SL_HOME && sl_ui_adding_host(m)) {
             m->input[0] = 0;
             push(m, SL_MANUAL);
         }
@@ -559,6 +578,8 @@ int sl_ui_hit(const sl_layout *l, int x, int y) {
     y -= l->offset_y;
     for (int i = l->count - 1; i >= 0; --i) {
         const sl_control *c = &l->controls[i];
+        if (c->disabled)
+            continue;
         if (c->action == SL_RECENT && (x < 40 || x >= 1240))
             continue;
         if (x >= c->x && y >= c->y && x < c->x + c->w && y < c->y + c->h)
@@ -572,6 +593,8 @@ void sl_ui_activate(sl_ui_model *m, int id) {
     for (int i = 0; i < m->layout.count; ++i)
         if (m->layout.controls[i].id == id) {
             sl_control c = m->layout.controls[i];
+            if (c.disabled)
+                return;
             if (!m->layout.compact && (m->page != SL_HOME || c.action == SL_RECENT))
                 m->focus = id;
             sl_ui_action(m, c.action, c.arg);

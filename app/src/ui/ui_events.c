@@ -24,6 +24,7 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
         if (h && m->page == SL_CONNECTING && !m->intent.host.id &&
             !strcmp(m->intent.text, h->address)) {
             m->store.registry.selected = (int)(h - m->store.registry.hosts);
+            m->adding_host = false;
             m->page = SL_HOME;
             sl_ui_action(m, SL_START, 0);
         }
@@ -94,6 +95,7 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
             if (remote_pair) {
                 h->observed = e.host.observed;
                 m->store.registry.selected = (int)(h - m->store.registry.hosts);
+                m->adding_host = false;
                 m->page = SL_HOME;
                 m->intent = (sl_command){0};
                 m->depth = 0;

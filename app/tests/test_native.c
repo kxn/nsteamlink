@@ -222,7 +222,14 @@ int main(int argc, char **argv) {
         sl_ui_layout(&ui);
         stream_media_present();
         save_image("discovery-lan");
-        SDL_Rect icon = {493, 104, 64, 64};
+        SDL_Rect icon = {0};
+        for (int i = 0; i < ui.layout.count; ++i)
+            if (ui.layout.controls[i].action == SL_SELECT_HOST && !ui.layout.controls[i].arg) {
+                const sl_control *tab = &ui.layout.controls[i];
+                icon = (SDL_Rect){tab->x + tab->w / 2 - 58, tab->y + 50, 44, 44};
+                break;
+            }
+        assert(icon.w);
         uint64_t lan = region_hash(icon);
         source.discovery_source = SL_DISCOVERY_INTERNET;
         sl_ui_runtime_event(&ui, &source);
@@ -250,6 +257,8 @@ int main(int argc, char **argv) {
                     state.type = SL_EVENT_HOST_OFFLINE;
                     sl_ui_runtime_event(&ui, &state);
                 }
+                if (route == SL_DISCOVERY_INTERNET && !paired)
+                    continue; /* Cloud discovery requires an already-authorized identity. */
                 sl_ui_layout(&ui);
                 stream_media_present();
                 char name[64];
@@ -277,7 +286,7 @@ int main(int argc, char **argv) {
             snprintf(other.host.address, sizeof(other.host.address), "10.10.10.%d", 40 + i);
             snprintf(other.host.name, sizeof(other.host.name), "%s",
                      i == 1 ? "客厅电脑" : "Gaming PC");
-            other.discovery_source = SL_DISCOVERY_INTERNET;
+            other.discovery_source = i == 1 ? SL_DISCOVERY_LAN : SL_DISCOVERY_INTERNET;
             sl_ui_runtime_event(&ui, &other);
             ui.store.registry.hosts[i].paired = i == 2;
             if (i == 2) {
@@ -289,6 +298,65 @@ int main(int argc, char **argv) {
         sl_ui_layout(&ui);
         stream_media_present();
         save_image("discovery-multiple");
+        sl_runtime_event cloud = source;
+        cloud.host.id = 0;
+        cloud.host.client_id += 3;
+        strcpy(cloud.host.name, "远程电脑");
+        cloud.discovery_source = SL_DISCOVERY_INTERNET;
+        sl_ui_runtime_event(&ui, &cloud);
+        ui.store.registry.hosts[3].paired = true;
+        ui.store.registry.selected = 3;
+        sl_ui_layout(&ui);
+        stream_media_present();
+        save_image("internet-paired");
+        sl_ui_action(&ui, SL_OPEN_OPTIONS, 0);
+        sl_ui_action(&ui, SL_OPEN_SETTINGS, 0);
+        sl_ui_activate(&ui, 104);
+        assert(ui.page == SL_HOME && sl_ui_adding_host(&ui));
+        stream_media_present();
+        save_image("add-computer");
+        sl_language language = sl_i18n_language();
+        sl_i18n_set(SL_LANG_EN);
+        sl_ui_layout(&ui);
+        stream_media_present();
+        save_image("add-computer-en");
+        sl_i18n_set(language);
+        sl_ui_model adding = ui;
+        sl_ui_activate(&ui, 31);
+        sl_ui_tick(&ui, ui.now + 220);
+        stream_media_present();
+        save_image("add-computer-manual");
+        ui = adding;
+        sl_ui_activate(&ui, 30);
+        assert(ui.command.type == SL_CMD_REMOTE_PAIR && !ui.command.host.id);
+        sl_runtime_event pair_code = {.type = SL_EVENT_CODE, .generation = ui.generation};
+        strcpy(pair_code.text, "1234"); /* UI fixture only; never a live authorization. */
+        sl_ui_runtime_event(&ui, &pair_code);
+        sl_ui_tick(&ui, ui.now + 2000);
+        stream_media_present();
+        save_image("add-computer-code");
+        ui = adding;
+        ui.adding_host = false;
+        ui.store.registry.selected = 1;
+        sl_ui_layout(&ui);
+        stream_media_present();
+        save_image("known-computer-unpaired");
+        sl_ui_action(&ui, SL_START, 0);
+        assert(ui.command.type == SL_CMD_PAIR &&
+               ui.command.host.client_id == source.host.client_id + 1);
+        pair_code.generation = ui.generation;
+        sl_ui_runtime_event(&ui, &pair_code);
+        sl_ui_tick(&ui, ui.now + 2000);
+        stream_media_present();
+        save_image("known-computer-pair-code");
+        ui = adding;
+        ui.adding_host = false;
+        ui.store.registry.selected = 2;
+        ui.store.registry.hosts[2].games[0].id = 367520;
+        strcpy(ui.store.registry.hosts[2].games[0].name, "空洞骑士");
+        sl_ui_layout(&ui);
+        stream_media_present();
+        save_image("cached-games-offline");
         ui = saved;
         sl_ui_layout(&ui);
         stream_media_present();

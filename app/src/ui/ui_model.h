@@ -48,6 +48,7 @@ typedef enum sl_action {
     SL_DEBUG,
     SL_OPEN_OPTIONS,
     SL_OPEN_SETTINGS,
+    SL_OPEN_ADD,
     SL_OPEN_REMOTE_PAIR,
     SL_OPEN_SHORTCUT,
     SL_CONFIRM_SHORTCUT,
@@ -104,6 +105,7 @@ typedef struct sl_control {
     sl_action action;
     int arg;
     bool primary;
+    bool disabled; /* Cached history can be browsed but cannot launch while unavailable. */
     char label[160];
 } sl_control;
 typedef struct sl_label {
@@ -157,6 +159,8 @@ typedef struct sl_ui_model {
     bool repair_attempted;
     int depth;
     bool streaming, debug, network_ok, closing, leaving, ending_game;
+    bool adding_host; /* UI-only final tab; never a registry entry or persisted selection. */
+    int add_focus;
     uint64_t leave_at;
     float leave_opacity;
     int focus;
@@ -192,6 +196,7 @@ bool sl_ui_pair_prompt_visible(const sl_ui_model *model);
 float sl_ui_overlay_opacity(const sl_ui_model *model);
 
 int sl_ui_game_count(const sl_ui_model *);
+bool sl_ui_adding_host(const sl_ui_model *);
 float sl_ui_scroll_limit(const sl_ui_model *);
 void sl_ui_drag_games(sl_ui_model *, float delta);
 void sl_ui_release_games(sl_ui_model *, float velocity);

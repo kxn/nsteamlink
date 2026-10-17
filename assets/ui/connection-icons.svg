@@ -1,14 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="128" height="768" viewBox="0 0 24 144">
   <!-- Original project icons; regenerate masks with scripts/render-connection-icons.py. -->
-  <defs>
-    <mask id="slash"><rect width="24" height="24" fill="white"/><path d="M3 21 21 3" stroke="black" stroke-width="4.5"/></mask>
-  </defs>
-  <g fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-    <g><path d="m3 10 9-7 9 7M5 9v12h14V9"/><rect x="8" y="11" width="8" height="5.5" rx=".7"/><path d="M12 16.5V19m-2 0h4"/></g>
-    <g transform="translate(0 24)"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/></g>
-    <g transform="translate(0 48)"><g mask="url(#slash)"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M12 17v4m-4 0h8"/></g><path d="M3 21 21 3"/></g>
-    <g transform="translate(0 72)"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M12 17v4m-4 0h8"/></g>
-    <g transform="translate(0 96)"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></g>
-    <g transform="translate(0 120)"><circle cx="12" cy="12" r="9"/><path d="M8 12h8m-4-4v8"/></g>
+  <g fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Computer, house, globe, search, linked and unlinked: six stable atlas slots. -->
+    <g><rect x="1" y="5" width="15" height="11" rx="1.3"/><path d="M8.5 16v4m-4 0h8"/><rect x="18.5" y="3" width="4.5" height="18" rx="1"/><path d="M20 6h1.5m-1.5 3h1.5m-.8 8v.1"/></g>
+    <g transform="translate(0 24)"><path d="m3 10 9-7 9 7M5 9v12h14V9M10 21v-7h4v7"/></g>
+    <g transform="translate(0 48)"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/></g>
+    <g transform="translate(0 72)"><circle cx="10" cy="10" r="6.5"/><path d="m15 15 6 6"/></g>
+    <g transform="translate(0 96)"><path d="m14 5 1.5-1.5a4.2 4.2 0 0 1 6 6L17 14a4.2 4.2 0 0 1-6 0M10 19l-1.5 1.5a4.2 4.2 0 0 1-6-6L7 10a4.2 4.2 0 0 1 6 0M8 16l8-8"/></g>
+    <g transform="translate(0 120)"><path d="m14 5 1.5-1.5a4.2 4.2 0 0 1 6 6L19 12M10 19l-1.5 1.5a4.2 4.2 0 0 1-6-6L5 12M8 3v3M3 8h3m12 8h3m-5 2v3"/></g>
   </g>
 </svg>
