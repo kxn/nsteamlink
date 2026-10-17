@@ -180,7 +180,7 @@ int NSL_REMOTE_LIVE_ENTRY(int argc, char **argv) {
     bool sns_test = false;
     bool desktop_stream = false;
     bool sdr_session = false;
-    bool relay_only = false, fault_test = false, warm_fault = false, pause_test = false;
+    bool relay_only = false, fault_test = false, warm_fault = false, pause_test = false, migration_test = false;
     int terminal_test = 0;
 #ifdef NSL_HAVE_SNS
     sns_test = argc == 3 && !strcmp(argv[1], "--sns-test");
@@ -198,13 +198,15 @@ int NSL_REMOTE_LIVE_ENTRY(int argc, char **argv) {
         warm_fault = fault_test = desktop_stream = relay_only = true;
     if (argc == 3 && !strcmp(argv[1], "--sdr-pause-desktop"))
         pause_test = desktop_stream = relay_only = true;
+    if (argc == 3 && !strcmp(argv[1], "--sdr-migrate-desktop"))
+        migration_test = desktop_stream = relay_only = true;
     if (argc == 3 && !strcmp(argv[1], "--sdr-only-test"))
         sns_test = relay_only = true;
     if (argc == 3 && !strcmp(argv[1], "--sdr-only-desktop"))
         desktop_stream = relay_only = true;
 #endif
     if (argc != 1 && !pairing && !status && !idle && !sns_test && !desktop_stream && !sdr_session) {
-        fprintf(stderr, "usage: %s [--idle | --pair|--status|--sns-test|--sns-desktop|--sdr-session|--sdr-only-test|--sdr-only-desktop|--sdr-fault-test|--sdr-fault-desktop|--sdr-warm-fault-desktop|--sdr-pause-desktop PRIVATE_PROFILE_DIRECTORY]\n",
+        fprintf(stderr, "usage: %s [--idle | --pair|--status|--sns-test|--sns-desktop|--sdr-session|--sdr-only-test|--sdr-only-desktop|--sdr-fault-test|--sdr-fault-desktop|--sdr-warm-fault-desktop|--sdr-pause-desktop|--sdr-migrate-desktop PRIVATE_PROFILE_DIRECTORY]\n",
                 argv[0]);
         return 2;
     }
@@ -268,6 +270,9 @@ int NSL_REMOTE_LIVE_ENTRY(int argc, char **argv) {
     bool reported_e2e = false;
     unsigned observed_frames = 0, recovery_frames = 0;
     bool ihs_was_connected = false;
+    uint64_t migration_at=0, migration_hold=0, migration_sample=0;
+    unsigned migration_generation=0, migration_frames=0;
+    bool migration_success=false;
     uint64_t pause_at = 0, resume_at = 0;
     unsigned resume_frames = 0;
     uint64_t video_received_at = 0, snapshot_at = 0;
@@ -332,6 +337,33 @@ int NSL_REMOTE_LIVE_ENTRY(int argc, char **argv) {
             if (frames != observed_frames) {
                 observed_frames = frames;
                 video_received_at = now_ms();
+            }
+            if (migration_test && sns_connected_at && now_ms()-sns_connected_at>=3000 && ihs_connected && frames>=30) {
+                unsigned migration[6]={};
+                bool ok=sl_sns_test_migration(l.sns,!migration_at,migration);
+                if (!ok) { puts("SDR_MIGRATION_FIXTURE_FAILED=1"); l.failed=true; break; }
+                if (!migration_at) {
+                    migration_at=now_ms();
+                    puts("SDR_MIGRATION_REQUESTED=1"); fflush(stdout);
+                }
+                if (migration[1] && migration[3] && migration[5]) {
+                    if (!migration_hold || migration[0]!=migration_generation) {
+                        migration_hold=now_ms(); migration_generation=migration[0]; migration_frames=frames;
+                    }
+                    migration_success=now_ms()-migration_hold>=5000 && migration[2]<=1000 &&
+                        frames-migration_frames>=30 && now_ms()-video_received_at<=1000;
+                    if (migration_success) {
+                        printf("SDR_MIGRATION_MEDIA_OK=1 fresh_frames=%u held_ms=%llu fresh_e2e_ms=%u\n",
+                            frames-migration_frames,(unsigned long long)(now_ms()-migration_hold),migration[2]);
+                        fflush(stdout);
+                    }
+                } else migration_hold=0;
+                if (now_ms()-migration_sample>=1000) {
+                    migration_sample=now_ms();
+                    printf("SDR_MIGRATION_SAMPLE gen=%u changed_address=%u e2e_age=%u e2e_after=%u state=%u retired=%u video=%u\n",
+                        migration[0],migration[1],migration[2],migration[3],migration[4],migration[5],frames); fflush(stdout);
+                }
+                if (now_ms()-migration_at>30000 && !migration_success) { puts("SDR_MIGRATION_TIMEOUT=1"); l.failed=true; }
             }
             if (pause_test && ihs_connected && frames>=30 && !pause_at) {
                 IHS_SessionSetPaused(l.session,true); pause_at=now_ms();
@@ -445,6 +477,7 @@ int NSL_REMOTE_LIVE_ENTRY(int argc, char **argv) {
                   : status ? l.status
                   : terminal_test ? false
                   : fault_test ? fault_success && !l.failed
+                  : migration_test ? migration_success && !l.failed
                   : sns_test ? sns_connected_at && now_ms() - sns_connected_at >= 5000
                   : desktop_stream ? desktop_success
                   : sdr_session ? sdr_success

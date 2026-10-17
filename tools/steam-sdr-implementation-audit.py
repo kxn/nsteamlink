@@ -34,6 +34,15 @@ class Selection(c.Structure):
 
 class PrimaryLoss(c.Structure):
     _fields_ = [('since',c.c_int64),('reason',c.c_char*64)]
+class RelayChoice(c.Structure):
+    _fields_ = [('rank',c.c_int32),('shutdown',c.c_int32),('eligible',c.c_bool)]
+class SnapshotChoice(c.Structure):
+    _fields_ = [(n,c.c_int32) for n in ('rank','score','migration','shutdown')]
+class AlternateProbe(c.Structure):
+    _fields_ = [('failures',c.c_uint),('received',c.c_uint),('measured',c.c_int32),
+        ('sent',c.c_int64),('root_sent',c.c_int64),('pending',c.c_bool),('root_pending',c.c_bool),('root_failed',c.c_bool)]
+class AlternatePlan(c.Structure):
+    _fields_ = [('probe',c.c_int32),('root',c.c_bool),('remove',c.c_bool*512)]
 
 class Timeouts(c.Structure):
     _fields_ = [(n, c.c_int64) for n in ('ping_deadline', 'request_deadline', 'last_received')]
@@ -83,6 +92,8 @@ class Config(c.Structure):
         ('pop_count',c.c_size_t),('endpoint_count',c.c_size_t),('alias_count',c.c_size_t)]
 class Edge(c.Structure):
     _fields_=[('source',c.c_uint),('target',c.c_uint),('ping',c.c_int32)]
+class MeasuredEdge(c.Structure):
+    _fields_=[('source',c.c_uint),('target',c.c_uint),('ping',c.c_int32),('penalty',c.c_int32),('measured',c.c_bool)]
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -369,13 +380,25 @@ def main():
         original_estimates=audit.datacenter_routes
         lib.sl_sdr_route_estimates.argtypes=[c.POINTER(c.c_int32),c.c_size_t,c.POINTER(Edge),c.c_size_t,c.POINTER(c.c_int32)]
         lib.sl_sdr_route_estimates.restype=c.c_bool
-        def datacenter_routes(elf,fronts,edges,expected,measured=True):
-            native=original_estimates(elf,fronts,edges,expected,measured)
+        lib.sl_sdr_nearest_routes.argtypes=[c.POINTER(c.c_int32),c.POINTER(c.c_int32),c.c_size_t,
+            c.POINTER(MeasuredEdge),c.c_size_t,c.POINTER(c.c_int32)]
+        lib.sl_sdr_nearest_routes.restype=c.c_bool
+        def datacenter_routes(elf,fronts,edges,expected,measured=True,**kw):
+            native=original_estimates(elf,fronts,edges,expected,measured,**kw)
             inputs=(c.c_int32*len(fronts))(*fronts)
             links=(Edge*len(edges))(*(Edge(*edge) for edge in edges))
             result=(c.c_int32*len(fronts))()
             assert lib.sl_sdr_route_estimates(inputs,len(fronts),links,len(edges),result)
-            assert list(result)==native,(fronts,edges,list(result),native)
+            estimates=native[0] if kw.get('capture_nearest') else native
+            assert list(result)==estimates,(fronts,edges,list(result),native)
+            if kw.get('capture_nearest'):
+                penalties=(c.c_int32*len(fronts))(*(kw.get('penalties') or [0]*len(fronts)))
+                extra=kw.get('edge_penalties') or [0]*len(edges)
+                links=(MeasuredEdge*len(edges))(*(MeasuredEdge(*e,extra[i],measured) for i,e in enumerate(edges)))
+                nearest=(c.c_int32*(len(fronts)*3))()
+                assert lib.sl_sdr_nearest_routes(inputs,penalties,len(fronts),links,len(edges),nearest)
+                assert list(nearest)==native[1],(fronts,edges,kw,list(nearest),native[1])
+            return native
         audit.datacenter_routes=datacenter_routes
         original_router=audit.router_ping_reply
         lib.sl_sdr_router_ping_ms.argtypes=[c.c_uint32,c.c_int64,c.POINTER(c.c_int32)]
@@ -480,6 +503,54 @@ def main():
             present = lib.sl_sdr_primary_gap(c.byref(loss),kw.get('metrics_gap',0),audit.NOW,c.byref(ms))
             assert (present,ms.value)==native[0][1:],(kw,present,ms.value,native)
         audit.primary_switch_report = loss_report
+        original_choice=audit.choose_relay
+        lib.sl_sdr_choose_relay.argtypes=[c.POINTER(RelayChoice),c.c_size_t,c.c_int32]
+        lib.sl_sdr_choose_relay.restype=c.c_int32
+        def choose_relay(elf,routes,active,expected,**kw):
+            native=original_choice(elf,routes,active,expected,**kw)
+            values=(RelayChoice*len(routes))()
+            for i,r in enumerate(routes):
+                rank=active.index(i) if i in active and r.get('has_session',True) else 0x7fffffff
+                values[i]=RelayChoice(rank,r.get('shutdown_seconds',0x7fffffff),
+                    not r.get('shutdown',False) and r.get('alternate',0)<=8190)
+            actual=lib.sl_sdr_choose_relay(values,len(routes),kw.get('target',-1))
+            assert (actual==-1 and native in (91,0xffffffff)) or (actual>=0 and actual==native),(routes,active,actual,native)
+        audit.choose_relay=choose_relay
+        original_order=audit.snapshot_session_order
+        lib.sl_sdr_choose_snapshot.argtypes=[c.POINTER(SnapshotChoice),c.c_size_t]
+        lib.sl_sdr_choose_snapshot.restype=c.c_int32
+        def snapshot_order(elf,rows,expected):
+            native=original_order(elf,rows,expected)
+            values=(SnapshotChoice*len(rows))(*(SnapshotChoice(*r) for r in rows))
+            actual=lib.sl_sdr_choose_snapshot(values,len(rows))
+            assert actual==(native[0] if native else -1),(rows,actual,native)
+        audit.snapshot_session_order=snapshot_order
+        original_creation=audit.create_alternate
+        lib.sl_sdr_alternate_can_create.argtypes=[c.c_bool,c.c_int64,c.c_int64]
+        lib.sl_sdr_alternate_can_create.restype=c.c_bool
+        def alternate_creation(elf,age,expected,existing=False,create_ok=True):
+            native=original_creation(elf,age,expected,existing,create_ok)
+            tick=audit.NOW+200000000
+            actual=lib.sl_sdr_alternate_can_create(existing,tick-age,tick)
+            assert actual==native,(age,existing,actual,native)
+        audit.create_alternate=alternate_creation
+        original_schedule=audit.alternate_probe_schedule
+        lib.sl_sdr_plan_alternates.argtypes=[c.POINTER(AlternateProbe),c.c_size_t,c.c_int64,c.POINTER(AlternatePlan)]
+        lib.sl_sdr_plan_alternates.restype=c.c_bool
+        def alternate_schedule(elf,routes,expected):
+            native=original_schedule(elf,routes,expected)
+            tick=audit.NOW+200000000
+            values=(AlternateProbe*len(routes))()
+            for i,r in enumerate(routes):
+                values[i]=AlternateProbe(r.get('failures',0),r.get('received',0),r.get('measured',-1),
+                    tick-r.get('age',1000000),tick-r.get('root_age',1000000),r.get('pending',False),
+                    r.get('root_pending',False),r.get('root_failures',0)>0)
+            plan=AlternatePlan()
+            assert lib.sl_sdr_plan_alternates(values,len(routes),tick,c.byref(plan))
+            actual=[('probe_done',i) for i in range(len(routes)) if plan.remove[i]]
+            if plan.probe>=0: actual.append(('root_ping' if plan.root else 'ping',plan.probe))
+            assert actual==native,(routes,actual,native)
+        audit.alternate_probe_schedule=alternate_schedule
         elf = audit.policy.descriptors.SampleELF(args.elf.read_bytes())
         groups = {'active_selection', 'active_switch_confirmation', 'active_candidate_order', 'timeout_decisions', 'downtime_warning', 'global_probe_priority_matrix',
             'global_routing_readiness', 'failed_cache_insertion', 'failed_cache_expiry', 'received_packet_recovery', 'transport_state_change', 'session_established', 'clean_route_targets',
@@ -487,7 +558,8 @@ def main():
             'datacenter_route_estimation','router_ping_reply_dispatch','ping_request_size','probe_failure_history',
             'nearest_probe_planning','config_pop_type','relay_key_selection','p2p_front_eligibility','config_hex_key',
             'route_advertisement','advertisement_union','old_advertisement_hysteresis','generic_stats_production','outer_routes_delivery',
-            'primary_loss_history','primary_switch_report','session_idle_expiry'}
+            'primary_loss_history','primary_switch_report','session_idle_expiry','relay_choice',
+            'snapshot_session_order','alternate_creation','alternate_probe_schedule','datacenter_nearest_routes'}
         # Select group names from the existing audit; fail if they are renamed.
         counts = audit.audit(elf, groups)
         assert set(counts) == groups, counts

@@ -631,6 +631,21 @@ def choose_relay(elf, routes, active, expected, target=-1, random_invalid=False,
     m.run(0x81e504, 0x81eb90, cluster)
     assert m.reg(0) & 0xffffffff == expected & 0xffffffff
     assert len(m.events) == random_count, m.events
+    return m.reg(0) & 0xffffffff
+
+
+def snapshot_session_order(elf, rows, expected):
+    m=Machine(elf); m.buffers()
+    items=m.alloc(max(1,len(rows))*96)
+    for i,(rank,score,migration,shutdown) in enumerate(rows):
+        m.write(items+i*96,i,8)
+        for offset,value in ((8,rank),(60,score),(88,migration),(72,shutdown)):
+            m.write(items+i*96+offset,value)
+    m.allowed.append((0x84c848,0x84f000))
+    m.run(0x84c848,0x84e430,items,items+len(rows)*96,64,1,budget=150000)
+    actual=[m.read(items+i*96,8) for i in range(len(rows))]
+    assert actual==expected,(rows,actual,expected)
+    return actual
 
 
 def timeout_decision(elf, ping_failures, request_failures, expected_removed, expected_ping=False,
@@ -1148,7 +1163,8 @@ def receive_latencies(elf, initial, ordinary, p2p, exceptions, flags, expected, 
         assert actual_reverse == result, (actual_reverse, result)
 
 
-def datacenter_routes(elf, fronts, edges, expected, measured=True):
+def datacenter_routes(elf, fronts, edges, expected, measured=True, capture_nearest=False,
+                      penalties=None, edge_penalties=None):
     m = Machine(elf)
     network, vector, logging = m.alloc(128), m.alloc(24), m.alloc(128)
     pops, pointers = m.alloc(len(fronts)*120), m.alloc(len(fronts)*8)
@@ -1169,14 +1185,16 @@ def datacenter_routes(elf, fronts, edges, expected, measured=True):
         m.write(pops+index*120+8, 100+index)
         m.write(cluster+560, int(front >= 0))
         m.write(cluster+76, front)
-        outgoing = [edge for edge in edges if edge[0] == index]
+        m.write(cluster+760,0 if penalties is None else penalties[index])
+        outgoing = [(i,edge) for i,edge in enumerate(edges) if edge[0] == index]
         nodes = m.alloc(max(1, len(outgoing))*40)
         m.write(cluster+712, nodes, 8)
         m.write(cluster+736, len(outgoing))
-        for number, (_, remote, ping) in enumerate(outgoing):
+        for number, (edge_index,(_, remote, ping)) in enumerate(outgoing):
             ptr = nodes+number*40
             m.write(ptr, 100+remote)
             m.write(ptr+8, ping)
+            m.write(ptr+12,0 if edge_penalties is None else edge_penalties[edge_index])
             m.write(ptr+24, NOW if measured else 0, 8)
             m.write(ptr+32, -1)
     m.stubs[0xc11f50] = lambda m: m.reg(0, m.reg(1)-100 if 100 <= m.reg(1) < 100+len(fronts) else -1)
@@ -1187,10 +1205,20 @@ def datacenter_routes(elf, fronts, edges, expected, measured=True):
     # Only directly measured edges seed nearest-route slots, never estimates.
     for index, cluster in enumerate(clusters):
         nearest = m.read(cluster+806, 2)
-        eligible = [(fronts[a]+ping+(fronts[a]//10), a) for a, b, ping in edges
+        eligible = [(fronts[a]+ping+(fronts[a]//10)+(0 if penalties is None else penalties[a])+
+                     (0 if edge_penalties is None else edge_penalties[i]), a) for i,(a, b, ping) in enumerate(edges)
                     if b == index and 0 <= fronts[a] <= 2000 and ping >= 0 and measured]
+        eligible=[v for v in eligible if v[0]<32767]
         assert nearest == (min(eligible)[1] if eligible else 0xffff), (index, nearest, eligible)
-    return result
+    nearest=[m.read(c+806+k*6,2) for c in clusters for k in range(3)]
+    nearest=[v if v!=65535 else -1 for v in nearest]
+    return (result,nearest) if capture_nearest else result
+
+
+def nearest_routes(elf,fronts,edges,expected,**kw):
+    _,nearest=datacenter_routes(elf,fronts,edges,None,capture_nearest=True,**kw)
+    assert nearest==expected,(fronts,edges,kw,nearest,expected)
+    return nearest
 
 
 def alternate_updates(elf, initial, advertised, partial, expected, removed=()):
@@ -1278,6 +1306,7 @@ def create_alternate(elf, failure_age, expected_created, existing=False, create_
     assert bool(m.events) == expected_created
     assert m.reg(0) == (created if existing or (expected_created and create_ok) else 0)
     assert m.read(entry+72, 8) == (tick if expected_created and not create_ok else tick-failure_age)
+    return expected_created
 
 
 def alternate_probe_schedule(elf, routes, expected):
@@ -1315,6 +1344,7 @@ def alternate_probe_schedule(elf, routes, expected):
     m.stops[0x824ea8] = ('alternate_probes_complete',)
     m.run(0x824d38, 0x824ea8)
     assert [e for e in m.events if e[0] != 'alternate_probes_complete'] == expected, m.events
+    return expected
 
 
 def bad_route(elf, tokens, failed):
@@ -2915,6 +2945,26 @@ def audit(elf, groups=None):
     case('relay_choice', choose_relay, [{'shutdown': True}, {}], [1], 0, target=0)
     case('relay_choice', choose_relay, [{'shutdown': True}], [], 91, random_count=1)
     case('relay_choice', choose_relay, [{'shutdown': True}], [], -1, random_invalid=True, random_count=99)
+    case('relay_choice', choose_relay, [{'shutdown_seconds':10},{'shutdown_seconds':20}], [], 1)
+    case('relay_choice', choose_relay, [{'shutdown_seconds':20},{'shutdown_seconds':10}], [1], 1)
+    for rows,expected in [
+        ([(1,10,0,100),(0,500,0,1)],[1,0]),
+        ([(inf,10,0,100),(inf,9,1,1)],[1,0]),
+        ([(inf,10,0,100),(inf,10,-1,1)],[1,0]),
+        ([(inf,10,0,10),(inf,10,0,20)],[1,0]),
+        ([(inf,10,0,20),(inf,10,0,10)],[0,1]),
+        ([(inf,9,0,20),(0,500,0,10),(1,1,0,50)],[1,2,0]),
+    ]:
+        case('snapshot_session_order',snapshot_session_order,rows,expected)
+    for fronts,edges,expected,kw in [
+        ([20,10,30,40],[(0,3,10),(1,3,20),(2,3,5)],[-1]*9+[1,0,2],{}),
+        ([10,10,10,10],[(0,3,10),(1,3,10),(2,3,10)],[-1]*9+[0,1,2],{}),
+        ([20,10,30,40],[(0,3,10),(1,3,20),(2,3,5)],[-1]*9+[1,2,0],{'penalties':[30,0,0,0]}),
+        ([20,10,30,40],[(0,3,10),(1,3,20),(2,3,5)],[-1]*9+[0,2,1],{'edge_penalties':[0,20,0]}),
+        ([20,10,30,40],[(0,3,10),(1,3,20),(2,3,5)],[-1]*12,{'measured':False}),
+        ([2000,2001,0,0],[(0,3,1),(1,3,0),(2,3,32767)],[-1]*9+[0,-1,-1],{}),
+    ]:
+        case('datacenter_nearest_routes',nearest_routes,fronts,edges,expected,**kw)
     for failures, due, removed in [(2, 1, False), (2, 0, False), (3, 1, False),
                                      (3, 0, True), (3, -1, True), (4, None, True)]:
         case('timeout_decisions', timeout_decision, failures, 0, removed, ping_due=due)

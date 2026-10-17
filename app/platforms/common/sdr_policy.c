@@ -19,6 +19,70 @@ bool sl_sdr_primary_gap(const sl_sdr_primary_loss *loss, int64_t metrics_gap, in
 bool sl_sdr_session_expired(int64_t last_received, int64_t now) {
     return last_received + 60000000 < now;
 }
+int32_t sl_sdr_choose_relay(const sl_sdr_relay_choice *c, size_t count, int32_t target) {
+    if (target >= 0 && (size_t)target < count) return target;
+    int32_t best = -1;
+    for (size_t i=0; i<count; ++i) {
+        if (!c[i].eligible) continue;
+        if (best < 0 || c[i].active_rank < c[best].active_rank ||
+            (c[i].active_rank == c[best].active_rank && c[i].shutdown_seconds > c[best].shutdown_seconds))
+            best = (int32_t)i;
+    }
+    return best;
+}
+bool sl_sdr_alternate_can_create(bool existing, int64_t last_failure, int64_t now) {
+    return !existing && last_failure+120000000 < now;
+}
+int32_t sl_sdr_choose_snapshot(const sl_sdr_snapshot_choice *c, size_t count) {
+    int32_t best=-1;
+    for (size_t i=0;i<count;++i) {
+        if (best<0) { best=(int32_t)i; continue; }
+        const sl_sdr_snapshot_choice *a=&c[i],*b=&c[best];
+        if (a->active_rank<b->active_rank || (a->active_rank==b->active_rank &&
+            (a->score<b->score || (a->score==b->score && (a->migration<b->migration ||
+                (a->migration==b->migration && a->shutdown_seconds>b->shutdown_seconds)))))) best=(int32_t)i;
+    }
+    return best;
+}
+bool sl_sdr_plan_alternates(const sl_sdr_alternate_probe *c, size_t count, int64_t now, sl_sdr_alternate_plan *out) {
+    if (!out || count>SL_SDR_RELAY_MAX || (!c && count)) return false;
+    sl_sdr_alternate_plan plan={.probe=-1};
+    int64_t oldest=now-500000;
+    for (size_t i=0;i<count;++i) {
+        if (c[i].failures>=4) continue;
+        if (c[i].received>=8 && c[i].measured>=0) { plan.remove[i]=true; continue; }
+        if (c[i].last_sent>now-90000) { plan.probe=-1; *out=plan; return true; }
+        bool root=c[i].root_failed;
+        bool pending=root ? c[i].root_pending : c[i].pending;
+        int64_t sent=root ? c[i].root_last_sent : c[i].last_sent;
+        if (!pending && sent<=oldest) { oldest=sent; plan.probe=(int32_t)i; plan.root=root; }
+    }
+    *out=plan;
+    return true;
+}
+bool sl_sdr_nearest_routes(const int32_t *front, const int32_t *penalties, size_t count,
+    const sl_sdr_measured_edge *edges, size_t edge_count, int32_t *out) {
+    if (count>SL_SDR_CANDIDATES || edge_count>SL_SDR_CANDIDATES*SL_SDR_CANDIDATES || (!front && count) || (!penalties && count) || (!out && count) ||
+        (!edges && edge_count)) return false;
+    for (size_t i=0;i<edge_count;++i) if (edges[i].source>=count || edges[i].target>=count) return false;
+    int32_t scores[SL_SDR_CANDIDATES*3];
+    for (size_t i=0;i<count*3;++i) { scores[i]=32767; out[i]=-1; }
+    for (size_t source=0;source<count;++source) {
+        if (front[source]<0 || front[source]>2000) continue;
+        for (size_t i=0;i<edge_count;++i) {
+            const sl_sdr_measured_edge *e=&edges[i];
+            if (e->source!=source || e->ping<0 || !e->measured) continue;
+            int64_t score=(int64_t)front[source]+front[source]/10+penalties[source]+e->ping+e->penalty;
+            if (score<0 || score>INT_MAX) return false;
+            size_t base=e->target*3;
+            for (size_t k=0;k<3;++k) if (score<scores[base+k]) {
+                for (size_t j=2;j>k;--j) { scores[base+j]=scores[base+j-1]; out[base+j]=out[base+j-1]; }
+                scores[base+k]=(int32_t)score; out[base+k]=(int32_t)source; break;
+            }
+        }
+    }
+    return true;
+}
 int32_t sl_sdr_comparison_score(int32_t forward, int32_t reverse) {
     if (forward == INT_MAX || reverse == INT_MAX)
         return forward;

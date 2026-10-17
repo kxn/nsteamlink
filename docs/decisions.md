@@ -2378,8 +2378,8 @@ Switch 同类旧记录保留其角色/状态证据范围，不自动升级为 E2
 
 1. global good-enough 后才导入 peer routes 到 selector 并构造公布快照；原始 peer 消息仍缓存。
    本地 front 候选保留用于初始 pursue，不把此门槛变成停止维护已有路径。
-2. front 测量可作为 RelayCluster 提示；本适配器从已有本地 session 生成 Route 候选。
-   这是受限对象模型的实现边界，不是官方协议限制，也不是已证明的超时修复。
+2. front 测量可作为 RelayCluster 提示。原适配器仅从已有本地 session 生成 Route；此受限
+   模型由 D-070 撤回，改接 nearest、对端 token 和显式 Route 的实际候选生产链。
 3. 候选执行四轮 rank 并集、cluster 必要项提升、完整 rank/分数/索引排序与旧消息迟滞。
    仅 controlling primary 强制公布，并检查旧首项。token、penalty、近期 ping 区间与
    interior score 校验和必要项覆盖共同决定复用；迟滞不改变 active 切路阈值。
@@ -2428,8 +2428,8 @@ request 不等价。原始生产器与 C 函数对照覆盖该边界，SDK 活�
 NETWORKING §21.30 定义 type 16 的旧 primary 数据包计数、101 门槛、新 relay 发送目标和
 current/previous quality。主路生效时保存快照；同一 relay 对象改地址也属于新的 primary。
 跨 POP 只重置并补连接 RTT 的最近样本，不借此清空 transport 确认状态或会话 ACK。
-报告的服务端效果不由客户端代码推断；单 POP 多地址排序仍按文中的模型差异保留，不能以
-消息的 telemetry 名称豁免实现或夸大恢复证据。原先遗漏的被移除主路原因与断流时刻按
+报告的服务端效果不由客户端代码推断；多地址排序接线见 D-070，不能以消息的 telemetry
+名称豁免实现或夸大恢复证据。原先遗漏的被移除主路原因与断流时刻按
 NETWORKING §21.32 在移除事件发生时保存，下一条主路生效时消费；token 剪枝不伪造销毁。
 
 ## D-068：按原始外层契约交付 routes/ACK 并决定 CM 回退
@@ -2458,3 +2458,21 @@ Runtime 仅将应用 foreground 变化接入 whole-client pause，显式 StopVid
 无活动时有界退出，不能仍概括为完全不改变旧 LAN 超时行为。既有 UI 使用原来的断开/错误
 事件，不增加网络模式选项。测试 fixture 的 pause 模式属于单独 media NRO，先收 30 帧、
 请求暂停两秒、恢复后要求再收到 30 个新编码帧；请求日志不冒充 owner 或主机已执行的确认。
+
+## D-070：分开 POP、relay 地址与 session，按官方事件维护迁移和 alternate
+
+依据 NETWORKING §21.33，保留共享 POP front/interior/failure/last-good 和每地址独立的
+own RTT、challenge、pending、ACK/序号/token；地址切换创建另一对象，不覆盖旧地址。
+停机记录按 IP/port 独立保存，移除节点前清活动角色及子节点引用，回收前剪除 pursue 指针。
+每个 SNS owner 的单媒体连接持有自己的图，不新建后台线程或 socket owner。
+
+chooser、pursue、active 的迁移优先级分别接入，不将“知道服务器请求目标”当作迁移完成。
+alternate 临时探测与正式 session 分开：完成只释放 probe，失败才登记冷却；共享 front
+不接受 child 的 RTT。候选按直接测量的 nearest 三项、对端 token 和显式 Route 生成，
+不再要求本地先有 session；快照按 active 角色/base score/迁移标记/shutdown 选择 token。
+旧历史 fallback 字段误标的撤回见 NETWORKING，不扩展为所有容器/provider 的全等声明。
+
+512 地址/每 root 128 alternate 是本地资源上限；耗尽不覆盖活对象。离线实际对象图 fixture
+绑定 ephemeral socket、零发包，manual poll 与 SDK Kill 明确配对。诊断版迁移媒体 fixture
+先建立指定目标，再在进程中退役旧 endpoint，验收新 E2E 和新编码帧的持续窗口；故障注入
+与这些 API 不进入 release，也不据此升级直接断主路的恢复结论。正式 UI 不增加网络模式。

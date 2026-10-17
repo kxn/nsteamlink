@@ -21,6 +21,13 @@ bool sl_gns_sdr_transport_stats(uint32_t connection, unsigned out[16]);
 bool sl_gns_sdr_test_loss(uint32_t connection, int mode, unsigned out[5]);
 
 bool sl_gns_sdr_test_terminal(uint32_t connection, int packet_case);
+/* Offline synthetic topology fixture; requires initialized SDK/manual polling.
+ * Binds one ephemeral UDP socket, sends no packets, returns first failed stage. */
+int sl_gns_sdr_topology_fixture(void);
+/* Synthetic notification to the production migration consumer; subsequent
+ * probe/session/route traffic uses real service responses. The original endpoint
+ * is dropped only after authenticated E2E arrives through the exact target. */
+bool sl_gns_sdr_test_migration(uint32_t connection, bool start, unsigned out[6]);
 
 /* Fixture-only metadata snapshot. UINT32_MAX means no timestamp; ages are
  * milliseconds. No addresses, identities, payloads, or SDK text are returned. */

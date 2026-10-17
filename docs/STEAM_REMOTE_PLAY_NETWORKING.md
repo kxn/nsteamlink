@@ -1752,7 +1752,8 @@ ClientSwitchedPrimary（type 16）遥测还要求旧主路时间非零、旧主�
 - 每项路线记录本轮序号；配额计算的是可继续使用或正在取得的候选，不是扫描过的项数。
   已有本连接、同 POP 的合格 session 可直接占一份配额，不重复申请。
   root 避让、alternate penalty>=8191 或不满足地址限制的旧 session 不走该复用路径。
-- 配额尚为 0 且迁移目标属于本轮 POP 时，优先追求迁移目标；否则由 §21.4 的共享 chooser 选 relay。
+- 本轮已消费的配额为 0 且迁移目标属于本轮 POP 时，优先追求迁移目标；否则先复用合格
+  session，再由 §21.4 的共享 chooser 选 relay。这是 consumed=0，不是 remaining=0。
 - 申请前要求 challenge 非零、server_time 非零；challenge 接收年龄 <=10秒；
   relay lastReceived 非零且年龄 <=20秒；cluster 至少 3 个 front 样本、最新样本年龄 <=20秒；
   relay 连续 ping 失败数为 0。challenge 超过 10 秒会先清零。
@@ -2802,9 +2803,10 @@ datagram bounds/queue、allocation；不把来源枚举当作线上协议错误�
 interior ping（session+4584），不是 remote front 与 interior 的和；score 包含两端 front、
 10% internet 项和各 penalty，seconds_until_down 为 INT_MAX 时省略。
 
-新节点的旧快照先在相同 POP 中找精确地址；找不到时按 score、alternate penalty、shutdown
-剩余时间选备用记录。当前适配器每 POP 只有一个 relay，其旧记录同时也是该模型下的唯一
-fallback；不能把此简化推广到官方的多 relay 选择。报告的 dropped_reason 取旧 primary 被
+新节点的旧快照先在相同 POP 中找精确地址；找不到时按 score 升序、迁移标记升序、shutdown
+剩余时间降序选备用记录。**Evidence correction**：旧文将 `0x81d524` 的记录+96 误标为
+alternate penalty；它对应保存的 SessionSelectQualityMetrics+72 迁移标记。
+原单地址模型不再适用；多地址快照和所选 session 的接线见 §21.33。报告的 dropped_reason 取旧 primary 被
 移除时缓存的原因。原适配器没有保存这条字符串；该缺口由 §21.32 的移除事件接线补齐，
 不能用普通换路时当前候选的失败原因临时替代。
 
@@ -2882,3 +2884,56 @@ NoSession 的 session 销毁、60 秒 session 销毁及 root 移除都清 sessio
 `0x818bb0–0x818c20` 的销毁及 `0x83dbe4–0x83dbfc` 的重新创建，不将 transport 或 root
 整体重置。另加 12 个原始 thinker 输入覆盖 session 时钟的 60 秒两侧/等号、root 新鲜而
 session 过期、root 过期而 session 新鲜及倒序多项移除；显式锁/销毁回调不证明真实线程时序。
+
+### 21.33 多 relay 对象、迁移与 alternate 的生产接线
+
+**Evidence**：§21.3/21.4/21.7/21.11 的原始入口以及 `RecvPingReply 0x812a28–0x812c90`
+分别使用 RelayServer 的 own ping 和 SharedCluster 的 front ping。只有 root 的 RTT 更新
+POP front；alternate probe 的 RTT 更新它自己的测量槽位。有效收包把 root 地址保存为 POP
+last-good，但从失败缓存移除的是实际收包地址。§21.9 的 nearest 输入由
+`EnsureDataCenterRoutesValidLocked 0x810e70–0x8113c4` 的 SharedCluster+806/+812/+818
+生成；仅直接测量的 interior edge、有效 direct front<=2000 参与，按
+`front+front/10+clusterPenalty+interiorPing+interiorPenalty` 维护三个严格更小的 score。
+32767 是未填充的 short score；平局保留原遍历项。估计 edge 不填这些槽位。
+
+`MarkRemoteRelaysAndRoutes 0x839dc8–0x839e78` 先加入 nearest 三项；远端 token 非空时
+枚举全部本地 POP，另加入显式 POP 限制。对端明确公布的 Route 也尝试建立对应组合。
+这不是“本地必须已有 session 才能公布 Route”；session token 仍只从实际 session 取得。
+`CheckRebuildRoutingMessage 0x836f90–0x83718c` 对已有 session 按 active index、base score、
+迁移标记、shutdown 剩余时间排序，在每个 POP 取首个 session 的 token。排序的原始 helper
+`0x84c848` 和 `0x84e430` 与旧历史 fallback 的迁移标记字段交叉核对。
+
+**Conclusion / evidence correction**：撤回单 POP 单 relay 和原地覆盖地址的实现假设。
+`ProbeCluster` 保存共享 front、失败地址、interior、penalty、last-good；`ProbeRelay` 保存
+独立 IP/port、cookie/challenge、own ping、请求/pending、session ACK/序号/token。多个 relay
+可共用 POP，迁移目标与旧 primary 可以同时存活。移除前通知 transport 并剪除角色，随后
+清 session；回收前剪除 pursue 引用，root 移除同时移除 children，POP 缓存和按地址保存的
+停机记录继续存活。备用仍按不同 POP 选，不因同 POP 多对象就改为同 POP backup。
+
+迁移通知只由当前 primary 的非零 IP/port 触发，重复地址不重新启动事务；uint32 port
+仍截断到 uint16，截断为零由随后请求资格校验拒绝。state=1 经过同 POP、失败缓存及严格
+avoidTime 校验后创建/查找目标，state=2 在目标消失、root 避让、alternate penalty>=8191、
+主路/请求消失或不再匹配时取消。目标优先进入 chooser/pursue，并以 -1/1 迁移标记参与
+active 选择。全局维护后再处理迁移、active 和本轮 pursue，2/1 配额不消费重复 POP。
+
+alternate 地址按完整 IP/port 保留稳定槽位，遵守 bit 1 增量/完整回复、protocol 变化和撤销；
+公布的 wire penalty 不取代 8191 未测内部状态。仅合格 root 的前五个按 front 排序者创建
+DefaultProtocol 探测；失败冷却严格 120 秒，own RTT 达 8 次后保存测量。临时 probe 完成时
+只释放 child，保留测量和槽位；失败时才清测量、记录冷却。每轮 90ms/500ms/最多一次及
+失败 root 优先规则由独立 C planner 执行，不并入普通 POP 探测预算。
+
+本实现每个 SNS owner 只有一条活动媒体连接，图在该 owner 内维护；最多 512 个地址对象、
+每 root 128 个 alternate 是本地内存上限，耗尽返回创建失败，不覆盖活动对象。没有启用
+官方调试地址/POP override UI。函数级对照保留容器/provider/调度边界，不声称完整 SDK、
+所有容器平局顺序或多 owner 共享实例行为全等。
+
+`nsl-sdr-topology` 以合成 localhost 地址测试实际 C++ 对象图：共享/独立时钟、迁移重复与
+无效目标、增量/完整公布、probe 回收与稳定 child 引用、last-good 重建、停机缓存存活和
+nearest/token/显式 Route 门槛。它仅绑定一个 ephemeral UDP socket，不发送网络包；SDK
+使用 manual poll 并显式 Kill。此 fixture 及其 API 均不进入 release。
+
+独立 `--sdr-migrate-desktop` fixture 在收至少 30 编码帧后，将同 POP 的另一个配置地址
+作为合成迁移通知交给生产 consumer；跳过了通知的接收 parser，不伪称真实服务端发过该
+通知。后续 challenge、签名 session、routing 和媒体收发来自真实服务。只有指定目标主路
+已收到有效 E2E 才在进程内屏蔽旧 endpoint；屏蔽后要求目标的新 E2E、至少 30 个新编码帧、
+五秒保持及末尾一秒内的新 E2E/视频。它验证先建后拆，与直接断主路的 fault fixture 分开。

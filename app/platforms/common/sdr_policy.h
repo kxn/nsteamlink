@@ -28,6 +28,29 @@ typedef struct sl_sdr_primary_loss { int64_t since; char reason[64]; } sl_sdr_pr
 void sl_sdr_primary_removed(sl_sdr_primary_loss *, bool primary, const char *reason, int64_t now);
 bool sl_sdr_primary_gap(const sl_sdr_primary_loss *, int64_t metrics_gap, int64_t now, uint32_t *ms);
 bool sl_sdr_session_expired(int64_t last_received, int64_t now);
+typedef struct sl_sdr_relay_choice { int32_t active_rank, shutdown_seconds; bool eligible; } sl_sdr_relay_choice;
+/* Existing migration target precedes normal eligibility/rank comparison. */
+int32_t sl_sdr_choose_relay(const sl_sdr_relay_choice *, size_t count, int32_t migration_target);
+typedef struct sl_sdr_snapshot_choice { int32_t active_rank, score, migration, shutdown_seconds; } sl_sdr_snapshot_choice;
+int32_t sl_sdr_choose_snapshot(const sl_sdr_snapshot_choice *, size_t count);
+enum { SL_SDR_RELAY_MAX = 512 };
+typedef struct sl_sdr_alternate_probe {
+    unsigned failures, received;
+    int32_t measured;
+    int64_t last_sent, root_last_sent;
+    bool pending, root_pending, root_failed;
+} sl_sdr_alternate_probe;
+typedef struct sl_sdr_alternate_plan {
+    int32_t probe;
+    bool root, remove[SL_SDR_RELAY_MAX];
+} sl_sdr_alternate_plan;
+bool sl_sdr_plan_alternates(const sl_sdr_alternate_probe *, size_t count, int64_t now, sl_sdr_alternate_plan *);
+bool sl_sdr_alternate_can_create(bool existing, int64_t last_failure, int64_t now);
+typedef struct sl_sdr_measured_edge { unsigned source, target; int32_t ping, penalty; bool measured; } sl_sdr_measured_edge;
+/* Three direct-measurement nearest sources per target, -1 for absent slots.
+ * Inferred interior edges cannot seed these slots. */
+bool sl_sdr_nearest_routes(const int32_t *front, const int32_t *penalties, size_t count,
+    const sl_sdr_measured_edge *, size_t edge_count, int32_t *out);
 
 typedef struct sl_sdr_timeouts {
     int64_t ping_deadline, request_deadline, last_received;

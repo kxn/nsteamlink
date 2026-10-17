@@ -43,6 +43,7 @@ void sl_sns_sdr_debug(const sl_sns *, unsigned out[16]);
  * is usable (zero otherwise), different POP. The fixture checks fresh counter
  * progress at the end of its hold; a lone packet cannot prove recovery. */
 bool sl_sns_test_relay_loss(sl_sns *, int mode, unsigned out[5]);
+bool sl_sns_test_migration(sl_sns *, bool start, unsigned out[6]);
 bool sl_sns_test_terminal(sl_sns *, int packet_case);
 bool sl_sns_loss_snapshot(sl_sns *, sl_sdr_loss_snapshot *);
 #endif

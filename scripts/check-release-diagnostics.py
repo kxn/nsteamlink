@@ -63,7 +63,7 @@ for entry in commands:
     nm = compiler.with_name(re.sub(r'(?:clang\+\+|g\+\+|c\+\+)$', 'nm', compiler.name))
     archive = build / 'third_party/GameNetworkingSockets/src/libGameNetworkingSockets_s.a'
     symbols = subprocess.check_output([str(nm), '--defined-only', str(archive)], text=True)
-    for name in ('sl_gns_sdr_test_loss', 'sl_gns_sdr_test_terminal',
+    for name in ('sl_gns_sdr_test_loss', 'sl_gns_sdr_test_terminal', 'sl_gns_sdr_test_migration', 'sl_gns_sdr_topology_fixture',
                  'sl_gns_sdr_transport_stats', 'sl_gns_sdr_probe_create'):
         assert name not in symbols, f'relay diagnostic API remains: {name}'
 manifest = json.loads((build / 'generated/graphics_manifest.json').read_text())
