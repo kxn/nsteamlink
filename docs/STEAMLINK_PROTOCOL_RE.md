@@ -7730,3 +7730,93 @@ LD_LIBRARY_PATH="$PWD/build/video-recovery-re/linux-1.3.32.316/package/lib" \
 python3 scripts/check-steam-video-recovery.py --receiver build/desktop/app/nsl-video-timing-oracle
 python3 scripts/check-avcodec-native-mutations.py --build build/desktop --output /tmp/avcodec-mutants
 ```
+
+## 96. 官方Linux客户端的连接、运行期配置与上行FEC分界
+
+【材料】继续使用§91的Valve Linux Steam Link 1.3.32.316客户端，ELF SHA
+`95482ca6120f90bb90798b27206b7946ab732e079f008d7fc90ea58a8b0074e1`。
+`audit-steam-client-linux-fec.py`复播原函数，补充§71/90的Android客户端证据；
+没有用Host行为、本地FEC实现或FFmpeg输出推导客户端启用策略。
+
+### 96.1 实际连接字段与发送生产者
+
+原factory @0x19bd00实际构造socket adapter @0x19fed0及Connection @0x19bb80。
+分配器先污染Connection+8…+15，原@0x19bb9b的4B清零实际覆盖+11。原ID helper、
+连接成员构造及channel表清零均执行。随后原Connect @0x19aa40与SendConnectPacket
+@0x19a8d0产生17B连接包；最终socket send是声明的终点，其签名按原call site核对为
+`socket, connection, packet`，仅记录第三参数packet的17B，不能把connection当packet。
+
+原HandleConnected @0x19b720接收已准入、去掉外部CRC的17B包；@0x19b754把首字节
+bit7写入Connection+10，state变1并调用连接delegate。**+10是CRC，+11才是本机
+outgoing FEC gate**。两个CRC输入分别执行原分支，后者仍为0。连接delegate、socket
+注册/transport引用与最后send为终点；没有冒称重演完整密码学握手、Socket准入或网络。
+
+明确的post-auth边界随后提供client state=6、协商Opus/48000/stereo及reliable_data。
+原StartMicrophoneStream @0x31b480调用原channel分配器@0x318960，分配通道3，经原
+消息构造/serializer/SendControl产生完整明文`6b100318032880f7023002`，原priority
+setter @0x19ed10设置1，没有调用percentage setter。原SendMicrophoneData
+@0x31ae90提交非空`11223344`，实际经过原Frame::Send @0x1947a0：
+
+| 已给定的协商值 | 实际选择 |
+|---|---|
+| reliable_data=true | Connection可靠发送，最终Channel可靠入口 |
+| reliable_data=false | Connection::SendUnreliable @0x19ec60读取+11=0，最终普通不可靠入口 |
+
+原SDK采集/Opus编码及最终Channel发送是边界，不声称已产生真实麦克风UDP wire。
+该producer的两个直接调用位于原@0x2fc2b0内，Start的直接调用位于@0x2fc480内；
+这些调用关系另存原指令地址/字节，并不把未执行的外层capture函数算作已复播。
+
+### 96.2 配置99的真实调用者与FEC字段
+
+初始字段25缺失/false/true，分别组合CRC两值和reliable_data两值，共12组生产路径。
+原SetStreamingClientConfig @0x321f80执行完整配置CopyFrom、delegate与save；state=6
+且local_only=false时，实际发送完整99明文。local_only=true仍通知/保存而不发送。
+原parser/serializer核对缺字段、true、false和quality/FEC/unknown混合值，不能用省略字段
+代替“保留旧FEC”。这组观察的配置wire与Native既有§35契约分开，没有新增配置策略。
+
+对端99从**已准入的单项control FIFO边界**进入原HandleIncomingPackets @0x322b90，
+执行实际pop、packet refcount、原Frame packet构造和状态/消息分派；原@0x322f3a调用
+OnSetStreamingClientConfig @0x322060，原Frame protobuf读取成功后进入上述setter，
+local_only=1。字段25缺失/false/true整体替换；坏protobuf保留原配置并走原失败返回。
+FIFO输入与packet header/body是外部输入，未据此声称Socket接收/解密/FIFO生产者全覆盖。
+加入真实dispatcher前后的411个协议状态逐项比较保持；增加的诊断名称调用单独记录。
+
+每次API/peer99前后均再次执行非空麦克风producer。所有这些轨迹的本机gate和channel
+percentage仍为0，发送选择仍由reliable_data决定；原宽写/别名写由内存hook捕获，
+不是仅检查某条STRB或由观察者按字段25计算发送路径。控制加密、配置持久化/delegate
+及诊断名称为明确终点；记录的是原明文及调用顺序，不冒称加密UDP或完整player缓存。
+
+【结论】上述官方Linux实际路径与§90的Android观察一致：运行中99可以承载字段25，
+但这一字段修改不等于本机上行FEC gate或冗余比例被启用。接收type11、请求对端视频FEC
+和本机上行FEC继续分立；不能把CRC、QoS或一次丢包当成新的启用条件。
+
+### 96.3 调用扫描、能力对照与验证范围
+
+另扫描`.text`中30,894个CFI/FDE范围，完整解出1,884,916条指令、合计7,668,016B；
+这不是整个8,074,176B `.text`的全程序证明。记录所选目标的直接call/jmp、RIP相对取址
+与动态重定位；22处直接引用的地址/指令字节/目标经独立objdump逐项核对。
+percentage setter @0x19ed60在该范围内没有直接调用、RIP取址或对应动态
+重定位。任意间接调用、内联/别名写、未覆盖代码与其他库/版本仍不由该负观察排除。
+
+另7例从正常连接执行手动percentage=0/5/20/100/-1/INT_MAX/INT_MIN，原setter只保存
+原32位值，并不设置gate；后续正常发送仍普通。**再显式注入gate=1的能力输入**才选择
+FEC发送终点。它们明确是能力对照，没有用人工置位冒充产品启用入口，也不建议固定比例。
+
+总计19案例411状态、41个所列完整FDE入口；六项原指令反事实分别改变构造gate初值、
+CRC写地址、发送门禁字段、API local_only门禁、麦克风可靠性及percentage写入。要求修改
+实际执行、原函数完整返回、无原assert，再以实际状态/正文/选择差异检出；不会把错误ABI、
+模拟器异常或assert当作检出。能力路径的真实RS编码/队列及物理资源不在本审计中。
+
+【实现约束】这组证据不要求添加新的丢包自适应FEC规则，也不将“未发现入口”改写为
+“全局永不启用”。请求对端FEC仍按§32已证实的设置/预设/接受测试推荐入口与完整配置
+字段25处理；未知上行产品入口的判断需要其自身官方调用链，不能用能力函数代替。
+
+```sh
+python3 scripts/audit-steam-client-linux-fec.py \
+  --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
+  --output /tmp/steam-client-linux-fec.json
+```
+
+依赖`unicorn`、`pyelftools`和`capstone`；fixture固定SHA及原函数FDE/指令SHA。
+正常运行只读核验，显式refresh也拒绝覆盖既有不同报告。OS锁/时钟/entropy、allocator/
+C++字符串及transport引用为声明终点；没有真实Qt事件循环、Steam认证或Switch证明。
