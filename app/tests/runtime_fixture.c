@@ -21,6 +21,11 @@ static char private_directory[192];
 static uint32_t private_host;
 static uint64_t began, sampled, phase_at, submitted_before, acked_before;
 static bool cloud_mode, cloud_ui_offline, cloud_initial, cloud_initial_bridge;
+static bool loss_soak, soak_completed;
+static atomic_bool loss_active;
+static atomic_uint loss_packets[2], loss_dropped[2]; /* RX, TX. */
+static uint64_t soak_started, soak_last_frame;
+static uint32_t soak_previous_frame;
 static atomic_uint cloud_directory_rounds, cloud_tls_failures, cloud_tls_unique, cloud_tls_success;
 static atomic_uint_fast64_t cloud_retry_delay;
 static _Thread_local bool cloud_update_context;
@@ -32,6 +37,9 @@ static uint64_t cloud_resume_at;
 static bool cloud_was_ready;
 void sl_runtime_fixture_cloud_reconnect(void) {
     cloud_mode = true;
+}
+void sl_runtime_fixture_loss_soak(void) {
+    loss_soak = true;
 }
 void sl_runtime_fixture_cloud_initial_failure(bool bridge_mode) {
     cloud_mode = cloud_initial = true;
@@ -130,19 +138,43 @@ static uint32_t frames_before;
 static uint64_t wire_before, wire_pressed, submitted_pressed, acked_pressed, sent_before,
     sent_pressed, giveups_before;
 static uint64_t reported;
-static unsigned phase, failure;
+static unsigned phase, failure, press_attempts;
+static uint64_t press_attempt_at;
 static sl_runtime *runtime;
 static atomic_uint filtered_tx, filtered_rx, sns_flags, reliability_revision;
 static atomic_uint_fast64_t observed_submitted, observed_acked, observed_sent, observed_giveups;
 static atomic_uint observed_pending, observed_inflight;
 static atomic_uint_fast64_t wire_report;
 static atomic_size_t report_length;
+static atomic_uintptr_t observed_device;
+static atomic_int observed_controller = -1;
+static atomic_uint device_creations, device_closes;
+IHS_HIDDevice *__real_IHS_HIDDeviceSDLCreate(IHS_HIDProvider *, SDL_GameController *, bool);
+IHS_HIDDevice *__wrap_IHS_HIDDeviceSDLCreate(IHS_HIDProvider *provider,
+                                             SDL_GameController *controller, bool managed) {
+    IHS_HIDDevice *device = __real_IHS_HIDDeviceSDLCreate(provider, controller, managed);
+    int id = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller));
+    atomic_store(&observed_controller, id);
+    atomic_store(&observed_device, (uintptr_t)device);
+    if (atomic_fetch_add(&device_creations, 1) < 8)
+        sl_live_printf("RUNTIME_FIXTURE_DEVICE_CREATED id=%d managed=%d ok=%d\n", id, managed,
+                       device != NULL);
+    return device;
+}
+void __real_IHS_HIDManagedDeviceClose(IHS_HIDManagedDevice *);
+void __wrap_IHS_HIDManagedDeviceClose(IHS_HIDManagedDevice *managed) {
+    if (atomic_fetch_add(&device_closes, 1) < 8)
+        sl_live_printf("RUNTIME_FIXTURE_DEVICE_CLOSE observed=%u\n", atomic_load(&device_closes));
+    __real_IHS_HIDManagedDeviceClose(managed);
+}
 int __real_IHS_HIDDeviceStartInputReports(IHS_HIDDevice *, size_t);
 int __wrap_IHS_HIDDeviceStartInputReports(IHS_HIDDevice *device, size_t length) {
     int result = __real_IHS_HIDDeviceStartInputReports(device, length);
     if (!result)
         atomic_store(&report_length, length);
-    sl_live_printf("RUNTIME_FIXTURE_START_INPUT length=%zu result=%d\n", length, result);
+    sl_live_printf("RUNTIME_FIXTURE_START_INPUT length=%zu result=%d last_device=%d id=%d\n",
+                   length, result, atomic_load(&observed_device) == (uintptr_t)device,
+                   atomic_load(&observed_controller));
     return result;
 }
 bool __real_IHS_HIDSDLGetLastSubmittedReport(IHS_Session *, IHS_HIDSDLLastSubmitted *);
@@ -173,10 +205,11 @@ bool __wrap_IHS_HIDHandleSDLEvent(IHS_Session *session, const SDL_Event *e) {
         atomic_fetch_add(&handled_events, 1);
     if ((e->type == SDL_CONTROLLERBUTTONDOWN || e->type == SDL_CONTROLLERBUTTONUP) &&
         atomic_fetch_add(&traced_events, 1) < 4)
-        sl_live_printf(
-            "RUNTIME_FIXTURE_HID_EVENT time=%llu code=%u value=%u accepted=%d gate=%u enabled=%d\n",
-            (unsigned long long)sl_system_now(), e->cbutton.button, e->cbutton.state, result,
-            atomic_load(&gate_enabled), IHS_SessionInputEnabled(session));
+        sl_live_printf("RUNTIME_FIXTURE_HID_EVENT time=%llu id=%d code=%u value=%u accepted=%d "
+                       "gate=%u enabled=%d\n",
+                       (unsigned long long)sl_system_now(), e->cbutton.which, e->cbutton.button,
+                       e->cbutton.state, result, atomic_load(&gate_enabled),
+                       IHS_SessionInputEnabled(session));
     return result;
 }
 void __real_sl_media_gate(bool);
@@ -239,7 +272,7 @@ bool __wrap_sl_system_running(void) {
             failure = 1;
         return false;
     }
-    if (began && sl_system_now() - began >= (cloud_initial ? 180000 : 90000)) {
+    if (began && sl_system_now() - began >= (loss_soak ? 240000 : cloud_initial ? 180000 : 90000)) {
         if (!failure)
             failure = 2;
         sl_live_printf("RUNTIME_FIXTURE_TIMEOUT phase=%u\n", phase);
@@ -333,7 +366,8 @@ void __wrap_sl_ui_tick(sl_ui_model *ui, uint64_t now) {
     uint64_t packed_wire = atomic_load(&wire_report), wire_seq = packed_wire >> 16;
     uint16_t wire_buttons = (uint16_t)packed_wire;
     bool pressed = (wire_buttons & (1u << SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) != 0;
-    if ((phase == 2 || phase == 3) && s.reliability.reliableGiveUps > giveups_before) {
+    if ((phase == 2 || phase == 3 || phase == 30) &&
+        s.reliability.reliableGiveUps > giveups_before) {
         failure = 8;
         sl_live_printf("RUNTIME_FIXTURE_ERROR reliable_giveup=1\n");
         return;
@@ -403,11 +437,27 @@ void __wrap_sl_ui_tick(sl_ui_model *ui, uint64_t now) {
                            "audio_errors=%u sns=%u\n",
                            s.decoded_frames, s.displayed_frames, s.render.hardware, s.audio_frames,
                            s.audio_decode_errors, atomic_load(&sns_flags));
+            sl_live_printf("RUNTIME_FIXTURE_DEVICE_SELECTED id=%d total=%d\n", controller_id,
+                           SDL_NumJoysticks());
             button(true);
+            press_attempts = 1;
+            press_attempt_at = now;
             enter(2, now);
         }
         break;
     case 2:
+        /* A host may reopen the SDL device after its first full report. These
+         * are bounded driver events, never a substitute for the wire/ACK gate. */
+        if (wire_seq == wire_before && now - press_attempt_at >= 1000 && press_attempts < 3) {
+            button(true);
+            press_attempt_at = now;
+            sl_live_printf("RUNTIME_FIXTURE_RETRY_PRESS attempt=%u\n", ++press_attempts);
+        }
+        if (wire_seq == wire_before && now - phase_at >= 15000) {
+            failure = 11;
+            sl_live_printf("RUNTIME_FIXTURE_INPUT_UNAVAILABLE=1 attempts=%u\n", press_attempts);
+            break;
+        }
         if (wire_seq > wire_before && pressed && s.reliability.hidSubmitted > submitted_before &&
             s.reliability.hidSent > sent_before && s.reliability.hidAcknowledged > acked_before &&
             !s.reliability.hidPending && !s.reliability.hidInFlight) {
@@ -454,6 +504,50 @@ void __wrap_sl_ui_tick(sl_ui_model *ui, uint64_t now) {
                            (unsigned long long)(s.reliability.hidAcknowledged - acked_before),
                            s.displayed_frames - frames_before, (unsigned long long)wire_seq,
                            wire_buttons);
+            if (loss_soak) {
+                frames_before = soak_previous_frame = s.displayed_frames;
+                soak_started = soak_last_frame = now;
+                atomic_store(&loss_active, true);
+                sl_live_printf("RUNTIME_FIXTURE_LOSS_BEGIN duration_ms=180000 per_10000=100 "
+                               "seed=1373051537\n");
+                enter(30, now);
+                break;
+            }
+            key(SDLK_MINUS, true);
+            key(SDLK_EQUALS, true);
+            enter(4, now);
+        }
+        break;
+    case 30:
+        if (s.displayed_frames != soak_previous_frame) {
+            soak_previous_frame = s.displayed_frames;
+            soak_last_frame = now;
+        }
+        if (ui->page != SL_STREAM || now - soak_last_frame > 5000) {
+            failure = 10;
+            sl_live_printf("RUNTIME_FIXTURE_LOSS_STALLED page=%u age_ms=%llu\n", ui->page,
+                           (unsigned long long)(now - soak_last_frame));
+            break;
+        }
+        if (now - reported >= 5000) {
+            reported = now;
+            sl_live_printf("RUNTIME_FIXTURE_LOSS_SAMPLE elapsed_ms=%llu new_frames=%u audio=%u "
+                           "errors=%u packets_rx=%u tx=%u dropped_rx=%u tx=%u\n",
+                           (unsigned long long)(now - soak_started),
+                           s.displayed_frames - frames_before, s.audio_frames,
+                           s.audio_decode_errors, atomic_load(&loss_packets[0]),
+                           atomic_load(&loss_packets[1]), atomic_load(&loss_dropped[0]),
+                           atomic_load(&loss_dropped[1]));
+        }
+        if (now - soak_started >= 180000 && now - soak_last_frame <= 1000 &&
+            s.displayed_frames - frames_before >= 3000 && s.audio_frames >= 1000 &&
+            atomic_load(&loss_dropped[0]) && atomic_load(&loss_dropped[1])) {
+            soak_completed = true;
+            atomic_store(&loss_active, false);
+            sl_live_printf(
+                "RUNTIME_FIXTURE_LOSS_HELD elapsed_ms=%llu new_frames=%u fresh_ms=%llu\n",
+                (unsigned long long)(now - soak_started), s.displayed_frames - frames_before,
+                (unsigned long long)(now - soak_last_frame));
             key(SDLK_MINUS, true);
             key(SDLK_EQUALS, true);
             enter(4, now);
@@ -535,7 +629,7 @@ int sl_runtime_fixture_result(void) {
                     ? !flags && cloud_ui_offline && atomic_load(&cloud_connections) >= 2 &&
                           atomic_load(&cloud_disconnects) == 1 && atomic_load(&cloud_drops) == 1
                     : (flags & 3) == 3 && (!force_sdr || (flags & 4));
-    bool passed = !failure && phase == 8 && path && tx;
+    bool passed = !failure && phase == 8 && path && tx && (!loss_soak || soak_completed);
     sl_live_printf(
         "RUNTIME_FIXTURE_RESULT=%d phase=%u failure=%u sns=%u filtered_tx=%u filtered_rx=%u\n",
         passed ? 0 : 1, phase, failure, flags, tx, rx);
@@ -550,6 +644,26 @@ static bool blocked(const struct sockaddr *sa) {
     uint32_t ip = ntohl(((const struct sockaddr_in *)sa)->sin_addr.s_addr);
     return ip == private_host || ip == UINT32_MAX || ip == ((private_host & 0xffffff00u) | 255u);
 }
+/* Fixed-seed pseudorandom 1% public IPv4 UDP loss after input acceptance.
+ * No socket, timer, worker, delayed queue, or global firewall is introduced. */
+static bool impaired(const struct sockaddr *sa, bool tx) {
+    if (!atomic_load(&loss_active) || !sa || sa->sa_family != AF_INET)
+        return false;
+    uint32_t ip = ntohl(((const struct sockaddr_in *)sa)->sin_addr.s_addr);
+    if ((ip >> 24) == 0 || (ip >> 24) == 10 || (ip >> 24) == 127 || (ip >> 16) == 0xa9fe ||
+        (ip >> 20) == 0xac1 || (ip >> 16) == 0xc0a8 || ip >= 0xe0000000)
+        return false;
+    uint32_t x = (atomic_fetch_add(&loss_packets[tx], 1) + 1) ^ (UINT32_C(0x51d71a91) + tx);
+    x ^= x >> 16;
+    x *= UINT32_C(0x7feb352d);
+    x ^= x >> 15;
+    x *= UINT32_C(0x846ca68b);
+    x ^= x >> 16;
+    if (x % 10000 >= 100)
+        return false;
+    atomic_fetch_add(&loss_dropped[tx], 1);
+    return true;
+}
 ssize_t __real_sendto(int, const void *, size_t, int, const struct sockaddr *, socklen_t);
 ssize_t __wrap_sendto(int fd, const void *p, size_t n, int flags, const struct sockaddr *sa,
                       socklen_t len) {
@@ -557,13 +671,17 @@ ssize_t __wrap_sendto(int fd, const void *p, size_t n, int flags, const struct s
         atomic_fetch_add(&filtered_tx, 1);
         return n;
     }
+    if (impaired(sa, true))
+        return n;
     return __real_sendto(fd, p, n, flags, sa, len);
 }
 ssize_t __real_recvfrom(int, void *, size_t, int, struct sockaddr *, socklen_t *);
 ssize_t __wrap_recvfrom(int fd, void *p, size_t n, int flags, struct sockaddr *sa, socklen_t *len) {
     ssize_t result = __real_recvfrom(fd, p, n, flags, sa, len);
-    if (result >= 0 && blocked(sa)) {
-        atomic_fetch_add(&filtered_rx, 1);
+    bool lan = result >= 0 && blocked(sa);
+    if (result >= 0 && (lan || impaired(sa, false))) {
+        if (lan)
+            atomic_fetch_add(&filtered_rx, 1);
         errno = EAGAIN;
         return -1;
     }
@@ -572,12 +690,14 @@ ssize_t __wrap_recvfrom(int fd, void *p, size_t n, int flags, struct sockaddr *s
 
 ssize_t __real_sendmsg(int, const struct msghdr *, int);
 ssize_t __wrap_sendmsg(int fd, const struct msghdr *msg, int flags) {
-    if (blocked(msg->msg_name)) {
+    bool lan = blocked(msg->msg_name);
+    if (lan || impaired(msg->msg_name, true)) {
         size_t total = 0;
         size_t vectors = msg->msg_iovlen > 0 ? (size_t)msg->msg_iovlen : 0;
         for (size_t i = 0; i < vectors; ++i)
             total += msg->msg_iov[i].iov_len;
-        atomic_fetch_add(&filtered_tx, 1);
+        if (lan)
+            atomic_fetch_add(&filtered_tx, 1);
         return total;
     }
     return __real_sendmsg(fd, msg, flags);
@@ -585,8 +705,10 @@ ssize_t __wrap_sendmsg(int fd, const struct msghdr *msg, int flags) {
 ssize_t __real_recvmsg(int, struct msghdr *, int);
 ssize_t __wrap_recvmsg(int fd, struct msghdr *msg, int flags) {
     ssize_t result = __real_recvmsg(fd, msg, flags);
-    if (result >= 0 && blocked(msg->msg_name)) {
-        atomic_fetch_add(&filtered_rx, 1);
+    bool lan = result >= 0 && blocked(msg->msg_name);
+    if (result >= 0 && (lan || impaired(msg->msg_name, false))) {
+        if (lan)
+            atomic_fetch_add(&filtered_rx, 1);
         errno = EAGAIN;
         return -1;
     }

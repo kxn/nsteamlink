@@ -32,12 +32,13 @@ int sl_live_printf(const char *format, ...) {
 }
 int main(int argc, char **argv) {
     if (argc != 3 &&
-        !(argc == 4 && (!strcmp(argv[3], "--sdr-only") || !strcmp(argv[3], "--cloud-reconnect") ||
-                        !strcmp(argv[3], "--cloud-initial-failure") ||
-                        !strcmp(argv[3], "--cloud-initial-bridge")))) {
-        fprintf(stderr,
-                "Usage: nsl-runtime-probe PRIVATE_PROFILE LAN_HOST "
-                "[--sdr-only|--cloud-reconnect|--cloud-initial-failure|--cloud-initial-bridge]\n");
+        !(argc == 4 &&
+          (!strcmp(argv[3], "--sdr-only") || !strcmp(argv[3], "--cloud-reconnect") ||
+           !strcmp(argv[3], "--cloud-initial-failure") ||
+           !strcmp(argv[3], "--cloud-initial-bridge") || !strcmp(argv[3], "--sdr-loss-soak")))) {
+        fprintf(stderr, "Usage: nsl-runtime-probe PRIVATE_PROFILE LAN_HOST "
+                        "[--sdr-only|--cloud-reconnect|--cloud-initial-failure|--cloud-initial-"
+                        "bridge|--sdr-loss-soak]\n");
         return 2;
     }
     if (argc == 4 && !strcmp(argv[3], "--cloud-reconnect"))
@@ -45,10 +46,13 @@ int main(int argc, char **argv) {
     if (argc == 4 &&
         (!strcmp(argv[3], "--cloud-initial-failure") || !strcmp(argv[3], "--cloud-initial-bridge")))
         sl_runtime_fixture_cloud_initial_failure(!strcmp(argv[3], "--cloud-initial-bridge"));
+    if (argc == 4 && !strcmp(argv[3], "--sdr-loss-soak"))
+        sl_runtime_fixture_loss_soak();
     sl_auth_store store = {0};
     if ((argc != 3 && argc != 4) || sl_auth_load(&store, argv[1]) ||
-        !sl_runtime_fixture_prepare(argv[1], &store, argv[2],
-                                    argc == 4 && !strcmp(argv[3], "--sdr-only"))) {
+        !sl_runtime_fixture_prepare(
+            argv[1], &store, argv[2],
+            argc == 4 && (!strcmp(argv[3], "--sdr-only") || !strcmp(argv[3], "--sdr-loss-soak")))) {
         fprintf(stderr, "Pass an isolated, paired test profile directory and LAN host IPv4\n");
         return 2;
     }
