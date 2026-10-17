@@ -4904,8 +4904,8 @@ payload含7B视频头，不含传输13B、消息tag、12B数据头、CRC或FEC s
 原视频采样与帧received统计都发生于codec解析之前；不能因payload不足7B而漏采。
 
 【本地契约】首/末接收时间是本地元数据，随完整frame/早到可靠frame与FEC FIFO
-保持所有权，不序列化进UDP。实际视频dataFrame入口在codec最短长度检查前记录
-帧统计和VideoBitrateStats；后者归session、沿用§56队列与Base锁、关闭join后释放，
+保持所有权，不序列化进UDP。实际视频RX完整帧交付入口在decoder FIFO之前记录
+帧统计和VideoBitrateStats（§70更正时序）；后者归session、沿用§56队列与Base锁、关闭join后释放，
 由§57全局上报快照读取link。普通分片和FEC不共用错误的末时间合并规则。
 
 
@@ -5620,3 +5620,58 @@ observer移到同一接收边界，原固定输出不变；非data的固定FEC�
 transport delegate，不把它们当作未知消息完整dispatcher证明。媒体测试的packet
 header补齐真实channel ID，并登记实际decoder消费者；保留原窗口/丢包/反馈及
 阻塞消费者断言，避免在未配置消费者的夹具里要求已经发生解码。
+
+
+## 70. RX时间转换、采样与延迟消费者
+
+【官方客户端证据】同§24.1固定Android客户端。OnDataPacket
+@0x7ad220–0x7ad25c在已匹配audio/video ID之后，从connection+848取offset，
+将frame-start、transport-send减去offset；input-received仅在非零时减去offset。
+本地首/末接收时间不转换，32位减法保留回绕。随后0x7ad260调用原
+RecordFrameReceived，0x7ad298才进入decoder。未匹配ID的完整packet先pending，
+不在首次到达时固定offset；配置匹配后的重放才转换与采样。
+
+【撤回】撤回§59把“dataFrame在codec长度检查前采样”足以当作官方接收时序
+等价的含义。旧Native在媒体worker读取当前offset、归一化并采样，FIFO等待期间
+的新时钟样本会改变此前到达帧的结果。新对照在第一个U后直接检出：Native
+video collector仍frame0/空，原版已frame1并记录send=1100900。该差异不证明
+原用户停顿的根因，但明确说明统计与decoder消费不应共用晚到的时钟估计。
+
+【本地契约】匹配有效完整data header后，在RX准备阶段缓存一次offset，并
+记录视频网络/received统计，再把原body与本地cache一起转交FIFO。消费者从原始
+12B数据头生成回调header时按cache转换，标记为local，视频消费者不重复减去
+当前offset或重复采样。frame/transport wire header与body仍保留原始值；cache、
+local/recorded标记均不上协议线。Frame初始化、重新组装与释放清除cache，FIFO
+所有权转移保留cache。pending只保存尚未匹配的原始完整packet，在重放时准备。
+视频tracker的本地完成事件仍由其原路径收集，不把本节扩大为整个tracker/decoder
+生命周期已对齐。Audio保留同一offset转换，完整音频采样/同步策略另有证据范围。
+
+【原指令对照】`audit-steam-media-clock.py`固定48例618动作状态、96次官方
+终点metadata。CRC开/关×普通3、可靠5、FEC11，覆盖接收后改变offset、pending后
+配置、负offset、零frame/input sentinel、ProcessTimestamp更新估计，以及32位
+符号边界附近回绕。T执行原ProcessTimestamp和Ping/TimeOffset采样，不把所有
+变化只当作手动setter；O为明确受控的offset状态，未假称每个极值必然由真实
+网络触发。12例另经真实完成标记、Streaming/FrameEvents/C++ protobuf生成
+24份完整消息正文，核对report时当前offset与旧帧接收时offset的组合。plain正文
+不等于最终UDP加密/发送证明，原frame/encryption准入adapter范围保持明确。
+
+原Socket CRC、窗口/Pop、RS、OnStreamPacket、OnDataPacket、received采样及
+pending重放执行真实指令；decoder终点立即复制转换后的header。D只消费这份
+已记录的官方历史，供Native晚取FIFO时比较，不改变Source原decoder调用时机。
+每动作直接比较RX accepted metadata、video collector、完整pending、窗口/预算、
+offset及反馈；消费者D再核对先前真实终点值。没有用Python公式替代官方转换。
+平台锁/refcount/vector存储、decoder本体与最终IO仍为明确adapter。
+
+`media_clock_real_workers`对36份非report场景各运行两次，共72次实际工作线程
+进程启动。首个消费者在D前不能取帧，首帧回调之后再次等待第二个D，RX期间
+继续收包、执行时钟更新。核对真实dataFrame回调的144份完整metadata/body及
+反馈，并stop/join后销毁Session；没有只用observer自行计算header代替真实回调。
+屏障是显式Native调度输入，不是官方OS/硬件调度的证明；完整异常/短data header、
+消费者替换期间的tracker事件、音频时钟同步、资源失败与真实Steam/Switch仍
+属于各自证据范围。本节未新增FEC开关或重试策略。
+
+【检测力】将消费者临时改回“消费时重新读取offset”而保留RX cache与sampling，
+使用真实ProcessTimestamp更新场景，真实工作线程回调得到frame-start=1100349，
+原官方终点为1100549；测试明确拒绝。恢复后72次工作线程通过。这也区分了
+FIFO observer按cache自行计算与消费者实际收到正确header两种证据，不能用前者
+替代后者。
