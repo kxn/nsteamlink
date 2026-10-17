@@ -108,7 +108,7 @@ def main():
             assert actual["phase"] == (3 if auth else phase), case["case"]
         elif group == "pause_resume":
             conn, client = entry["connection_state"], entry["client_state"]
-            phase = (5 if client == 6 else 2) if conn == 1 else 1 if conn == 0 else 0
+            phase = (6 if client == 6 else 2) if conn == 1 else 1 if conn == 0 else 0
             actual = run(
                 [f"FOREGROUND {int(entry['action'] == 'resume')}", "UPDATE 123456"],
                 phase=phase,
@@ -172,7 +172,7 @@ def main():
             for offset in (-1, 0, 1):
                 now = (start + threshold + offset) & 0xFFFFFFFF
                 actual = run(
-                    [f"BEGIN {start}", f"UPDATE {now}"], phase=5, paused=paused
+                    [f"BEGIN {start}", f"UPDATE {now}"], phase=6, paused=paused
                 )[-1]
                 assert actual["timed_out"] == (offset >= 0)
                 assert actual["actions"].split() == (["D"] if offset >= 0 else [])
@@ -189,7 +189,7 @@ def main():
             "FEEDBACK 999900 1000300 1000400",
             "FEEDBACK 999970 1000300 1000400",
         ],
-        phase=5,
+        phase=6,
         update_time=1000000,
     )
     assert actual[0]["actions"].split() == ["C122", "C123", "L0", "L1", "C122"]

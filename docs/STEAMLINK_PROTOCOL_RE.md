@@ -4459,3 +4459,58 @@ python3 scripts/audit-steam-negotiation-loop.py \
   --binary /path/to/official/libmain-arm64.so \
   --output build/video-recovery-re/negotiation-loop.json
 ```
+
+## 51. 接收更新中的协商阶段与保活算术契约
+
+【证据／更正】§49–50的完整官方客户端入口支持将peer config保存、Starting和
+Streaming拆开实现，不能仅调整毫秒timer。`audit-steam-negotiation-loop.py`保留原30例
+并追加9例：tick0、32位回绕、连续周期、倒退和signed半域边界。原始指令
+`0x7a71b8–0x7a71c0`实际检验32位`last - now + 0xa0000`的符号位，非负跳过发送；
+last0另外直接发送。撤回把`signed(now-last)>0xa0000`当全32位域等价表达的说明。
+通常小时间差下两式相同；半域及加法回绕边界不同，新增原指令反例已直接区分。
+
+【设计约束】协商成员保存完整CNegotiatedConfig，包括presence、unknown、nested/repeated；
+收到有效peer config只复制并进入Starting。接收更新先排空已接纳的可靠控制帧，再选择
+一个阶段。Starting先置Connected、设priority和本次tick，再准备Complete并通知应用；
+该次更新不再执行Streaming。已Connected的更新按原符号位算术检查KeepAlive并记录
+尝试时间，不引入独立timer线程；配置分配失败采用本地关闭保护，不声称原版OOM行为。
+
+【比较边界】Native从实际encrypted/CRC wire ingress、可靠重组及解密到peer handler，
+分别观察drain后的Starting和实际Base RX Update后的状态，出站通过真实分片/加密/
+retained sender后从wire重组解密。39个OnThink序列加22个state4 peer案例在CRC关/开
+各比较一次。state5/6的Setup4只按真实dispatcher忽略；§49的直接入口案例不会冒充
+这些网络消息可达。比较完整成员config、Complete/KeepAlive body、sequence、保活tick，
+以及Starting的priority结果和connected通知。网络线程开关在Source影响适配器调用，
+不宣称Native拥有同样的平台线程配置。
+
+CNetworkStats Start、frame-events时间/统计内部、pending log、完整decoder与Connection
+内部RX反馈/TX同循环排序不在本节比较内；普通sender异步队列与应用callback相对Socket
+写入的先后亦不因此宣称等价。原transport/Pause oracle调用的UPDATE限定为Transport
+Update，避免以单组件Source结果推断整个新增客户端阶段；完整RX阶段由本节另测。
+
+
+保留现有control producer锁串行化Starting的live状态发布与Complete入队，防止并发HID
+在这两者之间抢先入队；应用connected callback仍在该段锁释放后执行，不新增应用
+必须持Base锁的约束。该局部producer顺序不当作Source全局network lock域的等价证明。
+
+极端半域tick跳变案例中，Source记录Connection::Send入口，未执行内部整形器；Native
+因此同时记录真实加密Frame producer边界与实际wire。通常tick范围两者均比较；跨半域
+时仍逐字段比较producer/序号/保活时间，额外wire轨迹保留，但不冒称Source已证明整形后
+UDP发出。Native整形器确实可能阻止该包立即写出，不能把序号增加当Socket已经发送。
+
+```sh
+python3 scripts/check-steam-negotiation-stage.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-negotiation-stage-oracle
+ctest --test-dir build/desktop -R 'negotiation_stage' --output-on-failure
+```
+
+真实RX/send workers另覆盖CRC关/开、普通/回绕起点及正常、Complete首次EIO、KeepAlive
+首次EIO/EAGAIN，共16组；保留标准ConnectACK/ClientHandshake，认证后状态为显式fixture。
+实际加密peer配置进入后观察一次connected、完整配置、严格到期、发送序号与重传，最后
+stop/join/destroy。冻结逻辑clock时传输整形rate设为0；EAGAIN后的可靠重传显式推进到
+现有RetryTicks之后，不用保活producer再生成一条消息来替代可靠重传。
+
+
+Complete准备在producer锁内返回admission结果；本地资源失败的关闭/停止消费者发生在
+释放该锁之后。不能在外层锁仍持有时复用会自动Disconnect的普通Send包装器，否则
+消费者可能正在等待同一producer锁。该保护是Native所有权约束，不冒称官方OOM策略。

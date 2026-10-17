@@ -91,6 +91,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-reliable-large-frame.py"
             --receiver $<TARGET_FILE:ihs-reliable-large-frame-oracle>)
         set_tests_properties(reliable_large_frame_official_vectors PROPERTIES TIMEOUT 60)
+        add_test(NAME negotiation_stage_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-negotiation-stage.py"
+            --receiver $<TARGET_FILE:ihs-negotiation-stage-oracle>)
+        set_tests_properties(negotiation_stage_official_vectors PROPERTIES TIMEOUT 60)
         add_test(NAME negotiation_official_vectors COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-negotiation.py"
             --receiver $<TARGET_FILE:ihs-negotiation-oracle>)

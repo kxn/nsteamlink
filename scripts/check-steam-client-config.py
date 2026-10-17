@@ -4,6 +4,7 @@
 No ELF, emulator or Python protobuf package is required. The wire comparison
 retains field presence, repeated ordering, nested messages and unknown fields.
 """
+
 import argparse
 import json
 import subprocess
@@ -83,7 +84,7 @@ def main():
             # Native application player effects are a separate contract; C bool
             # callers also cannot supply the noncanonical ABI values 2/3.
             continue
-        phase = {2: 2, 3: 3, 4: 4, 6: 5}[inp["state"]]
+        phase = {2: 2, 3: 3, 4: 4, 6: 6}[inp["state"]]
         command = (
             f"SET {inp['local_only']} {inp['config'] or '-'}"
             if entry == "setter"
