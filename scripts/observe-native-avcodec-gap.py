@@ -134,6 +134,43 @@ void __wrap_IHS_SessionChannelDataLost(IHS_SessionChannel *ch) {
             native["complete"] and native["result"] == original["stats_result"]
         ),
     )
+    # A second actual process observes a normal decoded/framemd5-checked image
+    # with declared SDK elapsed ticks. Compare original OnThink's events, not
+    # an Android-to-AVCodec timing formula.
+    timing = subprocess.run(
+        [str(exe), str(ROOT / "app/tests/fixtures/video/sequential.h264")],
+        input="B 0\nQ 100 200\nP 23 23 24 1000000 1000000 0 2204\nD 1000300\n",
+        text=True,
+        capture_output=True,
+        timeout=20,
+    )
+    (output / "native-timing-states.jsonl").write_text(timing.stdout)
+    (output / "native-timing-stderr.log").write_text(timing.stderr)
+    assert timing.returncode == 0, (timing.returncode, timing.stderr[-3000:])
+    source_player = json.loads(
+        gzip.decompress(
+            (
+                ROOT / "scripts/fixtures/steam-client-avcodec-player-reference.json.gz"
+            ).read_bytes()
+        )
+    )
+    official_timing = next(
+        case for case in source_player["cases"] if case["name"] == "decoder_time"
+    )["states"][0]
+    native_timing = json.loads(timing.stdout.splitlines()[-1])
+    expected_events = [
+        row[1:] for row in official_timing["events"] if row[0] == "event"
+    ]
+    actual_events = [row[1:] for row in native_timing["decode_events"]]
+    report["decoder_timing"] = dict(
+        original_events=expected_events,
+        native_events=actual_events,
+        original_samples=[
+            row[1:] for row in official_timing["events"] if row[0] == "sample"
+        ],
+        native_jitter=native_timing["jitter"],
+        decode_events_match=actual_events == expected_events,
+    )
     (output / "comparison.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2))
 

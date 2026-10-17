@@ -7336,7 +7336,8 @@ protobuf与Frame::Put/Send，最终Connection终点收到video channel3、完整
 因此可观察到“声明128×72、AVFrame实际0×0/format=-1”的对象。此处只记录对象元数据及
 调用者交接，不生成/校验物理像素；不能把模拟内存或占位对象当作官方成功显示，亦不能
 要求Native向GPU提交无像素的AVFrame。完整Linux呈现调用者、jitter/提交阶段与这类对象的
-消费语义，不能由Android对应函数或本节的player Put终点替代。
+消费语义，不能由Android对应函数或本节的player Put终点替代；§92沿同一Linux客户端
+继续执行这些调用者，单独记录该边界的证据。
 
 ### 91.4 撤回共有后端推断与Native反例
 
@@ -7369,6 +7370,104 @@ python3 scripts/audit-steam-client-avcodec.py \
   --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
   --output /tmp/steam-client-avcodec.json \
   --sdk-library build/video-recovery-re/linux-1.3.32.316/package/lib/libavutil.so.59
+python3 scripts/observe-native-avcodec-gap.py \
+  --build build/desktop --output /tmp/native-avcodec-gap
+```
+
+## 92. 同一官方Linux客户端的OnThink、播放队列与占位对象消费
+
+### 92.1 官方客户端证据链与终点
+
+来源仍是§91的Valve Steam Link 1.3.32.316客户端ELF，SHA256不变。
+`audit-steam-client-avcodec-player.py`不使用Windows Host行为，也不把Android/MediaCodec
+策略翻译成AVCodec期望；它在同一原客户端内继续执行以下函数：
+
+| 原函数边界 | 地址/身份依据 | 执行范围 |
+| --- | --- | --- |
+| decoder OnThink | @0x326f30，已固定decoder vtable slot4 | 完整函数，原partial链表删除、AppendBuffer、mode检查、FinalDecode前后事件与清理 |
+| AppendBuffer | @0x3236e0，slot13 | 原完整函数；显式合法carrier/list-node输入，结束标记8，2204B AU |
+| IStreamPlayer构造/注册 | @0x2ee0f0、0x317ab0 | 原完整函数；在client phase0注册后回到受控streaming phase6 |
+| PutVideoFrame | @0x2edf70，CStreamPlayer主vtable 0x11001a0的slot9 | 原采样、锁、ring queue push/commit与唤醒入口 |
+| jitter update/ready | @0x2ed080、0x2ed1d0 | 原浮点与年龄门禁；构造批量60，预算可作为显式调用边界输入 |
+| 播放队列选择 | @0x2ee9e0、0x2eea50、0x2eeaa0 | 原pop、ready筛选、跳过旧ready对象、设置current |
+| video update调用者 | @0x33d350 | 完整函数，含格式分支、16/17、SDL调用、呈现后完成 |
+| 完成虚调用 | 主vtable slot49 → @0x33b5b0 → @0x2ee8d0 → @0x2ee7a0 | 原derived/base完整函数；不是把slot49直接当作base函数 |
+| 事件/统计门禁 | @0x318a90、0x318b50、0x318df0及原helper | 原函数执行；原槽的最终结果直接读回 |
+
+39个完整FDE的地址/长度/指令SHA收录于fixture，案例逐个覆盖入口。
+SDK/parser/frame/packet接口及返回码沿用§91的明确终点；没有执行物理解码。
+原base player构造运行，但derived player的vptr、已初始化render handle/模式由调用边界
+显式提供，不冒称跑过完整CStreamPlayer工厂、Qt/UI/session启动。输入UI pump、overlay
+虚调用、完成后的统计UI消费者、OS锁/事件/clock、可选外部显示服务及SDL是终点。
+SDL返回值是输入，不表示真实显示成功；不以零像素或伪造GPU内存通过画面校验。
+
+复用的decoder构造在受控`fopen(/proc/cpuinfo)=NULL`下会触发原CPU信息读取assert，
+并走原fallback；其精确line2919/表达式地址0x8c88d0另列`bootstrap_assertions`，
+不把它藏进“没有assert”的主张。之后注册与各submit/present状态均检查无新增assert。
+统计仍从显式合法pending槽起步，不是完整RecordFrameReceived/统计启停或全并发生命周期。
+
+### 92.2 可直接复跑的策略与触发条件
+
+【证据】OnThink @0x3270bf记录14；@0x3270d8虚调用完整FinalDecode；@0x3270ef记录15。
+FinalDecode里的receive成功或错误处理完成后，才调用原PutVideoFrame。
+PutVideoFrame @0x2edfac在实际入队前采样。在显式send耗时100ticks、receive耗时200ticks
+下，原14为1000000，原15与采样时刻为1000300；不是1000100。
+
+【证据】receive EAGAIN的原路径保持§91的`7 → 尝试5 → DataLost(video,空正文) → unref`。
+随后原format0/AVFrame无像素对象真实进入原播放队列，并参与同一个jitter门禁。
+budget0时立即可选；预算20ms时，在1000000尚不可选，到1001311可选。
+这20ms是显式jitter边界案例，不是重传timeout，也不能解释为官方固定等20ms。
+
+选中该对象后，完整video update原函数的可观察顺序为：
+
+1. 尝试记录该任务的事件16。
+2. format0不进入@0x33d900的软件像素上传分支，也不把无像素AVFrame交给SDL_UpdateYUVTexture。
+3. 尝试记录17，继续界面相关绘图与SDL_RenderPresent。
+4. 由原slot49的derived/base调用链尝试完成result1；原统计槽已有7，最终仍为7。
+
+原普通软件能力下的reset成员保持0。占位对象被消费并成为previous，不是挂在
+“等待同一任务将来解出像素”的状态。后面普通结束标记8、没有协议关键帧标记的任务，
+在显式SDK成功输入下可以入队/上传并完成1；这里的SDK成功是边界条件，不证明物理P帧
+一定能在丢参考后解出，也不证明真实Steam重发或NVTEGRA恢复延迟。
+
+【证据】旧占位对象和新有效对象同时ready时，原选择器尝试给旧对象记6并释放它，
+仍保留旧对象已有7；新对象上传后完成1。重复呈现previous占位对象可再次调用SDL呈现，
+但不重复16/17或完成。SDL_RenderPresent显式返回false的案例，调用者仍尝试完成1。
+不能把这个结果1独立解释为物理屏幕已经正确显示。
+
+【结论边界】这补齐了§91缺少的“占位对象交给谁、怎样消费、统计是否被后续成功覆盖”。
+不上传无像素对象已由原分支证明；“一定保留上一张游戏画面”“一定黑屏/闪烁”仍未证明，
+需要完整renderer/backbuffer与平台显示证据。源函数的调用顺序也不等于真实多线程调度时序。
+这些分支没有建立新的FEC自动启用入口，不改变§32/90对FEC配置来源与能力门禁的区分。
+
+### 92.3 与实际Native的差异及实现约束
+
+`observe-native-avcodec-gap.py`增加第二个独立真实runtime/control/parser/worker/FFmpeg/media
+进程；实际输出仍比独立framemd5，SDK耗时由同样的100/200ticks显式控制。
+Native实际decode-end记录为1000100，jitter样本也只包含send后的年龄；与原OnThink的
+1000300不符。原§91的EAGAIN反例仍为Native result0/pending、loss_calls0，而官方为7和`02`。
+这些是实际执行读回的差异，不是只比较两个自写模型。
+
+【撤回/限定】继续撤回把Android的“输入被SDK接受就结束解码计时、无输出任务等待texture”
+当作FFmpeg共有策略的推断。Native当前结构描述及Android正向投影测试仍可说明各自覆盖范围，
+不能作为这里AVCodec分支已对齐的验收条件。
+
+按本节证据约束AVCodec实现时，须分别核验：receive后任务入队/采样/15的顺序；
+7/5首次完成门禁与空DataLost；format0任务可被消费而无无效像素上传；正常下一任务可继续；
+跳过/重复呈现不覆盖错误结果。物理像素token/AVFrame引用安全保持独立，不能为了任务策略
+对齐而把无效帧或错误身份送入GPU。send错误的reset/仍receive一次、parser长度分支、
+具体硬件格式与平台reset映射仍各按§91或平台官方客户端证据处理，不能被这一占位分支替代。
+
+固定18案例45状态包括普通/异常收帧、send异常后收帧、parser长度、无效宽度、未知格式、
+SDK耗时、SDL失败、占位后恢复、旧占位被跳过、jitter等待和重复呈现。
+五项原指令反事实去掉15、采样、完成调用、跳过旧ready或DataLost，均完整返回且读回状态
+改变；不以harness异常充检测力。该fixture是官方客户端证据，既非Native等价证明，亦非
+原用户停顿/闪烁根因或全官方平台统一策略的证明。
+
+```sh
+python3 scripts/audit-steam-client-avcodec-player.py \
+  --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
+  --output /tmp/steam-client-avcodec-player.json
 python3 scripts/observe-native-avcodec-gap.py \
   --build build/desktop --output /tmp/native-avcodec-gap
 ```

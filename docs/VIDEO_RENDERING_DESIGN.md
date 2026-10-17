@@ -900,6 +900,12 @@ COPY_OPAQUE在本地证明物理输出的引用归属，不单独证明官方FFm
 采样顺序一致；物理像素身份安全与协议任务策略分别核验。本文当前队列/伪代码不能作为
 这些FFmpeg分支已对齐的验收依据。
 
+§92另执行同一官方Linux客户端的完整OnThink、原Put/jitter/播放队列及video update调用者：
+采样与15位于receive之后；EAGAIN的format0占位任务正常出队、跳过像素上传并继续呈现，
+后续尝试完成1不能覆盖先前7。当前Native提前计时与无输出pending均有真实执行反例。
+以下“接受输入后独立入队/等待”的结构描述须限定为现有Native与Android投影，不能拿它
+覆盖这组AVCodec官方客户端策略；也不能把占位消费推断成物理屏幕必定保留旧图。
+
 历史问题：原 `video_submit_locked` 调 `receive_frames(frame_id, submit_us)`，缓存输出也沿用本次
 输入 id；实际 FFmpeg 的 send/receive 解耦。固定分支及本机 `avcodec.h` 的 COPY_OPAQUE 契约
 允许输入输出不是一一对应，不能仅开一个 flag 就宣称完成归因。
