@@ -2590,3 +2590,10 @@ D-071 补充：桌面 `--sdr-abrupt` 在同一正式 UI/解码/音频/HID 路径
 因此 listener 即使尚无连接，也须传入有效的 `sockaddr_storage` 和初始化后的长度；
 不能沿用 Linux 允许的 `accept(fd, NULL, NULL)`。桌面回归测试包装 accept，强制核对
 这一 SDK 前置条件，再调用真实 socket；仅在 Linux 通过 HTTP 测试不足以证明此处可移植。
+
+活跃文件约束：同版本 `nx/source/runtime/devices/fs_dev.c:fsdev_stat` 会额外用 Read
+打开文件，`fsdev_fstat` 则直接使用已有句柄查询长度。Horizon 不允许已有 writer 时再开
+独立 reader，因此活跃日志以单一读写 FILE 拥有：索引使用 fstat，HTTP 每次最多读取
+4 KiB，保存并恢复写入位置；读写都在原日志线程串行执行。HTTP 只保存快照名称和偏移，
+若期间分卷，旧卷已经关闭 writer，才切换为独立只读句柄；不借用跨分卷失效的 FILE。
+桌面测试以文件锁模拟拒绝重开 writer，核对活跃文件的索引、正文、范围读取和后续追加。

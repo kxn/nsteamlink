@@ -2,10 +2,14 @@
 #include <arpa/inet.h>
 #include <assert.h>
 #include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -20,6 +24,37 @@ int __wrap_accept(int fd, struct sockaddr *address, socklen_t *length) {
     assert(*length == sizeof(struct sockaddr_storage));
     ++accept_calls;
     return __real_accept(fd, address, length);
+}
+/* Emulate Horizon's refusal to reopen a file that already has a writer.
+ * libnx stat(path) also opens a separate read handle; fstat does not. */
+FILE *__real_fdopen(int fd, const char *mode);
+FILE *__wrap_fdopen(int fd, const char *mode) {
+    if (mode[0] == 'w')
+        assert(!flock(fd, LOCK_EX | LOCK_NB));
+    return __real_fdopen(fd, mode);
+}
+FILE *__real_fopen(const char *path, const char *mode);
+FILE *__wrap_fopen(const char *path, const char *mode) {
+    FILE *file = __real_fopen(path, mode);
+    if (file && mode[0] == 'r' && flock(fileno(file), LOCK_SH | LOCK_NB)) {
+        fclose(file);
+        errno = EACCES;
+        return NULL;
+    }
+    return file;
+}
+int __real_stat(const char *path, struct stat *st);
+int __wrap_stat(const char *path, struct stat *st) {
+    int fd = open(path, O_RDONLY);
+    if (fd >= 0) {
+        int result = flock(fd, LOCK_SH | LOCK_NB);
+        close(fd);
+        if (result) {
+            errno = EACCES;
+            return -1;
+        }
+    }
+    return __real_stat(path, st);
 }
 const char *sl_system_data_dir(void) {
     return data_root;
@@ -129,6 +164,28 @@ int main(void) {
     get("GET /logs HTTP/1.1\r\nHost: local\r\n\r\n", reply, sizeof(reply));
     assert(strstr(reply, "200 Response") && strstr(reply, "stream_diag.log") &&
            strstr(reply, "session-") && !strstr(reply, "profile.bin"));
+    char active[96], active_request[256];
+    const char *active_field = strstr(reply, "\"active\":\"");
+    assert(active_field && sscanf(active_field, "\"active\":\"%95[^\"]", active) == 1);
+    char listed_active[128];
+    snprintf(listed_active, sizeof(listed_active), "\"name\":\"%s\"", active);
+    assert(strstr(reply, listed_active));
+    snprintf(active_request, sizeof(active_request), "GET /logs/%s HTTP/1.1\r\nHost: local\r\n\r\n",
+             active);
+    get(active_request, reply, sizeof(reply));
+    assert(strstr(reply, "200 OK") && strstr(reply, "marker=239"));
+    snprintf(active_request, sizeof(active_request),
+             "GET /logs/%s HTTP/1.1\r\nHost: local\r\nRange: bytes=0-10\r\n\r\n", active);
+    get(active_request, reply, sizeof(reply));
+    assert(strstr(reply, "206 OK") && !strcmp(strstr(reply, "\r\n\r\n") + 4, "diagnostic "));
+    for (unsigned attempt = 0;; ++attempt) {
+        unsigned before = sl_log_drop_count();
+        sl_log("after-active-download");
+        if (sl_log_drop_count() == before)
+            break;
+        assert(attempt < 1000);
+        usleep(1000);
+    }
     get("GET /logs/stream_diag.log HTTP/1.1\r\nHost: local\r\nRange: bytes=0-10\r\n\r\n", reply,
         sizeof(reply));
     assert(strstr(reply, "206 OK") && strstr(reply, "Content-Range: bytes 0-10/25"));
@@ -218,6 +275,7 @@ int main(void) {
         snprintf(marker, sizeof(marker), "marker=%03u ", i);
         assert(strstr(all, marker));
     }
+    assert(strstr(all, "after-active-download"));
     snprintf(path, sizeof(path), "%s/logs", root);
     assert(!rmdir(path));
     snprintf(path, sizeof(path), "%s/stream_diag.log", root);

@@ -51,9 +51,10 @@ typedef struct log_store {
 typedef struct http_client {
     int fd;
     char request[2048], output[16384];
+    char active_snapshot[NAME_SIZE];
     size_t received, size, sent;
     FILE *file;
-    uint64_t remaining, deadline;
+    uint64_t remaining, deadline, offset;
     bool responding;
 } http_client;
 typedef struct log_entry {
@@ -115,13 +116,13 @@ static bool open_segment(log_store *store) {
         snprintf(store->active, sizeof(store->active), "%s-%05u.log", store->run, store->part++);
         if (!log_path(store, store->active, path, sizeof(path)))
             break;
-        int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+        int fd = open(path, O_RDWR | O_CREAT | O_EXCL, 0600);
         if (fd < 0) {
             if (errno == EEXIST)
                 continue;
             break;
         }
-        store->file = fdopen(fd, "w");
+        store->file = fdopen(fd, "w+");
         if (!store->file) {
             int saved = errno;
             close(fd);
@@ -229,6 +230,13 @@ static void insert_entry(log_entry *entries, unsigned *count, bool *more, const 
     snprintf(entries[pos].name, NAME_SIZE, "%s", name);
     entries[pos].size = size;
 }
+static int snapshot_stat(log_store *store, const char *name, const char *path, struct stat *st) {
+    /* libnx stat(path) opens a second read handle, which Horizon rejects for
+     * a file already open for writing. The worker owns the existing handle. */
+    if (store->file && !strcmp(name, store->active))
+        return fstat(fileno(store->file), st);
+    return stat(path, st);
+}
 static void index_response(log_store *store, http_client *client, const char *after) {
     struct index_page {
         log_entry entries[PAGE_SIZE];
@@ -249,7 +257,7 @@ static void index_response(log_store *store, http_client *client, const char *af
         while ((entry = readdir(dir))) {
             struct stat st;
             if (valid_name(entry->d_name) && log_path(store, entry->d_name, path, sizeof(path)) &&
-                !stat(path, &st) && S_ISREG(st.st_mode))
+                !snapshot_stat(store, entry->d_name, path, &st) && S_ISREG(st.st_mode))
                 insert_entry(entries, &count, &more, entry->d_name, st.st_size, after);
         }
         closedir(dir);
@@ -301,7 +309,7 @@ static void request(log_store *store, http_client *client) {
     char path[672];
     struct stat st;
     if (strncmp(target, "/logs/", 6) || !log_path(store, target + 6, path, sizeof(path)) ||
-        stat(path, &st) || !S_ISREG(st.st_mode) || st.st_size < 0) {
+        snapshot_stat(store, target + 6, path, &st) || !S_ISREG(st.st_mode) || st.st_size < 0) {
         response(client, 404, "text/plain", "Log not found\n");
         return;
     }
@@ -320,14 +328,20 @@ static void request(log_store *store, http_client *client) {
         }
         ranged = true;
     }
-    client->file = fopen(path, "rb");
-    if (!client->file || first > LONG_MAX || fseek(client->file, (long)first, SEEK_SET)) {
+    bool active = store->file && !strcmp(target + 6, store->active);
+    if (!active)
+        client->file = fopen(path, "rb");
+    if (first > LONG_MAX ||
+        (!active && (!client->file || fseek(client->file, (long)first, SEEK_SET)))) {
         if (client->file)
             fclose(client->file);
         client->file = NULL;
         response(client, 500, "text/plain", "Cannot read log\n");
         return;
     }
+    if (active)
+        snprintf(client->active_snapshot, sizeof(client->active_snapshot), "%s", store->active);
+    client->offset = first;
     client->remaining = st.st_size ? last - first + 1 : 0;
     char range[128] = {0};
     if (ranged)
@@ -341,6 +355,40 @@ static void request(log_store *store, http_client *client) {
                  "Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n\r\n",
                  ranged ? 206 : 200, (unsigned long long)client->remaining, range);
     client->responding = true;
+}
+static size_t snapshot_read(log_store *store, http_client *client, size_t count) {
+    if (!client->active_snapshot[0])
+        return fread(client->output, 1, count, client->file);
+    if (store->file && !strcmp(client->active_snapshot, store->active)) {
+        /* The same worker serializes writes and bounded snapshot reads. Keep
+         * the writer's append position, and never close its borrowed FILE. */
+        fpos_t position;
+        if (fgetpos(store->file, &position))
+            return 0;
+        size_t n = 0;
+        if (client->offset <= LONG_MAX && !fseek(store->file, (long)client->offset, SEEK_SET))
+            n = fread(client->output, 1, count, store->file);
+        clearerr(store->file);
+        if (fsetpos(store->file, &position)) {
+            store->storage_error = errno ? errno : EIO;
+            fclose(store->file);
+            store->file = NULL;
+            return 0;
+        }
+        client->offset += n;
+        return n;
+    }
+    /* Rotation closed the writer for this snapshot; it is now a regular
+     * immutable archive. Open it lazily and continue at the captured offset. */
+    char path[672];
+    if (!log_path(store, client->active_snapshot, path, sizeof(path)))
+        return 0;
+    client->file = fopen(path, "rb");
+    if (!client->file || client->offset > LONG_MAX ||
+        fseek(client->file, (long)client->offset, SEEK_SET))
+        return 0;
+    client->active_snapshot[0] = 0;
+    return fread(client->output, 1, count, client->file);
 }
 static int listen_start(log_store *store) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -417,7 +465,7 @@ static void http_step(int listener, log_store *store, http_client *client) {
             return;
         }
         size_t count = client->remaining < 4096 ? client->remaining : 4096;
-        client->size = fread(client->output, 1, count, client->file);
+        client->size = snapshot_read(store, client, count);
         client->sent = 0;
         if (client->size != count) {
             client_close(client);
