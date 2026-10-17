@@ -2,8 +2,8 @@
 """Compare production ordinary-channel loss events against pinned client execution.
 
 Native actual CRC RX, channel insertion, reliable update, window Pop and live
-collectors are used. Media polling drives the production worker step explicitly;
-scheduling, decoder, final feedback I/O and early-media are outside scope.
+collectors are used. Media U actions drive the production RX update then FIFO
+poll explicitly; scheduling, decoder, final feedback I/O and early-media are outside scope.
 Appended type11 cases use real FEC RX/RS and drive its worker FIFO within the
 receive action; payload/counter equivalence does not imply callback timing.
 Optional report cases compare full original FrameEvents bodies.

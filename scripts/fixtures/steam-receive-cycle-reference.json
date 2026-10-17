@@ -1,6 +1,6 @@
 {
   "binary_sha256": "50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e",
-  "scope": "Run original Socket Wait/Update -> CRC RX -> Connection/channel updates.\n\nThe pinned client executes readiness flag/GetWaitMS, drain loop, timestamp\ncapture, Connection::Update, real channel factory/windows, reliable feedback,\nSocket TX/CRC and network/clock collectors. Transport wait/read/final write,\npacket refcounts and delivered-frame/client-update delegates are adapters;\nconnection state/clock initialization are controlled. Incoming rows can spend\ncontrolled ticks in read and processing, including the final empty read.\nOutgoing queues are empty. This does not prove full client OnThink, producer/TX\nworker interleaving, decoder, fatal OS-read policy, authentication or device IO.\n",
+  "scope": "Run original Socket Wait/Update -> CRC RX -> Connection/channel updates.\n\nThe pinned client executes readiness flag/GetWaitMS, drain loop, timestamp\ncapture, Connection::Update, real channel factory/windows, reliable/media feedback,\nSocket TX/CRC and network/clock collectors. Transport wait/read/final write,\npacket refcounts and delivered-frame/client-update delegates are adapters;\nconnection state/clock initialization are controlled. Incoming rows can spend\ncontrolled ticks in read and processing, including the final empty read.\nOutgoing queues are empty. This does not prove full client OnThink, producer/TX\nworker interleaving, decoder, fatal OS-read policy, authentication or device IO.\n",
   "cases": [
     {
       "input": {
@@ -9092,6 +9092,2108 @@
           "now": 1000200,
           "update_tick": 1000200,
           "last_receive": 1000100,
+          "ping": {
+            "sum": 0,
+            "bits": 0,
+            "samples": []
+          },
+          "clock": {
+            "echo": 1000000,
+            "minimum": 0,
+            "smooth": 0,
+            "next_min_update": 0,
+            "offset": 0
+          }
+        }
+      ],
+      "source_assertions": []
+    },
+    {
+      "input": {
+        "name": "media_batch_0",
+        "crc": false,
+        "cycles": [
+          {
+            "tick": 1000000,
+            "blocked": false,
+            "ready": true,
+            "eof": 100,
+            "rows": [
+              [
+                3,
+                3,
+                0,
+                0,
+                0,
+                900000,
+                "06aabb",
+                7,
+                11
+              ],
+              [
+                3,
+                3,
+                1,
+                0,
+                0,
+                900001,
+                "06aabb",
+                7,
+                11
+              ]
+            ]
+          }
+        ]
+      },
+      "observed": [
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 32,
+              "bits": 1118481067,
+              "samples": [
+                "40420f0010000000",
+                "52420f0010000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 2,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000",
+              "52420f000100000000000000"
+            ]
+          },
+          "entries": [
+            16,
+            16
+          ],
+          "writes": [],
+          "waits": [
+            2
+          ],
+          "wires": [],
+          "delivered": [
+            "06aabb",
+            "06aabb"
+          ],
+          "metadata": [
+            {
+              "first": 1000000,
+              "last": 1000000,
+              "sent": 900000,
+              "fragment": 0
+            },
+            {
+              "first": 1000018,
+              "last": 1000018,
+              "sent": 900001,
+              "fragment": 0
+            }
+          ],
+          "now": 1000136,
+          "update_tick": 1000036,
+          "last_receive": 1000018,
+          "ping": {
+            "sum": 0,
+            "bits": 0,
+            "samples": []
+          },
+          "clock": {
+            "echo": 1000000,
+            "minimum": 0,
+            "smooth": 0,
+            "next_min_update": 0,
+            "offset": 0
+          }
+        }
+      ],
+      "source_assertions": []
+    },
+    {
+      "input": {
+        "name": "media_fill_0",
+        "crc": false,
+        "cycles": [
+          {
+            "tick": 1000000,
+            "blocked": false,
+            "ready": true,
+            "eof": 100,
+            "rows": [
+              [
+                3,
+                3,
+                1,
+                1,
+                0,
+                900001,
+                "06aabb",
+                7,
+                11
+              ],
+              [
+                3,
+                3,
+                0,
+                1,
+                0,
+                900000,
+                "06aabb",
+                7,
+                11
+              ]
+            ]
+          }
+        ]
+      },
+      "observed": [
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 32,
+              "bits": 1118481067,
+              "samples": [
+                "40420f0010000000",
+                "52420f0010000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 2,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000",
+              "52420f000100000000000000"
+            ]
+          },
+          "entries": [
+            16,
+            16
+          ],
+          "writes": [],
+          "waits": [
+            2
+          ],
+          "wires": [],
+          "delivered": [
+            "06aabb",
+            "06aabb"
+          ],
+          "metadata": [
+            {
+              "first": 1000018,
+              "last": 1000018,
+              "sent": 900000,
+              "fragment": 0
+            },
+            {
+              "first": 1000000,
+              "last": 1000000,
+              "sent": 900001,
+              "fragment": 0
+            }
+          ],
+          "now": 1000136,
+          "update_tick": 1000036,
+          "last_receive": 1000018,
+          "ping": {
+            "sum": 0,
+            "bits": 0,
+            "samples": []
+          },
+          "clock": {
+            "echo": 1000000,
+            "minimum": 0,
+            "smooth": 0,
+            "next_min_update": 0,
+            "offset": 0
+          }
+        }
+      ],
+      "source_assertions": []
+    },
+    {
+      "input": {
+        "name": "media_fragments_0",
+        "crc": false,
+        "cycles": [
+          {
+            "tick": 1000000,
+            "blocked": false,
+            "ready": true,
+            "eof": 100,
+            "rows": [
+              [
+                3,
+                3,
+                0,
+                0,
+                1,
+                900000,
+                "06aa",
+                7,
+                11
+              ],
+              [
+                4,
+                3,
+                1,
+                0,
+                0,
+                900001,
+                "bbcc",
+                7,
+                11
+              ]
+            ]
+          }
+        ]
+      },
+      "observed": [
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 30,
+              "bits": 1117782016,
+              "samples": [
+                "40420f000f000000",
+                "52420f000f000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 2,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000",
+              "52420f000100000000000000"
+            ]
+          },
+          "entries": [
+            15,
+            15
+          ],
+          "writes": [],
+          "waits": [
+            2
+          ],
+          "wires": [],
+          "delivered": [
+            "06aabbcc"
+          ],
+          "metadata": [
+            {
+              "first": 1000000,
+              "last": 1000018,
+              "sent": 900000,
+              "fragment": 1
+            }
+          ],
+          "now": 1000136,
+          "update_tick": 1000036,
+          "last_receive": 1000018,
+          "ping": {
+            "sum": 0,
+            "bits": 0,
+            "samples": []
+          },
+          "clock": {
+            "echo": 1000000,
+            "minimum": 0,
+            "smooth": 0,
+            "next_min_update": 0,
+            "offset": 0
+          }
+        }
+      ],
+      "source_assertions": []
+    },
+    {
+      "input": {
+        "name": "media_gap_0",
+        "crc": false,
+        "cycles": [
+          {
+            "tick": 1000000,
+            "blocked": false,
+            "ready": true,
+            "eof": 0,
+            "rows": [
+              [
+                3,
+                3,
+                1,
+                1,
+                0,
+                900001,
+                "06aabb",
+                0,
+                0
+              ]
+            ]
+          },
+          {
+            "tick": 1000064,
+            "blocked": false,
+            "ready": false,
+            "eof": 0,
+            "rows": []
+          },
+          {
+            "tick": 1000065,
+            "blocked": false,
+            "ready": false,
+            "eof": 0,
+            "rows": []
+          },
+          {
+            "tick": 1000066,
+            "blocked": false,
+            "ready": false,
+            "eof": 0,
+            "rows": []
+          },
+          {
+            "tick": 1000300,
+            "blocked": false,
+            "ready": true,
+            "eof": 100,
+            "rows": [
+              [
+                3,
+                3,
+                0,
+                2,
+                0,
+                900000,
+                "06aabb",
+                7,
+                11
+              ]
+            ]
+          }
+        ]
+      },
+      "observed": [
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 16,
+              "bits": 1110092459,
+              "samples": [
+                "40420f0010000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 1,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000"
+            ]
+          },
+          "entries": [
+            16
+          ],
+          "writes": [],
+          "waits": [
+            2
+          ],
+          "wires": [],
+          "delivered": [],
+          "metadata": [],
+          "now": 1000000,
+          "update_tick": 1000000,
+          "last_receive": 1000000,
+          "ping": {
+            "sum": 0,
+            "bits": 0,
+            "samples": []
+          },
+          "clock": {
+            "echo": 1000000,
+            "minimum": 0,
+            "smooth": 0,
+            "next_min_update": 0,
+            "offset": 0
+          }
+        },
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 16,
+              "bits": 1110092459,
+              "samples": [
+                "40420f0010000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 1,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000"
+            ]
+          },
+          "entries": [],
+          "writes": [],
+          "waits": [
+            2
+          ],
+          "wires": [],
+          "delivered": [],
+          "metadata": [],
+          "now": 1000064,
+          "update_tick": 1000064,
+          "last_receive": 1000000,
+          "ping": {
+            "sum": 0,
+            "bits": 0,
+            "samples": []
+          },
+          "clock": {
+            "echo": 1000000,
+            "minimum": 0,
+            "smooth": 0,
+            "next_min_update": 0,
+            "offset": 0
+          }
+        },
+        {
+          "rates": [
+            {
+              "sum": 20,
+              "bits": 1112888661,
+              "samples": [
+                "81420f0014000000"
+              ]
+            },
+            {
+              "sum": 16,
+              "bits": 1110092459,
+              "samples": [
+                "40420f0010000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 1,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000"
+            ]
+          },
+          "entries": [],
+          "writes": [
+            {
+              "size": 20,
+              "wire_size": 20,
+              "crc": false
+            }
+          ],
+          "waits": [
+            2
+          ],
+          "wires": [
+            "0a000c22030000010081420f00a1bb0d00ffff01"
+          ],
+          "delivered": [],
+          "metadata": [],
+          "now": 1000065,
+          "update_tick": 1000065,
+          "last_receive": 1000000,
+          "ping": {
+            "sum": 0,
+            "bits": 0,
+            "samples": []
+          },
+          "clock": {
+            "echo": 1000000,
+            "minimum": 0,
+            "smooth": 0,
+            "next_min_update": 0,
+            "offset": 0
+          }
+        },
+        {
+          "rates": [
+            {
+              "sum": 20,
+              "bits": 1112888661,
+              "samples": [
+                "81420f0014000000"
+              ]
+            },
+            {
+              "sum": 16,
+              "bits": 1110092459,
+              "samples": [
+                "40420f0010000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 1,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000"
+            ]
+          },
+          "entries": [],
+          "writes": [],
+          "waits": [
+            2
+          ],
+          "wires": [],
+          "delivered": [],
+          "metadata": [],
+          "now": 1000066,
+          "update_tick": 1000066,
+          "last_receive": 1000000,
+          "ping": {
+            "sum": 0,
+            "bits": 0,
+            "samples": []
+          },
+          "clock": {
+            "echo": 1000000,
+            "minimum": 0,
+            "smooth": 0,
+            "next_min_update": 0,
+            "offset": 0
+          }
+        },
+        {
+          "rates": [
+            {
+              "sum": 20,
+              "bits": 1112888661,
+              "samples": [
+                "81420f0014000000"
+              ]
+            },
+            {
+              "sum": 32,
+              "bits": 1118481067,
+              "samples": [
+                "40420f0010000000",
+                "6c430f0010000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 3,
+            "lost": 1,
+            "samples": [
+              "40420f000100000000000000",
+              "6c430f000100000000000000",
+              "6c430f000100000001000000"
+            ]
+          },
+          "entries": [
+            16
+          ],
+          "writes": [],
+          "waits": [
+            2
+          ],
+          "wires": [],
+          "delivered": [
+            "06aabb",
+            "06aabb"
+          ],
+          "metadata": [
+            {
+              "first": 1000300,
+              "last": 1000300,
+              "sent": 900000,
+              "fragment": 0
+            },
+            {
+              "first": 1000000,
+              "last": 1000000,
+              "sent": 900001,
+              "fragment": 0
+            }
+          ],
+          "now": 1000418,
+          "update_tick": 1000318,
+          "last_receive": 1000300,
+          "ping": {
+            "sum": 0,
+            "bits": 0,
+            "samples": []
+          },
+          "clock": {
+            "echo": 1000000,
+            "minimum": 0,
+            "smooth": 0,
+            "next_min_update": 0,
+            "offset": 0
+          }
+        }
+      ],
+      "source_assertions": []
+    },
+    {
+      "input": {
+        "name": "media_expire_0",
+        "crc": false,
+        "cycles": [
+          {
+            "tick": 1000000,
+            "blocked": false,
+            "ready": true,
+            "eof": 100,
+            "rows": [
+              [
+                3,
+                3,
+                1,
+                0,
+                0,
+                900001,
+                "06aabb",
+                0,
+                0
+              ],
+              [
+                3,
+                3,
+                3,
+                0,
+                1,
+                910000,
+                "06bb",
+                7,
+                11
+              ]
+            ]
+          }
+        ]
+      },
+      "observed": [
+        {
+          "rates": [
+            {
+              "sum": 20,
+              "bits": 1112888661,
+              "samples": [
+                "b6420f0014000000"
+              ]
+            },
+            {
+              "sum": 31,
+              "bits": 1118131541,
+              "samples": [
+                "40420f001f000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 3,
+            "lost": 1,
+            "samples": [
+              "40420f000200000000000000",
+              "52420f000100000001000000"
+            ]
+          },
+          "entries": [
+            16,
+            15
+          ],
+          "writes": [
+            {
+              "size": 20,
+              "wire_size": 20,
+              "crc": false
+            }
+          ],
+          "waits": [
+            2
+          ],
+          "wires": [
+            "0a000c220300000300b6420f00b0e20d00010001"
+          ],
+          "delivered": [],
+          "metadata": [],
+          "now": 1000118,
+          "update_tick": 1000018,
+          "last_receive": 1000000,
+          "ping": {
+            "sum": 0,
+            "bits": 0,
+            "samples": []
+          },
+          "clock": {
+            "echo": 1000000,
+            "minimum": 0,
+            "smooth": 0,
+            "next_min_update": 0,
+            "offset": 0
+          }
+        }
+      ],
+      "source_assertions": []
+    },
+    {
+      "input": {
+        "name": "media_batch_1",
+        "crc": true,
+        "cycles": [
+          {
+            "tick": 1000000,
+            "blocked": false,
+            "ready": true,
+            "eof": 100,
+            "rows": [
+              [
+                3,
+                3,
+                0,
+                0,
+                0,
+                900000,
+                "06aabb",
+                7,
+                11
+              ],
+              [
+                3,
+                3,
+                1,
+                0,
+                0,
+                900001,
+                "06aabb",
+                7,
+                11
+              ]
+            ]
+          }
+        ]
+      },
+      "observed": [
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 32,
+              "bits": 1118481067,
+              "samples": [
+                "40420f0010000000",
+                "52420f0010000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 2,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000",
+              "52420f000100000000000000"
+            ]
+          },
+          "entries": [
+            16,
+            16
+          ],
+          "writes": [],
+          "waits": [
+            2
+          ],
+          "wires": [],
+          "delivered": [
+            "06aabb",
+            "06aabb"
+          ],
+          "metadata": [
+            {
+              "first": 1000000,
+              "last": 1000000,
+              "sent": 900000,
+              "fragment": 0
+            },
+            {
+              "first": 1000018,
+              "last": 1000018,
+              "sent": 900001,
+              "fragment": 0
+            }
+          ],
+          "now": 1000136,
+          "update_tick": 1000036,
+          "last_receive": 1000018,
+          "ping": {
+            "sum": 0,
+            "bits": 0,
+            "samples": []
+          },
+          "clock": {
+            "echo": 1000000,
+            "minimum": 0,
+            "smooth": 0,
+            "next_min_update": 0,
+            "offset": 0
+          }
+        }
+      ],
+      "source_assertions": []
+    },
+    {
+      "input": {
+        "name": "media_fill_1",
+        "crc": true,
+        "cycles": [
+          {
+            "tick": 1000000,
+            "blocked": false,
+            "ready": true,
+            "eof": 100,
+            "rows": [
+              [
+                3,
+                3,
+                1,
+                1,
+                0,
+                900001,
+                "06aabb",
+                7,
+                11
+              ],
+              [
+                3,
+                3,
+                0,
+                1,
+                0,
+                900000,
+                "06aabb",
+                7,
+                11
+              ]
+            ]
+          }
+        ]
+      },
+      "observed": [
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 32,
+              "bits": 1118481067,
+              "samples": [
+                "40420f0010000000",
+                "52420f0010000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 2,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000",
+              "52420f000100000000000000"
+            ]
+          },
+          "entries": [
+            16,
+            16
+          ],
+          "writes": [],
+          "waits": [
+            2
+          ],
+          "wires": [],
+          "delivered": [
+            "06aabb",
+            "06aabb"
+          ],
+          "metadata": [
+            {
+              "first": 1000018,
+              "last": 1000018,
+              "sent": 900000,
+              "fragment": 0
+            },
+            {
+              "first": 1000000,
+              "last": 1000000,
+              "sent": 900001,
+              "fragment": 0
+            }
+          ],
+          "now": 1000136,
+          "update_tick": 1000036,
+          "last_receive": 1000018,
+          "ping": {
+            "sum": 0,
+            "bits": 0,
+            "samples": []
+          },
+          "clock": {
+            "echo": 1000000,
+            "minimum": 0,
+            "smooth": 0,
+            "next_min_update": 0,
+            "offset": 0
+          }
+        }
+      ],
+      "source_assertions": []
+    },
+    {
+      "input": {
+        "name": "media_fragments_1",
+        "crc": true,
+        "cycles": [
+          {
+            "tick": 1000000,
+            "blocked": false,
+            "ready": true,
+            "eof": 100,
+            "rows": [
+              [
+                3,
+                3,
+                0,
+                0,
+                1,
+                900000,
+                "06aa",
+                7,
+                11
+              ],
+              [
+                4,
+                3,
+                1,
+                0,
+                0,
+                900001,
+                "bbcc",
+                7,
+                11
+              ]
+            ]
+          }
+        ]
+      },
+      "observed": [
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 30,
+              "bits": 1117782016,
+              "samples": [
+                "40420f000f000000",
+                "52420f000f000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 2,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000",
+              "52420f000100000000000000"
+            ]
+          },
+          "entries": [
+            15,
+            15
+          ],
+          "writes": [],
+          "waits": [
+            2
+          ],
+          "wires": [],
+          "delivered": [
+            "06aabbcc"
+          ],
+          "metadata": [
+            {
+              "first": 1000000,
+              "last": 1000018,
+              "sent": 900000,
+              "fragment": 1
+            }
+          ],
+          "now": 1000136,
+          "update_tick": 1000036,
+          "last_receive": 1000018,
+          "ping": {
+            "sum": 0,
+            "bits": 0,
+            "samples": []
+          },
+          "clock": {
+            "echo": 1000000,
+            "minimum": 0,
+            "smooth": 0,
+            "next_min_update": 0,
+            "offset": 0
+          }
+        }
+      ],
+      "source_assertions": []
+    },
+    {
+      "input": {
+        "name": "media_gap_1",
+        "crc": true,
+        "cycles": [
+          {
+            "tick": 1000000,
+            "blocked": false,
+            "ready": true,
+            "eof": 0,
+            "rows": [
+              [
+                3,
+                3,
+                1,
+                1,
+                0,
+                900001,
+                "06aabb",
+                0,
+                0
+              ]
+            ]
+          },
+          {
+            "tick": 1000064,
+            "blocked": false,
+            "ready": false,
+            "eof": 0,
+            "rows": []
+          },
+          {
+            "tick": 1000065,
+            "blocked": false,
+            "ready": false,
+            "eof": 0,
+            "rows": []
+          },
+          {
+            "tick": 1000066,
+            "blocked": false,
+            "ready": false,
+            "eof": 0,
+            "rows": []
+          },
+          {
+            "tick": 1000300,
+            "blocked": false,
+            "ready": true,
+            "eof": 100,
+            "rows": [
+              [
+                3,
+                3,
+                0,
+                2,
+                0,
+                900000,
+                "06aabb",
+                7,
+                11
+              ]
+            ]
+          }
+        ]
+      },
+      "observed": [
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 16,
+              "bits": 1110092459,
+              "samples": [
+                "40420f0010000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 1,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000"
+            ]
+          },
+          "entries": [
+            16
+          ],
+          "writes": [],
+          "waits": [
+            2
+          ],
+          "wires": [],
+          "delivered": [],
+          "metadata": [],
+          "now": 1000000,
+          "update_tick": 1000000,
+          "last_receive": 1000000,
+          "ping": {
+            "sum": 0,
+            "bits": 0,
+            "samples": []
+          },
+          "clock": {
+            "echo": 1000000,
+            "minimum": 0,
+            "smooth": 0,
+            "next_min_update": 0,
+            "offset": 0
+          }
+        },
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 16,
+              "bits": 1110092459,
+              "samples": [
+                "40420f0010000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 1,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000"
+            ]
+          },
+          "entries": [],
+          "writes": [],
+          "waits": [
+            2
+          ],
+          "wires": [],
+          "delivered": [],
+          "metadata": [],
+          "now": 1000064,
+          "update_tick": 1000064,
+          "last_receive": 1000000,
+          "ping": {
+            "sum": 0,
+            "bits": 0,
+            "samples": []
+          },
+          "clock": {
+            "echo": 1000000,
+            "minimum": 0,
+            "smooth": 0,
+            "next_min_update": 0,
+            "offset": 0
+          }
+        },
+        {
+          "rates": [
+            {
+              "sum": 20,
+              "bits": 1112888661,
+              "samples": [
+                "81420f0014000000"
+              ]
+            },
+            {
+              "sum": 16,
+              "bits": 1110092459,
+              "samples": [
+                "40420f0010000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 1,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000"
+            ]
+          },
+          "entries": [],
+          "writes": [
+            {
+              "size": 20,
+              "wire_size": 24,
+              "crc": true
+            }
+          ],
+          "waits": [
+            2
+          ],
+          "wires": [
+            "8a000c22030000010081420f00a1bb0d00ffff01bafdab65"
+          ],
+          "delivered": [],
+          "metadata": [],
+          "now": 1000065,
+          "update_tick": 1000065,
+          "last_receive": 1000000,
+          "ping": {
+            "sum": 0,
+            "bits": 0,
+            "samples": []
+          },
+          "clock": {
+            "echo": 1000000,
+            "minimum": 0,
+            "smooth": 0,
+            "next_min_update": 0,
+            "offset": 0
+          }
+        },
+        {
+          "rates": [
+            {
+              "sum": 20,
+              "bits": 1112888661,
+              "samples": [
+                "81420f0014000000"
+              ]
+            },
+            {
+              "sum": 16,
+              "bits": 1110092459,
+              "samples": [
+                "40420f0010000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 1,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000"
+            ]
+          },
+          "entries": [],
+          "writes": [],
+          "waits": [
+            2
+          ],
+          "wires": [],
+          "delivered": [],
+          "metadata": [],
+          "now": 1000066,
+          "update_tick": 1000066,
+          "last_receive": 1000000,
+          "ping": {
+            "sum": 0,
+            "bits": 0,
+            "samples": []
+          },
+          "clock": {
+            "echo": 1000000,
+            "minimum": 0,
+            "smooth": 0,
+            "next_min_update": 0,
+            "offset": 0
+          }
+        },
+        {
+          "rates": [
+            {
+              "sum": 20,
+              "bits": 1112888661,
+              "samples": [
+                "81420f0014000000"
+              ]
+            },
+            {
+              "sum": 32,
+              "bits": 1118481067,
+              "samples": [
+                "40420f0010000000",
+                "6c430f0010000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 3,
+            "lost": 1,
+            "samples": [
+              "40420f000100000000000000",
+              "6c430f000100000000000000",
+              "6c430f000100000001000000"
+            ]
+          },
+          "entries": [
+            16
+          ],
+          "writes": [],
+          "waits": [
+            2
+          ],
+          "wires": [],
+          "delivered": [
+            "06aabb",
+            "06aabb"
+          ],
+          "metadata": [
+            {
+              "first": 1000300,
+              "last": 1000300,
+              "sent": 900000,
+              "fragment": 0
+            },
+            {
+              "first": 1000000,
+              "last": 1000000,
+              "sent": 900001,
+              "fragment": 0
+            }
+          ],
+          "now": 1000418,
+          "update_tick": 1000318,
+          "last_receive": 1000300,
+          "ping": {
+            "sum": 0,
+            "bits": 0,
+            "samples": []
+          },
+          "clock": {
+            "echo": 1000000,
+            "minimum": 0,
+            "smooth": 0,
+            "next_min_update": 0,
+            "offset": 0
+          }
+        }
+      ],
+      "source_assertions": []
+    },
+    {
+      "input": {
+        "name": "media_expire_1",
+        "crc": true,
+        "cycles": [
+          {
+            "tick": 1000000,
+            "blocked": false,
+            "ready": true,
+            "eof": 100,
+            "rows": [
+              [
+                3,
+                3,
+                1,
+                0,
+                0,
+                900001,
+                "06aabb",
+                0,
+                0
+              ],
+              [
+                3,
+                3,
+                3,
+                0,
+                1,
+                910000,
+                "06bb",
+                7,
+                11
+              ]
+            ]
+          }
+        ]
+      },
+      "observed": [
+        {
+          "rates": [
+            {
+              "sum": 20,
+              "bits": 1112888661,
+              "samples": [
+                "b6420f0014000000"
+              ]
+            },
+            {
+              "sum": 31,
+              "bits": 1118131541,
+              "samples": [
+                "40420f001f000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 3,
+            "lost": 1,
+            "samples": [
+              "40420f000200000000000000",
+              "52420f000100000001000000"
+            ]
+          },
+          "entries": [
+            16,
+            15
+          ],
+          "writes": [
+            {
+              "size": 20,
+              "wire_size": 24,
+              "crc": true
+            }
+          ],
+          "waits": [
+            2
+          ],
+          "wires": [
+            "8a000c220300000300b6420f00b0e20d0001000177451e2a"
+          ],
+          "delivered": [],
+          "metadata": [],
+          "now": 1000118,
+          "update_tick": 1000018,
+          "last_receive": 1000000,
+          "ping": {
+            "sum": 0,
+            "bits": 0,
+            "samples": []
+          },
+          "clock": {
+            "echo": 1000000,
+            "minimum": 0,
+            "smooth": 0,
+            "next_min_update": 0,
+            "offset": 0
+          }
+        }
+      ],
+      "source_assertions": []
+    },
+    {
+      "input": {
+        "name": "media_priority_10_0",
+        "crc": false,
+        "priorities": [
+          [
+            3,
+            10
+          ],
+          [
+            4,
+            -10
+          ]
+        ],
+        "cycles": [
+          {
+            "tick": 1000000,
+            "blocked": false,
+            "ready": true,
+            "eof": 100,
+            "rows": [
+              [
+                3,
+                3,
+                1,
+                0,
+                0,
+                900001,
+                "06aabb",
+                7,
+                11
+              ],
+              [
+                5,
+                4,
+                0,
+                0,
+                0,
+                900000,
+                "06aabb",
+                7,
+                11
+              ],
+              [
+                5,
+                4,
+                1,
+                0,
+                0,
+                900001,
+                "06aabb",
+                7,
+                11
+              ]
+            ]
+          }
+        ]
+      },
+      "observed": [
+        {
+          "rates": [
+            {
+              "sum": 37,
+              "bits": 1120228693,
+              "samples": [
+                "da420f0025000000"
+              ]
+            },
+            {
+              "sum": 48,
+              "bits": 1124073472,
+              "samples": [
+                "40420f0010000000",
+                "52420f0010000000",
+                "64420f0010000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 3,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000",
+              "52420f000100000000000000",
+              "64420f000100000000000000"
+            ]
+          },
+          "entries": [
+            16,
+            16,
+            16
+          ],
+          "writes": [
+            {
+              "size": 20,
+              "wire_size": 20,
+              "crc": false
+            },
+            {
+              "size": 17,
+              "wire_size": 17,
+              "crc": false
+            }
+          ],
+          "waits": [
+            2
+          ],
+          "wires": [
+            "0a000c220300000100da420f00a1bb0d00ffff01",
+            "07000c220400000100da420f0017bc0d00"
+          ],
+          "delivered": [
+            "06aabb",
+            "06aabb"
+          ],
+          "metadata": [
+            {
+              "first": 1000018,
+              "last": 1000018,
+              "sent": 900000,
+              "fragment": 0
+            },
+            {
+              "first": 1000036,
+              "last": 1000036,
+              "sent": 900001,
+              "fragment": 0
+            }
+          ],
+          "now": 1000154,
+          "update_tick": 1000054,
+          "last_receive": 1000036,
+          "ping": {
+            "sum": 0,
+            "bits": 0,
+            "samples": []
+          },
+          "clock": {
+            "echo": 1000000,
+            "minimum": 0,
+            "smooth": 0,
+            "next_min_update": 0,
+            "offset": 0
+          }
+        }
+      ],
+      "source_assertions": []
+    },
+    {
+      "input": {
+        "name": "media_priority_-10_0",
+        "crc": false,
+        "priorities": [
+          [
+            3,
+            -10
+          ],
+          [
+            4,
+            10
+          ]
+        ],
+        "cycles": [
+          {
+            "tick": 1000000,
+            "blocked": false,
+            "ready": true,
+            "eof": 100,
+            "rows": [
+              [
+                3,
+                3,
+                1,
+                0,
+                0,
+                900001,
+                "06aabb",
+                7,
+                11
+              ],
+              [
+                5,
+                4,
+                0,
+                0,
+                0,
+                900000,
+                "06aabb",
+                7,
+                11
+              ],
+              [
+                5,
+                4,
+                1,
+                0,
+                0,
+                900001,
+                "06aabb",
+                7,
+                11
+              ]
+            ]
+          }
+        ]
+      },
+      "observed": [
+        {
+          "rates": [
+            {
+              "sum": 37,
+              "bits": 1120228693,
+              "samples": [
+                "da420f0025000000"
+              ]
+            },
+            {
+              "sum": 48,
+              "bits": 1124073472,
+              "samples": [
+                "40420f0010000000",
+                "52420f0010000000",
+                "64420f0010000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 3,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000",
+              "52420f000100000000000000",
+              "64420f000100000000000000"
+            ]
+          },
+          "entries": [
+            16,
+            16,
+            16
+          ],
+          "writes": [
+            {
+              "size": 17,
+              "wire_size": 17,
+              "crc": false
+            },
+            {
+              "size": 20,
+              "wire_size": 20,
+              "crc": false
+            }
+          ],
+          "waits": [
+            2
+          ],
+          "wires": [
+            "07000c220400000100da420f0017bc0d00",
+            "0a000c220300000100da420f00a1bb0d00ffff01"
+          ],
+          "delivered": [
+            "06aabb",
+            "06aabb"
+          ],
+          "metadata": [
+            {
+              "first": 1000018,
+              "last": 1000018,
+              "sent": 900000,
+              "fragment": 0
+            },
+            {
+              "first": 1000036,
+              "last": 1000036,
+              "sent": 900001,
+              "fragment": 0
+            }
+          ],
+          "now": 1000154,
+          "update_tick": 1000054,
+          "last_receive": 1000036,
+          "ping": {
+            "sum": 0,
+            "bits": 0,
+            "samples": []
+          },
+          "clock": {
+            "echo": 1000000,
+            "minimum": 0,
+            "smooth": 0,
+            "next_min_update": 0,
+            "offset": 0
+          }
+        }
+      ],
+      "source_assertions": []
+    },
+    {
+      "input": {
+        "name": "media_priority_10_1",
+        "crc": true,
+        "priorities": [
+          [
+            3,
+            10
+          ],
+          [
+            4,
+            -10
+          ]
+        ],
+        "cycles": [
+          {
+            "tick": 1000000,
+            "blocked": false,
+            "ready": true,
+            "eof": 100,
+            "rows": [
+              [
+                3,
+                3,
+                1,
+                0,
+                0,
+                900001,
+                "06aabb",
+                7,
+                11
+              ],
+              [
+                5,
+                4,
+                0,
+                0,
+                0,
+                900000,
+                "06aabb",
+                7,
+                11
+              ],
+              [
+                5,
+                4,
+                1,
+                0,
+                0,
+                900001,
+                "06aabb",
+                7,
+                11
+              ]
+            ]
+          }
+        ]
+      },
+      "observed": [
+        {
+          "rates": [
+            {
+              "sum": 37,
+              "bits": 1120228693,
+              "samples": [
+                "da420f0025000000"
+              ]
+            },
+            {
+              "sum": 48,
+              "bits": 1124073472,
+              "samples": [
+                "40420f0010000000",
+                "52420f0010000000",
+                "64420f0010000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 3,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000",
+              "52420f000100000000000000",
+              "64420f000100000000000000"
+            ]
+          },
+          "entries": [
+            16,
+            16,
+            16
+          ],
+          "writes": [
+            {
+              "size": 20,
+              "wire_size": 24,
+              "crc": true
+            },
+            {
+              "size": 17,
+              "wire_size": 21,
+              "crc": true
+            }
+          ],
+          "waits": [
+            2
+          ],
+          "wires": [
+            "8a000c220300000100da420f00a1bb0d00ffff01f8c8d55b",
+            "87000c220400000100da420f0017bc0d004bbdb02e"
+          ],
+          "delivered": [
+            "06aabb",
+            "06aabb"
+          ],
+          "metadata": [
+            {
+              "first": 1000018,
+              "last": 1000018,
+              "sent": 900000,
+              "fragment": 0
+            },
+            {
+              "first": 1000036,
+              "last": 1000036,
+              "sent": 900001,
+              "fragment": 0
+            }
+          ],
+          "now": 1000154,
+          "update_tick": 1000054,
+          "last_receive": 1000036,
+          "ping": {
+            "sum": 0,
+            "bits": 0,
+            "samples": []
+          },
+          "clock": {
+            "echo": 1000000,
+            "minimum": 0,
+            "smooth": 0,
+            "next_min_update": 0,
+            "offset": 0
+          }
+        }
+      ],
+      "source_assertions": []
+    },
+    {
+      "input": {
+        "name": "media_priority_-10_1",
+        "crc": true,
+        "priorities": [
+          [
+            3,
+            -10
+          ],
+          [
+            4,
+            10
+          ]
+        ],
+        "cycles": [
+          {
+            "tick": 1000000,
+            "blocked": false,
+            "ready": true,
+            "eof": 100,
+            "rows": [
+              [
+                3,
+                3,
+                1,
+                0,
+                0,
+                900001,
+                "06aabb",
+                7,
+                11
+              ],
+              [
+                5,
+                4,
+                0,
+                0,
+                0,
+                900000,
+                "06aabb",
+                7,
+                11
+              ],
+              [
+                5,
+                4,
+                1,
+                0,
+                0,
+                900001,
+                "06aabb",
+                7,
+                11
+              ]
+            ]
+          }
+        ]
+      },
+      "observed": [
+        {
+          "rates": [
+            {
+              "sum": 37,
+              "bits": 1120228693,
+              "samples": [
+                "da420f0025000000"
+              ]
+            },
+            {
+              "sum": 48,
+              "bits": 1124073472,
+              "samples": [
+                "40420f0010000000",
+                "52420f0010000000",
+                "64420f0010000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 3,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000",
+              "52420f000100000000000000",
+              "64420f000100000000000000"
+            ]
+          },
+          "entries": [
+            16,
+            16,
+            16
+          ],
+          "writes": [
+            {
+              "size": 17,
+              "wire_size": 21,
+              "crc": true
+            },
+            {
+              "size": 20,
+              "wire_size": 24,
+              "crc": true
+            }
+          ],
+          "waits": [
+            2
+          ],
+          "wires": [
+            "87000c220400000100da420f0017bc0d004bbdb02e",
+            "8a000c220300000100da420f00a1bb0d00ffff01f8c8d55b"
+          ],
+          "delivered": [
+            "06aabb",
+            "06aabb"
+          ],
+          "metadata": [
+            {
+              "first": 1000018,
+              "last": 1000018,
+              "sent": 900000,
+              "fragment": 0
+            },
+            {
+              "first": 1000036,
+              "last": 1000036,
+              "sent": 900001,
+              "fragment": 0
+            }
+          ],
+          "now": 1000154,
+          "update_tick": 1000054,
+          "last_receive": 1000036,
           "ping": {
             "sum": 0,
             "bits": 0,

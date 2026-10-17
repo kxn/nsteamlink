@@ -1828,9 +1828,9 @@ avcodec_flush_buffers 明确约定调用方引用仍有效。硬件实际恢复�
 本实现的额外资源边界（项目策略，不声称是官方常数）：软同步时 pending 最多
 256 个片段，含已组装部分的编码数据最多 2MiB；超限清理 pending 并转为严格等待，
 以防主机不响应时无限积累。完整帧的 transport continuation 必须类型/序号一致，
-不能把另一帧的 head 拼成缺失的 fragment。媒体反馈使用单独的可 join worker，
-只持有短时 windowLock，不等待解码、不使用全局 timer 锁，不输出逐包日志。
-退出先置 interrupted 并唤醒两个 worker，join 后才销毁 window/cond/mutex。
+不能把另一帧的 head 拼成缺失的 fragment。媒体反馈原使用单独的可 join worker；
+该调度差异由§62更正为接收批次末尾推进/反馈。解码worker只消费完整帧FIFO，
+不等待解码完成才反馈；退出置interrupted并唤醒，join后才销毁window/cond/mutex。
 
 传输续片 ordinal 的来源：同一 ELF `AddToOutgoingPacketWindow @0x7f6f94` 在
 `0x7f7018` 给 head 写入续片数；`0x7f7024` 从 ordinal 0 开始，
@@ -1906,7 +1906,7 @@ ClearAndRestartWindow(0)，与 reliable 的 `0x7f8720–0x7f8734` 相同。因�
 | 包龄与完整传输帧 | HandleDataPacket / BInsertPacket / PopHead / Advance / UpdateUnreliableState；window.c | 执行这些原始函数，比较发送时间、帧字节及交付后的窗口头；限本项目容量以内 |
 | 视频准入与恢复请求 | DecodeFrame、FinalDecode；DataReceived / SubmitFrame | 同输入比较严格/软同步、6553 tick 边界、关键帧及后端失败反馈；原始视频 slice 组装和实际 codec 不在这组对比内 |
 | 积压范围消息 148 | §25.11；CheckPartialOverflow | 帧 ID 的有符号含端点范围；相等可报告，较小范围也保存；不是时间阈值加 412 |
-| 接收窗口交付、退休与反馈的调度顺序 | UpdateUnreliableState 0x7fa470–0x7fa6fc；DataThreadWorker / FeedbackThreadWorker | 官方同一次 update 先交付/退休再构造反馈；本项目两个 worker 在 windowLock 下各自取快照，允许不同先后顺序。F/U 分步对比不能证明并发交错的反馈序列完全相同 |
+| 接收窗口交付、退休与反馈的调度顺序 | UpdateUnreliableState 0x7fa470–0x7fa6fc；DataUpdateAt / SessionReceiveUpdateAt | 撤回本项目仍由两个worker各自推进/反馈的当前状态；§62由同一接收批次按priority快照先推进窗口再反馈。F/U旧分步案例不能替代新增完整Socket批次对照；发送actor全局交错仍单列 |
 | 已完整 pending 的后续处理 | §25.13；DataReceived 的排空循环 | 官方仍有 pending 时约 1ms think；本项目在同 worker 中排空，不等新包；调度方式不同 |
 | 帧损坏的判断 | §25.5/25.10；video_pipeline.c | FFmpeg 明确 INVALIDDATA/损坏标记是项目映射，不是从 MediaCodec 逆向出的错误码对照表 |
 | 后端重建 | Android 输入 buffer 超时/参数变化/Surface 变化与 Reset 调用链 | 项目未等价实现这些异步重建分支；FFmpeg flush 不等于销毁/重建 MediaCodec；不能照搬 200ms 输入 timeout |
@@ -3547,8 +3547,8 @@ ctest --test-dir build/desktop \
 pthread使ACK发生在send callback等待期间，并在4000次生产tick处理期间并发修改
 RTT；结束后join再销毁。它们是项目所有权/线程验证，不替代官方策略来源。
 
-FIFO交付后的窗口/整形/发送阶段接线见§38；接收更新和媒体feedback worker仍
-不同于原版Connection::Update，不将发送阶段对照扩大成整个连接循环的墙钟等价。
+FIFO交付后的窗口/整形/发送阶段接线见§38；普通媒体推进/feedback的独立worker
+差异由§62更正，发送actor和完整阶段交错仍不同，不将发送阶段对照扩大成整个连接循环的墙钟等价。
 真实认证会话、系统背压时序、Switch输入/解码显示及用户原始停顿因果均无本节证据。
 
 
@@ -4980,8 +4980,8 @@ start+36。实际POSIX loopback核对readiness、非阻塞读完两包直到empt
 worker调度的预期而改变官方批次规则。SDL fallback补同一readiness/非阻塞接口，
 当前验证平台是POSIX desktop与Switch交叉构建，不冒称Windows/SDL_net已实测。
 
-【保留的差异】普通媒体窗口/feedback与发送仍有独立worker；此处没有把decoder
-移到网络线程，也未复制Source未知fatal read行为，Native负返回仍走本地stop/join
+【范围与更正】普通媒体窗口/feedback的独立worker差异由§62更正；发送仍有独立
+worker。decoder没有移到网络线程，也未复制Source未知fatal read行为，Native负返回仍走本地stop/join
 关闭保护。停止检查可在持续drain中生效，是loader ABI所需的本地生存期保护。
 两条PIN语义和Connect/Connected正文协议未因传输readiness改动而合并或重写。
 
@@ -5069,3 +5069,67 @@ delegate/send处检查对应锁状态；fixture只保存修正后的执行结果
 初发producer调用仍以§37–38及实际调用链为准，不能把所有初发强行延后到周期尾。
 本节没有改变生产实现，也没有把FEC启用条件、decoder错误处理或真实设备结果判为
 等价；FEC启用仍以§32客户端设置/预设/推荐确认链及§29配置消息证据为准。
+
+## 62. 普通媒体窗口推进与反馈归属接收批次
+
+【官方客户端证据】同§24.1 Android客户端固定SHA。原Socket::Update先排空read，
+Connection::Update按priority/creation快照逐channel执行可靠更新，再执行
+UpdateUnreliableState @0x7fa3b0。其0x7fa470起先Pop并交付完整消息，再按sender
+时间退休过期前缀/计空槽，最后构造类型10反馈；不是由解码器或另一个反馈线程
+各自读取窗口。§60–61接通外层Socket/manager，§25/58接通内部窗口/反馈/采样。
+
+【更正与实现】撤回§25/37/60“普通媒体仍由两个独立worker推进/反馈”的当前状态。
+生产SessionUpdateAt在read批次结束后调用SessionReceiveUpdateAt，以共享的
+OutgoingSnapshot取得原priority排序；每个channel先可靠UpdateChannelAt，再解析
+当前audio/video消费者并调用DataUpdateAt。可靠control delegate可能替换消费者，
+因此不能跨该delegate保留旧指针。窗口推进、空槽lost样本和反馈期限使用同一批次
+tick；类型10直接在本轮尝试Socket Send，不排到初发producer队列之后。
+
+普通3/4接收只入窗、更新sender时间和dirty，不唤醒解码线程抢先Pop。DataUpdateAt
+先把完整消息/过期后可交付消息移入完整帧FIFO，在窗口锁外记lost；随后锁内构造
+反馈、锁外发送。decoder worker只在FIFO上等待/消费，不能推进普通窗口或发反馈。
+FEC仍在实际收片/RS成功时交付到FIFO，可靠完整帧仍由可靠更新交付；二者不进入
+普通不可靠窗口。单独的feedback线程和cond已移除；退出仍stop→唤醒→join解码线程
+后才销毁FIFO、窗口、RS、锁及会话依赖。网络采样不得在windowLock下反向取得Base。
+
+### 62.1 整个Socket批次与priority对照
+
+`audit-steam-receive-cycle.py`在§60的28例之后追加14例，合计42例56周期状态、
+30份完整feedback wire，与Native真实SessionReceiveCycle→Parse/CRC→窗口→
+SessionReceiveUpdateAt→Socket准备/采样逐项比较；不是把两侧输入都直接放在
+DataBuildFeedback入口。原28例输出原样保留。
+
+| 输入 | 原版与Native输出 |
+|---|---|
+| 同批普通id0/1 | 两个完整payload在批末交付，不发送无缺口NACK |
+| 同批id1再id0、各有read/处理耗时 | 收完批次再交付；不因第一包的临时缺口提前反馈 |
+| 普通head/continuation同批 | 保留原first/last/send元数据和完整组装payload |
+| 首批缺口、后续无readiness周期、再补缺 | 64/65/66tick与dirty/期限反馈按实际原指令结果比较 |
+| sender时间跨过媒体退休界限、剩余head仍不完整 | lost空槽在批次tick记录，不依赖decoder得到可解码帧 |
+| ch3缺口加ch4可靠id0/1，priority分别为±10 | 同周期确实产生两份反馈；优先ch3为[3,4]，优先ch4为[4,3]，CRC开/关均比较完整wire |
+
+Native fixture在批次返回后受控排空生产FIFO来记录payload/元数据；这是consumer
+调度adapter，不把它解释成原decoder与Native decoder在同一指令位置执行。
+实际BaseWorker测试另在CRC开/关各运行可靠/普通两种模式：第二次Read和最终空Read
+之前无交付/普通Pop；空Read之后才推进窗口。read7+处理11各两包，批次tick=start+36，
+最终空Read额外耗100，普通完整帧元数据仍来自每次Read之前的start/start+18；
+不因decoder线程恰好先/后运行改变协议时间。
+
+### 62.2 decoder阻塞、资源边界与未涵盖范围
+
+实际媒体worker测试在dataFrame回调中阻塞decoder，仍由网络owner执行窗口补洞与
+类型10同步发送。loss-only案例使decoder始终没有完整帧可消费，网络owner仍记空槽。
+实际视频worker/并发快照reader使用接收批次步骤后得到§59相同13帧的采样总和与
+float比特；这些编码帧sink不替代物理硬件decoder。
+
+完整帧FIFO沿用本地有界内存保护，不声称是官方队列容量：所有完整帧共享原窗口
+容量的count上限，bytes为windowCapacity×2048且至少允许一个2MiB payload及node。
+满队列退休最老完整帧，普通帧不再藏在另一个待解码窗口中；blocked decoder的
+混合FEC/普通输入因此按共享FIFO上限计算。该资源保护分支不纳入原版等价声明，
+不据此增加DataLost、自动FEC、重连或decoder reset策略。
+
+【边界】发送actor仍独立，原每channel的可靠更新→不可靠更新→可靠发送→不可靠
+false→FEC，以及末尾轮转不可靠true，尚未作为一个完整生产网络周期接通；全局
+network锁与control处理/consumer替换的所有交错也不能由此42例推定已等价。
+保持初发producer的来源约束，不将所有初发强行延后。早到媒体窗口、畸形/错误保护、
+完整decoder/OS线程、Steam会话和Switch实际显示/loader均另需来源和运行证据。

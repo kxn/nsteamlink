@@ -2,7 +2,7 @@
 """Run original Socket Wait/Update -> CRC RX -> Connection/channel updates.
 
 The pinned client executes readiness flag/GetWaitMS, drain loop, timestamp
-capture, Connection::Update, real channel factory/windows, reliable feedback,
+capture, Connection::Update, real channel factory/windows, reliable/media feedback,
 Socket TX/CRC and network/clock collectors. Transport wait/read/final write,
 packet refcounts and delivered-frame/client-update delegates are adapters;
 connection state/clock initialization are controlled. Incoming rows can spend
@@ -273,6 +273,123 @@ def schedules():
                 ],
             )
         )
+    for crc in (False, True):
+        for name, rows in (
+            (
+                "media_batch",
+                [packet(n, kind=3, channel=3, cost=7, work=11) for n in range(2)],
+            ),
+            (
+                "media_fill",
+                [
+                    packet(n, kind=3, channel=3, retry=1, cost=7, work=11)
+                    for n in (1, 0)
+                ],
+            ),
+            (
+                "media_fragments",
+                [
+                    packet(
+                        0,
+                        kind=3,
+                        channel=3,
+                        fragment=1,
+                        payload="06aa",
+                        cost=7,
+                        work=11,
+                    ),
+                    packet(1, kind=4, channel=3, payload="bbcc", cost=7, work=11),
+                ],
+            ),
+        ):
+            cases.append(
+                dict(
+                    name=f"{name}_{int(crc)}",
+                    crc=crc,
+                    cycles=[
+                        dict(
+                            tick=1000000, blocked=False, ready=True, eof=100, rows=rows
+                        )
+                    ],
+                )
+            )
+        cases.append(
+            dict(
+                name=f"media_gap_{int(crc)}",
+                crc=crc,
+                cycles=[
+                    dict(
+                        tick=1000000,
+                        blocked=False,
+                        ready=True,
+                        eof=0,
+                        rows=[packet(1, kind=3, channel=3, retry=1)],
+                    ),
+                    *[
+                        dict(
+                            tick=1000000 + d, blocked=False, ready=False, eof=0, rows=[]
+                        )
+                        for d in (64, 65, 66)
+                    ],
+                    dict(
+                        tick=1000300,
+                        blocked=False,
+                        ready=True,
+                        eof=100,
+                        rows=[packet(0, kind=3, channel=3, retry=2, cost=7, work=11)],
+                    ),
+                ],
+            )
+        )
+        cases.append(
+            dict(
+                name=f"media_expire_{int(crc)}",
+                crc=crc,
+                cycles=[
+                    dict(
+                        tick=1000000,
+                        blocked=False,
+                        ready=True,
+                        eof=100,
+                        rows=[
+                            packet(1, kind=3, channel=3),
+                            packet(
+                                3,
+                                kind=3,
+                                channel=3,
+                                fragment=1,
+                                cost=7,
+                                work=11,
+                                payload="06bb",
+                            ),
+                        ],
+                    ),
+                ],
+            )
+        )
+        cases[-1]["cycles"][0]["rows"][1][5] = 910000
+    for crc in (False, True):
+        for priority in (10, -10):
+            cases.append(
+                dict(
+                    name=f"media_priority_{priority}_{int(crc)}",
+                    crc=crc,
+                    priorities=[[3, priority], [4, -priority]],
+                    cycles=[
+                        dict(
+                            tick=1000000,
+                            blocked=False,
+                            ready=True,
+                            eof=100,
+                            rows=[
+                                packet(1, kind=3, channel=3, retry=0, cost=7, work=11),
+                                packet(0, kind=5, channel=4, retry=0, cost=7, work=11),
+                                packet(1, kind=5, channel=4, retry=0, cost=7, work=11),
+                            ],
+                        )
+                    ],
+                )
+            )
     return cases
 
 
@@ -281,6 +398,8 @@ def audit(binary):
     cases = []
     for i in schedules():
         r = Cycle(binary, i["crc"])
+        for channel, priority in i.get("priorities", []):
+            r.call(0x7FBC68, r.connection, channel, priority & 0xFFFFFFFF)
         r.wi(r.connection + 52, i["cycles"][0]["tick"])
         r.wi(r.connection + 56, i["cycles"][0]["tick"])
         observed = []

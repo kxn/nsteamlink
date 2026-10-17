@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Compare production session readiness/drain/update against original Socket.
 
-Actual native CRC RX, clock/packet collectors, reliable windows/feedback and
+Actual native CRC RX, clock/packet collectors, reliable/media windows/feedback and
 Socket-send preparation run, with wait/read elapsed/processing elapsed and final
 I/O controlled. Handshaking client state avoids unrelated OnThink producers;
-no outgoing queue, media decoder, authentication or global-thread equivalence.
+complete-frame FIFO is drained after each batch by a controlled consumer. No
+outgoing queue, decoder, authentication or global-thread equivalence is claimed.
 """
 
 import argparse
@@ -25,7 +26,7 @@ def main():
     states = wires = 0
     for c in cases:
         i = c["input"]
-        lines = []
+        lines = [f"Q {ch} {priority}" for ch, priority in i.get("priorities", [])]
         for v in i["cycles"]:
             lines.append(
                 f"B {v['tick']} {int(v['ready'])} {int(v['blocked'])} {v['eof']} {len(v['rows'])}"
