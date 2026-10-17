@@ -4840,7 +4840,7 @@ UpdateReliableState @0x7f9d0c将本轮所有Pop的总和在0x7f9dec–0x7f9e04
 
 【执行对照】audit-steam-network-loss.py执行原Socket→Connection→GetChannel/
 真实构造与EnsureCapacity→HandlePacket→UpdateReliable/UnreliableState→原采样队列。
-48组固定输入共246次状态、12份完整统计body，与Native真实CRC RX/窗口/可靠
+52组固定输入共266次状态、12份完整统计body，与Native真实CRC RX/窗口/可靠
 Update/全局上报逐项比较。覆盖retry=0/1/2/3/255、入窗前后重复/旧包、乱序续片、
 多个frame交付总和、可靠600跨度真实扩容及16384拒绝、接收时间/Update时间区分、
 严格3秒样本退休，以及sender回绕时6946tick保留/6947tick放弃。此边界案例先执行
@@ -4859,3 +4859,13 @@ decoder回调也发布lost；停止并join后释放。另三线程并发执行10
 2000次真实CRC RX（其中1000个可靠retry=2）、可靠Update及网络快照读取，
 join后核对total=5000/lost=3000与有效样本。此处线程证据不能替代官方调度、
 早到媒体缓存/FEC独立路由、真实Steam会话或Switch解码显示的证据。
+
+
+另4组将§26固定原版向量从真实Socket送入type11接收分支，执行真实FEC队列和
+RS重建：系统片0/1/2全部收到，或只有片0再靠校验片3/4恢复；CRC开关均覆盖。
+三包即便retry=255，也只有received=3/lost=0，不进入普通入窗/可靠Pop计数。
+随后同channel普通packetId0、retry2仍正常新入窗并交付，另记lost1；FEC组ID1
+不推进普通水位。结果与Native真实FEC RX/RS/FIFO消费者的payload和计数一致。
+原版直接同步delegate，Nativeoracle在同一收包action内驱动生产FIFO polling；
+这是明确的线程桥适配，不据此宣称callback同步时序一致。向量不覆盖原版重复
+shard错误、全部畸形输入或FEC配置启用/自动切换；配置策略仍以§32的客户端证据为准。

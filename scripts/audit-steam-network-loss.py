@@ -7,7 +7,9 @@ is set through the real setter to the active-media value documented in §25.2.
 Final feedback I/O, packet refcounts, platform locks and the player delegate are
 adapters. Optional report steps execute original Streaming/FrameEvents/protobuf;
 report encryption/final frame admission remain adapters. No decoder, full global
-loop, early-media cache, FEC or Steam session equivalence is implied.
+loop, early-media cache or Steam session equivalence is implied. Appended FEC
+cases execute real BAddPacket/ReconstructData/RS code; payload vectors come from
+the independent pinned FEC audit. They do not prove FEC enable/config policy.
 """
 
 import argparse
@@ -40,6 +42,7 @@ class Loss(wire.Wire):
                 0xC01810: self.release_guard,
                 0xC09AB0: lambda: self.ret(self.alloc(self.r(0))),
                 0xC09AC0: lambda: self.ret(),
+                0xC0BAE0: lambda: self.ret(self.alloc(self.r(0) * self.r(1))),
                 0xC0E390: lambda: self.jump(0x7FBA34),
                 0xC11470: self.construct,
                 0xC11250: lambda: self.jump(0x7F9250),
@@ -230,6 +233,35 @@ def scenarios():
                         ["S", 1200003],
                     ],
                 )
+            )
+    fec = json.loads((ROOT / "scripts/fixtures/steam-fec-reference.json").read_text())
+    assert fec["binary_sha256"] == config.SHA
+    vectors = fec["vector"]["wires"]
+    for crc in (False, True):
+        for indexes in ((0, 1, 2), (0, 3, 4)):
+            actions = []
+            for n, index in enumerate(indexes):
+                actions.append(
+                    [
+                        "W",
+                        1000000 + n,
+                        11,
+                        3,
+                        1,
+                        255,
+                        index,
+                        900000,
+                        bytes.fromhex(vectors[index])[13:].hex(),
+                    ]
+                )
+            # FEC group IDs/retry do not move the ordinary window's ID zero or
+            # contribute ordinary retry/Pop loss, even after RS reconstruction.
+            actions += [
+                ["W", 1000003, 3, 3, 0, 2, 0, 900001, "06aabb"],
+                ["U", 1000004, 3],
+            ]
+            cases.append(
+                dict(name=f"fec_{indexes}_{int(crc)}", crc=crc, actions=actions)
             )
     return cases
 

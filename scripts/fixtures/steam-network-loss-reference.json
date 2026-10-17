@@ -1,6 +1,6 @@
 {
   "binary_sha256": "50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e",
-  "scope": "Execute official client Socket -> Channel -> windows -> live loss collectors.\n\nPinned Android instructions execute channel construction, real window growth,\ninsert, reliable/unreliable update, Pop and PacketStats. Channel max receive delay\nis set through the real setter to the active-media value documented in \u00a725.2.\nFinal feedback I/O, packet refcounts, platform locks and the player delegate are\nadapters. Optional report steps execute original Streaming/FrameEvents/protobuf;\nreport encryption/final frame admission remain adapters. No decoder, full global\nloop, early-media cache, FEC or Steam session equivalence is implied.\n",
+  "scope": "Execute official client Socket -> Channel -> windows -> live loss collectors.\n\nPinned Android instructions execute channel construction, real window growth,\ninsert, reliable/unreliable update, Pop and PacketStats. Channel max receive delay\nis set through the real setter to the active-media value documented in \u00a725.2.\nFinal feedback I/O, packet refcounts, platform locks and the player delegate are\nadapters. Optional report steps execute original Streaming/FrameEvents/protobuf;\nreport encryption/final frame admission remain adapters. No decoder, full global\nloop, early-media cache or Steam session equivalence is implied. Appended FEC\ncases execute real BAddPacket/ReconstructData/RS code; payload vectors come from\nthe independent pinned FEC audit. They do not prove FEC enable/config policy.\n",
   "cases": [
     {
       "input": {
@@ -10226,6 +10226,894 @@
           "keepalive_time": 1100000,
           "sequence": 1,
           "reported": 2
+        }
+      ],
+      "source_assertions": []
+    },
+    {
+      "input": {
+        "name": "fec_(0, 1, 2)_0",
+        "crc": false,
+        "actions": [
+          [
+            "W",
+            1000000,
+            11,
+            3,
+            1,
+            255,
+            0,
+            900000,
+            "50000000200002000b30557a9fc4e90e33587da2c7ec11365b80a5caef14395e83a8cdf2173c6186"
+          ],
+          [
+            "W",
+            1000001,
+            11,
+            3,
+            1,
+            255,
+            1,
+            900000,
+            "5000000020000200abd0f51a3f6489aed3f81d42678cb1d6fb20456a8fb4d9fe23486d92b7dc0126"
+          ],
+          [
+            "W",
+            1000002,
+            11,
+            3,
+            1,
+            255,
+            2,
+            900000,
+            "50000000200002004b7095badf04294e7398bde2072c517600000000000000000000000000000000"
+          ],
+          [
+            "W",
+            1000003,
+            3,
+            3,
+            0,
+            2,
+            0,
+            900001,
+            "06aabb"
+          ],
+          [
+            "U",
+            1000004,
+            3
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 53,
+              "bits": 1124947285,
+              "samples": [
+                "40420f0035000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 1,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000"
+            ]
+          },
+          "entries": [
+            53
+          ],
+          "writes": [],
+          "delivered": []
+        },
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 106,
+              "bits": 1133335893,
+              "samples": [
+                "40420f0035000000",
+                "41420f0035000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 2,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000",
+              "41420f000100000000000000"
+            ]
+          },
+          "entries": [
+            53
+          ],
+          "writes": [],
+          "delivered": []
+        },
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 159,
+              "bits": 1137967104,
+              "samples": [
+                "40420f0035000000",
+                "41420f0035000000",
+                "42420f0035000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 3,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000",
+              "41420f000100000000000000",
+              "42420f000100000000000000"
+            ]
+          },
+          "entries": [
+            53
+          ],
+          "writes": [],
+          "delivered": [
+            "0b30557a9fc4e90e33587da2c7ec11365b80a5caef14395e83a8cdf2173c6186abd0f51a3f6489aed3f81d42678cb1d6fb20456a8fb4d9fe23486d92b7dc01264b7095badf04294e7398bde2072c5176"
+          ]
+        },
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 175,
+              "bits": 1139365205,
+              "samples": [
+                "40420f0035000000",
+                "41420f0035000000",
+                "42420f0035000000",
+                "43420f0010000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 5,
+            "lost": 1,
+            "samples": [
+              "40420f000100000000000000",
+              "41420f000100000000000000",
+              "42420f000100000000000000",
+              "43420f000100000000000000",
+              "43420f000100000001000000"
+            ]
+          },
+          "entries": [
+            16
+          ],
+          "writes": [],
+          "delivered": []
+        },
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 175,
+              "bits": 1139365205,
+              "samples": [
+                "40420f0035000000",
+                "41420f0035000000",
+                "42420f0035000000",
+                "43420f0010000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 5,
+            "lost": 1,
+            "samples": [
+              "40420f000100000000000000",
+              "41420f000100000000000000",
+              "42420f000100000000000000",
+              "43420f000100000000000000",
+              "43420f000100000001000000"
+            ]
+          },
+          "entries": [],
+          "writes": [],
+          "delivered": [
+            "06aabb"
+          ]
+        }
+      ],
+      "source_assertions": []
+    },
+    {
+      "input": {
+        "name": "fec_(0, 3, 4)_0",
+        "crc": false,
+        "actions": [
+          [
+            "W",
+            1000000,
+            11,
+            3,
+            1,
+            255,
+            0,
+            900000,
+            "50000000200002000b30557a9fc4e90e33587da2c7ec11365b80a5caef14395e83a8cdf2173c6186"
+          ],
+          [
+            "W",
+            1000001,
+            11,
+            3,
+            1,
+            255,
+            3,
+            900000,
+            "5000000020000200c2bf95602ab43b0bf8a9d3d9f3f2ba3101ab144377662e8e256c38fce8a14aaa"
+          ],
+          [
+            "W",
+            1000002,
+            11,
+            3,
+            1,
+            255,
+            4,
+            900000,
+            "50000000200002003e311d508e23c9b04b35797559476ec5319bcf736756f5be15b708ecd87a5a9a"
+          ],
+          [
+            "W",
+            1000003,
+            3,
+            3,
+            0,
+            2,
+            0,
+            900001,
+            "06aabb"
+          ],
+          [
+            "U",
+            1000004,
+            3
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 53,
+              "bits": 1124947285,
+              "samples": [
+                "40420f0035000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 1,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000"
+            ]
+          },
+          "entries": [
+            53
+          ],
+          "writes": [],
+          "delivered": []
+        },
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 106,
+              "bits": 1133335893,
+              "samples": [
+                "40420f0035000000",
+                "41420f0035000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 2,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000",
+              "41420f000100000000000000"
+            ]
+          },
+          "entries": [
+            53
+          ],
+          "writes": [],
+          "delivered": []
+        },
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 159,
+              "bits": 1137967104,
+              "samples": [
+                "40420f0035000000",
+                "41420f0035000000",
+                "42420f0035000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 3,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000",
+              "41420f000100000000000000",
+              "42420f000100000000000000"
+            ]
+          },
+          "entries": [
+            53
+          ],
+          "writes": [],
+          "delivered": [
+            "0b30557a9fc4e90e33587da2c7ec11365b80a5caef14395e83a8cdf2173c6186abd0f51a3f6489aed3f81d42678cb1d6fb20456a8fb4d9fe23486d92b7dc01264b7095badf04294e7398bde2072c5176"
+          ]
+        },
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 175,
+              "bits": 1139365205,
+              "samples": [
+                "40420f0035000000",
+                "41420f0035000000",
+                "42420f0035000000",
+                "43420f0010000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 5,
+            "lost": 1,
+            "samples": [
+              "40420f000100000000000000",
+              "41420f000100000000000000",
+              "42420f000100000000000000",
+              "43420f000100000000000000",
+              "43420f000100000001000000"
+            ]
+          },
+          "entries": [
+            16
+          ],
+          "writes": [],
+          "delivered": []
+        },
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 175,
+              "bits": 1139365205,
+              "samples": [
+                "40420f0035000000",
+                "41420f0035000000",
+                "42420f0035000000",
+                "43420f0010000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 5,
+            "lost": 1,
+            "samples": [
+              "40420f000100000000000000",
+              "41420f000100000000000000",
+              "42420f000100000000000000",
+              "43420f000100000000000000",
+              "43420f000100000001000000"
+            ]
+          },
+          "entries": [],
+          "writes": [],
+          "delivered": [
+            "06aabb"
+          ]
+        }
+      ],
+      "source_assertions": []
+    },
+    {
+      "input": {
+        "name": "fec_(0, 1, 2)_1",
+        "crc": true,
+        "actions": [
+          [
+            "W",
+            1000000,
+            11,
+            3,
+            1,
+            255,
+            0,
+            900000,
+            "50000000200002000b30557a9fc4e90e33587da2c7ec11365b80a5caef14395e83a8cdf2173c6186"
+          ],
+          [
+            "W",
+            1000001,
+            11,
+            3,
+            1,
+            255,
+            1,
+            900000,
+            "5000000020000200abd0f51a3f6489aed3f81d42678cb1d6fb20456a8fb4d9fe23486d92b7dc0126"
+          ],
+          [
+            "W",
+            1000002,
+            11,
+            3,
+            1,
+            255,
+            2,
+            900000,
+            "50000000200002004b7095badf04294e7398bde2072c517600000000000000000000000000000000"
+          ],
+          [
+            "W",
+            1000003,
+            3,
+            3,
+            0,
+            2,
+            0,
+            900001,
+            "06aabb"
+          ],
+          [
+            "U",
+            1000004,
+            3
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 53,
+              "bits": 1124947285,
+              "samples": [
+                "40420f0035000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 1,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000"
+            ]
+          },
+          "entries": [
+            53
+          ],
+          "writes": [],
+          "delivered": []
+        },
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 106,
+              "bits": 1133335893,
+              "samples": [
+                "40420f0035000000",
+                "41420f0035000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 2,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000",
+              "41420f000100000000000000"
+            ]
+          },
+          "entries": [
+            53
+          ],
+          "writes": [],
+          "delivered": []
+        },
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 159,
+              "bits": 1137967104,
+              "samples": [
+                "40420f0035000000",
+                "41420f0035000000",
+                "42420f0035000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 3,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000",
+              "41420f000100000000000000",
+              "42420f000100000000000000"
+            ]
+          },
+          "entries": [
+            53
+          ],
+          "writes": [],
+          "delivered": [
+            "0b30557a9fc4e90e33587da2c7ec11365b80a5caef14395e83a8cdf2173c6186abd0f51a3f6489aed3f81d42678cb1d6fb20456a8fb4d9fe23486d92b7dc01264b7095badf04294e7398bde2072c5176"
+          ]
+        },
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 175,
+              "bits": 1139365205,
+              "samples": [
+                "40420f0035000000",
+                "41420f0035000000",
+                "42420f0035000000",
+                "43420f0010000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 5,
+            "lost": 1,
+            "samples": [
+              "40420f000100000000000000",
+              "41420f000100000000000000",
+              "42420f000100000000000000",
+              "43420f000100000000000000",
+              "43420f000100000001000000"
+            ]
+          },
+          "entries": [
+            16
+          ],
+          "writes": [],
+          "delivered": []
+        },
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 175,
+              "bits": 1139365205,
+              "samples": [
+                "40420f0035000000",
+                "41420f0035000000",
+                "42420f0035000000",
+                "43420f0010000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 5,
+            "lost": 1,
+            "samples": [
+              "40420f000100000000000000",
+              "41420f000100000000000000",
+              "42420f000100000000000000",
+              "43420f000100000000000000",
+              "43420f000100000001000000"
+            ]
+          },
+          "entries": [],
+          "writes": [],
+          "delivered": [
+            "06aabb"
+          ]
+        }
+      ],
+      "source_assertions": []
+    },
+    {
+      "input": {
+        "name": "fec_(0, 3, 4)_1",
+        "crc": true,
+        "actions": [
+          [
+            "W",
+            1000000,
+            11,
+            3,
+            1,
+            255,
+            0,
+            900000,
+            "50000000200002000b30557a9fc4e90e33587da2c7ec11365b80a5caef14395e83a8cdf2173c6186"
+          ],
+          [
+            "W",
+            1000001,
+            11,
+            3,
+            1,
+            255,
+            3,
+            900000,
+            "5000000020000200c2bf95602ab43b0bf8a9d3d9f3f2ba3101ab144377662e8e256c38fce8a14aaa"
+          ],
+          [
+            "W",
+            1000002,
+            11,
+            3,
+            1,
+            255,
+            4,
+            900000,
+            "50000000200002003e311d508e23c9b04b35797559476ec5319bcf736756f5be15b708ecd87a5a9a"
+          ],
+          [
+            "W",
+            1000003,
+            3,
+            3,
+            0,
+            2,
+            0,
+            900001,
+            "06aabb"
+          ],
+          [
+            "U",
+            1000004,
+            3
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 53,
+              "bits": 1124947285,
+              "samples": [
+                "40420f0035000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 1,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000"
+            ]
+          },
+          "entries": [
+            53
+          ],
+          "writes": [],
+          "delivered": []
+        },
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 106,
+              "bits": 1133335893,
+              "samples": [
+                "40420f0035000000",
+                "41420f0035000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 2,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000",
+              "41420f000100000000000000"
+            ]
+          },
+          "entries": [
+            53
+          ],
+          "writes": [],
+          "delivered": []
+        },
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 159,
+              "bits": 1137967104,
+              "samples": [
+                "40420f0035000000",
+                "41420f0035000000",
+                "42420f0035000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 3,
+            "lost": 0,
+            "samples": [
+              "40420f000100000000000000",
+              "41420f000100000000000000",
+              "42420f000100000000000000"
+            ]
+          },
+          "entries": [
+            53
+          ],
+          "writes": [],
+          "delivered": [
+            "0b30557a9fc4e90e33587da2c7ec11365b80a5caef14395e83a8cdf2173c6186abd0f51a3f6489aed3f81d42678cb1d6fb20456a8fb4d9fe23486d92b7dc01264b7095badf04294e7398bde2072c5176"
+          ]
+        },
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 175,
+              "bits": 1139365205,
+              "samples": [
+                "40420f0035000000",
+                "41420f0035000000",
+                "42420f0035000000",
+                "43420f0010000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 5,
+            "lost": 1,
+            "samples": [
+              "40420f000100000000000000",
+              "41420f000100000000000000",
+              "42420f000100000000000000",
+              "43420f000100000000000000",
+              "43420f000100000001000000"
+            ]
+          },
+          "entries": [
+            16
+          ],
+          "writes": [],
+          "delivered": []
+        },
+        {
+          "rates": [
+            {
+              "sum": 0,
+              "bits": 0,
+              "samples": []
+            },
+            {
+              "sum": 175,
+              "bits": 1139365205,
+              "samples": [
+                "40420f0035000000",
+                "41420f0035000000",
+                "42420f0035000000",
+                "43420f0010000000"
+              ]
+            }
+          ],
+          "packets": {
+            "total": 5,
+            "lost": 1,
+            "samples": [
+              "40420f000100000000000000",
+              "41420f000100000000000000",
+              "42420f000100000000000000",
+              "43420f000100000000000000",
+              "43420f000100000001000000"
+            ]
+          },
+          "entries": [],
+          "writes": [],
+          "delivered": [
+            "06aabb"
+          ]
         }
       ],
       "source_assertions": []
