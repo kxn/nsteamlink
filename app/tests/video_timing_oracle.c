@@ -15,7 +15,11 @@ static unsigned decodeCount;
 static uint32_t decodeEvents[1024][4];
 static int64_t selected[512][3], waits[512][2];
 static uint8_t payload[2204];
-static bool recording;
+static bool recording, presenting;
+static int suppressOutput = -1;
+static unsigned physicalCount, prepCount, codecCount;
+static uint64_t codecPts[512][4];
+static uint32_t physical[1024][3], prep[1024][3];
 sl_video_pipeline *sl_video_create(void) { return pipeline = timing_create(); }
 sl_video_submit_result sl_video_submit(sl_video_pipeline *p, sl_video_key key, const unsigned char *data,
                                        size_t size, IHS_FrameTicket *ticket, bool *taken, bool keyframe) {
@@ -28,8 +32,15 @@ sl_video_submit_result sl_video_submit(sl_video_pipeline *p, sl_video_key key, c
     submits[submitCount++][2] = stamp;
     uint64_t before = p->publish_seq;
     sl_video_submit_result result = timing_submit(p, key, data, size, ticket, taken, keyframe);
-    assert(result == SL_VIDEO_SUBMIT_OK && p->publish_seq == before + (size != 0));
-    if (!size) return result;
+    assert(result == SL_VIDEO_SUBMIT_OK && p->publish_seq <= before + (size != 0));
+    pthread_mutex_lock(&p->mailbox);
+    assert(p->job_count && codecCount < 512);
+    input_job *job=&p->jobs[p->job_count-1];
+    assert(IHS_FrameTicketIdentity(job->ticket).frameId==identity.frameId);
+    codecPts[codecCount][0]=action;codecPts[codecCount][1]=identity.frameId;
+    codecPts[codecCount][2]=stamp;codecPts[codecCount++][3]=job->codec_timestamp;
+    pthread_mutex_unlock(&p->mailbox);
+    if (!size || p->publish_seq==before) return result;
     pthread_mutex_lock(&p->mailbox);
     sl_video_frame *frame = p->pending[p->pending_count - 1];
     assert(frame->has_media_timestamp && frame->media_timestamp == stamp);
@@ -64,6 +75,13 @@ int __wrap_avcodec_send_packet(AVCodecContext *c,const AVPacket *packet) {
 int __real_avcodec_receive_frame(AVCodecContext *, AVFrame *);
 int __wrap_avcodec_receive_frame(AVCodecContext *c,AVFrame *frame) {
     int result=__real_avcodec_receive_frame(c,frame);
+    if (result>=0 && suppressOutput>=0) {
+        packet_token *token=(void *)frame->opaque_ref->data;
+        if (IHS_FrameTicketIdentity(token->ticket).frameId==suppressOutput) {
+            av_frame_unref(frame);
+            return AVERROR(EAGAIN);
+        }
+    }
     if (result>=0) clockTick+=outputTicks;
     return result;
 }
@@ -141,19 +159,44 @@ static void hash(sl_video_frame *frame, uint8_t out[16]) {
 }
 static uint8_t golden[16];
 static sl_video_scheduler scheduler;
-static void consume(void) {
-    sl_video_frame *frame=sl_video_scheduler_wait(&scheduler,pipeline,now_us()) ? NULL : sl_video_take(pipeline);
+static void record_selection(const sl_video_selection *s, bool selectedJob) {
     assert(selectCount<512);
     selected[selectCount][0]=action;
-    selected[selectCount][1]=frame?IHS_FrameTicketIdentity(frame->ticket).frameId:-1;
-    selected[selectCount++][2]=frame?frame->media_timestamp:0;
-    if (!frame) return;
-    uint8_t actual[16]; hash(frame,actual);
-    assert(!memcmp(golden,actual,sizeof(golden)));
+    selected[selectCount][1]=selectedJob?IHS_FrameTicketIdentity(s->ticket).frameId:-1;
+    selected[selectCount++][2]=selectedJob?s->media_timestamp:0;
+    if (selectedJob && s->frame) {
+        assert(physicalCount<1024);
+        physical[physicalCount][0]=action;
+        physical[physicalCount][1]=IHS_FrameTicketIdentity(s->frame->ticket).frameId;
+        physical[physicalCount++][2]=s->frame->media_timestamp;
+        uint8_t actual[16];hash(s->frame,actual);assert(!memcmp(golden,actual,16));
+    }
+}
+bool __real_sl_video_select(sl_video_pipeline *, sl_video_selection *);
+bool __wrap_sl_video_select(sl_video_pipeline *p,sl_video_selection *s) {
+    bool selectedJob=__real_sl_video_select(p,s);
+    if (presenting) record_selection(s,selectedJob);
+    return selectedJob;
+}
+bool __real_IHS_FrameTicketUploadStage(IHS_FrameTicket *,bool,uint64_t);
+bool __wrap_IHS_FrameTicketUploadStage(IHS_FrameTicket *t,bool end,uint64_t us) {
+    bool recorded=__real_IHS_FrameTicketUploadStage(t,end,us);
+    if (recording && recorded) {
+        assert(prepCount<1024);
+        prep[prepCount][0]=action;prep[prepCount][1]=IHS_FrameTicketIdentity(t).frameId;
+        prep[prepCount++][2]=end?17:16;
+    }
+    return recorded;
+}
+static void consume(void) {
+    sl_video_selection s={0};
+    bool selectedJob=!sl_video_scheduler_wait(&scheduler,pipeline,now_us()) && sl_video_select(pipeline,&s);
+    record_selection(&s,selectedJob);
+    if (!selectedJob) return;
     IHS_FrameOutcome out={.result=IHS_VideoFrameResultDisplayed,.presentationSerial=selectCount,
-                          .completionUs=frame->decode_end_us};
-    sl_video_frame_complete(frame,&out);
-    sl_resource_release(&frame->ref);
+                          .completionUs=now_us()};
+    sl_video_selection_complete(&s,&out);
+    sl_video_selection_release(&s);
 }
 static void observe(void) {
     pthread_mutex_lock(&pipeline->mailbox);
@@ -163,9 +206,9 @@ static void observe(void) {
     const uint8_t *bytes=(const uint8_t *)timing->samples;
     for (unsigned n=0;n<timing->count*4;++n) printf("%02x",bytes[n]);
     printf("\"},\"pending\":[");
-    for (unsigned n=0;n<pipeline->pending_count;++n) {
-        sl_video_frame *f=pipeline->pending[n];
-        printf("%s[%u,%u]",n?",":"",IHS_FrameTicketIdentity(f->ticket).frameId,f->media_timestamp);
+    for (unsigned n=0;n<pipeline->job_count;++n) {
+        input_job *j=&pipeline->jobs[n];
+        printf("%s[%u,%u]",n?",":"",IHS_FrameTicketIdentity(j->ticket).frameId,j->media_timestamp);
     }
     pthread_mutex_unlock(&pipeline->mailbox);
     printf("],\"pictures\":[");
@@ -184,6 +227,12 @@ static void observe(void) {
     for (unsigned n=0;n<waitCount;++n) printf("%s[%ld,%ld]",n?",":"",(long)waits[n][0],(long)waits[n][1]);
     printf("],\"completed\":[");
     for (unsigned n=0;n<completionCount;++n) printf("%s[%u,%u]",n?",":"",completed[n][0],completed[n][1]);
+    printf("],\"physical_selected\":[");
+    for(unsigned n=0;n<physicalCount;++n) printf("%s[%u,%u,%u]",n?",":"",physical[n][0],physical[n][1],physical[n][2]);
+    printf("],\"prep\":[");
+    for(unsigned n=0;n<prepCount;++n) printf("%s[%u,%u,%u]",n?",":"",prep[n][0],prep[n][1],prep[n][2]);
+    printf("],\"codec_pts\":[");
+    for(unsigned n=0;n<codecCount;++n) printf("%s[%llu,%llu,%llu,%llu]",n?",":"",(unsigned long long)codecPts[n][0],(unsigned long long)codecPts[n][1],(unsigned long long)codecPts[n][2],(unsigned long long)codecPts[n][3]);
     puts("]}");
 }
 static sl_video_frame *resourceOld;
@@ -195,23 +244,46 @@ static void resources(sl_runtime *r) {
         clockTick=1000000+n*1092;
         packet(r->session,n,n,n?8:24,clockTick-655,0,sizeof(payload));
         if (!n) {
-            resourceOld=sl_video_take(pipeline);assert(resourceOld);
+            sl_video_selection first={0};assert(sl_video_select(pipeline,&first));
+            resourceOld=first.frame;first.frame=NULL;assert(resourceOld);
+            IHS_FrameOutcome displayed={.result=IHS_VideoFrameResultDisplayed,.completionUs=now_us()};
+            sl_video_selection_complete(&first,&displayed);sl_video_selection_release(&first);
             resourceMapping=sl_video_hold_mapping(resourceOld);assert(resourceMapping);
             resourceStamp=resourceOld->media_timestamp;
             uint8_t actual[16];hash(resourceOld,actual);assert(!memcmp(actual,golden,16));
         } else consume();
     }
     assert(pipeline->timing.budget==9 && !pipeline->pending_count);
+    sl_video_frame *cached=pipeline->image;assert(cached);
+    /* Real first marked fragment flushes only the backend, not player tasks
+     * or its already selected immutable image; finish arrives separately. */
+    packet(r->session,60,60,16,clockTick+655,0,0);
+    assert(pipeline->image==cached && !pipeline->pending_count && !pipeline->job_count);
     unsigned last=60+LEASE_COUNT+6;
     for (unsigned n=60;n<last;++n)
-        packet(r->session,n,n,8,clockTick+655,0,sizeof(payload));
-    assert(pipeline->pending_count==LEASE_COUNT-1 && pipeline->counters.replaced==7);
-    assert(sl_video_wait(pipeline)>0 && !sl_video_take(pipeline));
-    packet(r->session,last,last,72,clockTick,0,sizeof(payload));
+        packet(r->session,n,n+1,8,clockTick+655,0,sizeof(payload));
+    assert(pipeline->pending_count==LEASE_COUNT-2 && pipeline->counters.replaced==8);
+    sl_video_selection future={0};
+    assert(sl_video_wait(pipeline)>0 && !sl_video_select(pipeline,&future));
+    packet(r->session,last,last+1,72,clockTick,0,sizeof(payload));
     IHS_SessionVideoHandlePendingReset(r->session);
     assert(r->facts.epoch==2 && pipeline->timing.budget==9 && !pipeline->pending_count);
-    packet(r->session,last+1,last+1,88,clockTick-655,0,sizeof(payload));
+    packet(r->session,last+1,last+2,88,clockTick-655,0,sizeof(payload));
     consume();
+    /* Accepted input with no returned pixel keeps its task/metadata alive;
+     * Stop must cancel this separate waiting owner before session teardown. */
+    suppressOutput=(int)last+2;clockTick+=1092;
+    packet(r->session,last+2,last+3,72,clockTick-655,0,sizeof(payload));
+    sl_video_selection waiting={0};assert(!sl_video_select(pipeline,&waiting));
+    assert(pipeline->waiting.ticket && IHS_FrameTicketIdentity(pipeline->waiting.ticket).frameId==last+2);
+    IHS_TrackedFrame records[IHS_FRAME_TRACKER_CAPACITY];
+    size_t count=IHS_FrameTrackerCopyStats(r->session->frameTracker,records,IHS_FRAME_TRACKER_CAPACITY);
+    bool pending=false;
+    for(size_t n=0;n<count;++n) if(records[n].identity.frameId==last+2) {
+        assert(records[n].hasDecodeBegin && records[n].hasDecodeEnd && !records[n].statsComplete);
+        pending=true;
+    }
+    assert(pending);suppressOutput=-1;
     uint8_t actual[16];hash(resourceOld,actual);
     assert(!memcmp(actual,golden,16) && resourceOld->media_timestamp==resourceStamp);
 }
@@ -255,6 +327,14 @@ int main(int argc,char **argv) {
             unsigned fid,seq,flags,offset,size,stamp,now;
             assert(sscanf(line,"P %u %u %u %u %u %u %u",&fid,&seq,&flags,&stamp,&now,&offset,&size)==7);
             clockTick=now;packet(r.session,fid,seq,flags,stamp,offset,size);
+        } else if (line[0]=='B') {
+            unsigned budget;assert(sscanf(line,"B %u",&budget)==1);
+            pthread_mutex_lock(&pipeline->mailbox);pipeline->timing.budget=(int)budget;pthread_mutex_unlock(&pipeline->mailbox);
+        } else if (line[0]=='X') {
+            assert(sscanf(line,"X %d",&suppressOutput)==1);
+        } else if (line[0]=='D') {
+            assert(sscanf(line,"D %u",&clockTick)==1);
+            presenting=true;stream_media_present();presenting=false;
         } else if (line[0]=='N') {
             assert(sscanf(line,"N %u",&clockTick)==1);consume();
         } else if (line[0]=='W') {
@@ -268,6 +348,7 @@ int main(int argc,char **argv) {
     recording=false;
     CStopVideoDataMsg stop=CSTOP_VIDEO_DATA_MSG__INIT;
     controlMessage(r.session,k_EStreamControlStopVideoData,&stop.base);
+    sl_media_collect();
     IHS_SessionDestroy(r.session);IHS_Quit();
     if (resourceOld) {
         assert(!sl_media_video_clean());

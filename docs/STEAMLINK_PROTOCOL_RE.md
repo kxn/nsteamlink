@@ -7125,3 +7125,67 @@ libc++ uint64排序原语为明确终点；map筛选、移除、统计、latch�
 固定对照含60组289状态、12项原指令反事实；含codec guard、PTS匹配/重复guard、等待额度、
 丢弃index的render位、-1 flush、release失败、Surface ID/时间边界、真实pending统计与已丢弃
 统计分流、反馈latch抑制/恢复。全部反事实必须在上述实际输出/反馈观察中产生差异。
+
+## 89. 呈现调用者的输入任务归属与像素所有权
+
+【官方客户端证据】固定SHA同§24.1。配置好的streaming/window边界中，完整
+CStreamPlayer::BUpdateVideo @0x7b782c–8110经原BGetNextVideoFrame选输入任务；
+format2实际调用CAndroidAccel::RenderFrame。SDK格式先经原BHandleOutputBuffer(-2)
+建立1280×720参数，避免把NAL metadata适配器未提供的零尺寸当正常UI状态。
+SDK/JNI/SDL与overlay绘制原语、图表/显示历史sample sink是明确平台/IO终点；
+选择、渲染调用、事件16/17、present调用点、派生/base/client完成函数和真实帧统计均执行原代码。
+此不是完整CStreamPlayer构造/startup或物理SDL/GPU验收。
+
+固定budget10、任务1媒体time998689已到期、任务2媒体time1001311未到期、now1000000：
+原调用者持有任务1，texture使用仅有的任务2对应SDK输出；之后原
+@0x7b7fac–7fe8按current输入任务调用VideoFrameComplete(Displayed=1)。原
+CStreamPlayer::VideoFrameComplete @0x7c2b28再进入base/client完成链。
+由原RecordFrameReceived建立的真实记录验证：任务1结果变1，任务2仍0。
+因此完成权属于选中的输入任务，不属于这次实际借用的像素输出。不能为了适配该规则
+改写已发布像素envelope的输入身份；任务ticket和像素/decoder引用需要独立所有权。
+
+同一调用者@0x7b7bcc–7be0、@0x7b7d94–7db4记录16/17，均关联current输入任务；
+硬件format2路径也执行。这是呈现准备范围，不能把协议这两个事件仅理解成CPU拷贝像素。
+原调用忽略SDL_RenderPresent返回值，SDK release失败请求重置后仍可沿调用者完成输入任务；
+这些原调用观察不等于物理新画面成功，也不抹除Native显式图形设备/资源故障的独立边界。
+原完成后current清空、previous仍持有输入任务用于重画；重复previous重画不重复完成该任务。
+新任务可借用先前的texture，而其完成仍归自己的输入ticket。空输入亦能产生输入任务，
+不能因为它没有像素token就从任务生命周期中消失。
+
+【平台契约】视频消费者须分别持有：已接受输入的有序任务、真实解码输出队列、已选像素缓存、
+本次呈现任务ticket。先按原媒体jitter选最新已到期任务，再按其后端PTS选择输出或复用缓存；
+输出的不可变物理身份/PTS留在像素对象中，16/17及最终结果写任务ticket。缺输出时的NDK等待/
+flush与FFmpeg EAGAIN不是同一个API事件，物理等待/超时适配仍需单独验证；不能在每次普通
+EAGAIN时立即flush。暂停/关闭清任务、待选输出和缓存，持有中的GPU/map/像素引用按既有ABI
+规则独立退出。单独decoder Flush @0x906f40–6fa8保留SDK输入/请求PTS缓存及player任务，
+只处理backend/map；新decoder构造才建立新的后端PTS状态。
+
+【Native接线与可复现边界】`sl_video_selection`独立移交任务ticket与可空像素引用；
+`media.c`真实present路径按任务记录16/17与完成，软件纹理缓存和GPU/map继续按物理像素身份
+管理。像素FIFO的淘汰、token在已接受后无输出的释放不再擅自回报该任务corrupt/reset；
+任务被新就绪任务跳过以6完成，关闭则以7完成。已使用的目标图像可在无新输出时复用；
+如队列还有更新输出，仍按原规则继续取，不能仅因缓存PTS匹配而跳过它们。
+后端PTS累加器逐字段复播原SDK输入时间，包括0、重复、回退与回绕；新decoder重置，
+单独flush保留。decoder-only flush清未取走输出、保留已选图像和任务，player关闭清全部内部
+拥有者；清理检查也包含CPU任务/等待ticket/图像缓存，不能只查codec domain。
+
+`audit-steam-video-present.py CORE --check scripts/fixtures/steam-video-present-reference.json.gz`
+执行24组99状态与四项原指令反事实，保留调用者四个完整原函数。Native
+`video_present_official_vectors`执行实际control/parser/worker/FFmpeg/media/SDL/endpoint，
+对照13组18个呈现状态的任务完成、16/17归属及有成功SDK输出的像素身份，另核60组SDK PTS
+输入；每个实际像素均比独立framemd5。No BufferInfo供给域仅比较已执行的调用者完成语义，
+不比较假想物理像素。§87已有15组1659状态对照保留，观察对象明确改为输入任务队列。
+`observe-native-video-output-gap.py`现直接运行该真实receiver的显式后端缺首输出输入，
+同时回读任务1/像素2/完成1与任务2后续复用，selection_matches从§88基线false变为true。
+不以较早构造的隔离观察器或固定差异测试代替实际播放接线。
+
+七项Native隔离变体检出像素时间戳替代任务准入、像素ticket冒领完成/16–17、漏接输入任务、
+关闭漏清任务、decoder flush误清已选图像，以及缓存匹配时忽略更新输出；前四类中有实际
+任务/像素/回报变化，生命周期项以资源/所有者断言检出。资源用例通过实际首标记分片flush、
+actor重建、已接受但无输出的等待任务取消，持有旧AVFrame/map跨SessionDestroy/IHS_Quit直至
+最终回收。无输出等待任务的统计保持decode begin/end而未伪造corrupt。
+
+【尚未被本节证明的行为范围】Native非空输入等待首个输出时仍保留已选任务，未移植或验证
+Android六次250000us的timeout/flush到NVTEGRA/FFmpeg的对应事件；不能称该分支已经等价。
+NDK/Native图形错误返回、完整startup/UI cadence、全部音画同步与物理decoder/资源/设备验收
+各有独立范围。完整FEC启用/非空上行producer和Host响应亦未由本节推定。

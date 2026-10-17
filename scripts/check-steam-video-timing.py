@@ -56,10 +56,8 @@ def main():
         assert [s["decode_events"] for s in states] == [
             s["decode_events"] for s in case["states"]
         ]
-        assert all(
-            not s["pictures"] and not s["pending"] and not s["completed"]
-            for s in states
-        )
+        assert [s["pending"] for s in states] == [s["pending"] for s in case["states"]]
+        assert all(not s["pictures"] and not s["completed"] for s in states)
     cases = reference["cases"]
     keys = (
         "jitter",
@@ -84,7 +82,10 @@ def main():
             timeout=20,
         )
         assert not r.returncode, (n, c["input"], r.returncode, r.stderr[-2500:])
-        got = [json.loads(x) for x in r.stdout.splitlines()]
+        got = [
+            {k: s[k] for k in keys}
+            for s in (json.loads(x) for x in r.stdout.splitlines())
+        ]
         want = [{k: s[k] for k in keys} for s in c["states"]]
         assert got == want, (
             n,

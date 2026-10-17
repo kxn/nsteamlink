@@ -217,7 +217,8 @@ renderer 发布本地故障的同一轮就更新 faulted；不等待 runtime/UI 
 ### 5.1 帧与 GPU 使用期
 
 `FrameLease` 是有界 envelope，包含 AVFrame 强引用、session_id/video_epoch/pool_id/frame_serial、
-颜色/裁剪信息和可选的帧完成 ticket；不含 session 裸指针或 Dk 对象。
+颜色/裁剪信息和不可变的物理解码输入身份ticket；本次呈现任务ticket在独立selection中，
+不含session裸指针或Dk对象。
 数据只读，引用可在 decoder mailbox、current 和 GPU 批次之间移交；使用预分配 AVFrame + move_ref，
 不逐帧 clone/alloc 整帧。最后一个外部 lease 释放只回收帧并减少 domain 的使用计数，
 不能在任意线程顺带销毁 decoder 或 GPU cache。
@@ -236,14 +237,17 @@ present 返回 submitted=true 而 result=ERROR 时，仍保留批次；没有可
 设备错误不能用普通取消释放。emergency-clear 只替换尚未入 queue 的命令，不能撤销已提交工作。
 软件 staging 与软件 current 纹理是不同寿命：批次可复用不等于 current 像素可覆写。
 
-官方消费语义分层见STEAMLINK_PROTOCOL_RE §87–88：输入任务的jitter准入与实际像素输出选择
-是两个位置。§88已给出“较早任务到期、SDK仅有后继未到期输出”的反例，不能把以下像素FIFO
-在顺序输出用例中的对照扩展为完整texture消费等价。完整平台适配须分别表达任务、像素/PTS、
-复用与完成结果归属，并与实际上层调用者核对；GPU/map引用仍须按真正持有的像素独立管理。
+官方消费语义分层见STEAMLINK_PROTOCOL_RE §87–89：按已接受输入任务的媒体时间戳/jitter
+选择最新已到期任务，再按后端PTS从实际输出FIFO选择像素或复用缓存。输入任务持有独立
+CPU ticket与时间戳；像素envelope保留真实解码输入身份、PTS、AVFrame/domain引用。
+本次selection分别拥有任务ticket和可空的像素引用，16/17与完成写任务ticket，不改写像素身份。
+单独decoder Flush清未取走的输出而保留任务/像素缓存/PTS状态；player关闭清任务、等待任务、
+输出和缓存。GPU/map或当前帧已经持有的引用独立退出。空输出EAGAIN不立即flush；
+FFmpeg缺输出等待/NDK超时适配的物理边界仍见§89，不能由顺序像素用例替代验证。
 
-视频待选队列按官方媒体时间戳/jitter准入，详见STEAMLINK_PROTOCOL_RE §87；取最新已到期帧，
-后续尚未到期帧保留。历史pending=1/六个envelope预算撤回：合法60样本等待可达约244ms，
-按最大60fps需15个排队帧，加candidate/current、两GPU批次和一次发布交接，共20个FrameLease。
+已接受任务队列采用与CPU endpoint容量一致的256个有界槽；这是本地资源约束。实际像素
+采用20个FrameLease共享于待选输出、当前缓存、candidate/current、GPU批次与交接。
+历史pending=1/六个envelope预算撤回：合法60样本等待可达约244ms，按最大60fps需15帧排队。
 应用AVFrame壳预算为22（两个domain scratch + 20个envelope）；不增加renderer自分配96MiB、
 导入backing128MiB等独立上限。容量统计按唯一对象而非引用数；
 包含旧 epoch 在途引用，耗尽时仍处理压缩输入的
@@ -262,11 +266,13 @@ session/renderer/decoder；IHS 拥有活动引用，帧 ticket 持有记录使�
 接收方完整初始化记录后才发布 ticket；同一帧分片更新同一记录，不重复分配。
 
 接口语义：`begin_received` / `record_decode_stage` / `complete(ticket, outcome, timestamps)` /
-`settle_and_drain` / `close_epoch` / `close_endpoint`。renderer 只调用 complete 并释放 ticket；decoder→renderer 移交时
-一并移交“报告最终结果”的权利，就绪旧帧被跳过或本地预算淘汰由实际摘出引用的一侧终结，已取走的帧不能再由它回报。
-关闭时由实际摘出 pending 的 owner 终结该 ticket；移交在 mailbox 临界区完成，main 与 callback
-不能分别给同一帧报告一次丢弃。帧已首呈现后 ticket 可归还，current/GpuBatch 的像素引用继续保留。
-复杂 receive/输出对应关系由 PTS/COPY_OPAQUE fixture 证明；没有可靠归因不能伪造 ticket。
+`settle_and_drain` / `close_epoch` / `close_endpoint`。已接受输入任务队列持有CPU ticket；
+renderer按任务选择时移交完成权，跳过的就绪旧任务以6终结，关闭清队列以7终结。
+实际像素/token只保留自己的解码身份引用，没有替代另一个任务回报的权利；像素被预算淘汰
+不自动终结其输入任务。selection的唯一完成者在present后写任务结果并释放引用。
+同一物理像素可以服务多个输入任务，且在current/GPU/缓存引用中继续保留。
+复杂receive/物理输出对应关系由PTS/COPY_OPAQUE fixture证明，任务/像素关联另由官方调用者
+对照证明；不能把两者混成“最新输入ID”或重写已发布envelope身份。
 
 complete 是非阻塞、无需堆分配的单 writer 发布：写入结果与显式时间戳后 release 发布 ready；
 IHS 消费端 acquire 后才能读 payload。时间在事件发生处采集，用有效位表达零值；硬件导入不伪造为 upload。
@@ -762,7 +768,7 @@ struct sl_frame_lease {               // 固定20个envelope，另有2个domain 
     sl_domain_handle domain;
     sl_video_key key;
     uint64_t pool_id, frame_serial;
-    IHS_FrameTicket *completion;      // 可为空；最终结果的唯一报告权
+    IHS_FrameTicket *decoded_identity; // 物理解码身份，呈现完成权在独立selection
     sl_frame_metadata metadata;
 };
 
@@ -802,7 +808,7 @@ domain 的状态转换只由 pipeline 执行；runtime reaper 在 decoder_lock �
 ```c
 sl_video_pipeline *sl_video_create(void);
 void sl_video_close_session(sl_video_pipeline *, uint64_t session_id); // main，短 mailbox
-sl_frame_lease *sl_video_take(sl_video_pipeline *, sl_video_key);      // main，转移 pending
+bool sl_video_select(sl_video_pipeline *, sl_video_selection *); // main，转移任务ticket及像素引用
 bool sl_video_reserve_current(sl_video_pipeline *, sl_frame_lease *); // main，检查关闭并增引用
 void sl_frame_release(sl_frame_lease *);                              // 无 session/GPU 调用
 void sl_video_reap(sl_video_pipeline *);                             // runtime
@@ -897,8 +903,8 @@ decoder open 前设置 flag；packet PTS 可用于 fixture 辅助核对，但禁
 “最新输入 id”或只凭 16-bit PTS 猜测。token 元数据和 AVBuffer wrapper 的小额分配单独计量，
 不将其冒称整条解码链零分配；禁止的是应用稳态整帧像素分配/复制。
 
-首版支持经过 fixture 证明的一个组装画面至多一个可归因输出；零输出可由 token 最后引用释放、
-flush/close 或 tracker 过期结算。同一 token 第二个输出、非空输出无 token、跨 epoch token 均为
+支持经过fixture证明的一个组装输入至多一个可归因物理输出；已接受输入独立入任务队列，
+不能因零输出/token最后引用释放就自动回报corrupt。任务由呈现、跳过、关闭或endpoint过期结算。同一 token 第二个输出、非空输出无 token、跨 epoch token 均为
 归因契约失败：释放该输出并走视频故障收尾，不给两个并行 owner 同一个完成权。若实际支持的
 H.264 流不满足此形状，必须在接入前扩展组装/归因规格并验证，不静默丢弃第二个合法画面作为支持。
 
@@ -915,23 +921,22 @@ submit(input, ticket):                         // callback；decoder_lock 下
     drain_available_outputs()                  // 取每个输出自己的 token
     若 send/receive 双 EAGAIN 且无进展：API 契约错误，停止；不能 sleep 重试
     若已关闭：终结仍未送入的 token，退出循环
-  若send成功：按末片媒体时间戳更新官方jitter、结束协议提交计时，再unref/drain输出
+  若send成功：入独立输入任务队列、计算后端PTS、更新官方jitter并结束协议提交计时，再unref/drain输出
   否则：按真实错误终结尚未接管输出的 token，unref packet
 
 drain_available_outputs():
   每次 receive 前 scratch 为空；receive 返回 EAGAIN 即结束本次 drain
-  成功输出：验证token/key；claim唯一ticket；记录本地物理输出耗时（不覆盖协议提交结束）
+  成功输出：验证token/key；claim唯一物理输出归因；记录本地输出耗时（不覆盖协议提交结束）
   获取空envelope；可先有界淘汰最旧排队引用；仍无容量则终结该输出、unref并继续drain
   move_ref(scratch -> envelope.frame)，登记 external_frames 和只读 metadata
-  mailbox下复核session/epoch、追加FIFO；按媒体时间戳取最新ready，锁外终结/释放跳过的就绪旧帧
+  mailbox下复核session/epoch、追加物理输出FIFO；呈现侧按输入任务/后端PTS另选，未选像素只释放引用
   关闭后输出不再发布，锁外释放；下次循环检查停止，不为 stop 主动 drain 全部延迟画面
 ```
 
-Claim ticket 在 decoder 串行域内进行；先拿走 token 的完成权，再将 AVFrame 的 opaque_ref 解除
-（像素引用照常保留），避免 current/GpuBatch 额外钉住统计 token。FFmpeg 自身留存的 token
-可以继续存在，但没有第二份完成权。token finalizer 只释放 CPU 引用，并对尚未 claim 的结果
-作有据的未输出/关闭终结，不获取 decoder/tracker mutex、不调用 IHS session、不 free domain。
-软件 decoder 的 FFmpeg 内部线程也可能触发 finalizer，不能假设它总在 submit 线程。
+物理输出claim在decoder串行域内，解除AVFrame opaque_ref时保留像素自己的CPU身份引用；
+不把物理输出claim当成呈现完成权。FFmpeg可继续持有token；accepted标记保证其最后释放不
+误报无输出corrupt。未接受输入的真实失败才按既有失败路径终结。token finalizer不获取
+session/GPU指针，不析构domain；FFmpeg内部线程仍可触发它，不能假定总在submit线程。
 
 decode_begin/end 用输出 token 关联；send/receive 调用墙钟另记 decode_cpu_wall，不能把解码器
 整体调用时间重复填给本次输出的所有帧。硬件帧直接 move_ref；软件 NV12/IYUV 使用同一 envelope，

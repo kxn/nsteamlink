@@ -185,12 +185,17 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_link_options(nsl-video-timing-oracle PRIVATE -Wl,--wrap=IHS_SessionPacketTimestamp
         -Wl,--wrap=avcodec_send_packet -Wl,--wrap=avcodec_receive_frame
         -Wl,--wrap=IHS_FrameTicketVideoDecodeStage
+        -Wl,--wrap=sl_video_select -Wl,--wrap=IHS_FrameTicketUploadStage
         -Wl,--wrap=IHS_SessionPacketsWindowReleaseFrame -Wl,--wrap=IHS_BaseSend
         -Wl,--wrap=IHS_SessionSendControlMessage -Wl,--wrap=IHS_FrameTicketComplete)
     add_test(NAME video_timing_official_vectors COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-video-timing.py"
         --receiver $<TARGET_FILE:nsl-video-timing-oracle>)
     set_tests_properties(video_timing_official_vectors PROPERTIES TIMEOUT 60)
+    add_test(NAME video_present_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-video-present.py"
+        --receiver $<TARGET_FILE:nsl-video-timing-oracle>)
+    set_tests_properties(video_present_official_vectors PROPERTIES TIMEOUT 90)
     add_executable(nsl-video-keyframe-runtime tests/video_keyframe_runtime.c)
     target_include_directories(nsl-video-keyframe-runtime PRIVATE platforms/common
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client

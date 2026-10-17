@@ -15,6 +15,7 @@
  * 244 ms: 15 queued frames at the advertised 60 fps, plus candidate/current,
  * two GPU batches and one publication handoff. Scratch frames remain separate. */
 #define LEASE_COUNT  20
+#define INPUT_JOB_COUNT 256 /* matches bounded CPU endpoint storage; not an SDK queue policy */
 #define MAX_PACKET   (2u * 1024u * 1024u)
 typedef struct domain {
     sl_video_key key;
@@ -23,7 +24,15 @@ typedef struct domain {
     bool occupied, stopped, reaping;
     atomic_uint external, mappings;
     enum AVPixelFormat hardware_format;
+    sl_video_timestamp_state timestamp;
 } domain;
+typedef struct input_job {
+    IHS_FrameTicket *ticket;
+    sl_video_key key;
+    uint64_t codec_timestamp;
+    uint32_t media_timestamp;
+    bool has_timestamp, empty;
+} input_job;
 struct sl_video_pipeline {
     pthread_mutex_t mailbox, decoder;
     domain domains[DOMAIN_COUNT];
@@ -31,6 +40,11 @@ struct sl_video_pipeline {
     sl_video_frame *pending[LEASE_COUNT];
     unsigned pending_count;
     sl_video_timing timing;
+    input_job jobs[INPUT_JOB_COUNT], waiting;
+    unsigned job_count;
+    bool waiting_output;
+    uint64_t requested_timestamp;
+    sl_video_frame *image;
     sl_video_key active;
     bool accepting;
     bool cancelled, frozen;
@@ -47,7 +61,8 @@ typedef struct packet_token {
     uint64_t begin_us;
     uint32_t media_timestamp;
     bool has_media_timestamp;
-    atomic_bool claimed;
+    uint64_t codec_timestamp;
+    atomic_bool claimed, accepted;
 } packet_token;
 static uint64_t now_us(void) {
     struct timespec t;
@@ -59,13 +74,22 @@ static bool same(sl_video_key a, sl_video_key b) {
 }
 /* Official PutVideoFrame samples after accepted SDK input, before the
  * renderer maps/waits for decoder output. Codec output latency is independent. */
-static void accepted_input(sl_video_pipeline *p, sl_video_key key, IHS_FrameTicket *ticket,
-                           bool hasTimestamp, uint32_t timestamp) {
+static bool accepted_input(sl_video_pipeline *p, domain *d, IHS_FrameTicket *ticket,
+                           bool hasTimestamp, uint32_t timestamp, uint64_t *codecTimestamp, bool empty) {
+    if (!IHS_FrameTicketRetain(ticket)) return false;
+    uint64_t pts = hasTimestamp ? sl_video_timestamp_next(&d->timestamp, timestamp)
+                               : IHS_FrameTicketIdentity(ticket).receiveSerial;
+    if (codecTimestamp) *codecTimestamp = pts;
     pthread_mutex_lock(&p->mailbox);
-    if (hasTimestamp && p->accepting && same(p->active,key))
-        sl_video_timing_update(&p->timing,timestamp,IHS_SessionPacketTimestamp(),false);
+    bool active = p->accepting && same(p->active,d->key) && p->job_count < INPUT_JOB_COUNT;
+    if (active) {
+        if (hasTimestamp) sl_video_timing_update(&p->timing,timestamp,IHS_SessionPacketTimestamp(),false);
+        p->jobs[p->job_count++] = (input_job){ticket,d->key,pts,timestamp,hasTimestamp,empty};
+    }
     pthread_mutex_unlock(&p->mailbox);
+    if (!active) IHS_FrameTicketRelease(ticket);
     IHS_FrameTicketVideoDecodeStage(ticket, true);
+    return active;
 }
 static void dropped(IHS_FrameTicket *ticket, IHS_VideoFrameResult reason) {
     IHS_FrameOutcome result = {.result = reason, .completionUs = now_us()};
@@ -74,7 +98,8 @@ static void dropped(IHS_FrameTicket *ticket, IHS_VideoFrameResult reason) {
 static void free_token(void *unused, uint8_t *data) {
     (void)unused;
     packet_token *token = (void *)data;
-    if (!atomic_exchange_explicit(&token->claimed, true, memory_order_acq_rel))
+    if (!atomic_exchange_explicit(&token->claimed, true, memory_order_acq_rel) &&
+        !atomic_load_explicit(&token->accepted, memory_order_acquire))
         dropped(token->ticket, IHS_VideoFrameResultDroppedDecodeCorrupt);
     IHS_FrameTicketRelease(token->ticket);
     av_free(token);
@@ -82,7 +107,6 @@ static void free_token(void *unused, uint8_t *data) {
 static void release_frame(void *context) {
     sl_video_frame *frame = context;
     domain *d = frame->domain;
-    dropped(frame->ticket, IHS_VideoFrameResultDroppedReset);
     IHS_FrameTicketRelease(frame->ticket);
     frame->ticket = NULL;
     av_frame_unref(frame->pixels);
@@ -156,6 +180,7 @@ sl_video_open_result sl_video_open_ex(sl_video_pipeline *p, sl_video_key key, co
     if (admissible) {
         if (p->active.session != key.session) sl_video_timing_reset(&p->timing);
         p->active = key;
+        p->requested_timestamp = 0;
         p->cancelled = false;
         p->counters = (sl_video_counters){0};
         p->publish_seq = 0;
@@ -185,6 +210,7 @@ sl_video_open_result sl_video_open_ex(sl_video_pipeline *p, sl_video_key key, co
     if (!d->codec)
         goto fail;
     d->key = key;
+    d->timestamp = (sl_video_timestamp_state){0};
     d->codec->width = config->width;
     d->codec->height = config->height;
     d->codec->thread_count = 1;
@@ -247,16 +273,35 @@ static sl_video_frame *pop_pending(sl_video_pipeline *p) {
     memmove(p->pending, p->pending + 1, p->pending_count * sizeof(*p->pending));
     return frame;
 }
+static input_job pop_job(sl_video_pipeline *p) {
+    input_job job = p->jobs[0];
+    --p->job_count;
+    memmove(p->jobs,p->jobs+1,p->job_count*sizeof(*p->jobs));
+    return job;
+}
+static void retire_jobs(input_job *jobs, unsigned count, IHS_VideoFrameResult result) {
+    for (unsigned n=0;n<count;++n) {
+        dropped(jobs[n].ticket,result);
+        IHS_FrameTicketRelease(jobs[n].ticket);
+    }
+}
 void sl_video_close(sl_video_pipeline *p, sl_video_key key) {
-    sl_video_frame *old[LEASE_COUNT];
-    unsigned count = 0;
+    sl_video_frame *old[LEASE_COUNT+1];
+    input_job jobs[INPUT_JOB_COUNT+1];
+    unsigned count = 0, jobCount=0;
     pthread_mutex_lock(&p->mailbox);
     if (same(p->active, key)) {
         p->cancelled = true;
         p->accepting = false;
         while (p->pending_count) old[count++] = pop_pending(p);
+        if (p->image) old[count++]=p->image;
+        p->image=NULL;
+        while (p->job_count) jobs[jobCount++]=pop_job(p);
+        if (p->waiting.ticket) jobs[jobCount++]=p->waiting;
+        p->waiting=(input_job){0};p->waiting_output=false;
     }
     pthread_mutex_unlock(&p->mailbox);
+    retire_jobs(jobs,jobCount,IHS_VideoFrameResultDroppedReset);
     for (unsigned n = 0; n < count; ++n) sl_resource_release(&old[n]->ref);
 }
 void sl_video_stop(sl_video_pipeline *p, sl_video_key key) {
@@ -270,13 +315,18 @@ void sl_video_stop(sl_video_pipeline *p, sl_video_key key) {
     pthread_mutex_unlock(&p->decoder);
 }
 void sl_video_discard_buffers(sl_video_pipeline *p, sl_video_key key) {
+    sl_video_frame *old[LEASE_COUNT];unsigned count=0;
     pthread_mutex_lock(&p->decoder);
     domain *d = find_domain(p, key);
     if (d && d->codec && !d->stopped && !d->reaping) {
         av_frame_unref(d->scratch);
         avcodec_flush_buffers(d->codec);
+        pthread_mutex_lock(&p->mailbox);
+        if (same(p->active,key)) while (p->pending_count) old[count++]=pop_pending(p);
+        pthread_mutex_unlock(&p->mailbox);
     }
     pthread_mutex_unlock(&p->decoder);
+    for (unsigned n=0;n<count;++n) sl_resource_release(&old[n]->ref);
 }
 bool sl_video_is_current(sl_video_pipeline *p, sl_video_key key) {
     pthread_mutex_lock(&p->mailbox);
@@ -308,7 +358,6 @@ static bool publish(sl_video_pipeline *p, domain *d) {
         if (evicted && p->counters.replaced != UINT32_MAX) ++p->counters.replaced;
         pthread_mutex_unlock(&p->mailbox);
         if (evicted) {
-            dropped(evicted->ticket, IHS_VideoFrameResultDroppedLate);
             sl_resource_release(&evicted->ref);
         }
         for (unsigned i = 0; i < LEASE_COUNT; ++i) {
@@ -329,6 +378,7 @@ static bool publish(sl_video_pipeline *p, domain *d) {
     }
     frame->key = token->key;
     frame->ticket = token->ticket;
+    frame->codec_timestamp = token->codec_timestamp;
     frame->media_timestamp = token->media_timestamp;
     frame->has_media_timestamp = token->has_media_timestamp;
     frame->decode_begin_us = token->begin_us;
@@ -419,9 +469,9 @@ sl_video_submit_result sl_video_submit(sl_video_pipeline *p, sl_video_key key,
     if (!size) {
         uint32_t mediaTimestamp;
         bool hasTimestamp = IHS_FrameTicketVideoTimestamp(ticket,&mediaTimestamp);
-        accepted_input(p,key,ticket,hasTimestamp,hasTimestamp ? mediaTimestamp : 0);
+        bool accepted = accepted_input(p,d,ticket,hasTimestamp,hasTimestamp ? mediaTimestamp : 0,NULL,true);
         pthread_mutex_unlock(&p->decoder);
-        return SL_VIDEO_SUBMIT_OK;
+        return accepted ? SL_VIDEO_SUBMIT_OK : SL_VIDEO_SUBMIT_ERROR;
     }
     AVPacket *packet = av_packet_alloc();
     if (!packet)
@@ -458,6 +508,7 @@ sl_video_submit_result sl_video_submit(sl_video_pipeline *p, sl_video_key key,
     pthread_mutex_unlock(&p->mailbox);
 #endif
     atomic_init(&token->claimed, false);
+    atomic_init(&token->accepted, false);
     packet->opaque_ref = av_buffer_create((uint8_t *)token, sizeof(*token), free_token, NULL, 0);
     if (!packet->opaque_ref) {
         free_token(NULL, (void *)token);
@@ -474,8 +525,11 @@ sl_video_submit_result sl_video_submit(sl_video_pipeline *p, sl_video_key key,
         else
             result = drained;
     }
-    if (result >= 0)
-        accepted_input(p,key,ticket,token->has_media_timestamp,token->media_timestamp);
+    if (result >= 0) {
+        bool accepted = accepted_input(p,d,ticket,token->has_media_timestamp,token->media_timestamp,&token->codec_timestamp,false);
+        atomic_store_explicit(&token->accepted,true,memory_order_release);
+        if (!accepted) result=AVERROR(ENOMEM);
+    }
     av_packet_free(&packet);
     sl_video_submit_result status = SL_VIDEO_SUBMIT_ERROR;
     if (result >= 0) {
@@ -502,17 +556,14 @@ bool sl_video_flush(sl_video_pipeline *p, sl_video_key key) {
 }
 int32_t sl_video_wait(sl_video_pipeline *p) {
     pthread_mutex_lock(&p->mailbox);
-    sl_video_frame *head = p->pending_count ? p->pending[0] : NULL;
-    int32_t wait = head ? (head->has_media_timestamp ?
-        sl_video_timing_wait(&p->timing, head->media_timestamp, IHS_SessionPacketTimestamp()) : 0) : -1;
+    input_job *head = p->job_count ? &p->jobs[0] : NULL;
+    int32_t wait = p->waiting.ticket ? 0 : head ? (head->has_timestamp ?
+        sl_video_timing_wait(&p->timing,head->media_timestamp,IHS_SessionPacketTimestamp()) : 0) : -1;
     pthread_mutex_unlock(&p->mailbox);
     return wait;
 }
-sl_video_frame *sl_video_take(sl_video_pipeline *p) {
-    sl_video_frame *discarded[LEASE_COUNT], *frame = NULL;
-    unsigned count = 0;
-    pthread_mutex_lock(&p->mailbox);
 #if NSL_DIAGNOSTICS
+static void observe_take(sl_video_pipeline *p) {
     uint64_t stamp = now_us();
     if (p->accepting) {
         p->counters.take_empty += p->published_since_take == 0;
@@ -523,6 +574,75 @@ sl_video_frame *sl_video_take(sl_video_pipeline *p) {
         p->last_take_us = stamp;
     }
     p->published_since_take = 0;
+}
+#endif
+bool sl_video_select(sl_video_pipeline *p, sl_video_selection *out) {
+    input_job skipped[INPUT_JOB_COUNT];unsigned count=0;
+    sl_video_frame *discarded[LEASE_COUNT+1];unsigned discardedCount=0;
+    *out=(sl_video_selection){0};
+    pthread_mutex_lock(&p->mailbox);
+#if NSL_DIAGNOSTICS
+    observe_take(p);
+#endif
+    if (!p->accepting) goto done;
+    if (!p->waiting.ticket) {
+        uint32_t now=IHS_SessionPacketTimestamp();
+        while (p->job_count) {
+            input_job *head=&p->jobs[0];
+            if (head->has_timestamp && !sl_video_timing_ready(&p->timing,head->media_timestamp,now)) break;
+            if (p->waiting.ticket) skipped[count++]=p->waiting;
+            p->waiting=pop_job(p);
+        }
+        if (!p->waiting.ticket) goto done;
+        p->waiting_output=p->waiting.codec_timestamp > p->requested_timestamp;
+        if (p->waiting_output) p->requested_timestamp=p->waiting.codec_timestamp;
+        if (!p->pending_count && p->image && p->image->codec_timestamp==p->waiting.codec_timestamp)
+            p->waiting_output=false; /* already acquired actual target pixels */
+    }
+    if (p->waiting_output && p->waiting.empty && !p->pending_count)
+        p->waiting_output=false; /* metadata-only input has no FFmpeg pixel */
+    if (p->waiting_output) {
+        /* Polling an empty FFmpeg output queue is not an NDK timeout. Keep the
+         * selected task while normal UI drawing continues; no EAGAIN flush. */
+        if (!p->pending_count) goto done;
+        sl_video_frame *chosen=NULL;
+        while (p->pending_count) {
+            if (chosen) discarded[discardedCount++]=chosen;
+            chosen=pop_pending(p);
+            if (chosen->codec_timestamp==p->waiting.codec_timestamp) break;
+        }
+        if (p->image) discarded[discardedCount++]=p->image;
+        p->image=chosen;
+    }
+    if (p->image && !sl_resource_retain(&p->image->ref)) goto done;
+    out->frame=p->image;out->ticket=p->waiting.ticket;out->key=p->waiting.key;
+    out->media_timestamp=p->waiting.media_timestamp;
+    p->waiting=(input_job){0};p->waiting_output=false;
+done:
+    if (p->counters.replaced<=UINT32_MAX-count) p->counters.replaced+=count;
+    else p->counters.replaced=UINT32_MAX;
+    pthread_mutex_unlock(&p->mailbox);
+    retire_jobs(skipped,count,IHS_VideoFrameResultDroppedLate);
+    for (unsigned n=0;n<discardedCount;++n) sl_resource_release(&discarded[n]->ref);
+    return out->ticket!=NULL;
+}
+void sl_video_selection_complete(sl_video_selection *s,const IHS_FrameOutcome *outcome) {
+    if (s->ticket) IHS_FrameTicketComplete(s->ticket,outcome);
+}
+void sl_video_selection_release(sl_video_selection *s) {
+    if (s->ticket) {
+        dropped(s->ticket,IHS_VideoFrameResultDroppedReset);
+        IHS_FrameTicketRelease(s->ticket);
+    }
+    if (s->frame) sl_resource_release(&s->frame->ref);
+    *s=(sl_video_selection){0};
+}
+sl_video_frame *sl_video_take(sl_video_pipeline *p) {
+    sl_video_frame *discarded[LEASE_COUNT], *frame = NULL;
+    unsigned count = 0;
+    pthread_mutex_lock(&p->mailbox);
+#if NSL_DIAGNOSTICS
+    observe_take(p);
 #endif
     uint32_t now = IHS_SessionPacketTimestamp();
     while (p->pending_count) {
@@ -536,7 +656,6 @@ sl_video_frame *sl_video_take(sl_video_pipeline *p) {
     else p->counters.replaced = UINT32_MAX;
     pthread_mutex_unlock(&p->mailbox);
     for (unsigned n = 0; n < count; ++n) {
-        dropped(discarded[n]->ticket, IHS_VideoFrameResultDroppedLate);
         sl_resource_release(&discarded[n]->ref);
     }
     return frame;
@@ -572,6 +691,9 @@ bool sl_video_clean(sl_video_pipeline *p) {
     bool clean = true;
     for (unsigned i = 0; i < DOMAIN_COUNT; ++i)
         clean &= !p->domains[i].occupied;
+    pthread_mutex_lock(&p->mailbox);
+    clean &= !p->job_count && !p->waiting.ticket && !p->pending_count && !p->image;
+    pthread_mutex_unlock(&p->mailbox);
     pthread_mutex_unlock(&p->decoder);
     return clean;
 }
@@ -604,15 +726,11 @@ void sl_video_release_mapping(void *cookie) {
 }
 
 void sl_video_freeze(sl_video_pipeline *p) {
-    sl_video_frame *old[LEASE_COUNT];
-    unsigned count = 0;
     pthread_mutex_lock(&p->mailbox);
-    p->frozen = true;
-    p->cancelled = true;
-    p->accepting = false;
-    while (p->pending_count) old[count++] = pop_pending(p);
+    p->frozen=true;p->cancelled=true;p->accepting=false;
+    sl_video_key key=p->active;
     pthread_mutex_unlock(&p->mailbox);
-    for (unsigned n = 0; n < count; ++n) sl_resource_release(&old[n]->ref);
+    sl_video_close(p,key);
 }
 void sl_video_thaw(sl_video_pipeline *p) {
     pthread_mutex_lock(&p->mailbox);

@@ -1512,12 +1512,14 @@ void stream_media_present(void) {
 #if NSL_DIAGNOSTICS
     uint64_t begun_us = media_monotonic_us();
 #endif
-    sl_video_frame *candidate = sl_video_take(video);
+    sl_video_selection selection = {0};
+    bool has_selection = sl_video_select(video,&selection);
     uint64_t take_us = media_monotonic_us();
-    if (candidate && !sl_video_is_current(video, candidate->key)) {
-        sl_resource_release(&candidate->ref);
-        candidate = NULL;
+    if (has_selection && !sl_video_is_current(video,selection.key)) {
+        sl_video_selection_release(&selection);
+        has_selection=false;
     }
+    sl_video_frame *candidate = has_selection ? selection.frame : NULL;
     sl_video_frame *frame = candidate ? candidate : current_frame;
     sl_gfx_draw_color(gfx, 0, 0, 0, 255);
     sl_gfx_clear(gfx);
@@ -1525,25 +1527,27 @@ void stream_media_present(void) {
     sl_gfx_counters before_video, after_video;
     sl_gfx_get_counters(gfx, &before_video);
 #endif
-    bool report_upload = candidate && (!NSL_GFX_DEKO || candidate->pixels->hw_frames_ctx == NULL);
+    /* Official 16/17 cover the selected task's presentation preparation,
+     * including hardware texture and reuse; they are not RAM-copy counters. */
+    bool report_upload = has_selection;
     uint64_t upload_begin = media_monotonic_us();
     if (report_upload)
-        IHS_FrameTicketUploadStage(candidate->ticket, false, upload_begin);
+        IHS_FrameTicketUploadStage(selection.ticket, false, upload_begin);
     bool drawn = frame && sl_gfx_video(gfx, frame);
     uint64_t upload_end = media_monotonic_us();
     if (report_upload)
-        IHS_FrameTicketUploadStage(candidate->ticket, true, upload_end);
+        IHS_FrameTicketUploadStage(selection.ticket, true, upload_end);
 #if NSL_DIAGNOSTICS
     sl_gfx_get_counters(gfx, &after_video);
 #endif
     if (candidate && !drawn) {
         media_set_error("video layout, import, or renderer capacity rejected");
         pthread_mutex_lock(&state_lock);
-        if (snapshot.session_id == candidate->key.session &&
-            snapshot.video_epoch == candidate->key.epoch)
+        if (snapshot.session_id == selection.key.session &&
+            snapshot.video_epoch == selection.key.epoch)
             snapshot.render_failed = true;
         pthread_mutex_unlock(&state_lock);
-        sl_video_close(video, candidate->key);
+        sl_video_close(video, selection.key);
         if (current_frame)
             sl_gfx_video(gfx, current_frame);
     }
@@ -1591,11 +1595,11 @@ void stream_media_present(void) {
     }
     pthread_mutex_unlock(&state_lock);
 #endif
-    if (candidate) {
-        bool displayed = drawn && result.result == SL_GFX_READY && result.output_returned;
-        if (presentation_key.session != candidate->key.session ||
-            presentation_key.epoch != candidate->key.epoch) {
-            presentation_key = candidate->key;
+    if (has_selection) {
+        bool displayed = (!frame || drawn) && result.result == SL_GFX_READY && result.output_returned;
+        if (presentation_key.session != selection.key.session ||
+            presentation_key.epoch != selection.key.epoch) {
+            presentation_key = selection.key;
             presentation_serial = last_presentation_us = 0;
         }
         IHS_FrameOutcome outcome = {.result = displayed ? IHS_VideoFrameResultDisplayed
@@ -1607,36 +1611,36 @@ void stream_media_present(void) {
             outcome.presentationIntervalUs =
                 last_presentation_us ? present_us - last_presentation_us : 0;
             last_presentation_us = present_us;
-            outcome.hasUpload = !NSL_GFX_DEKO || candidate->pixels->hw_frames_ctx == NULL;
+            outcome.hasUpload = true;
             outcome.uploadBeginUs = upload_begin;
             outcome.uploadEndUs = upload_end;
         }
-        sl_video_frame_complete(candidate, &outcome);
-        bool active = sl_video_is_current(video, candidate->key);
+        sl_video_selection_complete(&selection, &outcome);
+        bool active = sl_video_is_current(video, selection.key);
         pthread_mutex_lock(&state_lock);
-        if (video_key.session == candidate->key.session &&
-            video_key.epoch == candidate->key.epoch) {
-            if (!NSL_GFX_DEKO && candidate->pixels->hw_frames_ctx && drawn)
+        if (video_key.session == selection.key.session &&
+            video_key.epoch == selection.key.epoch) {
+            if (!NSL_GFX_DEKO && frame && frame->pixels->hw_frames_ctx && drawn)
                 snapshot.transferred_frames++;
-            if (displayed && active) {
-                int w = 1280, h = candidate->pixels->height * 1280 / candidate->pixels->width;
+            if (displayed && active && frame && drawn) {
+                int w = 1280, h = frame->pixels->height * 1280 / frame->pixels->width;
                 if (h > 720) {
                     h = 720;
-                    w = candidate->pixels->width * 720 / candidate->pixels->height;
+                    w = frame->pixels->width * 720 / frame->pixels->height;
                 }
                 video_rect = (SDL_Rect){(1280 - w) / 2, (720 - h) / 2, w, h};
-                layout_key = candidate->key;
+                layout_key = selection.key;
                 snapshot.first_frame_displayed = true;
                 snapshot.displayed_frames++;
 #if NSL_DIAGNOSTICS
                 ++snapshot.render.samples;
                 snapshot.render.prep_us += elapsed_us(upload_begin, upload_end);
-                snapshot.render.wait_us += elapsed_us(candidate->decode_end_us, upload_begin);
-                snapshot.render.age_us += elapsed_us(candidate->decode_begin_us, present_us);
+                snapshot.render.wait_us += elapsed_us(frame->decode_end_us, upload_begin);
+                snapshot.render.age_us += elapsed_us(frame->decode_begin_us, present_us);
 #endif
-                snapshot.last_displayed_frame = IHS_FrameTicketIdentity(candidate->ticket).frameId;
-                snapshot.width = candidate->pixels->width;
-                snapshot.height = candidate->pixels->height;
+                snapshot.last_displayed_frame = IHS_FrameTicketIdentity(selection.ticket).frameId;
+                snapshot.width = frame->pixels->width;
+                snapshot.height = frame->pixels->height;
                 if (outcome.hasUpload) {
                     snapshot.upload_samples++;
                     add_timing(&snapshot.upload_us_total, &snapshot.upload_us_max,
@@ -1648,12 +1652,12 @@ void stream_media_present(void) {
                 snapshot.dropped_frames++;
         }
         pthread_mutex_unlock(&state_lock);
-        if (displayed && active) {
-            if (current_frame)
-                sl_resource_release(&current_frame->ref);
+        if (displayed && active && candidate) {
+            if (current_frame) sl_resource_release(&current_frame->ref);
             current_frame = candidate;
-        } else
-            sl_resource_release(&candidate->ref);
+            selection.frame=NULL; /* transfer its pixel reference */
+        }
+        sl_video_selection_release(&selection);
     }
 }
 

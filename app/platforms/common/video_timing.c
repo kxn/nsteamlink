@@ -46,3 +46,11 @@ int32_t sl_video_timing_wait(const sl_video_timing *t, uint32_t frame, uint32_t 
     int32_t wait = t->budget - (int32_t)age_ms(frame, now);
     return wait > 0 ? wait : 0;
 }
+
+uint64_t sl_video_timestamp_next(sl_video_timestamp_state *s, uint32_t media) {
+    uint32_t ticks = s->media ? media - s->media : media;
+    float ms = (float)((ticks >> 16) * 1000u) + (float)((ticks & 65535u) * 1000u) / 65536.0f;
+    float us = s->media ? fmaf(ms, 1000.0f, (float)s->pts) : ms * 1000.0f;
+    s->media = media;
+    return s->pts = (uint64_t)us;
+}
