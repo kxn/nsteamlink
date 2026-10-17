@@ -1103,7 +1103,8 @@ sl_media_video_submit_tracked(IHS_Session *session, const IHS_VideoEpochInfo *ep
     }
     sl_video_submit_result result = sl_video_submit(
         video, (sl_video_key){epoch->session_id, epoch->video_epoch}, IHS_BufferPointer(data),
-        data->size, ticket, taken, flags & IHS_StreamVideoFrameKeyFrame);
+        data->size, ticket, taken, (flags & IHS_StreamVideoFrameKeyFrame) &&
+                                  !(flags & IHS_StreamVideoFrameFlushHandled));
     if (result == SL_VIDEO_SUBMIT_CORRUPT)
         return IHS_StreamVideoSubmitReportLost;
     if (result == SL_VIDEO_SUBMIT_ERROR)

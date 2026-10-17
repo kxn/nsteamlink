@@ -147,6 +147,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-video-stop-phases.py"
             --receiver $<TARGET_FILE:ihs-video-stop-phases-oracle>)
         set_tests_properties(video_stop_phases_official_vectors PROPERTIES TIMEOUT 60)
+        add_test(NAME keyframe_flush_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-keyframe-flush.py"
+            --receiver $<TARGET_FILE:ihs-video-keyframe-oracle>)
+        set_tests_properties(keyframe_flush_official_vectors PROPERTIES TIMEOUT 60)
         add_test(NAME early_media_real_workers COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-early-media-worker.py"
             --receiver $<TARGET_FILE:ihs-early-media-worker>)

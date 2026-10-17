@@ -362,9 +362,9 @@ sl_video_submit_result sl_video_submit(sl_video_pipeline *p, sl_video_key key,
     domain *d = find_domain(p, key);
     if (!d || d->stopped || !sl_video_is_current(p, key))
         goto fail;
-    /* Standalone FlushPendingData 0x7b124c clears backend pending state on a
-     * protocol keyframe. FFmpeg keeps caller-held AVFrame buffers valid. Never
-     * destroy/reopen the hardware domain or renderer mappings here. */
+    /* Complete-frame compatibility callers can request this fallback. The
+     * production protocol path already flushes at the first marked fragment
+     * and suppresses it here. Caller-held AVFrame/map references stay valid. */
     if (keyframe) {
         av_frame_unref(d->scratch);
         avcodec_flush_buffers(d->codec);

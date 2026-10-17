@@ -6554,3 +6554,68 @@ python3 scripts/audit-steam-video-stop-phases.py \
   --check scripts/fixtures/steam-video-stop-phases-reference.json
 ctest --test-dir build/desktop -R 'video_stop_phases_official_vectors|video_reset_runtime|video_start_lifetime' --output-on-failure
 ```
+
+## 82. 首关键片段的backend flush与完整帧提交
+
+【官方客户端证据】同§24.1固定SHA。原DecodeFrame @0x7b20b4–0x7b20c0在
+video header bit4到达时调用实际standalone虚表+120；清partial/编码buffers并
+flush backend后，0x7b20d0清strict/soft，再加入当前片段。此时不要求FrameFinish。
+原OnThink组帧后经FinalDecode→AndroidAccel→BSubmitFrame、真实data-buffer Read
+才进入AMediaCodec_queueInputBuffer；后者观察的编码字节与首个AU一致。
+
+`audit-steam-keyframe-flush.py`执行上述原链，129例258状态覆盖有/无backend、
+strict/soft四组合、空/linked/packet引用/编码缓存的旧pending、单片/两片/未完成
+关键帧被新关键帧替代/重复关键标记，以及受控SDK flush错误。backend缺失的输入
+没有预置解码图片；有backend时先将frame 0经同一原DecodeFrame→OnThink→
+Android BDecodeFrame链处理，以原CAndroidFrame进入真实player queue；其后关键
+标记flush仍保留该旧帧。SDK输出及图像元数据是声明的平台边界，并非真实像素。
+SDK、JNI/平台、内存/原子 primitive、NAL元数据与profiling格式终点均明确，不将
+SDK入队成功当作物理解码或参考帧解析已经证明。载荷取既有sequential.h264首个
+2204-byte AU，ffprobe与实际parser测试交叉确认其边界；完整输入与输出字节均保留。
+
+【Native差异与更正】应用19e6a77/子库58905a7在收到首关键片段时只清协议pending，
+backend flush位于完整帧submit。原指令首片段flow为flush，完整帧为flush→decode；
+修改前Native首片段无flush/submit，之后才decode（应用pipeline届时才flush）。
+撤回可将完整帧submit处的flush视为该触发时机已经与官方一致的解释；§81仅证明
+Stop阶段。此次契约将Decoder flush阶段在首关键标记后、协议pending清理完成后
+立即分派；该阶段在正常消费时运行于decoder worker，Stop时仍在join后的actor。
+它保持player已解码帧、backend对象与epoch，完整帧继续组装并沿原路径提交。
+
+本地FrameFlag FlushHandled只说明Decoder阶段已由回调处理，用于抑制完整帧提交
+处的重复flush；它不是wire标志或已重新创建backend的通知。未注册阶段回调的
+既有接口保留完整帧keyframe处理约定。真实SDK/GPU输出、其他factory与所有
+flush/reset生产者、完整统计及其余原协议范围均需独立证据。
+
+
+【调用点覆盖边界】对固定binary全.text直接B/BL扫描，base FlushPendingData只有
+standalone的0x7b125c一处直接调用；动态符号中选定Video/H264/Standalone共33个
+非const方法的虚表slot+120候选为Stop的load/call 0x7b1fdc/0x7b1fe0和首关键标记的
+0x7b20bc/0x7b20c0两处。fixture保留扫描范围、指令字节/上下文、重定位和直接引用。
+这是该方法集合的调用点证据，不能据此宣布其他类/平台、间接别名及所有reset
+producer均已查全；bit6内容模式转换等独立触发也不能从本节bit6=0输入外推。
+
+【Native对照与资源边界】正式129例逐状态比较strict/soft、reset请求、flush时仍未
+清除的等待标志、flush/完整submit的先后及完整编码字节，运行实际生产video TU、
+组帧与tracked ticket；OS worker在该确定性observer内空闲，不冒充真实调度。初始
+strict/soft与旧pending是显式decoder边界输入，linked/packet/encoded存储布局不要求
+跨平台一致；非空player的原创建/拥有引用另由Source和真实runtime分别验证。
+
+`video_keyframe_runtime`经实际control parser、生产callback表和decoder线程进入
+FFmpeg：首完整关键帧flush/send=1/1，下一关键首半片后2/1，完成后2/2；未完成帧
+被新关键帧替代后4/2，完成后4/3；同frame重复关键标记后的完整输入6/4；Stop后
+flush=7。整个过程codec只open一次、epoch=1，旧AVFrame跨上述操作和最终session
+销毁的可见像素MD5保持一致，map lease仍阻止提前回收。SDL dummy/软件解码测试
+不证明NVTEGRA、真实GPU fence、Steam主机互通或Switch物理显示。
+
+Source审计内建五个负向检查：省略关键虚调用、协议purge、SDK flush、等待标志清零
+或原AppendBuffer，均必须引起观察差异或原断言。priming已执行过这些地址，内存
+补丁后显式失效Unicorn翻译缓存，防止继续执行旧指令。Native额外故意省略首片段
+flush、提前清等待、延后purge及遗漏FlushHandled标记，前三项由正式observer检出，
+最后一项由真实runtime的重复SDK flush计数检出；负向变体仅在隔离临时编译中运行。
+
+```sh
+python3 scripts/audit-steam-keyframe-flush.py \
+  /data/dl/nsteamlink/build/video-recovery-re/libmain-arm64.so \
+  --check scripts/fixtures/steam-keyframe-flush-reference.json
+ctest --test-dir build/desktop -R 'keyframe_flush_official_vectors|video_keyframe_runtime' --output-on-failure
+```
