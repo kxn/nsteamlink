@@ -196,8 +196,8 @@ codec仍是明确差异，不能以H264/HEVC子集对照代替全能力一致性
        真实发送点在 StartAuthentication 调用链]
        ← AuthenticationResponse(2, 明文) → 派生密钥
 协商:  ← NegotiationInit(3, 加密) → OnNegotiationInit → → NegotiationSetConfig(4, 加密)
-       ← NegotiationSetConfig(4)（host 确认）→ OnNegotiationSetConfig（校验
-         NegotiatedConfig 与本地 +0x120 一致，Assert 0xa7b=2683 行）
+       ← NegotiationSetConfig(4)（host 确认）→ OnNegotiationSetConfig（仅audio/video
+         两个codec各有Assert；非debug下仍CopyFrom并进入Starting，详见§49）
 会话:  → NegotiationComplete(5) (HandleStreamStarting) → HandleStreaming
        （进入即发一次 KeepAlive；此后 SendKeepAlive 周期性）
 ```
@@ -207,7 +207,7 @@ codec仍是明确差异，不能以H264/HEVC子集对照代替全能力一致性
 - 音频：`IsSupportedAudioCodec`——1（Raw）恒真；3（Opus）当 CStreamClient+0x238 == 0；
   解码器 CStreamDecoderRawAudio / CStreamDecoderOpus。
 - 视频：`IsSupportedVideoCodec`——掩码 0x330（4,5,8,9）走
-  `CStreamDecoderH264Standalone::BAvailable`，1（H264）恒真。
+  `CStreamDecoderH264Standalone::BAvailable`，1（Raw视频）恒真；旧H264标注撤回，见§48。
 - EStreamVideoCodec 官方值域 ≥9（AV1），协商扫描上界 9。
 
 ## 8. 与 ihslib 的差异对照
@@ -4376,3 +4376,46 @@ Source完整C++ Frame生产在加密/Connection发送处用适配器，故不是
 Raw音频另外从真实media start/submit走到SDL设备队列，与14个官方float结果比较，并
 核对codec_data覆盖外层频率/声道；附加坏配置/不整样本保护和stop/shutdown。
 这些证据不包含真实Steam认证、peer SetConfig后完整握手、物理设备解码/显示或用户停顿原因。
+
+
+## 49. Host回传SetConfig与独立StreamStarting阶段
+
+【证据／撤回】`audit-steam-peer-negotiation.py`执行同SHA官方客户端
+`OnNegotiationSetConfig 0x7adb28`完整函数及原C++ Frame parser/CopyFrom/serializer。
+撤回旧§6“校验整个NegotiatedConfig一致”的说明：`0x7adb78–0x7adbfc`只分别比较
+selected_audio_codec和selected_video_codec，断言行2683/2684。探针显式使用
+非debug环境，断言被记录但不终止；codec不一致仍CopyFrom，不能据此新增拒绝协商策略。
+
+【结论】解析成功时只将message.config整体复制到成员，包含reliable_data、HID/touch
+清零、省略/presence及unknown fields；同一消息的streaming_client_config/caps不替换
+client自身配置。required config完全缺失或坏protobuf时保留旧成员/状态；required
+config存在但为空则有效，可清掉旧字段。函数末尾始终return1，不能以返回1断言
+protobuf解析成功。复制后state不是5时改为5（Starting），本函数不发Complete，
+不改channel priority、不启动stats/player。
+
+【证据】探针随后显式调用`HandleStreamStarting 0x7a6f9c`，执行原始状态分支、
+Complete构造/SendControl/Frame Put/Send；最终明文body为05。观察到调用顺序：
+network lock → state6 → SetChannelPriority(1,2)/(2,-1) → 写两处同值timestamp →
+发送Complete → stats Start → 可选client/player通知 → network unlock。setter、clock、
+stats及player回调本身是记录适配器，未由此证明各个被调模块内部实现。
+
+【证据范围】固定66例：state4/5/6受控入口×缺required config、reliable三态、codec
+匹配/不匹配、flags清零、unknown config和坏消息，另含显式空required config。
+state5/6是直接函数入口的受控测试，不据此宣称完整网络dispatcher在这些状态必然
+允许对应消息。Start是探针显式接续；真实应用循环何时调用、与Connection Update/
+feedback/KeepAlive的先后仍不能由这两个单函数的拼接代替。
+
+【实现约束】完整成员CopyFrom与Starting阶段不能省略为“收到host SetConfig就直接
+忽略正文并发Complete”。另一方面，看到codec Assert也不能自行添加非debug断连。
+官方状态6与本地Connected枚举的数字不相同，比较时应按阶段语义映射。
+本节仅提供官方入口证据，不把现有Native协商处理宣称为这些66例等价。
+
+```sh
+python3 scripts/audit-steam-peer-negotiation.py \
+  --binary /path/to/official/libmain-arm64.so \
+  --output build/video-recovery-re/peer-negotiation.json
+```
+
+输入Frame从解密后开始，内存分配/进程protobuf初始化、network lock、priority setter、
+时间、stats/player/client回调、GetChannel、加密及Connection最终发送均是显式适配器。
+原C++字段复制和protobuf输出并未被本地模型替代；真实加密会话及设备仍不在范围内。
