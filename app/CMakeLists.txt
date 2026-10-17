@@ -10,7 +10,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
 pkg_check_modules(SDL2_TTF REQUIRED IMPORTED_TARGET SDL2_ttf)
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavcodec libavutil libswscale)
-pkg_check_modules(OPUS REQUIRED IMPORTED_TARGET opus)
+include(${CMAKE_SOURCE_DIR}/cmake/Opus.cmake)
 pkg_check_modules(CURL REQUIRED IMPORTED_TARGET libcurl)
 pkg_check_modules(JPEG REQUIRED IMPORTED_TARGET libjpeg)
 find_package(Threads REQUIRED)
@@ -83,9 +83,16 @@ target_link_libraries(nsl_ui PUBLIC m)
 add_dependencies(nsl_ui nsl_identity nsl_i18n)
 target_include_directories(nsl_ui PUBLIC ${NSL_IDENTITY_DIR} ${NSL_I18N_DIR})
 target_compile_definitions(nsl_ui PUBLIC NSL_DIAGNOSTICS=$<BOOL:${NSL_DIAGNOSTICS}> NSL_ADAPTIVE_PACING=$<BOOL:${NSL_ADAPTIVE_PACING}>)
+add_library(nsl_stream_settings STATIC platforms/common/stream_settings.c)
+target_include_directories(nsl_stream_settings PUBLIC src platforms/common
+    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+target_link_libraries(nsl_stream_settings PUBLIC ihslib Threads::Threads PRIVATE ihs-protobuf)
+target_compile_options(nsl_stream_settings PRIVATE -Wall -Wextra)
+set_source_files_properties(platforms/common/audio_jitter.c PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
 add_library(nsl_platform STATIC platforms/common/application.c platforms/common/sdl_input.c platforms/common/media.c
+    platforms/common/audio_recovery.c platforms/common/audio_jitter.c
     platforms/common/shortcut_package.c platforms/${NSL_PLATFORM}/shortcut.c
-    platforms/common/ui_renderer.c platforms/common/ui_audio.c platforms/common/runtime.c platforms/${NSL_PLATFORM}/system.c
+    platforms/common/ui_renderer.c platforms/common/ui_audio.c platforms/common/player_owner.c platforms/common/runtime.c platforms/${NSL_PLATFORM}/system.c
     platforms/${NSL_PLATFORM}/events.c)
 target_include_directories(nsl_platform PRIVATE ${CMAKE_SOURCE_DIR}/third_party/ihslib/src
     ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf)
@@ -96,8 +103,8 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/background.c"
     DEPENDS ${CMAKE_SOURCE_DIR}/assets/branding/background.bmp ${CMAKE_SOURCE_DIR}/cmake/EmbedAsset.cmake
     VERBATIM)
 target_sources(nsl_platform PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/background.c")
-target_link_libraries(nsl_platform PUBLIC nsl_ui nsl_artwork nsl_updater ihslib ihslib-hid-sdl PkgConfig::SDL2 PkgConfig::SDL2_TTF
-    PkgConfig::FFMPEG PkgConfig::OPUS Threads::Threads nsl_gfx)
+target_link_libraries(nsl_platform PUBLIC nsl_ui nsl_artwork nsl_updater nsl_stream_settings ihslib ihslib-hid-sdl PkgConfig::SDL2 PkgConfig::SDL2_TTF
+    PkgConfig::FFMPEG Opus::opus Threads::Threads nsl_gfx)
 add_executable(nsteamlink src/main.c)
 target_link_libraries(nsteamlink PRIVATE nsl_platform)
 if(NSL_PLATFORM STREQUAL "switch")
@@ -152,6 +159,127 @@ if(NSL_PLATFORM STREQUAL "desktop")
     set_tests_properties(nsl-updater PROPERTIES TIMEOUT 30)
 endif()
 if(NSL_PLATFORM STREQUAL "desktop")
+    add_executable(nsl-stream-settings-tests tests/test_stream_settings.c platforms/desktop/system.c)
+    target_include_directories(nsl-stream-settings-tests PRIVATE ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+    target_link_libraries(nsl-stream-settings-tests PRIVATE nsl_stream_settings nsl_ui ihs-protobuf)
+    target_link_options(nsl-stream-settings-tests PRIVATE -Wl,--wrap=rename -Wl,--wrap=fclose)
+    target_compile_options(nsl-stream-settings-tests PRIVATE -Wall -Wextra -UNDEBUG)
+    add_test(NAME nsl-stream-settings COMMAND nsl-stream-settings-tests)
+    set_tests_properties(nsl-stream-settings PROPERTIES TIMEOUT 20)
+    add_executable(nsl-stream-settings-oracle tests/stream_settings_oracle.c)
+    target_link_libraries(nsl-stream-settings-oracle PRIVATE nsl_stream_settings)
+    target_compile_options(nsl-stream-settings-oracle PRIVATE -UNDEBUG)
+    add_test(NAME stream_settings_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-client-settings-io.py"
+        --receiver $<TARGET_FILE:nsl-stream-settings-oracle>)
+    set_tests_properties(stream_settings_official_vectors PROPERTIES TIMEOUT 60)
+    add_executable(nsl-video-keyframe-runtime tests/video_keyframe_runtime.c)
+    target_include_directories(nsl-video-keyframe-runtime PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf ${CMAKE_SOURCE_DIR}/third_party/ihslib/tests/common)
+    target_compile_definitions(nsl-video-keyframe-runtime PRIVATE NSL_DIAGNOSTICS=$<BOOL:${NSL_DIAGNOSTICS}>)
+    target_compile_options(nsl-video-keyframe-runtime PRIVATE -UNDEBUG -Wall -Wextra -Wno-unknown-pragmas)
+    target_link_libraries(nsl-video-keyframe-runtime PRIVATE nsl_platform ihs-test-session)
+    target_link_options(nsl-video-keyframe-runtime PRIVATE -Wl,--wrap=sl_video_create -Wl,--wrap=avcodec_open2
+        -Wl,--wrap=avcodec_flush_buffers -Wl,--wrap=avcodec_send_packet
+        -Wl,--wrap=IHS_SessionPacketsWindowReleaseFrame -Wl,--wrap=IHS_SessionPacketTimestamp
+        -Wl,--wrap=IHS_BaseSend -Wl,--wrap=IHS_SessionSendControlMessage
+        -Wl,--wrap=IHS_SessionChannelDataLost -Wl,--wrap=IHS_FrameTicketComplete)
+    add_test(NAME video_keyframe_runtime COMMAND nsl-video-keyframe-runtime
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video/sequential.h264)
+    set_tests_properties(video_keyframe_runtime PROPERTIES TIMEOUT 20)
+    add_executable(nsl-video-reset-runtime tests/video_reset_runtime.c)
+    target_include_directories(nsl-video-reset-runtime PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf ${CMAKE_SOURCE_DIR}/third_party/ihslib/tests/common)
+    target_compile_definitions(nsl-video-reset-runtime PRIVATE NSL_DIAGNOSTICS=$<BOOL:${NSL_DIAGNOSTICS}>)
+    target_compile_options(nsl-video-reset-runtime PRIVATE -UNDEBUG -Wall -Wextra -Wno-unknown-pragmas)
+    target_link_libraries(nsl-video-reset-runtime PRIVATE nsl_platform ihs-test-session)
+    target_link_options(nsl-video-reset-runtime PRIVATE -Wl,--wrap=sl_video_create -Wl,--wrap=avcodec_open2
+        -Wl,--wrap=sl_video_close -Wl,--wrap=sl_video_discard_buffers -Wl,--wrap=sl_video_stop
+        -Wl,--wrap=avcodec_flush_buffers -Wl,--wrap=avcodec_free_context
+        -Wl,--wrap=sl_media_video_submit_tracked -Wl,--wrap=IHS_SessionPacketsWindowReleaseFrame
+        -Wl,--wrap=IHS_SessionPacketTimestamp -Wl,--wrap=IHS_BaseSend
+        -Wl,--wrap=IHS_SessionSendControlMessage -Wl,--wrap=IHS_SessionChannelDataLost)
+    add_test(NAME video_reset_runtime COMMAND nsl-video-reset-runtime
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video/sequential.h264)
+    set_tests_properties(video_reset_runtime PROPERTIES TIMEOUT 20)
+    add_executable(nsl-player-owner-runtime tests/player_owner_runtime.c)
+    target_include_directories(nsl-player-owner-runtime PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf ${CMAKE_SOURCE_DIR}/third_party/ihslib/tests/common)
+    target_compile_definitions(nsl-player-owner-runtime PRIVATE NSL_DIAGNOSTICS=$<BOOL:${NSL_DIAGNOSTICS}>)
+    target_compile_options(nsl-player-owner-runtime PRIVATE -UNDEBUG -Wall -Wextra -Wno-unknown-pragmas)
+    target_link_libraries(nsl-player-owner-runtime PRIVATE nsl_platform ihs-test-session)
+    target_link_options(nsl-player-owner-runtime PRIVATE -Wl,--wrap=IHS_SessionThreadedJoin
+        -Wl,--wrap=IHS_SessionDestroy -Wl,--wrap=sl_media_end_stream_player
+        -Wl,--wrap=SDL_OpenAudioDevice -Wl,--wrap=SDL_CloseAudioDevice -Wl,--wrap=SDL_PauseAudioDevice
+        -Wl,--wrap=sl_audio_jitter_init -Wl,--wrap=IHS_BaseSend -Wl,--wrap=IHS_SessionPacketTimestamp)
+    add_test(NAME player_owner_runtime COMMAND nsl-player-owner-runtime 1)
+    add_test(NAME player_owner_runtime_unfocused COMMAND nsl-player-owner-runtime 0)
+    set_tests_properties(player_owner_runtime player_owner_runtime_unfocused PROPERTIES TIMEOUT 15)
+    add_executable(nsl-player-owner-oracle tests/player_owner_oracle.c platforms/common/player_owner.c)
+    target_include_directories(nsl-player-owner-oracle PRIVATE platforms/common)
+    target_compile_options(nsl-player-owner-oracle PRIVATE -UNDEBUG -Wall -Wextra)
+    add_test(NAME player_owner_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-player-owner.py"
+        --policy $<TARGET_FILE:nsl-player-owner-oracle> --player $<TARGET_FILE:nsl-audio-player-oracle>)
+    set_tests_properties(player_owner_official_vectors PROPERTIES TIMEOUT 90)
+    add_executable(nsl-audio-player-oracle tests/audio_player_oracle.c)
+    target_include_directories(nsl-audio-player-oracle PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/tests/common)
+    target_compile_options(nsl-audio-player-oracle PRIVATE -UNDEBUG -Wall -Wextra -Werror=format)
+    target_link_libraries(nsl-audio-player-oracle PRIVATE nsl_platform ihs-test-session)
+    target_link_options(nsl-audio-player-oracle PRIVATE -Wl,--wrap=SDL_OpenAudioDevice
+        -Wl,--wrap=SDL_PauseAudioDevice -Wl,--wrap=SDL_CloseAudioDevice
+        -Wl,--wrap=sl_audio_jitter_init -Wl,--wrap=sl_audio_jitter_push -Wl,--wrap=sl_audio_suspend
+        -Wl,--wrap=sl_audio_recovery_run -Wl,--wrap=IHS_SessionPacketTimestamp
+        -Wl,--wrap=IHS_SessionChannelDataReceiveReliableFrame)
+    add_test(NAME audio_player_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-audio-player.py"
+        --receiver $<TARGET_FILE:nsl-audio-player-oracle>)
+    set_tests_properties(audio_player_official_vectors PROPERTIES TIMEOUT 90)
+    add_executable(nsl-audio-playback-oracle tests/audio_playback_oracle.c)
+    target_include_directories(nsl-audio-playback-oracle PRIVATE platforms/common ${MBEDTLS_INCLUDE_DIRS})
+    target_compile_options(nsl-audio-playback-oracle PRIVATE -UNDEBUG -Wall -Wextra)
+    target_link_libraries(nsl-audio-playback-oracle PRIVATE nsl_platform ${MBEDCRYPTO_LIBRARY})
+    target_link_options(nsl-audio-playback-oracle PRIVATE -Wl,--wrap=SDL_OpenAudioDevice
+        -Wl,--wrap=SDL_PauseAudioDevice)
+    add_test(NAME audio_playback_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-audio-jitter.py"
+        --receiver $<TARGET_FILE:nsl-audio-playback-oracle> --playback)
+    set_tests_properties(audio_playback_official_vectors PROPERTIES TIMEOUT 120)
+    add_executable(nsl-audio-jitter-oracle tests/audio_jitter_oracle.c platforms/common/audio_jitter.c)
+    target_include_directories(nsl-audio-jitter-oracle PRIVATE platforms/common ${MBEDTLS_INCLUDE_DIRS})
+    target_compile_options(nsl-audio-jitter-oracle PRIVATE -UNDEBUG -Wall -Wextra)
+    target_link_libraries(nsl-audio-jitter-oracle PRIVATE ${MBEDCRYPTO_LIBRARY} m)
+    add_test(NAME audio_jitter_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-audio-jitter.py"
+        --receiver $<TARGET_FILE:nsl-audio-jitter-oracle>)
+    set_tests_properties(audio_jitter_official_vectors PROPERTIES TIMEOUT 60)
+    add_executable(nsl-raw-audio-oracle tests/raw_audio_oracle.c)
+    target_include_directories(nsl-raw-audio-oracle PRIVATE platforms/common ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+    target_compile_options(nsl-raw-audio-oracle PRIVATE -UNDEBUG -Wall -Wextra)
+    target_link_libraries(nsl-raw-audio-oracle PRIVATE nsl_platform)
+    target_link_options(nsl-raw-audio-oracle PRIVATE -Wl,--wrap=sl_audio_jitter_push)
+    add_test(NAME raw_audio_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-raw-audio.py"
+        --receiver $<TARGET_FILE:nsl-raw-audio-oracle>)
+    set_tests_properties(raw_audio_official_vectors PROPERTIES TIMEOUT 60)
+    add_executable(nsl-opus-recovery-oracle tests/opus_recovery_oracle.c)
+    target_include_directories(nsl-opus-recovery-oracle PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/tests/common)
+    target_compile_options(nsl-opus-recovery-oracle PRIVATE -UNDEBUG -Wall -Wextra)
+    target_link_libraries(nsl-opus-recovery-oracle PRIVATE nsl_platform ihs-test-session)
+    target_link_options(nsl-opus-recovery-oracle PRIVATE -Wl,--wrap=sl_audio_jitter_push
+        -Wl,--wrap=SDL_OpenAudioDevice -Wl,--wrap=SDL_PauseAudioDevice
+        -Wl,--wrap=opus_multistream_decode_float -Wl,--wrap=opus_multistream_decoder_create
+        -Wl,--wrap=sl_audio_recovery_run -Wl,--wrap=sl_audio_recovery_reset)
+    add_test(NAME opus_recovery_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-opus-recovery.py"
+        --receiver $<TARGET_FILE:nsl-opus-recovery-oracle>)
+    set_tests_properties(opus_recovery_official_vectors PROPERTIES TIMEOUT 90)
     add_executable(nsl-native-tests tests/test_native.c)
     target_include_directories(nsl-native-tests PRIVATE platforms/common)
     target_compile_options(nsl-native-tests PRIVATE -UNDEBUG)
@@ -248,7 +376,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
     add_executable(nsl-video-pipeline-tests tests/test_video_pipeline.c)
     target_link_libraries(nsl-video-pipeline-tests PRIVATE nsl_video_pipeline)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        target_link_options(nsl-video-pipeline-tests PRIVATE -Wl,--wrap=avcodec_open2)
+        target_link_options(nsl-video-pipeline-tests PRIVATE -Wl,--wrap=avcodec_open2 -Wl,--wrap=avcodec_send_packet -Wl,--wrap=avcodec_receive_frame)
     endif()
     target_include_directories(nsl-video-pipeline-tests PRIVATE ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
     target_compile_options(nsl-video-pipeline-tests PRIVATE -Wall -Wextra -Wno-unknown-pragmas -UNDEBUG)

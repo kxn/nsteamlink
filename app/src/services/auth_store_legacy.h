@@ -54,6 +54,22 @@ typedef struct disk_store_v3 {
     auth_store_v3 data;
 } disk_store_v3;
 
+/* v4 used the current per-host secrets but had no FEC setting. */
+typedef struct auth_store_v4 {
+    uint64_t device_id;
+    uint8_t secret[32];
+    char device_name[64];
+    sl_host_registry registry;
+    uint32_t quality;
+    bool sound;
+    uint32_t bitrate_kbps;
+} auth_store_v4;
+typedef struct disk_store_v4 {
+    char magic[8];
+    uint32_t version, size, checksum;
+    auth_store_v4 data;
+} disk_store_v4;
+
 /* Hosts paired by v2/v3 keep using the installation secret (has_secret false). */
 static inline void sl_host_registry_from_v3(sl_host_registry *dst, const sl_host_registry_v3 *src) {
     sl_host_registry_init(dst);

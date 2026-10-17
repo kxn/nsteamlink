@@ -154,8 +154,11 @@ void sl_ui_layout(sl_ui_model *m) {
             row(l, 1, sl_tr(SL_T_BANDWIDTH), SL_OPEN_BANDWIDTH, 0);
             row(l, 2, m->store.sound ? sl_tr(SL_T_SOUND_ON) : sl_tr(SL_T_SOUND_OFF), SL_SOUND, 0);
             row(l, 3, sl_tr(SL_T_LANGUAGE), SL_OPEN_LANGUAGE, 0);
+            row(l, 4, sl_tr(SL_T_ERROR_CORRECTION), SL_FEC, 0);
             if (!m->streaming)
-                row(l, 4, sl_tr(SL_T_MANUAL), SL_OPEN_MANUAL, 0);
+                row(l, 5, sl_tr(SL_T_MANUAL), SL_OPEN_MANUAL, 0);
+            else
+                text(l, 784, 560, 24, sl_tr(SL_T_ERROR_CORRECTION_NEXT));
             break;
         case SL_LANGUAGE:
             strcpy(l->title, sl_tr(SL_T_LANGUAGE));
@@ -164,6 +167,17 @@ void sl_ui_layout(sl_ui_model *m) {
             row(l, 2, sl_tr(SL_T_ENGLISH), SL_SET_LANGUAGE, SL_LANG_EN);
             break;
         case SL_BANDWIDTH:
+            if (!sl_bitrate_valid(m->store.bitrate_kbps)) {
+                char rate[96];
+                int32_t value = (int32_t)m->store.bitrate_kbps;
+                if (value == -1)
+                    snprintf(rate, sizeof(rate), "%s", sl_tr(SL_T_BANDWIDTH_AUTO));
+                else if (value == 0)
+                    snprintf(rate, sizeof(rate), "%s", sl_tr(SL_T_BANDWIDTH_UNLIMITED));
+                else
+                    snprintf(rate, sizeof(rate), "%d kbps", value);
+                text(l, 320, 170, 24, rate);
+            }
             strcpy(l->title, sl_tr(SL_T_BANDWIDTH));
             row(l, 0, "4 Mbps", SL_SET_BANDWIDTH, 4000);
             row(l, 1, "6 Mbps", SL_SET_BANDWIDTH, 6000);
@@ -278,8 +292,9 @@ void sl_ui_layout(sl_ui_model *m) {
                 sl_control *c = &l->controls[i];
                 c->x = 776;
                 c->w = 472;
-                c->y = c->id == 9 ? 624 : 172 + (c->id - 100) * 88;
-                c->h = 72;
+                int step = m->page == SL_SETTINGS ? 72 : 88;
+                c->y = c->id == 9 ? 624 : 172 + (c->id - 100) * step;
+                c->h = m->page == SL_SETTINGS && c->id != 9 ? 64 : 72;
             }
             for (int i = 0; i < l->label_count; ++i)
                 l->labels[i].x = 784;

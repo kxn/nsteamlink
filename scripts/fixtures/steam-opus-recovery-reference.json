@@ -1,0 +1,5565 @@
+{
+  "binary_sha256": "50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e",
+  "scope": "Execute official Opus gap recovery and the embedded original Opus decoder.\n\nOriginal StartDecoding/DecodeFrame/StopDecoding, multistream decoder creation and\ndecode execute from the SHA-pinned Android client. Frame IDs/timestamps and input\npayloads are controlled at the decoder-worker boundary. Player creation/submit,\nFrame storage, allocation, assertion presentation and libc storage are adapters.\nNo transport/UI/OS-thread reachability, jitter-buffer output or device is proved.\nMalformed codec output records the original unsafe Resize request without\nallocating or reading that size; it is not claimed as safe native behavior.\n",
+  "cases": [
+    {
+      "name": "sequential_1_10",
+      "channels": 1,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        1,
+        1,
+        0,
+        0
+      ],
+      "actions": [
+        [
+          "F",
+          10,
+          1100000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          11,
+          1101000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          12,
+          1102000,
+          "f0fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 12,
+          "decodes": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 13,
+          "decodes": [
+            {
+              "id": 12,
+              "timestamp": 1102000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 12,
+              "timestamp": 1102000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "one_gap_1_10",
+      "channels": 1,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        1,
+        1,
+        0,
+        0
+      ],
+      "actions": [
+        [
+          "F",
+          10,
+          1100000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          12,
+          1101000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          13,
+          1102000,
+          "f0fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 13,
+          "decodes": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "payload": "f0fffe",
+              "max_samples": 480,
+              "fec": 1,
+              "result": 480
+            },
+            {
+              "id": 12,
+              "timestamp": 1101000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 12,
+              "timestamp": 1101000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 14,
+          "decodes": [
+            {
+              "id": 13,
+              "timestamp": 1102000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 13,
+              "timestamp": 1102000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "three_gap_1_10",
+      "channels": 1,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        1,
+        1,
+        0,
+        0
+      ],
+      "actions": [
+        [
+          "F",
+          10,
+          1100000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          14,
+          1101000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          15,
+          1102000,
+          "f0fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 15,
+          "decodes": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "payload": "",
+              "max_samples": 480,
+              "fec": 0,
+              "result": 480
+            },
+            {
+              "id": 12,
+              "timestamp": 1101000,
+              "payload": "",
+              "max_samples": 480,
+              "fec": 0,
+              "result": 480
+            },
+            {
+              "id": 13,
+              "timestamp": 1101000,
+              "payload": "f0fffe",
+              "max_samples": 480,
+              "fec": 1,
+              "result": 480
+            },
+            {
+              "id": 14,
+              "timestamp": 1101000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 12,
+              "timestamp": 1101000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 13,
+              "timestamp": 1101000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 14,
+              "timestamp": 1101000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 16,
+          "decodes": [
+            {
+              "id": 15,
+              "timestamp": 1102000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 15,
+              "timestamp": 1102000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "old_duplicate_1_10",
+      "channels": 1,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        1,
+        1,
+        0,
+        0
+      ],
+      "actions": [
+        [
+          "F",
+          10,
+          1100000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          10,
+          1101000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          9,
+          1102000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          11,
+          1103000,
+          "f0fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [],
+          "submitted": [],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [],
+          "submitted": [],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 12,
+          "decodes": [
+            {
+              "id": 11,
+              "timestamp": 1103000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 11,
+              "timestamp": 1103000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "out_of_order_1_10",
+      "channels": 1,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        1,
+        1,
+        0,
+        0
+      ],
+      "actions": [
+        [
+          "F",
+          20,
+          1100000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          22,
+          1101000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          21,
+          1102000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          23,
+          1103000,
+          "f0fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 21,
+          "decodes": [
+            {
+              "id": 20,
+              "timestamp": 1100000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 20,
+              "timestamp": 1100000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 23,
+          "decodes": [
+            {
+              "id": 21,
+              "timestamp": 1101000,
+              "payload": "f0fffe",
+              "max_samples": 480,
+              "fec": 1,
+              "result": 480
+            },
+            {
+              "id": 22,
+              "timestamp": 1101000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 21,
+              "timestamp": 1101000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 22,
+              "timestamp": 1101000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 23,
+          "decodes": [],
+          "submitted": [],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 24,
+          "decodes": [
+            {
+              "id": 23,
+              "timestamp": 1103000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 23,
+              "timestamp": 1103000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "wrap_1_10",
+      "channels": 1,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        1,
+        1,
+        0,
+        0
+      ],
+      "actions": [
+        [
+          "F",
+          65534,
+          1100000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          0,
+          1101000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          65535,
+          1102000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          1,
+          1103000,
+          "f0fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 65535,
+          "decodes": [
+            {
+              "id": 65534,
+              "timestamp": 1100000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 65534,
+              "timestamp": 1100000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 1,
+          "decodes": [
+            {
+              "id": 65535,
+              "timestamp": 1101000,
+              "payload": "f0fffe",
+              "max_samples": 480,
+              "fec": 1,
+              "result": 480
+            },
+            {
+              "id": 0,
+              "timestamp": 1101000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 65535,
+              "timestamp": 1101000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 0,
+              "timestamp": 1101000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 1,
+          "decodes": [],
+          "submitted": [],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 2,
+          "decodes": [
+            {
+              "id": 1,
+              "timestamp": 1103000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 1,
+              "timestamp": 1103000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "first_high_1_10",
+      "channels": 1,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        1,
+        1,
+        0,
+        0
+      ],
+      "actions": [
+        [
+          "F",
+          65000,
+          1100000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          65001,
+          1101000,
+          "f0fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 65001,
+          "decodes": [
+            {
+              "id": 65000,
+              "timestamp": 1100000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 65000,
+              "timestamp": 1100000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 65002,
+          "decodes": [
+            {
+              "id": 65001,
+              "timestamp": 1101000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 65001,
+              "timestamp": 1101000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "restart_1_10",
+      "channels": 1,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        1,
+        1,
+        0,
+        0
+      ],
+      "actions": [
+        [
+          "F",
+          10,
+          1100000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          14,
+          1101000,
+          "f0fffe"
+        ],
+        [
+          "R"
+        ],
+        [
+          "F",
+          123,
+          1103000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          125,
+          1104000,
+          "f0fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 15,
+          "decodes": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "payload": "",
+              "max_samples": 480,
+              "fec": 0,
+              "result": 480
+            },
+            {
+              "id": 12,
+              "timestamp": 1101000,
+              "payload": "",
+              "max_samples": 480,
+              "fec": 0,
+              "result": 480
+            },
+            {
+              "id": 13,
+              "timestamp": 1101000,
+              "payload": "f0fffe",
+              "max_samples": 480,
+              "fec": 1,
+              "result": 480
+            },
+            {
+              "id": 14,
+              "timestamp": 1101000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 12,
+              "timestamp": 1101000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 13,
+              "timestamp": 1101000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 14,
+              "timestamp": 1101000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": true,
+          "next": 0,
+          "decodes": [],
+          "submitted": [],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 124,
+          "decodes": [
+            {
+              "id": 123,
+              "timestamp": 1103000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 123,
+              "timestamp": 1103000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 126,
+          "decodes": [
+            {
+              "id": 124,
+              "timestamp": 1104000,
+              "payload": "f0fffe",
+              "max_samples": 480,
+              "fec": 1,
+              "result": 480
+            },
+            {
+              "id": 125,
+              "timestamp": 1104000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 124,
+              "timestamp": 1104000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 125,
+              "timestamp": 1104000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "sequential_1_20",
+      "channels": 1,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        1,
+        1,
+        0,
+        0
+      ],
+      "actions": [
+        [
+          "F",
+          10,
+          1100000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          11,
+          1101000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          12,
+          1102000,
+          "f8fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "size": 3840,
+              "decoder_result": 960,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 12,
+          "decodes": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": 960,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 13,
+          "decodes": [
+            {
+              "id": 12,
+              "timestamp": 1102000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 12,
+              "timestamp": 1102000,
+              "size": 3840,
+              "decoder_result": 960,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "one_gap_1_20",
+      "channels": 1,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        1,
+        1,
+        0,
+        0
+      ],
+      "actions": [
+        [
+          "F",
+          10,
+          1100000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          12,
+          1101000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          13,
+          1102000,
+          "f8fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "size": 3840,
+              "decoder_result": 960,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 13,
+          "decodes": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "payload": "f8fffe",
+              "max_samples": 480,
+              "fec": 1,
+              "result": -2
+            },
+            {
+              "id": 12,
+              "timestamp": 1101000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "size": 1920,
+              "decoder_result": -2,
+              "invalid_codec_output": true
+            },
+            {
+              "id": 12,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": 960,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": [
+            159
+          ]
+        },
+        {
+          "first": false,
+          "next": 14,
+          "decodes": [
+            {
+              "id": 13,
+              "timestamp": 1102000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 13,
+              "timestamp": 1102000,
+              "size": 3840,
+              "decoder_result": 960,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "three_gap_1_20",
+      "channels": 1,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        1,
+        1,
+        0,
+        0
+      ],
+      "actions": [
+        [
+          "F",
+          10,
+          1100000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          14,
+          1101000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          15,
+          1102000,
+          "f8fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "size": 3840,
+              "decoder_result": 960,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 15,
+          "decodes": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "payload": "",
+              "max_samples": 480,
+              "fec": 0,
+              "result": 480
+            },
+            {
+              "id": 12,
+              "timestamp": 1101000,
+              "payload": "",
+              "max_samples": 480,
+              "fec": 0,
+              "result": 480
+            },
+            {
+              "id": 13,
+              "timestamp": 1101000,
+              "payload": "f8fffe",
+              "max_samples": 480,
+              "fec": 1,
+              "result": -2
+            },
+            {
+              "id": 14,
+              "timestamp": 1101000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 12,
+              "timestamp": 1101000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 13,
+              "timestamp": 1101000,
+              "size": 1920,
+              "decoder_result": -2,
+              "invalid_codec_output": true
+            },
+            {
+              "id": 14,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": 960,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": [
+            159
+          ]
+        },
+        {
+          "first": false,
+          "next": 16,
+          "decodes": [
+            {
+              "id": 15,
+              "timestamp": 1102000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 15,
+              "timestamp": 1102000,
+              "size": 3840,
+              "decoder_result": 960,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "old_duplicate_1_20",
+      "channels": 1,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        1,
+        1,
+        0,
+        0
+      ],
+      "actions": [
+        [
+          "F",
+          10,
+          1100000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          10,
+          1101000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          9,
+          1102000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          11,
+          1103000,
+          "f8fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "size": 3840,
+              "decoder_result": 960,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [],
+          "submitted": [],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [],
+          "submitted": [],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 12,
+          "decodes": [
+            {
+              "id": 11,
+              "timestamp": 1103000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 11,
+              "timestamp": 1103000,
+              "size": 3840,
+              "decoder_result": 960,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "out_of_order_1_20",
+      "channels": 1,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        1,
+        1,
+        0,
+        0
+      ],
+      "actions": [
+        [
+          "F",
+          20,
+          1100000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          22,
+          1101000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          21,
+          1102000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          23,
+          1103000,
+          "f8fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 21,
+          "decodes": [
+            {
+              "id": 20,
+              "timestamp": 1100000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 20,
+              "timestamp": 1100000,
+              "size": 3840,
+              "decoder_result": 960,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 23,
+          "decodes": [
+            {
+              "id": 21,
+              "timestamp": 1101000,
+              "payload": "f8fffe",
+              "max_samples": 480,
+              "fec": 1,
+              "result": -2
+            },
+            {
+              "id": 22,
+              "timestamp": 1101000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 21,
+              "timestamp": 1101000,
+              "size": 1920,
+              "decoder_result": -2,
+              "invalid_codec_output": true
+            },
+            {
+              "id": 22,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": 960,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": [
+            159
+          ]
+        },
+        {
+          "first": false,
+          "next": 23,
+          "decodes": [],
+          "submitted": [],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 24,
+          "decodes": [
+            {
+              "id": 23,
+              "timestamp": 1103000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 23,
+              "timestamp": 1103000,
+              "size": 3840,
+              "decoder_result": 960,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "wrap_1_20",
+      "channels": 1,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        1,
+        1,
+        0,
+        0
+      ],
+      "actions": [
+        [
+          "F",
+          65534,
+          1100000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          0,
+          1101000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          65535,
+          1102000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          1,
+          1103000,
+          "f8fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 65535,
+          "decodes": [
+            {
+              "id": 65534,
+              "timestamp": 1100000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 65534,
+              "timestamp": 1100000,
+              "size": 3840,
+              "decoder_result": 960,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 1,
+          "decodes": [
+            {
+              "id": 65535,
+              "timestamp": 1101000,
+              "payload": "f8fffe",
+              "max_samples": 480,
+              "fec": 1,
+              "result": -2
+            },
+            {
+              "id": 0,
+              "timestamp": 1101000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 65535,
+              "timestamp": 1101000,
+              "size": 1920,
+              "decoder_result": -2,
+              "invalid_codec_output": true
+            },
+            {
+              "id": 0,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": 960,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": [
+            159
+          ]
+        },
+        {
+          "first": false,
+          "next": 1,
+          "decodes": [],
+          "submitted": [],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 2,
+          "decodes": [
+            {
+              "id": 1,
+              "timestamp": 1103000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 1,
+              "timestamp": 1103000,
+              "size": 3840,
+              "decoder_result": 960,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "first_high_1_20",
+      "channels": 1,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        1,
+        1,
+        0,
+        0
+      ],
+      "actions": [
+        [
+          "F",
+          65000,
+          1100000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          65001,
+          1101000,
+          "f8fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 65001,
+          "decodes": [
+            {
+              "id": 65000,
+              "timestamp": 1100000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 65000,
+              "timestamp": 1100000,
+              "size": 3840,
+              "decoder_result": 960,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 65002,
+          "decodes": [
+            {
+              "id": 65001,
+              "timestamp": 1101000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 65001,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": 960,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "restart_1_20",
+      "channels": 1,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        1,
+        1,
+        0,
+        0
+      ],
+      "actions": [
+        [
+          "F",
+          10,
+          1100000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          14,
+          1101000,
+          "f8fffe"
+        ],
+        [
+          "R"
+        ],
+        [
+          "F",
+          123,
+          1103000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          125,
+          1104000,
+          "f8fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "size": 3840,
+              "decoder_result": 960,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 15,
+          "decodes": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "payload": "",
+              "max_samples": 480,
+              "fec": 0,
+              "result": 480
+            },
+            {
+              "id": 12,
+              "timestamp": 1101000,
+              "payload": "",
+              "max_samples": 480,
+              "fec": 0,
+              "result": 480
+            },
+            {
+              "id": 13,
+              "timestamp": 1101000,
+              "payload": "f8fffe",
+              "max_samples": 480,
+              "fec": 1,
+              "result": -2
+            },
+            {
+              "id": 14,
+              "timestamp": 1101000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 12,
+              "timestamp": 1101000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 13,
+              "timestamp": 1101000,
+              "size": 1920,
+              "decoder_result": -2,
+              "invalid_codec_output": true
+            },
+            {
+              "id": 14,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": 960,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": [
+            159
+          ]
+        },
+        {
+          "first": true,
+          "next": 0,
+          "decodes": [],
+          "submitted": [],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 124,
+          "decodes": [
+            {
+              "id": 123,
+              "timestamp": 1103000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 123,
+              "timestamp": 1103000,
+              "size": 3840,
+              "decoder_result": 960,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 126,
+          "decodes": [
+            {
+              "id": 124,
+              "timestamp": 1104000,
+              "payload": "f8fffe",
+              "max_samples": 480,
+              "fec": 1,
+              "result": -2
+            },
+            {
+              "id": 125,
+              "timestamp": 1104000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 124,
+              "timestamp": 1104000,
+              "size": 1920,
+              "decoder_result": -2,
+              "invalid_codec_output": true
+            },
+            {
+              "id": 125,
+              "timestamp": 1104000,
+              "size": 3840,
+              "decoder_result": 960,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": [
+            159
+          ]
+        }
+      ]
+    },
+    {
+      "name": "sequential_2_10",
+      "channels": 2,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        2,
+        1,
+        1,
+        0,
+        1
+      ],
+      "actions": [
+        [
+          "F",
+          10,
+          1100000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          11,
+          1101000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          12,
+          1102000,
+          "f0fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 12,
+          "decodes": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 13,
+          "decodes": [
+            {
+              "id": 12,
+              "timestamp": 1102000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 12,
+              "timestamp": 1102000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "one_gap_2_10",
+      "channels": 2,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        2,
+        1,
+        1,
+        0,
+        1
+      ],
+      "actions": [
+        [
+          "F",
+          10,
+          1100000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          12,
+          1101000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          13,
+          1102000,
+          "f0fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 13,
+          "decodes": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "payload": "f0fffe",
+              "max_samples": 480,
+              "fec": 1,
+              "result": 480
+            },
+            {
+              "id": 12,
+              "timestamp": 1101000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 12,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 14,
+          "decodes": [
+            {
+              "id": 13,
+              "timestamp": 1102000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 13,
+              "timestamp": 1102000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "three_gap_2_10",
+      "channels": 2,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        2,
+        1,
+        1,
+        0,
+        1
+      ],
+      "actions": [
+        [
+          "F",
+          10,
+          1100000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          14,
+          1101000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          15,
+          1102000,
+          "f0fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 15,
+          "decodes": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "payload": "",
+              "max_samples": 480,
+              "fec": 0,
+              "result": 480
+            },
+            {
+              "id": 12,
+              "timestamp": 1101000,
+              "payload": "",
+              "max_samples": 480,
+              "fec": 0,
+              "result": 480
+            },
+            {
+              "id": 13,
+              "timestamp": 1101000,
+              "payload": "f0fffe",
+              "max_samples": 480,
+              "fec": 1,
+              "result": 480
+            },
+            {
+              "id": 14,
+              "timestamp": 1101000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 12,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 13,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 14,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 16,
+          "decodes": [
+            {
+              "id": 15,
+              "timestamp": 1102000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 15,
+              "timestamp": 1102000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "old_duplicate_2_10",
+      "channels": 2,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        2,
+        1,
+        1,
+        0,
+        1
+      ],
+      "actions": [
+        [
+          "F",
+          10,
+          1100000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          10,
+          1101000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          9,
+          1102000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          11,
+          1103000,
+          "f0fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [],
+          "submitted": [],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [],
+          "submitted": [],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 12,
+          "decodes": [
+            {
+              "id": 11,
+              "timestamp": 1103000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 11,
+              "timestamp": 1103000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "out_of_order_2_10",
+      "channels": 2,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        2,
+        1,
+        1,
+        0,
+        1
+      ],
+      "actions": [
+        [
+          "F",
+          20,
+          1100000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          22,
+          1101000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          21,
+          1102000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          23,
+          1103000,
+          "f0fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 21,
+          "decodes": [
+            {
+              "id": 20,
+              "timestamp": 1100000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 20,
+              "timestamp": 1100000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 23,
+          "decodes": [
+            {
+              "id": 21,
+              "timestamp": 1101000,
+              "payload": "f0fffe",
+              "max_samples": 480,
+              "fec": 1,
+              "result": 480
+            },
+            {
+              "id": 22,
+              "timestamp": 1101000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 21,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 22,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 23,
+          "decodes": [],
+          "submitted": [],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 24,
+          "decodes": [
+            {
+              "id": 23,
+              "timestamp": 1103000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 23,
+              "timestamp": 1103000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "wrap_2_10",
+      "channels": 2,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        2,
+        1,
+        1,
+        0,
+        1
+      ],
+      "actions": [
+        [
+          "F",
+          65534,
+          1100000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          0,
+          1101000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          65535,
+          1102000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          1,
+          1103000,
+          "f0fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 65535,
+          "decodes": [
+            {
+              "id": 65534,
+              "timestamp": 1100000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 65534,
+              "timestamp": 1100000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 1,
+          "decodes": [
+            {
+              "id": 65535,
+              "timestamp": 1101000,
+              "payload": "f0fffe",
+              "max_samples": 480,
+              "fec": 1,
+              "result": 480
+            },
+            {
+              "id": 0,
+              "timestamp": 1101000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 65535,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 0,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 1,
+          "decodes": [],
+          "submitted": [],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 2,
+          "decodes": [
+            {
+              "id": 1,
+              "timestamp": 1103000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 1,
+              "timestamp": 1103000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "first_high_2_10",
+      "channels": 2,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        2,
+        1,
+        1,
+        0,
+        1
+      ],
+      "actions": [
+        [
+          "F",
+          65000,
+          1100000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          65001,
+          1101000,
+          "f0fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 65001,
+          "decodes": [
+            {
+              "id": 65000,
+              "timestamp": 1100000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 65000,
+              "timestamp": 1100000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 65002,
+          "decodes": [
+            {
+              "id": 65001,
+              "timestamp": 1101000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 65001,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "restart_2_10",
+      "channels": 2,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        2,
+        1,
+        1,
+        0,
+        1
+      ],
+      "actions": [
+        [
+          "F",
+          10,
+          1100000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          14,
+          1101000,
+          "f0fffe"
+        ],
+        [
+          "R"
+        ],
+        [
+          "F",
+          123,
+          1103000,
+          "f0fffe"
+        ],
+        [
+          "F",
+          125,
+          1104000,
+          "f0fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 15,
+          "decodes": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "payload": "",
+              "max_samples": 480,
+              "fec": 0,
+              "result": 480
+            },
+            {
+              "id": 12,
+              "timestamp": 1101000,
+              "payload": "",
+              "max_samples": 480,
+              "fec": 0,
+              "result": 480
+            },
+            {
+              "id": 13,
+              "timestamp": 1101000,
+              "payload": "f0fffe",
+              "max_samples": 480,
+              "fec": 1,
+              "result": 480
+            },
+            {
+              "id": 14,
+              "timestamp": 1101000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 12,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 13,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 14,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": true,
+          "next": 0,
+          "decodes": [],
+          "submitted": [],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 124,
+          "decodes": [
+            {
+              "id": 123,
+              "timestamp": 1103000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 123,
+              "timestamp": 1103000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 126,
+          "decodes": [
+            {
+              "id": 124,
+              "timestamp": 1104000,
+              "payload": "f0fffe",
+              "max_samples": 480,
+              "fec": 1,
+              "result": 480
+            },
+            {
+              "id": 125,
+              "timestamp": 1104000,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 124,
+              "timestamp": 1104000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 125,
+              "timestamp": 1104000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "sequential_2_20",
+      "channels": 2,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        2,
+        1,
+        1,
+        0,
+        1
+      ],
+      "actions": [
+        [
+          "F",
+          10,
+          1100000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          11,
+          1101000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          12,
+          1102000,
+          "f8fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "size": 7680,
+              "decoder_result": 960,
+              "s16_sha256": "a8eac8b0d3b1fde368813438dd5ba415a796fd6dd0a2a42fb6a5a2dfb2429576",
+              "s16_zlib_base64": "eJztwQENAAAAwqD3T20PBxQAAAD8Gw8AAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 12,
+          "decodes": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "size": 7680,
+              "decoder_result": 960,
+              "s16_sha256": "a8eac8b0d3b1fde368813438dd5ba415a796fd6dd0a2a42fb6a5a2dfb2429576",
+              "s16_zlib_base64": "eJztwQENAAAAwqD3T20PBxQAAAD8Gw8AAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 13,
+          "decodes": [
+            {
+              "id": 12,
+              "timestamp": 1102000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 12,
+              "timestamp": 1102000,
+              "size": 7680,
+              "decoder_result": 960,
+              "s16_sha256": "a8eac8b0d3b1fde368813438dd5ba415a796fd6dd0a2a42fb6a5a2dfb2429576",
+              "s16_zlib_base64": "eJztwQENAAAAwqD3T20PBxQAAAD8Gw8AAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "one_gap_2_20",
+      "channels": 2,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        2,
+        1,
+        1,
+        0,
+        1
+      ],
+      "actions": [
+        [
+          "F",
+          10,
+          1100000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          12,
+          1101000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          13,
+          1102000,
+          "f8fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "size": 7680,
+              "decoder_result": 960,
+              "s16_sha256": "a8eac8b0d3b1fde368813438dd5ba415a796fd6dd0a2a42fb6a5a2dfb2429576",
+              "s16_zlib_base64": "eJztwQENAAAAwqD3T20PBxQAAAD8Gw8AAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 13,
+          "decodes": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "payload": "f8fffe",
+              "max_samples": 480,
+              "fec": 1,
+              "result": -2
+            },
+            {
+              "id": 12,
+              "timestamp": 1101000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": -2,
+              "invalid_codec_output": true
+            },
+            {
+              "id": 12,
+              "timestamp": 1101000,
+              "size": 7680,
+              "decoder_result": 960,
+              "s16_sha256": "a8eac8b0d3b1fde368813438dd5ba415a796fd6dd0a2a42fb6a5a2dfb2429576",
+              "s16_zlib_base64": "eJztwQENAAAAwqD3T20PBxQAAAD8Gw8AAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": [
+            159
+          ]
+        },
+        {
+          "first": false,
+          "next": 14,
+          "decodes": [
+            {
+              "id": 13,
+              "timestamp": 1102000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 13,
+              "timestamp": 1102000,
+              "size": 7680,
+              "decoder_result": 960,
+              "s16_sha256": "a8eac8b0d3b1fde368813438dd5ba415a796fd6dd0a2a42fb6a5a2dfb2429576",
+              "s16_zlib_base64": "eJztwQENAAAAwqD3T20PBxQAAAD8Gw8AAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "three_gap_2_20",
+      "channels": 2,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        2,
+        1,
+        1,
+        0,
+        1
+      ],
+      "actions": [
+        [
+          "F",
+          10,
+          1100000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          14,
+          1101000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          15,
+          1102000,
+          "f8fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "size": 7680,
+              "decoder_result": 960,
+              "s16_sha256": "a8eac8b0d3b1fde368813438dd5ba415a796fd6dd0a2a42fb6a5a2dfb2429576",
+              "s16_zlib_base64": "eJztwQENAAAAwqD3T20PBxQAAAD8Gw8AAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 15,
+          "decodes": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "payload": "",
+              "max_samples": 480,
+              "fec": 0,
+              "result": 480
+            },
+            {
+              "id": 12,
+              "timestamp": 1101000,
+              "payload": "",
+              "max_samples": 480,
+              "fec": 0,
+              "result": 480
+            },
+            {
+              "id": 13,
+              "timestamp": 1101000,
+              "payload": "f8fffe",
+              "max_samples": 480,
+              "fec": 1,
+              "result": -2
+            },
+            {
+              "id": 14,
+              "timestamp": 1101000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 12,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 13,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": -2,
+              "invalid_codec_output": true
+            },
+            {
+              "id": 14,
+              "timestamp": 1101000,
+              "size": 7680,
+              "decoder_result": 960,
+              "s16_sha256": "a8eac8b0d3b1fde368813438dd5ba415a796fd6dd0a2a42fb6a5a2dfb2429576",
+              "s16_zlib_base64": "eJztwQENAAAAwqD3T20PBxQAAAD8Gw8AAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": [
+            159
+          ]
+        },
+        {
+          "first": false,
+          "next": 16,
+          "decodes": [
+            {
+              "id": 15,
+              "timestamp": 1102000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 15,
+              "timestamp": 1102000,
+              "size": 7680,
+              "decoder_result": 960,
+              "s16_sha256": "a8eac8b0d3b1fde368813438dd5ba415a796fd6dd0a2a42fb6a5a2dfb2429576",
+              "s16_zlib_base64": "eJztwQENAAAAwqD3T20PBxQAAAD8Gw8AAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "old_duplicate_2_20",
+      "channels": 2,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        2,
+        1,
+        1,
+        0,
+        1
+      ],
+      "actions": [
+        [
+          "F",
+          10,
+          1100000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          10,
+          1101000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          9,
+          1102000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          11,
+          1103000,
+          "f8fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "size": 7680,
+              "decoder_result": 960,
+              "s16_sha256": "a8eac8b0d3b1fde368813438dd5ba415a796fd6dd0a2a42fb6a5a2dfb2429576",
+              "s16_zlib_base64": "eJztwQENAAAAwqD3T20PBxQAAAD8Gw8AAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [],
+          "submitted": [],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [],
+          "submitted": [],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 12,
+          "decodes": [
+            {
+              "id": 11,
+              "timestamp": 1103000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 11,
+              "timestamp": 1103000,
+              "size": 7680,
+              "decoder_result": 960,
+              "s16_sha256": "a8eac8b0d3b1fde368813438dd5ba415a796fd6dd0a2a42fb6a5a2dfb2429576",
+              "s16_zlib_base64": "eJztwQENAAAAwqD3T20PBxQAAAD8Gw8AAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "out_of_order_2_20",
+      "channels": 2,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        2,
+        1,
+        1,
+        0,
+        1
+      ],
+      "actions": [
+        [
+          "F",
+          20,
+          1100000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          22,
+          1101000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          21,
+          1102000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          23,
+          1103000,
+          "f8fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 21,
+          "decodes": [
+            {
+              "id": 20,
+              "timestamp": 1100000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 20,
+              "timestamp": 1100000,
+              "size": 7680,
+              "decoder_result": 960,
+              "s16_sha256": "a8eac8b0d3b1fde368813438dd5ba415a796fd6dd0a2a42fb6a5a2dfb2429576",
+              "s16_zlib_base64": "eJztwQENAAAAwqD3T20PBxQAAAD8Gw8AAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 23,
+          "decodes": [
+            {
+              "id": 21,
+              "timestamp": 1101000,
+              "payload": "f8fffe",
+              "max_samples": 480,
+              "fec": 1,
+              "result": -2
+            },
+            {
+              "id": 22,
+              "timestamp": 1101000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 21,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": -2,
+              "invalid_codec_output": true
+            },
+            {
+              "id": 22,
+              "timestamp": 1101000,
+              "size": 7680,
+              "decoder_result": 960,
+              "s16_sha256": "a8eac8b0d3b1fde368813438dd5ba415a796fd6dd0a2a42fb6a5a2dfb2429576",
+              "s16_zlib_base64": "eJztwQENAAAAwqD3T20PBxQAAAD8Gw8AAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": [
+            159
+          ]
+        },
+        {
+          "first": false,
+          "next": 23,
+          "decodes": [],
+          "submitted": [],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 24,
+          "decodes": [
+            {
+              "id": 23,
+              "timestamp": 1103000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 23,
+              "timestamp": 1103000,
+              "size": 7680,
+              "decoder_result": 960,
+              "s16_sha256": "a8eac8b0d3b1fde368813438dd5ba415a796fd6dd0a2a42fb6a5a2dfb2429576",
+              "s16_zlib_base64": "eJztwQENAAAAwqD3T20PBxQAAAD8Gw8AAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "wrap_2_20",
+      "channels": 2,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        2,
+        1,
+        1,
+        0,
+        1
+      ],
+      "actions": [
+        [
+          "F",
+          65534,
+          1100000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          0,
+          1101000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          65535,
+          1102000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          1,
+          1103000,
+          "f8fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 65535,
+          "decodes": [
+            {
+              "id": 65534,
+              "timestamp": 1100000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 65534,
+              "timestamp": 1100000,
+              "size": 7680,
+              "decoder_result": 960,
+              "s16_sha256": "a8eac8b0d3b1fde368813438dd5ba415a796fd6dd0a2a42fb6a5a2dfb2429576",
+              "s16_zlib_base64": "eJztwQENAAAAwqD3T20PBxQAAAD8Gw8AAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 1,
+          "decodes": [
+            {
+              "id": 65535,
+              "timestamp": 1101000,
+              "payload": "f8fffe",
+              "max_samples": 480,
+              "fec": 1,
+              "result": -2
+            },
+            {
+              "id": 0,
+              "timestamp": 1101000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 65535,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": -2,
+              "invalid_codec_output": true
+            },
+            {
+              "id": 0,
+              "timestamp": 1101000,
+              "size": 7680,
+              "decoder_result": 960,
+              "s16_sha256": "a8eac8b0d3b1fde368813438dd5ba415a796fd6dd0a2a42fb6a5a2dfb2429576",
+              "s16_zlib_base64": "eJztwQENAAAAwqD3T20PBxQAAAD8Gw8AAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": [
+            159
+          ]
+        },
+        {
+          "first": false,
+          "next": 1,
+          "decodes": [],
+          "submitted": [],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 2,
+          "decodes": [
+            {
+              "id": 1,
+              "timestamp": 1103000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 1,
+              "timestamp": 1103000,
+              "size": 7680,
+              "decoder_result": 960,
+              "s16_sha256": "a8eac8b0d3b1fde368813438dd5ba415a796fd6dd0a2a42fb6a5a2dfb2429576",
+              "s16_zlib_base64": "eJztwQENAAAAwqD3T20PBxQAAAD8Gw8AAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "first_high_2_20",
+      "channels": 2,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        2,
+        1,
+        1,
+        0,
+        1
+      ],
+      "actions": [
+        [
+          "F",
+          65000,
+          1100000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          65001,
+          1101000,
+          "f8fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 65001,
+          "decodes": [
+            {
+              "id": 65000,
+              "timestamp": 1100000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 65000,
+              "timestamp": 1100000,
+              "size": 7680,
+              "decoder_result": 960,
+              "s16_sha256": "a8eac8b0d3b1fde368813438dd5ba415a796fd6dd0a2a42fb6a5a2dfb2429576",
+              "s16_zlib_base64": "eJztwQENAAAAwqD3T20PBxQAAAD8Gw8AAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 65002,
+          "decodes": [
+            {
+              "id": 65001,
+              "timestamp": 1101000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 65001,
+              "timestamp": 1101000,
+              "size": 7680,
+              "decoder_result": 960,
+              "s16_sha256": "a8eac8b0d3b1fde368813438dd5ba415a796fd6dd0a2a42fb6a5a2dfb2429576",
+              "s16_zlib_base64": "eJztwQENAAAAwqD3T20PBxQAAAD8Gw8AAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "restart_2_20",
+      "channels": 2,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        2,
+        1,
+        1,
+        0,
+        1
+      ],
+      "actions": [
+        [
+          "F",
+          10,
+          1100000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          14,
+          1101000,
+          "f8fffe"
+        ],
+        [
+          "R"
+        ],
+        [
+          "F",
+          123,
+          1103000,
+          "f8fffe"
+        ],
+        [
+          "F",
+          125,
+          1104000,
+          "f8fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "size": 7680,
+              "decoder_result": 960,
+              "s16_sha256": "a8eac8b0d3b1fde368813438dd5ba415a796fd6dd0a2a42fb6a5a2dfb2429576",
+              "s16_zlib_base64": "eJztwQENAAAAwqD3T20PBxQAAAD8Gw8AAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 15,
+          "decodes": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "payload": "",
+              "max_samples": 480,
+              "fec": 0,
+              "result": 480
+            },
+            {
+              "id": 12,
+              "timestamp": 1101000,
+              "payload": "",
+              "max_samples": 480,
+              "fec": 0,
+              "result": 480
+            },
+            {
+              "id": 13,
+              "timestamp": 1101000,
+              "payload": "f8fffe",
+              "max_samples": 480,
+              "fec": 1,
+              "result": -2
+            },
+            {
+              "id": 14,
+              "timestamp": 1101000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 11,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 12,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 13,
+              "timestamp": 1101000,
+              "size": 3840,
+              "decoder_result": -2,
+              "invalid_codec_output": true
+            },
+            {
+              "id": 14,
+              "timestamp": 1101000,
+              "size": 7680,
+              "decoder_result": 960,
+              "s16_sha256": "a8eac8b0d3b1fde368813438dd5ba415a796fd6dd0a2a42fb6a5a2dfb2429576",
+              "s16_zlib_base64": "eJztwQENAAAAwqD3T20PBxQAAAD8Gw8AAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": [
+            159
+          ]
+        },
+        {
+          "first": true,
+          "next": 0,
+          "decodes": [],
+          "submitted": [],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 124,
+          "decodes": [
+            {
+              "id": 123,
+              "timestamp": 1103000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 123,
+              "timestamp": 1103000,
+              "size": 7680,
+              "decoder_result": 960,
+              "s16_sha256": "a8eac8b0d3b1fde368813438dd5ba415a796fd6dd0a2a42fb6a5a2dfb2429576",
+              "s16_zlib_base64": "eJztwQENAAAAwqD3T20PBxQAAAD8Gw8AAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 126,
+          "decodes": [
+            {
+              "id": 124,
+              "timestamp": 1104000,
+              "payload": "f8fffe",
+              "max_samples": 480,
+              "fec": 1,
+              "result": -2
+            },
+            {
+              "id": 125,
+              "timestamp": 1104000,
+              "payload": "f8fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 960
+            }
+          ],
+          "submitted": [
+            {
+              "id": 124,
+              "timestamp": 1104000,
+              "size": 3840,
+              "decoder_result": -2,
+              "invalid_codec_output": true
+            },
+            {
+              "id": 125,
+              "timestamp": 1104000,
+              "size": 7680,
+              "decoder_result": 960,
+              "s16_sha256": "a8eac8b0d3b1fde368813438dd5ba415a796fd6dd0a2a42fb6a5a2dfb2429576",
+              "s16_zlib_base64": "eJztwQENAAAAwqD3T20PBxQAAAD8Gw8AAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": [
+            159
+          ]
+        }
+      ]
+    },
+    {
+      "name": "invalid",
+      "source_only": true,
+      "observed": [
+        {
+          "first": false,
+          "next": 11,
+          "decodes": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "payload": "ff",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": -4
+            }
+          ],
+          "submitted": [
+            {
+              "id": 10,
+              "timestamp": 1100000,
+              "size": 18446744073709551584,
+              "decoder_result": -4,
+              "invalid_codec_output": true
+            }
+          ],
+          "assertions": [
+            179
+          ]
+        }
+      ]
+    },
+    {
+      "name": "missing",
+      "source_only": true,
+      "observed": [
+        {
+          "first": true,
+          "next": 0,
+          "decodes": [],
+          "submitted": [],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "silk_fec_gap1_1",
+      "channels": 1,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        1,
+        1,
+        0,
+        0
+      ],
+      "actions": [
+        [
+          "F",
+          0,
+          1100000,
+          "4082b6937df0a48f832e586f8c652e287d7fe0"
+        ],
+        [
+          "F",
+          1,
+          1100655,
+          "40af9c9379fc594f2c78e7a508d69cc4f7879becf030"
+        ],
+        [
+          "F",
+          2,
+          1101310,
+          "40a4bb35088c1bfc02f13db806aa81162d40d082cd7d61f74d84051a14"
+        ],
+        [
+          "F",
+          4,
+          1102620,
+          "40a3e4ad269a2d8d17d6e486fbe785e04940b1d42dc2cb5a852e038f15bdcd10"
+        ],
+        [
+          "F",
+          5,
+          1103275,
+          "40a3e4abc6e9e1f03f4bb4cac93af5f12736d9db247364845b5700936480"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 1,
+          "decodes": [
+            {
+              "id": 0,
+              "timestamp": 1100000,
+              "payload": "4082b6937df0a48f832e586f8c652e287d7fe0",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 0,
+              "timestamp": 1100000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "4dbdac40f98d599163fd1d0d34a447901353c0aa2bc6cf3e73c5a3c94d81c459",
+              "s16_zlib_base64": "eJylUftPj1Ecft6u3/O+5z0HmZSFsJFUWorSV6RCLq1y+5JKpNwqSkshplFhzH2M2YxlLhs/NYxhzWYzTPnBD9jI/RKpfVHm8Z3/wPvs7HzOcz6X8zwv8L+fQXjDHxIBCMIQDMdIjEYkYjABiUjCZCKJUQLhRCoysAA5WILFWES4MBezMBUTEc81CVOQgnRyuViBYmIl1qAcG7EZW4ht2IEG1GM7z9U878Q+HMIB7EEdmY2oZG4pVqGIWMWonChDCVclaxuZt4vVDdiLwziGI9iNWmzwZKxhRT7f5OKbclGA5VjGfT5m8m1Oz+viEEVloRiMEAzCQPSDRh8E8jyC/AgqD8YAIsjDjMYYIgJjWZfo0R+DcOaF0ZloYgxGMY5m7+mYzSnTqDsFaUQKkulCMvfJrI1g1lhmzcAc+pRKzsle8ewW+c/jeMQy4++k8bxxkon23CSxaxaRwcpsKsuj61nsk8Z5LqorQiE5FzUupNJCrKYP61FBp6qxlT7X09MarON/yEEmXYjljBjWVuEcHuENOuCGZYQbmcZao8ooN1YY84wkY6jhxkNcwWkcp9sVdDODsw7iMQKMhUazke2V4L3U54TvTb8m/zyHj7glzpvNVou8ZLvUTfVStaomVaXy1WrVqE6q/apU5aha9VSl6jpdqaP0S3VHtakeFaRDdLAerhN0ls7TBbqYt5t1iU7Tg7RD99fDtKVvqAXKT7Xbr+1n9gU71w61g+10u5HxCXutHWcL+7m8KCvkNJkgZ8t1cpfcK3fKbbJBHpWn5EEyTukj26xr1nWr1eq0vOVX66pVaoVZbvOF+cR8YLaYzWaTecisMZeaGeYsM92MNX+Js2KuiBRTRI24LG6L86JWuESyiBFDha9457jj2OTo9g/1t/3afVq9P3gFesUa4ej9fbf3Qs+1X+0/7Z8hP/q6e7rdXQFdU7+XddZ9q/66vCP3S+Xn05/ufbz/4cz7wndxb8e9KXx9ub3z1R/Xm88g",
+              "peak": 0.211334228515625
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 2,
+          "decodes": [
+            {
+              "id": 1,
+              "timestamp": 1100655,
+              "payload": "40af9c9379fc594f2c78e7a508d69cc4f7879becf030",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 1,
+              "timestamp": 1100655,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "81bc29f93541f2b3d343134f6066dd45be1790207e22438a26a1a439d64e9884",
+              "s16_zlib_base64": "eJwBwAM//BbkH+Mo4k7hoOAe4MDfdN8j37DeCd493YTcINwy3JXc7Nzh3Grczttv23/b09sM3Ozbhtst2yzbhtv820bcUNw/3E7ckNzo3CvdRd1I3Vjdht3H3QDeJt5A3mXen97k3iTfVN9636vf+N9s4AjhxeGX4mzjL+TU5GblAebI5svn/ug86mPrZOxJ7SruHO8i8DbxUvJ888L0MPa99075xfoM/Cv9P/5n/64ADgJ1A90ETAbMB1YJzwoZDC8NKA4oD0MQbBGEEnUTRxQXFf4V+hb0F9MYkxlHGgMbzBuSHEId1x1dHuceex8RIJwgGSGNIQUihSIII4Uj9iNfJMAkEyVKJVYlMyXyJK8khSSBJJYkrCSxJKIkjSSGJJUkrCS5JK0kiyRkJEkkOyQyJCEkByTtI9wj1CPSI8wjvCOoI5UjhyN5I2YjSSMnIwYj6SLRIroiniJ/Il0iOCIRIuQhsSF4ITgh9yC5IIQgXiBVIG4gqyD/IFMhjCGfIZIhfSF1IX4hiyGIIWohOiEQIfgg8SDpINAgoyBvIEEgGyDzH7gfXB/YHiweYB2AHJsbxhoRGnUZ3Rg2GHYXqxboFTYVhBSzE6cSZBEJEL4OoQ2wDM8L2AqwCVMI0wZKBdUDgwJRASwA+P6d/RT8aPq0+Bb3oPVQ9BDzwvFN8Kvu6ewh63Tp8eeY5lXlFOTG4nHhJuD03t3d1dzM27vaqdml2LrX4tYP1jnVYtSW0+HSRNKz0SXRmNAP0JTPJ8/CzmDO/s2hzVPNGc30zOXM6Mz6zBXNLM04zTzNRM1dzZLN5M1Nzs7Oac8g0OzQvdGA0jLT4NOd1HfVZtZV1zbYDdno2dfa3dvs3Pfd+97/3xHhN+Jo45XkueXT5u7nE+lA6m/rlOym7aHuiu9p8EnxMfIi8xj0CfXw9cr2nfdv+Eb5IPr3+sT7ifxK/Qr+yv6G/zsA6QCSATkC4QKHAykExgRiBf4FnAY8B9oHdQgLCZwJJgqnCh0LiQvpCzwMhAzADPYMKQ1fDZgN1A0PDkcOfQ62DvUOPg+UD/gPbRDsEGwR3xE8EocSzRIcE3wT7RNoFOoUeBUVFr0WYBftF2UY2BhfGQsa1hqnG2YcDx2yHWYeNx8cIPsgviFeIugicSMPJMEkeyUwJtsmgScxKOworCliKgMrkSsXLJssHC2ULfotUi6jLvcuTS+gL+YvGzBHMG0wizCfMJ8wijBkMDEw9S+vL14vBS+nLkku6y2NLSYttCw5LLQrJiuNKuQpJylPKFonSiYpJWJTvbA=",
+              "peak": 0.399261474609375
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 3,
+          "decodes": [
+            {
+              "id": 2,
+              "timestamp": 1101310,
+              "payload": "40a4bb35088c1bfc02f13db806aa81162d40d082cd7d61f74d84051a14",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 2,
+              "timestamp": 1101310,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "1bd0aeae201caa15e930e635d9d00766db588f4af9d3728dcf3d2d702b1fcbdc",
+              "s16_zlib_base64": "eJwBwAM//AIk4SLOIcIgrh+KHlIdDhzNGpMZWhgaF8gVZBT5Eo8RKxDHDl0N6AtuCvIIcQfnBUsEnALmADn/pf0w/NT6gvku+NX2dvUS9KbyK/Gj7xvupuxU6ybqDOnw58rmouWM5Jbjt+Lg4QDhFuAw313eod3z3Ejcntv62mXa49lw2QTZmNgv2NDXgNc+1wfX2daz1p3WmNaj1rnW1tb31h3XS9eC18LXB9hQ2JzY7NhB2ZvZ+dlT2qXa8No524jb5ttV3NDcTN263Rfead663hXfft/v32DgxuAc4WPhouHg4SLiaeKw4vPiK+NZ44fjv+MH5F3kteT+5DLlVeV25aPl4uUr5nTmtebo5hDnNOdY54Tnuuf750TokOja6CHpZ+mu6fjpQ+qI6sbq/uo0623rquvp6yrsb+zA7CTtnu0n7rPuOe+27y/wsfBH8fTxsPJv8yn03PSR9VP2KfcQ+P/46/nU+sH7wPzY/Qb/PgBvAZICqgPIBPgFOweICNAJCgs6DGwNrw4GEG0R1RIwFHkVthb1Fz4ZlBrvG0Mdhx67H+kgHCJXI48ktyXDJrUnnCiNKZEqoiusLJ4tcy4yL+UvlDA+MdoxYTLUMjkzlDPpMzY0ezS1NOU0DDUtNUU1VTVbNVU1RDUmNfo0vzR2NCA0vjNTM9wyXDLSMTwxmDDkLx4vRS5eLXEshCudKrkp0SjeJ90mzSWzJI4jWSIXIcoffh47HQMczxqVGVIYDRfTFawUkhN4ElARExDJDnsNMwz1CsQJoQiNB4gGiwWQBJIDlgKhAbkA2v/+/h7+PP1e/Iv7w/oE+kn5kfje9zb3l/b/9Wv12fRN9MnzUPPg8nbyD/Ko8ULx3PB38Bnwwu917yvv3+6N7jru8u287Zjte+1S7RPtwexp7Bvs2eue613rEeu96m3qKert6a3pXOn06Hro/+eR5zbn5uaV5jnmz+Vb5eTkbOTw43Lj8+J24vrhe+Hw4FfguN8e35LeE96V3RDdgdzt22Hb49pt2vTZb9nf2E/Yzddg1wLXpNY+1tHVatUX1dvUrdR51DfU7dOp03jTW9NG0zLTINMZ0yrTU9OJ08TT/tM91IjU49RN1cHVPNa/1k7X6deQ2D/Z9dmz2n/bWtxD3TneO99G4FvheuKh49DkCeZP56boD+qF6//sdu7n71XxyPJE9M31YPf1+I36K/zP/Xn/IQG9AkoE0AVWB+AIagrrC10Nww4oEJkRGBOeFB4WjRfpGDQadhuuHNkd8x75H+4g2iHEIrMjpSSRJUFJIxo=",
+              "peak": 0.416839599609375
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 5,
+          "decodes": [
+            {
+              "id": 3,
+              "timestamp": 1102620,
+              "payload": "40a3e4ad269a2d8d17d6e486fbe785e04940b1d42dc2cb5a852e038f15bdcd10",
+              "max_samples": 480,
+              "fec": 1,
+              "result": 480
+            },
+            {
+              "id": 4,
+              "timestamp": 1102620,
+              "payload": "40a3e4ad269a2d8d17d6e486fbe785e04940b1d42dc2cb5a852e038f15bdcd10",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 3,
+              "timestamp": 1102620,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "26e924ac7e858d3de9ed6919dc85b3ee4b6aa4d57bb42027eb8515a8914b34c0",
+              "s16_zlib_base64": "eJwBwAM//G4mNyfuJ5YoNSnSKWcq8ipuK9krNCyGLNAsDy1CLWMtdS16LXctbi1gLUwtMS0OLd8soixZLAgsuCtxKysr2ipwKucpQymPKNEnCScxJkclVSRmI4EioyHDINsf7R4FHisdWxyKG6carhmkGJQXhxaCFYcUmBO5EucRGhFKEHMPmQ7DDfcMMgxtC6IK0gkGCUUIkAfhBjQGhgXfBEIErwMgA5EC/wFsAeAAXwDo/3j/Cv+a/in+uP1J/d38d/wU/LL7TPvk+n36H/rR+ZL5VfkL+a34PvjI91j39faa9j322fVu9QT1ofRF9OXzd/P08mHyzPFC8crwYPD274Lv/+5x7t7tSe2y7Bvsg+vu6lvqxuko6YDo1ecv55bmB+Z65eXkRuSh4wLjb+Lj4VXhvOAZ4Hbf4N5f3u7dgd0N3ZLcG9y022LbHdvW2oXaLtrd2Z3ZbdlE2RzZ99je2N3Y9dgb2UPZadmR2cPZBtpX2rPaFdt+2/Hbcdz83I7dJ97G3nDfJ+Ds4MDhoeKQ44nki+WS5qHnvOjm6SHrbuzE7RvvbfC58QXzWPSz9Rj3hPjz+Wf74vxk/uv/bQHlAlAEtAUXB3wI4Ak5C4QMxQ0HD1QQrBEJE2EUqRXiFhAYNRlSGmMbZhxYHToeEx/pH74gkiFgIiEj0CNuJP8kiCUOJpEmDCd6J9YnJChpKKco3igJKSQpMCkxKS0pJykeKQ4p+CjZKK0obygfKL0nUSfnJoYmLSbWJXUlAyWAJO0jSyObItohBSEhIDQfSB5jHYMcpBvBGtoZ9BgYGEcXfRauFdIU4xPoEuYR5BDqD/oOGA5GDX0MtwvtCh0KTQmFCMgHEAdVBpMFzAQJBFEDpwIFAmYByAAwAKT/I/+p/i7+r/0t/a78OPzK+2X7BPuk+kX66PmP+Tn55/iY+Ej49Ped90n3//bD9pP2ZfYs9uD1hvUl9cr0e/Qz9Orzm/NH8/byrPJo8iHyzPFj8erwbfD775zvSu/37pnuLu667UTtz+xZ7OHraOvx6nzqBuqJ6QXpeujy53Tn/uaL5hLmkOUJ5YTkCOSS4xzjnuIV4ovhDOGe4D7g4d993xXfst5h3iXe89273XbdKN3g3KnchNxm3EjcKtwX3BvcNtxf3Ircs9zd3BDdU92j3f3dXN7B3i/fqd8t4LngSuHh4YLiMOPr47bkkOV25mXnW+hW6VbqYOt47KHt2e4X8FPxifK58+n0H/Zh96z4/flQ+6b8BP5p/9MAOgKVA+QEKgZvB7QI+AkxC8r1/7k=",
+              "peak": 0.35528564453125
+            },
+            {
+              "id": 4,
+              "timestamp": 1102620,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "59d89c7b61e64ced412a2f9abb9ae29c5593dcdb6f6ed078d67d772f3cb2384e",
+              "s16_zlib_base64": "eJwBwAM//FwMfg2jDtQPEBFREosTtxTVFekW9Rf7GPUZ4Rq8G4scUh0WHtgemR9UIAQhoyEzIrYiMiOrIyEkkST0JEcljSXKJQEmMiZbJncmhiaOJpAmjCaAJmYmPiYKJs8ljyVOJQwlzCSOJFUkHSThI5cjNiO9Ii8imyEMIYYgCiCPHw4fhh77HXcdAB2UHCoctxs2G60aKRq3GVUZ/BihGD4Y1xd2Fx0XyBZvFhAWshVfFR0V4xShFEsU5RN+EygT6RK+EpcSbBI3Ev0RwhGLEVoRLhEHEd8QtBCEEFMQJxAFEOkPxg+UD08PBA/DDpcOfA5kDkAOCw7KDYcNSQ0MDcgMdwwaDLgLVwv4CpgKMwrCCUMJtQgdCIEH5wZVBsoFPwWwBB0EiAP3AmkC2QE7AYoAyP/+/jj+f/3T/Cn8ePu6+u/5HPlJ+H33vfYI9ln1q/T780jzk/Lb8R/xXPCV78/uFu5v7dvsUuzL60PrvOo+6s/paukI6aToPeja54HnM+fu5q3mcuY/5hvmBub75fXl8OXv5fblB+Yh5kLma+aa5tHmEedY56Xn+OdS6LXoIuma6R3qp+o569LrbewG7ZrtLO7B7mDvDvDN8JjxZvIv8/Lzs/R19Tn2/Pa893z4P/kI+tX6nftY/AT9rv1c/hD/w/9pAAABkwEvAtgChgMqBL4ESAXUBWcG9gZrB78H/Qc8CJAI+AhhCbYJ8AkbCkoKhwrKCgQLKQs6C0MLUgtrC4QLjwuIC3QLYgtfC2sLeAtyC1ALFwvYCqQKfwplCksKKAoBCtkJtwmcCYQJbAlVCUMJOQkzCSkJEgnqCLcIgghWCDUIHAgICPgH7gfwB/wHDAgYCCAILAhECGcIigifCKQIowixCNkIGAleCZcJwQnlCRUKWAqnCvMKLQtSC20LjwvDCwoMXAytDPIMKg1ZDYYNuw37DUQOlA7iDigPYQ+PD7UP1w/5DxwQQBBnEJEQwRD1ECYRSxFcEVoRThFAETQRJRENEeYQsBB0EDgQ+w+5D2sPFg/ADnIOLw7yDa8NXQ36DIoMGAypCzkLwwpDCrkJKgmhCCQIsAc9B8EGNQaaBfYEUASvAxIDdwLhAU8BxgBDAMP/Pf+p/gr+av3W/Fj86/uF+xn7ofoi+qb5OPnd+JP4VPgY+Nr3lPdH9/j2qvZl9ir2+vXT9bj1q/Wr9bP1u/W89bX1r/W09cb14fX99RX2KvZF9m72o/bg9h/3Xveh9+v3PviW+O/4Sfmj+QH6YPq8+g/7Wfui+/L7Ufy//E1FmMM=",
+              "peak": 0.30126953125
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 6,
+          "decodes": [
+            {
+              "id": 5,
+              "timestamp": 1103275,
+              "payload": "40a3e4abc6e9e1f03f4bb4cac93af5f12736d9db247364845b5700936480",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 5,
+              "timestamp": 1103275,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "f8876e5740968d1ff2bd5b6fa500033307749a0e40d2de1079cfd5b98c11ebe6",
+              "s16_zlib_base64": "eJwBwAM//DP9pf0K/l/+qv7x/j7/kv/p/zoAfQCzAOMAGAFWAZgB0gH7ARUCLwJUAoQCtALTAt8C4gLrAv4CDgMFA9kCmgJhAkECNgIrAgYCwQFrARkB2ACfAF4ACQCe/yv/vf5a/vn9i/0N/YT8//uK+yb7yPpj+vH5ePkD+Zn4Ofja93T3B/ec9jv25vWW9Uf19fSk9Fr0GvTh86vzePNL8yvzG/MV8xLzCfP28uDy0/LZ8vfyLPNx877zDvRf9LD0//RK9ZP13/U09pv2Ffeh9zj40/hr+f75jPoX+6H7MPzG/Gb9Dv66/mT/CwCuAFUBBQLAAn8DNwTdBHEF/QWNBigHywdvCBAJsglXCgELqAtBDMgMQw28DT0Owg5DD7UPGBByEM0QKxGDEdEREhJKEn4SsRLjEgwTKxNDE1gTbhOGE5sTqxO2E70TwBO/E7kTrxOgE4wTdhNbEz0THBP6EtYSsRKJEl0SLRL8EcgRkxFbESER4xClEGgQMBAAENsPvg+oD5EPcg9KDxwP8g7WDs4O1A7gDugO5g7dDtQO1A7iDv4OIg9KD24PiQ+dD68Pxg/rDyEQZBCuEPUQNBFqEZ0R1hEbEm0SyhIqE4UT1xMgFGQUqBTvFDkVgxXKFQwWTBaOFtAWEhdSF4sXwBfyFyEYShhqGHkYeRhwGGYYZBhqGHIYchhgGDcY+RevF14XBxeuFlIW8hWQFSYVrBQhFIYT4hJBEqoRGBGAENYPFQ9ADl8NewyYC7kK3AkECS8IVgd1BoQFgwR4A2wCZgFoAGz/av5Y/TT8BPvR+aL4f/dn9lf1SfQ88zDyKfEq8DPvQO5O7VzsbOuB6qDpxujx5x7nT+aE5cHkCORW46niAuJg4cngPeC930ff2t5z3hPeuN1g3RDdydyO3GPcSdw+3D/cSNxU3GLcctyE3Jncs9zP3PDcFN083W7drt383VXest4L32Dfs98H4F7gtuAK4VzhteEc4pTiFuOX4w/kgOTx5GXl3OVM5q/mBudc57znLuiv6DPpsekl6pHq9+pb67jrCuxP7I7s0ewc7XHtx+0V7lfulO7S7hbvYu+x7wLwV/Cx8A/xbPHA8QjySfKO8tnyK/N4873z/PNB9JX0/PRr9dT1LfZ59r/2DPdm99D3RPjA+D/5vfk6+rX6Lvuo+yv8vPxb/QL+q/5Q//b/pwBrAUQCKQMKBOAEsgWIBm4HZghlCV4KSws1DCcNKg48D1MQYRFhElsTXRRxFZQWuBfLGMkZvxq/G9YcAh4zH1kgbSFzIpAwy7E=",
+              "peak": 0.27935791015625
+            }
+          ],
+          "assertions": []
+        }
+      ],
+      "codec_counterfactual": {
+        "scope": "Force packet=NULL/fec=0 only at the codec API, not a product strategy",
+        "fec_sha256": "26e924ac7e858d3de9ed6919dc85b3ee4b6aa4d57bb42027eb8515a8914b34c0",
+        "plc_sha256": "26e924ac7e858d3de9ed6919dc85b3ee4b6aa4d57bb42027eb8515a8914b34c0",
+        "distinguishes": false
+      }
+    },
+    {
+      "name": "silk_fec_gap3_1",
+      "channels": 1,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        1,
+        1,
+        0,
+        0
+      ],
+      "actions": [
+        [
+          "F",
+          0,
+          1100000,
+          "4082b6937df0a48f832e586f8c652e287d7fe0"
+        ],
+        [
+          "F",
+          1,
+          1100655,
+          "40af9c9379fc594f2c78e7a508d69cc4f7879becf030"
+        ],
+        [
+          "F",
+          2,
+          1101310,
+          "40a4bb35088c1bfc02f13db806aa81162d40d082cd7d61f74d84051a14"
+        ],
+        [
+          "F",
+          6,
+          1103930,
+          "40a3e4ad2696448ec26d5d9d53acaf0cbf62bc62a952353e7566b18ded4728"
+        ],
+        [
+          "F",
+          7,
+          1104585,
+          "40a3e4ad2696137c89db7b57d7f9ccda17ff20dc6651ebcef3c70189dee0e0"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 1,
+          "decodes": [
+            {
+              "id": 0,
+              "timestamp": 1100000,
+              "payload": "4082b6937df0a48f832e586f8c652e287d7fe0",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 0,
+              "timestamp": 1100000,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "4dbdac40f98d599163fd1d0d34a447901353c0aa2bc6cf3e73c5a3c94d81c459",
+              "s16_zlib_base64": "eJylUftPj1Ecft6u3/O+5z0HmZSFsJFUWorSV6RCLq1y+5JKpNwqSkshplFhzH2M2YxlLhs/NYxhzWYzTPnBD9jI/RKpfVHm8Z3/wPvs7HzOcz6X8zwv8L+fQXjDHxIBCMIQDMdIjEYkYjABiUjCZCKJUQLhRCoysAA5WILFWES4MBezMBUTEc81CVOQgnRyuViBYmIl1qAcG7EZW4ht2IEG1GM7z9U878Q+HMIB7EEdmY2oZG4pVqGIWMWonChDCVclaxuZt4vVDdiLwziGI9iNWmzwZKxhRT7f5OKbclGA5VjGfT5m8m1Oz+viEEVloRiMEAzCQPSDRh8E8jyC/AgqD8YAIsjDjMYYIgJjWZfo0R+DcOaF0ZloYgxGMY5m7+mYzSnTqDsFaUQKkulCMvfJrI1g1lhmzcAc+pRKzsle8ewW+c/jeMQy4++k8bxxkon23CSxaxaRwcpsKsuj61nsk8Z5LqorQiE5FzUupNJCrKYP61FBp6qxlT7X09MarON/yEEmXYjljBjWVuEcHuENOuCGZYQbmcZao8ooN1YY84wkY6jhxkNcwWkcp9sVdDODsw7iMQKMhUazke2V4L3U54TvTb8m/zyHj7glzpvNVou8ZLvUTfVStaomVaXy1WrVqE6q/apU5aha9VSl6jpdqaP0S3VHtakeFaRDdLAerhN0ls7TBbqYt5t1iU7Tg7RD99fDtKVvqAXKT7Xbr+1n9gU71w61g+10u5HxCXutHWcL+7m8KCvkNJkgZ8t1cpfcK3fKbbJBHpWn5EEyTukj26xr1nWr1eq0vOVX66pVaoVZbvOF+cR8YLaYzWaTecisMZeaGeYsM92MNX+Js2KuiBRTRI24LG6L86JWuESyiBFDha9457jj2OTo9g/1t/3afVq9P3gFesUa4ej9fbf3Qs+1X+0/7Z8hP/q6e7rdXQFdU7+XddZ9q/66vCP3S+Xn05/ufbz/4cz7wndxb8e9KXx9ub3z1R/Xm88g",
+              "peak": 0.211334228515625
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 2,
+          "decodes": [
+            {
+              "id": 1,
+              "timestamp": 1100655,
+              "payload": "40af9c9379fc594f2c78e7a508d69cc4f7879becf030",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 1,
+              "timestamp": 1100655,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "81bc29f93541f2b3d343134f6066dd45be1790207e22438a26a1a439d64e9884",
+              "s16_zlib_base64": "eJwBwAM//BbkH+Mo4k7hoOAe4MDfdN8j37DeCd493YTcINwy3JXc7Nzh3Grczttv23/b09sM3Ozbhtst2yzbhtv820bcUNw/3E7ckNzo3CvdRd1I3Vjdht3H3QDeJt5A3mXen97k3iTfVN9636vf+N9s4AjhxeGX4mzjL+TU5GblAebI5svn/ug86mPrZOxJ7SruHO8i8DbxUvJ888L0MPa99075xfoM/Cv9P/5n/64ADgJ1A90ETAbMB1YJzwoZDC8NKA4oD0MQbBGEEnUTRxQXFf4V+hb0F9MYkxlHGgMbzBuSHEId1x1dHuceex8RIJwgGSGNIQUihSIII4Uj9iNfJMAkEyVKJVYlMyXyJK8khSSBJJYkrCSxJKIkjSSGJJUkrCS5JK0kiyRkJEkkOyQyJCEkByTtI9wj1CPSI8wjvCOoI5UjhyN5I2YjSSMnIwYj6SLRIroiniJ/Il0iOCIRIuQhsSF4ITgh9yC5IIQgXiBVIG4gqyD/IFMhjCGfIZIhfSF1IX4hiyGIIWohOiEQIfgg8SDpINAgoyBvIEEgGyDzH7gfXB/YHiweYB2AHJsbxhoRGnUZ3Rg2GHYXqxboFTYVhBSzE6cSZBEJEL4OoQ2wDM8L2AqwCVMI0wZKBdUDgwJRASwA+P6d/RT8aPq0+Bb3oPVQ9BDzwvFN8Kvu6ewh63Tp8eeY5lXlFOTG4nHhJuD03t3d1dzM27vaqdml2LrX4tYP1jnVYtSW0+HSRNKz0SXRmNAP0JTPJ8/CzmDO/s2hzVPNGc30zOXM6Mz6zBXNLM04zTzNRM1dzZLN5M1Nzs7Oac8g0OzQvdGA0jLT4NOd1HfVZtZV1zbYDdno2dfa3dvs3Pfd+97/3xHhN+Jo45XkueXT5u7nE+lA6m/rlOym7aHuiu9p8EnxMfIi8xj0CfXw9cr2nfdv+Eb5IPr3+sT7ifxK/Qr+yv6G/zsA6QCSATkC4QKHAykExgRiBf4FnAY8B9oHdQgLCZwJJgqnCh0LiQvpCzwMhAzADPYMKQ1fDZgN1A0PDkcOfQ62DvUOPg+UD/gPbRDsEGwR3xE8EocSzRIcE3wT7RNoFOoUeBUVFr0WYBftF2UY2BhfGQsa1hqnG2YcDx2yHWYeNx8cIPsgviFeIugicSMPJMEkeyUwJtsmgScxKOworCliKgMrkSsXLJssHC2ULfotUi6jLvcuTS+gL+YvGzBHMG0wizCfMJ8wijBkMDEw9S+vL14vBS+nLkku6y2NLSYttCw5LLQrJiuNKuQpJylPKFonSiYpJWJTvbA=",
+              "peak": 0.399261474609375
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 3,
+          "decodes": [
+            {
+              "id": 2,
+              "timestamp": 1101310,
+              "payload": "40a4bb35088c1bfc02f13db806aa81162d40d082cd7d61f74d84051a14",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 2,
+              "timestamp": 1101310,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "1bd0aeae201caa15e930e635d9d00766db588f4af9d3728dcf3d2d702b1fcbdc",
+              "s16_zlib_base64": "eJwBwAM//AIk4SLOIcIgrh+KHlIdDhzNGpMZWhgaF8gVZBT5Eo8RKxDHDl0N6AtuCvIIcQfnBUsEnALmADn/pf0w/NT6gvku+NX2dvUS9KbyK/Gj7xvupuxU6ybqDOnw58rmouWM5Jbjt+Lg4QDhFuAw313eod3z3Ejcntv62mXa49lw2QTZmNgv2NDXgNc+1wfX2daz1p3WmNaj1rnW1tb31h3XS9eC18LXB9hQ2JzY7NhB2ZvZ+dlT2qXa8No524jb5ttV3NDcTN263Rfead663hXfft/v32DgxuAc4WPhouHg4SLiaeKw4vPiK+NZ44fjv+MH5F3kteT+5DLlVeV25aPl4uUr5nTmtebo5hDnNOdY54Tnuuf750TokOja6CHpZ+mu6fjpQ+qI6sbq/uo0623rquvp6yrsb+zA7CTtnu0n7rPuOe+27y/wsfBH8fTxsPJv8yn03PSR9VP2KfcQ+P/46/nU+sH7wPzY/Qb/PgBvAZICqgPIBPgFOweICNAJCgs6DGwNrw4GEG0R1RIwFHkVthb1Fz4ZlBrvG0Mdhx67H+kgHCJXI48ktyXDJrUnnCiNKZEqoiusLJ4tcy4yL+UvlDA+MdoxYTLUMjkzlDPpMzY0ezS1NOU0DDUtNUU1VTVbNVU1RDUmNfo0vzR2NCA0vjNTM9wyXDLSMTwxmDDkLx4vRS5eLXEshCudKrkp0SjeJ90mzSWzJI4jWSIXIcoffh47HQMczxqVGVIYDRfTFawUkhN4ElARExDJDnsNMwz1CsQJoQiNB4gGiwWQBJIDlgKhAbkA2v/+/h7+PP1e/Iv7w/oE+kn5kfje9zb3l/b/9Wv12fRN9MnzUPPg8nbyD/Ko8ULx3PB38Bnwwu917yvv3+6N7jru8u287Zjte+1S7RPtwexp7Bvs2eue613rEeu96m3qKert6a3pXOn06Hro/+eR5zbn5uaV5jnmz+Vb5eTkbOTw43Lj8+J24vrhe+Hw4FfguN8e35LeE96V3RDdgdzt22Hb49pt2vTZb9nf2E/Yzddg1wLXpNY+1tHVatUX1dvUrdR51DfU7dOp03jTW9NG0zLTINMZ0yrTU9OJ08TT/tM91IjU49RN1cHVPNa/1k7X6deQ2D/Z9dmz2n/bWtxD3TneO99G4FvheuKh49DkCeZP56boD+qF6//sdu7n71XxyPJE9M31YPf1+I36K/zP/Xn/IQG9AkoE0AVWB+AIagrrC10Nww4oEJkRGBOeFB4WjRfpGDQadhuuHNkd8x75H+4g2iHEIrMjpSSRJUFJIxo=",
+              "peak": 0.416839599609375
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 7,
+          "decodes": [
+            {
+              "id": 3,
+              "timestamp": 1103930,
+              "payload": "",
+              "max_samples": 480,
+              "fec": 0,
+              "result": 480
+            },
+            {
+              "id": 4,
+              "timestamp": 1103930,
+              "payload": "",
+              "max_samples": 480,
+              "fec": 0,
+              "result": 480
+            },
+            {
+              "id": 5,
+              "timestamp": 1103930,
+              "payload": "40a3e4ad2696448ec26d5d9d53acaf0cbf62bc62a952353e7566b18ded4728",
+              "max_samples": 480,
+              "fec": 1,
+              "result": 480
+            },
+            {
+              "id": 6,
+              "timestamp": 1103930,
+              "payload": "40a3e4ad2696448ec26d5d9d53acaf0cbf62bc62a952353e7566b18ded4728",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 3,
+              "timestamp": 1103930,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "26e924ac7e858d3de9ed6919dc85b3ee4b6aa4d57bb42027eb8515a8914b34c0",
+              "s16_zlib_base64": "eJwBwAM//G4mNyfuJ5YoNSnSKWcq8ipuK9krNCyGLNAsDy1CLWMtdS16LXctbi1gLUwtMS0OLd8soixZLAgsuCtxKysr2ipwKucpQymPKNEnCScxJkclVSRmI4EioyHDINsf7R4FHisdWxyKG6carhmkGJQXhxaCFYcUmBO5EucRGhFKEHMPmQ7DDfcMMgxtC6IK0gkGCUUIkAfhBjQGhgXfBEIErwMgA5EC/wFsAeAAXwDo/3j/Cv+a/in+uP1J/d38d/wU/LL7TPvk+n36H/rR+ZL5VfkL+a34PvjI91j39faa9j322fVu9QT1ofRF9OXzd/P08mHyzPFC8crwYPD274Lv/+5x7t7tSe2y7Bvsg+vu6lvqxuko6YDo1ecv55bmB+Z65eXkRuSh4wLjb+Lj4VXhvOAZ4Hbf4N5f3u7dgd0N3ZLcG9y022LbHdvW2oXaLtrd2Z3ZbdlE2RzZ99je2N3Y9dgb2UPZadmR2cPZBtpX2rPaFdt+2/Hbcdz83I7dJ97G3nDfJ+Ds4MDhoeKQ44nki+WS5qHnvOjm6SHrbuzE7RvvbfC58QXzWPSz9Rj3hPjz+Wf74vxk/uv/bQHlAlAEtAUXB3wI4Ak5C4QMxQ0HD1QQrBEJE2EUqRXiFhAYNRlSGmMbZhxYHToeEx/pH74gkiFgIiEj0CNuJP8kiCUOJpEmDCd6J9YnJChpKKco3igJKSQpMCkxKS0pJykeKQ4p+CjZKK0obygfKL0nUSfnJoYmLSbWJXUlAyWAJO0jSyObItohBSEhIDQfSB5jHYMcpBvBGtoZ9BgYGEcXfRauFdIU4xPoEuYR5BDqD/oOGA5GDX0MtwvtCh0KTQmFCMgHEAdVBpMFzAQJBFEDpwIFAmYByAAwAKT/I/+p/i7+r/0t/a78OPzK+2X7BPuk+kX66PmP+Tn55/iY+Ej49Ped90n3//bD9pP2ZfYs9uD1hvUl9cr0e/Qz9Orzm/NH8/byrPJo8iHyzPFj8erwbfD775zvSu/37pnuLu667UTtz+xZ7OHraOvx6nzqBuqJ6QXpeujy53Tn/uaL5hLmkOUJ5YTkCOSS4xzjnuIV4ovhDOGe4D7g4d993xXfst5h3iXe89273XbdKN3g3KnchNxm3EjcKtwX3BvcNtxf3Ircs9zd3BDdU92j3f3dXN7B3i/fqd8t4LngSuHh4YLiMOPr47bkkOV25mXnW+hW6VbqYOt47KHt2e4X8FPxifK58+n0H/Zh96z4/flQ+6b8BP5p/9MAOgKVA+QEKgZvB7QI+AkxC8r1/7k=",
+              "peak": 0.35528564453125
+            },
+            {
+              "id": 4,
+              "timestamp": 1103930,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "470c9ed42d093173d13e75f52b40397b3609678781c4c10493a5332a623a3e55",
+              "s16_zlib_base64": "eJwBwAM//FwMfg2jDtQPEBFREosTtxTVFekW9Rf7GPUZ4Rq8G4scUh0WHtgemR9UIAQhoyEzIrYiMiOrIyEkkST0JEcljSXKJQEmMiZbJncmhiaMJosmhCZ0JlwmOyYYJvUl0SWnJW8lIyXFJFgk6CN6IxMjryJMIuAhZiHdIEUgoB/vHjMeaB2SHLMb0xr4GSIZTBhzF5UWthXfFBIUThOIErcR2BDrD/cOBA4YDTcMZAufCuQJKglsCKkH6AYvBoAF1QQpBHYDvwILAmMBxwAzAKH/Ef+G/gb+kv0j/bT8QfzM+1r77vqJ+iv6zvly+RX5uvhj+BP4y/eH90L3+vat9mL2Ifbw9cz1qvV+9T717fSX9Ej0BfTL85PzVfMO88fyhvJN8hTyzfFz8QjxmfA18OTvoO9b7wvvrO5E7tntbe0B7ZPsJOy460/r5up46gDqg+kI6ZfoL+jK51/n6uZx5v7llOUw5cnkV+TX41Tj2+J04hvixeFp4QnhruBk4C7gAeDN34vfQd/73sXeod6F3mneTt493kHeWd5/3qje0N743iffZd+v3wPgXeC84CPhlOEO4o/iGOOo40Lk6OSc5V7mLOcC6N7ovumi6ozrgeyE7Zfuue/g8AbyKfNI9Gf1i/a39+r4Ivpc+5v84P0t/3wAxwEIAz8EbwWeBs0H+QgbCjELQAxTDXEOmg/JEPERCxMYFBoVFRYJF/QX0RihGWYaJBvgG50cXB0cHtgeix81INEgXyHeIVEiviImI4kj5CM2JHsktSToJBUlOiVVJWQlZyVhJVclRyUzJRcl9STOJKYkfCRPJBckziN1Iw4joCI2ItMhdyEbIbcgRCDDHzQfmh73HUodkRzOGwQbOhp1GbQY8xctF2IWlRXQFBUUYBOoEuURExE2EFYPeA6jDdgMGAxiC7MKBQpVCaII8gdHB6IGAgZfBbYECAReA74CKAKaARABiAAFAIv/Gf+t/kL+1v1p/f78mvw8/Ob7kfs7++L6i/o3+ur5pfli+Rz50fiB+DP48fe+95b3cfdD9wP3tfZj9hf21vWe9Wb1KfXl9KH0ZPQt9Pbzs/Nf8/3ymPI+8vbxu/GB8T7x7/CX8Dzw4O+D7ybvye5v7hjuwO1h7fjsiuwe7LvrYOsF66XqQOrY6XXpHOnF6GjoAOiM5xnnsuZc5hLmyOV45SPl0+ST5GTkPuQQ5NbjlONW4yfjBuPt4tTiveKt4q/ixOLm4gnjKuNL43Ljo+Pf4yPkbuS+5Bbld+Xg5U/mxeZD58vnYOgA6S7P7tM=",
+              "peak": 0.3011474609375
+            },
+            {
+              "id": 5,
+              "timestamp": 1103930,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "e8126b67d135c9a5174b49034f1ae9f3ee88c5b6e6ab0cef7198511320cda246",
+              "s16_zlib_base64": "eJwBwAM//KzpYuod693roexo7TXuC+/r79nw0PHN8srzxPS79bL2rPer+LH5vPrL+9/8+v0Z/zsAWQFvAn4DiASRBZsGoQehCJYJhgp2C2wMaw1uDmwPXhBFESES9hLFE40USxX+FagWTRfyF5gYQRnpGYwaJxu4Gz4ctxwlHYkd5h0+HpIe3x4jH1sfix+zH9Yf9R8OIBwgICAcIBIgBCDxH9ofvh+fH3wfVx8vH/4ewB51Hh0ewB1mHREdwRxzHB0cvBtNG9MaUhrJGTcZmhj1F0oXoBb6FVcVtBQNFGETtBINEm4R1BA5EJQP4g4oDmoNrgz6C08LrAoRCnoJ4whKCK8HFgeEBvgFbgXiBFIEvwMvA6YCJQKrATMBuwBHANv/d/8a/8D+Z/4O/rj9Zv0b/dX8j/xH/P77tvty+zT7/PrH+o/6UvoR+tH5mvly+VT5OfkV+eP4pPhh+CP47ve/95L3X/cn9+/2vPaN9l/2J/bh9Y/1PPXx9LX0g/RT9Bv02fOR80fz/fKz8mnyHvLU8YzxQ/H18J/wRPDr75fvSu//7q/uWu4E7rPtaO0f7dLse+wb7LzrZusd697qoOpc6hXq0ema6XDpS+kh6e3osuh86FLoNOgc6ALo6OfU587n2Ofs5wPoGegv6Ezoceif6NToDelN6ZPp4ek16o/q7epR673rM+yz7Dztze1l7gLvpO9J8PLwpPFf8iXz8/PD9JL1XvYm9+/3u/iL+V36L/v/+9D8pP1//mL/SwA3ASACBgPnA8QEnwV6BlEHIwjtCLAJcAowC/ULvQyGDUoOBg+4D2IQBRGkET4S0RJbE94TWhTXFFcV1xVWFtEWRBeuFxAYaBi4GAAZQxmCGbwZ8hkiGkoabBqJGqEathrEGswazRrHGrsarBqaGoIaZhpIGigaBhriGbYZgBk+GfMYpBhZGBMY0ReQF0oX+RaeFjgWyhVVFdoUWBTQE0ITsxInEp4RFhGLEP4PcQ/pDmgO7A1wDe4MYwzQCzkLowoRCocJBAmHCA4IlQcaB58GJgayBUIF1QRmBPIDegMFA5UCLQLHAWMB/wCfAEUA8f+i/1b/Cv+//nj+Nf74/bz9gv1G/Qn9zfyV/GL8M/wH/Nv7rPt5+0j7Hfv8+uP6zPqw+oj6Vvof+uz5wfmb+Xb5Tvkh+fT4yvil+H/4U/gb+Nv3mPdc9yz3Bfff9rT2gvZM9hT23PWj9Wn1LvX09Lz0hPRG9AL0ufNy8zLz9fK68nvyOPLz8bTxefFB8QfxxPB78DLw8O+477Iw7cY=",
+              "peak": 0.2509765625
+            },
+            {
+              "id": 6,
+              "timestamp": 1103930,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "2df56a7b1370f870541c0a1bb93c7d1dfdee5f47cfba660be901d35dc49d8260",
+              "s16_zlib_base64": "eJwNk21QFGUAx3efvX15diQEJ/ClCLU6Na2pGTPipYwoFSxnYFKzSAyiBq2wCQeqCaUZQhjHTCR8K2RkGkTNq7DJl6yjSelD0wyoVHKHt/cCx7N3++zu7d7u3m43vw//md/M/+OvPbY5tiQWFS+KnWKD+JK4UqTEcTSIOlAjqkYb0Bq0DD2MHkNrURWqQ01oPzqNriMJ5YuV6ceomBnbFhuKUfHq+JX4IukDyStl4C14CHPy2/KInKvUKT8pOeqnakQtS3QnAomntWNaUivTm/U+fUzPT7YnteQbxrDhMjeZx82gucyqtb6xJq0FqY2p5tRAypd6xG6zb9l5zlbnsHPTySNeJ9qJXuIU4SHGCIpcTW4n28g+8hfyLskANygFW8G7oA0cBd+BETAG7gIENEBQHJVBzaWy02RR91CQckAcTIIbwAO+Ah+BV8GTIBOEyctkF1lFZpMjRCPxADHu9Dg1jtuZsjvt5bY3VZvKSnmtRmuedcZ81vQZHUaBEUi2JuclB/QyHWt92jotkGhNPJpQ1Rtqt7pBjSqdyjNKhjIrj8on5B1yvuzH/XgnLsYLMIFjkk/6UxqWBqRT0qB0WRqXVGkhfg7X4324Gw9gL5bxU3KHPCEvUd5UTih/K7biVivVA6pfXZ+4mlipfa79pc3VX9Ov6I8nB5O5xm7jNyPLrDMvmdB62TpiRayK1MVUjl1tH7Sv2ppd6nQ7fuc+opxoIYYJh6ggD5BeUiKXghowAIIgi1pBlVDVVA8VpFa79rj6Xb+6Jl2AXkVvplvoHvoHeow26AeZcuY95iDjYW4yBpPHlrDb2Cb2EHuWvc5OsRo7h1vKFXGV3Fvcbq6Z28t1cke589woN8vdC9fCergPHoIn4TnohRMwDCPQD2/DMXgL/pvmDgxBB7r5LXwb/zU/xJ/jz/MXeE96+/kv+E/4XXwN/wpfzhfyy/kc3sXL0Af/gIOwC74Pq2ABvB/a3B3uEtfLNXEV3CLOx/ayL7KI+ZIpYRT6At1Az6c9riLXNWo9dRu8AyRyJ/kP8TzxvbPCOW3n2h+nJqw11klzjtloXEvqulvfof2YWJhoVSeUxUqt7MFZuEXyxwviHbH/xGLxLFqMumaD0Seie2eE6e3T8Uhn5KHIz+GNYX9oTygzdCa4KQiCvwuHhXqhUMgWcGAq4AsEAjMBOUAI84WitD8ieAUsuIO1wW+DOFgc2h+aCK0KfxaeDBdGjkWI6V3TwnTDDIj2R1+YDcx+iBzULuakqyuNj8f/B/IGCSw=",
+              "peak": 0.219757080078125
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 8,
+          "decodes": [
+            {
+              "id": 7,
+              "timestamp": 1104585,
+              "payload": "40a3e4ad2696137c89db7b57d7f9ccda17ff20dc6651ebcef3c70189dee0e0",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 7,
+              "timestamp": 1104585,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "15c64de8faa2b4cfd93f4eb8462faf25ec77cfdd1a005de78d260ae6833595b3",
+              "s16_zlib_base64": "eJwBwAM//F/x6PF58hzzzfOA9Cr1w/VP9tX2Yff495j4Pfnd+XX6AvuF+wD8evz0/HD97v1u/vL+e/8HAJEAEwGHAe0BSgKpAgwDdAPZAzgEkQTqBEgFqAUHBmEGuQYWB34H9AdwCOYIUAmsCf8JUwqqCgQLWgurC/QLNwx6DL8MBQ1HDYQNvA3xDSQOVg6HDrQO3g4DDygPTQ9zD5gPvQ/jDwkQLxBVEHkQmhC4ENYQ9BAZEUURdxGtEd8RBhIiEjgSUBJ0EqcS5xIoE2ITkBO0E9YT/RMtFGUUoxTgFBYVRBVuFZoVzBUGFkAWcBaPFp0WqBa+FuYWGhdOF3UXiReQF5MXmBefF6MXnxeRF3wXYxdIFysXCBfhFrQWghZMFhIW0xWQFUkV/hSuFFcU9hOKEw0TghLsEVERtRAaEHoPzw4XDlUNkgzSCxELRApgCWYIYAdiBnUFlQSzA8ICvQGwAKj/qf6s/aH8fftE+gj53PfI9sP1t/ST81nyGPHq79nu3+3n7ODrxeqf6YHocud05n7liuSY46niv+HZ4PnfIt9V3pLd1NwW3FvbrtoX2prZL9nH2FzY7Nd91xbXttZX1vrVptVp1UzVSdVS1VjVVNVN1U3VXNV31ZjVutXf1QzWR9aU1vLWX9fU10zYwtgy2Z7ZD9qM2hrbudte3ALdnt0z3sjeZt8Q4Mngi+FP4hDjx+N05BvlwuVs5hnnx+dv6BLptela6gXrtOth7Antq+1J7ujuie8q8MfwYPH28YzyJvPC8170+/SW9TP20/Z09xf4uvhc+fz5m/o5+9X7cPwI/Z79Mf7C/lP/5/+CACYB1AGFAjID0wNnBPIEfgUVBroGaQcYCL4IVQnhCWkK9gqOCy8M1wyBDScOyQ5qDw4QvBB0ES8S5xKXE0YU/BTEFZ0WehdLGAcZsBlSGvoaqxtlHCId4x2rHnsfUiAlIeshpCJWIwwkyiSOJU0m/iaiJz8o4SiNKTwq5Cp+KwkskiwhLbUtQy7BLisviy/wL1swwjATMUUxYTF4MZcxujHTMdQxvzGgMYMxajFLMRkx0TB7MB4wwC9dL+suZy7XLT8toiz+K00riiq1Kcwo0ifKJrklpiSXI4sieSFaICMf2R2IHDgb8hmyGG0XGha0FD0TvBE7EMAOTQ3gC3QKAgmGBwAGcQTiAlkB2/9q/gH9lvsj+qj4KPep9TX0z/J48Szw5+6m7WrsMuv/6c7onedu5kblLOQl4zHiSeFj4H/fnt7J3QTdUdyo2wbbatrW2U3ZzthR2BtSvT4=",
+              "peak": 0.3892822265625
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "silk_fec_gap1_2",
+      "channels": 2,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        2,
+        1,
+        1,
+        0,
+        1
+      ],
+      "actions": [
+        [
+          "F",
+          0,
+          1100000,
+          "44a778989b3325fc308ea5550c97a2041544216a8d217072c701cfe907699322ca80"
+        ],
+        [
+          "F",
+          1,
+          1100655,
+          "44f778ba617b3cab8a65c54ffeffa969df1ad0722a3c171a2d42b9c8073fe795b955fad87c0247a7880f4d3369f35da113f0177d29108c"
+        ],
+        [
+          "F",
+          2,
+          1101310,
+          "44f7d2e582f274a565880b2647ab42804cc06becb07c33069c831c8a474418e26a3853829b69019b46fde5598460089558d510008d5149052c75e436f748d577bbda9c34e08366fa938229f06d"
+        ],
+        [
+          "F",
+          4,
+          1102620,
+          "44c48c979aa73ee0dff10c228a8f56c95050abe993ede8609f9da5b4b7895fb146576be8"
+        ],
+        [
+          "F",
+          5,
+          1103275,
+          "44c7d1bfb852cd080f609354e7440510236f8656a8736f748be5858417f8fa566798d901fe392bac317b72e807fc3a13fc"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 1,
+          "decodes": [
+            {
+              "id": 0,
+              "timestamp": 1100000,
+              "payload": "44a778989b3325fc308ea5550c97a2041544216a8d217072c701cfe907699322ca80",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 0,
+              "timestamp": 1100000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "08218b00326ef805003528c515d6b4685327e1de53e6f78cf33c6d1654fe920d",
+              "s16_zlib_base64": "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",
+              "peak": 0.18865966796875
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 2,
+          "decodes": [
+            {
+              "id": 1,
+              "timestamp": 1100655,
+              "payload": "44f778ba617b3cab8a65c54ffeffa969df1ad0722a3c171a2d42b9c8073fe795b955fad87c0247a7880f4d3369f35da113f0177d29108c",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 1,
+              "timestamp": 1100655,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "960364c77ed9edd9117dc4c03f4738ecdf5e34fb5b2b66723ac0ff1ed47d7a59",
+              "s16_zlib_base64": "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",
+              "peak": 0.43798828125
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 3,
+          "decodes": [
+            {
+              "id": 2,
+              "timestamp": 1101310,
+              "payload": "44f7d2e582f274a565880b2647ab42804cc06becb07c33069c831c8a474418e26a3853829b69019b46fde5598460089558d510008d5149052c75e436f748d577bbda9c34e08366fa938229f06d",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 2,
+              "timestamp": 1101310,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "a33facf418f359fbd6779fe97bcacc703fce07dec4ec4a0e00e7dcff8d61f1eb",
+              "s16_zlib_base64": "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",
+              "peak": 0.4195556640625
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 5,
+          "decodes": [
+            {
+              "id": 3,
+              "timestamp": 1102620,
+              "payload": "44c48c979aa73ee0dff10c228a8f56c95050abe993ede8609f9da5b4b7895fb146576be8",
+              "max_samples": 480,
+              "fec": 1,
+              "result": 480
+            },
+            {
+              "id": 4,
+              "timestamp": 1102620,
+              "payload": "44c48c979aa73ee0dff10c228a8f56c95050abe993ede8609f9da5b4b7895fb146576be8",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 3,
+              "timestamp": 1102620,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "8e5da602aeeac595f2ec34917024a10a90f04a5a7c0598a53afc9c17fd5345cc",
+              "s16_zlib_base64": "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",
+              "peak": 0.420074462890625
+            },
+            {
+              "id": 4,
+              "timestamp": 1102620,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "34f52749333f6e884d10ea60cde45627da971a328852d61ffe118e87dce8e117",
+              "s16_zlib_base64": "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",
+              "peak": 0.345672607421875
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 6,
+          "decodes": [
+            {
+              "id": 5,
+              "timestamp": 1103275,
+              "payload": "44c7d1bfb852cd080f609354e7440510236f8656a8736f748be5858417f8fa566798d901fe392bac317b72e807fc3a13fc",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 5,
+              "timestamp": 1103275,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "1597226ef1ec5dc6332550c7e37fa34304d439feb22d47d4cf9fe604e8a70a9a",
+              "s16_zlib_base64": "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",
+              "peak": 0.288787841796875
+            }
+          ],
+          "assertions": []
+        }
+      ],
+      "codec_counterfactual": {
+        "scope": "Force packet=NULL/fec=0 only at the codec API, not a product strategy",
+        "fec_sha256": "8e5da602aeeac595f2ec34917024a10a90f04a5a7c0598a53afc9c17fd5345cc",
+        "plc_sha256": "b326b691b4300e48ecb49cbb9c15d75fc6e1eb50b77424f1106cde5c8b3792c1",
+        "distinguishes": true
+      }
+    },
+    {
+      "name": "silk_fec_gap3_2",
+      "channels": 2,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        2,
+        1,
+        1,
+        0,
+        1
+      ],
+      "actions": [
+        [
+          "F",
+          0,
+          1100000,
+          "44a778989b3325fc308ea5550c97a2041544216a8d217072c701cfe907699322ca80"
+        ],
+        [
+          "F",
+          1,
+          1100655,
+          "44f778ba617b3cab8a65c54ffeffa969df1ad0722a3c171a2d42b9c8073fe795b955fad87c0247a7880f4d3369f35da113f0177d29108c"
+        ],
+        [
+          "F",
+          2,
+          1101310,
+          "44f7d2e582f274a565880b2647ab42804cc06becb07c33069c831c8a474418e26a3853829b69019b46fde5598460089558d510008d5149052c75e436f748d577bbda9c34e08366fa938229f06d"
+        ],
+        [
+          "F",
+          6,
+          1103930,
+          "44c7712145059e97b8c37183433b53f23e76a022a2f4998930326d4b5b9ff4ba69df6c3ce8a82895c5f9922a3c6dc9bdf57c8675e74afdaef26be6"
+        ],
+        [
+          "F",
+          7,
+          1104585,
+          "44c8382370fa90217e65c262fb465b32d6f56b8f3481027d9d0ac736157a7178849b53bcf83eef73d5f25b964e36d9a7137d3140"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 1,
+          "decodes": [
+            {
+              "id": 0,
+              "timestamp": 1100000,
+              "payload": "44a778989b3325fc308ea5550c97a2041544216a8d217072c701cfe907699322ca80",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 0,
+              "timestamp": 1100000,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "08218b00326ef805003528c515d6b4685327e1de53e6f78cf33c6d1654fe920d",
+              "s16_zlib_base64": "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",
+              "peak": 0.18865966796875
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 2,
+          "decodes": [
+            {
+              "id": 1,
+              "timestamp": 1100655,
+              "payload": "44f778ba617b3cab8a65c54ffeffa969df1ad0722a3c171a2d42b9c8073fe795b955fad87c0247a7880f4d3369f35da113f0177d29108c",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 1,
+              "timestamp": 1100655,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "960364c77ed9edd9117dc4c03f4738ecdf5e34fb5b2b66723ac0ff1ed47d7a59",
+              "s16_zlib_base64": "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",
+              "peak": 0.43798828125
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 3,
+          "decodes": [
+            {
+              "id": 2,
+              "timestamp": 1101310,
+              "payload": "44f7d2e582f274a565880b2647ab42804cc06becb07c33069c831c8a474418e26a3853829b69019b46fde5598460089558d510008d5149052c75e436f748d577bbda9c34e08366fa938229f06d",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 2,
+              "timestamp": 1101310,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "a33facf418f359fbd6779fe97bcacc703fce07dec4ec4a0e00e7dcff8d61f1eb",
+              "s16_zlib_base64": "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",
+              "peak": 0.4195556640625
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 7,
+          "decodes": [
+            {
+              "id": 3,
+              "timestamp": 1103930,
+              "payload": "",
+              "max_samples": 480,
+              "fec": 0,
+              "result": 480
+            },
+            {
+              "id": 4,
+              "timestamp": 1103930,
+              "payload": "",
+              "max_samples": 480,
+              "fec": 0,
+              "result": 480
+            },
+            {
+              "id": 5,
+              "timestamp": 1103930,
+              "payload": "44c7712145059e97b8c37183433b53f23e76a022a2f4998930326d4b5b9ff4ba69df6c3ce8a82895c5f9922a3c6dc9bdf57c8675e74afdaef26be6",
+              "max_samples": 480,
+              "fec": 1,
+              "result": 480
+            },
+            {
+              "id": 6,
+              "timestamp": 1103930,
+              "payload": "44c7712145059e97b8c37183433b53f23e76a022a2f4998930326d4b5b9ff4ba69df6c3ce8a82895c5f9922a3c6dc9bdf57c8675e74afdaef26be6",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 3,
+              "timestamp": 1103930,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "b326b691b4300e48ecb49cbb9c15d75fc6e1eb50b77424f1106cde5c8b3792c1",
+              "s16_zlib_base64": "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",
+              "peak": 0.32843017578125
+            },
+            {
+              "id": 4,
+              "timestamp": 1103930,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "d863a0a30c6fe042ae9cc943a7d843d1256d5144b29d422f2392c4663fd8fb53",
+              "s16_zlib_base64": "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",
+              "peak": 0.2183837890625
+            },
+            {
+              "id": 5,
+              "timestamp": 1103930,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "50498d68199a1efb6f9924eb15c6c5d9b1a1716211c876961b30eeb21bf478aa",
+              "s16_zlib_base64": "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",
+              "peak": 0.2225341796875
+            },
+            {
+              "id": 6,
+              "timestamp": 1103930,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "6e03d9fd3dfc430815ede515891c13ec800b08b8b3ecb982700a285cff9981a8",
+              "s16_zlib_base64": "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",
+              "peak": 0.15972900390625
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 8,
+          "decodes": [
+            {
+              "id": 7,
+              "timestamp": 1104585,
+              "payload": "44c8382370fa90217e65c262fb465b32d6f56b8f3481027d9d0ac736157a7178849b53bcf83eef73d5f25b964e36d9a7137d3140",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 7,
+              "timestamp": 1104585,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "0b4cafacccdaf3cb1379884f78e0c38e278d05291448dd801deda5ba04b1f3ea",
+              "s16_zlib_base64": "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",
+              "peak": 0.2603759765625
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "timestamp_zero_wrap_1",
+      "channels": 1,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        1,
+        1,
+        0,
+        0
+      ],
+      "actions": [
+        [
+          "F",
+          65535,
+          4294967280,
+          "f0fffe"
+        ],
+        [
+          "F",
+          1,
+          0,
+          "f0fffe"
+        ],
+        [
+          "F",
+          2,
+          4294967196,
+          "f0fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 0,
+          "decodes": [
+            {
+              "id": 65535,
+              "timestamp": 4294967280,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 65535,
+              "timestamp": 4294967280,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 2,
+          "decodes": [
+            {
+              "id": 0,
+              "timestamp": 0,
+              "payload": "f0fffe",
+              "max_samples": 480,
+              "fec": 1,
+              "result": 480
+            },
+            {
+              "id": 1,
+              "timestamp": 0,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 0,
+              "timestamp": 0,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 1,
+              "timestamp": 0,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 3,
+          "decodes": [
+            {
+              "id": 2,
+              "timestamp": 4294967196,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 2,
+              "timestamp": 4294967196,
+              "size": 1920,
+              "decoder_result": 480,
+              "s16_sha256": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+              "s16_zlib_base64": "eJxjYBgFo2AUDFUAAAPAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "timestamp_zero_wrap_2",
+      "channels": 2,
+      "frequency": 48000,
+      "decoder_config": [
+        48000,
+        2,
+        1,
+        1,
+        0,
+        1
+      ],
+      "actions": [
+        [
+          "F",
+          65535,
+          4294967280,
+          "f0fffe"
+        ],
+        [
+          "F",
+          1,
+          0,
+          "f0fffe"
+        ],
+        [
+          "F",
+          2,
+          4294967196,
+          "f0fffe"
+        ]
+      ],
+      "observed": [
+        {
+          "first": false,
+          "next": 0,
+          "decodes": [
+            {
+              "id": 65535,
+              "timestamp": 4294967280,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 65535,
+              "timestamp": 4294967280,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 2,
+          "decodes": [
+            {
+              "id": 0,
+              "timestamp": 0,
+              "payload": "f0fffe",
+              "max_samples": 480,
+              "fec": 1,
+              "result": 480
+            },
+            {
+              "id": 1,
+              "timestamp": 0,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 0,
+              "timestamp": 0,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            },
+            {
+              "id": 1,
+              "timestamp": 0,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        },
+        {
+          "first": false,
+          "next": 3,
+          "decodes": [
+            {
+              "id": 2,
+              "timestamp": 4294967196,
+              "payload": "f0fffe",
+              "max_samples": 5760,
+              "fec": 0,
+              "result": 480
+            }
+          ],
+          "submitted": [
+            {
+              "id": 2,
+              "timestamp": 4294967196,
+              "size": 3840,
+              "decoder_result": 480,
+              "s16_sha256": "155e437b946ac82ae591ff382b8d19efda9397b2282672dbabd91ec31ce8a651",
+              "s16_zlib_base64": "eJxjYBgFo2AUjIJRMApGAb0BAAeAAAE=",
+              "peak": 0.0
+            }
+          ],
+          "assertions": []
+        }
+      ]
+    }
+  ],
+  "codec_identity": "libopus unknown-fixed"
+}

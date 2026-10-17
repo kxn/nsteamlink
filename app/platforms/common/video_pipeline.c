@@ -121,10 +121,13 @@ static domain *find_domain(sl_video_pipeline *p, sl_video_key key) {
     return NULL;
 }
 bool sl_video_open(sl_video_pipeline *p, sl_video_key key, const sl_video_config *config) {
+    return sl_video_open_ex(p, key, config) == SL_VIDEO_OPEN_READY;
+}
+sl_video_open_result sl_video_open_ex(sl_video_pipeline *p, sl_video_key key, const sl_video_config *config) {
     if (!key.session || !key.epoch || !config || !config->width || !config->height ||
         config->width > 1920 || config->height > 1080 || config->extradata_size > MAX_PACKET ||
         (config->extradata_size && !config->extradata))
-        return false;
+        return SL_VIDEO_OPEN_GUARD;
     pthread_mutex_lock(&p->decoder);
     pthread_mutex_lock(&p->mailbox);
     bool admissible = !p->frozen && !p->accepting &&
@@ -149,9 +152,14 @@ bool sl_video_open(sl_video_pipeline *p, sl_video_key key, const sl_video_config
             }
     if (!d) {
         pthread_mutex_unlock(&p->decoder);
-        return false;
+        return admissible ? SL_VIDEO_OPEN_UNAVAILABLE : SL_VIDEO_OPEN_GUARD;
     }
+    sl_video_open_result failure = SL_VIDEO_OPEN_GUARD;
     const AVCodec *codec = avcodec_find_decoder(AV_CODEC_ID_H264);
+    if (!codec) {
+        failure = SL_VIDEO_OPEN_UNAVAILABLE;
+        goto fail;
+    }
     d->codec = codec ? avcodec_alloc_context3(codec) : NULL;
     if (!d->codec)
         goto fail;
@@ -180,15 +188,22 @@ bool sl_video_open(sl_video_pipeline *p, sl_video_key key, const sl_video_config
                 break;
             }
         }
-        if (type == AV_HWDEVICE_TYPE_NONE || d->hardware_format == AV_PIX_FMT_NONE ||
-            av_hwdevice_ctx_create(&d->codec->hw_device_ctx, type, NULL, NULL, 0) < 0)
+        int opened = type == AV_HWDEVICE_TYPE_NONE || d->hardware_format == AV_PIX_FMT_NONE
+            ? AVERROR(ENOSYS)
+            : av_hwdevice_ctx_create(&d->codec->hw_device_ctx, type, NULL, NULL, 0);
+        if (opened < 0) {
+            failure = opened == AVERROR(ENOMEM) ? SL_VIDEO_OPEN_GUARD : SL_VIDEO_OPEN_UNAVAILABLE;
             goto fail;
+        }
         d->codec->opaque = d;
         d->codec->get_format = hardware_format;
         d->codec->extra_hw_frames = 6;
     }
-    if (avcodec_open2(d->codec, codec, NULL) < 0)
+    int opened = avcodec_open2(d->codec, codec, NULL);
+    if (opened < 0) {
+        failure = opened == AVERROR(ENOMEM) ? SL_VIDEO_OPEN_GUARD : SL_VIDEO_OPEN_UNAVAILABLE;
         goto fail;
+    }
     d->occupied = true;
     d->stopped = false;
     pthread_mutex_lock(&p->mailbox);
@@ -197,11 +212,11 @@ bool sl_video_open(sl_video_pipeline *p, sl_video_key key, const sl_video_config
     d->stopped = !accepted;
     pthread_mutex_unlock(&p->mailbox);
     pthread_mutex_unlock(&p->decoder);
-    return accepted;
+    return accepted ? SL_VIDEO_OPEN_READY : SL_VIDEO_OPEN_GUARD;
 fail:
     avcodec_free_context(&d->codec);
     pthread_mutex_unlock(&p->decoder);
-    return false;
+    return failure;
 }
 void sl_video_close(sl_video_pipeline *p, sl_video_key key) {
     sl_video_frame *old = NULL;
@@ -223,6 +238,15 @@ void sl_video_stop(sl_video_pipeline *p, sl_video_key key) {
     if (d) {
         av_frame_unref(d->scratch);
         d->stopped = true;
+    }
+    pthread_mutex_unlock(&p->decoder);
+}
+void sl_video_discard_buffers(sl_video_pipeline *p, sl_video_key key) {
+    pthread_mutex_lock(&p->decoder);
+    domain *d = find_domain(p, key);
+    if (d && d->codec && !d->stopped && !d->reaping) {
+        av_frame_unref(d->scratch);
+        avcodec_flush_buffers(d->codec);
     }
     pthread_mutex_unlock(&p->decoder);
 }
@@ -314,25 +338,48 @@ static int receive_frames(sl_video_pipeline *p, domain *d) {
             return result;
         if (result < 0)
             return result;
+        if ((d->scratch->flags & AV_FRAME_FLAG_CORRUPT) || d->scratch->decode_error_flags) {
+            av_frame_unref(d->scratch);
+            return AVERROR_INVALIDDATA;
+        }
         bool ok = publish(p, d);
         av_frame_unref(d->scratch);
         if (!ok)
-            return AVERROR_INVALIDDATA;
+            return AVERROR_BUG; /* identity/ownership/resource failure is NOT codec corruption */
     }
-    return AVERROR_INVALIDDATA;
+    return AVERROR_BUG;
 }
-bool sl_video_submit(sl_video_pipeline *p, sl_video_key key, const unsigned char *data, size_t size,
-                     IHS_FrameTicket *ticket, bool *taken) {
+sl_video_submit_result sl_video_submit(sl_video_pipeline *p, sl_video_key key,
+                                       const unsigned char *data, size_t size,
+                                       IHS_FrameTicket *ticket, bool *taken, bool keyframe) {
     *taken = false;
-    if (!data || !size || size > MAX_PACKET || !ticket)
-        return false;
+    if ((size && !data) || size > MAX_PACKET || !ticket)
+        return SL_VIDEO_SUBMIT_ERROR;
     IHS_FrameIdentity identity = IHS_FrameTicketIdentity(ticket);
     if (identity.sessionId != key.session || identity.epoch != key.epoch)
-        return false;
+        return SL_VIDEO_SUBMIT_ERROR;
     pthread_mutex_lock(&p->decoder);
     domain *d = find_domain(p, key);
     if (!d || d->stopped || !sl_video_is_current(p, key))
         goto fail;
+    /* Complete-frame compatibility callers can request this fallback. The
+     * production protocol path already flushes at the first marked fragment
+     * and suppresses it here. Caller-held AVFrame/map references stay valid. */
+    if (keyframe) {
+        av_frame_unref(d->scratch);
+        avcodec_flush_buffers(d->codec);
+    }
+    /* A fully padded video fragment can complete an empty frame. The original
+     * SDK call uses size=0/flags=0; FFmpeg uses NULL/zero packets for drain/EOF. Consume
+     * this protocol input without draining the codec or creating a pixel/token.
+     * Endpoint metadata remains pending until ordinary expiration/close. */
+    if (!size) {
+        uint64_t stamp = now_us();
+        IHS_FrameTicketDecodeStage(ticket, false, stamp);
+        IHS_FrameTicketDecodeStage(ticket, true, stamp);
+        pthread_mutex_unlock(&p->decoder);
+        return SL_VIDEO_SUBMIT_OK;
+    }
     AVPacket *packet = av_packet_alloc();
     if (!packet)
         goto fail;
@@ -385,14 +432,19 @@ bool sl_video_submit(sl_video_pipeline *p, sl_video_key key, const unsigned char
             result = drained;
     }
     av_packet_free(&packet);
-    if (result < 0)
-        goto fail;
-    result = receive_frames(p, d);
+    sl_video_submit_result status = SL_VIDEO_SUBMIT_ERROR;
+    if (result >= 0) {
+        result = receive_frames(p, d);
+        if (result == AVERROR(EAGAIN) || result == AVERROR_EOF)
+            status = SL_VIDEO_SUBMIT_OK;
+    }
+    if (result == AVERROR_INVALIDDATA)
+        status = SL_VIDEO_SUBMIT_CORRUPT;
     pthread_mutex_unlock(&p->decoder);
-    return result == AVERROR(EAGAIN) || result == AVERROR_EOF;
+    return status;
 fail:
     pthread_mutex_unlock(&p->decoder);
-    return false;
+    return SL_VIDEO_SUBMIT_ERROR;
 }
 bool sl_video_flush(sl_video_pipeline *p, sl_video_key key) {
     pthread_mutex_lock(&p->decoder);

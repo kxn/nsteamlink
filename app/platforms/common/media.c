@@ -1,16 +1,23 @@
 #include "media.h"
+#include "audio_jitter.h"
+#include "audio_recovery.h"
+#include "player_owner.h"
 #include "video_scheduler.h"
 static sl_video_scheduler video_scheduler;
 #if NSL_DIAGNOSTICS
-void sl_media_adaptive_pacing(bool enabled) { sl_video_scheduler_init(&video_scheduler,enabled); }
+void sl_media_adaptive_pacing(bool enabled) {
+    sl_video_scheduler_init(&video_scheduler, enabled);
+}
 #endif
 #include "events_backend.h"
 #include "gfx_backend.h"
 #include "platform/rumble.h"
+#include "protobuf/remoteplay.pb-c.h"
 #include "session/frame_tracker.h"
 #include "ui_audio.h"
 
 #include <ctype.h>
+#include <math.h>
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdatomic.h>
@@ -22,6 +29,7 @@ void sl_media_adaptive_pacing(bool enabled) { sl_video_scheduler_init(&video_sch
 
 #include <SDL.h>
 #include <opus.h>
+#include <opus_multistream.h>
 #if __SWITCH__
 #include <switch.h>
 #endif
@@ -53,6 +61,9 @@ static bool logged_alignment_fallback;
 
 static pthread_mutex_t state_lock;
 static pthread_mutex_t audio_lock;
+/* Callback never takes audio_lock/state_lock. Close/join precedes jitter destruction. */
+static pthread_mutex_t audio_jitter_lock;
+static sl_audio_jitter audio_jitter;
 
 static sl_video_pipeline *video;
 static sl_video_frame *current_frame;
@@ -61,9 +72,11 @@ static IHS_FrameTracker *test_tracker;
 static uint64_t test_session_id;
 static uint64_t presentation_serial, last_presentation_us;
 static sl_video_key presentation_key, layout_key;
-static OpusDecoder *audio_decoder;
+static OpusMSDecoder *audio_decoder;
+static sl_audio_recovery audio_recovery;
 static int audio_frequency;
-static int audio_channels;
+static int audio_channels; /* Player/device geometry, independent of decoder format. */
+static int audio_decode_frequency, audio_decode_channels;
 static IHS_StreamAudioCodec audio_codec;
 static bool audio_active;
 static uint32_t audio_frames_total;
@@ -72,8 +85,8 @@ static uint64_t audio_decoded_samples_total;
 static uint32_t audio_queue_drops_total;
 static uint32_t audio_decode_errors_total;
 #define AUDIO_MAX_OPUS_FRAME_SAMPLES 5760
-#define AUDIO_QUEUE_LIMIT_MS         300U
-static opus_int16 audio_decode_buf[AUDIO_MAX_OPUS_FRAME_SAMPLES * 2];
+static float audio_output_buf[SL_AUDIO_JITTER_CAPACITY * 2];
+static float audio_float_buf[AUDIO_MAX_OPUS_FRAME_SAMPLES * 2];
 
 static IHS_Session *hid_session;
 static bool rumble_reset_pending;
@@ -160,9 +173,8 @@ static struct {
     int64_t id;
 } remote_touches[8];
 static void media_logf(const char *fmt, ...);
-static bool opus_rate_supported(uint32_t rate);
-static uint32_t audio_queue_limit_bytes(int frequency, int channels);
 static void audio_stop_locked(void);
+static void audio_decoder_stop_locked(void);
 static void update_audio_snapshot(void);
 
 static bool open_hid_controller(void);
@@ -277,34 +289,60 @@ static void ffmpeg_log_callback(void *ptr, int level, const char *fmt, va_list v
     }
 }
 
-static bool opus_rate_supported(uint32_t rate) {
-    return rate == 8000U || rate == 12000U || rate == 16000U || rate == 24000U || rate == 48000U;
+/* SDL2 requires the callback to fill the complete S16 buffer. Official SDL3
+ * PlayAudio only submits Pop's actual float output; zero fill below is a device
+ * boundary, not an invented jitter/packet recovery rule. */
+static void audio_device_callback(void *unused, Uint8 *bytes, int length) {
+    (void)unused;
+    memset(bytes, 0, (size_t)length);
+    int frames = length / (audio_channels * (int)sizeof(int16_t));
+    if (frames > SL_AUDIO_JITTER_CAPACITY)
+        return;
+    pthread_mutex_lock(&audio_jitter_lock);
+    int got = sl_audio_jitter_pop(&audio_jitter, audio_output_buf, frames);
+    pthread_mutex_unlock(&audio_jitter_lock);
+    int16_t *out = (int16_t *)bytes;
+    if (!atomic_load(&muted)) {
+        for (int i = 0; i < got * audio_channels; ++i) {
+            float v = audio_output_buf[i] * 32768.0f;
+            out[i] = v >= 32767.0f ? 32767 : v <= -32768.0f ? -32768 : (int16_t)lrintf(v);
+        }
+    }
+    sl_audio_mix(out, frames, audio_frequency, audio_channels);
 }
 
-static uint32_t audio_queue_limit_bytes(int frequency, int channels) {
-    if (frequency <= 0 || channels <= 0) {
-        return 0;
-    }
-    uint64_t bytes = (uint64_t)frequency * (uint64_t)channels * sizeof(opus_int16) *
-                     AUDIO_QUEUE_LIMIT_MS / 1000U;
-    return bytes > UINT32_MAX ? UINT32_MAX : (uint32_t)bytes;
+static uint32_t audio_queued_bytes_locked(void) {
+    pthread_mutex_lock(&audio_jitter_lock);
+    uint32_t bytes = audio_jitter.ring
+                         ? (uint32_t)sl_audio_jitter_queued(&audio_jitter) * audio_channels * 2U
+                         : 0;
+    audio_queue_drops_total = audio_jitter.dropped;
+    pthread_mutex_unlock(&audio_jitter_lock);
+    return bytes;
 }
 
-static void audio_stop_locked(void) {
-    if (audio_device != 0) {
-        SDL_PauseAudioDevice(audio_device, 1);
-        SDL_ClearQueuedAudio(audio_device);
-        SDL_CloseAudioDevice(audio_device);
-        audio_device = 0;
-    }
+static void audio_decoder_stop_locked(void) {
     if (audio_decoder != NULL) {
-        opus_decoder_destroy(audio_decoder);
+        opus_multistream_decoder_destroy(audio_decoder);
         audio_decoder = NULL;
     }
     audio_active = false;
+    audio_codec = IHS_StreamAudioCodecNone;
+    sl_audio_recovery_reset(&audio_recovery);
+}
+
+/* Player shutdown/reopen: SDL Close joins the callback before freeing its ring.
+ * StopAudioData only calls audio_decoder_stop_locked and leaves this tail live. */
+static void audio_stop_locked(void) {
+    audio_decoder_stop_locked();
+    if (audio_device != 0) {
+        SDL_PauseAudioDevice(audio_device, 1);
+        SDL_CloseAudioDevice(audio_device);
+        audio_device = 0;
+    }
+    sl_audio_jitter_destroy(&audio_jitter);
     audio_frequency = 0;
     audio_channels = 0;
-    audio_codec = IHS_StreamAudioCodecNone;
 }
 
 static void update_audio_snapshot(void) {
@@ -321,15 +359,15 @@ static void update_audio_snapshot(void) {
 
     pthread_mutex_lock(&audio_lock);
     active = audio_active;
-    queued = audio_device != 0 ? SDL_GetQueuedAudioSize(audio_device) : 0;
+    queued = audio_queued_bytes_locked();
     frames = audio_frames_total;
     bytes = audio_bytes_total;
     samples = audio_decoded_samples_total;
     drops = audio_queue_drops_total;
     errors = audio_decode_errors_total;
     codec = (int)audio_codec;
-    channels = audio_channels;
-    frequency = audio_frequency;
+    channels = audio_decode_channels;
+    frequency = audio_decode_frequency;
     pthread_mutex_unlock(&audio_lock);
 
     pthread_mutex_lock(&state_lock);
@@ -770,6 +808,7 @@ bool stream_media_init(stream_media_log_fn log_fn) {
     if (!locks_ready) {
         pthread_mutex_init(&state_lock, NULL);
         pthread_mutex_init(&audio_lock, NULL);
+        pthread_mutex_init(&audio_jitter_lock, NULL);
         pthread_mutex_init(&hid_lifecycle_lock, NULL);
         locks_ready = true;
     }
@@ -825,7 +864,7 @@ void stream_media_shutdown(void) {
     stream_media_set_hid_session(NULL, false);
     stream_media_video_stop(NULL);
     audio_shutting_down = true;
-    stream_media_audio_stop(NULL);
+    stream_media_audio_close(NULL);
     sl_audio_shutdown();
 
     pthread_mutex_lock(&state_lock);
@@ -876,6 +915,7 @@ void stream_media_shutdown(void) {
     mapping_installed = false;
     pthread_mutex_destroy(&state_lock);
     pthread_mutex_destroy(&audio_lock);
+    pthread_mutex_destroy(&audio_jitter_lock);
     pthread_mutex_destroy(&hid_lifecycle_lock);
     locks_ready = false;
     media_logf("media shutdown: done");
@@ -1000,6 +1040,13 @@ void stream_media_destroy_hid_provider(IHS_HIDProvider *provider) {
     pthread_mutex_unlock(&state_lock);
 }
 
+int sl_media_video_prepare(IHS_Session *session, const IHS_StreamVideoConfig *config) {
+    (void)session;
+    /* The persistent platform player already exists; backend creation belongs
+     * to start. Invalid geometry is this port's bounded resource guard. */
+    return video && config && config->width && config->height && config->width <= 1920 &&
+                   config->height <= 1080 ? 0 : -1;
+}
 int sl_media_video_start_tracked(IHS_Session *session, const IHS_VideoEpochInfo *epoch,
                                  const IHS_StreamVideoConfig *config) {
     (void)session;
@@ -1030,17 +1077,19 @@ int sl_media_video_start_tracked(IHS_Session *session, const IHS_VideoEpochInfo 
     snapshot.width = config->width;
     snapshot.height = config->height;
     pthread_mutex_unlock(&state_lock);
-    if (!sl_video_open(video, key, &decoder)) {
-        media_set_error("video domain unavailable or decoder initialization failed");
+    sl_video_open_result opened = sl_video_open_ex(video, key, &decoder);
+    if (opened == SL_VIDEO_OPEN_GUARD) {
+        media_set_error("video identity or allocation guard rejected decoder start");
         return -1;
     }
     pthread_mutex_lock(&state_lock);
     snapshot.video_active = true;
-    snprintf(snapshot.decoder, sizeof(snapshot.decoder), "h264 %s",
-             decoder.hardware ? "nvtegra" : "software");
+    snprintf(snapshot.decoder, sizeof(snapshot.decoder), "h264 %s%s",
+             decoder.hardware ? "nvtegra" : "software",
+             opened == SL_VIDEO_OPEN_UNAVAILABLE ? " pending" : "");
     snapshot.last_error[0] = 0;
     pthread_mutex_unlock(&state_lock);
-    return 0;
+    return opened == SL_VIDEO_OPEN_UNAVAILABLE ? 1 : 0;
 }
 IHS_StreamVideoSubmitResult
 sl_media_video_submit_tracked(IHS_Session *session, const IHS_VideoEpochInfo *epoch, uint16_t id,
@@ -1048,16 +1097,34 @@ sl_media_video_submit_tracked(IHS_Session *session, const IHS_VideoEpochInfo *ep
                               IHS_StreamVideoFrameFlag flags, bool *taken) {
     (void)session;
     (void)id;
-    (void)flags;
     if (!video) {
         *taken = false;
         return IHS_StreamVideoSubmitError;
     }
-    bool ok = sl_video_submit(video, (sl_video_key){epoch->session_id, epoch->video_epoch},
-                              IHS_BufferPointer(data), data->size, ticket, taken);
-    if (!ok)
-        media_set_error("video packet ownership or decode failure");
-    return ok ? IHS_StreamVideoSubmitOK : IHS_StreamVideoSubmitError;
+    sl_video_submit_result result = sl_video_submit(
+        video, (sl_video_key){epoch->session_id, epoch->video_epoch}, IHS_BufferPointer(data),
+        data->size, ticket, taken, (flags & IHS_StreamVideoFrameKeyFrame) &&
+                                  !(flags & IHS_StreamVideoFrameFlushHandled));
+    if (result == SL_VIDEO_SUBMIT_CORRUPT)
+        return IHS_StreamVideoSubmitReportLost;
+    if (result == SL_VIDEO_SUBMIT_ERROR)
+        media_set_error("video packet ownership or decoder resource failure");
+    return result == SL_VIDEO_SUBMIT_OK ? IHS_StreamVideoSubmitOK : IHS_StreamVideoSubmitError;
+}
+void sl_media_video_flush_tracked(IHS_Session *session, const IHS_VideoEpochInfo *epoch,
+                                  IHS_StreamVideoFlushPhase phase) {
+    (void)session;
+    if (!video)
+        return;
+    sl_video_key key = {epoch->session_id, epoch->video_epoch};
+    if (phase == IHS_StreamVideoFlushPlayer) {
+        sl_video_close(video, key);
+        pthread_mutex_lock(&state_lock);
+        if (video_key.session == key.session && video_key.epoch == key.epoch)
+            snapshot.video_active = false;
+        pthread_mutex_unlock(&state_lock);
+    } else if (phase == IHS_StreamVideoFlushDecoder)
+        sl_video_discard_buffers(video, key);
 }
 void sl_media_video_stop_tracked(IHS_Session *session, const IHS_VideoEpochInfo *epoch) {
     (void)session;
@@ -1086,79 +1153,61 @@ bool sl_media_video_clean(void) {
     return sl_video_clean(video);
 }
 
-int stream_media_audio_start(IHS_Session *session, const IHS_StreamAudioConfig *config) {
+int stream_media_audio_prepare(IHS_Session *session, const IHS_StreamAudioConfig *config) {
     (void)session;
-    if (config == NULL) {
-        media_set_error("audio start missing config");
+    if (!config || !sdl_ready) {
+        media_set_error("audio prepare before SDL init or without config");
         return -1;
     }
-    if (!sdl_ready) {
-        media_set_error("audio start before SDL media init");
+    /* The official player opens from the OUTER message before codec parsing.
+     * Mono/stereo are this platform backend's supported device geometry. */
+    if (!config->frequency || config->frequency > INT_MAX || !config->channels ||
+        config->channels > 2) {
+        media_set_error("unsupported audio device format: freq=%u channels=%u", config->frequency,
+                        config->channels);
         return -1;
     }
-    if (config->codec != IHS_StreamAudioCodecOpus) {
-        media_set_error("unsupported audio codec=%d", (int)config->codec);
-        return -1;
-    }
-    if (config->channels == 0 || config->channels > 2) {
-        media_set_error("unsupported audio channels=%u", config->channels);
-        return -1;
-    }
-    if (!opus_rate_supported(config->frequency)) {
-        media_set_error("unsupported Opus audio frequency=%u", config->frequency);
-        return -1;
-    }
-
-    int opus_err = OPUS_OK;
-    OpusDecoder *decoder =
-        opus_decoder_create((opus_int32)config->frequency, (int)config->channels, &opus_err);
-    if (decoder == NULL || opus_err != OPUS_OK) {
-        media_set_error("opus_decoder_create: %s", opus_strerror(opus_err));
-        return -1;
-    }
-
-    SDL_AudioSpec want;
-    SDL_AudioSpec have;
+    SDL_AudioSpec want, have;
     SDL_zero(want);
     SDL_zero(have);
     want.freq = (int)config->frequency;
-    want.format = AUDIO_S16LSB;
+    want.format = AUDIO_S16LSB; /* SDL2 boundary; jitter and codec remain float. */
     want.channels = (Uint8)config->channels;
 #if __SWITCH__
-    want.samples = 960; /* Restore the device-tested pre-feedback Switch request. */
+    want.samples = 960;
 #else
-    want.samples = 1024; /* Portable SDL/dummy requires power-of-two blocks. */
+    want.samples = 1024;
 #endif
-    want.callback = NULL;
+    want.callback = audio_device_callback;
 
     pthread_mutex_lock(&audio_lock);
-    sl_audio_suspend(); /* Close the UI device before opening the stream device. */
+    /* Join an existing stream before resetting the shared UI mixer voices. */
     audio_stop_locked();
+    sl_audio_suspend();
+    audio_frequency = want.freq;
+    audio_channels = want.channels;
+    if (!sl_audio_jitter_init(&audio_jitter, want.freq, want.channels)) {
+        sl_audio_init();
+        pthread_mutex_unlock(&audio_lock);
+        media_set_error("audio jitter allocation failed");
+        return -1;
+    }
     SDL_AudioDeviceID device =
         SDL_OpenAudioDevice(NULL, 0, &want, &have, SDL_AUDIO_ALLOW_SAMPLES_CHANGE);
-    if (device == 0) {
+    if (!device || have.freq != want.freq || have.format != want.format ||
+        have.channels != want.channels) {
+        if (device)
+            SDL_CloseAudioDevice(device);
+        /* Original BOpenAudio retains the new jitter even on SDL open failure. */
         sl_audio_init();
         pthread_mutex_unlock(&audio_lock);
-        media_set_error("SDL_OpenAudioDevice: %s", SDL_GetError());
-        opus_decoder_destroy(decoder);
+        update_audio_snapshot();
+        media_set_error("SDL audio device open/format failed: %s", SDL_GetError());
         return -1;
     }
-    if (have.freq != want.freq || have.format != want.format || have.channels != want.channels) {
-        media_set_error("SDL audio format mismatch: got %dHz fmt=0x%x ch=%u", have.freq,
-                        (unsigned)have.format, (unsigned)have.channels);
-        SDL_CloseAudioDevice(device);
-        sl_audio_init();
-        pthread_mutex_unlock(&audio_lock);
-        opus_decoder_destroy(decoder);
-        return -1;
-    }
-
-    audio_decoder = decoder;
     audio_device = device;
-    audio_frequency = have.freq;
-    audio_channels = have.channels;
-    audio_codec = config->codec;
-    audio_active = true;
+    audio_decode_frequency = config->frequency;
+    audio_decode_channels = config->channels;
     audio_frames_total = 0;
     audio_bytes_total = 0;
     audio_decoded_samples_total = 0;
@@ -1166,14 +1215,105 @@ int stream_media_audio_start(IHS_Session *session, const IHS_StreamAudioConfig *
     audio_decode_errors_total = 0;
     SDL_PauseAudioDevice(audio_device, 0);
     pthread_mutex_unlock(&audio_lock);
-
     update_audio_snapshot();
-    media_logf("audio start: codec=Opus freq=%d channels=%d samples=%u codecData=%zu", have.freq,
-               have.channels, have.samples, config->codecDataLen);
     return 0;
 }
 
-int stream_media_audio_submit(IHS_Session *session, IHS_Buffer *data) {
+int stream_media_audio_start_decoder(IHS_Session *session, const IHS_StreamAudioConfig *config) {
+    (void)session;
+    if (!config || !sdl_ready)
+        return -1;
+    uint32_t frequency = config->frequency, channels = config->channels;
+    if (config->codec == IHS_StreamAudioCodecRaw) {
+        CAudioFormat *format =
+            config->codecData && config->codecDataLen
+                ? caudio_format__unpack(NULL, config->codecDataLen, config->codecData)
+                : NULL;
+        if (!format) {
+            media_set_error("invalid Raw audio format");
+            return -1; /* Do not reproduce unsafe zero/invalid PCM dimensions. */
+        }
+        frequency = format->frequency;
+        channels = format->channels;
+        caudio_format__free_unpacked(format, NULL);
+    }
+    if ((config->codec != IHS_StreamAudioCodecRaw && config->codec != IHS_StreamAudioCodecOpus) ||
+        !channels || channels > 2 || !frequency || frequency > INT_MAX)
+        return -1;
+
+    pthread_mutex_lock(&audio_lock);
+    if (!audio_device) {
+        pthread_mutex_unlock(&audio_lock);
+        return -1;
+    }
+    audio_decoder_stop_locked();
+    audio_decode_frequency = frequency;
+    audio_decode_channels = channels;
+    audio_codec = config->codec;
+    if (config->codec == IHS_StreamAudioCodecOpus) {
+        int error = OPUS_OK;
+        const unsigned char mapping[2] = {0, 1};
+        audio_decoder = opus_multistream_decoder_create((opus_int32)frequency, (int)channels, 1,
+                                                        channels == 2, mapping, &error);
+        /* The original retains its decoder object/active flag when the
+         * embedded codec allocation fails. Such frames are silently dropped. */
+        if (error != OPUS_OK && audio_decoder) {
+            opus_multistream_decoder_destroy(audio_decoder);
+            audio_decoder = NULL;
+        }
+    }
+    audio_active = true;
+    pthread_mutex_unlock(&audio_lock);
+    update_audio_snapshot();
+    return 0;
+}
+
+/* Combined entry retained for direct backend callers. The protocol callback
+ * wiring uses prepare and start_decoder as two distinct original stages. */
+int stream_media_audio_start(IHS_Session *session, const IHS_StreamAudioConfig *config) {
+    if (stream_media_audio_prepare(session, config) != 0)
+        return -1;
+    return stream_media_audio_start_decoder(session, config);
+}
+
+static int audio_queue_pcm_locked(const float *pcm, int samples) {
+    pthread_mutex_lock(&audio_jitter_lock);
+    /* PutAudioFrame divides PCM bytes by the PLAYER's physical stride. */
+    int playback_samples = samples * audio_decode_channels / audio_channels;
+    sl_audio_jitter_push(&audio_jitter, pcm, playback_samples);
+    audio_queue_drops_total = audio_jitter.dropped;
+    pthread_mutex_unlock(&audio_jitter_lock);
+    audio_frames_total++;
+    audio_bytes_total += (uint64_t)samples * audio_decode_channels * sizeof(int16_t);
+    audio_decoded_samples_total += (uint32_t)samples;
+    return 0;
+}
+
+typedef struct audio_decode_context {
+    IHS_Buffer *packet;
+    char *error;
+} audio_decode_context;
+
+static int audio_decode_step(void *context, const sl_audio_decode_step *step) {
+    audio_decode_context *ctx = context;
+    const unsigned char *payload =
+        step->use_packet && ctx->packet->size ? IHS_BufferPointer(ctx->packet) : NULL;
+    opus_int32 size = step->use_packet ? (opus_int32)ctx->packet->size : 0;
+    int samples = opus_multistream_decode_float(audio_decoder, payload, size, audio_float_buf,
+                                                step->max_samples, step->fec);
+    if (samples < 0 || (step->max_samples == 480 && samples != 480)) {
+        /* Original asserts but can submit uninitialized PCM/resize a negative
+         * size. Preserve its decode sequence, never read invalid codec output. */
+        audio_decode_errors_total++;
+        if (audio_decode_errors_total <= 3 || audio_decode_errors_total % 60U == 0)
+            snprintf(ctx->error, 128, "opus_decode recovery: result=%d fec=%d", samples, step->fec);
+        return -1;
+    }
+    return audio_queue_pcm_locked(audio_float_buf, samples);
+}
+
+int stream_media_audio_submit_frame(IHS_Session *session, const IHS_StreamAudioFrameInfo *info,
+                                    IHS_Buffer *data) {
     (void)session;
     if (data == NULL) {
         return -1;
@@ -1182,46 +1322,53 @@ int stream_media_audio_submit(IHS_Session *session, IHS_Buffer *data) {
     char error[128] = "";
     int ret = 0;
     pthread_mutex_lock(&audio_lock);
-    if (!audio_active || audio_decoder == NULL || audio_device == 0) {
+    if (!audio_active || audio_device == 0) {
         pthread_mutex_unlock(&audio_lock);
         return 0;
     }
 
-    uint32_t queue_limit = audio_queue_limit_bytes(audio_frequency, audio_channels);
-    uint32_t queued = SDL_GetQueuedAudioSize(audio_device);
-    if (queue_limit > 0 && queued > queue_limit) {
-        SDL_ClearQueuedAudio(audio_device);
-        audio_queue_drops_total++;
-    }
-
     const unsigned char *payload =
         data->size > 0 ? (const unsigned char *)IHS_BufferPointer(data) : NULL;
-    int samples = opus_decode(audio_decoder, payload, (opus_int32)data->size, audio_decode_buf,
-                              AUDIO_MAX_OPUS_FRAME_SAMPLES, 0);
-    if (samples < 0) {
-        audio_decode_errors_total++;
-        ret = -1;
-        if (audio_decode_errors_total <= 3 || (audio_decode_errors_total % 60U) == 0U) {
-            snprintf(error, sizeof(error), "opus_decode: %s", opus_strerror(samples));
+    float *pcm = audio_float_buf;
+    if (audio_codec == IHS_StreamAudioCodecRaw) {
+        size_t stride = (size_t)audio_decode_channels * sizeof(int16_t);
+        if (data->size % stride || data->size > UINT32_MAX) {
+            pthread_mutex_unlock(&audio_lock);
+            media_set_error("misaligned or oversized Raw audio frame");
+            return -1;
         }
+        if (data->size / 2 > sizeof(audio_float_buf) / sizeof(float))
+            pcm = malloc(data->size / 2 * sizeof(float));
+        if (!pcm) {
+            pthread_mutex_unlock(&audio_lock);
+            media_set_error("Raw audio frame allocation failed");
+            return -1;
+        }
+        for (size_t i = 0; i < data->size / 2; ++i)
+            pcm[i] =
+                (float)(int16_t)((uint16_t)payload[2 * i] | (uint16_t)payload[2 * i + 1] << 8) /
+                32768.0f;
+        int samples = (int)(data->size / stride);
+        ret = audio_queue_pcm_locked(pcm, samples);
+    } else if (!audio_decoder) {
+        /* Original Opus DecodeFrame returns before recovery when codec=null. */
+        ret = 0;
+    } else if (data->size > INT32_MAX) {
+        ret = -1;
     } else {
-        uint32_t pcm_bytes =
-            (uint32_t)samples * (uint32_t)audio_channels * (uint32_t)sizeof(opus_int16);
-        if (atomic_load(&muted))
-            memset(audio_decode_buf, 0, pcm_bytes);
-        sl_audio_mix(audio_decode_buf, samples, audio_frequency, audio_channels);
-        if (pcm_bytes > 0 && SDL_QueueAudio(audio_device, audio_decode_buf, pcm_bytes) != 0) {
-            audio_decode_errors_total++;
-            ret = -1;
-            if (audio_decode_errors_total <= 3 || (audio_decode_errors_total % 60U) == 0U) {
-                snprintf(error, sizeof(error), "SDL_QueueAudio: %s", SDL_GetError());
-            }
+        audio_decode_context ctx = {.packet = data, .error = error};
+        if (info) {
+            ret = sl_audio_recovery_run(&audio_recovery, info->id, info->timestamp,
+                                        audio_decode_step, &ctx);
         } else {
-            audio_frames_total++;
-            audio_bytes_total += pcm_bytes;
-            audio_decoded_samples_total += (uint32_t)samples;
+            /* Compatibility entry for callers that do not have frame IDs. */
+            sl_audio_decode_step step = {.max_samples = AUDIO_MAX_OPUS_FRAME_SAMPLES,
+                                         .use_packet = true};
+            ret = audio_decode_step(&ctx, &step);
         }
     }
+    if (pcm != audio_float_buf)
+        free(pcm);
     pthread_mutex_unlock(&audio_lock);
 
     if (error[0] != '\0') {
@@ -1231,19 +1378,71 @@ int stream_media_audio_submit(IHS_Session *session, IHS_Buffer *data) {
     return ret;
 }
 
+int stream_media_audio_submit(IHS_Session *session, IHS_Buffer *data) {
+    return stream_media_audio_submit_frame(session, NULL, data);
+}
+
 void stream_media_audio_stop(IHS_Session *session) {
     (void)session;
     pthread_mutex_lock(&audio_lock);
-    bool had_audio = audio_active || audio_device != 0 || audio_decoder != NULL;
+    bool had_decoder = audio_active;
+    audio_decoder_stop_locked();
+    pthread_mutex_unlock(&audio_lock);
+    update_audio_snapshot();
+    if (had_decoder)
+        media_logf("audio decoder stopped; player retained");
+}
+
+void stream_media_audio_close(IHS_Session *session) {
+    (void)session;
+    pthread_mutex_lock(&audio_lock);
+    bool had_device = audio_device != 0, had_jitter = audio_jitter.ring != NULL;
     audio_stop_locked();
     if (!audio_shutting_down && sdl_ready)
         sl_audio_init();
     pthread_mutex_unlock(&audio_lock);
-
     update_audio_snapshot();
-    if (had_audio) {
-        media_logf("audio stopped");
-    }
+    if (had_device || had_jitter)
+        media_logf("audio player closed: device_joined=%d jitter_freed=%d", had_device, had_jitter);
+}
+
+void sl_media_end_stream_player(bool input_focus, bool hard, bool background) {
+    sl_player_teardown action = sl_player_owner_decide(input_focus, hard, background);
+    /* The original destructor calls Quit even when hard mode skips the first
+     * virtual Quit. One idempotent audio close supplies both normal-mode paths;
+     * UI/render ownership remains with this app's persistent media backend. */
+    if (action.request_quit || action.destroy_player)
+        stream_media_audio_close(NULL);
+}
+
+static int media_audio_prepare(IHS_Session *s, const IHS_StreamAudioConfig *c, void *context) {
+    (void)context;
+    return stream_media_audio_prepare(s, c);
+}
+static int media_audio_start(IHS_Session *s, const IHS_StreamAudioConfig *c, void *context) {
+    (void)context;
+    return stream_media_audio_start_decoder(s, c);
+}
+static int media_audio_submit(IHS_Session *s, IHS_Buffer *data, void *context) {
+    (void)context;
+    return stream_media_audio_submit(s, data);
+}
+static int media_audio_submit_frame(IHS_Session *s, const IHS_StreamAudioFrameInfo *info,
+                                    IHS_Buffer *data, void *context) {
+    (void)context;
+    return stream_media_audio_submit_frame(s, info, data);
+}
+static void media_audio_stop(IHS_Session *s, void *context) {
+    (void)context;
+    stream_media_audio_stop(s);
+}
+const IHS_StreamAudioCallbacks *sl_media_audio_callbacks(void) {
+    static const IHS_StreamAudioCallbacks callbacks = {.prepare = media_audio_prepare,
+                                                       .start = media_audio_start,
+                                                       .stop = media_audio_stop,
+                                                       .submit = media_audio_submit,
+                                                       .submitFrame = media_audio_submit_frame};
+    return &callbacks;
 }
 
 void sl_media_collect(void) {
@@ -1326,9 +1525,14 @@ void stream_media_present(void) {
     sl_gfx_counters before_video, after_video;
     sl_gfx_get_counters(gfx, &before_video);
 #endif
+    bool report_upload = candidate && (!NSL_GFX_DEKO || candidate->pixels->hw_frames_ctx == NULL);
     uint64_t upload_begin = media_monotonic_us();
+    if (report_upload)
+        IHS_FrameTicketUploadStage(candidate->ticket, false, upload_begin);
     bool drawn = frame && sl_gfx_video(gfx, frame);
     uint64_t upload_end = media_monotonic_us();
+    if (report_upload)
+        IHS_FrameTicketUploadStage(candidate->ticket, true, upload_end);
 #if NSL_DIAGNOSTICS
     sl_gfx_get_counters(gfx, &after_video);
 #endif
@@ -1470,15 +1674,15 @@ void stream_media_get_snapshot(stream_media_snapshot *out) {
 
     pthread_mutex_lock(&audio_lock);
     audio_snap_active = audio_active;
-    audio_snap_queued = audio_device != 0 ? SDL_GetQueuedAudioSize(audio_device) : 0;
+    audio_snap_queued = audio_queued_bytes_locked();
     audio_snap_frames = audio_frames_total;
     audio_snap_bytes = audio_bytes_total;
     audio_snap_samples = audio_decoded_samples_total;
     audio_snap_drops = audio_queue_drops_total;
     audio_snap_errors = audio_decode_errors_total;
     audio_snap_codec = (int)audio_codec;
-    audio_snap_channels = audio_channels;
-    audio_snap_frequency = audio_frequency;
+    audio_snap_channels = audio_decode_channels;
+    audio_snap_frequency = audio_decode_frequency;
     pthread_mutex_unlock(&audio_lock);
 
     pthread_mutex_lock(&state_lock);
@@ -1611,7 +1815,7 @@ int stream_media_video_start(IHS_Session *session, const IHS_StreamVideoConfig *
     if (!test_tracker || !IHS_FrameTrackerOpenEpoch(test_tracker, 1))
         return -1;
     IHS_VideoEpochInfo epoch = {test_session_id, 1};
-    return sl_media_video_start_tracked(session, &epoch, config);
+    return sl_media_video_start_tracked(session, &epoch, config) == 0 ? 0 : -1;
 }
 IHS_StreamVideoSubmitResult stream_media_video_submit(IHS_Session *session, uint16_t id,
                                                       IHS_Buffer *data,

@@ -68,6 +68,7 @@ typedef enum sl_action {
     SL_SET_QUALITY,
     SL_SET_BANDWIDTH,
     SL_SOUND,
+    SL_FEC,
     SL_RETRY,
     SL_UPDATE_CHECK,
     SL_CONFIRM_UPDATE,
@@ -93,6 +94,7 @@ typedef struct sl_command {
     uint64_t game_id;
     uint32_t quality;
     uint32_t bitrate_kbps;
+    bool unreliable_fec;
     sl_language language;
     bool update_check;
     char text[64];
@@ -135,6 +137,7 @@ typedef enum sl_ui_cue {
     SL_CUE_COUNT
 } sl_ui_cue;
 typedef struct sl_ui_model {
+    uint64_t settings_revision;
     sl_ui_cue cue;
     uint64_t cue_serial, move_sound_at;
     sl_auth_store store;

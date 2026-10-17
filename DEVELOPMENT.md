@@ -116,7 +116,7 @@ runtime 执行协议 stop/join 并在外部使用归零后回收关闭的 decode
 | SDL2 | 系统 2.32.4 / `switch-sdl2` | zlib | 桌面渲染 / 音频 / 输入（Switch 图形使用 deko） | M3 起 |
 | SDL2_ttf | 系统 2.24.0 / devkitPro `switch-sdl2_ttf` | zlib | 中文与平台共享字体、字形缓存 | M5 |
 | mbedTLS | 系统 2.28 / `switch-mbedtls` | Apache-2.0 | IHSlib 加密后端 | M2 |
-| libopus | 系统 1.5.2 / `switch-libopus` | BSD-3 | 音频解码 | M4 |
+| libopus | 官方1.5.2归档，SHA256固定，fixed-point构建 | BSD-3 | multistream float解码及按帧ID恢复，见协议参考§72 | M4 |
 | libcurl | 系统 / devkitPro switch-curl 7.69.1-5（libnx SSL） | curl | 封面 HTTPS | M5 |
 | libjpeg-turbo | 系统 / devkitPro 2.1.2-2 | BSD/IJG | 后台 JPEG 解码 | M5 |
 | jsmn | vendored 25647e6 | MIT | 有界商店 JSON 解析 | M5 |
@@ -260,7 +260,8 @@ D-051 硬件帧直显的资源依赖补充：session stop 不等待主线程 GPU
 | devkitPro pacman | 6.0.2 | 经官方 apt 仓库安装 |
 | devkitA64 gcc | 16.1.0 | `/opt/devkitpro/devkitA64` |
 | libnx / switch-dev | 当前最新 | `dkp-pacman -S switch-dev` |
-| switch-portlibs | 含 SDL2/ttf/mbedtls 2.28/opus 1.3 | `dkp-pacman -S switch-portlibs` |
+| switch-portlibs | 含 SDL2/ttf/mbedtls 2.28 | `dkp-pacman -S switch-portlibs` |
+| Opus | 1.5.2，fixed-point，multistream float API | `cmake/Opus.cmake`核验官方归档SHA256后源码构建，见协议参考§72 |
 | SDL2 (desktop) | 2.32.4 | apt |
 | FFmpeg (desktop) | libavcodec 61.19 | apt |
 | libcurl | 系统 / devkitPro switch-curl 7.69.1-5（libnx SSL） | curl | 封面 HTTPS | M5 |

@@ -16,7 +16,7 @@ static struct {
     double at;
 } voices[4];
 static unsigned next_voice;
-/* UI callback and stream submit are mutually exclusive owners. The device is
+/* UI callback and stream device callback are mutually exclusive owners. The device is
  * closed/joined before media transfers ownership under audio_lock. */
 void sl_audio_mix(int16_t *out, int frames, int rate, int channels) {
     bool audible = atomic_load(&enabled);

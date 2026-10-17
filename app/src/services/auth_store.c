@@ -67,12 +67,10 @@ bool sl_auth_save(const sl_auth_store *s, const char *dir) {
     snprintf(tmp, sizeof(tmp), "%s/profile.tmp", dir);
     snprintf(backup, sizeof(backup), "%s/profile.bak", dir);
     disk_store d = {0};
-    memcpy(d.magic, "NSLUI04", 8);
-    d.version = 4;
+    memcpy(d.magic, "NSLUI05", 8);
+    d.version = 5;
     d.size = sizeof(d);
     d.data = *s;
-    if (!sl_bitrate_valid(d.data.bitrate_kbps))
-        d.data.bitrate_kbps = 6000;
     for (int i = 0; i < d.data.registry.count; ++i) {
         d.data.registry.hosts[i].observed = false;
         d.data.registry.hosts[i].last_seen = 0;
@@ -146,16 +144,29 @@ int sl_auth_load(sl_auth_store *s, const char *dir) {
                 d.data.bitrate_kbps = old.data.bitrate_kbps;
             }
         } else if (ok && !memcmp(magic, "NSLUI04", 8)) {
+            disk_store_v4 old;
+            ok = fread(&old, 1, sizeof(old), f) == sizeof(old) && fgetc(f) == EOF;
+            ok = ok && old.version == 4 && old.size == sizeof(old) &&
+                 old.checksum == checksum(&old.data, sizeof(old.data));
+            if (ok) {
+                d.data.device_id = old.data.device_id;
+                memcpy(d.data.secret, old.data.secret, sizeof(d.data.secret));
+                memcpy(d.data.device_name, old.data.device_name, sizeof(d.data.device_name));
+                d.data.registry = old.data.registry;
+                d.data.quality = old.data.quality;
+                d.data.sound = old.data.sound;
+                d.data.bitrate_kbps = old.data.bitrate_kbps;
+            }
+        } else if (ok && !memcmp(magic, "NSLUI05", 8)) {
             ok = fread(&d, 1, sizeof(d), f) == sizeof(d) && fgetc(f) == EOF;
-            ok = ok && d.version == 4 && d.size == sizeof(d) &&
+            ok = ok && d.version == 5 && d.size == sizeof(d) &&
                  d.checksum == checksum(&d.data, sizeof(d.data));
         } else {
             ok = false;
         }
         fclose(f);
         if (!ok || !d.data.device_id || d.data.registry.count < 0 ||
-            d.data.registry.count > SL_HOST_LIMIT || d.data.quality > 2 ||
-            !sl_bitrate_valid(d.data.bitrate_kbps))
+            d.data.registry.count > SL_HOST_LIMIT || d.data.quality > 2)
             return -2;
         if (recovered && rename(backup, path)) {
             store_error("recover");

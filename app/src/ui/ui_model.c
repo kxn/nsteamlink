@@ -109,8 +109,6 @@ void sl_ui_release_games(sl_ui_model *m, float velocity) {
 void sl_ui_init(sl_ui_model *m, const sl_auth_store *s) {
     memset(m, 0, sizeof(*m));
     m->store = *s;
-    if (!sl_bitrate_valid(m->store.bitrate_kbps))
-        m->store.bitrate_kbps = 6000;
     m->page = SL_HOME;
     m->network_ok = true;
     m->update_check = true;
@@ -182,6 +180,7 @@ static void emit(sl_ui_model *m, sl_command_type type) {
     m->command.generation = m->generation;
     m->command.quality = m->store.quality;
     m->command.bitrate_kbps = m->store.bitrate_kbps;
+    m->command.unreliable_fec = m->store.unreliable_fec;
     m->command.language = sl_i18n_language();
     m->command.update_check = m->update_check;
 }
@@ -345,7 +344,7 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
     case SL_OPEN_BANDWIDTH: {
         push(m, SL_BANDWIDTH);
         const uint32_t rates[] = {4000, 6000, 10000, 20000};
-        m->focus = 101;
+        m->focus = sl_bitrate_valid(m->store.bitrate_kbps) ? 101 : 9;
         for (int i = 0; i < 4; ++i)
             if (m->store.bitrate_kbps == rates[i])
                 m->focus = 100 + i;
@@ -484,6 +483,12 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
     case SL_SOUND:
         m->store.sound = !m->store.sound;
         emit(m, SL_CMD_SAVE);
+        break;
+    case SL_FEC:
+        if (m->page == SL_SETTINGS) {
+            m->store.unreliable_fec = !m->store.unreliable_fec;
+            emit(m, SL_CMD_SAVE);
+        }
         break;
     case SL_RETRY:
         if (m->page == SL_ERROR && !m->ending_game) {

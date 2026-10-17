@@ -9,13 +9,33 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Same queue item layout as session.c; no worker/socket is started. */
-struct IHS_QueueItem {
-    IHS_SessionPacket packet;
-    bool reliable;
-};
-
 static unsigned violations;
+static unsigned feedbackCount;
+static uint32_t now = 1000000;
+static const char *phase;
+uint32_t __wrap_IHS_SessionPacketTimestamp(void) { return now; }
+bool __wrap_IHS_BaseSend(IHS_Base *base, IHS_SocketAddress address, const IHS_Buffer *wire) {
+    (void)base; (void)address;
+    IHS_Buffer copy = IHS_BUFFER_INIT(2048, 2048);
+    IHS_BufferAppendMem(&copy, IHS_BufferPointer(wire), wire->size);
+    IHS_SessionPacket p;
+    assert(IHS_SessionPacketParse(&p, &copy) == IHS_SessionPacketResultOK);
+    const uint8_t *b = IHS_BufferPointer(&p.body);
+    if (p.header.type == IHS_SessionPacketTypeNACK) {
+        assert(p.body.size >= 7);
+        printf("%s: NACK base=%u contiguous=%u (required 100), mask=%02x\n", phase,
+               p.header.packetId, b[4] | (b[5] << 8), b[6]);
+        violations += (b[4] | (b[5] << 8)) != 100 || p.header.packetId != 102 || b[6] != 1;
+        ++feedbackCount;
+    } else if (p.header.type == IHS_SessionPacketTypeACK) {
+        unsigned echo = b[0] | (unsigned)b[1]<<8 | (unsigned)b[2]<<16 | (unsigned)b[3]<<24;
+        printf("%s: ACK id=%u echo=%u (peer timestamp=123456)\n", phase, p.header.packetId, echo);
+        violations += echo != 123456;
+    }
+    IHS_SessionPacketClear(&p, true);
+    IHS_BufferClear(&copy, true);
+    return true;
+}
 
 static void init_packet(IHS_SessionPacket *p, int type, unsigned id) {
     memset(p, 0, sizeof(*p));
@@ -26,9 +46,8 @@ static void init_packet(IHS_SessionPacket *p, int type, unsigned id) {
 }
 static IHS_Session *session_new(void) {
     IHS_Session *s = IHS_TestSessionCreate();
+    s->state.connectionState = IHS_SessionConnectionStateHandshaking;
     IHS_TimerTaskStopImmediate(s->retransmission.timer);
-    IHS_SessionChannelControl *c = (void *) IHS_SessionChannelFor(s, 1);
-    IHS_TimerTaskStopImmediate(c->feedbackTimer);
     return s;
 }
 static void nack_receive(void) {
@@ -41,6 +60,7 @@ static void nack_receive(void) {
         assert(IHS_RetransmissionTrack(&s->retransmission, &p, 1));
         IHS_SessionPacketClear(&p, true);
     }
+    IHS_RetransmissionActivate(&s->retransmission, 1, 100, 3);
     IHS_SessionPacket nack;
     init_packet(&nack, IHS_SessionPacketTypeNACK, 101);
     /* Official layout: timestamp, last contiguous ID, presence bitmap
@@ -52,46 +72,31 @@ static void nack_receive(void) {
     printf("RX NACK: missing packet 101 retained=%d (required 1); outstanding=%u (required 1)\n",
            IHS_RetransmissionIsTracked(&s->retransmission, 1, 101, 0),
            s->retransmission.stats.outstanding);
-    violations += !IHS_RetransmissionIsTracked(&s->retransmission, 1, 101, 0);
+    violations += !IHS_RetransmissionIsTracked(&s->retransmission, 1, 101, 0) || s->retransmission.stats.outstanding != 1;
     IHS_SessionPacketClear(&nack, true);
     IHS_SessionDestroy(s);
-}
-static void drain(IHS_Session *s, const char *phase) {
-    IHS_QueueItem *q;
-    while ((q = IHS_QueuePoll(s->sendQueue))) {
-        IHS_SessionPacket *p = &q->packet;
-        if (p->header.type == IHS_SessionPacketTypeNACK) {
-            const uint8_t *b = IHS_BufferPointer(&p->body);
-            printf("%s: NACK base=%u contiguous=%u (required 100), mask=%02x\n", phase,
-                   p->header.packetId, b[4] | (b[5] << 8), b[6]);
-            violations += (b[4] | (b[5] << 8)) != 100;
-        }
-        if (p->header.type == IHS_SessionPacketTypeACK) {
-            const uint8_t *b = IHS_BufferPointer(&p->body);
-            unsigned echo = b[0] | (b[1] << 8) | (b[2] << 16) | ((unsigned)b[3] << 24);
-            printf("%s: ACK id=%u echo=%u (peer timestamp=123456)\n", phase, p->header.packetId,
-                   echo);
-        }
-        IHS_SessionPacketClear(p, true);
-        IHS_QueueItemFree(q);
-    }
 }
 static void nack_send(void) {
     IHS_Session *s = session_new();
     IHS_SessionChannel *c = IHS_SessionChannelFor(s, 1);
-    IHS_SessionChannelControl *control = (void *) c;
-    IHS_SessionPacketsWindowDestroy(control->framePacketWindow);
+    IHS_ReliableChannel *control = IHS_SessionReliableGet(s, c->id);
+    if (control->framePacketWindow) IHS_SessionPacketsWindowDestroy(control->framePacketWindow);
     control->framePacketWindow = IHS_SessionPacketsWindowCreateReliable(320, 100);
     for (unsigned id = 100; id <= 102; id += 2) {
         IHS_SessionPacket p;
         init_packet(&p, IHS_SessionPacketTypeReliable, id);
         p.header.sendTimestamp = 123456;
+        p.header.receiveTimestamp = now;
         /* ClientHandshake is plaintext and has no incoming client handler. */
         IHS_BufferAppendUInt8(&p.body, k_EStreamControlClientHandshake);
+        phase = id == 100 ? "TX feedback after 100" : "TX feedback after 102 (101 missing)";
         c->cls->received(c, &p);
-        drain(s, id == 100 ? "TX feedback after 100" : "TX feedback after 102 (101 missing)");
+        IHS_SessionReliableUpdateChannel(s, 1);
+        now += 66;
+        IHS_SessionReliableUpdateChannel(s, 1);
         IHS_SessionPacketClear(&p, true);
     }
+    violations += feedbackCount != 1;
     IHS_SessionDestroy(s);
 }
 static void diagnostics_capacity(void) {

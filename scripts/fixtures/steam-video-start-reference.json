@@ -1,0 +1,4058 @@
+{
+  "binary_sha256": "50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e",
+  "boundary": "Execute official video Start/Stop dispatch, prepare gate, factory and pending.\n\nOriginal control FIFO/Frame/protobuf, handlers, standalone factory/constructors,\nSetUseThreads/size/OnStreamStarted and queue/pending replay execute. Player prepare\nand Android backend initialization results, OS scheduling, packet refs/libc and\nfinal IO are adapters. No real SDL window, physical decoder, all Java/platform\nfactories or Steam/Native resource proof is claimed.\n",
+  "cases": [
+    {
+      "input": {
+        "prepare": false,
+        "ready": false,
+        "threads": false
+      },
+      "actions": [
+        [
+          "C",
+          52,
+          "080320800a28d005"
+        ]
+      ],
+      "states": [
+        {
+          "channel": 3,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              false
+            ]
+          ],
+          "trace": [],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        }
+      ]
+    },
+    {
+      "input": {
+        "prepare": false,
+        "ready": false,
+        "threads": false
+      },
+      "actions": [
+        [
+          "C",
+          52,
+          "0803100420800a28d005"
+        ]
+      ],
+      "states": [
+        {
+          "channel": 3,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              false
+            ]
+          ],
+          "trace": [],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        }
+      ]
+    },
+    {
+      "input": {
+        "prepare": false,
+        "ready": false,
+        "threads": true
+      },
+      "actions": [
+        [
+          "C",
+          52,
+          "080320800a28d005"
+        ]
+      ],
+      "states": [
+        {
+          "channel": 3,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              false
+            ]
+          ],
+          "trace": [],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        }
+      ]
+    },
+    {
+      "input": {
+        "prepare": false,
+        "ready": false,
+        "threads": true
+      },
+      "actions": [
+        [
+          "C",
+          52,
+          "0803100420800a28d005"
+        ]
+      ],
+      "states": [
+        {
+          "channel": 3,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              false
+            ]
+          ],
+          "trace": [],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        }
+      ]
+    },
+    {
+      "input": {
+        "prepare": false,
+        "ready": true,
+        "threads": false
+      },
+      "actions": [
+        [
+          "C",
+          52,
+          "080320800a28d005"
+        ]
+      ],
+      "states": [
+        {
+          "channel": 3,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              false
+            ]
+          ],
+          "trace": [],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        }
+      ]
+    },
+    {
+      "input": {
+        "prepare": false,
+        "ready": true,
+        "threads": false
+      },
+      "actions": [
+        [
+          "C",
+          52,
+          "0803100420800a28d005"
+        ]
+      ],
+      "states": [
+        {
+          "channel": 3,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              false
+            ]
+          ],
+          "trace": [],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        }
+      ]
+    },
+    {
+      "input": {
+        "prepare": false,
+        "ready": true,
+        "threads": true
+      },
+      "actions": [
+        [
+          "C",
+          52,
+          "080320800a28d005"
+        ]
+      ],
+      "states": [
+        {
+          "channel": 3,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              false
+            ]
+          ],
+          "trace": [],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        }
+      ]
+    },
+    {
+      "input": {
+        "prepare": false,
+        "ready": true,
+        "threads": true
+      },
+      "actions": [
+        [
+          "C",
+          52,
+          "0803100420800a28d005"
+        ]
+      ],
+      "states": [
+        {
+          "channel": 3,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              false
+            ]
+          ],
+          "trace": [],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        }
+      ]
+    },
+    {
+      "input": {
+        "prepare": true,
+        "ready": false,
+        "threads": false
+      },
+      "actions": [
+        [
+          "C",
+          52,
+          "080320800a28d005"
+        ]
+      ],
+      "states": [
+        {
+          "channel": 3,
+          "decoder": {
+            "active": true,
+            "backend": false,
+            "threads": false,
+            "codec": 4,
+            "size": [
+              1280,
+              720
+            ],
+            "codec_data": "",
+            "queued": []
+          },
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              true
+            ]
+          ],
+          "trace": [
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              false
+            ],
+            [
+              "accel_dtor"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "free",
+              "new_backend_1"
+            ]
+          ],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "decoder_start"
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        }
+      ]
+    },
+    {
+      "input": {
+        "prepare": true,
+        "ready": false,
+        "threads": false
+      },
+      "actions": [
+        [
+          "C",
+          52,
+          "0803100420800a28d005"
+        ]
+      ],
+      "states": [
+        {
+          "channel": 3,
+          "decoder": {
+            "active": true,
+            "backend": false,
+            "threads": false,
+            "codec": 4,
+            "size": [
+              1280,
+              720
+            ],
+            "codec_data": "",
+            "queued": []
+          },
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              true
+            ]
+          ],
+          "trace": [
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              false
+            ],
+            [
+              "accel_dtor"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "free",
+              "new_backend_1"
+            ]
+          ],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "decoder_start"
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        }
+      ]
+    },
+    {
+      "input": {
+        "prepare": true,
+        "ready": false,
+        "threads": true
+      },
+      "actions": [
+        [
+          "C",
+          52,
+          "080320800a28d005"
+        ]
+      ],
+      "states": [
+        {
+          "channel": 3,
+          "decoder": {
+            "active": true,
+            "backend": false,
+            "threads": true,
+            "codec": 4,
+            "size": [
+              1280,
+              720
+            ],
+            "codec_data": "",
+            "queued": []
+          },
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              true
+            ]
+          ],
+          "trace": [
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              false
+            ],
+            [
+              "accel_dtor"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "free",
+              "new_backend_1"
+            ],
+            [
+              "thread_start"
+            ]
+          ],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        }
+      ]
+    },
+    {
+      "input": {
+        "prepare": true,
+        "ready": false,
+        "threads": true
+      },
+      "actions": [
+        [
+          "C",
+          52,
+          "0803100420800a28d005"
+        ]
+      ],
+      "states": [
+        {
+          "channel": 3,
+          "decoder": {
+            "active": true,
+            "backend": false,
+            "threads": true,
+            "codec": 4,
+            "size": [
+              1280,
+              720
+            ],
+            "codec_data": "",
+            "queued": []
+          },
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              true
+            ]
+          ],
+          "trace": [
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              false
+            ],
+            [
+              "accel_dtor"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "free",
+              "new_backend_1"
+            ],
+            [
+              "thread_start"
+            ]
+          ],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        }
+      ]
+    },
+    {
+      "input": {
+        "prepare": true,
+        "ready": true,
+        "threads": false
+      },
+      "actions": [
+        [
+          "C",
+          52,
+          "080320800a28d005"
+        ]
+      ],
+      "states": [
+        {
+          "channel": 3,
+          "decoder": {
+            "active": true,
+            "backend": true,
+            "threads": false,
+            "codec": 4,
+            "size": [
+              1280,
+              720
+            ],
+            "codec_data": "",
+            "queued": []
+          },
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              true
+            ]
+          ],
+          "trace": [
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              true
+            ],
+            [
+              "decoder_info",
+              "Android texture hardware decoding",
+              1
+            ]
+          ],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "decoder_start"
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        }
+      ]
+    },
+    {
+      "input": {
+        "prepare": true,
+        "ready": true,
+        "threads": false
+      },
+      "actions": [
+        [
+          "C",
+          52,
+          "0803100420800a28d005"
+        ]
+      ],
+      "states": [
+        {
+          "channel": 3,
+          "decoder": {
+            "active": true,
+            "backend": true,
+            "threads": false,
+            "codec": 4,
+            "size": [
+              1280,
+              720
+            ],
+            "codec_data": "",
+            "queued": []
+          },
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              true
+            ]
+          ],
+          "trace": [
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              true
+            ],
+            [
+              "decoder_info",
+              "Android texture hardware decoding",
+              1
+            ]
+          ],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "decoder_start"
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        }
+      ]
+    },
+    {
+      "input": {
+        "prepare": true,
+        "ready": true,
+        "threads": true
+      },
+      "actions": [
+        [
+          "C",
+          52,
+          "080320800a28d005"
+        ]
+      ],
+      "states": [
+        {
+          "channel": 3,
+          "decoder": {
+            "active": true,
+            "backend": true,
+            "threads": true,
+            "codec": 4,
+            "size": [
+              1280,
+              720
+            ],
+            "codec_data": "",
+            "queued": []
+          },
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              true
+            ]
+          ],
+          "trace": [
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              true
+            ],
+            [
+              "decoder_info",
+              "Android texture hardware decoding",
+              1
+            ],
+            [
+              "thread_start"
+            ]
+          ],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        }
+      ]
+    },
+    {
+      "input": {
+        "prepare": true,
+        "ready": true,
+        "threads": true
+      },
+      "actions": [
+        [
+          "C",
+          52,
+          "0803100420800a28d005"
+        ]
+      ],
+      "states": [
+        {
+          "channel": 3,
+          "decoder": {
+            "active": true,
+            "backend": true,
+            "threads": true,
+            "codec": 4,
+            "size": [
+              1280,
+              720
+            ],
+            "codec_data": "",
+            "queued": []
+          },
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              true
+            ]
+          ],
+          "trace": [
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              true
+            ],
+            [
+              "decoder_info",
+              "Android texture hardware decoding",
+              1
+            ],
+            [
+              "thread_start"
+            ]
+          ],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        }
+      ]
+    },
+    {
+      "input": {
+        "prepare": false,
+        "ready": false,
+        "threads": true
+      },
+      "actions": [
+        [
+          "M",
+          3,
+          1,
+          1000000,
+          1000010,
+          1000020,
+          "0000180000000011223344"
+        ],
+        [
+          "C",
+          52,
+          "080310041a046162636420800a28d005"
+        ],
+        [
+          "M",
+          3,
+          2,
+          1000000,
+          1000010,
+          1000020,
+          "0000180000000011223344"
+        ],
+        [
+          "C",
+          52,
+          "08041a046566676820800f28b808"
+        ],
+        [
+          "M",
+          4,
+          3,
+          1000000,
+          1000010,
+          1000020,
+          "0000180000000011223344"
+        ],
+        [
+          "C",
+          53,
+          ""
+        ],
+        [
+          "C",
+          53,
+          ""
+        ]
+      ],
+      "states": [
+        {
+          "channel": 0,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [
+            {
+              "kind": 5,
+              "channel": 3,
+              "fragment": 0,
+              "id": 0,
+              "sent": 1000010,
+              "first": 1000020,
+              "received": 1000020,
+              "body": "01010040420f000000000000000000180000000011223344"
+            }
+          ],
+          "steps": [],
+          "trace": [],
+          "assertions": [],
+          "events": [],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 65
+          }
+        },
+        {
+          "channel": 3,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              false
+            ]
+          ],
+          "trace": [],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        },
+        {
+          "channel": 3,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              false
+            ]
+          ],
+          "trace": [],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        },
+        {
+          "channel": 4,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              false
+            ],
+            [
+              "prepare",
+              1920,
+              1080,
+              false
+            ]
+          ],
+          "trace": [],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "delay",
+              4,
+              6553
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553,
+            "4": 6553
+          }
+        },
+        {
+          "channel": 4,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              false
+            ],
+            [
+              "prepare",
+              1920,
+              1080,
+              false
+            ]
+          ],
+          "trace": [],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "delay",
+              4,
+              6553
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553,
+            "4": 6553
+          }
+        },
+        {
+          "channel": 0,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              false
+            ],
+            [
+              "prepare",
+              1920,
+              1080,
+              false
+            ]
+          ],
+          "trace": [],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "delay",
+              4,
+              6553
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553,
+            "4": 6553
+          }
+        },
+        {
+          "channel": 0,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              false
+            ],
+            [
+              "prepare",
+              1920,
+              1080,
+              false
+            ]
+          ],
+          "trace": [],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "delay",
+              4,
+              6553
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553,
+            "4": 6553
+          }
+        }
+      ]
+    },
+    {
+      "input": {
+        "prepare": false,
+        "ready": true,
+        "threads": true
+      },
+      "actions": [
+        [
+          "M",
+          3,
+          1,
+          1000000,
+          1000010,
+          1000020,
+          "0000180000000011223344"
+        ],
+        [
+          "C",
+          52,
+          "080310041a046162636420800a28d005"
+        ],
+        [
+          "M",
+          3,
+          2,
+          1000000,
+          1000010,
+          1000020,
+          "0000180000000011223344"
+        ],
+        [
+          "C",
+          52,
+          "08041a046566676820800f28b808"
+        ],
+        [
+          "M",
+          4,
+          3,
+          1000000,
+          1000010,
+          1000020,
+          "0000180000000011223344"
+        ],
+        [
+          "C",
+          53,
+          ""
+        ],
+        [
+          "C",
+          53,
+          ""
+        ]
+      ],
+      "states": [
+        {
+          "channel": 0,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [
+            {
+              "kind": 5,
+              "channel": 3,
+              "fragment": 0,
+              "id": 0,
+              "sent": 1000010,
+              "first": 1000020,
+              "received": 1000020,
+              "body": "01010040420f000000000000000000180000000011223344"
+            }
+          ],
+          "steps": [],
+          "trace": [],
+          "assertions": [],
+          "events": [],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 65
+          }
+        },
+        {
+          "channel": 3,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              false
+            ]
+          ],
+          "trace": [],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        },
+        {
+          "channel": 3,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              false
+            ]
+          ],
+          "trace": [],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        },
+        {
+          "channel": 4,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              false
+            ],
+            [
+              "prepare",
+              1920,
+              1080,
+              false
+            ]
+          ],
+          "trace": [],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "delay",
+              4,
+              6553
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553,
+            "4": 6553
+          }
+        },
+        {
+          "channel": 4,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              false
+            ],
+            [
+              "prepare",
+              1920,
+              1080,
+              false
+            ]
+          ],
+          "trace": [],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "delay",
+              4,
+              6553
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553,
+            "4": 6553
+          }
+        },
+        {
+          "channel": 0,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              false
+            ],
+            [
+              "prepare",
+              1920,
+              1080,
+              false
+            ]
+          ],
+          "trace": [],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "delay",
+              4,
+              6553
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553,
+            "4": 6553
+          }
+        },
+        {
+          "channel": 0,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              false
+            ],
+            [
+              "prepare",
+              1920,
+              1080,
+              false
+            ]
+          ],
+          "trace": [],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "delay",
+              4,
+              6553
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553,
+            "4": 6553
+          }
+        }
+      ]
+    },
+    {
+      "input": {
+        "prepare": true,
+        "ready": false,
+        "threads": true
+      },
+      "actions": [
+        [
+          "M",
+          3,
+          1,
+          1000000,
+          1000010,
+          1000020,
+          "0000180000000011223344"
+        ],
+        [
+          "C",
+          52,
+          "080310041a046162636420800a28d005"
+        ],
+        [
+          "M",
+          3,
+          2,
+          1000000,
+          1000010,
+          1000020,
+          "0000180000000011223344"
+        ],
+        [
+          "C",
+          52,
+          "08041a046566676820800f28b808"
+        ],
+        [
+          "M",
+          4,
+          3,
+          1000000,
+          1000010,
+          1000020,
+          "0000180000000011223344"
+        ],
+        [
+          "C",
+          53,
+          ""
+        ],
+        [
+          "C",
+          53,
+          ""
+        ]
+      ],
+      "states": [
+        {
+          "channel": 0,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [
+            {
+              "kind": 5,
+              "channel": 3,
+              "fragment": 0,
+              "id": 0,
+              "sent": 1000010,
+              "first": 1000020,
+              "received": 1000020,
+              "body": "01010040420f000000000000000000180000000011223344"
+            }
+          ],
+          "steps": [],
+          "trace": [],
+          "assertions": [],
+          "events": [],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 65
+          }
+        },
+        {
+          "channel": 3,
+          "decoder": {
+            "active": true,
+            "backend": false,
+            "threads": true,
+            "codec": 4,
+            "size": [
+              1280,
+              720
+            ],
+            "codec_data": "61626364",
+            "queued": [
+              {
+                "id": 1,
+                "timestamp": 1000000,
+                "body": "0000180000000011223344"
+              }
+            ]
+          },
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              true
+            ]
+          ],
+          "trace": [
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              false
+            ],
+            [
+              "accel_dtor"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "free",
+              "new_backend_1"
+            ],
+            [
+              "thread_start"
+            ]
+          ],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "receive",
+              1
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        },
+        {
+          "channel": 3,
+          "decoder": {
+            "active": true,
+            "backend": false,
+            "threads": true,
+            "codec": 4,
+            "size": [
+              1280,
+              720
+            ],
+            "codec_data": "61626364",
+            "queued": [
+              {
+                "id": 1,
+                "timestamp": 1000000,
+                "body": "0000180000000011223344"
+              },
+              {
+                "id": 2,
+                "timestamp": 1000000,
+                "body": "0000180000000011223344"
+              }
+            ]
+          },
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              true
+            ]
+          ],
+          "trace": [
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              false
+            ],
+            [
+              "accel_dtor"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "free",
+              "new_backend_1"
+            ],
+            [
+              "thread_start"
+            ]
+          ],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "receive",
+              1
+            ],
+            [
+              "receive",
+              2
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        },
+        {
+          "channel": 4,
+          "decoder": {
+            "active": true,
+            "backend": false,
+            "threads": true,
+            "codec": 4,
+            "size": [
+              1920,
+              1080
+            ],
+            "codec_data": "65666768",
+            "queued": []
+          },
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              true
+            ],
+            [
+              "prepare",
+              1920,
+              1080,
+              true
+            ]
+          ],
+          "trace": [
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              false
+            ],
+            [
+              "accel_dtor"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "free",
+              "new_backend_1"
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "join",
+              4294967295
+            ],
+            [
+              "input_queue_purge"
+            ],
+            [
+              "standalone_stop"
+            ],
+            [
+              "player_flush"
+            ],
+            [
+              "pending_flush"
+            ],
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              false
+            ],
+            [
+              "accel_dtor"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "free",
+              "new_backend_2"
+            ],
+            [
+              "thread_start"
+            ]
+          ],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "receive",
+              1
+            ],
+            [
+              "receive",
+              2
+            ],
+            [
+              "decoder_stop"
+            ],
+            [
+              "thread_join"
+            ],
+            [
+              "delay",
+              4,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553,
+            "4": 6553
+          }
+        },
+        {
+          "channel": 4,
+          "decoder": {
+            "active": true,
+            "backend": false,
+            "threads": true,
+            "codec": 4,
+            "size": [
+              1920,
+              1080
+            ],
+            "codec_data": "65666768",
+            "queued": [
+              {
+                "id": 3,
+                "timestamp": 1000000,
+                "body": "0000180000000011223344"
+              }
+            ]
+          },
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              true
+            ],
+            [
+              "prepare",
+              1920,
+              1080,
+              true
+            ]
+          ],
+          "trace": [
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              false
+            ],
+            [
+              "accel_dtor"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "free",
+              "new_backend_1"
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "join",
+              4294967295
+            ],
+            [
+              "input_queue_purge"
+            ],
+            [
+              "standalone_stop"
+            ],
+            [
+              "player_flush"
+            ],
+            [
+              "pending_flush"
+            ],
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              false
+            ],
+            [
+              "accel_dtor"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "free",
+              "new_backend_2"
+            ],
+            [
+              "thread_start"
+            ]
+          ],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "receive",
+              1
+            ],
+            [
+              "receive",
+              2
+            ],
+            [
+              "decoder_stop"
+            ],
+            [
+              "thread_join"
+            ],
+            [
+              "delay",
+              4,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "receive",
+              3
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553,
+            "4": 6553
+          }
+        },
+        {
+          "channel": 0,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              true
+            ],
+            [
+              "prepare",
+              1920,
+              1080,
+              true
+            ]
+          ],
+          "trace": [
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              false
+            ],
+            [
+              "accel_dtor"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "free",
+              "new_backend_1"
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "join",
+              4294967295
+            ],
+            [
+              "input_queue_purge"
+            ],
+            [
+              "standalone_stop"
+            ],
+            [
+              "player_flush"
+            ],
+            [
+              "pending_flush"
+            ],
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              false
+            ],
+            [
+              "accel_dtor"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "free",
+              "new_backend_2"
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "join",
+              4294967295
+            ],
+            [
+              "input_queue_purge"
+            ],
+            [
+              "standalone_stop"
+            ],
+            [
+              "player_flush"
+            ],
+            [
+              "pending_flush"
+            ]
+          ],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "receive",
+              1
+            ],
+            [
+              "receive",
+              2
+            ],
+            [
+              "decoder_stop"
+            ],
+            [
+              "thread_join"
+            ],
+            [
+              "delay",
+              4,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "receive",
+              3
+            ],
+            [
+              "decoder_stop"
+            ],
+            [
+              "thread_join"
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553,
+            "4": 6553
+          }
+        },
+        {
+          "channel": 0,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              true
+            ],
+            [
+              "prepare",
+              1920,
+              1080,
+              true
+            ]
+          ],
+          "trace": [
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              false
+            ],
+            [
+              "accel_dtor"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "free",
+              "new_backend_1"
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "join",
+              4294967295
+            ],
+            [
+              "input_queue_purge"
+            ],
+            [
+              "standalone_stop"
+            ],
+            [
+              "player_flush"
+            ],
+            [
+              "pending_flush"
+            ],
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              false
+            ],
+            [
+              "accel_dtor"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "free",
+              "new_backend_2"
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "join",
+              4294967295
+            ],
+            [
+              "input_queue_purge"
+            ],
+            [
+              "standalone_stop"
+            ],
+            [
+              "player_flush"
+            ],
+            [
+              "pending_flush"
+            ]
+          ],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "receive",
+              1
+            ],
+            [
+              "receive",
+              2
+            ],
+            [
+              "decoder_stop"
+            ],
+            [
+              "thread_join"
+            ],
+            [
+              "delay",
+              4,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "receive",
+              3
+            ],
+            [
+              "decoder_stop"
+            ],
+            [
+              "thread_join"
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553,
+            "4": 6553
+          }
+        }
+      ]
+    },
+    {
+      "input": {
+        "prepare": true,
+        "ready": true,
+        "threads": true
+      },
+      "actions": [
+        [
+          "M",
+          3,
+          1,
+          1000000,
+          1000010,
+          1000020,
+          "0000180000000011223344"
+        ],
+        [
+          "C",
+          52,
+          "080310041a046162636420800a28d005"
+        ],
+        [
+          "M",
+          3,
+          2,
+          1000000,
+          1000010,
+          1000020,
+          "0000180000000011223344"
+        ],
+        [
+          "C",
+          52,
+          "08041a046566676820800f28b808"
+        ],
+        [
+          "M",
+          4,
+          3,
+          1000000,
+          1000010,
+          1000020,
+          "0000180000000011223344"
+        ],
+        [
+          "C",
+          53,
+          ""
+        ],
+        [
+          "C",
+          53,
+          ""
+        ]
+      ],
+      "states": [
+        {
+          "channel": 0,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [
+            {
+              "kind": 5,
+              "channel": 3,
+              "fragment": 0,
+              "id": 0,
+              "sent": 1000010,
+              "first": 1000020,
+              "received": 1000020,
+              "body": "01010040420f000000000000000000180000000011223344"
+            }
+          ],
+          "steps": [],
+          "trace": [],
+          "assertions": [],
+          "events": [],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 65
+          }
+        },
+        {
+          "channel": 3,
+          "decoder": {
+            "active": true,
+            "backend": true,
+            "threads": true,
+            "codec": 4,
+            "size": [
+              1280,
+              720
+            ],
+            "codec_data": "61626364",
+            "queued": [
+              {
+                "id": 1,
+                "timestamp": 1000000,
+                "body": "0000180000000011223344"
+              }
+            ]
+          },
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              true
+            ]
+          ],
+          "trace": [
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              true
+            ],
+            [
+              "decoder_info",
+              "Android texture hardware decoding",
+              1
+            ],
+            [
+              "thread_start"
+            ]
+          ],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "receive",
+              1
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        },
+        {
+          "channel": 3,
+          "decoder": {
+            "active": true,
+            "backend": true,
+            "threads": true,
+            "codec": 4,
+            "size": [
+              1280,
+              720
+            ],
+            "codec_data": "61626364",
+            "queued": [
+              {
+                "id": 1,
+                "timestamp": 1000000,
+                "body": "0000180000000011223344"
+              },
+              {
+                "id": 2,
+                "timestamp": 1000000,
+                "body": "0000180000000011223344"
+              }
+            ]
+          },
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              true
+            ]
+          ],
+          "trace": [
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              true
+            ],
+            [
+              "decoder_info",
+              "Android texture hardware decoding",
+              1
+            ],
+            [
+              "thread_start"
+            ]
+          ],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "receive",
+              1
+            ],
+            [
+              "receive",
+              2
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        },
+        {
+          "channel": 4,
+          "decoder": {
+            "active": true,
+            "backend": true,
+            "threads": true,
+            "codec": 4,
+            "size": [
+              1920,
+              1080
+            ],
+            "codec_data": "65666768",
+            "queued": []
+          },
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              true
+            ],
+            [
+              "prepare",
+              1920,
+              1080,
+              true
+            ]
+          ],
+          "trace": [
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              true
+            ],
+            [
+              "decoder_info",
+              "Android texture hardware decoding",
+              1
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "join",
+              4294967295
+            ],
+            [
+              "input_queue_purge"
+            ],
+            [
+              "standalone_stop"
+            ],
+            [
+              "player_flush"
+            ],
+            [
+              "pending_flush"
+            ],
+            [
+              "accel_flush"
+            ],
+            [
+              "accel_quit"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "accel_dtor"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "free",
+              "new_backend_1"
+            ],
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              true
+            ],
+            [
+              "decoder_info",
+              "Android texture hardware decoding",
+              1
+            ],
+            [
+              "thread_start"
+            ]
+          ],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "receive",
+              1
+            ],
+            [
+              "receive",
+              2
+            ],
+            [
+              "decoder_stop"
+            ],
+            [
+              "thread_join"
+            ],
+            [
+              "delay",
+              4,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553,
+            "4": 6553
+          }
+        },
+        {
+          "channel": 4,
+          "decoder": {
+            "active": true,
+            "backend": true,
+            "threads": true,
+            "codec": 4,
+            "size": [
+              1920,
+              1080
+            ],
+            "codec_data": "65666768",
+            "queued": [
+              {
+                "id": 3,
+                "timestamp": 1000000,
+                "body": "0000180000000011223344"
+              }
+            ]
+          },
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              true
+            ],
+            [
+              "prepare",
+              1920,
+              1080,
+              true
+            ]
+          ],
+          "trace": [
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              true
+            ],
+            [
+              "decoder_info",
+              "Android texture hardware decoding",
+              1
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "join",
+              4294967295
+            ],
+            [
+              "input_queue_purge"
+            ],
+            [
+              "standalone_stop"
+            ],
+            [
+              "player_flush"
+            ],
+            [
+              "pending_flush"
+            ],
+            [
+              "accel_flush"
+            ],
+            [
+              "accel_quit"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "accel_dtor"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "free",
+              "new_backend_1"
+            ],
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              true
+            ],
+            [
+              "decoder_info",
+              "Android texture hardware decoding",
+              1
+            ],
+            [
+              "thread_start"
+            ]
+          ],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "receive",
+              1
+            ],
+            [
+              "receive",
+              2
+            ],
+            [
+              "decoder_stop"
+            ],
+            [
+              "thread_join"
+            ],
+            [
+              "delay",
+              4,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "receive",
+              3
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553,
+            "4": 6553
+          }
+        },
+        {
+          "channel": 0,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              true
+            ],
+            [
+              "prepare",
+              1920,
+              1080,
+              true
+            ]
+          ],
+          "trace": [
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              true
+            ],
+            [
+              "decoder_info",
+              "Android texture hardware decoding",
+              1
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "join",
+              4294967295
+            ],
+            [
+              "input_queue_purge"
+            ],
+            [
+              "standalone_stop"
+            ],
+            [
+              "player_flush"
+            ],
+            [
+              "pending_flush"
+            ],
+            [
+              "accel_flush"
+            ],
+            [
+              "accel_quit"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "accel_dtor"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "free",
+              "new_backend_1"
+            ],
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              true
+            ],
+            [
+              "decoder_info",
+              "Android texture hardware decoding",
+              1
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "join",
+              4294967295
+            ],
+            [
+              "input_queue_purge"
+            ],
+            [
+              "standalone_stop"
+            ],
+            [
+              "player_flush"
+            ],
+            [
+              "pending_flush"
+            ],
+            [
+              "accel_flush"
+            ],
+            [
+              "accel_quit"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "accel_dtor"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "free",
+              "new_backend_2"
+            ]
+          ],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "receive",
+              1
+            ],
+            [
+              "receive",
+              2
+            ],
+            [
+              "decoder_stop"
+            ],
+            [
+              "thread_join"
+            ],
+            [
+              "delay",
+              4,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "receive",
+              3
+            ],
+            [
+              "decoder_stop"
+            ],
+            [
+              "thread_join"
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553,
+            "4": 6553
+          }
+        },
+        {
+          "channel": 0,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              true
+            ],
+            [
+              "prepare",
+              1920,
+              1080,
+              true
+            ]
+          ],
+          "trace": [
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              true
+            ],
+            [
+              "decoder_info",
+              "Android texture hardware decoding",
+              1
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "join",
+              4294967295
+            ],
+            [
+              "input_queue_purge"
+            ],
+            [
+              "standalone_stop"
+            ],
+            [
+              "player_flush"
+            ],
+            [
+              "pending_flush"
+            ],
+            [
+              "accel_flush"
+            ],
+            [
+              "accel_quit"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "accel_dtor"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "free",
+              "new_backend_1"
+            ],
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              true
+            ],
+            [
+              "decoder_info",
+              "Android texture hardware decoding",
+              1
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "join",
+              4294967295
+            ],
+            [
+              "input_queue_purge"
+            ],
+            [
+              "standalone_stop"
+            ],
+            [
+              "player_flush"
+            ],
+            [
+              "pending_flush"
+            ],
+            [
+              "accel_flush"
+            ],
+            [
+              "accel_quit"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "accel_dtor"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "free",
+              "new_backend_2"
+            ]
+          ],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "receive",
+              1
+            ],
+            [
+              "receive",
+              2
+            ],
+            [
+              "decoder_stop"
+            ],
+            [
+              "thread_join"
+            ],
+            [
+              "delay",
+              4,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "receive",
+              3
+            ],
+            [
+              "decoder_stop"
+            ],
+            [
+              "thread_join"
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553,
+            "4": 6553
+          }
+        }
+      ]
+    },
+    {
+      "input": {
+        "prepare": true,
+        "ready": false,
+        "threads": true,
+        "thread_ok": false
+      },
+      "actions": [
+        [
+          "C",
+          52,
+          "080310041a030001ff20800a28d005"
+        ],
+        [
+          "C",
+          53,
+          ""
+        ]
+      ],
+      "states": [
+        {
+          "channel": 3,
+          "decoder": {
+            "active": true,
+            "backend": false,
+            "threads": true,
+            "codec": 4,
+            "size": [
+              1280,
+              720
+            ],
+            "codec_data": "0001ff",
+            "queued": []
+          },
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              true
+            ]
+          ],
+          "trace": [
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              false
+            ],
+            [
+              "accel_dtor"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "free",
+              "new_backend_1"
+            ],
+            [
+              "thread_start"
+            ]
+          ],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        },
+        {
+          "channel": 0,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              true
+            ]
+          ],
+          "trace": [
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              false
+            ],
+            [
+              "accel_dtor"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "free",
+              "new_backend_1"
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "join",
+              4294967295
+            ],
+            [
+              "input_queue_purge"
+            ],
+            [
+              "standalone_stop"
+            ],
+            [
+              "player_flush"
+            ],
+            [
+              "pending_flush"
+            ]
+          ],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "decoder_stop"
+            ],
+            [
+              "thread_join"
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        }
+      ]
+    },
+    {
+      "input": {
+        "prepare": true,
+        "ready": true,
+        "threads": true,
+        "thread_ok": false
+      },
+      "actions": [
+        [
+          "C",
+          52,
+          "080310041a030001ff20800a28d005"
+        ],
+        [
+          "C",
+          53,
+          ""
+        ]
+      ],
+      "states": [
+        {
+          "channel": 3,
+          "decoder": {
+            "active": true,
+            "backend": true,
+            "threads": true,
+            "codec": 4,
+            "size": [
+              1280,
+              720
+            ],
+            "codec_data": "0001ff",
+            "queued": []
+          },
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              true
+            ]
+          ],
+          "trace": [
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              true
+            ],
+            [
+              "decoder_info",
+              "Android texture hardware decoding",
+              1
+            ],
+            [
+              "thread_start"
+            ]
+          ],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        },
+        {
+          "channel": 0,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              true
+            ]
+          ],
+          "trace": [
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              true
+            ],
+            [
+              "decoder_info",
+              "Android texture hardware decoding",
+              1
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "join",
+              4294967295
+            ],
+            [
+              "input_queue_purge"
+            ],
+            [
+              "standalone_stop"
+            ],
+            [
+              "player_flush"
+            ],
+            [
+              "pending_flush"
+            ],
+            [
+              "accel_flush"
+            ],
+            [
+              "accel_quit"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "accel_dtor"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "android_destroy"
+            ],
+            [
+              "free",
+              "new_backend_1"
+            ]
+          ],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ],
+            [
+              "decoder_stop"
+            ],
+            [
+              "thread_join"
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        }
+      ]
+    },
+    {
+      "input": {
+        "prepare": true,
+        "ready": true,
+        "threads": true,
+        "fallback": 5
+      },
+      "actions": [
+        [
+          "C",
+          52,
+          "0803100420800a28d005"
+        ]
+      ],
+      "states": [
+        {
+          "channel": 3,
+          "decoder": {
+            "active": true,
+            "backend": true,
+            "threads": true,
+            "codec": 4,
+            "size": [
+              1280,
+              720
+            ],
+            "codec_data": "",
+            "queued": []
+          },
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [
+            [
+              "prepare",
+              1280,
+              720,
+              true
+            ]
+          ],
+          "trace": [
+            [
+              "standalone_start"
+            ],
+            [
+              "accel_ctor"
+            ],
+            [
+              "init_terminal",
+              true
+            ],
+            [
+              "decoder_info",
+              "Android texture hardware decoding",
+              1
+            ],
+            [
+              "thread_start"
+            ]
+          ],
+          "assertions": [],
+          "events": [
+            [
+              "delay",
+              3,
+              6553
+            ],
+            [
+              "decoder_start"
+            ],
+            [
+              "thread_start"
+            ]
+          ],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 6553
+          }
+        }
+      ]
+    },
+    {
+      "input": {
+        "prepare": true,
+        "ready": true,
+        "threads": true
+      },
+      "actions": [
+        [
+          "C",
+          52,
+          "80"
+        ]
+      ],
+      "states": [
+        {
+          "channel": 0,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [],
+          "trace": [],
+          "assertions": [],
+          "events": [],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 65
+          }
+        }
+      ]
+    },
+    {
+      "input": {
+        "prepare": true,
+        "ready": true,
+        "threads": true
+      },
+      "actions": [
+        [
+          "C",
+          52,
+          ""
+        ]
+      ],
+      "states": [
+        {
+          "channel": 0,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [],
+          "trace": [],
+          "assertions": [],
+          "events": [],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 65
+          }
+        }
+      ]
+    },
+    {
+      "input": {
+        "prepare": true,
+        "ready": true,
+        "threads": true
+      },
+      "actions": [
+        [
+          "C",
+          52,
+          "1003"
+        ]
+      ],
+      "states": [
+        {
+          "channel": 0,
+          "decoder": null,
+          "phase": 6,
+          "paused": false,
+          "pending": [],
+          "steps": [],
+          "trace": [],
+          "assertions": [],
+          "events": [],
+          "delays": {
+            "0": 65,
+            "1": 65,
+            "2": 65,
+            "3": 65
+          }
+        }
+      ]
+    }
+  ]
+}

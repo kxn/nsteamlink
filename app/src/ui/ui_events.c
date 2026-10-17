@@ -66,6 +66,7 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
             m->command.type = SL_CMD_STREAM;
             m->command.quality = m->store.quality;
             m->command.bitrate_kbps = m->store.bitrate_kbps;
+            m->command.unreliable_fec = m->store.unreliable_fec;
         } else
             sl_ui_error(m, sl_tr(SL_T_HOST_REMOVED));
         break;
@@ -127,4 +128,22 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
         break;
     }
     sl_ui_layout(m);
+}
+
+bool sl_ui_stream_preferences(sl_ui_model *m, const sl_stream_preferences *prefs,
+                              uint64_t revision) {
+    /* A local action awaiting submit owns the visible controls. After submit,
+     * older worker snapshots cannot undo it; a matching/newer snapshot can. */
+    if (m->command.type != SL_CMD_NONE || revision < m->settings_revision)
+        return false;
+    bool changed = m->store.quality != prefs->quality ||
+                   m->store.bitrate_kbps != prefs->bitrate_kbps ||
+                   m->store.unreliable_fec != prefs->unreliable_fec;
+    m->settings_revision = revision;
+    m->store.quality = prefs->quality;
+    m->store.bitrate_kbps = prefs->bitrate_kbps;
+    m->store.unreliable_fec = prefs->unreliable_fec;
+    if (changed)
+        sl_ui_layout(m);
+    return true;
 }

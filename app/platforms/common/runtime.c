@@ -7,6 +7,7 @@
 #include "services/i18n.h"
 #include "services/launch_watch.h"
 #include "services/update_config.h"
+#include "stream_settings.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -27,7 +28,9 @@ struct sl_runtime {
     pthread_t worker;
     atomic_bool exit_requested, worker_finished;
     bool waiting_video;
-    atomic_bool foreground;
+    atomic_uint foreground_generation;
+    atomic_bool player_input_focus; /* Separate from app lifecycle/pause edges. */
+    unsigned foreground_applied; /* Runtime worker only. */
     uint64_t session_id;
     sl_runtime_facts facts;
     pthread_mutex_t lock;
@@ -37,6 +40,10 @@ struct sl_runtime {
     bool save_update_check;
     sl_command pending, active;
     sl_auth_store store, save;
+    sl_stream_settings settings;
+    sl_stream_preferences settings_view;
+    uint64_t settings_view_revision;
+    bool settings_view_ready;
     sl_runtime_event events[48];
     int count;
     IHS_Client *client;
@@ -327,24 +334,16 @@ static void rejected(IHS_Client *c, const IHS_HostInfo *h, IHS_StreamingResult r
 }
 static void configuring(IHS_Session *s, IHS_SessionConfig *c, void *ctx) {
     (void)s;
-    sl_runtime *r = ctx;
-    c->enableAudio = true;
+    (void)ctx;
+    /* The full saved config supplies preferences. Only apply actual platform
+     * limits here; copying legacy command defaults would erase saved fields. */
     c->enableHevc = false;
-    c->maxWidth = 1280;
-    c->maxHeight = 720;
-    c->maxFps = 60;
-    switch (r->active.quality) {
-    case 1:
-        c->quality = IHS_StreamQualityFast;
-        break;
-    case 2:
-        c->quality = IHS_StreamQualityBeautiful;
-        break;
-    default:
-        c->quality = IHS_StreamQualityBalanced;
-        break;
-    }
-    c->maxBitrateKbps = sl_bitrate_valid(r->active.bitrate_kbps) ? r->active.bitrate_kbps : 6000;
+    if (!c->maxWidth || c->maxWidth > 1280)
+        c->maxWidth = 1280;
+    if (!c->maxHeight || c->maxHeight > 720)
+        c->maxHeight = 720;
+    if (!c->maxFps || c->maxFps > 60)
+        c->maxFps = 60;
 }
 static void connected(IHS_Session *s, void *ctx) {
     (void)s;
@@ -363,12 +362,16 @@ static void disconnected(IHS_Session *s, void *ctx) {
                            : "session end: transport/local disconnect");
     pthread_mutex_unlock(&r->lock);
 }
+static int video_prepare(IHS_Session *s, const IHS_StreamVideoConfig *config, void *ctx) {
+    (void)ctx;
+    return sl_media_video_prepare(s, config);
+}
 static int video_start(IHS_Session *s, const IHS_VideoEpochInfo *epoch,
                        const IHS_StreamVideoConfig *c, void *ctx) {
     sl_runtime *r = ctx;
     int result = sl_media_video_start_tracked(s, epoch, c);
     pthread_mutex_lock(&r->lock);
-    if (!result && r->facts.session_id == epoch->session_id) {
+    if (result >= 0 && r->facts.session_id == epoch->session_id) {
         r->facts.epoch = epoch->video_epoch;
         ++r->facts.video_transition;
         r->facts.paused = false;
@@ -394,17 +397,10 @@ static void video_stop(IHS_Session *s, const IHS_VideoEpochInfo *epoch, void *ct
     }
     pthread_mutex_unlock(&r->lock);
 }
-static int audio_start(IHS_Session *s, const IHS_StreamAudioConfig *c, void *ctx) {
+static void video_flush(IHS_Session *s, const IHS_VideoEpochInfo *epoch,
+                        IHS_StreamVideoFlushPhase phase, void *ctx) {
     (void)ctx;
-    return stream_media_audio_start(s, c);
-}
-static int audio_submit(IHS_Session *s, IHS_Buffer *b, void *ctx) {
-    (void)ctx;
-    return stream_media_audio_submit(s, b);
-}
-static void audio_stop(IHS_Session *s, void *ctx) {
-    (void)ctx;
-    stream_media_audio_stop(s);
+    sl_media_video_flush_tracked(s, epoch, phase);
 }
 static void activity(IHS_Session *s, int kind, uint64_t id, const char *name, void *ctx) {
     (void)s;
@@ -430,12 +426,41 @@ static const IHS_ClientDiscoveryCallbacks discovery_cb = {.discovered = discover
 static const IHS_ClientAuthorizationCallbacks auth_cb = {.success = authorized,
                                                          .failed = auth_failed};
 static const IHS_ClientStreamingCallbacks stream_cb = {.success = accepted, .failed = rejected};
-static const IHS_StreamSessionCallbacks session_cb = {
-    .configuring = configuring, .connected = connected, .disconnected = disconnected};
+static void client_config_saved(IHS_Session *session, const uint8_t *wire, size_t size, void *ctx) {
+    sl_runtime *r = ctx;
+    sl_stream_settings_receive(session, wire, size, &r->settings);
+    pthread_cond_signal(&r->wake);
+}
+static bool same_preferences(sl_stream_preferences a, sl_stream_preferences b) {
+    return a.quality == b.quality && a.bitrate_kbps == b.bitrate_kbps &&
+           a.unreliable_fec == b.unreliable_fec;
+}
+static void sync_stream_settings(sl_runtime *r, bool refresh) {
+    bool changed = sl_stream_settings_drain(&r->settings);
+    if (!changed && !refresh)
+        return;
+    sl_stream_preferences before = {r->store.quality, r->store.bitrate_kbps,
+                                    r->store.unreliable_fec};
+    sl_stream_settings_project(&r->settings, &r->store);
+    sl_stream_preferences after = {r->store.quality, r->store.bitrate_kbps,
+                                   r->store.unreliable_fec};
+    if (r->settings.dirty && !sl_stream_settings_save(&r->settings, sl_system_data_dir()))
+        sl_log("settings: full configuration save failed");
+    if (!same_preferences(before, after) && !sl_auth_save(&r->store, sl_system_data_dir()))
+        sl_log("settings: profile projection save failed");
+    pthread_mutex_lock(&r->lock);
+    r->settings_view = after;
+    r->settings_view_revision = r->settings.applied_revision;
+    r->settings_view_ready = true;
+    pthread_mutex_unlock(&r->lock);
+}
+static const IHS_StreamSessionCallbacks session_cb = {.configuring = configuring,
+                                                      .connected = connected,
+                                                      .disconnected = disconnected,
+                                                      .saveClientConfig = client_config_saved};
 static const IHS_StreamVideoCallbacks video_cb = {
-    .startTracked = video_start, .submitTracked = video_submit, .stopTracked = video_stop};
-static const IHS_StreamAudioCallbacks audio_cb = {
-    .start = audio_start, .submit = audio_submit, .stop = audio_stop};
+    .startTracked = video_start, .submitTracked = video_submit, .stopTracked = video_stop,
+    .prepare = video_prepare, .flushTracked = video_flush};
 static const IHS_StreamInputCallbacks input_cb = {.activityState = activity};
 static void stop_client(sl_runtime *r) {
     if (!r->client)
@@ -472,8 +497,8 @@ static bool stop_session(sl_runtime *r) {
     if (r->session) {
         sl_log("cleanup: session disconnect/join");
         IHS_SessionDisconnect(r->session);
-        /* Discovery disconnect retries are bounded to ~1.1 s. Let the session
-         * worker send them before joining; immediate interrupt drops the goodbye. */
+        /* Disconnect attempts one goodbye before stopping workers. Join before
+         * releasing session, sockets and decoder dependencies. */
         IHS_SessionThreadedJoin(r->session);
         host_completed = IHS_SessionHostRequestedStop(r->session);
         /* Workers are joined. Detached frame tickets can outlive the session. */
@@ -481,6 +506,9 @@ static bool stop_session(sl_runtime *r) {
         IHS_SessionDestroy(r->session);
         r->session = NULL;
         sl_log("cleanup: session destroyed");
+        /* SDL_main quits the client before the focused player's teardown.
+         * This port has no Android hard/background process modes. */
+        sl_media_end_stream_player(atomic_load(&r->player_input_focus), false, false);
     }
     pthread_mutex_lock(&r->lock);
     host_completed = host_completed || (r->end_game.at && r->end_game.empty >= 2);
@@ -509,11 +537,22 @@ static bool launch_session(sl_runtime *r, IHS_SessionInfo info) {
     }
     if (!r->session)
         return false;
+    const sl_stream_request_limits limits = {
+        .width = 1280, .height = 720, .fps = 60, .hevc = false};
+    if (!sl_stream_settings_apply_limited(&r->settings, r->session, &limits)) {
+        IHS_SessionDestroy(r->session);
+        r->session = NULL;
+        return false;
+    }
+    r->foreground_applied = atomic_load(&r->foreground_generation);
+    IHS_SessionSetForeground(r->session, !(r->foreground_applied & 1u));
     sl_system_stream_info platform = sl_system_streaming_info();
     IHS_StreamClientCapabilities caps = {
         .systemInfo = platform.system_info[0] ? platform.system_info : NULL,
         .decoderInfo = platform.decoder_info,
         .decoderThreads = 1, /* video_pipeline.c sets AVCodecContext.thread_count = 1. */
+        .hasVideoDecoderCapabilities = true,
+        .supportsVideoHevc = false, /* The runtime's validated pipeline is H264. */
         .maximumDecodeBitrateKbps = platform.maximum_decode_bitrate_kbps,
         .maximumBurstBitrateKbps = platform.maximum_burst_bitrate_kbps,
         .hasSystemCanSuspend = true,
@@ -533,7 +572,7 @@ static bool launch_session(sl_runtime *r, IHS_SessionInfo info) {
     IHS_SessionSetLogFunction(r->session, ihs_log);
     IHS_SessionSetSessionCallbacks(r->session, &session_cb, r);
     IHS_SessionSetVideoCallbacks(r->session, &video_cb, r);
-    IHS_SessionSetAudioCallbacks(r->session, &audio_cb, r);
+    IHS_SessionSetAudioCallbacks(r->session, sl_media_audio_callbacks(), r);
     IHS_SessionSetInputCallbacks(r->session, &input_cb, r);
     if (r->provider)
         IHS_SessionHIDAddProvider(r->session, r->provider);
@@ -903,6 +942,9 @@ static void *worker_main(void *ctx) {
     uint32_t discovery_seq = 0;
     IHS_Init();
     sl_log("runtime: IHS initialized");
+    if (sl_stream_settings_load(&r->settings, sl_system_data_dir()) < 0)
+        sl_log("settings: load failed, retaining the previous complete value");
+    sync_stream_settings(r, true);
     if (!start_client(r))
         fail(r, sl_tr(SL_T_NETWORK_UNAVAILABLE));
     while (!r->quit) {
@@ -962,8 +1004,9 @@ static void *worker_main(void *ctx) {
             sl_host_registry_keep_secrets(&save.registry, &r->store.registry);
             r->store = save;
         }
+        sync_stream_settings(r, snapshot_pending);
         if (save_pending) {
-            bool profile_saved = sl_auth_save(&save, sl_system_data_dir());
+            bool profile_saved = sl_auth_save(&r->store, sl_system_data_dir());
             bool language_saved = sl_i18n_save(sl_system_data_dir(), save_language);
             bool update_saved = sl_update_config_save(sl_system_data_dir(), save_update_check);
             if (!profile_saved || !language_saved || !update_saved)
@@ -1085,8 +1128,15 @@ static void *worker_main(void *ctx) {
                                (ProtobufCMessage *)&probe);
             }
         }
+        unsigned foreground_requested = atomic_load(&r->foreground_generation);
+        for (unsigned count = 0; count < 32 && r->foreground_applied != foreground_requested;
+             ++count) {
+            unsigned edge = ++r->foreground_applied;
+            if (r->session)
+                IHS_SessionSetForeground(r->session, !(edge & 1u));
+        }
         bool video_suspended =
-            !atomic_load(&r->foreground) || (r->session && IHS_SessionHostVideoStopped(r->session));
+            (foreground_requested & 1u) || (r->session && IHS_SessionHostVideoStopped(r->session));
         if (r->video_suspended && !video_suspended) {
             r->frame_at = now;
             if (!r->first_reported)
@@ -1133,6 +1183,7 @@ static void *worker_main(void *ctx) {
         pthread_mutex_unlock(&r->lock);
     }
     stop_session(r);
+    sync_stream_settings(r, true); /* Producers joined; include the final callback/edit. */
     while (!sl_media_video_clean()) {
         struct timespec pause = {0, 1000000};
         nanosleep(&pause, NULL);
@@ -1158,10 +1209,17 @@ sl_runtime *sl_runtime_create(const sl_auth_store *store) {
     r->store = *store;
     r->udp = -1;
     atomic_init(&r->exit_requested, false);
-    atomic_init(&r->foreground, true);
+    atomic_init(&r->foreground_generation, 0);
+    atomic_init(&r->player_input_focus, true);
     atomic_init(&r->worker_finished, false);
     pthread_mutex_init(&r->lock, NULL);
     pthread_cond_init(&r->wake, NULL);
+    if (!sl_stream_settings_init(&r->settings, store)) {
+        pthread_cond_destroy(&r->wake);
+        pthread_mutex_destroy(&r->lock);
+        free(r);
+        return NULL;
+    }
     r->config = (IHS_ClientConfig){.deviceId = r->store.device_id,
                                    .secretKey = r->store.secret,
                                    .deviceName = r->store.device_name};
@@ -1211,6 +1269,7 @@ bool sl_runtime_submit(sl_runtime *r, const sl_command *cmd, const sl_auth_store
         r->save = *store;
         r->snapshot_pending = true;
     }
+    sl_stream_settings_note_ui(&r->settings, store);
     pthread_cond_signal(&r->wake);
     pthread_mutex_unlock(&r->lock);
     return true;
@@ -1266,14 +1325,26 @@ void sl_runtime_destroy(sl_runtime *r) {
     if (r->udp >= 0)
         close(r->udp);
     sl_log("cleanup: runtime worker joined");
+    sl_stream_settings_destroy(&r->settings);
     pthread_cond_destroy(&r->wake);
     pthread_mutex_destroy(&r->lock);
     free(r);
 }
 
-void sl_runtime_foreground(sl_runtime *r, bool foreground) {
+void sl_runtime_player_focus(sl_runtime *r, bool focused) {
     if (r)
-        atomic_store(&r->foreground, foreground);
+        atomic_store(&r->player_input_focus, focused);
+}
+
+void sl_runtime_foreground(sl_runtime *r, bool foreground) {
+    if (!r)
+        return;
+    unsigned generation = atomic_load(&r->foreground_generation);
+    while ((generation & 1u) != (unsigned)!foreground) {
+        if (atomic_compare_exchange_weak(&r->foreground_generation, &generation,
+                                         generation + 1u))
+            break;
+    }
 }
 
 bool sl_runtime_read_facts(sl_runtime *r, sl_runtime_facts *facts) {
@@ -1282,4 +1353,25 @@ bool sl_runtime_read_facts(sl_runtime *r, sl_runtime_facts *facts) {
     *facts = r->facts;
     pthread_mutex_unlock(&r->lock);
     return true;
+}
+
+bool sl_runtime_stream_settings(sl_runtime *r, sl_stream_preferences *view, uint64_t *revision) {
+    if (!r || pthread_mutex_trylock(&r->lock))
+        return false;
+    bool ready = r->settings_view_ready;
+    if (ready) {
+        *view = r->settings_view;
+        *revision = r->settings_view_revision;
+    }
+    pthread_mutex_unlock(&r->lock);
+    return ready;
+}
+uint64_t sl_runtime_settings_revision(sl_runtime *r) {
+    return r ? sl_stream_settings_revision(&r->settings) : 0;
+}
+
+void sl_runtime_ack_stream_settings(sl_runtime *r, const sl_stream_preferences *view,
+                                    uint64_t revision) {
+    if (r)
+        sl_stream_settings_ack_ui(&r->settings, view, revision);
 }

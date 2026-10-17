@@ -1,0 +1,4890 @@
+{
+  "binary_sha256": "50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e",
+  "scope": "Execute official OnThink/Starting/Streaming through real frame-stat production.\n\nThe pinned client runs its empty incoming queue, stage selection, both time\ncomparisons, receive/completion/ring retirement, accumulator, C++ protobuf and\nFrame Send. Network process/update, locks, priority, player, Stats::Start,\nencryption, clock, metric collectors and final Connection send are adapters.\nNo authentication, socket scheduling, decoder or live metric window is claimed.\n",
+  "cases": [
+    {
+      "input": {
+        "name": "strict",
+        "full": false,
+        "state": 5,
+        "send_result": 0,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            1065536
+          ],
+          [
+            "UPDATE",
+            1065537
+          ],
+          [
+            "UPDATE",
+            1131073
+          ],
+          [
+            "UPDATE",
+            1131074
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            1196611
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d000000001a09080610011d002474411a09080810011dda0158461a09080910011d002474421a09080a10011d001bb7421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1065537,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1065537,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1131074,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d6f1283421a09080610011d002474411a09080810011de33e58461a09080910011d809698421a09080a10011d809fd5421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1196611,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "strict",
+        "full": false,
+        "state": 5,
+        "send_result": 5,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            1065536
+          ],
+          [
+            "UPDATE",
+            1065537
+          ],
+          [
+            "UPDATE",
+            1131073
+          ],
+          [
+            "UPDATE",
+            1131074
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            1196611
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d000000001a09080610011d002474411a09080810011dda0158461a09080910011d002474421a09080a10011d001bb7421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1065537,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1065537,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1131074,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d6f1283421a09080610011d002474411a09080810011de33e58461a09080910011d809698421a09080a10011d809fd5421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1196611,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "zero_start",
+        "full": false,
+        "state": 5,
+        "send_result": 0,
+        "actions": [
+          [
+            "UPDATE",
+            0
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            0
+          ],
+          [
+            "UPDATE",
+            1
+          ],
+          [
+            "UPDATE",
+            65537
+          ],
+          [
+            "UPDATE",
+            65538
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            131075
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 0,
+          "keepalive_time": 0,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d000000001a09080610011d002474411a09080810011dda0158461a09080910011d002474421a09080a10011d001bb7421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            },
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 0,
+          "keepalive_time": 0,
+          "sequence": 2,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1,
+          "keepalive_time": 1,
+          "sequence": 3,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1,
+          "keepalive_time": 1,
+          "sequence": 3,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 65538,
+          "keepalive_time": 1,
+          "sequence": 3,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d6f1283421a09080610011d002474411a09080810011de33e58461a09080910011d809698421a09080a10011d809fd5421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 131075,
+          "keepalive_time": 1,
+          "sequence": 3,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "zero_start",
+        "full": false,
+        "state": 5,
+        "send_result": 5,
+        "actions": [
+          [
+            "UPDATE",
+            0
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            0
+          ],
+          [
+            "UPDATE",
+            1
+          ],
+          [
+            "UPDATE",
+            65537
+          ],
+          [
+            "UPDATE",
+            65538
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            131075
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 0,
+          "keepalive_time": 0,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d000000001a09080610011d002474411a09080810011dda0158461a09080910011d002474421a09080a10011d001bb7421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            },
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 0,
+          "keepalive_time": 0,
+          "sequence": 2,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1,
+          "keepalive_time": 1,
+          "sequence": 3,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1,
+          "keepalive_time": 1,
+          "sequence": 3,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 65538,
+          "keepalive_time": 1,
+          "sequence": 3,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d6f1283421a09080610011d002474411a09080810011de33e58461a09080910011d809698421a09080a10011d809fd5421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 131075,
+          "keepalive_time": 1,
+          "sequence": 3,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "wrap",
+        "full": false,
+        "state": 5,
+        "send_result": 0,
+        "actions": [
+          [
+            "UPDATE",
+            4294901760
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            0
+          ],
+          [
+            "UPDATE",
+            1
+          ],
+          [
+            "UPDATE",
+            65538
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            131075
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 4294901760,
+          "keepalive_time": 4294901760,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 4294901760,
+          "keepalive_time": 4294901760,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d000000001a09080610011d002474411a09080810011dda0158461a09080910011d002474421a09080a10011d001bb7421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1,
+          "keepalive_time": 4294901760,
+          "sequence": 1,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 65538,
+          "keepalive_time": 4294901760,
+          "sequence": 1,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d6f1283421a09080610011d002474411a09080810011de33e58461a09080910011d809698421a09080a10011d809fd5421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 131075,
+          "keepalive_time": 4294901760,
+          "sequence": 1,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "wrap",
+        "full": false,
+        "state": 5,
+        "send_result": 5,
+        "actions": [
+          [
+            "UPDATE",
+            4294901760
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            0
+          ],
+          [
+            "UPDATE",
+            1
+          ],
+          [
+            "UPDATE",
+            65538
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            131075
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 4294901760,
+          "keepalive_time": 4294901760,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 4294901760,
+          "keepalive_time": 4294901760,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d000000001a09080610011d002474411a09080810011dda0158461a09080910011d002474421a09080a10011d001bb7421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1,
+          "keepalive_time": 4294901760,
+          "sequence": 1,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 65538,
+          "keepalive_time": 4294901760,
+          "sequence": 1,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d6f1283421a09080610011d002474411a09080810011de33e58461a09080910011d809698421a09080a10011d809fd5421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 131075,
+          "keepalive_time": 4294901760,
+          "sequence": 1,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "simultaneous",
+        "full": false,
+        "state": 5,
+        "send_result": 0,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            1655360
+          ],
+          [
+            "UPDATE",
+            1655361
+          ],
+          [
+            "UPDATE",
+            1655362
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            1720899
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d000000001a09080610011d002474411a09080810011dda0158461a09080910011d002474421a09080a10011d001bb7421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361,
+          "sequence": 2,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361,
+          "sequence": 2,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d6f1283421a09080610011d002474411a09080810011de33e58461a09080910011d809698421a09080a10011d809fd5421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1720899,
+          "keepalive_time": 1655361,
+          "sequence": 2,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "simultaneous",
+        "full": false,
+        "state": 5,
+        "send_result": 5,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            1655360
+          ],
+          [
+            "UPDATE",
+            1655361
+          ],
+          [
+            "UPDATE",
+            1655362
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            1720899
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d000000001a09080610011d002474411a09080810011dda0158461a09080910011d002474421a09080a10011d001bb7421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361,
+          "sequence": 2,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361,
+          "sequence": 2,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d6f1283421a09080610011d002474411a09080810011de33e58461a09080910011d809698421a09080a10011d809fd5421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1720899,
+          "keepalive_time": 1655361,
+          "sequence": 2,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "already_streaming",
+        "full": false,
+        "state": 6,
+        "send_result": 0,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            1065536
+          ],
+          [
+            "UPDATE",
+            1065537
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            1131074
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d000000001a09080610011d002474411a09080810011dda0158461a09080910011d002474421a09080a10011d001bb7421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1065537,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d6f1283421a09080610011d002474411a09080810011de33e58461a09080910011d809698421a09080a10011d809fd5421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1131074,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "already_streaming",
+        "full": false,
+        "state": 6,
+        "send_result": 5,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            1065536
+          ],
+          [
+            "UPDATE",
+            1065537
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            1131074
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d000000001a09080610011d002474411a09080810011dda0158461a09080910011d002474421a09080a10011d001bb7421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1065537,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d6f1283421a09080610011d002474411a09080810011de33e58461a09080910011d809698421a09080a10011d809fd5421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1131074,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "negotiating",
+        "full": false,
+        "state": 4,
+        "send_result": 0,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            2000000
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            2065537
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 4,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 0,
+          "keepalive_time": 0,
+          "sequence": 0,
+          "reported": 0
+        },
+        {
+          "state": 4,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 0,
+          "keepalive_time": 0,
+          "sequence": 0,
+          "reported": 0
+        },
+        {
+          "state": 4,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 0,
+          "keepalive_time": 0,
+          "sequence": 0,
+          "reported": 0
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "negotiating",
+        "full": false,
+        "state": 4,
+        "send_result": 5,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            2000000
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            2065537
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 4,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 0,
+          "keepalive_time": 0,
+          "sequence": 0,
+          "reported": 0
+        },
+        {
+          "state": 4,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 0,
+          "keepalive_time": 0,
+          "sequence": 0,
+          "reported": 0
+        },
+        {
+          "state": 4,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 0,
+          "keepalive_time": 0,
+          "sequence": 0,
+          "reported": 0
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "half_7fffffff",
+        "full": false,
+        "state": 5,
+        "send_result": 0,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            2148483647
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            2148549184
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d000000001a09080610011d002474411a09080810011dda0158461a09080910011d002474421a09080a10011d001bb7421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            },
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148483647,
+          "keepalive_time": 2148483647,
+          "sequence": 2,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d6f1283421a09080610011d002474411a09080810011de33e58461a09080910011d809698421a09080a10011d809fd5421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148549184,
+          "keepalive_time": 2148483647,
+          "sequence": 2,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "half_7fffffff",
+        "full": false,
+        "state": 5,
+        "send_result": 5,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            2148483647
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            2148549184
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d000000001a09080610011d002474411a09080810011dda0158461a09080910011d002474421a09080a10011d001bb7421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            },
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148483647,
+          "keepalive_time": 2148483647,
+          "sequence": 2,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d6f1283421a09080610011d002474411a09080810011de33e58461a09080910011d809698421a09080a10011d809fd5421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148549184,
+          "keepalive_time": 2148483647,
+          "sequence": 2,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "half_80000000",
+        "full": false,
+        "state": 5,
+        "send_result": 0,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            2148483648
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            2148549185
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d000000001a09080610011d002474411a09080810011dda0158461a09080910011d002474421a09080a10011d001bb7421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            },
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148483648,
+          "keepalive_time": 2148483648,
+          "sequence": 2,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d6f1283421a09080610011d002474411a09080810011de33e58461a09080910011d809698421a09080a10011d809fd5421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148549185,
+          "keepalive_time": 2148483648,
+          "sequence": 2,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "half_80000000",
+        "full": false,
+        "state": 5,
+        "send_result": 5,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            2148483648
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            2148549185
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d000000001a09080610011d002474411a09080810011dda0158461a09080910011d002474421a09080a10011d001bb7421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            },
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148483648,
+          "keepalive_time": 2148483648,
+          "sequence": 2,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d6f1283421a09080610011d002474411a09080810011de33e58461a09080910011d809698421a09080a10011d809fd5421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148549185,
+          "keepalive_time": 2148483648,
+          "sequence": 2,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "half_8000ffff",
+        "full": false,
+        "state": 5,
+        "send_result": 0,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            2148549183
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            2148614720
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d000000001a09080610011d002474411a09080810011dda0158461a09080910011d002474421a09080a10011d001bb7421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            },
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148549183,
+          "keepalive_time": 2148549183,
+          "sequence": 2,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d6f1283421a09080610011d002474411a09080810011de33e58461a09080910011d809698421a09080a10011d809fd5421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148614720,
+          "keepalive_time": 2148549183,
+          "sequence": 2,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "half_8000ffff",
+        "full": false,
+        "state": 5,
+        "send_result": 5,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            2148549183
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            2148614720
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d000000001a09080610011d002474411a09080810011dda0158461a09080910011d002474421a09080a10011d001bb7421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            },
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148549183,
+          "keepalive_time": 2148549183,
+          "sequence": 2,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d6f1283421a09080610011d002474411a09080810011de33e58461a09080910011d809698421a09080a10011d809fd5421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148614720,
+          "keepalive_time": 2148549183,
+          "sequence": 2,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "half_80010000",
+        "full": false,
+        "state": 5,
+        "send_result": 0,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            2148549184
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            2148614721
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d000000001a09080610011d002474411a09080810011dda0158461a09080910011d002474421a09080a10011d001bb7421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            },
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148549184,
+          "keepalive_time": 2148549184,
+          "sequence": 2,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d6f1283421a09080610011d002474411a09080810011de33e58461a09080910011d809698421a09080a10011d809fd5421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148614721,
+          "keepalive_time": 2148549184,
+          "sequence": 2,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "half_80010000",
+        "full": false,
+        "state": 5,
+        "send_result": 5,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            2148549184
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            2148614721
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d000000001a09080610011d002474411a09080810011dda0158461a09080910011d002474421a09080a10011d001bb7421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            },
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148549184,
+          "keepalive_time": 2148549184,
+          "sequence": 2,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "0108011a09080010011d6f1283421a09080610011d002474411a09080810011de33e58461a09080910011d809698421a09080a10011d809fd5421a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148614721,
+          "keepalive_time": 2148549184,
+          "sequence": 2,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "half_80010001",
+        "full": false,
+        "state": 5,
+        "send_result": 0,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            2148549185
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            2148614722
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 2148549185,
+          "sequence": 2,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 2148549185,
+          "sequence": 2,
+          "reported": 0
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "half_80010001",
+        "full": false,
+        "state": 5,
+        "send_result": 5,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            2148549185
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            2148614722
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 2148549185,
+          "sequence": 2,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 2148549185,
+          "sequence": 2,
+          "reported": 0
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "half_ffffffff",
+        "full": false,
+        "state": 5,
+        "send_result": 0,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            999999
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            1065536
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "half_ffffffff",
+        "full": false,
+        "state": 5,
+        "send_result": 5,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            999999
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            1065536
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "strict",
+        "full": true,
+        "state": 5,
+        "send_result": 0,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            1065536
+          ],
+          [
+            "UPDATE",
+            1065537
+          ],
+          [
+            "UPDATE",
+            1131073
+          ],
+          [
+            "UPDATE",
+            1131074
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            1196611
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121308011a06080d10f086371a05081210a01f20011a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1065537,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1065537,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1131074,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121d08021a06080d10f086371a05081210882720012d6f12833a35002474411a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1196611,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "strict",
+        "full": true,
+        "state": 5,
+        "send_result": 5,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            1065536
+          ],
+          [
+            "UPDATE",
+            1065537
+          ],
+          [
+            "UPDATE",
+            1131073
+          ],
+          [
+            "UPDATE",
+            1131074
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            1196611
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121308011a06080d10f086371a05081210a01f20011a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1065537,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1065537,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1131074,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121d08021a06080d10f086371a05081210882720012d6f12833a35002474411a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1196611,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "zero_start",
+        "full": true,
+        "state": 5,
+        "send_result": 0,
+        "actions": [
+          [
+            "UPDATE",
+            0
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            0
+          ],
+          [
+            "UPDATE",
+            1
+          ],
+          [
+            "UPDATE",
+            65537
+          ],
+          [
+            "UPDATE",
+            65538
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            131075
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 0,
+          "keepalive_time": 0,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121308011a06080d10f086371a05081210a01f20011a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            },
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 0,
+          "keepalive_time": 0,
+          "sequence": 2,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1,
+          "keepalive_time": 1,
+          "sequence": 3,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1,
+          "keepalive_time": 1,
+          "sequence": 3,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 65538,
+          "keepalive_time": 1,
+          "sequence": 3,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121d08021a06080d10f086371a05081210882720012d6f12833a35002474411a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 131075,
+          "keepalive_time": 1,
+          "sequence": 3,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "zero_start",
+        "full": true,
+        "state": 5,
+        "send_result": 5,
+        "actions": [
+          [
+            "UPDATE",
+            0
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            0
+          ],
+          [
+            "UPDATE",
+            1
+          ],
+          [
+            "UPDATE",
+            65537
+          ],
+          [
+            "UPDATE",
+            65538
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            131075
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 0,
+          "keepalive_time": 0,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121308011a06080d10f086371a05081210a01f20011a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            },
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 0,
+          "keepalive_time": 0,
+          "sequence": 2,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1,
+          "keepalive_time": 1,
+          "sequence": 3,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1,
+          "keepalive_time": 1,
+          "sequence": 3,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 65538,
+          "keepalive_time": 1,
+          "sequence": 3,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121d08021a06080d10f086371a05081210882720012d6f12833a35002474411a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 131075,
+          "keepalive_time": 1,
+          "sequence": 3,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "wrap",
+        "full": true,
+        "state": 5,
+        "send_result": 0,
+        "actions": [
+          [
+            "UPDATE",
+            4294901760
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            0
+          ],
+          [
+            "UPDATE",
+            1
+          ],
+          [
+            "UPDATE",
+            65538
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            131075
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 4294901760,
+          "keepalive_time": 4294901760,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 4294901760,
+          "keepalive_time": 4294901760,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121308011a06080d10f086371a05081210a01f20011a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1,
+          "keepalive_time": 4294901760,
+          "sequence": 1,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 65538,
+          "keepalive_time": 4294901760,
+          "sequence": 1,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121d08021a06080d10f086371a05081210882720012d6f12833a35002474411a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 131075,
+          "keepalive_time": 4294901760,
+          "sequence": 1,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "wrap",
+        "full": true,
+        "state": 5,
+        "send_result": 5,
+        "actions": [
+          [
+            "UPDATE",
+            4294901760
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            0
+          ],
+          [
+            "UPDATE",
+            1
+          ],
+          [
+            "UPDATE",
+            65538
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            131075
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 4294901760,
+          "keepalive_time": 4294901760,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 4294901760,
+          "keepalive_time": 4294901760,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121308011a06080d10f086371a05081210a01f20011a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1,
+          "keepalive_time": 4294901760,
+          "sequence": 1,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 65538,
+          "keepalive_time": 4294901760,
+          "sequence": 1,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121d08021a06080d10f086371a05081210882720012d6f12833a35002474411a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 131075,
+          "keepalive_time": 4294901760,
+          "sequence": 1,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "simultaneous",
+        "full": true,
+        "state": 5,
+        "send_result": 0,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            1655360
+          ],
+          [
+            "UPDATE",
+            1655361
+          ],
+          [
+            "UPDATE",
+            1655362
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            1720899
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121308011a06080d10f086371a05081210a01f20011a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361,
+          "sequence": 2,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361,
+          "sequence": 2,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121d08021a06080d10f086371a05081210882720012d6f12833a35002474411a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1720899,
+          "keepalive_time": 1655361,
+          "sequence": 2,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "simultaneous",
+        "full": true,
+        "state": 5,
+        "send_result": 5,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            1655360
+          ],
+          [
+            "UPDATE",
+            1655361
+          ],
+          [
+            "UPDATE",
+            1655362
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            1720899
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121308011a06080d10f086371a05081210a01f20011a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361,
+          "sequence": 2,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361,
+          "sequence": 2,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121d08021a06080d10f086371a05081210882720012d6f12833a35002474411a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1720899,
+          "keepalive_time": 1655361,
+          "sequence": 2,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "already_streaming",
+        "full": true,
+        "state": 6,
+        "send_result": 0,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            1065536
+          ],
+          [
+            "UPDATE",
+            1065537
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            1131074
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121308011a06080d10f086371a05081210a01f20011a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1065537,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121d08021a06080d10f086371a05081210882720012d6f12833a35002474411a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1131074,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "already_streaming",
+        "full": true,
+        "state": 6,
+        "send_result": 5,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            1065536
+          ],
+          [
+            "UPDATE",
+            1065537
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            1131074
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121308011a06080d10f086371a05081210a01f20011a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1065537,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121d08021a06080d10f086371a05081210882720012d6f12833a35002474411a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 1131074,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "negotiating",
+        "full": true,
+        "state": 4,
+        "send_result": 0,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            2000000
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            2065537
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 4,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 0,
+          "keepalive_time": 0,
+          "sequence": 0,
+          "reported": 0
+        },
+        {
+          "state": 4,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 0,
+          "keepalive_time": 0,
+          "sequence": 0,
+          "reported": 0
+        },
+        {
+          "state": 4,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 0,
+          "keepalive_time": 0,
+          "sequence": 0,
+          "reported": 0
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "negotiating",
+        "full": true,
+        "state": 4,
+        "send_result": 5,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            2000000
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            2065537
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 4,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 0,
+          "keepalive_time": 0,
+          "sequence": 0,
+          "reported": 0
+        },
+        {
+          "state": 4,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 0,
+          "keepalive_time": 0,
+          "sequence": 0,
+          "reported": 0
+        },
+        {
+          "state": 4,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 0,
+          "keepalive_time": 0,
+          "sequence": 0,
+          "reported": 0
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "half_7fffffff",
+        "full": true,
+        "state": 5,
+        "send_result": 0,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            2148483647
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            2148549184
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121308011a06080d10f086371a05081210a01f20011a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            },
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148483647,
+          "keepalive_time": 2148483647,
+          "sequence": 2,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121d08021a06080d10f086371a05081210882720012d6f12833a35002474411a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148549184,
+          "keepalive_time": 2148483647,
+          "sequence": 2,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "half_7fffffff",
+        "full": true,
+        "state": 5,
+        "send_result": 5,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            2148483647
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            2148549184
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121308011a06080d10f086371a05081210a01f20011a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            },
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148483647,
+          "keepalive_time": 2148483647,
+          "sequence": 2,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121d08021a06080d10f086371a05081210882720012d6f12833a35002474411a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148549184,
+          "keepalive_time": 2148483647,
+          "sequence": 2,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "half_80000000",
+        "full": true,
+        "state": 5,
+        "send_result": 0,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            2148483648
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            2148549185
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121308011a06080d10f086371a05081210a01f20011a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            },
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148483648,
+          "keepalive_time": 2148483648,
+          "sequence": 2,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121d08021a06080d10f086371a05081210882720012d6f12833a35002474411a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148549185,
+          "keepalive_time": 2148483648,
+          "sequence": 2,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "half_80000000",
+        "full": true,
+        "state": 5,
+        "send_result": 5,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            2148483648
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            2148549185
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121308011a06080d10f086371a05081210a01f20011a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            },
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148483648,
+          "keepalive_time": 2148483648,
+          "sequence": 2,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121d08021a06080d10f086371a05081210882720012d6f12833a35002474411a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148549185,
+          "keepalive_time": 2148483648,
+          "sequence": 2,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "half_8000ffff",
+        "full": true,
+        "state": 5,
+        "send_result": 0,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            2148549183
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            2148614720
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121308011a06080d10f086371a05081210a01f20011a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            },
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148549183,
+          "keepalive_time": 2148549183,
+          "sequence": 2,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121d08021a06080d10f086371a05081210882720012d6f12833a35002474411a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148614720,
+          "keepalive_time": 2148549183,
+          "sequence": 2,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "half_8000ffff",
+        "full": true,
+        "state": 5,
+        "send_result": 5,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            2148549183
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            2148614720
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121308011a06080d10f086371a05081210a01f20011a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            },
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148549183,
+          "keepalive_time": 2148549183,
+          "sequence": 2,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121d08021a06080d10f086371a05081210882720012d6f12833a35002474411a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148614720,
+          "keepalive_time": 2148549183,
+          "sequence": 2,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "half_80010000",
+        "full": true,
+        "state": 5,
+        "send_result": 0,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            2148549184
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            2148614721
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121308011a06080d10f086371a05081210a01f20011a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            },
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148549184,
+          "keepalive_time": 2148549184,
+          "sequence": 2,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121d08021a06080d10f086371a05081210882720012d6f12833a35002474411a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148614721,
+          "keepalive_time": 2148549184,
+          "sequence": 2,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "half_80010000",
+        "full": true,
+        "state": 5,
+        "send_result": 5,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            2148549184
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            2148614721
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121308011a06080d10f086371a05081210a01f20011a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002001"
+            },
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148549184,
+          "keepalive_time": 2148549184,
+          "sequence": 2,
+          "reported": 1
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 2,
+              "body": "010801121d08021a06080d10f086371a05081210882720012d6f12833a35002474411a09080e10011d000000001a09080f10011d000000001a09081010011d000000001a09081110011d000000001a09081210011d000000002002"
+            }
+          ],
+          "frame_events": [
+            1
+          ],
+          "frame_events_time": 2148614721,
+          "keepalive_time": 2148549184,
+          "sequence": 2,
+          "reported": 2
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "half_80010001",
+        "full": true,
+        "state": 5,
+        "send_result": 0,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            2148549185
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            2148614722
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 2148549185,
+          "sequence": 2,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 2148549185,
+          "sequence": 2,
+          "reported": 0
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "half_80010001",
+        "full": true,
+        "state": 5,
+        "send_result": 5,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            2148549185
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            2148614722
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "09"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 2148549185,
+          "sequence": 2,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 2148549185,
+          "sequence": 2,
+          "reported": 0
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "half_ffffffff",
+        "full": true,
+        "state": 5,
+        "send_result": 0,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            999999
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            1065536
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        }
+      ]
+    },
+    {
+      "input": {
+        "name": "half_ffffffff",
+        "full": true,
+        "state": 5,
+        "send_result": 5,
+        "actions": [
+          [
+            "UPDATE",
+            1000000
+          ],
+          [
+            "R",
+            1
+          ],
+          [
+            "C",
+            1,
+            1,
+            906000
+          ],
+          [
+            "UPDATE",
+            999999
+          ],
+          [
+            "R",
+            2
+          ],
+          [
+            "C",
+            2,
+            1,
+            907000
+          ],
+          [
+            "UPDATE",
+            1065536
+          ]
+        ]
+      },
+      "observed": [
+        {
+          "state": 6,
+          "frames": [
+            {
+              "channel": 1,
+              "body": "05"
+            }
+          ],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        },
+        {
+          "state": 6,
+          "frames": [],
+          "frame_events": [],
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000,
+          "sequence": 1,
+          "reported": 0
+        }
+      ]
+    }
+  ]
+}

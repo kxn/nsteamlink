@@ -954,11 +954,12 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
             continue;
         } else if (!centered && !footer) {
             width -= 28;
-            if (c->action == SL_SOUND) {
-                sl_gfx_color track = m->store.sound ? green : muted;
+            if (c->action == SL_SOUND || c->action == SL_FEC) {
+                bool enabled = c->action == SL_FEC ? m->store.unreliable_fec : m->store.sound;
+                sl_gfx_color track = enabled ? green : muted;
                 int tx = box.x + box.w - 74, ty = box.y + (box.h - 28) / 2;
                 rounded(r->renderer, (sl_gfx_rect){tx, ty, 50, 28}, 14, track);
-                rounded(r->renderer, (sl_gfx_rect){tx + (m->store.sound ? 25 : 3), ty + 3, 22, 22},
+                rounded(r->renderer, (sl_gfx_rect){tx + (enabled ? 25 : 3), ty + 3, 22, 22},
                         11, bg);
             } else if (c->action != SL_BACK && c->action != SL_SET_QUALITY &&
                        c->action != SL_SET_BANDWIDTH && c->action != SL_SET_LANGUAGE)

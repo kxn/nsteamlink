@@ -28,10 +28,23 @@ sl_video_pipeline *sl_video_create(void);
  * FFmpeg. stop joins the callback domain via the decoder lock, then freezes it.
  * Reap/destroy belong to the runtime worker after callbacks have been excluded. */
 bool sl_video_open(sl_video_pipeline *, sl_video_key, const sl_video_config *);
+typedef enum sl_video_open_result {
+    SL_VIDEO_OPEN_GUARD = -1, SL_VIDEO_OPEN_UNAVAILABLE = 0, SL_VIDEO_OPEN_READY = 1,
+} sl_video_open_result;
+sl_video_open_result sl_video_open_ex(sl_video_pipeline *, sl_video_key, const sl_video_config *);
 void sl_video_close(sl_video_pipeline *, sl_video_key);
 void sl_video_stop(sl_video_pipeline *, sl_video_key);
-bool sl_video_submit(sl_video_pipeline *, sl_video_key, const unsigned char *, size_t,
-                     IHS_FrameTicket *, bool *ticket_taken);
+/* After admission closes/consumer joins, discard codec's internal references;
+ * this neither drains output nor destroys caller-held frames/map leases. */
+void sl_video_discard_buffers(sl_video_pipeline *, sl_video_key);
+typedef enum sl_video_submit_result {
+    SL_VIDEO_SUBMIT_ERROR = 0,
+    SL_VIDEO_SUBMIT_OK = 1,
+    SL_VIDEO_SUBMIT_CORRUPT = 2,
+} sl_video_submit_result;
+sl_video_submit_result sl_video_submit(sl_video_pipeline *, sl_video_key, const unsigned char *,
+                                       size_t, IHS_FrameTicket *, bool *ticket_taken,
+                                       bool keyframe);
 bool sl_video_flush(sl_video_pipeline *, sl_video_key);
 sl_video_frame *sl_video_take(sl_video_pipeline *); /* transfers pending reference */
 bool sl_video_is_current(sl_video_pipeline *, sl_video_key);

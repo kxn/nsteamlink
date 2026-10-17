@@ -150,5 +150,9 @@
   "UPDATE_DONE": "Updated to %s.\nExit and start NSteamLink again.",
   "UPDATE_FAILED_DOWNLOAD": "Download failed.\nCheck the connection and retry.",
   "UPDATE_FAILED_VERIFY": "The download failed its checksum.\nNothing was changed.",
-  "UPDATE_FAILED_WRITE": "Could not write the update\nto the SD card."
+  "UPDATE_FAILED_WRITE": "Could not write the update\nto the SD card.",
+  "ERROR_CORRECTION": "Network error correction",
+  "ERROR_CORRECTION_NEXT": "Error correction applies on next connection",
+  "BANDWIDTH_AUTO": "Automatic",
+  "BANDWIDTH_UNLIMITED": "Unlimited"
 }

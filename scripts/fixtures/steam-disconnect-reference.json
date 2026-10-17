@@ -1,0 +1,7061 @@
+{
+  "binary_sha256": "50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e",
+  "scope": "Official client shutdown paths, peer packets, Close and connection IDs.\n\nExecutes pinned ARM64 client/connection/socket/CRC instructions. Packet allocation,\nbase construction/refcounts, empty queues, absent decoder/device objects, stats,\naddress comparison and final transport I/O/destruction are explicit adapters.\nThe callback recorder observes state/IDs before Update clears them.\n",
+  "cases": [
+    {
+      "case": "disconnect_state0_crc0_result0",
+      "group": "disconnect",
+      "input": {
+        "state": 0,
+        "crc": false,
+        "result": 0
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state0_crc0_result1",
+      "group": "disconnect",
+      "input": {
+        "state": 0,
+        "crc": false,
+        "result": 1
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state0_crc0_result2",
+      "group": "disconnect",
+      "input": {
+        "state": 0,
+        "crc": false,
+        "result": 2
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state0_crc1_result0",
+      "group": "disconnect",
+      "input": {
+        "state": 0,
+        "crc": true,
+        "result": 0
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state0_crc1_result1",
+      "group": "disconnect",
+      "input": {
+        "state": 0,
+        "crc": true,
+        "result": 1
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state0_crc1_result2",
+      "group": "disconnect",
+      "input": {
+        "state": 0,
+        "crc": true,
+        "result": 2
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state1_crc0_result0",
+      "group": "disconnect",
+      "input": {
+        "state": 1,
+        "crc": false,
+        "result": 0
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "09000c22000000000040420f00"
+            }
+          ],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state1_crc0_result1",
+      "group": "disconnect",
+      "input": {
+        "state": 1,
+        "crc": false,
+        "result": 1
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "09000c22000000000040420f00"
+            }
+          ],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state1_crc0_result2",
+      "group": "disconnect",
+      "input": {
+        "state": 1,
+        "crc": false,
+        "result": 2
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "09000c22000000000040420f00"
+            }
+          ],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state1_crc1_result0",
+      "group": "disconnect",
+      "input": {
+        "state": 1,
+        "crc": true,
+        "result": 0
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "89000c22000000000040420f00d6497fa4"
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state1_crc1_result1",
+      "group": "disconnect",
+      "input": {
+        "state": 1,
+        "crc": true,
+        "result": 1
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "89000c22000000000040420f00d6497fa4"
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state1_crc1_result2",
+      "group": "disconnect",
+      "input": {
+        "state": 1,
+        "crc": true,
+        "result": 2
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "89000c22000000000040420f00d6497fa4"
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state2_crc0_result0",
+      "group": "disconnect",
+      "input": {
+        "state": 2,
+        "crc": false,
+        "result": 0
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state2_crc0_result1",
+      "group": "disconnect",
+      "input": {
+        "state": 2,
+        "crc": false,
+        "result": 1
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state2_crc0_result2",
+      "group": "disconnect",
+      "input": {
+        "state": 2,
+        "crc": false,
+        "result": 2
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state2_crc1_result0",
+      "group": "disconnect",
+      "input": {
+        "state": 2,
+        "crc": true,
+        "result": 0
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state2_crc1_result1",
+      "group": "disconnect",
+      "input": {
+        "state": 2,
+        "crc": true,
+        "result": 1
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state2_crc1_result2",
+      "group": "disconnect",
+      "input": {
+        "state": 2,
+        "crc": true,
+        "result": 2
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state3_crc0_result0",
+      "group": "disconnect",
+      "input": {
+        "state": 3,
+        "crc": false,
+        "result": 0
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state3_crc0_result1",
+      "group": "disconnect",
+      "input": {
+        "state": 3,
+        "crc": false,
+        "result": 1
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state3_crc0_result2",
+      "group": "disconnect",
+      "input": {
+        "state": 3,
+        "crc": false,
+        "result": 2
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state3_crc1_result0",
+      "group": "disconnect",
+      "input": {
+        "state": 3,
+        "crc": true,
+        "result": 0
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state3_crc1_result1",
+      "group": "disconnect",
+      "input": {
+        "state": 3,
+        "crc": true,
+        "result": 1
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "disconnect_state3_crc1_result2",
+      "group": "disconnect",
+      "input": {
+        "state": 3,
+        "crc": true,
+        "result": 2
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "close_state0_crc0",
+      "group": "close",
+      "input": {
+        "state": 0,
+        "crc": false
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            }
+          ],
+          "crc_required": false,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "close_state0_crc1",
+      "group": "close",
+      "input": {
+        "state": 0,
+        "crc": true
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "close_state1_crc0",
+      "group": "close",
+      "input": {
+        "state": 1,
+        "crc": false
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "send",
+              "wire": "09000c22000000000040420f00"
+            }
+          ],
+          "crc_required": false,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "close_state1_crc1",
+      "group": "close",
+      "input": {
+        "state": 1,
+        "crc": true
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "send",
+              "wire": "89000c22000000000040420f00d6497fa4"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "close_state2_crc0",
+      "group": "close",
+      "input": {
+        "state": 2,
+        "crc": false
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            }
+          ],
+          "crc_required": false,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "close_state2_crc1",
+      "group": "close",
+      "input": {
+        "state": 2,
+        "crc": true
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "close_state3_crc0",
+      "group": "close",
+      "input": {
+        "state": 3,
+        "crc": false
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            }
+          ],
+          "crc_required": false,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": false,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "close_state3_crc1",
+      "group": "close",
+      "input": {
+        "state": 3,
+        "crc": true
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase0_state0",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 0,
+        "state": 0
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase0_state1",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 0,
+        "state": 1
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "send",
+              "wire": "89000c22000000000040420f00d6497fa4"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase0_state2",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 0,
+        "state": 2
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase0_state3",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 0,
+        "state": 3
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase1_state0",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 1,
+        "state": 0
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase1_state1",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 1,
+        "state": 1
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "send",
+              "wire": "89000c22000000000040420f00d6497fa4"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase1_state2",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 1,
+        "state": 2
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase1_state3",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 1,
+        "state": 3
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase2_state0",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 2,
+        "state": 0
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase2_state1",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 2,
+        "state": 1
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "send",
+              "wire": "89000c22000000000040420f00d6497fa4"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase2_state2",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 2,
+        "state": 2
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase2_state3",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 2,
+        "state": 3
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase3_state0",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 3,
+        "state": 0
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase3_state1",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 3,
+        "state": 1
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "send",
+              "wire": "89000c22000000000040420f00d6497fa4"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase3_state2",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 3,
+        "state": 2
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase3_state3",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 3,
+        "state": 3
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase4_state0",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 4,
+        "state": 0
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase4_state1",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 4,
+        "state": 1
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "send",
+              "wire": "89000c22000000000040420f00d6497fa4"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase4_state2",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 4,
+        "state": 2
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase4_state3",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 4,
+        "state": 3
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase5_state0",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 5,
+        "state": 0
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase5_state1",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 5,
+        "state": 1
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "send",
+              "wire": "89000c22000000000040420f00d6497fa4"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase5_state2",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 5,
+        "state": 2
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase5_state3",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 5,
+        "state": 3
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase6_state0",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 6,
+        "state": 0
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "stats_stop"
+            },
+            {
+              "action": "stats_save"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase6_state1",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 6,
+        "state": 1
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "send",
+              "wire": "89000c22000000000040420f00d6497fa4"
+            },
+            {
+              "action": "stats_stop"
+            },
+            {
+              "action": "stats_save"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase6_state2",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 6,
+        "state": 2
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "stats_stop"
+            },
+            {
+              "action": "stats_save"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase6_state3",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 6,
+        "state": 3
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "stats_stop"
+            },
+            {
+              "action": "stats_save"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase7_state0",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 7,
+        "state": 0
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "stats_stop"
+            },
+            {
+              "action": "stats_save"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase7_state1",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 7,
+        "state": 1
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "send",
+              "wire": "89000c22000000000040420f00d6497fa4"
+            },
+            {
+              "action": "stats_stop"
+            },
+            {
+              "action": "stats_save"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase7_state2",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 7,
+        "state": 2
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "stats_stop"
+            },
+            {
+              "action": "stats_save"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "client_disconnect_phase7_state3",
+      "group": "client_disconnect",
+      "input": {
+        "client_state": 7,
+        "state": 3
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "stats_stop"
+            },
+            {
+              "action": "stats_save"
+            },
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "transport_release"
+            }
+          ],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 0,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state0_valid",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 0,
+        "mode": "valid",
+        "datagram": "8900220c000000000040420f00a6380026"
+      },
+      "observed": [
+        {
+          "state": 0,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 0,
+          "last_connect": 1000001,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "81000c00000000000041420f00c73d8f3ca2526d59"
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state0_valid_delay100",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 0,
+        "mode": "valid",
+        "datagram": "8900220c0000000000a4420f00068b0173",
+        "delay": 100
+      },
+      "observed": [
+        {
+          "state": 0,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000100
+        },
+        {
+          "state": 0,
+          "last_connect": 1000101,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "81000c000000000000a5420f00c73d8f3c00e8715b"
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000100
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state0_no_crc",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 0,
+        "mode": "no_crc",
+        "datagram": "0900220c000000000040420f00"
+      },
+      "observed": [
+        {
+          "state": 0,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 0,
+          "last_connect": 1000001,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "81000c00000000000041420f00c73d8f3ca2526d59"
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state0_no_crc_delay100",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 0,
+        "mode": "no_crc",
+        "datagram": "0900220c0000000000a4420f00",
+        "delay": 100
+      },
+      "observed": [
+        {
+          "state": 0,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000100
+        },
+        {
+          "state": 0,
+          "last_connect": 1000101,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "81000c000000000000a5420f00c73d8f3c00e8715b"
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000100
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state0_bad_crc",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 0,
+        "mode": "bad_crc",
+        "datagram": "8900220c000000000040420f00a7380026"
+      },
+      "observed": [
+        {
+          "state": 0,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 0,
+          "last_connect": 1000001,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "81000c00000000000041420f00c73d8f3ca2526d59"
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state0_bad_crc_delay100",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 0,
+        "mode": "bad_crc",
+        "datagram": "8900220c0000000000a4420f00078b0173",
+        "delay": 100
+      },
+      "observed": [
+        {
+          "state": 0,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 0,
+          "last_connect": 1000101,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "81000c000000000000a5420f00c73d8f3c00e8715b"
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state0_bad_source",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 0,
+        "mode": "bad_source",
+        "datagram": "8900230c000000000040420f0067cf71b1"
+      },
+      "observed": [
+        {
+          "state": 0,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 0,
+          "last_connect": 1000001,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "81000c00000000000041420f00c73d8f3ca2526d59"
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state0_bad_source_delay100",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 0,
+        "mode": "bad_source",
+        "datagram": "8900230c0000000000a4420f00c77c70e4",
+        "delay": 100
+      },
+      "observed": [
+        {
+          "state": 0,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 0,
+          "last_connect": 1000101,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "81000c000000000000a5420f00c73d8f3c00e8715b"
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state0_bad_dest",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 0,
+        "mode": "bad_dest",
+        "datagram": "8900220d000000000040420f00034356ed"
+      },
+      "observed": [
+        {
+          "state": 0,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 0,
+          "last_connect": 1000001,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "81000c00000000000041420f00c73d8f3ca2526d59"
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state0_bad_dest_delay100",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 0,
+        "mode": "bad_dest",
+        "datagram": "8900220d0000000000a4420f00a3f057b8",
+        "delay": 100
+      },
+      "observed": [
+        {
+          "state": 0,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 0,
+          "last_connect": 1000101,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "81000c000000000000a5420f00c73d8f3c00e8715b"
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state0_bad_address",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 0,
+        "mode": "bad_address",
+        "datagram": "8900220c000000000040420f00a6380026"
+      },
+      "observed": [
+        {
+          "state": 0,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 0,
+          "last_connect": 1000001,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "81000c00000000000041420f00c73d8f3ca2526d59"
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state0_bad_address_delay100",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 0,
+        "mode": "bad_address",
+        "datagram": "8900220c0000000000a4420f00068b0173",
+        "delay": 100
+      },
+      "observed": [
+        {
+          "state": 0,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 0,
+          "last_connect": 1000101,
+          "actions": [
+            {
+              "action": "send",
+              "wire": "81000c000000000000a5420f00c73d8f3c00e8715b"
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state1_valid",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 1,
+        "mode": "valid",
+        "datagram": "8900220c000000000040420f00a6380026"
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "send",
+              "wire": "89000c22000000000040420f00d6497fa4"
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state1_valid_delay100",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 1,
+        "mode": "valid",
+        "datagram": "8900220c0000000000a4420f00068b0173",
+        "delay": 100
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "send",
+              "wire": "89000c220000000000a4420f0076fa7ef1"
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000100
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000100
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state1_no_crc",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 1,
+        "mode": "no_crc",
+        "datagram": "0900220c000000000040420f00"
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "send",
+              "wire": "89000c22000000000040420f00d6497fa4"
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state1_no_crc_delay100",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 1,
+        "mode": "no_crc",
+        "datagram": "0900220c0000000000a4420f00",
+        "delay": 100
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "disconnect"
+            },
+            {
+              "action": "send",
+              "wire": "89000c220000000000a4420f0076fa7ef1"
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000100
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000100
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state1_bad_crc",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 1,
+        "mode": "bad_crc",
+        "datagram": "8900220c000000000040420f00a7380026"
+      },
+      "observed": [
+        {
+          "state": 1,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 1,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state1_bad_crc_delay100",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 1,
+        "mode": "bad_crc",
+        "datagram": "8900220c0000000000a4420f00078b0173",
+        "delay": 100
+      },
+      "observed": [
+        {
+          "state": 1,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 1,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state1_bad_source",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 1,
+        "mode": "bad_source",
+        "datagram": "8900230c000000000040420f0067cf71b1"
+      },
+      "observed": [
+        {
+          "state": 1,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 1,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state1_bad_source_delay100",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 1,
+        "mode": "bad_source",
+        "datagram": "8900230c0000000000a4420f00c77c70e4",
+        "delay": 100
+      },
+      "observed": [
+        {
+          "state": 1,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 1,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state1_bad_dest",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 1,
+        "mode": "bad_dest",
+        "datagram": "8900220d000000000040420f00034356ed"
+      },
+      "observed": [
+        {
+          "state": 1,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 1,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state1_bad_dest_delay100",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 1,
+        "mode": "bad_dest",
+        "datagram": "8900220d0000000000a4420f00a3f057b8",
+        "delay": 100
+      },
+      "observed": [
+        {
+          "state": 1,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 1,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state1_bad_address",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 1,
+        "mode": "bad_address",
+        "datagram": "8900220c000000000040420f00a6380026"
+      },
+      "observed": [
+        {
+          "state": 1,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 1,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state1_bad_address_delay100",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 1,
+        "mode": "bad_address",
+        "datagram": "8900220c0000000000a4420f00068b0173",
+        "delay": 100
+      },
+      "observed": [
+        {
+          "state": 1,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 1,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state2_valid",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 2,
+        "mode": "valid",
+        "datagram": "8900220c000000000040420f00a6380026"
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state2_valid_delay100",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 2,
+        "mode": "valid",
+        "datagram": "8900220c0000000000a4420f00068b0173",
+        "delay": 100
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000100
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000100
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state2_no_crc",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 2,
+        "mode": "no_crc",
+        "datagram": "0900220c000000000040420f00"
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state2_no_crc_delay100",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 2,
+        "mode": "no_crc",
+        "datagram": "0900220c0000000000a4420f00",
+        "delay": 100
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000100
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000100
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state2_bad_crc",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 2,
+        "mode": "bad_crc",
+        "datagram": "8900220c000000000040420f00a7380026"
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state2_bad_crc_delay100",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 2,
+        "mode": "bad_crc",
+        "datagram": "8900220c0000000000a4420f00078b0173",
+        "delay": 100
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state2_bad_source",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 2,
+        "mode": "bad_source",
+        "datagram": "8900230c000000000040420f0067cf71b1"
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state2_bad_source_delay100",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 2,
+        "mode": "bad_source",
+        "datagram": "8900230c0000000000a4420f00c77c70e4",
+        "delay": 100
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state2_bad_dest",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 2,
+        "mode": "bad_dest",
+        "datagram": "8900220d000000000040420f00034356ed"
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state2_bad_dest_delay100",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 2,
+        "mode": "bad_dest",
+        "datagram": "8900220d0000000000a4420f00a3f057b8",
+        "delay": 100
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state2_bad_address",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 2,
+        "mode": "bad_address",
+        "datagram": "8900220c000000000040420f00a6380026"
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state2_bad_address_delay100",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 2,
+        "mode": "bad_address",
+        "datagram": "8900220c0000000000a4420f00068b0173",
+        "delay": 100
+      },
+      "observed": [
+        {
+          "state": 2,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state3_valid",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 3,
+        "mode": "valid",
+        "datagram": "8900220c000000000040420f00a6380026"
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state3_valid_delay100",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 3,
+        "mode": "valid",
+        "datagram": "8900220c0000000000a4420f00068b0173",
+        "delay": 100
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000100
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000100
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state3_no_crc",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 3,
+        "mode": "no_crc",
+        "datagram": "0900220c000000000040420f00"
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state3_no_crc_delay100",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 3,
+        "mode": "no_crc",
+        "datagram": "0900220c0000000000a4420f00",
+        "delay": 100
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000100
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000100
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state3_bad_crc",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 3,
+        "mode": "bad_crc",
+        "datagram": "8900220c000000000040420f00a7380026"
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state3_bad_crc_delay100",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 3,
+        "mode": "bad_crc",
+        "datagram": "8900220c0000000000a4420f00078b0173",
+        "delay": 100
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state3_bad_source",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 3,
+        "mode": "bad_source",
+        "datagram": "8900230c000000000040420f0067cf71b1"
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state3_bad_source_delay100",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 3,
+        "mode": "bad_source",
+        "datagram": "8900230c0000000000a4420f00c77c70e4",
+        "delay": 100
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state3_bad_dest",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 3,
+        "mode": "bad_dest",
+        "datagram": "8900220d000000000040420f00034356ed"
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state3_bad_dest_delay100",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 3,
+        "mode": "bad_dest",
+        "datagram": "8900220d0000000000a4420f00a3f057b8",
+        "delay": 100
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state3_bad_address",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 3,
+        "mode": "bad_address",
+        "datagram": "8900220c000000000040420f00a6380026"
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "peer_disconnect_state3_bad_address_delay100",
+      "group": "peer_disconnect",
+      "input": {
+        "state": 3,
+        "mode": "bad_address",
+        "datagram": "8900220c0000000000a4420f00068b0173",
+        "delay": 100
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "terminal_timeout_state0_close0",
+      "group": "terminal_timeout",
+      "input": {
+        "state": 0,
+        "close": false
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "terminal_timeout_state0_close1",
+      "group": "terminal_timeout",
+      "input": {
+        "state": 0,
+        "close": true
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "terminal_timeout_state1_close0",
+      "group": "terminal_timeout",
+      "input": {
+        "state": 1,
+        "close": false
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "terminal_timeout_state1_close1",
+      "group": "terminal_timeout",
+      "input": {
+        "state": 1,
+        "close": true
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "terminal_timeout_state2_close0",
+      "group": "terminal_timeout",
+      "input": {
+        "state": 2,
+        "close": false
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [
+            {
+              "action": "closed",
+              "state": 2,
+              "local": 12,
+              "peer": 34
+            }
+          ],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "terminal_timeout_state2_close1",
+      "group": "terminal_timeout",
+      "input": {
+        "state": 2,
+        "close": true
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 0,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "terminal_timeout_state3_close0",
+      "group": "terminal_timeout",
+      "input": {
+        "state": 3,
+        "close": false
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": true,
+          "delegate": true,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "terminal_timeout_state3_close1",
+      "group": "terminal_timeout",
+      "input": {
+        "state": 3,
+        "close": true
+      },
+      "observed": [
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        },
+        {
+          "state": 3,
+          "last_connect": 0,
+          "actions": [],
+          "crc_required": true,
+          "attached": false,
+          "delegate": false,
+          "client_state": 1,
+          "local": 12,
+          "peer": 34,
+          "last_receive": 1000000
+        }
+      ]
+    },
+    {
+      "case": "connection_ids_prior0",
+      "group": "connection_ids",
+      "input": {
+        "prior": 0,
+        "random": [
+          0,
+          255,
+          510,
+          254
+        ],
+        "warmup": 0,
+        "count": 260
+      },
+      "observed": {
+        "ids": [
+          254,
+          255,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39,
+          40,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46,
+          47,
+          48,
+          49,
+          50,
+          51,
+          52,
+          53,
+          54,
+          55,
+          56,
+          57,
+          58,
+          59,
+          60,
+          61,
+          62,
+          63,
+          64,
+          65,
+          66,
+          67,
+          68,
+          69,
+          70,
+          71,
+          72,
+          73,
+          74,
+          75,
+          76,
+          77,
+          78,
+          79,
+          80,
+          81,
+          82,
+          83,
+          84,
+          85,
+          86,
+          87,
+          88,
+          89,
+          90,
+          91,
+          92,
+          93,
+          94,
+          95,
+          96,
+          97,
+          98,
+          99,
+          100,
+          101,
+          102,
+          103,
+          104,
+          105,
+          106,
+          107,
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126,
+          127,
+          128,
+          129,
+          130,
+          131,
+          132,
+          133,
+          134,
+          135,
+          136,
+          137,
+          138,
+          139,
+          140,
+          141,
+          142,
+          143,
+          144,
+          145,
+          146,
+          147,
+          148,
+          149,
+          150,
+          151,
+          152,
+          153,
+          154,
+          155,
+          156,
+          157,
+          158,
+          159,
+          160,
+          161,
+          162,
+          163,
+          164,
+          165,
+          166,
+          167,
+          168,
+          169,
+          170,
+          171,
+          172,
+          173,
+          174,
+          175,
+          176,
+          177,
+          178,
+          179,
+          180,
+          181,
+          182,
+          183,
+          184,
+          185,
+          186,
+          187,
+          188,
+          189,
+          190,
+          191,
+          192,
+          193,
+          194,
+          195,
+          196,
+          197,
+          198,
+          199,
+          200,
+          201,
+          202,
+          203,
+          204,
+          205,
+          206,
+          207,
+          208,
+          209,
+          210,
+          211,
+          212,
+          213,
+          214,
+          215,
+          216,
+          217,
+          218,
+          219,
+          220,
+          221,
+          222,
+          223,
+          224,
+          225,
+          226,
+          227,
+          228,
+          229,
+          230,
+          231,
+          232,
+          233,
+          234,
+          235,
+          236,
+          237,
+          238,
+          239,
+          240,
+          241,
+          242,
+          243,
+          244,
+          245,
+          246,
+          247,
+          248,
+          249,
+          250,
+          251,
+          252,
+          253,
+          254,
+          255,
+          1,
+          2,
+          3
+        ],
+        "random_calls": [
+          0,
+          255,
+          510,
+          254
+        ]
+      }
+    },
+    {
+      "case": "connection_ids_prior1",
+      "group": "connection_ids",
+      "input": {
+        "prior": 1,
+        "random": [
+          1
+        ],
+        "warmup": 0,
+        "count": 260
+      },
+      "observed": {
+        "ids": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39,
+          40,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46,
+          47,
+          48,
+          49,
+          50,
+          51,
+          52,
+          53,
+          54,
+          55,
+          56,
+          57,
+          58,
+          59,
+          60,
+          61,
+          62,
+          63,
+          64,
+          65,
+          66,
+          67,
+          68,
+          69,
+          70,
+          71,
+          72,
+          73,
+          74,
+          75,
+          76,
+          77,
+          78,
+          79,
+          80,
+          81,
+          82,
+          83,
+          84,
+          85,
+          86,
+          87,
+          88,
+          89,
+          90,
+          91,
+          92,
+          93,
+          94,
+          95,
+          96,
+          97,
+          98,
+          99,
+          100,
+          101,
+          102,
+          103,
+          104,
+          105,
+          106,
+          107,
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126,
+          127,
+          128,
+          129,
+          130,
+          131,
+          132,
+          133,
+          134,
+          135,
+          136,
+          137,
+          138,
+          139,
+          140,
+          141,
+          142,
+          143,
+          144,
+          145,
+          146,
+          147,
+          148,
+          149,
+          150,
+          151,
+          152,
+          153,
+          154,
+          155,
+          156,
+          157,
+          158,
+          159,
+          160,
+          161,
+          162,
+          163,
+          164,
+          165,
+          166,
+          167,
+          168,
+          169,
+          170,
+          171,
+          172,
+          173,
+          174,
+          175,
+          176,
+          177,
+          178,
+          179,
+          180,
+          181,
+          182,
+          183,
+          184,
+          185,
+          186,
+          187,
+          188,
+          189,
+          190,
+          191,
+          192,
+          193,
+          194,
+          195,
+          196,
+          197,
+          198,
+          199,
+          200,
+          201,
+          202,
+          203,
+          204,
+          205,
+          206,
+          207,
+          208,
+          209,
+          210,
+          211,
+          212,
+          213,
+          214,
+          215,
+          216,
+          217,
+          218,
+          219,
+          220,
+          221,
+          222,
+          223,
+          224,
+          225,
+          226,
+          227,
+          228,
+          229,
+          230,
+          231,
+          232,
+          233,
+          234,
+          235,
+          236,
+          237,
+          238,
+          239,
+          240,
+          241,
+          242,
+          243,
+          244,
+          245,
+          246,
+          247,
+          248,
+          249,
+          250,
+          251,
+          252,
+          253,
+          254,
+          255,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "random_calls": []
+      }
+    },
+    {
+      "case": "connection_ids_prior254",
+      "group": "connection_ids",
+      "input": {
+        "prior": 254,
+        "random": [
+          254
+        ],
+        "warmup": 0,
+        "count": 260
+      },
+      "observed": {
+        "ids": [
+          254,
+          255,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39,
+          40,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46,
+          47,
+          48,
+          49,
+          50,
+          51,
+          52,
+          53,
+          54,
+          55,
+          56,
+          57,
+          58,
+          59,
+          60,
+          61,
+          62,
+          63,
+          64,
+          65,
+          66,
+          67,
+          68,
+          69,
+          70,
+          71,
+          72,
+          73,
+          74,
+          75,
+          76,
+          77,
+          78,
+          79,
+          80,
+          81,
+          82,
+          83,
+          84,
+          85,
+          86,
+          87,
+          88,
+          89,
+          90,
+          91,
+          92,
+          93,
+          94,
+          95,
+          96,
+          97,
+          98,
+          99,
+          100,
+          101,
+          102,
+          103,
+          104,
+          105,
+          106,
+          107,
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126,
+          127,
+          128,
+          129,
+          130,
+          131,
+          132,
+          133,
+          134,
+          135,
+          136,
+          137,
+          138,
+          139,
+          140,
+          141,
+          142,
+          143,
+          144,
+          145,
+          146,
+          147,
+          148,
+          149,
+          150,
+          151,
+          152,
+          153,
+          154,
+          155,
+          156,
+          157,
+          158,
+          159,
+          160,
+          161,
+          162,
+          163,
+          164,
+          165,
+          166,
+          167,
+          168,
+          169,
+          170,
+          171,
+          172,
+          173,
+          174,
+          175,
+          176,
+          177,
+          178,
+          179,
+          180,
+          181,
+          182,
+          183,
+          184,
+          185,
+          186,
+          187,
+          188,
+          189,
+          190,
+          191,
+          192,
+          193,
+          194,
+          195,
+          196,
+          197,
+          198,
+          199,
+          200,
+          201,
+          202,
+          203,
+          204,
+          205,
+          206,
+          207,
+          208,
+          209,
+          210,
+          211,
+          212,
+          213,
+          214,
+          215,
+          216,
+          217,
+          218,
+          219,
+          220,
+          221,
+          222,
+          223,
+          224,
+          225,
+          226,
+          227,
+          228,
+          229,
+          230,
+          231,
+          232,
+          233,
+          234,
+          235,
+          236,
+          237,
+          238,
+          239,
+          240,
+          241,
+          242,
+          243,
+          244,
+          245,
+          246,
+          247,
+          248,
+          249,
+          250,
+          251,
+          252,
+          253,
+          254,
+          255,
+          1,
+          2,
+          3
+        ],
+        "random_calls": []
+      }
+    },
+    {
+      "case": "connection_ids_prior255",
+      "group": "connection_ids",
+      "input": {
+        "prior": 255,
+        "random": [
+          254
+        ],
+        "warmup": 1,
+        "count": 260
+      },
+      "observed": {
+        "ids": [
+          255,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39,
+          40,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46,
+          47,
+          48,
+          49,
+          50,
+          51,
+          52,
+          53,
+          54,
+          55,
+          56,
+          57,
+          58,
+          59,
+          60,
+          61,
+          62,
+          63,
+          64,
+          65,
+          66,
+          67,
+          68,
+          69,
+          70,
+          71,
+          72,
+          73,
+          74,
+          75,
+          76,
+          77,
+          78,
+          79,
+          80,
+          81,
+          82,
+          83,
+          84,
+          85,
+          86,
+          87,
+          88,
+          89,
+          90,
+          91,
+          92,
+          93,
+          94,
+          95,
+          96,
+          97,
+          98,
+          99,
+          100,
+          101,
+          102,
+          103,
+          104,
+          105,
+          106,
+          107,
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126,
+          127,
+          128,
+          129,
+          130,
+          131,
+          132,
+          133,
+          134,
+          135,
+          136,
+          137,
+          138,
+          139,
+          140,
+          141,
+          142,
+          143,
+          144,
+          145,
+          146,
+          147,
+          148,
+          149,
+          150,
+          151,
+          152,
+          153,
+          154,
+          155,
+          156,
+          157,
+          158,
+          159,
+          160,
+          161,
+          162,
+          163,
+          164,
+          165,
+          166,
+          167,
+          168,
+          169,
+          170,
+          171,
+          172,
+          173,
+          174,
+          175,
+          176,
+          177,
+          178,
+          179,
+          180,
+          181,
+          182,
+          183,
+          184,
+          185,
+          186,
+          187,
+          188,
+          189,
+          190,
+          191,
+          192,
+          193,
+          194,
+          195,
+          196,
+          197,
+          198,
+          199,
+          200,
+          201,
+          202,
+          203,
+          204,
+          205,
+          206,
+          207,
+          208,
+          209,
+          210,
+          211,
+          212,
+          213,
+          214,
+          215,
+          216,
+          217,
+          218,
+          219,
+          220,
+          221,
+          222,
+          223,
+          224,
+          225,
+          226,
+          227,
+          228,
+          229,
+          230,
+          231,
+          232,
+          233,
+          234,
+          235,
+          236,
+          237,
+          238,
+          239,
+          240,
+          241,
+          242,
+          243,
+          244,
+          245,
+          246,
+          247,
+          248,
+          249,
+          250,
+          251,
+          252,
+          253,
+          254,
+          255,
+          1,
+          2,
+          3,
+          4
+        ],
+        "random_calls": []
+      }
+    },
+    {
+      "case": "udp_init_fallback0",
+      "group": "udp_init",
+      "input": {
+        "fallback": false
+      },
+      "observed": {
+        "result": 1,
+        "calls": [
+          {
+            "call": "socket",
+            "family": 10
+          },
+          {
+            "call": "fcntl",
+            "command": 2,
+            "argument": 1
+          },
+          {
+            "call": "fcntl",
+            "command": 3,
+            "argument": 8
+          },
+          {
+            "call": "fcntl",
+            "command": 4,
+            "argument": 2304
+          }
+        ]
+      }
+    },
+    {
+      "case": "udp_init_fallback1",
+      "group": "udp_init",
+      "input": {
+        "fallback": true
+      },
+      "observed": {
+        "result": 1,
+        "calls": [
+          {
+            "call": "socket",
+            "family": 10
+          },
+          {
+            "call": "socket",
+            "family": 2
+          },
+          {
+            "call": "fcntl",
+            "command": 2,
+            "argument": 1
+          },
+          {
+            "call": "fcntl",
+            "command": 3,
+            "argument": 8
+          },
+          {
+            "call": "fcntl",
+            "command": 4,
+            "argument": 2304
+          }
+        ]
+      }
+    },
+    {
+      "case": "udp_send_OK_crc0",
+      "group": "udp_send",
+      "input": {
+        "errno_name": "OK",
+        "crc": false
+      },
+      "observed": {
+        "result": 0,
+        "actions": [
+          {
+            "action": "send",
+            "wire": "09000c22000000000040420f00"
+          }
+        ]
+      }
+    },
+    {
+      "case": "udp_send_OK_crc1",
+      "group": "udp_send",
+      "input": {
+        "errno_name": "OK",
+        "crc": true
+      },
+      "observed": {
+        "result": 0,
+        "actions": [
+          {
+            "action": "send",
+            "wire": "89000c22000000000040420f00d6497fa4"
+          }
+        ]
+      }
+    },
+    {
+      "case": "udp_send_EAGAIN_crc0",
+      "group": "udp_send",
+      "input": {
+        "errno_name": "EAGAIN",
+        "crc": false
+      },
+      "observed": {
+        "result": 1,
+        "actions": [
+          {
+            "action": "send",
+            "wire": "09000c22000000000040420f00"
+          }
+        ]
+      }
+    },
+    {
+      "case": "udp_send_EAGAIN_crc1",
+      "group": "udp_send",
+      "input": {
+        "errno_name": "EAGAIN",
+        "crc": true
+      },
+      "observed": {
+        "result": 1,
+        "actions": [
+          {
+            "action": "send",
+            "wire": "89000c22000000000040420f00d6497fa4"
+          }
+        ]
+      }
+    },
+    {
+      "case": "udp_send_EMSGSIZE_crc0",
+      "group": "udp_send",
+      "input": {
+        "errno_name": "EMSGSIZE",
+        "crc": false
+      },
+      "observed": {
+        "result": 2,
+        "actions": [
+          {
+            "action": "send",
+            "wire": "09000c22000000000040420f00"
+          }
+        ]
+      }
+    },
+    {
+      "case": "udp_send_EMSGSIZE_crc1",
+      "group": "udp_send",
+      "input": {
+        "errno_name": "EMSGSIZE",
+        "crc": true
+      },
+      "observed": {
+        "result": 2,
+        "actions": [
+          {
+            "action": "send",
+            "wire": "89000c22000000000040420f00d6497fa4"
+          }
+        ]
+      }
+    },
+    {
+      "case": "udp_send_EBADF_crc0",
+      "group": "udp_send",
+      "input": {
+        "errno_name": "EBADF",
+        "crc": false
+      },
+      "observed": {
+        "result": 3,
+        "actions": [
+          {
+            "action": "send",
+            "wire": "09000c22000000000040420f00"
+          }
+        ]
+      }
+    },
+    {
+      "case": "udp_send_EBADF_crc1",
+      "group": "udp_send",
+      "input": {
+        "errno_name": "EBADF",
+        "crc": true
+      },
+      "observed": {
+        "result": 3,
+        "actions": [
+          {
+            "action": "send",
+            "wire": "89000c22000000000040420f00d6497fa4"
+          }
+        ]
+      }
+    },
+    {
+      "case": "udp_send_EIO_crc0",
+      "group": "udp_send",
+      "input": {
+        "errno_name": "EIO",
+        "crc": false
+      },
+      "observed": {
+        "result": 4,
+        "actions": [
+          {
+            "action": "send",
+            "wire": "09000c22000000000040420f00"
+          }
+        ]
+      }
+    },
+    {
+      "case": "udp_send_EIO_crc1",
+      "group": "udp_send",
+      "input": {
+        "errno_name": "EIO",
+        "crc": true
+      },
+      "observed": {
+        "result": 4,
+        "actions": [
+          {
+            "action": "send",
+            "wire": "89000c22000000000040420f00d6497fa4"
+          }
+        ]
+      }
+    },
+    {
+      "case": "udp_send_EINTR_crc0",
+      "group": "udp_send",
+      "input": {
+        "errno_name": "EINTR",
+        "crc": false
+      },
+      "observed": {
+        "result": 4,
+        "actions": [
+          {
+            "action": "send",
+            "wire": "09000c22000000000040420f00"
+          }
+        ]
+      }
+    },
+    {
+      "case": "udp_send_EINTR_crc1",
+      "group": "udp_send",
+      "input": {
+        "errno_name": "EINTR",
+        "crc": true
+      },
+      "observed": {
+        "result": 4,
+        "actions": [
+          {
+            "action": "send",
+            "wire": "89000c22000000000040420f00d6497fa4"
+          }
+        ]
+      }
+    }
+  ]
+}

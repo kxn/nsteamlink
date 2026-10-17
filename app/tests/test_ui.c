@@ -395,8 +395,8 @@ static void actionable_settings(void) {
     assert(m.layout.count == 4); /* Settings, HOME shortcut, update check and back. */
     assert(m.layout.controls[2].action == SL_UPDATE_CHECK);
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
-    assert(m.layout.count == 6); /* Quality, bandwidth, sound, language, manual address, back. */
-    assert(m.layout.controls[4].action == SL_OPEN_MANUAL);
+    assert(m.layout.count == 7); /* Quality, bandwidth, sound, language, FEC, manual, back. */
+    assert(m.layout.controls[5].action == SL_OPEN_MANUAL);
     sl_ui_action(&m, SL_OPEN_MANUAL, 0);
     assert(m.page == SL_MANUAL);
     sl_ui_action(&m, SL_BACK, 0);
@@ -404,6 +404,10 @@ static void actionable_settings(void) {
     sl_ui_action(&m, SL_SOUND, 0);
     sl_command command;
     assert(!m.store.sound && sl_ui_take_command(&m, &command) && command.type == SL_CMD_SAVE);
+    assert(!m.store.unreliable_fec);
+    sl_ui_action(&m, SL_FEC, 0);
+    assert(m.store.unreliable_fec && sl_ui_take_command(&m, &command));
+    assert(command.type == SL_CMD_SAVE && command.unreliable_fec);
     sl_ui_action(&m, SL_OPEN_BANDWIDTH, 0);
     sl_ui_action(&m, SL_SET_BANDWIDTH, 20000);
     assert(m.store.bitrate_kbps == 20000 && m.store.quality == 0);
@@ -422,7 +426,11 @@ static void actionable_settings(void) {
     sl_ui_connected(&m);
     sl_ui_action(&m, SL_OPEN_MENU, 0);
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
-    assert(m.layout.count == 5); /* Sound, quality, bandwidth, language and back. */
+    assert(m.layout.count == 6); /* Sound, quality, bandwidth, language, FEC and back. */
+    sl_ui_action(&m, SL_FEC, 0);
+    assert(!m.store.unreliable_fec && sl_ui_take_command(&m, &command));
+    assert(command.type == SL_CMD_SAVE && !command.unreliable_fec);
+    assert(m.streaming && m.page == SL_SETTINGS); /* save only, no restart */
     for (int i = 0; i < m.layout.count; ++i)
         assert(m.layout.controls[i].action != SL_OPEN_MANUAL);
     sl_ui_action(&m, SL_OPEN_MANUAL, 0);
@@ -569,7 +577,7 @@ static void profile_v3_migration(void) {
     assert(s.registry.hosts[1].client_id == 222 && !s.registry.hosts[1].paired);
     assert(!strcmp(s.registry.hosts[1].address, "192.168.1.14"));
 
-    /* Saved again as v4, a negotiated key survives the round trip. */
+    /* Saved again as v5, a negotiated key survives the round trip. */
     s.registry.hosts[1].paired = true;
     s.registry.hosts[1].has_secret = true;
     memset(s.registry.hosts[1].secret, 0xa5, sizeof(s.registry.hosts[1].secret));
@@ -579,7 +587,50 @@ static void profile_v3_migration(void) {
     f = fopen(path, "rb");
     char magic[8];
     assert(f && fread(magic, 1, sizeof(magic), f) == sizeof(magic) && fclose(f) == 0);
-    assert(!memcmp(magic, "NSLUI04", 8));
+    assert(!memcmp(magic, "NSLUI05", 8));
+    unlink(path);
+    rmdir(dir);
+}
+
+static void profile_v4_migration(void) {
+    disk_store_v4 old = {0};
+    char dir[] = "/tmp/nsl-profile-v4-XXXXXX", path[512];
+    assert(mkdtemp(dir));
+    snprintf(path, sizeof(path), "%s/profile.bin", dir);
+    memcpy(old.magic, "NSLUI04", 8);
+    old.version = 4;
+    old.size = sizeof(old);
+    old.data.device_id = 12345;
+    memset(old.data.secret, 0x5a, sizeof(old.data.secret));
+    strcpy(old.data.device_name, "v4 paired device");
+    old.data.registry.count = 1;
+    old.data.registry.hosts[0].id = 1;
+    old.data.registry.hosts[0].client_id = 98765;
+    old.data.registry.hosts[0].paired = true;
+    old.data.registry.hosts[0].has_secret = true;
+    memset(old.data.registry.hosts[0].secret, 0xa5, 32);
+    old.data.bitrate_kbps = 20000;
+    old.data.quality = 2;
+    old.data.sound = true;
+    old.checksum = 2166136261u;
+    const uint8_t *bytes = (const void *)&old.data;
+    for (size_t i = 0; i < sizeof(old.data); ++i)
+        old.checksum = (old.checksum ^ bytes[i]) * 16777619u;
+    FILE *f = fopen(path, "wb");
+    assert(f && fwrite(&old, 1, sizeof(old), f) == sizeof(old) && fclose(f) == 0);
+    sl_auth_store store, loaded;
+    assert(sl_auth_load(&store, dir) == 0 && !store.unreliable_fec);
+    for (int enabled = 1; enabled >= 0; --enabled) {
+        store.unreliable_fec = enabled;
+        assert(sl_auth_save(&store, dir) && sl_auth_load(&loaded, dir) == 0);
+        assert(loaded.unreliable_fec == (bool)enabled);
+        assert(loaded.device_id == old.data.device_id && loaded.quality == 2 &&
+               loaded.bitrate_kbps == 20000 && loaded.sound);
+        assert(!memcmp(loaded.secret, old.data.secret, 32));
+        assert(loaded.registry.hosts[0].paired && loaded.registry.hosts[0].has_secret &&
+               loaded.registry.hosts[0].client_id == 98765);
+        assert(!memcmp(loaded.registry.hosts[0].secret, old.data.registry.hosts[0].secret, 32));
+    }
     unlink(path);
     rmdir(dir);
 }
@@ -620,6 +671,7 @@ int main(void) {
     update_flow();
     profile_v2_migration();
     profile_v3_migration();
+    profile_v4_migration();
     host_secrets();
     end_game_failure();
     carousel();
@@ -903,13 +955,15 @@ int main(void) {
     assert(mkdtemp(dir));
     sl_auth_store s, t;
     assert(sl_auth_load(&s, dir) == 1);
-    assert(s.device_id && s.bitrate_kbps == 6000);
+    assert(s.device_id && s.bitrate_kbps == 6000 && !s.unreliable_fec);
     assert(sl_auth_load(&t, dir) == 0);
     assert(s.device_id == t.device_id && !memcmp(s.secret, t.secret, 32));
     s.quality = 2;
     s.bitrate_kbps = 20000;
+    s.unreliable_fec = true;
     assert(sl_auth_save(&s, dir));
-    assert(sl_auth_load(&t, dir) == 0 && t.quality == 2 && t.bitrate_kbps == 20000);
+    assert(sl_auth_load(&t, dir) == 0 && t.quality == 2 && t.bitrate_kbps == 20000 &&
+           t.unreliable_fec);
     no_replace = true;
     s.quality = 1;
     assert(sl_auth_save(&s, dir));
@@ -925,7 +979,8 @@ int main(void) {
     snprintf(primary, sizeof(primary), "%s/profile.bin", dir);
     snprintf(backup, sizeof(backup), "%s/profile.bak", dir);
     assert(rename(primary, backup) == 0); /* interrupted before publication */
-    assert(sl_auth_load(&t, dir) == 0 && t.quality == 2 && t.bitrate_kbps == 20000);
+    assert(sl_auth_load(&t, dir) == 0 && t.quality == 2 && t.bitrate_kbps == 20000 &&
+           t.unreliable_fec);
     assert(access(primary, F_OK) == 0);
     /* A failed temporary write must preserve the previous valid profile. */
     char tmp[512];
@@ -933,7 +988,8 @@ int main(void) {
     assert(mkdir(tmp, 0700) == 0);
     s.quality = 1;
     assert(!sl_auth_save(&s, dir));
-    assert(sl_auth_load(&t, dir) == 0 && t.quality == 2 && t.bitrate_kbps == 20000);
+    assert(sl_auth_load(&t, dir) == 0 && t.quality == 2 && t.bitrate_kbps == 20000 &&
+           t.unreliable_fec);
     assert(rmdir(tmp) == 0);
     char path[512];
     snprintf(path, sizeof(path), "%s/profile.bin", dir);

@@ -1,6 +1,7 @@
 # third_party — 第三方依赖目录
 
-所有外部库以 git submodule 或 vendored 源码形式放在这里，**禁止就地修改**。
+Git submodule与vendored源码放在这里；Opus的未修改归档由CMake核验并展开到
+构建目录，来源与许可见下文。第三方源码**禁止就地修改**。
 对一般第三方库的改动以 patch 文件放 `patches/<库名>/` 并在 `docs/decisions.md` 登记；
 **例外：IHSlib 使用本项目的 GitHub fork（D-037），改动直接提交到 fork 分支并推送**。
 
@@ -9,6 +10,7 @@
 | 库 | 版本 | 说明 |
 |---|---|---|
 | IHSlib | `kxn/ihslib` `master` 分支，基线 `8c5a17c`（fork 自 `beudbeud/ihslib` plume） | 协议层依赖；改动进入 fork 主分支（D-037/D-055） |
+| Opus | 1.5.2，SHA256 `65c1d2f78b9f2fb20082c38cbe47c951ad5839345876e46941612ee87f9a7ce1` | CMake核验官方归档，定点构建、保留float API；桌面/Switch共用，见协议参考§72 |
 
 ## IHSlib fork（kxn/ihslib，分支 master）
 
@@ -66,6 +68,16 @@ submodule 工作区逐字节一致。旧 patch 文件已删除，需要查阅时
   `git submodule update --remote` 使用，不能代替审核和提交 submodule pin。
 - 复用的任何第三方代码保留原版权与许可声明，并更新 `DEVELOPMENT.md` §7 的依赖表。
 
+## Opus：音频解码
+
+`cmake/Opus.cmake`从[Xiph官方归档](https://downloads.xiph.org/releases/opus/opus-1.5.2.tar.gz)
+下载未修改源码并核验SHA256，静态链接fixed-point decoder，调用multistream float API。
+官方客户端的实际恢复分支和定点输出证据见`docs/STEAMLINK_PROTOCOL_RE.md`§72。
+源码在构建目录中，无需全局安装；已有源码缓存可用CMake的
+`FETCHCONTENT_SOURCE_DIR_NSL_OPUS`指定，使用者负责其与固定归档一致。
+BSD许可原文保存为`third_party/opus-LICENSE.txt`，随发布NRO收集到同一输出目录。
+1.5.2是本项目的可复现依赖版本，不将官方库的`unknown-fixed`误称为已识别版本。
+
 ## jsmn：游戏封面元数据解析
 
 `third_party/jsmn/jsmn.h` 与 `LICENSE` 来自 [zserge/jsmn](https://github.com/zserge/jsmn)，
@@ -81,3 +93,9 @@ Switch curl 使用 libnx SSL，不引入应用自己的根证书文件或关闭 
 Makefile、hbl.json、source/main.c、source/trampoline.s 和 LICENSE.md，均未修改。
 `scripts/build-shortcut.py` 在 build 副本应用固定路径和返回 HOME 调整，见 decisions D-049。
 不使用 Nintendo/Steam 原生图标，不提交机器密钥、生成的 NCA 或模板二进制。
+
+IHSlib 的 `src/session/outgoing_sort.c` 参考
+[LLVM libc++19 sort.h](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/libcxx/include/__algorithm/sort.h)
+实现至多32个通道的排序，单文件使用 Apache-2.0 WITH LLVM-exception；完整许可位于
+`third_party/ihslib/src/session/LLVM-LICENSE.txt`。排序策略与同优先级结果以固定官方
+Steam Link 客户端原指令对照为准，开源实现只用于算法实现参考。

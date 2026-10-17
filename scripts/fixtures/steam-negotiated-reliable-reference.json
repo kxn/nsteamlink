@@ -1,0 +1,42 @@
+{
+  "binary_sha256": "50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e",
+  "scope": "Execute the official negotiation's initial reliable_data copy checkpoint.\n\nReal C++ constructors, Frame::Get/parser, initial OnNegotiationInit instructions\nand partial CNegotiatedConfig serialization run from the pinned Android ELF.\nExecution stops at 0x7ad720 before codec selection or final SetConfig. A plaintext\nFrame is seeded after the normal decrypt boundary. Allocation/libc and checkpoint\nexit are adapters. No complete negotiation, sender, host or decoder is claimed.\n",
+  "cases": [
+    {
+      "input": {
+        "protobuf": ""
+      },
+      "observed": {
+        "checkpoint": 8050464,
+        "input_hasbits": 0,
+        "reliable": false,
+        "output_hasbits": 5,
+        "partial_config": "08001000"
+      }
+    },
+    {
+      "input": {
+        "protobuf": "0800"
+      },
+      "observed": {
+        "checkpoint": 8050464,
+        "input_hasbits": 1,
+        "reliable": false,
+        "output_hasbits": 5,
+        "partial_config": "08001000"
+      }
+    },
+    {
+      "input": {
+        "protobuf": "0801"
+      },
+      "observed": {
+        "checkpoint": 8050464,
+        "input_hasbits": 1,
+        "reliable": true,
+        "output_hasbits": 5,
+        "partial_config": "08011000"
+      }
+    }
+  ]
+}

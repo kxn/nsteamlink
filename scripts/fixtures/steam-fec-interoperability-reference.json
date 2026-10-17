@@ -1,0 +1,903 @@
+{
+  "host32_sha256": "0cad7c69ace13e802be17beb06df299f7f733f01b4450a74bc68709494b21ddb",
+  "host64_sha256": "1b9457943205dc3af0bd53463ba331cbd2a381388699705c02271aac7a2b1252",
+  "android_sha256": "50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e",
+  "scope": "Feed original Windows sender output into the original Android receiver.\n\nThis joins SHA-pinned sender control/configuration/channel/RS instructions to\nAndroid socket/connection/channel/window/RS instructions. Existing audit doubles\nstill replace OS, storage, clocks, refcounts, encryption and actual transport.\nPayloads are opaque deterministic bytes, not decoded video or live sessions.\n",
+  "case_count": 12,
+  "cases": [
+    {
+      "name": "win32_erase_[]_order_[0, 1, 2, 3]",
+      "input": {
+        "host_arch": 32,
+        "fec": true,
+        "video_codec": 4,
+        "payload_bytes": 3000,
+        "payload_recipe": "byte[i] = (i * 19) & 255",
+        "dropped_shards": [],
+        "receive_order": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      "observed": {
+        "sender_packets": [
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 0,
+            "bytes": 1493,
+            "sha256": "1f06897173369b05530d9f89d93e82b05754921220830b20d49ca49d907bb0c1"
+          },
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 1,
+            "bytes": 1493,
+            "sha256": "604956e88b26d3667d3da9e0b43d6af8de7b442057bd3d05f864d657bdc11bdd"
+          },
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 2,
+            "bytes": 1493,
+            "sha256": "cbdb01cdcf99c2ca0ba893c0cb76f654da449c0035ab258acd12c9485c27088c"
+          },
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 3,
+            "bytes": 1493,
+            "sha256": "4b69c14a4f7ef137836bd42c411283b63b855b1289c4adf666637d647f0b6134"
+          }
+        ],
+        "delivered_count": 1,
+        "delivered_payload_sha256": [
+          "c022cd890bb0602cb94182a161d378f506067b897978d8e35b42080e6dfb1972"
+        ]
+      }
+    },
+    {
+      "name": "win32_erase_[1]_order_[0, 2, 3]",
+      "input": {
+        "host_arch": 32,
+        "fec": true,
+        "video_codec": 4,
+        "payload_bytes": 3000,
+        "payload_recipe": "byte[i] = (i * 19) & 255",
+        "dropped_shards": [
+          1
+        ],
+        "receive_order": [
+          0,
+          2,
+          3
+        ]
+      },
+      "observed": {
+        "sender_packets": [
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 0,
+            "bytes": 1493,
+            "sha256": "1f06897173369b05530d9f89d93e82b05754921220830b20d49ca49d907bb0c1"
+          },
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 1,
+            "bytes": 1493,
+            "sha256": "604956e88b26d3667d3da9e0b43d6af8de7b442057bd3d05f864d657bdc11bdd"
+          },
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 2,
+            "bytes": 1493,
+            "sha256": "cbdb01cdcf99c2ca0ba893c0cb76f654da449c0035ab258acd12c9485c27088c"
+          },
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 3,
+            "bytes": 1493,
+            "sha256": "4b69c14a4f7ef137836bd42c411283b63b855b1289c4adf666637d647f0b6134"
+          }
+        ],
+        "delivered_count": 1,
+        "delivered_payload_sha256": [
+          "c022cd890bb0602cb94182a161d378f506067b897978d8e35b42080e6dfb1972"
+        ]
+      }
+    },
+    {
+      "name": "win32_erase_[0, 1]_order_[2, 3]",
+      "input": {
+        "host_arch": 32,
+        "fec": true,
+        "video_codec": 4,
+        "payload_bytes": 3000,
+        "payload_recipe": "byte[i] = (i * 19) & 255",
+        "dropped_shards": [
+          0,
+          1
+        ],
+        "receive_order": [
+          2,
+          3
+        ]
+      },
+      "observed": {
+        "sender_packets": [
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 0,
+            "bytes": 1493,
+            "sha256": "1f06897173369b05530d9f89d93e82b05754921220830b20d49ca49d907bb0c1"
+          },
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 1,
+            "bytes": 1493,
+            "sha256": "604956e88b26d3667d3da9e0b43d6af8de7b442057bd3d05f864d657bdc11bdd"
+          },
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 2,
+            "bytes": 1493,
+            "sha256": "cbdb01cdcf99c2ca0ba893c0cb76f654da449c0035ab258acd12c9485c27088c"
+          },
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 3,
+            "bytes": 1493,
+            "sha256": "4b69c14a4f7ef137836bd42c411283b63b855b1289c4adf666637d647f0b6134"
+          }
+        ],
+        "delivered_count": 0,
+        "delivered_payload_sha256": []
+      }
+    },
+    {
+      "name": "win32_erase_[1]_order_[3, 2, 0]",
+      "input": {
+        "host_arch": 32,
+        "fec": true,
+        "video_codec": 4,
+        "payload_bytes": 3000,
+        "payload_recipe": "byte[i] = (i * 19) & 255",
+        "dropped_shards": [
+          1
+        ],
+        "receive_order": [
+          3,
+          2,
+          0
+        ]
+      },
+      "observed": {
+        "sender_packets": [
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 0,
+            "bytes": 1493,
+            "sha256": "1f06897173369b05530d9f89d93e82b05754921220830b20d49ca49d907bb0c1"
+          },
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 1,
+            "bytes": 1493,
+            "sha256": "604956e88b26d3667d3da9e0b43d6af8de7b442057bd3d05f864d657bdc11bdd"
+          },
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 2,
+            "bytes": 1493,
+            "sha256": "cbdb01cdcf99c2ca0ba893c0cb76f654da449c0035ab258acd12c9485c27088c"
+          },
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 3,
+            "bytes": 1493,
+            "sha256": "4b69c14a4f7ef137836bd42c411283b63b855b1289c4adf666637d647f0b6134"
+          }
+        ],
+        "delivered_count": 1,
+        "delivered_payload_sha256": [
+          "c022cd890bb0602cb94182a161d378f506067b897978d8e35b42080e6dfb1972"
+        ]
+      }
+    },
+    {
+      "name": "win32_toggle_after_1_ordinary_frames",
+      "input": {
+        "host_arch": 32,
+        "updates": [
+          false,
+          true,
+          false
+        ],
+        "ordinary_before_count": 1,
+        "post_toggle_count": 2,
+        "video_codec": 4,
+        "payload_bytes_each": 100
+      },
+      "observed": {
+        "stages": [
+          {
+            "stage": "ordinary_before",
+            "value": 65,
+            "sender_packets": [
+              {
+                "type": 3,
+                "sequence": 0,
+                "shard": 0,
+                "bytes": 113,
+                "sha256": "935dbde2b3a66be5df9a814c70437a9f64e1a56ead9eb8f277a28d5892a2c4f4"
+              }
+            ],
+            "delivered_count": 1,
+            "ordinary_head": 1
+          },
+          {
+            "stage": "fec",
+            "value": 80,
+            "sender_packets": [
+              {
+                "type": 11,
+                "sequence": 1,
+                "shard": 0,
+                "bytes": 133,
+                "sha256": "d439034c83be4d012a1edf481476fb11c1c15a4d20f612624ee1f0316d7d77de"
+              },
+              {
+                "type": 11,
+                "sequence": 1,
+                "shard": 1,
+                "bytes": 133,
+                "sha256": "2151988df301886b224d3051b3bf286a4332066509bc03fb98819e9b35a31b31"
+              }
+            ],
+            "delivered_count": 1,
+            "ordinary_head": 1
+          },
+          {
+            "stage": "ordinary_after",
+            "value": 90,
+            "sender_packets": [
+              {
+                "type": 3,
+                "sequence": 1,
+                "shard": 0,
+                "bytes": 113,
+                "sha256": "50bf5719f7f6064c0f1b71f9ffaf700dd73437aafb4becacd7f1ccf477e9add3"
+              }
+            ],
+            "delivered_count": 1,
+            "ordinary_head": 2
+          },
+          {
+            "stage": "ordinary_after",
+            "value": 91,
+            "sender_packets": [
+              {
+                "type": 3,
+                "sequence": 2,
+                "shard": 0,
+                "bytes": 113,
+                "sha256": "55bf81e3596afb881019738003901f434cf6ca89783eb94efd2070e3be243ef6"
+              }
+            ],
+            "delivered_count": 1,
+            "ordinary_head": 3
+          }
+        ],
+        "delivered_total": 4
+      }
+    },
+    {
+      "name": "win32_toggle_after_3_ordinary_frames",
+      "input": {
+        "host_arch": 32,
+        "updates": [
+          false,
+          true,
+          false
+        ],
+        "ordinary_before_count": 3,
+        "post_toggle_count": 4,
+        "video_codec": 4,
+        "payload_bytes_each": 100
+      },
+      "observed": {
+        "stages": [
+          {
+            "stage": "ordinary_before",
+            "value": 65,
+            "sender_packets": [
+              {
+                "type": 3,
+                "sequence": 0,
+                "shard": 0,
+                "bytes": 113,
+                "sha256": "935dbde2b3a66be5df9a814c70437a9f64e1a56ead9eb8f277a28d5892a2c4f4"
+              }
+            ],
+            "delivered_count": 1,
+            "ordinary_head": 1
+          },
+          {
+            "stage": "ordinary_before",
+            "value": 66,
+            "sender_packets": [
+              {
+                "type": 3,
+                "sequence": 1,
+                "shard": 0,
+                "bytes": 113,
+                "sha256": "e2ed80239785c050056899366cf44fcc8142ab7713aae0889f9cfcab32f048be"
+              }
+            ],
+            "delivered_count": 1,
+            "ordinary_head": 2
+          },
+          {
+            "stage": "ordinary_before",
+            "value": 67,
+            "sender_packets": [
+              {
+                "type": 3,
+                "sequence": 2,
+                "shard": 0,
+                "bytes": 113,
+                "sha256": "20ba86f0a1a40b509be9b828b39cdc7f74bce8f0209d952473d1858070994f4c"
+              }
+            ],
+            "delivered_count": 1,
+            "ordinary_head": 3
+          },
+          {
+            "stage": "fec",
+            "value": 80,
+            "sender_packets": [
+              {
+                "type": 11,
+                "sequence": 1,
+                "shard": 0,
+                "bytes": 133,
+                "sha256": "d439034c83be4d012a1edf481476fb11c1c15a4d20f612624ee1f0316d7d77de"
+              },
+              {
+                "type": 11,
+                "sequence": 1,
+                "shard": 1,
+                "bytes": 133,
+                "sha256": "2151988df301886b224d3051b3bf286a4332066509bc03fb98819e9b35a31b31"
+              }
+            ],
+            "delivered_count": 1,
+            "ordinary_head": 3
+          },
+          {
+            "stage": "ordinary_after",
+            "value": 90,
+            "sender_packets": [
+              {
+                "type": 3,
+                "sequence": 3,
+                "shard": 0,
+                "bytes": 113,
+                "sha256": "3458b0c6b74e3d2594994388e1936713b8d05db030eed046d0a859ec758edf42"
+              }
+            ],
+            "delivered_count": 1,
+            "ordinary_head": 4
+          },
+          {
+            "stage": "ordinary_after",
+            "value": 91,
+            "sender_packets": [
+              {
+                "type": 3,
+                "sequence": 4,
+                "shard": 0,
+                "bytes": 113,
+                "sha256": "facaba4b609173db62e15e6ed0994b7d91a7c16d9ca4fc8fc186f3cf7df2a77f"
+              }
+            ],
+            "delivered_count": 1,
+            "ordinary_head": 5
+          },
+          {
+            "stage": "ordinary_after",
+            "value": 92,
+            "sender_packets": [
+              {
+                "type": 3,
+                "sequence": 5,
+                "shard": 0,
+                "bytes": 113,
+                "sha256": "53dd1d0e7f571f7caf522527922629a3c51465abe768d6b1687c48bc0b769fea"
+              }
+            ],
+            "delivered_count": 1,
+            "ordinary_head": 6
+          },
+          {
+            "stage": "ordinary_after",
+            "value": 93,
+            "sender_packets": [
+              {
+                "type": 3,
+                "sequence": 6,
+                "shard": 0,
+                "bytes": 113,
+                "sha256": "66e7eeda9aa8bf1e431c719a9db62225d0eaa1e92032d3c180a3c44f2be8fc59"
+              }
+            ],
+            "delivered_count": 1,
+            "ordinary_head": 7
+          }
+        ],
+        "delivered_total": 8
+      }
+    },
+    {
+      "name": "win64_erase_[]_order_[0, 1, 2, 3]",
+      "input": {
+        "host_arch": 64,
+        "fec": true,
+        "video_codec": 4,
+        "payload_bytes": 3000,
+        "payload_recipe": "byte[i] = (i * 19) & 255",
+        "dropped_shards": [],
+        "receive_order": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      "observed": {
+        "sender_packets": [
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 0,
+            "bytes": 1493,
+            "sha256": "1f06897173369b05530d9f89d93e82b05754921220830b20d49ca49d907bb0c1"
+          },
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 1,
+            "bytes": 1493,
+            "sha256": "604956e88b26d3667d3da9e0b43d6af8de7b442057bd3d05f864d657bdc11bdd"
+          },
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 2,
+            "bytes": 1493,
+            "sha256": "cbdb01cdcf99c2ca0ba893c0cb76f654da449c0035ab258acd12c9485c27088c"
+          },
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 3,
+            "bytes": 1493,
+            "sha256": "4b69c14a4f7ef137836bd42c411283b63b855b1289c4adf666637d647f0b6134"
+          }
+        ],
+        "delivered_count": 1,
+        "delivered_payload_sha256": [
+          "c022cd890bb0602cb94182a161d378f506067b897978d8e35b42080e6dfb1972"
+        ]
+      }
+    },
+    {
+      "name": "win64_erase_[1]_order_[0, 2, 3]",
+      "input": {
+        "host_arch": 64,
+        "fec": true,
+        "video_codec": 4,
+        "payload_bytes": 3000,
+        "payload_recipe": "byte[i] = (i * 19) & 255",
+        "dropped_shards": [
+          1
+        ],
+        "receive_order": [
+          0,
+          2,
+          3
+        ]
+      },
+      "observed": {
+        "sender_packets": [
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 0,
+            "bytes": 1493,
+            "sha256": "1f06897173369b05530d9f89d93e82b05754921220830b20d49ca49d907bb0c1"
+          },
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 1,
+            "bytes": 1493,
+            "sha256": "604956e88b26d3667d3da9e0b43d6af8de7b442057bd3d05f864d657bdc11bdd"
+          },
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 2,
+            "bytes": 1493,
+            "sha256": "cbdb01cdcf99c2ca0ba893c0cb76f654da449c0035ab258acd12c9485c27088c"
+          },
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 3,
+            "bytes": 1493,
+            "sha256": "4b69c14a4f7ef137836bd42c411283b63b855b1289c4adf666637d647f0b6134"
+          }
+        ],
+        "delivered_count": 1,
+        "delivered_payload_sha256": [
+          "c022cd890bb0602cb94182a161d378f506067b897978d8e35b42080e6dfb1972"
+        ]
+      }
+    },
+    {
+      "name": "win64_erase_[0, 1]_order_[2, 3]",
+      "input": {
+        "host_arch": 64,
+        "fec": true,
+        "video_codec": 4,
+        "payload_bytes": 3000,
+        "payload_recipe": "byte[i] = (i * 19) & 255",
+        "dropped_shards": [
+          0,
+          1
+        ],
+        "receive_order": [
+          2,
+          3
+        ]
+      },
+      "observed": {
+        "sender_packets": [
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 0,
+            "bytes": 1493,
+            "sha256": "1f06897173369b05530d9f89d93e82b05754921220830b20d49ca49d907bb0c1"
+          },
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 1,
+            "bytes": 1493,
+            "sha256": "604956e88b26d3667d3da9e0b43d6af8de7b442057bd3d05f864d657bdc11bdd"
+          },
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 2,
+            "bytes": 1493,
+            "sha256": "cbdb01cdcf99c2ca0ba893c0cb76f654da449c0035ab258acd12c9485c27088c"
+          },
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 3,
+            "bytes": 1493,
+            "sha256": "4b69c14a4f7ef137836bd42c411283b63b855b1289c4adf666637d647f0b6134"
+          }
+        ],
+        "delivered_count": 0,
+        "delivered_payload_sha256": []
+      }
+    },
+    {
+      "name": "win64_erase_[1]_order_[3, 2, 0]",
+      "input": {
+        "host_arch": 64,
+        "fec": true,
+        "video_codec": 4,
+        "payload_bytes": 3000,
+        "payload_recipe": "byte[i] = (i * 19) & 255",
+        "dropped_shards": [
+          1
+        ],
+        "receive_order": [
+          3,
+          2,
+          0
+        ]
+      },
+      "observed": {
+        "sender_packets": [
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 0,
+            "bytes": 1493,
+            "sha256": "1f06897173369b05530d9f89d93e82b05754921220830b20d49ca49d907bb0c1"
+          },
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 1,
+            "bytes": 1493,
+            "sha256": "604956e88b26d3667d3da9e0b43d6af8de7b442057bd3d05f864d657bdc11bdd"
+          },
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 2,
+            "bytes": 1493,
+            "sha256": "cbdb01cdcf99c2ca0ba893c0cb76f654da449c0035ab258acd12c9485c27088c"
+          },
+          {
+            "type": 11,
+            "sequence": 1,
+            "shard": 3,
+            "bytes": 1493,
+            "sha256": "4b69c14a4f7ef137836bd42c411283b63b855b1289c4adf666637d647f0b6134"
+          }
+        ],
+        "delivered_count": 1,
+        "delivered_payload_sha256": [
+          "c022cd890bb0602cb94182a161d378f506067b897978d8e35b42080e6dfb1972"
+        ]
+      }
+    },
+    {
+      "name": "win64_toggle_after_1_ordinary_frames",
+      "input": {
+        "host_arch": 64,
+        "updates": [
+          false,
+          true,
+          false
+        ],
+        "ordinary_before_count": 1,
+        "post_toggle_count": 2,
+        "video_codec": 4,
+        "payload_bytes_each": 100
+      },
+      "observed": {
+        "stages": [
+          {
+            "stage": "ordinary_before",
+            "value": 65,
+            "sender_packets": [
+              {
+                "type": 3,
+                "sequence": 0,
+                "shard": 0,
+                "bytes": 113,
+                "sha256": "935dbde2b3a66be5df9a814c70437a9f64e1a56ead9eb8f277a28d5892a2c4f4"
+              }
+            ],
+            "delivered_count": 1,
+            "ordinary_head": 1
+          },
+          {
+            "stage": "fec",
+            "value": 80,
+            "sender_packets": [
+              {
+                "type": 11,
+                "sequence": 1,
+                "shard": 0,
+                "bytes": 133,
+                "sha256": "d439034c83be4d012a1edf481476fb11c1c15a4d20f612624ee1f0316d7d77de"
+              },
+              {
+                "type": 11,
+                "sequence": 1,
+                "shard": 1,
+                "bytes": 133,
+                "sha256": "2151988df301886b224d3051b3bf286a4332066509bc03fb98819e9b35a31b31"
+              }
+            ],
+            "delivered_count": 1,
+            "ordinary_head": 1
+          },
+          {
+            "stage": "ordinary_after",
+            "value": 90,
+            "sender_packets": [
+              {
+                "type": 3,
+                "sequence": 0,
+                "shard": 0,
+                "bytes": 113,
+                "sha256": "d6d180c8687d296b6e22755b1782036d471ee19e89e973c1114fa26b7ff5f5f8"
+              }
+            ],
+            "delivered_count": 0,
+            "ordinary_head": 1
+          },
+          {
+            "stage": "ordinary_after",
+            "value": 91,
+            "sender_packets": [
+              {
+                "type": 3,
+                "sequence": 1,
+                "shard": 0,
+                "bytes": 113,
+                "sha256": "f9045b6c1e5362f1033879179b7c63c42d5075ff4dbd8294de1003ce20f52162"
+              }
+            ],
+            "delivered_count": 1,
+            "ordinary_head": 2
+          }
+        ],
+        "delivered_total": 3
+      }
+    },
+    {
+      "name": "win64_toggle_after_3_ordinary_frames",
+      "input": {
+        "host_arch": 64,
+        "updates": [
+          false,
+          true,
+          false
+        ],
+        "ordinary_before_count": 3,
+        "post_toggle_count": 4,
+        "video_codec": 4,
+        "payload_bytes_each": 100
+      },
+      "observed": {
+        "stages": [
+          {
+            "stage": "ordinary_before",
+            "value": 65,
+            "sender_packets": [
+              {
+                "type": 3,
+                "sequence": 0,
+                "shard": 0,
+                "bytes": 113,
+                "sha256": "935dbde2b3a66be5df9a814c70437a9f64e1a56ead9eb8f277a28d5892a2c4f4"
+              }
+            ],
+            "delivered_count": 1,
+            "ordinary_head": 1
+          },
+          {
+            "stage": "ordinary_before",
+            "value": 66,
+            "sender_packets": [
+              {
+                "type": 3,
+                "sequence": 1,
+                "shard": 0,
+                "bytes": 113,
+                "sha256": "e2ed80239785c050056899366cf44fcc8142ab7713aae0889f9cfcab32f048be"
+              }
+            ],
+            "delivered_count": 1,
+            "ordinary_head": 2
+          },
+          {
+            "stage": "ordinary_before",
+            "value": 67,
+            "sender_packets": [
+              {
+                "type": 3,
+                "sequence": 2,
+                "shard": 0,
+                "bytes": 113,
+                "sha256": "20ba86f0a1a40b509be9b828b39cdc7f74bce8f0209d952473d1858070994f4c"
+              }
+            ],
+            "delivered_count": 1,
+            "ordinary_head": 3
+          },
+          {
+            "stage": "fec",
+            "value": 80,
+            "sender_packets": [
+              {
+                "type": 11,
+                "sequence": 1,
+                "shard": 0,
+                "bytes": 133,
+                "sha256": "d439034c83be4d012a1edf481476fb11c1c15a4d20f612624ee1f0316d7d77de"
+              },
+              {
+                "type": 11,
+                "sequence": 1,
+                "shard": 1,
+                "bytes": 133,
+                "sha256": "2151988df301886b224d3051b3bf286a4332066509bc03fb98819e9b35a31b31"
+              }
+            ],
+            "delivered_count": 1,
+            "ordinary_head": 3
+          },
+          {
+            "stage": "ordinary_after",
+            "value": 90,
+            "sender_packets": [
+              {
+                "type": 3,
+                "sequence": 0,
+                "shard": 0,
+                "bytes": 113,
+                "sha256": "d6d180c8687d296b6e22755b1782036d471ee19e89e973c1114fa26b7ff5f5f8"
+              }
+            ],
+            "delivered_count": 0,
+            "ordinary_head": 3
+          },
+          {
+            "stage": "ordinary_after",
+            "value": 91,
+            "sender_packets": [
+              {
+                "type": 3,
+                "sequence": 1,
+                "shard": 0,
+                "bytes": 113,
+                "sha256": "f9045b6c1e5362f1033879179b7c63c42d5075ff4dbd8294de1003ce20f52162"
+              }
+            ],
+            "delivered_count": 0,
+            "ordinary_head": 3
+          },
+          {
+            "stage": "ordinary_after",
+            "value": 92,
+            "sender_packets": [
+              {
+                "type": 3,
+                "sequence": 2,
+                "shard": 0,
+                "bytes": 113,
+                "sha256": "61da7cffa21da106cac87e238244fd234c8b27cf1f67970c3219fe52db763488"
+              }
+            ],
+            "delivered_count": 0,
+            "ordinary_head": 3
+          },
+          {
+            "stage": "ordinary_after",
+            "value": 93,
+            "sender_packets": [
+              {
+                "type": 3,
+                "sequence": 3,
+                "shard": 0,
+                "bytes": 113,
+                "sha256": "9a3c5e26e21e3621f63f4ca9822eabca7eb3a5d36df6a791b5ba0b177a7c8fc5"
+              }
+            ],
+            "delivered_count": 1,
+            "ordinary_head": 4
+          }
+        ],
+        "delivered_total": 5
+      }
+    }
+  ]
+}

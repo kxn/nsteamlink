@@ -13,8 +13,35 @@
 static pthread_mutex_t open_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t open_cond = PTHREAD_COND_INITIALIZER;
 static bool block_open, entered_open, release_open;
+static int send_failure;
+static int open_failure;
+static bool flag_missing_reference;
+int __real_avcodec_receive_frame(AVCodecContext *, AVFrame *);
+int __wrap_avcodec_receive_frame(AVCodecContext *c, AVFrame *frame) {
+    int result = __real_avcodec_receive_frame(c, frame);
+    if (!result && flag_missing_reference) {
+        frame->decode_error_flags |= FF_DECODE_ERROR_MISSING_REFERENCE;
+        flag_missing_reference = false;
+    }
+    return result;
+}
+int __real_avcodec_send_packet(AVCodecContext *, const AVPacket *);
+int __wrap_avcodec_send_packet(AVCodecContext *c, const AVPacket *packet) {
+    if (send_failure) {
+        int error = send_failure;
+        send_failure = 0;
+        return error;
+    }
+    return __real_avcodec_send_packet(c, packet);
+}
+
 int __real_avcodec_open2(AVCodecContext *, const AVCodec *, AVDictionary **);
 int __wrap_avcodec_open2(AVCodecContext *c, const AVCodec *codec, AVDictionary **options) {
+    if (open_failure) {
+        int error = open_failure;
+        open_failure = 0;
+        return error;
+    }
     pthread_mutex_lock(&open_lock);
     if (block_open) {
         entered_open = true;
@@ -46,6 +73,22 @@ static void close_during_open(sl_video_pipeline *p) {
     assert(!sl_video_is_current(p, (sl_video_key){5, 1}));
     sl_video_reap(p);
     assert(sl_video_clean(p));
+}
+static void opening_results(void) {
+    sl_video_pipeline *p = sl_video_create();
+    sl_video_config config = {.width = 128, .height = 72};
+    assert(p);
+    assert(sl_video_open_ex(p, (sl_video_key){1, 0}, &config) == SL_VIDEO_OPEN_GUARD);
+    open_failure = AVERROR(EIO);
+    assert(sl_video_open_ex(p, (sl_video_key){1, 1}, &config) == SL_VIDEO_OPEN_UNAVAILABLE);
+    assert(sl_video_clean(p));
+    open_failure = AVERROR(ENOMEM);
+    assert(sl_video_open_ex(p, (sl_video_key){1, 2}, &config) == SL_VIDEO_OPEN_GUARD);
+    assert(sl_video_clean(p));
+    assert(sl_video_open_ex(p, (sl_video_key){1, 3}, &config) == SL_VIDEO_OPEN_READY);
+    sl_video_stop(p, (sl_video_key){1, 3});
+    sl_video_reap(p);
+    assert(sl_video_destroy(p));
 }
 #endif
 typedef struct run {
@@ -106,7 +149,9 @@ static void submit(run *r, const unsigned char *data, size_t size) {
     assert(IHS_FrameTrackerBegin(r->tracker, r->key.epoch, ++r->packets, &received, &ticket) ==
            IHS_FrameBeginOK);
     bool taken = false;
-    assert(sl_video_submit(r->pipeline, r->key, data, size, ticket, &taken) && taken);
+    assert(sl_video_submit(r->pipeline, r->key, data, size, ticket, &taken, false) ==
+               SL_VIDEO_SUBMIT_OK &&
+           taken);
     IHS_FrameTicketRelease(ticket);
     take(r);
 }
@@ -161,8 +206,100 @@ static void fixture(run *r, const char *path) {
     avcodec_free_context(&context);
     free(data);
 }
+static void corruption_and_recovery(sl_video_pipeline *pipeline, const char *path) {
+    sl_video_config config = {.width = 128, .height = 72};
+    run r = {.pipeline = pipeline, .tracker = IHS_FrameTrackerCreate(6), .key = {6, 1}};
+    assert(IHS_FrameTrackerOpenEpoch(r.tracker, 1));
+    assert(sl_video_open(pipeline, r.key, &config));
+    FILE *f = fopen(path, "rb");
+    assert(f && !fseek(f, 0, SEEK_END));
+    long size = ftell(f);
+    rewind(f);
+    uint8_t *input = calloc(1, size + AV_INPUT_BUFFER_PADDING_SIZE);
+    assert(input && fread(input, 1, size, f) == (size_t)size);
+    fclose(f);
+    AVCodecParserContext *parser = av_parser_init(AV_CODEC_ID_H264);
+    AVCodecContext *context = avcodec_alloc_context3(NULL);
+    uint8_t *first;
+    int bytes;
+    assert(av_parser_parse2(parser, context, &first, &bytes, input, size, AV_NOPTS_VALUE,
+                            AV_NOPTS_VALUE, 0) > 0 &&
+           bytes > 0);
+    // Compare recovered visible pixels to the first clean decoded output.
+    IHS_FrameReceive received = {.firstReceiveUs = 1, .lastReceiveUs = 1};
+    IHS_FrameTicket *ticket;
+    bool taken;
+    assert(IHS_FrameTrackerBegin(r.tracker, 1, 1, &received, &ticket) == IHS_FrameBeginOK);
+    assert(sl_video_submit(pipeline, r.key, first, bytes, ticket, &taken, true) ==
+               SL_VIDEO_SUBMIT_OK &&
+           taken);
+    IHS_FrameTicketRelease(ticket);
+    sl_video_frame *held = sl_video_take(pipeline);
+    assert(held);
+    uint8_t before[128 * 72 * 3 / 2], after[sizeof(before)];
+    assert(av_image_copy_to_buffer(
+               before, sizeof(before), (const uint8_t *const *)held->pixels->data,
+               held->pixels->linesize, AV_PIX_FMT_YUV420P, 128, 72, 1) == sizeof(before));
+    const uint8_t broken[] = {0, 0, 0, 1, 0x65, 0x80}; // truncated IDR slice
+    assert(IHS_FrameTrackerBegin(r.tracker, 1, 2, &received, &ticket) == IHS_FrameBeginOK);
+    assert(sl_video_submit(pipeline, r.key, broken, sizeof(broken), ticket, &taken, false) ==
+               SL_VIDEO_SUBMIT_CORRUPT &&
+           taken);
+    IHS_FrameTicketRelease(ticket);
+    assert(!sl_video_take(pipeline)); // damaged output never replaces displayed frame
+    assert(IHS_FrameTrackerBegin(r.tracker, 1, 3, &received, &ticket) == IHS_FrameBeginOK);
+    assert(sl_video_submit(pipeline, r.key, first, bytes, ticket, &taken, true) ==
+               SL_VIDEO_SUBMIT_OK &&
+           taken);
+    IHS_FrameTicketRelease(ticket);
+    sl_video_frame *recovered = sl_video_take(pipeline);
+    assert(recovered);
+    assert(av_image_copy_to_buffer(
+               after, sizeof(after), (const uint8_t *const *)recovered->pixels->data,
+               recovered->pixels->linesize, AV_PIX_FMT_YUV420P, 128, 72, 1) == sizeof(after));
+    assert(!memcmp(before, after, sizeof(before)));
+    // Backend flush must preserve caller/GPU-held output buffers.
+    assert(av_image_copy_to_buffer(after, sizeof(after), (const uint8_t *const *)held->pixels->data,
+                                   held->pixels->linesize, AV_PIX_FMT_YUV420P, 128, 72,
+                                   1) == sizeof(after));
+    assert(!memcmp(before, after, sizeof(before)));
+#if defined(__linux__)
+    // A successful API return can still carry an explicit missing-reference
+    // marker. Inject that backend result and require no publication.
+    assert(IHS_FrameTrackerBegin(r.tracker, 1, 4, &received, &ticket) == IHS_FrameBeginOK);
+    flag_missing_reference = true;
+    assert(sl_video_submit(pipeline, r.key, first, bytes, ticket, &taken, true) ==
+               SL_VIDEO_SUBMIT_CORRUPT &&
+           taken);
+    IHS_FrameTicketRelease(ticket);
+    assert(!sl_video_take(pipeline) && !flag_missing_reference);
+    // Resource failure and a stale identity must not be downgraded to DataLost.
+    assert(IHS_FrameTrackerBegin(r.tracker, 1, 5, &received, &ticket) == IHS_FrameBeginOK);
+    send_failure = AVERROR(ENOMEM);
+    assert(sl_video_submit(pipeline, r.key, first, bytes, ticket, &taken, false) ==
+               SL_VIDEO_SUBMIT_ERROR &&
+           taken);
+    taken = true;
+    assert(sl_video_submit(pipeline, (sl_video_key){7, 1}, first, bytes, ticket, &taken, false) ==
+               SL_VIDEO_SUBMIT_ERROR &&
+           !taken);
+    IHS_FrameTicketRelease(ticket);
+#endif
+    sl_resource_release(&held->ref);
+    sl_resource_release(&recovered->ref);
+    sl_video_stop(pipeline, r.key);
+    sl_video_reap(pipeline);
+    IHS_FrameTrackerClose(r.tracker);
+    av_parser_close(parser);
+    avcodec_free_context(&context);
+    free(input);
+}
+
 int main(int argc, char **argv) {
     assert(argc == 3);
+#if defined(__linux__)
+    opening_results();
+#endif
     sl_video_config config = {.width = 128, .height = 72};
     sl_video_pipeline *pipeline = sl_video_create();
     assert(pipeline);
@@ -184,7 +321,8 @@ int main(int argc, char **argv) {
     fixture(&b, argv[2]);
     assert(b.outputs == 12 && b.reordered == 0);
     sl_video_stop(pipeline, b.key);
-    assert(!sl_video_open(pipeline, (sl_video_key){3, 1}, &config)); /* two pinned domains */
+    assert(sl_video_open_ex(pipeline, (sl_video_key){3, 1}, &config) ==
+           SL_VIDEO_OPEN_UNAVAILABLE); /* two pinned domains */
     sl_resource_release(&a.held->ref);
     sl_video_reap(pipeline);
     assert(sl_video_open(pipeline, (sl_video_key){4, 1}, &config));
@@ -198,6 +336,8 @@ int main(int argc, char **argv) {
 #if defined(__linux__)
     close_during_open(pipeline);
 #endif
+    sl_video_thaw(pipeline);
+    corruption_and_recovery(pipeline, argv[2]);
     assert(sl_video_destroy(pipeline));
     return 0;
 }
