@@ -24,7 +24,8 @@ MODES = {'ice': '--sns-test', 'sdr': '--sdr-only-test', 'loss': '--sdr-fault-tes
          'close': '--sdr-close-test', 'no-connection': '--sdr-no-connection-test'}
 MEDIA_MODES = {'ice': '--sns-desktop', 'sdr': '--sdr-only-desktop', 'loss': '--sdr-fault-desktop',
                'loss-warm': '--sdr-warm-fault-desktop', 'pause': '--sdr-pause-desktop'}
-RUNTIME_MODES = {'auto': '--sns-runtime', 'sdr': '--sdr-runtime'}
+RUNTIME_MODES = {'auto': '--sns-runtime', 'sdr': '--sdr-runtime',
+                 'lan': '--lan-runtime', 'lan-isolated': '--lan-isolated-runtime'}
 LIMIT = 8+65536+8192+16
 
 def profile_valid(data, original=None):
@@ -190,7 +191,7 @@ def main(media=False, runtime=False):
     parser.add_argument('--address', required=True, help='explicit Switch IPv4 address')
     parser.add_argument('--profile', required=True, type=Path, help='our isolated paired test profile directory')
     parser.add_argument('--build', type=Path, default=ROOT / ('build/switch-sns-'+kind+'-private' if kind != 'network' else 'build/switch-sns-private'))
-    parser.add_argument('--lan-host', help='runtime fixture: block this Steam host IPv4 and broadcast in this process')
+    parser.add_argument('--lan-host', help='Steam host IPv4; native UDP in lan modes, process-local isolation in SNS modes')
     parser.add_argument('--mode', choices=modes, default='auto' if runtime else 'sdr')
     group = parser.add_mutually_exclusive_group()
     group.add_argument('--prepare-only', action='store_true')
@@ -228,7 +229,7 @@ def main(media=False, runtime=False):
                 result = subprocess.run(['/opt/devkitpro/tools/bin/nxlink', '-a', args.address, '-s',
                     '-p', target+'.nro', '--args',
                     modes[args.mode]+' '+str(receiver.port)+(' '+args.lan_host if runtime else ''), str(nro)], stdout=output, stderr=subprocess.STDOUT,
-                    timeout=120)
+                    timeout=180 if runtime and args.mode.startswith('lan') else 120)
                 exit_code = result.returncode
             except subprocess.TimeoutExpired:
                 timed_out = True
@@ -242,7 +243,7 @@ def main(media=False, runtime=False):
         'private_upload_removed': 'PRIVATE_NRO_REMOVED=1' in text,
         'loader_return_verified': False,
         'events': [line for line in text.splitlines() if line.startswith(('CLOUD_', 'SNS_', 'SDR_',
-            'SWITCH_SNS_', 'RUNTIME_FIXTURE_', 'PROFILE_READBACK_', 'PREVIOUS_EXIT_', 'PRIVATE_NRO_', 'PRIVATE_FIXTURE_',
+            'SWITCH_SNS_', 'RUNTIME_FIXTURE_', 'LAN_FIXTURE_', 'PROFILE_READBACK_', 'PREVIOUS_EXIT_', 'PRIVATE_NRO_', 'PRIVATE_FIXTURE_',
             'PRIVATE_EMBEDDED_', 'PRIVATE_RUNTIME_', 'IHS_CONNECTED=', 'IHS_DISCONNECTED=', 'IHS_PAUSE_', 'IHS_RESUME_', 'PREVIOUS_MEDIA_EXIT_'))
             and 'SNS_ERROR_FILE' not in line]}
     (build / (kind+'-result.json')).write_text(json.dumps(report, indent=2)+'\n')

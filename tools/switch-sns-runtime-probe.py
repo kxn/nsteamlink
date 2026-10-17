@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Run a private fixture around the full Switch client, using its normal UI.
 
-Automatically isolates LAN discovery in the fixture process, starts streaming
-from cloud discovery, checks actual presentation/audio queue and synthetic SDL
-input/ACK, then disconnects and exits. Does not prove physical sound or buttons.
+SNS modes isolate LAN discovery in the fixture process and check cloud media,
+presentation/audio queue and synthetic SDL input/ACK. LAN modes preserve native
+UDP discovery, observe a single desktop connection for 30 seconds, and optionally
+disable the CM background work for comparison. Each mode disconnects and exits;
+none proves physical sound or buttons.
 The user only prepares hbmenu netloader. Identity and readback use the existing
 private RomFS/AES-GCM delivery path. Never publish the private NRO.
 """

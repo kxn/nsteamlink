@@ -227,7 +227,8 @@ cleanup:
 int main(int argc, char **argv) {
     const char *mode = argc > 1 ? argv[1] : "";
 #if NSL_PRIVATE_RUNTIME_FIXTURE
-    bool allowed = (!strcmp(mode,"--sns-runtime") || !strcmp(mode,"--sdr-runtime")) && argc > 3;
+    bool allowed = (!strcmp(mode,"--sns-runtime") || !strcmp(mode,"--sdr-runtime") ||
+                    !strcmp(mode,"--lan-runtime") || !strcmp(mode,"--lan-isolated-runtime")) && argc > 3;
 #elif NSL_PRIVATE_MEDIA_FIXTURE
     bool allowed = !strcmp(mode,"--sns-desktop") || !strcmp(mode,"--sdr-only-desktop") ||
         !strcmp(mode,"--sdr-fault-desktop") || !strcmp(mode,"--sdr-warm-fault-desktop") ||
@@ -292,6 +293,8 @@ int main(int argc, char **argv) {
 #if NSL_PRIVATE_RUNTIME_FIXTURE
     phase="runtime_test";
     save_stage(phase);
+    if (!strcmp(mode,"--lan-runtime") || !strcmp(mode,"--lan-isolated-runtime"))
+        sl_runtime_fixture_lan(!strcmp(mode,"--lan-isolated-runtime"));
     if (!sl_runtime_fixture_prepare(directory,&embedded,argv[3],!strcmp(mode,"--sdr-runtime"))) goto cleanup;
     sl_live_printf("SWITCH_SNS_RUNTIME_BEGIN network_only=0\n");
     result=sl_application_run(argc,argv);

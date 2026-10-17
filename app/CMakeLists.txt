@@ -236,11 +236,14 @@ if(NSL_PLATFORM STREQUAL "switch")
                 # All fixture policy stays in this separate binary. The real
                 # application, media, runtime, decoder and SDK objects are reused.
                 target_link_libraries(${fixture} PRIVATE nsl_platform)
-                target_include_directories(${fixture} PRIVATE platforms/common)
+                target_include_directories(${fixture} PRIVATE platforms/common
+                    ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
                 foreach(symbol sl_system_init sl_system_shutdown sl_system_data_dir sl_system_running
                         sl_update_config_load sl_ui_tick sl_runtime_create sl_sns_create sl_sns_update IHS_SessionGetReliabilityStats IHS_HIDSDLGetLastSubmittedReport IHS_HIDDeviceStartInputReports IHS_HIDDeviceSDLCreate IHS_HIDManagedDeviceClose
                         IHS_HIDFlushSDLGameControllers IHS_HIDHandleSDLEvent sl_media_gate
-                        sl_remote_connection_update curl_easy_recv sendto recvfrom sendmsg recvmsg)
+                        IHS_SessionConnect IHS_UDPSocketReceive IHS_SessionChannelDataReceived
+                        IHS_SessionChannelQueuePacket sl_remote_connection_update
+                        curl_easy_recv sendto recvfrom sendmsg recvmsg)
                     target_link_options(${fixture} PRIVATE "-Wl,--wrap=${symbol}")
                 endforeach()
             endif()
@@ -255,15 +258,25 @@ if(NSL_PLATFORM STREQUAL "switch")
     endif()
 endif()
 if(NSL_PLATFORM STREQUAL "desktop")
+    add_executable(nsl-lan-transport-tests tests/test_lan_transport.c)
+    target_include_directories(nsl-lan-transport-tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+    target_compile_options(nsl-lan-transport-tests PRIVATE -Wall -Wextra -Wno-unknown-pragmas -UNDEBUG)
+    target_link_libraries(nsl-lan-transport-tests PRIVATE ihslib)
+    add_test(NAME nsl-lan-transport COMMAND nsl-lan-transport-tests)
+    set_tests_properties(nsl-lan-transport PROPERTIES TIMEOUT 20)
     if(NSL_BUILD_TOOLS AND NSL_BUILD_SNS AND NSL_DIAGNOSTICS)
         add_executable(nsl-runtime-probe tests/runtime_probe.c tests/runtime_fixture.c)
         target_link_libraries(nsl-runtime-probe PRIVATE nsl_platform)
-        target_include_directories(nsl-runtime-probe PRIVATE platforms/common)
+        target_include_directories(nsl-runtime-probe PRIVATE platforms/common
+            ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
         target_compile_options(nsl-runtime-probe PRIVATE -Wall -Wextra -Wno-unknown-pragmas)
         foreach(symbol sl_system_data_dir sl_system_running sl_update_config_load sl_ui_tick
                 sl_runtime_create sl_sns_create sl_sns_update IHS_SessionGetReliabilityStats IHS_HIDSDLGetLastSubmittedReport IHS_HIDDeviceStartInputReports IHS_HIDDeviceSDLCreate IHS_HIDManagedDeviceClose
                         IHS_HIDFlushSDLGameControllers IHS_HIDHandleSDLEvent sl_media_gate
-                        sl_remote_connection_update curl_easy_recv curl_multi_add_handle curl_multi_info_read sendto recvfrom sendmsg recvmsg SDL_Init SDL_Quit)
+                        IHS_SessionConnect IHS_UDPSocketReceive IHS_SessionChannelDataReceived
+                        IHS_SessionChannelQueuePacket sl_remote_connection_update curl_easy_recv
+                        curl_multi_add_handle curl_multi_info_read sendto recvfrom sendmsg recvmsg SDL_Init SDL_Quit)
             target_link_options(nsl-runtime-probe PRIVATE "-Wl,--wrap=${symbol}")
         endforeach()
     endif()

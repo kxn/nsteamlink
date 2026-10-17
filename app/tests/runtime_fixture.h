@@ -8,3 +8,5 @@ void sl_runtime_fixture_cloud_reconnect(void);
 void sl_runtime_fixture_cloud_initial_failure(bool bridge_mode);
 void sl_runtime_fixture_loss_soak(void);
 void sl_runtime_fixture_abrupt_fault(void);
+/* Preserve native UDP discovery/media; optionally remove only the new CM work. */
+void sl_runtime_fixture_lan(bool without_cloud);

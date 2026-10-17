@@ -35,10 +35,11 @@ int main(int argc, char **argv) {
         !(argc == 4 && (!strcmp(argv[3], "--sdr-only") || !strcmp(argv[3], "--cloud-reconnect") ||
                         !strcmp(argv[3], "--cloud-initial-failure") ||
                         !strcmp(argv[3], "--cloud-initial-bridge") ||
-                        !strcmp(argv[3], "--sdr-loss-soak") || !strcmp(argv[3], "--sdr-abrupt")))) {
+                        !strcmp(argv[3], "--sdr-loss-soak") || !strcmp(argv[3], "--sdr-abrupt") ||
+                        !strcmp(argv[3], "--lan") || !strcmp(argv[3], "--lan-isolated")))) {
         fprintf(stderr, "Usage: nsl-runtime-probe PRIVATE_PROFILE LAN_HOST "
                         "[--sdr-only|--cloud-reconnect|--cloud-initial-failure|--cloud-initial-"
-                        "bridge|--sdr-loss-soak|--sdr-abrupt]\n");
+                        "bridge|--sdr-loss-soak|--sdr-abrupt|--lan|--lan-isolated]\n");
         return 2;
     }
     if (argc == 4 && !strcmp(argv[3], "--cloud-reconnect"))
@@ -50,6 +51,8 @@ int main(int argc, char **argv) {
         sl_runtime_fixture_loss_soak();
     if (argc == 4 && !strcmp(argv[3], "--sdr-abrupt"))
         sl_runtime_fixture_abrupt_fault();
+    if (argc == 4 && (!strcmp(argv[3], "--lan") || !strcmp(argv[3], "--lan-isolated")))
+        sl_runtime_fixture_lan(!strcmp(argv[3], "--lan-isolated"));
     sl_auth_store store = {0};
     if ((argc != 3 && argc != 4) || sl_auth_load(&store, argv[1]) ||
         !sl_runtime_fixture_prepare(argv[1], &store, argv[2],

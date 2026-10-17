@@ -3,16 +3,20 @@
  * UI/SDL actions and snapshots run on the existing main thread; SNS observations
  * are copied by its existing owner through atomics. No additional workers. */
 #include "runtime_fixture.h"
+#include "ihs_udp.h"
 #include "media.h"
 #include "platform/runtime.h"
 #include "platform/system.h"
 #include "remote_connection.h"
+#include "session/channels/ch_data.h"
+#include "session/session_pri.h"
 #include "sns_backend.h"
 #include <SDL.h>
 #include <arpa/inet.h>
 #include <curl/curl.h>
 #include <errno.h>
 #include <stdatomic.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
 
@@ -41,6 +45,71 @@ static sl_remote_connection *cloud_connection;
 static _Thread_local bool cloud_receive_context;
 static uint64_t cloud_resume_at;
 static bool cloud_was_ready;
+static bool lan_mode, lan_without_cloud, lan_failed, lan_observed;
+static uint64_t lan_requested, lan_first_frame, lan_last_frame, lan_max_gap;
+static unsigned lan_previous_frames;
+static atomic_uint lan_starts, lan_raw[32], lan_admitted[32], lan_recovery[32];
+static atomic_uint lan_timeouts, lan_receive_errors;
+static atomic_uint_fast64_t lan_peer;
+void sl_runtime_fixture_lan(bool without_cloud) {
+    lan_mode = true;
+    lan_without_cloud = without_cloud;
+}
+/* These wrappers observe the unchanged native transport before packet parsing
+ * and after source/connection/channel validation. Counters are observations,
+ * never inferred packet-loss percentages. No logging or allocation per packet. */
+bool __real_IHS_SessionConnect(IHS_Session *);
+bool __wrap_IHS_SessionConnect(IHS_Session *session) {
+    if (lan_mode) {
+        const IHS_SocketAddress *address = &IHS_SessionGetInfo(session)->address;
+        uint32_t ip = 0;
+        if (address->ip.family == IHS_IPAddressFamilyIPv4)
+            memcpy(&ip, address->ip.v4.data, sizeof(ip));
+        atomic_store(&lan_peer, ((uint64_t)ip << 16) | address->port);
+        atomic_fetch_add(&lan_starts, 1);
+    }
+    return __real_IHS_SessionConnect(session);
+}
+int __real_IHS_UDPSocketReceive(IHS_UDPSocket *, IHS_UDPPacket *);
+int __wrap_IHS_UDPSocketReceive(IHS_UDPSocket *socket, IHS_UDPPacket *packet) {
+    int result = __real_IHS_UDPSocketReceive(socket, packet);
+    if (lan_mode && result > 0 && packet->address.ip.family == IHS_IPAddressFamilyIPv4) {
+        uint32_t ip;
+        memcpy(&ip, packet->address.ip.v4.data, sizeof(ip));
+        if ((((uint64_t)ip << 16) | packet->address.port) == atomic_load(&lan_peer) &&
+            packet->buffer.size >= IHS_PACKET_HEADER_SIZE) {
+            IHS_SessionPacketHeader h;
+            if (IHS_SessionPacketHeaderParse(&h, IHS_BufferPointer(&packet->buffer)) &&
+                h.channelId < 32)
+                atomic_fetch_add(&lan_raw[h.channelId], 1);
+        }
+    }
+    /* Includes the discovery socket, so label these as aggregate call results. */
+    if (lan_mode && result <= 0)
+        atomic_fetch_add(result ? &lan_receive_errors : &lan_timeouts, 1);
+    return result;
+}
+void __real_IHS_SessionChannelDataReceived(IHS_SessionChannel *, IHS_SessionPacket *);
+void __wrap_IHS_SessionChannelDataReceived(IHS_SessionChannel *channel, IHS_SessionPacket *packet) {
+    if (lan_mode && channel->id < 32)
+        atomic_fetch_add(&lan_admitted[channel->id], 1);
+    __real_IHS_SessionChannelDataReceived(channel, packet);
+}
+bool __real_IHS_SessionChannelQueuePacket(IHS_SessionChannel *, IHS_SessionPacket *, bool);
+bool __wrap_IHS_SessionChannelQueuePacket(IHS_SessionChannel *channel, IHS_SessionPacket *packet,
+                                          bool reliable) {
+    /* Observe the queue boundary: --wrap cannot intercept DataLost calls
+     * originating in the same object file as its definition (ch_data.c). */
+    bool recovery = lan_mode && channel->id < 32 &&
+                    (channel->type == IHS_SessionChannelTypeDataAudio ||
+                     channel->type == IHS_SessionChannelTypeDataVideo) &&
+                    packet->header.type == IHS_SessionPacketTypeUnreliable && packet->body.size &&
+                    *IHS_BufferPointer(&packet->body) == k_EStreamDataLost;
+    bool result = __real_IHS_SessionChannelQueuePacket(channel, packet, reliable);
+    if (recovery && result)
+        atomic_fetch_add(&lan_recovery[channel->id], 1);
+    return result;
+}
 void sl_runtime_fixture_cloud_reconnect(void) {
     cloud_mode = true;
 }
@@ -119,6 +188,10 @@ CURLcode __wrap_curl_easy_recv(CURL *easy, void *data, size_t size, size_t *rece
 }
 void __real_sl_remote_connection_update(sl_remote_connection *, uint64_t);
 void __wrap_sl_remote_connection_update(sl_remote_connection *connection, uint64_t now) {
+    if (lan_mode && lan_without_cloud) {
+        sl_remote_connection_set_active(connection, false);
+        return;
+    }
     if (cloud_mode && connection == cloud_connection && now < cloud_resume_at)
         return;
     if (cloud_initial && !cloud_connection) {
@@ -259,6 +332,17 @@ bool sl_runtime_fixture_prepare(const char *directory, const sl_auth_store *stor
     if (!private_host || private_host == UINT32_MAX)
         return false;
     strcpy(private_directory, directory);
+    if (lan_mode) {
+        /* A known IP is only a probe target; online status still requires a
+         * real discovery reply. Never depend on broadcast reaching this Wi-Fi. */
+        sl_auth_store fixture = *store;
+        snprintf(fixture.registry.hosts[fixture.registry.selected].address,
+                 sizeof(fixture.registry.hosts[0].address), "%s", lan_host);
+        if (!sl_auth_save(&fixture, directory))
+            return false;
+        sl_live_printf("LAN_FIXTURE_CONFIG quality=%u bitrate_kbps=%u cloud_background=%d\n",
+                       fixture.quality, fixture.bitrate_kbps, !lan_without_cloud);
+    }
     force_sdr = sdr_only;
     began = sl_system_now();
     return true;
@@ -281,7 +365,10 @@ bool __wrap_sl_system_running(void) {
             failure = 1;
         return false;
     }
-    if (began && sl_system_now() - began >= (loss_soak ? 240000 : cloud_initial ? 180000 : 90000)) {
+    if (began && sl_system_now() - began >= (loss_soak       ? 240000
+                                             : cloud_initial ? 180000
+                                             : lan_mode      ? 110000
+                                                             : 90000)) {
         if (!failure)
             failure = 2;
         sl_live_printf("RUNTIME_FIXTURE_TIMEOUT phase=%u\n", phase);
@@ -380,6 +467,80 @@ static void enter(unsigned next, uint64_t now) {
     phase_at = now;
     sl_live_printf("RUNTIME_FIXTURE_STAGE=%u\n", phase);
 }
+static void lan_tick(sl_ui_model *ui, const stream_media_snapshot *s, const sl_runtime_facts *facts,
+                     bool have_facts, uint64_t now) {
+    if (phase == 0) {
+        int i = ui->store.registry.selected;
+        sl_host *h = i >= 0 && i < ui->store.registry.count ? &ui->store.registry.hosts[i] : NULL;
+        if (ui->page == SL_HOME && h && h->paired && sl_ui_host_source(ui, h) == SL_DISCOVERY_LAN) {
+            lan_requested = now;
+            sl_live_printf("LAN_FIXTURE_BEGIN cloud_background=%d first_connect=1\n",
+                           !lan_without_cloud);
+            tap(SDLK_y); /* The real desktop-stream UI action. */
+            enter(40, now);
+        }
+        return;
+    }
+    if (phase == 40) {
+        if (s->displayed_frames != lan_previous_frames) {
+            if (!lan_first_frame)
+                lan_first_frame = now;
+            if (lan_last_frame && now - lan_last_frame > lan_max_gap)
+                lan_max_gap = now - lan_last_frame;
+            lan_last_frame = now;
+            lan_previous_frames = s->displayed_frames;
+        }
+        if (lan_last_frame && now - lan_last_frame > lan_max_gap)
+            lan_max_gap = now - lan_last_frame;
+        if (now - reported >= 1000) {
+            reported = now;
+            sl_live_printf("LAN_FIXTURE_MEDIA elapsed_ms=%llu submit=%llu decode=%u show=%u "
+                           "audio=%u gap_max_ms=%llu starts=%u sns=%u\n",
+                           (unsigned long long)(now - lan_requested),
+                           (unsigned long long)s->pacing.submits, s->decoded_frames,
+                           s->displayed_frames, s->audio_frames, (unsigned long long)lan_max_gap,
+                           atomic_load(&lan_starts), atomic_load(&sns_flags));
+            for (unsigned i = 0; i < 32; ++i)
+                if (atomic_load(&lan_raw[i]) || atomic_load(&lan_admitted[i]))
+                    sl_live_printf(
+                        "LAN_FIXTURE_RX channel=%u raw=%u admitted=%u recovery_queued=%u\n", i,
+                        atomic_load(&lan_raw[i]), atomic_load(&lan_admitted[i]),
+                        atomic_load(&lan_recovery[i]));
+        }
+        bool error = ui->page == SL_ERROR || ui->page == SL_PIN || ui->page == SL_PAIRING ||
+                     s->render_failed;
+        bool elapsed = lan_first_frame && now - lan_first_frame >= 30000;
+        if (error || elapsed || now - lan_requested >= 60000) {
+            lan_failed = error || !elapsed || s->displayed_frames < 120 || s->audio_frames < 30 ||
+                         s->audio_decode_errors || lan_max_gap >= 3000 || atomic_load(&sns_flags) ||
+                         atomic_load(&lan_starts) != 1;
+            lan_observed = true;
+            sl_live_printf(
+                "LAN_FIXTURE_OBSERVED passed=%d page=%u first_ms=%llu max_gap_ms=%llu "
+                "recv_timeout_calls=%u recv_error_calls=%u\n",
+                !lan_failed, ui->page,
+                (unsigned long long)(lan_first_frame ? lan_first_frame - lan_requested : 0),
+                (unsigned long long)lan_max_gap, atomic_load(&lan_timeouts),
+                atomic_load(&lan_receive_errors));
+            /* Always close the real session, including error/connecting cases.
+             * Do not retry and hide the first-connection failure. */
+            if (ui->page == SL_STREAM) {
+                sl_ui_action(ui, SL_OPEN_DISCONNECT, 0);
+                sl_ui_action(ui, SL_CONFIRM_STOP, 0);
+            } else {
+                sl_ui_action(ui, SL_BACK, 0);
+            }
+            enter(41, now);
+        }
+    } else if (phase == 41 && ui->page == SL_HOME && have_facts && facts->requests_closed &&
+               facts->protocol_closed && facts->video_clean) {
+        tap(SDLK_ESCAPE);
+        enter(7, now);
+    } else if (phase == 7 && ui->page == SL_EXIT) {
+        tap(SDLK_RETURN);
+        enter(8, now);
+    }
+}
 void __real_sl_ui_tick(sl_ui_model *, uint64_t);
 void __wrap_sl_ui_tick(sl_ui_model *ui, uint64_t now) {
     __real_sl_ui_tick(ui, now);
@@ -401,6 +562,10 @@ void __wrap_sl_ui_tick(sl_ui_model *ui, uint64_t now) {
         return;
     sl_runtime_facts f = {0};
     bool facts = sl_runtime_read_facts(runtime, &f);
+    if (lan_mode) {
+        lan_tick(ui, &s, &f, facts, now);
+        return;
+    }
     uint64_t packed_wire = atomic_load(&wire_report), wire_seq = packed_wire >> 16;
     uint16_t wire_buttons = (uint16_t)packed_wire;
     bool pressed = (wire_buttons & (1u << SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) != 0;
@@ -707,16 +872,17 @@ void __wrap_sl_ui_tick(sl_ui_model *ui, uint64_t now) {
 int sl_runtime_fixture_result(void) {
     unsigned flags = atomic_load(&sns_flags), tx = atomic_load(&filtered_tx),
              rx = atomic_load(&filtered_rx);
-    bool path = cloud_initial ? !flags && cloud_directory_rounds == 2 && cloud_tls_failures >= 2 &&
-                                    cloud_tls_unique == cloud_tls_failures && cloud_tls_success &&
-                                    initial_delay_valid() && atomic_load(&cloud_connections) == 1 &&
-                                    !atomic_load(&cloud_disconnects) && !atomic_load(&cloud_drops)
-                : cloud_mode
-                    ? !flags && cloud_ui_offline && atomic_load(&cloud_connections) >= 2 &&
-                          atomic_load(&cloud_disconnects) == 1 && atomic_load(&cloud_drops) == 1
-                    : (flags & 3) == 3 && (!force_sdr || (flags & 4));
-    bool passed = !failure && phase == 8 && path && tx && (!loss_soak || soak_completed) &&
-                  (!abrupt_fault || fault_completed);
+    bool path =
+        lan_mode        ? lan_observed && !lan_failed && !flags && !tx && !rx
+        : cloud_initial ? !flags && cloud_directory_rounds == 2 && cloud_tls_failures >= 2 &&
+                              cloud_tls_unique == cloud_tls_failures && cloud_tls_success &&
+                              initial_delay_valid() && atomic_load(&cloud_connections) == 1 &&
+                              !atomic_load(&cloud_disconnects) && !atomic_load(&cloud_drops)
+        : cloud_mode ? !flags && cloud_ui_offline && atomic_load(&cloud_connections) >= 2 &&
+                           atomic_load(&cloud_disconnects) == 1 && atomic_load(&cloud_drops) == 1
+                     : (flags & 3) == 3 && (!force_sdr || (flags & 4));
+    bool passed = !failure && phase == 8 && path && (lan_mode || tx) &&
+                  (!loss_soak || soak_completed) && (!abrupt_fault || fault_completed);
     sl_live_printf(
         "RUNTIME_FIXTURE_RESULT=%d phase=%u failure=%u sns=%u filtered_tx=%u filtered_rx=%u\n",
         passed ? 0 : 1, phase, failure, flags, tx, rx);
@@ -726,7 +892,7 @@ int sl_runtime_fixture_result(void) {
  * preserving nonblocking progress. CM TCP, public UDP, nxlink and loopback are
  * unaffected. No global firewall or host state is changed. */
 static bool blocked(const struct sockaddr *sa) {
-    if (!private_host || !sa || sa->sa_family != AF_INET)
+    if (lan_mode || !private_host || !sa || sa->sa_family != AF_INET)
         return false;
     uint32_t ip = ntohl(((const struct sockaddr_in *)sa)->sin_addr.s_addr);
     return ip == private_host || ip == UINT32_MAX || ip == ((private_host & 0xffffff00u) | 255u);
