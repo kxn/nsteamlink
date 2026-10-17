@@ -2529,3 +2529,14 @@ session/重订阅，直到同一已配对主机在 UI 恢复在线，最后从�
 20 秒是故障环境的保持时长，不是恢复策略或官方重试常数；测试不修改 host/路由。
 这覆盖连接读错误和真实重建，不把本地 TTL 到期称为收到服务端 Offline 消息，
 亦不将重建自动等同于取消 PIN 或退订验收。
+
+D-071 补充：桌面 `--cloud-initial-failure` 让正式 discovery provider 请求真实 CM
+目录，并将首轮各候选的 libcurl TLS 完成结果统一替换为 CURLE_COULDNT_CONNECT。
+轮换、耗尽、清理和随机退避仍由正式 provider 执行；第二轮恢复真实结果，直到匿名
+连接和 UI 主机在线，再正常退出。验收要求至少两个不同候选、首轮无重复、至少一次
+原本成功的 TLS 被替换，以及耗尽后的约 10–30 秒等待。180 秒是 fixture 总期限，
+不是协议重试常数；不向首轮候选发送 WebSocket Upgrade，也不启动媒体。
+`--cloud-initial-bridge` 在同一独立 fixture 中显式设置正式 provider 的 bridge_mode，
+要求耗尽后下一轮更新即开始重新取目录（观测容许一秒），用以核对 §13.1 的退避差异。
+这项测试验证 provider 配置分支，不冒充完整媒体 bridge 重连或真实服务端故障。
+新增包装仅链接桌面 runner，不进入 Switch fixture 或正式产品；共享观测经原子发布。

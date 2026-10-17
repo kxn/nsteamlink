@@ -20,7 +20,10 @@ int sl_live_printf(const char *, ...);
 static char private_directory[192];
 static uint32_t private_host;
 static uint64_t began, sampled, phase_at, submitted_before, acked_before;
-static bool cloud_mode, cloud_ui_offline;
+static bool cloud_mode, cloud_ui_offline, cloud_initial, cloud_initial_bridge;
+static atomic_uint cloud_directory_rounds, cloud_tls_failures, cloud_tls_unique, cloud_tls_success;
+static atomic_uint_fast64_t cloud_retry_delay;
+static _Thread_local bool cloud_update_context;
 static atomic_bool cloud_armed, cloud_ready;
 static atomic_uint cloud_connections, cloud_disconnects, cloud_drops;
 static sl_remote_connection *cloud_connection;
@@ -30,6 +33,62 @@ static bool cloud_was_ready;
 void sl_runtime_fixture_cloud_reconnect(void) {
     cloud_mode = true;
 }
+void sl_runtime_fixture_cloud_initial_failure(bool bridge_mode) {
+    cloud_mode = cloud_initial = true;
+    cloud_initial_bridge = bridge_mode;
+}
+static bool initial_delay_valid(void) {
+    uint64_t delay = atomic_load(&cloud_retry_delay);
+    return cloud_initial_bridge ? delay < 1000 : delay >= 10000 && delay <= 30500;
+}
+/* Desktop-only initial-connect fixture. The first directory and TLS handshakes
+ * are real; only their CM completion results are replaced. No WS request is sent
+ * on the failed batch. The production provider rotates/exhausts its own list. */
+#ifndef __SWITCH__
+static uint64_t cloud_tls_last_failed;
+static char cloud_failed_urls[32][192];
+CURLMcode __real_curl_multi_add_handle(CURLM *, CURL *);
+CURLMcode __wrap_curl_multi_add_handle(CURLM *multi, CURL *easy) {
+    char *url = NULL;
+    if (cloud_initial && cloud_update_context &&
+        curl_easy_getinfo(easy, CURLINFO_EFFECTIVE_URL, &url) == CURLE_OK && url &&
+        strstr(url, "/ISteamDirectory/")) {
+        ++cloud_directory_rounds;
+        if (cloud_directory_rounds == 2 && cloud_tls_last_failed) {
+            cloud_retry_delay = sl_system_now() - cloud_tls_last_failed;
+            sl_live_printf("CLOUD_FIXTURE_INITIAL_RETRY delay_ms=%llu failed=%u unique=%u\n",
+                           (unsigned long long)cloud_retry_delay, cloud_tls_failures,
+                           cloud_tls_unique);
+        }
+    }
+    return __real_curl_multi_add_handle(multi, easy);
+}
+CURLMsg *__real_curl_multi_info_read(CURLM *, int *);
+CURLMsg *__wrap_curl_multi_info_read(CURLM *multi, int *remaining) {
+    CURLMsg *message = __real_curl_multi_info_read(multi, remaining);
+    char *url = NULL;
+    if (cloud_initial && cloud_update_context && cloud_directory_rounds == 1 && message &&
+        message->msg == CURLMSG_DONE &&
+        curl_easy_getinfo(message->easy_handle, CURLINFO_EFFECTIVE_URL, &url) == CURLE_OK && url &&
+        strstr(url, "/remoteplay/")) {
+        bool known = false;
+        for (unsigned i = 0; i < cloud_tls_unique; ++i)
+            if (!strcmp(url, cloud_failed_urls[i]))
+                known = true;
+        if (!known && cloud_tls_unique < 32 && strlen(url) < sizeof(cloud_failed_urls[0]))
+            strcpy(cloud_failed_urls[cloud_tls_unique++], url);
+        ++cloud_tls_failures;
+        cloud_tls_last_failed = sl_system_now();
+        CURLcode original = message->data.result;
+        if (original == CURLE_OK)
+            ++cloud_tls_success;
+        message->data.result = CURLE_COULDNT_CONNECT;
+        sl_live_printf("CLOUD_FIXTURE_INITIAL_TLS_FAILURE attempt=%u unique=%u original=%d\n",
+                       cloud_tls_failures, cloud_tls_unique, original);
+    }
+    return message;
+}
+#endif
 CURLcode __real_curl_easy_recv(CURL *, void *, size_t, size_t *);
 CURLcode __wrap_curl_easy_recv(CURL *easy, void *data, size_t size, size_t *received) {
     if (cloud_mode && cloud_receive_context && atomic_exchange(&cloud_armed, false)) {
@@ -45,9 +104,15 @@ void __real_sl_remote_connection_update(sl_remote_connection *, uint64_t);
 void __wrap_sl_remote_connection_update(sl_remote_connection *connection, uint64_t now) {
     if (cloud_mode && connection == cloud_connection && now < cloud_resume_at)
         return;
-    cloud_receive_context = cloud_mode && connection == cloud_connection;
+    if (cloud_initial && !cloud_connection) {
+        cloud_connection = connection;
+        sl_remote_connection_set_bridge_mode(connection, cloud_initial_bridge);
+        sl_live_printf("CLOUD_FIXTURE_INITIAL_MODE bridge=%d\n", cloud_initial_bridge);
+    }
+    cloud_update_context = cloud_mode && (!cloud_connection || connection == cloud_connection);
+    cloud_receive_context = cloud_mode && !cloud_initial && connection == cloud_connection;
     __real_sl_remote_connection_update(connection, now);
-    cloud_receive_context = false;
+    cloud_receive_context = cloud_update_context = false;
     if (!cloud_mode)
         return;
     bool ready = sl_remote_ready(sl_remote_connection_protocol(connection));
@@ -174,7 +239,7 @@ bool __wrap_sl_system_running(void) {
             failure = 1;
         return false;
     }
-    if (began && sl_system_now() - began >= 90000) {
+    if (began && sl_system_now() - began >= (cloud_initial ? 180000 : 90000)) {
         if (!failure)
             failure = 2;
         sl_live_printf("RUNTIME_FIXTURE_TIMEOUT phase=%u\n", phase);
@@ -283,7 +348,23 @@ void __wrap_sl_ui_tick(sl_ui_model *ui, uint64_t now) {
         int i = ui->store.registry.selected;
         sl_host *h = i >= 0 && i < ui->store.registry.count ? &ui->store.registry.hosts[i] : NULL;
         if (ui->page == SL_HOME && h && h->paired && sl_host_online(h, now)) {
-            if (cloud_mode) {
+            if (cloud_initial) {
+                if (!atomic_load(&cloud_ready))
+                    break;
+                if (cloud_directory_rounds != 2 || cloud_tls_failures < 2 ||
+                    cloud_tls_unique != cloud_tls_failures || !cloud_tls_success ||
+                    !initial_delay_valid() || atomic_load(&cloud_connections) != 1 ||
+                    atomic_load(&cloud_disconnects)) {
+                    failure = 9;
+                    sl_live_printf("CLOUD_FIXTURE_INITIAL_INVALID=1\n");
+                    break;
+                }
+                sl_live_printf(
+                    "CLOUD_FIXTURE_INITIAL_RECOVERED=1 failed=%u unique=%u retry_ms=%llu\n",
+                    cloud_tls_failures, cloud_tls_unique, (unsigned long long)cloud_retry_delay);
+                tap(SDLK_ESCAPE);
+                enter(7, now);
+            } else if (cloud_mode) {
                 atomic_store(&cloud_armed, true);
                 enter(20, now);
             } else {
@@ -446,7 +527,11 @@ void __wrap_sl_ui_tick(sl_ui_model *ui, uint64_t now) {
 int sl_runtime_fixture_result(void) {
     unsigned flags = atomic_load(&sns_flags), tx = atomic_load(&filtered_tx),
              rx = atomic_load(&filtered_rx);
-    bool path = cloud_mode
+    bool path = cloud_initial ? !flags && cloud_directory_rounds == 2 && cloud_tls_failures >= 2 &&
+                                    cloud_tls_unique == cloud_tls_failures && cloud_tls_success &&
+                                    initial_delay_valid() && atomic_load(&cloud_connections) == 1 &&
+                                    !atomic_load(&cloud_disconnects) && !atomic_load(&cloud_drops)
+                : cloud_mode
                     ? !flags && cloud_ui_offline && atomic_load(&cloud_connections) >= 2 &&
                           atomic_load(&cloud_disconnects) == 1 && atomic_load(&cloud_drops) == 1
                     : (flags & 3) == 3 && (!force_sdr || (flags & 4));

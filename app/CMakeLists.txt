@@ -256,7 +256,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
         foreach(symbol sl_system_data_dir sl_system_running sl_update_config_load sl_ui_tick
                 sl_runtime_create sl_sns_create sl_sns_update IHS_SessionGetReliabilityStats IHS_HIDSDLGetLastSubmittedReport IHS_HIDDeviceStartInputReports
                         IHS_HIDFlushSDLGameControllers IHS_HIDHandleSDLEvent sl_media_gate
-                        sl_remote_connection_update curl_easy_recv sendto recvfrom sendmsg recvmsg SDL_Init SDL_Quit)
+                        sl_remote_connection_update curl_easy_recv curl_multi_add_handle curl_multi_info_read sendto recvfrom sendmsg recvmsg SDL_Init SDL_Quit)
             target_link_options(nsl-runtime-probe PRIVATE "-Wl,--wrap=${symbol}")
         endforeach()
     endif()

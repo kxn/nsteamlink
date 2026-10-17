@@ -5,3 +5,4 @@ bool sl_runtime_fixture_prepare(const char *directory, const sl_auth_store *stor
                                 const char *lan_host, bool sdr_only);
 int sl_runtime_fixture_result(void);
 void sl_runtime_fixture_cloud_reconnect(void);
+void sl_runtime_fixture_cloud_initial_failure(bool bridge_mode);
