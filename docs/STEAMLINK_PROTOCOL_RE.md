@@ -5137,7 +5137,7 @@ float比特；这些编码帧sink不替代物理硬件decoder。
 不据此增加DataLost、自动FEC、重连或decoder reset策略。
 
 【边界】发送actor仍独立，原每channel的可靠更新→不可靠更新→可靠发送→不可靠
-false→FEC，以及末尾轮转不可靠true，尚未作为一个完整生产网络周期接通；全局
+false→FEC，以及末尾轮转不可靠true不属于本节独立RX边界；组合周期见§64。全局
 network锁与control处理/consumer替换的所有交错也不能由此42例推定已等价。
 保持初发producer的来源约束，不将所有初发强行延后。早到媒体窗口、畸形/错误保护、
 完整decoder/OS线程、Steam会话和Switch实际显示/loader均另需来源和运行证据。
@@ -5169,7 +5169,7 @@ ControlHandoff。control拥有独立incoming mutex和常数时间head/tail FIFO�
 type、原transport header和已解密body所有权。入队不执行普通控制handler，不把body
 借给稍后已释放的Frame或栈buffer。KeepAlive不进队列，RemoteHID仍内联处理。
 
-SessionUpdateAt先完成本轮接收窗口/反馈，再DrainIncoming，然后按新的状态选择
+SessionUpdateAt先完成本轮收发周期（§64），再DrainIncoming，然后按新的状态选择
 一个Starting/Streaming阶段。每次pop只持队列锁，实际控制分派在锁外执行，也不
 持网络/Base锁；一条消息改变状态后，下一条按新的状态重新选择。可靠ACK可以在
 普通控制动作执行之前发出。消费期间不重新递增解密序号，不再次解密body。
@@ -5221,3 +5221,67 @@ decrypt_attempts测试用Connected状态验证实际控制动作；在Handshakin
 的交错称为已对齐。RemoteHID仍是官方内联例外，其设备线程/发送锁关系须按自身
 调用链核对。完整decoder、早到媒体、上行FEC实际启用、统计评分与真实Steam/Switch
 仍独立取证；没有新增自动FEC或把原用户停顿认定为已修复。
+
+## 64. 同轮接收、反馈与周期发送的时间和通道顺序
+
+【官方客户端证据】沿用§24.1固定SHA的Android 1.3.32 libmain.so，不以主机代码
+或字段定义代替客户端策略。Socket::Update @0x7fecd4先按§60排空可读数据，再以
+最后一次Read之前保存的tick调用Connection::Update @0x7fc108。它在
+0x7fc368–0x7fc3cc按同一优先级快照逐channel执行：可靠接收更新、普通不可靠接收
+更新、可靠发送、不可靠发送(false)、FECOutgoingQueue发送；全部channel之后，
+0x7fc3d0–0x7fc40c再做不可靠发送(true)的轮转扫描。每轮只在末尾推进一次rotation。
+因此不能把“先更新全部RX，再由另一周期线程扫描全部TX”称为同一策略。
+
+### 64.1 可靠RTO、NACK与实际发送时间
+
+0x7fc36c/0x7fc390将同一batch tick w20分别传给可靠接收和
+SendReliablePackets(unsigned int)；可靠sender @0x7f8ac4的0x7f8b28使用参数w1
+计算到期条件，不在候选判断前重新取时钟。默认估计为0时，clamp后65 tick加1/4为
+81 tick；age=81不触发，age=82触发。该数值是受控初始估计的边界，不是固定线上RTO。
+最后一次空Read消耗100 tick，或前一通道实际发送耗时100 tick，也不能使另一个
+可靠包在本轮由81提前变成到期。
+
+不可靠sender @0x7f8cbc在0x7f8cf4自行GetStreamTimestamp，以新时间清理保留窗口。
+Socket::Send @0x7ff1dc还会独立取实际attempt stamp，包含被budget拒绝的attempt。
+故同一轮可以出现“可靠包按batch tick仍未到期，不可靠包按新时间已经过期”。
+0xf479a8是局部静态初始化的__cxa_guard，0x7f90bc–0x7f90e0初始化0xf479a0为13107；
+它不是开启重传/FEC的配置开关。审计通过真实首次调用执行此初始化，不预置其值。
+
+HandlePacket @0x7f93d0尾调用共享HandleNackPacket @0x7f95dc；后者直到0x7f9938
+没有调用sender。NACK先修改窗口，在后续周期发送阶段生效；同一接收批次随后到达
+的ACK可先移除该包，从而不产生多余重传。旧组件审计中显式再调用sender，是单独
+受控步骤，不能用来证明原客户端“收到NACK即发送”。
+
+### 64.2 Native边界与完整字节对照
+
+IHS_SessionNetworkUpdateAt使用一次factory/priority/rotation快照，对每个channel
+依次调用可靠RX、媒体普通RX/反馈、OutgoingUpdateChannel，最后OutgoingRetryPass。
+普通控制仍在网络周期后出队分派，见§63。初发producer事务保留原来的Queue/Dispatch
+入口；SessionSendWorker不再独立触发周期OutgoingUpdate。新初发事务在自己的入口
+调用sender，仍可能发送同channel其他到期包，不能把“取消独立周期扫描”误写为
+“所有初发必须等到接收批次末尾”。legacy重传timer仍只唤醒初发队列，不执行周期TX。
+
+`audit-steam-network-cycle.py`从官方真实Channel::Send @0x7f89dc、SendUnreliable
+@0x7f8bd8建立保留窗口，执行原Socket收包/Connection整轮和真实RX/TX窗口。
+固定40例76个状态，含96份初发wire、132份周期wire；与Native真实QueuePacket/
+DispatchQueued、receiveCycle、网络收发/反馈及统计路径逐字节、逐状态比较。
+检查完整CRC wire顺序、初发失败后的重试、可靠保留状态、不可靠head/tail/cursor/
+计数/stamp、两类budget deadline、blocked、优先级顺序、rotation、时钟及采样。
+
+向量包括CRC开/关、RTO 80/81/82、最后空Read耗时、实际write耗时、无可读输入仍推进
+TX、同批NACK→ACK/ACK→NACK/NACK单独输入、混合媒体NACK与可靠ACK/重传、优先级
+正负、两类budget阻塞、transport结果1…4及同channel失败不阻断其他channel、重复
+NACK下跨rotation完整回绕。不以只看rotation计数的空队列案例声称公平重试；该组
+实际观察到channel4/5/6的重试。被budget拒绝的attempt仍更新stamp，后续NACK可重新
+标记，这一点也比较窗口状态，不能仅检查实际write次数。
+
+Native真实双worker测试在CRC开/关分别把RX批次卡在Read中，保持初发worker运行，
+确认初发可发送；再推进协议时钟并等待20ms，确认没有周期抢跑。释放Read后，同批
+NACK无ACK时才重传，有随后ACK则取消；stop/join后销毁。恢复独立周期sender的
+mutation会在EOF前重传并触发断言。这是Native时序回归证据，不是Source OS调度证据。
+
+【证据范围】时间、初始连接状态、IO结果、平台mutex/refcount和交付delegate受控；
+FEC outgoing队列为空。该对照不证明上行FEC的真实生产入口或启用条件，不新增按丢包
+自动开启FEC的策略。全局network锁与所有初发producer/内联RemoteHID设备线程交错、
+timeout/生命周期相对channel的完整顺序、早到媒体的窗口所有权/完整帧缓存、decoder、
+统计评分及真实Steam/Switch会话，不能由这些受控网络周期结果推定等价。

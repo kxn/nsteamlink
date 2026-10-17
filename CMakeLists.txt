@@ -131,6 +131,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-receive-cycle.py"
             --receiver $<TARGET_FILE:ihs-network-wire-oracle>)
         set_tests_properties(receive_cycle_official_vectors PROPERTIES TIMEOUT 60)
+        add_test(NAME network_cycle_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-network-cycle.py"
+            --receiver $<TARGET_FILE:ihs-network-wire-oracle>)
+        set_tests_properties(network_cycle_official_vectors PROPERTIES TIMEOUT 60)
         add_test(NAME control_handoff_official_vectors COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-control-handoff.py"
             --receiver $<TARGET_FILE:ihs-control-handoff-oracle>)
