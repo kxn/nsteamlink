@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Observe the pinned official SDK during an Android Steam Link network test.
+"""Observe the pinned official SDK during a bounded Android Steam Link experiment.
 
 Requires a rooted emulator, running frida-server, adb forwarding to --remote,
 and Steam Link already at Computer Settings. --tap must target Network Test.
+Explicit --media instead requires Home/Start Playing and a bounded --stop-app.
 Peer blocking must precede app startup when avoiding a cached LAN connection.
-No desktop/game button is selected. Credentials and packet bodies are not read.
+Desktop streaming is entered only with explicit --media. Credentials and packet
+bodies are not read.
 """
 import argparse
 import importlib.util
@@ -19,6 +21,7 @@ import subprocess
 import time
 
 PACKAGE = 'com.valvesoftware.steamlink'
+MEDIA_SHA256 = '57e625cdecef4683e019109cea5bf26c67ab7d0e84bbe4c247377a0ba9a11a34'
 SAMPLE_SHA256 = '195025601c2b17194a4d8b3debd674aca3377290fe3851986656c49bc973f907'
 
 
@@ -78,11 +81,12 @@ def main():
     parser.add_argument('--remote', default='127.0.0.1:27043')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--peer-file', type=Path, help='optional JSON peer IP list; emulator OUTPUT only')
+    parser.add_argument('--media', action='store_true', help='explicit desktop streaming experiment; --tap targets Start Playing')
     parser.add_argument('--force-sdr', action='store_true', help='set connection ICE config 104 to zero')
     parser.add_argument('--fault', action='store_true', help='drop the current primary after valid E2E + 3s')
     parser.add_argument('--hold-test-timeout', type=int, default=0,
                         help='hold only the network-test frame clock after injection, in seconds')
-    parser.add_argument('--tap', type=int, nargs=2, help='coordinates of the Network Test button')
+    parser.add_argument('--tap', type=int, nargs=2, help='coordinates of Network Test, or Start Playing with --media')
     parser.add_argument('--seconds', type=float, default=60)
     parser.add_argument('--stop-app', action='store_true', help='stop the emulator app before restoring rules')
     args = parser.parse_args()
@@ -92,6 +96,8 @@ def main():
         parser.error('seconds must be 1..120 and frame timeout hold 0..60')
     if args.fault and not args.force_sdr or args.hold_test_timeout and not args.fault:
         parser.error('fault requires --force-sdr; timeout hold requires --fault')
+    if args.media and (not args.stop_app or args.hold_test_timeout):
+        parser.error('media requires --stop-app and forbids the network-test clock override')
     if args.tap and any(value < 0 for value in args.tap):
         parser.error('tap coordinates must be nonnegative')
     args.output.mkdir(mode=0o700, parents=True, exist_ok=False)
@@ -152,10 +158,15 @@ def main():
             preflight.unload()
         if sample != SAMPLE_SHA256:
             raise RuntimeError('unexpected official ELF; no hooks installed')
+        media_path = str(Path(metadata['path']).with_name('libmain.so'))
+        media_sample = command('sha256sum', media_path).split()[0]
+        if media_sample != MEDIA_SHA256:
+            raise RuntimeError('unexpected media ELF; no hooks installed')
         sample_verified = True
         private(args.output / 'configuration.json', json.dumps({
-            'sample_sha256': sample, 'force_sdr': args.force_sdr, 'fault': args.fault,
-            'hold_test_timeout_seconds': args.hold_test_timeout, 'seconds': args.seconds}, indent=2))
+            'sample_sha256': sample, 'media_sha256': media_sample, 'force_sdr': args.force_sdr, 'fault': args.fault,
+            'hold_test_timeout_seconds': args.hold_test_timeout, 'seconds': args.seconds,
+            'experiment': 'media' if args.media else 'network_test'}, indent=2))
         script = session.create_script(Path(__file__).with_suffix('.js').read_text())
         script.on('message', lambda message, data: events.put(message))
         script.load()
@@ -186,7 +197,7 @@ def main():
             if args.tap and not tapped and time.monotonic() - started >= 2:
                 command('input', 'tap', *map(str, args.tap))
                 tapped = True
-                record({'kind': 'network_test_button_tap', 'coordinates': args.tap})
+                record({'kind': 'media_button_tap' if args.media else 'network_test_button_tap', 'coordinates': args.tap})
             if (args.fault and not errors and ice_disabled and fault_at is None and
                     primary and backup and valid_since and time.monotonic() - valid_since >= 3):
                 drop.apply(primary)

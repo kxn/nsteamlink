@@ -177,7 +177,7 @@ int NSL_REMOTE_LIVE_ENTRY(int argc, char **argv) {
     bool sns_test = false;
     bool desktop_stream = false;
     bool sdr_session = false;
-    bool relay_only = false, fault_test = false;
+    bool relay_only = false, fault_test = false, warm_fault = false;
     int terminal_test = 0;
 #ifdef NSL_HAVE_SNS
     sns_test = argc == 3 && !strcmp(argv[1], "--sns-test");
@@ -189,13 +189,17 @@ int NSL_REMOTE_LIVE_ENTRY(int argc, char **argv) {
     }
     if (argc == 3 && !strcmp(argv[1], "--sdr-fault-test"))
         fault_test = sns_test = relay_only = true;
+    if (argc == 3 && !strcmp(argv[1], "--sdr-fault-desktop"))
+        fault_test = desktop_stream = relay_only = true;
+    if (argc == 3 && !strcmp(argv[1], "--sdr-warm-fault-desktop"))
+        warm_fault = fault_test = desktop_stream = relay_only = true;
     if (argc == 3 && !strcmp(argv[1], "--sdr-only-test"))
         sns_test = relay_only = true;
     if (argc == 3 && !strcmp(argv[1], "--sdr-only-desktop"))
         desktop_stream = relay_only = true;
 #endif
     if (argc != 1 && !pairing && !status && !idle && !sns_test && !desktop_stream && !sdr_session) {
-        fprintf(stderr, "usage: %s [--idle | --pair|--status|--sns-test|--sns-desktop|--sdr-session|--sdr-only-test|--sdr-only-desktop|--sdr-fault-test PRIVATE_PROFILE_DIRECTORY]\n",
+        fprintf(stderr, "usage: %s [--idle | --pair|--status|--sns-test|--sns-desktop|--sdr-session|--sdr-only-test|--sdr-only-desktop|--sdr-fault-test|--sdr-fault-desktop|--sdr-warm-fault-desktop PRIVATE_PROFILE_DIRECTORY]\n",
                 argv[0]);
         return 2;
     }
@@ -257,6 +261,8 @@ int NSL_REMOTE_LIVE_ENTRY(int argc, char **argv) {
     unsigned observed_e2e = 0, recovery_generation = 0;
     uint64_t e2e_received_at = 0;
     bool reported_e2e = false;
+    unsigned observed_frames = 0, recovery_frames = 0;
+    uint64_t video_received_at = 0;
     unsigned terminal_stage = 0;
     uint64_t terminal_at = 0;
     while (!l.failed && now_ms() < deadline) {
@@ -307,7 +313,13 @@ int NSL_REMOTE_LIVE_ENTRY(int argc, char **argv) {
                     l.failed = true;
                 fflush(stdout);
             }
-            if (fault_test && sns_connected_at && now_ms()-sns_connected_at >= 3000) {
+            unsigned frames = atomic_load(&l.video_frames);
+            if (frames != observed_frames) {
+                observed_frames = frames;
+                video_received_at = now_ms();
+            }
+            if (fault_test && sns_connected_at && now_ms()-sns_connected_at >= (warm_fault ? 15000u : 3000u) &&
+                (!desktop_stream || (atomic_load(&l.session_connected) && frames >= 30))) {
                 unsigned fault[5] = {};
                 if (!injected && sl_sns_test_relay_loss(l.sns, 1, fault)) {
                     injected = true; fault_at = now_ms(); fault_generation = fault[0];
@@ -320,6 +332,7 @@ int NSL_REMOTE_LIVE_ENTRY(int argc, char **argv) {
                             recovered_at = now_ms();
                             observed_e2e = fault[3];
                             e2e_received_at = recovered_at;
+                            recovery_frames = frames;
                         } else if (observed_e2e != fault[3]) {
                             observed_e2e = fault[3];
                             e2e_received_at = now_ms();
@@ -333,11 +346,16 @@ int NSL_REMOTE_LIVE_ENTRY(int argc, char **argv) {
                         /* A single reply can precede another stall. Require
                          * a fresh reply at the end of the five-second hold. */
                         fault_success = now_ms()-recovered_at >= 5000 &&
-                            now_ms()-e2e_received_at <= 1000;
+                            now_ms()-e2e_received_at <= 1000 &&
+                            (!desktop_stream || (frames-recovery_frames >= 30 &&
+                                now_ms()-video_received_at <= 1000));
                         if (fault_success) {
                             printf("SDR_BACKUP_RECOVERED=1 post_fault_e2e=1 held_ms=%llu fresh_e2e_ms=%llu dropped_tx=%u dropped_rx=%u\n",
                                 (unsigned long long)(now_ms()-recovered_at),
                                 (unsigned long long)(now_ms()-e2e_received_at), fault[1], fault[2]);
+                            if (desktop_stream)
+                                printf("SDR_MEDIA_RECOVERED=1 encoded_frames_after_switch=%u fresh_frame_ms=%llu\n",
+                                    frames-recovery_frames, (unsigned long long)(now_ms()-video_received_at));
                             fflush(stdout);
                         }
                     } else {
@@ -403,6 +421,7 @@ int NSL_REMOTE_LIVE_ENTRY(int argc, char **argv) {
     if (l.sns) {
         sl_sns_stats stats;
         sl_sns_get_stats(l.sns, &stats);
+        printf("SNS_TERMINAL_SOURCE=%d detail=%d\n", stats.terminal_source, stats.terminal_detail);
         printf("SNS_DATAGRAMS_SENT=%llu RECEIVED=%llu\n",
             (unsigned long long)stats.datagrams_sent, (unsigned long long)stats.datagrams_received);
         if (sdr_session) {

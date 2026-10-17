@@ -4,6 +4,9 @@
 The network-only tool and NRO retain their separate mode whitelist. This tool
 builds another private NRO, receives 30 encoded frames without decoding or saving
 them, and joins IHS workers before destroying SNS and returning the profile.
+Loss mode waits for 30 frames before dropping the primary, and requires 30 fresh
+frames after switching POP plus the network fixture's five-second E2E hold.
+loss-warm waits 15 seconds before injection; it keeps the same recovery criteria.
 """
 import importlib.util
 from pathlib import Path

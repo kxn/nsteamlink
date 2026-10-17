@@ -133,6 +133,42 @@ class SDR:
         return [self.sessions.index(self.m.read(self.base+20+i*8, 8)) for i in range(count)]
 
 
+def primary_switch_report(elf, packets, since, ip=True, port=True, pop=True):
+    fixture = SDR(elf, [{'ping':60}, {'ping':20}])
+    fixture.active([0])
+    m, base = fixture.m, fixture.base
+    for index, cluster in enumerate(fixture.clusters):
+        descriptor = m.alloc(128)
+        m.write(cluster+8, descriptor, 8)
+        m.write(descriptor+8, 100+index)
+    m.uc.mem_write(base+72, address(1 if ip else 0, 27015 if port else 0))
+    m.write(base+96, 100 if pop else 0)
+    m.write(base+104, NOW-10000000 if since else 0, 8)
+    m.write(base+120, packets)
+    reports=[]
+    def constructor(m):
+        m.uc.mem_write(m.reg(0), bytes(112))
+    def send(m):
+        assert m.reg(0) == fixture.relays[1] and m.reg(1) == 16
+        obj=m.reg(2)
+        qualities=[]
+        for offset in (32,40):
+            q=m.read(obj+offset,8)
+            qualities.append(tuple(m.read(q+i) for i in (16,24,28,32)))
+        reports.append((m.read(obj+16),tuple(m.read(obj+i) for i in range(64,88,4)),qualities))
+        m.reg(0,100)
+    m.stubs.update({0xbffad0:constructor,0xc003c0:lambda m:None,
+        0xc0dba0:lambda m:m.reg(0,int(ip)),0xc003e0:lambda m:m.reg(0,m.alloc(128)),
+        0xc12390:send})
+    m.run(0x81c55c,0x81ddb8,base,NOW,budget=100000)
+    wanted=packets>=101 and since and ip and port and pop
+    assert len(reports)==int(wanted),reports
+    if wanted:
+        assert reports==[(0x7e6,(0,1,27015,100,10,packets),[(7,66,60,0),(7,22,20,0)])],reports
+    assert m.read(base+120)==0 and m.read(base+104,8)==NOW
+    assert m.read(base+96)==101
+
+
 def select(elf, routes, active, expected, pings=(), migration_pending=False):
     fixture = SDR(elf, routes)
     fixture.active(active)
@@ -1956,7 +1992,29 @@ def packed_ack_encoding(elf, ages):
     assert m.read(queue+4) == len(ages) and m.read(queue, 1) == 1
 
 
-def receive_packed_ack(elf, elapsed, delay, matching=True, override=-2):
+def relay_request_clocks(elf, session_pending, root_pending, delayed, ping):
+    fixture = SDR(elf, [{}])
+    m, session, root, cluster = fixture.m, fixture.sessions[0], fixture.relays[0], fixture.clusters[0]
+    tracker = session+112
+    m.write(tracker+4432, session, 8)
+    m.write(tracker+68, ping)
+    m.write(tracker+4008, 0 if session_pending is None else NOW+session_pending, 8)
+    m.write(root+136, 0 if root_pending is None else NOW+root_pending, 8)
+    m.stubs.update({0xc123c0: lambda m: m.reg(0, ping),
+                    0xc12e40: lambda m: m.events.append(('expected_ack',))})
+    for call, start, end in [(0xc12d30, 0x8b4108, 0x8b420c),
+                              (0xc12370, 0x817304, 0x817330)]:
+        m.redirects[call] = start
+        m.allowed.append((start, end))
+    native_call(m, 0x84f8b4, 0x84fb9c, tracker, NOW, int(delayed))
+    timeout = (1250000 if ping < 0 else min(ping*2000, 1000000)+250000) + (200000 if delayed else 0)
+    assert m.read(tracker+4008, 8) == NOW+(timeout if session_pending is None else session_pending)
+    assert m.read(root+136, 8) == NOW+(timeout if root_pending is None else root_pending)
+    assert m.read(root+320, 8) == NOW and m.read(cluster+80, 8) == NOW
+    assert m.read(cluster+556) == 1 and m.events == [('expected_ack',)]
+
+
+def receive_packed_ack(elf, elapsed, delay, matching=True, override=-2, native_root=False):
     fixture = SDR(elf, [{}])
     m, tracker = fixture.m, fixture.sessions[0]+112
     m.write(tracker+4432, fixture.sessions[0], 8)
@@ -1973,17 +2031,32 @@ def receive_packed_ack(elf, elapsed, delay, matching=True, override=-2):
                                        m.reg(0, 0 if elapsed is None else -1 if elapsed == 'invalid' else NOW-elapsed)),
                     0xc12070: lambda m: m.events.append(('relay_ping', m.reg(1))),
                     0xc120d0: lambda m: m.events.append(('tracker_ping', m.reg(1)))})
+    if native_root:
+        root = fixture.relays[0]
+        m.write(root+752, -2)
+        m.write(root+136, NOW+1000, 8)
+        m.redirects[0xc12070] = 0x812a28
+        del m.stubs[0xc12070]
+        m.allowed.append((0x812a28, 0x812cb4))
+        m.stubs[0x810c34] = lambda m: None  # Routing-score dirty notification.
     sequence = 1000 if matching else 999
     m.run(0x84f1f0, 0x84f424, tracker, (sequence << 16) | delay, NOW)
-    measured = None
+    measured = raw_measured = None
     valid = elapsed != 'invalid'
     if isinstance(elapsed, int) and elapsed >= 1:
         corrected = elapsed-delay*64
         measured = abs(corrected)//1000 * (-1 if corrected < 0 else 1)
         valid = -1 <= measured <= 3000
-        measured = max(measured, 0) if override == -2 else override
+        raw_measured = max(measured, 0)
+        measured = raw_measured if override == -2 else override
     samples = isinstance(elapsed, int) and elapsed >= 1 and valid
-    assert m.events == [('lookup', sequence)]+([('relay_ping', measured), ('tracker_ping', measured)] if samples else [])
+    updates = ([('tracker_ping', raw_measured),
+                ('tracker_ping', measured), ('tracker_ping', measured)] if native_root else
+               [('relay_ping', measured), ('tracker_ping', measured)]) if samples else []
+    assert m.events == [('lookup', sequence)]+updates
+    if native_root:
+        assert m.read(root+136, 8) == (0 if samples else NOW+1000)
+        assert m.read(root+748) == int(samples) and m.read(fixture.clusters[0]+508) == int(samples)
     assert bool(m.reg(0)) == valid
     assert m.read(tracker+3984, 8) == (0 if matching else 1000)
     assert m.read(tracker+4088, 8) == (NOW if matching else 1234)
@@ -2076,7 +2149,8 @@ def send_stats_path(elf, state, primary, current, force, flags, quality, schedul
 def generic_stats_producer(elf, expected, mode=0, request=0, relay_age=0, e2e_age=0,
                            relay_fail=0, e2e_fail=0, immediate_age=0, queued=0,
                            relay_recv_age=0, pending=False, activity=0,
-                           instant_age=0, e2e_instant_age=0):
+                           instant_age=0, e2e_instant_age=0, base_flags=0,
+                           e2e_recv_age=0, e2e_pending=False, e2e_activity=None):
     fixture = SDR(elf, [{}])
     m, session = fixture.m, fixture.sessions[0]
     context = m.alloc(256)
@@ -2096,9 +2170,11 @@ def generic_stats_producer(elf, expected, mode=0, request=0, relay_age=0, e2e_ag
     m.write(session+4500, queued)
     for offset in (416, 464):
         m.write(fixture.connection+offset, NOW-e2e_age, 8)
-    m.write(fixture.connection+2792, NOW, 8)
+    m.write(fixture.connection+2792, NOW-e2e_recv_age, 8)
+    m.write(fixture.connection+4400, NOW+1000000 if e2e_pending else 0, 8)
     m.write(fixture.connection+4408, NOW-immediate_age, 8)
     m.write(fixture.connection+4416, e2e_fail)
+    m.write(fixture.connection+4432, activity if e2e_activity is None else e2e_activity)
     def quality(m):
         need = m.reg(1)
         m.write(m.reg(2)+16, int(bool(need & 3)) | int(bool(need & 12)) << 1)
@@ -2108,8 +2184,10 @@ def generic_stats_producer(elf, expected, mode=0, request=0, relay_age=0, e2e_ag
     m.stubs.update({0xc006d0: lambda m: m.reg(0, m.alloc(128)), 0xc12ae0: quality,
                     0xc12af0: lambda m: m.events.append(('put_acks',)),
                     0xc009d0: lambda m: m.reg(0, 10)})
-    m.run(0x8355f8, 0x835c64, fixture.base, context, request, mode, 9, 0, 0)
-    assert m.read(context+24) == expected, (expected, m.read(context+24), m.events)
+    m.run(0x8355f8, 0x835c64, fixture.base, context, request, mode, 9, base_flags, 0)
+    if expected is not None:
+        assert m.read(context+24) == expected, (expected, m.read(context+24), m.events)
+    expected = m.read(context+24)
     expected_quality = []
     for label, age in [('relay', instant_age), ('e2e', e2e_instant_age if mode else 0)]:
         if age >= 20000000:
@@ -2119,6 +2197,7 @@ def generic_stats_producer(elf, expected, mode=0, request=0, relay_age=0, e2e_ag
     presence = m.read(context+48)
     quality_flags = int(instant_age >= 20000000) | (int(bool(mode) and e2e_instant_age >= 20000000) << 1)
     assert ((m.read(context+128) if presence & 32 else 0) | ((presence >> 2) & 3)) == expected | quality_flags
+    return expected
 
 
 
@@ -2456,6 +2535,11 @@ def native_stats_send_chain(elf, socket_ok, *, desired=b'new-target', force=Fals
         assert m.read(relay_tracker+4104, 8) == int(attached)
         assert bool(m.read(relay_tracker+4008, 8)) == attached
         assert bool(m.read(transport+792, 8)) == attached
+        # Session ACK registration reaches RelayServer::TrackSentPingRequest,
+        # even before a failed inline gather. Root and session clocks coexist.
+        assert m.read(fixture.relays[0]+136, 8) == m.read(relay_tracker+4008, 8)
+        assert m.read(fixture.relays[0]+320, 8) == (NOW if attached else 0)
+        assert m.read(fixture.clusters[0]+556) == int(attached)
         return
     if outer:
         # ABI bridge: CM service's (connection,msg,now) -> PopulateRendezvous(transport,msg,now).
@@ -2509,6 +2593,9 @@ def native_stats_send_chain(elf, socket_ok, *, desired=b'new-target', force=Fals
     assert m.read(relay_tracker+4104, 8) == int(socket_ok and relay_ack)
     assert m.read(relay_tracker+4008, 8) != 0 if socket_ok and relay_ack else m.read(relay_tracker+4008, 8) == 0
     assert bool(m.read(transport+792, 8)) == bool(socket_ok and e2e_ack)
+    assert m.read(fixture.relays[0]+136, 8) == m.read(relay_tracker+4008, 8)
+    assert m.read(fixture.relays[0]+320, 8) == (NOW if socket_ok and relay_ack else 0)
+    assert m.read(fixture.clusters[0]+556) == int(socket_ok and relay_ack)
     assert m.read(relay_tracker+3984, 8) == (100 if socket_ok and presence & 4 else 0)
     assert m.read(e2e_tracker+3984, 8) == (200 if socket_ok and presence & 8 else 0)
 
@@ -3130,6 +3217,10 @@ def audit(elf, groups=None):
         (0, {'mode': 1, 'instant_age': 30000000, 'e2e_instant_age': 30000000}),
     ]:
         case('generic_stats_production', generic_stats_producer, expected, **params)
+    for packets, since in itertools.product((0,100,101,102), (False,True)):
+        case('primary_switch_report',primary_switch_report,packets,since)
+    for field in ('ip','port','pop'):
+        case('primary_switch_report',primary_switch_report,101,True,**{field:False})
     case('clean_route_targets', clean_routes, [b'a', b'b'], [0, 1], [0, 1], targets=[1, 0])
     case('clean_route_targets', clean_routes, [b'a', b'b'], [0, 1], [1], targets=[None, 0])
     for sequences, incoming in [([], 1000), ([1000, 1001, 1002], 1001),
@@ -3162,6 +3253,11 @@ def audit(elf, groups=None):
         case('native_receive_sequence_chain', receive_sequence_chain,
              [(101, 201), (102, 202)], [0, 1], (102, 202, 0, 0, 0),
              relay_quality=relay_quality, e2e_quality=e2e_quality)
+    for elapsed, delay in itertools.product((None, 'invalid', 1000, 150000, 3000001), (0, 10, 65535)):
+        case('relay_ack_root_feedback', receive_packed_ack, elapsed, delay, native_root=True)
+    for session_pending, root_pending, delayed, ping in itertools.product(
+            (None, 20000), (None, -1, 0, 50000), (False, True), (-1, 20, 700)):
+        case('relay_request_clocks', relay_request_clocks, session_pending, root_pending, delayed, ping)
     for request, params in [
         (0, {}), (3, {'quota': 1}), (3, {'need': True}), (3, {'failures': 1}),
         (3, {'smoothed': -1}), (3, {'samples': 2}), (3, {'total': 9}),

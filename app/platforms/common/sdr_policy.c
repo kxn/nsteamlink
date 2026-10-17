@@ -428,3 +428,34 @@ bool sl_sdr_router_cookie(uint32_t cookie, uint32_t root_cookie, uint32_t sessio
 size_t sl_sdr_ping_request_size(int64_t last_full, int64_t now) {
     return last_full > now-5000000 ? 100 : 1300;
 }
+
+static bool stats_aggressive(const sl_sdr_stats_probe *s, int64_t now) {
+    return s->activity == 0 && s->failures > 0 && s->last_immediate_request+200000 <= now;
+}
+static bool stats_keepalive(const sl_sdr_stats_probe *s, int64_t now) {
+    return s->pending && ((s->activity == 0 && s->last_received+10000000 <= now) ||
+        (s->activity == 1 && s->last_received+60000000 <= now));
+}
+uint32_t sl_sdr_stats_request_flags(const sl_sdr_stats_probe *r,
+    const sl_sdr_stats_probe *e, int request, int mode, uint32_t flags, bool content, int64_t now) {
+    bool relay_opportunity = false, e2e_opportunity = false;
+    if (request == 3 || stats_aggressive(r, now)) flags |= 5;
+    else if (request == 2 || stats_keepalive(r, now)) flags |= 1;
+    else if (r->activity == 0) {
+        relay_opportunity = r->last_ping+5000000 < now;
+        if (r->last_ping+7000000 < now) flags |= 1;
+    }
+    if (mode >= 1) {
+        if ((request == 3 && mode == 2) || stats_aggressive(e, now)) flags |= 7;
+        else if ((request == 2 && mode == 2) || stats_keepalive(e, now)) flags |= 2;
+        else if (e->activity == 0) {
+            e2e_opportunity = e->last_ping+5000000 < now;
+            if (e->last_ping+7000000 < now) flags |= 2;
+        }
+    }
+    if (flags || content) {
+        if (relay_opportunity) flags |= 1;
+        if (e2e_opportunity) flags |= 2;
+    }
+    return flags;
+}

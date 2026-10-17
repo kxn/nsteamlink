@@ -8,6 +8,32 @@
  * in tools/steam-sdr-implementation-audit.py and needs the private fixed ELF. */
 int main(void) {
     const int64_t now = 1000000000;
+    /* Original PopulateSDRSendPacketContextGeneric branch outcomes (21.18). */
+    sl_sdr_stats_probe r = {.activity=0,.last_received=now,.last_immediate_request=now,.last_ping=now-5000000};
+    sl_sdr_stats_probe e = r;
+    assert(sl_sdr_stats_request_flags(&r,&e,0,1,0,false,now)==0);
+    r.last_ping--;
+    assert(sl_sdr_stats_request_flags(&r,&e,0,1,0,false,now)==0);
+    assert(sl_sdr_stats_request_flags(&r,&e,0,1,0,true,now)==1);
+    e.last_ping--;
+    assert(sl_sdr_stats_request_flags(&r,&e,0,1,0,true,now)==3);
+    r.last_ping=now-7000000;
+    assert(sl_sdr_stats_request_flags(&r,&e,0,0,0,false,now)==0);
+    r.last_ping--;
+    assert(sl_sdr_stats_request_flags(&r,&e,0,1,0,false,now)==3);
+    e.failures=1; e.last_immediate_request=now-199999;
+    e.last_ping=r.last_ping=now;
+    assert(sl_sdr_stats_request_flags(&r,&e,0,1,0,false,now)==0);
+    e.last_immediate_request--;
+    assert(sl_sdr_stats_request_flags(&r,&e,0,1,0,false,now)==7);
+    e.failures=0; e.pending=true; e.last_received=now-10000000;
+    assert(sl_sdr_stats_request_flags(&r,&e,0,1,0,false,now)==2);
+    e.activity=1;
+    assert(sl_sdr_stats_request_flags(&r,&e,0,1,0,false,now)==0);
+    e.last_received=now-60000000;
+    assert(sl_sdr_stats_request_flags(&r,&e,0,1,0,false,now)==2);
+    e.activity=2;
+    assert(sl_sdr_stats_request_flags(&r,&e,0,1,0,false,now)==0);
     assert(sl_sdr_comparison_score(20, INT_MAX) == 20);
     assert(sl_sdr_comparison_score(INT_MAX, 20) == INT_MAX);
     assert(sl_sdr_comparison_score(20, SL_SDR_UNKNOWN) == 134217737);

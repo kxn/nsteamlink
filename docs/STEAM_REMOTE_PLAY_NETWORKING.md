@@ -2653,7 +2653,9 @@ POP 未给该字段则跳过本地公钥解析、使用全局；显式空串则�
 **Evidence**：同版 x86_64 `libshell_x86_64.so` 的 SHA-256 为
 `195025601c2b17194a4d8b3debd674aca3377290fe3851986656c49bc973f907`。
 `tools/steam-sdr-runtime-audit.py` 在已 root 的指定模拟器上先核对该文件及进程架构，再挂钩
-主备选择和 RecvValidEndToEndPacket。它只采集地址、POP、角色、计数和时间元数据；不采集
+主备选择和 RecvValidEndToEndPacket。播放器库另核对 §0 的 x86_64 `libmain.so` 哈希，
+通过 module observer 在实际加载后、调用前安装对应挂钩；不能仅观察启动器库就宣称覆盖实际媒体。
+两份库的独立 stats 原因常量分别为 `0x4b2ed5` / `0x3b11eb`。它只采集地址、POP、角色、计数和时间元数据；不采集
 凭据、protobuf 业务缓冲或编码帧。主路/备用字段和两组 failure count 使用该固定库的布局，
 不能拿这些偏移直接挂到其他版本。
 
@@ -2689,8 +2691,8 @@ CNetworkTest 的帧时钟，本例 45 秒（工具上限 60 秒）；不改 SDR 
 **Evidence correction**：整理后的工具在 `build/anywhere-research/official-runtime-fault/`
 再次运行同一覆盖，捕捉到东京成为 primary 后的一个有效 E2E 样本；随后仍因 IHS inactivity
 结束。撤回将前一份“没有采到新 E2E”推广为“官方 SDK 完全不会恢复 E2E”的判断。不同
-样例或采样缺席都不能证明零包。该包是统计应答还是业务数据仍待分类；仅凭这次调用不能
-证明业务回程、编码帧或持续收流恢复。
+样例或采样缺席都不能证明零包。后续 `official-runtime-packet-category-v2/` 用 §21.29 的同线程入口分类，
+记录换路后的一个 `data` 样本；这仍可能只是 SNP ACK/控制，不能据此证明编码帧或持续收流恢复。
 新的本地 fixture 被动跟踪 E2E 计数，要求五秒角色保持的末尾一秒内仍有新计数增长，不
 用单包把整个保持窗口判为成功。SDK/relay/业务帧的失败与超时仍按各自所有者解释。
 
@@ -2714,6 +2716,104 @@ python3 tools/steam-sdr-runtime-audit.py \
 
 前置条件是已运行的 frida-server 和 adb forward。工具核验实际配置覆盖成功后，才在首次有效
 E2E 后至少 3 秒、有 primary/backup 时注入丢包；有布局读取错误则停止。有效 E2E 最多每
-250ms 采样一次，并保留每个 session 的首个样本，注入时重新登记首样本。结果只记录是否
+250ms 采样一次，并保留每个 session/包类别的首个样本，注入时重新登记首样本。结果只记录是否
 注入、是否见到新 primary 的 E2E 样本与清理错误，不自行输出恢复 PASS。采样不能替代逐包
 统计；`--stop-app` 是实验清理，也不是 SDK 析构/loader 生命周期通过的证据。
+
+实际媒体是另一项显式实验：应用必须在 Home，使用 `--media --tap 480 450 --stop-app`。
+该模式禁止 `--hold-test-timeout`，启动 Start Playing 并在限定窗口结束时停止应用；未观察到
+真正 ICE 配置覆盖或未完成故障注入均记失败。只挂 shell 的首次媒体尝试没有命中播放器入口，
+日志实际选择 ICE，工具报告 `force_sdr_not_observed` / `fault_not_reached`；这份样例不参与
+SDR 故障比较。播放器挂钩还按每秒上限记录 `CStreamDecoderVideo::DecodeFrame` 的调用累计数，
+不读取帧缓冲。它证明视频进入该函数的次数，不能直接等同成功解码帧数或已显示帧数。
+
+**实际媒体 Evidence**：`build/anywhere-research/official-actual-media-fault-v2/` 核验两份
+ELF 并命中 `libmain.so` 的实际 ICE 配置，应用日志为 `Streaming`、业务选择 SDR。
+未覆盖帧时钟；故障在 elapsed=9.611s 注入，6.662s 后主路由香港换到东京。新主路在故障后
+6.789s 与 14.525s 分别采到 `data` E2E；切换后没有新的解码器输入采样，IHS 因 15 秒无活动
+从 Streaming 退出。注入前有持续的 decoder input，最后一个每秒采样累计值为 62；这个值
+不是完整帧计数。两向 DROP 命中、工具与规则清理无错误。
+
+**Conclusion**：在该主机/模拟器/强制 SDR/单 endpoint 中断的具体条件下，官方媒体同样没有
+完成持续恢复。它将“官方网络测试外壳提前结束”的边界扩展到一次未改时钟的实际串流观察，
+但仍不证明其他拓扑必然失败，也不证明适配器和官方 SDK 的所有请求、时序或断流原因相同。
+E2E 数据包可在 IHS inactivity 之前或附近到达，故仍不能用少量 E2E 代替视频帧验收。
+
+### 21.29 Session ACK 对 RelayServer 探测时钟和 front 测量的副作用
+
+**Evidence**：`TrackSentStatsToSessionCommon 0x83e624` 在 relay ACK 请求或隐式 relay quality
+需求下调用 `TrackSentMessageExpectingSeqNumAckInternal 0x84f8b4–0x84fb9c`。该函数不只更新
+session LinkStats：`0x84f98c–0x84f998` 还调用 `RelayServer::TrackSentPingRequest
+0x817304–0x817330`，更新 root 最后请求时刻、cluster 最后请求时刻及累计请求数；root
+没有 pending 时才建立期限，已有 pending 不被后续包延后。
+
+- session 原来没有 pending 时，root 使用刚建立的 session deadline 与 now 之差。
+- session 原来已有 pending 时，重新计算该 session tracker 的 conservative timeout，允许
+  delayed reply 再加 200000µs，再交给 root 的“不延长已有 pending”规则。
+- root 与 session 的失败计数、pending 和超时 thinker 始终独立；这里登记请求不直接增加失败。
+- 控制消息成功后登记；数据的 inline stats 在 gather 之前登记，gather 失败仍保留这些副作用。
+  没有附带 inline stats 时不凭数据头登记这一请求，见 §21.23。
+
+**接收 Evidence**：有效 packed relay ACK 的 RTT 经 `RecvPackedAckInternal 0x84f1f0`
+调用 `RelayServer::RecvPingReply 0x812a28–0x812cb4`，更新 relay 与 SharedCluster/front 的
+测量，并在 `0x812c90` 清 root pending；随后再交给 session tracker。缺少对应发送记录或
+RTT 不在允许范围内时，不产生这些测量/清 pending 的副作用。单纯 ReceivedPacket 清 root
+连续失败、记录 lastReceived，与 RTT 成功后清 pending 是两个动作，不能合并。
+
+**Conclusion / evidence correction**：§18.5 的 root/session 失败状态归属修正还必须与上述
+生产者/消费者相连。适配器此前只在显式 RouterPing 时建立 root pending，session ACK 请求
+没有登记；有效 ACK RTT 也只更新 session tracker，未反馈 front 或清 root pending。
+这会使已完成初始测量的 relay 在中断后缺少 root 失联输入，旧前台测量也得不到正常流量刷新。
+原始发送链核对现在同时断言 root 时钟/累计探测数；独立 root/session pending、延迟回复及
+ACK→root/front 回调使用完整原始指令组合覆盖。函数级 selector 对照不替代这些接线证据。
+
+**观测边界**：官方 `RecvValidEndToEndPacket` 的原因字符串 `Stats` 也可能来自数据包内联
+stats。运行时工具用同线程内 `RecvValidDataPacket` 的调用范围区分 `data` 与独立 `stats`，
+不读取 payload；固定 x86_64 的独立 stats 原因常量位于 `0x4b2ed5`。`data` 只说明加密数据
+承载被接收，仍可能只含 SNP ACK/控制，不证明交付了 IHS 视频帧。媒体故障 fixture 因此独立
+使用 `--sdr-fault-desktop`：首次至少收到 30 帧再注入；新角色的恢复观察窗口内再收到至少
+30 个编码帧，且窗口末尾一秒仍有新帧，同时满足五秒 E2E 验收。网络专用 NRO 不接受该模式。
+
+§21.18 的生产接线同样不能省略：`populate` 将两组 tracker 的活动级别、连续失败、最近收包、
+lastImmediateRequest、最近 RTT/请求时刻和 pending 状态分别交给
+`sl_sdr_stats_request_flags`，保留 5/7 秒严格边界、200ms 的包含等号、10/60 秒及 mode=0/1/2。
+此前只处理调用者显式 request 和 quality，不能实现这些自动探测分支。该 C 函数与原始通用
+生产器在相同输入下比较，包含非对称 relay/E2E 活动及 pending；并不因此扩大到 protobuf
+实际长度、MTU 裁剪及完整 SDK 策略全等的声明。
+
+后端诊断分别保存 SDK end reason 和首个本地 terminal source/detail；发送/接收可能早于
+一秒状态轮询发现关闭，销毁 SDK handle 前还要读取它的原始 end reason。数值来源分别为
+signal、certificate/start/config、connection info/status/state、signal queue、send/receive、
+datagram bounds/queue、allocation；不把来源枚举当作线上协议错误码，不打印 SDK 调试文本。
+
+### 21.30 primary 历史、切换报告与连接 RTT 初值
+
+**Evidence**：`ThinkSelectServer_SelectActiveSessions 0x81cddc–0x81ce18` 检查旧 primary 的
+开始时刻非零、数据接收数 >=101、地址有 IP/非零 port/非零 POP，才构造 type 16
+`CMsgSteamDatagramClientSwitchedPrimary`。`0x819854–0x819874` 的计数属于 active primary
+的数据包入口，不是所有 E2E 事件、独立 stats 或 IHS 视频帧数；数据内联 stats 不重复计数。
+
+消息由**新 primary relay** 发出（`0x81d678–0x81d688`），带 connection_id、旧地址/POP、
+旧 primary 活动秒数与数据接收数。gap 优先用已记录的失联起点，否则使用旧 current metrics
+的非零 gap。`from_quality_now` 使用旧地址本轮测量，`to_quality_now` 使用新 session 测量；
+`*_quality_then` 来自上次 primary 生效时保存的候选快照。RouterQuality 的 back_ping 是
+interior ping（session+4584），不是 remote front 与 interior 的和；score 包含两端 front、
+10% internet 项和各 penalty，seconds_until_down 为 INT_MAX 时省略。
+
+新节点的旧快照先在相同 POP 中找精确地址；找不到时按 score、alternate penalty、shutdown
+剩余时间选备用记录。当前适配器每 POP 只有一个 relay，其旧记录同时也是该模型下的唯一
+fallback；不能把此简化推广到官方的多 relay 选择。报告的 dropped_reason 取旧 primary 被
+移除时缓存的原因；当前适配器尚未保存这条原因字符串，不能声称覆盖该可选字段的原厂行为。
+
+`0x81d694–0x81d718` 在新 primary 生效时重置该历史计数并保存地址/POP/时刻/候选快照。
+跨 POP 时，`0x81d724–0x81d74c` 将**连接** RTT tracker 的最近样本数清零，再以
+local front+remote front+interior 生成样本；不是重置 P2P transport 独立确认状态或全部 session
+ACK 窗口。随后提前调度 connection 与 session thinker。
+
+**Conclusion**：这条客户端报告应按条件产生；把它称为遥测并不能据此断言服务端忽略它。
+它的服务端影响仍须单独验证，报告已发出也不代表媒体已恢复。原始发送组合覆盖 100/101 边界、
+缺少地址字段和首次 primary，并检查消息发送到新 relay 及 current quality 字段。
+
+媒体故障 fixture 另提供 `--sdr-warm-fault-desktop`：在 SNS 连接至少 15 秒且已有 30 帧后才
+注入。15 秒只是用于比较建立初期和持续收流的实验条件，不是选路阈值；它与普通故障模式
+使用相同的切换后新帧、五秒保持及末尾收包新鲜度要求，不能用其中一组替代另一组。

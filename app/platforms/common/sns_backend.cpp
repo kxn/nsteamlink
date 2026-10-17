@@ -109,7 +109,12 @@ struct sl_sns {
     unsigned sdr_debug[16] = {};
 #endif
 };
-static void close_backend(sl_sns *b, sl_sns_state state) {
+static void close_backend(sl_sns *b, sl_sns_state state,
+    sl_sns_terminal_source source = SL_SNS_TERMINAL_NONE, int detail = 0) {
+    if (b->stats.terminal_source == SL_SNS_TERMINAL_NONE && source != SL_SNS_TERMINAL_NONE) {
+        b->stats.terminal_source = source;
+        b->stats.terminal_detail = detail;
+    }
     {
         std::lock_guard<std::mutex> lock(b->q->mutex);
         if (b->q->state == SL_SNS_FAILED)
@@ -120,6 +125,11 @@ static void close_backend(sl_sns *b, sl_sns_state state) {
     }
     b->q->wake.notify_all();
     if (b->connection != k_HSteamNetConnection_Invalid) {
+        // A send/receive can observe a terminal SDK state before the periodic
+        // status poll. Preserve its reason before invalidating the handle.
+        SteamNetConnectionInfo_t info;
+        if (b->sockets->GetConnectionInfo(b->connection, &info) && info.m_eEndReason)
+            b->end_reason = info.m_eEndReason;
         b->sockets->CloseConnection(b->connection, 2001, "stream transport closed", false);
         b->connection = k_HSteamNetConnection_Invalid;
     }
@@ -131,7 +141,7 @@ static bool receive_signal(const uint8_t *p, size_t n, void *ctx) {
     ReceiveContext receive;
     return b->sockets->ReceivedP2PCustomSignal(p, static_cast<int>(n), &receive);
 }
-static void signal_failed(void *ctx) { close_backend(static_cast<sl_sns *>(ctx), SL_SNS_FAILED); }
+static void signal_failed(void *ctx) { close_backend(static_cast<sl_sns *>(ctx), SL_SNS_FAILED, SL_SNS_TERMINAL_SIGNAL); }
 static void copy_error(char *error, size_t size, const char *text) {
     if (error && size)
         snprintf(error, size, "%s", text);
@@ -215,15 +225,15 @@ static void pump_config(sl_sns *b) {
         b->certificate.clear();
         if (!installed) {
             b->end_reason = -2;
-            close_backend(b, SL_SNS_FAILED);
+            close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_CERTIFICATE);
             return;
         }
         b->sockets->InitAuthentication();
         if (!begin_connection(b))
-            close_backend(b, SL_SNS_FAILED);
+            close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_START);
     } else if (b->config_attempt >= 3 || !begin_config(b)) {
         b->end_reason = -1;
-        close_backend(b, SL_SNS_FAILED);
+        close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_CONFIG);
     }
 }
 extern "C" sl_sns *sl_sns_create(const IHS_ClientConfig *config, const sl_remote_material *m,
@@ -293,7 +303,7 @@ static bool check_connection(sl_sns *b, uint64_t now) {
     b->last_check = now;
     SteamNetConnectionInfo_t info;
     if (!b->sockets->GetConnectionInfo(b->connection, &info)) {
-        close_backend(b, SL_SNS_FAILED);
+        close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_CONNECTION_INFO);
         return false;
     }
     b->end_reason = info.m_eEndReason;
@@ -306,18 +316,19 @@ static bool check_connection(sl_sns *b, uint64_t now) {
         return false;
     case k_ESteamNetworkingConnectionState_Connected: {
         SteamNetConnectionRealTimeStatus_t status;
-        if (b->sockets->GetConnectionRealTimeStatus(b->connection, &status, 0, nullptr) != k_EResultOK) {
-            close_backend(b, SL_SNS_FAILED);
+        EResult ret = b->sockets->GetConnectionRealTimeStatus(b->connection, &status, 0, nullptr);
+        if (ret != k_EResultOK) {
+            close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_STATUS, ret);
             return false;
         }
         b->q->state = SL_SNS_CONNECTED;
         return true;
     }
     case k_ESteamNetworkingConnectionState_ProblemDetectedLocally:
-        close_backend(b, SL_SNS_FAILED);
+        close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_CONNECTION, info.m_eState);
         break;
     default:
-        close_backend(b, SL_SNS_CLOSED);
+        close_backend(b, SL_SNS_CLOSED, SL_SNS_TERMINAL_CONNECTION, info.m_eState);
         break;
     }
     return false;
@@ -346,7 +357,7 @@ static void update_backend(sl_sns *b, uint64_t now) {
         }
         for (const auto &p : signals)
             if (!sl_stream_bridge_queue(b->bridge, p.data(), p.size())) {
-                close_backend(b, SL_SNS_FAILED);
+                close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_SIGNAL_QUEUE);
                 break;
             }
     }
@@ -371,7 +382,7 @@ static void update_backend(sl_sns *b, uint64_t now) {
             break;
         }
         if (ret != k_EResultOK) {
-            close_backend(b, SL_SNS_FAILED);
+            close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_SEND, ret);
             return;
         }
         ++b->stats.datagrams_sent;
@@ -380,7 +391,7 @@ static void update_backend(sl_sns *b, uint64_t now) {
     for (unsigned batch = 0; batch < 32; ++batch) {
         int count = b->sockets->ReceiveMessagesOnConnection(b->connection, messages, 128);
         if (count < 0) {
-            close_backend(b, SL_SNS_FAILED);
+            close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_RECEIVE, count);
             return;
         }
         bool overflow = false;
@@ -402,7 +413,7 @@ static void update_backend(sl_sns *b, uint64_t now) {
         }
         b->q->wake.notify_all();
         if (overflow) {
-            close_backend(b, SL_SNS_FAILED);
+            close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_DATAGRAM);
             return;
         }
         if (count < 128)
@@ -413,7 +424,7 @@ extern "C" void sl_sns_update(sl_sns *b, uint64_t now) {
     try { update_backend(b, now); }
     catch (const std::bad_alloc &) {
         if (b)
-            close_backend(b, SL_SNS_FAILED);
+            close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_MEMORY);
     }
 }
 extern "C" sl_sns_state sl_sns_get_state(const sl_sns *b) {

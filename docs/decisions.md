@@ -2405,3 +2405,28 @@ D-065 的单包校正：官方受控样例的第二次复核捕捉到经新 prim
 持续恢复证明的判断。fixture 改为暴露有效 E2E 观察计数，并在五秒保持的末尾检查新计数
 是否仍在一秒内增长；第一次见包只报告 OBSERVED，达到全部条件才报告 RECOVERED。
 这仍是控制通路的证据，不替代故障中的编码帧/业务流验收。
+
+## D-066：将 session ACK 请求接回 RelayServer 探测与 front RTT
+
+依据 NETWORKING §21.29 的原始调用链，relay ACK 请求同时登记 session 与 root 的回复
+期限；已有 root pending 不延长。有效 packed ACK RTT 同时刷新 front、session 测量并清 root
+pending。两个失败计数仍独立，不能恢复为“用 session 失败直接作为 root 失败”的旧适配。
+控制消息与 inline 数据沿用各自发送登记时机，不因 socket 失败一律回滚。
+
+证据来自固定 ARM ELF `0x84f8b4 → 0x817304` 和 `0x84f1f0 → 0x812a28` 的原始指令执行，
+以及本地有界实验记录 `build/anywhere-research/recovery-packet-trace/selection-loss.private.log`
+中故障时 root failure 持续为 0 的输入。该记录只解释实际输入缺失，不能把其他旧失败全部归于
+同一个原因。传输恢复与媒体恢复分别验收；媒体模式显式请求桌面且单独打包，不能由纯网络
+模式意外触发。验收结果和剩余任务只记对应 GitHub Issues。
+
+D-066 的发送端接线还包括 §21.18 通用生产器：每次正常构造数据/stats 时，独立读取两组
+tracker 时钟来生成机会探测、到期探测和 aggressive 回复请求。只实现外层 thinker 的显式
+request 不等价。原始生产器与 C 函数对照覆盖该边界，SDK 活动级别通过公开 accessor 读取。
+
+## D-067：保留 primary 历史并按原始门槛发送切换报告
+
+NETWORKING §21.30 定义 type 16 的旧 primary 数据包计数、101 门槛、新 relay 发送目标和
+current/previous quality。主路生效时保存快照；同一 relay 对象改地址也属于新的 primary。
+跨 POP 只重置并补连接 RTT 的最近样本，不借此清空 transport 确认状态或会话 ACK。
+报告的服务端效果不由客户端代码推断；单 POP 多地址排序及被移除主路的缓存原因仍按文中的
+模型差异保留，不能以消息的 telemetry 名称豁免实现或夸大恢复证据。

@@ -49,6 +49,13 @@ struct ProbeRelay {
         stats.Init(SteamNetworkingSockets_GetLocalTimestamp(), ELinkActivityLevel::Idle);
     }
     uint64_t address_key() const { return uint64_t(address.GetIPv4()) << 16 | address.GetPort(); }
+    // Fixed ELF 817304/84f98c: a session ACK request also probes its
+    // RelayServer. Keep this deadline independent of the session's LinkStats.
+    void track_ping_request(SteamNetworkingMicroseconds now, SteamNetworkingMicroseconds timeout) {
+        ping_sent = failures.last_probe = front.m_usecTimeLastSentPingRequest = now;
+        if (!ping_deadline) ping_deadline = now + timeout;
+        ++probes_sent;
+    }
     void received(SteamNetworkingMicroseconds now) {
         last_received = now;
         ping_failures = 0;
@@ -385,9 +392,7 @@ static bool send_ping(sl_sdr_probe *p, ProbeRelay &r, SteamNetworkingMicrosecond
     size_t size=sl_sdr_ping_request_size(r.interior.last_full,now);
     sl_sdr_ping(ping, sizeof(ping), size==100, now, r.cookie, uint32_t(p->config.revision),
         r.address.GetIPv4(), r.address.GetPort());
-    r.ping_sent = r.failures.last_probe = r.front.m_usecTimeLastSentPingRequest = now;
-    r.ping_deadline = now + r.front.CalcConservativeTimeout();
-    ++r.probes_sent;
+    r.track_ping_request(now, r.front.CalcConservativeTimeout());
     if (!send_packet(p, ping, size, r.address)) return false;
     ++p->counters.sent_pings;
     return true;
@@ -581,6 +586,15 @@ public:
     sl_sdr_revisions revisions{};
     CMsgSteamDatagramP2PRoutes peer_routes, local_routes;
     std::string last_snapshot;
+    struct PrimaryQuality {
+        netadr_t address;
+        uint32_t pop;
+        int score, front, back, shutdown;
+    };
+    std::vector<PrimaryQuality> primary_snapshot;
+    netadr_t previous_primary_address;
+    uint32_t previous_primary_pop = 0, primary_packets_received = 0;
+    SteamNetworkingMicroseconds primary_since = 0;
     int route_ping = 0, route_score = 0;
 #if NSL_SNS_PROBES
     unsigned debug[16] = {}, route_generation = 0;
@@ -625,6 +639,52 @@ public:
         if (primary)
             info.m_idPOPRelay = primary->pop_id;
     }
+    static void fill_quality(CMsgSteamDatagramClientSwitchedPrimary_RouterQuality &out, const PrimaryQuality &q) {
+        out.set_score(q.score); out.set_front_ping(q.front); out.set_back_ping(q.back);
+        if (q.shutdown != INT_MAX) out.set_seconds_until_down(q.shutdown);
+    }
+    void changed_primary(ProbeRelay &next, const std::vector<PrimaryQuality> &current,
+        int64_t gap, int ping, SteamNetworkingMicroseconds now) {
+        // 81cddc-81d694: the report is sent to the new relay, only after
+        // >=101 data packets on an identifiable previous primary.
+        if (primary_since && primary_packets_received >= 101 && previous_primary_address.GetIPv4() &&
+            previous_primary_address.GetPort() && previous_primary_pop) {
+            CMsgSteamDatagramClientSwitchedPrimary m;
+            m.set_connection_id(ConnectionIDLocal());
+            m.set_from_ip(previous_primary_address.GetIPv4());
+            m.set_from_port(previous_primary_address.GetPort());
+            m.set_from_router_cluster(previous_primary_pop);
+            m.set_from_active_time(uint32_t((now-primary_since)/1000000));
+            m.set_from_active_packets_recv(primary_packets_received);
+            if (gap > 0) m.set_gap_ms(uint32_t(gap/1000));
+            for (const auto &q : current) {
+                if (q.address == previous_primary_address) fill_quality(*m.mutable_from_quality_now(), q);
+                if (q.address == next.address) fill_quality(*m.mutable_to_quality_now(), q);
+            }
+            for (const auto &q : primary_snapshot) {
+                if (q.address == previous_primary_address) fill_quality(*m.mutable_from_quality_then(), q);
+                // This adapter keeps one relay per POP. Its saved entry is
+                // also the native fallback when that POP's address changed.
+                if (q.pop == next.pop_id)
+                    fill_quality(*m.mutable_to_quality_then(), q);
+            }
+            uint8_t packet[1300]; size_t size = m.ByteSizeLong();
+            if (size < sizeof(packet)) {
+                packet[0] = 16; m.SerializeToArray(packet+1,int(size));
+                send_packet(network,packet,int(size+1),next.address);
+            }
+        }
+        if (previous_primary_pop != next.pop_id) {
+            // 81d724-81d74c resets the connection RTT's recent sample count,
+            // then seeds it from local front + remote front + interior.
+            m_connection.m_statsEndToEnd.m_ping.m_nValidPings = 0;
+            m_connection.m_statsEndToEnd.m_ping.ReceivedPing(ping, now);
+        }
+        primary_snapshot = current;
+        primary_since = now; primary_packets_received = 0;
+        previous_primary_address = next.address; previous_primary_pop = next.pop_id;
+        EnsureP2PTransportThink(k_nThinkTime_ASAP);
+    }
     void select_routes(SteamNetworkingMicroseconds now) {
         // Keep local-front candidates available for the first pursue round,
         // but defer importing peer routes until global measurements are usable.
@@ -634,6 +694,7 @@ public:
         int pings[SL_SDR_CANDIDATES] = {};
         bool desired[SL_SDR_CANDIDATES] = {};
         int current = -1, old_backup = -1;
+        std::vector<PrimaryQuality> quality;
         size_t count = 0;
         for (auto &r : network->relays) {
             if (count == SL_SDR_CANDIDATES) break;
@@ -715,6 +776,8 @@ public:
             m.last_ping_sent = r.ping_sent;
             m.bucket_end = r.front.m_arTimeBuckets[r.front.m_idxCurrentBucket].m_usecEnd;
             m.ping_pending = r.ping_deadline != 0;
+            if (target && m.score < SL_SDR_UNKNOWN)
+                quality.push_back({r.address,r.pop_id,m.score,r.ping_ms,ping-r.ping_ms-remote,m.shutdown_seconds});
             ++count;
         }
         auto order = [](const auto &a, const auto &b) { return a.first < b.first; };
@@ -729,7 +792,9 @@ public:
         ProbeRelay *next = selected.primary >= 0 ? relays[selected.primary] : nullptr;
         backup = selected.backup >= 0 ? relays[selected.backup] : nullptr;
         for (size_t i = 0; i < count; ++i) if (selected.probe[i]) relays[i]->force_ping = true;
-        if (primary != next) {
+        if (primary != next || (next && next->address != previous_primary_address)) {
+            int64_t gap = current >= 0 ? metrics[current].gap : 0;
+            if (next) changed_primary(*next,quality,gap,pings[selected.primary],now);
 #if NSL_SNS_PROBES
             ++route_generation;
 #endif
@@ -896,22 +961,21 @@ public:
         size_t count = sl_sdr_ack_pack(&r.acks, uint64_t(ctx.m_usecNow), acks);
         for (size_t i = 0; i < count; ++i)
             m.add_ack_relay(acks[i]);
-        ctx.m_nFlags = ctx.routing.flags;
-        if (request >= k_EStatsReplyRequest_DelayedOK) {
-            ctx.m_nFlags |= 1;
-            if (ctx.routing.e2e_mode == 2)
-                ctx.m_nFlags |= 2;
-        }
-        if (request == k_EStatsReplyRequest_Immediate)
-            ctx.m_nFlags |= 4;
         int need = r.stats.GetStatsSendNeed(ctx.m_usecNow);
         if (need)
             r.stats.PopulateMessage(need, *m.mutable_quality_relay(), ctx.m_usecNow);
-        if (ctx.routing.e2e_mode) {
-            int e2e_need = m_connection.m_statsEndToEnd.GetStatsSendNeed(ctx.m_usecNow);
-            if (e2e_need)
-                m_connection.m_statsEndToEnd.PopulateMessage(e2e_need, *m.mutable_quality_e2e(), ctx.m_usecNow);
-        }
+        int e2e_need = ctx.routing.e2e_mode ? m_connection.m_statsEndToEnd.GetStatsSendNeed(ctx.m_usecNow) : 0;
+        if (e2e_need)
+            m_connection.m_statsEndToEnd.PopulateMessage(e2e_need, *m.mutable_quality_e2e(), ctx.m_usecNow);
+        auto probe = [](const auto &stats) {
+            return sl_sdr_stats_probe{int(stats.GetActivityLevel()), stats.m_nReplyTimeoutsSinceLastRecv,
+                stats.m_usecTimeLastRecv, stats.m_usecLastSendPacketExpectingImmediateReply,
+                std::max(stats.m_ping.TimeRecvMostRecentPing(), stats.m_ping.m_usecTimeLastSentPingRequest),
+                stats.m_usecInFlightReplyTimeout != 0};
+        };
+        auto relay_probe = probe(r.stats), e2e_probe = probe(m_connection.m_statsEndToEnd);
+        ctx.m_nFlags = sl_sdr_stats_request_flags(&relay_probe, &e2e_probe, request, ctx.routing.e2e_mode,
+            ctx.routing.flags, m.ack_relay_size() || need || e2e_need, ctx.m_usecNow);
         ctx.SlamFlagsAndCalcSize();
         ctx.CalcMaxEncryptedPayloadSize(9, &m_connection);
     }
@@ -927,6 +991,9 @@ public:
         else if (flags & 1)
             r.stats.TrackSentMessageExpectingSeqNumAck(ctx.m_usecNow, delayed);
         if ((flags & 1) || m.has_quality_relay()) {
+            auto timeout = r.stats.m_ping.CalcConservativeTimeout();
+            if (delayed) timeout += k_usecSteamDatagramRouterPendClientPing;
+            r.track_ping_request(ctx.m_usecNow, timeout);
             /* RTT samples older than the accepted 3s window cannot contribute.
              * The count cap is a local memory bound, not a wire constant. */
             while (!r.sent_acks.empty() && (r.sent_acks.size() >= 256 ||
@@ -1078,8 +1145,16 @@ public:
                     auto elapsed = now - it->second - (packed & 65535) * 64;
                     r.sent_acks.erase(it);
                     int ms = int(elapsed / 1000);
-                    if (ms >= -1 && ms <= 3000)
-                        r.stats.ReceivedPing(std::max(0, ms), now);
+                    if (ms >= -1 && ms <= 3000) {
+                        ms = std::max(0, ms);
+                        // 84f1f0 -> RelayServer::RecvPingReply (812a28):
+                        // valid relay ACK RTTs also refresh the POP front
+                        // tracker and retire the independent root request.
+                        r.front.ReceivedPing(ms, now);
+                        r.ping_ms = r.front.m_nSmoothedPing;
+                        r.ping_deadline = 0;
+                        r.stats.ReceivedPing(ms, now);
+                    }
                     break;
                 }
             }
@@ -1175,9 +1250,12 @@ public:
             recv_stats(r, m, uint16_t(m.seq_num_r2c()), now);
         } else if ((data[0] & 0xe0) == 0x40) {
             count(9);
+            // 819854-819874 counts primary data before parsing inline stats
+            // or checking crypto/SNP; standalone stats are not in this count.
             sl_sdr_data d;
             if (!sl_sdr_parse_data(data, packet.m_cbPkt, &d) || d.connection_id != ConnectionIDLocal())
                 return;
+            if (&r == primary) ++primary_packets_received;
             CMsgSteamDatagramConnectionStatsP2PRouterToClient m;
             if (d.stats && !m.ParseFromArray(d.stats, int(d.stats_size)))
                 return;

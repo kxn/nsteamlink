@@ -24,6 +24,11 @@ class Candidate(c.Structure):
     _fields_ += [(n, c.c_int64) for n in ('last_received', 'front_oldest', 'last_ping_sent', 'bucket_end', 'gap')]
     _fields_ += [(n, c.c_bool) for n in ('eligible', 'draining', 'ping_pending')]
 
+class StatsProbe(c.Structure):
+    _fields_ = [('activity', c.c_int), ('failures', c.c_int)]
+    _fields_ += [(n, c.c_int64) for n in ('last_received','last_immediate_request','last_ping')]
+    _fields_ += [('pending',c.c_bool)]
+
 class Selection(c.Structure):
     _fields_ = [('primary', c.c_int32), ('backup', c.c_int32), ('probe', c.c_bool * 128)]
 
@@ -396,13 +401,32 @@ def main():
         audit.select, audit.timeout_decision = select, timeout
         audit.downtime, audit.probe_priorities, audit.routing_readiness = downtime, priorities, ready
         audit.failed_cache_add, audit.failed_cache_expire, audit.received = add, expire, received
+        original_generic = audit.generic_stats_producer
+        lib.sl_sdr_stats_request_flags.argtypes = [c.POINTER(StatsProbe), c.POINTER(StatsProbe),
+            c.c_int, c.c_int, c.c_uint32, c.c_bool, c.c_int64]
+        lib.sl_sdr_stats_request_flags.restype = c.c_uint32
+        def generic(elf, expected, **kw):
+            native = original_generic(elf, expected, **kw)
+            now = audit.NOW
+            r = StatsProbe(kw.get('activity',0),kw.get('relay_fail',0),
+                now-kw.get('relay_recv_age',0), now-kw.get('immediate_age',0),
+                now-kw.get('relay_age',0),kw.get('pending',False))
+            e = StatsProbe(kw.get('e2e_activity',kw.get('activity',0)),kw.get('e2e_fail',0),
+                now-kw.get('e2e_recv_age',0),now-kw.get('immediate_age',0),
+                now-kw.get('e2e_age',0),kw.get('e2e_pending',False))
+            content = bool(kw.get('queued',0) or kw.get('instant_age',0)>=20000000 or
+                kw.get('mode',0) and kw.get('e2e_instant_age',0)>=20000000)
+            actual = lib.sl_sdr_stats_request_flags(c.byref(r),c.byref(e),kw.get('request',0),
+                kw.get('mode',0),kw.get('base_flags',0),content,now)
+            assert actual == native, (kw,actual,native)
+        audit.generic_stats_producer = generic
         elf = audit.policy.descriptors.SampleELF(args.elf.read_bytes())
         groups = {'active_selection', 'active_switch_confirmation', 'active_candidate_order', 'timeout_decisions', 'downtime_warning', 'global_probe_priority_matrix',
             'global_routing_readiness', 'failed_cache_insertion', 'failed_cache_expiry', 'received_packet_recovery', 'transport_state_change', 'session_established', 'clean_route_targets',
             'datacenter_latency_updates', 'reverse_latency_estimation', 'cluster_penalty_updates', 'canonical_pop_mapping',
             'datacenter_route_estimation','router_ping_reply_dispatch','ping_request_size','probe_failure_history',
             'nearest_probe_planning','config_pop_type','relay_key_selection','p2p_front_eligibility','config_hex_key',
-            'route_advertisement','advertisement_union','old_advertisement_hysteresis'}
+            'route_advertisement','advertisement_union','old_advertisement_hysteresis','generic_stats_production'}
         # Select group names from the existing audit; fail if they are renamed.
         counts = audit.audit(elf, groups)
         assert set(counts) == groups, counts
@@ -446,6 +470,19 @@ def main():
                    for b in range(len(fronts)) if a != b and rng.randrange(3)==0]
             datacenter_routes(elf,fronts,edges,None,measured=rng.choice((False,True)))
         counts['generated_route_estimation']=64
+        for _ in range(512):
+            kw = {name:rng.choice((0,4999999,5000000,5000001,6999999,7000000,7000001))
+                  for name in ('relay_age','e2e_age')}
+            kw.update(activity=rng.choice((0,1,2)),mode=rng.randrange(3),request=rng.randrange(4),
+                relay_fail=rng.randrange(2),e2e_fail=rng.randrange(2),
+                immediate_age=rng.choice((199999,200000,200001)),
+                relay_recv_age=rng.choice((0,9999999,10000000,59999999,60000000)),
+                pending=rng.choice((False,True)),queued=rng.choice((0,1)),base_flags=rng.choice((0,8,16,32)),
+                e2e_activity=rng.choice((0,1,2)),e2e_pending=rng.choice((False,True)),
+                e2e_recv_age=rng.choice((9999999,10000000,59999999,60000000)))
+            generic(elf,None,**kw)
+        counts['generated_stats_production']=512
+
         report = {'sample_sha256': audit.policy.descriptors.SAMPLE_SHA256,
             'method': 'production C policy versus original APK instructions on identical inputs',
             'passed': sum(counts.values()), 'groups': counts, 'generated_inputs_rejected_by_native_assert': rejected,

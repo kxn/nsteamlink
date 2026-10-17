@@ -17,9 +17,19 @@ void sl_sns_update(sl_sns *, uint64_t monotonic_ms);
 sl_sns_state sl_sns_get_state(const sl_sns *);
 /* Numeric diagnostics only; SDK text may embed a peer identity. */
 int sl_sns_end_reason(const sl_sns *);
+/* Numeric terminal origin; SDK end_reason remains a separate value. */
+typedef enum sl_sns_terminal_source {
+    SL_SNS_TERMINAL_NONE, SL_SNS_TERMINAL_SIGNAL, SL_SNS_TERMINAL_CERTIFICATE,
+    SL_SNS_TERMINAL_START, SL_SNS_TERMINAL_CONFIG, SL_SNS_TERMINAL_CONNECTION_INFO,
+    SL_SNS_TERMINAL_STATUS, SL_SNS_TERMINAL_CONNECTION, SL_SNS_TERMINAL_SIGNAL_QUEUE,
+    SL_SNS_TERMINAL_SEND, SL_SNS_TERMINAL_RECEIVE, SL_SNS_TERMINAL_DATAGRAM,
+    SL_SNS_TERMINAL_MEMORY
+} sl_sns_terminal_source;
 typedef struct sl_sns_stats {
     bool authenticated, relayed;
     uint64_t datagrams_sent, datagrams_received;
+    sl_sns_terminal_source terminal_source;
+    int terminal_detail;
 } sl_sns_stats;
 void sl_sns_get_stats(const sl_sns *, sl_sns_stats *);
 /* Explicit diagnostic: verify relay session authorization in parallel with the

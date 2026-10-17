@@ -129,3 +129,14 @@ bool sl_sdr_order_advertisement(const sl_sdr_advert_cluster *, size_t clusters,
     const uint8_t *cluster_ranks, const uint8_t *route_ranks,
     unsigned *cluster_order, unsigned *route_order);
 size_t sl_sdr_ping_request_size(int64_t last_full_latencies, int64_t now);
+
+/* NETWORKING 21.18: automatic reply requests in a packet being populated.
+ * These clocks belong to each stats tracker, independently of root probes. */
+typedef struct sl_sdr_stats_probe {
+    int activity, failures;
+    int64_t last_received, last_immediate_request, last_ping;
+    bool pending;
+} sl_sdr_stats_probe;
+uint32_t sl_sdr_stats_request_flags(const sl_sdr_stats_probe *relay,
+    const sl_sdr_stats_probe *e2e, int request, int mode, uint32_t flags,
+    bool content, int64_t now);

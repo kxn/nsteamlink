@@ -22,7 +22,8 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 ROOT = Path(__file__).resolve().parent.parent
 MODES = {'ice': '--sns-test', 'sdr': '--sdr-only-test', 'loss': '--sdr-fault-test',
          'close': '--sdr-close-test', 'no-connection': '--sdr-no-connection-test'}
-MEDIA_MODES = {'ice': '--sns-desktop', 'sdr': '--sdr-only-desktop'}
+MEDIA_MODES = {'ice': '--sns-desktop', 'sdr': '--sdr-only-desktop', 'loss': '--sdr-fault-desktop',
+               'loss-warm': '--sdr-warm-fault-desktop'}
 LIMIT = 8+65536+8192+16
 
 def profile_valid(data, original=None):
@@ -176,7 +177,7 @@ def prepare(build, profile, media=False):
     return nro
 
 def main(media=False):
-    description = 'Request a Steam desktop stream on Switch, receive 30 encoded frames, then disconnect.' if media else __doc__
+    description = 'Request a Steam desktop stream on Switch; loss mode requires fresh encoded frames after relay failure.' if media else __doc__
     parser = argparse.ArgumentParser(description=description)
     modes = MEDIA_MODES if media else MODES
     kind = 'media' if media else 'network'
