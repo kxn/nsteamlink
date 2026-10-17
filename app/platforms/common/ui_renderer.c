@@ -147,7 +147,8 @@ static void host_icon(sl_ui_renderer *r, const sl_ui_model *m, const sl_host *ho
     if (online &&
         (source == SL_DISCOVERY_LAN || (source == SL_DISCOVERY_INTERNET && host->paired))) {
         rounded(r->renderer, (sl_gfx_rect){x - 5, y + size - 27, 32, 32}, 16, bg);
-        connection_icon(r, x - 3, y + size - 25, 28, source == SL_DISCOVERY_LAN ? 1 : 2, color);
+        connection_icon(r, x - 3, y + size - 25, 28, source == SL_DISCOVERY_LAN ? 1 : 2,
+                        source == SL_DISCOVERY_INTERNET ? accent : color);
     }
     rounded(r->renderer, (sl_gfx_rect){x + size - 12, y - 6, 38, 38}, 19, bg);
     connection_icon(r, x + size - 10, y - 4, 34, host && host->paired ? 4 : 5, color);
