@@ -354,6 +354,8 @@ int sl_application_run(int argc, char **argv) {
     sl_artwork_destroy(a->artwork);
     sl_updater_destroy(a->updater);
     sl_runtime_destroy(a->runtime);
+    sl_log(sl_system_dns_finish() ? "cleanup: DNS scopes=0 sockets=0"
+                                 : "cleanup: DNS unmatched scopes released");
     sl_media_hooks(NULL, NULL, NULL);
     sl_ui_renderer_destroy(a->renderer);
     stream_media_shutdown();

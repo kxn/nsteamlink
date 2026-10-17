@@ -2634,6 +2634,11 @@ TEXT、headers、payload 和 TLS 数据。连接方法、DNS、超时与重试�
 
 ## D-074 Switch 目录连接失败时向当前 DNS 重新解析
 
+**范围修订：仅目录的补丁已由D-075统一策略替代。** 4e810d5真机热点日志证实目录DNS恢复、
+HTTP200、CM和主机在线通知成功，但随后的3次开流保持SDK state=0。源码另有独立
+GetSDRConfig easy/multi访问同一api域名；目录multi的RESOLVE规则不能覆盖该请求。
+撤回将D-074视为完整跨网络DNS恢复方案的定位；它只验证了直接查询当前DNS的机制。
+
 证据：`session-00000000001792248673-084334796-00000.log` 在用户切热点、杀应用后
 冷启动的运行中，6次目录连接目标均为11.171.50.44:443，全部约10秒后curl=28。
 这是此前已在局域网确认的Fake-IP；回局域网的新冷启动运行
@@ -2666,3 +2671,35 @@ URL重试，原Host/SNI、CA链及域名校验不变。不硬编码公共DNS、V
 
 DNS socket由既有remote owner拥有；完成、失败、取消、挂起或destroy都会关闭，
 先于socketExit。诊断仅记录当前网络的数字地址、查询结果和尝试数；不记录DNS原始报文。
+
+## D-075 Switch 所有实际解析入口使用当前网络 DNS
+
+依据：D-074的限定范围；`sns_backend.cpp:begin_config` 的独立GetSDRConfig请求；固定
+Switch libcurl.a的未定义符号仅使用getaddrinfo/freeaddrinfo；GNS ResolveHostname在
+字面IP预解析后调用getaddrinfo。SDR POP记录本身使用数字IP，不另外猜测中继域名。
+
+决策：Switch正式应用及使用完整平台初始化的runtime夹具，在最终链接层将getaddrinfo和
+curl_easy_init接到统一适配器。目录、CM/独立信令桥、SDR配置、SDK STUN主机名、封面和
+更新器全部遵循同一策略；删除按目录URL注入RESOLVE的单点补丁。每次域名查询从nifm读取
+当前DNS，复用经过验证的有界A查询，不保留跨查询地址缓存；每个curl easy默认DNS缓存期限0。
+不硬编码公共DNS、Valve IP或Fake-IP范围；当前DNS不可用时明确返回解析失败，不能悄悄
+回退旧系统域名缓存。数字地址、NULL/localhost及NUMERICHOST请求保持原SDK转换行为。
+
+原固定Switch curl/libnx解析接口是同步；此适配并不将它变成异步。查询发生在已有解析
+worker上，最多3秒，每次轮询最多4个报文、每1ms检查取消，无新增线程。图片/更新器的
+请求scope以原取消token登记和结束，取消能立即打断当前查询；应用退出前先取消全部解析，
+join既有调用worker后释放全部scope、mutex，记录清理，再关闭日志与socket服务。SDL绘制、
+输入路径不执行解析。独立底层探针保留其自有平台初始化；不拿它当正式应用适配器覆盖证据。
+UDP截断应答在验证问题/来源后改用同一配置DNS的非阻塞TCP查询，保留原总期限，
+处理分段长度前缀/消息，最大4KiB；不将截断数据当作完整答案，也不因TCP重试无限延长等待。
+
+固定libnx `freeaddrinfo` 每节点仅调用__libnx_free，因此适配器用匹配的__libnx_alloc分配
+节点，将sockaddr和canonical文本放同一块。先让原SDK对数字IP解释service/hints，再复制
+结果，保留socktype/protocol/port、最多4个A地址以及请求时的canonical名。主机名仍由原URL
+交给TLS做SNI/Host/证书校验，不用数字IP替换HTTPS authority。适配保持此SDK现有IPv4
+解析能力，不宣称新增IPv6 DNS支持。主机测试使用glibc相匹配的canonical分配方式。
+
+诊断dns_query记录主机名、当前本机/DNS数字地址、结果、耗时；sns_config记录独立配置
+HTTP结果、信任导入、证书安装与P2P创建阶段，不输出身份/证书正文/信令payload。
+除夹具测试外，check-switch-dns-policy.py检查最终ELF反汇编：curl与GNS实际调用都必须
+进入统一适配器，原getaddrinfo和curl工厂只允许从适配器调用；出现其他未审计入口则失败。

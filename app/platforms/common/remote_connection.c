@@ -1,6 +1,5 @@
 #include "remote_connection.h"
 #include "crypto.h"
-#include "dns_refresh.h"
 #include "remote_wire.h"
 #define JSMN_STRICT
 #include "jsmn.h"
@@ -16,7 +15,7 @@
 
 #define CM_LIMIT   32
 #define FIFO_LIMIT 32
-enum { NET_IDLE, NET_DIRECTORY, NET_TLS, NET_UPGRADE, NET_WEBSOCKET, NET_DNS_REFRESH };
+enum { NET_IDLE, NET_DIRECTORY, NET_TLS, NET_UPGRADE, NET_WEBSOCKET };
 struct outgoing {
     uint8_t *data;
     size_t size, sent;
@@ -28,9 +27,6 @@ struct sl_remote_connection {
     CURLM *multi;
     CURL *easy;
     bool easy_added, global;
-    sl_dns_refresh dns;
-    struct curl_slist *resolve;
-    bool dns_refreshed, resolve_installed;
     bool bridge_mode, suspended;
     int state;
     uint64_t retry_at, deadline;
@@ -53,9 +49,8 @@ static const char directory_url[] = "https://api.steampowered.com/ISteamDirector
                                     "GetCMListForConnect/v1/?cellid=0&cmtype=websockets";
 #if NSL_DIAGNOSTICS
 static const char *stage_name(int state) {
-    static const char *names[] = {"idle",    "directory", "tls",
-                                  "upgrade", "websocket", "dns_refresh"};
-    return state >= NET_IDLE && state <= NET_DNS_REFRESH ? names[state] : "invalid";
+    static const char *names[] = {"idle", "directory", "tls", "upgrade", "websocket"};
+    return state >= NET_IDLE && state <= NET_WEBSOCKET ? names[state] : "invalid";
 }
 static int network_trace(CURL *easy, curl_infotype type, char *data, size_t size, void *context) {
     (void)easy;
@@ -249,8 +244,6 @@ static void clear_easy(sl_remote_connection *c) {
         curl_easy_cleanup(c->easy);
         c->easy = NULL;
     }
-    curl_slist_free_all(c->resolve);
-    c->resolve = NULL;
     c->easy_added = false;
     for (size_t i = 0; i < c->count; ++i) {
         struct outgoing *q = &c->fifo[(c->head + i) % FIFO_LIMIT];
@@ -273,7 +266,6 @@ static void fail_connection(sl_remote_connection *c, uint64_t now) {
         c->callbacks.diagnostic(established ? "cloud: session reset; reconnecting"
                                             : "cloud: initialization failed; retry scheduled",
                                 c->ctx);
-    sl_dns_refresh_cancel(&c->dns);
     clear_easy(c);
     sl_remote_close(c->protocol);
     c->state = NET_IDLE;
@@ -300,8 +292,7 @@ static size_t directory_write(char *data, size_t size, size_t count, void *ctx) 
     c->received += n;
     return n;
 }
-static bool setup_easy(sl_remote_connection *c, const char *url, bool tls_only,
-                       const char *addresses) {
+static bool setup_easy(sl_remote_connection *c, const char *url, bool tls_only) {
     c->easy = curl_easy_init();
     if (!c->easy)
         return false;
@@ -321,22 +312,6 @@ static bool setup_easy(sl_remote_connection *c, const char *url, bool tls_only,
     SET(CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
     SET(CURLOPT_FOLLOWLOCATION, 0L);
     SET(CURLOPT_USERAGENT, "NSteamLink/0.3");
-    if (addresses || (!tls_only && c->resolve_installed)) {
-        /* Only the original directory host/port is overridden. URL, SNI,
-         * Host header and certificate validation stay on the original name. */
-        char rule[128];
-        if (addresses)
-            snprintf(rule, sizeof(rule), "api.steampowered.com:443:%s", addresses);
-        else
-            snprintf(rule, sizeof(rule), "-api.steampowered.com:443");
-        c->resolve = curl_slist_append(NULL, rule);
-        if (!c->resolve)
-            return false;
-        SET(CURLOPT_RESOLVE, c->resolve);
-        /* curl 7.69 has no expiring '+' entries: explicitly remove this
-         * override before the next ordinary directory request. */
-        c->resolve_installed = addresses != NULL;
-    }
 #if NSL_DIAGNOSTICS
     c->attempts_logged = 0;
     SET(CURLOPT_DEBUGFUNCTION, network_trace);
@@ -353,47 +328,6 @@ static bool setup_easy(sl_remote_connection *c, const char *url, bool tls_only,
     if (curl_multi_add_handle(c->multi, c->easy) != CURLM_OK)
         return false;
     c->easy_added = true;
-    return true;
-}
-static bool refresh_directory(sl_remote_connection *c, CURLcode result, uint64_t now) {
-    if (c->dns_refreshed || (result != CURLE_COULDNT_RESOLVE_HOST &&
-                             result != CURLE_COULDNT_CONNECT && result != CURLE_OPERATION_TIMEDOUT))
-        return false;
-    double connected_at = 0;
-    curl_easy_getinfo(c->easy, CURLINFO_CONNECT_TIME, &connected_at);
-    if (connected_at > 0)
-        return false; /* Do not treat TLS, HTTP or protocol failures as stale DNS. */
-    c->dns_refreshed = true;
-    sl_dns_config config = {0};
-    bool configured = sl_dns_current_config(&config);
-    if (!configured || !sl_dns_refresh_begin(&c->dns, &config, "api.steampowered.com", now)) {
-#if NSL_DIAGNOSTICS
-        if (c->callbacks.diagnostic) {
-            char line[128];
-            snprintf(line, sizeof(line), "cloud_dns event=%s platform=%u servers=%u",
-                     configured ? "query_start_failed" : "config_failed", config.platform_error,
-                     config.count);
-            c->callbacks.diagnostic(line, c->ctx);
-        }
-#endif
-        return false;
-    }
-#if NSL_DIAGNOSTICS
-    if (c->callbacks.diagnostic) {
-        char local[INET_ADDRSTRLEN], primary[INET_ADDRSTRLEN], secondary[INET_ADDRSTRLEN] = "";
-        inet_ntop(AF_INET, &config.local, local, sizeof(local));
-        inet_ntop(AF_INET, &config.servers[0].sin_addr, primary, sizeof(primary));
-        if (config.count > 1)
-            inet_ntop(AF_INET, &config.servers[1].sin_addr, secondary, sizeof(secondary));
-        char line[160];
-        snprintf(line, sizeof(line), "cloud_dns event=begin local=%s primary=%s secondary=%s",
-                 local, primary, secondary);
-        c->callbacks.diagnostic(line, c->ctx);
-    }
-#endif
-    clear_easy(c);
-    c->state = NET_DNS_REFRESH;
-    c->deadline = now + 7000;
     return true;
 }
 static bool parse_directory(sl_remote_connection *c) {
@@ -442,7 +376,7 @@ static bool next_endpoint(sl_remote_connection *c, uint64_t now) {
 #endif
     c->state = NET_TLS;
     c->deadline = now + 20000;
-    return setup_easy(c, url, true, NULL);
+    return setup_easy(c, url, true);
 }
 static bool start_upgrade(sl_remote_connection *c, uint64_t now) {
     uint8_t nonce[16];
@@ -568,7 +502,6 @@ sl_remote_connection *sl_remote_connection_create(const IHS_ClientConfig *config
     sl_remote_connection *c = calloc(1, sizeof(*c));
     if (!c)
         return NULL;
-    c->dns.fd = -1;
     c->callbacks = *cb;
     c->ctx = ctx;
     c->receive = calloc(1, SL_REMOTE_FRAME_MAX + 16384);
@@ -604,35 +537,10 @@ void sl_remote_connection_update(sl_remote_connection *c, uint64_t now) {
         if (!c->bridge_mode && now < c->retry_at)
             return;
         c->state = NET_DIRECTORY;
-        c->dns_refreshed = false;
         c->deadline = now + 20000;
         network_event(c, "directory_begin", -1);
-        if (!setup_easy(c, directory_url, false, NULL)) {
+        if (!setup_easy(c, directory_url, false)) {
             network_event(c, "setup_failed", CURLE_FAILED_INIT);
-            fail_connection(c, now);
-            return;
-        }
-    }
-    if (c->state == NET_DNS_REFRESH) {
-        int result = now >= c->deadline ? -1 : sl_dns_refresh_poll(&c->dns, now);
-        if (!result)
-            return;
-#if NSL_DIAGNOSTICS
-        if (c->callbacks.diagnostic) {
-            char line[128];
-            snprintf(line, sizeof(line), "cloud_dns event=%s addresses=%s attempts=%u",
-                     result > 0 ? "ready" : "failed", result > 0 ? c->dns.addresses : "",
-                     c->dns.attempt);
-            c->callbacks.diagnostic(line, c->ctx);
-        }
-#endif
-        if (result < 0) {
-            fail_connection(c, now);
-            return;
-        }
-        c->state = NET_DIRECTORY;
-        c->deadline = now + 20000;
-        if (!setup_easy(c, directory_url, false, c->dns.addresses)) {
             fail_connection(c, now);
             return;
         }
@@ -652,8 +560,6 @@ void sl_remote_connection_update(sl_remote_connection *c, uint64_t now) {
             CURLcode result = msg->data.result;
             network_event(c, "transfer_done", result);
             if (c->state == NET_DIRECTORY) {
-                if (result != CURLE_OK && refresh_directory(c, result, now))
-                    break;
                 long status_code = 0;
                 curl_easy_getinfo(c->easy, CURLINFO_RESPONSE_CODE, &status_code);
                 if (result != CURLE_OK || status_code != 200 || !parse_directory(c) ||
@@ -710,7 +616,6 @@ void sl_remote_connection_set_active(sl_remote_connection *c, bool active) {
         return;
     c->suspended = !active;
     if (!active) {
-        sl_dns_refresh_cancel(&c->dns);
         clear_easy(c);
         sl_remote_close(c->protocol);
         c->state = NET_IDLE;
@@ -722,7 +627,6 @@ void sl_remote_connection_destroy(sl_remote_connection *c) {
     if (!c)
         return;
     /* No new worker: the runtime owner has stopped pumping before destruction. */
-    sl_dns_refresh_cancel(&c->dns);
     if (c->receive && c->message)
         clear_easy(c);
     if (c->multi)

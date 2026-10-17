@@ -101,7 +101,7 @@ static bool fetch_https(const char *url, size_t limit, unsigned char **data, siz
     curl_easy_setopt(c, CURLOPT_XFERINFODATA, a);
     atomic_store(&a->dns_handle, sl_system_dns_begin());
     CURLcode result = cancelled(a) ? CURLE_ABORTED_BY_CALLBACK : curl_easy_perform(c);
-    atomic_store(&a->dns_handle, 0);
+    sl_system_dns_end(atomic_exchange(&a->dns_handle, 0));
     long code = 0;
     curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
     curl_easy_cleanup(c);

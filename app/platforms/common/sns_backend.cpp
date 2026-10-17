@@ -2,6 +2,7 @@ extern "C" {
 #include "sns_backend.h"
 #include "stream_bridge.h"
 #include "sdr_probe.h"
+#include "dns_policy.h"
 }
 #include <steam/steamnetworkingsockets.h>
 #include <steam/steamnetworkingcustomsignaling.h>
@@ -170,6 +171,23 @@ static size_t receive_config(char *p, size_t size, size_t count, void *ctx) {
         return bytes;
     } catch (const std::bad_alloc &) { return 0; }
 }
+static void config_event(sl_sns *b, const char *event, int result) {
+#if NSL_DIAGNOSTICS
+    long status = 0, verified = 0;
+    char *remote = nullptr;
+    if (b->request) {
+        curl_easy_getinfo(b->request, CURLINFO_RESPONSE_CODE, &status);
+        curl_easy_getinfo(b->request, CURLINFO_SSL_VERIFYRESULT, &verified);
+        curl_easy_getinfo(b->request, CURLINFO_PRIMARY_IP, &remote);
+    }
+    char line[224];
+    snprintf(line, sizeof(line), "sns_config event=%s attempt=%u curl=%d http=%ld verify=%ld ip=%.64s",
+        event, b->config_attempt, result, status, verified, remote ? remote : "");
+    sl_dns_policy_report(line);
+#else
+    (void)b; (void)event; (void)result;
+#endif
+}
 static bool begin_config(sl_sns *b) {
     b->config.clear();
     ++b->config_attempt;
@@ -186,6 +204,7 @@ static bool begin_config(sl_sns *b) {
     curl_easy_setopt(b->request, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(b->request, CURLOPT_CONNECTTIMEOUT_MS, 10000L);
     curl_easy_setopt(b->request, CURLOPT_TIMEOUT_MS, 25000L);
+    config_event(b, "begin", -1);
     return curl_multi_add_handle(b->http, b->request) == CURLM_OK;
 }
 static bool begin_connection(sl_sns *b) {
@@ -217,8 +236,11 @@ static void pump_config(sl_sns *b) {
         done = true;
         long status = 0;
         curl_easy_getinfo(b->request, CURLINFO_RESPONSE_CODE, &status);
+        config_event(b, "complete", int(message->data.result));
         success = message->data.result == CURLE_OK && status == 200 &&
             sl_gns_import_trust(b->config.data(), b->config.size());
+        if (message->data.result == CURLE_OK && status == 200)
+            config_event(b, success ? "trust_imported" : "trust_failed", -1);
     }
     if (!done)
         return;
@@ -233,6 +255,7 @@ static void pump_config(sl_sns *b) {
          * rather than treating this as an invalid host public key. */
         bool installed = b->sockets->SetCertificate(b->certificate.data(),
             static_cast<int>(b->certificate.size()), error);
+        config_event(b, installed ? "certificate_installed" : "certificate_failed", -1);
         wipe(b->certificate.data(), b->certificate.size());
         b->certificate.clear();
         if (!installed) {
@@ -241,7 +264,9 @@ static void pump_config(sl_sns *b) {
             return;
         }
         b->sockets->InitAuthentication();
-        if (!begin_connection(b))
+        bool started = begin_connection(b);
+        config_event(b, started ? "p2p_started" : "p2p_start_failed", -1);
+        if (!started)
             close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_START);
     } else if (b->config_attempt >= 3 || !begin_config(b)) {
         b->end_reason = -1;

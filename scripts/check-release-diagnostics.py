@@ -76,8 +76,11 @@ assert b'RUNTIME_FIXTURE_' not in archive.read_bytes(), 'runtime driver included
 assert b'sl_packet_diagnostics_' not in archive.read_bytes(), 'packet observers remain in release'
 remote_archive = build / 'app/libnsl_remote.a'
 for marker in (b'cloud_net event=', b'cloud_time total_ms=', b'cloud_subscription', b'cloud_addr local=',
-               b'cloud_try stage=', b'cloud_dns event='):
+               b'cloud_try stage=', b'cloud_dns event=', b'dns_query event='):
     assert marker not in remote_archive.read_bytes(), f'cloud diagnostics remain in release: {marker!r}'
+sns_archive = build / 'app/libnsl_sns.a'
+if sns_archive.exists():
+    assert b'sns_config event=' not in sns_archive.read_bytes(), 'SNS HTTP diagnostics remain in release'
 manifest = json.loads((build / 'generated/graphics_manifest.json').read_text())
 if any(e['file'].endswith('/platforms/switch/gfx.c') for e in commands):
     assert manifest['backend'] == 'deko', 'Switch must use deko'

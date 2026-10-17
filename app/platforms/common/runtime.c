@@ -1590,6 +1590,7 @@ void sl_runtime_debug(sl_runtime *r, sl_debug_snapshot *d) {
 void sl_runtime_request_exit(sl_runtime *r) {
     if (!r)
         return;
+    sl_system_dns_cancel_all();
     atomic_store_explicit(&r->exit_requested, true, memory_order_release);
     pthread_mutex_lock(&r->lock);
     sl_media_close_video();

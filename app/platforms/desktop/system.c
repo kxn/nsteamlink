@@ -66,6 +66,14 @@ uint32_t sl_system_dns_begin(void) {
 void sl_system_dns_cancel(uint32_t handle) {
     (void)handle;
 }
+void sl_system_dns_end(uint32_t handle) {
+    (void)handle;
+}
+void sl_system_dns_cancel_all(void) {
+}
+bool sl_system_dns_finish(void) {
+    return true;
+}
 
 const char *sl_system_locale(void) {
     const char *locale = getenv("LC_ALL");

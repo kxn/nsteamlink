@@ -82,9 +82,12 @@ ACK/NACK/重试/失败、待确认数量与最老项年龄。退出前及 IHS jo
 `cloud_try` 从 curl 的连接前事件记录每个尝试的数字 IP/端口，即使 TCP 超时、
 `cloud_addr` 尚无值也能留证。每个请求最多 16 条；该地址不是 DNS 响应全集，也不代表连接成功。
 只接受 `Trying` 文本中经数字地址校验的 IP/端口；其他文本、头部及数据全部忽略。
-`cloud_dns event=begin` 记录目录失败恢复时从当前接口取得的本机/配置DNS地址，
-`event=ready|failed` 记录直接查询的有界结果。ready只代表取得DNS地址，不代表HTTPS成功；
-须继续看后续目录、TLS及主机在线事件。查询无需调用SDK未实现的清缓存接口，具体策略见D-074。
+当前Switch统一解析策略用`dns_query event=begin`记录主机名和当前本机/DNS数字地址，
+`event=ready|failed|cancelled`记录有界查询结果与耗时。ready只代表取得DNS地址，不代表
+HTTPS成功。旧4e810d5的cloud_dns仅覆盖目录，不能据此判断SDR配置或SDK解析已恢复；
+该单点补丁已被D-075统一策略替代。`sns_config`另外记录GetSDRConfig HTTP/curl结果、
+信任导入、证书安装与P2P创建。须继续对应后续SDK状态、IHS和媒体进度，不把发现成功当作
+传输成功。清理时DNS scope/socket结果在日志关闭前保存。
 `cloud_watch` 记录保存主机中有多少具备配对/账户/设备信息；`cloud_subscription queued`
 仅代表订阅进入发送队列，`cloud_host event=online` 才代表收到并接纳主机状态。
 

@@ -21,6 +21,10 @@ typedef struct {
     uint8_t query[272];
     size_t query_size;
     char addresses[64]; /* Up to four IPv4 addresses. */
+    char canonical[254];
+    bool tcp;
+    uint8_t response[4098], stream_query[274];
+    size_t received, expected, sent;
 } sl_dns_refresh;
 bool sl_dns_current_config(sl_dns_config *);
 /* Initialize fd=-1 before first begin; cancel is idempotent. */

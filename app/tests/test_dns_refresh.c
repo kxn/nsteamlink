@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <netinet/tcp.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -71,8 +72,8 @@ static void invalid_replies(void) {
             packet[0] ^= 1;
             break; /* Wrong transaction. */
         case 1:
-            packet[2] |= 2;
-            break; /* Truncated response. */
+            packet[qsize - 1] = 2;
+            break; /* Wrong question class. */
         case 2:
             packet[qsize - 3] = 28;
             break; /* AAAA question. */
@@ -141,6 +142,7 @@ static void cname_and_timeout(void) {
     send_reply(second, &client, packet, p);
     assert(sl_dns_refresh_poll(&d, 2501) == 1);
     assert(!strcmp(d.addresses, "198.51.100.1,198.51.100.2"));
+    assert(!strcmp(d.canonical, "edge.test"));
     assert(d.fd == -1);
     /* Two DNS servers, two rounds, no reply: six seconds total by owner ticks. */
     assert(sl_dns_refresh_begin(&d, &config, "api.steampowered.com", 3000));
@@ -160,11 +162,64 @@ static void cname_and_timeout(void) {
     close(first);
     close(second);
 }
+static void truncated_tcp(void) {
+    sl_dns_config config = {.count = 1};
+    int udp = server(&config.servers[0]);
+    int listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    assert(listener >= 0);
+    assert(bind(listener, (struct sockaddr *)&config.servers[0], sizeof(config.servers[0])) == 0);
+    assert(listen(listener, 1) == 0);
+    struct timeval timeout = {.tv_usec = 100000};
+    assert(setsockopt(listener, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == 0);
+    sl_dns_refresh d = {.fd = -1};
+    assert(sl_dns_refresh_begin(&d, &config, "api.steampowered.com", 1000));
+    uint8_t packet[1024], request[274];
+    struct sockaddr_in client;
+    size_t qsize = query(udp, &client, packet);
+    put16(packet + 2, 0x8380); /* Matched question and truncated UDP response. */
+    send_reply(udp, &client, packet, qsize);
+    assert(sl_dns_refresh_poll(&d, 1001) == 0 && d.tcp);
+    int tcp = accept(listener, NULL, NULL);
+    assert(tcp >= 0);
+    assert(setsockopt(tcp, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == 0);
+    int yes = 1;
+    assert(setsockopt(tcp, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes)) == 0);
+    assert(sl_dns_refresh_poll(&d, 1002) == 0);
+    assert(recv(tcp, request, qsize + 2, MSG_WAITALL) == (ssize_t)qsize + 2);
+    assert(request[0] == 0 && request[1] == qsize && !memcmp(request + 2, d.query, qsize));
+    size_t size = simple_answer(packet, qsize);
+    put16(packet + 6, 2);
+    uint8_t text[600];
+    memset(text, 'x', sizeof(text));
+    text[0] = text[256] = 255;
+    text[512] = 87;
+    size += rr(packet + size, 12, 16, text, sizeof(text)); /* Large, ignored TXT RR. */
+    assert(size > 512 && size < 4096);
+    uint8_t prefix[2];
+    put16(prefix, (unsigned)size);
+    assert(send(tcp, prefix, 1, 0) == 1);
+    assert(sl_dns_refresh_poll(&d, 1003) == 0);
+    assert(send(tcp, prefix + 1, 1, 0) == 1);
+    assert(send(tcp, packet, 100, 0) == 100);
+    assert(sl_dns_refresh_poll(&d, 1004) == 0);
+    assert(send(tcp, packet + 100, size - 100, 0) == (ssize_t)size - 100);
+    int result = 0;
+    for (unsigned i = 0; i < 100 && !result; ++i) {
+        result = sl_dns_refresh_poll(&d, 1005);
+        if (!result)
+            usleep(1000);
+    }
+    assert(result == 1 && d.fd == -1 && !strcmp(d.addresses, "198.51.100.7"));
+    close(tcp);
+    close(listener);
+    close(udp);
+}
 int main(void) {
     struct timespec begin, end;
     clock_gettime(CLOCK_MONOTONIC, &begin);
     invalid_replies();
     cname_and_timeout();
+    truncated_tcp();
     clock_gettime(CLOCK_MONOTONIC, &end);
     double elapsed = end.tv_sec - begin.tv_sec + (end.tv_nsec - begin.tv_nsec) / 1e9;
     assert(elapsed < 1); /* Simulated deadlines must not become blocking waits. */
