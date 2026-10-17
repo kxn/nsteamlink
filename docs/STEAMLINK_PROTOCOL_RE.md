@@ -6155,3 +6155,97 @@ python3 scripts/audit-steam-audio-player.py \
   --check scripts/fixtures/steam-audio-player-reference.json
 ctest --test-dir build/desktop -R 'audio_player_official_vectors|audio_playback_official_vectors' --output-on-failure
 ```
+
+## 77. SDL_main退出owner、窗口焦点与音频player收尾
+
+【官方客户端证据】同§24.1固定SHA Android1.3.32 core。SDL_main导出symbol
+size=4，仅0x75b3d8的B 0x75b3dc，不能用symbol size排除其后主体。
+0x75cce4以4232 bytes分配CStreamPlayer，0x75ccf8保留x0到callee-saved x21，
+0x75ccfc调用真实CStreamPlayer constructor，client参数为sp+0x238；随后至退出
+虚调用的x21构造来源闭合。撤回把0x75cf50/58的receiver仅保留为未证实候选的
+限制；这不证明该区域之外所有同offset虚调用也是CStreamPlayer。
+
+`BOpenVideo @0x7b5c68`在CreateWindow成功后，0x7b5e30–0x7b5e6c真实读取三次
+SDL_GetWindowFlags，分别保存bit6到+1784、bit9到+1785、bit10到+1786。
+原`BHandleEvent @0x7b8110`对0x20e在0x7b82e4写+1785=1，对0x20f在
+0x7b8b0c写0。它们对应窗口输入焦点，独立于Remote Play client+19 Pause。
+字段/分支判断来自原指令；SDL枚举名称仅借[SDL官方events头](https://raw.githubusercontent.com/libsdl-org/SDL/release-3.2.0/include/SDL3/SDL_events.h)
+和[window flags头](https://raw.githubusercontent.com/libsdl-org/SDL/release-3.2.0/include/SDL3/SDL_video.h)
+核对，不把SDL文档作为Steam策略证据。
+
+0x75cf80–0x75cfac按client+256循环OnThink、player virtual+408 Update，Update
+bit0为0才ThreadSleep(1)。client state0退出循环，0x75cf20先Client::Quit。
+接着0x75cf24读取player+1785：无输入焦点时设置g_bBackgroundShutdown=1，跳过
+显式player Quit和destroy；有焦点则保留原background值。Hard/background真实
+GOT relocation分别为0xc80450/0xc80458，指向g_bHardShutdown/
+g_bBackgroundShutdown。退出动作如下：
+
+| input focus | background输入 | hard | 显式virtual+416 Quit | virtual+8 destroy | background输出 |
+|---|---|---|---|---|---|
+| 0 | 任意 | 任意 | 否 | 否 | 1 |
+| 1 | 1 | 任意 | 否 | 否 | 1 |
+| 1 | 0 | 0 | 是 | 是 | 0 |
+| 1 | 0 | 1 | 否 | 是 | 0 |
+
+Player虚调用之后0x75cfc0才StreamShutdownNetworkProcessing，再
+SteamDatagramClient_Kill。原CStreamPlayer析构前缀0x7b4944–0x7b4980实际执行
+并抵达其Quit调用之后，确认hard跳过显式Quit并不意味着跳过析构内Quit。
+§76已独立执行Quit直到CloseAudio之后，证明音频关闭效果；本节不把完整dtor/
+UI/renderer/所有线程清理当作已执行。一次与重复关闭的最终音频资源效果一致。
+
+【Native契约】sl_player_owner_decide保留focus/hard/background为独立输入。
+窗口focus独立发布，不调用SetForeground，也不产生Pause/Resume。Desktop从
+实际SDL键盘焦点window flags初始化，并按FOCUS_GAINED/LOST事件更新；Switch
+deko无SDL window，明确以libnx application input focus作平台adapter，发布真实
+APP lifecycle边沿时同步owner focus。minimized/restored与其他字段不替代owner
+焦点。runtime停止session时先disconnect/join、释放session，再按owner动作收尾
+音频player；正常有焦点退出不再只停decoder而遗留stream/jitter。无焦点则保留
+尾部，下一prepare或最终media shutdown释放。
+
+本地Switch session使用normal mode（hard/background process mode输入为0）；
+Android的全部hard/background产品调用入口、对象移交Java/完整SDL_main返回与后续复用
+没有由本节输入矩阵证明；下述hard producer对照只覆盖明确列出的函数/事件。最终NRO shutdown仍无条件释放资源以满足Homebrew ABI，
+不能把Android背景对象逃逸搬成返回hbmenu时的资源泄漏。Native只把这段owner
+策略投射到音频player，persistent renderer/UI对象没有冒充C++析构的全部效果。
+
+【可执行对照】`audit-steam-player-owner.py`执行原flags读取块、完整focus事件
+handler、原post-connect loop/owner分支、真实析构Quit调用前缀。480例覆盖三个
+window flag组合位、五种focus事件序列、所有hard/background组合、state0和两组
+脚本化phase推进、Update bit0和Sleep路径。Client OnThink/Quit与Player Update/
+Quit/destroy、global network stop为声明的终点adapter；它们的wire/内部清理分别
+保留既有审计范围，不把脚本状态变更当作完整网络连接。Connecting state1之前的
+10秒UI等待、Init失败及全部平台启动/退出入口不在此post-connect边界中。
+
+另8例先真实控制Start→Opus→原CAudioFrame/PutAudioFrame→480帧jitter→Stop，
+再执行原owner分支；Quit/dtor音频效果adapter跳到真实CloseAudio，比较Native
+生产回调/实际worker/SDL dummy的资源保留或释放、全部既有音频观测值。该adapter
+连接两个独立已执行边界，不声称执行了全player Quit/dtor。Native实际runtime
+stop_session另以production translation unit测试：真实test session、实际音频worker与
+480帧尾部，未启动Base RX线程，Socket send为终点adapter；强制核验生产join调用
+→session destroy→owner→device close，不能据此证明真实Socket线程的退出；有焦点且app
+lifecycle为background仍关闭，无焦点且app lifecycle为foreground仍保留。最后
+media shutdown两者均释放；不替代Switch/Steam/loader验收。
+
+【hard标志producer证据】再执行原`TerminateSession @0x7b9a28`、完整
+BHandleEvent中type0x8000/code3，以及完整`ReduceVideoResolution @0x7b9a4c`。
+TerminateSession与该事件均在hard=0时先写hard=1再调用Client::Disconnect；已为1
+则不重复Disconnect。事件code在SDL_Event+20，尚未证明全部事件投递入口，因此
+不能把code3自行命名为某个用户操作。Disconnect在本对照为终点，不重复声称其
+wire和内部工作已执行。
+
+ReduceVideoResolution按当前player+1336/+1340的32-bit面积比较：大于
+1920×1080时目标1920×1080；否则大于1280×720时目标1280×720；再低则不设置
+新尺寸，hard=0时写1并Disconnect，hard已1时不重复。中间两档若config中已有
+相同目标就不调用SetStreamingClientConfig；不根据hard跳过降尺寸配置。
+46个source-only案例执行边界两侧、hard组合、三个旧config尺寸及低面积宽屏。
+原尺寸决策、直接字段读取/写入和调用分支执行；config复制/释放为受控storage
+adapter，SetStreamingClientConfig为记录终点，不证明这些case发送的protobuf或
+wire。不能由这两个面积门槛推导FEC阈值，也没有据此新增本地自动降尺寸。
+这些函数的全部产品caller、hard其他写入和background全部producer仍须分别取证。
+
+```sh
+python3 scripts/audit-steam-player-owner.py \
+  /data/dl/nsteamlink/build/video-recovery-re/libmain-arm64.so \
+  --check scripts/fixtures/steam-player-owner-reference.json
+ctest --test-dir build/desktop -R player_owner --output-on-failure
+```

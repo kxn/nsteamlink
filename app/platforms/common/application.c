@@ -68,6 +68,20 @@ static void event(const void *native, void *ctx) {
         sl_runtime_foreground(a->runtime, false);
     else if (e->type == SDL_APP_DIDENTERFOREGROUND)
         sl_runtime_foreground(a->runtime, true);
+    if (e->type == SDL_WINDOWEVENT) {
+        if (e->window.event == SDL_WINDOWEVENT_FOCUS_GAINED)
+            sl_runtime_player_focus(a->runtime, true);
+        else if (e->window.event == SDL_WINDOWEVENT_FOCUS_LOST)
+            sl_runtime_player_focus(a->runtime, false);
+    }
+#if __SWITCH__
+    /* Native deko has no SDL window; the platform emits these edges from
+     * libnx application input focus, so publish that owner fact explicitly. */
+    if (e->type == SDL_APP_WILLENTERBACKGROUND)
+        sl_runtime_player_focus(a->runtime, false);
+    else if (e->type == SDL_APP_DIDENTERFOREGROUND)
+        sl_runtime_player_focus(a->runtime, true);
+#endif
     sl_sdl_input(native, &a->input);
     if (!sl_app_allow_remote(&a->lifecycle, sl_ui_remote(&a->ui)))
         sl_media_gate(false);
@@ -260,6 +274,8 @@ int sl_application_run(int argc, char **argv) {
         a->runtime = sl_runtime_create(&store);
         if (!a->runtime)
             sl_ui_error(&a->ui, sl_tr(SL_T_NETWORK_START_FAILED));
+        else
+            sl_runtime_player_focus(a->runtime, sl_events_keyboard_focus());
     }
     if (screenshot)
         sl_gfx_request_readback(sl_media_gfx());

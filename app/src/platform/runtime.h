@@ -43,6 +43,7 @@ void sl_runtime_request_exit(sl_runtime *);
 bool sl_runtime_finished(sl_runtime *);
 
 void sl_runtime_foreground(sl_runtime *, bool);
+void sl_runtime_player_focus(sl_runtime *, bool);
 
 /* Persistent ownership facts, independent of the bounded UI notification queue.
  * request_id is the original STREAM command, never a STOP/END_GAME reply id. */

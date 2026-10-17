@@ -361,6 +361,10 @@ int main(void) {
             for (unsigned n = 0; n < 32; ++n)
                 assert(output[outputSize + n] == 0xa5);
             break;
+        case 'O':
+            assert(sscanf(line, "O %u %u %u", &kind, &channel, &id) == 3);
+            sl_media_end_stream_player(kind != 0, channel != 0, id != 0);
+            break;
         case 'X':
             stream_media_audio_close(NULL);
             break;

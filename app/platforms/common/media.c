@@ -1,6 +1,7 @@
 #include "media.h"
 #include "audio_jitter.h"
 #include "audio_recovery.h"
+#include "player_owner.h"
 #include "video_scheduler.h"
 static sl_video_scheduler video_scheduler;
 #if NSL_DIAGNOSTICS
@@ -1378,6 +1379,15 @@ void stream_media_audio_close(IHS_Session *session) {
     update_audio_snapshot();
     if (had_device || had_jitter)
         media_logf("audio player closed: device_joined=%d jitter_freed=%d", had_device, had_jitter);
+}
+
+void sl_media_end_stream_player(bool input_focus, bool hard, bool background) {
+    sl_player_teardown action = sl_player_owner_decide(input_focus, hard, background);
+    /* The original destructor calls Quit even when hard mode skips the first
+     * virtual Quit. One idempotent audio close supplies both normal-mode paths;
+     * UI/render ownership remains with this app's persistent media backend. */
+    if (action.request_quit || action.destroy_player)
+        stream_media_audio_close(NULL);
 }
 
 static int media_audio_prepare(IHS_Session *s, const IHS_StreamAudioConfig *c, void *context) {

@@ -29,6 +29,7 @@ struct sl_runtime {
     atomic_bool exit_requested, worker_finished;
     bool waiting_video;
     atomic_uint foreground_generation;
+    atomic_bool player_input_focus; /* Separate from app lifecycle/pause edges. */
     unsigned foreground_applied; /* Runtime worker only. */
     uint64_t session_id;
     sl_runtime_facts facts;
@@ -495,6 +496,9 @@ static bool stop_session(sl_runtime *r) {
         IHS_SessionDestroy(r->session);
         r->session = NULL;
         sl_log("cleanup: session destroyed");
+        /* SDL_main quits the client before the focused player's teardown.
+         * This port has no Android hard/background process modes. */
+        sl_media_end_stream_player(atomic_load(&r->player_input_focus), false, false);
     }
     pthread_mutex_lock(&r->lock);
     host_completed = host_completed || (r->end_game.at && r->end_game.empty >= 2);
@@ -1196,6 +1200,7 @@ sl_runtime *sl_runtime_create(const sl_auth_store *store) {
     r->udp = -1;
     atomic_init(&r->exit_requested, false);
     atomic_init(&r->foreground_generation, 0);
+    atomic_init(&r->player_input_focus, true);
     atomic_init(&r->worker_finished, false);
     pthread_mutex_init(&r->lock, NULL);
     pthread_cond_init(&r->wake, NULL);
@@ -1314,6 +1319,11 @@ void sl_runtime_destroy(sl_runtime *r) {
     pthread_cond_destroy(&r->wake);
     pthread_mutex_destroy(&r->lock);
     free(r);
+}
+
+void sl_runtime_player_focus(sl_runtime *r, bool focused) {
+    if (r)
+        atomic_store(&r->player_input_focus, focused);
 }
 
 void sl_runtime_foreground(sl_runtime *r, bool foreground) {

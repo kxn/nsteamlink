@@ -193,6 +193,7 @@ IHS_StreamVideoSubmitResult stream_media_video_submit(IHS_Session *session, uint
 void stream_media_video_stop(IHS_Session *session);
 
 const IHS_StreamAudioCallbacks *sl_media_audio_callbacks(void);
+void sl_media_end_stream_player(bool input_focus, bool hard, bool background);
 int stream_media_audio_prepare(IHS_Session *, const IHS_StreamAudioConfig *);
 int stream_media_audio_start_decoder(IHS_Session *, const IHS_StreamAudioConfig *);
 int stream_media_audio_start(IHS_Session *session, const IHS_StreamAudioConfig *config);

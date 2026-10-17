@@ -92,7 +92,7 @@ set_source_files_properties(platforms/common/audio_jitter.c PROPERTIES COMPILE_O
 add_library(nsl_platform STATIC platforms/common/application.c platforms/common/sdl_input.c platforms/common/media.c
     platforms/common/audio_recovery.c platforms/common/audio_jitter.c
     platforms/common/shortcut_package.c platforms/${NSL_PLATFORM}/shortcut.c
-    platforms/common/ui_renderer.c platforms/common/ui_audio.c platforms/common/runtime.c platforms/${NSL_PLATFORM}/system.c
+    platforms/common/ui_renderer.c platforms/common/ui_audio.c platforms/common/player_owner.c platforms/common/runtime.c platforms/${NSL_PLATFORM}/system.c
     platforms/${NSL_PLATFORM}/events.c)
 target_include_directories(nsl_platform PRIVATE ${CMAKE_SOURCE_DIR}/third_party/ihslib/src
     ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf)
@@ -173,6 +173,27 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-client-settings-io.py"
         --receiver $<TARGET_FILE:nsl-stream-settings-oracle>)
     set_tests_properties(stream_settings_official_vectors PROPERTIES TIMEOUT 60)
+    add_executable(nsl-player-owner-runtime tests/player_owner_runtime.c)
+    target_include_directories(nsl-player-owner-runtime PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf ${CMAKE_SOURCE_DIR}/third_party/ihslib/tests/common)
+    target_compile_definitions(nsl-player-owner-runtime PRIVATE NSL_DIAGNOSTICS=$<BOOL:${NSL_DIAGNOSTICS}>)
+    target_compile_options(nsl-player-owner-runtime PRIVATE -UNDEBUG -Wall -Wextra -Wno-unknown-pragmas)
+    target_link_libraries(nsl-player-owner-runtime PRIVATE nsl_platform ihs-test-session)
+    target_link_options(nsl-player-owner-runtime PRIVATE -Wl,--wrap=IHS_SessionThreadedJoin
+        -Wl,--wrap=IHS_SessionDestroy -Wl,--wrap=sl_media_end_stream_player
+        -Wl,--wrap=SDL_OpenAudioDevice -Wl,--wrap=SDL_CloseAudioDevice -Wl,--wrap=SDL_PauseAudioDevice
+        -Wl,--wrap=sl_audio_jitter_init -Wl,--wrap=IHS_BaseSend -Wl,--wrap=IHS_SessionPacketTimestamp)
+    add_test(NAME player_owner_runtime COMMAND nsl-player-owner-runtime 1)
+    add_test(NAME player_owner_runtime_unfocused COMMAND nsl-player-owner-runtime 0)
+    set_tests_properties(player_owner_runtime player_owner_runtime_unfocused PROPERTIES TIMEOUT 15)
+    add_executable(nsl-player-owner-oracle tests/player_owner_oracle.c platforms/common/player_owner.c)
+    target_include_directories(nsl-player-owner-oracle PRIVATE platforms/common)
+    target_compile_options(nsl-player-owner-oracle PRIVATE -UNDEBUG -Wall -Wextra)
+    add_test(NAME player_owner_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-player-owner.py"
+        --policy $<TARGET_FILE:nsl-player-owner-oracle> --player $<TARGET_FILE:nsl-audio-player-oracle>)
+    set_tests_properties(player_owner_official_vectors PROPERTIES TIMEOUT 90)
     add_executable(nsl-audio-player-oracle tests/audio_player_oracle.c)
     target_include_directories(nsl-audio-player-oracle PRIVATE platforms/common
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/tests/common)
