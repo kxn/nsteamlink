@@ -79,6 +79,9 @@ ACK/NACK/重试/失败、待确认数量与最老项年龄。退出前及 IHS jo
 常见 result：6=DNS、7=连接、28=超时、35=TLS、60=证书校验。`cloud_addr` 记录连接实际
 本地/远端 IP；`cloud_update stall_ms` 记录 owner 内一次云端更新超过 250 ms（最多每秒一条），
 用于核对是否阻塞了同线程的其他工作，不能仅凭使用 multi 就断言所有 DNS 路径均不阻塞。
+`cloud_try` 从 curl 的连接前事件记录每个尝试的数字 IP/端口，即使 TCP 超时、
+`cloud_addr` 尚无值也能留证。每个请求最多 16 条；该地址不是 DNS 响应全集，也不代表连接成功。
+只接受 `Trying` 文本中经数字地址校验的 IP/端口；其他文本、头部及数据全部忽略。
 `cloud_watch` 记录保存主机中有多少具备配对/账户/设备信息；`cloud_subscription queued`
 仅代表订阅进入发送队列，`cloud_host event=online` 才代表收到并接纳主机状态。
 

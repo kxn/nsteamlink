@@ -2617,3 +2617,17 @@ IPv4 对端统计 native UDP、按 channel 统计原始媒体报文头/校验后
 快照由既有 owner 每秒输出。原始计数不是有效包，差值不是无线丢包率，恢复入队不是发送或 ACK。
 私有 fixture 保留其独立观察器；不将它与产品观察器重复包装。release 不编译这些观察器，
 对象/静态库检查排除新增诊断字符串及符号。
+
+### D-073 连接尚未建立时的地址证据
+
+热点冷启动日志 `session-00000000001792247845-083927948-00000.log` 的五次目录请求
+均为 curl=28，DNS 完成时间 0–5ms、TCP/TLS 完成时间为0，且没有 cloud_addr。
+这是已回收设备日志的直接证据；用户确认每次切 Wi-Fi 都杀掉重开，热点 DNS 自动、手机无
+代理/VPN。这些证据收窄到目录连接阶段，但不证明系统 DNS 缓存或某个目的地址有误。
+
+`CURLINFO_PRIMARY_IP` 没有覆盖这个失败路径。依据固定 curl 7.69.1 的
+[connect.c](https://github.com/curl/curl/blob/curl-7_69_1/lib/connect.c#L1082)，
+在 connect 前会通过 infof 产生数字目的地址。诊断构建使用
+[DEBUGFUNCTION](https://curl.se/libcurl/c/CURLOPT_DEBUGFUNCTION.html) 只提取该行中经
+inet_pton 校验的 IP 和数字端口，每个 easy 请求最多16条；不转发原始 trace，忽略其他
+TEXT、headers、payload 和 TLS 数据。连接方法、DNS、超时与重试策略保持不变。

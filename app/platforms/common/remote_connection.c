@@ -9,6 +9,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#if NSL_DIAGNOSTICS
+#include <arpa/inet.h>
+#endif
 
 #define CM_LIMIT   32
 #define FIFO_LIMIT 32
@@ -38,6 +41,9 @@ struct sl_remote_connection {
     uint64_t next_ping, pong_deadline;
     struct outgoing fifo[FIFO_LIMIT];
     size_t head, count;
+#if NSL_DIAGNOSTICS
+    unsigned attempts_logged;
+#endif
 };
 static const char directory_url[] = "https://api.steampowered.com/ISteamDirectory/"
                                     "GetCMListForConnect/v1/?cellid=0&cmtype=websockets";
@@ -45,6 +51,58 @@ static const char directory_url[] = "https://api.steampowered.com/ISteamDirector
 static const char *stage_name(int state) {
     static const char *names[] = {"idle", "directory", "tls", "upgrade", "websocket"};
     return state >= NET_IDLE && state <= NET_WEBSOCKET ? names[state] : "invalid";
+}
+static int network_trace(CURL *easy, curl_infotype type, char *data, size_t size, void *context) {
+    (void)easy;
+    sl_remote_connection *c = context;
+    /* curl 7.69.1 connect.c emits this before connect(). Unlike PRIMARY_IP,
+     * it remains observable when TCP never connects. Never forward raw trace:
+     * even TEXT can contain credentials; headers and payload are ignored. */
+    static const char prefix[] = "  Trying ";
+    if (type != CURLINFO_TEXT || !c->callbacks.diagnostic || c->attempts_logged >= 16 ||
+        size <= sizeof(prefix) - 1 || memcmp(data, prefix, sizeof(prefix) - 1))
+        return 0;
+    data += sizeof(prefix) - 1;
+    size -= sizeof(prefix) - 1;
+    char address[80];
+    size_t n = 0;
+    while (n < size && n < sizeof(address) - 1) {
+        if (n + 3 <= size && !memcmp(data + n, "...", 3))
+            break;
+        ++n;
+    }
+    if (n + 3 > size || n >= sizeof(address) - 1 || memcmp(data + n, "...", 3))
+        return 0;
+    memcpy(address, data, n);
+    address[n] = 0;
+    char *port = strrchr(address, ':');
+    if (!port || !port[1])
+        return 0;
+    *port++ = 0;
+    unsigned number = 0;
+    for (const char *p = port; *p; ++p) {
+        if (*p < '0' || *p > '9' || number > 6553)
+            return 0;
+        number = number * 10 + (unsigned)(*p - '0');
+    }
+    if (!number || number > 65535)
+        return 0;
+    char *ip = address;
+    size_t length = strlen(ip);
+    if (length > 2 && ip[0] == '[' && ip[length - 1] == ']') {
+        ip[length - 1] = 0;
+        ++ip;
+    }
+    unsigned char numeric[16];
+    int family = strchr(ip, ':') ? AF_INET6 : AF_INET;
+    if (inet_pton(family, ip, numeric) != 1)
+        return 0;
+    char line[160];
+    snprintf(line, sizeof(line), "cloud_try stage=%s ip=%s port=%u", stage_name(c->state), ip,
+             number);
+    ++c->attempts_logged;
+    c->callbacks.diagnostic(line, c->ctx);
+    return 0;
 }
 static void network_event(sl_remote_connection *c, const char *event, int result) {
     if (!c->callbacks.diagnostic)
@@ -254,6 +312,12 @@ static bool setup_easy(sl_remote_connection *c, const char *url, bool tls_only) 
     SET(CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
     SET(CURLOPT_FOLLOWLOCATION, 0L);
     SET(CURLOPT_USERAGENT, "NSteamLink/0.3");
+#if NSL_DIAGNOSTICS
+    c->attempts_logged = 0;
+    SET(CURLOPT_DEBUGFUNCTION, network_trace);
+    SET(CURLOPT_DEBUGDATA, c);
+    SET(CURLOPT_VERBOSE, 1L);
+#endif
     if (tls_only)
         SET(CURLOPT_CONNECT_ONLY, 1L);
     else {

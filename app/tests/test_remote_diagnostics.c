@@ -1,6 +1,7 @@
 #include "remote_connection.h"
 #include <assert.h>
 #include <curl/curl.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -10,6 +11,35 @@ static CURLMsg done;
 static bool pending;
 static unsigned performs;
 static char messages[4096];
+static curl_debug_callback trace;
+static void *trace_context;
+static long verbose;
+CURLcode __real_curl_easy_setopt(CURL *, CURLoption, ...);
+CURLcode __wrap_curl_easy_setopt(CURL *handle, CURLoption option, ...) {
+    va_list args;
+    va_start(args, option);
+    CURLcode result;
+    if (option == CURLOPT_DEBUGFUNCTION) {
+        trace = va_arg(args, curl_debug_callback);
+        result = __real_curl_easy_setopt(handle, option, trace);
+    } else if (option == CURLOPT_WRITEFUNCTION) {
+        curl_write_callback write = va_arg(args, curl_write_callback);
+        result = __real_curl_easy_setopt(handle, option, write);
+    } else if (option >= CURLOPTTYPE_OBJECTPOINT && option < CURLOPTTYPE_FUNCTIONPOINT) {
+        void *value = va_arg(args, void *);
+        if (option == CURLOPT_DEBUGDATA)
+            trace_context = value;
+        result = __real_curl_easy_setopt(handle, option, value);
+    } else {
+        assert(option < CURLOPTTYPE_OBJECTPOINT);
+        long value = va_arg(args, long);
+        if (option == CURLOPT_VERBOSE)
+            verbose = value;
+        result = __real_curl_easy_setopt(handle, option, value);
+    }
+    va_end(args);
+    return result;
+}
 CURL *__real_curl_easy_init(void);
 CURL *__wrap_curl_easy_init(void) {
     return easy = __real_curl_easy_init();
@@ -46,11 +76,15 @@ int main(void) {
     sl_remote_callbacks callbacks = {.diagnostic = diagnostic};
     for (unsigned i = 0; i < sizeof(errors) / sizeof(errors[0]); ++i) {
         messages[0] = 0;
+        trace = NULL;
+        trace_context = NULL;
+        verbose = 0;
         failure = errors[i];
         performs = 0;
         sl_remote_connection *connection = sl_remote_connection_create(&config, &callbacks, NULL);
         assert(connection);
         sl_remote_connection_update(connection, 1000);
+        assert(trace && trace_context && verbose == 1);
         char expected[96], description[256];
         snprintf(expected, sizeof(expected), "event=transfer_done stage=directory curl=%d http=0",
                  (int)failure);
@@ -61,7 +95,36 @@ int main(void) {
         assert(strstr(description, "state=idle ready=0") && strstr(description, "retry_ms="));
         sl_remote_connection_update(connection, 1001);
         assert(performs == 1); /* Diagnostics must preserve initialization backoff. */
+        /* Callback data is length-delimited, never assumed NUL-terminated.
+         * Numeric attempts survive failed TCP; every other trace stays private. */
+        messages[0] = 0;
+        char ipv4[] = "  Trying 11.171.50.44:443...\n";
+        char ipv6[] = "  Trying 2d00:fdef::ff42:746:2037:8618:443...\n";
+        char bracketed[] = "  Trying [2001:db8::1]:443...\n";
+        assert(trace(easy, CURLINFO_TEXT, ipv4, sizeof(ipv4) - 1, trace_context) == 0);
+        assert(trace(easy, CURLINFO_TEXT, ipv6, sizeof(ipv6) - 1, trace_context) == 0);
+        assert(trace(easy, CURLINFO_TEXT, bracketed, sizeof(bracketed) - 1, trace_context) == 0);
+        assert(strstr(messages, "ip=11.171.50.44 port=443"));
+        assert(strstr(messages, "ip=2d00:fdef::ff42:746:2037:8618 port=443"));
+        assert(strstr(messages, "ip=2001:db8::1 port=443"));
+        size_t accepted = strlen(messages);
+        for (int type = CURLINFO_HEADER_IN; type < CURLINFO_END; ++type)
+            assert(trace(easy, (curl_infotype)type, ipv4, sizeof(ipv4) - 1, trace_context) == 0);
+        const char *private[] = {"Authorization: secret", "  Trying secret:443...\n",
+                                 "  Trying 127.0.0.1:65536...\n",
+                                 "  Trying 127.0.0.1:443 secret...\n"};
+        for (unsigned k = 0; k < sizeof(private) / sizeof(private[0]); ++k)
+            trace(easy, CURLINFO_TEXT, (char *)private[k], strlen(private[k]), trace_context);
+        for (size_t length = 0; length < sizeof(ipv4) - 3; ++length)
+            trace(easy, CURLINFO_TEXT, ipv4, length, trace_context);
+        assert(strlen(messages) == accepted);
+        for (int k = 0; k < 40; ++k)
+            trace(easy, CURLINFO_TEXT, ipv4, sizeof(ipv4) - 1, trace_context);
+        unsigned attempts = 0;
+        for (const char *p = messages; (p = strstr(p, "cloud_try ")); ++p)
+            ++attempts;
+        assert(attempts == 16); /* Bound output per request, even for unexpected curl traces. */
         sl_remote_connection_destroy(connection);
     }
-    puts("DNS, TCP, TLS, certificate and timeout errors remain distinguishable; backoff preserved");
+    puts("Connection attempts survive TCP failures; trace privacy, bounds and backoff preserved");
 }
