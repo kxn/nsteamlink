@@ -4656,3 +4656,42 @@ endpoint，晚发布/释放不访问已销毁统计对象。这些资源检查�
 软件upload的已有begin/end capture在实际发生时写入ticket阶段，避免到Complete才补。
 硬件zero-copy阶段、完整decoder错误/显示回调、OnThink周期、真实collector窗口与
 Steam/Switch仍有独立证据边界；不从上述给定事件对照推出所有平台事件来源均一致。
+
+## 55. OnThink中的帧统计上报时钟与消费者生存期
+
+【官方客户端证据】同SHA Android libmain的HandleStreamStarting @0x7a6f9c，
+0x7a7090取GetStreamTimestamp，0x7a7094/98将同一值写入client+0x1c678和
+client+0x1f6f0。HandleStreaming @0x7a7140在0x7a7178取当前tick，随后检查
+frame-events时间；last==0，或uint32(last−now+0x10000)符号位置位时，
+0x7a71a8调用SendFrameEvents(type1)，0x7a71ac无条件写入now。此后才检查
+KeepAlive的0xa0000阈值。因此正常非零启动不是立即上报；常规时钟范围内，
+严格超过1秒才尝试，不是大于等于。零哨兵、回绕和半域边界必须按原32位运算保留。
+原反汇编可由scripts/audit-steam-negotiation-loop.py的同SHA二进制重现，
+本地文件为build/video-recovery-re/negotiation-stream-starting.disasm与
+negotiation-handle-streaming.disasm（生成物不入库）。
+
+【结论／撤回】撤回将视频DataStart的1000ms独立timer作为官方上报调度的解释。
+此调度不以视频通道/decoder已创建为前提；空报告仍推进尝试时间，发送拒绝也不回滚。
+同轮统计调用先于KeepAlive。§52–54的报告正文/采集对照不能单独证明此调度。
+
+【本地资源适配】会话统计对象一次性持有编码scratch，由RX会话阶段作唯一正常
+report consumer，在Streaming分支先发送统计再更新KeepAlive。视频停止只关闭自身
+资源epoch，不销毁会话级scratch或异步取消另一个消费者正在使用的报告。会话销毁
+先join RX和视频线程，再释放统计及scratch。tracked资源清理仍是本地资源策略，
+安排在协议采集之后；不把资源2秒过期称为官方解码策略。真实网络采样窗口、
+整个网络处理全局锁、平台decoder/显示回调仍须各自核对。
+
+【原版执行对照】audit-steam-frame-events-loop.py执行同SHA的原OnThink、空输入队列、
+Starting/Streaming、真实RecordReceived/Complete、完整SendFrameEvents、累计统计、
+C++ protobuf和Frame Send。48例覆盖完整/累计模式、最终Connection返回0/5、正常
+1秒精确边界、空报告、两报告间退休、与KeepAlive同轮、零哨兵、回绕、半域及state4/6。
+固定输出为steam-frame-events-loop-reference.json；Native经实际会话阶段、同一
+report consumer、protobuf、StatsSend/控制producer和真实可靠frame准入，逐项比较
+188次阶段观察和148份完整body，包含跨channel发送顺序、时间戳、序号和reported水位。
+另在既有39组真实RX/协商对照中加入frame-events时间戳比较，连接接收链不由新案例替代。
+
+【对照边界】Source的网络process/update、锁、Stats::Start、player、加密、时钟、
+网络metric collector及最终Connection发送是显式adapter。channel来自真实Frame Send
+传给Connection::Send的参数，不从尚未由Connection填充的packet header猜测。
+Native受控拒绝在最终frame准入处发生，仅对照退休/重试时间，不宣称其errno含义与
+Source返回5相同。新案例不比较实际UDP调度/重传/ACK、网络指标窗口和decoder。

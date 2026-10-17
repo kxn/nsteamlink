@@ -2,8 +2,8 @@
 """Compare real native RX/stage/sender with the original client negotiation chain.
 
 The 39 OnThink cases compare phase, full copied config, control frames, encryption
-sequence, connected notification, priority-setter results and KeepAlive timestamp.
-Network/transport adapters, log/lock calls, stats internals and frame-event timing
+sequence, connected notification, priority-setter results and both periodic timestamps.
+Network/transport adapters, log/lock calls and stats internals
 are explicit exclusions, not normalized into successful comparisons. The peer
 entry's 22 state4 cases also compare before stage advancement; its direct state5/6
 cases are not replayed as admissible messages (the real dispatcher rejects them).
@@ -64,7 +64,14 @@ def main():
                 if ((want["tick"] - prior) & 0xFFFFFFFF) < 0x80000000:
                     assert got["wire_frames"] == got["frames"], (count, n, got)
                 prior = want["tick"]
-                for key in ("state", "config", "frames", "sequence", "keepalive_time"):
+                for key in (
+                    "state",
+                    "config",
+                    "frames",
+                    "sequence",
+                    "keepalive_time",
+                    "frame_events_time",
+                ):
                     assert got[key] == want[key], (count, n, key, got, want)
                 assert got["connected"] == want["events"].count("player_started"), (
                     count,
