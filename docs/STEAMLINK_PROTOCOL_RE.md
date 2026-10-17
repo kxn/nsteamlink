@@ -1910,7 +1910,7 @@ ClearAndRestartWindow(0)，与 reliable 的 `0x7f8720–0x7f8734` 相同。因�
 | 已完整 pending 的后续处理 | §25.13；DataReceived 的排空循环 | 官方仍有 pending 时约 1ms think；本项目在同 worker 中排空，不等新包；调度方式不同 |
 | 帧损坏的判断 | §25.5/25.10；video_pipeline.c | FFmpeg 明确 INVALIDDATA/损坏标记是项目映射，不是从 MediaCodec 逆向出的错误码对照表 |
 | 后端重建 | Android 输入 buffer 超时/参数变化/Surface 变化与 Reset 调用链 | 项目未等价实现这些异步重建分支；FFmpeg flush 不等于销毁/重建 MediaCodec；不能照搬 250ms 输入 timeout；常数更正见§78 |
-| 视频标志 bit 6 的内容模式变化 | OnThink 0x7b2648–0x7b26f8 / CheckContentMode 0x7b2804 | 官方存在依据该位及已记录模式请求 Reset 的分支；其完整语义未确认，项目未据此新增重建逻辑，不将它解释为缺参考帧标记 |
+| 视频标志 bit 6 的内容模式变化 | OnThink 0x7b2648–0x7b26f8 / CheckContentMode 0x7b2804 | 原OnThink用末片bit6与已见模式判断转换，转换请求异步Reset并门控FinalDecode，执行对照与Native契约见§83；主机侧含义未确认，不解释为缺参考帧标记 |
 | 关键帧清理／显示引用 | FlushPendingData / FlushVideoStream；video_pipeline.c | 官方在关键帧片段入口清后端；项目完整关键帧提交前 flush，并保留外部显示/GPU 引用；时机与所有权不同，硬件行为待真机 |
 | 窗口容量与坏分片 | §25.10；window.c | 官方动态窗口；项目视频固定 2048 槽、积压 256 片段/2MiB，溢出重新锚定，并增加 continuation 类型/ordinal 检查；这些是明确的项目策略 |
 | 项目身份／所有权及坏数据防护 | frame ticket、帧 ID/ordinal、解密返回值检查 | 属于项目防护策略，不声称原版拥有相同检查及错误分类；未以此推导官方会接受坏密文 |
@@ -6618,4 +6618,81 @@ python3 scripts/audit-steam-keyframe-flush.py \
   /data/dl/nsteamlink/build/video-recovery-re/libmain-arm64.so \
   --check scripts/fixtures/steam-keyframe-flush-reference.json
 ctest --test-dir build/desktop -R 'keyframe_flush_official_vectors|video_keyframe_runtime' --output-on-failure
+```
+
+## 83. Video bit6模式转换与pending-reset提交门
+
+【官方客户端证据】固定SHA同§24.1。原OnThink先AppendBuffer；只有遇到
+FrameFinish才在0x7b2618–0x7b2624提取该**末片段**的bit6。0x7b2648–0x7b26c0
+比较video+393/+394的两种已见模式，首次模式仅设置对应字段，同模式不请求重建；
+相反模式出现时更新为新模式并实际调用ResetVideoDecoder(false)。随后0x7b26c8/
+0x7b26dc/0x7b26f8检查request+96；已有请求即跳过FinalDecode，不提交SDK，也不
+进入正常的buffer/packet引用清理。新的顺序连续数据仍经DecodeFrame/OnThink追加，
+可保留多帧编码数据；关键标记仍执行§82 purge/flush。下一真实Client::OnThink
+开头的原Reset流程才清输入FIFO、player、pending/backend、重启并发DataLost。
++393/+394跨同对象Reset保留，因此新backend同模式的关键帧可正常提交；新decoder
+构造从两字段均0开始。bit6的主机侧含义/producer不由这些客户端消费者指令证明，
+不得把它命名为缺参考帧、丢包、HDR或桌面模式开关。
+
+【Native差异证据】应用7c3b220/子库af91801无bit6消费，也未在完整提交前检查
+pending reset。首帧已建立bit6=0后，下一帧首半片flags=16、末半片flags=72：
+官方request=1，flow只有首片flush，末片后2204编码字节保留、无decode；修改前
+Native request=0，flow为flush→decode。完整原指令日志`/tmp/nsl-mode83-probe.json`
+与实际生产Native observer`/tmp/nsl-mode83-native-baseline.json`支持此差异。
+§24旧表“未据此新增重建逻辑”仅描述旧实现，不再据此推导可以忽略这一触发条件；
+§80的异步actor生命周期不证明其所有请求producer与提交门已经对齐。
+
+【对齐约束】在完整组帧后按末片bit6更新模式/请求，再检查pending reset；请求
+存在时保留编码数据及本地ticket所有权，继续接收连续片段，等待actor或下一关键
+标记清理。任何来源的pending reset均适用该提交门，不能只在bit6新请求当帧停止
+提交。不得为重建等待添加自行推断的超时或自动FEC阈值。Native固定ticket容量、
+内存/OOM与身份保护为本地资源边界，不能冒称官方平台存储上限。
+
+
+【正式执行与覆盖边界】`audit-steam-video-content-mode.py`运行148例1332状态，
+覆盖初始未见/两种已见模式、有/无backend、预先请求、两线程flag、首/末bit6
+四组合、有/无关键标记、连续后帧、实际Main OnThink重建、非关键严格等待、
+往返模式切换、重建初始化失败，以及actor处理前关键标记purge/重复同frame ID。
+有模式历史的旧frame 0由同一原DecodeFrame→OnThink→Android SDK入队链创建；
+其player frame与输入packet引用保留/释放都有原观察。成功初始化终点明确安装
+codec/window/format存储，让后续真实BSubmitFrame可以执行；不将true返回值冒充
+实物decoder。GetBufferCount/GetBuffer执行原函数观察保留的完整字节，不推进Read。
+SDK、JNI、NAL元数据、平台primitive、网络/control终点与OS排程均声明边界。
+
+另24例84状态执行导出的CheckContentMode(bool)与实际Main OnThink，记录原两字段
+和请求序列；全.text直接B/BL、PLT、动态重定位在该固定库未发现此helper引用，
+不能据此认定所有间接/跨库调用均不可达。它们为Source-only helper案例，不据此
+给Native新增产品API；实际对齐的入口是原OnThink中已证明的wire末片路径。
+Source内建四项反事实：省略模式重建调用、忽略末片bit6、忽略全部pending gate、
+请求时提前清编码数据；均改变原结果或触发断言，补丁后失效已翻译指令缓存。
+
+【Native所有权投射】实际video TU逐状态比较strict/soft、request、backend、两模式
+字段的等价投射、完整保留编码字节、flush/decode/player/retire/start/info/DataLost
+顺序及player帧ID。Native将已拼接帧的ticket引用移交有界deferred表；正常提交或
+pending gate后的下帧可各自组装，编码bytes在后者累积。key purge/reset清表与bytes，
+同frame ID关键标记保留当前incoming ticket，不能提前将它完成后再复用。observer
+另通过真实tracker确认deferred仍未完成，容量案例让256次同ticket追加成功，下一次
+触发本地保护并完整销毁。此容量不作为官方限制。省略mode请求、仅门控新请求、
+丢弃保留bytes、提前完成ticket、Stop遗忘模式或OR所有片段bit6的隔离变体均检出。
+
+【更正】撤回可将“reset请求未立即停准入”扩展成仍允许后续完整帧提交SDK的解释。
+旧§80线程测试在pending时用第二次submit阻塞以验证join，未证明这个提交门。
+现实际连续delta被消费而不submit，随后关键片段的Decoder flush仍可运行；测试
+阻塞该真实worker阶段，核验actor先join再purge/retire，连接window/FEC仍按原所有权
+保留。以上不改变§79/80异步请求与下轮actor时序的证据。
+
+【实际runtime资源验证】既有首关键片段测试追加bit6往返转换，经生产control
+parser/decoder线程/callback表和FFmpeg：第一次转换首片flush=7/send=4，末片及后续
+delta仍7/4；actor后8/4、epoch2，再来非关键帧不送SDK；同模式关键帧9/5，反向
+转换10/5，actor后11/5、epoch3，同模式关键帧12/6，Stop后flush=13。每次epoch只
+open一次codec，DataLost只在actor处理后增加，send_packet总接收2204-byte单AU。
+旧AVFrame可见像素MD5跨两次重建/最终session销毁保持一致，map lease阻止提前回收。
+SDL dummy/软件FFmpeg不证明NVTEGRA、GPU fence、真实Steam/Switch/loader或所有
+SDK错误映射；其他reset生产者和bit6主机侧语义仍需各自证据。
+
+```sh
+python3 scripts/audit-steam-video-content-mode.py \
+  /data/dl/nsteamlink/build/video-recovery-re/libmain-arm64.so \
+  --check scripts/fixtures/steam-video-content-mode-reference.json
+ctest --test-dir build/desktop -R 'video_content_mode|video_keyframe_runtime|video_reset_worker' --output-on-failure
 ```

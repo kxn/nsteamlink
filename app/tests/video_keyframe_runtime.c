@@ -1,6 +1,7 @@
 /* Production runtime callback table + control parser + real IHS worker/FFmpeg.
  * Split/replaced/repeated key fragments must flush immediately and exactly once
  * per wire mark, preserve the player/epoch and keep old pixels/map leases valid.
+ * Bit6 transitions use the real actor; pending requests suppress SDK submission.
  * SDL dummy/software output is used; no physical GPU/Steam/loader claim. */
 #include "../platforms/common/runtime.c"
 #include "ihs_buffer.h"
@@ -15,7 +16,7 @@
 #include <libavutil/md5.h>
 #include <unistd.h>
 static sl_video_pipeline *pipeline;
-static atomic_uint processed, flushes, sends;
+static atomic_uint processed, flushes, sends, losses;
 static unsigned target, opens;
 sl_video_pipeline *__real_sl_video_create(void);
 sl_video_pipeline *__wrap_sl_video_create(void) {
@@ -57,6 +58,11 @@ bool __wrap_IHS_SessionSendControlMessage(IHS_Session *s, EStreamControlMessage 
     (void)t;
     (void)m;
     return true;
+}
+void __real_IHS_SessionChannelDataLost(IHS_SessionChannel *);
+void __wrap_IHS_SessionChannelDataLost(IHS_SessionChannel *ch) {
+    atomic_fetch_add(&losses, 1);
+    __real_IHS_SessionChannelDataLost(ch);
 }
 static void control(IHS_Session *s, EStreamControlMessage t, const ProtobufCMessage *m) {
     IHS_Buffer b = IHS_BUFFER_INIT(64, 4096);
@@ -109,10 +115,24 @@ static void counts(sl_runtime *r, unsigned fs, unsigned ss, sl_video_frame *old,
         assert(!memcmp(actual, saved, 16));
     }
 }
-static void output(void) {
+static void output(unsigned epoch) {
     sl_video_frame *f = sl_video_take(pipeline);
-    assert(f && f->key.epoch == 1);
+    assert(f && f->key.epoch == epoch);
     sl_resource_release(&f->ref);
+}
+static void modeCounts(sl_runtime *r, unsigned fs, unsigned ss, unsigned epoch,
+                       sl_video_frame *old, const uint8_t saved[16]) {
+    assert(atomic_load(&flushes) == fs && atomic_load(&sends) == ss && opens == epoch);
+    assert(r->facts.epoch == epoch && !r->facts.paused && !r->session->base.interrupted &&
+           sl_video_is_current(pipeline, (sl_video_key){90, epoch}));
+    assert(atomic_load(&losses) == epoch - 1);
+    uint8_t actual[16];
+    hash(old, actual);
+    assert(!memcmp(actual, saved, 16));
+}
+static void reset(sl_runtime *r) {
+    r->session->base.callbacks.run->update(&r->session->base,
+                                           r->session->base.callbackContexts.run);
 }
 int main(int argc, char **argv) {
     assert(argc == 2);
@@ -156,22 +176,44 @@ int main(int argc, char **argv) {
     assert(!sl_video_take(pipeline));
     feed(r.session, 2, 2, 8, packet + half, half);
     counts(&r, 2, 2, old, saved);
-    output();
+    output(1);
     feed(r.session, 3, 3, 16, packet, half);
     counts(&r, 3, 2, old, saved);
     feed(r.session, 4, 4, 16, packet, half);
     counts(&r, 4, 2, old, saved);
     feed(r.session, 4, 5, 8, packet + half, half);
     counts(&r, 4, 3, old, saved);
-    output();
+    output(1);
     feed(r.session, 5, 6, 16, packet, half);
     counts(&r, 5, 3, old, saved);
     feed(r.session, 5, 7, 24, packet, sizeof(packet));
     counts(&r, 6, 4, old, saved);
-    output();
+    output(1);
+    /* The finishing bit decides the mode. Its transition is retained, and
+     * following delta bytes must not reach FFmpeg before the actor resets. */
+    feed(r.session, 6, 8, 16, packet, half);
+    modeCounts(&r, 7, 4, 1, old, saved);
+    feed(r.session, 6, 9, 72, packet + half, half);
+    modeCounts(&r, 7, 4, 1, old, saved);
+    feed(r.session, 7, 10, 72, packet, sizeof(packet));
+    modeCounts(&r, 7, 4, 1, old, saved);
+    reset(&r);
+    modeCounts(&r, 8, 4, 2, old, saved);
+    feed(r.session, 8, 11, 72, packet, sizeof(packet));
+    modeCounts(&r, 8, 4, 2, old, saved); /* Strict wait after the reset. */
+    feed(r.session, 9, 12, 88, packet, sizeof(packet));
+    modeCounts(&r, 9, 5, 2, old, saved); /* Same mode survives the reset. */
+    output(2);
+    feed(r.session, 10, 13, 24, packet, sizeof(packet));
+    modeCounts(&r, 10, 5, 2, old, saved); /* Reverse transition also gates. */
+    reset(&r);
+    modeCounts(&r, 11, 5, 3, old, saved);
+    feed(r.session, 11, 14, 24, packet, sizeof(packet));
+    modeCounts(&r, 12, 6, 3, old, saved);
+    output(3);
     CStopVideoDataMsg stop = CSTOP_VIDEO_DATA_MSG__INIT;
     control(r.session, k_EStreamControlStopVideoData, &stop.base);
-    assert(atomic_load(&flushes) == 7);
+    assert(atomic_load(&flushes) == 13);
     IHS_SessionDestroy(r.session);
     IHS_Quit();
     assert(!sl_media_video_clean());
