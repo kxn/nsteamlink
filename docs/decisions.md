@@ -2584,3 +2584,9 @@ D-071 补充：桌面 `--sdr-abrupt` 在同一正式 UI/解码/音频/HID 路径
    续传；本地保存 SHA-256 和构建元数据。抓取既不删除远端文件，也不依赖 Netloader。
 5. 服务仅在 NSL_DIAGNOSTICS=ON 存在，默认 release 的对象检查须排除 HTTP/存储服务字符串。
    持久日志不会自行修复网络发现或媒体故障，相关原因仍须以实际失败记录核对。
+
+平台约束：libnx v4.12.0 的 `nx/source/runtime/devices/socket.c:accept` 经 `bsdAccept`
+调用 `nx/source/services/bsd.c:_bsdCmdInSockfdOutSockaddr`，后者无条件解引用 `*addrlen`。
+因此 listener 即使尚无连接，也须传入有效的 `sockaddr_storage` 和初始化后的长度；
+不能沿用 Linux 允许的 `accept(fd, NULL, NULL)`。桌面回归测试包装 accept，强制核对
+这一 SDK 前置条件，再调用真实 socket；仅在 Linux 通过 HTTP 测试不足以证明此处可移植。

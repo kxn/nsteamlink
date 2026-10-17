@@ -372,7 +372,11 @@ static void http_step(int listener, log_store *store, http_client *client) {
     uint64_t now = sl_system_now();
     if (client->fd < 0 && listener >= 0 && now >= store->accept_after) {
         store->accept_after = now + 200;
-        int fd = accept(listener, NULL, NULL);
+        /* libnx 4.12.0 bsdAccept requires a non-NULL address length, even
+         * when the nonblocking listener has no connection to accept. */
+        struct sockaddr_storage peer;
+        socklen_t peer_length = sizeof(peer);
+        int fd = accept(listener, (struct sockaddr *)&peer, &peer_length);
         if (fd >= 0) {
             int rx = 4096, tx = 16384;
             setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rx, sizeof(rx));

@@ -11,6 +11,16 @@
 
 static char root[] = "/tmp/nsl-log-test-XXXXXX";
 static const char *data_root = root;
+static unsigned accept_calls;
+int __real_accept(int fd, struct sockaddr *address, socklen_t *length);
+int __wrap_accept(int fd, struct sockaddr *address, socklen_t *length) {
+    /* libnx 4.12.0 bsdAccept dereferences length even without a pending
+     * connection. Linux permits NULL here and otherwise hides this crash. */
+    assert(address && length);
+    assert(*length == sizeof(struct sockaddr_storage));
+    ++accept_calls;
+    return __real_accept(fd, address, length);
+}
 const char *sl_system_data_dir(void) {
     return data_root;
 }
@@ -190,6 +200,7 @@ int main(void) {
     assert(!strstr(reply, "DO NOT SERVE"));
     sl_log_finish();
     data_root = root;
+    assert(accept_calls > 0);
     unsigned after = files(names, 128);
     assert(after > before);
     char all[65536] = {0};
