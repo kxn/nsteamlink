@@ -120,10 +120,13 @@ def run(binary, inp):
     if inp["threads"]:
         x.queue_input(1)
         x.queue_input(2)
-    x.queue_picture(10)
-    x.queue_picture(11)
-    for off, fid in zip((272, 280, 288), (20, 21, 22)):
-        x.wq(x.player + off, x.picture(fid))
+    # Backend-absent input models initial BInit failure: it has never produced
+    # decoded pictures. Nonempty player ownership is exercised with an old codec.
+    if inp["old_backend"]:
+        x.queue_picture(10)
+        x.queue_picture(11)
+        for off, fid in zip((272, 280, 288), (20, 21, 22)):
+            x.wq(x.player + off, x.picture(fid))
     x.trace.clear()
     x.tracing = True
     before = x.cut()
