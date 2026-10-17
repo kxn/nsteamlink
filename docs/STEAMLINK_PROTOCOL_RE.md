@@ -1740,7 +1740,7 @@ fallback 与回绕比较亦是实际实现的一部分，不能只移植“0 丢
 | 后端存在，BDecodeFrame 返回 false | `FinalDecode 0x7b1134–0x7b1168` 记录失败帧结果并请求 DataLost；这一分支本身不直接 Disconnect，也不无条件 Reset |
 | 后端不存在 | `0x7b1188–0x7b118c` 请求异步 ResetVideoDecoder(false) |
 | Android 编码参数尺寸／Surface 发生需重置的变化 | `BSubmitFrame 0x906988–0x9069a4` 判断，`0x906a5c–0x906a7c` 更新参数并请求 Reset |
-| 无法取得输入 buffer index | `0x9069e0–0x9069e8` 的 MediaCodec dequeue 最多等待 200000 微秒；返回负值走 `0x906a88–0x906a9c` 请求 Reset |
+| 无法取得输入 buffer index | `0x9069e0–0x9069e8` 的 MediaCodec dequeue 最多等待 250000 微秒（常数更正见§78）；返回负值走 `0x906a88–0x906a9c` 请求 Reset |
 | 输入 index 存在，但 getInputBuffer 返回空 | `0x906a0c/0x906aa8–0x906ac0` 发致命错误通知 |
 | queueInputBuffer 返回非零 | `0x906b84–0x906ba0` 记录错误并返回失败，进入上层相应反馈路径 |
 
@@ -1909,7 +1909,7 @@ ClearAndRestartWindow(0)，与 reliable 的 `0x7f8720–0x7f8734` 相同。因�
 | 接收窗口交付、退休与反馈的调度顺序 | UpdateUnreliableState 0x7fa470–0x7fa6fc；DataUpdateAt / SessionReceiveUpdateAt | 撤回本项目仍由两个worker各自推进/反馈的当前状态；§62由同一接收批次按priority快照先推进窗口再反馈。F/U旧分步案例不能替代新增完整Socket批次对照；发送actor全局交错仍单列 |
 | 已完整 pending 的后续处理 | §25.13；DataReceived 的排空循环 | 官方仍有 pending 时约 1ms think；本项目在同 worker 中排空，不等新包；调度方式不同 |
 | 帧损坏的判断 | §25.5/25.10；video_pipeline.c | FFmpeg 明确 INVALIDDATA/损坏标记是项目映射，不是从 MediaCodec 逆向出的错误码对照表 |
-| 后端重建 | Android 输入 buffer 超时/参数变化/Surface 变化与 Reset 调用链 | 项目未等价实现这些异步重建分支；FFmpeg flush 不等于销毁/重建 MediaCodec；不能照搬 200ms 输入 timeout |
+| 后端重建 | Android 输入 buffer 超时/参数变化/Surface 变化与 Reset 调用链 | 项目未等价实现这些异步重建分支；FFmpeg flush 不等于销毁/重建 MediaCodec；不能照搬 250ms 输入 timeout；常数更正见§78 |
 | 视频标志 bit 6 的内容模式变化 | OnThink 0x7b2648–0x7b26f8 / CheckContentMode 0x7b2804 | 官方存在依据该位及已记录模式请求 Reset 的分支；其完整语义未确认，项目未据此新增重建逻辑，不将它解释为缺参考帧标记 |
 | 关键帧清理／显示引用 | FlushPendingData / FlushVideoStream；video_pipeline.c | 官方在关键帧片段入口清后端；项目完整关键帧提交前 flush，并保留外部显示/GPU 引用；时机与所有权不同，硬件行为待真机 |
 | 窗口容量与坏分片 | §25.10；window.c | 官方动态窗口；项目视频固定 2048 槽、积压 256 片段/2MiB，溢出重新锚定，并增加 continuation 类型/ordinal 检查；这些是明确的项目策略 |
@@ -6248,4 +6248,99 @@ python3 scripts/audit-steam-player-owner.py \
   /data/dl/nsteamlink/build/video-recovery-re/libmain-arm64.so \
   --check scripts/fixtures/steam-player-owner-reference.json
 ctest --test-dir build/desktop -R player_owner --output-on-failure
+```
+
+
+## 78. Android decoder失败producer、事件消费与runtime limit配置
+
+【官方客户端证据】同§24.1固定SHA Android1.3.32 core。
+`audit-steam-decoder-events.py`执行原Android decoder ctor（JNI初始化为声明终点）、
+完整`BUpdateDecoder @0x9079a0`、真实`BGetLowLatencyOptions @0x907b80`、
+完整`BUpdateParams @0x907e80`，以及`FinalDecode @0x7b1088`→真实
+`CAndroidAccel::BDecodeFrame @0x906570`→完整`BSubmitFrame @0x906660`。
+CDummyFrame构造、SetFrame及对应accessors执行；IStreamDataBuffers存储、NAL边界/
+参数解析结果、MediaCodec/Format返回值、SDK版本/manufacturer、JNI、OS锁及最终
+frame/statistics/DataLost/Disconnect为适配终点。硬件codec没有执行，不能把提交成功
+解释为已解码图像。普通H264案例的NAL扫描返回空；PPS案例仅由受控扫描终点返回
+固定Annex-B PPS的边界，原参数拼接和BUpdateParams调用/缓存真实执行，未声称
+验证了NAL parser或参考帧关系。
+
+【撤回／常数更正】撤回§25.5/25.14把输入dequeue写为200000us/200ms的记录。
+`0x9069e0/0x9069e4`及`0x907ec4/0x907ec8`均为低16位0xd090、高16位3，
+即0x3d090=250000us；BSubmitFrame和BUpdateParams的SDK终点实收250000。
+Texture输出路径首次dequeue的200000us是另一处输入，不能混用。本节不从250ms
+直接推导原玩家1–2秒停顿，也不把Android SDK等待值搬成FFmpeg timeout。
+
+【失败分支】下表区分函数内动作与外层动作；SDK错误输入受控，不证明真实设备
+会因丢包触发同样的SDK返回值。
+
+| 原始入口／条件 | 直接效果 | 已组合执行的后续 |
+|---|---|---|
+| BUpdateDecoder stop非零／Format分配NULL | 返回false，不发decoder通知 | 本节从该函数入口验证，完整BCreateDecoder失败处理仍独立 |
+| configure最终非零 | 清ms_nLastWidth/Height，NotifyReduceResolution | 原通知投递type0x8000/code2，原BHandleEvent调用ReduceVideoResolution |
+| configure成功、start非零 | NotifyFatalDecoderError并false | code3被消费后hard由0置1再Disconnect；已hard不重复 |
+| BSubmitFrame input index负值 | 原ResetVideoDecoder(false)，提交false | FinalDecode记录result7并DataLost；真实reset请求字段置1，未执行完整Reset生命周期 |
+| BSubmitFrame输入buffer NULL | 原fatal通知、提交false | 先由FinalDecode记录result7/DataLost，后在声明的事件消费边界Disconnect |
+| BSubmitFrame queueInputBuffer非零 | 提交false | result7/DataLost；没有额外reset/fatal通知 |
+| BSubmitFrame尺寸／Surface变化 | 原ResetVideoDecoder(false)并false | result7/DataLost；本节实际覆盖Surface变化，SPS尺寸解析仍是独立输入边界 |
+| BSubmitFrame输入buffer容纳不足 | 原路径以零长度queue，queue成功仍交dummy frame | 仅为异步提交成功，不能称这份输入已经显示；不据此削弱本地资源/有效性检查 |
+| BUpdateParams index负值／queue失败 | 返回false，原参数缓存不更新 | PPS组合案例从BSubmitFrame进入，最终result7/DataLost |
+| BUpdateParams输入buffer NULL | fatal通知、false | PPS组合案例先result7/DataLost，再按code3消费断开 |
+| BUpdateParams容量不足 | 归还零长度输入，false，不更新参数缓存 | PPS组合案例最终result7/DataLost，不冒充后续视频提交成功 |
+| Android accel的stopped标志 | 不进入SDK，result7/false | FinalDecode DataLost |
+| FinalDecode没有backend | 记录默认result5，ResetVideoDecoder(false) | 不在此直接DataLost；后续HandlePendingResets/Reset仍按各自边界取证 |
+
+【低延迟选项实际触发】helper读取decoder+202、SDL_GetAndroidSDKVersion及缓存的
+`ro.product.manufacturer`。BCreateDecoder的0x9075cc先置+202=1；Surface/Texture
+准备后0x907704调用JNI boolean，0x907710把结果是否非零写回+202。
+BInitJNI的0x907240/250/258把原字符串`shouldEnableLowLatencyOptions`、`()Z`
+对应的method ID存到+72，恰为上述JNI调用所用成员。此绑定为原指令/字符串证据；
+完整Java方法体和所有BCreateDecoder/展示资源路径没有在本节执行。
+
+正式案例将+202作为受控入口输入，执行真实helper及manufacturer缓存初始化路径，
+不再注入helper的布尔结果。覆盖9个SDK值23/24/25/26/27/28/29/30/35与5种
+manufacturer输入；持续configure失败的案例实际有1/2/3/5次尝试。+202=0时
+helper仍让attempt0后重试一次，不能简化成“关闭低延迟就绝不重试”。各attempt
+实际写入的priority、low-latency、vendor选项及顺序保留在fixture；这些是Android
+设备参数，不是网络重请求次数或FEC阈值。NDK导入的KEY_MIME/WIDTH/HEIGHT
+数据变量由真实ELF relocation核对，字符串值以显式SDK符号label替代；vendor
+选项字符串来自原ELF。属性值、SDK及JNI输入仍不是实机观测。
+
+【原事件消费与完整配置】真实NotifyFatal/Reduce/Reset构造事件，原BHandleEvent
+消费0x8000的code3/2/1。code1执行ResetVideoDecoder(false)，本节仅从通知函数
+显式进入，不把它称为已经找到所有产品caller的错误producer。Notify/SDL_PushEvent
+不等于事件已经被UI消费；fixture分别保存before、produced、after-consume。
+事件投递失败的受控案例不执行消费；原Notify不检查SDK投递返回值。实际SDL/UI/
+线程排程不由该动作边界证明。
+
+ReduceVideoResolution使用player保存的当前尺寸，而非configure失败后已清零的
+Android static尺寸。按§77的面积门槛更新**runtime_limit.mode**，不是覆盖用户
+quality/display/desired resolution字段。原C++ config ctor/copy、nested mode构造/
+修改、SetStreamingClientConfig、protobuf序列化全部执行。相同目标已有时不重复
+notify/save/send；改动时先notify、save，client6才发送99，phase5不发送。保留
+FEC字段的unset/显式false/true、decoder_limit、字符串与未知tag150。
+文件、通知delegate及SendControlMessage是终点；本节比较的是完整config与99
+protobuf正文，不将其称为加密/可靠窗口/Socket wire验收。
+
+【可执行范围】247例、741份before/produced/consumed快照；19处选定目标的
+全.text直接B/BL及动态重定位、13处常数/Java绑定指令字另存。覆盖SDK失败和成功、
+真实helper尝试、PPS嵌套失败、Surface变化、无backend/stopped、hard重复抑制、
+未投递事件、phase5与6、7种当前面积/3种旧runtime limit/两种hard/三种FEC presence。
+所有案例无Source断言；固定输入完整只读复播。静态扫描不覆盖任意间接调用、
+内联/别名写入或其他库/版本，未见直接caller不作为全局不可达证明。
+
+【与Native的边界】本节是官方客户端执行证据扩展，不宣称已经实现上述所有分支。
+Native使用FFmpeg/NVTEGRA，仍需分别证明其错误来源、可映射条件、后端重建和
+lease/GPU资源顺序；不能把AVERROR统一映射成Android NULL buffer或configure失败。
+当前ReportLost与本地身份/资源保护的SubmitError分立；后者直接断开是本地保护，
+不是本节证明的“任意backend false都断开”。Android fatal路径仍先有上层DataLost、
+后有事件消费，不能把立即disconnect称为同一调度策略。原完整Video factory、
+HandlePendingResets/IStreamDecoder Reset、物理输出、平台资源界限和完整UI/owner
+继续按独立证据核对，不以这些SDK受控案例替代。没有新加按丢包自动FEC或自动降
+分辨率，也没有认定用户停顿、闪烁的根因。
+
+```sh
+python3 scripts/audit-steam-decoder-events.py \
+  /data/dl/nsteamlink/build/video-recovery-re/libmain-arm64.so \
+  --check scripts/fixtures/steam-decoder-events-reference.json
 ```
