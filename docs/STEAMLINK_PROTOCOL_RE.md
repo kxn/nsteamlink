@@ -3785,8 +3785,9 @@ ResetConnection调用Close，Close再次调用Disconnect后清connection的socke
 位并入F_SETFL；`TransportUDP::Send @0x802754`只尝试一次sendto，完整长度才算成功。
 Android errno EAGAIN/EMSGSIZE/EBADF/其他分别返回1/2/3/4，EINTR也没有内部循环。
 因此“只发一个goodbye”还要求发送本身非阻塞，不能在应用退出路径等待socket写缓冲。
-本地POSIX backend的接收保持有界阻塞，发送使用每次MSG_DONTWAIT实现同样的出站
-非阻塞语义；这不是整个UDP BInit/BWait/IPv6路径与原版等价的结论。
+本地POSIX发送使用每次MSG_DONTWAIT实现出站非阻塞；§60将串流接收改为独立
+readiness等待与非阻塞drain，discovery保留其接收适配。IPv6/全部BInit错误分支仍不
+由这些结论验收。
 
 【证据】`GetNextConnectionID @0x7fab70`全进程共享计数，首次取非零的rand()%255
 （1～254），随后按1…255回绕跳过0；构造和退休都会分配。项目使用自有entropy
@@ -4921,8 +4922,9 @@ complete-frame/video消费者，再采实际网络快照/完整报告。worker�
 polling，Source的锁/引用计数/析构、最终feedback I/O、CNetworkStats评分、decoder、
 报告加密/最终Frame准入为adapter。非data tag的固定FEC向量只到记录delegate，
 不以此核对未知消息入队。Source接收tick参数、Native时钟均受控；Socket::Update
-在transport读取前取tick而Native现接收callback在Parse后取tick，真实I/O捕获时刻与
-全局network锁/收发同循环仍是独立差异，不能把本对照扩大成墙钟时序已闭合。
+在transport读取前取tick；§60接通Native实际readiness/drain前取tick与可靠更新批次。
+全局network锁、普通媒体/发送worker与完整收发同循环仍有独立差异，不能把本对照
+扩大成全局墙钟时序已闭合。
 
 覆盖CRC开关、普通3/4和可靠5/6、单包/分片/反序、同视频frame多个payload、offset、
 receive早于send的统计局部修正、零哨兵、无符号回绕、frameId65535→0、3秒窗口
@@ -4935,3 +4937,50 @@ network项，也不以直接setter替代采样。0…7B视频payload各用独立
 join后读取原版同输入的12个样本，totals=[120,240,11760,324]、bitrate/link float
 比特=[1180512027,1236061389]。编码帧sink代替硬件decoder，所有worker停/join后
 销毁session采样队列；这是本地线程/所有权证据，不是Steam认证或Switch显示证明。
+
+## 60. Socket读取批次与接收/更新tick
+
+【官方客户端证据】同§24.1 SHA。GetWaitMS @0x7feb7c按Socket blocked字节返回
+0或2ms；Wait @0x7feb90把transport readiness bit0保存到socket+56。Update
+@0x7fecd4先GetStreamTimestamp；readable时反复BReadPacket→HandlePacket(捕获tick)
+→重新GetStreamTimestamp，直到Read非零；随后才逐连接调用真实Update。
+即使最后一次空Read耗时增加，连接Update仍使用该Read之前的tick；无readiness
+也会更新连接。本地旧“每个包之前Update一次、Parse后取receive tick”不等价。
+
+Connection::Update @0x7fc108把该tick写+48；同一tick传给通道可靠/不可靠Update。
+可靠Update的反馈资格、lost Pop样本以此tick计算，但ACK echo在0x7f9ed0重新取
+当前时刻，并非统一用旧Update tick。HandlePacket的0x7f93a0把接收tick传给
+HandleAckPacket→ProcessTimestamp，不能在Native解析之后再新取一次用于RTT。
+
+【适配边界】Source真实Socket/Connection/channel/采样/反馈Socket TX可执行，
+transport wait/read/write、client-update/frame delegate、refcount与构造初始时钟受控。
+Native以可中断的有界readiness等待加非阻塞drain实现同一批次契约；检查退出后
+由owner join再释放socket/会话。Discovery独立接收不据此改动认证/PIN语义。
+Source sender和普通媒体decoder worker、全局network锁及主线程OnThink与Socket
+线程之间的执行交错仍须单独验证，不把接收批次相同称为全局时序已完全闭合。
+
+
+【执行对照】audit-steam-receive-cycle.py使用真实原Socket::GetWaitMS/Wait/Update、
+Connection::Update、channel构造/扩容/可靠更新、ProcessTimestamp、采样队列与反馈
+Socket发送/CRC，固定28例34周期状态/18份完整feedback wire。Native从生产
+SessionReceiveCycle进入实际Parse/clock/window/可靠UpdateAt/发送准备；单包、同批
+2/17/130包、乱序可靠分片、读/处理/最终空读分别耗时、readable=false、blocked的
+0/2ms、NACK65tick边界、多个批次及ACK入站RTT均逐项相同。构造初始lastReceive/
+echo受控且一致，空outgoing队列的原sender仍执行；不能以空队列证明生产TX actor
+和普通媒体worker已与Source同步循环。原line1139诊断单列保存，不隐藏为零assert。
+
+Native实际BaseWorker另用CRC开/关接同批两包；验证第二包和空Read时尚未交付，
+批末统一交付/反馈。每包read7tick、parse11tick，批次tick为start+36；空Read另耗
+100tick，ACK wire timestamp为start+136、echo仍按当前时刻重取，Pop lost样本用
+start+36。实际POSIX loopback核对readiness、非阻塞读完两包直到empty，以及关闭；
+停止/join发生在依赖释放前，不借此声明Switch loader或物理显示已验证。
+
+旧worker脚本曾把“每包一次Update”隐含在read调用之间，现显式给出空Read边界；
+精确反馈/Connect计时脚本将受控clock推进放在Wait/read之前。没有为了保留旧
+worker调度的预期而改变官方批次规则。SDL fallback补同一readiness/非阻塞接口，
+当前验证平台是POSIX desktop与Switch交叉构建，不冒称Windows/SDL_net已实测。
+
+【保留的差异】普通媒体窗口/feedback与发送仍有独立worker；此处没有把decoder
+移到网络线程，也未复制Source未知fatal read行为，Native负返回仍走本地stop/join
+关闭保护。停止检查可在持续drain中生效，是loader ABI所需的本地生存期保护。
+两条PIN语义和Connect/Connected正文协议未因传输readiness改动而合并或重写。
