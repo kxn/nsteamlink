@@ -6,9 +6,11 @@
 #include "media.h"
 #include "platform/runtime.h"
 #include "platform/system.h"
+#include "remote_connection.h"
 #include "sns_backend.h"
 #include <SDL.h>
 #include <arpa/inet.h>
+#include <curl/curl.h>
 #include <errno.h>
 #include <stdatomic.h>
 #include <string.h>
@@ -18,6 +20,47 @@ int sl_live_printf(const char *, ...);
 static char private_directory[192];
 static uint32_t private_host;
 static uint64_t began, sampled, phase_at, submitted_before, acked_before;
+static bool cloud_mode, cloud_ui_offline;
+static atomic_bool cloud_armed, cloud_ready;
+static atomic_uint cloud_connections, cloud_disconnects, cloud_drops;
+static sl_remote_connection *cloud_connection;
+static _Thread_local bool cloud_receive_context;
+static uint64_t cloud_resume_at;
+static bool cloud_was_ready;
+void sl_runtime_fixture_cloud_reconnect(void) {
+    cloud_mode = true;
+}
+CURLcode __real_curl_easy_recv(CURL *, void *, size_t, size_t *);
+CURLcode __wrap_curl_easy_recv(CURL *easy, void *data, size_t size, size_t *received) {
+    if (cloud_mode && cloud_receive_context && atomic_exchange(&cloud_armed, false)) {
+        *received = 0;
+        cloud_resume_at = sl_system_now() + 20000;
+        atomic_fetch_add(&cloud_drops, 1);
+        sl_live_printf("CLOUD_FIXTURE_RECV_ERROR=1 hold_ms=20000\n");
+        return CURLE_RECV_ERROR;
+    }
+    return __real_curl_easy_recv(easy, data, size, received);
+}
+void __real_sl_remote_connection_update(sl_remote_connection *, uint64_t);
+void __wrap_sl_remote_connection_update(sl_remote_connection *connection, uint64_t now) {
+    if (cloud_mode && connection == cloud_connection && now < cloud_resume_at)
+        return;
+    cloud_receive_context = cloud_mode && connection == cloud_connection;
+    __real_sl_remote_connection_update(connection, now);
+    cloud_receive_context = false;
+    if (!cloud_mode)
+        return;
+    bool ready = sl_remote_ready(sl_remote_connection_protocol(connection));
+    if (!cloud_connection && ready)
+        cloud_connection = connection;
+    if (connection != cloud_connection)
+        return;
+    if (ready != cloud_was_ready) {
+        atomic_fetch_add(ready ? &cloud_connections : &cloud_disconnects, 1);
+        cloud_was_ready = ready;
+    }
+    atomic_store(&cloud_ready, ready);
+}
 static uint32_t frames_before;
 static uint64_t wire_before, wire_pressed, submitted_pressed, acked_pressed, sent_before,
     sent_pressed, giveups_before;
@@ -240,8 +283,13 @@ void __wrap_sl_ui_tick(sl_ui_model *ui, uint64_t now) {
         int i = ui->store.registry.selected;
         sl_host *h = i >= 0 && i < ui->store.registry.count ? &ui->store.registry.hosts[i] : NULL;
         if (ui->page == SL_HOME && h && h->paired && sl_host_online(h, now)) {
-            tap(SDLK_y);
-            enter(1, now);
+            if (cloud_mode) {
+                atomic_store(&cloud_armed, true);
+                enter(20, now);
+            } else {
+                tap(SDLK_y);
+                enter(1, now);
+            }
         }
         break;
     }
@@ -364,6 +412,29 @@ void __wrap_sl_ui_tick(sl_ui_model *ui, uint64_t now) {
             enter(7, now);
         }
         break;
+    case 20: {
+        int i = ui->store.registry.selected;
+        sl_host *h = i >= 0 && i < ui->store.registry.count ? &ui->store.registry.hosts[i] : NULL;
+        if (atomic_load(&cloud_drops) && !atomic_load(&cloud_ready) && !sl_host_online(h, now)) {
+            cloud_ui_offline = true;
+            sl_live_printf("CLOUD_FIXTURE_UI_OFFLINE delay_ms=%llu\n",
+                           (unsigned long long)(now - phase_at));
+            enter(21, now);
+        }
+        break;
+    }
+    case 21: {
+        int i = ui->store.registry.selected;
+        sl_host *h = i >= 0 && i < ui->store.registry.count ? &ui->store.registry.hosts[i] : NULL;
+        if (cloud_ui_offline && atomic_load(&cloud_connections) >= 2 && atomic_load(&cloud_ready) &&
+            sl_host_online(h, now)) {
+            sl_live_printf("CLOUD_FIXTURE_UI_RESTORED connections=%u disconnects=%u\n",
+                           atomic_load(&cloud_connections), atomic_load(&cloud_disconnects));
+            tap(SDLK_ESCAPE);
+            enter(7, now);
+        }
+        break;
+    }
     case 7:
         if (ui->page == SL_EXIT) {
             tap(SDLK_RETURN);
@@ -375,7 +446,11 @@ void __wrap_sl_ui_tick(sl_ui_model *ui, uint64_t now) {
 int sl_runtime_fixture_result(void) {
     unsigned flags = atomic_load(&sns_flags), tx = atomic_load(&filtered_tx),
              rx = atomic_load(&filtered_rx);
-    bool passed = !failure && phase == 8 && (flags & 3) == 3 && (!force_sdr || (flags & 4)) && tx;
+    bool path = cloud_mode
+                    ? !flags && cloud_ui_offline && atomic_load(&cloud_connections) >= 2 &&
+                          atomic_load(&cloud_disconnects) == 1 && atomic_load(&cloud_drops) == 1
+                    : (flags & 3) == 3 && (!force_sdr || (flags & 4));
+    bool passed = !failure && phase == 8 && path && tx;
     sl_live_printf(
         "RUNTIME_FIXTURE_RESULT=%d phase=%u failure=%u sns=%u filtered_tx=%u filtered_rx=%u\n",
         passed ? 0 : 1, phase, failure, flags, tx, rx);

@@ -232,7 +232,8 @@ if(NSL_PLATFORM STREQUAL "switch")
                 target_include_directories(${fixture} PRIVATE platforms/common)
                 foreach(symbol sl_system_init sl_system_shutdown sl_system_data_dir sl_system_running
                         sl_update_config_load sl_ui_tick sl_runtime_create sl_sns_create sl_sns_update IHS_SessionGetReliabilityStats IHS_HIDSDLGetLastSubmittedReport IHS_HIDDeviceStartInputReports
-                        IHS_HIDFlushSDLGameControllers IHS_HIDHandleSDLEvent sl_media_gate sendto recvfrom sendmsg recvmsg)
+                        IHS_HIDFlushSDLGameControllers IHS_HIDHandleSDLEvent sl_media_gate
+                        sl_remote_connection_update curl_easy_recv sendto recvfrom sendmsg recvmsg)
                     target_link_options(${fixture} PRIVATE "-Wl,--wrap=${symbol}")
                 endforeach()
             endif()
@@ -254,7 +255,8 @@ if(NSL_PLATFORM STREQUAL "desktop")
         target_compile_options(nsl-runtime-probe PRIVATE -Wall -Wextra -Wno-unknown-pragmas)
         foreach(symbol sl_system_data_dir sl_system_running sl_update_config_load sl_ui_tick
                 sl_runtime_create sl_sns_create sl_sns_update IHS_SessionGetReliabilityStats IHS_HIDSDLGetLastSubmittedReport IHS_HIDDeviceStartInputReports
-                        IHS_HIDFlushSDLGameControllers IHS_HIDHandleSDLEvent sl_media_gate sendto recvfrom sendmsg recvmsg SDL_Init SDL_Quit)
+                        IHS_HIDFlushSDLGameControllers IHS_HIDHandleSDLEvent sl_media_gate
+                        sl_remote_connection_update curl_easy_recv sendto recvfrom sendmsg recvmsg SDL_Init SDL_Quit)
             target_link_options(nsl-runtime-probe PRIVATE "-Wl,--wrap=${symbol}")
         endforeach()
     endif()

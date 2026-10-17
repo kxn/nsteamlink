@@ -28,7 +28,7 @@ for entry in commands:
         continue
     assert '-DNSL_DIAGNOSTICS=0' in argv, f'diagnostic macro missing: {source}'
     data = obj.read_bytes()
-    for marker in (b'render-rate-test', b'--adaptive-pacing', b'--no-adaptive-pacing', b'RUNTIME_FIXTURE_', b'vq1 ', b'vq7 ', b'vq8 ', b'vq9 '):
+    for marker in (b'render-rate-test', b'--adaptive-pacing', b'--no-adaptive-pacing', b'RUNTIME_FIXTURE_', b'CLOUD_FIXTURE_', b'vq1 ', b'vq7 ', b'vq8 ', b'vq9 '):
         assert marker not in data, f'diagnostic string {marker!r} in {obj}'
     if source.name == 'gfx.c' and source.parent.name == 'switch':
         nm = Path(argv[0]).with_name('aarch64-none-elf-nm')

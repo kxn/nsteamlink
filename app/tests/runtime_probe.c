@@ -31,6 +31,15 @@ int sl_live_printf(const char *format, ...) {
     return n;
 }
 int main(int argc, char **argv) {
+    if (argc != 3 &&
+        !(argc == 4 && (!strcmp(argv[3], "--sdr-only") || !strcmp(argv[3], "--cloud-reconnect")))) {
+        fprintf(
+            stderr,
+            "Usage: nsl-runtime-probe PRIVATE_PROFILE LAN_HOST [--sdr-only|--cloud-reconnect]\n");
+        return 2;
+    }
+    if (argc == 4 && !strcmp(argv[3], "--cloud-reconnect"))
+        sl_runtime_fixture_cloud_reconnect();
     sl_auth_store store = {0};
     if ((argc != 3 && argc != 4) || sl_auth_load(&store, argv[1]) ||
         !sl_runtime_fixture_prepare(argv[1], &store, argv[2],

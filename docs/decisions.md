@@ -2519,3 +2519,13 @@ UI、解码器、呈现、音频队列和输入门控，不能替代这些集成
    不替代用户直接观察的 LCD/loader 状态，亦不将 nxlink 退出当作返回 hbmenu。
 
 运行结果和剩余验收仅记录于 #46、#49；本文描述 fixture 契约，不维护任务状态。
+
+
+D-071 补充：桌面 runner 的 `--cloud-reconnect` 保持首页，不请求媒体。在已建立的
+CM WebSocket `curl_easy_recv` 调用点仅注入一次 CURLE_RECV_ERROR，交由正式 provider
+关闭旧 session；随后 fixture 暂停该 provider 的 update 20 秒，主线程和 runtime
+仍继续工作。要求 UI 的旧主机在线状态实际失效，再恢复更新，经真实服务新建匿名
+session/重订阅，直到同一已配对主机在 UI 恢复在线，最后从正常退出确认结束。
+20 秒是故障环境的保持时长，不是恢复策略或官方重试常数；测试不修改 host/路由。
+这覆盖连接读错误和真实重建，不把本地 TTL 到期称为收到服务端 Offline 消息，
+亦不将重建自动等同于取消 PIN 或退订验收。
