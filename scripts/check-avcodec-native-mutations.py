@@ -28,6 +28,7 @@ def main():
     pipeline = ROOT / "app/platforms/common/video_pipeline.c"
     video = ROOT / "third_party/ihslib/src/session/channels/video/ch_data_video.c"
     config = ROOT / "third_party/ihslib/src/session/client_config.c"
+    runtime = ROOT / "app/platforms/common/runtime.c"
     oracle = ROOT / "app/tests/video_timing_oracle.c"
     mutations = [
         (
@@ -100,6 +101,55 @@ def main():
             "        if (opened < 0) {\n            failure=SL_VIDEO_OPEN_UNAVAILABLE;goto fail;\n            /* Original VAAPI factory",
             "capability",
         ),
+        (
+            "omit_player_config_delegate",
+            runtime,
+            ".clientConfigChanged = client_config_changed",
+            ".clientConfigChanged = NULL",
+            "player",
+        ),
+        (
+            "ignore_player_hardware_presence",
+            runtime,
+            "if (present && hardware != r->player_hardware_decoding)",
+            "if (hardware != r->player_hardware_decoding)",
+            "player",
+        ),
+        (
+            "omit_player_config_reset",
+            runtime,
+            "IHS_SessionVideoRequestReset(session);",
+            "/* omit config reset */",
+            "player",
+        ),
+        (
+            "omit_player_cache_update",
+            runtime,
+            "r->player_hardware_decoding = hardware;",
+            "/* keep old cache */",
+            "player",
+        ),
+        (
+            "resync_player_cache_each_epoch",
+            runtime,
+            "int result = sl_media_video_start_tracked(s, epoch, c);",
+            "int result = sl_media_video_start_tracked(s, epoch, c);\n    r->player_hardware_decoding = IHS_SessionVideoHardwareDecodingEnabled(s);",
+            "player",
+        ),
+        (
+            "omit_config_reset_atomic",
+            video,
+            "atomic_store(&((IHS_SessionChannelVideo *)ch)->resetRequested, true);",
+            "/* omit actual config gate */",
+            "player",
+        ),
+        (
+            "omit_player_cache_initialization",
+            runtime,
+            "r->player_hardware_decoding = IHS_SessionVideoHardwareDecodingEnabled(session);",
+            "/* omit active player init */",
+            "player",
+        ),
     ]
     reports = []
     for name, source, before, after, kind in mutations:
@@ -112,7 +162,7 @@ def main():
         changed.write_text(body)
         target = (
             "nsl-video-timing-oracle"
-            if kind in ("oracle", "recovery")
+            if kind in ("oracle", "recovery", "player")
             else "nsl-video-pipeline-tests"
         )
         link = shlex.split(
@@ -137,13 +187,13 @@ def main():
                 )
             return obj
 
-        if kind in ("oracle", "recovery"):
+        if kind in ("oracle", "recovery", "player"):
             text = oracle.read_text().replace(
                 '#include "../platforms/common/',
                 '#include "' + str(ROOT / "app/platforms/common") + "/",
             )
-            if source == pipeline:
-                text = text.replace(str(pipeline), str(changed))
+            if source in (pipeline, runtime):
+                text = text.replace(str(source), str(changed))
             copied = directory / "oracle.c"
             copied.write_text(text)
             obj = compile_file(oracle, copied, "oracle")
@@ -167,7 +217,7 @@ def main():
                 stdout=log,
                 stderr=subprocess.STDOUT,
             )
-        if kind in ("oracle", "recovery"):
+        if kind in ("oracle", "recovery", "player"):
             command = [
                 "python3",
                 str(
@@ -175,7 +225,11 @@ def main():
                     / (
                         "scripts/check-steam-video-avcodec.py"
                         if kind == "oracle"
-                        else "scripts/check-steam-video-recovery.py"
+                        else (
+                            "scripts/check-steam-player-config.py"
+                            if kind == "player"
+                            else "scripts/check-steam-video-recovery.py"
+                        )
                     )
                 ),
                 "--receiver",
@@ -191,7 +245,7 @@ def main():
         (directory / "stdout.log").write_text(r.stdout)
         (directory / "stderr.log").write_text(r.stderr)
         assert r.returncode != 0, (name, "undetected")
-        if kind in ("oracle", "recovery"):
+        if kind in ("oracle", "recovery", "player"):
             assert (
                 "AssertionError:" in r.stderr
                 and "returncode" not in r.stderr

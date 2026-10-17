@@ -17,6 +17,8 @@ static int forcedWidth=-1, forcedHeight=-1, forcedFormat=-1;
 static bool resetRequested, presentReturned=true;
 static int formatResult=-2;
 static bool requestedHardware;
+static unsigned controlCount, controlSteps[512], controlSizes[512];
+static uint8_t controlBodies[512][1024];
 sl_video_open_result __real_sl_video_open_ex(sl_video_pipeline *,sl_video_key,const sl_video_config *);
 sl_video_open_result __wrap_sl_video_open_ex(sl_video_pipeline *p,sl_video_key key,const sl_video_config *config) {
     requestedHardware=config->hardware;
@@ -169,10 +171,21 @@ bool __wrap_IHS_BaseSend(IHS_Base *b, IHS_SocketAddress a, const IHS_Buffer *dat
 }
 bool __wrap_IHS_SessionSendControlMessage(IHS_Session *s, EStreamControlMessage t,
                                           const ProtobufCMessage *message) {
-    (void)s; (void)message; event(9,t,0,clockTick); return true;
+    (void)s;
+    if(recording) {
+        assert(controlCount<512);size_t size=protobuf_c_message_get_packed_size(message);
+        assert(size+1<=sizeof(controlBodies[0]));
+        controlSteps[controlCount]=action;controlSizes[controlCount]=(unsigned)size+1;
+        controlBodies[controlCount][0]=(uint8_t)t;
+        assert(protobuf_c_message_pack(message,controlBodies[controlCount]+1)==size);
+        ++controlCount;
+    }
+    event(9,t,0,clockTick); return true;
 }
 static void config_changed(IHS_Session *s,const uint8_t *p,size_t n,bool local,void *context) {
-    (void)s;(void)p;(void)context;event(10,n,local,clockTick);
+    event(10,n,local,clockTick);
+    if(session_cb.clientConfigChanged)
+        session_cb.clientConfigChanged(s,p,n,local,context); /* Actual production table. */
 }
 static void config_saved(IHS_Session *s,const uint8_t *p,size_t n,void *context) {
     (void)s;(void)p;(void)context;event(11,n,0,clockTick);
@@ -180,6 +193,11 @@ static void config_saved(IHS_Session *s,const uint8_t *p,size_t n,void *context)
 static const IHS_StreamSessionCallbacks config_callbacks={
     .clientConfigChanged=config_changed,.saveClientConfig=config_saved,
 };
+bool __real_IHS_SessionVideoRequestReset(IHS_Session *);
+bool __wrap_IHS_SessionVideoRequestReset(IHS_Session *s) {
+    bool applied=__real_IHS_SessionVideoRequestReset(s);
+    event(12,applied,0,clockTick);return applied;
+}
 void __real_IHS_SessionPacketsWindowReleaseFrame(IHS_SessionFrame *);
 void __wrap_IHS_SessionPacketsWindowReleaseFrame(IHS_SessionFrame *f) {
     __real_IHS_SessionPacketsWindowReleaseFrame(f);
@@ -342,12 +360,19 @@ static void observe(sl_runtime *runtime) {
             n?",":"",f->identity.frameId,f->statsComplete?"true":"false",f->outcome.result,
             f->hasDecodeBegin?"true":"false",f->hasDecodeEnd?"true":"false");
     }
+    printf("],\"control_bodies\":[");
+    for(unsigned n=0;n<controlCount;++n) {
+        printf("%s[%u,\"",n?",":"",controlSteps[n]);
+        for(unsigned k=0;k<controlSizes[n];++k)printf("%02x",controlBodies[n][k]);
+        printf("\"]");
+    }
     printf("],\"reset_feedback_applied\":%s,\"hardware_preference\":%s,\"config\":\"",
         resetRequested?"true":"false",IHS_SessionVideoHardwareDecodingEnabled(runtime->session)?"true":"false");
     uint8_t config[512];size_t configSize=IHS_SessionGetStreamingClientConfig(runtime->session,config,sizeof(config));
     assert(configSize<=sizeof(config));for(size_t n=0;n<configSize;++n)printf("%02x",config[n]);
-    printf("\",\"epoch\":%llu,\"format_result\":%d,\"requested_hardware\":%s}\n",
-        (unsigned long long)runtime->facts.epoch,formatResult,requestedHardware?"true":"false");
+    printf("\",\"epoch\":%llu,\"format_result\":%d,\"requested_hardware\":%s,\"player_hardware_cache\":%s}\n",
+        (unsigned long long)runtime->facts.epoch,formatResult,requestedHardware?"true":"false",
+        runtime->player_hardware_decoding?"true":"false");
 }
 static sl_video_frame *resourceOld;
 static void *resourceMapping;
@@ -413,7 +438,8 @@ int main(int argc,char **argv) {
     r.session->state.connectionState=IHS_SessionConnectionStateConnected;
     assert(IHS_SessionSetVideoTrackingIdentity(r.session,90));
     IHS_SessionSetVideoCallbacks(r.session,&video_cb,&r);
-    IHS_SessionSetSessionCallbacks(r.session,&config_callbacks,NULL);
+    client_config_begin(r.session,&r);
+    IHS_SessionSetSessionCallbacks(r.session,&config_callbacks,&r);
     CStartVideoDataMsg m=CSTART_VIDEO_DATA_MSG__INIT;
     m.channel=3;m.has_codec=m.has_width=m.has_height=true;
     m.codec=k_EStreamVideoCodecH264;m.width=128;m.height=72;
@@ -440,13 +466,22 @@ int main(int argc,char **argv) {
             controlMessage(r.session,k_EStreamControlStartVideoData,&m.base);
             recording=true;videoStarted=true;
         }
-        if (line[0]=='C') {
+        if (line[0]=='C' || line[0]=='U' || line[0]=='G') {
             uint8_t config[256];size_t n=0;
-            if(line[2]!='-') {
-                size_t length=strcspn(line+2,"\r\n");assert(!(length&1) && length/2<=sizeof(config));
-                for(;n<length/2;++n){unsigned value;assert(sscanf(line+2+n*2,"%2x",&value)==1);config[n]=value;}
+            unsigned local=1;char *hex=line+2;
+            if(line[0]=='U') {assert((line[2]=='0'||line[2]=='1')&&line[3]==' ');local=line[2]-'0';hex=line+4;}
+            if(hex[0]!='-') {
+                size_t length=strcspn(hex,"\r\n");assert(!(length&1) && length/2<=sizeof(config));
+                for(;n<length/2;++n){unsigned value;assert(sscanf(hex+n*2,"%2x",&value)==1);config[n]=value;}
             }
-            assert(IHS_SessionSetStreamingClientConfig(r.session,config,n,true));
+            if(line[0]=='G') {
+                IHS_Buffer b=IHS_BUFFER_INIT(64,4096);IHS_BufferAppendMem(&b,config,n);
+                IHS_SessionPacketHeader h={.type=IHS_SessionPacketTypeReliable,.channelId=1};
+                IHS_SessionChannelControlHandoff(r.session->channels[1],k_EStreamControlSetStreamingClientConfig,&b,&h);
+                IHS_SessionChannelControlDrainIncoming(r.session->channels[1]);IHS_BufferClear(&b,true);
+            } else {
+                assert(IHS_SessionSetStreamingClientConfig(r.session,config,n,local));
+            }
         } else if (line[0]=='F') {
             unsigned count;int used;assert(sscanf(line,"F %u%n",&count,&used)==1 && count<16);
             enum AVPixelFormat formats[16];char *next=line+used;

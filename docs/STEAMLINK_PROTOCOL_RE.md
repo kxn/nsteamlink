@@ -7820,3 +7820,83 @@ python3 scripts/audit-steam-client-linux-fec.py \
 依赖`unicorn`、`pyelftools`和`capstone`；fixture固定SHA及原函数FDE/指令SHA。
 正常运行只读核验，显式refresh也拒绝覆盖既有不同报告。OS锁/时钟/entropy、allocator/
 C++字符串及transport引用为声明终点；没有真实Qt事件循环、Steam认证或Switch证明。
+
+## 97. 官方Linux播放器配置回调、缓存与嵌套99
+
+【证据】继续固定§91的官方客户端SHA。`audit-steam-client-player-config.py`执行原
+CStreamPlayer构造@0x337610及base构造@0x2ee0f0；实际派生vptr为0x11001a0，
+slot+128指向@0x32a250。原客户端setter@0x321f80通过该真实虚表进入回调；peer99
+仍由实际control FIFO dispatcher进入。没有用记录delegate替代播放器策略。
+
+原构造将hardware cache（player+0x6f3）清0。启动代码@0x33e59c–0x33e5b7实际从
+client+0x264（config第7项有效值）复制该cache；审计单列执行这27B原span及其SHA，
+不把span称为完整SDL/player Init。active fullscreen/overlay等平台状态为明确输入。
+
+### 97.1 硬解presence和异步重建
+
+原delegate先处理overlay，再检查config第7项**存在位**，仅存在且值与player cache
+不同才调用原ResetVideoDecoder(false)@0x319360，随后更新cache。原request只设置
+当前decoder的原子请求，不在配置回调里Stop/join；没有decoder时request返回无动作。
+实际pending actor@0x31f9d0按§95的Stop/Flush/Start顺序重建。字段省略时，即使默认
+true与cache不同，也不因默认值更新cache/请求reset。FEC字段变化本身不触发该分支。
+
+【不同入口不能合并】§95的send EIO直接改client config，不通知player，因此**保留
+旧player cache**，actor重建也不把该cache同步成新值。原EIO→actor→显式false→actor
+实测会请求第二次reset，随后重复false不再reset。再省略第7项时保留cache=false；
+随后显式true才再次reset。仅比较新旧两份存储配置会漏掉第二次reset；每epoch将cache
+改成实际backend偏好同样不等价。cache也不是GPU是否实际成功启用的状态。
+
+Native映射应在player激活时初始化有效硬解cache，接入生产clientConfigChanged回调，
+按presence/value/cache请求现有video actor，先请求再改cache。RX/control owner只设置
+原子请求；不持Base锁执行join，不在UI/render/input路径处理decoder重建。SDK错误的
+同步反馈仍走原epoch借用API；配置回调与SDK反馈不互相代替。
+
+### 97.2 平台helper与后续发送
+
+原overlay toggle@0x329c10在delegate中参数为false：更新overlay/cache及原统计显示
+标志，不在这条分支主动发99。原fullscreen toggle@0x3298b0比较windowed实际值；
+原can-toggle@0x329810拒绝SDL driver=`kmsdrm`，其余还受原平台环境判断约束。允许
+时原函数调用SDL restore/grab/fullscreen，再修改client config的windowed存在位/值，
+嵌套调用setter(false)，可以发99；这些SDL操作是声明终点，不证明物理窗口改变。
+
+原microphone toggle@0x32a200先执行close/shutdown，再切换player cached bool，修改
+client config第15项及存在位，嵌套setter(false)，最后调用原open helper。即使本节
+明确给定microphone unavailable，open返回false，前面的嵌套通知/save/99仍发生。
+不能因为设备不可用而删除已发生的配置协议动作。本节没有mic capture/编码成功输入。
+
+原setter发送其原输入引用，save则读取delegate返回后的当前存储值；window/mic同时
+变化会产生多层真实回调，不能按“一次配置最多一份99”简化。全部明文及通知/save顺序
+由原C++ protobuf序列化和实际Frame/Connection路由记录。第25项/unknown保留按完整值
+替换语义；这些嵌套99不是FEC ACK，也不设置本机outgoing gate。
+
+### 97.3 证据范围
+
+SDK状态/内存、缺省文件、SDL窗口/OS event构造与wake、数学/字符串、配置保存、控制
+加密和最终Channel发送为终点。EIO实际经过原FinalDecode，CPU探测失败的既有bootstrap
+assert单列；测量动作/反事实不接受原assert。统计枚举的值校验执行原指令，名称lookup
+仅为诊断终点。Source旧函数/fixtures保持，不能据此声称完整Qt/SDK/loader已等价。
+
+Native硬解投影应比较实际生产回调、cache、完整配置、控制明文、reset门禁和真实epoch；
+window/overlay/microphone完整平台适配仍需各自实现与验收，不以硬解投影证明整层delegate。
+
+固定76例214状态、35个所列完整FDE；初始显式false/true/默认缺字段、三种硬解presence/
+value与API两种local_only/peer99分别覆盖。dummy/kmsdrm两种平台输入下，overlay/window/
+microphone八种组合均执行API及peer99入口；每组核对nested99数量、cache/请求与完整原
+明文。五项原指令反事实覆盖presence、reset调用、cache更新、microphone嵌套99与kmsdrm
+guard，要求原函数完整返回、无原assert且实际轨迹改变。旧51例146状态作为固定前缀保留，
+再追加初始默认值和混合peer99案例，不改已有观察来适配实现。
+
+`check-steam-player-config.py`对其中28例118状态的硬解范围执行实际Native生产callback
+表/初始化helper、完整配置API/control FIFO、reset gate及actor。比较cache/完整protobuf、
+通知→请求→save顺序、真实序列化99明文、DataLost及实际epoch；SDK EIO边界依然先用
+真实FFmpeg图片的独立framemd5核验，不把受控SDK状态冒称NVTEGRA自然错误。
+Native隔离反事实由§95的十项扩为十七项，新增漏注册、漏presence、漏请求、漏cache更新、
+每epoch错误同步cache、漏真实atomic gate和漏初始化；均先成功编译/链接，policy项由正常
+oracle返回后的官方对照拒绝，不用编译错误/崩溃充当检出。
+
+```sh
+python3 scripts/audit-steam-client-player-config.py \
+  --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
+  --output /tmp/steam-client-player-config.json
+python3 scripts/check-steam-player-config.py --receiver build/desktop/app/nsl-video-timing-oracle
+```

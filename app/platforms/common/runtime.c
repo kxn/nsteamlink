@@ -51,6 +51,7 @@ struct sl_runtime {
     IHS_HIDProvider *provider;
     IHS_ClientConfig config;
     IHS_SessionInfo session_info;
+    bool player_hardware_decoding; /* Player cache, distinct from silent EIO config changes. */
     bool video_suspended;
     bool activity_changed;
     sl_launch_watch launch;
@@ -431,6 +432,23 @@ static void client_config_saved(IHS_Session *session, const uint8_t *wire, size_
     sl_stream_settings_receive(session, wire, size, &r->settings);
     pthread_cond_signal(&r->wake);
 }
+static void client_config_begin(IHS_Session *session, sl_runtime *r) {
+    r->player_hardware_decoding = IHS_SessionVideoHardwareDecodingEnabled(session);
+}
+static void client_config_changed(IHS_Session *session, const uint8_t *wire, size_t size,
+                                  bool local_only, void *ctx) {
+    (void)wire; (void)size; (void)local_only;
+    sl_runtime *r = ctx;
+    bool present;
+    bool hardware = IHS_SessionVideoHardwareDecodingPreference(session, &present);
+    if (present && hardware != r->player_hardware_decoding) {
+        /* Official player 32a250: presence -> compare cache -> request -> cache.
+         * Registered after pre-worker config setup; live callbacks run on RX.
+         * EIO bypasses this delegate, so neither EIO nor epoch start updates it. */
+        IHS_SessionVideoRequestReset(session);
+        r->player_hardware_decoding = hardware;
+    }
+}
 static bool same_preferences(sl_stream_preferences a, sl_stream_preferences b) {
     return a.quality == b.quality && a.bitrate_kbps == b.bitrate_kbps &&
            a.unreliable_fec == b.unreliable_fec;
@@ -457,7 +475,8 @@ static void sync_stream_settings(sl_runtime *r, bool refresh) {
 static const IHS_StreamSessionCallbacks session_cb = {.configuring = configuring,
                                                       .connected = connected,
                                                       .disconnected = disconnected,
-                                                      .saveClientConfig = client_config_saved};
+                                                      .saveClientConfig = client_config_saved,
+                                                      .clientConfigChanged = client_config_changed};
 static const IHS_StreamVideoCallbacks video_cb = {
     .startTracked = video_start, .submitTracked = video_submit, .stopTracked = video_stop,
     .prepare = video_prepare, .flushTracked = video_flush};
@@ -570,6 +589,9 @@ static bool launch_session(sl_runtime *r, IHS_SessionInfo info) {
     r->facts.session_id = r->session_id;
     pthread_mutex_unlock(&r->lock);
     IHS_SessionSetLogFunction(r->session, ihs_log);
+    /* Original active player Init copies the effective field value (§97).
+     * Initialize once per player/session, not again when a decoder epoch opens. */
+    client_config_begin(r->session, r);
     IHS_SessionSetSessionCallbacks(r->session, &session_cb, r);
     IHS_SessionSetVideoCallbacks(r->session, &video_cb, r);
     IHS_SessionSetAudioCallbacks(r->session, sl_media_audio_callbacks(), r);

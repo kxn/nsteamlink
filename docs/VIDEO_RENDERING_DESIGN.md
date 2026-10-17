@@ -893,7 +893,7 @@ legacy adapter 仍进入同一 tracker，但不为迟到、歧义的 16-bit id �
 
 ### 15.2 FFmpeg 输入输出关联
 
-AVCodec任务策略以`STEAMLINK_PROTOCOL_RE.md` §91–95的官方Linux客户端为依据：
+AVCodec任务策略以`STEAMLINK_PROTOCOL_RE.md` §91–97的官方Linux客户端为依据：
 完整AU经complete-frame parser后只send一次、receive一次；send失败独立请求异步reset，
 仍尝试receive。receive EAGAIN首次记7，其他错误记5，并反馈空DataLost；无像素占位
 仍按普通jitter进入/离开任务队列。采样和事件15在receive及原错误处理之后。
@@ -910,6 +910,12 @@ H264时回退软件，SDK未提供目标硬件格式但提供0/12时采用软件
 执行download。SDK分配/身份/固定资源上限保护、自然NVTEGRA错误与成功路径、原完整SDK
 启动/ABI及完整decoder-info时序仍有独立证据范围。生命周期保持stop/join后回收，parser
 先于codec销毁。
+
+显式配置的硬解变化另按§97的真实player delegate：检查字段7存在位及播放器cache，
+先请求异步reset再更新cache；字段省略不按默认值触发。player激活时初始化一次cache，
+EIO的直接字段修改及每次epoch打开均不刷新它。因此EIO后再收到显式false仍可能按官方
+请求一次重建。RX/control回调只设置现有原子gate，不在Base锁下join；window/overlay/
+microphone的完整平台delegate接线仍单列，不能据此声称整个回调层已等价。
 
 【官方来源范围更正】以下资源/身份模型描述Native实现。撤回把“已接受但无输出继续pending”
 作为所有官方后端共有策略的判断：此前任务选择与完成投影来自Android/MediaCodec。
