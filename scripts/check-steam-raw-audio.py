@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare actual native SDL PCM output with the original Raw audio decoder.
+"""Compare actual native pre-jitter PCM with the original Raw audio decoder.
 
 Official uses normalized float; SDL's verified S16LE format uses the exact
 inverse scale 32768. Format conversion is the only normalization here.
@@ -43,7 +43,7 @@ def main():
         )
         assert json.loads(r.stdout) == want, (index, r.stdout, want)
     print(
-        f"Production Raw audio SDL output: {len(fixture['cases'])} official cases passed"
+        f"Production Raw audio jitter input: {len(fixture['cases'])} official cases passed"
     )
 
 

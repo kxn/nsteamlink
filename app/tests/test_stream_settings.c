@@ -46,7 +46,8 @@ static sl_auth_store legacy(void) {
 static void put(const char *path, const uint8_t *data, size_t size) {
     FILE *f = fopen(path, "wb");
     assert(f);
-    assert(fwrite(data, 1, size, f) == size);
+    if (size)
+        assert(fwrite(data, 1, size, f) == size);
     assert(!fclose(f));
 }
 static void check_file(const char *path, const uint8_t *data, size_t size) {
@@ -54,7 +55,7 @@ static void check_file(const char *path, const uint8_t *data, size_t size) {
     assert(f);
     uint8_t *wire = malloc(size + 1);
     assert(wire);
-    assert(fread(wire, 1, size + 1, f) == size && !memcmp(data, wire, size));
+    assert(fread(wire, 1, size + 1, f) == size && (!size || !memcmp(data, wire, size)));
     free(wire);
     assert(!fclose(f));
 }

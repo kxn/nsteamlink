@@ -88,8 +88,9 @@ target_include_directories(nsl_stream_settings PUBLIC src platforms/common
     PRIVATE ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
 target_link_libraries(nsl_stream_settings PUBLIC ihslib Threads::Threads PRIVATE ihs-protobuf)
 target_compile_options(nsl_stream_settings PRIVATE -Wall -Wextra)
+set_source_files_properties(platforms/common/audio_jitter.c PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
 add_library(nsl_platform STATIC platforms/common/application.c platforms/common/sdl_input.c platforms/common/media.c
-    platforms/common/audio_recovery.c
+    platforms/common/audio_recovery.c platforms/common/audio_jitter.c
     platforms/common/shortcut_package.c platforms/${NSL_PLATFORM}/shortcut.c
     platforms/common/ui_renderer.c platforms/common/ui_audio.c platforms/common/runtime.c platforms/${NSL_PLATFORM}/system.c
     platforms/${NSL_PLATFORM}/events.c)
@@ -172,11 +173,29 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-client-settings-io.py"
         --receiver $<TARGET_FILE:nsl-stream-settings-oracle>)
     set_tests_properties(stream_settings_official_vectors PROPERTIES TIMEOUT 60)
+    add_executable(nsl-audio-playback-oracle tests/audio_playback_oracle.c)
+    target_include_directories(nsl-audio-playback-oracle PRIVATE platforms/common ${MBEDTLS_INCLUDE_DIRS})
+    target_compile_options(nsl-audio-playback-oracle PRIVATE -UNDEBUG -Wall -Wextra)
+    target_link_libraries(nsl-audio-playback-oracle PRIVATE nsl_platform ${MBEDCRYPTO_LIBRARY})
+    target_link_options(nsl-audio-playback-oracle PRIVATE -Wl,--wrap=SDL_OpenAudioDevice
+        -Wl,--wrap=SDL_PauseAudioDevice)
+    add_test(NAME audio_playback_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-audio-jitter.py"
+        --receiver $<TARGET_FILE:nsl-audio-playback-oracle> --playback)
+    set_tests_properties(audio_playback_official_vectors PROPERTIES TIMEOUT 120)
+    add_executable(nsl-audio-jitter-oracle tests/audio_jitter_oracle.c platforms/common/audio_jitter.c)
+    target_include_directories(nsl-audio-jitter-oracle PRIVATE platforms/common ${MBEDTLS_INCLUDE_DIRS})
+    target_compile_options(nsl-audio-jitter-oracle PRIVATE -UNDEBUG -Wall -Wextra)
+    target_link_libraries(nsl-audio-jitter-oracle PRIVATE ${MBEDCRYPTO_LIBRARY} m)
+    add_test(NAME audio_jitter_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-audio-jitter.py"
+        --receiver $<TARGET_FILE:nsl-audio-jitter-oracle>)
+    set_tests_properties(audio_jitter_official_vectors PROPERTIES TIMEOUT 60)
     add_executable(nsl-raw-audio-oracle tests/raw_audio_oracle.c)
     target_include_directories(nsl-raw-audio-oracle PRIVATE platforms/common)
     target_compile_options(nsl-raw-audio-oracle PRIVATE -UNDEBUG -Wall -Wextra)
     target_link_libraries(nsl-raw-audio-oracle PRIVATE nsl_platform)
-    target_link_options(nsl-raw-audio-oracle PRIVATE -Wl,--wrap=SDL_QueueAudio)
+    target_link_options(nsl-raw-audio-oracle PRIVATE -Wl,--wrap=sl_audio_jitter_push)
     add_test(NAME raw_audio_official_vectors COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-raw-audio.py"
         --receiver $<TARGET_FILE:nsl-raw-audio-oracle>)
@@ -187,7 +206,8 @@ if(NSL_PLATFORM STREQUAL "desktop")
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/tests/common)
     target_compile_options(nsl-opus-recovery-oracle PRIVATE -UNDEBUG -Wall -Wextra)
     target_link_libraries(nsl-opus-recovery-oracle PRIVATE nsl_platform ihs-test-session)
-    target_link_options(nsl-opus-recovery-oracle PRIVATE -Wl,--wrap=SDL_QueueAudio
+    target_link_options(nsl-opus-recovery-oracle PRIVATE -Wl,--wrap=sl_audio_jitter_push
+        -Wl,--wrap=SDL_OpenAudioDevice -Wl,--wrap=SDL_PauseAudioDevice
         -Wl,--wrap=opus_multistream_decode_float -Wl,--wrap=opus_multistream_decoder_create
         -Wl,--wrap=sl_audio_recovery_run -Wl,--wrap=sl_audio_recovery_reset)
     add_test(NAME opus_recovery_official_vectors COMMAND "${Python3_EXECUTABLE}"

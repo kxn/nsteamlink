@@ -98,8 +98,8 @@ typedef struct stream_media_snapshot {
     uint32_t audio_frames;
     uint64_t audio_bytes;
     uint64_t audio_decoded_samples;
-    uint32_t audio_queued_bytes;
-    uint32_t audio_queue_drops;
+    uint32_t audio_queued_bytes; /* Jitter occupancy expressed in device S16 bytes. */
+    uint32_t audio_queue_drops; /* Rejected input sample frames (per-channel frames). */
     uint32_t audio_decode_errors;
     int audio_codec;
     int audio_channels;

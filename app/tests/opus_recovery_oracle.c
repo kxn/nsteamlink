@@ -1,6 +1,7 @@
 /* Real complete-frame dispatch -> audio FIFO/worker -> app Opus -> SDL queue.
  * Wrappers observe actual recovery callbacks, codec arguments/results and PCM.
  * Every consumer is stopped/joined before SDL/session dependencies are freed. */
+#include "audio_jitter.h"
 #include "audio_recovery.h"
 #include "ihs_buffer.h"
 #include "ihs_buffer_ext.h"
@@ -12,6 +13,7 @@
 #include "test_session.h"
 #include <SDL.h>
 #include <assert.h>
+#include <math.h>
 #include <opus.h>
 #include <opus_multistream.h>
 #include <stdatomic.h>
@@ -98,20 +100,39 @@ int __wrap_opus_multistream_decode_float(OpusMSDecoder *d, const unsigned char *
     r->result = __real_opus_multistream_decode_float(d, packet, size, pcm, maxSamples, fec);
     return r->result;
 }
-int __real_SDL_QueueAudio(SDL_AudioDeviceID, const void *, Uint32);
-int __wrap_SDL_QueueAudio(SDL_AudioDeviceID device, const void *pcm, Uint32 size) {
-    if (guard) {
-        SDL_PauseAudioDevice(device, 1); /* Real queue, controlled stalled device. */
-        return __real_SDL_QueueAudio(device, pcm, size);
+SDL_AudioDeviceID __real_SDL_OpenAudioDevice(const char *, int, const SDL_AudioSpec *,
+                                             SDL_AudioSpec *, int);
+void __real_SDL_PauseAudioDevice(SDL_AudioDeviceID, int);
+static SDL_AudioDeviceID controlled_device;
+SDL_AudioDeviceID __wrap_SDL_OpenAudioDevice(const char *name, int capture,
+                                             const SDL_AudioSpec *want, SDL_AudioSpec *have,
+                                             int allowed) {
+    SDL_AudioDeviceID id = __real_SDL_OpenAudioDevice(name, capture, want, have, allowed);
+    if (guard && want->samples == 1024)
+        controlled_device = id;
+    return id;
+}
+void __wrap_SDL_PauseAudioDevice(SDL_AudioDeviceID device, int paused) {
+    if (guard && device == controlled_device && !paused)
+        return; /* Real SDL device remains paused before first callback. */
+    __real_SDL_PauseAudioDevice(device, paused);
+}
+int __real_sl_audio_jitter_push(sl_audio_jitter *, const float *, int);
+int __wrap_sl_audio_jitter_push(sl_audio_jitter *j, const float *pcm, int count) {
+    if (!guard) {
+        assert(current && current->outputs < 64);
+        pcm_record *r = &current->pcm[current->outputs++];
+        r->step = activeStep;
+        r->size = (unsigned)count * j->channels * 2;
+        r->data = malloc(r->size ? r->size : 1);
+        assert(r->data);
+        for (unsigned i = 0; i < r->size / 2; ++i) {
+            float v = pcm[i] * 32768.0f;
+            int16_t sample = v >= 32767.0f ? 32767 : v <= -32768.0f ? -32768 : (int16_t)lrintf(v);
+            memcpy(r->data + i * 2, &sample, 2);
+        }
     }
-    assert(current && current->outputs < 64);
-    pcm_record *r = &current->pcm[current->outputs++];
-    r->step = activeStep;
-    r->size = size;
-    r->data = malloc(size ? size : 1);
-    assert(r->data);
-    memcpy(r->data, pcm, size);
-    return __real_SDL_QueueAudio(device, pcm, size);
+    return __real_sl_audio_jitter_push(j, pcm, count);
 }
 static int audio_start(IHS_Session *s, const IHS_StreamAudioConfig *config, void *unused) {
     (void)unused;

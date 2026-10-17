@@ -1,5 +1,6 @@
-/* Real media start/submit -> SDL device queue. Only the terminal queue write is
- * observed; parsing, sample handling, mixer and lifecycle run production code. */
+/* Real Raw decoder -> float jitter input. This observes decoded PCM before
+ * jitter/device output; jitter playback has its own official vectors. */
+#include "audio_jitter.h"
 #include "media.h"
 #include <SDL.h>
 #include <assert.h>
@@ -9,16 +10,19 @@
 static bool recording;
 static uint8_t *queued;
 static size_t queuedSize;
-int __real_SDL_QueueAudio(SDL_AudioDeviceID, const void *, Uint32);
-int __wrap_SDL_QueueAudio(SDL_AudioDeviceID device, const void *data, Uint32 size) {
+int __real_sl_audio_jitter_push(sl_audio_jitter *, const float *, int);
+int __wrap_sl_audio_jitter_push(sl_audio_jitter *j, const float *data, int count) {
     if (recording) {
         assert(!queued);
-        queued = malloc(size ? size : 1);
+        queuedSize = (size_t)count * j->channels * 2;
+        queued = malloc(queuedSize ? queuedSize : 1);
         assert(queued);
-        memcpy(queued, data, size);
-        queuedSize = size;
+        for (size_t i = 0; i < queuedSize / 2; ++i) {
+            int16_t v = (int16_t)(data[i] * 32768.0f);
+            memcpy(queued + 2 * i, &v, 2);
+        }
     }
-    return __real_SDL_QueueAudio(device, data, size);
+    return __real_sl_audio_jitter_push(j, data, count);
 }
 static IHS_Buffer bytes(const char *text) {
     IHS_Buffer b = {.size = strlen(text) / 2};

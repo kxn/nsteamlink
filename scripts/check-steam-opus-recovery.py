@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Compare real audio worker/app decoder/SDL output with official Opus policy.
+"""Compare real audio worker/app decoder/jitter input with official Opus policy.
 
 The native complete-frame dispatcher and FIFO carry IDs/local timestamps into
-the new callback. Wrappers record actual recovery steps and real libopus calls.
+the new callback. Wrappers record actual recovery steps and real libopus calls. PCM is observed at jitter input.
 Negative codec output is deliberately discarded instead of copying the source
 client's unsafe submit/Resize. Valid PCM is compared after float->S16 observation
 conversion, requiring exact S16 bytes with the project's fixed-point codec. This does
@@ -113,9 +113,9 @@ def main():
     assert not r.returncode, (r.stdout, r.stderr)
     bounded = json.loads(r.stdout)
     assert bounded["frames"] == 101 and not bounded["errors"] and bounded["drops"] > 0
-    assert bounded["queued"] <= 48000 * 2 * 2 * 300 // 1000 + 5760 * 2 * 2
+    assert bounded["queued"] == 16383 * 2 * 2
     print(
-        f"Production Opus: {count} source schedules, {callbacks} metadata callbacks, {decodes} exact codec calls, {pcm_count} PCM outputs, max S16 error={peak_error}; legacy/invalid-output/local queue-bound processes passed"
+        f"Production Opus: {count} source schedules, {callbacks} metadata callbacks, {decodes} exact codec calls, {pcm_count} PCM outputs, max S16 error={peak_error}; legacy/invalid-output/official ring-bound processes passed"
     )
 
 

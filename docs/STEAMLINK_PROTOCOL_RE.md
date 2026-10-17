@@ -5788,10 +5788,9 @@ BSD许可随二进制收集，不把codec库的许可/构建动作当作Steam产
 正常完整帧在RX捕获offset，经FIFO保留，到实际audio消费者只转换一次。旧submit
 仍在新回调未提供时使用。应用注册新回调，在既有audio_lock下按原ID规则依次
 执行PLC、末帧FEC、当前包解码；start/stop重置next/first，不引入后台线程或新的
-协议开关。有效PCM进入原SDL队列；保留本地已有300ms队列内存保护，按每份
-产出PCM应用，防止一个缺口循环绕过内存上限。这个保护**不是**官方jitter策略。
-原CAudioJitterBuffer在BOpenAudio0x7bed3c以16384容量构造，Push/Pop还包含部分
-接纳、overrun、淡入淡出和自适应处理；这些不能由本节的SDL队列对照判为等价。
+协议开关。有效PCM以float进入§73的官方策略jitter buffer。原本地300ms清空
+SDL队列的处理已由§73替代；撤回将该保护当作音频恢复完整对齐的任何推论。
+本节codec对照的观察点是jitter输入，不能拿它代替§73的缓冲/播放回调对照。
 
 【原始执行证据】`audit-steam-opus-recovery.py`固定40例140状态，实际执行原
 Start/Decode/Stop、内嵌Opus创建和完整decode。38份可比较调度覆盖mono/stereo、
@@ -5803,11 +5802,11 @@ Start/Decode/Stop、内嵌Opus创建和完整decode。38份可比较调度覆盖
 FEC恢复成功。counterfactual不作为客户端生产触发入口。
 
 `opus_recovery_official_vectors`使用真实Native完整帧分派、offset cache、audio
-FIFO/线程、应用恢复函数、真实固定点Opus及SDL队列。38次进程调度比较134次
+FIFO/线程、应用恢复函数、真实固定点Opus及jitter输入。38次进程调度比较134次
 实际metadata回调、168次完整codec参数/返回值、156份有效PCM，S16误差为0。
 codec配置、next/first及补帧id/timestamp也逐项核对；不是只比较观察者推算的计划。
 另三进程检查旧callback后备、当前坏包不提交PCM，以及暂停真实SDL设备后101份
-解码产物仍受本地队列上限约束。每个消费者stop/join后再销毁Session/SDL。
+解码产物受§73的16383-frame接纳界限约束。每个消费者stop/join后再销毁Session/SDL。
 
 【检测力】将Native末个缺帧的fec位临时由1改为0，真实worker/codec对照在
 one_gap_1_10立即拒绝：官方首个补帧id11/fec1，本地id11/fec0。该零PCM输入
@@ -5825,4 +5824,86 @@ python3 scripts/audit-steam-opus-recovery.py \
   --binary /data/dl/nsteamlink/build/video-recovery-re/libmain-arm64.so \
   --output /tmp/steam-opus-recovery.json
 ctest --test-dir build/desktop -R 'opus_recovery_official_vectors|raw_audio_official_vectors' --output-on-failure
+```
+
+
+## 73. 官方float音频jitter与设备拉取边界
+
+【官方客户端证据】与§24.1相同SHA的Android 1.3.32 `libmain-arm64.so`。
+`CStreamPlayer::BOpenAudio @0x7bec54`实际执行构造器
+`CAudioJitterBuffer<float> @0x7bf048`，再于0x7bed44–0x7bedb0覆盖参数。
+`Push @0x7bf91c`、`Pop @0x7bfdd0`、`FindBestCrossfadeEndpoint @0x7ca5b8`、
+`ApplyCrossfade @0x7ca798`、`UpdateStats @0x7ca928`均执行原指令；
+不是用自写伪代码产生预期。SDL设备及提交、libc存储和外部sinf为明确adapter。
+这条路径是官方客户端自身的播放策略，与Host何时发送网络FEC无关。
+
+| 对象offset | BOpenAudio设置（按每通道frame计） | 触发/作用 |
+| --- | --- | --- |
+| +0 | floor(rate×70/1000) | priming且无fade时达到此占用才开始输出 |
+| +4 / +8 / +12 | 80 / 60 / 40ms | 统计最小占用在区间外，修正量为min−60ms |
+| +16 | 10ms | queued−requested不大于此值时进入欠载预判；也是溢出混合保留量 |
+| +20 | 500ms | 按Pop请求frame数累计，达到后发布统计；不是墙钟timer |
+| +24 | 50ms | 淡入步长1/(N−1) |
+| +28 / +32 | 5 / 10ms | 扩张/收缩crossfade步长的分母N−1 |
+| +36 | 1 | 无新写入期间最多一次欠载扩张尝试 |
+| +60 | 16384 | 环形容量；预留一个slot，可接纳16383个frame |
+
+【Push】正常路径只接纳free范围，保留已排队数据并累计被丢弃的输入frame数。
+部分接纳后设置overrun锁存。后续输入若仍放不下，整份拒收；能放下时清锁存，
+令blend=min(queued−10ms,inputCount)。blend>0时回退write，按sin²权重混合
+旧尾部与新输入，再接入剩余输入，并清统计周期计数/修正量。
+不存在“超过300ms就清整个队列”的分支。blend=1的原0/0浮点路径也有自然调度
+对照，未把它改写成任意平均混音。
+
+【Pop】priming不足时只累计missing并返回0，不推进读指针/统计周期，也不填充
+输出尾部。达到70ms后清priming、开始50ms淡入。queued−requested≤10ms时，
+若最后一frame各声道全0，或没有新写入而已达一次扩张尝试，就重新priming；
+已有有效增益时按当前queued淡出。否则修正量为queued−requested−60ms，
+在前max(queued−5ms,0)范围寻找声道顺序求和的符号变化作为起点。
+新write与tracked_write不同会重置尝试次数；不是按frame ID或网络ACK判断恢复。
+
+统计最小占用>80ms或<40ms时设置min−60ms修正量（边界等于40/80不触发）。
+修正起点最多向前检查299次符号变化；候选目标最多再前/后检查99次。
+没有符号变化返回原候选，不假定候选一定属于新到PCM。正修正做10ms收缩，
+负修正做5ms扩张，均从原环形内容交叉淡化，不清整队列、不重启codec。
+正crossfade完成在0x7ca8c8切换read到已前进的alternate_read；
+负crossfade完成0x7ca8ac**仅清phase/step，不切read**。这两个分支不能合并。
+相位、权重、插值和统计的原float/FMA舍入次序均保留。
+
+【Native与设备边界】`audio_jitter.c`实现上述策略；解码器持续输出float，Raw
+按原signed16/32768归一化。媒体SDL2设备的pull callback每次调用同一Pop，
+在设备边界才转换S16/限幅/舍入，随后混入UI提示音；已移除SDL_QueueAudio及
+300ms清队列。`audio_queued_bytes`是环形内占用折算S16字节，`audio_queue_drops`
+是拒收的输入frame累计数，不再表示清队列次数。SDL2必须填满请求缓冲，因此
+不足部分补0是本地设备adapter；官方SDL3 PlayAudio只提交Pop实际返回的部分。
+原PlayAudio在本对照中设置volume=1；其他volume、SDL3自身重采样/欠载行为不
+由此推成相同。超过16384-frame的本地设备请求以静音守界，不冒称原客户端策略。
+
+callback只拿专用jitter锁，不拿audio_lock/state_lock；生产者在audio_lock下短暂
+拿jitter锁Push。关闭路径持audio_lock先Pause/Close等待SDL callback退出，然后
+销毁ring/codec；从不持jitter锁等待SDL关闭。原算法原子index与本地序列化临界区
+的并发调度不宣称逐指令等价；callback内不分配、不打印日志。
+
+【对照边界】`audit-steam-audio-jitter.py`的自然Push/Pop/Play调度从原BOpenAudio
+进入，构造后不写policy/state。保留所有scalar/float位、完整ring hash、实际输出
+float字节和分支PC；包含临界预缓冲、单frame混合、零长度、环绕、溢出拒收/恢复、
+稳态占用修正、欠载淡出/扩张、静音、常量及声道抵消。Play调度额外执行原
+CStreamPlayer::PlayAudio @0x7bfca4并观察SDL提交终点。固定fixture为120例9276步，覆盖8/12/16/24/44.1/48kHz及mono/stereo/八声道。
+Native模块对照与实际Raw媒体→生产SDL callback对照分开；后者为90例6957步，
+比较S16输出、补零尾部、占用及丢弃数。
+真实SDL dummy callback另做连续start/stop，验证退出后不再访问ring；这不是Switch
+或Android物理设备/loader证据。
+
+sinf是Android系统外部数学库边界，Source探针明确使用host libm的float adapter，
+Native模块采用同一host数学边界作逐字节比较；不因此宣称Android/Switch libm位级
+相同。八声道及44.1kHz从受控BOpenAudio入口执行，不能反推全StartAudio协议/
+codec/capability会选择这些参数；本地实际媒体仍受原有mono/stereo/rate准入限制。
+音频全局统计/input-mark与时间同步、所有生产入口和真实设备调度另有独立契约。
+本节不能证明用户的1–2秒停顿或菜单闪烁根因，也不新增按网络丢包自动FEC。
+
+```sh
+python3 scripts/audit-steam-audio-jitter.py \
+  /data/dl/nsteamlink/build/video-recovery-re/libmain-arm64.so \
+  --check scripts/fixtures/steam-audio-jitter-reference.json.gz
+ctest --test-dir build/desktop -R 'audio_jitter_official_vectors|audio_playback_official_vectors' --output-on-failure
 ```
