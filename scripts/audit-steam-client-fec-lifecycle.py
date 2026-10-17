@@ -211,6 +211,18 @@ class Client(c.Core):
         self.wi(c.CLIENT + 728, 0)
         self.call(0x7A6368, c.CLIENT)
 
+    def direct_qos(self, body):
+        """Independent exported-handler entry, distinct from the inline dispatcher."""
+        p, raw, frame = (self.alloc(4096) for _ in range(3))
+        data = bytes(13) + b"\x57" + body
+        self.u.mem_write(raw, data)
+        self.wq(p + 40, raw)
+        self.wq(p + 56, raw)
+        self.wi(p + 52, len(data))
+        self.call(0x7F2B98, frame, p)
+        self.b(frame + 16, 1)  # Controlled post-decryption boundary.
+        self.call(0x7ADCD0, c.CLIENT, frame)
+
     def snapshot(self):
         raw = self.serialize(c.CLIENT + 456)
         result = dict(
@@ -388,6 +400,19 @@ def audit(binary, patch=None, patch_hits=None):
                         if qos is None
                         else [dict(event="set_qos", value=2 * int(qos))]
                     )
+                for qos, body in (
+                    (False, message("CSetQoSMsg", use_qos=False)),
+                    (True, message("CSetQoSMsg", use_qos=True)),
+                    (None, b"\xff"),
+                ):
+                    r.stage = f"qos_direct_{qos}"
+                    r.direct_qos(body)
+                    s = snap()
+                    assert [e for e in s["events"] if e["event"] == "set_qos"] == (
+                        []
+                        if qos is None
+                        else [dict(event="set_qos", value=2 * int(qos))]
+                    )
                 for value in (False, True):
                     for local in (0, 1):
                         r.stage = f"config_api_{value}_{local}"
@@ -472,13 +497,15 @@ def inventory(binary):
 def mutations(binary, reference):
     words = {
         pc: struct.unpack_from("<I", binary, pc)[0]
-        for pc in (0x7FB250, 0x7FBF44, 0x7ADA8C, 0x7FBBD0, 0x7A8AB8)
+        for pc in (0x7FB250, 0x7FBF44, 0x7ADA8C, 0x7FBBD0, 0x7A8AB8, 0x7A6C6C, 0x7ADD28)
     }
     patches = (
         ("omit_gate_initialization", 0x7FB250, 0xD503201F),
         ("crc_written_to_fec_gate", 0x7FBF44, words[0x7FBF44] + (1 << 10)),
         ("omit_config_copy_to_message4", 0x7ADA8C, 0xD503201F),
         ("invert_connection_gate", 0x7FBBD0, words[0x7FBBD0] ^ (1 << 24)),
+        ("inline_qos_wrong_type", 0x7A6C6C, 0x2A0903E1),
+        ("exported_qos_wrong_type", 0x7ADD28, 0x2A0903E1),
         (
             "mic_reliability_from_fec",
             0x7A8AB8,

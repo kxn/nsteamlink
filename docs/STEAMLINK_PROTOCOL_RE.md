@@ -7217,7 +7217,10 @@ Socket注册、锁、最终connect发送/Channel发送、加密、refcount、sta
 peer99的缺字段/false/true配置实际整体替换，坏protobuf保留旧配置。上述轨迹均直接
 观察原连接+11和原channel percentage，二者保持0，不从字段25推导本机发送开关。
 
-消息87的原OnSetQoS @0x7adcd0–7add8c将use_qos=false/true转为UDP SetQOS参数0/2，
+【调用链更正】撤回本节初稿将消息87的dispatcher路径表述为调用原OnSetQoS入口。
+实际HandleIncomingPackets在@0x7a6c3c–7a6c80内联QoS处理，@0x7a6c74调用
+SetQOS；同名导出OnSetQoS @0x7adcd0–7add8c没有被此dispatcher调用。两条路径分别
+执行false/true/坏protobuf对照，均将use_qos=false/true转为UDP SetQOS参数0/2，
 对端地址来自connection+20；坏protobuf不调用该终点。该原路径不设置FEC开关或比例，
 不能把QoS消息当作尚未发现的“对端要求本机启用FEC”协议。此结论限该消息/函数，
 不等于已经穷尽所有消息、别名写入或其他库。
@@ -7232,17 +7235,17 @@ peer99的缺字段/false/true配置实际整体替换，坏protobuf保留旧配�
 - 初始FEC=true、主动API改false/true（local_only两值）、peer99替换配置前后，
   以上选择仍由协商reliable_data决定，没有因为字段25改用上行FEC。
 
-本节实际执行原微音数据producer，不再仅用空FEC周期调用或强制gate=1能力对照。
+本节实际执行原麦克风数据producer，不再仅用空FEC周期调用或强制gate=1能力对照。
 最终Channel发送为终点，因此观察到的是官方生产者与发送选择，不声称已经得到
 真实麦克风UDP wire或全部上行producer的启用策略。
 
-【内存与检测边界】12组CRC×reliable_data×字段25初值组合共324个状态，记录
+【内存与检测边界】12组CRC×reliable_data×字段25初值组合共360个状态，记录
 每阶段实际配置、完整明文frame正文、gate分支及全部执行期间覆盖gate/percentage的
 内存写。动态内存hook包含宽写/指针别名；不是只扫描STRB +11。不过它仅覆盖这些
 实际执行的轨迹，不能据“未观察到写入”断言全局永不启用。
-五项原指令反事实分别删构造清零、把CRC写到FEC gate、漏消息4配置copy、反转发送
-门禁、将麦克风可靠性错取自字段25；每项确认修改指令实际执行，再由字段/正文/发送
-选择断言或固定观察对照检出。没有用本地FEC实现产生期望结果。
+七项原指令反事实分别删构造清零、把CRC写到FEC gate、漏消息4配置copy、反转发送
+门禁、将麦克风可靠性错取自字段25、改错内联/导出两个QoS分支的参数类型；每项确认
+修改指令实际执行，再由字段/正文/发送选择断言或固定观察对照检出。没有用本地FEC实现产生期望结果。
 
 【实现约束】继续按§32官方客户端的手动设置、预设、网络测试推荐后用户确认来决定
 请求对端FEC的字段25；接收type11与本机outgoing gate独立。不增加“看到丢包立即自行
