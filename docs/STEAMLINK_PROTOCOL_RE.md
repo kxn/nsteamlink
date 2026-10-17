@@ -5455,3 +5455,45 @@ Pause @0x7b02d8/0x7b0338和Resume @0x7b03a0/0x7b0420明确读取/写入它，它
 Native16次实际worker场景同时检查retire时清client暂停标记，以及本地取消在player
 通知时仍保留它、到owner Close/Reset收尾后才清零。暂停时完整媒体帧的准入与解码
 调度不由这6个控制/关闭案例推定等价，须按OnStreamPacket自己的数据路径核对。
+
+## 67. 暂停期间的完整媒体帧准入
+
+【官方客户端证据】同§24.1 Android 1.3.32固定SHA。OnStreamPacket
+@0x7acfa8先拒绝client0/7；Frame构造后，channel≥3且message tag=1才进入
+0x7ad00c–0x7ad01c的媒体分支：client阶段必须为6，且client+19必须为0，
+才调用OnDataPacket @0x7ad148。此处读的是客户端暂停标记，不是Connection+8。
+控制消息的解密/队列准入不经过这个媒体判断，不能一起在收包入口屏蔽。
+
+【结论】判断发生在通道已取出完整媒体帧之后。普通/可靠窗口、FEC重建、
+连接入包采样以及反馈维护不因clientPaused而停止；被拒绝的帧不进入
+OnDataPacket、RecordFrameReceived或视频带宽采样。该判断不生成Resume、
+DataLost或关键帧请求，也不构成按丢包启用FEC的策略。暂停/恢复的控制生产
+及DataLost动作仍按§29/34各自的调用入口。
+
+【执行对照】`audit-steam-media-admission.py`执行真实Socket CRC/ID准入、
+普通3/4与可靠5/6窗口/Pop、type11 RS恢复、原OnStreamPacket/OnDataPacket
+和视频采样。反馈另外接通真实Socket::Send @0x7ff1dc，保留ACK/NACK含CRC
+的完整wire。42例570状态覆盖CRC开关、三种载体、持续暂停、末片到达前暂停/
+恢复、末片到达后但Update前暂停/恢复，以及受控client5/7→6。66次
+OnDataPacket frame ID和42份反馈wire，与Native生产路径及采样逐状态一致。
+client phase/paused为显式受控输入，不将所有组合称为真实UI或网络可达。
+通道构造时钟为1000000，数据时间从1101000起，避免用倒退时钟掩盖ACK资格。
+
+其中FEC的重建完成在收包调用内同步触发媒体准入；普通/可靠媒体由通道Update
+取出完整帧时触发。因此在末片到达后、Update前改变暂停位，FEC第二帧已经
+按旧标记决定，普通/可靠第二帧按新标记决定。该差异来自真实指令输出，不能
+为了统一三种载体而把所有判断挪到decoder worker。Native在完整帧交入消费者
+FIFO前判断；可靠的未配置通道分支在存入完整帧pending前也先检查暂停位。
+已有消费者所有权的数据不因这个新增判断被追溯清除，decoder自身暂停行为不
+由本节推定。旧线程测试在Handshaking状态等媒体回调不符合此准入条件，其
+解码/反馈测试输入改为Connected，不删除原有消费者/窗口/反馈断言。
+
+【撤回与范围】撤回将旧Native“暂停时完整数据仍进媒体FIFO”视为官方等价的
+解释。修改前对照明确出现paused下Native admitted=[1]、官方=[]，且Native
+视频collector已推进而官方未推进；修改后两者一致。Source平台锁/refcount、
+最终IO结果、decoder及CNetworkStats评分仍为明确adapter，Native线程创建用
+受控polling桥接。Source pre-gate transport delegate与Native post-gate FIFO
+并非同一所有权边界，本组不比较旧delivered/metadata列表，而单独比较实际
+OnDataPacket/消费者入口frame ID；原§59的146例未作此投影或更改。
+本组适用已配置媒体通道，不证明早到普通3/4的raw pending缓存、未知tag路由、
+无decoder通道的完整pending生命周期、硬件解码/显示或全局线程交错已经等价。
