@@ -6782,3 +6782,85 @@ python3 scripts/audit-steam-video-crypto.py \
   --check scripts/fixtures/steam-video-crypto-reference.json
 ctest --test-dir build/desktop -R 'video_crypto_official_vectors|video_keyframe_runtime|^crypto$' --output-on-failure
 ```
+
+## 85. NAL起始前缀、跨片转义与历史字节边界
+
+【官方客户端证据】固定SHA同§24.1。CStreamDecoderH264::AppendBuffer
+@0x7b09d0处理H264 standalone的NAL拼接；NeedEscape=0直接保留packet引用，bit0
+不另造前缀。NeedEscape=1时，若NeedStart=1，@0x7b0b00–0x7b0b64先写四字节
+`00000001`，再原样复制本片最多**前三字节**；余下部分才送实际CopyAndEscapeNAL。
+没有NeedStart时整片都进入转义器，不能每片跳过前两字节。
+
+原scalar @0x8029f0与SIMD名义版本@0x802a3c在该ARM64库均为相同循环：当当前
+byte<=3时实际读取已写输出[-2]/[-1]，两者均0则先插入03，再写当前byte。因此
+输出历史跨片保留，已经插入的03也参加后续历史。构造@0x7b0984–0x7b09a4按
+GetCPUInformation.flags+4的bit0x10选择虚表实例字段+608：0为scalar，1为SIMD；
+这是系统CPU输入，不是网络/FEC或硬件decoder选择。两例路径均执行原函数体。
+
+【实际差异】应用d095563/子库6d5d25a每片先原样复制前两字节，再从该片第三字节
+开始查找零序列，丢失跨片历史。真实原DecodeFrame/OnThink输入：key首片flags19、
+bytes `650000`；末片flags10、bytes `0102`。官方SDK输入
+`00000001650000030102`，旧Native为`000000016500000102`，原路径无assert且所有
+历史读取均位于已写encoded buffer内。相同模式对多个零序列和不同片长均可触发。
+起始标记下复制最多前三字节的差异也有完整原输出，不用NAL规范推测代替原指令。
+
+【前述探针边界澄清】先前fresh buffer直接NeedEscape续片`000001`的单片探针
+没有assert，却会读取encoded allocation之前的两个字节；模拟器中的初始零值不
+构成协议规定。撤回可把该初始值解释为固定“两个零历史”的推论。正式对照对每个
+实际历史读取检查地址，区分拥有的上下文与Source-only缺失历史；跨片反例不依赖
+这些外部字节。新NeedStart保证有效前缀；无起始且历史不足/输出依赖未知前缀时
+Native采用有界保护，不复制Source越界读取。空NeedStart沿§84保留保护。
+
+【编码存储前置条件】NeedEscape片段到达时已有raw packet buffers，原@0x7b0a14
+触发assert82；非空encoded bytes再混入raw并结束帧时，原OnThink触发assert191。
+这些不是可任意混拼的两种存储。Native按raw-buffer存在/encoded byte数维护同一
+有效域，完整提交或key/actor purge清除，pending-reset保留；非法混合保留本地保护。
+空encoded不凭空算非空encoded，空raw packet仍是一个raw拥有引用。断言后继续
+执行的Source数据不作正常码流契约。
+
+【HEVC与工厂边界】相同原standalone构造参数codec=5也执行该AppendBuffer。
+原StartVideoData控制handler在显式codec5、声明的AMediaCodec_createDecoderByType
+("video/hevc") capability非空终点下实际创建同一H264Standalone虚表类；此为SDK
+能力输入，不证明物理HEVC支持。Native H264/HEVC byte formatter共用这套已核实
+拼接规则；Switch仍只声明已接线H264。SDK不支持时的完整外层UI/其他factory与
+物理codec输出仍各自独立。
+
+【可复验的执行范围】`audit-steam-video-nal.py`固定192例444状态，覆盖codec4/5、
+CPU bit0x10两值、首片1/2/3-byte直拷、续片空/短/多零序列、raw忽略bit0、完成提交
+与pending-reset保留、key与actor purge、每片独立CBC解密后再拼接。每次真实helper
+历史读取记录地址，正常组要求无原assert、无encoded allocation之前读取；16组原
+断言/缺历史输入另列source_only。constructor、AppendBuffer和两个escape函数完整
+原指令随fixture保留，三项原指令反事实（scalar/SIMD分别去插03、起始只直拷两字节）
+必须仍在有效拥有上下文执行、实际SDK bytes改变才算检出；修改已翻译指令后清缓存，
+不把harness异常当成功。HEVC正能力factory执行证据单列，SDK不可用外层UI没有闭合。
+
+同一真实2204-byte H264 AU拆成四个NAL共八片，含一个实际跨片零序列，去除已有
+emulation prevention后按原NeedStart/NeedEscape重组。原SDK收到2206 bytes（原两个
+三字节start code改写为四字节），明文/逐片CBC与两种CPU选择共四例均完整字节相同。
+Native实际生产video TU、tracker、reset actor、mbedTLS与callback终点逐状态/完整
+bytes一致。独立本地guard核对空NeedStart、缺历史、零字节raw引用、非空encoded
+后raw与容量边界；这些保护不构成新的peer恢复算法。
+
+真实应用parser/worker/生产callbacks/FFmpeg也接收同一八片明文和逐片CBC数据，
+每次送2206-byte AU，均输出128x72图片，可见像素MD5与原2204-byte AU解码一致；
+旧图片/map lease跨flush/重建保留。此证明软件管线可消费该有界fixture，不是物理
+Android/Switch输出、所有slice grammar或实际Steam host分片producer证明。Native
+隔离反事实分别遗忘跨片suffix、只直拷两字节、丢失空raw引用、允许encoded后raw，
+均被完整字节/guard对照检出，未改生产文件或原golden。既有mode/crypto/reset/start
+原golden仍按默认H264输入独立核对，不由新NAL规则重写旧期望。
+
+复验命令（官方库路径由本地合法取得的固定SHA二进制替换）：
+
+```sh
+python3 scripts/audit-steam-video-nal.py /path/libmain-arm64.so \
+  --check scripts/fixtures/steam-video-nal-reference.json
+python3 scripts/check-steam-video-nal.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-video-nal-oracle
+ctest --test-dir build/desktop --output-on-failure \
+  -R '^(video_nal_official_vectors|video_keyframe_runtime)$'
+```
+
+【结论边界】正常NAL字节转换按以上原客户端执行策略实现；缺历史/原assert域以
+本地有界检查处理，不复制越界读取。没有由此增加等待关键帧、FEC阈值或重发计时。
+发现的字节差异尚不证明用户一两秒停顿/菜单闪烁根因；bit0/1主机producer、bit6
+主机含义、其余decoder factory、完整平台错误映射各需独立官方证据。

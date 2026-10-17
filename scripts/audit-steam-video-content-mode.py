@@ -40,6 +40,7 @@ class Mode(k.Key):
                 threads=inp["threads"],
                 old_backend=inp["backend"],
                 init_success=inp.get("ready", True),
+                video_codec=inp.get("codec", 4),
             ),
         )
         self.b(self.video + 404, 0)

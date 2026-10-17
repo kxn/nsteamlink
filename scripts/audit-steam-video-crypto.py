@@ -49,6 +49,7 @@ class Crypto(m.Mode):
                 threads=inp.get("threads", True),
                 backend=inp.get("backend", False),
                 initial=0 if inp.get("backend") else None,
+                codec=inp.get("codec", 4),
             ),
         )
         # The inherited audio harness replaces shared Frame::SetSize. Video

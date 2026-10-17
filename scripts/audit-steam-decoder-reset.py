@@ -51,7 +51,9 @@ class Reset(d.Decoder):
         # delivery isn't replaced with the decoder-event audit's recorder.
         self.wq(self.vt + 72, 0x767D9C)
         self.video = self.alloc(800)
-        self.call(0x7B0E0C, self.video, c.CLIENT, self.player, 4)
+        self.call(
+            0x7B0E0C, self.video, c.CLIENT, self.player, scenario.get("video_codec", 4)
+        )
         self.wq(c.CLIENT + 40, self.video)
         self.wi(self.video + 396, 1280)
         self.wi(self.video + 400, 720)
@@ -100,7 +102,9 @@ class Reset(d.Decoder):
     def accel(self, label):
         obj = self.alloc(392)
         self.labels[obj] = label
-        self.call(0x906488, obj, c.CLIENT, 1280, 720, 4)
+        self.call(
+            0x906488, obj, c.CLIENT, 1280, 720, self.scenario.get("video_codec", 4)
+        )
         return obj
 
     def delete_global_ref(self):
@@ -305,7 +309,7 @@ class Reset(d.Decoder):
         input_head, input_tail = self.i(self.video + 364), self.i(self.video + 368)
         player_head, player_tail = self.i(self.player + 244), self.i(self.player + 248)
         size = self.i(self.video + 500)
-        assert size < 4096
+        assert size < 2 * 1024 * 1024
         return dict(
             active=self.u.mem_read(self.video + 24, 1)[0],
             request=self.i(self.video + 96),

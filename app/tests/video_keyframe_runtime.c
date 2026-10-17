@@ -20,6 +20,7 @@
 static sl_video_pipeline *pipeline;
 static atomic_uint processed, flushes, sends, losses;
 static unsigned target, opens;
+static unsigned expectedPacketSize = 2204;
 sl_video_pipeline *__real_sl_video_create(void);
 sl_video_pipeline *__wrap_sl_video_create(void) {
     return pipeline = __real_sl_video_create();
@@ -36,7 +37,7 @@ void __wrap_avcodec_flush_buffers(AVCodecContext *c) {
 }
 int __real_avcodec_send_packet(AVCodecContext *, const AVPacket *);
 int __wrap_avcodec_send_packet(AVCodecContext *c, const AVPacket *p) {
-    assert(p && p->size == 2204);
+    assert(p && p->size == (int)expectedPacketSize);
     atomic_fetch_add(&sends, 1);
     return __real_avcodec_send_packet(c, p);
 }
@@ -138,6 +139,64 @@ static void modeCounts(sl_runtime *r, unsigned fs, unsigned ss, unsigned epoch,
     uint8_t actual[16];
     hash(old, actual);
     assert(!memcmp(actual, saved, 16));
+}
+static size_t marker(const uint8_t *p, size_t len, size_t at, size_t *width) {
+    for (size_t n = at; n + 2 < len; ++n) {
+        if (p[n] || p[n+1]) continue;
+        if (n+3 < len && !p[n+2] && p[n+3] == 1) { *width = 4; return n; }
+        if (p[n+2] == 1) { *width = 3; return n; }
+    }
+    return len;
+}
+static unsigned nalFrame(sl_runtime *r, const uint8_t *packet, size_t len,
+                          uint16_t id, unsigned sequence, bool encrypted, const uint8_t saved[16]) {
+    uint8_t raw[2204], cipher[2224];
+    const uint8_t iv[16] = {0};
+    size_t width, begin = marker(packet,len,0,&width);
+    bool first = true;
+    unsigned boundaries = 0;
+    while (begin < len) {
+        size_t nextWidth = 0, start = begin + width;
+        size_t end = marker(packet,len,start,&nextWidth);
+        size_t count = 0;
+        unsigned zeros = 0;
+        for (size_t n = start; n < end; ++n) {
+            uint8_t value = packet[n];
+            if (zeros == 2 && value == 3) { zeros = 0; continue; }
+            raw[count++] = value;
+            zeros = value ? 0 : zeros + 1;
+        }
+        size_t cut = 0;
+        for (size_t n = 3; n < count; ++n)
+            if (!raw[n-2] && !raw[n-1] && raw[n] <= 3) { cut = n; ++boundaries; break; }
+        if (!cut) cut = count > 1 ? count / 2 : count;
+        for (unsigned part = 0; part < 2; ++part) {
+            size_t offset = part ? cut : 0, size = part ? count-cut : cut;
+            if (!size) continue;
+            uint8_t flags = 2 | (!part ? 1 : 0) | (first ? 16 : 0);
+            if (end == len && (part || cut == count)) flags |= 8;
+            const uint8_t *bytes = raw + offset;
+            if (encrypted) {
+                size_t cipherSize = sizeof(cipher);
+                assert(!IHS_CryptoSymmetricEncryptWithIV(bytes,size,iv,sizeof(iv),
+                           r->session->info.sessionKey,16,false,cipher,&cipherSize));
+                flags |= 32; bytes = cipher; size = cipherSize;
+            }
+            feed(r->session,id,sequence++,flags,bytes,size);
+            first = false;
+        }
+        begin = end; width = nextWidth;
+    }
+    assert(boundaries > 0);
+    sl_video_frame *frame = sl_video_take(pipeline);
+    assert(frame && frame->key.epoch == 3);
+    uint8_t decoded[16];
+    hash(frame, decoded);
+    /* The same first-AU fixture was already decoded before packetization. */
+    assert(frame->pixels->width == 128 && frame->pixels->height == 72);
+    assert(!memcmp(decoded, saved, 16));
+    sl_resource_release(&frame->ref);
+    return sequence;
 }
 static void emptyPending(sl_runtime *r, uint16_t id) {
     IHS_TrackedFrame stats[IHS_FRAME_TRACKER_CAPACITY];
@@ -259,9 +318,16 @@ int main(int argc, char **argv) {
     feed(r.session, 15, 18, 24, packet, sizeof(packet));
     modeCounts(&r, 16, 8, 3, old, saved);
     output(3);
+    /* Rebuild all four NALs from RBSP, split at zero sequences, and require
+     * the normalized original AU bytes/decoded image to survive each path. */
+    expectedPacketSize = 2206;
+    unsigned sequence = nalFrame(&r, packet, sizeof(packet), 16, 19, false, saved);
+    modeCounts(&r, 17, 9, 3, old, saved);
+    nalFrame(&r, packet, sizeof(packet), 17, sequence, true, saved);
+    modeCounts(&r, 18, 10, 3, old, saved);
     CStopVideoDataMsg stop = CSTOP_VIDEO_DATA_MSG__INIT;
     control(r.session, k_EStreamControlStopVideoData, &stop.base);
-    assert(atomic_load(&flushes) == 17);
+    assert(atomic_load(&flushes) == 19);
     IHS_SessionDestroy(r.session);
     IHS_Quit();
     assert(!sl_media_video_clean());
