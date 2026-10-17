@@ -199,7 +199,7 @@ codec仍是明确差异，不能以H264/HEVC子集对照代替全能力一致性
        ← NegotiationSetConfig(4)（host 确认）→ OnNegotiationSetConfig（仅audio/video
          两个codec各有Assert；非debug下仍CopyFrom并进入Starting，详见§49）
 会话:  → NegotiationComplete(5) (HandleStreamStarting) → HandleStreaming
-       （进入即发一次 KeepAlive；此后 SendKeepAlive 周期性）
+       （正常Starting先记时间，首个KeepAlive须严格超过10秒；详见§50）
 ```
 
 ## 7. 音视频编解码能力（客户端侧）【已验证】
@@ -441,7 +441,7 @@ PersonalizationResponse(2)/ActiveConfigChange(3)/RequestActiveConfig(4)，客户
 | 7 | → | NegotiationSetConfig(4) | ch1 加密可靠 | 见 §5：config.reliable_data=回显宿宣告；audio=宿列表首个∈{1,3}；video=宿列表首个过 0x330+BAvailable；enable_remote_hid/enable_touch=宿宣告；caps=CStreamingClientCaps（video_codecs 恒 1 + 逐个 4/5/8/9）；streaming_client_config=本机配置 |
 | 8 | ← | NegotiationSetConfig(4) | 同上 | host 确认（与本地不一致则 Assert） |
 | 9 | → | NegotiationComplete(5) | 同上 | 空消息。状态→Streaming |
-| 10 | → | KeepAlive(9) | ch1 加密可靠 | 空消息；进入 Streaming 发一次+周期（HandleStreaming） |
+| 10 | → | KeepAlive(9) | ch1 加密可靠 | 空消息；正常Starting记时间后严格超过10秒发送；last=0是特殊分支，见§50 |
 | 11 | ← | StartAudioData(50)/StartVideoData(52) | ch1 加密可靠 | CStartAudioDataMsg{channel=2, codec=3, codec_data=4, frequency=5, channels=6}；channel 值写入数据通道匹配（client+625/626），client 启动解码（IsSupportedAudioCodec：1 恒可、3 视 +0x238） |
 | 12 | → | VideoDecoderInfo(80) | ch1 加密可靠 | CVideoDecoderInfoMsg{decoder=1...}（0x7aacf0） |
 | 13 | →/← | 输入：UpdateDeviceList(信封1) → host DeviceOpen(下行2)+DeviceStartInputReports(下行11) → 125Hz 报告 | RemoteHID(106) ch1 加密可靠 | 信封 CRemoteHIDMsg{data=1, active_input=2}；下行 oneof 见 §9b/12.2；报告合批规则 §9b.2；delta/full 自适应 R1 |
@@ -549,7 +549,7 @@ SDL_PollEvent/libnx-hid 跨线程竞争）。修复 = DeviceWrite 在接收线�
 本段旧稿的“未验证 0 项”“无新增矛盾”结论撤回：§14 的独立复核发现 NACK
 字段/方向、时钟换算、full_report 和 Unconnected 过滤等反例。不能用分类计数
 代替逐项证据，也不能把 Android 客户端的 Stopping 分支外推成 Host 的超时策略。
-KeepAlive 的立即首发及 10 秒周期有调用点证据；其他裁定应按 §14 的具体边界理解。
+撤回将last=0的立即发送分支当正常首发策略的结论；完整启动调用链见§50，其他裁定按§14具体边界理解。
 
 
 
@@ -559,7 +559,7 @@ KeepAlive 的立即首发及 10 秒周期有调用点证据；其他裁定应按
    旧稿只搜索 `bl` 会漏掉尾调用 `b`，且不能由包装函数数量推断实际发送者；
 3. OnSetQoS/OnSetTargetBitrate/OnVideoEncoderInfo 的接收行为见 §14.16；
 4. CStreamingClientHandshakeInfo / CStreamingClientCaps 其余字段取值（Android 官方值）；
-5. KeepAlive 的立即首发与 10 秒周期见 §13.3、§14.14；
+5. KeepAlive 首发不能只读last=0分支；正常Starting设时间及严格10秒边界更正见§50；
 6. ControllerConfigMsg(137) 官方载荷构造（0x7abb30 只做转发，构造在调用方——
    CStreamPlayer/UI 层，需沿 xref 上溯）。
 
@@ -4419,3 +4419,43 @@ python3 scripts/audit-steam-peer-negotiation.py \
 输入Frame从解密后开始，内存分配/进程protobuf初始化、network lock、priority setter、
 时间、stats/player/client回调、GetChannel、加密及Connection最终发送均是显式适配器。
 原C++字段复制和protobuf输出并未被本地模型替代；真实加密会话及设备仍不在范围内。
+
+
+## 50. OnThink真实分派与正常首个KeepAlive边界
+
+【证据／撤回】`audit-steam-negotiation-loop.py`从官方
+`CStreamClient::OnThink 0x7a5ff8`进入，执行真实HandleIncomingPackets队列取出、Frame
+构造/解析、OnNegotiationSetConfig、状态选择、HandleStreamStarting及HandleStreaming。
+撤回§6/§9/§13.3/§14.14把`last==0`立即发送解释为正常启动首发的结论。
+§13.3的表格保留历史审计背景，不能再据此称本地立即发送已经与正常官方启动对齐。
+`ch_control_keepalive.c`中旧“Official立即发送”的注释也属该过度解释，不能作协议证据。
+
+【结论】OnThink在network process/Transport Update后先排空incoming队列，再按当前
+状态仅选一个阶段。state4只把Setup3/4分派到Init/SetConfig；成功peer SetConfig改为5
+后，同队列后面的Setup4被忽略。原始队列中先坏PB后有效消息仍能成功；先有效后另一
+有效消息则保留第一份config。state5/6时Setup4不直接进入OnNegotiationSetConfig，
+因此§49受控函数入口state5/6不代表相应网络消息被接纳。
+
+OnThink发现state5时执行Start并进入6，但该轮不再执行Streaming。
+Start把两处时间都写为当前值：client+0x1c678（frame events）和+0x1f6f0（KeepAlive）。
+下一轮Streaming的KeepAlive条件是last=0或signed(now-last)>0xa0000。
+正常非零启动时间下，下一tick和恰好+0xa0000都不发；+0xa0001才发消息09。
+不能把正常首发改成立即发，也不能把严格大于改成大于等于；只有预先state6而
+last仍为0的控制案例才在第一次Streaming立即发送。
+
+【原指令案例】30组×4个OnThink阶段，覆盖state4/5/6、网络线程开关、空队列、
+有效/坏PB、两份有效及坏后有效；逐阶段输出真实config、完整明文Complete/KeepAlive
+frame body、send sequence、调用记录和两处timestamp。Complete只在进入Starting的轮
+发05；正常KeepAlive在严格10秒边界后发09，帧事件反馈的调用另外记录。
+
+【边界】StreamProcessNetwork与Transport Update本身是记录适配器，因此本节证明
+客户端阶段/dispatcher/KeepAlive调用链，仍不证明Connection内部RX反馈/TX同循环时序。
+Input已解密，平台无decoder，network lock/refcounts/destruction、priority setter、clock、
+stats/player/log回调、GetChannel、加密与Connection最终发送亦为显式适配器。
+不据此声称真实认证、完整设备消费或操作系统调度等价。
+
+```sh
+python3 scripts/audit-steam-negotiation-loop.py \
+  --binary /path/to/official/libmain-arm64.so \
+  --output build/video-recovery-re/negotiation-loop.json
+```

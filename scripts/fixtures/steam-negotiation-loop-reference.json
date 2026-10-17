@@ -1,0 +1,2544 @@
+{
+  "binary_sha256": "50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e",
+  "scope": "Execute official OnThink -> incoming dispatch -> peer SetConfig/Start/Streaming.\n\nReal queue dequeue, Frame construction/parser, C++ config copy/serialization,\nOnThink stage selection, Start and Streaming/KeepAlive branches and control frame\nproduction run. Input packets are seeded post-decryption. Network process and\nTransport Update, decoder-free platform state, locks/refcounts/destruction,\npriority setter, clock, stats/player/log callbacks, GetChannel, encryption and\nfinal Connection send are explicit adapters. Connection feedback/TX internals,\nactual authentication, device decoders and OS scheduling are not exercised.\n",
+  "cases": [
+    {
+      "input": {
+        "state": 4,
+        "own_network": false,
+        "packets": []
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 4,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 0,
+          "frame_events_time": 0,
+          "keepalive_time": 0
+        },
+        {
+          "tick": 1000001,
+          "state": 4,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 0,
+          "frame_events_time": 0,
+          "keepalive_time": 0
+        },
+        {
+          "tick": 1655360,
+          "state": 4,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 0,
+          "frame_events_time": 0,
+          "keepalive_time": 0
+        },
+        {
+          "tick": 1655361,
+          "state": 4,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 0,
+          "frame_events_time": 0,
+          "keepalive_time": 0
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 4,
+        "own_network": false,
+        "packets": [
+          "0a06080010031804"
+        ]
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 6,
+          "config": "080010031804",
+          "frames": [
+            "05"
+          ],
+          "events": [
+            "network_process",
+            "transport_update",
+            "lock",
+            {
+              "priority": [
+                1,
+                2
+              ]
+            },
+            {
+              "priority": [
+                2,
+                -1
+              ]
+            },
+            "stats_start",
+            "player_started",
+            "unlock",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1000001,
+          "state": 6,
+          "config": "080010031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655360,
+          "state": 6,
+          "config": "080010031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655361,
+          "state": 6,
+          "config": "080010031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 2,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 4,
+        "own_network": false,
+        "packets": [
+          "ff"
+        ]
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 4,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 0,
+          "frame_events_time": 0,
+          "keepalive_time": 0
+        },
+        {
+          "tick": 1000001,
+          "state": 4,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 0,
+          "frame_events_time": 0,
+          "keepalive_time": 0
+        },
+        {
+          "tick": 1655360,
+          "state": 4,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 0,
+          "frame_events_time": 0,
+          "keepalive_time": 0
+        },
+        {
+          "tick": 1655361,
+          "state": 4,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 0,
+          "frame_events_time": 0,
+          "keepalive_time": 0
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 4,
+        "own_network": false,
+        "packets": [
+          "0a06080010031804",
+          "0a06080110011805"
+        ]
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 6,
+          "config": "080010031804",
+          "frames": [
+            "05"
+          ],
+          "events": [
+            "network_process",
+            "transport_update",
+            "lock",
+            {
+              "priority": [
+                1,
+                2
+              ]
+            },
+            {
+              "priority": [
+                2,
+                -1
+              ]
+            },
+            "stats_start",
+            "player_started",
+            "unlock",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1000001,
+          "state": 6,
+          "config": "080010031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655360,
+          "state": 6,
+          "config": "080010031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655361,
+          "state": 6,
+          "config": "080010031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 2,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 4,
+        "own_network": false,
+        "packets": [
+          "ff",
+          "0a06080010031804"
+        ]
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 6,
+          "config": "080010031804",
+          "frames": [
+            "05"
+          ],
+          "events": [
+            "network_process",
+            "transport_update",
+            "lock",
+            {
+              "priority": [
+                1,
+                2
+              ]
+            },
+            {
+              "priority": [
+                2,
+                -1
+              ]
+            },
+            "stats_start",
+            "player_started",
+            "unlock",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1000001,
+          "state": 6,
+          "config": "080010031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655360,
+          "state": 6,
+          "config": "080010031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655361,
+          "state": 6,
+          "config": "080010031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 2,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 4,
+        "own_network": true,
+        "packets": []
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 4,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 0,
+          "frame_events_time": 0,
+          "keepalive_time": 0
+        },
+        {
+          "tick": 1000001,
+          "state": 4,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 0,
+          "frame_events_time": 0,
+          "keepalive_time": 0
+        },
+        {
+          "tick": 1655360,
+          "state": 4,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 0,
+          "frame_events_time": 0,
+          "keepalive_time": 0
+        },
+        {
+          "tick": 1655361,
+          "state": 4,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 0,
+          "frame_events_time": 0,
+          "keepalive_time": 0
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 4,
+        "own_network": true,
+        "packets": [
+          "0a06080010031804"
+        ]
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 6,
+          "config": "080010031804",
+          "frames": [
+            "05"
+          ],
+          "events": [
+            "transport_update",
+            "lock",
+            {
+              "priority": [
+                1,
+                2
+              ]
+            },
+            {
+              "priority": [
+                2,
+                -1
+              ]
+            },
+            "stats_start",
+            "player_started",
+            "unlock",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1000001,
+          "state": 6,
+          "config": "080010031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655360,
+          "state": 6,
+          "config": "080010031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655361,
+          "state": 6,
+          "config": "080010031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 2,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 4,
+        "own_network": true,
+        "packets": [
+          "ff"
+        ]
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 4,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 0,
+          "frame_events_time": 0,
+          "keepalive_time": 0
+        },
+        {
+          "tick": 1000001,
+          "state": 4,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 0,
+          "frame_events_time": 0,
+          "keepalive_time": 0
+        },
+        {
+          "tick": 1655360,
+          "state": 4,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 0,
+          "frame_events_time": 0,
+          "keepalive_time": 0
+        },
+        {
+          "tick": 1655361,
+          "state": 4,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 0,
+          "frame_events_time": 0,
+          "keepalive_time": 0
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 4,
+        "own_network": true,
+        "packets": [
+          "0a06080010031804",
+          "0a06080110011805"
+        ]
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 6,
+          "config": "080010031804",
+          "frames": [
+            "05"
+          ],
+          "events": [
+            "transport_update",
+            "lock",
+            {
+              "priority": [
+                1,
+                2
+              ]
+            },
+            {
+              "priority": [
+                2,
+                -1
+              ]
+            },
+            "stats_start",
+            "player_started",
+            "unlock",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1000001,
+          "state": 6,
+          "config": "080010031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655360,
+          "state": 6,
+          "config": "080010031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655361,
+          "state": 6,
+          "config": "080010031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 2,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 4,
+        "own_network": true,
+        "packets": [
+          "ff",
+          "0a06080010031804"
+        ]
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 6,
+          "config": "080010031804",
+          "frames": [
+            "05"
+          ],
+          "events": [
+            "transport_update",
+            "lock",
+            {
+              "priority": [
+                1,
+                2
+              ]
+            },
+            {
+              "priority": [
+                2,
+                -1
+              ]
+            },
+            "stats_start",
+            "player_started",
+            "unlock",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1000001,
+          "state": 6,
+          "config": "080010031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655360,
+          "state": 6,
+          "config": "080010031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655361,
+          "state": 6,
+          "config": "080010031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 2,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 5,
+        "own_network": false,
+        "packets": []
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "05"
+          ],
+          "events": [
+            "network_process",
+            "transport_update",
+            "lock",
+            {
+              "priority": [
+                1,
+                2
+              ]
+            },
+            {
+              "priority": [
+                2,
+                -1
+              ]
+            },
+            "stats_start",
+            "player_started",
+            "unlock",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1000001,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655360,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655361,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 2,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 5,
+        "own_network": false,
+        "packets": [
+          "0a06080010031804"
+        ]
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "05"
+          ],
+          "events": [
+            "network_process",
+            "transport_update",
+            "lock",
+            {
+              "priority": [
+                1,
+                2
+              ]
+            },
+            {
+              "priority": [
+                2,
+                -1
+              ]
+            },
+            "stats_start",
+            "player_started",
+            "unlock",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1000001,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655360,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655361,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 2,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 5,
+        "own_network": false,
+        "packets": [
+          "ff"
+        ]
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "05"
+          ],
+          "events": [
+            "network_process",
+            "transport_update",
+            "lock",
+            {
+              "priority": [
+                1,
+                2
+              ]
+            },
+            {
+              "priority": [
+                2,
+                -1
+              ]
+            },
+            "stats_start",
+            "player_started",
+            "unlock",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1000001,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655360,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655361,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 2,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 5,
+        "own_network": false,
+        "packets": [
+          "0a06080010031804",
+          "0a06080110011805"
+        ]
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "05"
+          ],
+          "events": [
+            "network_process",
+            "transport_update",
+            "lock",
+            {
+              "priority": [
+                1,
+                2
+              ]
+            },
+            {
+              "priority": [
+                2,
+                -1
+              ]
+            },
+            "stats_start",
+            "player_started",
+            "unlock",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1000001,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655360,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655361,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 2,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 5,
+        "own_network": false,
+        "packets": [
+          "ff",
+          "0a06080010031804"
+        ]
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "05"
+          ],
+          "events": [
+            "network_process",
+            "transport_update",
+            "lock",
+            {
+              "priority": [
+                1,
+                2
+              ]
+            },
+            {
+              "priority": [
+                2,
+                -1
+              ]
+            },
+            "stats_start",
+            "player_started",
+            "unlock",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1000001,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655360,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655361,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 2,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 5,
+        "own_network": true,
+        "packets": []
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "05"
+          ],
+          "events": [
+            "transport_update",
+            "lock",
+            {
+              "priority": [
+                1,
+                2
+              ]
+            },
+            {
+              "priority": [
+                2,
+                -1
+              ]
+            },
+            "stats_start",
+            "player_started",
+            "unlock",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1000001,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655360,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655361,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 2,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 5,
+        "own_network": true,
+        "packets": [
+          "0a06080010031804"
+        ]
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "05"
+          ],
+          "events": [
+            "transport_update",
+            "lock",
+            {
+              "priority": [
+                1,
+                2
+              ]
+            },
+            {
+              "priority": [
+                2,
+                -1
+              ]
+            },
+            "stats_start",
+            "player_started",
+            "unlock",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1000001,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655360,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655361,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 2,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 5,
+        "own_network": true,
+        "packets": [
+          "ff"
+        ]
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "05"
+          ],
+          "events": [
+            "transport_update",
+            "lock",
+            {
+              "priority": [
+                1,
+                2
+              ]
+            },
+            {
+              "priority": [
+                2,
+                -1
+              ]
+            },
+            "stats_start",
+            "player_started",
+            "unlock",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1000001,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655360,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655361,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 2,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 5,
+        "own_network": true,
+        "packets": [
+          "0a06080010031804",
+          "0a06080110011805"
+        ]
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "05"
+          ],
+          "events": [
+            "transport_update",
+            "lock",
+            {
+              "priority": [
+                1,
+                2
+              ]
+            },
+            {
+              "priority": [
+                2,
+                -1
+              ]
+            },
+            "stats_start",
+            "player_started",
+            "unlock",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1000001,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655360,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655361,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 2,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 5,
+        "own_network": true,
+        "packets": [
+          "ff",
+          "0a06080010031804"
+        ]
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "05"
+          ],
+          "events": [
+            "transport_update",
+            "lock",
+            {
+              "priority": [
+                1,
+                2
+              ]
+            },
+            {
+              "priority": [
+                2,
+                -1
+              ]
+            },
+            "stats_start",
+            "player_started",
+            "unlock",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1000001,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655360,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655361,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 2,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 6,
+        "own_network": false,
+        "packets": []
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "network_process",
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1000001,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655360,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655361,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 2,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 6,
+        "own_network": false,
+        "packets": [
+          "0a06080010031804"
+        ]
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "network_process",
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1000001,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655360,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655361,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 2,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 6,
+        "own_network": false,
+        "packets": [
+          "ff"
+        ]
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "network_process",
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1000001,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655360,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655361,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 2,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 6,
+        "own_network": false,
+        "packets": [
+          "0a06080010031804",
+          "0a06080110011805"
+        ]
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "network_process",
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1000001,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655360,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655361,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 2,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 6,
+        "own_network": false,
+        "packets": [
+          "ff",
+          "0a06080010031804"
+        ]
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "network_process",
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1000001,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655360,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "network_process",
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655361,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "network_process",
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 2,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 6,
+        "own_network": true,
+        "packets": []
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1000001,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655360,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655361,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 2,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 6,
+        "own_network": true,
+        "packets": [
+          "0a06080010031804"
+        ]
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1000001,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655360,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655361,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 2,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 6,
+        "own_network": true,
+        "packets": [
+          "ff"
+        ]
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1000001,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655360,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655361,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 2,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 6,
+        "own_network": true,
+        "packets": [
+          "0a06080010031804",
+          "0a06080110011805"
+        ]
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1000001,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655360,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655361,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 2,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361
+        }
+      ]
+    },
+    {
+      "input": {
+        "state": 6,
+        "own_network": true,
+        "packets": [
+          "ff",
+          "0a06080010031804"
+        ]
+      },
+      "observed": [
+        {
+          "tick": 1000000,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1000001,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1000000,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655360,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [],
+          "events": [
+            "transport_update",
+            {
+              "frame_events": 1
+            },
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 1,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1000000
+        },
+        {
+          "tick": 1655361,
+          "state": 6,
+          "config": "080110031804",
+          "frames": [
+            "09"
+          ],
+          "events": [
+            "transport_update",
+            "pending_logs"
+          ],
+          "asserts": [],
+          "sequence": 2,
+          "frame_events_time": 1655360,
+          "keepalive_time": 1655361
+        }
+      ]
+    }
+  ]
+}
