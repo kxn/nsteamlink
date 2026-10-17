@@ -1,18 +1,20 @@
 #include "dns_refresh.h"
 #include <arpa/inet.h>
-#include <sys/socket.h>
 #include <string.h>
+#include <sys/socket.h>
 #ifdef __SWITCH__
 #include <switch.h>
 #endif
 bool sl_dns_current_config(sl_dns_config *out) {
     memset(out, 0, sizeof(*out));
 #ifdef __SWITCH__
-    if (R_FAILED(nifmInitialize(NifmServiceType_User)))
+    out->platform_error = nifmInitialize(NifmServiceType_User);
+    if (R_FAILED(out->platform_error))
         return false;
     uint32_t mask, gateway, primary, secondary;
     Result result = nifmGetCurrentIpConfigInfo(&out->local, &mask, &gateway, &primary, &secondary);
     nifmExit();
+    out->platform_error = result;
     if (R_FAILED(result))
         return false;
     const uint32_t servers[] = {primary, secondary};

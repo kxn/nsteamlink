@@ -364,10 +364,20 @@ static bool refresh_directory(sl_remote_connection *c, CURLcode result, uint64_t
     if (connected_at > 0)
         return false; /* Do not treat TLS, HTTP or protocol failures as stale DNS. */
     c->dns_refreshed = true;
-    sl_dns_config config;
-    if (!sl_dns_current_config(&config) ||
-        !sl_dns_refresh_begin(&c->dns, &config, "api.steampowered.com", now))
+    sl_dns_config config = {0};
+    bool configured = sl_dns_current_config(&config);
+    if (!configured || !sl_dns_refresh_begin(&c->dns, &config, "api.steampowered.com", now)) {
+#if NSL_DIAGNOSTICS
+        if (c->callbacks.diagnostic) {
+            char line[128];
+            snprintf(line, sizeof(line), "cloud_dns event=%s platform=%u servers=%u",
+                     configured ? "query_start_failed" : "config_failed", config.platform_error,
+                     config.count);
+            c->callbacks.diagnostic(line, c->ctx);
+        }
+#endif
         return false;
+    }
 #if NSL_DIAGNOSTICS
     if (c->callbacks.diagnostic) {
         char local[INET_ADDRSTRLEN], primary[INET_ADDRSTRLEN], secondary[INET_ADDRSTRLEN] = "";
