@@ -1065,14 +1065,14 @@ public:
         r.stats.TrackSentPacket(int(sent));
         return int(sent);
     }
-    void send_stats(ProbeRelay &r, EStatsReplyRequest request, SteamNetworkingMicroseconds now, bool force) {
+    bool send_stats(ProbeRelay &r, EStatsReplyRequest request, SteamNetworkingMicroseconds now, bool force) {
         SDRSendContext ctx(now, "relay stats");
         populate(ctx, r, request, force);
         if (ConnectionState() == k_ESteamNetworkingConnectionState_Connected &&
             ((ctx.msg.flags() & 2) || ctx.msg.has_quality_e2e() || force ||
              (&r == primary && m_connection.m_pTransport == this && m_connection.SNP_WantsToSendPacket()))) {
             if (m_connection.SNP_SendPacket(this, ctx))
-                return;
+                return true;
         }
         ctx.msg.set_connection_id(ConnectionIDLocal());
         ctx.msg.set_seq_num_c2r(r.stats.ConsumeSendPacketNumberAndGetWireFmt(now));
@@ -1082,7 +1082,7 @@ public:
         uint8_t packet[1300];
         size_t size = ctx.msg.ByteSizeLong();
         if (size >= sizeof(packet))
-            return;
+            return false;
         packet[0] = 26;
         ctx.msg.SerializeToArray(packet + 1, int(size));
         if (send_packet(network, packet, int(size + 1), r.address)) {
@@ -1091,7 +1091,9 @@ public:
             track(ctx);
             if (e2e)
                 m_connection.SNP_SentNonDataPacket(this, int(size + 1), now);
+            return true;
         }
+        return false;
     }
     void SendEndToEndStatsMsg(EStatsReplyRequest request, SteamNetworkingMicroseconds now, const char *) override {
         if (primary)
@@ -1300,6 +1302,35 @@ public:
         m_routeMetrics.m_nScoreMax = high;
         m_routeMetrics.m_nTotalPenalty = 10;
     }
+    void deliver_routes(SteamNetworkingMicroseconds now) {
+        // Fixed ELF 837b28-837f2c: preparing the primary target is observable
+        // even when this round has neither routes nor an ACK to send.
+        bool usable = primary && sl_sdr_target_populate(&primary->forward);
+        auto &stats=m_connection.m_statsEndToEnd;
+        sl_sdr_stats_probe e{};
+        e.pending=stats.m_usecInFlightReplyTimeout!=0;
+        e.last_immediate_request=stats.m_usecLastSendPacketExpectingImmediateReply;
+        bool probe=sl_sdr_outer_probe(usable,m_bNeedToConfirmEndToEndConnectivity,&e,now);
+        bool due=sl_sdr_routes_due(&revisions,uint64_t(now));
+        if (!due && !revisions.ack_pending) {
+            if (probe) send_stats(*primary,k_EStatsReplyRequest_Immediate,now,true);
+            return;
+        }
+        revisions.ack_pending=true;
+        bool sent=usable && ConnectionWireState()==k_ESteamNetworkingConnectionState_Connected &&
+            send_stats(*primary,probe ? k_EStatsReplyRequest_Immediate : due ?
+                k_EStatsReplyRequest_DelayedOK : k_EStatsReplyRequest_NoReply,now,true);
+        sl_sdr_stats_probe r{};
+        if (usable) { r.failures=primary->ping_failures; r.last_received=primary->last_received; }
+        e.failures=stats.m_nReplyTimeoutsSinceLastRecv; e.last_received=stats.m_usecTimeLastRecv;
+        if (sl_sdr_outer_relay_sufficient(sent,m_bNeedToConfirmEndToEndConnectivity,
+                revisions.ack_pending,sl_sdr_routes_due(&revisions,uint64_t(now)),&r,&e,now)) return;
+        if (due) revisions.retry_us=0;
+        revisions.ack_pending=true;
+        CMsgSteamNetworkingP2PRendezvous message;
+        conn().SetRendezvousCommonFieldsAndSendSignal(message,now,"SDR routes retry");
+        if (probe && !sent) send_stats(*primary,k_EStatsReplyRequest_Immediate,now,true);
+    }
     void P2PTransportThink(SteamNetworkingMicroseconds now) override {
         if (!network || ConnectionWireState() < k_ESteamNetworkingConnectionState_Connecting ||
             ConnectionWireState() > k_ESteamNetworkingConnectionState_Connected)
@@ -1307,11 +1338,7 @@ public:
         update_network(network, &m_connection, now);
         select_routes(now);
         rebuild_routes();
-        if (primary && (sl_sdr_routes_due(&revisions, uint64_t(now)) || revisions.ack_pending))
-            send_stats(*primary, m_bNeedToConfirmEndToEndConnectivity ? k_EStatsReplyRequest_Immediate
-                : k_EStatsReplyRequest_DelayedOK, now, true);
-        if (sl_sdr_routes_due(&revisions, uint64_t(now)) || revisions.ack_pending)
-            conn().ScheduleSendSignal("SDR routes retry");
+        deliver_routes(now);
         for (auto &r : network->relays) {
             r.stats.Think(now);
             if (!r.established) continue;

@@ -401,6 +401,34 @@ def main():
         audit.select, audit.timeout_decision = select, timeout
         audit.downtime, audit.probe_priorities, audit.routing_readiness = downtime, priorities, ready
         audit.failed_cache_add, audit.failed_cache_expire, audit.received = add, expire, received
+        original_outer = audit.outer_routes_delivery
+        lib.sl_sdr_outer_probe.argtypes=[c.c_bool,c.c_bool,c.POINTER(StatsProbe),c.c_int64]
+        lib.sl_sdr_outer_probe.restype=c.c_bool
+        lib.sl_sdr_outer_relay_sufficient.argtypes=[c.c_bool]*4+[c.POINTER(StatsProbe)]*2+[c.c_int64]
+        lib.sl_sdr_outer_relay_sufficient.restype=c.c_bool
+        def outer(elf,expected_events,**kw):
+            native=original_outer(elf,expected_events,**kw)
+            now=audit.NOW
+            r=StatsProbe(0,kw.get('relay_fail',0),now-kw.get('relay_age',0),0,0,False)
+            e=StatsProbe(0,kw.get('e2e_fail',0),now-kw.get('e2e_age',0),
+                now-kw.get('immediate_age',0),0,kw.get('reply_pending',False))
+            usable=kw.get('active',True) and kw.get('token',True)
+            need=kw.get('need',False)
+            probe=lib.sl_sdr_outer_probe(usable,need,c.byref(e),now)
+            due=not kw.get('acked',False) and kw.get('deadline_delta',-1)<=0
+            ack=kw.get('pending_ack',False)
+            actual=[]
+            if due or ack:
+                sent=usable and kw.get('state',3)==3 and kw.get('stats_ok',True)
+                if usable and kw.get('state',3)==3: actual.append(('stats',3 if probe else 2 if due else 1))
+                enough=lib.sl_sdr_outer_relay_sufficient(sent,need,not sent,False if sent else due,
+                    c.byref(r),c.byref(e),now)
+                if not enough:
+                    actual.append(('signal',))
+                    if probe and not sent: actual.append(('stats',3))
+            elif probe: actual.append(('stats',3))
+            assert actual==[x for x in native if x[0]!='diagnostic'],(kw,actual,native)
+        audit.outer_routes_delivery=outer
         original_generic = audit.generic_stats_producer
         lib.sl_sdr_stats_request_flags.argtypes = [c.POINTER(StatsProbe), c.POINTER(StatsProbe),
             c.c_int, c.c_int, c.c_uint32, c.c_bool, c.c_int64]
@@ -426,7 +454,7 @@ def main():
             'datacenter_latency_updates', 'reverse_latency_estimation', 'cluster_penalty_updates', 'canonical_pop_mapping',
             'datacenter_route_estimation','router_ping_reply_dispatch','ping_request_size','probe_failure_history',
             'nearest_probe_planning','config_pop_type','relay_key_selection','p2p_front_eligibility','config_hex_key',
-            'route_advertisement','advertisement_union','old_advertisement_hysteresis','generic_stats_production'}
+            'route_advertisement','advertisement_union','old_advertisement_hysteresis','generic_stats_production','outer_routes_delivery'}
         # Select group names from the existing audit; fail if they are renamed.
         counts = audit.audit(elf, groups)
         assert set(counts) == groups, counts

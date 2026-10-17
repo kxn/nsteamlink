@@ -2444,6 +2444,8 @@ front+interior+remote 作为初值，应用本地 override（-1 禁止、>=0 替
 - `probeWanted` 要求 primary/目标可用、need-confirm=1，且 connection E2E 没有 pending reply，
   或 `lastImmediateRequest+200000<=now`。
 
+原始 `0x837b38–0x837b44` 在这些判断前调用 BSetSessionForwardTargetToken，
+因此本轮不发送时仍可登记 sent token/POP/revision，不只是无副作用地读取旧值。
 三者都为 false 就返回。只有 probeWanted、没有 routesDue/ackPending 时直接对 primary 发
 request=3、force E2E 的 stats；这条专用分支不先发 CM。发送后期望 connection E2E pending
 已建立；发送失败且没有 pending 时走诊断，不能凭空假设转为 CM。
@@ -2824,3 +2826,16 @@ ACK 窗口。随后提前调度 connection 与 session thinker。
 网络请求，也不改变选路。stdout 仅从 fixture owner 在一秒采样点输出；Switch 使用已有的
 非阻塞 64KiB transcript，生产 release 不编译此诊断 API。单纯 root ACK 持续正常与 E2E
 保持为零必须分开解释，不能把前者记作后者恢复。
+
+### 21.31 外层 routes 交付的实现接线
+
+**Evidence**：§21.21 的 `ThinkSelectServer 0x837a90–0x837f2c` 与 20 项原始指令用例覆盖
+单独探测、ACK-only request=1、200ms/10 秒等号、健康门槛及 stats→signal→stats 次序。
+适配器原来只在 routesDue/ackPending 时发送 stats，再按这两个标志是否剩余决定 CM，遗漏
+单独 probeWanted 和发送成功后的 E2E/root 健康判断；ACK-only 也错误地统一请求 delayed。
+
+**Conclusion**：`deliver_routes` 在基础选路及快照维护后准备 primary target，再按该独立
+交付契约执行。`send_stats` 返回实际承载发送结果；成功不代表健康、ACK/revision 已满足。
+需要 CM 且本轮 routesDue 时先清共享重试期限，随后由信令填充沿用一秒规则。生产 C helper
+分别判断 probeWanted 和 relay 是否足够，使用同一输入与原始函数的网络动作序列核对；
+原始诊断回调不当作网络动作。此处修正依据既有静态证据，不预先认定它是某次断流的根因。

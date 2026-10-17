@@ -459,3 +459,12 @@ uint32_t sl_sdr_stats_request_flags(const sl_sdr_stats_probe *r,
     }
     return flags;
 }
+
+bool sl_sdr_outer_probe(bool usable, bool need, const sl_sdr_stats_probe *e, int64_t now) {
+    return usable && need && (!e->pending || e->last_immediate_request+200000 <= now);
+}
+bool sl_sdr_outer_relay_sufficient(bool sent, bool need, bool ack, bool due,
+    const sl_sdr_stats_probe *r, const sl_sdr_stats_probe *e, int64_t now) {
+    return sent && !need && !ack && !due && !r->failures && !e->failures &&
+        r->last_received+10000000 > now && e->last_received+10000000 > now;
+}

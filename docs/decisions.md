@@ -2430,3 +2430,11 @@ current/previous quality。主路生效时保存快照；同一 relay 对象改�
 跨 POP 只重置并补连接 RTT 的最近样本，不借此清空 transport 确认状态或会话 ACK。
 报告的服务端效果不由客户端代码推断；单 POP 多地址排序及被移除主路的缓存原因仍按文中的
 模型差异保留，不能以消息的 telemetry 名称豁免实现或夸大恢复证据。
+
+## D-068：按原始外层契约交付 routes/ACK 并决定 CM 回退
+
+依据 NETWORKING §21.21、§21.31，primary 的 forward target 准备、probeWanted、ACK-only、
+stats 成功后的 root/E2E 健康门槛与 CM 回退属于独立交付策略。不能仅以 routes/ACK 在发送
+后是否清空决定回退，也不能将纯探测等同新的 routes revision。保留 routesDue 时先清期限、
+必要时 stats→signal→stats 的调用顺序。发送函数返回承载结果，网络恢复另由真实输入验收；
+该静态修正不构成断流根因或恢复成功的声明。

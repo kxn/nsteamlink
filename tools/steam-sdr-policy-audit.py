@@ -2415,6 +2415,7 @@ def outer_routes_delivery(elf, expected_events, *, state=3, active=True, token=T
                     0xc097e0: lambda m: (m.events.append(('diagnostic',)), m.reg(0, 1))})
     native_call(m, 0x837a90, 0x837f2c, fixture.base, NOW)
     assert m.events == expected_events, (m.events, expected_events)
+    return m.events
 
 
 

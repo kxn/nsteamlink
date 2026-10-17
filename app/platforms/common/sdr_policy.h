@@ -140,3 +140,8 @@ typedef struct sl_sdr_stats_probe {
 uint32_t sl_sdr_stats_request_flags(const sl_sdr_stats_probe *relay,
     const sl_sdr_stats_probe *e2e, int request, int mode, uint32_t flags,
     bool content, int64_t now);
+
+/* NETWORKING 21.21: outer routes/ACK delivery, separate from packet production. */
+bool sl_sdr_outer_probe(bool usable, bool need_confirm, const sl_sdr_stats_probe *e2e, int64_t now);
+bool sl_sdr_outer_relay_sufficient(bool sent, bool need_confirm, bool pending_ack, bool routes_due,
+    const sl_sdr_stats_probe *relay, const sl_sdr_stats_probe *e2e, int64_t now);

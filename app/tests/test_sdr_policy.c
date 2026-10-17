@@ -34,6 +34,22 @@ int main(void) {
     assert(sl_sdr_stats_request_flags(&r,&e,0,1,0,false,now)==2);
     e.activity=2;
     assert(sl_sdr_stats_request_flags(&r,&e,0,1,0,false,now)==0);
+    /* Original outer delivery: probe-only and strict ten-second health. */
+    r=(sl_sdr_stats_probe){.last_received=now};
+    e=(sl_sdr_stats_probe){.last_received=now,.pending=true,.last_immediate_request=now-199999};
+    assert(!sl_sdr_outer_probe(true,true,&e,now));
+    --e.last_immediate_request;
+    assert(sl_sdr_outer_probe(true,true,&e,now));
+    assert(!sl_sdr_outer_probe(false,true,&e,now));
+    assert(sl_sdr_outer_relay_sufficient(true,false,false,false,&r,&e,now));
+    r.last_received=now-10000000;
+    assert(!sl_sdr_outer_relay_sufficient(true,false,false,false,&r,&e,now));
+    ++r.last_received;
+    assert(sl_sdr_outer_relay_sufficient(true,false,false,false,&r,&e,now));
+    assert(!sl_sdr_outer_relay_sufficient(true,true,false,false,&r,&e,now));
+    assert(!sl_sdr_outer_relay_sufficient(true,false,true,false,&r,&e,now));
+    assert(!sl_sdr_outer_relay_sufficient(true,false,false,true,&r,&e,now));
+    assert(!sl_sdr_outer_relay_sufficient(false,false,false,false,&r,&e,now));
     assert(sl_sdr_comparison_score(20, INT_MAX) == 20);
     assert(sl_sdr_comparison_score(INT_MAX, 20) == INT_MAX);
     assert(sl_sdr_comparison_score(20, SL_SDR_UNKNOWN) == 134217737);
