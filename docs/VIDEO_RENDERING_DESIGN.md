@@ -892,6 +892,14 @@ legacy adapter 仍进入同一 tracker，但不为迟到、歧义的 16-bit id �
 
 ### 15.2 FFmpeg 输入输出关联
 
+【官方来源范围更正】以下资源/身份模型描述Native实现。撤回把“已接受但无输出继续pending”
+作为所有官方后端共有策略的判断：此前任务选择与完成投影来自Android/MediaCodec。
+`STEAMLINK_PROTOCOL_RE.md` §91另固定官方Linux AVCodec客户端，其receive EAGAIN实际先记7，
+再经原统计门禁保留7并发空DataLost；没有Android的六次SDK等待。这是不同后端的实际差异。
+COPY_OPAQUE在本地证明物理输出的引用归属，不单独证明官方FFmpeg的任务身份/错误结果/
+采样顺序一致；物理像素身份安全与协议任务策略分别核验。本文当前队列/伪代码不能作为
+这些FFmpeg分支已对齐的验收依据。
+
 证据：当前 `video_submit_locked` 调 `receive_frames(frame_id, submit_us)`，缓存输出也沿用本次
 输入 id；实际 FFmpeg 的 send/receive 解耦。固定分支及本机 `avcodec.h` 的 COPY_OPAQUE 契约
 允许输入输出不是一一对应，不能仅开一个 flag 就宣称完成归因。

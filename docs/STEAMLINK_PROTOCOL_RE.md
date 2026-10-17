@@ -7152,7 +7152,7 @@ CStreamPlayer::VideoFrameComplete @0x7c2b28再进入base/client完成链。
 新任务可借用先前的texture，而其完成仍归自己的输入ticket。空输入亦能产生输入任务，
 不能因为它没有像素token就从任务生命周期中消失。
 
-【平台契约】视频消费者须分别持有：已接受输入的有序任务、真实解码输出队列、已选像素缓存、
+【Android/MediaCodec投影契约】视频消费者须分别持有：已接受输入的有序任务、真实解码输出队列、已选像素缓存、
 本次呈现任务ticket。先按原媒体jitter选最新已到期任务，再按其后端PTS选择输出或复用缓存；
 输出的不可变物理身份/PTS留在像素对象中，16/17及最终结果写任务ticket。缺输出时的NDK等待/
 flush与FFmpeg EAGAIN不是同一个API事件，物理等待/超时适配仍需单独验证；不能在每次普通
@@ -7259,3 +7259,112 @@ python3 scripts/audit-steam-client-fec-lifecycle.py \
 ```
 
 正常运行只读核验压缩fixture；`--refresh-reference`仍拒绝覆盖已有不同观察结果。
+
+## 91. 官方Linux AVCodec客户端：收帧错误与Android投影的边界
+
+### 91.1 来源、身份与复播边界
+
+【官方客户端材料】从Valve的[1.3.32.316目录](https://repo.steampowered.com/steamlink/1.3.32.316/)
+取得`steamlink-1.3.32.316.tgz`；archive SHA256为
+`cb12c08e14ce4dfd4c4544bc783e94c51c0a474e30cccbd98a6937e14aa5d8e8`，
+与[分发manifest](https://github.com/flathub/com.valvesoftware.SteamLink/blob/master/com.valvesoftware.SteamLink.yml)
+固定的该版本值一致。[Valve README](https://repo.steampowered.com/steamlink/README.txt)
+将桌面Linux客户端指向该Flatpak；该文件也限制二进制再分发。审计只在本地读取原包，
+不将Valve ELF/库提交到项目或发布包。`package/bin/steamlink`的SHA256固定为
+`95482ca6120f90bb90798b27206b7946ab732e079f008d7fc90ea58a8b0074e1`。
+版本与平台独立记录，不把它冒称Android ELF或所有当前官方版本。
+
+ELF去掉了普通函数符号。命名依据是实际RTTI `25CStreamDecoderH264AVCodec`、
+相对重定位及vtable、原构造写入的vptr、GetName返回字符串、与导出的Android基类
+虚接口顺序交叉核对。完整函数范围由`.eh_frame`的FDE确定，不取最近的残余导出名；
+objdump将这里标为附近ctype导出的偏移不能据此命名。原构造@0x324610实际写入
+vptr=0x10ffaa8，其slot14指向@0x324190；后者参数为decoder/id/timestamp/buffers，
+是本节的FinalDecode。函数元数据包含19个完整FDE范围的地址/长度/指令SHA，
+案例合计逐个观察到其入口执行。
+
+`audit-steam-client-avcodec.py`执行原函数指针表设置@0x173b10、完整decoder/base构造、
+受控仅支持软件H264的SDK能力下的原codec选择与StartDecoding @0x3246d0、
+完整FinalDecode @0x324190–32460d、CAVCodecVideoFrame构造/身份、原RecordFrameComplete、
+DataLost protobuf与原Frame::Put/Send。AVCodec/parser/frame/packet API、输入buffer接口、
+锁/CPU/file/time、日志、最终player Put与Connection发送是明确终点。
+
+SDK返回值/格式/尺寸/输出PTS是输入；没有物理解码、绘图、GPU或真实网络。
+统计槽显式种为合法pending状态，执行原完成门禁；不声称完整RecordFrameReceived、
+网络/统计Start/Stop生命周期。没有完整Qt/认证/client启动。COPY/TLS全进程初始化
+边界受控，未使用的导入对象保持零。后述hardware_format值是直接控制的能力分支，
+不冒称已经走通硬件选择、驱动失败或NVTEGRA等价。
+
+### 91.2 FinalDecode的触发条件与可观察结果
+
+原StartDecoding为H264建parser并置complete-frame标志。FinalDecode从buffer取得整个AU，
+分配AVPacket与CAVCodecVideoFrame；解析/提交/取输出按以下分支推进：
+
+| 明确输入/条件 | 原函数观察 |
+| --- | --- |
+| parser消费字节数不等于本次输入长度 | @0x324253–273记result5、释放packet，不send/receive/Put；不是无限等待parser补齐 |
+| send_packet返回0 | 继续一次receive_frame |
+| send_packet返回非0，包括-11 | @0x324520–548记录错误并请求ResetVideoDecoder(false)，随后仍执行一次receive；没有在此drain并重发同一packet |
+| send返回-5/EIO | @0x3245c8–5eb打印禁用硬件加速说明，client+0x1d8置0x10000000并清+0x264，再进入上述reset/receive；完整配置保存/重协商未由这些裸成员写证明 |
+| receive返回0且宽/高均大于0 | @0x324389以后设frame身份为本次FinalDecode的id/timestamp，选择格式后调用player Put |
+| receive返回0但宽或高不大于0 | 释放packet，不交付该对象；不能把SDK成功状态单独视为有效画面 |
+| receive返回-11/EAGAIN | @0x324560–57a先调用RecordFrameComplete(video,id,7)，再进入共有错误分支调用result5 |
+| receive其他非0错误，包括EOF/INVALIDDATA/EIO | 进入共有错误分支，调用result5 |
+| 共有receive错误分支 | @0x324480–4a4调用SendDataLost(video,空vector)，unref AVFrame，然后按context尺寸继续后处理；hardware_format=51/157另请求Reset(false) |
+
+这里的7是DroppedReset结果；不能把结果名直接等同于实际ResetVideoDecoder调用。
+仅receive EAGAIN且普通软件能力的案例，真实reset请求成员仍为0。`RecordFrameComplete`
+@0x318b50实际先检查槽ID和pending结果；7之后的5不能覆盖它。合法pending槽的实测最终值
+为7，其他receive错误为5。不是用观察者挑选第一个结果来模拟该门禁。
+
+原SendDataLost @0x31f7f0检查client phase6；本节在该前置状态下执行原空message构造、
+protobuf与Frame::Put/Send，最终Connection终点收到video channel3、完整frame正文`02`，
+表示k_EStreamDataLost且protobuf正文为空。没有凭空加入丢失的sequence ID，亦不是148。
+原Codec API的EAGAIN路径没有Android六次250000us取输出或SDK flush。
+
+正常输出的AVFrame PTS由SDK输入分别取不同值，原frame的协议id/time仍按本次FinalDecode
+参数设置；AVPacket PTS保留SDK分配时的AV_NOPTS_VALUE。它不同于Android按SDK输入PTS
+再取texture的规则；这不证明Host会自然产生任意B帧/重排，也不取消Native物理像素token的
+引用安全要求。媒体任务身份与物理解码来源是两个需分别映射的对象。
+
+### 91.3 错误后的占位对象不是有效像素证据
+
+共有receive错误路径先unref AVFrame；SDK替身按FFmpeg默认语义将其宽高清零、format=-1。
+随后原代码以codec context宽高设置IVideoFrame尺寸，使用format0并仍调用player Put。
+因此可观察到“声明128×72、AVFrame实际0×0/format=-1”的对象。此处只记录对象元数据及
+调用者交接，不生成/校验物理像素；不能把模拟内存或占位对象当作官方成功显示，亦不能
+要求Native向GPU提交无像素的AVFrame。完整Linux呈现调用者、jitter/提交阶段与这类对象的
+消费语义，不能由Android对应函数或本节的player Put终点替代。
+
+### 91.4 撤回共有后端推断与Native反例
+
+【撤回】§87–89的官方正向证据来自Android/MediaCodec。撤回将“接受输入即入任务队列、
+无输出继续pending、输入后端PTS选择texture”当成FFmpeg/所有官方后端共有策略的判断。
+那些Android原指令观察仍成立；其Native投影仅证明所列Android边界案例，不能用来证明
+Linux AVCodec错误处理、任务身份、采样顺序或NVTEGRA平台策略等价。§89契约标题据此限定
+为Android/MediaCodec投影；`VIDEO_RENDERING_DESIGN.md`同样明确当前Native资源模型与
+官方后端策略证据的区别。已有COPY_OPAQUE/跨销毁像素引用检查的资源价值不等于协议完成
+行为已经对齐。
+
+`observe-native-avcodec-gap.py --build build/desktop --output DIR`从实际已配置oracle的
+compile/link命令生成隔离观察器；保留真实control/parser/worker/FFmpeg/media与FrameTracker，
+第一张实际解码像素先比独立framemd5，再显式在codec返回边界抑制为EAGAIN。这是声明的
+后端可用性输入，不是自然Switch故障。观察器不改产品/golden、不添加必须保留差异的测试。
+
+产品基线1a6d145、frame1、相同2204B AU与媒体time1000000：原Linux函数最终统计7并生成
+`02`反馈；Native实际tracker有decode begin/end，但complete=false、result0，选择后仍持有
+waiting_id1，DataLost调用0。`completion_matches=false`是实际记录差异；不从较早隔离模型
+或预设期望拼出Native状态。不以这个受控反例认定原用户卡顿/闪烁根因。
+
+【复现与检测力】固定来源29组32状态：正常/连续输出、不同输出PTS、send错误仍收一次、
+receive EAGAIN/EOF/INVALIDDATA、parser消费长度、空输入/空parser输出、无效尺寸，以及受控
+格式分支。六项原指令反事实分别去掉EAGAIN特判、去掉DataLost、把错误视为成功、漏send失败
+reset、漏输出身份赋值、漏EIO配置修改；均须完整返回且实际状态/反馈/交付结果改变，
+不以assert或harness错误充数。该审计是官方客户端证据，不是产品等价或设备测试。
+
+```sh
+python3 scripts/audit-steam-client-avcodec.py \
+  --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
+  --output /tmp/steam-client-avcodec.json
+python3 scripts/observe-native-avcodec-gap.py \
+  --build build/desktop --output /tmp/native-avcodec-gap
+```
