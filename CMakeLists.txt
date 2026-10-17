@@ -87,6 +87,14 @@ if(NSL_PLATFORM STREQUAL "desktop")
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-control-wire.py"
             --receiver $<TARGET_FILE:ihs-control-wire-oracle>)
         set_tests_properties(control_wire_official_vectors PROPERTIES TIMEOUT 60)
+        add_test(NAME reliable_large_frame_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-reliable-large-frame.py"
+            --receiver $<TARGET_FILE:ihs-reliable-large-frame-oracle>)
+        set_tests_properties(reliable_large_frame_official_vectors PROPERTIES TIMEOUT 60)
+        add_test(NAME negotiation_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-negotiation.py"
+            --receiver $<TARGET_FILE:ihs-negotiation-oracle>)
+        set_tests_properties(negotiation_official_vectors PROPERTIES TIMEOUT 60)
         add_test(NAME reliable_channels_official_vectors COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-reliable-channels.py"
             --receiver $<TARGET_FILE:ihs-reliable-channels-oracle>)

@@ -551,6 +551,8 @@ static bool launch_session(sl_runtime *r, IHS_SessionInfo info) {
         .systemInfo = platform.system_info[0] ? platform.system_info : NULL,
         .decoderInfo = platform.decoder_info,
         .decoderThreads = 1, /* video_pipeline.c sets AVCodecContext.thread_count = 1. */
+        .hasVideoDecoderCapabilities = true,
+        .supportsVideoHevc = false, /* The runtime's validated pipeline is H264. */
         .maximumDecodeBitrateKbps = platform.maximum_decode_bitrate_kbps,
         .maximumBurstBitrateKbps = platform.maximum_burst_bitrate_kbps,
         .hasSystemCanSuspend = true,

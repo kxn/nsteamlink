@@ -171,6 +171,15 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-client-settings-io.py"
         --receiver $<TARGET_FILE:nsl-stream-settings-oracle>)
     set_tests_properties(stream_settings_official_vectors PROPERTIES TIMEOUT 60)
+    add_executable(nsl-raw-audio-oracle tests/raw_audio_oracle.c)
+    target_include_directories(nsl-raw-audio-oracle PRIVATE platforms/common)
+    target_compile_options(nsl-raw-audio-oracle PRIVATE -UNDEBUG -Wall -Wextra)
+    target_link_libraries(nsl-raw-audio-oracle PRIVATE nsl_platform)
+    target_link_options(nsl-raw-audio-oracle PRIVATE -Wl,--wrap=SDL_QueueAudio)
+    add_test(NAME raw_audio_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-raw-audio.py"
+        --receiver $<TARGET_FILE:nsl-raw-audio-oracle>)
+    set_tests_properties(raw_audio_official_vectors PROPERTIES TIMEOUT 60)
     add_executable(nsl-native-tests tests/test_native.c)
     target_include_directories(nsl-native-tests PRIVATE platforms/common)
     target_compile_options(nsl-native-tests PRIVATE -UNDEBUG)

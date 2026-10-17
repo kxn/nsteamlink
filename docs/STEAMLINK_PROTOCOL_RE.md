@@ -167,9 +167,9 @@ data[13] = messageType；若 hasExtHeader：data[14..25] = 扩展头 12 字节
 | InitMsg 字段 | 官方处理 |
 |---|---|
 | reliable_data (bool) | **无条件字节复制bool值**进自身CNegotiatedConfig.reliable_data；撤回“含输入hasbit回显”的说法，输出hasbit独立置位，详见§47 |
-| supported_audio_codecs | 顺序扫描，取首个 ∈ {1, 3}（Raw/Opus）为 selected_audio_codec；无匹配记 0 并在日志使能时告警 |
-| supported_video_codecs | 顺序扫描，按客户端解码能力掩码 0x330（位 4,5,8,9 = HEVC/AV1 族，再过
-  `CStreamDecoderH264Standalone::BAvailable` 硬解检测）取首个为 selected_video_codec |
+| supported_audio_codecs | 顺序扫描，取首个Raw1或允许的Opus3；enable_audio_uncompressed时跳过Opus；无匹配显式记0，详见§48 |
+| supported_video_codecs | 顺序扫描，按客户端解码能力掩码 0x330（位4,5,8,9 = H.264/HEVC/AV1/Pyrowave，再过
+  `CStreamDecoderH264Standalone::BAvailable` 能力检测）或Raw1，取首个为 selected_video_codec，详见§48 |
 | supports_remote_hid | 真 → 置 enable_remote_hid=1（NegotiatedConfig hasbit 0x8） |
 | supports_touch_input | 真 → 置 enable_touch_input=1（hasbit 0x10） |
 | os_type / gaming_device_type (int32) | 存入 CStreamClient+8/+12 |
@@ -177,13 +177,13 @@ data[13] = messageType；若 hasExtHeader：data[14..25] = 扩展头 12 字节
 随后的 `CNegotiationSetConfigMsg`（0x7ada1c 起）三段整体 CopyFrom 后发送（type 4，加密+可靠）：
 `config` ← CStreamClient+0x120（CNegotiatedConfig，成员对象：上述选择结果）、
 `streaming_client_caps` ← +0x160（CStreamingClientCaps：supported_video_codecs 内联构建——
-恒追加 1/H264，再按 BAvailable 逐个追加 4,5,8,9）、
+恒追加1/Raw视频，再按 BAvailable 逐个追加 4,5,8,9）、
 `streaming_client_config` ← +0x1c8（CStreamingClientConfig，来自 Load/SetStreamingClientConfig）。
 
-**与 ihslib 差异（§6 P4 落地）**：ihslib 硬编码 `reliable_data=false`；
-官方把 host 宣告的 reliable_data 原样回显。【推断】host 侧语义 = "host 能力下的可靠数据选项"，
-客户端回显表示接受；ihslib 的硬编码在实践中与 host 宣告 false 等价（真机 host 日志未出现异常），
-但语义上不再对齐，对齐修改应在读取 host 宣告后回显。
+**实现契约（§48更正）**：通用可靠接收及完整协商生产已有官方客户端原指令对照，
+本地按host的bool值写reliable_data，并独立显式置presence。撤回此前用“host宣告false时
+真机无异常”弱化硬编码false差异的论证。平台只声明实际解码能力；Raw视频及其他未实现
+codec仍是明确差异，不能以H264/HEVC子集对照代替全能力一致性。
 
 ## 6. 会话建立序列（client 视角）【已验证（函数级）/时序待动态确认】
 
@@ -959,7 +959,7 @@ Opus 48kHz 双声道，HID open=1/start=1；25 秒采样期间继续收到音视
 | `src/session/channels/ch_control.c` | 汇编：ACK/NACK 0x7f94b8/0x7f960c、接收水位 0x7fa14c、解密序号 0x7ad054；§14.1–14.7/14.12。诊断容量另有离线 canary/并发测试。 |
 | `src/session/channels/ch_control.h` | 汇编：ACK/NACK 0x7f94b8/0x7f960c、接收水位 0x7fa14c、解密序号 0x7ad054；§14.1–14.7/14.12。诊断容量另有离线 canary/并发测试。 |
 | `src/session/channels/ch_control_keepalive.c` | 汇编：HandleStreaming 0x7a7140 首发与 0xA0000 ticks 周期；本地 stop/join 定时器生命周期。 |
-| `src/session/channels/ch_control_negotiation.c` | 汇编：OnNegotiationInit 0x7ad710、0x7ad9cc、0x7ad9e8；真实能力约束 reliable_data=false，§14.11。分辨率/码率/硬解/system_info 是 Switch 平台选择。 |
+| `src/session/channels/ch_control_negotiation.c` | 汇编：完整OnNegotiationInit 0x7ad698与原C++ SetConfig生产，§47–48；reliable值/presence、codec顺序及重复Init有固定对照。Raw视频等未实现能力与平台system_info单列。 |
 | `src/session/channels/ch_control_video.c` | 汇编：真实 StartVideoData 0x7ae0c8–0x7ae1f4、数据时钟换算 0x7ad22c；§14.10/14.11。本地 worker/短包防护及音视频真机验证。 |
 | `src/session/channels/ch_discovery.c` | 汇编：Connected 0x7fae30 与 Unconnected 分流 0x7ff660；§14.13。重复 Connected 不重复发送 ClientHandshake；停止任务后释放 channel。 |
 | `src/session/channels/channel.c` | 汇编：ACK echo 0x7f9ec0；数组移除计数、重复添加/容量边界属于 C 内存约束，protocol_evidence 音频重建/早到包测试。 |
@@ -4239,8 +4239,8 @@ refcount/释放、mutex、诊断与最终UDP为明确适配器；接收环预分
 
 本节媒体数据采用有效完整头，peer−local offset固定0；实机codec、非零offset的
 跨层转换、完整应用循环与协商声明不能由这些数据头样本自动推出。
-`reliable_data=false`仍是协议能力声明差异，其完整negotiation/decoder契约独立于
-通用可靠接收状态机。原§14.11/§24中“只接纳3/4”说明由此更正：5/6可以重组并
+本节当时`reliable_data=false`仍是声明差异；后续§48完整协商生产对照更正此声明。
+完整decoder契约仍独立于通用可靠接收状态机。原§14.11/§24中“只接纳3/4”说明由此更正：5/6可以重组并
 交给consumer，但不能仅凭本节宣称完整协商和设备消费已经与Android相同。
 
 ```sh
@@ -4291,3 +4291,88 @@ python3 scripts/audit-steam-negotiated-reliable.py \
   --binary /path/to/official/libmain-arm64.so \
   --output build/video-recovery-re/negotiated-reliable.json
 ```
+
+
+## 48. 完整NegotiationInit生产与编码能力语义
+
+【证据／撤回】直接读取固定ELF的内嵌remoteplay.proto descriptor，
+EStreamVideoCodec的1=Raw、4=H264、5=HEVC、8=AV1、9=Pyrowave。
+撤回旧§5/§7“1/H264”的说明，不能把音视频消息的type1或Raw视频codec1当H264。
+`OnNegotiationInit`对Raw1直接选中，对4/5/8/9调用BAvailable；caps顺序为Raw1，
+再按BAvailable追加4/5/8/9。当前平台H264/HEVC外的codec能力不因看到这个分支就可冒报。
+
+【证据】`audit-steam-negotiation.py`执行完整OnNegotiationInit、原C++构造/
+parser/CopyFrom/serializer、SendControlMessage、Frame::Put/Send至最终Connection
+send边界。输入是已解密Frame；BAvailable、GetChannel、加密和Connection最终发送
+是显式适配器，捕获的是已定型的明文frame body，不是加密UDP线包。
+三个复制checkpoint不再被当成完整协商；完整生产案例覆盖codec顺序、Raw音频开关、
+可靠字段presence/值、重复Init、host元数据、临时limit清除与坏protobuf。
+
+【结论】完整SetConfig明确写reliable_data（缺省false也有presence），selected audio/
+video即使None0也显式出现。音频按host顺序取首个Raw1或Opus3，enable_audio_uncompressed
+为true时跳过Opus；enable_audio_streaming=false不删除解码能力。视频按host顺序取
+Raw1或BAvailable允许的4/5/8/9。Codec能力与HEVC请求偏好分开；caps的音视频数组也
+不能改成偏好排序。Native库的H264/HEVC子集不支持Raw视频1，是明确能力差异，相关source
+案例不计入Native等价；不能把过滤后的计数宣称覆盖了Raw/AV1/Pyrowave。
+
+重复Init会覆盖reliable/selected codecs，但remote HID/touch仅在host的值为true时置位，
+随后false/省略不清除该成员。os_type/gaming_device_type仅在输入presence存在时更新，
+显式0仍覆盖。OnInit在复制client config前清除runtime_limit，保留display/quality limit。
+这些规则由完整C++生产案例执行验证，不从字段名推断。Switch应用只声明已接线的H264，库的显式HEVC能力与请求偏好分开。
+平台的BAvailable、caps初始deprecated HEVC位为受控输入，不冒称执行了真实硬件探测或完整CStreamClient构造。
+
+
+### 48.1 可靠环满状态与大帧约束
+
+【证据】长SetConfig的19片生产回归中，本地已发送全部片，但测试接收环在第16片
+后把满环误判成空，后续重组无法完成。通用接收也采用相同window函数，故这是实际
+接收风险，不是测试需要多pump一次sender。此前引入16槽初值时没有覆盖环满边界。
+`audit-steam-reliable-large-frame.py`执行官方真实ctor/BInsert/EnsureCapacity/PopHead/
+Update/Socket，证明环满仍保持正确span并交付。原始EnsureCapacity `0x7fd250–0x7fd270`
+将容量下限取64、再按二的幂扩展。18例覆盖15/16/17/19/63/64/65/1100片、
+CRC开关和64槽满环但缺首片的ACK/NACK。该探针还逐字节重组1100×1024B，记录真实交付的
+长度/SHA256和ACK，不用本地算法生成expected结果。
+
+【设计约束】Native的物理head/tail相邻既可表示空也可表示满；tail槽仍持有packet时
+不能返回size0。可靠window从64槽起增长，满环不能阻断扩容。可靠完整帧使用接收
+窗口范围决定重组长度，不把control时期的1MiB临时buffer上限误当成媒体协议上限。
+decoder/FEC FIFO的显式本地资源限制与此transport重组区分；本节不是内存耗尽验收。
+
+### 48.2 Raw音频能力必须由实际播放路径支撑
+
+【证据】同SHA官方客户端`StartAudioDecoding 0x7a7ef8`对codec1构造
+CStreamDecoderRawAudio；`StartDecoding 0x7b178c`执行CAudioFormat parser，
+用其中frequency/channels启动player，不能仅沿用StartAudioData外层的两个值。
+`DecodeFrame 0x7b1838`读取little-endian signed16样本，转换为float（除32768）
+后交给player；标量尾部和NEON分支均如此。`audit-steam-raw-audio.py`执行原始
+parser/DecodeFrame，14例覆盖mono/stereo、极值/符号、向量边界及6000样本长帧，输出真实float
+字节与frame metadata。player的分配、启动、提交和GetWriteArea存储为显式适配器。
+
+【设计约束】此前应用播放端仅允许Opus，不能把库能交付Raw误称为应用能播放。
+Raw能力声明必须配套解析codec_data和实际PCM播放。SDL平台仍用已验证的S16LE
+设备格式；官方float输出与本地SDL队列的S16LE按精确的32768比例比较，平台音频
+输出格式差异不当成网络codec差异。短坏配置、无效采样率/声道及分配失败的保护
+属于本地资源/输入约束，不声称官方故障行为等价。实际声卡/扬声器仍需设备证据。
+
+
+```sh
+python3 scripts/audit-steam-negotiation.py \
+  --binary /path/to/official/libmain-arm64.so \
+  --output build/video-recovery-re/negotiation.json
+python3 scripts/audit-steam-reliable-large-frame.py \
+  --binary /path/to/official/libmain-arm64.so \
+  --output build/video-recovery-re/reliable-large-frame.json
+python3 scripts/audit-steam-raw-audio.py \
+  --binary /path/to/official/libmain-arm64.so \
+  --output build/video-recovery-re/raw-audio.json
+ctest --test-dir build/desktop -R 'negotiation|reliable_large_frame|raw_audio' --output-on-failure
+```
+
+完整Init固定96例，Native比较其中93例；3个实际选择Raw视频/AV1/Pyrowave的案例只作
+source证据。比较器仅删除caps中本平台没有的Raw视频1声明，其他SetConfig字段完整逐字节
+比较，不以此过滤冒称全codec等价。Native真实可靠分片和加密发送后重组、解密再比较；
+Source完整C++ Frame生产在加密/Connection发送处用适配器，故不是两端加密UDP互通证明。
+嵌套limit保留/清除覆盖空repeated容器，非空decoder-limit列表不在本节96例内。
+Raw音频另外从真实media start/submit走到SDL设备队列，与14个官方float结果比较，并
+核对codec_data覆盖外层频率/声道；附加坏配置/不整样本保护和stop/shutdown。
+这些证据不包含真实Steam认证、peer SetConfig后完整握手、物理设备解码/显示或用户停顿原因。
