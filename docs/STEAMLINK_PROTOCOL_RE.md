@@ -6864,3 +6864,82 @@ ctest --test-dir build/desktop --output-on-failure \
 本地有界检查处理，不复制越界读取。没有由此增加等待关键帧、FEC阈值或重发计时。
 发现的字节差异尚不证明用户一两秒停顿/菜单闪烁根因；bit0/1主机producer、bit6
 主机含义、其余decoder factory、完整平台错误映射各需独立官方证据。
+
+## 86. 分片范围连续性、bit2与结束片段身份
+
+【官方客户端证据】固定core SHA同§24.1。原DecodeFrame @0x7b2274/227c从视频
+header偏移3/5读两个LE16值，并在partial节点+12/+16以32位保存；入队扫描
+@0x7b22c4–22dc只在frame ID相同且incoming.end < existing.start时插前，否则
+继续向后。因此这是严格小于，不是按sequence重新排序或去重，也不跨frame ID排序。
+
+原OnThink @0x7b2540–256c：end=0直接绕过范围检查及推进；end!=0要求
+start等于decoder+420的32位next值，不等则保留头节点、退出本轮，不在这个分支
+设置strict/请求DataLost。匹配且bit2=1时，FrameFinish=1写next=0，否则写
+end+1；bit2=0保持next，含FrameFinish=1也不凭空清零。因此65535+1保存为65536，
+不是LE16回绕。原FlushPendingData清零next，普通提交不统一清零此字段。
+
+原OnThink @0x7b258c/2594、261c/2620从**结束片段**取得frame ID/timestamp，
+@0x7b2744/2748将它们传FinalDecode；在这些原组帧指令里没有“中途frame ID变化
+就strict丢弃”的条件。完整实际输入：key首片frame1/seq1/flags16/range0,0/`41`，
+末片frame2/seq2/flags8/range0,0/`42`，原SDK收到`4142`，提交ID为2，strict=0、
+无DataLost、无原assert。该例证明decoder边界行为，不证明任意Host正常产生它。
+
+【差异与更正】子库9824e01的next为uint16，65535边界会错误回到0；同一组帧
+还强制所有partial的frame ID/ticket必须等于第一片，否则DiscardPending并严格
+等待/请求DataLost。撤回将这条wire frame ID一致性要求视作官方组帧准入策略的
+含义；旧test_video_tracked中“ID变化不得完成组帧”的断言同样撤回，
+该用例现检查完整`xy`提交至结束ID及相应ticket。epoch/resource身份保护仍有独立意义，不能据此改变原片段拼接条件。正确
+投射须保留当前epoch，并在完整提交采用结束片段的tracked ticket；不能把由不同
+片段ID贡献的字节丢弃或将完成错误地记在第一片ID。
+
+【执行循环边界】原IStreamDecoder::RunDecodeLoop @0x766d50–766e60实际先排空
+input FIFO，再调用虚OnThink，将原返回值送CThreadSyncObject::Wait：-1是idle
+等待输入，0是pending-reset返回，1是在尚有partial时短等后再循环。本审计将OS
+Wait作为有界排程终点，可继续wait1循环；wait0/-1结束本轮观察并保留对象供后续
+动作。记录原Wait参数，不把受控终点解释为真实线程延迟/唤醒或物理显示证明。
+
+【执行向量与反事实】`audit-steam-video-subframe.py`固定160例544状态，涵盖
+codec4/5、有/无backend、end0/1/65535、bit2/FrameFinish组合、非匹配范围保留、
+同ID反序修复/等边界不插前、跨ID不排序、结束不带bit2的next继承、wire sequence
+回绕/缺口、key/actor purge、pending-reset、逐片CBC与真实AU。每状态记录完整
+partial顺序/header/bytes、32位next、sequence、严格/软等待、backend/mode/request、
+完整SDK输入/提交ID/player引用和反馈有序列表；20份148正文由原generated protobuf
+序列化后与Native完整wire比较。未用观察者公式生成范围/排序/反馈期望。
+
+queued_finishes案例先在同ID范围2..3排入结束片，再排入另一ID的结束片；最后
+0..1的bit2片插前补齐范围，原RunDecodeLoop先提交第一个ID的完整`4142`，实际
+Wait(1)后再提交第二个ID的`43`。idle时Wait(UINT_MAX)、请求挂起时Wait(0)也实际
+执行并保留参数。Native对照在动作边界排空有界工作，只证明列表/状态/顺序相同；
+没有声称其OS条件变量和官方Wait毫秒排程、线程竞争或真实帧间时序等价。
+
+六项原指令反事实分别截断32位next、跳过范围比较、等边界也插前、改用第一片ID、
+忽略bit2、强制检查end0。均清除翻译缓存后实际执行，无原assert/harness异常，
+必须观察到真实状态/partial/SDK数据变化才算检出。Native六项隔离变体分别恢复
+16位next/首ID veto/第一片ticket、所有结束清next、等边界插前与检查end0，均被
+实际生产TU对照或提交ticket身份断言检出，不改生产文件/golden。
+
+【Native拥有引用】wire ID变化本身不再丢字节/请求strict。完整提交时先retain结束
+片ticket，再release先前assembly ticket，使用结束片ID和同一epoch；此前贡献者
+没有SDK提交，不伪造decode/corrupt完成，metadata按既有有界settlement/epoch规则
+收尾。pending-reset仍保留待清理的完整frame tickets；key/actor及Stop负责清理。
+原统计的全部最终结果/评分/跨记录生命周期仍有独立范围，不由这些本地ticket
+断言外推。矩阵timestamp固定，原结束片timestamp参数的选择有原指令证据，但非
+一致timestamp及完整音视频同步尚不由本对照证明。
+
+真实应用parser/worker/callback/mbedTLS/FFmpeg用四片范围0..1/2..3/4..5/6..7
+接收同一2204-byte H264 AU，前两片ID与后两片ID不同；明文和逐片CBC均出128x72
+图片，pixel MD5与原AU一致。输出ticket实际属于结束片ID，前ID仍pending且无
+decode begin/end，结束ID有真实decode阶段；无额外DataLost/epoch重建。旧AVFrame
+像素和map lease继续跨flush/重建/session销毁有效。这是软件fixture与拥有引用验证，
+不是任意Host分片可达、Android/Switch硬件输出、同步或用户原故障归因证明。
+
+复验：
+
+```sh
+python3 scripts/audit-steam-video-subframe.py /path/libmain-arm64.so \
+  --check scripts/fixtures/steam-video-subframe-reference.json
+python3 scripts/check-steam-video-subframe.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-video-subframe-oracle
+ctest --test-dir build/desktop --output-on-failure \
+  -R '^(video_subframe_official_vectors|video_keyframe_runtime)$'
+```

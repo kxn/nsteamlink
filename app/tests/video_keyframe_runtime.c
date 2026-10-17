@@ -82,8 +82,8 @@ static void control(IHS_Session *s, EStreamControlMessage t, const ProtobufCMess
     IHS_SessionChannelControlDrainIncoming(s->channels[1]);
     IHS_BufferClear(&b, true);
 }
-static void feed(IHS_Session *s, uint16_t fid, uint16_t seq, uint8_t flags, const uint8_t *bytes,
-                 size_t len) {
+static void feedRange(IHS_Session *s, uint16_t fid, uint16_t seq, uint8_t flags,
+                      uint16_t startRange, uint16_t endRange, const uint8_t *bytes, size_t len) {
     IHS_SessionFrame f = {.header = {.type = IHS_SessionPacketTypeReliable,
                                      .channelId = 3,
                                      .sendTimestamp = 1000000,
@@ -97,8 +97,8 @@ static void feed(IHS_Session *s, uint16_t fid, uint16_t seq, uint8_t flags, cons
     IHS_BufferAppendUInt32LE(&f.body, 0);
     IHS_BufferAppendUInt16LE(&f.body, seq);
     IHS_BufferAppendUInt8(&f.body, flags);
-    IHS_BufferAppendUInt16LE(&f.body, 0);
-    IHS_BufferAppendUInt16LE(&f.body, 0);
+    IHS_BufferAppendUInt16LE(&f.body, startRange);
+    IHS_BufferAppendUInt16LE(&f.body, endRange);
     IHS_BufferAppendMem(&f.body, bytes, len);
     IHS_SessionDeliverReliableFrame(s, &f);
     IHS_SessionFrameClear(&f, true);
@@ -106,6 +106,10 @@ static void feed(IHS_Session *s, uint16_t fid, uint16_t seq, uint8_t flags, cons
     for (unsigned n = 0; n < 5000 && atomic_load(&processed) < target; ++n)
         usleep(1000);
     assert(atomic_load(&processed) == target);
+}
+static void feed(IHS_Session *s, uint16_t fid, uint16_t seq, uint8_t flags, const uint8_t *bytes,
+                 size_t len) {
+    feedRange(s, fid, seq, flags, 0, 0, bytes, len);
 }
 static void hash(sl_video_frame *f, uint8_t out[16]) {
     uint8_t b[128 * 72 * 3 / 2];
@@ -195,6 +199,46 @@ static unsigned nalFrame(sl_runtime *r, const uint8_t *packet, size_t len,
     /* The same first-AU fixture was already decoded before packetization. */
     assert(frame->pixels->width == 128 && frame->pixels->height == 72);
     assert(!memcmp(decoded, saved, 16));
+    sl_resource_release(&frame->ref);
+    return sequence;
+}
+static unsigned rangeFrame(sl_runtime *r, const uint8_t *packet, uint16_t firstId,
+                           unsigned sequence, bool encrypted, const uint8_t saved[16]) {
+    uint8_t cipher[576];
+    const uint8_t iv[16] = {0};
+    for (unsigned n = 0; n < 4; ++n) {
+        const uint8_t *bytes = packet + n * 551;
+        size_t size = 551;
+        uint8_t flags = 4 | (!n ? 16 : 0) | (n == 3 ? 8 : 0);
+        if (encrypted) {
+            size = sizeof(cipher);
+            assert(!IHS_CryptoSymmetricEncryptWithIV(bytes,551,iv,sizeof(iv),
+                       r->session->info.sessionKey,16,false,cipher,&size));
+            bytes = cipher; flags |= 32;
+        }
+        feedRange(r->session, firstId + (n >= 2), sequence++, flags, n*2, n*2+1, bytes, size);
+    }
+    sl_video_frame *frame = sl_video_take(pipeline);
+    assert(frame && frame->key.epoch == 3);
+    IHS_FrameIdentity identity = IHS_FrameTicketIdentity(frame->ticket);
+    assert(identity.frameId == firstId + 1 && identity.epoch == 3);
+    uint8_t decoded[16];
+    hash(frame, decoded);
+    assert(!memcmp(decoded, saved, 16));
+    IHS_TrackedFrame stats[IHS_FRAME_TRACKER_CAPACITY];
+    size_t count = IHS_FrameTrackerCopyStats(r->session->frameTracker, stats, IHS_FRAME_TRACKER_CAPACITY);
+    bool foundContributor = false, foundFinish = false;
+    for (size_t n = 0; n < count; ++n) {
+        if (stats[n].identity.frameId == firstId) {
+            assert(!stats[n].statsComplete && !stats[n].hasDecodeBegin && !stats[n].hasDecodeEnd);
+            foundContributor = true;
+        }
+        if (stats[n].identity.frameId == firstId + 1) {
+            assert(!stats[n].statsComplete && stats[n].hasDecodeBegin && stats[n].hasDecodeEnd);
+            foundFinish = true;
+        }
+    }
+    assert(foundContributor && foundFinish);
     sl_resource_release(&frame->ref);
     return sequence;
 }
@@ -323,11 +367,16 @@ int main(int argc, char **argv) {
     expectedPacketSize = 2206;
     unsigned sequence = nalFrame(&r, packet, sizeof(packet), 16, 19, false, saved);
     modeCounts(&r, 17, 9, 3, old, saved);
-    nalFrame(&r, packet, sizeof(packet), 17, sequence, true, saved);
+    sequence = nalFrame(&r, packet, sizeof(packet), 17, sequence, true, saved);
     modeCounts(&r, 18, 10, 3, old, saved);
+    expectedPacketSize = 2204;
+    sequence = rangeFrame(&r, packet, 18, sequence, false, saved);
+    modeCounts(&r, 19, 11, 3, old, saved);
+    rangeFrame(&r, packet, 20, sequence, true, saved);
+    modeCounts(&r, 20, 12, 3, old, saved);
     CStopVideoDataMsg stop = CSTOP_VIDEO_DATA_MSG__INIT;
     control(r.session, k_EStreamControlStopVideoData, &stop.base);
-    assert(atomic_load(&flushes) == 19);
+    assert(atomic_load(&flushes) == 21);
     IHS_SessionDestroy(r.session);
     IHS_Quit();
     assert(!sl_media_video_clean());

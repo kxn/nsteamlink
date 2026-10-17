@@ -147,6 +147,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-video-stop-phases.py"
             --receiver $<TARGET_FILE:ihs-video-stop-phases-oracle>)
         set_tests_properties(video_stop_phases_official_vectors PROPERTIES TIMEOUT 60)
+        add_test(NAME video_subframe_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-video-subframe.py"
+            --receiver $<TARGET_FILE:ihs-video-subframe-oracle>)
+        set_tests_properties(video_subframe_official_vectors PROPERTIES TIMEOUT 60)
         add_test(NAME video_nal_official_vectors COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-video-nal.py"
             --receiver $<TARGET_FILE:ihs-video-nal-oracle>)
