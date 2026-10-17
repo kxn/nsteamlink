@@ -151,6 +151,13 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/background.c"
     DEPENDS ${CMAKE_SOURCE_DIR}/assets/branding/background.bmp ${CMAKE_SOURCE_DIR}/cmake/EmbedAsset.cmake
     VERBATIM)
 target_sources(nsl_platform PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/background.c")
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/connection_icons.c"
+    COMMAND "${CMAKE_COMMAND}" -DINPUT=${CMAKE_SOURCE_DIR}/assets/ui/connection-icons.alpha
+        -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/connection_icons.c -DSYMBOL=nsl_connection_icons
+        -P ${CMAKE_SOURCE_DIR}/cmake/EmbedAsset.cmake
+    DEPENDS ${CMAKE_SOURCE_DIR}/assets/ui/connection-icons.alpha ${CMAKE_SOURCE_DIR}/cmake/EmbedAsset.cmake
+    VERBATIM)
+target_sources(nsl_platform PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/connection_icons.c")
 target_link_libraries(nsl_platform PUBLIC nsl_ui nsl_artwork nsl_updater ihslib ihslib-hid-sdl PkgConfig::SDL2 PkgConfig::SDL2_TTF
     PkgConfig::FFMPEG PkgConfig::OPUS Threads::Threads nsl_gfx nsl_remote)
 target_compile_definitions(nsl_platform PRIVATE NSL_HAVE_SNS=$<BOOL:${NSL_BUILD_SNS}>)

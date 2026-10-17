@@ -44,14 +44,16 @@ void sl_ui_layout(sl_ui_model *m) {
             if (end > r->count)
                 end = r->count;
             if (r->count > 1)
-                button(l, 1, 40, 86, 64, 104, "LB", SL_PREV_HOST, 0, false);
-            int origin = (1280 - (end - begin) * 342 + 16) / 2;
+                button(l, 1, 40, 96, 64, 120, "LB", SL_PREV_HOST, 0, false);
+            int width = 326;
+            int step = width + 16;
+            int origin = (1280 - (end - begin) * step + 16) / 2;
             for (int i = begin; i < end; ++i)
-                button(l, 10 + i, origin + (i - begin) * 342, 86, 326, 104,
+                button(l, 10 + i, origin + (i - begin) * step, 96, width, 120,
                        r->hosts[i].name[0] ? r->hosts[i].name : r->hosts[i].address, SL_SELECT_HOST,
                        i, i == r->selected);
             if (r->count > 1)
-                button(l, 2, 1176, 86, 64, 104, "RB", SL_NEXT_HOST, 0, false);
+                button(l, 2, 1176, 96, 64, 120, "RB", SL_NEXT_HOST, 0, false);
             if (!sl_host_online(h, m->now)) {
                 /* Unavailable + search are rendered as large geometric symbols. */
             } else if (h->paired && h->games[0].id) {

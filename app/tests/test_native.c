@@ -222,7 +222,7 @@ int main(int argc, char **argv) {
         sl_ui_layout(&ui);
         stream_media_present();
         save_image("discovery-lan");
-        SDL_Rect icon = {487, 102, 72, 72};
+        SDL_Rect icon = {493, 104, 64, 64};
         uint64_t lan = region_hash(icon);
         source.discovery_source = SL_DISCOVERY_INTERNET;
         sl_ui_runtime_event(&ui, &source);
@@ -238,6 +238,33 @@ int main(int argc, char **argv) {
         save_image("discovery-offline");
         uint64_t absent = region_hash(icon);
         assert(absent != lan && absent != internet);
+        ui = saved;
+        sl_ui_runtime_event(&ui, &source);
+        ui.store.registry.hosts[0].paired = false;
+        sl_ui_layout(&ui);
+        stream_media_present();
+        save_image("discovery-unpaired");
+        ui = saved;
+        source.discovery_source = SL_DISCOVERY_LAN;
+        sl_ui_runtime_event(&ui, &source);
+        for (int i = 1; i <= 2; ++i) {
+            sl_runtime_event other = source;
+            other.host.id = 0;
+            other.host.client_id += i;
+            snprintf(other.host.address, sizeof(other.host.address), "10.10.10.%d", 40 + i);
+            snprintf(other.host.name, sizeof(other.host.name), "%s",
+                     i == 1 ? "客厅电脑" : "Gaming PC");
+            other.discovery_source = SL_DISCOVERY_INTERNET;
+            sl_ui_runtime_event(&ui, &other);
+            if (i == 2) {
+                other.type = SL_EVENT_HOST_OFFLINE;
+                sl_ui_runtime_event(&ui, &other);
+            }
+        }
+        ui.focus = 10;
+        sl_ui_layout(&ui);
+        stream_media_present();
+        save_image("discovery-multiple");
         ui = saved;
         sl_ui_layout(&ui);
         stream_media_present();
