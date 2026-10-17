@@ -7328,7 +7328,10 @@ protobuf与Frame::Put/Send，最终Connection终点收到video channel3、完整
 
 ### 91.3 错误后的占位对象不是有效像素证据
 
-共有receive错误路径先unref AVFrame；SDK替身按FFmpeg默认语义将其宽高清零、format=-1。
+共有receive错误路径先unref AVFrame；SDK替身按FFmpeg默认语义将其宽高清零、format=-1、PTS=AV_NOPTS_VALUE。
+这些默认值另由随包libavutil.so.59（SHA256
+`6df6556b6026144eb545dd95c0e2cc8c4568f462c9bd7e036531207d4172db34`）
+实际av_frame_alloc/unref核对，未把模拟器零内存当作默认PTS。
 随后原代码以codec context宽高设置IVideoFrame尺寸，使用format0并仍调用player Put。
 因此可观察到“声明128×72、AVFrame实际0×0/format=-1”的对象。此处只记录对象元数据及
 调用者交接，不生成/校验物理像素；不能把模拟内存或占位对象当作官方成功显示，亦不能
@@ -7364,7 +7367,8 @@ reset、漏输出身份赋值、漏EIO配置修改；均须完整返回且实际
 ```sh
 python3 scripts/audit-steam-client-avcodec.py \
   --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
-  --output /tmp/steam-client-avcodec.json
+  --output /tmp/steam-client-avcodec.json \
+  --sdk-library build/video-recovery-re/linux-1.3.32.316/package/lib/libavutil.so.59
 python3 scripts/observe-native-avcodec-gap.py \
   --build build/desktop --output /tmp/native-avcodec-gap
 ```

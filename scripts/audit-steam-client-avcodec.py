@@ -43,6 +43,7 @@ from unicorn.x86_const import (
 ROOT = Path(__file__).resolve().parents[1]
 SHA = "95482ca6120f90bb90798b27206b7946ab732e079f008d7fc90ea58a8b0074e1"
 ARCHIVE_SHA = "cb12c08e14ce4dfd4c4544bc783e94c51c0a474e30cccbd98a6937e14aa5d8e8"
+SDK_SHA = "6df6556b6026144eb545dd95c0e2cc8c4568f462c9bd7e036531207d4172db34"
 STOP = 0x40000000
 
 
@@ -201,10 +202,12 @@ class _ElfReplay:
         elif n == "av_frame_alloc":
             p = self.alloc(512)
             self.wi(p + 116, -1)
+            self.wq(p + 136, 1 << 63)
             self.ret(p)
         elif n == "av_frame_unref":
             self.u.mem_write(self.arg(0), bytes(512))
             self.wi(self.arg(0) + 116, -1)
+            self.wq(self.arg(0) + 136, 1 << 63)
             self.events.append(["unref"])
             self.ret()
         elif n == "av_packet_free":
@@ -588,13 +591,48 @@ def audit(binary):
     )
 
 
+def check_sdk_defaults(path):
+    """Validate the API-terminal scalar defaults using the exact bundled library."""
+    import ctypes
+
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == SDK_SHA
+    sdk = ctypes.CDLL(str(path.resolve()))
+    sdk.av_frame_alloc.restype = ctypes.c_void_p
+    sdk.av_frame_unref.argtypes = [ctypes.c_void_p]
+    sdk.av_frame_unref.restype = None
+    sdk.av_frame_free.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
+    sdk.av_frame_free.restype = None
+    frame = ctypes.c_void_p(sdk.av_frame_alloc())
+    assert frame.value
+
+    def state():
+        return [
+            ctypes.c_int.from_address(frame.value + n).value for n in (104, 108, 116)
+        ] + [ctypes.c_int64.from_address(frame.value + 136).value]
+
+    expected = [0, 0, -1, -(1 << 63)]
+    try:
+        assert state() == expected
+        ctypes.c_int.from_address(frame.value + 104).value = 128
+        ctypes.c_int64.from_address(frame.value + 136).value = 123456
+        sdk.av_frame_unref(frame)
+        assert state() == expected
+    finally:
+        sdk.av_frame_free(ctypes.byref(frame))
+    assert not frame.value
+    print("Bundled libavutil frame alloc/unref defaults verified:", SDK_SHA)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--binary", type=Path, required=True)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--refresh-reference", action="store_true")
+    p.add_argument("--sdk-library", type=Path)
     a = p.parse_args()
     report = audit(a.binary.read_bytes())
+    if a.sdk_library:
+        check_sdk_defaults(a.sdk_library)
     ref = ROOT / "scripts/fixtures/steam-client-avcodec-reference.json.gz"
     encoded = (json.dumps(report, indent=2) + "\n").encode()
     if a.refresh_reference:
