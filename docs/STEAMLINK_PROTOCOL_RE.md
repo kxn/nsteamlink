@@ -1913,7 +1913,7 @@ ClearAndRestartWindow(0)，与 reliable 的 `0x7f8720–0x7f8734` 相同。因�
 | 视频标志 bit 6 的内容模式变化 | OnThink 0x7b2648–0x7b26f8 / CheckContentMode 0x7b2804 | 原OnThink用末片bit6与已见模式判断转换，转换请求异步Reset并门控FinalDecode，执行对照与Native契约见§83；主机侧含义未确认，不解释为缺参考帧标记 |
 | 关键帧清理／显示引用 | FlushPendingData / FlushVideoStream；video_pipeline.c | §82按原首关键片段入口清protocol pending/flush backend，完整提交抑制重复flush；保留显示/GPU引用的本地所有权独立验证，真实硬件行为另验 |
 | 窗口容量与坏分片 | §25.10；window.c | 官方动态窗口；项目视频固定 2048 槽、积压 256 片段/2MiB，溢出重新锚定，并增加 continuation 类型/ordinal 检查；这些是明确的项目策略 |
-| 项目身份／所有权及坏数据防护 | frame ticket、帧 ID/ordinal、解密返回值检查 | 属于项目防护策略，不声称原版拥有相同检查及错误分类；未以此推导官方会接受坏密文 |
+| 项目身份／所有权及坏数据防护 | frame ticket、帧 ID/ordinal、Source assert前置条件与容量保护 | 属于本地身份/所有权/内存保护，不声称原版采用同一错误分类；bit5解密返回值与原输出变换另按§84执行，不添加strict请求 |
 | 客户端发送方向的不可靠缓存 | §25.3 的 SendUnreliablePackets / HandleNackPacket | 客户端初发/保留/ACK/NACK补发及关闭的执行对照见§52–67；DataLost的queue(false)仍是独立producer语义，不能扩展为全部outgoing的准入约定 |
 | FEC | 官方 SendUnreliableFEC / HandleFECPacket；本地 packet enum/接收分派 | type11接收/恢复及配置请求见§27–32；接收能力不证明产品启用门，自身上行入口与明确边界见§71 |
 
@@ -6702,3 +6702,83 @@ ctest --test-dir build/desktop -R 'video_content_mode|video_keyframe_runtime|vid
 指向各自后续执行证据；撤回这些行仍代表初次接收恢复移植边界就是当前实现边界的
 解释。具体case/adapter/未证明范围以各节原证据为准，不能将表内引用合并成完整
 协议或全平台已经等价的声明。
+
+## 84. Video bit5解密返回值、padding与空明文
+
+【官方客户端证据】固定SHA同§24.1。DecodeFrame在准入后@0x7b2174–0x7b21ac
+只在key标记上按bit5变化调用protected-content虚表并记录video+395；每个bit5片段
+仍各自解密。H264 standalone两slot转发至CAndroidAccel继承的IVideoAccel方法，
+@0x9090c4/0x9090c8均为原ret；这个Android factory没有实际保护内容切换操作，
+不能据此扩展到其他factory/平台。实际crypto调用@0x7b223c，零IV、key长度取client
+字段，caller栈传verifyPadding=true；返回后直接读取out length并调用原frame Resize，
+**未检查bool返回值，不因此请求DataLost/严格等待/reset**，随后继续原partial/OnThink。
+
+CCrypto::SymmetricDecryptWithIV @0x747640实际执行软件AES key schedule @0xaae31c、
+AES decrypt @0xaae894和CBC/padding @0x746f28；没有用替身生成解密结果。
+初始检查要求至少16字节且为整块，输出容量先与cipher length−16比较。前缀块直接
+写输出，末块暂存；verify=true检查pad在1..16且每个padding byte一致。错误时长度
+不更新、末块不写输出，所以in-place会留下已解密前缀和原末块密文；短/非整块
+输入不改bytes。成功时按容量复制末块全部或仅非pad部分，容量有余则在明文后写NUL。
+
+【Native差异与更正】应用c841a14/子库58e006d在解密错误时立即DataLost并strict=1，
+与原caller无此分支不同。其通用CBC helper先覆盖末块再检查padding，允许pad=0，
+且要求输出容量至少cipher length而非能容纳实际明文即可。32-byte cipher解出末字节
+0时，官方返回false且长度32/末块密文保留；旧Native返回成功。坏pad非一致时，
+原视频caller仍提交变换后的bytes并保持strict=0。探索原日志`/tmp/nsl-crypto84-probe.json`
+记录这些原结果；不能把原先额外的strict请求描述为官方的解密错误策略。
+
+【空明文与平台边界】16-byte合法全padding密文得到0-byte明文，原DecodeFrame/
+OnThink/FinalDecode至SDK入队均无断言、无自动DataLost/reset，之后可继续收帧；
+NeedEscape而无NeedStart也允许0-byte数据。NeedStart+NeedEscape的空内容触发原assert
+line60；空密文本身触发原assert585/590，这些为独立source-only前置条件失败证据，
+不能复制越界/断言后继续执行的字节作为正常协议要求。Native保留相应有界保护。
+FFmpeg对NULL-data/zero-size packet定义为drain/EOF，平台不得把合法空明文当作flush/EOS或致命错误；
+本地空输入按已验证身份/有效backend消费，无像素输出/ticket不被backend接管，
+保留decode begin/end与pending metadata，交既有endpoint过期/epoch关闭退休，
+不伪造即时corrupt结局。这个平台映射不声称已证明Android物理输出/最终统计结果。
+
+【对齐约束】video使用原地等价的拥有buffer拷贝，执行实际CBC helper，按原caller
+使用out length及输出bytes，解密返回错误不另造请求/严格等待。通用CBC的分块写入、
+pad1..16验证、输出容量与末块复制/NUL行为按原指令对照。Zero-size raw组帧合法；
+空NeedStart仍受保护。配对授权码与connect/security PIN含义和认证流程均不受影响。
+
+
+【正式对照与前置条件】`audit-steam-video-crypto.py`固定272个helper输入，覆盖
+AES128/256、零/非零IV、in-place/独立输出、pad1..16、pad0/17/255、不一致padding、
+短/非整块输入、合法全padding及小于cipher length但可容纳实际明文的容量边界。
+比较bool、out length、整个输出/输入变换窗口与guard bytes；原软件AES key schedule/
+block decrypt执行次数也保留，不用本地实现生成期望值。另52组240状态经过原帧ctor/
+DecodeFrame/原CCrypto及AES/原Frame Resize/OnThink/FinalDecode/BSubmitFrame直至SDK
+入队，保留真实输入字节、player引用、strict/soft、mode、请求、SDK/生命周期顺序；
+覆盖key16/32、backend有无、已pending请求、正常/坏pad/短数据/空明文、独立加密
+分片与明密混合分片、reset后恢复。SDK/JNI/NAL metadata/平台primitive/OS排程沿
+§83，不能据SDK终点成功外推物理解码。另4个输入保留原assert，作为Source-only
+前置条件失败证据；不投射其断言后不确定数据。会话认证输入保持既有语义。
+
+正式Native observer运行实际mbedTLS、生产video TU/组帧/tracker/actor，逐字节比较
+272组helper及52组240状态；后端/player仅记录接口终点，protected字段/空Android
+方法调用保留Source证据而不凭空新增Native产品API。原地解密发生在拥有buffer拷贝
+上，原接收header/密文输入不被破坏。`/tmp/nsl-crypto84-native-baseline.json`记录
+修改前pad0成功与坏pad strict1两项实际反例，Source对应false/strict0。
+
+【负向与本地资源验证】Source四种原指令补丁：跳过padding校验、略过成功NUL、
+略过视频crypto调用或frame Resize均被拒绝，补丁后失效已翻译缓存。Native隔离
+变体恢复pad0、过早写末块、拒绝可容纳明文的较小输出、恢复解密strict等待、拒绝
+合法空组帧，均不能通过同一官方向量；伪造空帧corrupt或将其映射为FFmpeg EOF由
+真实runtime检出。变体只在临时编译/库副本中运行。
+
+真实runtime控制parser/worker/callback/mbedTLS/FFmpeg测试在§83往返重建后继续
+接收AES-CBC 2208-byte密文，SDK实际接收2204-byte首AU并产生图像；再接合法全
+padding的raw及NeedEscape片段，保持decoder、无额外DataLost/退出/EOF；下一真实
+关键帧仍出图。新增4个关键标记后flush=16/send=8，Stop后flush=17；epoch保持3，
+旧AVFrame像素MD5及map lease跨所有操作和最终session销毁不变。空输入记录decode
+begin/end，tracker保留pending元数据，实际callback拦截确认未生成即时corrupt结局；
+过期仅退休本地资源，不自行制造协议Complete。空输入的Android真实输出/最终统计、
+FFmpeg实际错误码/硬件映射、其他factory/所有producer仍需独立证据。
+
+```sh
+python3 scripts/audit-steam-video-crypto.py \
+  /data/dl/nsteamlink/build/video-recovery-re/libmain-arm64.so \
+  --check scripts/fixtures/steam-video-crypto-reference.json
+ctest --test-dir build/desktop -R 'video_crypto_official_vectors|video_keyframe_runtime|^crypto$' --output-on-failure
+```

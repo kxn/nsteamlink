@@ -5,10 +5,12 @@
  * SDL dummy/software output is used; no physical GPU/Steam/loader claim. */
 #include "../platforms/common/runtime.c"
 #include "ihs_buffer.h"
+#include "crypto.h"
 #include "ihs_buffer_ext.h"
 #include "session/channels/ch_control.h"
 #include "session/channels/video/ch_data_video.h"
 #include "session/session_pri.h"
+#include "session/frame_tracker.h"
 #include "test_session.h"
 #include <assert.h>
 #include <libavcodec/avcodec.h>
@@ -63,6 +65,13 @@ void __real_IHS_SessionChannelDataLost(IHS_SessionChannel *);
 void __wrap_IHS_SessionChannelDataLost(IHS_SessionChannel *ch) {
     atomic_fetch_add(&losses, 1);
     __real_IHS_SessionChannelDataLost(ch);
+}
+bool __real_IHS_FrameTicketComplete(IHS_FrameTicket *, const IHS_FrameOutcome *);
+bool __wrap_IHS_FrameTicketComplete(IHS_FrameTicket *t, const IHS_FrameOutcome *o) {
+    uint16_t id = IHS_FrameTicketIdentity(t).frameId;
+    if (id == 13 || id == 14)
+        assert(o->result != IHS_VideoFrameResultDroppedDecodeCorrupt);
+    return __real_IHS_FrameTicketComplete(t, o);
 }
 static void control(IHS_Session *s, EStreamControlMessage t, const ProtobufCMessage *m) {
     IHS_Buffer b = IHS_BUFFER_INIT(64, 4096);
@@ -129,6 +138,18 @@ static void modeCounts(sl_runtime *r, unsigned fs, unsigned ss, unsigned epoch,
     uint8_t actual[16];
     hash(old, actual);
     assert(!memcmp(actual, saved, 16));
+}
+static void emptyPending(sl_runtime *r, uint16_t id) {
+    IHS_TrackedFrame stats[IHS_FRAME_TRACKER_CAPACITY];
+    size_t n = IHS_FrameTrackerCopyStats(r->session->frameTracker, stats, IHS_FRAME_TRACKER_CAPACITY);
+    bool found = false;
+    for (size_t j = 0; j < n; ++j)
+        if (stats[j].identity.frameId == id) {
+            assert(!stats[j].statsComplete && stats[j].outcome.result == IHS_VideoFrameResultPending);
+            assert(stats[j].hasDecodeBegin && stats[j].hasDecodeEnd);
+            found = true;
+        }
+    assert(found);
 }
 static void reset(sl_runtime *r) {
     r->session->base.callbacks.run->update(&r->session->base,
@@ -211,9 +232,36 @@ int main(int argc, char **argv) {
     feed(r.session, 11, 14, 24, packet, sizeof(packet));
     modeCounts(&r, 12, 6, 3, old, saved);
     output(3);
+    /* Real per-fragment AES-CBC, then two valid all-padding inputs. Empty
+     * plaintext must not become FFmpeg EOF or prevent the next real frame. */
+    uint8_t encrypted[2224];
+    for (unsigned n = 0; n < 16; ++n) r.session->info.sessionKey[n] = n;
+    r.session->info.sessionKeyLen = 16;
+    const uint8_t iv[16] = {0};
+    size_t encryptedSize = sizeof(encrypted);
+    assert(!IHS_CryptoSymmetricEncryptWithIV(packet, sizeof(packet), iv, sizeof(iv),
+              r.session->info.sessionKey, 16, false, encrypted, &encryptedSize));
+    assert(encryptedSize == 2208);
+    feed(r.session, 12, 15, 56, encrypted, encryptedSize);
+    modeCounts(&r, 13, 7, 3, old, saved);
+    output(3);
+    encryptedSize = sizeof(encrypted);
+    assert(!IHS_CryptoSymmetricEncryptWithIV(packet, 0, iv, sizeof(iv),
+              r.session->info.sessionKey, 16, false, encrypted, &encryptedSize));
+    assert(encryptedSize == 16);
+    feed(r.session, 13, 16, 56, encrypted, encryptedSize);
+    modeCounts(&r, 14, 7, 3, old, saved);
+    emptyPending(&r, 13);
+    assert(!sl_video_take(pipeline));
+    feed(r.session, 14, 17, 58, encrypted, encryptedSize);
+    modeCounts(&r, 15, 7, 3, old, saved);
+    emptyPending(&r, 14);
+    feed(r.session, 15, 18, 24, packet, sizeof(packet));
+    modeCounts(&r, 16, 8, 3, old, saved);
+    output(3);
     CStopVideoDataMsg stop = CSTOP_VIDEO_DATA_MSG__INIT;
     control(r.session, k_EStreamControlStopVideoData, &stop.base);
-    assert(atomic_load(&flushes) == 13);
+    assert(atomic_load(&flushes) == 17);
     IHS_SessionDestroy(r.session);
     IHS_Quit();
     assert(!sl_media_video_clean());

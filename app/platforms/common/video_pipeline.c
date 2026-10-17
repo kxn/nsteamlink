@@ -353,7 +353,7 @@ sl_video_submit_result sl_video_submit(sl_video_pipeline *p, sl_video_key key,
                                        const unsigned char *data, size_t size,
                                        IHS_FrameTicket *ticket, bool *taken, bool keyframe) {
     *taken = false;
-    if (!data || !size || size > MAX_PACKET || !ticket)
+    if ((size && !data) || size > MAX_PACKET || !ticket)
         return SL_VIDEO_SUBMIT_ERROR;
     IHS_FrameIdentity identity = IHS_FrameTicketIdentity(ticket);
     if (identity.sessionId != key.session || identity.epoch != key.epoch)
@@ -368,6 +368,17 @@ sl_video_submit_result sl_video_submit(sl_video_pipeline *p, sl_video_key key,
     if (keyframe) {
         av_frame_unref(d->scratch);
         avcodec_flush_buffers(d->codec);
+    }
+    /* A fully padded video fragment can complete an empty frame. The original
+     * SDK call uses size=0/flags=0; FFmpeg uses NULL/zero packets for drain/EOF. Consume
+     * this protocol input without draining the codec or creating a pixel/token.
+     * Endpoint metadata remains pending until ordinary expiration/close. */
+    if (!size) {
+        uint64_t stamp = now_us();
+        IHS_FrameTicketDecodeStage(ticket, false, stamp);
+        IHS_FrameTicketDecodeStage(ticket, true, stamp);
+        pthread_mutex_unlock(&p->decoder);
+        return SL_VIDEO_SUBMIT_OK;
     }
     AVPacket *packet = av_packet_alloc();
     if (!packet)

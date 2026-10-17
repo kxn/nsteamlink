@@ -184,7 +184,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
         -Wl,--wrap=avcodec_flush_buffers -Wl,--wrap=avcodec_send_packet
         -Wl,--wrap=IHS_SessionPacketsWindowReleaseFrame -Wl,--wrap=IHS_SessionPacketTimestamp
         -Wl,--wrap=IHS_BaseSend -Wl,--wrap=IHS_SessionSendControlMessage
-        -Wl,--wrap=IHS_SessionChannelDataLost)
+        -Wl,--wrap=IHS_SessionChannelDataLost -Wl,--wrap=IHS_FrameTicketComplete)
     add_test(NAME video_keyframe_runtime COMMAND nsl-video-keyframe-runtime
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video/sequential.h264)
     set_tests_properties(video_keyframe_runtime PROPERTIES TIMEOUT 20)
