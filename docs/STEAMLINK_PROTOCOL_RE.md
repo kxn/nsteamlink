@@ -4695,3 +4695,63 @@ report consumer、protobuf、StatsSend/控制producer和真实可靠frame准入�
 传给Connection::Send的参数，不从尚未由Connection填充的packet header猜测。
 Native受控拒绝在最终frame准入处发生，仅对照退休/重试时间，不宣称其errno含义与
 Source返回5相同。新案例不比较实际UDP调度/重传/ACK、网络指标窗口和decoder。
+
+## 56. 连接与视频带宽采样器的原版窗口语义
+
+【官方客户端证据】同SHA Android客户端的BitrateStats ctor/Record/UpdateBitrate为
+0x7fcb14/0x7fcb84/0x7fccd0，PacketStats ctor/Record为0x7fcec8/0x7fcf24，
+PingStats ctor/Record为0x7fc5f0/0x7fc070，VideoBitrateStats ctor/RecordPacket为
+0x7b046c/0x7ac1d0。audit-steam-network-collectors.py实际执行上述构造、记录、
+原CUtlQueue构造/扩容及CStreamSampleQueue::AddSample；锁/libc内存为显式adapter，
+不是用Python重写窗口输出。Bitrate/Packet/Ping/Video窗口以
+uint32(newTick−oldTick)>0x30000退休，
+仅新增样本时推进窗口，不因读取或墙钟流逝清零。
+
+【结论】Bitrate合并最新同tick样本，按有符号int字节值累加64位总数；使用固定3秒
+分母计算float((signed64)(bytes<<3))/3，不取首尾样本的实际跨度。PacketStats只在
+tick及lost标志都相同才合并，total/lost按32位加减。loss的真实caller不能由该参数
+入口反推：原HandlePacket记录成功接纳的收包；成功入窗的retry>1路径及可靠窗口
+PopHeadOfPacketWindow_WithRef输出的非零计数另调用PacketStats::Record(lost=true)，不能把丢帧数、NACK个数或FEC纠错片数
+当作同一计数。上层触发与实际报文字节数仍须分别验证。
+
+【证据／撤回】PingStats::OnSampleAdded @0x7fc7b4及内联版本0x7fc760先将uint32
+sum/count做整数除法，再将整数tick拆成高/低16位换算float毫秒，sum也按32位回绕。
+撤回本地“用float总tick/样本数再乘1000/65536等价于官方RTT平均值”的解释。
+原常数RTT的sender/media对照只是受控metric输入，不能证明它们的采样公式。
+Clock的真实反馈样本应共用原整数平均规则，NACK、媒体反馈及普通包退休都读同一结果。
+
+Video RecordPacket的前三个参数，在FrameReceived内联路径对应frame+32/36/40。
+队列样本四项为：本次参数3−参数2、上一frame末参数3−首参数1、本次参数1−上一
+frame末参数3、上一frame累计字节；队列tick取上一frame末参数3。仅第二项>0且
+第三项非负、首参数1及累计字节非零才入队。原derived值在至少10个样本
+时才重算；后续窗口不足10个时保留原值。第二项加第三项计算bitrate；非零第一项
+计算link值，均先float除法再乘8。低于门槛不等于立即写0。原FrameReceived中的
+内联分支与RecordPacket对应，但给定原语输入不等于真实caller参数来源已对齐。
+
+【本地资源适配边界】动态环形采样存储由所属clock/会话锁串行；关闭后释放所有队列。
+分配失败保护不冒称官方OOM策略。采样器组件对照不证明Socket错误、CRC计数、
+channel窗口丢弃、decoder阶段、Stats Start/Stop或真实Steam/Switch已验收。
+
+【执行对照】固定25例共724次状态比较，包含3秒精确边界/超过1tick、同tick/不同
+lost标记合并、uint32回绕/倒退/半域年龄、int字节与64位累计/32位样本分别溢出、
+9/10/11/17/65个视频样本、失效输入、不足10样本后的旧值、130样本扩容。Native
+比较所有队列有效样本、总数与float原始比特。PacketSample的受控padding为0，
+此处比较不声称是wire padding契约。
+
+两组另从原FrameReceived及真实Frame::SetPacket→OnDataPacket进入视频内联采集。
+0x7f2ce8/0x7f2cec把packet+28/32复制到frame+36/40；不能将直接R入口手工seed的
+frame+36=sent当作真实wire路径的参数。单packet案例两接收时间相同，其link样本
+第一项为0；该分支与RecordPacket受控非零输入不同。Native在这些组件案例中
+提供对应已归一字段，不借此声称实际Native RX/Frame元数据已接好采样。
+
+另4例执行真实ProcessTimestamp，直达原Ping和TimeOffset的真实队列；比较echo、
+minimum/smoothed RTT、min-update、offset，最后一例另比较offset样本数量和64位总和，
+确认10秒等号保留、超过1tick退休。Connection字段为受控初态，实际连接构造时钟与
+全32位极端值不由这些案例穷尽；GetRTTStandardDeviation/网络评分不在该比较内。
+
+【Native clock适配】实际反馈路径改用同一Ping队列，uint32累计、整数tick平均及缓存
+毫秒值由NACK年龄、媒体延迟及普通包退休共用。655与656tick两样本的平均必须是
+655tick；旧655.5tick浮点平均会把NACK年龄从8ms越界到9ms、媒体额外延迟从5ms
+越界到6ms。普通sender的旧10ms原版fixture是直接seed连接字段，本地oracle也明确
+seed缓存10ms，不能为配合新getter而篡改该fixture输入。上述Native采样器中bandwidth、
+packet和video组件仍需实际收发/组帧入口接线；报告network快照仍不能计作生产采集完成。

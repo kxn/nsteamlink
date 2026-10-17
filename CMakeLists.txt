@@ -111,6 +111,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-frame-events-loop.py"
             --receiver $<TARGET_FILE:ihs-frame-events-loop-oracle>)
         set_tests_properties(frame_events_loop_official_vectors PROPERTIES TIMEOUT 60)
+        add_test(NAME network_collectors_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-network-collectors.py"
+            --receiver $<TARGET_FILE:ihs-network-collectors-oracle>)
+        set_tests_properties(network_collectors_official_vectors PROPERTIES TIMEOUT 60)
         add_test(NAME negotiation_official_vectors COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-negotiation.py"
             --receiver $<TARGET_FILE:ihs-negotiation-oracle>)
