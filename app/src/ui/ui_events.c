@@ -6,6 +6,21 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
     sl_runtime_event e = *event;
     if (e.type == SL_EVENT_HOST) {
         sl_host *h = sl_host_observe(&m->store.registry, &e.host, m->now);
+        if (h) {
+            sl_host_discovery *slot = NULL;
+            for (unsigned i = 0; i < SL_HOST_LIMIT; ++i) {
+                sl_host_discovery *d = &m->discoveries[i];
+                if (d->host_id == h->id) {
+                    slot = d;
+                    break;
+                }
+                if (!slot && (!d->host_id || !sl_host_find(&m->store.registry, d->host_id)))
+                    slot = d;
+            }
+            if (slot)
+                *slot = (sl_host_discovery){h->id, e.discovery_source ? e.discovery_source
+                                                                      : SL_DISCOVERY_UNKNOWN};
+        }
         if (h && m->page == SL_CONNECTING && !m->intent.host.id &&
             !strcmp(m->intent.text, h->address)) {
             m->store.registry.selected = (int)(h - m->store.registry.hosts);

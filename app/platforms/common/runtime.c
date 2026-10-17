@@ -1,4 +1,5 @@
 #include "platform/runtime.h"
+#include "build_identity.h"
 #include "client_pri.h"
 #include "discovery.pb-c.h"
 #include "media.h"
@@ -85,12 +86,18 @@ static unsigned log_head, log_tail;
 static pthread_t log_worker;
 static atomic_bool log_stop;
 static bool log_started;
+static atomic_uint log_dropped;
 void sl_log(const char *s) {
-    if (!atomic_load(&log_ready) || pthread_mutex_trylock(&log_lock))
+    if (!atomic_load(&log_ready))
         return;
+    if (pthread_mutex_trylock(&log_lock)) {
+        atomic_fetch_add(&log_dropped, 1);
+        return;
+    }
     if (log_head - log_tail < 128) {
         snprintf(log_queue[log_head++ % 128], 224, "%.220s", s);
-    }
+    } else
+        atomic_fetch_add(&log_dropped, 1);
     pthread_mutex_unlock(&log_lock);
 }
 static void *log_main(void *unused) {
@@ -120,6 +127,11 @@ static void *log_main(void *unused) {
         pthread_mutex_unlock(&log_lock);
     }
     FILE *f = fopen(path, "w");
+    if (f) {
+        fprintf(f, "diagnostic version=%s commit=%s unix_time=%lld\n", NSL_APP_VERSION,
+                NSL_GIT_COMMIT, (long long)time(NULL));
+        fflush(f);
+    }
     size_t bytes = 0;
     for (;;) {
         char message[224] = {0};
@@ -162,6 +174,7 @@ bool sl_log_start(void) {
         return true;
     pthread_mutex_init(&log_lock, NULL);
     log_head = log_tail = 0;
+    atomic_store(&log_dropped, 0);
     log_tail_size = 0;
     log_tail_text[0] = log_previous_text[0] = 0;
     atomic_store(&log_stop, false);
@@ -183,7 +196,8 @@ void sl_log_finish(void) {
     pthread_mutex_destroy(&log_lock);
 }
 static void ihs_log(IHS_LogLevel level, const char *tag, const char *message) {
-    if (level > IHS_LogLevelWarn && strcmp(tag, "Activity") && strcmp(tag, "StreamState"))
+    if (level > IHS_LogLevelWarn && strcmp(tag, "Activity") && strcmp(tag, "StreamState") &&
+        !(level == IHS_LogLevelInfo && !strcmp(tag, "Session")))
         return;
     char s[224];
     snprintf(s, sizeof(s), "%.24s: %.190s", tag, message);
@@ -199,6 +213,70 @@ bool sl_log_start(void) {
 void sl_log_finish(void) {
 }
 #define ihs_log NULL
+#endif
+#if NSL_DIAGNOSTICS
+/* Owner-thread snapshots: no packet dumps, secret material, disk or network I/O. */
+static void diagnostic_state(sl_runtime *r, const char *phase) {
+    stream_media_snapshot s;
+    stream_media_get_snapshot(&s);
+    IHS_SessionReliabilityStats rel = {0};
+    if (r->session)
+        IHS_SessionGetReliabilityStats(r->session, &rel);
+    const char *route = r->session ? "lan_udp" : "none";
+    int sdk = 0, end_reason = 0, terminal = 0, detail = 0, relayed = 0;
+    uint64_t tx = 0, rx = 0;
+#if NSL_HAVE_SNS
+    if (r->sns) {
+        sl_sns_stats stats;
+        sl_sns_get_stats(r->sns, &stats);
+        sdk = stats.sdk_state;
+        end_reason = sl_sns_end_reason(r->sns);
+        relayed = stats.relayed;
+        terminal = stats.terminal_source;
+        detail = stats.terminal_detail;
+        tx = stats.datagrams_sent;
+        rx = stats.datagrams_received;
+        route = sl_sns_get_state(r->sns) != SL_SNS_CONNECTED ? "sns_pending_or_closed"
+                : relayed                                    ? "sns_relay"
+                                                             : "sns_direct";
+    }
+#endif
+    char line[224];
+    snprintf(line, sizeof(line),
+             "connection phase=%s req=%llu session=%llu route=%s sdk=%d relay=%d end=%d "
+             "origin=%d/%d tx=%llu rx=%llu",
+             phase, (unsigned long long)r->active.generation, (unsigned long long)r->session_id,
+             route, sdk, relayed, end_reason, terminal, detail, (unsigned long long)tx,
+             (unsigned long long)rx);
+    sl_log(line);
+    snprintf(line, sizeof(line),
+             "pipeline phase=%s session=%llu epoch=%llu active=%d submit=%llu decode=%u show=%u "
+             "audio=%u audio_err=%u first=%d frame_idle_ms=%llu log_drop=%u",
+             phase, (unsigned long long)s.session_id, (unsigned long long)s.video_epoch,
+             s.video_active, (unsigned long long)s.pacing.submits, s.decoded_frames,
+             s.displayed_frames, s.audio_frames, s.audio_decode_errors, r->first_reported,
+             (unsigned long long)(r->request_at ? sl_system_now() - r->frame_at : 0),
+             atomic_load(&log_dropped));
+    sl_log(line);
+    snprintf(line, sizeof(line),
+             "reliable phase=%s tracked=%llu ack=%llu retry=%llu nack=%llu fail=%llu giveup=%llu "
+             "pending=%u oldest_ms=%llu channel=%u packet=%u",
+             phase, (unsigned long long)rel.reliableTracked,
+             (unsigned long long)rel.reliableAcknowledged, (unsigned long long)rel.reliableRetries,
+             (unsigned long long)rel.reliableNacks, (unsigned long long)rel.reliableSendFailures,
+             (unsigned long long)rel.reliableGiveUps, rel.reliableOutstanding,
+             (unsigned long long)rel.reliableOldestOutstandingMs, rel.reliableOldestChannelId,
+             rel.reliableOldestPacketId);
+    sl_log(line);
+}
+static void diagnostic_phase(const char *phase, int value) {
+    char line[128];
+    snprintf(line, sizeof(line), "connection_event phase=%s value=%d", phase, value);
+    sl_log(line);
+}
+#else
+#define diagnostic_state(r, phase)     ((void)0)
+#define diagnostic_phase(phase, value) ((void)0)
 #endif
 static void post(sl_runtime *r, sl_runtime_event e) {
     pthread_mutex_lock(&r->lock);
@@ -283,7 +361,8 @@ static void discovered(IHS_Client *client, const IHS_HostInfo *h, void *ctx) {
     snprintf(line, sizeof(line), "discovery: response %.63s %.63s", observed.name,
              observed.address);
     sl_log(line);
-    post(r, (sl_runtime_event){.type = SL_EVENT_HOST, .host = observed});
+    post(r, (sl_runtime_event){.type = SL_EVENT_HOST, .host = observed,
+                               .discovery_source = SL_DISCOVERY_LAN});
 }
 static void authorized(IHS_Client *client, const IHS_HostInfo *h, uint64_t account, void *ctx) {
     (void)h;
@@ -318,6 +397,7 @@ static void accepted(IHS_Client *c, const IHS_HostInfo *h, const IHS_SocketAddre
     (void)c;
     (void)h;
     sl_runtime *r = ctx;
+    diagnostic_phase("stream_request_accepted", address->port);
     if (len > 32) {
         fail(r, sl_tr(SL_T_INVALID_RESPONSE));
         return;
@@ -333,6 +413,7 @@ static void rejected(IHS_Client *c, const IHS_HostInfo *h, IHS_StreamingResult r
     (void)c;
     (void)h;
     sl_runtime *r = ctx;
+    diagnostic_phase("stream_request_rejected", result);
     pthread_mutex_lock(&r->lock);
     r->request_terminal = true;
     pthread_mutex_unlock(&r->lock);
@@ -352,6 +433,7 @@ static void rejected(IHS_Client *c, const IHS_HostInfo *h, IHS_StreamingResult r
 static void configuring(IHS_Session *s, IHS_SessionConfig *c, void *ctx) {
     (void)s;
     sl_runtime *r = ctx;
+    diagnostic_phase("ihs_configuring", 0);
     c->enableAudio = true;
     c->enableHevc = false;
     c->maxWidth = 1280;
@@ -373,6 +455,7 @@ static void configuring(IHS_Session *s, IHS_SessionConfig *c, void *ctx) {
 static void connected(IHS_Session *s, void *ctx) {
     (void)s;
     sl_runtime *r = ctx;
+    diagnostic_phase("ihs_connected", 0);
     pthread_mutex_lock(&r->lock);
     r->connected = true;
     r->facts.connected = true;
@@ -380,6 +463,7 @@ static void connected(IHS_Session *s, void *ctx) {
 }
 static void disconnected(IHS_Session *s, void *ctx) {
     sl_runtime *r = ctx;
+    diagnostic_phase("ihs_disconnected", IHS_SessionHostRequestedStop(s));
     pthread_mutex_lock(&r->lock);
     r->finished = true;
     r->host_stopped = IHS_SessionHostRequestedStop(s);
@@ -589,7 +673,10 @@ static void cloud_observed(const sl_remote_host *host, void *ctx) {
     sl_host *known = saved_host(r, host->info.clientId);
     if (known)
         snprintf(h.address, sizeof(h.address), "%s", known->address);
-    post(r, (sl_runtime_event){.type = SL_EVENT_HOST, .host = h});
+    IHS_HostInfo direct;
+    post(r, (sl_runtime_event){.type = SL_EVENT_HOST, .host = h,
+        .discovery_source = local_host(r, host->info.clientId, &direct)
+                                ? SL_DISCOVERY_LAN : SL_DISCOVERY_INTERNET});
 }
 static void cloud_offline(uint64_t id, void *ctx) {
     sl_runtime *r = ctx;
@@ -602,12 +689,16 @@ static void cloud_offline(uint64_t id, void *ctx) {
     IHS_HostInfo local;
     if (!local_host(r, id, &local))
         post(r, (sl_runtime_event){.type = SL_EVENT_HOST_OFFLINE, .host = {.client_id = id}});
+    else
+        post(r, (sl_runtime_event){.type = SL_EVENT_HOST, .host = host_from(&local),
+                                   .discovery_source = SL_DISCOVERY_LAN});
 }
 static void cloud_stream_result(IHS_StreamingResult result, const sl_remote_material *m,
                                 void *ctx) {
     sl_runtime *r = ctx;
     if (r->active.type != SL_CMD_STREAM)
         return;
+    diagnostic_phase("cloud_stream_result", result);
     if (result != IHS_StreamingSuccess) {
         rejected(NULL, NULL, result, ctx);
         return;
@@ -682,6 +773,7 @@ static bool start_client(sl_runtime *r) {
 }
 /* Return completion observed before/during join, before destroying its owner. */
 static bool stop_session(sl_runtime *r) {
+    if (r->session || r->request_at) diagnostic_state(r, "stop_begin");
     bool host_completed = false;
     sl_media_close_video();
     r->waiting_video = true;
@@ -706,6 +798,7 @@ static bool stop_session(sl_runtime *r) {
         /* Discovery disconnect retries are bounded to ~1.1 s. Let the session
          * worker send them before joining; immediate interrupt drops the goodbye. */
         IHS_SessionThreadedJoin(r->session);
+        diagnostic_state(r, "ihs_joined");
         host_completed = IHS_SessionHostRequestedStop(r->session);
         /* Workers are joined. Detached frame tickets can outlive the session. */
         stream_media_audio_stop(r->session);
@@ -729,6 +822,7 @@ static bool stop_session(sl_runtime *r) {
     r->first_reported = false;
     r->video_suspended = false;
     r->request_at = 0;
+    diagnostic_phase("stop_complete", host_completed);
     return host_completed;
 }
 static bool launch_session(sl_runtime *r, IHS_SessionInfo info) {
@@ -782,6 +876,7 @@ static bool launch_session(sl_runtime *r, IHS_SessionInfo info) {
 #endif
     if (!IHS_SessionConnect(r->session))
         return false;
+    diagnostic_state(r, "ihs_connect_started");
     IHS_ClientStreamingEstablished(r->client);
     return true;
 }
@@ -940,15 +1035,20 @@ static void execute(sl_runtime *r, sl_command cmd) {
         snprintf(req.pin, sizeof(req.pin), "%.15s", cmd.text);
         IHS_HostInfo direct;
         if (cloud_online && !local_host(r, cmd.host.client_id, &direct)) {
+            diagnostic_phase("selected_cloud_sns", 0);
             sl_remote_stream_options options = {.sns = NSL_HAVE_SNS};
             if (!sl_remote_stream_ex(sl_remote_connection_protocol(r->remote), cmd.host.client_id,
                                      &req, &options))
                 fail(r, sl_tr(SL_T_REQUEST_STREAM_FAILED));
-        } else if (!IHS_ClientStreamingRequest(r->client, &h, &req))
-            fail(r, sl_tr(SL_T_REQUEST_STREAM_FAILED));
+        } else {
+            diagnostic_phase("selected_lan_udp", 0);
+            if (!IHS_ClientStreamingRequest(r->client, &h, &req))
+                fail(r, sl_tr(SL_T_REQUEST_STREAM_FAILED));
+        }
     }
 }
 static void sample(sl_runtime *r, uint64_t now) {
+    if (r->session || r->request_at) diagnostic_state(r, "sample");
     stream_media_snapshot s;
     stream_media_get_snapshot(&s);
     pthread_mutex_lock(&r->lock);
@@ -1302,7 +1402,10 @@ static void *worker_main(void *ctx) {
                 sl_host *known = saved_host(r, h.client_id);
                 if (known)
                     snprintf(h.address, sizeof(h.address), "%s", known->address);
-                post(r, (sl_runtime_event){.type = SL_EVENT_HOST, .host = h});
+                IHS_HostInfo direct;
+                post(r, (sl_runtime_event){.type = SL_EVENT_HOST, .host = h,
+                    .discovery_source = local_host(r, h.client_id, &direct)
+                                            ? SL_DISCOVERY_LAN : SL_DISCOVERY_INTERNET});
             }
         }
         if (r->client && !r->session && !r->request_at && now - last_probe >= 3000) {

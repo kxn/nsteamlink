@@ -99,6 +99,49 @@ static void monitor(sl_gfx *r, int x, int y, int size, sl_gfx_color color) {
     line(r, x + size / 2, y + size * 2 / 3, x + size / 2, y + size * 2 / 3 + 7, color);
     line(r, x + size / 2 - 9, y + size * 2 / 3 + 8, x + size / 2 + 9, y + size * 2 / 3 + 8, color);
 }
+static void ellipse(sl_gfx *r, int cx, int cy, int rx, int ry, sl_gfx_color color) {
+    for (int i = 0; i < 64; ++i) {
+        float a = i * 6.2831853f / 64, b = (i + 1) * 6.2831853f / 64;
+        line(r, cx + (int)(cosf(a) * rx), cy + (int)(sinf(a) * ry),
+             cx + (int)(cosf(b) * rx), cy + (int)(sinf(b) * ry), color);
+    }
+}
+/* Shape carries the state even in grayscale: hub, globe, or crossed-out screen. */
+static void discovery_icon(sl_gfx *r, int x, int y, int size, sl_discovery_source source,
+                           sl_gfx_color color) {
+    if (source == SL_DISCOVERY_INTERNET) {
+        int cx = x + size / 2, cy = y + size / 2, radius = size * 2 / 5;
+        ellipse(r, cx, cy, radius, radius, color);
+        ellipse(r, cx, cy, radius / 2, radius, color);
+        line(r, cx - radius, cy, cx + radius, cy, color);
+        line(r, cx - radius * 4 / 5, cy - radius / 2, cx + radius * 4 / 5, cy - radius / 2, color);
+        line(r, cx - radius * 4 / 5, cy + radius / 2, cx + radius * 4 / 5, cy + radius / 2, color);
+    } else if (source == SL_DISCOVERY_LAN) {
+        int small = size * 2 / 5;
+        monitor(r, x + (size - small) / 2, y, small, color);
+        int hub = y + size / 2;
+        line(r, x + size / 2, y + small * 2 / 3 + 8, x + size / 2, hub, color);
+        line(r, x + small / 2, hub, x + size - small / 2, hub, color);
+        line(r, x + small / 2, hub, x + small / 2, y + size * 3 / 5, color);
+        line(r, x + size - small / 2, hub, x + size - small / 2, y + size * 3 / 5, color);
+        monitor(r, x, y + size * 3 / 5, small, color);
+        monitor(r, x + size - small, y + size * 3 / 5, small, color);
+    } else {
+        monitor(r, x + size / 10, y + size / 10, size * 4 / 5, color);
+        if (source == SL_DISCOVERY_NONE) {
+            line(r, x + size / 10, y + size * 9 / 10, x + size * 9 / 10, y + size / 10, color);
+            line(r, x + size / 10 + 2, y + size * 9 / 10, x + size * 9 / 10 + 2, y + size / 10,
+                 color);
+        }
+    }
+}
+static void pairing_icon(sl_gfx *r, int x, int y, bool paired, sl_gfx_color color) {
+    rounded(r, (sl_gfx_rect){x, y + 9, 18, 15}, 3, color);
+    line(r, x + 4, y + 9, x + 4, y + 3, color);
+    line(r, x + 4, y + 3, x + 14, y + 3, color);
+    if (paired)
+        line(r, x + 14, y + 3, x + 14, y + 9, color);
+}
 extern const unsigned char nsl_background[];
 extern const size_t nsl_background_size;
 static sl_gfx_texture *make_backdrop(sl_gfx *r) {
@@ -795,10 +838,19 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
         const sl_host *host = hosts->selected >= 0 && hosts->selected < hosts->count
                                   ? &hosts->hosts[hosts->selected]
                                   : NULL;
-        if (!host || !host->paired || !host->games[0].id) {
-            sl_gfx_color state = !host ? accent : host->paired ? green : amber;
-            rounded(r->renderer, (sl_gfx_rect){588, 190, 104, 78}, 22, mix(bg, state, .13f));
-            monitor(r->renderer, 615, 208, 50, state);
+        sl_discovery_source source = sl_ui_host_source(m, host);
+        bool online = source != SL_DISCOVERY_NONE;
+        sl_gfx_color state = !online ? muted : source == SL_DISCOVERY_INTERNET ? violet : green;
+        if (!host || !online || !host->paired || !host->games[0].id) {
+            rounded(r->renderer, (sl_gfx_rect){518, 258, 244, 178}, 28, mix(bg, state, .12f));
+            discovery_icon(r->renderer, 584, 280, 112, source, online ? state : coral);
+            if (!online && m->network_ok) {
+                /* Moving scan segments mean searching, never imply online. */
+                int step = (int)((m->now / 180) % 5);
+                for (int i = 0; i < 5; ++i)
+                    rounded(r->renderer, (sl_gfx_rect){593 + i * 20, 414, 12, 4}, 2,
+                            i == step ? accent : mix(bg, muted, .25f));
+            }
         }
         rect(r->renderer, (sl_gfx_rect){52, 612, 1176, 1}, (sl_gfx_color){78, 103, 124, 45});
     }
@@ -912,13 +964,19 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
                         c->action == SL_SUBMIT || c->action == SL_ERASE || shoulder || footer;
         if (tab) {
             const sl_host *host = &m->store.registry.hosts[c->arg];
-            sl_gfx_color status = !sl_host_online(host, m->now) ? muted
-                                  : host->paired                ? green
-                                                                : amber;
-            rounded(r->renderer, (sl_gfx_rect){box.x + 18, box.y + (box.h - 12) / 2, 12, 12}, 6,
-                    status);
-            x = box.x + 44;
-            width = box.w - 60;
+            sl_discovery_source source = sl_ui_host_source(m, host);
+            sl_gfx_color status = source == SL_DISCOVERY_NONE       ? muted
+                                  : source == SL_DISCOVERY_INTERNET ? violet
+                                                                    : green;
+            rounded(r->renderer, (sl_gfx_rect){box.x + 10, box.y + 16, 72, 72}, 16,
+                    mix(focused ? fg : panel, status, .13f));
+            discovery_icon(r->renderer, box.x + 20, box.y + 23, 52, source, focused ? bg : status);
+            pairing_icon(r->renderer, box.x + box.w - 31, box.y + box.h - 33, host->paired,
+                         focused ? bg : muted);
+            x = box.x + 94;
+            width = box.w - 125;
+            if (source == SL_DISCOVERY_NONE)
+                ink = focused ? bg : muted;
         }
         int measured = text_width(r, label, size);
         if (footer) {

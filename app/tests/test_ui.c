@@ -51,6 +51,42 @@ static sl_ui_model model(void) {
     m.now = 100;
     return m;
 }
+static void discovery_source_evidence(void) {
+    sl_ui_model m = model();
+    sl_runtime_event e = {.type = SL_EVENT_HOST, .host = {.client_id = 4321}};
+    strcpy(e.host.name, "PC");
+    strcpy(e.host.address, "10.10.10.166");
+    e.discovery_source = SL_DISCOVERY_INTERNET;
+    sl_ui_runtime_event(&m, &e);
+    sl_host *h = &m.store.registry.hosts[0];
+    assert(sl_ui_host_source(&m, h) == SL_DISCOVERY_INTERNET); /* Private IP is not LAN proof. */
+    e.discovery_source = SL_DISCOVERY_LAN;
+    sl_ui_runtime_event(&m, &e);
+    assert(sl_ui_host_source(&m, h) == SL_DISCOVERY_LAN);
+    e.discovery_source = SL_DISCOVERY_INTERNET;
+    sl_ui_runtime_event(&m, &e);
+    assert(sl_ui_host_source(&m, h) ==
+           SL_DISCOVERY_INTERNET); /* Fresh complete evidence replaces old. */
+    h->paired = true;
+    sl_ui_layout(&m);
+    assert(m.layout.label_count == 1); /* Action hint only; no status/address copy. */
+    sl_ui_tick(&m, m.now + 15000);
+    assert(sl_ui_host_source(&m, h) == SL_DISCOVERY_NONE && h->paired);
+    assert(m.layout.label_count == 0); /* Saved pairing must never appear discovered. */
+    e.discovery_source = SL_DISCOVERY_INTERNET;
+    sl_ui_runtime_event(&m, &e);
+    sl_runtime_event off = {.type = SL_EVENT_HOST_OFFLINE, .host = {.client_id = 4321}};
+    sl_ui_runtime_event(&m, &off);
+    assert(sl_ui_host_source(&m, h) == SL_DISCOVERY_NONE);
+    sl_auth_store saved = m.store;
+    sl_ui_model restarted;
+    sl_ui_init(&restarted, &saved);
+    /* Store loaders clear observed; model never fabricates a source from old metadata. */
+    restarted.store.registry.hosts[0].observed = true;
+    restarted.store.registry.hosts[0].last_seen = restarted.now;
+    assert(sl_ui_host_source(&restarted, &restarted.store.registry.hosts[0]) ==
+           SL_DISCOVERY_UNKNOWN);
+}
 static void add(sl_ui_model *m, int id, const char *name) {
     sl_host h = {.client_id = id, .instance_id = 10};
     snprintf(h.name, 64, "%s", name);
@@ -672,6 +708,7 @@ static void host_secrets(void) {
     assert(!snapshot.hosts[0].has_secret);
 }
 int main(void) {
+    discovery_source_evidence();
     update_flow();
     profile_v2_migration();
     profile_v3_migration();

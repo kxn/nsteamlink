@@ -44,22 +44,16 @@ void sl_ui_layout(sl_ui_model *m) {
             if (end > r->count)
                 end = r->count;
             if (r->count > 1)
-                button(l, 1, 40, 86, 64, 72, "LB", SL_PREV_HOST, 0, false);
+                button(l, 1, 40, 86, 64, 104, "LB", SL_PREV_HOST, 0, false);
             int origin = (1280 - (end - begin) * 342 + 16) / 2;
             for (int i = begin; i < end; ++i)
-                button(l, 10 + i, origin + (i - begin) * 342, 86, 326, 72,
+                button(l, 10 + i, origin + (i - begin) * 342, 86, 326, 104,
                        r->hosts[i].name[0] ? r->hosts[i].name : r->hosts[i].address, SL_SELECT_HOST,
                        i, i == r->selected);
             if (r->count > 1)
-                button(l, 2, 1176, 86, 64, 72, "RB", SL_NEXT_HOST, 0, false);
-            char address[160];
-            snprintf(address, sizeof(address), "%s%s · %s",
-                     sl_host_online(h, m->now) ? "" : sl_tr(SL_T_LAST_ADDRESS), h->address,
-                     h->paired ? sl_tr(SL_T_PAIRED) : sl_tr(SL_T_UNPAIRED));
-            center(l, 170, 26, address);
+                button(l, 2, 1176, 86, 64, 104, "RB", SL_NEXT_HOST, 0, false);
             if (!sl_host_online(h, m->now)) {
-                center(l, 300, 44, sl_tr(SL_T_HOST_OFFLINE));
-                center(l, 372, 30, sl_tr(SL_T_SEARCHING_AUTO));
+                /* Unavailable + search are rendered as large geometric symbols. */
             } else if (h->paired && h->games[0].id) {
                 text(l, 52, 236, 36, sl_tr(SL_T_RECENT));
                 button(l, 30, 956, 220, 272, 72, sl_tr(SL_T_OPEN_STEAM), SL_START, 0, false);
@@ -68,21 +62,11 @@ void sl_ui_layout(sl_ui_model *m) {
                            SL_CARD_Y, SL_CARD_WIDTH, SL_CARD_HEIGHT, h->games[i].name, SL_RECENT, i,
                            false);
             } else {
-                center(l, 284, 44, h->paired ? sl_tr(SL_T_READY) : sl_tr(SL_T_CONNECT_PC));
-                if (h->games_running)
-                    center(l, 404, 28, sl_tr(SL_T_GAME_RUNNING));
                 button(l, 30, 448, 472, 384, 80,
                        h->paired ? sl_tr(SL_T_OPEN_STEAM) : sl_tr(SL_T_PAIR_CONNECT), SL_START, 0,
                        true);
             }
-        } else {
-            center(l, 292, 44,
-                   !m->network_ok                  ? sl_tr(SL_T_NO_NETWORK)
-                   : m->now - m->entered_at < 8000 ? sl_tr(SL_T_SEARCHING)
-                                                   : sl_tr(SL_T_NO_HOSTS));
-            center(l, 368, 30,
-                   m->network_ok ? sl_tr(SL_T_OPEN_SAME_NETWORK) : sl_tr(SL_T_SEARCH_WHEN_ONLINE));
-        }
+        } /* Empty discovery is rendered without status copy. */
         button(l, 3, 1060, 632, 180, 64, sl_tr(SL_T_OPTIONS_KEY), SL_OPEN_OPTIONS, 0, false);
         button(l, 5, 40, 632, 180, 64, sl_tr(SL_T_EXIT_KEY), SL_BACK, 0, false);
         if (h && sl_host_online(h, m->now))

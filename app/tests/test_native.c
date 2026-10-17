@@ -4,6 +4,7 @@
 #include "platform/system.h"
 #include "platform/ui_renderer.h"
 #include "sdl_input.h"
+#include "ui/ui_events.h"
 #include <SDL.h>
 #include <assert.h>
 #include <libavcodec/avcodec.h>
@@ -212,6 +213,35 @@ int main(int argc, char **argv) {
     sl_ui_layout(&ui);
     stream_media_present();
     save_image("paired");
+    {
+        sl_ui_model saved = ui;
+        sl_runtime_event source = {.type = SL_EVENT_HOST,
+                                   .host = ui.store.registry.hosts[0],
+                                   .discovery_source = SL_DISCOVERY_LAN};
+        sl_ui_runtime_event(&ui, &source);
+        sl_ui_layout(&ui);
+        stream_media_present();
+        save_image("discovery-lan");
+        SDL_Rect icon = {487, 102, 72, 72};
+        uint64_t lan = region_hash(icon);
+        source.discovery_source = SL_DISCOVERY_INTERNET;
+        sl_ui_runtime_event(&ui, &source);
+        sl_ui_layout(&ui);
+        stream_media_present();
+        save_image("discovery-internet");
+        uint64_t internet = region_hash(icon);
+        assert(lan != internet);
+        sl_runtime_event offline = {.type = SL_EVENT_HOST_OFFLINE, .host = source.host};
+        sl_ui_runtime_event(&ui, &offline);
+        sl_ui_layout(&ui);
+        stream_media_present();
+        save_image("discovery-offline");
+        uint64_t absent = region_hash(icon);
+        assert(absent != lan && absent != internet);
+        ui = saved;
+        sl_ui_layout(&ui);
+        stream_media_present();
+    }
     if (artwork) {
         /* Offline fixture rendering exercises queue -> decode -> texture upload -> fade. */
         for (int i = 0; i < 100; ++i) {

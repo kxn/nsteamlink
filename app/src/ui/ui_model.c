@@ -53,6 +53,14 @@ static sl_host *selected(sl_ui_model *m) {
     int i = m->store.registry.selected;
     return i >= 0 && i < m->store.registry.count ? &m->store.registry.hosts[i] : NULL;
 }
+sl_discovery_source sl_ui_host_source(const sl_ui_model *m, const sl_host *h) {
+    if (!sl_host_online(h, m->now))
+        return SL_DISCOVERY_NONE;
+    for (unsigned i = 0; i < SL_HOST_LIMIT; ++i)
+        if (m->discoveries[i].host_id == h->id)
+            return m->discoveries[i].source;
+    return SL_DISCOVERY_UNKNOWN;
+}
 int sl_ui_game_count(const sl_ui_model *m) {
     int selected = m->store.registry.selected;
     if (selected < 0 || selected >= m->store.registry.count)

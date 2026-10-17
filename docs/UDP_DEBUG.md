@@ -44,6 +44,15 @@ tools/switch-debugctl.py 10.10.10.17 diag prev
 每次运行最大 4 MiB；启动时轮转至 `stream_diag_prev.log`、`stream_diag_older.log`。
 UDP 读取内存快照，不在渲染线程读文件。配对码、安全码及密钥不进入该日志接口。
 
+日志首行包含应用版本、完整 commit 和设备 Unix 时间，回收后须先核对是否属于目标会话。
+`connection_event` 记录实际选用 LAN UDP 或云端 SNS、请求响应及 IHS 配置/连接/断开阶段；
+每秒 `connection` 的 `route` 区分 `lan_udp`、`sns_direct`、`sns_relay` 和未就绪/已关闭，
+同时记录 SDK state、relay 标志、终态来源和 SNS datagram 累计数。它不把云端发现等同中继。
+`pipeline` 即使尚未显示第一帧也输出提交、解码、显示、音频及帧停滞时间；`reliable` 输出
+ACK/NACK/重试/失败、待确认数量与最老项年龄。退出前及 IHS join 后再保存一次阶段快照。
+`log_drop` 是有界队列或 trylock 丢弃的诊断记录数，不能把它当作网络丢包数。
+这些记录只在诊断包启用，不包含 packet payload、配对材料或 SDK 原始身份文本。
+
 清理日志包括 HID worker、session interrupt/join/destroy、IHS client、IHS_Quit、SDL_Quit。
 退出后 nxlink 结束仅是 PC 侧证据，Switch 返回 hbmenu 及再次启动结果仍以屏幕观察为准。
 

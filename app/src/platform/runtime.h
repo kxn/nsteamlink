@@ -23,6 +23,7 @@ typedef struct sl_runtime_event {
     sl_event_type type;
     uint64_t generation, account;
     sl_host host;
+    sl_discovery_source discovery_source; /* HOST event: verified LAN or cloud-only. */
     sl_game game;
     char text[192];
 } sl_runtime_event;
