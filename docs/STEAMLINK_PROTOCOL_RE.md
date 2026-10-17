@@ -6344,3 +6344,86 @@ python3 scripts/audit-steam-decoder-events.py \
   /data/dl/nsteamlink/build/video-recovery-re/libmain-arm64.so \
   --check scripts/fixtures/steam-decoder-events-reference.json
 ```
+
+
+## 79. Standalone reset、非空队列与主循环中的处理时机
+
+【官方客户端证据】同§24.1固定SHA core。`audit-steam-decoder-reset.py`从Idle
+执行真实IStreamPlayer及CStreamDecoderH264Standalone构造，使用真实重定位虚表。
+Base CStreamDecoderVideo的+64/+80/+120分别为0x7b1fb8/0x7b1fbc/0x7b2a68；
+standalone对应0x7b0e70/0x7b103c/0x7b124c，不能用base Start的RET替代standalone。
+原ResetVideoDecoder、HandlePendingResets、IStreamDecoder Reset/OnStreamStopped、
+standalone Stop/Start/Flush及AndroidAccel构造、Flush、Quit、析构实际执行。
+CPU/system property、JNI/SDK、线程/OS锁、libc allocator/string/atomic为声明的
+平台适配；free记录退休而不unmap。新BCreateDecoder或者执行真实missing-JNI失败
+路径，或者使用明确的初始化结果终点；后者返回true不构成真实codec已经工作的证明。
+
+【真实所有权输入】解码输入FIFO经原CStreamFrame ctor/OnReceiveFrame复制、入队，
+原始frame随后析构。RTP partial经原DecodeFrame进入linked list；另一组再执行
+原OnThink/AppendBuffer，分别形成保留packet引用的数据buffers，或NeedEscape的
+28-byte编码缓存。播放器队列经原PutVideoFrame入队。其三个暂存slot为受控输入，
+对象使用与BDecodeFrame相同的CDummyFrame构造/SetFrame/SetFormat与CAndroidFrame
+vptr/额外字段；不是硬件出队的像素或GPU引用。各队列ID、packet refcount及编码
+缓存完整字节、buffers计数、私有状态标量和实际释放终点保留在fixture；释放后的
+packet计数取原primitive最后写入记录，不从已退休对象推导Native可解引用。
+
+【实际Reset顺序】请求参数false只置decoder+96，不立即停准入；多次请求可合并。
+参数true在置请求后调用OnStreamStopped，立即停准入、按线程flag唤醒/join/purge、
+virtual Stop；**不是在该函数内立即执行完整Reset**。以后处理请求仍会Reset。
+IStreamDecoder Reset实际先active=0，线程模式下signal→Join(-1)→输入FIFO Purge，
+再virtual Stop。Standalone Stop先调用base Stop：FlushVideoStream释放播放器queue
+及三个slot，再清linked pending/保留packet/编码buffers，并Flush现有backend；
+随后设strict=1、soft=0及请求时间，再Quit/delete backend并清+624。
+
+有旧backend的组合案例确认：解码FIFO、播放器frame、RTP packet引用释放都先于
+旧codec delete；旧codec/window/SDL texture各自按原字段清零保护。Texture路径
+原Quit/析构的多次DestroyDecoder会多次进入Java texture shutdown终点，但NDK
+window/SDL texture只释放一次；最后DeleteGlobalRef。Surface路径依active flag
+只发一次Java surface shutdown，JNI全局ref随后释放，Java拥有的window不套用
+Texture分支的ANativeWindow_release。JNI调用是终点，不将这些观察外推成Java
+方法体或Switch资源生命周期已经验证。
+
+随后Reset清请求、active=1，按standalone真实Start尝试新backend，成功才发
+VideoDecoderInfo（原GetInfo/Format产生完整字符串、threads=1）；线程模式下再
+尝试Start。HandlePendingResets在其返回后发DataLost(video)。BInit失败仍会清
+请求、恢复active/strict等待，backend=NULL，不在此自动Disconnect；线程Start
+终点失败亦未使此caller跳过DataLost。原SDK flush/delete错误的受控返回不改变
+这些已观察的上层顺序。反复处理已清请求不会重复重建；最终OnStreamStopped仍
+清理本次新backend和所有队列。仅覆盖本节受控SDK/线程结果，不提供真实失败时延保证。
+
+【产品调用入口与跨周期顺序】选定目标的全.text直接B/BL/动态重定位审计发现
+ResetVideoDecoder的调用来自FinalDecode、OnThink/CheckContentMode、BHandleEvent、
+CloseVideo、SetStreamingClientConfig、Android输入和Texture输出包装层。
+CloseVideo @0x7c1420/24实际传1；本节未执行其余完整UI关闭路径。
+HandlePendingResets没有该范围内的直接B/BL caller，不能因此判为产品不可达：
+**真实CStreamClient::OnThink @0x7a5ff8内联了相同处理**，0x7a6058/6070先
+处理audio Reset/DataLost，0x7a6084/609c再处理video。之后才在0x7a60c0推进
+network、0x7a60c8 transport Update、0x7a60d0消费控制队列；再做decoder think和
+phase处理。该OnThink又由§77已核实的SDL_main串流循环调用。
+
+正式案例执行完整OnThink，network/transport/控制消费/phase/log是声明终点，
+实际Reset和decoder think保持原指令。控制消费终点注入一次受控请求并尾调用
+原ResetVideoDecoder；第一轮只留下request=1，下一轮起点才重建并发DataLost，
+然后再进该轮network。它证明顺序/延后机制，不冒充某份消息的完整parser触发链、
+socket排程或所有控制生产者都已验证。新请求不能在同一轮控制消费后立即重建。
+
+【对照边界】91例455状态覆盖线程0/1、新backend真实失败及初始化终点false/true、
+无旧backend/有旧backend、空/linked/保留packet/编码缓存、非空解码FIFO与播放器
+queue/三个held slot、0/1/2次请求与true同步停止、重复drain、线程Start失败、SDK
+flush/delete错误、完整Main OnThink两轮时机、Texture/Surface及JNI释放分支。
+所有Source案例无断言，完整只读复播。原接收connection/window/FEC没有在本节
+引入非空传输状态，不能把本节的decoder FIFO清理扩大为这些状态的等价证明。
+原初始化/Java/硬件输出、全部factory和资源边界、实际线程交错及UI返回仍独立。
+
+【Native投射约束】异步reset应由拥有decoder生命周期的actor消费，排除并join
+原worker后再释放其依赖，保留连接的接收/反馈所有权，分别清decoder FIFO/partial/
+player引用、替换backend、恢复严格等待并请求DataLost。Native epoch/ticket/GPU
+lease和renderer mapgroup需要按本地生命周期证明，不能直接复制Android指针释放。
+当前Native尚无这一整条actor reset，Video start失败/资源保护和FFmpeg错误映射仍
+是独立边界；本节没有据SDK错误码猜测AVERROR映射或提前添加自动重连、FEC策略。
+
+```sh
+python3 scripts/audit-steam-decoder-reset.py \
+  /data/dl/nsteamlink/build/video-recovery-re/libmain-arm64.so \
+  --check scripts/fixtures/steam-decoder-reset-reference.json
+```
