@@ -73,24 +73,23 @@ void sl_ui_layout(sl_ui_model *m) {
             button(l, 31, 652, 350, 576, 220, sl_tr(SL_T_ENTER_IP), SL_OPEN_MANUAL, 0, false);
         } else if (h) {
             if (games) {
-                int card_y = ready ? SL_CARD_Y : 372, card_h = ready ? SL_CARD_HEIGHT : 198;
+                char recent[sizeof(l->labels[0].text)];
+                snprintf(recent, sizeof(recent), "%s", sl_tr(SL_T_RECENT));
                 if (!ready) {
-                    text(l, 52, 240, 30,
-                         sl_tr(!m->network_ok ? SL_T_NO_NETWORK
-                               : !online      ? SL_T_HOST_OFFLINE
-                                              : SL_T_UNPAIRED));
-                    if (!online && m->network_ok)
-                        text(l, 52, 282, 24, sl_tr(SL_T_SEARCHING_AUTO));
-                    if (online && !h->paired)
-                        button(l, 30, 916, 240, 312, 72, sl_tr(SL_T_PAIR_CONNECT), SL_START, 0,
-                               true);
+                    snprintf(recent, sizeof(recent), "%s  ·  %s", sl_tr(SL_T_RECENT),
+                             sl_tr(!m->network_ok ? SL_T_NO_NETWORK
+                                   : !online      ? SL_T_HOST_UNAVAILABLE_SEARCHING
+                                                  : SL_T_UNPAIRED));
                 }
-                text(l, 52, ready ? 236 : 330, ready ? 36 : 28, sl_tr(SL_T_RECENT));
-                if (ready)
-                    button(l, 30, 956, 220, 272, 72, sl_tr(SL_T_OPEN_STEAM), SL_START, 0, false);
+                text(l, 52, 236, 36, recent);
+                if (online)
+                    button(l, 30, 956, 220, 272, 72,
+                           h->paired ? sl_tr(SL_T_OPEN_STEAM) : sl_tr(SL_T_PAIR_CONNECT), SL_START,
+                           0, !h->paired);
                 for (int i = 0; i < sl_ui_game_count(m); ++i) {
                     button(l, 40 + i, SL_GAMES_LEFT + i * SL_CARD_STEP - (int)m->games_scroll,
-                           card_y, SL_CARD_WIDTH, card_h, h->games[i].name, SL_RECENT, i, false);
+                           SL_CARD_Y, SL_CARD_WIDTH, SL_CARD_HEIGHT, h->games[i].name, SL_RECENT, i,
+                           false);
                     l->controls[l->count - 1].disabled = !ready;
                 }
             } else {

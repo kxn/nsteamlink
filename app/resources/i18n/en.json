@@ -5,6 +5,7 @@
   "UNPAIRED": "Not paired",
   "HOST_OFFLINE": "PC not found",
   "SEARCHING_AUTO": "Searching automatically",
+  "HOST_UNAVAILABLE_SEARCHING": "PC unavailable, still searching",
   "RECENT": "Recently played",
   "OPEN_STEAM": "Y  Open Steam",
   "READY": "Ready to play",

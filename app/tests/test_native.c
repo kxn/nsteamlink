@@ -59,6 +59,21 @@ static uint64_t region_hash(SDL_Rect box) {
     SDL_FreeSurface(s);
     return hash;
 }
+static unsigned chromatic_pixels(SDL_Rect box) {
+    SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(0, box.w, box.h, 32, SDL_PIXELFORMAT_RGBA32);
+    assert(s);
+    sl_gfx_rect region = {box.x, box.y, box.w, box.h};
+    assert(sl_gfx_readback(sl_media_gfx(), &region, s->pixels, (size_t)s->pitch * s->h, s->pitch));
+    unsigned count = 0;
+    for (int y = 0; y < s->h; ++y)
+        for (int x = 0; x < s->w; ++x) {
+            const unsigned char *p = (const unsigned char *)s->pixels + y * s->pitch + x * 4;
+            if (abs(p[0] - p[1]) > 2 || abs(p[1] - p[2]) > 2)
+                ++count;
+        }
+    SDL_FreeSurface(s);
+    return count;
+}
 static void tap(int x, int y) {
     SDL_Event e = {.type = SDL_MOUSEBUTTONDOWN};
     e.button.button = SDL_BUTTON_LEFT;
@@ -374,6 +389,23 @@ int main(int argc, char **argv) {
         sl_ui_tick(&ui, ui.now + 200);
         stream_media_present();
         save_image("paired-artwork-focused");
+        sl_ui_model available = ui;
+        SDL_Rect artwork_box = {82, SL_CARD_Y + 40, 360, 130};
+        uint64_t color = region_hash(artwork_box);
+        unsigned chromatic = chromatic_pixels(artwork_box);
+        sl_runtime_event unavailable = {.type = SL_EVENT_HOST_OFFLINE,
+                                        .host = ui.store.registry.hosts[0]};
+        sl_ui_runtime_event(&ui, &unavailable);
+        sl_ui_layout(&ui);
+        stream_media_present();
+        save_image("paired-artwork-offline");
+        assert(!chromatic_pixels(artwork_box));
+        if (chromatic)
+            assert(region_hash(artwork_box) != color);
+        ui = available;
+        sl_ui_layout(&ui);
+        stream_media_present();
+        assert(region_hash(artwork_box) == color);
     }
     /* Fixture duplicates artwork only to exercise a four-card viewport. */
     for (int i = 1; i < 4; ++i)

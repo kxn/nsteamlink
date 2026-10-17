@@ -26,7 +26,7 @@ struct sl_ui_renderer {
     sl_artwork *artwork;
     struct {
         uint64_t id, used, ready_at;
-        sl_gfx_texture *texture, *blurred;
+        sl_gfx_texture *texture, *blurred, *grayscale;
         int w, h;
     } covers[8];
     float text_alpha;
@@ -731,7 +731,8 @@ static bool launch_background(sl_ui_renderer *r, const sl_ui_model *m) {
          (sl_gfx_color){9, 12, 20, (Uint8)(120 * p * alpha)});
     return true;
 }
-static void draw_cover(sl_ui_renderer *r, uint64_t id, sl_gfx_rect box, uint64_t now) {
+static void draw_cover(sl_ui_renderer *r, uint64_t id, sl_gfx_rect box, uint64_t now,
+                       bool unavailable) {
     if (!r->artwork || !sl_artwork_appid(id))
         return;
     int index = -1;
@@ -751,12 +752,28 @@ static void draw_cover(sl_ui_renderer *r, uint64_t id, sl_gfx_rect box, uint64_t
                 index = i;
         sl_gfx_destroy_texture(r->covers[index].texture);
         sl_gfx_destroy_texture(r->covers[index].blurred);
+        sl_gfx_destroy_texture(r->covers[index].grayscale);
         r->covers[index].blurred = blurred_cover(r, &image);
         r->covers[index].texture = sl_gfx_create_texture(r->renderer, SL_GFX_RGBA8, SL_GFX_STATIC,
                                                          image.width, image.height);
         if (r->covers[index].texture) {
             sl_gfx_upload(r->covers[index].texture, NULL, image.pixels, image.width * 4);
             sl_gfx_texture_blend(r->covers[index].texture, SL_GFX_BLEND_ALPHA);
+        }
+        /* Reuse the decoded pixels once; no filtering or allocation on status changes. */
+        for (size_t i = 0; i < (size_t)image.width * image.height; ++i) {
+            unsigned char *pixel = image.pixels + i * 4;
+            unsigned char gray = (77U * pixel[0] + 150U * pixel[1] + 29U * pixel[2]) >> 8;
+            pixel[0] = pixel[1] = pixel[2] = gray;
+        }
+        r->covers[index].grayscale = sl_gfx_create_texture(r->renderer, SL_GFX_RGBA8, SL_GFX_STATIC,
+                                                           image.width, image.height);
+        if (r->covers[index].grayscale) {
+            if (sl_gfx_upload(r->covers[index].grayscale, NULL, image.pixels, image.width * 4)) {
+                sl_gfx_destroy_texture(r->covers[index].grayscale);
+                r->covers[index].grayscale = NULL;
+            } else
+                sl_gfx_texture_blend(r->covers[index].grayscale, SL_GFX_BLEND_ALPHA);
         }
         r->covers[index].w = image.width;
         r->covers[index].h = image.height;
@@ -765,15 +782,16 @@ static void draw_cover(sl_ui_renderer *r, uint64_t id, sl_gfx_rect box, uint64_t
         r->covers[index].ready_at = now;
     }
     r->covers[index].used = ++r->tick;
-    if (!r->covers[index].texture)
+    sl_gfx_texture *texture = unavailable ? r->covers[index].grayscale : r->covers[index].texture;
+    if (!texture)
         return;
     /* Contain the complete header artwork; never crop the game's logo. */
     float scale = fminf((float)box.w / r->covers[index].w, (float)box.h / r->covers[index].h);
     int w = (int)(r->covers[index].w * scale), h = (int)(r->covers[index].h * scale);
     sl_gfx_rect target = {box.x + (box.w - w) / 2, box.y + (box.h - h) / 2, w, h};
     Uint8 alpha = (Uint8)(255.f * fminf(1.f, (float)(now - r->covers[index].ready_at) / 180.f));
-    sl_gfx_texture_alpha(r->covers[index].texture, alpha);
-    sl_gfx_copy(r->renderer, r->covers[index].texture, NULL, &target);
+    sl_gfx_texture_alpha(texture, alpha);
+    sl_gfx_copy(r->renderer, texture, NULL, &target);
 }
 static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_snapshot *d,
                        bool focused_scene) {
@@ -1015,16 +1033,17 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
         }
         int y = centered_y(r, label, size, c->y, c->h, width);
         if (c->action == SL_RECENT) {
-            sl_gfx_color game_color = c->arg % 2 ? amber : violet;
+            sl_gfx_color game_color = c->disabled ? muted : c->arg % 2 ? amber : violet;
             sl_gfx_rect art = {box.x + 8, box.y + 8, box.w - 16, box.h - 72};
             rounded(r->renderer, art, 10, mix(panel, game_color, .16f));
             if (!c->disabled)
                 play_icon(r->renderer, box.x + box.w / 2 - 10, box.y + art.h / 2, 28, game_color);
             int selected = m->store.registry.selected;
             if (selected >= 0 && selected < m->store.registry.count && c->arg < SL_RECENT_LIMIT)
-                draw_cover(r, m->store.registry.hosts[selected].games[c->arg].id, art, m->now);
+                draw_cover(r, m->store.registry.hosts[selected].games[c->arg].id, art, m->now,
+                           c->disabled);
             if (c->disabled)
-                rounded(r->renderer, art, 10, (sl_gfx_color){32, 35, 42, 160});
+                rounded(r->renderer, art, 10, (sl_gfx_color){24, 24, 24, 112});
             if (selected >= 0 && selected < m->store.registry.count && c->arg < SL_RECENT_LIMIT)
                 label =
                     localized_title(r, m->store.registry.hosts[selected].games[c->arg].id, label);
@@ -1150,6 +1169,7 @@ void sl_ui_renderer_destroy(sl_ui_renderer *r) {
     for (int i = 0; i < 8; ++i) {
         sl_gfx_destroy_texture(r->covers[i].texture);
         sl_gfx_destroy_texture(r->covers[i].blurred);
+        sl_gfx_destroy_texture(r->covers[i].grayscale);
     }
     sl_gfx_destroy_texture(r->overlay);
     free(r->base_ui);

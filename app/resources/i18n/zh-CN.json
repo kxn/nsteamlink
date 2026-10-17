@@ -5,6 +5,7 @@
   "UNPAIRED": "未配对",
   "HOST_OFFLINE": "暂未发现这台电脑",
   "SEARCHING_AUTO": "正在自动查找",
+  "HOST_UNAVAILABLE_SEARCHING": "电脑不可用，正在继续查找",
   "RECENT": "最近游玩",
   "OPEN_STEAM": "Y  打开 Steam",
   "READY": "准备就绪",

@@ -178,12 +178,22 @@ static void cached_history_availability(void) {
     strcpy(h->games[0].name, "First computer's game");
     m.store.registry.hosts[1].games[0].id = 456;
     sl_ui_tick(&m, 20000);
-    assert(sl_ui_game_count(&m) == 1 && has_label(&m, sl_tr(SL_T_HOST_OFFLINE)));
+    assert(sl_ui_game_count(&m) == 1);
+    assert(!has_label(&m, sl_tr(SL_T_HOST_OFFLINE)) && !has_label(&m, sl_tr(SL_T_SEARCHING_AUTO)));
+    bool unavailable_caption = false;
+    for (int i = 0; i < m.layout.label_count; ++i)
+        if (strstr(m.layout.labels[i].text, sl_tr(SL_T_HOST_UNAVAILABLE_SEARCHING))) {
+            unavailable_caption = true;
+            assert(strstr(m.layout.labels[i].text, sl_tr(SL_T_RECENT)) &&
+                   m.layout.labels[i].y == 236 && m.layout.labels[i].size == 36);
+        }
+    assert(unavailable_caption);
     const sl_control *card = NULL;
     for (int i = 0; i < m.layout.count; ++i)
         if (m.layout.controls[i].action == SL_RECENT)
             card = &m.layout.controls[i];
     assert(card && card->disabled && !strcmp(card->label, h->games[0].name));
+    sl_control unavailable_card = *card;
     assert(!sl_ui_hit(&m.layout, card->x + 100, card->y + 50));
     sl_ui_activate(&m, card->id);
     sl_ui_action(&m, SL_ACCEPT, 0);
@@ -200,7 +210,10 @@ static void cached_history_availability(void) {
     sl_ui_layout(&m);
     for (int i = 0; i < m.layout.count; ++i)
         if (m.layout.controls[i].action == SL_RECENT)
-            assert(!m.layout.controls[i].disabled);
+            assert(!m.layout.controls[i].disabled && m.layout.controls[i].x == unavailable_card.x &&
+                   m.layout.controls[i].y == unavailable_card.y &&
+                   m.layout.controls[i].w == unavailable_card.w &&
+                   m.layout.controls[i].h == unavailable_card.h);
     sl_ui_action(&m, SL_ACCEPT, 0);
     assert(sl_ui_take_command(&m, &command) && command.type == SL_CMD_STREAM &&
            command.host.client_id == 1 && command.game_id == 123);
