@@ -2165,6 +2165,10 @@ IHSlib `5fe67f4`。下述案例执行原始指令，替换平台依赖，不是�
 - state 4：NegotiationInit(3)、NegotiationSetConfig(4)。
 - state 6：40 个非默认分派入口，清单保存在 fixture。
 
+【范围更正】上述是原扫描输入，不是“仅state6可进入通用分派”的证明。
+§63核对原指令及新增状态后，通用表实际用于除2/3/4以外的状态；
+入队时的state0/7丢弃与消费时的状态选择必须分开。
+
 `OnStreamPacket @0x7acfa8` 另对 state 6/control channel 的全部 256 编号以及
 5 个 state/channel 边界执行验证：KeepAlive(9) 在该层提前消费；RemoteHID(106)
 提前交给 delegate；其他控制消息排队进入前述分派。state 0/7 丢弃数据；媒体
@@ -3213,8 +3217,12 @@ ByteSizeLong 把原始 protobuf 字节放入 CUtlBuffer，再调用 BSaveFile。
 
 ### 35.3 接收 99：缺字段回默认；delegate 可能产生后续动作
 
-【证据】queued dispatcher 只在 client state=6 进入
-`OnSetStreamingClientConfig 0x7af08c–0x7af13c`。原版 Get/ParseFromArray 成功，
+【更正】撤回“queued dispatcher只在client state=6进入”的过度结论。
+§63补测并核对`0x7a6444–0x7a651c`：只有state2/3/4使用专用分派，其他状态
+走50…147通用表；其中99进入`OnSetStreamingClientConfig 0x7af08c–0x7af13c`。
+state0/7在OnStreamPacket入队之前丢弃新帧，但已排队后改变state的消费边界不同，
+不能把两个入口合成同一guard。143例配置审计含28个新增post-decrypt queue边界案例；
+不据函数边界状态注入证明相应UI启动路径可达。原版 Get/ParseFromArray 成功，
 且 required config（及嵌套 required mode 宽高）满足后，CopyFrom → delegate(bool=true)
 → Save。坏 protobuf、缺 required config、无效嵌套 mode 都保留旧值、不通知、不保存。
 空 **config** 是有效值，会把已有 FEC=true 恢复 false，已有 input/audio/video=false
@@ -5133,3 +5141,83 @@ false→FEC，以及末尾轮转不可靠true，尚未作为一个完整生产�
 network锁与control处理/consumer替换的所有交错也不能由此42例推定已等价。
 保持初发producer的来源约束，不将所有初发强行延后。早到媒体窗口、畸形/错误保护、
 完整decoder/OS线程、Steam会话和Switch实际显示/loader均另需来源和运行证据。
+
+## 63. 控制交付、解密与主阶段消费的边界
+
+【官方客户端证据】同§24.1 Android 1.3.32固定SHA。OnStreamPacket @0x7acfa8在
+client state0/7直接丢弃新帧；控制通道先按原明文类型集合{1,2,6,7}选择解密，
+加密帧在0x7ad054–0x7ad06c先递增client+136，再执行Frame::BDecrypt。
+失败也消耗该次期望序号，不因下一帧成功或更大序号而重同步。
+成功后KeepAlive(9)直接消费，RemoteHID(106)在0x7ad0c4–0x7ad0d8调用delegate，
+其余消息经0x7ad0e0–0x7ad0f0引用计数/真实CStreamQueue::PushItem排队。
+不是等到主阶段才解密，也不是把所有控制消息都立即分派。
+
+【更正】原§35.3“queued dispatcher只在state6进入99”撤回。原
+HandleIncomingPackets的0x7a6444–0x7a6458只对state2/3/4作专门分派；
+其他状态进入0x7a6510–0x7a6534的50…147通用表。其内部99 handler本身没有
+state6判断。state5的队列99会复制配置；同批先收到有效peer SetConfig(4)再收到
+99时，主阶段先变state5，再应用99，之后才由Starting阶段进入6。
+0/7入队前丢弃新帧，不能推成“先前已排队的消息在消费时state0/7也必定被丢弃”。
+补测0/1/5/7的143例配置审计含28个新增**已解密队列入口**案例；该函数边界输入
+不证明相应UI或网络连接启动路径可达。主动发送99仍要求state6且bool bit0=0，
+不能把接收分派边界的更正反向用来放宽发送条件。
+
+### 63.1 Native所有权和调用顺序
+
+ControlReceiveFrame继续在网络交付时解密/递增序号，将除9/106之外的成功消息交给
+ControlHandoff。control拥有独立incoming mutex和常数时间head/tail FIFO；节点持有
+type、原transport header和已解密body所有权。入队不执行普通控制handler，不把body
+借给稍后已释放的Frame或栈buffer。KeepAlive不进队列，RemoteHID仍内联处理。
+
+SessionUpdateAt先完成本轮接收窗口/反馈，再DrainIncoming，然后按新的状态选择
+一个Starting/Streaming阶段。每次pop只持队列锁，实际控制分派在锁外执行，也不
+持网络/Base锁；一条消息改变状态后，下一条按新的状态重新选择。可靠ACK可以在
+普通控制动作执行之前发出。消费期间不重新递增解密序号，不再次解密body。
+ControlReceiveFrame是网络入口；OnMessageReceived是较低层handler入口，直接调用
+后者的测试不能用于证明网络准入或队列时序。
+
+队列没有新增丢旧消息、FEC切换或重连期限。分配失败仍按项目已有本地关闭保护，
+不把“立即在网络锁下执行handler”作为失败fallback。destroy在RX/producers停止后
+丢弃未消费节点并释放body、队列mutex及sendLock，不在析构时执行协议动作。
+部分初始化的Stop/Destroy允许空channel，避免新增mutex失败后清理未创建的消费者。
+这些OOM/关闭保护不是从原版推导出的失败策略，不扩大正常分派的等价范围。
+
+### 63.2 原指令对照、空控制帧与真实worker
+
+`audit-steam-control-handoff.py`执行原OnStreamPacket、Frame构造/BDecrypt/Resize、
+CStreamQueue PushItem、实际CUtlQueue增长/取出、HandleIncomingPackets及peer
+SetConfig/config99解析/复制。固定53例618个状态快照、451次consumer事件，比较
+每一步队列顺序、完整明文body、send/receive metadata、receive sequence、客户端
+状态及完整negotiated/client config；Native从真实ControlReceiveFrame进入实际
+MBED TLS解密/HMAC、生产FIFO和DrainIncoming。Source的AES-CBC/HMAC primitive由
+cryptography/hashlib适配，原Frame层的长度/HMAC比较/序号/移动与Resize分支仍执行；
+不能将其描述成原CCrypto密码实现的完整指令验收。
+
+案例含合法/坏MAC/IV-only/旧序号/未来序号后下一次合法输入、plain与encrypted编号、
+0…7接收状态、排队后改变消费状态、两份peer config、坏PB后有效config、Starting
+期间99、17/129/257项队列增长、排空后再次入队，以及带未消费节点的Native退出清理。Source的
+2683/2684 codec诊断如实单列；它们不拒绝非debug下的完整peer config，见§49。
+其他terminal handler、OS mutex/refcount/析构为adapter；仅peer SetConfig和99的
+完整配置消费者进入原实现，不把HID/播放器设备功能称为已验证。
+
+空控制帧也不能在外层提前绕过解密尝试：原Frame缺少message byte时保留type0，
+仍递增receive sequence，然后拒绝缺失cipher。独立的两份CRC开/关carrier向量执行
+原Socket→Connection→可靠Pop，确认13B零payload载体会交给client delegate；此
+delegate为adapter，与后续Frame入口案例构成两段边界证据，不冒充一次完整会话。
+Native可靠交付现在也让空控制frame进入该失败分支；其他空消费者保持自身准入。
+
+实际BaseWorker测试在CRC开/关分别接收同批空控制帧和随后sequence1的有效加密
+SetInputTemporarilyDisabled。最终空Read之前无交付；ACK时已完成两次decrypt attempt，
+队列只有一条普通控制动作，input状态尚未改变；Drain后才改变。handler中创建并join
+一个实际线程，该线程能取得Base和incoming mutex，验证消费回调没有持这两把锁。
+这是Native线程/锁生存期证据，不代表Source OS调度或Switch decoder/loader已验证。
+
+原来的transport/client-config/protocol-evidence/peer-negotiation fixture曾隐含
+“可靠Update即分派普通控制”，现显式执行DrainIncoming再观测对应源函数边界。
+decrypt_attempts测试用Connected状态验证实际控制动作；在Handshaking状态发送
+普通input通知本来就不属于官方专用dispatcher允许的输入。
+
+【范围】这一步分离普通控制消费，不将周期发送actor、全局network锁与所有producer
+的交错称为已对齐。RemoteHID仍是官方内联例外，其设备线程/发送锁关系须按自身
+调用链核对。完整decoder、早到媒体、上行FEC实际启用、统计评分与真实Steam/Switch
+仍独立取证；没有新增自动FEC或把原用户停顿认定为已修复。

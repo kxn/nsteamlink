@@ -309,7 +309,7 @@ def audit(binary):
         ("truncated", b"\x0a\x08\x08"),
         ("missing_nested_required", b"\x0a\x06\xaa\x01\x03\x12\x01\x00"),
     ]
-    for state in (2, 3, 4, 6):
+    for state in (2, 3, 4, 6, 0, 1, 5, 7):
         for name, wire in incoming:
             core = Core(binary)
             seed(core)
@@ -323,12 +323,13 @@ def audit(binary):
                 "truncated",
                 "missing_nested_required",
             )
-            assert bool(observed["events"]) == (state == 6 and valid), (
+            accepted = state not in (2, 3, 4)
+            assert bool(observed["events"]) == (accepted and valid), (
                 name,
                 state,
                 observed,
             )
-            if state == 6 and valid:
+            if accepted and valid:
                 assert [next(iter(event)) for event in observed["events"]] == [
                     "notify",
                     "save",
@@ -345,6 +346,11 @@ def audit(binary):
                         "initial": initial.hex(),
                         "message": wire.hex(),
                         "state": state,
+                        **(
+                            {"boundary": "decrypted_queue"}
+                            if state in (0, 1, 5, 7)
+                            else {}
+                        ),
                     },
                     "observed": observed,
                 }
@@ -502,14 +508,14 @@ def main():
             }
             for case in cases:
                 if case["case"] in previous:
-                    assert (
-                        case == previous[case["case"]]
-                    ), "existing official observation changed"
+                    assert case == previous[case["case"]], (
+                        "existing official observation changed"
+                    )
         reference.write_text(json.dumps(report, indent=2) + "\n")
     else:
-        assert report == json.loads(
-            reference.read_text()
-        ), "official config reference changed"
+        assert report == json.loads(reference.read_text()), (
+            "official config reference changed"
+        )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n")
     print(

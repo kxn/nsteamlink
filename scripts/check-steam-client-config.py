@@ -84,11 +84,11 @@ def main():
             # Native application player effects are a separate contract; C bool
             # callers also cannot supply the noncanonical ABI values 2/3.
             continue
-        phase = {2: 2, 3: 3, 4: 4, 6: 6}[inp["state"]]
+        phase = inp["state"]
         command = (
             f"SET {inp['local_only']} {inp['config'] or '-'}"
             if entry == "setter"
-            else f"RX {inp['message'] or '-'}"
+            else f"{'QUEUED' if inp.get('boundary') == 'decrypted_queue' else 'RX'} {inp['message'] or '-'}"
         )
         actual = run([f"SEED {inp['initial']}", f"PHASE {phase}", command])[-1]
         assert fields(bytes.fromhex(actual["config"])) == fields(
