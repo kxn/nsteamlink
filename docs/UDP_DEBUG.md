@@ -134,3 +134,34 @@ Deko 产品调度由 `NSL_ADAPTIVE_PACING` 控制，默认 ON；算法输入在 
 `start_us` 是首次发布至首次具备预测条件的间隔，`hold` 为输入观测中断时保留时钟的次数。
 时间跨度过长的主循环暂停不计入状态占比；首次具备条件不等于利用率已经收敛。
 该行由诊断 worker 输出，release 排除；控制器不使用这些计数决策。
+
+### 正式客户端云端媒体自包含测试
+
+`nsl-runtime-probe` 复用正式桌面应用，通过现有 UI 自动启动、显示视频、核对音频队列、
+合成 SDL 手柄的报告内容及 ACK，再从菜单断开并退出。需 `NSL_BUILD_SNS=ON`、
+`NSL_BUILD_TOOLS=ON` 和 `NSL_DIAGNOSTICS=ON`；外部服务验收不加入普通 CTest。
+传入独立的已配对 profile 目录和 Steam 主机 LAN IPv4：
+
+```sh
+build/gns-mbed/app/nsl-runtime-probe /absolute/private-profile 10.10.10.166 --sdr-only
+```
+
+省略 `--sdr-only` 则保留自动 ICE/SDR。两种模式都仅在 fixture 进程内过滤指定主机
+及广播 UDP，使正式 runtime 通过云端发现请求 SNS；不会修改电脑/路由器的防火墙。
+指定 IP 必须是实际 Steam 主机，不能把该隔离称为不同出口 NAT 验收。
+
+Switch 对应入口复用私有 RomFS 交付和加密回读，用户只准备 hbmenu Netloader：
+
+```sh
+python3 tools/switch-sns-runtime-probe.py --address 10.10.10.25 \
+  --lan-host 10.10.10.166 --profile /absolute/private-profile --mode sdr --prepare-only
+python3 tools/switch-sns-runtime-probe.py --address 10.10.10.25 \
+  --lan-host 10.10.10.166 --profile /absolute/private-profile --mode sdr --run-only
+```
+
+`--mode auto` 保留自动选路。私有 NRO、profile 与诊断只保留在 ignored build 目录，
+不要分发为发布包；同一身份不能同时运行于 PC 和 Switch。结果保存在私有 build
+目录的 `runtime-result.json`，日志含阶段、错误、身份回读 ACK 与临时文件清理结果。
+按下/释放均要求新的报告序号和按钮位、发送/ACK 进展以及空待确认队列；初始化全量
+报告不能代替输入验收。合成事件不证明物理按键，音频队列不证明实际扬声器声音，
+`nxlink` 正常退出也不证明 LCD 已返回 hbmenu。契约见 D-071。

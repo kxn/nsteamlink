@@ -2476,3 +2476,46 @@ alternate 临时探测与正式 session 分开：完成只释放 probe，失败�
 绑定 ephemeral socket、零发包，manual poll 与 SDK Kill 明确配对。诊断版迁移媒体 fixture
 先建立指定目标，再在进程中退役旧 endpoint，验收新 E2E 和新编码帧的持续窗口；故障注入
 与这些 API 不进入 release，也不据此升级直接断主路的恢复结论。正式 UI 不增加网络模式。
+
+## D-071 以独立 fixture 验证正式 runtime 的云端媒体和 UI 生命周期
+
+背景：独立 SNS/IHS 工具接收编码帧，只证明承载、鉴权和收流；它绕过正式应用的
+UI、解码器、呈现、音频队列和输入门控，不能替代这些集成行为的证据。
+
+决策：
+
+1. `nsl-runtime-probe`（desktop）和显式启用 `NSL_PRIVATE_SNS_RUNTIME` 的
+   `nsl-sns-runtime-private`（Switch）复用 `nsl_platform` 的正式应用对象。
+   `app/tests/runtime_fixture.c` 通过仅作用于这些独立可执行文件的 linker wrappers
+   驱动已有 SDL/UI 事件并读取观测，不在产品添加控制端点、自动操作或网络模式。
+   Switch fixture 使用正式全应用 preflight；不进入交互式 applet 安装流程。
+2. fixture 在进程内过滤明确指定的 Steam 主机 IPv4 以及对应 `/24` 广播地址、
+   全网广播地址的 UDP 收发。被过滤的接收包已消费，每次调用最多丢弃一个并返回
+   EAGAIN；不修改主机或全局防火墙。该环境只隔离本地发现和指定地址的直连，
+   公网 ICE 仍可能成功，不等于构造了新的 NAT 出口。`auto` 保留产品原有选择；
+   显式 `sdr` 仅在 fixture 的 SNS 创建参数关闭 ICE，并要求观测到 authenticated
+   和 relayed。普通客户端继续自动选路。
+3. 驱动在现有主线程执行：云端主机在线后通过 Y 启动，等待实际显示至少 60 帧；
+   等待 HID 已提交且 pending/inFlight 归零，再注入 SDL 手柄方向键按下。
+   要求 owner 采到新 `lastSubmitted.seq` 且 buttons 含方向键、提交/ACK 进展与
+   pending/inFlight 归零，才注入释放；释放再要求新的 seq、清除该位并等待 ACK，
+   以及至少 30 个后续显示帧。同时要求音频解码计数有效且没有解码错误。
+   单纯提交/ACK 计数也会被主机全量报告请求推动，不能替代按下/释放内容核对。
+   随后长按 -/+ 打开菜单，命中当前布局的断开项并确认；要求回到首页且 runtime
+   的 requests_closed/protocol_closed/video_clean 均成立，再从退出确认结束应用。
+   操作阶段设 90 秒期限，超时转入原有清理路径，不绕过 join/drain。
+4. SNS 与 IHS 计数由原 owner 线程在现有更新/采样点复制，使用原子发布；主线程
+   不访问 SDK/session 所有权。`stream_media_get_snapshot()` 的原始 reliability
+   成员并未填充，不能直接把它的零值当成没有 ACK；应使用 runtime owner 调用
+   `IHS_SessionGetReliabilityStats()` 得到的采样。视频/音频仍读取正式媒体快照。
+5. Switch 复用 D-064 的私有 RomFS、独立 profile、AES-GCM 回读和 ACK 后清理。
+   正式应用完整销毁 runtime、媒体、SDL 后，fixture 暂留同一次 platform/socket
+   生命周期，完成身份和至多 8 KiB 私有诊断回读，再释放 platform 服务和 sockets。
+   不重复初始化 socket，不借用普通客户端的 profile。清理仅遍历生成目录内的
+   一层 artwork 缓存并删除已知文件，核对目录删除；私有上传在卸载 RomFS 后删除。
+6. 此 fixture 不新增线程；生产 release 构建检查拒绝 runtime fixture 标记进入
+   `nsl_platform` 或产品链接。模拟的 SDL 事件只证明输入路径和协议 ACK，不证明
+   物理 Joy-Con 按键或主机应用的响应；音频解码/入队不证明扬声器声音。呈现计数
+   不替代用户直接观察的 LCD/loader 状态，亦不将 nxlink 退出当作返回 hbmenu。
+
+运行结果和剩余验收仅记录于 #46、#49；本文描述 fixture 契约，不维护任务状态。

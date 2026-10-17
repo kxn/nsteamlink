@@ -28,7 +28,7 @@ for entry in commands:
         continue
     assert '-DNSL_DIAGNOSTICS=0' in argv, f'diagnostic macro missing: {source}'
     data = obj.read_bytes()
-    for marker in (b'render-rate-test', b'--adaptive-pacing', b'--no-adaptive-pacing', b'vq1 ', b'vq7 ', b'vq8 ', b'vq9 '):
+    for marker in (b'render-rate-test', b'--adaptive-pacing', b'--no-adaptive-pacing', b'RUNTIME_FIXTURE_', b'vq1 ', b'vq7 ', b'vq8 ', b'vq9 '):
         assert marker not in data, f'diagnostic string {marker!r} in {obj}'
     if source.name == 'gfx.c' and source.parent.name == 'switch':
         nm = Path(argv[0]).with_name('aarch64-none-elf-nm')
@@ -66,6 +66,10 @@ for entry in commands:
     for name in ('sl_gns_sdr_test_loss', 'sl_gns_sdr_test_terminal', 'sl_gns_sdr_test_migration', 'sl_gns_sdr_topology_fixture',
                  'sl_gns_sdr_transport_stats', 'sl_gns_sdr_probe_create'):
         assert name not in symbols, f'relay diagnostic API remains: {name}'
+link = (build / 'app/CMakeFiles/nsteamlink.dir/link.txt').read_text()
+assert 'runtime_fixture' not in link and 'runtime_probe' not in link, 'runtime fixture linked into product'
+archive = build / 'app/libnsl_platform.a'
+assert b'RUNTIME_FIXTURE_' not in archive.read_bytes(), 'runtime driver included in product platform'
 manifest = json.loads((build / 'generated/graphics_manifest.json').read_text())
 if any(e['file'].endswith('/platforms/switch/gfx.c') for e in commands):
     assert manifest['backend'] == 'deko', 'Switch must use deko'

@@ -1,10 +1,19 @@
 /* Private fixture. The default target accepts network-only modes; the separate
  * opt-in media target receives 30 encoded frames. RomFS is supplied explicitly.
  * Never redirect stdio, publish this NRO, or use the normal application store. */
+#ifndef NSL_PRIVATE_RUNTIME_FIXTURE
+#define NSL_PRIVATE_RUNTIME_FIXTURE 0
+#endif
 #include "services/auth_store.h"
+#if NSL_PRIVATE_RUNTIME_FIXTURE
+#include "platform/application.h"
+#include "platform/system.h"
+#include "runtime_fixture.h"
+#endif
 #include <switch.h>
 #include <arpa/inet.h>
 #include <errno.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <mbedtls/gcm.h>
 #include <mbedtls/md.h>
@@ -22,7 +31,12 @@ int sl_network_probe_run(int, char **);
 #ifndef NSL_PRIVATE_MEDIA_FIXTURE
 #define NSL_PRIVATE_MEDIA_FIXTURE 0
 #endif
-#if NSL_PRIVATE_MEDIA_FIXTURE
+#if NSL_PRIVATE_RUNTIME_FIXTURE
+#define FIXTURE_KIND "RUNTIME"
+#define FIXTURE_NRO "nsl-sns-runtime-private.nro"
+#define FIXTURE_DIRECTORY "sdmc:/switch/nsl-sns-runtime-private-%s"
+#define FIXTURE_STAGE "sdmc:/switch/nsl-sns-runtime.stage"
+#elif NSL_PRIVATE_MEDIA_FIXTURE
 #define FIXTURE_KIND "MEDIA"
 #define FIXTURE_NRO "nsl-sns-media-private.nro"
 #define FIXTURE_DIRECTORY "sdmc:/switch/nsl-sns-media-private-%s"
@@ -43,6 +57,14 @@ static uint64_t now_ms(void) {
     return (uint64_t)t.tv_sec * 1000 + t.tv_nsec / 1000000;
 }
 static void wipe(void *p, size_t n) { volatile unsigned char *b = p; while (n--) *b++ = 0; }
+#if NSL_PRIVATE_RUNTIME_FIXTURE
+bool __real_sl_system_init(void);
+void __real_sl_system_shutdown(void);
+/* One real platform lifetime spans the application and encrypted readback.
+ * The application still destroys/join its media and runtime before returning. */
+bool __wrap_sl_system_init(void) { return true; }
+void __wrap_sl_system_shutdown(void) {}
+#endif
 static void send_pending(void) {
     if (log_fd < 0 || delivered == logged) return;
     ssize_t n = send(log_fd, transcript+delivered, logged-delivered, MSG_DONTWAIT);
@@ -55,10 +77,17 @@ int sl_live_printf(const char *format, ...) {
     va_end(args);
     if (n > 0) {
         size_t size = (size_t)n < sizeof(line) ? (size_t)n : sizeof(line)-1;
+#if !NSL_PRIVATE_RUNTIME_FIXTURE
         if (size <= sizeof(transcript)-logged) {
             memcpy(transcript+logged, line, size); logged += size;
         }
+#endif
+#if NSL_PRIVATE_RUNTIME_FIXTURE
+        line[size] = 0;
+        sl_system_log(line);
+#else
         send_pending();
+#endif
     }
     return n;
 }
@@ -121,6 +150,34 @@ static bool return_profile(const char *directory, const unsigned char key[32], u
     unsigned char *profile = read_file(path, 65536, &profile_size);
     snprintf(path, sizeof(path), "%s/sns-error.private", directory);
     unsigned char *error = read_file(path, 8192, &error_size);
+#if NSL_PRIVATE_RUNTIME_FIXTURE
+    /* Return a bounded private diagnostic tail even when the live nxlink
+     * channel dropped logs. The encrypted envelope already reserves 8 KiB. */
+    unsigned char *combined=calloc(1,8192);
+    if (combined) {
+        size_t used=0;
+        if (error_size) {
+            const char prefix[]="SNS_ERROR (prefix)\n";
+            memcpy(combined,prefix,sizeof(prefix)-1); used=sizeof(prefix)-1;
+            size_t take=error_size<1800 ? error_size : 1800;
+            memcpy(combined+used,error,take); used+=take;
+        }
+        const char marker[]="\nRUNTIME_LOG_TAIL\n";
+        memcpy(combined+used,marker,sizeof(marker)-1); used+=sizeof(marker)-1;
+        snprintf(path,sizeof(path),"%s/stream_diag.log",directory);
+        FILE *diagnostic=fopen(path,"rb");
+        if (diagnostic) {
+            if (!fseek(diagnostic,0,SEEK_END)) {
+                long length=ftell(diagnostic);
+                long start=length>6000 ? length-6000 : 0;
+                if (length>=0 && !fseek(diagnostic,start,SEEK_SET))
+                    used+=fread(combined+used,1,6000,diagnostic);
+            }
+            fclose(diagnostic);
+        }
+        free(error); error=combined; error_size=used;
+    }
+#endif
     if (!profile || !profile_size) { free(profile); free(error); return false; }
     size_t plain_size = 8+profile_size+error_size, cipher_size = plain_size+16;
     unsigned char *plain = calloc(1, plain_size), *cipher = malloc(cipher_size);
@@ -169,7 +226,9 @@ cleanup:
 }
 int main(int argc, char **argv) {
     const char *mode = argc > 1 ? argv[1] : "";
-#if NSL_PRIVATE_MEDIA_FIXTURE
+#if NSL_PRIVATE_RUNTIME_FIXTURE
+    bool allowed = (!strcmp(mode,"--sns-runtime") || !strcmp(mode,"--sdr-runtime")) && argc > 3;
+#elif NSL_PRIVATE_MEDIA_FIXTURE
     bool allowed = !strcmp(mode,"--sns-desktop") || !strcmp(mode,"--sdr-only-desktop") ||
         !strcmp(mode,"--sdr-fault-desktop") || !strcmp(mode,"--sdr-warm-fault-desktop") ||
         !strcmp(mode,"--sdr-pause-desktop");
@@ -180,10 +239,21 @@ int main(int argc, char **argv) {
 #endif
     char *end = NULL; unsigned long port = argc > 2 ? strtoul(argv[2], &end, 10) : 0;
     bool valid=allowed && port && port <= 65535 && end && !*end;
+#if NSL_PRIVATE_RUNTIME_FIXTURE
+    /* Match the real client preflight in full application mode. Do not enter
+     * its interactive applet installer from an unattended diagnostic. */
+    AppletType type=appletGetAppletType();
+    if ((type != AppletType_Application && type != AppletType_SystemApplication) ||
+        !sl_system_preflight(argc,argv)) return 2;
+    bool sockets = __real_sl_system_init(), romfs = false;
+#else
     bool sockets = R_SUCCEEDED(socketInitializeDefault()), romfs = false;
+#endif
     if (!sockets) return 1;
+#if !NSL_PRIVATE_RUNTIME_FIXTURE
     log_fd = nxlinkConnectToHost(false, false);
     if (log_fd >= 0) fcntl(log_fd, F_SETFL, O_NONBLOCK);
+#endif
     previous_stage(stage_path,"PREVIOUS_EXIT_STAGE");
 #if !NSL_PRIVATE_MEDIA_FIXTURE
     previous_stage("sdmc:/switch/nsl-sns-media.stage","PREVIOUS_MEDIA_EXIT_STAGE");
@@ -219,21 +289,59 @@ int main(int argc, char **argv) {
         fclose(present);
         if (sl_auth_load(&existing,directory) != 0 || existing.device_id != embedded.device_id) goto cleanup;
     } else if (!sl_auth_save(&embedded,directory)) goto cleanup;
+#if NSL_PRIVATE_RUNTIME_FIXTURE
+    phase="runtime_test";
+    save_stage(phase);
+    if (!sl_runtime_fixture_prepare(directory,&embedded,argv[3],!strcmp(mode,"--sdr-runtime"))) goto cleanup;
+    sl_live_printf("SWITCH_SNS_RUNTIME_BEGIN network_only=0\n");
+    result=sl_application_run(argc,argv);
+    if (!result) result=sl_runtime_fixture_result();
+    save_stage("runtime_destroyed");
+#else
     save_stage(NSL_PRIVATE_MEDIA_FIXTURE ? "media_test" : "network_test");
     char *arguments[]={(char *)"sns-network-fixture",(char *)mode,directory,NULL};
     sl_live_printf("SWITCH_SNS_" FIXTURE_KIND "_BEGIN mode=%s network_only=%d\n",mode,!NSL_PRIVATE_MEDIA_FIXTURE);
     phase=NSL_PRIVATE_MEDIA_FIXTURE ? "media_test" : "network_test";
     result=sl_network_probe_run(3,arguments);
     save_stage(NSL_PRIVATE_MEDIA_FIXTURE ? "media_destroyed" : "network_destroyed");
+#endif
     bool returned=return_profile(directory,key,(uint16_t)port);
     sl_live_printf("PROFILE_READBACK_ACK=%d\n",returned);
     if (returned) {
-        const char *files[]={"profile.bin","profile.tmp","profile.bak","sns-error.private"};
+#if NSL_PRIVATE_RUNTIME_FIXTURE
+        bool cleared=true;
+#endif
+        const char *files[]={"profile.bin","profile.tmp","profile.bak","sns-error.private",
+            "stream_diag.log","stream_diag_prev.log","stream_diag_older.log"};
         for (unsigned i=0; i<sizeof(files)/sizeof(files[0]); ++i) {
             char path[256]; snprintf(path,sizeof(path),"%s/%s",directory,files[i]);
-            if (unlink(path) && errno != ENOENT) result=1;
+            if (unlink(path) && errno != ENOENT) {
+                result=1;
+#if NSL_PRIVATE_RUNTIME_FIXTURE
+                cleared=false;
+#endif
+            }
         }
+#if NSL_PRIVATE_RUNTIME_FIXTURE
+        /* Only the generated private fixture root is used by the application.
+         * Artwork has one flat, bounded cache directory; no recursive SD walk. */
+        char artwork[256]; snprintf(artwork,sizeof(artwork),"%s/artwork",directory);
+        DIR *cache=opendir(artwork);
+        if (cache) {
+            struct dirent *entry;
+            while ((entry=readdir(cache))) {
+                if (!strcmp(entry->d_name,".") || !strcmp(entry->d_name,"..")) continue;
+                char file[768];
+                if (snprintf(file,sizeof(file),"%s/%s",artwork,entry->d_name) >= (int)sizeof(file) || unlink(file)) { result=1; cleared=false; }
+            }
+            closedir(cache);
+            if (rmdir(artwork) && errno != ENOENT) { result=1; cleared=false; }
+        } else if (errno != ENOENT) { result=1; cleared=false; }
+        if (rmdir(directory) && errno != ENOENT) { result=1; cleared=false; }
+        sl_live_printf("PRIVATE_RUNTIME_STORE_CLEAN=%d\n",cleared);
+#else
         rmdir(directory);
+#endif
     } else result=1; /* Preserve a possibly rotated identity for recovery. */
     sl_live_printf("SWITCH_SNS_" FIXTURE_KIND "_RESULT=%d\n",result);
 cleanup:
@@ -252,7 +360,11 @@ cleanup:
     while (delivered < logged && now_ms() < deadline) { send_pending(); usleep(1000); }
     if (log_fd >= 0) { int fd=log_fd; log_fd=-1; close(fd); }
     save_stage("log_closed");
+#if NSL_PRIVATE_RUNTIME_FIXTURE
+    __real_sl_system_shutdown();
+#else
     socketExit();
+#endif
     save_stage("socket_exit_returned");
     return result;
 }
