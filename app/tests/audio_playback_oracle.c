@@ -69,8 +69,8 @@ static void start(int rate, int channels) {
     format[n++] = 24;
     format[n++] = (uint8_t)channels;
     IHS_StreamAudioConfig config = {.codec = IHS_StreamAudioCodecRaw,
-                                    .frequency = 8000,
-                                    .channels = 2,
+                                    .frequency = (uint32_t)rate,
+                                    .channels = (uint32_t)channels,
                                     .codecData = format,
                                     .codecDataLen = n};
     assert(stream_media_audio_start(NULL, &config) == 0);
@@ -118,7 +118,16 @@ int main(int argc, char **argv) {
                 assert(SDL_GetTicks64() < deadline);
             }
             assert(atomic_load(&callbacks) >= before + 3);
-            stream_media_audio_stop(NULL); /* SDL callback must join before ring free. */
+            stream_media_audio_stop(NULL); /* Decoder stop retains the device. */
+            unsigned tail = atomic_load(&callbacks);
+            deadline = SDL_GetTicks64() + 3000;
+            while (atomic_load(&callbacks) < tail + 3) {
+                SDL_Delay(2);
+                assert(SDL_GetTicks64() < deadline);
+            }
+            if (run == 1)
+                continue; /* Next prepare must join this retained callback before reuse. */
+            stream_media_audio_close(NULL); /* Player close joins before ring free. */
             unsigned stopped = atomic_load(&callbacks);
             SDL_Delay(25);
             assert(atomic_load(&callbacks) == stopped);

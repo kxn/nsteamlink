@@ -6031,11 +6031,10 @@ purge之后由teardown调用者执行。已支持codec的start失败保留channe
 置discardFrames而不创建消费者，后续帧仍走完整RX准备后丢弃。未知codec不创建
 库消费者。video class仍沿既有worker启动接口，本节不作其factory等价声明。
 
-这个callback API把应用设备打开/codec初始化合在一次调用里，原客户端则分开。
-因此本节对照的是库的配置/consumer边界：不声称未知codec也执行原物理设备
-打开，不声称应用的实际SDL/codec顺序、StopAudio设备保留、无效Raw格式或原
-Opus分配失败语义已经一致。应用对无效PCM的拒绝规则见§72；不能复制原不安全
-输出。Native OS线程创建失败仍保留已启动backend和待解码FIFO，匹配原代码
+本节fixture使用未提供prepare的合并backend接口，对照库的配置/consumer边界；
+它没有执行实际SDL/player。§76另以可选prepare及真实应用回调表细分设备/decoder
+阶段，核对未知codec的设备准备、Stop尾部及codec_create失败；不能把本节fixture
+单独当作那层证明。无效Raw/PCM的安全拒绝规则见§72/76，不复制原不安全输出。Native OS线程创建失败仍保留已启动backend和待解码FIFO，匹配原代码
 忽略Thread::Start失败、保留decoder/队列的结果；停止时先purge再释放backend。
 既有FIFO内存/条数上限仍生效，不宣称复制原未设上限队列的耗尽行为。
 
@@ -6060,4 +6059,99 @@ python3 scripts/audit-steam-audio-start.py \
   /data/dl/nsteamlink/build/video-recovery-re/libmain-arm64.so \
   --check scripts/fixtures/steam-audio-start-reference.json
 ctest --test-dir build/desktop -R audio_start_official_vectors --output-on-failure
+```
+
+## 76. 音频设备与decoder分层、真实PCM Frame到player及停止尾部
+
+【官方客户端证据】同§24.1固定SHA的Android 1.3.32 core。
+`audit-steam-audio-player.py`把§75的BOpenAudio adapter下移到SDL终点，执行
+原控制分派/解析、Start/Stop、Raw/Opus factory及嵌入codec、真正
+`CreateAudioFrame @0x7679c4`与CStreamFrame存储、CAudioFrame accessors、
+`PutAudioFrame @0x7bf8a0`、AudioFrameComplete、jitter及PlayAudio。
+`IStreamPlayer ctor @0x7676a8`亦执行；它经SetPlayer要求client Idle。
+初步组合探针在client6调用该ctor触发streamclient.cpp line250断言，因此不能
+把那次构造当作有效产品顺序。正式fixture先在Idle执行原ctor、再进入受控6；
+普通案例没有断言，未知codec仅原factory line606。CStreamPlayer其余UI/owner
+字段为受控零，volume=1、线程开关=0，不把这些输入冒充整个产品初始化。
+
+原`BOpenAudio @0x7bec54`先销毁旧+1104 stream、释放旧+1320 jitter，再按
+**外层消息**设置设备format/rate/channels(+1124/1128/1132)，构造float jitter
+并调用SDL_OpenAudioDeviceStream。成功后GetAudioStreamDevice/Resume；失败
+仍保留新jitter、设备请求字段，但BStartAudioStream不SetAudioFormat，也不进
+codec factory。它的三项SDL hints是APP_NAME/设备stream名称/role，未从这些
+字符串推导未观察到的丢包、FEC或缓冲阈值。
+
+`BStartAudioStream`成功才设置IStreamPlayer逻辑format(+16/20/24/28)，然后
+Raw/Opus StartDecoding可再次设置它；**设备请求与decoder逻辑格式是两组字段**。
+实际执行Raw外层24000Hz/mono、codec_data48000Hz/stereo时，SDL请求及jitter
+仍24000/mono，逻辑format变为48000/stereo；反方向声道组合也执行验证。
+原Opus在44100Hz的SDL adapter成功后，真实embedded codec_create失败，
+decoder对象仍active，后续帧无PCM；不升级为整个会话断开，也不销毁player。
+
+原CreateAudioFrame实际构造CAudioFrame/CStreamFrame并复制当时逻辑format、
+frame ID及timestamp。实际GetWriteArea/Resize、GetFrameDataSize/GetFrameData
+都执行。PutAudioFrame在0x7bf8b0读取的是**设备channels+1132**；0x7bf8d8以
+`PCM float字节数/(设备channels×4)`算交给jitter的帧数，并非按decoder channels
+解释；0x7bf8f8真实Push后调用player虚表+384 AudioFrameComplete。
+`AudioFrameComplete @0x767bc4`执行原frame释放及next-ID/first bookkeeping；
+这些Source字段保留在fixture，不声称本地app有相同内存布局或已证明所有同步/
+统计消费者。记录的float PCM在原GetFrameData返回之后、原Push之前读取，
+不是用另一个codec生成golden，也不是只比较量化后的S16。
+
+原StopAudio handler/decoder Stop不关闭player。成功Opus数据经过整个原路径后
+留下480帧音频，Stop后stream/jitter/环内数据仍在；Raw的非零尾部亦可在Stop后
+由原PlayAudio继续取出。真实CStreamPlayer vtable+104解析到
+`OnStreamStopped @0x7b76e4`，ELF symbol size=4，唯一指令RET。
+`CloseAudio @0x7c0e00`在SDL audio已初始化时才销毁streams、再释放jitter、清
+设备format；逻辑format不会随之清零。另执行原`Quit @0x7c80cc`从入口到
+0x7c842c（CloseAudio之后）的前缀：先真实AudioFrameComplete/VideoFrameComplete、
+Microphone Shutdown，再CloseAudio，480帧尾部最终释放。USB/JNI及非音频UI终点
+为adapter，UI/owner字段及线程启动flag为0，随后Video/UI关闭与全函数返回没有
+执行；`source_only_quit_audio_prefix`单独保留这些观察。外层UI何时进入Quit及
+其余资源/线程不能由这段前缀证明，不列为完整UI owner/lifecycle验收。
+
+【Native契约／§75应用边界细化】AudioCallbacks尾部新增可选prepare，要求
+零初始化/同源码重编译。prepare在codec factory gate之前同步执行，包括未知
+codec；成功才调用start，失败保留媒体映射而无decoder。提供prepare时，start/
+stop只管理decoder，player/device资源由prepare重新打开或player close管理；
+没有prepare的既有调用者保持合并backend接口。本地app实际回调表由
+sl_media_audio_callbacks提供，runtime和对照使用同一张表。
+
+app prepare按外层字段准备设备/jitter，成功才更新逻辑format；start_decoder再
+按Raw codec_data或Opus字段建立逻辑decoder。Raw不再被Opus频率白名单限制。
+Opus codec_create返回NULL仍保留decoder active语义，收到帧静默丢弃，直到新的
+Start/Stop。Stop只释放decoder，保留已打开设备和jitter尾部；新的prepare先
+关闭旧player，显式audio_close/媒体shutdown关闭并join SDL callback，再释放
+ring。PCM Push按设备stride转换帧数；逻辑与设备格式不同也不重开SDL。
+
+Native支持mono/stereo，使用SDL2 S16 callback；Source为SDL3 float stream。
+既有§73的float→S16量化、完整callback零填充及Switch960/desktop1024设备块仍
+是明确I/O adapter，不声称复制Android物理设备参数。无效/零维度、Raw错误或
+未对齐输出仍安全拒绝；不复制原unsafe路径。Native内存/FIFO上限继续生效。
+独立UI音效设备、mute/mix/recording、外层session/UI owner与全部平台关闭分支
+不由本节的显式close动作证明。SDL callback真实线程运行的本地证据也不能替代
+Switch真机、Steam联调或loader返回/二次启动证据。
+
+【可执行对照】38例280状态：Raw/Opus与8/12/16/24/44.1/48k的适用组合、
+mono/stereo、双向Raw冲突格式、None/2/4/5未知codec仍先准备设备、设备失败与
+重试、真实Opus create失败、坏Start/Stop、重配置、配置前完整pending、
+原OnStreamStopped空操作、重复Close、断序/旧Opus、两个非零SILK/FEC输入、缺省codec协商回退、pending后修改/正负clock offset，
+以及Stop后的非零尾部播放。82份完整float PCM逐字节和ID/localtimestamp比较；
+每步还比较设备请求/stream/running、逻辑格式、完整pending、jitter参数与所有
+观测标量、完整ring SHA，以及原PlayAudio输出经已声明I/O转换后的实际SDL
+callback S16及零尾。原packet引用计数、锁/OS调度、SDL IO/libc/host sinf为adapter。
+完整帧和控制入口分别在重组、解密之后；没有把它们升级为Socket/真实Host证明。
+
+Native执行真实控制FIFO/drain、RX准备、实际decoder worker、生产音频回调表、
+app codec/jitter及生产SDL callback。按本地实际入队计数等回调完成，不从golden
+喂入完成数；dummy设备保持暂停作确定性pull，另在真实dummy线程中验证三次
+Stop仍继续callback、保留设备后直接prepare替换、Close后join且callback数不再增长。
+prepare先join旧stream再重置共享UI mixer，避免旧callback与voice reset并发。Source线程标志是受控
+0，本节不证明它在所有产品入口的设置，也不声称Native worker物理调度相同。
+
+```sh
+python3 scripts/audit-steam-audio-player.py \
+  /data/dl/nsteamlink/build/video-recovery-re/libmain-arm64.so \
+  --check scripts/fixtures/steam-audio-player-reference.json
+ctest --test-dir build/desktop -R 'audio_player_official_vectors|audio_playback_official_vectors' --output-on-failure
 ```

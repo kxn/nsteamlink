@@ -24,7 +24,8 @@ typedef struct sl_render_metrics {
     uint64_t draws, redraws, begin_us, ui_us, present_us;
     uint64_t uploads, upload_bytes, downloads;
     sl_gfx_counters resources;
-    uint64_t available_frames, submitted_frames, cohort_frames, cohort_presented, deferred, unobserved;
+    uint64_t available_frames, submitted_frames, cohort_frames, cohort_presented, deferred,
+        unobserved;
     uint32_t input_period_us, output_period_us;
     bool adaptive_active;
     uint64_t adaptive_ready_us, adaptive_wait_us, adaptive_start_us, adaptive_holdovers;
@@ -99,7 +100,7 @@ typedef struct stream_media_snapshot {
     uint64_t audio_bytes;
     uint64_t audio_decoded_samples;
     uint32_t audio_queued_bytes; /* Jitter occupancy expressed in device S16 bytes. */
-    uint32_t audio_queue_drops; /* Rejected input sample frames (per-channel frames). */
+    uint32_t audio_queue_drops;  /* Rejected input sample frames (per-channel frames). */
     uint32_t audio_decode_errors;
     int audio_codec;
     int audio_channels;
@@ -191,10 +192,14 @@ IHS_StreamVideoSubmitResult stream_media_video_submit(IHS_Session *session, uint
                                                       IHS_StreamVideoFrameFlag flags);
 void stream_media_video_stop(IHS_Session *session);
 
+const IHS_StreamAudioCallbacks *sl_media_audio_callbacks(void);
+int stream_media_audio_prepare(IHS_Session *, const IHS_StreamAudioConfig *);
+int stream_media_audio_start_decoder(IHS_Session *, const IHS_StreamAudioConfig *);
 int stream_media_audio_start(IHS_Session *session, const IHS_StreamAudioConfig *config);
 int stream_media_audio_submit(IHS_Session *session, IHS_Buffer *data);
 int stream_media_audio_submit_frame(IHS_Session *, const IHS_StreamAudioFrameInfo *, IHS_Buffer *);
-void stream_media_audio_stop(IHS_Session *session);
+void stream_media_audio_stop(IHS_Session *session);  /* decoder only; preserve player tail */
+void stream_media_audio_close(IHS_Session *session); /* join device, free player jitter */
 
 void sl_media_submitted(const IHS_HIDSDLLastSubmitted *value);
 

@@ -173,6 +173,20 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-client-settings-io.py"
         --receiver $<TARGET_FILE:nsl-stream-settings-oracle>)
     set_tests_properties(stream_settings_official_vectors PROPERTIES TIMEOUT 60)
+    add_executable(nsl-audio-player-oracle tests/audio_player_oracle.c)
+    target_include_directories(nsl-audio-player-oracle PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/tests/common)
+    target_compile_options(nsl-audio-player-oracle PRIVATE -UNDEBUG -Wall -Wextra -Werror=format)
+    target_link_libraries(nsl-audio-player-oracle PRIVATE nsl_platform ihs-test-session)
+    target_link_options(nsl-audio-player-oracle PRIVATE -Wl,--wrap=SDL_OpenAudioDevice
+        -Wl,--wrap=SDL_PauseAudioDevice -Wl,--wrap=SDL_CloseAudioDevice
+        -Wl,--wrap=sl_audio_jitter_init -Wl,--wrap=sl_audio_jitter_push -Wl,--wrap=sl_audio_suspend
+        -Wl,--wrap=sl_audio_recovery_run -Wl,--wrap=IHS_SessionPacketTimestamp
+        -Wl,--wrap=IHS_SessionChannelDataReceiveReliableFrame)
+    add_test(NAME audio_player_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-audio-player.py"
+        --receiver $<TARGET_FILE:nsl-audio-player-oracle>)
+    set_tests_properties(audio_player_official_vectors PROPERTIES TIMEOUT 90)
     add_executable(nsl-audio-playback-oracle tests/audio_playback_oracle.c)
     target_include_directories(nsl-audio-playback-oracle PRIVATE platforms/common ${MBEDTLS_INCLUDE_DIRS})
     target_compile_options(nsl-audio-playback-oracle PRIVATE -UNDEBUG -Wall -Wextra)
@@ -192,7 +206,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
         --receiver $<TARGET_FILE:nsl-audio-jitter-oracle>)
     set_tests_properties(audio_jitter_official_vectors PROPERTIES TIMEOUT 60)
     add_executable(nsl-raw-audio-oracle tests/raw_audio_oracle.c)
-    target_include_directories(nsl-raw-audio-oracle PRIVATE platforms/common)
+    target_include_directories(nsl-raw-audio-oracle PRIVATE platforms/common ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
     target_compile_options(nsl-raw-audio-oracle PRIVATE -UNDEBUG -Wall -Wextra)
     target_link_libraries(nsl-raw-audio-oracle PRIVATE nsl_platform)
     target_link_options(nsl-raw-audio-oracle PRIVATE -Wl,--wrap=sl_audio_jitter_push)

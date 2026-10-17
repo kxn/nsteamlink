@@ -2,6 +2,7 @@
  * jitter/device output; jitter playback has its own official vectors. */
 #include "audio_jitter.h"
 #include "media.h"
+#include "protobuf/remoteplay.pb-c.h"
 #include <SDL.h>
 #include <assert.h>
 #include <stdio.h>
@@ -43,12 +44,16 @@ int main(int argc, char **argv) {
     assert(setenv("SDL_RENDER_DRIVER", "software", 1) == 0);
     assert(stream_media_init(NULL));
     IHS_Buffer format = bytes(argv[1]), payload = bytes(argv[2]);
-    /* Deliberately conflicting outer metadata: the Raw codec_data is authoritative. */
+    /* This fixture isolates the Raw decoder primitive. Full player fixtures
+     * separately cover conflicting outer device and codec_data geometry. */
+    CAudioFormat *parsed = caudio_format__unpack(NULL, format.size, IHS_BufferPointer(&format));
+    assert(parsed);
     IHS_StreamAudioConfig config = {.codec = IHS_StreamAudioCodecRaw,
-                                    .frequency = 8000,
-                                    .channels = 2,
+                                    .frequency = parsed->frequency,
+                                    .channels = parsed->channels,
                                     .codecData = IHS_BufferPointer(&format),
                                     .codecDataLen = format.size};
+    caudio_format__free_unpacked(parsed, NULL);
     assert(stream_media_audio_start(NULL, &config) == 0);
     recording = true;
     assert(stream_media_audio_submit(NULL, &payload) == 0);

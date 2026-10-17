@@ -392,23 +392,6 @@ static void video_stop(IHS_Session *s, const IHS_VideoEpochInfo *epoch, void *ct
     }
     pthread_mutex_unlock(&r->lock);
 }
-static int audio_start(IHS_Session *s, const IHS_StreamAudioConfig *c, void *ctx) {
-    (void)ctx;
-    return stream_media_audio_start(s, c);
-}
-static int audio_submit(IHS_Session *s, IHS_Buffer *b, void *ctx) {
-    (void)ctx;
-    return stream_media_audio_submit(s, b);
-}
-static int audio_submit_frame(IHS_Session *s, const IHS_StreamAudioFrameInfo *info, IHS_Buffer *b,
-                              void *ctx) {
-    (void)ctx;
-    return stream_media_audio_submit_frame(s, info, b);
-}
-static void audio_stop(IHS_Session *s, void *ctx) {
-    (void)ctx;
-    stream_media_audio_stop(s);
-}
 static void activity(IHS_Session *s, int kind, uint64_t id, const char *name, void *ctx) {
     (void)s;
     sl_runtime *r = ctx;
@@ -467,10 +450,6 @@ static const IHS_StreamSessionCallbacks session_cb = {.configuring = configuring
                                                       .saveClientConfig = client_config_saved};
 static const IHS_StreamVideoCallbacks video_cb = {
     .startTracked = video_start, .submitTracked = video_submit, .stopTracked = video_stop};
-static const IHS_StreamAudioCallbacks audio_cb = {.start = audio_start,
-                                                  .submit = audio_submit,
-                                                  .stop = audio_stop,
-                                                  .submitFrame = audio_submit_frame};
 static const IHS_StreamInputCallbacks input_cb = {.activityState = activity};
 static void stop_client(sl_runtime *r) {
     if (!r->client)
@@ -579,7 +558,7 @@ static bool launch_session(sl_runtime *r, IHS_SessionInfo info) {
     IHS_SessionSetLogFunction(r->session, ihs_log);
     IHS_SessionSetSessionCallbacks(r->session, &session_cb, r);
     IHS_SessionSetVideoCallbacks(r->session, &video_cb, r);
-    IHS_SessionSetAudioCallbacks(r->session, &audio_cb, r);
+    IHS_SessionSetAudioCallbacks(r->session, sl_media_audio_callbacks(), r);
     IHS_SessionSetInputCallbacks(r->session, &input_cb, r);
     if (r->provider)
         IHS_SessionHIDAddProvider(r->session, r->provider);
