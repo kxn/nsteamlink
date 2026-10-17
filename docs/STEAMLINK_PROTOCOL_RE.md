@@ -5974,3 +5974,90 @@ python3 scripts/audit-steam-media-input.py \
   --check scripts/fixtures/steam-media-input-reference.json
 ctest --test-dir build/desktop -R 'media_input_official_vectors|frame_stats_.*vectors' --output-on-failure
 ```
+
+## 75. Audio Start/Stop控制分派、codec presence与同步启动
+
+【官方客户端证据】仅使用§24.1固定SHA的Android 1.3.32 core；协议描述或
+第三方客户端不充当官方策略证据。`audit-steam-audio-start.py`从原
+HandleIncomingPackets @0x7a6368执行真实Frame/protobuf解析、Start/Stop handler、
+factory、decoder构造/启动/停止及pending重放。BOpenAudio的设备返回值、OS线程
+Start/Join与锁、包引用计数、PCM输出存储及最终IO为adapter；不证明设备、真实
+OS调度或完整Steam会话。client初始phase、协商配置和线程开关是受控输入。
+
+`OnStartAudioData @0x7add8c`的先后关系为：
+
+1. 原Frame::Get解析成功才到0x7addd0；格式错误或缺少required channel均
+   保留原decoder/channel，且不重放pending。
+2. 全局网络锁内先清audio channel，停止/删除旧decoder，再写新channel；
+   0x7ade40调用真实SetChannelMaxRecvDelay(channel,6553)。这不是等待关键帧
+   的timeout，而是该媒体传输receiver的最大接收延迟字段，见§44/69。
+3. 0x7ade80调用player BStartAudioStream(消息frequency,channels)。真实
+   `BStartAudioStream @0x7bebe0`先BOpenAudio(float/2,外层rate,channels)，
+   成功才SetAudioFormat。同一消息的codec_data尚未在此作为设备参数使用。
+4. device成功才到0x7ade98–0x7adeb0：hasbit4存在则读消息codec，缺省才读
+   negotiated config的selected_audio_codec(client+336)。**显式0不会回退**。
+   negotiated config通过原type4控制分派/解析写入的路径亦执行验证。
+5. 复制可选codec_data，调用`StartAudioDecoding @0x7a7ef8`。该factory只为
+   Raw/1与Opus/3构造decoder；其他值走assert line606并保持decoder为空。
+   不为Vorbis/MP3/AAC臆造客户端解码路径。
+6. decoder指针发布后SetUseThreads(client+17)，同步执行
+   `OnStreamStarted @0x7670b4`：设active、复制codec_data、虚调用
+   StartDecoding，最后才按开关调用Thread::Start。它不检查该OS调用返回值。
+7. 无论device成功与否，均到0x7adf14执行完整HandlePendingDataPackets，
+   再解全局锁。device失败不创建decoder，不触发整个会话断开；已配置channel
+   的完整帧仍经过原RX/统计，但无decoder消费。重试Start可重新创建decoder。
+
+`OnStopAudioData @0x7adf9c`也先Frame::Get(CStopAudioDataMsg)。空protobuf是
+合法stop；坏protobuf不改变decoder/channel。成功才清channel、stop/delete旧
+解码器；没有Start路径的pending重放。真实`OnStreamStopped @0x767160`
+先清active，线程模式下signal/join/purge队列，最后虚调用StopDecoding。该handler
+及Raw/Opus停止/析构路径不调用player CloseAudio。不能把decoder停止自动解释为
+立即销毁物理音频设备或清空player jitter尾部；BOpenAudio及整个player关闭路径
+不在本节的设备adapter边界内。
+
+【结论／更正范围】§48的“codec_data权威格式”仅指Raw decoder逻辑格式。
+真实`Raw StartDecoding @0x7b178c`在设备已按外层字段打开后，再用codec_data
+解析结果SetAudioFormat，且忽略ParseFromArray失败；没有重新BOpenAudio。
+撤回将其扩大为“物理设备也必须只按codec_data打开”的等价解释。原Opus
+StartDecoding @0x7b134c即使embedded decoder_create失败仍保留decoder对象、
+设置format/active，缺codec时丢帧；不能把backend一切失败都归为device失败。
+原client构造0x7a4f2c宽零写覆盖+17，证明构造默认线程标志0；探针强制两分支
+只证明其能力，不证明产品UI/平台后来如何设置该标志。
+
+【Native契约及边界】库的StartAudio先区分codec presence/协商回退，并验证
+StopAudio protobuf。Audio start callback在控制分派调用者同步完成，才发布媒体
+endpoint/重放pending；成功之后才启动joined worker；stop在worker join及队列
+purge之后由teardown调用者执行。已支持codec的start失败保留channel与session，
+置discardFrames而不创建消费者，后续帧仍走完整RX准备后丢弃。未知codec不创建
+库消费者。video class仍沿既有worker启动接口，本节不作其factory等价声明。
+
+这个callback API把应用设备打开/codec初始化合在一次调用里，原客户端则分开。
+因此本节对照的是库的配置/consumer边界：不声称未知codec也执行原物理设备
+打开，不声称应用的实际SDL/codec顺序、StopAudio设备保留、无效Raw格式或原
+Opus分配失败语义已经一致。应用对无效PCM的拒绝规则见§72；不能复制原不安全
+输出。Native OS线程创建失败仍保留已启动backend和待解码FIFO，匹配原代码
+忽略Thread::Start失败、保留decoder/队列的结果；停止时先purge再释放backend。
+既有FIFO内存/条数上限仍生效，不宣称复制原未设上限队列的耗尽行为。
+
+【可执行对照】74个官方案例/346状态涵盖缺省/显式0/1/2/3与协商0/1/3组合、
+真实peer config、device失败后重试、替换与跨channel、未配置多channel pending、
+坏Start/Stop、重复Stop、phase0–7/paused，以及原线程开关0/1。原指令输出保留
+device/format/factory/queue/codec实际状态；原factory选值与原解析presence/协商
+字段独立核对。6个设备/unsafe边界案例只作为Source观察，不投射成本地通过。
+
+68个案例/332状态与Native真实控制FIFO/drain、AudioCreate、完整pending、RX
+准备、实际worker及stop/join逐步比较：phase/pause、channel/decoder存在、所有
+数据channel延迟、完整pending packet元数据/body、交付帧id/localtimestamp/body、
+配置及生命周期顺序。另强制OS Start返回失败，执行原Raw/Opus decoder
+入队/Stop路径，并比较实际Native FIFO内每帧id/timestamp/body；保留decoder、
+不运行worker及停止清理均有原函数对照。Native回调记录器强制start/stop在调用者、submit在worker，
+并核验stop之前已join；按实际入队计数等待回调完成，不从golden输出导入预期
+完成数。物理线程调度/Source队列深度不投射为Native严格等价。完整帧媒体入口
+在传输重组之后，控制入口在解密之后；不能将它们表述为Socket/FEC/鉴权验收。
+
+```sh
+python3 scripts/audit-steam-audio-start.py \
+  /data/dl/nsteamlink/build/video-recovery-re/libmain-arm64.so \
+  --check scripts/fixtures/steam-audio-start-reference.json
+ctest --test-dir build/desktop -R audio_start_official_vectors --output-on-failure
+```
