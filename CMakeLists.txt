@@ -123,6 +123,14 @@ if(NSL_PLATFORM STREQUAL "desktop")
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-network-loss.py"
             --receiver $<TARGET_FILE:ihs-network-wire-oracle>)
         set_tests_properties(network_loss_official_vectors PROPERTIES TIMEOUT 60)
+        add_test(NAME early_media_real_workers COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-early-media-worker.py"
+            --receiver $<TARGET_FILE:ihs-early-media-worker>)
+        set_tests_properties(early_media_real_workers PROPERTIES TIMEOUT 60)
+        add_test(NAME early_media_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-early-media.py"
+            --receiver $<TARGET_FILE:ihs-network-wire-oracle>)
+        set_tests_properties(early_media_official_vectors PROPERTIES TIMEOUT 60)
         add_test(NAME media_admission_official_vectors COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-media-admission.py"
             --receiver $<TARGET_FILE:ihs-network-wire-oracle>)

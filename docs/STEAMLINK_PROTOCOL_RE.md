@@ -2964,8 +2964,9 @@ Qt 事件循环、Steam 认证会话、并发、Switch 解码或显示的证明�
 `third_party/ihslib/src/session/fec.c` 独立处理 §26 的传输组，
 `packet.h` 明确命名类型 11，未知类型 12 不进入 FEC。包头拒绝未知类型的旧实现
 与官方连接保活顺序存在差异，撤回“包头直接拒绝即对齐”的含义，修正见 §34。raw datagram 经
-SessionRecvCallback 的地址/连接 ID 检查后进入媒体 channel；早到的 type 11
-与普通媒体一起等待 Start*Data 确定 channel 身份，不猜 codec。
+SessionRecvCallback 的地址/连接 ID 检查后进入连接持有的transport接收槽；早到的
+普通3/4与type11也先推进窗口/FEC/反馈，完整数据再等Start*Data确定decoder身份，
+不猜codec。旧raw datagram缓存与原版的差异及更正见§69。
 
 - 一条 channel 一个活动 FEC 组，以最近已交付组为水位，uint16 差为 1…32767
   才接纳。不同有效组替换未完成组，包括晚到的旧未完成组；不自行增加多组窗口。
@@ -5538,9 +5539,84 @@ live count已清空，不在同一遍追逐重新追加的帧。模块独立编�
 跨文件调用边界真实存在，不用observer伪造尚未调用的delegate事件。此本地链
 接不增加线程/分配，也不上协议线。
 
-【范围】完整pending目前来自可靠媒体；普通3/4与type11在未知decoder channel
-时仍缓存raw datagram，它们尚未成为官方的完整packet pending模型。该raw缓存
+【历史范围，由§69更正】本节实现时完整pending只来自可靠媒体；普通3/4与type11
+在未知decoder channel时仍缓存raw datagram，尚未成为官方的完整packet pending模型。该raw缓存
 暂保留其已有投递分支，不把原始FEC shard冒充已重建帧送入可靠分派器。320项
 缓存上限为本地资源约束，不是原CUtlVector策略的证明。完整Reset/中途输入回调
 重入/资源失败、transport与decoder生命周期分离、全部carrier的早到窗口及真实
 Steam/Switch仍各有独立证据范围；本节不证明原用户的停顿根因。
+
+
+## 69. 解码器配置之前的连接接收窗口与FEC
+
+【官方客户端证据】同§24.1固定Android 1.3.32 SHA。Socket/Connection的
+GetChannel/Channel::HandlePacket/Update、普通3/4窗口及FEC接收属于连接，
+不以client是否已收到StartVideo/AudioData为创建/推进条件。真实OnStreamPacket
+和OnDataPacket在transport完整帧之后才执行§67/68的准入、匹配与pending。
+OnStartVideoData @0x7ae128、OnStartAudioData @0x7ade4c的setter把同一通道
+预算由构造默认65改为6553tick，不清除窗口序列、未完成FEC组或反馈水位。
+接收过期预算另加RTT项，不能把65本身直接说成完整接收timeout。
+
+【撤回】撤回§33和§68曾把普通/FEC原始datagram先缓存至decoder出现再处理
+视为正确接线的含义。旧实现把传输入窗/重组/反馈一起延后，缓存项可能只是某个
+分片；配置/替换decoder还会新建消费者所拥有的窗口/FEC。它与原版连接先接收、
+完整packet才pending的顺序不同。§68的全列表快照契约不变，现适用于三种carrier。
+旧protocol_evidence以非data tag99测试raw包交给新decoder，不能证明官方完整
+媒体pending；该夹具改为核对传输仍收包/出窗、不会把未知tag直接交给decoder。
+
+【本地契约】连接按channel ID持有unreliable receive槽，含普通窗口、FEC活动组、
+反馈状态和通道预算；decoder只拥有获准的完整帧FIFO。媒体消费者创建/删除/
+替换不销毁或重置接收槽。Start*Data先通过真实本地setter建立通道并设置预算，
+再创建decoder；其接收槽继续使用已有部分帧。NetworkUpdate在原通道排序位置
+推进普通窗口和反馈，无需先找到媒体消费者。FEC在收到足够shard时立即重建并
+交给同一个完整帧分派器；不进入普通窗口，也不在pending重放时重新解码FEC。
+
+完整帧沿用原传输metadata进入统一pending；快照重放同样再判断client阶段及
+暂停位。普通不完整片/FEC shard不再混入pending。收到数据后可继续反馈，即使
+codec配置仍未到达。接收槽由RX协议owner串行操作，释放窗口锁后才交完整帧；
+decoder worker仅消费FIFO。窗口/FEC/锁在RX和消费者线程停止/join后随Session
+销毁释放。这个所有权分离不证明完整ResetConnection/对象复用的每个字段已等价。
+原有窗口/FEC payload、FIFO、320项pending资源界限仍是本地约束，不冒充官方限值。
+
+【原指令对照】`audit-steam-early-media.py`固定46例498动作状态，基础42例为CRC开/关×
+普通3/4、可靠5/6、type11×七种条件。包含配置前完整数据、末片前配置、暂停
+期间到达、暂停后配置、其他channel配置再匹配，以及配置前出现缺口/不完整组、再次配置decoder后重复旧完整帧。
+真实Socket CRC、构造器/窗口/Pop、FEC RS、OnStreamPacket/OnDataPacket、
+HandlePending控制流和视频collector执行。30份完整ACK/NACK及4份goodbye wire、54次decoder
+终点、完整pending的type/channel/序号/片数/发送和首末接收时间/body、普通
+window head/tail及65→6553预算逐状态与Native一致。原各组golden保持不变。
+
+配置动作是原setter+HandlePending的函数边界，phase/暂停/时钟/配置ID为受控
+输入；CUtlVector快照存储/append、平台锁/refcount/析构、decoder终点与最终IO
+是adapter。初始budget通过真实setter恢复为已由构造指令证明的65，接收基准
+clock/构造时间受控。没有用这46例声称完整Start handler、UI可达、所有畸形/
+资源失败、时钟offset在异步消费期间变化或真实硬件decoder已验证。
+
+`early_media_real_workers`将同46份官方动作序列各运行两次，共92个独立进程
+启动、136个实际消费者启动/停止。CRC RX、三carrier重组、pending、真实媒体
+线程/FIFO与stop/join都运行生产代码，decoder终点核对body与54×2个frame ID，
+反馈数量30×2、goodbye数量4×2，并断言decoder替换前后仍持有原接收槽。D屏障仅在原版同步
+终点之后等Native消费者完成，不替代原版OS调度证明；两次桌面进程不是两次
+Switch loader测试。网络真实会话、全局producer锁、完整统计/codec资源与显示
+仍有各自范围，未据此判定用户一两秒停顿/菜单闪烁的根因。
+
+【Closing边界补证与更正】另外4例经真实Socket接收peer type9，执行原
+Connection::Disconnect并发一次goodbye，再在同读批次、Connection::Update
+退休之前接收剩余FEC shard。CRC×clientPaused两值均覆盖，明确观察connection
+为2而client仍6；未暂停时仍进入OnDataPacket/decoder，暂停时仅完成FEC而不交付。
+原42例逐状态保持不变。普通通道U动作不是该组的Connection退休动作，不能据
+这组声称原OnThink/Stopping已执行；退休/完整Stopping由§66独立核验。
+
+撤回把完整帧分派器的atomic shutdown拒绝当作官方client准入条件的解释。
+加入本组前Native在第一个闭合FEC处admitted=[]、官方=[1]，且视频collector
+不同，实际对照能检出。完整帧分派现按client0/7、媒体client6/paused判断，并
+保留本地主动interrupt/detach的所有权保护。旧reliable oracle将client7借由
+Connected+shutdown模拟，现直接设置真实Stopping=7、保留独立connection1边界；
+原124例输出不变。传输closing本身不代替客户端状态判断，也不推导出额外FEC
+重试、关键帧或控制应答策略。
+
+旧transport oracle本来在Source Channel::HandlePacket前停止，现将Native terminal
+observer移到同一接收边界，原固定输出不变；非data的固定FEC向量仍仅比较
+transport delegate，不把它们当作未知消息完整dispatcher证明。媒体测试的packet
+header补齐真实channel ID，并登记实际decoder消费者；保留原窗口/丢包/反馈及
+阻塞消费者断言，避免在未配置消费者的夹具里要求已经发生解码。
