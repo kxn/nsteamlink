@@ -4753,5 +4753,60 @@ minimum/smoothed RTT、min-update、offset，最后一例另比较offset样本�
 毫秒值由NACK年龄、媒体延迟及普通包退休共用。655与656tick两样本的平均必须是
 655tick；旧655.5tick浮点平均会把NACK年龄从8ms越界到9ms、媒体额外延迟从5ms
 越界到6ms。普通sender的旧10ms原版fixture是直接seed连接字段，本地oracle也明确
-seed缓存10ms，不能为配合新getter而篡改该fixture输入。上述Native采样器中bandwidth、
-packet和video组件仍需实际收发/组帧入口接线；报告network快照仍不能计作生产采集完成。
+seed缓存10ms，不能为配合新getter而篡改该fixture输入。该组件对照本身不证明
+bandwidth/packet/video的实际入口或报告快照采集；§57另定义RTT/RX/TX/received接线，
+video与完整lost来源仍有独立边界。
+
+## 57. Socket收发入口与网络采样计数
+
+【官方客户端证据】audit-steam-network-wire.py固定同SHA，执行原Socket::HandlePacket
+@0x7ff3e0→HandleMessage @0x7ff640→Connection::HandlePacket @0x7facfc及真实采样队列。
+CRC由原CRC32C函数生成和验证。0x7ff4e0先把packet52减4，0x7ff54c写回后才进入
+Connection；RX BitrateStats消费的是去掉CRC的header+body长度。ID/地址/所需CRC
+标志/channel准入通过后，记录一个received及其字节数；未知七位type通过Connection
+准入也计入，之后channel不处理该type不撤回计数。Unconnected的Socket分派另走
+discovery，不由这些普通收包案例推导成Connection received。
+
+TX执行原Socket::Send @0x7ff1dc。0x7ff2b0–bc把CRC写在packet52末尾，但不增加
+packet52；最终I/O的物理长度另加4。仅transport返回0才在0x7ff31c记录TX字节，
+其长度仍为不含CRC的header+body；非零返回不记。不能把物理发包长度、整形记账、
+可靠发送器对返回值的后续处理或errno层级混成同一个统计输入。
+
+【执行边界】Source Socket connection表/地址比较、连接状态和最终I/O返回值为受控
+输入；channel消费者、Connect/Disconnect正文处理、未认领包的回复发送及refcount
+为显式adapter。Socket::HandlePacket返回寄存器不作为接纳布尔；未认领输入可被
+Socket复用来构造回复，因此只在真实Connection入口记录CRC剥离长度，不用返回后
+packet52反推。组件窗口依照§56；取样入口的等价结论限于下述Native实际Parse/收发
+路径对照。
+
+【Native所有权约束】连接采样随session零初始化；RX与TX使用已有Base锁串行更新
+动态队列，销毁前先停止/join全部会话和数据worker，最后释放队列。收包计数在已
+通过连接准入、尚未分派正文的位置；发送计数在实际Socket成功返回之后。采样资源
+失败保护是本地适配，不改变ACK/NACK、codec或发送结果语义。
+
+【准入差异】原0x7fad50–7fad88的Connect(type1)不检查destination；仅remote ID已知
+且非零时比较source ID，未知remote时不据source拒绝。Connected(type2)在
+0x7fae30–7fae58只检查destination与地址，不比较source；Disconnect(type9)与普通
+流量同时比较两ID。1/2/9专用分支绕过普通channel范围和“必须带CRC标志”的要求；
+若实际带CRC，仍先经过Socket真实校验。本节据这些原指令及新增Socket案例纠正
+Native旧“所有非discovery包检查destination、Connect始终忽略source”的统一guard。
+
+【执行对照】96组固定案例比较172次状态：实际Socket CRC开/关、坏CRC、所需CRC
+标志缺失、地址/ID/channel准入、type1..13，以及5类TX type×5种I/O返回×CRC开/关。
+另有同tick、严格3秒、回绕的连续收发，并补1/2/9的source/destination/CRC/channel
+分支及未知remote的type1。Native从实际PacketParse/CRC和session收到
+回调进入采样，TX从实际SessionSendPacketResult经过最终I/O边界记录；比较采样队列、
+总数、float比特、Connection入口长度及尝试I/O长度。RX正文可能产生的Native最终
+发送在此受控拒绝，Source对应正文/回复为adapter，不以这些案例验收完整控制流程。
+
+四组再把真实收发采样与ProcessTimestamp、原Streaming上报连接，完整/累计模式及
+CRC开/关分别比较12份完整Frame body、序号、退休水位及两周期tick。包含旧RX样本
+被新RX淘汰，而失败TX不淘汰其旧样本；读取RTT缓存不因墙钟超过3秒自行清零。
+Native全局阶段在报告前取得实际RTT/RX/TX/packet快照，进入同一报告退休/编码consumer。
+原受控network setter的独立报告案例仍有原覆盖范围，不当作该收发整链接线的替代。
+
+【边界】此处接通RTT、RX/TX字节及received计数；视频link仍为原默认0，lost的
+channel成功入窗retry>1及窗口Pop计数还需实际入口对照，不能把分母已采集称为完整
+丢包策略。实际RX/TX/快照三线程各1000包检查CRC计数、同tick合并、join后销毁，
+这是本地并发/生存期证据。实际全局network锁、构造时钟/极端值、CNetworkStats评分、上行FEC、
+硬件/decoder、真实Steam/Switch均不由本节证明。
