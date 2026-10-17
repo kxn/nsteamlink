@@ -893,7 +893,7 @@ legacy adapter 仍进入同一 tracker，但不为迟到、歧义的 16-bit id �
 
 ### 15.2 FFmpeg 输入输出关联
 
-AVCodec任务策略以`STEAMLINK_PROTOCOL_RE.md` §91–92的官方Linux客户端为依据：
+AVCodec任务策略以`STEAMLINK_PROTOCOL_RE.md` §91–95的官方Linux客户端为依据：
 完整AU经complete-frame parser后只send一次、receive一次；send失败独立请求异步reset，
 仍尝试receive。receive EAGAIN首次记7，其他错误记5，并反馈空DataLost；无像素占位
 仍按普通jitter进入/离开任务队列。采样和事件15在receive及原错误处理之后。
@@ -904,8 +904,12 @@ Linux原DecodeFrame @0x326225在关键标记上调用原FlushPendingData @0x325e
 其完整路径清理partial/压缩buffer引用，不调用AVCodec SDK flush；已交付player的对象保留。
 `audit-steam-client-avcodec-key.py`以原Frame构造、完整DecodeFrame/Flush/OnThink执行
 分片、替换和已排队对象场景，并检测实际send AU字节；不能继续套用Android SDK flush。
-SDK分配/身份/固定资源上限的本地保护、send EIO的完整配置重协商及NVTEGRA特定错误映射
-不能冒称已由这一软件路径证明。生命周期保持stop/join后回收，parser先于codec销毁。
+send EIO按§95直接将配置第7项设为显式false，然后请求reset，继续receive；不调用
+配置通知/保存或99。下一epoch读取有效硬件偏好。硬件能力/设备建立不可用且存在软件
+H264时回退软件，SDK未提供目标硬件格式但提供0/12时采用软件格式；这不是对失败硬件帧
+执行download。SDK分配/身份/固定资源上限保护、自然NVTEGRA错误与成功路径、原完整SDK
+启动/ABI及完整decoder-info时序仍有独立证据范围。生命周期保持stop/join后回收，parser
+先于codec销毁。
 
 【官方来源范围更正】以下资源/身份模型描述Native实现。撤回把“已接受但无输出继续pending”
 作为所有官方后端共有策略的判断：此前任务选择与完成投影来自Android/MediaCodec。

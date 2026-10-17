@@ -35,6 +35,7 @@ typedef enum sl_video_open_result {
     SL_VIDEO_OPEN_GUARD = -1, SL_VIDEO_OPEN_UNAVAILABLE = 0, SL_VIDEO_OPEN_READY = 1,
 } sl_video_open_result;
 sl_video_open_result sl_video_open_ex(sl_video_pipeline *, sl_video_key, const sl_video_config *);
+bool sl_video_has_hardware_context(sl_video_pipeline *, sl_video_key);
 void sl_video_close(sl_video_pipeline *, sl_video_key);
 void sl_video_stop(sl_video_pipeline *, sl_video_key);
 /* Decoder flush phase: the protocol owner purges encoded fragments. Linux
@@ -46,6 +47,7 @@ typedef enum sl_video_submit_result {
     SL_VIDEO_SUBMIT_OK = 1,
     SL_VIDEO_SUBMIT_CORRUPT = 2,
     SL_VIDEO_SUBMIT_RESET = 4,
+    SL_VIDEO_SUBMIT_DISABLE_HARDWARE = 8,
 } sl_video_submit_result;
 /* Synchronous borrowed callback, before player handoff/clock sampling. The
  * backend never retains its context or a session after this call returns. */

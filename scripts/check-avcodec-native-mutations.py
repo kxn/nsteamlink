@@ -27,6 +27,7 @@ def main():
     entries = json.loads((build / "compile_commands.json").read_text())
     pipeline = ROOT / "app/platforms/common/video_pipeline.c"
     video = ROOT / "third_party/ihslib/src/session/channels/video/ch_data_video.c"
+    config = ROOT / "third_party/ihslib/src/session/client_config.c"
     oracle = ROOT / "app/tests/video_timing_oracle.c"
     mutations = [
         (
@@ -71,6 +72,34 @@ def main():
             "if (s->frame) IHS_FrameTicketComplete(s->frame->ticket,outcome);",
             "reordered",
         ),
+        (
+            "omit_eio_config",
+            pipeline,
+            "if (sent == AVERROR(EIO)) status |= SL_VIDEO_SUBMIT_DISABLE_HARDWARE;",
+            "/* omit EIO-specific config mutation */",
+            "recovery",
+        ),
+        (
+            "invoke_config_setter",
+            config,
+            "s->clientConfig->enable_hardware_decoding = false;",
+            "s->clientConfig->enable_hardware_decoding = false;\n        IHS_SessionClientConfigApply(s,s->clientConfig,true);",
+            "recovery",
+        ),
+        (
+            "omit_software_format",
+            pipeline,
+            "if (*formats == AV_PIX_FMT_YUV420P || *formats == AV_PIX_FMT_YUVJ420P)",
+            "if (false)",
+            "recovery",
+        ),
+        (
+            "retry_missing_hardware_forever",
+            pipeline,
+            "        if (opened < 0) {\n            /* Original VAAPI factory",
+            "        if (opened < 0) {\n            failure=SL_VIDEO_OPEN_UNAVAILABLE;goto fail;\n            /* Original VAAPI factory",
+            "capability",
+        ),
     ]
     reports = []
     for name, source, before, after, kind in mutations:
@@ -83,7 +112,7 @@ def main():
         changed.write_text(body)
         target = (
             "nsl-video-timing-oracle"
-            if kind == "oracle"
+            if kind in ("oracle", "recovery")
             else "nsl-video-pipeline-tests"
         )
         link = shlex.split(
@@ -108,7 +137,7 @@ def main():
                 )
             return obj
 
-        if kind == "oracle":
+        if kind in ("oracle", "recovery"):
             text = oracle.read_text().replace(
                 '#include "../platforms/common/',
                 '#include "' + str(ROOT / "app/platforms/common") + "/",
@@ -122,8 +151,8 @@ def main():
                 i for i, x in enumerate(link) if x.endswith("video_timing_oracle.c.o")
             )
             link[index] = str(obj)
-            if source == video:
-                objects.append(compile_file(video, changed, "video"))
+            if source in (video, config):
+                objects.append(compile_file(source, changed, source.stem))
         else:
             objects.append(compile_file(pipeline, changed, "pipeline"))
         first = next(i for i, x in enumerate(link) if x.endswith(".o"))
@@ -138,10 +167,17 @@ def main():
                 stdout=log,
                 stderr=subprocess.STDOUT,
             )
-        if kind == "oracle":
+        if kind in ("oracle", "recovery"):
             command = [
                 "python3",
-                str(ROOT / "scripts/check-steam-video-avcodec.py"),
+                str(
+                    ROOT
+                    / (
+                        "scripts/check-steam-video-avcodec.py"
+                        if kind == "oracle"
+                        else "scripts/check-steam-video-recovery.py"
+                    )
+                ),
                 "--receiver",
                 str(exe),
             ]
@@ -155,7 +191,7 @@ def main():
         (directory / "stdout.log").write_text(r.stdout)
         (directory / "stderr.log").write_text(r.stderr)
         assert r.returncode != 0, (name, "undetected")
-        if kind == "oracle":
+        if kind in ("oracle", "recovery"):
             assert (
                 "AssertionError:" in r.stderr
                 and "returncode" not in r.stderr
@@ -166,8 +202,14 @@ def main():
                 "oracle crashed",
                 r.stderr[-2000:],
             )
-        else:
+        elif kind == "reordered":
             assert "current[j].statsComplete" in r.stderr, (name, r.stderr[-2000:])
+        else:
+            assert (
+                "opening_results" in r.stderr
+                and "{1, 4}" in r.stderr
+                and "SL_VIDEO_OPEN_READY" in r.stderr
+            ), (name, r.stderr[-2000:])
         reports.append(dict(name=name, returncode=r.returncode, detected=True))
     (out / "report.json").write_text(json.dumps(reports, indent=2) + "\n")
     print("AVCodec Native mutants:", len(reports), "detected")

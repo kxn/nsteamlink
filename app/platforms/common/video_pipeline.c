@@ -147,10 +147,16 @@ fail:
 }
 static enum AVPixelFormat hardware_format(AVCodecContext *ctx, const enum AVPixelFormat *formats) {
     domain *d = ctx->opaque;
+    const enum AVPixelFormat *first = formats;
     for (; *formats != AV_PIX_FMT_NONE; ++formats)
         if (*formats == d->hardware_format)
             return *formats;
-    return AV_PIX_FMT_NONE; /* hardware import failures cannot hide behind download */
+    /* Original selector permits an offered software format when the target
+     * hardware path is unavailable. No download of a failed HW frame occurs. */
+    for (formats = first; *formats != AV_PIX_FMT_NONE; ++formats)
+        if (*formats == AV_PIX_FMT_YUV420P || *formats == AV_PIX_FMT_YUVJ420P)
+            return *formats;
+    return AV_PIX_FMT_NONE;
 }
 static domain *find_domain(sl_video_pipeline *p, sl_video_key key) {
     for (unsigned i = 0; i < DOMAIN_COUNT; ++i)
@@ -237,13 +243,17 @@ sl_video_open_result sl_video_open_ex(sl_video_pipeline *p, sl_video_key key, co
         int opened = type == AV_HWDEVICE_TYPE_NONE || d->hardware_format == AV_PIX_FMT_NONE
             ? AVERROR(ENOSYS)
             : av_hwdevice_ctx_create(&d->codec->hw_device_ctx, type, NULL, NULL, 0);
+        if (opened == AVERROR(ENOMEM)) goto fail; /* Bounded local allocation guard. */
         if (opened < 0) {
-            failure = opened == AVERROR(ENOMEM) ? SL_VIDEO_OPEN_GUARD : SL_VIDEO_OPEN_UNAVAILABLE;
-            goto fail;
+            /* Original VAAPI factory tries its backends then accepts software
+             * when offered. Capability failure does not disable config field 7. */
+            av_buffer_unref(&d->codec->hw_device_ctx);
+            d->hardware_format = AV_PIX_FMT_NONE;
+        } else {
+            d->codec->opaque = d;
+            d->codec->get_format = hardware_format;
+            d->codec->extra_hw_frames = 6;
         }
-        d->codec->opaque = d;
-        d->codec->get_format = hardware_format;
-        d->codec->extra_hw_frames = 6;
     }
     int opened = avcodec_open2(d->codec, codec, NULL);
     if (opened < 0) {
@@ -268,6 +278,13 @@ fail:
     avcodec_free_context(&d->codec);
     pthread_mutex_unlock(&p->decoder);
     return failure;
+}
+bool sl_video_has_hardware_context(sl_video_pipeline *p, sl_video_key key) {
+    pthread_mutex_lock(&p->decoder);
+    domain *d = find_domain(p, key);
+    bool hardware = d && d->codec && d->codec->hw_device_ctx && !d->stopped;
+    pthread_mutex_unlock(&p->decoder);
+    return hardware;
 }
 /* Caller holds mailbox. References leave the lock before SDK/unref work. */
 static sl_video_frame *pop_pending(sl_video_pipeline *p) {
@@ -547,10 +564,11 @@ sl_video_submit_result sl_video_submit(sl_video_pipeline *p, sl_video_key key,
     }
     /* Keep the packet/token live through receive and Put; send failure still
      * reaches one receive and never drains/retries the same compressed packet. */
-    sl_video_submit_result status = avcodec_send_packet(d->codec, packet) != 0
-        ? SL_VIDEO_SUBMIT_RESET : SL_VIDEO_SUBMIT_OK;
-    if (feedback && status == SL_VIDEO_SUBMIT_RESET)
-        feedback(feedback_context, SL_VIDEO_SUBMIT_RESET);
+    int sent = avcodec_send_packet(d->codec, packet);
+    sl_video_submit_result status = sent ? SL_VIDEO_SUBMIT_RESET : SL_VIDEO_SUBMIT_OK;
+    if (sent == AVERROR(EIO)) status |= SL_VIDEO_SUBMIT_DISABLE_HARDWARE;
+    if (feedback && (status & SL_VIDEO_SUBMIT_RESET))
+        feedback(feedback_context, status);
     uint64_t output_seq;
     bool valid_size, guard;
     int result = receive_one(p, d, &output_seq, &valid_size, &guard);
@@ -561,7 +579,8 @@ sl_video_submit_result sl_video_submit(sl_video_pipeline *p, sl_video_key key,
         if (result != 0) {
             if (result == AVERROR(EAGAIN)) dropped(ticket, IHS_VideoFrameResultDroppedReset);
             dropped(ticket, IHS_VideoFrameResultDroppedDecodeCorrupt);
-            status = (status & SL_VIDEO_SUBMIT_RESET) | SL_VIDEO_SUBMIT_CORRUPT;
+            status = (status & (SL_VIDEO_SUBMIT_RESET | SL_VIDEO_SUBMIT_DISABLE_HARDWARE)) |
+                     SL_VIDEO_SUBMIT_CORRUPT;
         }
         if (feedback && (status & SL_VIDEO_SUBMIT_CORRUPT))
             feedback(feedback_context, SL_VIDEO_SUBMIT_CORRUPT);

@@ -20,7 +20,7 @@ static sl_video_pipeline *pipeline;
 static atomic_uint processed;
 static unsigned infos, losses, opens;
 static bool failOpen = true;
-static atomic_bool requestReset, requestBoth;
+static atomic_bool requestReset, requestBoth, requestEio;
 static unsigned submitCallbacks;
 static bool watchStop, buffersDiscarded, recoveryMarked;
 static unsigned phaseOrder, playerAt, decoderAt, markAt, stopAt, codecFlushAt, codecFreeAt;
@@ -100,9 +100,16 @@ __wrap_sl_media_video_submit_tracked(IHS_Session *s, const IHS_VideoEpochInfo *e
                                      IHS_FrameTicket *t, IHS_Buffer *b, IHS_StreamVideoFrameFlag f,
                                      bool *taken) {
     ++submitCallbacks;
+    if (atomic_exchange(&requestEio,false)) {
+        *taken=false;
+        return (IHS_StreamVideoSubmitResult)(IHS_StreamVideoSubmitResetAndReportLost |
+                                             IHS_StreamVideoSubmitDisableHardware);
+    }
     if (atomic_exchange(&requestBoth,false)) {
         IHS_VideoEpochInfo stale=*e;--stale.video_epoch;
         assert(!IHS_SessionVideoDecodeFeedback(s,&stale,IHS_StreamVideoSubmitResetAndReportLost));
+        assert(!IHS_SessionVideoDecodeFeedback(s,&stale,(IHS_StreamVideoSubmitResult)6));
+        assert(!IHS_SessionVideoDecodeFeedback(s,e,(IHS_StreamVideoSubmitResult)8));
         *taken=false;return IHS_StreamVideoSubmitResetAndReportLost;
     }
     if (atomic_exchange(&requestReset, false)) {
@@ -177,7 +184,8 @@ static void feed(IHS_Session *s, uint16_t id, bool key, const uint8_t *bytes, si
         usleep(1000);
     assert(atomic_load(&processed) == target);
 }
-static void reset(sl_runtime *r, unsigned epoch, unsigned expectedOpens, unsigned expectedInfos) {
+static void reset(sl_runtime *r, unsigned epoch, unsigned expectedOpens, unsigned expectedInfos,
+                  unsigned expectedLosses) {
     phaseOrder = playerAt = decoderAt = markAt = stopAt = codecFlushAt = codecFreeAt = 0;
     buffersDiscarded = recoveryMarked = false;
     watchStop = true;
@@ -189,7 +197,7 @@ static void reset(sl_runtime *r, unsigned epoch, unsigned expectedOpens, unsigne
     if (codecFreeAt)
         assert(codecFreeAt > stopAt);
     assert(r->facts.epoch == epoch && !r->facts.paused && !r->session->base.interrupted);
-    assert(opens == expectedOpens && infos == expectedInfos && losses == epoch - 1);
+    assert(opens == expectedOpens && infos == expectedInfos && losses == expectedLosses);
     stream_media_snapshot snap;
     stream_media_get_snapshot(&snap);
     assert(snap.video_active && snap.video_epoch == epoch && snap.session_id == 90 &&
@@ -242,16 +250,18 @@ int main(int argc, char **argv) {
            bytes > 0);
     feed(r.session, 1, true, packet, bytes);
     assert(!infos && !losses);
-    reset(&r, 2, 2, 1); /* Real initial open failure -> retained actor -> retry succeeds. */
+    reset(&r, 2, 2, 1, 1); /* Real initial open failure -> retained actor -> retry succeeds. */
     feed(r.session, 2, true, packet, bytes);
     sl_video_frame *a = take(2);
     uint8_t hashA[16], hashB[16];
     pixelHash(a, hashA);
     void *mapA = sl_video_hold_mapping(a);
     assert(mapA);
-    atomic_store(&requestReset, true);
+    atomic_store(&requestEio, true);
     feed(r.session, 3, false, packet, bytes);
-    reset(&r, 3, 3, 2);
+    uint8_t disabled[8];assert(IHS_SessionGetStreamingClientConfig(r.session,disabled,sizeof(disabled))==2);
+    assert(disabled[0]==0x38 && disabled[1]==0 && !IHS_SessionVideoHardwareDecodingEnabled(r.session));
+    reset(&r, 3, 3, 2, 3); /* Includes immediate loss from the combined EIO result. */
     unchanged(a, hashA);
     assert(a->pixels->data[0] && IHS_FrameTicketIdentity(a->ticket).epoch == 2);
     feed(r.session, 4, true, packet, bytes);
@@ -261,14 +271,14 @@ int main(int argc, char **argv) {
     assert(mapB && mapA != mapB);
     atomic_store(&requestReset, true);
     feed(r.session, 5, false, packet, bytes);
-    reset(&r, 4, 3, 2);
+    reset(&r, 4, 3, 2, 4);
     assert(!sl_video_is_current(pipeline, (sl_video_key){90, 4})); /* Both old domains pinned. */
     sl_resource_release(&a->ref); /* Imported map alone must keep old codec domain alive. */
     feed(r.session, 6, true, packet, bytes);
-    reset(&r, 5, 3, 2);
+    reset(&r, 5, 3, 2, 5);
     sl_video_release_mapping(mapA);
     feed(r.session, 7, true, packet, bytes);
-    reset(&r, 6, 4, 3);
+    reset(&r, 6, 4, 3, 6);
     unchanged(b, hashB);
     assert(b->pixels->data[0] && IHS_FrameTicketIdentity(b->ticket).epoch == 3);
     feed(r.session, 8, true, packet, bytes);

@@ -186,7 +186,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
         -Wl,--wrap=avcodec_send_packet -Wl,--wrap=avcodec_receive_frame -Wl,--wrap=avcodec_flush_buffers
         -Wl,--wrap=av_parser_parse2 -Wl,--wrap=sl_video_timing_update
         -Wl,--wrap=IHS_SessionVideoDecodeFeedback -Wl,--wrap=IHS_SessionChannelQueuePacket
-        -Wl,--wrap=sl_gfx_present
+        -Wl,--wrap=sl_gfx_present -Wl,--wrap=sl_video_open_ex
         -Wl,--wrap=IHS_FrameTicketVideoDecodeStage
         -Wl,--wrap=sl_video_select -Wl,--wrap=IHS_FrameTicketUploadStage
         -Wl,--wrap=IHS_SessionPacketsWindowReleaseFrame -Wl,--wrap=IHS_BaseSend
@@ -199,6 +199,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-video-avcodec.py"
         --receiver $<TARGET_FILE:nsl-video-timing-oracle>)
     set_tests_properties(video_present_avcodec_vectors PROPERTIES TIMEOUT 90)
+    add_test(NAME video_avcodec_recovery_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-video-recovery.py"
+        --receiver $<TARGET_FILE:nsl-video-timing-oracle>)
+    set_tests_properties(video_avcodec_recovery_vectors PROPERTIES TIMEOUT 90)
     add_executable(nsl-video-keyframe-runtime tests/video_keyframe_runtime.c)
     target_include_directories(nsl-video-keyframe-runtime PRIVATE platforms/common
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client

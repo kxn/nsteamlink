@@ -88,6 +88,15 @@ static void opening_results(void) {
     assert(sl_video_open_ex(p, (sl_video_key){1, 3}, &config) == SL_VIDEO_OPEN_READY);
     sl_video_stop(p, (sl_video_key){1, 3});
     sl_video_reap(p);
+    /* Actual host SDK has no Nvtegra device type: the requested capability
+     * falls through to a working software context, rather than endless reset. */
+    if (av_hwdevice_find_type_by_name("nvtegra") == AV_HWDEVICE_TYPE_NONE) {
+        config.hardware = true;
+        assert(sl_video_open_ex(p, (sl_video_key){1, 4}, &config) == SL_VIDEO_OPEN_READY);
+        assert(!sl_video_has_hardware_context(p, (sl_video_key){1, 4}));
+        sl_video_stop(p, (sl_video_key){1, 4});
+        sl_video_reap(p);
+    }
     assert(sl_video_destroy(p));
 }
 #endif
@@ -354,6 +363,10 @@ int main(int argc, char **argv) {
     IHS_FrameTrackerClose(a.tracker);  /* displayed lease survives endpoint close */
     run b = {.pipeline = pipeline, .tracker = IHS_FrameTrackerCreate(2), .key = {2, 1}, .use_selection=true};
     assert(IHS_FrameTrackerOpenEpoch(b.tracker, 1));
+#if defined(__linux__)
+    if (av_hwdevice_find_type_by_name("nvtegra") == AV_HWDEVICE_TYPE_NONE)
+        config.hardware = true; /* Actual absent-HW fallback must still decode every hashed pixel. */
+#endif
     assert(sl_video_open(pipeline, b.key, &config));
     fixture(&b, argv[2]);
     assert(b.outputs == 12 && b.reordered == 0);

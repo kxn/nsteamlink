@@ -1049,7 +1049,6 @@ int sl_media_video_prepare(IHS_Session *session, const IHS_StreamVideoConfig *co
 }
 int sl_media_video_start_tracked(IHS_Session *session, const IHS_VideoEpochInfo *epoch,
                                  const IHS_StreamVideoConfig *config) {
-    (void)session;
     if (!video || config->codec != IHS_StreamVideoCodecH264)
         return -1;
     sl_video_reap(video);
@@ -1057,9 +1056,7 @@ int sl_media_video_start_tracked(IHS_Session *session, const IHS_VideoEpochInfo 
                                .height = config->height,
                                .extradata = config->codecData,
                                .extradata_size = config->codecDataLen,
-#if __SWITCH__
-                               .hardware = true
-#endif
+                               .hardware = IHS_SessionVideoHardwareDecodingEnabled(session)
     };
     sl_video_key key = {epoch->session_id, epoch->video_epoch};
     pthread_mutex_lock(&state_lock);
@@ -1082,10 +1079,11 @@ int sl_media_video_start_tracked(IHS_Session *session, const IHS_VideoEpochInfo 
         media_set_error("video identity or allocation guard rejected decoder start");
         return -1;
     }
+    bool hardware = sl_video_has_hardware_context(video, key);
     pthread_mutex_lock(&state_lock);
     snapshot.video_active = true;
     snprintf(snapshot.decoder, sizeof(snapshot.decoder), "h264 %s%s",
-             decoder.hardware ? "nvtegra" : "software",
+             hardware ? "nvtegra" : "software",
              opened == SL_VIDEO_OPEN_UNAVAILABLE ? " pending" : "");
     snapshot.last_error[0] = 0;
     pthread_mutex_unlock(&state_lock);
@@ -1094,14 +1092,16 @@ int sl_media_video_start_tracked(IHS_Session *session, const IHS_VideoEpochInfo 
 typedef struct video_feedback_context {
     IHS_Session *session;
     const IHS_VideoEpochInfo *epoch;
+    bool failed;
 } video_feedback_context;
 static void video_decode_feedback(void *context, sl_video_submit_result result) {
     video_feedback_context *borrowed = context;
     unsigned flags = 0;
     if (result & SL_VIDEO_SUBMIT_RESET) flags |= IHS_StreamVideoSubmitReset;
     if (result & SL_VIDEO_SUBMIT_CORRUPT) flags |= IHS_StreamVideoSubmitReportLost;
-    IHS_SessionVideoDecodeFeedback(borrowed->session, borrowed->epoch,
-                                    (IHS_StreamVideoSubmitResult)flags);
+    if (result & SL_VIDEO_SUBMIT_DISABLE_HARDWARE) flags |= IHS_StreamVideoSubmitDisableHardware;
+    if (!IHS_SessionVideoDecodeFeedback(borrowed->session, borrowed->epoch,
+                                        (IHS_StreamVideoSubmitResult)flags)) borrowed->failed = true;
 }
 IHS_StreamVideoSubmitResult
 sl_media_video_submit_tracked(IHS_Session *session, const IHS_VideoEpochInfo *epoch, uint16_t id,
@@ -1112,16 +1112,17 @@ sl_media_video_submit_tracked(IHS_Session *session, const IHS_VideoEpochInfo *ep
         *taken = false;
         return IHS_StreamVideoSubmitError;
     }
-    video_feedback_context feedback = {session, epoch}; /* borrowed only for this callback */
+    video_feedback_context feedback = {.session = session, .epoch = epoch}; /* borrowed only */
     sl_video_submit_result result = sl_video_submit(
         video, (sl_video_key){epoch->session_id, epoch->video_epoch}, IHS_BufferPointer(data),
         data->size, ticket, taken, (flags & IHS_StreamVideoFrameKeyFrame) &&
                                   !(flags & IHS_StreamVideoFrameFlushHandled),
         video_decode_feedback, &feedback);
-    if (result == SL_VIDEO_SUBMIT_ERROR)
+    if (result == SL_VIDEO_SUBMIT_ERROR || feedback.failed)
         media_set_error("video packet ownership or decoder resource failure");
     /* Feedback already ran before player Put/sampling; do not send it twice. */
-    return result != SL_VIDEO_SUBMIT_ERROR ? IHS_StreamVideoSubmitOK : IHS_StreamVideoSubmitError;
+    return result != SL_VIDEO_SUBMIT_ERROR && !feedback.failed
+        ? IHS_StreamVideoSubmitOK : IHS_StreamVideoSubmitError;
 }
 void sl_media_video_flush_tracked(IHS_Session *session, const IHS_VideoEpochInfo *epoch,
                                   IHS_StreamVideoFlushPhase phase) {

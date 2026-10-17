@@ -6487,8 +6487,9 @@ map释放后初始化可恢复。真实GPU fence、NVTEGRA及物理显示/loader
 成功后start返回0为ready、1为backend不可用、负值为本地致命保护；reset复用配置
 而不重新prepare。无prepare的旧回调保留合并start失败语义，submit-only回调仍可收帧。
 无效callback组合、epoch/identity、OOM是本地保护；不冒充官方SDK处理分支。
-`sl_video_open_ex`区分保护、不可用、ready；FFmpeg查找/硬件初始化/open的非OOM失败
-归于初始化未就绪，OOM保持保护退出。旧bool及本地媒体fixture入口保留原成功约定。
+`sl_video_open_ex`区分保护、不可用、ready；FFmpeg查找/open的非OOM失败归于初始化未就绪。
+【更正，§95】目标硬件能力/设备建立不可用且支持软件H264时，改为同一open事务内软件回退，
+撤回硬件失败一律初始化未就绪的映射；OOM仍是本地保护。旧bool与本地fixture成功约定不变。
 Start空消息拒绝时不得取空buffer指针，和官方Get失败不创建decoder的行为一致。
 
 ```sh
@@ -7304,7 +7305,7 @@ SDK返回值/格式/尺寸/输出PTS是输入；没有物理解码、绘图、GP
 | parser消费字节数不等于本次输入长度 | @0x324253–273记result5、释放packet，不send/receive/Put；不是无限等待parser补齐 |
 | send_packet返回0 | 继续一次receive_frame |
 | send_packet返回非0，包括-11 | @0x324520–548记录错误并请求ResetVideoDecoder(false)，随后仍执行一次receive；没有在此drain并重发同一packet |
-| send返回-5/EIO | @0x3245c8–5eb打印禁用硬件加速说明，client+0x1d8置0x10000000并清+0x264，再进入上述reset/receive；完整配置保存/重协商未由这些裸成员写证明 |
+| send返回-5/EIO | @0x3245c8–5eb设置config第7项has位/false，再进入reset/receive；§95原parser/serializer与主循环证明该字段及本路径不调用notify/save/99，不把has位命名为独立禁用flags |
 | receive返回0且宽/高均大于0 | @0x324389以后设frame身份为本次FinalDecode的id/timestamp，选择格式后调用player Put |
 | receive返回0但宽或高不大于0 | 释放packet，不交付该对象；不能把SDK成功状态单独视为有效画面 |
 | receive返回-11/EAGAIN | @0x324560–57a先调用RecordFrameComplete(video,id,7)，再进入共有错误分支调用result5 |
@@ -7558,8 +7559,9 @@ decoder epoch的真实actor重建、session销毁及IHS_Quit后释放的资源�
 算作检出。旧Android官方复播与fixture保留；旧Native texture投影不再是AVCodec验收门禁。
 无SDK耗时的共享timing检查另保留14个Android来源案例1538状态，不将它标成Linux完整策略证明。
 
-这些是条件分支与Native映射的证据。官方SDK在完整client启动中的实际工厂/许可/硬件可达性、
-send EIO的完整配置禁用/重协商、51/157等硬件格式的特殊reset与NVTEGRA对应关系、所有
+这些是条件分支与Native映射的证据。send EIO直接配置修改/本路径不调用notify/save/99的
+补证见§95，不能继续将重协商当成这个分支的必需动作。官方SDK完整client启动的工厂/许可/
+硬件可达性、51/157等硬件格式的特殊reset与NVTEGRA对应关系、所有
 平台SDK/渲染失败、完整统计启停/并发和真实Steam/Switch/loader仍各需对应证据。直接加载随包
 libavcodec.so.61尝试软件H264 open返回-1，不能据此声称已运行官方SDK物理解码；没有更改
 该库或绕过这个结果。上述官方原码的codec API仍是受控终点，Native实际解码是另列证据。
@@ -7627,4 +7629,104 @@ LD_LIBRARY_PATH="$PWD/build/video-recovery-re/linux-1.3.32.316/package/lib" \
   --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
   --sdk-directory build/video-recovery-re/linux-1.3.32.316/package/lib \
   --output /tmp/steam-client-sdk-boundary.json
+```
+
+## 95. 官方AVCodec的EIO配置、主循环重建与软件格式回退
+
+### 95.1 原始配置字段与直接修改
+
+来源仍为§91固定SHA的Valve Linux客户端，`audit-steam-client-avcodec-recovery.py`
+执行原CStreamingClientConfig构造、ParseFromArray、ByteSizeLong与序列化，不从Android
+成员邻接推断Linux字段。原config对象位于client+456；输入`3801`由原parser设置
+config+156=true和config+16的bit28。原FinalDecode的send_packet=-5分支将值清false，
+保留has位，原序列化结果成为`3800`。默认缺字段时，EIO也实际新增该字段及false值。
+原bit28是protobuf存在标记，并非独立“禁用硬件flags”。混合FEC/quality/unknown字段的
+输入保留其余内容；receive_frame=-5本身不走这个配置修改，其他send错误也不修改该字段。
+
+【结论】EIO专用动作是直接修改完整客户端配置的第7项enable_hardware_decoding=false，
+然后请求ResetVideoDecoder(false)，再继续一次receive。不能替换成完整配置setter：本路径
+没有notify、SaveStreamingClientConfig或发送99；FEC第25项不变。后续显式配置替换的语义
+仍按§35，与这种直接字段修改分开。
+
+### 95.2 原主循环与格式回调的调用关系
+
+原Client::OnThink @0x3230a0首先调用HandlePendingResets @0x31f9d0，之后才走network、
+queued control、decoder OnThink及Streaming/Stats。后四个外部周期在本审计中为明确终点。
+实际HandlePendingResets通过原decoder Restart @0x2edc50执行Stop、清reset请求、Start，
+并发送空video DataLost。原AVCodec Stop调用原player Flush和协议partial清理、关闭parser后
+释放codec；没有SDK flush。Start再次执行原codec选择，实际读到EIO修改后的false偏好。
+此单线程decoder调度输入不冒称原OS线程/Qt启动或所有并发关系。
+
+显式SDK格式回调输入经原callback @0x324d00 → dispatch @0x324c90 → selector @0x324990。
+有软件格式0/12且hardware=false时选择第一个软件格式；hardware=true或没有软件格式时
+才尝试平台硬件后端。本客户端对VAAPI格式44依次尝试原CVAAPIGamescopeAccel、
+CVAAPIAccelDRM、CVAAPIAccelX11的完整构造/BAvailable/失败清理。配置好的SDL window句柄、
+环境变量不存在和SDL_LoadObject失败是声明的外部平台输入，没有替换内部BAvailable为true。
+三者失败且存在软件格式时实际返回软件格式，**不因此修改第7项配置**。
+
+SDK线程数元数据在此受控为1；格式选择随后执行原decoder-info生产者@0x31dd40、原消息80
+构造/序列化和原SendControl。实际明文含`libavcodec software decoding with 1 thread`及
+threads=1；控制加密与最终连接交接是终点，记录完整原明文，不冒称真实加密UDP wire。
+格式回调是在明确SDK接口边界主动调用，不据此证明真实SDK何时调用或NVTEGRA成功可达。
+
+### 95.3 Native映射契约
+
+AVCodec send EIO应在同一次同步反馈中先将配置第7项设为显式false，再置异步reset请求，
+继续receive；不能调用配置通知/保存/99入口。后续decoder epoch读当前有效硬件偏好。
+其他send错误只请求reset，receive错误只按§91规则处理；不能把任意SDK错误当成禁用硬件。
+配置完整值和unknown字段仍由现有owner管理，反馈只在当前借用session/epoch内有效。
+
+目标SDK硬件能力/设备建立不可用且支持软件H264时应回退软件；资源/身份guard另列，不能
+把无限重建相同不可用硬件当作等价回退。SDK未提供目标硬件格式但提供0/12时选软件。
+NVTEGRA驱动的自然错误码、成功硬件路径、物理呈现/完整decoder-info时序及动态配置的完整
+player delegate/cache仍需各自证据；这些分支不由本节Linux失败能力输入自动证明。
+
+【更正】§78的“硬件初始化非OOM失败一律保留pending actor”等价说法不适用于已证明的
+软件可用分支。Native的硬件能力/设备建立不可用改为同一open事务里的软件回退，不把
+相同硬件重试循环当成回退；codec不存在/open失败与本地OOM/身份guard仍单列。
+
+### 95.4 验证边界与检测力
+
+固定原客户端21案例97状态、50个所列完整FDE入口；缺字段/true/false/混合quality/FEC/unknown，
+send EIO/EAGAIN/ENOMEM、receive EIO、错误后正常输入、有/无软件格式均执行原分支。
+四项原指令反事实去掉EIO has位、value、主循环pending-reset调用或硬件偏好分支；均完整
+返回且实际配置/actor/格式轨迹改变，不用assert或adapter错误计数。
+
+`check-steam-video-recovery.py`直接消费该fixture，实际Native runtime/control/worker/
+FFmpeg/media/完整配置API对应21案例97状态。比较完整protobuf字节（含第25项与unknown）、
+有效硬件偏好、实际epoch、空DataLost及通知/保存/99调用缺席；SDK状态受控，实际图像先比
+独立framemd5。格式投影以目标硬件不可用为明确条件，不能称所有Source平台代码已在Native
+复现。Source消息80的文本/调用时机不在此投影中，Native DataStart已有80入口，完整SDK
+回调时序仍单列。Host自然触发与原用户停顿根因不由这些输入证明。
+
+实际Native SDK缺少Nvtegra能力时，硬件请求仍成功打开软件context；真实12张H264图片
+及完成归属继续经独立framemd5核验。真实runtime另覆盖返回结果7（reset/lost/disable）与
+原结果3、下一完整输入门禁、过期epoch/无效bit拒绝，以及旧pixel/map跨epoch和session销毁
+保留。配置惰性默认对象的分配失败是本地错误保护，不冒称官方OOM语义。
+
+随包原SDK的H264元数据API实际返回HWConfig(44,11,3)、(98,11,1)，格式/methods/device
+三字段逐项核对；只读取元数据，未打开解码器或更改§94门禁。审计将这两项作为SDK边界输入，
+原supported-format helper @0x1780a0接受44而拒绝98，避免“只声明软件能力却提供硬件格式”
+的不一致输入。枚举保留一个H264 codec，其余capability字段/SDK状态仍受控，不称完整SDK工厂。
+补入该helper的FDE/入口计数时，原21案例97状态全部逐项保持。
+
+Native初始完整配置先进入实际API再启动video actor；重建时真实sl_video_open_ex收到的
+硬件请求也与原codec-selection参数比较，避免只比较getter而没有验证应用实际读取。
+
+Native隔离反事实由六项扩为十项，新增漏EIO配置、误用通知/保存setter、漏软件格式选择、
+能力缺失仍返回unavailable；均先成功编译/链接。配置/格式策略项由正常oracle输出后的
+官方对照拒绝；能力项由真实SDK打开的READY断言拒绝，身份项保留真实B帧完成断言。
+不将编译失败或策略oracle崩溃算作有效检出。
+
+```sh
+python3 scripts/audit-steam-client-avcodec-recovery.py \
+  --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
+  --output /tmp/steam-client-avcodec-recovery.json
+LD_LIBRARY_PATH="$PWD/build/video-recovery-re/linux-1.3.32.316/package/lib" \
+  python3 scripts/audit-steam-client-avcodec-recovery.py \
+  --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
+  --sdk-library build/video-recovery-re/linux-1.3.32.316/package/lib/libavcodec.so.61 \
+  --output /tmp/steam-client-avcodec-recovery-with-sdk.json
+python3 scripts/check-steam-video-recovery.py --receiver build/desktop/app/nsl-video-timing-oracle
+python3 scripts/check-avcodec-native-mutations.py --build build/desktop --output /tmp/avcodec-mutants
 ```
