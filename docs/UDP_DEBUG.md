@@ -171,6 +171,30 @@ python3 tools/switch-sns-runtime-probe.py --address 10.10.10.25 \
 恢复在线，再正常退出。不启动媒体；其余网络继续正常工作。这是客户端进程故障环境，
 不代表真实服务器 Offline、退订或不同 NAT 出口的验收。
 
+`nsl-remote-lifecycle-live` 是不启动媒体、不创建 LAN discovery socket 的桌面云端
+生命周期验收工具。手动运行，不能放进无人值守 CTest：
+
+```sh
+build/desktop/app/nsl-remote-lifecycle-live --pair-cycles
+build/desktop/app/nsl-remote-lifecycle-live --subscriptions /absolute/private-profile
+build/desktop/app/nsl-remote-lifecycle-live --offline /absolute/private-profile
+```
+
+`--pair-cycles` 使用临时随机安装身份，申请的 PIN 不输出、不要求主机输入，随后自动取消。
+它在接收入口暂存真实 StartPairing 回复，核对取消后迟到 PIN 的清理、发布后取消，以及
+丢弃一次回复后真实等待 RPC 超时、重建 session、重新申请和取消；不修改产品协议。
+`--subscriptions` 使用两个只读发现会话，以其中一个为持续订阅对照，另一个退订后排空
+两秒再观察 30 秒；同时要求原始接收层的退订侧 status 为零、对照侧收到 status，随后
+重订阅恢复。若对照期没有通知，只能报告 INCONCLUSIVE，不能以本地不再分发 callback
+代替服务端退订证明。`--offline` 打印 READY 后各等待最多三分钟，需先让主机完整退出
+Steam，再重新打开；要求真实服务 Offline、匹配目标的回调和在线恢复，期间 CM 没有断线。
+后两种模式独占私有 profile，不得同时启动其他使用此身份的测试或客户端。
+
+`nsl-remote-tests` 的密钥中断测试采用合成主机输入、真实密码算法和生产 profile 存储：
+在保存新 secret 后、Proof 入队前，以及入队后直接退出子进程；父进程重新加载身份，
+验证请求 token 和后续 session key 使用正确密钥。保存失败另验证不发送 Proof、旧身份
+可读。这证明本地持久化与重启契约，不证明主机端回滚规则或设备断电时文件系统耐久性。
+
 `--cloud-initial-failure` 保留首页，将真实目录首轮 CM 候选的 TLS 完成结果替换为
 连接失败，检查逐个轮换、耗尽后的 10–30 秒退避，以及下一轮真实匿名连接/主机发现。
 `--cloud-initial-bridge` 对同一 provider 显式设置 bridge_mode，核对耗尽后立即重试的

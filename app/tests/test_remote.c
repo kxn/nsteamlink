@@ -4,10 +4,13 @@
 #include "protobuf/discovery.pb-c.h"
 #include "remote_protocol.h"
 #include "remote_wire.h"
+#include "services/auth_store.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 typedef struct fixture {
     sl_remote *remote;
@@ -21,12 +24,17 @@ typedef struct fixture {
     uint8_t stream_key[128];
     size_t stream_key_size;
     int stream_transport;
+    const char *profile;
+    unsigned crash_stage;
 } fixture;
+static unsigned sent_control_kind(fixture *, size_t, uint32_t *);
 static bool send_frame(const uint8_t *p, size_t size, void *ctx) {
     fixture *f = ctx;
     assert(f->count < 128 && size <= sizeof(f->sent[0]));
     memcpy(f->sent[f->count], p, size);
     f->sizes[f->count++] = size;
+    if (f->crash_stage == 2 && p[0] == 0x3a && sent_control_kind(f, f->count - 1, NULL) == 8)
+        _exit(72); /* Abrupt exit after proof enqueue; no normal teardown. */
     return true;
 }
 static void connected(bool ready, void *ctx) {
@@ -45,6 +53,16 @@ static bool save_key(const sl_remote_peer *peer, void *ctx) {
     fixture *f = ctx;
     ++f->saves;
     f->saved = *peer;
+    if (f->profile && f->save_ok) {
+        sl_auth_store store;
+        assert(sl_auth_load(&store, f->profile) == 0);
+        assert(store.registry.count == 1);
+        memcpy(store.registry.hosts[0].secret, peer->secret, 32);
+        assert(sl_auth_save(&store, f->profile));
+        memset(&store, 0, sizeof(store));
+        if (f->crash_stage == 1)
+            _exit(71); /* Saved, but protocol has not built/enqueued its proof. */
+    }
     return f->save_ok;
 }
 static void paired(const sl_remote_peer *peer, void *ctx) {
@@ -320,6 +338,104 @@ static void retired_stream_requests(void) {
     sl_remote_destroy(f->remote);
     free(f);
 }
+static void reordered_pairing_rpcs(void) {
+    fixture *f = create();
+    open_session(f, 55);
+    assert(sl_remote_pair(f->remote));
+    uint8_t pin[] = {8, 1};
+    assert(response(f, 3, 1, pin, sizeof(pin)) && f->codes == 1);
+    sl_remote_cancel(f->remote);
+    /* Cancel ack overtakes SetPairingInfo ack. A new attempt stays blocked
+     * until every unidentifiable service response has drained. */
+    assert(response(f, 5, 1, NULL, 0));
+    assert(!sl_remote_pair(f->remote));
+    assert(response(f, 4, 1, NULL, 0));
+    assert(sl_remote_pair(f->remote));
+    /* Duplicate old Set/Cancel failures must not fail the new Start RPC. */
+    assert(response(f, 4, 2, NULL, 0) && response(f, 5, 2, NULL, 0));
+    assert(!f->failed && !f->saves && f->codes == 1);
+    assert(response(f, 3, 1, pin, sizeof(pin)) && f->codes == 2);
+    assert(response(f, 4, 1, NULL, 0));
+    sl_remote_cancel(f->remote);
+    assert(response(f, 5, 1, NULL, 0));
+    sl_remote_destroy(f->remote);
+    free(f);
+}
+static void retry_after_cancel_and_rotation(void) {
+    fixture *f = create();
+    sl_remote_peer peer = {.client_id = 77, .steam_id = 88, .secret = {1, 2, 3}};
+    assert(sl_remote_watch(f->remote, &peer, 1));
+    open_session(f, 60);
+    IHS_StreamingRequest request = {0};
+    assert(sl_remote_stream(f->remote, 77, &request));
+    sl_remote_update(f->remote, 100);
+    uint32_t old_id = stream_request_id(f);
+    sl_remote_cancel(f->remote);
+    assert(sl_remote_stream(f->remote, 77, &request));
+    sl_remote_update(f->remote, 101);
+    uint32_t id = stream_request_id(f);
+    assert(id != old_id);
+    uint8_t challenge[] = {2, 7, 1, 8};
+    CMsgRemoteDeviceProofRequest proof = CMSG_REMOTE_DEVICE_PROOF_REQUEST__INIT;
+    proof.has_request_id = proof.has_update_secret = true;
+    proof.request_id = old_id;
+    proof.update_secret = true;
+    proof.challenge = (ProtobufCBinaryData){sizeof(challenge), challenge};
+    size_t count = f->count;
+    reply(f, 7, &proof.base);
+    assert(f->count == count && !f->saves);
+    CMsgRemoteDeviceStreamingResponse response = CMSG_REMOTE_DEVICE_STREAMING_RESPONSE__INIT;
+    response.request_id = old_id;
+    response.result = k_ERemoteDeviceStreamingSuccess;
+    reply(f, 6, &response.base);
+    assert(!f->streams && f->count == count);
+    response.result = k_ERemoteDeviceStreamingInProgress;
+    reply(f, 6, &response.base);
+    uint32_t canceled;
+    assert(sent_control_kind(f, f->count - 1, &canceled) == 10 && canceled == old_id);
+    proof.request_id = id;
+    reply(f, 7, &proof.base);
+    assert(f->saves == 1);
+    uint8_t key[32];
+    memcpy(key, f->saved.secret, 32);
+    sl_remote_close(f->remote);
+    open_session(f, 61);
+    sl_remote_update(f->remote, 102);
+    assert(stream_request_id(f) == id);
+    /* The same transaction survives CM replacement. Duplicate proof must not
+     * rotate again, and the response must decrypt with the persisted key. */
+    reply(f, 7, &proof.base);
+    assert(f->saves == 1 && !memcmp(key, f->saved.secret, 32));
+    sl_proto_field out = sent(f, f->count - 1, 7), packet = field(out.bytes, out.size, 4);
+    uint32_t hs, ms;
+    IHS_ReadUInt32LE(packet.bytes + 8, &hs);
+    IHS_ReadUInt32LE(packet.bytes + 12 + hs, &ms);
+    CMsgRemoteDeviceProofResponse *wire =
+        cmsg_remote_device_proof_response__unpack(NULL, ms, packet.bytes + 16 + hs);
+    uint8_t plain[64];
+    size_t size = sizeof(plain);
+    assert(wire && wire->request_id == id && wire->updated_secret &&
+           !IHS_CryptoSymmetricDecrypt(wire->response.data, wire->response.len, key, 32, plain,
+                                       &size) &&
+           size == sizeof(challenge) && !memcmp(plain, challenge, size));
+    cmsg_remote_device_proof_response__free_unpacked(wire, NULL);
+    uint8_t session_key[16] = {4}, encrypted[64];
+    size = sizeof(encrypted);
+    assert(
+        !IHS_CryptoSymmetricEncrypt(session_key, sizeof(session_key), key, 32, encrypted, &size));
+    response.request_id = id;
+    response.result = k_ERemoteDeviceStreamingSuccess;
+    response.has_encrypted_session_key = response.has_port = true;
+    response.port = 27031;
+    response.encrypted_session_key = (ProtobufCBinaryData){size, encrypted};
+    reply(f, 6, &response.base);
+    reply(f, 6, &response.base);
+    assert(f->streams == 1 && f->result == IHS_StreamingSuccess &&
+           f->stream_key_size == sizeof(session_key) &&
+           !memcmp(f->stream_key, session_key, sizeof(session_key)));
+    sl_remote_destroy(f->remote);
+    free(f);
+}
 static void known_host_reauthorization(void) {
     fixture *f = create();
     sl_remote_peer peers[] = {{.client_id = 77, .steam_id = 88, .secret = {1, 2, 3}},
@@ -477,6 +593,108 @@ static void sns_network_test_material(void) {
     sl_remote_destroy(f->remote);
     free(f);
 }
+static void rotation_restart(void) {
+    /* Synthetic host inputs, real crypto + production disk store + abrupt child
+     * process exit. This proves local persistence, not host rollback policy. */
+    uint8_t challenge[] = {4, 3, 2, 1}, old[32] = {1, 2, 3}, expected[32], source[36];
+    memcpy(source, old, 32);
+    memcpy(source + 32, challenge, sizeof(challenge));
+    assert(!IHS_CryptoSHA256(source, sizeof(source), expected));
+    for (unsigned stage = 0; stage <= 2; ++stage) {
+        char directory[] = "/tmp/nsl-proof-restart-XXXXXX";
+        assert(mkdtemp(directory));
+        sl_auth_store store = {.device_id = 0x123456789abcdefULL, .bitrate_kbps = 6000};
+        sl_host_registry_init(&store.registry);
+        store.registry.count = 1;
+        store.registry.hosts[0] =
+            (sl_host){.id = 1, .client_id = 77, .account = 88, .paired = true, .has_secret = true};
+        memcpy(store.secret, old, 32);
+        memcpy(store.registry.hosts[0].secret, old, 32);
+        assert(sl_auth_save(&store, directory));
+        pid_t child = fork();
+        assert(child >= 0);
+        if (!child) {
+            fixture *f = create();
+            f->profile = directory;
+            f->crash_stage = stage;
+            f->save_ok = stage != 0;
+            sl_remote_peer peer = {.client_id = 77, .steam_id = 88};
+            memcpy(peer.secret, old, 32);
+            assert(sl_remote_watch(f->remote, &peer, 1));
+            open_session(f, 70);
+            IHS_StreamingRequest q = {0};
+            assert(sl_remote_stream(f->remote, 77, &q));
+            sl_remote_update(f->remote, 100);
+            CMsgRemoteDeviceProofRequest proof = CMSG_REMOTE_DEVICE_PROOF_REQUEST__INIT;
+            proof.challenge = (ProtobufCBinaryData){sizeof(challenge), challenge};
+            proof.has_request_id = proof.has_update_secret = true;
+            proof.request_id = stream_request_id(f);
+            proof.update_secret = true;
+            size_t before = f->count;
+            reply(f, 7, &proof.base);
+            /* A failed save must emit neither a proof nor stream material. */
+            assert(stage == 0 && f->streams == 1 && f->result == IHS_StreamingFailed &&
+                   f->count == before);
+            _exit(70);
+        }
+        int status;
+        assert(waitpid(child, &status, 0) == child && WIFEXITED(status) &&
+               WEXITSTATUS(status) == (int)(70 + stage));
+        assert(sl_auth_load(&store, directory) == 0);
+        const uint8_t *key = stage ? expected : old;
+        sl_host *h = &store.registry.hosts[0];
+        assert(h->paired && h->has_secret && h->client_id == 77 && h->account == 88 &&
+               store.device_id == 0x123456789abcdefULL && !memcmp(h->secret, key, 32));
+        fixture *restarted = create();
+        sl_remote_peer peer = {.client_id = h->client_id, .steam_id = h->account};
+        memcpy(peer.secret, h->secret, 32);
+        assert(sl_remote_watch(restarted->remote, &peer, 1));
+        open_session(restarted, 71);
+        IHS_StreamingRequest request = {0};
+        assert(sl_remote_stream(restarted->remote, 77, &request));
+        sl_remote_update(restarted->remote, 101);
+        uint32_t id = stream_request_id(restarted);
+        /* Validate the new request token with the actual reloaded key. */
+        sl_proto_field out = sent(restarted, restarted->count - 1, 7);
+        sl_proto_field packet = field(out.bytes, out.size, 4);
+        uint32_t hs, ms;
+        IHS_ReadUInt32LE(packet.bytes + 8, &hs);
+        IHS_ReadUInt32LE(packet.bytes + 12 + hs, &ms);
+        CMsgRemoteDeviceStreamingRequest *wire =
+            cmsg_remote_device_streaming_request__unpack(NULL, ms, packet.bytes + 16 + hs);
+        uint8_t token[64];
+        size_t length = sizeof(token);
+        uint64_t device;
+        assert(wire &&
+               !IHS_CryptoSymmetricDecrypt(wire->device_token.data, wire->device_token.len, key, 32,
+                                           token, &length) &&
+               length == 8);
+        IHS_ReadUInt64LE(token, &device);
+        assert(device == store.device_id);
+        cmsg_remote_device_streaming_request__free_unpacked(wire, NULL);
+        uint8_t session_key[16] = {9, 8, 7}, encrypted[64];
+        length = sizeof(encrypted);
+        assert(!IHS_CryptoSymmetricEncrypt(session_key, sizeof(session_key), key, 32, encrypted,
+                                           &length));
+        CMsgRemoteDeviceStreamingResponse response = CMSG_REMOTE_DEVICE_STREAMING_RESPONSE__INIT;
+        response.request_id = id;
+        response.result = k_ERemoteDeviceStreamingSuccess;
+        response.has_port = response.has_encrypted_session_key = true;
+        response.port = 27031;
+        response.encrypted_session_key = (ProtobufCBinaryData){length, encrypted};
+        reply(restarted, 6, &response.base);
+        assert(restarted->streams == 1 && restarted->result == IHS_StreamingSuccess &&
+               restarted->stream_key_size == sizeof(session_key) &&
+               !memcmp(restarted->stream_key, session_key, sizeof(session_key)) &&
+               !restarted->saves);
+        sl_remote_destroy(restarted->remote);
+        free(restarted);
+        char path[256];
+        snprintf(path, sizeof(path), "%s/profile.bin", directory);
+        assert(!unlink(path) && !rmdir(directory));
+        memset(&store, 0, sizeof(store));
+    }
+}
 static void wire(void) {
     char accept[29];
     assert(sl_ws_accept("dGhlIHNhbXBsZSBub25jZQ==", accept));
@@ -505,6 +723,9 @@ static void wire(void) {
     assert(!sl_proto_next(&r, &p) && !sl_proto_done(&r));
 }
 int main(void) {
+    rotation_restart();
+    reordered_pairing_rpcs();
+    retry_after_cancel_and_rotation();
     sns_network_test_material();
     wire();
     lifecycle();
