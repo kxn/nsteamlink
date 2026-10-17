@@ -2968,7 +2968,7 @@ SessionRecvCallback 的地址/连接 ID 检查后进入媒体 channel；早到�
 - 从 L/S 计算 k，检查完整的 8+S 字节 shard body；按唯一 index 收集。
   系统数据全到即交付；缺数据且有 k 个不同 shard 才执行同一 GF(256)/Cauchy
   码字的恢复。实现只求解缺失数据列，不改变官方系数、数据分片或 parity 字节。
-- 输出沿用首个有效 shard 的传输 header（type=11、组 ID 和时钟），媒体 frame ID
+- 输出使用收到的最低 index shard 的传输 header（type=11、组 ID 和时钟；§59更正旧“首片”解释），媒体 frame ID
   仍由内部信封解析。FEC 不进入普通类型 3/4 窗口，不推进普通水位、更新时间回显
   或产生类型 10 NACK；FEC 序号和媒体 frame ID 也不混用。
 - 组替换、未达恢复门槛或解码失败不交付不完整 payload；不增加同组 shard
@@ -4755,7 +4755,7 @@ minimum/smoothed RTT、min-update、offset，最后一例另比较offset样本�
 越界到6ms。普通sender的旧10ms原版fixture是直接seed连接字段，本地oracle也明确
 seed缓存10ms，不能为配合新getter而篡改该fixture输入。该组件对照本身不证明
 bandwidth/packet/video的实际入口或报告快照采集；§57另定义RTT/RX/TX/received接线，
-video与完整lost来源仍有独立边界；§58另核对普通channel的三个lost入口。
+video与完整lost来源仍有独立边界；§58核对普通channel的三个lost入口，§59接通实际视频link采样。
 
 ## 57. Socket收发入口与网络采样计数
 
@@ -4805,7 +4805,7 @@ CRC开/关分别比较12份完整Frame body、序号、退休水位及两周期t
 Native全局阶段在报告前取得实际RTT/RX/TX/packet快照，进入同一报告退休/编码consumer。
 原受控network setter的独立报告案例仍有原覆盖范围，不当作该收发整链接线的替代。
 
-【边界】此处接通RTT、RX/TX字节及received计数；视频link仍为原默认0，lost的
+【边界】此处接通RTT、RX/TX字节及received计数；视频link的接线另见§59，lost的
 普通channel成功入窗retry>1、可靠Pop和不可靠过期空槽的实际入口对照见§58，
 不能把此处的分母采集单独称为完整丢包策略。实际RX/TX/快照三线程各1000包检查CRC计数、同tick合并、join后销毁，
 这是本地并发/生存期证据。实际全局network锁、构造时钟/极端值、CNetworkStats评分、上行FEC、
@@ -4869,3 +4869,69 @@ RS重建：系统片0/1/2全部收到，或只有片0再靠校验片3/4恢复；
 原版直接同步delegate，Nativeoracle在同一收包action内驱动生产FIFO polling；
 这是明确的线程桥适配，不据此宣称callback同步时序一致。向量不覆盖原版重复
 shard错误、全部畸形输入或FEC配置启用/自动切换；配置策略仍以§32的客户端证据为准。
+
+## 59. 视频网络采样的真实收帧元数据
+
+【官方客户端证据】同§24.1 SHA的Socket::HandlePacket在0x7ff42c–0x7ff43c、
+0x7ff558–0x7ff568中仅first(packet+28)为0才填入本次接收tick，last(+32)每次更新。
+普通分片Pop的0x7f764c–0x7f7668仅在续片last无符号大于头片当前last时推进；
+first为0才随之补值。first不是所有分片接收时间的最小值。真实Socket/Pop执行中：
+头/续片1000000/1000002→first1000000,last1000002；续片先到、head最后到→两者
+1000002；头0xfffffff0/续片16→两者0xfffffff0；头0/续片2→两者2。
+撤回把Native旧int32差挑选receiveTimestamp视为该合并语义等价的解释。
+
+FEC原BAddPacket 0x7f82a0–0x7f82dc另有不同规则：出现更低shard index时复制
+其13B wire头；first只在0时取当前packet last，last无条件取当前packet last。
+系统片0/1/2及片0+校验3/4真实Socket/RS执行均得到first1000000,last1000002。
+不能沿用Native原firstHeader而永远只保留第一片的末接收时间。
+
+原OnStreamPacket 0x7acfa8→Frame构造/SetPacket→OnDataPacket 0x7ad148
+先归一化发送方时间，再RecordFrameReceived 0x7abeb0，最后才调decoder。
+Record的0x7abf40–0x7abf58对receive早于send的情况只修正用于统计的send/frame/input
+局部值；VideoBitrateStats内联使用修正后的send、本帧first/last与payload大小，
+payload含7B视频头，不含传输13B、消息tag、12B数据头、CRC或FEC shard元数据。
+原视频采样与帧received统计都发生于codec解析之前；不能因payload不足7B而漏采。
+
+【本地契约】首/末接收时间是本地元数据，随完整frame/早到可靠frame与FEC FIFO
+保持所有权，不序列化进UDP。实际视频dataFrame入口在codec最短长度检查前记录
+帧统计和VideoBitrateStats；后者归session、沿用§56队列与Base锁、关闭join后释放，
+由§57全局上报快照读取link。普通分片和FEC不共用错误的末时间合并规则。
+
+
+【证据／撤回】旧check-steam-fec-receiver.py的scenario人为用sequence[0]构造
+预期header；这部分不是原指令输出。撤回§33.1“首个有效shard的header”的描述。
+原BAddPacket的header选择和新的60种distinct shard到达顺序均支持最低index，
+测试须据此修正，不能为了迁就旧预期而保留Native firstHeader的错误语义。
+视频collector对照的decoder不在验收范围：Native零codec payload可在采样后进入
+既有decoder/组装关闭分支。短payload采用独立会话验证其采样，不把该关闭行为
+称为已经与原版decoder对齐；全decoder策略须独立取证。
+
+
+【原指令与Native执行对照】audit-steam-video-network.py固定146组、2316次动作状态、
+12份完整统计body。Source从原Socket、channel ctor/窗口、普通Pop或FEC队列/RS
+进入真实OnStreamPacket、Frame构造/SetPacket、OnDataPacket、RecordFrameReceived
+内联视频采样，再经Streaming/FrameEvents/C++ protobuf；没有用Python重写这些分支。
+13份有效视频FEC向量另由原SendUnreliableFEC @0x7f90e4、AddPacket、真实RS编码及
+队列发送产生，MTU64/percentage50是显式输入，wire IDs/clock受控，不冒称官方默认
+或已经证明主机/客户端何时启用FEC。§26固定k3/m2向量另有60种distinct到达顺序，
+核对最低index header；8组补first=0、倒退、回绕的FEC首/末时间。
+
+Native走真实CRC RX、普通/可靠窗口、可靠frame→媒体FIFO、FEC RX/RS/FIFO及生产
+complete-frame/video消费者，再采实际网络快照/完整报告。worker创建与调度改为受控
+polling，Source的锁/引用计数/析构、最终feedback I/O、CNetworkStats评分、decoder、
+报告加密/最终Frame准入为adapter。非data tag的固定FEC向量只到记录delegate，
+不以此核对未知消息入队。Source接收tick参数、Native时钟均受控；Socket::Update
+在transport读取前取tick而Native现接收callback在Parse后取tick，真实I/O捕获时刻与
+全局network锁/收发同循环仍是独立差异，不能把本对照扩大成墙钟时序已闭合。
+
+覆盖CRC开关、普通3/4和可靠5/6、单包/分片/反序、同视频frame多个payload、offset、
+receive早于send的统计局部修正、零哨兵、无符号回绕、frameId65535→0、3秒窗口
+淘汰后不足10样本保留旧derived值。完整/累计报告比较真实video link，既不跳过
+network项，也不以直接setter替代采样。0…7B视频payload各用独立会话核对decoder
+长度检查之前的采样；恰好12B data header、零视频payload也记录received与0字节，
+不能用旧“必须大于12B”漏掉该入口。此处不证明它们在实际decoder上的结果。
+
+另真实媒体/视频worker接26个CRC分片、13个视频frame，与并发快照线程一起执行；
+join后读取原版同输入的12个样本，totals=[120,240,11760,324]、bitrate/link float
+比特=[1180512027,1236061389]。编码帧sink代替硬件decoder，所有worker停/join后
+销毁session采样队列；这是本地线程/所有权证据，不是Steam认证或Switch显示证明。

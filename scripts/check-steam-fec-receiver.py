@@ -60,7 +60,16 @@ def main():
     def scenario(sequence, name, body=payload):
         reset()
         for i, wire in enumerate(sequence):
-            send(wire, output(sequence[0], body) if i == 2 else "-", name)
+            send(
+                wire,
+                output(
+                    min(sequence[:3], key=lambda w: struct.unpack_from("<H", w, 5)[0]),
+                    body,
+                )
+                if i == 2
+                else "-",
+                name,
+            )
 
     # Every 2-erasure pattern, all orders of the three surviving distinct shards.
     for chosen in itertools.combinations(wires, 3):
@@ -102,7 +111,7 @@ def main():
     send(group(wires[0], 2))
     send(wires[3])  # late group 1 replaces unfinished group 2, as official does
     send(wires[0])
-    send(wires[4], output(wires[3]))
+    send(wires[4], output(wires[0]))
     for i, wire in enumerate(wires[:3]):
         changed = group(wire, 2)
         send(changed, output(group(wires[0], 2)) if i == 2 else "-")
