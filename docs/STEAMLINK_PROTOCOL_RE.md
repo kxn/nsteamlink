@@ -4755,7 +4755,7 @@ minimum/smoothed RTT、min-update、offset，最后一例另比较offset样本�
 越界到6ms。普通sender的旧10ms原版fixture是直接seed连接字段，本地oracle也明确
 seed缓存10ms，不能为配合新getter而篡改该fixture输入。该组件对照本身不证明
 bandwidth/packet/video的实际入口或报告快照采集；§57另定义RTT/RX/TX/received接线，
-video与完整lost来源仍有独立边界。
+video与完整lost来源仍有独立边界；§58另核对普通channel的三个lost入口。
 
 ## 57. Socket收发入口与网络采样计数
 
@@ -4806,7 +4806,56 @@ Native全局阶段在报告前取得实际RTT/RX/TX/packet快照，进入同一�
 原受控network setter的独立报告案例仍有原覆盖范围，不当作该收发整链接线的替代。
 
 【边界】此处接通RTT、RX/TX字节及received计数；视频link仍为原默认0，lost的
-channel成功入窗retry>1及窗口Pop计数还需实际入口对照，不能把分母已采集称为完整
-丢包策略。实际RX/TX/快照三线程各1000包检查CRC计数、同tick合并、join后销毁，
+普通channel成功入窗retry>1、可靠Pop和不可靠过期空槽的实际入口对照见§58，
+不能把此处的分母采集单独称为完整丢包策略。实际RX/TX/快照三线程各1000包检查CRC计数、同tick合并、join后销毁，
 这是本地并发/生存期证据。实际全局network锁、构造时钟/极端值、CNetworkStats评分、上行FEC、
 硬件/decoder、真实Steam/Switch均不由本节证明。
+
+## 58. 丢包采样的三个客户端入口
+
+【官方客户端证据】继续使用§24.1固定SHA的Android客户端。原
+CStreamChannel::HandlePacket @0x7f9250的可靠和普通不可靠分支仅在
+BInsertPacket真正插入后、wire retry字节大于1时，调用PacketStats::Record：
+时间取packet+32，count=retry−1，lost=true。旧包及重复槽不产生这笔lost，
+但通过Connection准入的物理包仍有§57的received样本。
+
+原PopHeadOfPacketWindow_WithRef @0x7f743c在0x7f76c4–0x7f76d8累加
+头包raw[1]，在0x7f766c–0x7f7680累加每个已消费续片raw[1]。
+UpdateReliableState @0x7f9d0c将本轮所有Pop的总和在0x7f9dec–0x7f9e04
+另记为lost，时间取Update参数。这个输出不是跳过的缺包数；新retry=2包
+可在入窗记1、可靠交付再记2。不能凭统计直觉合并或去重这两笔官方事件。
+
+原UpdateUnreliableState @0x7fa3b0给Pop传NULL，不记录上述交付retry总和。
+0x7fa590–0x7fa680扫描过期前缀，推进时同时经过已有包和空槽，但只累计空槽；
+0x7fa688–0x7fa694以Update时间另记这些空槽为lost。孤立续片的跳过不算空槽。
+过期比较仍遵循§25.2；真实构造值是65tick，活动视频/音频启动会改为6553tick，
+不能用未启动的generic channel默认值替代活动媒体策略。
+
+【本地契约】窗口Add原bool表示“处理没有资源错误”，旧包/重复包也返回true，
+因此lost入口必须单独取得实际插入结果。可靠交付在窗口锁外累计记录；普通媒体
+过期只能计空槽，不能用原Discard的全部推进槽数代替。采样仍由会话Base锁保护，
+禁止在持有reliableLock/windowLock时反向取得Base锁。FEC独立入口、早到媒体缓存、
+全局调度及设备解码并不由这些普通3/4/5/6分支推定等价。
+
+
+【执行对照】audit-steam-network-loss.py执行原Socket→Connection→GetChannel/
+真实构造与EnsureCapacity→HandlePacket→UpdateReliable/UnreliableState→原采样队列。
+48组固定输入共246次状态、12份完整统计body，与Native真实CRC RX/窗口/可靠
+Update/全局上报逐项比较。覆盖retry=0/1/2/3/255、入窗前后重复/旧包、乱序续片、
+多个frame交付总和、可靠600跨度真实扩容及16384拒绝、接收时间/Update时间区分、
+严格3秒样本退休，以及sender回绕时6946tick保留/6947tick放弃。此边界案例先执行
+真实ProcessTimestamp：656tick样本约10.0098ms，经整数毫秒截断得额外6ms。
+另有只有lost、没有完整frame可交付及重复Update不新增loss的输入。
+
+【执行边界】Source最终feedback发送、引用计数、锁、player delegate是adapter；
+完整统计消息仍使用§57的加密/最终Frame准入边界。初始缺口可进入原可靠Update的
+line1139 increasing诊断，fixture另保存其次数，adapter按非调试继续执行；不隐藏
+为“没有assert”。Native媒体步骤使用生产worker的PollLocked入口受控驱动、独立
+记录返回空槽数；不等于复制官方同步network loop。媒体有界容量保护仍遵循§33/48
+已声明差异，不能以本节可靠扩容案例证明媒体动态扩容等价。
+
+【本地线程验证】真实媒体worker在过期缺口之后仍是未完成head时，验证无需
+decoder回调也发布lost；停止并join后释放。另三线程并发执行1000次实际TX、
+2000次真实CRC RX（其中1000个可靠retry=2）、可靠Update及网络快照读取，
+join后核对total=5000/lost=3000与有效样本。此处线程证据不能替代官方调度、
+早到媒体缓存/FEC独立路由、真实Steam会话或Switch解码显示的证据。
