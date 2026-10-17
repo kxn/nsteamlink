@@ -40,9 +40,26 @@ tools/switch-debugctl.py 10.10.10.17 diag prev
 ## 日志与清理
 
 独立 joinable 日志线程接收有界队列；生产者 trylock，队列满时丢弃日志，不阻塞渲染或输入。
-每秒记录实际媒体与可靠传输摘要。文件位于 `sdmc:/switch/nsteamlink/stream_diag.log`，
-每次运行最大 4 MiB；启动时轮转至 `stream_diag_prev.log`、`stream_diag_older.log`。
-UDP 读取内存快照，不在渲染线程读文件。配对码、安全码及密钥不进入该日志接口。
+每秒记录实际媒体与可靠传输摘要。每次启动在 `sdmc:/switch/nsteamlink/logs/`
+创建独立的 `session-<时间>-<纳秒>-<分卷>.log`；单卷达到 4 MiB 后续写新卷，
+不会因总写入超过 4 MiB 停止，也不自动覆盖或删除历史文件。磁盘写入失败由下载索引的
+`storage_errno` 报告。升级前的三份 `stream_diag*.log` 原样保留，也可通过下载接口读取。
+UDP 的 `diag` 仍只是兼容用的内存尾部，完整历史应从 HTTP 接口下载。
+配对码、安全码及密钥不进入该日志接口。
+
+调试版运行期间，原日志线程提供 TCP `28773` 的只读 HTTP 接口；停流返回首页后仍可使用。
+无需重进 hbmenu 或部署回收 NRO。切回可达的局域网后，在电脑运行：
+
+```bash
+python3 tools/pull-switch-logs.py --address 10.10.10.17 --output build/device-logs
+```
+
+`GET /logs` 返回版本、commit、存储错误、诊断队列丢弃数及日志索引；超过一页可按
+`next_after` 查询。`GET /logs/<文件名>` 支持有界 HTTP Range。工具以 32 KiB 分段下载，
+超时重试并保留 `.part` 以续传，核对响应范围和长度，在 `capture.json` 保存本地 SHA-256。
+当前文件按索引时的大小取快照，下次拉取补齐其后追加部分。工具不修改远端文件，
+也不读取配对资料。退出应用后 HTTP 服务随日志线程关闭；重新启动调试版即可读取保留下来的历史。
+文件与网络操作均由后台日志线程承担，协议收包、渲染和输入线程不执行下载文件 I/O。
 
 日志首行包含应用版本、完整 commit 和设备 Unix 时间，回收后须先核对是否属于目标会话。
 `connection_event` 记录实际选用 LAN UDP 或云端 SNS、请求响应及 IHS 配置/连接/断开阶段；

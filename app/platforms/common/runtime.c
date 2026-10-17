@@ -1,6 +1,6 @@
 #include "platform/runtime.h"
-#include "build_identity.h"
 #include "client_pri.h"
+#include "diagnostic_log.h"
 #include "discovery.pb-c.h"
 #include "media.h"
 #include "platform/shortcut.h"
@@ -76,125 +76,6 @@ struct sl_runtime {
 };
 
 #if NSL_DIAGNOSTICS
-/* The log producer never waits for disk or the network. */
-static pthread_mutex_t log_lock;
-static atomic_bool log_ready;
-static char log_tail_text[3501], log_previous_text[3501];
-static size_t log_tail_size;
-static char log_queue[128][224];
-static unsigned log_head, log_tail;
-static pthread_t log_worker;
-static atomic_bool log_stop;
-static bool log_started;
-static atomic_uint log_dropped;
-void sl_log(const char *s) {
-    if (!atomic_load(&log_ready))
-        return;
-    if (pthread_mutex_trylock(&log_lock)) {
-        atomic_fetch_add(&log_dropped, 1);
-        return;
-    }
-    if (log_head - log_tail < 128) {
-        snprintf(log_queue[log_head++ % 128], 224, "%.220s", s);
-    } else
-        atomic_fetch_add(&log_dropped, 1);
-    pthread_mutex_unlock(&log_lock);
-}
-static void *log_main(void *unused) {
-    (void)unused;
-    char path[512];
-    snprintf(path, sizeof(path), "%s/stream_diag.log", sl_system_data_dir());
-    char previous[512], older[512];
-    snprintf(previous, sizeof(previous), "%s/stream_diag_prev.log", sl_system_data_dir());
-    snprintf(older, sizeof(older), "%s/stream_diag_older.log", sl_system_data_dir());
-    remove(older);
-    rename(previous, older);
-    rename(path, previous);
-    FILE *old = fopen(previous, "r");
-    if (old) {
-        fseek(old, 0, SEEK_END);
-        long length = ftell(old);
-        if (length > 3500)
-            fseek(old, length - 3500, SEEK_SET);
-        else
-            rewind(old);
-        char text[3501];
-        size_t n = fread(text, 1, 3500, old);
-        text[n] = 0;
-        fclose(old);
-        pthread_mutex_lock(&log_lock);
-        memcpy(log_previous_text, text, n + 1);
-        pthread_mutex_unlock(&log_lock);
-    }
-    FILE *f = fopen(path, "w");
-    if (f) {
-        fprintf(f, "diagnostic version=%s commit=%s unix_time=%lld\n", NSL_APP_VERSION,
-                NSL_GIT_COMMIT, (long long)time(NULL));
-        fflush(f);
-    }
-    size_t bytes = 0;
-    for (;;) {
-        char message[224] = {0};
-        pthread_mutex_lock(&log_lock);
-        if (log_tail < log_head)
-            memcpy(message, log_queue[log_tail++ % 128], 224);
-        bool empty = log_tail == log_head;
-        if (message[0]) {
-            size_t len = strlen(message);
-            if (log_tail_size + len + 1 > 3500) {
-                size_t drop = log_tail_size + len + 1 - 3500;
-                memmove(log_tail_text, log_tail_text + drop, log_tail_size - drop);
-                log_tail_size -= drop;
-            }
-            memcpy(log_tail_text + log_tail_size, message, len);
-            log_tail_size += len;
-            log_tail_text[log_tail_size++] = '\n';
-            log_tail_text[log_tail_size] = 0;
-        }
-        pthread_mutex_unlock(&log_lock);
-        if (message[0])
-            sl_system_log(message);
-        if (message[0] && f && bytes < 4 * 1024 * 1024) {
-            int n = fprintf(f, "%llu %s\n", (unsigned long long)sl_system_now(), message);
-            if (n > 0)
-                bytes += (size_t)n;
-            fflush(f);
-        }
-        if (atomic_load(&log_stop) && empty)
-            break;
-        if (!message[0])
-            usleep(20000);
-    }
-    if (f)
-        fclose(f);
-    return NULL;
-}
-bool sl_log_start(void) {
-    if (atomic_load(&log_ready))
-        return true;
-    pthread_mutex_init(&log_lock, NULL);
-    log_head = log_tail = 0;
-    atomic_store(&log_dropped, 0);
-    log_tail_size = 0;
-    log_tail_text[0] = log_previous_text[0] = 0;
-    atomic_store(&log_stop, false);
-    atomic_store(&log_ready, true);
-    log_started = pthread_create(&log_worker, NULL, log_main, NULL) == 0;
-    if (!log_started) {
-        atomic_store(&log_ready, false);
-        pthread_mutex_destroy(&log_lock);
-    }
-    return log_started;
-}
-void sl_log_finish(void) {
-    if (!log_started)
-        return;
-    atomic_store(&log_stop, true);
-    pthread_join(log_worker, NULL);
-    log_started = false;
-    atomic_store(&log_ready, false);
-    pthread_mutex_destroy(&log_lock);
-}
 static void ihs_log(IHS_LogLevel level, const char *tag, const char *message) {
     if (level > IHS_LogLevelWarn && strcmp(tag, "Activity") && strcmp(tag, "StreamState") &&
         !(level == IHS_LogLevelInfo && !strcmp(tag, "Session")))
@@ -204,14 +85,6 @@ static void ihs_log(IHS_LogLevel level, const char *tag, const char *message) {
     sl_log(s);
 }
 #else
-void sl_log(const char *s) {
-    (void)s;
-}
-bool sl_log_start(void) {
-    return true;
-}
-void sl_log_finish(void) {
-}
 #define ihs_log NULL
 #endif
 #if NSL_DIAGNOSTICS
@@ -256,7 +129,7 @@ static void diagnostic_state(sl_runtime *r, const char *phase) {
              s.video_active, (unsigned long long)s.pacing.submits, s.decoded_frames,
              s.displayed_frames, s.audio_frames, s.audio_decode_errors, r->first_reported,
              (unsigned long long)(r->request_at ? sl_system_now() - r->frame_at : 0),
-             atomic_load(&log_dropped));
+             sl_log_drop_count());
     sl_log(line);
     snprintf(line, sizeof(line),
              "reliable phase=%s tracked=%llu ack=%llu retry=%llu nack=%llu fail=%llu giveup=%llu "
@@ -361,8 +234,8 @@ static void discovered(IHS_Client *client, const IHS_HostInfo *h, void *ctx) {
     snprintf(line, sizeof(line), "discovery: response %.63s %.63s", observed.name,
              observed.address);
     sl_log(line);
-    post(r, (sl_runtime_event){.type = SL_EVENT_HOST, .host = observed,
-                               .discovery_source = SL_DISCOVERY_LAN});
+    post(r, (sl_runtime_event){
+                .type = SL_EVENT_HOST, .host = observed, .discovery_source = SL_DISCOVERY_LAN});
 }
 static void authorized(IHS_Client *client, const IHS_HostInfo *h, uint64_t account, void *ctx) {
     (void)h;
@@ -451,6 +324,14 @@ static void configuring(IHS_Session *s, IHS_SessionConfig *c, void *ctx) {
         break;
     }
     c->maxBitrateKbps = sl_bitrate_valid(r->active.bitrate_kbps) ? r->active.bitrate_kbps : 6000;
+#if NSL_DIAGNOSTICS
+    char line[160];
+    snprintf(line, sizeof(line),
+             "stream_config game=%llu quality=%u bitrate_kbps=%u size=%ux%u fps=%u",
+             (unsigned long long)r->active.game_id, r->active.quality, c->maxBitrateKbps,
+             c->maxWidth, c->maxHeight, c->maxFps);
+    sl_log(line);
+#endif
 }
 static void connected(IHS_Session *s, void *ctx) {
     (void)s;
@@ -545,7 +426,9 @@ static void session_finalized(IHS_Session *session, void *ctx) {
 }
 #endif
 static const IHS_StreamSessionCallbacks session_cb = {
-    .configuring = configuring, .connected = connected, .disconnected = disconnected,
+    .configuring = configuring,
+    .connected = connected,
+    .disconnected = disconnected,
 #if NSL_HAVE_SNS
     .finalized = session_finalized,
 #endif
@@ -674,9 +557,11 @@ static void cloud_observed(const sl_remote_host *host, void *ctx) {
     if (known)
         snprintf(h.address, sizeof(h.address), "%s", known->address);
     IHS_HostInfo direct;
-    post(r, (sl_runtime_event){.type = SL_EVENT_HOST, .host = h,
-        .discovery_source = local_host(r, host->info.clientId, &direct)
-                                ? SL_DISCOVERY_LAN : SL_DISCOVERY_INTERNET});
+    post(r, (sl_runtime_event){.type = SL_EVENT_HOST,
+                               .host = h,
+                               .discovery_source = local_host(r, host->info.clientId, &direct)
+                                                       ? SL_DISCOVERY_LAN
+                                                       : SL_DISCOVERY_INTERNET});
 }
 static void cloud_offline(uint64_t id, void *ctx) {
     sl_runtime *r = ctx;
@@ -690,7 +575,8 @@ static void cloud_offline(uint64_t id, void *ctx) {
     if (!local_host(r, id, &local))
         post(r, (sl_runtime_event){.type = SL_EVENT_HOST_OFFLINE, .host = {.client_id = id}});
     else
-        post(r, (sl_runtime_event){.type = SL_EVENT_HOST, .host = host_from(&local),
+        post(r, (sl_runtime_event){.type = SL_EVENT_HOST,
+                                   .host = host_from(&local),
                                    .discovery_source = SL_DISCOVERY_LAN});
 }
 static void cloud_stream_result(IHS_StreamingResult result, const sl_remote_material *m,
@@ -773,7 +659,8 @@ static bool start_client(sl_runtime *r) {
 }
 /* Return completion observed before/during join, before destroying its owner. */
 static bool stop_session(sl_runtime *r) {
-    if (r->session || r->request_at) diagnostic_state(r, "stop_begin");
+    if (r->session || r->request_at)
+        diagnostic_state(r, "stop_begin");
     bool host_completed = false;
     sl_media_close_video();
     r->waiting_video = true;
@@ -1048,7 +935,8 @@ static void execute(sl_runtime *r, sl_command cmd) {
     }
 }
 static void sample(sl_runtime *r, uint64_t now) {
-    if (r->session || r->request_at) diagnostic_state(r, "sample");
+    if (r->session || r->request_at)
+        diagnostic_state(r, "sample");
     stream_media_snapshot s;
     stream_media_get_snapshot(&s);
     pthread_mutex_lock(&r->lock);
@@ -1218,9 +1106,9 @@ static void udp_poll(sl_runtime *r) {
     if (!strcmp(cmd, "state") || !strcmp(cmd, "stats") || !strcmp(cmd, "perf") ||
         !strcmp(cmd, "ping")) {
         snprintf(reply, sizeof(reply),
-                 "OK session=%d displayed=%u debug=%s fps=%s hid=%s ackMax=%s", r->session != NULL,
-                 r->debug.frames, r->debug.title, r->debug.values[0], r->debug.values[4],
-                 r->debug.values[5]);
+                 "OK session=%d displayed=%u debug=%s fps=%s hid=%s ackMax=%s logs_port=%u",
+                 r->session != NULL, r->debug.frames, r->debug.title, r->debug.values[0],
+                 r->debug.values[4], r->debug.values[5], sl_log_http_port());
     } else if (!strcmp(cmd, "audio")) {
         stream_media_snapshot *s = &r->previous;
         snprintf(
@@ -1238,13 +1126,8 @@ static void udp_poll(sl_runtime *r) {
                  (unsigned long long)s->reliableRetries,
                  (unsigned long long)s->reliableMaxAckLatencyMs);
     } else if (!strncmp(cmd, "diag", 4)) {
-        if (atomic_load(&log_ready)) {
-            pthread_mutex_lock(&log_lock);
-            snprintf(reply, sizeof(reply), "OK %s",
-                     strstr(cmd, "prev") ? log_previous_text : log_tail_text);
-            pthread_mutex_unlock(&log_lock);
-        } else
-            strcpy(reply, "ERR diagnostic log unavailable");
+        if (!sl_log_copy_tail(reply, sizeof(reply), strstr(cmd, "prev") != NULL))
+            strcpy(reply, "ERR diagnostic log unavailable or busy");
     } else if (!strcmp(cmd, "hid-history") || !strncmp(cmd, "hidlog", 6)) {
         stream_media_format_hid_history(reply, sizeof(reply), 16);
     } else {
@@ -1377,7 +1260,7 @@ static void *worker_main(void *ctx) {
         }
         uint64_t now = sl_system_now();
         if (r->session)
-            IHS_SessionSetPaused(r->session,!atomic_load(&r->foreground));
+            IHS_SessionSetPaused(r->session, !atomic_load(&r->foreground));
 #if NSL_HAVE_SNS
         if (r->sns) {
             sl_sns_update(r->sns, now);
@@ -1403,9 +1286,11 @@ static void *worker_main(void *ctx) {
                 if (known)
                     snprintf(h.address, sizeof(h.address), "%s", known->address);
                 IHS_HostInfo direct;
-                post(r, (sl_runtime_event){.type = SL_EVENT_HOST, .host = h,
-                    .discovery_source = local_host(r, h.client_id, &direct)
-                                            ? SL_DISCOVERY_LAN : SL_DISCOVERY_INTERNET});
+                post(r, (sl_runtime_event){.type = SL_EVENT_HOST,
+                                           .host = h,
+                                           .discovery_source = local_host(r, h.client_id, &direct)
+                                                                   ? SL_DISCOVERY_LAN
+                                                                   : SL_DISCOVERY_INTERNET});
             }
         }
         if (r->client && !r->session && !r->request_at && now - last_probe >= 3000) {
@@ -1521,7 +1406,7 @@ static void *worker_main(void *ctx) {
 #if NSL_HAVE_SNS
                 r->sns ? 1000000 :
 #endif
-                20000000;
+                       20000000;
             if (t.tv_nsec >= 1000000000) {
                 t.tv_sec++;
                 t.tv_nsec -= 1000000000;

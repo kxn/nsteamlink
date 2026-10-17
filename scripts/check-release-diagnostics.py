@@ -14,7 +14,7 @@ build = a.build.resolve()
 cache = (build / 'CMakeCache.txt').read_text()
 assert 'NSL_DIAGNOSTICS:BOOL=OFF' in cache, 'configure with -DNSL_DIAGNOSTICS=OFF'
 commands = json.loads((build / 'compile_commands.json').read_text())
-names = {'application.c', 'media.c', 'runtime.c', 'video_pipeline.c', 'gfx.c', 'frame_pacer.c', 'video_scheduler.c'}
+names = {'application.c', 'media.c', 'runtime.c', 'diagnostic_log.c', 'video_pipeline.c', 'gfx.c', 'frame_pacer.c', 'video_scheduler.c'}
 checked = 0
 for entry in commands:
     source = Path(entry['file'])
@@ -28,6 +28,9 @@ for entry in commands:
         continue
     assert '-DNSL_DIAGNOSTICS=0' in argv, f'diagnostic macro missing: {source}'
     data = obj.read_bytes()
+    if source.name == 'diagnostic_log.c':
+        for marker in (b'HTTP/1.1', b'storage_errno', b'GET required', b'session-%020'):
+            assert marker not in data, f'diagnostic log service remains in release: {marker!r}'
     for marker in (b'render-rate-test', b'--adaptive-pacing', b'--no-adaptive-pacing', b'RUNTIME_FIXTURE_', b'CLOUD_FIXTURE_', b'vq1 ', b'vq7 ', b'vq8 ', b'vq9 '):
         assert marker not in data, f'diagnostic string {marker!r} in {obj}'
     if source.name == 'gfx.c' and source.parent.name == 'switch':
@@ -48,7 +51,7 @@ for entry in commands:
         for required in ('sl_pacer_wait', 'sl_pacer_publish', 'sl_pacer_submit'):
             assert required.encode() in data, f'product scheduler missing: {required}'
     checked += 1
-assert checked == 7, f'expected seven relevant translation units, got {checked}'
+assert checked == 8, f'expected eight relevant translation units, got {checked}'
 for entry in commands:
     if not entry['file'].endswith('/sns_backend.cpp'):
         continue

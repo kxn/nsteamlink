@@ -140,7 +140,8 @@ target_include_directories(nsl_ui PUBLIC ${NSL_IDENTITY_DIR} ${NSL_I18N_DIR})
 target_compile_definitions(nsl_ui PUBLIC NSL_DIAGNOSTICS=$<BOOL:${NSL_DIAGNOSTICS}> NSL_ADAPTIVE_PACING=$<BOOL:${NSL_ADAPTIVE_PACING}>)
 add_library(nsl_platform STATIC platforms/common/application.c platforms/common/sdl_input.c platforms/common/media.c
     platforms/common/shortcut_package.c platforms/${NSL_PLATFORM}/shortcut.c
-    platforms/common/ui_renderer.c platforms/common/ui_audio.c platforms/common/runtime.c platforms/${NSL_PLATFORM}/system.c
+    platforms/common/ui_renderer.c platforms/common/ui_audio.c platforms/common/runtime.c
+    platforms/common/diagnostic_log.c platforms/${NSL_PLATFORM}/system.c
     platforms/${NSL_PLATFORM}/events.c)
 target_include_directories(nsl_platform PRIVATE ${CMAKE_SOURCE_DIR}/third_party/ihslib/src
     ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf)
@@ -258,6 +259,15 @@ if(NSL_PLATFORM STREQUAL "switch")
     endif()
 endif()
 if(NSL_PLATFORM STREQUAL "desktop")
+    add_executable(nsl-diagnostic-log-tests tests/test_diagnostic_log.c platforms/common/diagnostic_log.c)
+    add_dependencies(nsl-diagnostic-log-tests nsl_identity)
+    target_include_directories(nsl-diagnostic-log-tests PRIVATE src platforms/common ${NSL_IDENTITY_DIR})
+    target_compile_definitions(nsl-diagnostic-log-tests PRIVATE NSL_DIAGNOSTICS=1
+        NSL_DIAGNOSTIC_PORT=0 NSL_DIAGNOSTIC_SEGMENT_BYTES=4096)
+    target_compile_options(nsl-diagnostic-log-tests PRIVATE -Wall -Wextra -UNDEBUG)
+    target_link_libraries(nsl-diagnostic-log-tests PRIVATE Threads::Threads)
+    add_test(NAME nsl-diagnostic-log COMMAND nsl-diagnostic-log-tests)
+    set_tests_properties(nsl-diagnostic-log PROPERTIES TIMEOUT 20)
     add_executable(nsl-lan-transport-tests tests/test_lan_transport.c)
     target_include_directories(nsl-lan-transport-tests PRIVATE
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)

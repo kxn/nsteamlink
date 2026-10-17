@@ -164,7 +164,19 @@ static bool return_profile(const char *directory, const unsigned char key[32], u
         }
         const char marker[]="\nRUNTIME_LOG_TAIL\n";
         memcpy(combined+used,marker,sizeof(marker)-1); used+=sizeof(marker)-1;
-        snprintf(path,sizeof(path),"%s/stream_diag.log",directory);
+        char log_dir[256],newest[96]={0};
+        snprintf(log_dir,sizeof(log_dir),"%s/logs",directory);
+        DIR *logs=opendir(log_dir);
+        if (logs) {
+            struct dirent *entry;
+            while ((entry=readdir(logs)))
+                if (!strncmp(entry->d_name,"session-",8) && strlen(entry->d_name)<sizeof(newest) &&
+                    strcmp(entry->d_name,newest)>0)
+                    snprintf(newest,sizeof(newest),"%.95s",entry->d_name);
+            closedir(logs);
+        }
+        if (newest[0]) snprintf(path,sizeof(path),"%s/logs/%s",directory,newest);
+        else snprintf(path,sizeof(path),"%s/stream_diag.log",directory);
         FILE *diagnostic=fopen(path,"rb");
         if (diagnostic) {
             if (!fseek(diagnostic,0,SEEK_END)) {
@@ -326,9 +338,11 @@ int main(int argc, char **argv) {
             }
         }
 #if NSL_PRIVATE_RUNTIME_FIXTURE
-        /* Only the generated private fixture root is used by the application.
-         * Artwork has one flat, bounded cache directory; no recursive SD walk. */
-        char artwork[256]; snprintf(artwork,sizeof(artwork),"%s/artwork",directory);
+        /* Only the generated private fixture root is used. Both cache and
+         * diagnostic archive are flat; never walk the product's SD tree. */
+        const char *subdirs[]={"artwork","logs"};
+        for (unsigned sub=0;sub<sizeof(subdirs)/sizeof(subdirs[0]);++sub) {
+        char artwork[256]; snprintf(artwork,sizeof(artwork),"%s/%s",directory,subdirs[sub]);
         DIR *cache=opendir(artwork);
         if (cache) {
             struct dirent *entry;
@@ -340,6 +354,7 @@ int main(int argc, char **argv) {
             closedir(cache);
             if (rmdir(artwork) && errno != ENOENT) { result=1; cleared=false; }
         } else if (errno != ENOENT) { result=1; cleared=false; }
+        }
         if (rmdir(directory) && errno != ENOENT) { result=1; cleared=false; }
         sl_live_printf("PRIVATE_RUNTIME_STORE_CLEAN=%d\n",cleared);
 #else
