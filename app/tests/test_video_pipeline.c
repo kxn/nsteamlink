@@ -118,6 +118,7 @@ static void take(run *r) {
     assert(found);
     IHS_FrameIdentity identity = IHS_FrameTicketIdentity(frame->ticket);
     assert(frame->pixels->pts == (int64_t)identity.receiveSerial);
+    assert(frame->has_media_timestamp && frame->media_timestamp == 0x100000u + identity.frameId * 777u);
     assert(frame->pixels->width == 128 && frame->pixels->height == 72);
     assert(frame->pixels->format == AV_PIX_FMT_YUV420P);
     assert(frame->decode_end_us >= frame->decode_begin_us);
@@ -148,10 +149,14 @@ static void submit(run *r, const unsigned char *data, size_t size) {
     IHS_FrameTicket *ticket;
     assert(IHS_FrameTrackerBegin(r->tracker, r->key.epoch, ++r->packets, &received, &ticket) ==
            IHS_FrameBeginOK);
+    IHS_FrameTicketSetVideoTimestamp(ticket, 0x100000u + r->packets * 777u);
     bool taken = false;
     assert(sl_video_submit(r->pipeline, r->key, data, size, ticket, &taken, false) ==
                SL_VIDEO_SUBMIT_OK &&
            taken);
+    /* Outputs may be reordered and published after a later packet. The
+     * presentation stamp belongs to the packet token, never a mutable ticket. */
+    IHS_FrameTicketSetVideoTimestamp(ticket, 0xdeadbeefu);
     IHS_FrameTicketRelease(ticket);
     take(r);
 }

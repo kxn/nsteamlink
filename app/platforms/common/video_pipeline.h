@@ -13,6 +13,8 @@ typedef struct sl_video_frame {
     sl_video_key key;
     IHS_FrameTicket *ticket;
     uint64_t decode_begin_us, decode_end_us, publish_seq;
+    uint32_t media_timestamp;
+    bool has_media_timestamp;
     void *domain;
     atomic_bool available;
 } sl_video_frame;
@@ -46,7 +48,9 @@ sl_video_submit_result sl_video_submit(sl_video_pipeline *, sl_video_key, const 
                                        size_t, IHS_FrameTicket *, bool *ticket_taken,
                                        bool keyframe);
 bool sl_video_flush(sl_video_pipeline *, sl_video_key);
-sl_video_frame *sl_video_take(sl_video_pipeline *); /* transfers pending reference */
+sl_video_frame *sl_video_take(sl_video_pipeline *); /* transfers newest ready reference */
+/* Original GetVideoWait: -1 without a queued frame, else remaining milliseconds. */
+int32_t sl_video_wait(sl_video_pipeline *);
 bool sl_video_is_current(sl_video_pipeline *, sl_video_key);
 void sl_video_reap(sl_video_pipeline *);
 bool sl_video_clean(sl_video_pipeline *);

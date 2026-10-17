@@ -17,9 +17,11 @@ find_package(Threads REQUIRED)
 add_library(nsl_video_contracts STATIC platforms/common/frame_lifetime.c platforms/common/app_lifecycle.c)
 target_include_directories(nsl_video_contracts PUBLIC platforms/common)
 target_compile_options(nsl_video_contracts PRIVATE -Wall -Wextra)
-add_library(nsl_video_pipeline STATIC platforms/common/video_pipeline.c)
+set_source_files_properties(platforms/common/video_timing.c PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+add_library(nsl_video_pipeline STATIC platforms/common/video_pipeline.c platforms/common/video_timing.c)
 target_compile_definitions(nsl_video_pipeline PRIVATE NSL_DIAGNOSTICS=$<BOOL:${NSL_DIAGNOSTICS}>)
-target_include_directories(nsl_video_pipeline PUBLIC platforms/common)
+target_include_directories(nsl_video_pipeline PUBLIC platforms/common
+    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
 target_compile_options(nsl_video_pipeline PRIVATE -Wall -Wextra -Wno-unknown-pragmas)
 target_link_libraries(nsl_video_pipeline PUBLIC nsl_video_contracts ihslib PkgConfig::FFMPEG Threads::Threads)
 # Backend is a platform property, not a selectable Switch fallback. Clear old
@@ -173,6 +175,22 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-client-settings-io.py"
         --receiver $<TARGET_FILE:nsl-stream-settings-oracle>)
     set_tests_properties(stream_settings_official_vectors PROPERTIES TIMEOUT 60)
+    add_executable(nsl-video-timing-oracle tests/video_timing_oracle.c)
+    target_include_directories(nsl-video-timing-oracle PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf ${CMAKE_SOURCE_DIR}/third_party/ihslib/tests/common)
+    target_compile_definitions(nsl-video-timing-oracle PRIVATE NSL_DIAGNOSTICS=$<BOOL:${NSL_DIAGNOSTICS}>)
+    target_compile_options(nsl-video-timing-oracle PRIVATE -UNDEBUG -Wall -Wextra -Wno-unknown-pragmas)
+    target_link_libraries(nsl-video-timing-oracle PRIVATE nsl_platform ihs-test-session)
+    target_link_options(nsl-video-timing-oracle PRIVATE -Wl,--wrap=IHS_SessionPacketTimestamp
+        -Wl,--wrap=avcodec_send_packet -Wl,--wrap=avcodec_receive_frame
+        -Wl,--wrap=IHS_FrameTicketVideoDecodeStage
+        -Wl,--wrap=IHS_SessionPacketsWindowReleaseFrame -Wl,--wrap=IHS_BaseSend
+        -Wl,--wrap=IHS_SessionSendControlMessage -Wl,--wrap=IHS_FrameTicketComplete)
+    add_test(NAME video_timing_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-video-timing.py"
+        --receiver $<TARGET_FILE:nsl-video-timing-oracle>)
+    set_tests_properties(video_timing_official_vectors PROPERTIES TIMEOUT 60)
     add_executable(nsl-video-keyframe-runtime tests/video_keyframe_runtime.c)
     target_include_directories(nsl-video-keyframe-runtime PRIVATE platforms/common
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client

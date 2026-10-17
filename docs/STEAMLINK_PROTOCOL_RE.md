@@ -6943,3 +6943,93 @@ python3 scripts/check-steam-video-subframe.py \
 ctest --test-dir build/desktop --output-on-failure \
   -R '^(video_subframe_official_vectors|video_keyframe_runtime)$'
 ```
+
+## 87. 视频媒体时间戳、jitter准入与已到期帧选择
+
+【官方客户端证据】固定core SHA同§24.1。§86末片的ID与timestamp分别经
+OnThink @0x7b261c/2620、FinalDecode @0x7b1088传到Android SDK输入与真实
+CAndroidFrame。时间戳探索例中，末片time1002000原样保存在player队列frame+32，
+SDK presentationTimeUs为15289307。frame1/time1000000贡献字节、frame2首片
+/time1001000、frame2末片/time1002000均无原assert。此为decoder边界的实际输入，
+不证明Host正常生成同ID不同timestamp的分片。
+
+【字段语义澄清】Native `receive.senderFrameTimestamp`是tracker首次接收记录；
+不能因它保留1001000就直接把它改为1002000并称统计已对齐。RX统计与decoder
+媒体时间戳是两个消费位置。正确的播放接线须另携带末片媒体时间戳，且在解码输出
+envelope上快照；不可用可复用ticket的后续字段覆盖先前已发布图片的metadata。
+§70已证明正常RX先按缓存offset归一化再进入video消费者；直接decoder输入的
+raw时间戳也只归一化一次。两种路径均保持原packet/body不变。
+
+【实际准入生产者】IStreamPlayer构造 @0x767734–773c在player+296构造
+CFrameJitterTracker("Video",60)。PutVideoFrame @0x767dc8–7dec从真实frame虚表
+取媒体timestamp，并取当前GetStreamTimestamp，调用原Update。原Update
+@0x76678c先查BShouldUseVideoSurface；true直接返回。否则按32位回绕有符号差
+将now-frame转为float32毫秒：负值忽略，>150ms清当前样本批次与计数，保留旧budget。
+每60个有效样本实际Calculate得到mean/stddev，budget=trunc(mean+2*stddev)；已有
+非零budget时再按带符号整数除二截断平滑。清样本后继续下一批，不要求先丢包。
+
+BReady @0x7668d8在budget=0时直接true；否则比较float32帧龄>=整数budget。
+GetCurrentWait @0x766974在budget=0时返回0，否则max(budget-trunc(age_ms),0)。
+两者都使用媒体时间戳、当前stream clock与32位回绕。原GetVideoWait
+@0x767e64、GetAvailableVideoFrame @0x767f1c将FIFO头保留在player+272，再按该
+帧时间戳检查jitter；头尚未ready不会跨过它选后面的帧。GetNextVideoFrame
+@0x767fe0与BGetNextVideoFrame @0x76817c反复取得已ready帧，较旧ready帧以
+result6释放，保留最新ready帧。未ready的后继仍保留，不能一律在发布时替换旧帧。
+
+FlushVideoStream @0x7681ec–82d0清FIFO和三个held slot，未重置player+296的
+jitter样本/budget；同一player的decoder重建应保留。新player构造从0开始。IHSlib
+tracked ticket/epoch、FFmpeg/GPU所有权仍是平台资源约束，不能复制Android引用布局。
+
+【Surface开关的产品条件】原BShouldUseVideoSurface @0x909ea4–9ff4首次读取
+SDL_IsTV与ro.product.manufacturer/model，拼接"manufacturer model"后：精确
+"Amlogic X96-W"、"Google Chromecast"禁用；以"Oculus Quest"或"Pico "开头
+启用；其他保留SDL_IsTV。结果缓存。此为Android平台/设备分支，不是FEC、丢包或
+解码器错误的动态开关。Native FFmpeg/texture/import路径没有Android VideoSurface
+能力，按非Surface播放路径核对；不能把“硬件解码/zero-copy”本身等同于该开关。
+
+【已有差异与本地界限】旧Native发布时只保留最新图片，并以本地解码输出时间和
+自有adaptive pacer决策；没有上述媒体时间戳jitter准入。Source自然运行60个约10ms
+帧龄的图片得到budget9，随后帧龄0的图片GetVideoWait=9、GetAvailable返回null；
+不是每一张解码输出都立即可绘。Native采用20个lease与两个domain/map/fence保护作为明确资源界限。原固定6个lease
+在新jitter准入下不够覆盖合法高budget：60个[0,150]ms样本的mean+2*sample_stddev
+严格小于244ms，按已声明最大60fps需15个排队帧，加candidate/current、两GPU批次
+与一次发布交接得到20。更小壳数会在帧到期前反复淘汰它们，不能冒称已对齐。
+此调整扩大预分配AVFrame/envelope壳预算至20+2 scratch，不改变renderer自分配
+96MiB、导入backing128MiB与map组等既有独立约束；真实codec pool/显存仍独立验证。
+资源预算触发的淘汰/失败不冒称原无界队列策略。OS/GPU
+实际等待、完整CStreamPlayer渲染/UI、音频同步和Host完整producer仍各有独立范围。
+
+【SDK输入与输出的时序纠正】PutVideoFrame中的CAndroidFrame是已接受输入的frame job，
+并不是已取得物理像素的证明。原Android BDecodeFrame @0x906570与BSubmitFrame
+@0x906660执行SDK queueInputBuffer后建job并入player；解码输出映射由另一消费位置负责。
+原OnThink @0x7b2720–2734记录event14，FinalDecode返回后@0x7b2754–2768记录event15。
+因此撤回“在Native publish得到像素后采样jitter/记decodeEnd即可等价”的判断：
+两者会把后端输出延迟混入输入抖动/提交耗时；无输出的已接受输入也会漏采样。
+Native在成功send_packet后、receive_frame前采样并结束提交计时；protocol提交范围负责
+开始计时与失败/无backend的结束兜底。同一次调用只记录一次结束，后续输出不覆盖它。
+物理输出耗时仍保留在本地frame诊断字段，不混入此协议提交计时。
+
+固定时钟对照将SDK输入接受推进65 ticks，Native输出另推进650 ticks：原event14/15
+实际分别在1000000/1000065；Native实际runtime→worker→FFmpeg在相同阶段结束。
+对照逐步检查原RecordFrameEvent调用的ID/14/15/受控stream clock；这证明调用位置与
+本例先后顺序，不证明完整Stats报文或物理NDK输出/空job映射等价。原frame job序列
+与Native有像素的完成序列仅在所列非空AU用例投影比较；空AU仅比输入采样/提交事件，
+Native不生成伪图片。完整AVsync/UI、物理codec错误/延迟与全部统计消费者均有独立边界。
+
+【可复现对照】`scripts/audit-steam-video-timing.py CORE --check
+scripts/fixtures/steam-video-timing-reference.json.gz`执行固定SHA原构造、DecodeFrame、
+OnThink/FinalDecode、Android SDK提交、jitter/stat与player选择/flush原函数：15组1659状态，
+另18组真实Surface条件/缓存、1个空输入采样/提交事件投影。静态保留15个完整原函数。
+SDK接受/平台属性/时钟/渲染机会作为明确终点；不是把Native算法当作官方期望值。
+`video_timing_official_vectors`将同一动作交给实际controlStart/Stop、parser、worker、
+生产callback与FFmpeg，核对完整媒体ID/time、样本float bits/budget、队列、等待、选帧、
+实际提交事件，像素逐张比独立framemd5。原VideoFrameComplete产生的缺ID result3等
+完整调用另保存在fixture，当前Native完成比较只投影已知非空图片的result1/6。
+
+八项Source反事实须执行原分支且实际改变状态/SDK或选择，不能以原assert/harness异常充数。
+十三项Native隔离变体覆盖错误RX/末片timestamp、stddev/负样本/outlier/平滑、直接ready/
+wait0、每epoch清样本、发布即替换、输出后采样、输出后结束计时与六lease资源界限。
+高budget连续20帧场景实际观察到六lease变体选帧结果不同；正式20lease保留到期画面。
+资源用例还持有旧图片与map跨actor重建/Stop/session销毁/IHS_Quit释放，核对同player
+budget保留及所有域最终回收。重排输出另将submit后ticket时间戳污染为0xdeadbeef，
+证明每个packet/output快照独立；这不证明Android帧job映射与FFmpeg B帧重排消费等价。

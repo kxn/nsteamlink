@@ -104,7 +104,7 @@ renderer。主线程协调应用状态，各子系统只销毁自己拥有、且
 flowchart LR
     A[Application 主线程] -->|请求 / 状态事实| R[Runtime / IHS]
     R -->|video callbacks| V[Video pipeline]
-    V -->|FrameLease / 最新帧 mailbox| G[Renderer 主线程]
+    V -->|FrameLease / 按媒体时间戳准入的 FIFO| G[Renderer 主线程]
     A -->|绘制 / collect| G
     G -->|完成 ticket| T[IHS FrameTracker]
     V -->|接收 / 解码 / 丢弃归因| T
@@ -236,8 +236,11 @@ present 返回 submitted=true 而 result=ERROR 时，仍保留批次；没有可
 设备错误不能用普通取消释放。emergency-clear 只替换尚未入 queue 的命令，不能撤销已提交工作。
 软件 staging 与软件 current 纹理是不同寿命：批次可复用不等于 current 像素可覆写。
 
-初始容量：pending=1、candidate=1、current=1、GPU 批次=2、应用 AVFrame 壳对象=8
-（最多两个 domain scratch + 六个 FrameLease envelope）。容量统计按唯一对象而非引用数；
+视频待选队列按官方媒体时间戳/jitter准入，详见STEAMLINK_PROTOCOL_RE §87；取最新已到期帧，
+后续尚未到期帧保留。历史pending=1/六个envelope预算撤回：合法60样本等待可达约244ms，
+按最大60fps需15个排队帧，加candidate/current、两GPU批次和一次发布交接，共20个FrameLease。
+应用AVFrame壳预算为22（两个domain scratch + 20个envelope）；不增加renderer自分配96MiB、
+导入backing128MiB等独立上限。容量统计按唯一对象而非引用数；
 包含旧 epoch 在途引用，耗尽时仍处理压缩输入的
 解码参考关系，丢弃无法交付的输出并明确计数。`extra_hw_frames=6` 为显示持有余量，不是 decoder pool 上限。
 
@@ -255,7 +258,7 @@ session/renderer/decoder；IHS 拥有活动引用，帧 ticket 持有记录使�
 
 接口语义：`begin_received` / `record_decode_stage` / `complete(ticket, outcome, timestamps)` /
 `settle_and_drain` / `close_epoch` / `close_endpoint`。renderer 只调用 complete 并释放 ticket；decoder→renderer 移交时
-一并移交“报告最终结果”的权利，pending 被覆盖由 decoder 侧终结，已取走的帧不能再由它回报。
+一并移交“报告最终结果”的权利，就绪旧帧被跳过或本地预算淘汰由实际摘出引用的一侧终结，已取走的帧不能再由它回报。
 关闭时由实际摘出 pending 的 owner 终结该 ticket；移交在 mailbox 临界区完成，main 与 callback
 不能分别给同一帧报告一次丢弃。帧已首呈现后 ticket 可归还，current/GpuBatch 的像素引用继续保留。
 复杂 receive/输出对应关系由 PTS/COPY_OPAQUE fixture 证明；没有可靠归因不能伪造 ticket。
@@ -422,7 +425,7 @@ fence 对象本身也属于 submission slot；不能在尚有资源引用该 ser
 3. renderer collect 完成批次/退役 pool；发布 renderer 使用结束的事实，runtime 轮询回收关闭的 codec domain。
 4. Stopping 时不再取该 session 视频，正常 gfx 可继续画 UI；Exiting/DeviceFailed 禁止新批次，
    仅处理已经 acquired 的收尾、collect 与停止状态推进。无可呈现 foreground 时有界让出。
-5. Starting/Streaming 及正常 UI 绘制有空批次才 begin；预留必要容量后 acquire，再取最新 pending。
+5. Starting/Streaming 及正常 UI 绘制有空批次才 begin；预留必要容量后 acquire，再取最新已到期帧。
    核对 epoch，导入 candidate 并取得 Recording 引用；失败按错误作用域收尾，不更改 current。
 6. 绘制视频/UI，提交并记录批次 fence，再 present；发布 ticket 完成结果和本地呈现健康快照。
    首帧 UI 事件从当前 session 的真实首次 present 生成，不等待 FrameTracker drain 或一秒诊断采样。
@@ -432,7 +435,7 @@ runtime 中旧的视频首帧/停滞 watchdog 迁至 application，避免两套�
 runtime 可继续读取带 session_id/video_epoch 的呈现快照供既有 launch/activity 逻辑使用，
 不能用跨代累计计数变化推断新会话首帧。诊断开关不改变首帧事件或健康判断。
 
-swapchain 初始 2 张 RGBA8、无 MSAA/深度缓冲；swap interval=1。命令在途最多 2，pending=1。
+swapchain 初始 2 张 RGBA8、无 MSAA/深度缓冲；swap interval=1。命令在途最多2；待选FIFO与20个envelope共享容量，只有已到期帧参与选择。
 不引入积满再播的软件 FIFO。输出固定 1280×720，dock 不自动启用 1080p。
 正常状态每个显示节拍重画 current+UI；不将 UI 动画绑在新视频上，不同时实现 idle 按需渲染。
 busy/suspend 用有界短等待避免忙转；不在正常显示节拍上额外照搬 SDL_Delay(1)。
@@ -748,7 +751,7 @@ typedef struct { uint32_t index; uint64_t version; } sl_domain_handle;
 typedef enum { DOMAIN_FREE, DOMAIN_OPENING, DOMAIN_ACTIVE,
                DOMAIN_FROZEN, DOMAIN_DESTROYING } sl_domain_state;
 
-struct sl_frame_lease {               // 固定 6 个 envelope，另有 2 个 domain scratch
+struct sl_frame_lease {               // 固定20个envelope，另有2个domain scratch
     atomic_uint refs;
     AVFrame *frame;                   // 初始化时分配，只在独占 envelope 时 move_ref
     sl_domain_handle domain;
@@ -778,10 +781,10 @@ envelope 按位不可变。mailbox 的短 mutex 为新帧可见性提供发布/�
 已经持有有效引用或 mailbox 对象引用。`fetch_add(relaxed)` 只适用于这个前提；最后一次
 `fetch_sub(acq_rel)` 释放 AVFrame 后，才将 domain.external_frames 减一。不能先公布外部使用归零。
 free-envelope 管理复用 mailbox 的短锁或专用固定池锁；AVFrame unref 和 ticket 终结始终在锁外。
-scratch 属于这 8 个壳对象预算；不能先建 8 个 envelope 又给每个 domain 额外分配 scratch。
-当前最多 pending/candidate/current 各一、两批各一，共五个不同 envelope，第六个供交接；
-当一次渲染同时持有旧 current 与新 candidate 时，仍按其实际唯一引用集合计数，满时不发布新输出。
-冻结 domain 前清空 packet/scratch 的临时引用；FFmpeg 内部 DPB 依赖保留到最终 codec 析构。
+scratch属于22个壳对象预算中的两个，20个envelope共享于待选FIFO、candidate/current、两GPU批次
+与一次交接，不额外分配。按官方244ms以下的等待上界与已声明60fps，15个排队帧仍能保留到ready，
+避免固定6壳在到期前反复淘汰帧。预算耗尽时可有界淘汰最旧排队引用，作为明确本地保护；
+在途GPU/current不能被强制释放。冻结domain前清空packet/scratch的临时引用；FFmpeg 内部 DPB 依赖保留到最终 codec 析构。
 
 domain 的状态转换只由 pipeline 执行；runtime reaper 在 decoder_lock 下确认冻结、callbacks=0、
 外部帧=0、renderer_groups=0，摘为 DESTROYING，解锁后析构 FFmpeg，再锁内归还 slot。
@@ -907,15 +910,15 @@ submit(input, ticket):                         // callback；decoder_lock 下
     drain_available_outputs()                  // 取每个输出自己的 token
     若 send/receive 双 EAGAIN 且无进展：API 契约错误，停止；不能 sleep 重试
     若已关闭：终结仍未送入的 token，退出循环
-  若 send 成功：av_packet_unref(packet)，drain_available_outputs()
+  若send成功：按末片媒体时间戳更新官方jitter、结束协议提交计时，再unref/drain输出
   否则：按真实错误终结尚未接管输出的 token，unref packet
 
 drain_available_outputs():
   每次 receive 前 scratch 为空；receive 返回 EAGAIN 即结束本次 drain
-  成功输出：验证 token/key；claim 唯一 ticket；记录该输出的 decode_end
-  获取空 envelope；无容量则终结该输出结果、unref，继续 drain 保持解码状态
+  成功输出：验证token/key；claim唯一ticket；记录本地物理输出耗时（不覆盖协议提交结束）
+  获取空envelope；可先有界淘汰最旧排队引用；仍无容量则终结该输出、unref并继续drain
   move_ref(scratch -> envelope.frame)，登记 external_frames 和只读 metadata
-  mailbox 下复核 session/epoch，交换 pending；锁外终结/释放被覆盖帧
+  mailbox下复核session/epoch、追加FIFO；按媒体时间戳取最新ready，锁外终结/释放跳过的就绪旧帧
   关闭后输出不再发布，锁外释放；下次循环检查停止，不为 stop 主动 drain 全部延迟画面
 ```
 
@@ -1063,7 +1066,7 @@ render_tick:
   collect();  若无 Free batch/非前台/应用已退出则返回
   reserve batch + 全部必需容量 + 独立 clear 命令容量
   begin/acquire output；记录 acquired=true、output_index
-  mailbox 下取最新 pending，并预留可能作为 fallback 的 current；每次使用都核对关闭
+  mailbox下取最新已到期帧，并预留可能作为 fallback 的 current；每次使用都核对关闭
   导入/软件上传 candidate；任何 draw 之前 batch_pin(resource_version)
   成功则录制视频与 UI；可选内容失败用占位；必要视频失败锁存会话错误
   若整批需回退且尚未入 queue：取消本批普通命令，录制预留 clear
