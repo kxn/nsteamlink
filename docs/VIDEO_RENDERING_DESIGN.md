@@ -236,6 +236,11 @@ present 返回 submitted=true 而 result=ERROR 时，仍保留批次；没有可
 设备错误不能用普通取消释放。emergency-clear 只替换尚未入 queue 的命令，不能撤销已提交工作。
 软件 staging 与软件 current 纹理是不同寿命：批次可复用不等于 current 像素可覆写。
 
+官方消费语义分层见STEAMLINK_PROTOCOL_RE §87–88：输入任务的jitter准入与实际像素输出选择
+是两个位置。§88已给出“较早任务到期、SDK仅有后继未到期输出”的反例，不能把以下像素FIFO
+在顺序输出用例中的对照扩展为完整texture消费等价。完整平台适配须分别表达任务、像素/PTS、
+复用与完成结果归属，并与实际上层调用者核对；GPU/map引用仍须按真正持有的像素独立管理。
+
 视频待选队列按官方媒体时间戳/jitter准入，详见STEAMLINK_PROTOCOL_RE §87；取最新已到期帧，
 后续尚未到期帧保留。历史pending=1/六个envelope预算撤回：合法60样本等待可达约244ms，
 按最大60fps需15个排队帧，加candidate/current、两GPU批次和一次发布交接，共20个FrameLease。

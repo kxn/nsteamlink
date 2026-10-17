@@ -7033,3 +7033,95 @@ wait0、每epoch清样本、发布即替换、输出后采样、输出后结束�
 资源用例还持有旧图片与map跨actor重建/Stop/session销毁/IHS_Quit释放，核对同player
 budget保留及所有域最终回收。重排输出另将submit后ticket时间戳污染为0xdeadbeef，
 证明每个packet/output快照独立；这不证明Android帧job映射与FFmpeg B帧重排消费等价。
+
+## 88. Android输入任务到SDK输出：texture与VideoSurface消费边界
+
+【官方客户端证据】固定Android 1.3.32 core及SHA同§24.1。实际
+CAndroidAccel::RenderFrame @0x906d40先检查全局禁用位/codec句柄，再按
+BShouldUseVideoSurface转到texture @0x908e04或VideoSurface @0x908494；
+CAndroidVideoDecoder::BRenderFrame @0x906e34另有同类dispatcher。同用MediaCodec
+不等于同一套输出消费规则。固定输入经原DecodeFrame/OnThink/FinalDecode、
+BSubmitFrame与player选择创建真实CAndroidFrame；NDK输出index/PTS/status/format
+作为显式平台输入。SDK/JNI/SDL输出终点不冒称已取得Android物理像素。
+
+### 88.1 texture的PTS匹配、等待、复用与失败
+
+原frame+32是媒体16.16时间戳，frame+40是BSubmitFrame实际传给SDK的presentationTimeUs；
+后者在@0x906aec–6b6c按float32增量生成并缓存，不可假定与Native的receiveSerial PTS
+数值相同。texture比较frame+40与decoder+192（上次**请求**的PTS）：
+
+| 触发条件 | 实际原分支/结果 |
+| --- | --- |
+| 请求PTS不大于缓存值 | @0x908e38–e40跳过SDK取输出，继续画既有texture；首次PTS=0、重复/回退PTS亦受此guard约束 |
+| 请求PTS更大 | 先@0x908e70写缓存，再取SDK输出；失败也已更新缓存 |
+| SDK取得目标PTS | @0x908e80–ecc停止取更多buffer，以render=true释放该index、JNI更新texture后绘制 |
+| SDK取得其他PTS，后面还有buffer | @0x908e90–ec0以零等待再取；先前index以render=false释放；重复比较目标PTS |
+| SDK取得其他PTS，再取返回-1 | @0x908ea0–ecc使用最后取得的index，render=true；没有再对这个实际输出做媒体jitter准入 |
+| 初次/重试取buffer的status为负 | 前五个负status交给原BHandleOutputBuffer；成功处理后重试，每次传250000us，合计最多六个这样的等待请求；末次仍无数据的域见§88.3 |
+| release/status处理失败 | @0x90906c–9084请求ResetVideoDecoder(false)，本例video请求位变1；之后由既有主循环消费 |
+
+BHandleOutputBuffer @0x9080c4–8490的原分支：index>=0调用NDK release（按render与时间参数
+选普通/AtTime）；status=-1调用AMediaCodec_flush并返回true，未按flush返回值改结果；
+-2读取/应用output format并释放format；-3记录buffer变化后返回true；其他负status或release
+失败返回false。这些是该NDK API边界上的实际调用，不能机械地把FFmpeg的AVERROR(EAGAIN)
+当作相同的250000us超时。所用Switch/desktop avcodec.h的receive_frame注释明确其EAGAIN
+表示当前无输出、需再送输入；Native receive_frames也在该条件退出本次drain。
+六个250000us是传入SDK的等待额度，不能据此认定实际必停1.5s，更不能认定原用户Switch
+停顿就是这条Android分支造成。
+
+### 88.2 VideoSurface的映射、统计与148触发
+
+原VideoSurface每次传timeout=0，按SDK PTS查BSubmitFrame建立的PTS→输入ID map；
+BGetFrameFromTimestamp @0x908934、DropFramesBefore @0x9089d0与
+BMarkFrameCompleteForTimestamp @0x908d48实际执行。对取到的输出，先移除更早的map
+条目并以result4回报；已选输出按真正render与release结果回报result1/4/5。该map和反馈
+不是texture分支的共有规则，不能因Switch也用硬件解码便直接套用。
+
+已知映射、非目标PTS且比上次输出新时，@0x9085d8–8658比较16位ID差与PTS差：
+ID差<=4且时间差<35000us允许落后的输出，并在恢复时清decoder+201 latch。
+超过任一边界时，实际GetFrameStats查询进一步分流：对应帧result为0/1仍可使用；
+统计不存在或result>=2则进入落后恢复分支。原RecordFrameReceived/RecordFrameComplete
+创建及完成的真实统计记录分别覆盖0..8，查询非空、ID和result逐次断言，未以假返回值代替。
+首次进入该恢复分支执行@0x90873c–8750或@0x90883c–8850：调用官方反馈函数，实际生成
+148 CStreamVideoOverflowMsg，完整原protobuf正文为`08001000`（first/last均0），并置
+latch=1、移除/丢弃对应输出。持续落后时latch抑制重复反馈；重新进入较近输出后清latch，
+后续再落后可再次反馈。这是VideoOverflow生产者证据，不是FEC开关或其启用参数的证据。
+完整Host对该反馈的反应仍不能仅凭客户端发送端推定。
+
+### 88.3 SDK未提供BufferInfo的Source-only域
+
+SDK负status输入不写BufferInfo，保留显式种下的旧栈内容。texture六次均无输出后
+@0x908e80仍读取该槽PTS；两种栈种子可改变后续零等待调用数。Surface对首次-2/未知负值
+也可能在@0x908568等处读取本次未由成功SDK返回提供的PTS。fixture逐次记录
+unsupplied_info_reads，把这些观察单列为栈内容相关的Source-only域；不能以模拟器初始零、
+旧栈值或这些域中的绘制调用作为确定的跨平台策略。成功取到目标/其他输出的主要对照
+没有这种未提供数据读取。也未把SDL/JNI调用等同于物理新画面显示。
+
+### 88.4 Native投影差异与可复现基线
+
+【纠正】§87按输出envelope做jitter FIFO比较，仅证明所列一输入一输出用例中的投影；
+不能当成完整官方texture输出消费等价证明。原选择对象是输入任务，实际SDK输出还可
+另选。正式输出适配需要分别表达输入任务、实际像素/PTS、等待与复用，以及上层完成结果
+的归属；仅移动采样点或扩大像素FIFO不足以证明这些语义一致。原采样和提交结束时机的
+独立证据仍见§87；完整CStreamPlayer::BUpdateVideo/呈现完成调用者有独立验证范围。
+
+固定budget10ms、now1000000：输入1媒体time998689已到期，输入2媒体time1001311未到期。
+原player选择任务1、保留任务2；SDK只提供输入2对应PTS15278794，再返回-1，原texture
+仍以render=true交付该index并绘制。Native产品基线87d99be在相同输入/输出可用性边界中，
+真实parser/worker/FFmpeg的第一个实际输出被平台适配器抑制，第二个实际输出仍保留：
+now1000000时不选图，到now1003000才选输入2，且该图像通过独立framemd5校验。
+这证明当前像素队列准入与原输入任务/SDK输出选择有差异；不证明设备自然发生了该缺输出，
+也不推定官方上层最终把显示结果归到哪一个任务。像素引用、GPU/map与统计ticket的归属
+不能在尚未验证调用者语义时任意互换。
+
+`audit-steam-video-output.py CORE --check scripts/fixtures/steam-video-output-reference.json.gz`
+复播固定官方函数与触发输入；保留九个完整原函数指令。SDK/属性/时钟/JNI/SDL/锁/存储和
+libc++ uint64排序原语为明确终点；map筛选、移除、统计、latch与原protobuf序列化均执行
+官方代码。Source反事实要求实际SDK调用、选择、反馈正文或完成结果改变，无assert/适配器
+异常充数。`observe-native-video-output-gap.py --build build/desktop --output DIR`从已配置
+真实runtime/pipeline oracle构建隔离观察器，保留实际codec/像素校验并输出comparison.json；
+它报告差异，不把现有差异固化为必须通过的产品测试，也不修改产品/golden文件。
+
+固定对照含60组289状态、12项原指令反事实；含codec guard、PTS匹配/重复guard、等待额度、
+丢弃index的render位、-1 flush、release失败、Surface ID/时间边界、真实pending统计与已丢弃
+统计分流、反馈latch抑制/恢复。全部反事实必须在上述实际输出/反馈观察中产生差异。
