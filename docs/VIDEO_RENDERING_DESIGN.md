@@ -900,7 +900,7 @@ COPY_OPAQUE在本地证明物理输出的引用归属，不单独证明官方FFm
 采样顺序一致；物理像素身份安全与协议任务策略分别核验。本文当前队列/伪代码不能作为
 这些FFmpeg分支已对齐的验收依据。
 
-证据：当前 `video_submit_locked` 调 `receive_frames(frame_id, submit_us)`，缓存输出也沿用本次
+历史问题：原 `video_submit_locked` 调 `receive_frames(frame_id, submit_us)`，缓存输出也沿用本次
 输入 id；实际 FFmpeg 的 send/receive 解耦。固定分支及本机 `avcodec.h` 的 COPY_OPAQUE 契约
 允许输入输出不是一一对应，不能仅开一个 flag 就宣称完成归因。
 参见 [固定 FFmpeg API](https://github.com/averne/FFmpeg/blob/caeec83b791be08ed43468a2ef426d6901d51c78/libavcodec/avcodec.h)。
