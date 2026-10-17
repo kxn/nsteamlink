@@ -19,7 +19,8 @@ add_library(nsl_sdr_core STATIC platforms/common/sdr_wire.c platforms/common/sdr
 target_include_directories(nsl_sdr_core PUBLIC platforms/common PRIVATE ${CMAKE_SOURCE_DIR}/third_party/jsmn)
 target_compile_options(nsl_sdr_core PRIVATE -Wall -Wextra)
 add_library(nsl_remote STATIC platforms/common/remote_wire.c platforms/common/remote_protocol.c
-    platforms/common/remote_connection.c platforms/common/stream_bridge.c)
+    platforms/common/remote_connection.c platforms/common/stream_bridge.c
+    platforms/common/dns_refresh.c platforms/common/dns_config.c)
 target_include_directories(nsl_remote PUBLIC platforms/common PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/jsmn ${CMAKE_SOURCE_DIR}/third_party/ihslib/src
     ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client)
@@ -318,12 +319,17 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_compile_options(nsl-remote-tests PRIVATE -Wall -Wextra -UNDEBUG)
     target_link_libraries(nsl-remote-tests PRIVATE nsl_remote nsl_ui)
     add_test(NAME nsl-remote COMMAND nsl-remote-tests)
+    add_executable(nsl-dns-refresh-tests tests/test_dns_refresh.c)
+    target_compile_options(nsl-dns-refresh-tests PRIVATE -Wall -Wextra -UNDEBUG)
+    target_link_libraries(nsl-dns-refresh-tests PRIVATE nsl_remote)
+    add_test(NAME nsl-dns-refresh COMMAND nsl-dns-refresh-tests)
     if(NSL_DIAGNOSTICS)
         add_executable(nsl-remote-diagnostics-tests tests/test_remote_diagnostics.c)
         target_compile_definitions(nsl-remote-diagnostics-tests PRIVATE NSL_DIAGNOSTICS=1)
         target_compile_options(nsl-remote-diagnostics-tests PRIVATE -Wall -Wextra -UNDEBUG)
         target_link_libraries(nsl-remote-diagnostics-tests PRIVATE nsl_remote)
-        foreach(symbol curl_easy_init curl_easy_setopt curl_multi_perform curl_multi_info_read)
+        foreach(symbol curl_easy_init curl_easy_setopt curl_multi_perform curl_multi_info_read
+                       sl_dns_current_config socket)
             target_link_options(nsl-remote-diagnostics-tests PRIVATE "-Wl,--wrap=${symbol}")
         endforeach()
         add_test(NAME nsl-remote-diagnostics COMMAND nsl-remote-diagnostics-tests)

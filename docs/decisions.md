@@ -2631,3 +2631,38 @@ IPv4 对端统计 native UDP、按 channel 统计原始媒体报文头/校验后
 [DEBUGFUNCTION](https://curl.se/libcurl/c/CURLOPT_DEBUGFUNCTION.html) 只提取该行中经
 inet_pton 校验的 IP 和数字端口，每个 easy 请求最多16条；不转发原始 trace，忽略其他
 TEXT、headers、payload 和 TLS 数据。连接方法、DNS、超时与重试策略保持不变。
+
+## D-074 Switch 目录连接失败时向当前 DNS 重新解析
+
+证据：`session-00000000001792248673-084334796-00000.log` 在用户切热点、杀应用后
+冷启动的运行中，6次目录连接目标均为11.171.50.44:443，全部约10秒后curl=28。
+这是此前已在局域网确认的Fake-IP；回局域网的新冷启动运行
+`session-00000000001792248889-085839052-00000.log` 访问相同地址成功并收到主机在线通知。
+用户确认热点DNS自动获取、手机无代理/VPN。错误目标跨应用进程重启存在；系统缓存、
+CFW/DNS中间层或配置残留的具体持有者尚未区分，不能归因于应用的上一进程。
+
+固定SDK libnx4.12.0的
+[resolver.c](https://github.com/switchbrew/libnx/blob/v4.12.0/nx/source/runtime/resolver.c)
+未将DisableDnsCache变量传入getaddrinfo IPC，RemoveHostnameFromCache直接返回
+NotInitialized。不能以调用这些占位API作为修复。
+[nifm.h](https://github.com/switchbrew/libnx/blob/v4.12.0/nx/include/switch/services/nifm.h)
+的GetCurrentIpConfigInfo提供当前IPv4/DNS配置。
+
+决策：保留正常目录连接；仅在解析/连接失败或连接尚未完成即超时时，Switch读取当前
+DNS配置，使用非阻塞connected UDP查询原目录域名的A记录。至多两个配置服务器、各两次，
+每次1.5秒、总期限最多6秒；每个owner tick至多读取4份应答，无新线程、阻塞等待或全局
+缓存操作。查询ID、来源端点、问题、IN/A类型、RCODE/TC和完整长度均校验；DNS压缩跳转
+有界，只取原名或已验证CNAME链的A记录，至多4个。查询格式遵循
+[RFC1035](https://www.rfc-editor.org/rfc/rfc1035#section-4)。
+
+用[curl RESOLVE](https://curl.se/libcurl/c/CURLOPT_RESOLVE.html)将新地址用于同一目录
+URL重试，原Host/SNI、CA链及域名校验不变。不硬编码公共DNS、Valve IP或Fake-IP网段，
+不更改Steam消息、配对、订阅或媒体协议。curl7.69.1的手动映射不会自动过期，故下一次
+普通目录请求前显式移除此映射，避免引入新的永久地址缓存。
+
+每轮目录请求最多恢复一次；查询/新地址仍失败则走原有失败与随机退避。TLS、证书或HTTP
+错误不触发DNS恢复。该路径为本地网络恢复策略，不冒充逆向得到的Valve规则。
+桌面平台保留原解析器；测试通过配置接口提供本机DNS夹具，不提供外部运行时覆盖入口。
+
+DNS socket由既有remote owner拥有；完成、失败、取消、挂起或destroy都会关闭，
+先于socketExit。诊断仅记录当前网络的数字地址、查询结果和尝试数；不记录DNS原始报文。
