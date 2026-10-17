@@ -7189,3 +7189,70 @@ actor重建、已接受但无输出的等待任务取消，持有旧AVFrame/map�
 Android六次250000us的timeout/flush到NVTEGRA/FFmpeg的对应事件；不能称该分支已经等价。
 NDK/Native图形错误返回、完整startup/UI cadence、全部音画同步与物理decoder/资源/设备验收
 各有独立范围。完整FEC启用/非空上行producer和Host响应亦未由本节推定。
+
+## 90. 官方客户端连接、配置与非空麦克风上行的FEC观察
+
+【官方客户端证据】仅使用§24.1固定SHA的Android 1.3.32 core。复播脚本
+`audit-steam-client-fec-lifecycle.py`记录18个原函数的地址、长度与指令SHA，
+从原Connection构造、Connect/SendConnectPacket到原HandleConnected及其真实
+CStreamClient::OnStreamConnected回调；随后在明确的认证完成边界进入实际
+HandleIncomingPackets dispatcher、协商/Starting、QoS、主动配置API和peer99。
+原channel工厂和构造均执行，不以受控channel存储代替。
+
+Socket注册、锁、最终connect发送/Channel发送、加密、refcount、stats/player启动、
+配置保存/delegate是明示adapter。HandleConnected输入为Socket已准入且去掉CRC后的
+17字节包；认证完成前的密码学握手没有执行。它不代表完整认证会话、实际麦克风采集/
+编码、Channel outgoing window/RS/UDP发出、真实Steam或设备测试。
+
+【连接字段】Connection构造@0x7fb250的4B清零覆盖+11，本节预先污染+8…+15以验证
+确实执行初始化。原HandleConnected @0x7fbef4–7fc000从包首字节取bit7，
+@0x7fbf44写入的是connection+10，即CRC开关；不是+11的outgoing FEC开关。
+原回调实际产生ClientHandshake(6)正文`060a00`并走可靠发送；随后连接保持state1，
+没有由观察者强行设置connected或FEC gate。
+
+【配置与控制】初始字段25分别缺失/false/true，经过真实OnNegotiationInit，产生的
+消息4保留该字段的presence和值。peer消息4中附带相反值的streaming_client_config
+不会替换客户端自己的配置；实际peer SetConfig仍推进4→5，原Starting推进5→6。
+运行期主动SetStreamingClientConfig在local_only=0时实际产生99，在=1时不发；
+peer99的缺字段/false/true配置实际整体替换，坏protobuf保留旧配置。上述轨迹均直接
+观察原连接+11和原channel percentage，二者保持0，不从字段25推导本机发送开关。
+
+消息87的原OnSetQoS @0x7adcd0–7add8c将use_qos=false/true转为UDP SetQOS参数0/2，
+对端地址来自connection+20；坏protobuf不调用该终点。该原路径不设置FEC开关或比例，
+不能把QoS消息当作尚未发现的“对端要求本机启用FEC”协议。此结论限该消息/函数，
+不等于已经穷尽所有消息、别名写入或其他库。
+
+【非空上行producer】原StartMicrophoneStream @0x7a87f0分配通道3、发送107完整
+正文`6b100318032880f7023002`（Opus/48000/stereo），并经原setter设priority1，
+未调用SetChannelFECPercentage。随后原SendMicrophoneData @0x7a8a38–7a8b18
+写真实非空payload `11223344`，经原Frame::Send和Connection发送入口：
+
+- 协商reliable_data=true：走Channel可靠发送。
+- 协商reliable_data=false：实际读取connection+11=0，走普通不可靠发送。
+- 初始FEC=true、主动API改false/true（local_only两值）、peer99替换配置前后，
+  以上选择仍由协商reliable_data决定，没有因为字段25改用上行FEC。
+
+本节实际执行原微音数据producer，不再仅用空FEC周期调用或强制gate=1能力对照。
+最终Channel发送为终点，因此观察到的是官方生产者与发送选择，不声称已经得到
+真实麦克风UDP wire或全部上行producer的启用策略。
+
+【内存与检测边界】12组CRC×reliable_data×字段25初值组合共324个状态，记录
+每阶段实际配置、完整明文frame正文、gate分支及全部执行期间覆盖gate/percentage的
+内存写。动态内存hook包含宽写/指针别名；不是只扫描STRB +11。不过它仅覆盖这些
+实际执行的轨迹，不能据“未观察到写入”断言全局永不启用。
+五项原指令反事实分别删构造清零、把CRC写到FEC gate、漏消息4配置copy、反转发送
+门禁、将麦克风可靠性错取自字段25；每项确认修改指令实际执行，再由字段/正文/发送
+选择断言或固定观察对照检出。没有用本地FEC实现产生期望结果。
+
+【实现约束】继续按§32官方客户端的手动设置、预设、网络测试推荐后用户确认来决定
+请求对端FEC的字段25；接收type11与本机outgoing gate独立。不增加“看到丢包立即自行
+开FEC”、从CRC/QoS推导FEC或从字段25推导本机上行冗余比例。此处的正常麦克风
+轨迹没有新的FEC开启触发，不将其包装为全部产品入口已经穷尽或全协议已经等价。
+
+```sh
+python3 scripts/audit-steam-client-fec-lifecycle.py \
+  --binary /data/dl/nsteamlink/build/video-recovery-re/libmain-arm64.so \
+  --output /tmp/steam-client-fec-lifecycle.json --verify-mutations
+```
+
+正常运行只读核验压缩fixture；`--refresh-reference`仍拒绝覆盖已有不同观察结果。
