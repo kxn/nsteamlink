@@ -153,8 +153,9 @@ data[13] = messageType；若 hasExtHeader：data[14..25] = 扩展头 12 字节
 `CStreamConnection::Send/SendUnreliable(packet, channel)`。
 
 接收：`OnStreamPacket`（0x7acfa8）按 channel 分派——channel≥3 为数据通道
-（仅接受 type==1，OnDataPacket；扩展头 +48 u32 字段减去 conn+848 的 peer−local 时钟偏移，换算为本地时间，
-即**扩展头第 12 字节域是流时间戳**）；channel==1 为控制通道；channel==0（发现/Ping）
+（仅接受 type==1，OnDataPacket；扩展头的frame timestamp、input-received timestamp及
+transport send timestamp减去conn+848的peer−local时钟偏移，换算为本地时间，详见§52。
+撤回旧文“扩展头第12字节域是流时间戳”的错误字段定位）；channel==1 为控制通道；channel==0（发现/Ping）
 由 OnPingRequest 处理。控制通道内 type==9（KeepAlive）静默消费，type==106（RemoteHID）
 内联转 IStreamPlayer 虚表槽 10，**其余控制消息经 ThreadInterlockedIncrement 引用计数后
 推入 CStreamQueue<CStreamPacket*>（CStreamClient+0x2a0），由 HandleIncomingPackets
@@ -383,8 +384,9 @@ OFFICIAL_INPUT_RE §13.2 的"ms 修复"（ab8712d、包头 sendTimestamp）方�
 - 逐帧 `CFastFrameStats::Save(CFrameStats*, full=1, conn+848)`：首个输出事件加
   peer−local 时钟偏移，后续事件减前一个已输出事件。单位均为 16.16 秒；
   数据通道接收则先减该偏移，将 host 时间换算为本地时间（§14.4、§14.10）。
-- 网络样本取自连接统计：srtt(conn+732)、conn+1152/+1000（×系数 0x3A83126F≈2^-10，
-  【推断】µs→定点秒换算）、丢包 = conn+1252×100.0/conn+1248；
+- 网络样本取自连接统计：srtt(conn+732)、conn+1152/+1000（×float32系数
+  0x3A83126F=0.001f）、丢包 = conn+1252×100.0/conn+1248。撤回旧“≈2^-10／
+  µs→定点秒”的系数及单位推断；这些参数还需按实际collector逐一确认来源；
 - `CFrameStatsAccumulator.Calculate()` 后追加最多 20 条 accumulated_stats
   （EFrameAccumulatedStat：FPS 等）；
 - 发送节奏：`HandleStreaming`（0x7a7140）内 `now - last > 0x10000`，**单位即定点秒
@@ -4514,3 +4516,72 @@ stop/join/destroy。冻结逻辑clock时传输整形rate设为0；EAGAIN后的�
 Complete准备在producer锁内返回admission结果；本地资源失败的关闭/停止消费者发生在
 释放该锁之后。不能在外层锁仍持有时复用会自动Disconnect的普通Send包装器，否则
 消费者可能正在等待同一producer锁。该保护是Native所有权约束，不冒称官方OOM策略。
+
+## 52. 帧统计窗口与完整报告的原始客户端契约
+
+【证据／撤回】同SHA官方客户端`CStreamClient`构造器0x7a5020–0x7a50d0对四个
+数据类型各构造240个120B CFastFrameStats，清零各自watermark/previous-time。
+RecordFrameReceived/Event/Complete、GetFrameStats及SendFrameEvents均用id模240寻址。
+撤回Native frame_stats.h“128槽/按id&127即对应Steam”的注释；它是本地实现差异。
+`audit-steam-frame-stats.py`实际执行CFast构造器及上述完整函数、原累加器、C++ protobuf
+和Frame Put/Send，保留最终明文frame body；不是按本地代码构造预期。
+
+【结论】只有Receive可为不同frame ID重置槽；Event/Complete在ID不匹配时直接忽略。
+已有非Pending result时第二次Complete不覆盖；显示结果才更新displayed watermark，
+该watermark不附加本地“只能向前”的假设。Receive同ID只更新Recv事件，保留size和
+其他时间；receive早于send时原函数会连同frame-start向前平移，再记录send=receive。
+构造/Reset的slot ID为0，GetFrameStats(0)的零槽语义不能由本地inUse标志改写；这些是
+直接入口和构造状态的证据，不把每个受控顺序宣称为实际播放器均会发生。
+
+报告仅遍历(reported,displayed]；匹配但未完成的帧在当时补Complete(result6)，随后
+Save或AddFrameSample并Reset，无论最终Connection Send返回值如何，槽和reported
+已经推进。原累加路径与明细路径二选一：full-frame-stats为真时输出明细，不再将
+同帧另加时延累积；两种路径都附带当次network sample，零均值也可有count=1。
+
+【更正】Source Save以raw timestamp0作缺省哨兵，不因Native tracked valid-mask为真
+就把零时间戳作为有值事件发送。首个保留事件加peer offset，后续按已输出事件差分；
+client Save(true)跳过2..12且省略frame_size，frame-start/display delta仅非零时有presence。
+原统计量使用float32样本、两遍样本标准差(n−1)；不能用本地double总体方差(n)替代。
+完整明细生产和均值/标准差的Native对照必须单独证明，不能从窗口索引正确推导。
+
+【证据／结论】`CFastFrameStats::SetEventTimestamp @0x7f4838`仅对事件12/14保留
+首次非零值，其他事件可覆盖；写入timestamp≤1时保存1。0是Reset/Clear留下的缺省值，
+不是“有效mask为真即可原样发出0”。SetLastFrameTimestamp/SetLastDisplayTimestamp
+@0x7f48c8/0x7f49c8将非正间隔钳制为0.001f毫秒。撤回本地相关“mask保留实际0”、
+“重复DecodeBegin覆盖”及“完成间隔为0就保持0”的等价解释。
+
+SendFrameEvents回绕处还有实际原指令的窄化差异：0x7a8398–0x7a83c0把FFFF+1
+留在32位寄存器，槽ID仍16位；该轮candidate=65536不匹配slot0，reported推进0，
+但不输出/Reset帧0。不能将其改写成“每轮先窄化后匹配”。这是固定版本的实际行为，
+不从此推断媒体帧ID0无效。
+
+`Frame::SetPacket @0x7f2bac`读取扩展头的id(+0/u16)、frame timestamp(+2/u32)、
+input mark(+6/u16)、input received(+8/u32)，分别放在Frame+26/+28/+44/+48。
+Frame+32来自transport header+9；+36/+40来自Packet+28/+32的本地收包元数据。
+`OnDataPacket @0x7ad220–0x7ad260`仅对非零input-received减offset，而frame/send
+无条件减offset，再进入原RecordFrameReceived。这纠正了§4旧字段位置，没有改造
+成另一种协议。原CreateInputMark @0x7a9240跳过0，按mark&1023写入begin/sent；
+绑定查询使用当前latest mark所在槽，ID相符且非未来mark才复制0/1/2三个事件并消费。
+“收到的任意input mark直接照填反馈”不符合原函数；此处不声称各输入producer触发
+CreateInputMark并发到线上那一段调用链已被证明。
+
+静态调用证据另见`SendLatencyTest @0x7a910c`：state≠6直接返回0；state6内联执行同一
+mark递增/跳0及begin/sent表写入，构造CInputLatencyTestMsg后调用SendControlMessage(70)。
+不能因libmain里没有到导出CreateInputMark的直接BL，就断言原客户端没有生成调用者；
+这里的内联代码是一个实际生产入口，但不等于所有触摸/HID/按键都会生成mark。
+
+【证据范围】60组覆盖full开关、offset正负、2/3/8/9样本、迟到事件/重复完成、补齐
+缺口、只丢帧、重复Receive、初始0、时间钳制、零哨兵、乱序显示、128/240槽别名、
+16位回绕、真实input-mark查询与受控network样本。原CFrameStatsAccumulator/Save/
+protobuf生产均执行；NetworkStats/bitrate collector、已设置channel/时钟/metrics、
+libc分配、诊断enum名字、最终Connection发送和析构为显式适配器。未证明传输整形/
+Socket、OnThink调用周期、完整Client初始化或GPU/显示时序。初始槽构造与buffer布局
+有上述真实构造器静态链交叉支持，探针不冒称运行了整个客户端构造器。
+
+六组另执行真实Frame::SetPacket与OnDataPacket，五组执行原CreateInputMark；重复事件、
+零时钟Pending→Displayed、旧input mark另有四组。原45组input/observed保持不变。
+`check-steam-frame-stats.py`只将Native video ring的逐动作状态、cursor、两个delta及
+明细CFrameStats的完整protobuf字节与上述原输出比较；Native输入先按原packet案例
+给出的换算值调用record入口，不借此声称Native接包整链已由这些案例覆盖。Audio案例
+为source-only。累积network/帧样本、整包发送/失败策略、tracked ticket采集及OnThink
+周期均是显式排除范围；共用明细encoder不等于Root实际tracked统计已全面对齐。
