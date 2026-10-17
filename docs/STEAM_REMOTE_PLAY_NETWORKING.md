@@ -2699,6 +2699,24 @@ CNetworkTest 的帧时钟，本例 45 秒（工具上限 60 秒）；不改 SDR 
 新的本地 fixture 被动跟踪 E2E 计数，要求五秒角色保持的末尾一秒内仍有新计数增长，不
 用单包把整个保持窗口判为成功。SDK/relay/业务帧的失败与超时仍按各自所有者解释。
 
+**关闭元数据的布局证据**：播放器 x86_64 `ProcessMessage_ConnectionClosed 0x85bfd0`
+在 `0x85bfe7/0x85c12a` 分别读 protobuf+0x5c 的 relay_mode 和 +0x60 的 reason；
+启动器 `0xd55a20` 使用相同字段偏移。`ConnectionState_ClosedByPeer 0x89f5a0`
+读 connection+0x1ac0 的 SDK state、在 `0x89f613` 写 +0x1458 的 end reason；
+启动器对应 `0xd99550` 的 state 位于 +0x1ad8，end reason 仍为 +0x1458。
+两份 `ConnectionState_FinWait` 的读点分别为 `0x89eabe` / `0xd98ace`，再次支持该
+state 差异，不能沿用一个偏移观察两库。运行时工具在这些固定哈希的入口记录 type20
+reason/mode、type21、API close 及 peer/local_problem/FinWait 的 state 前后值，关闭类
+最多每库 32 项；另在 SetState 入口记录最多 64 项 before/next/reason。
+播放器 `APICloseConnection 0x89e710` 在 `0x89e843–0x89e84b` 直接令 SetState(-1)，
+没有经过具名 FinWait 入口；因此后者的挂钩缺席不能解释为应用没有请求关闭。
+不读取 SDK debug 字符串、peer identity 或 protobuf 业务缓冲；FinWait 的 reason 读已保存
+字段，其余两种终态另记录调用参数。以上仍只适用于 §0 的固定 x86_64 样本。
+session 的目标也只采数值 POP/revision/ACK：两份 x86_64 的
+`BSetSessionForwardTargetToken` 在 player `0x87798f–0x877998` / shell
+`0xd7294f–0xd72958` 将 +0x40 的 desired POP 复制到 +0x60 的 sent POP，再更新
++0x64 revision、清 +0x68 ACK；与 §21.13 的 ARM 输入对象一致。不读取 token 字节。
+
 **Conclusion**：这份证据说明“只换 POP 并保持 Connected”不足以验收恢复；也不能仅因本地
 适配器的同类样例失败就把根因归给新增快照代码。它没有证明正常游戏串流也有同样结果，
 没有证明服务器内部的回程选择规则，更不能由两个失败样例推定客户端实现已经全等。

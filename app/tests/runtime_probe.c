@@ -32,13 +32,13 @@ int sl_live_printf(const char *format, ...) {
 }
 int main(int argc, char **argv) {
     if (argc != 3 &&
-        !(argc == 4 &&
-          (!strcmp(argv[3], "--sdr-only") || !strcmp(argv[3], "--cloud-reconnect") ||
-           !strcmp(argv[3], "--cloud-initial-failure") ||
-           !strcmp(argv[3], "--cloud-initial-bridge") || !strcmp(argv[3], "--sdr-loss-soak")))) {
+        !(argc == 4 && (!strcmp(argv[3], "--sdr-only") || !strcmp(argv[3], "--cloud-reconnect") ||
+                        !strcmp(argv[3], "--cloud-initial-failure") ||
+                        !strcmp(argv[3], "--cloud-initial-bridge") ||
+                        !strcmp(argv[3], "--sdr-loss-soak") || !strcmp(argv[3], "--sdr-abrupt")))) {
         fprintf(stderr, "Usage: nsl-runtime-probe PRIVATE_PROFILE LAN_HOST "
                         "[--sdr-only|--cloud-reconnect|--cloud-initial-failure|--cloud-initial-"
-                        "bridge|--sdr-loss-soak]\n");
+                        "bridge|--sdr-loss-soak|--sdr-abrupt]\n");
         return 2;
     }
     if (argc == 4 && !strcmp(argv[3], "--cloud-reconnect"))
@@ -48,11 +48,14 @@ int main(int argc, char **argv) {
         sl_runtime_fixture_cloud_initial_failure(!strcmp(argv[3], "--cloud-initial-bridge"));
     if (argc == 4 && !strcmp(argv[3], "--sdr-loss-soak"))
         sl_runtime_fixture_loss_soak();
+    if (argc == 4 && !strcmp(argv[3], "--sdr-abrupt"))
+        sl_runtime_fixture_abrupt_fault();
     sl_auth_store store = {0};
     if ((argc != 3 && argc != 4) || sl_auth_load(&store, argv[1]) ||
-        !sl_runtime_fixture_prepare(
-            argv[1], &store, argv[2],
-            argc == 4 && (!strcmp(argv[3], "--sdr-only") || !strcmp(argv[3], "--sdr-loss-soak")))) {
+        !sl_runtime_fixture_prepare(argv[1], &store, argv[2],
+                                    argc == 4 && (!strcmp(argv[3], "--sdr-only") ||
+                                                  !strcmp(argv[3], "--sdr-loss-soak") ||
+                                                  !strcmp(argv[3], "--sdr-abrupt")))) {
         fprintf(stderr, "Pass an isolated, paired test profile directory and LAN host IPv4\n");
         return 2;
     }

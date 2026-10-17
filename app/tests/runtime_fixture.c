@@ -22,6 +22,12 @@ static uint32_t private_host;
 static uint64_t began, sampled, phase_at, submitted_before, acked_before;
 static bool cloud_mode, cloud_ui_offline, cloud_initial, cloud_initial_bridge;
 static bool loss_soak, soak_completed;
+static bool abrupt_fault, fault_completed;
+static atomic_bool fault_armed, fault_injected, fault_invalid, fault_terminal;
+static atomic_uint fault_e2e, fault_new_pop, fault_generation;
+static atomic_uint_fast64_t fault_started;
+static uint64_t fault_window, fault_e2e_at, fault_frame_at;
+static unsigned fault_seen_e2e, fault_frames;
 static atomic_bool loss_active;
 static atomic_uint loss_packets[2], loss_dropped[2]; /* RX, TX. */
 static uint64_t soak_started, soak_last_frame;
@@ -40,6 +46,9 @@ void sl_runtime_fixture_cloud_reconnect(void) {
 }
 void sl_runtime_fixture_loss_soak(void) {
     loss_soak = true;
+}
+void sl_runtime_fixture_abrupt_fault(void) {
+    abrupt_fault = true;
 }
 void sl_runtime_fixture_cloud_initial_failure(bool bridge_mode) {
     cloud_mode = cloud_initial = true;
@@ -301,6 +310,35 @@ void __wrap_sl_sns_update(sl_sns *sns, uint64_t now) {
     /* Latched positive observations survive normal stop/destroy. */
     if (sl_sns_get_state(sns) == SL_SNS_CONNECTED)
         atomic_fetch_or(&sns_flags, 1u | (s.authenticated ? 2u : 0) | (s.relayed ? 4u : 0));
+    if (!abrupt_fault)
+        return;
+    unsigned values[5] = {0};
+    if (atomic_exchange(&fault_armed, false)) {
+        if (!sl_sns_test_relay_loss(sns, 1, values)) {
+            atomic_store(&fault_invalid, true);
+            return;
+        }
+        atomic_store(&fault_started, now);
+        atomic_store(&fault_injected, true);
+        sl_live_printf("RUNTIME_FIXTURE_FAULT_INJECTED generation=%u\n", values[0]);
+    }
+    if (atomic_load(&fault_injected) && sl_sns_test_relay_loss(sns, -1, values)) {
+        atomic_store(&fault_generation, values[0]);
+        atomic_store(&fault_e2e, values[3]);
+        atomic_store(&fault_new_pop, values[4]);
+    }
+    if (s.terminal_source && !atomic_exchange(&fault_terminal, true)) {
+        sl_live_printf(
+            "RUNTIME_FIXTURE_FAULT_TERMINAL source=%d detail=%d sdk_state=%d reason=%d\n",
+            s.terminal_source, s.terminal_detail, s.terminal_sdk_state, s.terminal_end_reason);
+        sl_sdr_loss_snapshot end;
+        if (sl_sns_loss_snapshot(sns, &end))
+            sl_live_printf("RUNTIME_FIXTURE_FAULT_CLOSE type20=%u type21=%u cm=%u relay_mode=%u "
+                           "primary=%u local_ack=%u revision=%u\n",
+                           end.relay_closed, end.relay_no_connection, end.cm_closed,
+                           end.close_relay_mode, end.primary_pop, end.local_acked,
+                           end.local_revision);
+    }
 }
 static void key(SDL_Keycode code, bool down) {
     SDL_Event e = {0};
@@ -504,6 +542,13 @@ void __wrap_sl_ui_tick(sl_ui_model *ui, uint64_t now) {
                            (unsigned long long)(s.reliability.hidAcknowledged - acked_before),
                            s.displayed_frames - frames_before, (unsigned long long)wire_seq,
                            wire_buttons);
+            if (abrupt_fault) {
+                soak_previous_frame = s.displayed_frames;
+                fault_frame_at = now;
+                atomic_store(&fault_armed, true);
+                enter(31, now);
+                break;
+            }
             if (loss_soak) {
                 frames_before = soak_previous_frame = s.displayed_frames;
                 soak_started = soak_last_frame = now;
@@ -518,6 +563,47 @@ void __wrap_sl_ui_tick(sl_ui_model *ui, uint64_t now) {
             enter(4, now);
         }
         break;
+    case 31: {
+        unsigned e2e = atomic_load(&fault_e2e);
+        bool usable = atomic_load(&fault_new_pop) && e2e;
+        if (atomic_load(&fault_invalid) || now - phase_at > 35000) {
+            failure = 12;
+            sl_live_printf("RUNTIME_FIXTURE_FAULT_TIMEOUT=1\n");
+            break;
+        }
+        if (s.displayed_frames != soak_previous_frame) {
+            soak_previous_frame = s.displayed_frames;
+            fault_frame_at = now;
+        }
+        if (!usable) {
+            fault_window = 0;
+        } else if (!fault_window) {
+            fault_window = fault_e2e_at = now;
+            fault_seen_e2e = e2e;
+            fault_frames = s.displayed_frames;
+        } else if (e2e != fault_seen_e2e) {
+            fault_seen_e2e = e2e;
+            fault_e2e_at = now;
+        }
+        if (atomic_load(&fault_injected) && now - reported >= 1000) {
+            reported = now;
+            sl_live_printf("RUNTIME_FIXTURE_FAULT_SAMPLE elapsed=%llu generation=%u new_pop=%u "
+                           "e2e=%u displayed=%u frame_age=%llu\n",
+                           (unsigned long long)(now - atomic_load(&fault_started)),
+                           atomic_load(&fault_generation), atomic_load(&fault_new_pop), e2e,
+                           s.displayed_frames, (unsigned long long)(now - fault_frame_at));
+        }
+        if (fault_window && now - fault_window >= 5000 && now - fault_e2e_at <= 1000 &&
+            now - fault_frame_at <= 1000 && s.displayed_frames - fault_frames >= 30) {
+            fault_completed = true;
+            sl_live_printf("RUNTIME_FIXTURE_FAULT_RECOVERED=1 new_frames=%u\n",
+                           s.displayed_frames - fault_frames);
+            key(SDLK_MINUS, true);
+            key(SDLK_EQUALS, true);
+            enter(4, now);
+        }
+        break;
+    }
     case 30:
         if (s.displayed_frames != soak_previous_frame) {
             soak_previous_frame = s.displayed_frames;
@@ -629,7 +715,8 @@ int sl_runtime_fixture_result(void) {
                     ? !flags && cloud_ui_offline && atomic_load(&cloud_connections) >= 2 &&
                           atomic_load(&cloud_disconnects) == 1 && atomic_load(&cloud_drops) == 1
                     : (flags & 3) == 3 && (!force_sdr || (flags & 4));
-    bool passed = !failure && phase == 8 && path && tx && (!loss_soak || soak_completed);
+    bool passed = !failure && phase == 8 && path && tx && (!loss_soak || soak_completed) &&
+                  (!abrupt_fault || fault_completed);
     sl_live_printf(
         "RUNTIME_FIXTURE_RESULT=%d phase=%u failure=%u sns=%u filtered_tx=%u filtered_rx=%u\n",
         passed ? 0 : 1, phase, failure, flags, tx, rx);

@@ -24,7 +24,7 @@ rpc.exports.armfault = function (ip, port) {
 };
 function install(module) {
     const symbols = module.enumerateExports();
-    let previousSelection = '', lastValid = 0, decoderCalls = 0, lastDecoder = 0;
+    let previousSelection = '', lastValid = 0, decoderCalls = 0, lastDecoder = 0, closeEvents = 0, stateEvents = 0;
     const seenSources = new Set(), receivingData = new Map(), hooks = [];
     states.set(module.name, {seenSources, hooks});
     const emit = event => send({module: module.name, ...event});
@@ -65,8 +65,60 @@ function install(module) {
     function sessionInfo(pointer) {
         const value = relay(pointer.readPointer());
         value.session_failures = pointer.add(4136).readU32();
+        // BSetSessionForwardTargetToken in the fixed player/shell ELFs:
+        // desired POP +40h, sent POP +60h, revision +64h, ACK +68h.
+        value.desired_pop = pointer.add(64).readU32();
+        value.sent_pop = pointer.add(96).readU32();
+        value.forward_revision = pointer.add(100).readU32();
+        value.forward_acked = pointer.add(104).readU8();
         return value;
     }
+
+    // Verified separately in both pinned x64 ELFs: peer-close/FinWait read the
+    // SDK state at shell+1ad8 / player+1ac0. End reason is +1458 in both.
+    // ConnectionClosed reads protobuf relay_mode+5c / reason+60. No debug text,
+    // peer identifiers, or protobuf buffers are copied.
+    const stateOffset = module.name === 'libmain.so' ? 0x1ac0 : 0x1ad8;
+    attach(address('_ZN25SteamNetworkingSocketsLib27CSteamNetworkConnectionBase8SetStateE31ESteamNetworkingConnectionStatex'), {
+        onEnter(args) {
+            if (++stateEvents <= 64) emit({kind: 'sdk_state', before: args[0].add(stateOffset).readS32(),
+                next: args[1].toInt32(), reason: args[0].add(0x1458).readS32()});
+        }
+    });
+    attach(address('_ZN25SteamNetworkingSocketsLib27CSteamNetworkConnectionBase18APICloseConnectionEiPKcb'), {
+        onEnter(args) {
+            if (++closeEvents <= 32) emit({kind: 'api_close', reason: args[1].toInt32(),
+                state: args[0].add(stateOffset).readS32(), linger: args[3].toInt32() !== 0});
+        }
+    });
+    for (const [kind, name] of [
+        ['peer_closed', '_ZN25SteamNetworkingSocketsLib27CSteamNetworkConnectionBase28ConnectionState_ClosedByPeerEiPKc'],
+        ['local_problem', '_ZN25SteamNetworkingSocketsLib27CSteamNetworkConnectionBase38ConnectionState_ProblemDetectedLocallyE22ESteamNetConnectionEndPKcz'],
+        ['fin_wait', '_ZN25SteamNetworkingSocketsLib27CSteamNetworkConnectionBase23ConnectionState_FinWaitEv']
+    ]) attach(address(name), {
+        onEnter(args) {
+            this.observe = ++closeEvents <= 32;
+            if (!this.observe) return;
+            this.connection = args[0];
+            this.before = args[0].add(stateOffset).readS32();
+            this.reason = kind === 'fin_wait' ? args[0].add(0x1458).readS32() : args[1].toInt32();
+        },
+        onLeave() {
+            if (this.observe) emit({kind: 'sdk_terminal', source: kind, reason: this.reason,
+                state_before: this.before, state_after: this.connection.add(stateOffset).readS32()});
+        }
+    });
+    attach(address('_ZN25SteamNetworkingSocketsLib27CConnectionTransportSDRBase31ProcessMessage_ConnectionClosedEPNS_12RelaySessionERK33CMsgSteamDatagramConnectionClosedix'), {
+        onEnter(args) {
+            if (++closeEvents <= 32) emit({kind: 'relay_closed', reason: args[2].add(0x60).readS32(),
+                relay_mode: args[2].add(0x5c).readU32(), relay: relay(args[1].readPointer())});
+        }
+    });
+    attach(address('_ZN25SteamNetworkingSocketsLib27CConnectionTransportSDRBase27ProcessMessage_NoConnectionEPNS_12RelaySessionERK29CMsgSteamDatagramNoConnectionix'), {
+        onEnter(args) {
+            if (++closeEvents <= 32) emit({kind: 'relay_no_connection', relay: relay(args[1].readPointer())});
+        }
+    });
 
     // The small CStreamTransportSDR getter may be inlined. Observe and modify the
     // actual configuration array received by ConnectP2PCustomSignaling instead.

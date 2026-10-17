@@ -7,3 +7,4 @@ int sl_runtime_fixture_result(void);
 void sl_runtime_fixture_cloud_reconnect(void);
 void sl_runtime_fixture_cloud_initial_failure(bool bridge_mode);
 void sl_runtime_fixture_loss_soak(void);
+void sl_runtime_fixture_abrupt_fault(void);
