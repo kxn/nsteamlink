@@ -4984,3 +4984,88 @@ worker调度的预期而改变官方批次规则。SDL fallback补同一readines
 移到网络线程，也未复制Source未知fatal read行为，Native负返回仍走本地stop/join
 关闭保护。停止检查可在持续drain中生效，是loader ABI所需的本地生存期保护。
 两条PIN语义和Connect/Connected正文协议未因传输readiness改动而合并或重写。
+
+## 61. 官方网络管理器的等待、锁、线程入口与主循环
+
+【官方客户端证据】同§24.1的Android 1.3.32 `libmain.so` SHA，
+`audit-steam-network-manager.py`从原函数入口执行下列调用链。证据来自客户端，
+没有以Host支持的字段或本地线程设计推断官方行为。
+
+| 入口 | 地址 | 原指令行为 |
+|---|---|---|
+| CStreamClient::BInit(bool) | 0x7a5df8 | 同一参数写client+16/17/18，再调用全局threaded setter |
+| StreamSetThreadedNetworkProcessing | 0x7feec0 | 启动前写manager+168；running时有诊断，不据此设计热切换 |
+| CStreamSocketManager::AddSocket | 0x7fe7e8 | manager+72锁内追加pending；threaded且非running才Join/Start |
+| StreamProcessNetwork | 0x7fef1c | 尾调用全局manager的CheckSockets |
+| CStreamSocketManager::CheckSockets | 0x7fe904 | 锁外等待，锁内追加pending、逆序更新/移除Socket |
+| CStreamSocketManager::Run | 0x7fee74 | 请求priority=15，检查stop，再循环CheckSockets |
+| StreamLock/UnlockNetworkProcessing | 0x7fef28/0x7fef34 | 指向同一全局manager+72 mutex |
+| CStreamClient::OnThink | 0x7a5ff8 | client+16 bit0为0才调用StreamProcessNetwork |
+
+### 61.1 等待、追加与更新的准确顺序
+
+【原版执行结果】有active Socket时，先计算所有active Socket的GetWaitMS最小值：
+全部blocked=false是2ms，任一blocked=true是0ms。仅数组第一个Socket的transport
+Wait接收这个timeout，其余Socket的Wait参数均为0；并非每个Socket都独立等待2ms。
+Wait调用发生在manager+72加锁之前。0…5个Socket的全部63种blocked输入组合，
+覆盖优化后的成对扫描与余数扫描；readiness返回值逐Socket保存。
+
+随后manager加锁，将pending vector追加到active尾部并清pending count，再从尾
+到头执行原Socket::Update。Update=false的Socket调用析构/释放并用尾项填空位；
+原Socket内部的Connection::Update也真实执行，未把整个Socket替换成事件。
+没有active Socket也会加锁处理pending；没有剩余Socket时清running、返回false。
+
+因此新加入pending的Socket本轮已进入Update，但本轮等待扫描没有包含它；在其
+初始readable=false的受控案例中，本轮只执行连接更新，下轮Wait后才收包。
+不能据此把“AddSocket返回”解释成它已经执行过一次网络读取。
+
+实际接收、普通可靠窗口Pop/交付、反馈Socket Send与Connection client-update
+delegate均在同一次manager锁期间发生。样本仍保留§60的两次read7+处理11：
+连接update参数为start+36，最后empty read另耗100，交付和ACK wire时刻为start+136。
+证明的是这些执行点的锁包围关系，不能扩大成所有producer/外部decoder均持此锁。
+
+### 61.2 线程和主循环的触发条件
+
+【证据】AddSocket在threaded=true且running=false时，在同一锁内调用
+Join(0xffffffff)，置running=true，再Start(0)；已有running或threaded=false不走
+这组调用。复播记录原Join/Start请求，平台线程函数返回受控成功，没有创建OS线程。
+Run先请求ThreadSetPriority(0,15)，然后在每轮CheckSockets之前检查stop：初始
+stop=true一轮也不执行；在第N次client-update delegate注入stop后，当前管理器
+周期仍执行到解锁，随后返回。所有Socket自然退休也使Run结束。
+stop退出不等于运行中的所有Socket已被释放；不能据此跳过另行Shutdown/join。
+
+【证据】Think案例实际执行BInit(false/true)，核对其三处client标志和全局threaded值，
+再进入OnThink。false时执行完整StreamProcessNetwork→CheckSockets→Socket/Connection，
+解锁后才执行transport Update与后续客户端阶段；true时跳过这条网络处理链。
+“启用网络线程后OnThink仍自行再处理一次Socket”不符合此固定客户端。
+
+【边界】BInit参数在本节为输入，不以两值均可执行证明Android生产启动参数或所有
+平台默认值。Run由审计入口直接调用；OS创建、优先级实际生效、线程间墙钟交错没有
+被执行。OnThink的transport Update、日志阶段以及最终frame/client-update delegate、
+refcount、析构与OS I/O是显式adapter；容器初始存储、单个存活连接和时钟受控。
+其余Socket刻意没有连接，用于执行真实退休/移除分支，不作为多活跃连接的完整验证。
+
+### 61.3 复播材料与实现约束
+
+```sh
+python3 scripts/audit-steam-network-manager.py \
+  --binary /path/to/libmain-arm64.so \
+  --output build/video-recovery-re/network-manager.json
+```
+
+固定`steam-network-manager-reference.json`保存123例输入与完整observed trace、
+pending/active存储结果、交付payload/时间、完整反馈wire和packet samples；含CRC开关、
+空管理器、0…5个Socket、pending首次更新、存活Socket位于不同位置、逆序退休、
+Run连续周期/初始停止/自然退出及AddSocket首次启动/已有线程两个分支。
+共执行148次CheckSockets、保留92份完整feedback wire。本节把§50曾记录为adapter的
+StreamProcessNetwork接通至真实manager/Socket/Connection，不扩大其余adapter的范围。
+原line1139诊断继续单列；未将其隐藏为零assert。初次探索曾由通用Core的mutex
+adapter吞掉锁调用，现由此脚本显式截取实际mutex PLT，并在每个wait/read/update/
+delegate/send处检查对应锁状态；fixture只保存修正后的执行结果。
+
+【结论】§60的收包批次不是独立线程随意拼接的依据。与此官方策略对齐时，应把普通
+接收窗口更新/反馈和按通道排序的周期发送纳入同一网络处理周期，并保留锁外等待与
+锁内原有阶段顺序；decoder消费可通过交付队列隔离。跨通道priority/creation顺序和
+初发producer调用仍以§37–38及实际调用链为准，不能把所有初发强行延后到周期尾。
+本节没有改变生产实现，也没有把FEC启用条件、decoder错误处理或真实设备结果判为
+等价；FEC启用仍以§32客户端设置/预设/推荐确认链及§29配置消息证据为准。
