@@ -13,6 +13,7 @@ actual host, hardware, Qt, complete stats or loader equivalence is claimed.
 
 import argparse
 import gzip
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -39,6 +40,7 @@ def main():
     p.add_argument("--receiver", type=Path, required=True)
     p.add_argument("--source-report", type=Path)
     p.add_argument("--control-source-report", type=Path)
+    p.add_argument("--codec-source-report", type=Path)
     a = p.parse_args()
     if a.source_report:
         source = json.loads(a.source_report.read_text())
@@ -120,6 +122,70 @@ def main():
         "disconnect_pending": ["cancel"],
         "freeze_pending": ["cancel"],
     }
+    codec_source = (
+        json.loads(a.codec_source_report.read_text())
+        if a.codec_source_report
+        else json.loads(
+            gzip.decompress(
+                (
+                    ROOT / "scripts/fixtures/steam-client-codec-data-reference.json.gz"
+                ).read_bytes()
+            )
+        )
+    )
+    codec_cases = {"codec_" + c["codec_case"]: c for c in codec_source["cases"]}
+    media = (ROOT / "app/tests/fixtures/video/sequential.h264").read_bytes()[:2204]
+    assert set(codec_cases) == {
+        "codec_empty",
+        "codec_opaque",
+        "codec_truncated",
+        "codec_annexb",
+        "codec_avcc",
+        "codec_avcc_reset",
+    }
+    for key, c in codec_cases.items():
+        assert (
+            c["client_sha256"] == cases["decode"]["client_sha256"]
+            and c["sdk_sha256"] == cases["decode"]["sdk_sha256"]
+        )
+        assert (
+            c["original_process_exit_code"] == 0
+            and c["probe_cleanup_complete"]
+            and not c["source_assertions"]
+        )
+        s = c["original_start"]
+        assert not s["assertions"] and s["network_shutdown_before_main"]
+        count = 2 if key == "codec_avcc_reset" else 1
+        assert (
+            s["codec_data_states"]
+            == [dict(stored=s["codec_data_input"], sdk_size=0, sdk_has_pointer=False)]
+            * count
+        )
+        assert (
+            s["codec_packets"]
+            == [
+                dict(
+                    size=len(media),
+                    sha256=hashlib.sha256(media).hexdigest(),
+                    sdk_size=0,
+                )
+            ]
+            * count
+        )
+        assert s["cleanup_complete"]
+        assert (
+            c["fixture_sha256"]
+            == hashlib.sha256(
+                (ROOT / "app/tests/fixtures/video/sequential.h264").read_bytes()
+            ).hexdigest()
+        )
+        assert (
+            len(c["source_functions"]) == 54
+            and len(c["start_functions"]) == 20
+            and len(c["codec_data_functions"]) == 1
+        )
+        cases[key] = c
+        compare[key] = [key]
     for mode in [*compare, "base_cancel", "opening_guard"]:
         result = subprocess.run(
             [
@@ -147,8 +213,15 @@ def main():
                 native,
                 expected,
             )
+        if mode in codec_cases:
+            s = codec_cases[mode]["original_start"]
+            assert native["codec_data"] == s["codec_data_input"], mode
+            assert native["codec_sdk_sizes"] == [
+                state["sdk_size"] for state in s["codec_data_states"]
+            ], mode
+            assert native["codec_packets"] == len(s["codec_packets"]), mode
     print(
-        "Native format handoff: 6 single-source traces (3 full control chains; one invalid SDK input), 3 SDK/control projections, 2 guard cases passed"
+        "Native format handoff: 12 single-source traces (6 codec_data, 3 full control chains; one invalid SDK input), 3 SDK/control projections, 2 guard cases passed"
     )
 
 

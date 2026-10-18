@@ -8735,3 +8735,64 @@ python3 scripts/audit-steam-client-video-start-process.py \
 legacy选项需要Git中固定41569f2的原helper；它只替换实验调用器，未替换官方代码。
 真实收发握手、自然Qt/控制producer、所有SDK错误的产品触发、外部图像最终销毁和真实
 Switch/NVTEGRA/显示/loader范围仍不能由这三个parsed边界过程推导。
+
+## 106. StartVideo codec_data与AVCodec extradata的分界
+
+### 106.1 固定原客户端与SDK观察
+
+Evidence：沿§105的真实加密接收/FIFO/StartVideo factory路径，message52携带
+`codec_data=01`或由独立H264 fixture的SPS/PPS构造的有效AVCC。原decoder+32的拥有
+buffer逐字节保存该输入；原Start@3246d0在真实SDK open调用前，context+48/+50
+（extradata指针/长度）仍为NULL/0。原SDK send接收的2204字节与独立Annex-B输入
+SHA256 5ff7383025bb865ea49f5b8b27a38811772281f68fb8dd0285afd3584273e64d相同。
+SDK open/send/receive均返回0、实际像素MD5仍为889019807dd199cebff67658cbc3d78f。
+没有改SDK状态、context字段、async/phase或原方法体；codec_data是明确的控制字段
+输入，不声称已证明真实Steam host会生产这些值。
+
+原OnStartVideo@3212e0把字段3拷入临时CUtlBuffer，factory/public Start保存其拥有副本；
+AVCodec Start本身不将该buffer赋给SDK extradata。协议字段的存储/重建寿命与SDK
+参数语义必须分开，不能仅因字段名字相近就直接映射。此结论限定固定Linux AVCodec
+路径，不能泛化为Android MediaCodec、其他decoder factory或音频codec_data。
+
+### 106.2 实际Native反例与实现约束
+
+Evidence：修正前Native把该字段直接分配给AVCodecContext.extradata。对01输入，真实
+SDK open=0、parser consumed/output=2204/2204，但send=-1094995529、receive=-11，
+该次SDK没有进入格式请求；原相同控制/Annex-B输入则正常出图。有效AVCC输入在旧
+Native也能出图，但SDK extradata_size=39，而原SDK仍为0。不得将有效AVCC的参数
+差异写成已经复现解码失败；本例中真正的失败反例是截断01输入。
+
+Conclusion：AVCodec应用适配应保留IHS拥有的完整codec_data供同对象重建和控制寿命，
+H264 pipeline不把它当成FFmpeg extradata，也不在SDK包前自行补入这些字节。不能通过
+在通用协议层删除字段来满足SDK边界；其他codec/平台仍按自己的证据处理。实际Steam
+输入、物理硬解行为及原用户卡顿根因不能由这些受控字段向量推导。
+
+### 106.3 拥有副本、重建与SDK包的实际对照
+
+`audit-steam-client-codec-data.py`通过真实加密控制链覆盖显式空字段、opaque四字节、
+截断01、从独立fixture提取的Annex-B SPS/PPS、有效AVCC，以及有效AVCC后的原
+RequestReset(false)→OnThink重建。不是将同一份未连接存储直接当成SDK输入。
+每次真实open前观察拥有buffer与SDK指针/长度；每次真实send前读取完整AVPacket
+大小与SHA256。六过程均保留字段值，SDK extradata为空、媒体包仍为原Annex-B字节；
+同对象重建再open也如此。SDK/pixels/80/DataLost、真正join、引用归零、原main与ELF
+退出和原assert入口空列表分别验证。旧三个控制过程与默认direct另作兼容核对。
+
+Native H264 SDK配置移除extradata字段及拷贝，IHS通用协议字段及其拥有/重建路径
+保留。真实生产startTracked入口在首次和重建时都观察完整codec_data；SDK open边界
+逐次检查空extradata，再经过真实parser/send/receive、格式actor与独立像素MD5。
+新增六模式与原11模式共17种格式/控制过程。Native与Source逐项比较，不以仅观察到
+一张图替代字段寿命、SDK参数和真实输入字节。
+
+反事实一在隔离的media/pipeline/header副本恢复旧映射，必须成功编译/链接后由SDK
+参数/实际解码反例拒绝；反事实二仅在协议callback前删除字段，被原始配置观察拒绝。
+隔离多TU副本需要同一份私有配置ABI，不能把原头/复制头重复定义的编译错误计作检出。
+这些是软件SDK和已声明字段能力输入，不是自然host producer或物理NVTEGRA验证。
+
+```sh
+python3 scripts/audit-steam-client-codec-data.py \
+  --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
+  --sdk-directory build/video-recovery-re/linux-1.3.32.316/package/lib \
+  --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/patched-runtime/lib \
+  --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/runtime/lib \
+  --output /tmp/steam-video-codec-data.json
+```

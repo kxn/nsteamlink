@@ -11,6 +11,7 @@ import argparse
 import json
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -352,6 +353,20 @@ def main():
             "    if (opened < 0) {\n        p->format.metadata_valid = false;\n        failure = opened == AVERROR(ENOMEM)",
             "formats",
         ),
+        (
+            "map_protocol_codec_data_to_sdk",
+            media,
+            "    sl_video_config decoder = {.width = config->width,\n                               .height = config->height,",
+            "    sl_video_config decoder = {.width = config->width,\n                               .height = config->height,\n                               .extradata = config->codecData, .extradata_size = config->codecDataLen,",
+            "formats",
+        ),
+        (
+            "drop_protocol_codec_data",
+            video,
+            "    int started =\n        videoCh->tracked\n            ? callbacks->startTracked(session, &videoCh->epoch, &videoCh->config,",
+            "    IHS_StreamVideoConfig misplaced = videoCh->config;\n    misplaced.codecData = NULL; misplaced.codecDataLen = 0;\n    int started =\n        videoCh->tracked\n            ? callbacks->startTracked(session, &videoCh->epoch, &misplaced,",
+            "formats",
+        ),
         ("format_lock_across_info", pipeline, locked, holding, "formats"),
     ]
     if a.only:
@@ -366,6 +381,33 @@ def main():
         body = body.replace(before, after)
         changed = directory / source.name
         changed.write_text(body)
+        codec_overlay = None
+        if name == "map_protocol_codec_data_to_sdk":
+            # Restore the prior SDK binding across its private configuration
+            # ABI, media adapter and decoder TU. All three copies are isolated;
+            # a compile failure is not accepted as regression detection.
+            shutil.copytree(pipeline.parent, directory, dirs_exist_ok=True)
+            changed.write_text(
+                body
+            )  # The isolated media mutation follows the copied tree.
+            header = (pipeline.parent / "video_pipeline.h").read_text()
+            header = header.replace(
+                "    bool hardware;",
+                "    bool hardware;\n    const unsigned char *extradata;\n    size_t extradata_size;",
+                1,
+            )
+            (directory / "video_pipeline.h").write_text(header)
+            decoder = pipeline.read_text()
+            before_copy = "    d->codec->flags |= AV_CODEC_FLAG_COPY_OPAQUE;"
+            assert decoder.count(before_copy) == 1
+            decoder = decoder.replace(
+                before_copy,
+                before_copy
+                + "\n    if(config->extradata_size) {\n        d->codec->extradata=av_mallocz(config->extradata_size+AV_INPUT_BUFFER_PADDING_SIZE);\n        if(!d->codec->extradata) goto fail;\n        memcpy(d->codec->extradata,config->extradata,config->extradata_size);\n        d->codec->extradata_size=config->extradata_size;\n    }",
+                1,
+            )
+            codec_overlay = directory / "video_pipeline.c"
+            codec_overlay.write_text(decoder)
         target = (
             "nsl-video-timing-oracle"
             if kind
@@ -415,6 +457,8 @@ def main():
                 '#include "../platforms/common/',
                 '#include "' + str(ROOT / "app/platforms/common") + "/",
             )
+            if codec_overlay:
+                text = text.replace(str(pipeline.parent) + "/", str(directory) + "/")
             if source in (pipeline, runtime):
                 text = text.replace(str(source), str(changed))
             copied = directory / "oracle.c"
@@ -496,6 +540,14 @@ def main():
                     "sl_video_formats_pending(pipeline)",
                 ),
                 "drop_reset_format_values": ("reset_pending", "infoCount=="),
+                "map_protocol_codec_data_to_sdk": (
+                    "codec_opaque",
+                    "codecDataSdkSize==0",
+                ),
+                "drop_protocol_codec_data": (
+                    "codec_opaque",
+                    "config->codecDataLen==codecDataExpectedSize",
+                ),
                 "discard_failed_open_metadata": ("reset_unavailable", "infoCount==1"),
                 "retain_replaced_format_values": ("replace_pending", "infoCount==0"),
                 "omit_prejoin_format_cancel": ("reset_pending", "TimeoutExpired"),

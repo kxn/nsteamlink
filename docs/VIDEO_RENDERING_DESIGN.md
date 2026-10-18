@@ -1446,6 +1446,12 @@ domain storage及各自SDK buffer/frames context/device引用。撤回旧设计�
 §103.5排除已进入kernel退出的proc条目，并单独检查可观测join返回值；这仍不等同真实
 NVTEGRA/loader验收。
 
+协议参考§106区分StartVideo codec_data与FFmpeg extradata。IHS拥有完整字段并在重建
+时继续传入启动回调；H264 SDK配置不映射这些字节，不向SDK媒体包自行补入。原AVCodec
+在这条路径保存该buffer但open/send时extradata仍为空。空/opaque/截断/Annex-B/AVCC及
+原重建由实际控制链和SDK验证；不泛化到Android或音频。撤回将视频codec_data直接拷到
+AVCodecContext.extradata视作官方等价映射的实现假设。
+
 格式回调按协议参考§102–104区分SDK open guard与运行期异步请求。原+2cc guard在
 avcodec_open2前置1、返回后清0；Native同样在open中同步选择，其余生产submit把offered
 格式值复制到pipeline-owned slot并等待。IHS actor按reset→network→control FIFO→格式

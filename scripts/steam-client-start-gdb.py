@@ -12,7 +12,7 @@ Frame remain explicit inputs; there is no Steam handshake, SDL init or renderer.
 
 
 def exercise_start(mode):
-    assert mode in ("decode", "replace_pending", "stop_pending")
+    assert mode in ("decode", "replace_pending", "stop_pending", "reset_ready")
     client, player = cpp_alloc(0x1F6F8), cpp_alloc(0x10000)
     main = gdb.selected_thread().global_num
     trace, breaks, roles, decoders = [], [], {}, []
@@ -67,6 +67,37 @@ def exercise_start(mode):
                         shape=[u32(af + 104), u32(af + 108), u32(af + 116)],
                     )
                 )
+            elif (
+                name in ("codec_open_input", "sdk_send")
+                and config.get("video_codec_data_hex") is not None
+            ):
+                context = (
+                    u64(int(gdb.parse_and_eval("$rbx")) + 0x268)
+                    if name == "codec_open_input"
+                    else int(gdb.parse_and_eval("$rdi"))
+                )
+                if name == "codec_open_input":
+                    owner = int(gdb.parse_and_eval("$rbx"))
+                    output.setdefault("codec_data_states", []).append(
+                        dict(
+                            stored=read(u64(owner + 32), u32(owner + 52)).hex()
+                            if u32(owner + 52)
+                            else "",
+                            sdk_size=u32(context + 0x50),
+                            sdk_has_pointer=bool(u64(context + 0x48)),
+                        )
+                    )
+                else:
+                    packet = int(gdb.parse_and_eval("$rsi"))
+                    assert packet and 0 <= u32(packet + 32) <= 2 * 1024 * 1024
+                    data = read(u64(packet + 24), u32(packet + 32))
+                    output.setdefault("codec_packets", []).append(
+                        dict(
+                            size=len(data),
+                            sha256=hashlib.sha256(data).hexdigest(),
+                            sdk_size=u32(context + 0x50),
+                        )
+                    )
             elif name == "frame_send":
                 frame = int(gdb.parse_and_eval("$rdi"))
                 output.setdefault("control", []).append(
@@ -91,6 +122,8 @@ def exercise_start(mode):
         0x3214D0: "stop_video_handler",
         0x318640: "start_video_factory",
         0x318910: "stop_video_owner",
+        0x32477E: "codec_open_input",
+        0x319360: "request_reset",
         0x324610: "avcodec_constructor",
         0x323FC0: "avcodec_deleting_destructor",
         0x2ED980: "public_start",
@@ -253,6 +286,12 @@ def exercise_start(mode):
         sequence += 1
 
     start_body = bytes.fromhex("080310042080012848")
+    codec_hex = config.get("video_codec_data_hex")
+    if codec_hex is not None:
+        codec_bytes = bytes.fromhex(codec_hex)
+        assert len(codec_bytes) < 128  # This fixture input, not a protocol limit.
+        start_body += bytes([26, len(codec_bytes)]) + codec_bytes
+        output["codec_data_input"] = codec_hex
     control(52, start_body)
     assert not decoder()  # Receive/FIFO must not eagerly execute the handler.
     call("void(*)(void*)", base + 0x3230A0, client)
@@ -305,13 +344,20 @@ def exercise_start(mode):
         digest = hashlib.md5(pixels).hexdigest()
         assert digest == expected
         output["picture"] = dict(id=fid, timestamp=1000000, md5=digest)
+        output.setdefault("pictures", []).append(output["picture"])
         # Full owner deletion has a separate external-frame lifetime contract.
         # Return this explicit external pop before control Stop deletes its pool.
         call("void(*)(void*)", base + 0x323FF0, frame)
 
     submit(23)
-    if mode == "decode":
+    if mode in ("decode", "reset_ready"):
         picture(23)
+        if mode == "reset_ready":
+            call("void(*)(void*,int)", base + 0x319360, client, 0)
+            call("void(*)(void*)", base + 0x3230A0, client)
+            assert decoder() == d and not pending()
+            submit(24)
+            picture(24)
     else:
         trace.append([mode, "main"])
         old = decoder()

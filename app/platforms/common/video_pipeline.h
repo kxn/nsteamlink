@@ -26,8 +26,6 @@ typedef uint8_t (*sl_video_cpu_count_fn)(void);
 typedef struct sl_video_config {
     unsigned width, height;
     bool hardware;
-    const unsigned char *extradata;
-    size_t extradata_size;
     sl_video_info_fn info;
     void *info_context;
     /* Platform CPU input, queried only for a slice-thread-capable codec.

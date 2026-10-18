@@ -189,6 +189,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
         -Wl,--wrap=av_parser_parse2 -Wl,--wrap=sl_video_timing_update
         -Wl,--wrap=IHS_SessionVideoDecodeFeedback -Wl,--wrap=IHS_SessionVideoRequestReset -Wl,--wrap=IHS_SessionChannelQueuePacket
         -Wl,--wrap=sl_gfx_present -Wl,--wrap=sl_video_open_ex
+        -Wl,--wrap=sl_media_video_start_tracked
         -Wl,--wrap=IHS_SessionVideoDecoderInfo
         -Wl,--wrap=IHS_FrameTicketVideoDecodeStage
         -Wl,--wrap=sl_video_select -Wl,--wrap=IHS_FrameTicketUploadStage

@@ -1064,10 +1064,10 @@ static int media_video_start_tracked(IHS_Session *session, const IHS_VideoEpochI
         return -1;
     sl_video_reap(video);
     video_feedback_context info = {.session = session, .epoch = epoch};
+    /* Original AVCodec keeps protocol codec_data in the decoder configuration;
+     * it does not map those bytes to SDK extradata (protocol reference §106). */
     sl_video_config decoder = {.width = config->width,
                                .height = config->height,
-                               .extradata = config->codecData,
-                               .extradata_size = config->codecDataLen,
                                .hardware = IHS_SessionVideoHardwareDecodingEnabled(session),
                                .info = video_decoder_info, .info_context = &info,
                                .cpu_count = sl_system_video_cpu_count,

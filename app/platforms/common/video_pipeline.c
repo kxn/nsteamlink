@@ -304,8 +304,7 @@ bool sl_video_open(sl_video_pipeline *p, sl_video_key key, const sl_video_config
 }
 sl_video_open_result sl_video_open_ex(sl_video_pipeline *p, sl_video_key key, const sl_video_config *config) {
     if (!key.session || !key.epoch || !config || !config->width || !config->height ||
-        config->width > 1920 || config->height > 1080 || config->extradata_size > MAX_PACKET ||
-        (config->extradata_size && !config->extradata))
+        config->width > 1920 || config->height > 1080)
         return SL_VIDEO_OPEN_GUARD;
     pthread_mutex_lock(&p->decoder);
     pthread_mutex_lock(&p->mailbox);
@@ -367,13 +366,8 @@ sl_video_open_result sl_video_open_ex(sl_video_pipeline *p, sl_video_key key, co
     d->codec->opaque = d;
     d->codec->get_format = hardware_format;
     d->codec->flags |= AV_CODEC_FLAG_COPY_OPAQUE;
-    if (config->extradata_size) {
-        d->codec->extradata = av_mallocz(config->extradata_size + AV_INPUT_BUFFER_PADDING_SIZE);
-        if (!d->codec->extradata)
-            goto fail;
-        memcpy(d->codec->extradata, config->extradata, config->extradata_size);
-        d->codec->extradata_size = config->extradata_size;
-    }
+    /* Protocol codec_data remains owned by IHS; original AVCodec does not
+     * provide it as SDK extradata or prepend it to the media packet (§106). */
     if (config->hardware) {
         enum AVHWDeviceType type = av_hwdevice_find_type_by_name("nvtegra");
         d->hardware_format = AV_PIX_FMT_NONE;

@@ -51,8 +51,18 @@ def audit(
     endpoint=None,
     format_memory=False,
     start_mode=None,
+    video_codec_data=None,
 ):
-    assert start_mode in (None, "decode", "replace_pending", "stop_pending")
+    assert start_mode in (
+        None,
+        "decode",
+        "replace_pending",
+        "stop_pending",
+        "reset_ready",
+    )
+    assert video_codec_data is None or (
+        start_mode and isinstance(video_codec_data, bytes)
+    )
     assert not start_mode or (worker_mode is None and client_bootstrap == "udp")
     assert worker_mode in (
         None,
@@ -114,6 +124,9 @@ def audit(
                     result=str(result),
                     worker_mode=worker_mode,
                     start_mode=start_mode,
+                    video_codec_data_hex=video_codec_data.hex()
+                    if video_codec_data is not None
+                    else None,
                     start_helper=str(ROOT / "scripts/steam-client-start-gdb.py"),
                     client_bootstrap=client_bootstrap,
                     endpoint=endpoint,

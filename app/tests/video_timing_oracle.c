@@ -25,6 +25,14 @@ static bool formatChecking;
 static pthread_t formatActor;
 static atomic_bool formatWrongThread, formatInfoEntered;
 static bool formatOpeningCheck, formatFailOpen;
+static bool codecDataChecking;
+static int codecDataSdkSize, codecDataOpenStatus;
+static unsigned codecDataStartCalls, codecDataSdkOpens;
+static unsigned codecDataPackets;
+static int codecDataSdkSizes[4];
+static bool codecDataSdkPointers[4];
+static uint8_t codecDataExpected[64];
+static size_t codecDataExpectedSize;
 /* Existing frozen comparisons declare the one-CPU input explicitly. */
 static uint8_t testCpuCount=1;
 static unsigned cpuQueries;
@@ -117,6 +125,17 @@ sl_video_submit_result sl_video_submit(sl_video_pipeline *p, sl_video_key key, c
 #include "../platforms/common/runtime.c"
 #include "ihs_buffer.h"
 #include "ihs_buffer_ext.h"
+int __real_sl_media_video_start_tracked(IHS_Session *,const IHS_VideoEpochInfo *,const IHS_StreamVideoConfig *);
+int __wrap_sl_media_video_start_tracked(IHS_Session *session,const IHS_VideoEpochInfo *epoch,
+                                       const IHS_StreamVideoConfig *config) {
+    if(codecDataChecking) {
+        assert(config->codecDataLen==codecDataExpectedSize);
+        assert(!codecDataExpectedSize || !memcmp(config->codecData,codecDataExpected,codecDataExpectedSize));
+        ++codecDataStartCalls;
+    }
+    return __real_sl_media_video_start_tracked(session,epoch,config);
+}
+
 #include "session/channels/ch_control.h"
 #include "session/channels/video/ch_data_video.h"
 #include "session/frame_tracker.h"
@@ -182,7 +201,13 @@ int __wrap_avcodec_open2(AVCodecContext *c,const AVCodec *codec,AVDictionary **o
     sdkThreadSetup[2]=codec->capabilities;
     bool invalidOpenInput=formatFailOpen;formatFailOpen=false;
     if(invalidOpenInput) c->extradata_size=-1; /* Declared SDK input, same as Source. */
+    if(codecDataChecking) {
+        assert(codecDataSdkOpens<4);codecDataSdkSize=c->extradata_size;
+        codecDataSdkPointers[codecDataSdkOpens]=c->extradata!=NULL;
+        codecDataSdkSizes[codecDataSdkOpens++]=codecDataSdkSize;
+    }
     int result=__real_avcodec_open2(c,codec,options);
+    if(codecDataChecking) {codecDataOpenStatus=result;fprintf(stderr,"codec_data SDK size=%d open=%d\n",codecDataSdkSize,result);}
     if(invalidOpenInput) assert(result==AVERROR(EINVAL));
     sdkThreadResult[0]=c->thread_count;sdkThreadResult[1]=c->thread_type;
     sdkThreadResult[2]=c->active_thread_type;
@@ -196,10 +221,15 @@ int __wrap_avcodec_open2(AVCodecContext *c,const AVCodec *codec,AVDictionary **o
 }
 int __real_avcodec_send_packet(AVCodecContext *, const AVPacket *);
 int __wrap_avcodec_send_packet(AVCodecContext *c,const AVPacket *packet) {
+    if(codecDataChecking && packet) {
+        assert(packet->size==sizeof(payload) && !memcmp(packet->data,payload,sizeof(payload)));
+        ++codecDataPackets;
+    }
     int result=__real_avcodec_send_packet(c,packet);
     if (packet) clockTick+=inputTicks;
     if (packet && forcedSend!=INT_MAX) result=forcedSend;
     if(packet) assert(packet->pts==AV_NOPTS_VALUE);
+    if(codecDataChecking) fprintf(stderr,"codec_data send=%d size=%d\n",result,packet?packet->size:0);
     event(4,result,packet?packet->size:0,clockTick);
     return result;
 }
@@ -234,6 +264,7 @@ int __wrap_avcodec_receive_frame(AVCodecContext *c,AVFrame *frame) {
         result=forcedReceive;
     }
     clockTick+=outputTicks;
+    if(codecDataChecking) fprintf(stderr,"codec_data receive=%d\n",result);
     event(5,result,0,clockTick);
     return result;
 }
@@ -242,6 +273,7 @@ int __real_av_parser_parse2(AVCodecParserContext *,AVCodecContext *,uint8_t **,i
 int __wrap_av_parser_parse2(AVCodecParserContext *parser,AVCodecContext *context,uint8_t **out,int *size,
                            const uint8_t *in,int count,int64_t pts,int64_t dts,int64_t pos) {
     int result=__real_av_parser_parse2(parser,context,out,size,in,count,pts,dts,pos);
+    if(codecDataChecking) fprintf(stderr,"codec_data parse=%d output=%d input=%d\n",result,*size,count);
     if(parsedSize>=0) { assert(parsedSize<=count);*size=parsedSize; }
     return result+parseDelta;
 }
