@@ -230,6 +230,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-client-settings-io.py"
         --receiver $<TARGET_FILE:nsl-stream-settings-oracle>)
     set_tests_properties(stream_settings_official_vectors PROPERTIES TIMEOUT 60)
+    add_test(NAME stream_presets_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-client-presets.py"
+        --receiver $<TARGET_FILE:nsl-stream-settings-oracle>)
+    set_tests_properties(stream_presets_official_vectors PROPERTIES TIMEOUT 90)
     add_executable(nsl-video-timing-oracle tests/video_timing_oracle.c)
     target_include_directories(nsl-video-timing-oracle PRIVATE platforms/common
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
@@ -309,6 +313,16 @@ if(NSL_PLATFORM STREQUAL "desktop")
     add_test(NAME video_reset_runtime COMMAND nsl-video-reset-runtime
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video/sequential.h264)
     set_tests_properties(video_reset_runtime PROPERTIES TIMEOUT 20)
+    add_executable(nsl-network-test-runtime tests/network_test_runtime.c)
+    target_include_directories(nsl-network-test-runtime PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf ${CMAKE_SOURCE_DIR}/third_party/ihslib/tests/session)
+    target_compile_options(nsl-network-test-runtime PRIVATE -UNDEBUG -Wall -Wextra)
+    target_link_libraries(nsl-network-test-runtime PRIVATE nsl_platform)
+    target_link_options(nsl-network-test-runtime PRIVATE -Wl,--wrap=IHS_ClientStreamingRequest
+        -Wl,--wrap=sl_network_stats_save_session)
+    add_test(NAME network_test_runtime COMMAND nsl-network-test-runtime)
+    set_tests_properties(network_test_runtime PROPERTIES TIMEOUT 120)
     add_executable(nsl-player-owner-runtime tests/player_owner_runtime.c)
     target_include_directories(nsl-player-owner-runtime PRIVATE platforms/common
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client

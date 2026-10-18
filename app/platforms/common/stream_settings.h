@@ -52,3 +52,22 @@ typedef struct sl_stream_request_limits {
 } sl_stream_request_limits;
 bool sl_stream_settings_apply_limited(const sl_stream_settings *, IHS_Session *,
                                       const sl_stream_request_limits *);
+
+typedef enum sl_stream_preset {
+    SL_PRESET_KEEP = 0,
+    SL_PRESET_DEFAULT = 1,
+    SL_PRESET_ENHANCED_1080 = 2,
+    SL_PRESET_ENHANCED_4K = 3,
+    SL_PRESET_FAST = 4, /* Separate factory, not a quality enum value. */
+} sl_stream_preset;
+/* Runtime worker only, after draining producers and outside an ordinary active
+ * player. Applies the whole original preset, retaining only its 20 fields.
+ * A new ordinary Session still uses actual platform limits; this is a stored
+ * preference transformation, not a hardware capability declaration. */
+bool sl_stream_settings_preset(sl_stream_settings *, sl_stream_preset);
+bool sl_stream_settings_network_test_plan(const sl_stream_settings *, IHS_NetworkTestMode *,
+                                          uint32_t *target_kbps);
+/* Official Panel recommendation codes: 0 none, 1 Fast, 2 Enhanced.
+ * A recommendation is not applied until the user's result confirmation. */
+unsigned sl_stream_settings_network_test_recommendation(const sl_stream_settings *,
+                                                        const IHS_NetworkTestResult *);

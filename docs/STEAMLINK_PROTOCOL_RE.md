@@ -9966,6 +9966,8 @@ Panel构造时，action=0才读取`streaming_stats.bin`；仅在读取失败且�
 enable_video_streaming=true时改为action3（先测试再连接）。可读空/损坏文件不会
 因此自动重测。action1/2/3不经这个文件判断，均设置network_test=true。
 没有本分支依据支持添加一个enable_auto_network_test配置字段。
+这个构造触发分支没有按LAN/WAN筛选；局域网连接也受相同文件/视频条件控制。
+这不证明其他平台或版本沿用相同触发策略。
 
 Evidence：首次连接的实际构造/请求先产生field12=true；已授权输入后实际OnUpdate
 进入panel state5及原Start入口。完成输入为“无推荐配置”，accepted=0/1与文件
@@ -10034,3 +10036,51 @@ python3 scripts/check-steam-network-stats-file.py \
 ctest --test-dir build/desktop -R '^network_stats_file_official_vectors$' \
   --output-on-failure
 ```
+
+## 122. 完整预设与网络测试推荐的配置变换
+
+### 122.1 原客户端工厂与字段保留契约
+
+Evidence：固定§121的官方Android shell，原CreateStreamingConfigPreset@c8562c、
+CreateStreamingConfigFastPreset@c85b74及非导出保留helper@c85868，实际执行原
+Copy/Clear、protobuf parser/serializer。输入为明确配置，不是UI操作或Host响应；
+allocation/libc++字符串存储、进程级protobuf初始化与断言文本为adapter。
+
+预设0保留完整配置；预设1先Clear，回到默认Balanced；2/3先Clear，显式quality=3、
+desired_bitrate_kbps=0、HEVC=true、FEC=true，quality_limit.mode分别为1920×1080、
+3840×2160。Fast工厂不是预设1：先Clear，再显式quality=1、HEVC=true、FEC=true，
+desired_bitrate保持默认-1且不加presence。这些是偏好，不代表Switch支持HEVC/4K。
+
+Clear后只保留输入中有presence的字段：7/8/9/10/11/12/14/15/16/19/20/26/27/
+28/29/30/31/32/33/34，共20项，涵盖硬解、overlay、音视频/input、音频声道、
+性能图标、mic、控制器热键、P2P、原始音频、AV1与窗口参数。字符串深复制，空字符串
+也保留presence。其余输入的尺寸/帧率/码率、HEVC/FEC、display/quality/runtime/
+decoder limits、touch旧字段、Pyrowave与unknown字段被清除，随后才写预设字段。
+不能把“完整配置接收保留unknown”扩成“主动重建预设也保留unknown”。
+
+§116的网络测试推荐只在用户确认且推荐非零时调用这些工厂；拒绝推荐保留完整设置。
+测试mode选择、94的previous/current与推荐阈值仍沿§116/118–120，不依据丢包率
+自行选择预设。Switch最终请求沿既有apply_limited限制720p60/H264，保存偏好与
+平台能力分立；不能把Android预设中的HEVC/分辨率当作Switch能力声明。
+
+### 122.2 Native产品事务与验证边界
+
+自动测试和普通串流使用不同的Session owner：测试取得自己的发现ticket，握手声明
+network_test=1，不创建decoder、audio player或HID线程。运行中的进度和完成结果用
+带generation/revision的持久快照传给UI，不依赖有界事件队列。完成后先join测试线程，
+保留完整样本直到用户确认；推荐值固定在结果页生成时。接受非零推荐应用完整工厂并
+保存配置；拒绝保留配置。两者均保存统计，销毁已join的测试owner，再申请普通ticket。
+保存失败沿原完成动作继续，不因文件仍缺失在同一次连接里重复自动测试。
+
+手动测网通过选中在线电脑后的选项入口发起，忽略已存在统计；结果确认后返回选项。
+Auto/-1与Unlimited/0是明确码率选项，分别触发质量相关目标和250000kbps带宽测试，
+不由丢包率动态打开FEC。最终FEC是确认后的完整配置字段，由后续普通协商交给Host。
+这些UI布局、持久快照、取消优先和Switch限制是本地产品适配，不冒称Qt原实现。
+
+`network_test_runtime`以真实runtime/discovery/session worker和loopback UDP核对首次
+自动测试、普通握手/鉴权/加密协商、接受/拒绝预设、手动测试、保存失败续接、运行中取消、
+结果页退出、保存期间取消，以及可读空统计/关闭视频跳过。发现端口被明确重定向为临时
+loopback端口，身份、凭据、Host回应和媒体样本为受控输入；不证明自然Steam对连或
+Switch显示/游玩。单元输入中frame599使固定测试完成，只用于验证事务，不能代表真实
+网络测量精度。源端工厂200组输入与17项进入函数身份、一个实际命中反事实，以及73组
+原mode/推荐输入分别由独立Source fixture与Native gate比较。

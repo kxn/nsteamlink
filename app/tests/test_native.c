@@ -341,6 +341,13 @@ int main(int argc, char **argv) {
             ui.ending_game = p == SL_STOPPING;
             ui.debug = p == SL_STREAM;
             ui.stream_started_at = ui.now;
+            ui.network_test = (sl_network_test_view){.phase = SL_TEST_RUNNING,
+                                                     .target_kbps = 15000,
+                                                     .previous_target_kbps = 99999,
+                                                     .bandwidth_test = true,
+                                                     .mean_ms = 2.5f,
+                                                     .deviation_ms = 0.75f,
+                                                     .recommendation = 1};
             ui.entered_at = ui.now > 500 ? ui.now - 500 : 0;
             strcpy(ui.error,
                    sl_tr(p == SL_INSTALL_RESULT ? SL_T_SHORTCUT_ADDED : SL_T_PROFILE_CORRUPT));

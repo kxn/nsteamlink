@@ -328,3 +328,96 @@ bool sl_stream_settings_apply_limited(const sl_stream_settings *s, IHS_Session *
     free(wire);
     return ok;
 }
+
+bool sl_stream_settings_preset(sl_stream_settings *s, sl_stream_preset preset) {
+    if (!s || !s->config || preset < SL_PRESET_KEEP || preset > SL_PRESET_FAST)
+        return false;
+    if (preset == SL_PRESET_KEEP)
+        return true;
+    CStreamingClientConfig value = CSTREAMING_CLIENT_CONFIG__INIT;
+    const CStreamingClientConfig *old = s->config;
+    /* Original helper c85868 retains presence as well as the field value.
+     * Do not copy the rest of the proto/unknowns into a factory that clears it. */
+#define KEEP(field)                                                                                \
+    do {                                                                                           \
+        value.has_##field = old->has_##field;                                                      \
+        memcpy(&value.field, &old->field, sizeof(value.field));                                    \
+    } while (0)
+    KEEP(enable_hardware_decoding);
+    KEEP(enable_performance_overlay);
+    KEEP(enable_video_streaming);
+    KEEP(enable_audio_streaming);
+    KEEP(enable_input_streaming);
+    KEEP(audio_channels);
+    KEEP(enable_performance_icons);
+    KEEP(enable_microphone_streaming);
+    KEEP(p2p_scope);
+    KEEP(enable_audio_uncompressed);
+    KEEP(enable_video_av1);
+    KEEP(windowed);
+    KEEP(window_pixel_density);
+    KEEP(window_width);
+    KEEP(window_height);
+    KEEP(window_position_x);
+    KEEP(window_position_y);
+    KEEP(window_frame_offset_x);
+    KEEP(window_frame_offset_y);
+#undef KEEP
+    value.controller_overlay_hotkey = old->controller_overlay_hotkey;
+    CStreamVideoLimit quality = CSTREAM_VIDEO_LIMIT__INIT;
+    CStreamVideoMode mode = CSTREAM_VIDEO_MODE__INIT;
+    if (preset != SL_PRESET_DEFAULT) {
+        value.has_quality = true;
+        value.quality = preset == SL_PRESET_FAST ? k_EStreamQualityFast : k_EStreamQualityBeautiful;
+        value.has_enable_video_hevc = value.has_enable_unreliable_fec = true;
+        value.enable_video_hevc = value.enable_unreliable_fec = true;
+        if (preset != SL_PRESET_FAST) {
+            value.has_desired_bitrate_kbps = true;
+            value.desired_bitrate_kbps = 0;
+            mode.width = preset == SL_PRESET_ENHANCED_4K ? 3840 : 1920;
+            mode.height = preset == SL_PRESET_ENHANCED_4K ? 2160 : 1080;
+            quality.mode = &mode;
+            value.quality_limit = &quality;
+        }
+    }
+    size_t size;
+    uint8_t *wire = pack(&value, &size);
+    if (!wire)
+        return false;
+    bool ok = replace(s, wire, size); /* Deep-copy before retiring old hotkey. */
+    free(wire);
+    if (!ok)
+        return false;
+    s->dirty = true;
+    pthread_mutex_lock(&s->lock);
+    s->applied_revision = ++s->sequence;
+    atomic_store(&s->published_revision, s->sequence);
+    pthread_mutex_unlock(&s->lock);
+    return true;
+}
+
+bool sl_stream_settings_network_test_plan(const sl_stream_settings *s, IHS_NetworkTestMode *mode,
+                                          uint32_t *target) {
+    if (!s || !s->config || !mode || !target)
+        return false;
+    int32_t bitrate = s->config->desired_bitrate_kbps;
+    if (bitrate < -1)
+        return false; /* Public dedicated Session accepts positive int32 targets. */
+    *mode = bitrate > 0 ? IHS_NetworkTestFixed : IHS_NetworkTestBandwidth;
+    *target = bitrate > 0                                       ? (uint32_t)bitrate
+              : bitrate == 0                                    ? 250000
+              : s->config->quality == k_EStreamQualityFast      ? 10000
+              : s->config->quality == k_EStreamQualityBeautiful ? 30000
+                                                                : 15000;
+    return true;
+}
+unsigned sl_stream_settings_network_test_recommendation(const sl_stream_settings *s,
+                                                        const IHS_NetworkTestResult *result) {
+    if (!s || !s->config || !result || !result->valid ||
+        result->status != IHS_NetworkTestComplete || result->mode != IHS_NetworkTestBandwidth)
+        return 0;
+    /* Original c711ec/f0 uses signed W24/B.LT, not unsigned throughput. */
+    bool high = result->previousTargetKbps >= 100000 && result->previousTargetKbps <= INT32_MAX;
+    return high ? (s->config->quality == k_EStreamQualityBeautiful ? 0 : 2)
+                : (s->config->quality == k_EStreamQualityFast ? 0 : 1);
+}

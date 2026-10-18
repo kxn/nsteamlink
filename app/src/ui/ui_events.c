@@ -78,7 +78,7 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
         break;
     case SL_EVENT_FAILURE:
         if (e.account == 1) {
-            if (m->page != SL_CONNECTING)
+            if (m->page != SL_CONNECTING && m->page != SL_NETWORK_TEST)
                 break;
             sl_host *h = sl_host_find(&m->store.registry, m->intent.host.id);
             if (h) {
@@ -127,6 +127,28 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
     default:
         break;
     }
+    sl_ui_layout(m);
+}
+
+void sl_ui_network_test(sl_ui_model *m, const sl_network_test_view *view) {
+    if (view->generation != m->generation ||
+        (m->network_test.generation == view->generation &&
+         view->revision <= m->network_test.revision) ||
+        (m->page != SL_CONNECTING && m->page != SL_NETWORK_TEST && m->page != SL_NETWORK_RESULT))
+        return;
+    m->network_test = *view;
+    sl_page before = m->page;
+    if (view->phase == SL_TEST_REQUESTING || view->phase == SL_TEST_RUNNING)
+        m->page = SL_NETWORK_TEST;
+    else if (view->phase == SL_TEST_RESULT) {
+        m->page = SL_NETWORK_RESULT;
+        m->focus = 103; /* The apply/continue row; footer B keeps the old settings. */
+    } else if (view->phase == SL_TEST_CONTINUING)
+        m->page = SL_CONNECTING;
+    else
+        return;
+    if (m->page != before)
+        m->entered_at = m->now;
     sl_ui_layout(m);
 }
 

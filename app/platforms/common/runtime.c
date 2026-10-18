@@ -2,8 +2,10 @@
 #include "client_pri.h"
 #include "discovery.pb-c.h"
 #include "media.h"
+#include "network_stats_file.h"
 #include "platform/shortcut.h"
 #include "platform/system.h"
+#include "protobuf/remoteplay.pb-c.h"
 #include "services/i18n.h"
 #include "services/launch_watch.h"
 #include "services/update_config.h"
@@ -30,7 +32,7 @@ struct sl_runtime {
     bool waiting_video;
     atomic_uint foreground_generation;
     atomic_bool player_input_focus; /* Separate from app lifecycle/pause edges. */
-    unsigned foreground_applied; /* Runtime worker only. */
+    unsigned foreground_applied;    /* Runtime worker only. */
     uint64_t session_id;
     sl_runtime_facts facts;
     pthread_mutex_t lock;
@@ -48,6 +50,10 @@ struct sl_runtime {
     int count;
     IHS_Client *client;
     IHS_Session *session;
+    IHS_Session *test_session; /* Dedicated protocol owner; never a video player. */
+    bool test_active, test_joined;
+    uint64_t test_sample_at;
+    sl_network_test_view test_view;
     IHS_HIDProvider *provider;
     IHS_ClientConfig config;
     IHS_SessionInfo session_info;
@@ -403,8 +409,8 @@ static void video_flush(IHS_Session *s, const IHS_VideoEpochInfo *epoch,
     (void)ctx;
     sl_media_video_flush_tracked(s, epoch, phase);
 }
-static void video_interrupt(IHS_Session *s, const IHS_VideoEpochInfo *epoch,
-                             bool restarting, void *ctx) {
+static void video_interrupt(IHS_Session *s, const IHS_VideoEpochInfo *epoch, bool restarting,
+                            void *ctx) {
     (void)ctx;
     sl_media_video_interrupt_tracked(s, epoch, restarting);
 }
@@ -446,7 +452,9 @@ static void client_config_begin(IHS_Session *session, sl_runtime *r) {
 }
 static void client_config_changed(IHS_Session *session, const uint8_t *wire, size_t size,
                                   bool local_only, void *ctx) {
-    (void)wire; (void)size; (void)local_only;
+    (void)wire;
+    (void)size;
+    (void)local_only;
     sl_runtime *r = ctx;
     bool present;
     bool hardware = IHS_SessionVideoHardwareDecodingPreference(session, &present);
@@ -486,11 +494,36 @@ static const IHS_StreamSessionCallbacks session_cb = {.configuring = configuring
                                                       .disconnected = disconnected,
                                                       .saveClientConfig = client_config_saved,
                                                       .clientConfigChanged = client_config_changed};
-static const IHS_StreamVideoCallbacks video_cb = {
-    .startTracked = video_start, .submitTracked = video_submit, .stopTracked = video_stop,
-    .prepare = video_prepare, .flushTracked = video_flush, .reportsDecoderInfo = true,
-    .interruptTracked = video_interrupt, .thinkTracked = video_think};
+static const IHS_StreamVideoCallbacks video_cb = {.startTracked = video_start,
+                                                  .submitTracked = video_submit,
+                                                  .stopTracked = video_stop,
+                                                  .prepare = video_prepare,
+                                                  .flushTracked = video_flush,
+                                                  .reportsDecoderInfo = true,
+                                                  .interruptTracked = video_interrupt,
+                                                  .thinkTracked = video_think};
 static const IHS_StreamInputCallbacks input_cb = {.activityState = activity};
+static void publish_test(sl_runtime *r, sl_network_test_view view) {
+    pthread_mutex_lock(&r->lock);
+    view.generation = r->active.generation;
+    view.revision = r->test_view.revision + 1;
+    view.test_only = r->active.test_only;
+    r->test_view = view;
+    pthread_mutex_unlock(&r->lock);
+}
+static void stop_network_test(sl_runtime *r) {
+    if (r->test_session) {
+        IHS_SessionDisconnect(r->test_session);
+        if (!r->test_joined)
+            IHS_SessionThreadedJoin(r->test_session);
+        IHS_SessionDestroy(r->test_session);
+        r->test_session = NULL;
+        sl_log("network test: workers joined, session destroyed");
+    }
+    r->test_active = r->test_joined = false;
+    r->test_sample_at = 0;
+    publish_test(r, (sl_network_test_view){.phase = SL_TEST_IDLE});
+}
 static void stop_client(sl_runtime *r) {
     if (!r->client)
         return;
@@ -519,6 +552,7 @@ static bool start_client(sl_runtime *r) {
 /* Return completion observed before/during join, before destroying its owner. */
 static bool stop_session(sl_runtime *r) {
     bool host_completed = false;
+    stop_network_test(r);
     sl_media_close_video();
     r->waiting_video = true;
     sl_log("cleanup: stop/join HID worker");
@@ -621,6 +655,144 @@ static bool host_info(const sl_host *h, IHS_HostInfo *out) {
     snprintf(out->hostname, sizeof(out->hostname), "%s", h->name);
     return IHS_IPAddressFromString(&out->address.ip, h->address);
 }
+static bool request_stream(sl_runtime *r, bool network_test) {
+    IHS_HostInfo host;
+    if (!r->client || !host_info(&r->active.host, &host))
+        return false;
+    IHS_ClientStreamingCancel(r->client);
+    IHS_ClientStopDiscovery(r->client);
+    const sl_host *paired = sl_host_find(&r->store.registry, r->active.host.id);
+    IHS_ClientSetSecretKey(r->client,
+                           paired && paired->has_secret ? paired->secret : r->store.secret);
+    const CStreamingClientConfig *config = r->settings.config;
+    IHS_StreamingRequest req = {
+        .networkTest = network_test,
+        .streamingEnable = {config->enable_video_streaming, config->enable_audio_streaming,
+                            config->enable_input_streaming},
+        .maxResolution = {1280, 720},
+        .audioChannelCount = 2,
+        .streamingInterface = IHS_StreamInterfaceBigPicture,
+        .gamepadCount = 1,
+        /* Recent-game launch is this application's extension. A dedicated
+         * test ticket must not launch the selected game before the real stream. */
+        .gameId = network_test ? 0 : r->active.game_id,
+    };
+    snprintf(req.pin, sizeof(req.pin), "%.15s", r->active.text);
+    r->request_at = sl_system_now();
+    r->frame_at = r->request_at;
+    r->first_reported = false;
+    r->frames = 0;
+    if (!network_test) {
+        pthread_mutex_lock(&r->lock);
+        r->launch = (sl_launch_watch){.target = r->active.game_id};
+        if (!r->request_pending && !atomic_load(&r->exit_requested))
+            sl_media_allow_video();
+        pthread_mutex_unlock(&r->lock);
+    }
+    return IHS_ClientStreamingRequest(r->client, &host, &req);
+}
+static bool launch_network_test(sl_runtime *r, IHS_SessionInfo info) {
+    IHS_NetworkTestMode mode;
+    uint32_t target;
+    if (!sl_stream_settings_network_test_plan(&r->settings, &mode, &target))
+        return false;
+    r->test_session = IHS_SessionCreate(&r->config, &info);
+    if (!r->test_session || !IHS_SessionConfigureNetworkTest(r->test_session, mode, target))
+        return false;
+    IHS_SessionSetLogFunction(r->test_session, ihs_log);
+    if (!IHS_SessionConnect(r->test_session))
+        return false;
+    IHS_ClientStreamingEstablished(r->client);
+    r->request_at = 0;
+    publish_test(r, (sl_network_test_view){.phase = SL_TEST_RUNNING,
+                                           .target_kbps = target,
+                                           .bandwidth_test = mode == IHS_NetworkTestBandwidth});
+    return true;
+}
+static void sample_network_test(sl_runtime *r, uint64_t now) {
+    if (!r->test_session || r->test_joined)
+        return;
+    IHS_NetworkTestResult result;
+    IHS_SessionGetNetworkTestResult(r->test_session, &result);
+    if (result.status == IHS_NetworkTestRunning || result.status == IHS_NetworkTestIdle) {
+        if (r->test_sample_at && now - r->test_sample_at < 250)
+            return;
+        r->test_sample_at = now;
+        publish_test(
+            r, (sl_network_test_view){.phase = SL_TEST_RUNNING,
+                                      .target_kbps = result.targetKbps,
+                                      .progress = result.progressPercent,
+                                      .bandwidth_test = result.mode == IHS_NetworkTestBandwidth});
+        return;
+    }
+    IHS_SessionThreadedJoin(r->test_session);
+    r->test_joined = true;
+    IHS_SessionGetNetworkTestResult(r->test_session, &result);
+    if (result.status != IHS_NetworkTestComplete || !result.valid) {
+        stop_network_test(r);
+        fail(r, sl_tr(SL_T_TEST_FAILED));
+        return;
+    }
+    /* Keep the joined Session/full samples until the result is acknowledged.
+     * Neither the result nor progress depends on event queue capacity. */
+    publish_test(r, (sl_network_test_view){
+                        .phase = SL_TEST_RESULT,
+                        .target_kbps = result.targetKbps,
+                        .previous_target_kbps = result.previousTargetKbps,
+                        .bandwidth_test = result.mode == IHS_NetworkTestBandwidth,
+                        .progress = result.progressPercent,
+                        .loss_percent = result.lossPercent,
+                        .mean_ms = result.meanNetworkMs,
+                        .deviation_ms = result.deviationMs,
+                        .rating = result.result,
+                        .recommendation =
+                            sl_stream_settings_network_test_recommendation(&r->settings, &result)});
+}
+static void confirm_network_test(sl_runtime *r, const sl_command *cmd) {
+    if (!r->test_active || !r->test_session || !r->test_joined ||
+        cmd->generation != r->active.generation)
+        return;
+    IHS_NetworkTestResult result;
+    IHS_SessionGetNetworkTestResult(r->test_session, &result);
+    if (result.status != IHS_NetworkTestComplete)
+        return;
+    pthread_mutex_lock(&r->lock);
+    unsigned recommendation = r->test_view.recommendation;
+    pthread_mutex_unlock(&r->lock);
+    if (cmd->accept_recommendation && recommendation) {
+        /* Current validated display path has no 4K/HEVC capability. The stored
+         * preset remains distinct from the final 720p60/H264 request limits. */
+        sl_stream_preset preset = recommendation == 1 ? SL_PRESET_FAST : SL_PRESET_ENHANCED_1080;
+        if (!sl_stream_settings_preset(&r->settings, preset)) {
+            stop_network_test(r);
+            fail(r, sl_tr(SL_T_SAVE_SETTINGS_FAILED));
+            return;
+        }
+        sync_stream_settings(r, true);
+    }
+    if (!sl_network_stats_save_session(sl_system_data_dir(), r->test_session))
+        sl_log("network test: statistics save failed; continuing original completion action");
+    bool test_only = r->active.test_only;
+    stop_network_test(r);
+    /* File publication can overlap a local cancel/exit. Let the queued owner
+     * command run before issuing a new ticket (and potentially launching a game). */
+    pthread_mutex_lock(&r->lock);
+    bool interrupted = atomic_load(&r->exit_requested) ||
+                       (r->request_pending && r->pending.type != SL_CMD_TEST_CONFIRM &&
+                        r->pending.type != SL_CMD_SAVE);
+    pthread_mutex_unlock(&r->lock);
+    if (interrupted)
+        return;
+    if (test_only) {
+        stop_session(r);
+        post(r, (sl_runtime_event){.type = SL_EVENT_STOPPED});
+        IHS_ClientStartDiscovery(r->client, 3000);
+    } else {
+        publish_test(r, (sl_network_test_view){.phase = SL_TEST_CONTINUING});
+        if (!request_stream(r, false))
+            fail(r, sl_tr(SL_T_REQUEST_STREAM_FAILED));
+    }
+}
 static void execute(sl_runtime *r, sl_command cmd) {
     char trace[120];
     snprintf(trace, sizeof(trace), "command: type=%d generation=%llu host=%llu", cmd.type,
@@ -628,6 +800,10 @@ static void execute(sl_runtime *r, sl_command cmd) {
     sl_log(trace);
     if (cmd.type == SL_CMD_SAVE)
         return;
+    if (cmd.type == SL_CMD_TEST_CONFIRM) {
+        confirm_network_test(r, &cmd);
+        return;
+    }
     if (cmd.type == SL_CMD_SHORTCUT) {
         pthread_mutex_lock(&r->lock);
         r->active.generation = cmd.generation;
@@ -741,22 +917,13 @@ static void execute(sl_runtime *r, sl_command cmd) {
         if (!IHS_ClientAuthorizationRequest(r->client, &h, e.text))
             fail(r, sl_tr(SL_T_REQUEST_PAIR_FAILED));
     } else if (cmd.type == SL_CMD_STREAM) {
-        pthread_mutex_lock(&r->lock);
-        if (!r->request_pending && !atomic_load(&r->exit_requested))
-            sl_media_allow_video();
-        pthread_mutex_unlock(&r->lock);
-        IHS_ClientStopDiscovery(r->client);
-        const sl_host *paired = sl_host_find(&r->store.registry, cmd.host.id);
-        IHS_ClientSetSecretKey(r->client,
-                               paired && paired->has_secret ? paired->secret : r->store.secret);
-        IHS_StreamingRequest req = {.streamingEnable = {true, true, true},
-                                    .maxResolution = {1280, 720},
-                                    .audioChannelCount = 2,
-                                    .streamingInterface = IHS_StreamInterfaceBigPicture,
-                                    .gamepadCount = 1,
-                                    .gameId = cmd.game_id};
-        snprintf(req.pin, sizeof(req.pin), "%.15s", cmd.text);
-        if (!IHS_ClientStreamingRequest(r->client, &h, &req))
+        bool readable = !cmd.test_only && sl_network_stats_load(sl_system_data_dir(), NULL);
+        unsigned action = sl_network_stats_connect_action(
+            cmd.test_only ? 2 : 0, r->settings.config->enable_video_streaming, readable);
+        r->test_active = action != 0;
+        if (r->test_active)
+            publish_test(r, (sl_network_test_view){.phase = SL_TEST_REQUESTING});
+        if (!request_stream(r, r->test_active))
             fail(r, sl_tr(SL_T_REQUEST_STREAM_FAILED));
     }
 }
@@ -862,13 +1029,13 @@ static void sample(sl_runtime *r, uint64_t now) {
         sl_log(line);
 #if NSL_GFX_DEKO
         snprintf(line, sizeof(line),
-                 "vq1 id=%llu attempts=%llu nobatch=%llu acquire=%llu acquire_us=%llu",
-                 U(now), U(m->resources.begin_attempts), U(m->resources.no_free_batch),
+                 "vq1 id=%llu attempts=%llu nobatch=%llu acquire=%llu acquire_us=%llu", U(now),
+                 U(m->resources.begin_attempts), U(m->resources.no_free_batch),
                  U(m->resources.acquires), U(m->resources.acquire_us));
         sl_log(line);
         snprintf(line, sizeof(line),
-                 "vq2 id=%llu polls=%llu timeout=%llu done=%llu residence_us=%llu",
-                 U(now), U(m->resources.fence_polls), U(m->resources.fence_timeouts),
+                 "vq2 id=%llu polls=%llu timeout=%llu done=%llu residence_us=%llu", U(now),
+                 U(m->resources.fence_polls), U(m->resources.fence_timeouts),
                  U(m->resources.completed_batches), U(m->resources.batch_residence_us));
         sl_log(line);
 #endif
@@ -878,14 +1045,14 @@ static void sample(sl_runtime *r, uint64_t now) {
                  U(m->resources.gpu_wait_ns), U(m->resources.gpu_work_ns),
                  U(m->resources.gpu_wait_max_ns), U(m->resources.gpu_work_max_ns));
         sl_log(line);
-        snprintf(line, sizeof(line),
-                 "vq4 id=%llu short=%llu long=%llu gapmax=%llu empty=%llu one=%llu many=%llu tmax=%llu",
-                 U(now), U(s.pacing.publish_short), U(s.pacing.publish_long),
-                 U(s.pacing.publish_gap_max_us), U(s.pacing.take_empty), U(s.pacing.take_one),
-                 U(s.pacing.take_many), U(s.pacing.take_gap_max_us));
+        snprintf(
+            line, sizeof(line),
+            "vq4 id=%llu short=%llu long=%llu gapmax=%llu empty=%llu one=%llu many=%llu tmax=%llu",
+            U(now), U(s.pacing.publish_short), U(s.pacing.publish_long),
+            U(s.pacing.publish_gap_max_us), U(s.pacing.take_empty), U(s.pacing.take_one),
+            U(s.pacing.take_many), U(s.pacing.take_gap_max_us));
         sl_log(line);
-        snprintf(line, sizeof(line),
-                 "vq5 id=%llu submit=%llu bytes=%llu long=%llu gapmax=%llu",
+        snprintf(line, sizeof(line), "vq5 id=%llu submit=%llu bytes=%llu long=%llu gapmax=%llu",
                  U(now), U(s.pacing.submits), U(s.pacing.submit_bytes), U(s.pacing.submit_long),
                  U(s.pacing.submit_gap_max_us));
         sl_log(line);
@@ -894,19 +1061,20 @@ static void sample(sl_runtime *r, uint64_t now) {
                  U(now), U(s.loop.loops), U(s.loop.control_us), U(s.loop.media_us),
                  U(s.loop.tail_us), U(s.loop.sleep_us), U(s.loop.collect_us));
         sl_log(line);
-        snprintf(line, sizeof(line), "vq7 id=%llu cpu=%llu wall=%llu rc=%u",
-                 U(now), U(s.loop.cpu_ticks), U(s.loop.cpu_wall_ticks), s.loop.cpu_result);
+        snprintf(line, sizeof(line), "vq7 id=%llu cpu=%llu wall=%llu rc=%u", U(now),
+                 U(s.loop.cpu_ticks), U(s.loop.cpu_wall_ticks), s.loop.cpu_result);
         sl_log(line);
         snprintf(line, sizeof(line),
-                 "vq8 id=%llu epoch=%llu a=%llu p=%llu ca=%llu cp=%llu defer=%llu tv=%u ts=%u active=%u unknown=%llu",
-                 U(now),U(s.video_epoch),U(m->available_frames),U(m->submitted_frames),
-                 U(m->cohort_frames),U(m->cohort_presented),U(m->deferred),
-                 m->input_period_us,m->output_period_us,m->adaptive_active,U(m->unobserved));
+                 "vq8 id=%llu epoch=%llu a=%llu p=%llu ca=%llu cp=%llu defer=%llu tv=%u ts=%u "
+                 "active=%u unknown=%llu",
+                 U(now), U(s.video_epoch), U(m->available_frames), U(m->submitted_frames),
+                 U(m->cohort_frames), U(m->cohort_presented), U(m->deferred), m->input_period_us,
+                 m->output_period_us, m->adaptive_active, U(m->unobserved));
         sl_log(line);
         snprintf(line, sizeof(line),
-                 "vq9 id=%llu ready_us=%llu wait_us=%llu start_us=%llu hold=%llu",
-                 U(now),U(m->adaptive_ready_us),U(m->adaptive_wait_us),
-                 U(m->adaptive_start_us),U(m->adaptive_holdovers));
+                 "vq9 id=%llu ready_us=%llu wait_us=%llu start_us=%llu hold=%llu", U(now),
+                 U(m->adaptive_ready_us), U(m->adaptive_wait_us), U(m->adaptive_start_us),
+                 U(m->adaptive_holdovers));
         sl_log(line);
 #undef U
     }
@@ -1074,7 +1242,8 @@ static void *worker_main(void *ctx) {
             r->request_at = 0;
         }
         memset(auth_secret, 0, sizeof(auth_secret));
-        if (ready && !r->session && !launch_session(r, info)) {
+        if (ready && !r->session && !r->test_session &&
+            !(r->test_active ? launch_network_test(r, info) : launch_session(r, info))) {
             stop_session(r);
             fail(r, sl_tr(SL_T_SESSION_FAILED));
         }
@@ -1089,7 +1258,9 @@ static void *worker_main(void *ctx) {
             IHS_ClientStartDiscovery(r->client, 3000);
         }
         uint64_t now = sl_system_now();
-        if (r->client && !r->session && !r->request_at && now - last_probe >= 3000) {
+        sample_network_test(r, now);
+        if (r->client && !r->session && !r->test_active && !r->request_at &&
+            now - last_probe >= 3000) {
             last_probe = now;
             CMsgRemoteClientBroadcastDiscovery probe = CMSG_REMOTE_CLIENT_BROADCAST_DISCOVERY__INIT;
             probe.has_seq_num = true;
@@ -1116,8 +1287,8 @@ static void *worker_main(void *ctx) {
         r->activity_changed = false;
         bool desktop = r->launch.kind == 3 || r->launch.kind == 4;
         bool ending_game = r->end_game.at != 0;
-        sl_end_game_result end_result = sl_end_game_poll(&r->end_game, now,
-            r->session && IHS_SessionHostRequestedStop(r->session));
+        sl_end_game_result end_result = sl_end_game_poll(
+            &r->end_game, now, r->session && IHS_SessionHostRequestedStop(r->session));
         bool end_game_done = end_result == SL_END_GAME_DONE;
         bool end_game_timeout = end_result == SL_END_GAME_TIMEOUT;
         bool probe_launch =
@@ -1175,7 +1346,7 @@ static void *worker_main(void *ctx) {
                 r->request_at = now;
         }
         r->video_suspended = video_suspended;
-        if (!ending_game && !video_suspended && r->request_at &&
+        if (r->session && !ending_game && !video_suspended && r->request_at &&
             ((!r->first_reported && now - r->request_at > 45000) ||
              (r->first_reported && !desktop && now - r->frame_at > 10000))) {
             /* A host stop may arrive after this loop copied finished. Read the
@@ -1233,6 +1404,15 @@ static void *worker_main(void *ctx) {
     post(r, (sl_runtime_event){.type = SL_EVENT_CLOSED});
     atomic_store_explicit(&r->worker_finished, true, memory_order_release);
     return NULL;
+}
+
+bool sl_runtime_network_test(sl_runtime *r, sl_network_test_view *view) {
+    if (!r || !view)
+        return false;
+    pthread_mutex_lock(&r->lock);
+    *view = r->test_view;
+    pthread_mutex_unlock(&r->lock);
+    return view->generation != 0;
 }
 sl_runtime *sl_runtime_create(const sl_auth_store *store) {
     sl_runtime *r = calloc(1, sizeof(*r));
@@ -1373,8 +1553,7 @@ void sl_runtime_foreground(sl_runtime *r, bool foreground) {
         return;
     unsigned generation = atomic_load(&r->foreground_generation);
     while ((generation & 1u) != (unsigned)!foreground) {
-        if (atomic_compare_exchange_weak(&r->foreground_generation, &generation,
-                                         generation + 1u))
+        if (atomic_compare_exchange_weak(&r->foreground_generation, &generation, generation + 1u))
             break;
     }
 }

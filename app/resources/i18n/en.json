@@ -154,5 +154,19 @@
   "ERROR_CORRECTION": "Network error correction",
   "ERROR_CORRECTION_NEXT": "Error correction applies on next connection",
   "BANDWIDTH_AUTO": "Automatic",
-  "BANDWIDTH_UNLIMITED": "Unlimited"
+  "BANDWIDTH_UNLIMITED": "Unlimited",
+  "NETWORK_TEST": "Network test",
+  "TEST_REQUESTING": "Requesting a test session",
+  "TEST_PROGRESS": "Testing: %.0f%%",
+  "TEST_RATE": "Test bitrate: %.1f Mbps",
+  "TEST_RESULT": "Network test results",
+  "TEST_LOSS": "Frame loss: %.2f%%",
+  "TEST_TIMING": "Delay %.1f ms · Variation %.1f ms",
+  "TEST_RECOMMEND_FAST": "Recommended: lower bandwidth preset",
+  "TEST_RECOMMEND_ENHANCED": "Recommended: higher quality preset",
+  "TEST_KEEP_SETTINGS": "Your current settings can be kept.",
+  "TEST_APPLY": "Use recommended settings",
+  "TEST_CONTINUE": "Continue",
+  "TEST_KEEP": "B  Keep current settings",
+  "TEST_FAILED": "Network test failed. Check the connection and retry."
 }

@@ -1,4 +1,5 @@
 #pragma once
+#include "services/network_test.h"
 #include "services/stream_preferences.h"
 #include "ui/ui_model.h"
 typedef struct sl_runtime sl_runtime;
@@ -59,3 +60,4 @@ bool sl_runtime_stream_settings(sl_runtime *, sl_stream_preferences *, uint64_t 
 uint64_t sl_runtime_settings_revision(sl_runtime *);
 
 void sl_runtime_ack_stream_settings(sl_runtime *, const sl_stream_preferences *, uint64_t revision);
+bool sl_runtime_network_test(sl_runtime *, sl_network_test_view *);

@@ -667,7 +667,114 @@ static void host_secrets(void) {
     sl_host_registry_keep_secrets(&snapshot, &known);
     assert(!snapshot.hosts[0].has_secret);
 }
+static void network_test_flow(void) {
+    for (unsigned manual = 0; manual < 2; ++manual) {
+        for (unsigned accept = 0; accept < 2; ++accept) {
+            sl_ui_model m = model();
+            add(&m, 1, "HOST");
+            m.store.registry.hosts[0].paired = true;
+            if (manual)
+                sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
+            sl_ui_action(&m, manual ? SL_RUN_NETWORK_TEST : SL_START, 0);
+            sl_command cmd;
+            assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_STREAM &&
+                   cmd.test_only == (bool)manual);
+            uint64_t generation = cmd.generation;
+            sl_network_test_view view = {.generation = generation,
+                                         .revision = 1,
+                                         .phase = SL_TEST_REQUESTING,
+                                         .test_only = manual};
+            sl_ui_network_test(&m, &view);
+            assert(m.page == SL_NETWORK_TEST && !m.streaming);
+            layout_check(&m);
+            sl_ui_action(&m, SL_ACCEPT, 0);
+            sl_ui_action(&m, SL_DOWN, 0);
+            assert(!sl_ui_take_command(&m, &cmd));
+            view.revision++;
+            view.phase = SL_TEST_RUNNING;
+            view.progress = 50;
+            sl_ui_network_test(&m, &view);
+            view.revision++;
+            view.phase = SL_TEST_RESULT;
+            view.recommendation = 1;
+            view.mean_ms = 2.5f;
+            sl_ui_network_test(&m, &view);
+            assert(m.page == SL_NETWORK_RESULT && m.focus == 103);
+            layout_check(&m);
+            sl_ui_action(&m, accept ? SL_ACCEPT : SL_BACK, 0);
+            assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_TEST_CONFIRM &&
+                   cmd.generation == generation && cmd.accept_recommendation == (bool)accept);
+            assert(m.page == (manual ? SL_STOPPING : SL_CONNECTING));
+            /* An unchanged persistent result cannot reopen the acknowledged dialog. */
+            sl_ui_network_test(&m, &view);
+            assert(m.page == (manual ? SL_STOPPING : SL_CONNECTING));
+            if (manual) {
+                sl_runtime_event done = {.type = SL_EVENT_STOPPED, .generation = generation};
+                sl_ui_runtime_event(&m, &done);
+                assert(m.page == SL_OPTIONS && m.depth == 1 && m.stack[0] == SL_HOME);
+            } else {
+                view.revision++;
+                view.phase = SL_TEST_CONTINUING;
+                sl_ui_network_test(&m, &view);
+                assert(m.page == SL_CONNECTING);
+                sl_runtime_event video = {.type = SL_EVENT_FIRST_FRAME, .generation = generation};
+                sl_ui_runtime_event(&m, &video);
+                assert(m.page == SL_STREAM);
+            }
+        }
+    }
+    sl_ui_model m = model();
+    add(&m, 1, "HOST");
+    m.store.registry.hosts[0].paired = true;
+    sl_ui_action(&m, SL_START, 0);
+    sl_command cmd;
+    assert(sl_ui_take_command(&m, &cmd));
+    sl_network_test_view view = {
+        .generation = cmd.generation, .revision = 1, .phase = SL_TEST_RUNNING};
+    sl_ui_network_test(&m, &view);
+    sl_runtime_event pin = {.type = SL_EVENT_PIN, .generation = cmd.generation};
+    sl_ui_runtime_event(&m, &pin);
+    assert(m.page == SL_PIN);
+    view.revision++;
+    sl_ui_network_test(&m, &view);
+    assert(m.page == SL_PIN); /* Progress cannot obscure a security PIN or failure. */
+    sl_ui_action(&m, SL_DIGIT, '7');
+    sl_ui_action(&m, SL_SUBMIT, 0);
+    assert(sl_ui_take_command(&m, &cmd) && cmd.security_pin_retry &&
+           cmd.generation == view.generation && !strcmp(cmd.text, "7"));
+    view.revision++;
+    sl_ui_network_test(&m, &view);
+    sl_ui_action(&m, SL_BACK, 0);
+    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_CANCEL &&
+           cmd.generation > view.generation);
+    view.revision++;
+    view.phase = SL_TEST_RESULT;
+    sl_ui_network_test(&m, &view);
+    assert(m.page == SL_STOPPING);
+
+    m = model();
+    add(&m, 1, "HOST");
+    sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
+    sl_ui_action(&m, SL_RUN_NETWORK_TEST, 0);
+    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_PAIR && cmd.test_only);
+    sl_runtime_event paired = {
+        .type = SL_EVENT_AUTHORIZED, .generation = cmd.generation, .account = 12, .host = cmd.host};
+    sl_ui_runtime_event(&m, &paired);
+    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_STREAM && cmd.test_only);
+
+    for (unsigned automatic = 0; automatic < 2; ++automatic) {
+        m = model();
+        sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
+        sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
+        sl_ui_action(&m, SL_OPEN_BANDWIDTH, 0);
+        layout_check(&m);
+        sl_ui_action(&m, SL_SET_BANDWIDTH, automatic ? -1 : 0);
+        assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_SAVE &&
+               m.store.bitrate_kbps == (automatic ? UINT32_MAX : 0));
+    }
+}
 int main(void) {
+    network_test_flow();
     update_flow();
     profile_v2_migration();
     profile_v3_migration();

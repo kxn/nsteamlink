@@ -154,5 +154,19 @@
   "ERROR_CORRECTION": "网络纠错",
   "ERROR_CORRECTION_NEXT": "网络纠错将在下次连接生效",
   "BANDWIDTH_AUTO": "自动",
-  "BANDWIDTH_UNLIMITED": "无限制"
+  "BANDWIDTH_UNLIMITED": "无限制",
+  "NETWORK_TEST": "网络测试",
+  "TEST_REQUESTING": "正在申请测试会话",
+  "TEST_PROGRESS": "测试进度：%.0f%%",
+  "TEST_RATE": "测试码率：%.1f Mbps",
+  "TEST_RESULT": "网络测试结果",
+  "TEST_LOSS": "丢帧率：%.2f%%",
+  "TEST_TIMING": "延迟 %.1f ms · 波动 %.1f ms",
+  "TEST_RECOMMEND_FAST": "建议使用较低带宽预设",
+  "TEST_RECOMMEND_ENHANCED": "建议使用较高画质预设",
+  "TEST_KEEP_SETTINGS": "可以保持当前设置",
+  "TEST_APPLY": "应用建议设置",
+  "TEST_CONTINUE": "继续",
+  "TEST_KEEP": "B  保持当前设置",
+  "TEST_FAILED": "网络测试失败，请检查连接后重试"
 }

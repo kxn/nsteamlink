@@ -95,6 +95,9 @@ static void runtime_events(application *a) {
     sl_runtime_event e;
     while (sl_runtime_poll(a->runtime, &e))
         sl_ui_runtime_event(&a->ui, &e);
+    sl_network_test_view test;
+    if (sl_runtime_network_test(a->runtime, &test))
+        sl_ui_network_test(&a->ui, &test);
 }
 /* D-060: the NRO that was launched is replaced, and the HOME shortcut's copy
  * with it. Without a launched NRO on the SD card there is nothing to check. */
@@ -180,6 +183,11 @@ static bool command(application *a, const sl_command *cmd) {
         return true;
     }
     if (cmd->type == SL_CMD_STREAM) {
+        if (cmd->security_pin_retry) {
+            if (a->lifecycle.phase != SL_APP_STARTING || a->lifecycle.request_id != cmd->generation)
+                return false;
+            return submit_runtime(a, cmd, &a->ui.store);
+        }
         if (!sl_app_request_start(&a->lifecycle, cmd->generation))
             return false;
         if (a->lifecycle.phase != SL_APP_STARTING) {
@@ -354,9 +362,11 @@ int sl_application_run(int argc, char **argv) {
         if (loop_end - loop_reported >= 1000000) {
 #if defined(__SWITCH__)
             u64 ticks = 0;
-            loop_metrics.cpu_result = svcGetInfo(&ticks,
-                hosversionAtLeast(13, 0, 0) ? InfoType_ThreadTickCount : InfoType_ThreadTickCountDeprecated,
-                CUR_THREAD_HANDLE, TickCountInfo_Total);
+            loop_metrics.cpu_result =
+                svcGetInfo(&ticks,
+                           hosversionAtLeast(13, 0, 0) ? InfoType_ThreadTickCount
+                                                       : InfoType_ThreadTickCountDeprecated,
+                           CUR_THREAD_HANDLE, TickCountInfo_Total);
             loop_metrics.cpu_ticks = ticks;
             loop_metrics.cpu_wall_ticks = armGetSystemTick();
 #else
