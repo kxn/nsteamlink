@@ -183,7 +183,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_compile_options(nsl-video-timing-oracle PRIVATE -UNDEBUG -Wall -Wextra -Wno-unknown-pragmas)
     target_link_libraries(nsl-video-timing-oracle PRIVATE nsl_platform ihs-test-session)
     target_link_options(nsl-video-timing-oracle PRIVATE -Wl,--wrap=IHS_SessionPacketTimestamp
-        -Wl,--wrap=avcodec_send_packet -Wl,--wrap=avcodec_receive_frame -Wl,--wrap=avcodec_flush_buffers
+        -Wl,--wrap=avcodec_open2 -Wl,--wrap=avcodec_send_packet -Wl,--wrap=avcodec_receive_frame -Wl,--wrap=avcodec_flush_buffers
         -Wl,--wrap=av_parser_parse2 -Wl,--wrap=sl_video_timing_update
         -Wl,--wrap=IHS_SessionVideoDecodeFeedback -Wl,--wrap=IHS_SessionVideoRequestReset -Wl,--wrap=IHS_SessionChannelQueuePacket
         -Wl,--wrap=sl_gfx_present -Wl,--wrap=sl_video_open_ex
@@ -207,6 +207,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-player-config.py"
         --receiver $<TARGET_FILE:nsl-video-timing-oracle>)
     set_tests_properties(player_hardware_config_vectors PROPERTIES TIMEOUT 90)
+    add_test(NAME decoder_info_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-decoder-info.py"
+        --receiver $<TARGET_FILE:nsl-video-timing-oracle>)
+    set_tests_properties(decoder_info_official_vectors PROPERTIES TIMEOUT 60)
     add_executable(nsl-video-keyframe-runtime tests/video_keyframe_runtime.c)
     target_include_directories(nsl-video-keyframe-runtime PRIVATE platforms/common
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client

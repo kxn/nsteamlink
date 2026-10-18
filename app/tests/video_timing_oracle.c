@@ -19,10 +19,16 @@ static int formatResult=-2;
 static bool requestedHardware;
 static unsigned controlCount, controlSteps[512], controlSizes[512];
 static uint8_t controlBodies[512][1024];
+static unsigned infoCount, infoPhase;
+static bool infoSendOk=true, infoOpenCallback;
+static unsigned infoSteps[512], infoPhases[512], infoSizes[512];
+static uint8_t infoBodies[512][512];
 sl_video_open_result __real_sl_video_open_ex(sl_video_pipeline *,sl_video_key,const sl_video_config *);
 sl_video_open_result __wrap_sl_video_open_ex(sl_video_pipeline *p,sl_video_key key,const sl_video_config *config) {
     requestedHardware=config->hardware;
-    return __real_sl_video_open_ex(p,key,config);
+    sl_video_open_result result=__real_sl_video_open_ex(p,key,config);
+    domain *d=find_domain(p,key);assert(!d || (!d->info && !d->info_context));
+    return result;
 }
 static int64_t forcedPts=AV_NOPTS_VALUE;
 static unsigned eventCount;
@@ -46,7 +52,7 @@ static uint64_t inputSerials[512][4];
 static uint32_t physical[1024][3], prep[1024][3];
 sl_video_pipeline *sl_video_create(void) { return pipeline = timing_create(); }
 sl_video_submit_result sl_video_submit(sl_video_pipeline *p, sl_video_key key, const unsigned char *data,
-                                       size_t size, IHS_FrameTicket *ticket, bool *taken, bool keyframe, sl_video_feedback_fn feedback, void *context) {
+                                       size_t size, IHS_FrameTicket *ticket, bool *taken, bool keyframe, sl_video_feedback_fn feedback, sl_video_info_fn info, void *context) {
     uint32_t stamp;
     assert(IHS_FrameTicketVideoTimestamp(ticket, &stamp));
     assert(!size || (size == sizeof(payload) && !memcmp(data, payload, size)));
@@ -55,7 +61,9 @@ sl_video_submit_result sl_video_submit(sl_video_pipeline *p, sl_video_key key, c
     submits[submitCount][0] = action; submits[submitCount][1] = identity.frameId;
     submits[submitCount++][2] = stamp;
     uint64_t before = p->publish_seq;
-    sl_video_submit_result result = timing_submit(p, key, data, size, ticket, taken, keyframe, feedback, context);
+    sl_video_submit_result result = timing_submit(p, key, data, size, ticket, taken, keyframe, feedback, info, context);
+    domain *reported=find_domain(p,key);
+    assert(!reported || (!reported->info && !reported->info_context));
     assert(result != SL_VIDEO_SUBMIT_ERROR && p->publish_seq <= before + (size != 0));
     pthread_mutex_lock(&p->mailbox);
     assert(inputCount < 512);
@@ -97,6 +105,17 @@ sl_gfx_present_result __wrap_sl_gfx_present(sl_gfx *g) {
 }
 static atomic_uint processed;
 static unsigned target;
+int __real_avcodec_open2(AVCodecContext *,const AVCodec *,AVDictionary **);
+int __wrap_avcodec_open2(AVCodecContext *c,const AVCodec *codec,AVDictionary **options) {
+    int result=__real_avcodec_open2(c,codec,options);
+    if(!result && infoOpenCallback) {
+        infoOpenCallback=false;unsigned previous=infoPhase;infoPhase=4;
+        enum AVPixelFormat formats[]={AV_PIX_FMT_YUV420P,AV_PIX_FMT_NONE};
+        assert(c->get_format && c->get_format(c,formats)==AV_PIX_FMT_YUV420P);
+        infoPhase=previous;
+    }
+    return result;
+}
 int __real_avcodec_send_packet(AVCodecContext *, const AVPacket *);
 int __wrap_avcodec_send_packet(AVCodecContext *c,const AVPacket *packet) {
     int result=__real_avcodec_send_packet(c,packet);
@@ -172,6 +191,13 @@ bool __wrap_IHS_BaseSend(IHS_Base *b, IHS_SocketAddress a, const IHS_Buffer *dat
 bool __wrap_IHS_SessionSendControlMessage(IHS_Session *s, EStreamControlMessage t,
                                           const ProtobufCMessage *message) {
     (void)s;
+    if(t==k_EStreamControlVideoDecoderInfo) {
+        assert(infoCount<512);size_t n=protobuf_c_message_get_packed_size(message);
+        assert(n+1<=sizeof(infoBodies[0]));
+        infoSteps[infoCount]=action;infoPhases[infoCount]=infoPhase;infoSizes[infoCount]=(unsigned)n+1;
+        infoBodies[infoCount][0]=(uint8_t)t;
+        assert(protobuf_c_message_pack(message,infoBodies[infoCount]+1)==n);++infoCount;
+    }
     if(recording) {
         assert(controlCount<512);size_t size=protobuf_c_message_get_packed_size(message);
         assert(size+1<=sizeof(controlBodies[0]));
@@ -180,7 +206,7 @@ bool __wrap_IHS_SessionSendControlMessage(IHS_Session *s, EStreamControlMessage 
         assert(protobuf_c_message_pack(message,controlBodies[controlCount]+1)==size);
         ++controlCount;
     }
-    event(9,t,0,clockTick); return true;
+    event(9,t,0,clockTick); return t!=k_EStreamControlVideoDecoderInfo || infoSendOk;
 }
 static void config_changed(IHS_Session *s,const uint8_t *p,size_t n,bool local,void *context) {
     event(10,n,local,clockTick);
@@ -366,6 +392,15 @@ static void observe(sl_runtime *runtime) {
         for(unsigned k=0;k<controlSizes[n];++k)printf("%02x",controlBodies[n][k]);
         printf("\"]");
     }
+    printf("],\"decoder_info_cache\":");
+    if(runtime->session->videoDecoderInfo) printf("\"%s\"",runtime->session->videoDecoderInfo);
+    else printf("null");
+    printf(",\"decoder_infos\":[");
+    for(unsigned n=0;n<infoCount;++n) {
+        printf("%s[%u,%u,\"",n?",":"",infoSteps[n],infoPhases[n]);
+        for(unsigned k=0;k<infoSizes[n];++k)printf("%02x",infoBodies[n][k]);
+        printf("\"]");
+    }
     printf("],\"reset_feedback_applied\":%s,\"hardware_preference\":%s,\"config\":\"",
         resetRequested?"true":"false",IHS_SessionVideoHardwareDecodingEnabled(runtime->session)?"true":"false");
     uint8_t config[512];size_t configSize=IHS_SessionGetStreamingClientConfig(runtime->session,config,sizeof(config));
@@ -463,7 +498,9 @@ int main(int argc,char **argv) {
     while (argc==2 && fgets(line,sizeof(line),stdin)) {
         if(!videoStarted && line[0]!='C') {
             recording=false;
+            infoPhase=1; /* Original control Start vs SDK callback are separate. */
             controlMessage(r.session,k_EStreamControlStartVideoData,&m.base);
+            infoPhase=0;
             recording=true;videoStarted=true;
         }
         if (line[0]=='C' || line[0]=='U' || line[0]=='G') {
@@ -482,7 +519,15 @@ int main(int argc,char **argv) {
             } else {
                 assert(IHS_SessionSetStreamingClientConfig(r.session,config,n,local));
             }
+        } else if (line[0]=='I') {
+            unsigned value;assert(sscanf(line,"I %u",&value)==1 && value<2);infoSendOk=value;
+        } else if (line[0]=='O') {
+            infoOpenCallback=true;
+        } else if (line[0]=='Z') {
+            assert(IHS_SessionVideoRequestReset(r.session));
+            IHS_SessionVideoHandlePendingReset(r.session);
         } else if (line[0]=='F') {
+            infoPhase=2;
             unsigned count;int used;assert(sscanf(line,"F %u%n",&count,&used)==1 && count<16);
             enum AVPixelFormat formats[16];char *next=line+used;
             for(unsigned n=0;n<count;++n)formats[n]=(enum AVPixelFormat)strtol(next,&next,10);
@@ -500,6 +545,7 @@ int main(int argc,char **argv) {
         } else if (line[0]=='Q') {
             assert(sscanf(line,"Q %u %u",&inputTicks,&outputTicks)==2);
         } else if (line[0]=='P') {
+            infoPhase=3;
             unsigned fid,seq,flags,offset,size,stamp,now;
             assert(sscanf(line,"P %u %u %u %u %u %u %u",&fid,&seq,&flags,&stamp,&now,&offset,&size)==7);
             clockTick=now;packet(r.session,fid,seq,flags,stamp,offset,size);
@@ -519,7 +565,7 @@ int main(int argc,char **argv) {
         } else {
             assert(line[0]=='R');IHS_SessionVideoHandlePendingReset(r.session);
         }
-        observe(&r);++action;
+        infoPhase=0;observe(&r);++action;
     }
     recording=false;
     CStopVideoDataMsg stop=CSTOP_VIDEO_DATA_MSG__INIT;

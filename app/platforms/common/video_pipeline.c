@@ -7,6 +7,7 @@
 #include <pthread.h>
 #include <assert.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include <time.h>
 
@@ -25,6 +26,8 @@ typedef struct domain {
     bool occupied, stopped, reaping;
     atomic_uint external, mappings;
     enum AVPixelFormat hardware_format;
+    sl_video_info_fn info;
+    void *info_context; /* Non-NULL only within the borrowed SDK call scope. */
 } domain;
 typedef struct input_job {
     IHS_FrameTicket *ticket;
@@ -148,15 +151,30 @@ fail:
 static enum AVPixelFormat hardware_format(AVCodecContext *ctx, const enum AVPixelFormat *formats) {
     domain *d = ctx->opaque;
     const enum AVPixelFormat *first = formats;
+    enum AVPixelFormat selected = AV_PIX_FMT_NONE;
     for (; *formats != AV_PIX_FMT_NONE; ++formats)
-        if (*formats == d->hardware_format)
-            return *formats;
+        if (*formats == d->hardware_format) {
+            selected = *formats;
+            break;
+        }
     /* Original selector permits an offered software format when the target
      * hardware path is unavailable. No download of a failed HW frame occurs. */
-    for (formats = first; *formats != AV_PIX_FMT_NONE; ++formats)
-        if (*formats == AV_PIX_FMT_YUV420P || *formats == AV_PIX_FMT_YUVJ420P)
-            return *formats;
-    return AV_PIX_FMT_NONE;
+    if (selected == AV_PIX_FMT_NONE)
+        for (formats = first; *formats != AV_PIX_FMT_NONE; ++formats)
+            if (*formats == AV_PIX_FMT_YUV420P || *formats == AV_PIX_FMT_YUVJ420P) {
+                selected = *formats;
+                break;
+            }
+    if (d->info) {
+        char description[128];
+        if (selected != AV_PIX_FMT_NONE && selected == d->hardware_format)
+            snprintf(description, sizeof(description), "FFmpeg NVDEC");
+        else
+            snprintf(description, sizeof(description), "libavcodec software decoding with %d thread%s",
+                     ctx->thread_count, ctx->thread_count >= 2 ? "s" : "");
+        d->info(d->info_context, description, (unsigned)ctx->thread_count);
+    }
+    return selected;
 }
 static domain *find_domain(sl_video_pipeline *p, sl_video_key key) {
     for (unsigned i = 0; i < DOMAIN_COUNT; ++i)
@@ -219,6 +237,8 @@ sl_video_open_result sl_video_open_ex(sl_video_pipeline *p, sl_video_key key, co
     d->codec->coded_height = (config->height + 15u) & ~15u;
     d->codec->flags2 |= AV_CODEC_FLAG2_FAST;
     d->codec->thread_count = 1;
+    d->codec->opaque = d;
+    d->codec->get_format = hardware_format;
     d->codec->flags |= AV_CODEC_FLAG_COPY_OPAQUE;
     if (config->extradata_size) {
         d->codec->extradata = av_mallocz(config->extradata_size + AV_INPUT_BUFFER_PADDING_SIZE);
@@ -250,12 +270,14 @@ sl_video_open_result sl_video_open_ex(sl_video_pipeline *p, sl_video_key key, co
             av_buffer_unref(&d->codec->hw_device_ctx);
             d->hardware_format = AV_PIX_FMT_NONE;
         } else {
-            d->codec->opaque = d;
-            d->codec->get_format = hardware_format;
             d->codec->extra_hw_frames = 6;
         }
     }
+    d->info = config->info;
+    d->info_context = config->info_context;
     int opened = avcodec_open2(d->codec, codec, NULL);
+    d->info = NULL;
+    d->info_context = NULL;
     if (opened < 0) {
         failure = opened == AVERROR(ENOMEM) ? SL_VIDEO_OPEN_GUARD : SL_VIDEO_OPEN_UNAVAILABLE;
         goto fail;
@@ -471,7 +493,8 @@ static int receive_frames(sl_video_pipeline *p, domain *d) {
 sl_video_submit_result sl_video_submit(sl_video_pipeline *p, sl_video_key key,
                                        const unsigned char *data, size_t size,
                                        IHS_FrameTicket *ticket, bool *taken, bool keyframe,
-                                       sl_video_feedback_fn feedback, void *feedback_context) {
+                                       sl_video_feedback_fn feedback, sl_video_info_fn info,
+                                       void *feedback_context) {
     *taken = false;
     if ((size && !data) || size > MAX_PACKET || !ticket)
         return SL_VIDEO_SUBMIT_ERROR;
@@ -564,6 +587,8 @@ sl_video_submit_result sl_video_submit(sl_video_pipeline *p, sl_video_key key,
     }
     /* Keep the packet/token live through receive and Put; send failure still
      * reaches one receive and never drains/retries the same compressed packet. */
+    d->info = info;
+    d->info_context = feedback_context;
     int sent = avcodec_send_packet(d->codec, packet);
     sl_video_submit_result status = sent ? SL_VIDEO_SUBMIT_RESET : SL_VIDEO_SUBMIT_OK;
     if (sent == AVERROR(EIO)) status |= SL_VIDEO_SUBMIT_DISABLE_HARDWARE;
@@ -572,6 +597,8 @@ sl_video_submit_result sl_video_submit(sl_video_pipeline *p, sl_video_key key,
     uint64_t output_seq;
     bool valid_size, guard;
     int result = receive_one(p, d, &output_seq, &valid_size, &guard);
+    d->info = NULL;
+    d->info_context = NULL;
     if (guard) {
         dropped(ticket, IHS_VideoFrameResultDroppedDecodeCorrupt);
         status = SL_VIDEO_SUBMIT_ERROR;

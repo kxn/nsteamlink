@@ -1047,16 +1047,28 @@ int sl_media_video_prepare(IHS_Session *session, const IHS_StreamVideoConfig *co
     return video && config && config->width && config->height && config->width <= 1920 &&
                    config->height <= 1080 ? 0 : -1;
 }
+typedef struct video_feedback_context {
+    IHS_Session *session;
+    const IHS_VideoEpochInfo *epoch;
+    bool failed;
+} video_feedback_context;
+static void video_decoder_info(void *context, const char *description, unsigned threads) {
+    video_feedback_context *borrowed = context;
+    /* Original format selection ignores an informational send failure. */
+    IHS_SessionVideoDecoderInfo(borrowed->session, borrowed->epoch, description, threads);
+}
 int sl_media_video_start_tracked(IHS_Session *session, const IHS_VideoEpochInfo *epoch,
                                  const IHS_StreamVideoConfig *config) {
     if (!video || config->codec != IHS_StreamVideoCodecH264)
         return -1;
     sl_video_reap(video);
+    video_feedback_context info = {.session = session, .epoch = epoch};
     sl_video_config decoder = {.width = config->width,
                                .height = config->height,
                                .extradata = config->codecData,
                                .extradata_size = config->codecDataLen,
-                               .hardware = IHS_SessionVideoHardwareDecodingEnabled(session)
+                               .hardware = IHS_SessionVideoHardwareDecodingEnabled(session),
+                               .info = video_decoder_info, .info_context = &info,
     };
     sl_video_key key = {epoch->session_id, epoch->video_epoch};
     pthread_mutex_lock(&state_lock);
@@ -1089,11 +1101,6 @@ int sl_media_video_start_tracked(IHS_Session *session, const IHS_VideoEpochInfo 
     pthread_mutex_unlock(&state_lock);
     return opened == SL_VIDEO_OPEN_UNAVAILABLE ? 1 : 0;
 }
-typedef struct video_feedback_context {
-    IHS_Session *session;
-    const IHS_VideoEpochInfo *epoch;
-    bool failed;
-} video_feedback_context;
 static void video_decode_feedback(void *context, sl_video_submit_result result) {
     video_feedback_context *borrowed = context;
     unsigned flags = 0;
@@ -1117,7 +1124,7 @@ sl_media_video_submit_tracked(IHS_Session *session, const IHS_VideoEpochInfo *ep
         video, (sl_video_key){epoch->session_id, epoch->video_epoch}, IHS_BufferPointer(data),
         data->size, ticket, taken, (flags & IHS_StreamVideoFrameKeyFrame) &&
                                   !(flags & IHS_StreamVideoFrameFlushHandled),
-        video_decode_feedback, &feedback);
+        video_decode_feedback, video_decoder_info, &feedback);
     if (result == SL_VIDEO_SUBMIT_ERROR || feedback.failed)
         media_set_error("video packet ownership or decoder resource failure");
     /* Feedback already ran before player Put/sampling; do not send it twice. */

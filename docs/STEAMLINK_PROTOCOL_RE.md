@@ -7900,3 +7900,57 @@ python3 scripts/audit-steam-client-player-config.py \
   --output /tmp/steam-client-player-config.json
 python3 scripts/check-steam-player-config.py --receiver build/desktop/app/nsl-video-timing-oracle
 ```
+
+## 98. 官方Linux AVCodec的消息80触发与SDK回调
+
+【证据】材料仍固定§91客户端ELF SHA。`audit-steam-client-decoder-info.py`
+执行原StartDecoding @0x3246d0、真实get_format @0x324d00/0x324c90/0x324990、
+原SendVideoDecoderInfo @0x31dd40、protobuf/Frame/Send和pending-reset actor。
+SDK open/send终点可以调用原Start实际安装的callback地址；原回调返回到SDK
+续点，再返回原调用者，不用观察器直接生成消息80。SDK状态、线程元数据和
+offered formats是明确输入，没有真实GPU/SDK启动或物理资源证明。
+
+原Start仅安装callback，未触发格式协商时不发80。每次真实格式回调都会生成
+info及threads并发送80，包括重复回调、空/不支持的formats和最终选择失败；
+连接发送失败不改变该函数的格式返回。无可用VAAPI时软件描述是
+`libavcodec software decoding with N thread[s]`，N取SDK元数据，N>=2才用复数。
+threads=0也显式存在。硬解配置false/true/缺省都实际经过原selector分支，不能
+把“请求硬解”当作已选择硬件。硬件成功的描述由其原backend GetInfo提供，
+本节没有将软件失败能力输入扩大为NVTEGRA成功映射。
+
+原sender @0x31dd77先调用字符串copy @0x2b5c80，写入client+648，再构造并发送80。
+额外单列这一完整FDE与SHA；`cached_info`作为独立观察列记录初值及每状态字符串，
+原30例/204状态及原函数hash不被覆盖。非空文本复制到客户端持有的内存，发送失败
+仍保留，普通decoder Stop/Start也不清。NULL/空文本的清理分支是原helper静态证据，
+本节格式callback产生的描述均非空，不能把它称为该分支的产品可达证明。
+
+显式调用格式回调、SDK send内回调及重建时SDK open内回调均实际执行；消息80
+出现在callback进入与返回之间。普通重建只Stop/Start、未触发格式回调时不发80。
+完整明文取最终Connection交接的`50...`正文；encryption终点较早的buffer尚未
+填最终控制type，不能将其中的`00...`当作线上消息编号。
+
+原24例168状态组合字段7三种初值、SDK threads=0/1/2/4和发送成功/失败；保留该
+固定前缀后追加六例36状态的SDK回调/普通提交/重建链，共30例204状态，51个
+所列完整FDE。两项原指令反事实分别跳过实际80调用、删去软件描述复数选择；
+要求命中且完整返回、无动作期原assert，再由轨迹差异检出。既有CPU bootstrap
+assert单列；OS、allocator、libc formatting、平台不可用、加密/保存/最终send
+边界继承§95，不冒称完整Qt/网络/硬件启动。
+
+【差异与契约】Native原先在Start成功后立即发送平台静态info；当前AVCodec只有
+硬件context建立成功才安装自定义get_format，软件路径没有同一上报时点。撤回
+将这一启动时点视为所有后端共有策略的泛化。AVCodec适配应在实际SDK格式回调
+同步上报，并逐次读取SDK threads；使用借用session/epoch，不保存跨回调的会话
+指针。Stop/Start本身不补发80，发送失败不升级为reset/断连。其他后端不能仅据
+本节AVCodec路径迁移时点；NVTEGRA自然格式/错误和backend描述仍须平台证据。
+
+Native软件范围对其中六例36状态比较生产callback表、media start/submit、实际
+FFmpeg get_format、epoch/actor与完整80正文。普通软件SDK自然选择格式，open回调
+另在SDK边界明确注入；每次真实输出仍先核对独立framemd5。初始/普通重建不发80、
+SDK callback内发80、重复帧无新格式时不补发、发送失败仍推进以及借用上下文归还
+分别检查。其他SDK线程数/不支持格式及硬件成功没有被这一单线程Native投影验收。
+Native另复制当前info到session持有缓存，Base锁串行更新；退出时在workers停止后
+释放，不因发包失败丢弃它。分配失败保留旧缓存并返回false是本地资源保护，未将
+原helper的未保护malloc失败泛化成官方恢复策略。缓存之后的完整Stats/设备消费者
+仍需各自调用链。隔离Native反事实扩为24项，新增启动上报、生产flag、SDK callback、
+借用info接线、threads wire、错误升级及漏持有缓存；正常返回后的官方比较拒绝这些
+策略差异，不用编译错误/崩溃充当policy检出。

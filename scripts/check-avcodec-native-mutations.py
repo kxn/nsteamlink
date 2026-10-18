@@ -29,6 +29,7 @@ def main():
     video = ROOT / "third_party/ihslib/src/session/channels/video/ch_data_video.c"
     config = ROOT / "third_party/ihslib/src/session/client_config.c"
     runtime = ROOT / "app/platforms/common/runtime.c"
+    media = ROOT / "app/platforms/common/media.c"
     oracle = ROOT / "app/tests/video_timing_oracle.c"
     mutations = [
         (
@@ -150,6 +151,55 @@ def main():
             "/* omit active player init */",
             "player",
         ),
+        (
+            "restore_avcodec_start_info",
+            video,
+            "if (videoCh->tracked && callbacks->reportsDecoderInfo) return true;",
+            "/* send generic startup info again */",
+            "info",
+        ),
+        (
+            "omit_runtime_info_flag",
+            runtime,
+            ".reportsDecoderInfo = true",
+            ".reportsDecoderInfo = false",
+            "info",
+        ),
+        (
+            "omit_sdk_format_callback",
+            pipeline,
+            "d->codec->get_format = hardware_format;",
+            "d->codec->get_format = avcodec_default_get_format;",
+            "info",
+        ),
+        (
+            "omit_submit_info_context",
+            pipeline,
+            "d->info = info;",
+            "d->info = NULL;",
+            "info",
+        ),
+        (
+            "zero_decoder_info_threads",
+            video,
+            "PROTOBUF_C_SET_VALUE(message, threads, threads);",
+            "PROTOBUF_C_SET_VALUE(message, threads, 0);",
+            "info",
+        ),
+        (
+            "reset_on_info_send_failure",
+            media,
+            "IHS_SessionVideoDecoderInfo(borrowed->session, borrowed->epoch, description, threads);",
+            "if (!IHS_SessionVideoDecoderInfo(borrowed->session, borrowed->epoch, description, threads)) IHS_SessionVideoDecodeFeedback(borrowed->session, borrowed->epoch, IHS_StreamVideoSubmitReset);",
+            "info",
+        ),
+        (
+            "omit_owned_info_cache",
+            video,
+            "free(session->videoDecoderInfo);\n    session->videoDecoderInfo = copy;",
+            "free(copy);",
+            "info",
+        ),
     ]
     reports = []
     for name, source, before, after, kind in mutations:
@@ -162,7 +212,7 @@ def main():
         changed.write_text(body)
         target = (
             "nsl-video-timing-oracle"
-            if kind in ("oracle", "recovery", "player")
+            if kind in ("oracle", "recovery", "player", "info")
             else "nsl-video-pipeline-tests"
         )
         link = shlex.split(
@@ -187,7 +237,7 @@ def main():
                 )
             return obj
 
-        if kind in ("oracle", "recovery", "player"):
+        if kind in ("oracle", "recovery", "player", "info"):
             text = oracle.read_text().replace(
                 '#include "../platforms/common/',
                 '#include "' + str(ROOT / "app/platforms/common") + "/",
@@ -201,7 +251,7 @@ def main():
                 i for i, x in enumerate(link) if x.endswith("video_timing_oracle.c.o")
             )
             link[index] = str(obj)
-            if source in (video, config):
+            if source in (video, config, media):
                 objects.append(compile_file(source, changed, source.stem))
         else:
             objects.append(compile_file(pipeline, changed, "pipeline"))
@@ -217,20 +267,17 @@ def main():
                 stdout=log,
                 stderr=subprocess.STDOUT,
             )
-        if kind in ("oracle", "recovery", "player"):
+        if kind in ("oracle", "recovery", "player", "info"):
             command = [
                 "python3",
                 str(
                     ROOT
-                    / (
-                        "scripts/check-steam-video-avcodec.py"
-                        if kind == "oracle"
-                        else (
-                            "scripts/check-steam-player-config.py"
-                            if kind == "player"
-                            else "scripts/check-steam-video-recovery.py"
-                        )
-                    )
+                    / {
+                        "oracle": "scripts/check-steam-video-avcodec.py",
+                        "recovery": "scripts/check-steam-video-recovery.py",
+                        "player": "scripts/check-steam-player-config.py",
+                        "info": "scripts/check-steam-decoder-info.py",
+                    }[kind]
                 ),
                 "--receiver",
                 str(exe),
@@ -245,7 +292,7 @@ def main():
         (directory / "stdout.log").write_text(r.stdout)
         (directory / "stderr.log").write_text(r.stderr)
         assert r.returncode != 0, (name, "undetected")
-        if kind in ("oracle", "recovery", "player"):
+        if kind in ("oracle", "recovery", "player", "info"):
             assert (
                 "AssertionError:" in r.stderr
                 and "returncode" not in r.stderr

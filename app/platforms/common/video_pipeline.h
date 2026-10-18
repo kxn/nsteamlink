@@ -19,11 +19,16 @@ typedef struct sl_video_frame {
     void *domain;
     atomic_bool available;
 } sl_video_frame;
+/* Called synchronously inside open/submit SDK format negotiation. Its context
+ * is borrowed for that call only; the pipeline clears it before returning. */
+typedef void (*sl_video_info_fn)(void *, const char *, unsigned threads);
 typedef struct sl_video_config {
     unsigned width, height;
     bool hardware;
     const unsigned char *extradata;
     size_t extradata_size;
+    sl_video_info_fn info;
+    void *info_context;
 } sl_video_config;
 
 sl_video_pipeline *sl_video_create(void);
@@ -54,7 +59,7 @@ typedef enum sl_video_submit_result {
 typedef void (*sl_video_feedback_fn)(void *, sl_video_submit_result);
 sl_video_submit_result sl_video_submit(sl_video_pipeline *, sl_video_key, const unsigned char *,
                                        size_t, IHS_FrameTicket *, bool *ticket_taken,
-                                       bool keyframe, sl_video_feedback_fn, void *);
+                                       bool keyframe, sl_video_feedback_fn, sl_video_info_fn, void *);
 bool sl_video_flush(sl_video_pipeline *, sl_video_key);
 /* Decoded-output observation for codec/probe fixtures. Application playback
  * uses selection below: an input task and physical pixels have separate owners. */

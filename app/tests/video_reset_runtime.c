@@ -108,6 +108,7 @@ __wrap_sl_media_video_submit_tracked(IHS_Session *s, const IHS_VideoEpochInfo *e
     if (atomic_exchange(&requestBoth,false)) {
         IHS_VideoEpochInfo stale=*e;--stale.video_epoch;
         assert(!IHS_SessionVideoDecodeFeedback(s,&stale,IHS_StreamVideoSubmitResetAndReportLost));
+        assert(!IHS_SessionVideoDecoderInfo(s,&stale,"stale",1));
         assert(!IHS_SessionVideoDecodeFeedback(s,&stale,(IHS_StreamVideoSubmitResult)6));
         assert(!IHS_SessionVideoDecodeFeedback(s,e,(IHS_StreamVideoSubmitResult)8));
         *taken=false;return IHS_StreamVideoSubmitResetAndReportLost;
@@ -250,8 +251,9 @@ int main(int argc, char **argv) {
            bytes > 0);
     feed(r.session, 1, true, packet, bytes);
     assert(!infos && !losses);
-    reset(&r, 2, 2, 1, 1); /* Real initial open failure -> retained actor -> retry succeeds. */
+    reset(&r, 2, 2, 0, 1); /* Open/rebuild alone has not negotiated an SDK format. */
     feed(r.session, 2, true, packet, bytes);
+    assert(infos==1); /* First real get_format, not Start, reports info80. */
     sl_video_frame *a = take(2);
     uint8_t hashA[16], hashB[16];
     pixelHash(a, hashA);
@@ -261,10 +263,11 @@ int main(int argc, char **argv) {
     feed(r.session, 3, false, packet, bytes);
     uint8_t disabled[8];assert(IHS_SessionGetStreamingClientConfig(r.session,disabled,sizeof(disabled))==2);
     assert(disabled[0]==0x38 && disabled[1]==0 && !IHS_SessionVideoHardwareDecodingEnabled(r.session));
-    reset(&r, 3, 3, 2, 3); /* Includes immediate loss from the combined EIO result. */
+    reset(&r, 3, 3, 1, 3); /* Includes immediate loss; rebuild does not add info80. */
     unchanged(a, hashA);
     assert(a->pixels->data[0] && IHS_FrameTicketIdentity(a->ticket).epoch == 2);
     feed(r.session, 4, true, packet, bytes);
+    assert(infos==2);
     sl_video_frame *b = take(3);
     pixelHash(b, hashB);
     void *mapB = sl_video_hold_mapping(b);
@@ -278,10 +281,11 @@ int main(int argc, char **argv) {
     reset(&r, 5, 3, 2, 5);
     sl_video_release_mapping(mapA);
     feed(r.session, 7, true, packet, bytes);
-    reset(&r, 6, 4, 3, 6);
+    reset(&r, 6, 4, 2, 6);
     unchanged(b, hashB);
     assert(b->pixels->data[0] && IHS_FrameTicketIdentity(b->ticket).epoch == 3);
     feed(r.session, 8, true, packet, bytes);
+    assert(infos==3);
     sl_video_frame *c = take(6);
     /* Combined legacy-return contract: exactly one immediate loss feedback,
      * then the real pending gate excludes another complete submission. The

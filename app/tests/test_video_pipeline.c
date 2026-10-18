@@ -188,7 +188,7 @@ static void submit(run *r, const unsigned char *data, size_t size) {
            IHS_FrameBeginOK);
     IHS_FrameTicketSetVideoTimestamp(ticket, 0x100000u + r->packets * 777u);
     bool taken = false;
-    sl_video_submit_result submitted=sl_video_submit(r->pipeline,r->key,data,size,ticket,&taken,false,NULL,NULL);
+    sl_video_submit_result submitted=sl_video_submit(r->pipeline,r->key,data,size,ticket,&taken,false,NULL,NULL,NULL);
     assert(submitted!=SL_VIDEO_SUBMIT_ERROR && !(submitted&SL_VIDEO_SUBMIT_RESET) && taken);
     /* Outputs may be reordered and published after a later packet. The
      * presentation stamp belongs to the packet token, never a mutable ticket. */
@@ -274,7 +274,7 @@ static void corruption_and_recovery(sl_video_pipeline *pipeline, const char *pat
     IHS_FrameTicket *ticket;
     bool taken;
     assert(IHS_FrameTrackerBegin(r.tracker, 1, 1, &received, &ticket) == IHS_FrameBeginOK);
-    assert(sl_video_submit(pipeline, r.key, first, bytes, ticket, &taken, true, NULL, NULL) ==
+    assert(sl_video_submit(pipeline, r.key, first, bytes, ticket, &taken, true, NULL, NULL, NULL) ==
                SL_VIDEO_SUBMIT_OK &&
            taken);
     IHS_FrameTicketRelease(ticket);
@@ -286,12 +286,12 @@ static void corruption_and_recovery(sl_video_pipeline *pipeline, const char *pat
                held->pixels->linesize, AV_PIX_FMT_YUV420P, 128, 72, 1) == sizeof(before));
     const uint8_t broken[] = {0, 0, 0, 1, 0x65, 0x80}; // truncated IDR slice
     assert(IHS_FrameTrackerBegin(r.tracker, 1, 2, &received, &ticket) == IHS_FrameBeginOK);
-    sl_video_submit_result bad=sl_video_submit(pipeline,r.key,broken,sizeof(broken),ticket,&taken,false,NULL,NULL);
+    sl_video_submit_result bad=sl_video_submit(pipeline,r.key,broken,sizeof(broken),ticket,&taken,false,NULL,NULL,NULL);
     assert((bad&SL_VIDEO_SUBMIT_CORRUPT) && taken);
     IHS_FrameTicketRelease(ticket);
     assert(!sl_video_take(pipeline)); // damaged output never replaces displayed frame
     assert(IHS_FrameTrackerBegin(r.tracker, 1, 3, &received, &ticket) == IHS_FrameBeginOK);
-    assert(sl_video_submit(pipeline, r.key, first, bytes, ticket, &taken, true, NULL, NULL) ==
+    assert(sl_video_submit(pipeline, r.key, first, bytes, ticket, &taken, true, NULL, NULL, NULL) ==
                SL_VIDEO_SUBMIT_OK &&
            taken);
     IHS_FrameTicketRelease(ticket);
@@ -312,7 +312,7 @@ static void corruption_and_recovery(sl_video_pipeline *pipeline, const char *pat
     // and real image bytes rather than retaining the superseded veto.
     assert(IHS_FrameTrackerBegin(r.tracker, 1, 4, &received, &ticket) == IHS_FrameBeginOK);
     flag_missing_reference = true;
-    assert(sl_video_submit(pipeline, r.key, first, bytes, ticket, &taken, true, NULL, NULL) ==
+    assert(sl_video_submit(pipeline, r.key, first, bytes, ticket, &taken, true, NULL, NULL, NULL) ==
                SL_VIDEO_SUBMIT_OK && taken);
     IHS_FrameTicketRelease(ticket);
     sl_video_frame *flagged=sl_video_take(pipeline);assert(flagged && !flag_missing_reference);
@@ -323,10 +323,10 @@ static void corruption_and_recovery(sl_video_pipeline *pipeline, const char *pat
     // from the port's local allocation/identity guard.
     assert(IHS_FrameTrackerBegin(r.tracker, 1, 5, &received, &ticket) == IHS_FrameBeginOK);
     send_failure = AVERROR(ENOMEM);
-    assert(sl_video_submit(pipeline, r.key, first, bytes, ticket, &taken, false, NULL, NULL) ==
+    assert(sl_video_submit(pipeline, r.key, first, bytes, ticket, &taken, false, NULL, NULL, NULL) ==
                (SL_VIDEO_SUBMIT_RESET | SL_VIDEO_SUBMIT_CORRUPT) && taken);
     taken = true;
-    assert(sl_video_submit(pipeline, (sl_video_key){7, 1}, first, bytes, ticket, &taken, false, NULL, NULL) ==
+    assert(sl_video_submit(pipeline, (sl_video_key){7, 1}, first, bytes, ticket, &taken, false, NULL, NULL, NULL) ==
                SL_VIDEO_SUBMIT_ERROR &&
            !taken);
     IHS_FrameTicketRelease(ticket);

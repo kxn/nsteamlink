@@ -479,7 +479,7 @@ static const IHS_StreamSessionCallbacks session_cb = {.configuring = configuring
                                                       .clientConfigChanged = client_config_changed};
 static const IHS_StreamVideoCallbacks video_cb = {
     .startTracked = video_start, .submitTracked = video_submit, .stopTracked = video_stop,
-    .prepare = video_prepare, .flushTracked = video_flush};
+    .prepare = video_prepare, .flushTracked = video_flush, .reportsDecoderInfo = true};
 static const IHS_StreamInputCallbacks input_cb = {.activityState = activity};
 static void stop_client(sl_runtime *r) {
     if (!r->client)
