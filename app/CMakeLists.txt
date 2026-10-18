@@ -202,6 +202,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-microphone-process.py"
         --receiver $<TARGET_FILE:nsl-auth-udp-oracle>)
     set_tests_properties(microphone_udp_official_vectors PROPERTIES TIMEOUT 60)
+    add_test(NAME microphone_schedule_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-microphone-schedule.py"
+        --receiver $<TARGET_FILE:ihs-microphone-schedule-oracle>)
+    set_tests_properties(microphone_schedule_official_vectors PROPERTIES TIMEOUT 30)
     add_executable(nsl-stream-settings-oracle tests/stream_settings_oracle.c)
     target_link_libraries(nsl-stream-settings-oracle PRIVATE nsl_stream_settings)
     target_compile_options(nsl-stream-settings-oracle PRIVATE -UNDEBUG)

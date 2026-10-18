@@ -9369,8 +9369,9 @@ GDB dummy caller单独标出边界，不把暂停的原main地址误算成已执
 这些不同进程的时钟/配额状态不同，既不能据此断言全局发送策略错误，也不能
 宣布该顺序差异已经证明等价。初版尝试把跨channel全序直接互比的断言撤回；
 完整原始事件仍保存，不删除差异记录。§37/44/58的同clock组件证据不穷尽这组
-多producer组合；其统一时钟/调度下的全局初发仍需要自身证据，本节未修改全局
-sender来迎合任一墙钟样本，也不以该边界缩减整个协议对齐目标。
+多producer组合。§115随后为这个具体现象补齐受控clock/配额的API对照，并在真实
+Linux客户端的明确线程调度条件下复现同一全序；完整自然线程调度仍需独立证据。
+本节没有修改全局sender迎合墙钟样本，也不以该边界缩减协议对齐目标。
 
 本地`microphone_lifetime`以真实公开接口/控制准备/队列配合可join的采集资源探针，
 验证Stop和活动替换在Base外允许采集线程完成最后一次拒绝提交并退出；销毁active
@@ -9390,4 +9391,82 @@ python3 scripts/audit-steam-client-microphone-process.py \
 python3 scripts/check-steam-microphone-process.py \
   --receiver build/desktop/app/nsl-auth-udp-oracle
 ctest --test-dir build/desktop -R 'microphone' --output-on-failure
+```
+
+## 115. 跨通道初发：共享配额不构成全局控制消息屏障
+
+### 115.1 原客户端受控API与逐步发送证据
+
+Evidence：`audit-steam-microphone-schedule.py`使用§24.1固定SHA的官方Android
+客户端原StartMicrophoneStream、SendMicrophoneData、StopMicrophoneStream，
+继续执行原protobuf、Frame、Connection/GetChannel、真实channel构造/窗口和
+Socket选择/配额/CRC。记录23个完整原函数的地址、长度与指令SHA。
+
+连接已建立和协商结果是明确前置输入，clock、mutex、refcount、最终UDP及发送统计
+终点是adapter；控制加密使用identity adapter。没有运行认证或后台线程，也不把该
+组件对照当作真实加密包。Native执行公开API后运行生产dispatch步骤；scan动作按
+指定通道调用生产可靠与非可靠sender，与Source同一步骤，而非复述期望输出。
+
+CRC两值、reliable_data两值、可靠rate=0/625000/65536与边界前/等于/后1 tick，
+共36组684状态；每步比较全部线包（含CRC、retry count、packet/frame ID、时间戳
+和完整body）、两类deadline/blocked、mic mapping/frame counter及各通道priority/
+下一packet ID。后续三个周期分别扫描1/3/4/5，保留无ACK时的真实RTO重传，不滤掉它们。
+Native所有受控状态与原客户端一致。隔离Native retransmission编译单元增加“有未初发
+control就禁止其他可靠channel”的屏障后，实际编译/链接成功，checker在可靠默认
+配额的边界等于用例以正常exit1检出Data5完整线包/deadline差异；不是编译错误或崩溃。
+
+明确反例：默认可靠rate625000，tick1000000发送Start3的24B未加密包后deadline为
+1000002。相同tick的Data3、Stop3、Start4、Data4及tick1000001的Start5均被共享
+可靠配额挡住；tick1000002的Data5先成功发出，deadline增至1000005。后续扫描
+channel1才发送Stop3/Start4/Start5。旧控制留在其可靠窗口，不构成禁止其他channel
+初发的全局屏障。非可靠数据使用另一类deadline；rate=0的行为亦逐字节比较，不据
+字段名自行赋予“全局不限速”语义。
+
+### 115.2 官方Linux原进程、真实加密和UDP反例
+
+Evidence：`audit-steam-client-microphone-schedule-process.py`沿§114的真实设置文件、
+UDP认证/加密/协商和原worker达到Streaming。受控peer仍消费真实反馈，全部编码
+字节为显式API输入。新的外部caller DSO只调用原Stop/Start/Send、原rate setter
+@19fd00和原clock @1a4530；不替换原方法、不改原指令、不直接写Source对象。
+它将可靠rate临时设为16384，缩短API之间的调试停顿，待原clock越过实际deadline
+再提交Data5，随后通过原setter恢复625000。记录八个时点的clock/deadline/rate/
+mic channel/frame counter；DSO源码、实际DSO、五个GDB helpers、runner、Qt及SDK
+映射身份均保存，原函数/实际调用者共60份FDE身份。
+
+四个原进程覆盖CRC两值×后台线程正常/暂挂。两个暂挂样本仅在这一批API期间使用
+GDB scheduler-locking，断点暂时关闭以避免逐API调试延迟（原assert observer保留），
+不是Source算法修改。恢复后台线程后再用原OnThink/正常退出。真实peer实收十二个
+初发控制/数据事件，两个暂挂样本均得到：
+
+```text
+Start3 → Data3(0..4) → Stop3 → Data5 → Start4 → Start5 → Data4 → Stop5
+```
+
+Start4/Data4/Start5之后的原clock仍早于共享deadline；Data5之前的clock已跨过
+该deadline。peer实收的七份初发data逐字节（只归一连接ID和外层时间）等于§114的
+独立预期；七条真实加密控制正文与§114同配置原样本完整密文相同。CRC独立校验，
+不以tag匹配代替密文/正文。正常线程两例保存实际全序但不要求固定顺序；这两例不能证明所有自然调度的保证。
+原peer107/108消费barrier、原assert空、join=0、live task与自然atexit引用5→0及
+ELF退出分别回读。没有以实验外部caller充当真实采集/encoder或Steam主机。
+
+Conclusion：§114那个“data5早于control107(channel4/5)”现象已被证实是官方客户端
+在明确配额/调度输入下允许的轨迹；撤回仅凭较早墙钟样本推测其属于协议策略偏差的
+判断依据。保持逐通道可靠顺序并不要求跨通道的控制总是先于数据；不能为迎合旧样本
+添加全局控制优先/等待控制清空的屏障。
+
+边界：36组同clock/配额的组件状态一致，加上四个真实原进程的允许轨迹，只闭合这
+个具体顺序疑点，不证明所有producer/后台线程/自然UI的全局调度等价。真实线程并发、
+Host对早到数据的消费、上行FEC产品入口、物理采集/编码、平台设备与既有其他协议
+范围仍分别需要证据。Switch能力仍遵守§111，不增加麦克风能力声明或UI。
+
+```sh
+PYTHONPATH=/path/to/python-dependencies python3 scripts/audit-steam-microphone-schedule.py \
+  --binary /path/to/official/libmain-arm64.so --output /tmp/microphone-schedule.json
+python3 scripts/check-steam-microphone-schedule.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-microphone-schedule-oracle
+PYTHONPATH=/path/to/python-dependencies python3 scripts/audit-steam-client-microphone-schedule-process.py \
+  --binary /path/to/package/bin/steamlink --sdk-directory /path/to/package/lib \
+  --qt-library-directory /path/to/qt/patched-runtime/lib \
+  --qt-library-directory /path/to/qt/runtime/lib --output /tmp/microphone-schedule-process.json
+ctest --test-dir build/desktop -R microphone_schedule_official_vectors --output-on-failure
 ```
