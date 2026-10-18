@@ -3412,6 +3412,78 @@
           ]
         }
       ]
+    },
+    {
+      "case": "legacy_hevc_absent_independent_of_decoder",
+      "input": {
+        "packets": [
+          "080110031804"
+        ],
+        "initial_config": "",
+        "initial_caps": "",
+        "available": [
+          4,
+          5
+        ],
+        "native_compatible": true
+      },
+      "observed": [
+        {
+          "frames": [
+            "040a0608011003180412001a0a70017003780178047805"
+          ],
+          "returned": 1,
+          "negotiated": "080110031804",
+          "caps": "70017003780178047805",
+          "client_config": "",
+          "host_os": 0,
+          "gaming_device": 0,
+          "sequence": 1,
+          "availability": [
+            4,
+            4,
+            5,
+            8,
+            9
+          ]
+        }
+      ]
+    },
+    {
+      "case": "legacy_hevc_false_independent_of_decoder",
+      "input": {
+        "packets": [
+          "080110031804"
+        ],
+        "initial_config": "",
+        "initial_caps": "2800",
+        "available": [
+          4,
+          5
+        ],
+        "native_compatible": true
+      },
+      "observed": [
+        {
+          "frames": [
+            "040a0608011003180412001a0c280070017003780178047805"
+          ],
+          "returned": 1,
+          "negotiated": "080110031804",
+          "caps": "280070017003780178047805",
+          "client_config": "",
+          "host_os": 0,
+          "gaming_device": 0,
+          "sequence": 1,
+          "availability": [
+            4,
+            4,
+            5,
+            8,
+            9
+          ]
+        }
+      ]
     }
   ]
 }

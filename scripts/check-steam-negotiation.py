@@ -97,6 +97,7 @@ def main():
                 str(args.receiver.resolve()),
                 inp["initial_config"] or "-",
                 str(int(5 in inp["available"])),
+                inp["initial_caps"] or "-",
             ],
             input="".join((body or "-") + "\n" for body in inp["packets"]),
             capture_output=True,

@@ -170,7 +170,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
     set_tests_properties(nsl-stream-settings PROPERTIES TIMEOUT 20)
     add_executable(nsl-auth-udp-oracle tests/auth_udp_oracle.c)
     target_include_directories(nsl-auth-udp-oracle PRIVATE ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
-    target_link_libraries(nsl-auth-udp-oracle PRIVATE ihslib)
+    target_link_libraries(nsl-auth-udp-oracle PRIVATE nsl_stream_settings)
     target_compile_options(nsl-auth-udp-oracle PRIVATE -Wall -Wextra -UNDEBUG)
     target_link_options(nsl-auth-udp-oracle PRIVATE
         -Wl,--wrap=IHS_SessionChannelControlRequestAuthentication
@@ -180,6 +180,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-auth-process.py"
         --receiver $<TARGET_FILE:nsl-auth-udp-oracle>)
     set_tests_properties(auth_udp_official_vectors PROPERTIES TIMEOUT 60)
+    add_test(NAME negotiation_udp_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-negotiation-process.py"
+        --receiver $<TARGET_FILE:nsl-auth-udp-oracle>)
+    set_tests_properties(negotiation_udp_official_vectors PROPERTIES TIMEOUT 60)
     add_executable(nsl-stream-settings-oracle tests/stream_settings_oracle.c)
     target_link_libraries(nsl-stream-settings-oracle PRIVATE nsl_stream_settings)
     target_compile_options(nsl-stream-settings-oracle PRIVATE -UNDEBUG)

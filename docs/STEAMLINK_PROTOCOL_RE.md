@@ -8933,3 +8933,62 @@ python3 scripts/audit-steam-client-auth-process.py \
 默认只输出新观察；写仓库snapshot必须显式指定`--snapshot`。正式报告保留原输入、
 实际UDP、原CPP/crypto/状态轨迹、完整FDE身份、helper/Qt SHA、真实join/module refs/
 live proc tasks、原main/ELF正常退出与全程assert列表。
+
+## 109. 设置文件、真实UDP加密协商与能力字段的独立来源
+
+### 109.1 官方客户端证据与已撤回的推断
+
+Evidence：固定§108同一Linux Steam Link 1.3.32.316。原SDL入口在@2d9230及
+@2d9e5b调用SetSettingsFile@3179e0，后者调用Load@317920，经真实文件读取和原CPP
+parser填client+456。实际UDP依次完成ConnectACK、ServerHandshake、认证响应、加密
+NegotiationInit/SetConfig与Complete，client真实进入Streaming(6)。没有写phase/state，
+没有直接调用收包/协商handler，没有已解析Packet/Frame或SDK/回调返回替身。
+
+配置文件3800+[字段25缺失/false/true]与可靠传输、CRC组合均保留原有presence，字段25
+实际进入加密消息4；客户端自身outgoing FEC gate仍0。这里证明请求对端FEC的真实
+配置/协商通路，不证明Steam主机此时必定产生冗余，也不增加按丢包自动切换策略。
+
+原能力查询自然留下SDK table计数5；原ELF正常退出时，libc exit handlers实际调用
+ForceRelease@173c60，再经Release归零。早先在返回原main前要求计数归零的实验条件
+过早，撤回其能判断退出是否完整的推断。分别记录pre-main=5和原atexit返回=0，不由
+探针主动调用ForceRelease或手写计数。真实join、live proc tasks和官方assert列表独立验。
+
+Evidence：实际SDK可用的原Generic player能力声明包含视频Raw/H264/HEVC（1/4/5），
+但不含supports_video_hevc_OBSOLETE。HEVC偏好false与true均如此。旧Android协商
+夹具的available=[4,5]与initial_caps=2801是两个独立的明确输入；此前Native把后者
+隐含地由前者推导，不能由该夹具证明官方producer也这样赋值。撤回“有HEVC decoder
+必然补旧HEVC标志”的实现假设。能力列表与caller提供的旧字段presence/value应分立。
+
+### 109.2 实现约束与完整对照
+
+`IHS_StreamClientCapabilities`分别接收decoder可用事实与旧标志的has/value；未提供旧
+字段就省略，显式false/true仍保留。能力列表继续按可用decoder产生。旧96条Android
+协商观察逐项保留，新增两个原CPP案例以相同HEVC可用集合输入空旧字段/显式false，
+验证该独立来源；Native oracle现在接收其实际initial_caps，不能再从available猜值。
+
+Source与Native均通过实际文件加载、真实UDP/crypto/线程和生产状态机完成14组：FEC
+缺省/false/true × CRC × reliable_data，以及HEVC偏好和坏HMAC后下一序号恢复。
+Native文件入口为产品sl_stream_settings_load/apply，capability输入明确匹配Source实际
+SDK可用集合；不据此给Switch声明HEVC。原mandatory Raw视频能力仍是已声明平台差异，
+仅从预期caps列表移除该一个条目；其余完整配置/能力字节不作过滤。真实明文与确定性
+HMAC-MD5 IV/AES-CBC ciphertext均比较，Native实际socket发出的消息4/5不能只靠同库
+decrypt成功自证。投影ciphertext由独立crypto从原明文生成，原未投影密文也先独立验MAC/
+padding/sequence。bad-MAC输入消耗RX序号，随后1/2继续，TX序号仍0/1。
+
+三项隔离编译反例恢复“decoder推旧标志”、按unreliable自动开FEC及丢掉保存的FEC true，
+均要求成功编译/链接、Native正常退出后由指定完整wire反例检出。认证六项反事实另保持。
+这些不证明真实Steam主机的冗余启用/参数、非空自身上行FEC producer、实际媒体解码/
+渲染、Qt shell设置生产者、完整Stats或Switch/loader验收；不得合称全协议已等价。
+
+```sh
+python3 scripts/audit-steam-client-negotiation-process.py \
+  --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
+  --sdk-directory build/video-recovery-re/linux-1.3.32.316/package/lib \
+  --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/patched-runtime/lib \
+  --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/runtime/lib \
+  --output /tmp/steam-client-negotiation.json
+```
+
+默认不覆盖snapshot；报告保留原文件读取字节、实际UDP/cipher/状态、完整FDE身份、
+当前helper与Qt SHA、原atexit与join、live proc tasks及全程assert列表。36节中坏文件
+保护差异仍按原范围保留，不能由这些有效文件案例推导异常加载策略已经一致。

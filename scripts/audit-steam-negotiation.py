@@ -201,6 +201,25 @@ def audit(binary):
         ],
         dict(controller_overlay_hotkey="x" * 2000),
     )
+    for name, caps in [
+        ("legacy_hevc_absent_independent_of_decoder", {}),
+        (
+            "legacy_hevc_false_independent_of_decoder",
+            {"supports_video_hevc_OBSOLETE": False},
+        ),
+    ]:
+        case(
+            name,
+            [
+                encoded(
+                    reliable_data=True,
+                    supported_audio_codecs=[3],
+                    supported_video_codecs=[4],
+                )
+            ],
+            hevc=True,
+            caps=caps,
+        )
     for entry in inputs:
         entry["input"].setdefault("native_compatible", True)
     cases = []

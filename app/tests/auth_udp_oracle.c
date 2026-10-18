@@ -5,6 +5,7 @@
 #include "session/channels/ch_control.h"
 #include "ihs_buffer_ext.h"
 #include "crc32c.h"
+#include "stream_settings.h"
 #include <assert.h>
 #include <arpa/inet.h>
 #include <poll.h>
@@ -54,11 +55,21 @@ static void sendPeer(int socket,const struct sockaddr_in *address,uint8_t type,u
     if(crc) {wire[0]|=128;uint32_t value=IHS_CRC32C(wire,size);for(unsigned n=0;n<4;++n)wire[size++]=(uint8_t)(value>>(8*n));}
     assert(sendto(socket,wire,size,0,(const struct sockaddr *)address,sizeof(*address))==(ssize_t)size);
 }
+static void sendEncryptedPeer(IHS_Session *s,int socket,const struct sockaddr_in *address,uint8_t local,uint16_t id,uint8_t kind,const uint8_t *plain,size_t size,uint64_t sequence,bool crc,bool badMac) {
+    uint8_t body[512];body[0]=kind;size_t count=sizeof(body)-1;
+    assert(IHS_SessionFrameEncrypt(s,plain,size,body+1,&count,sequence)==0);
+    /* Corrupt ciphertext input, not the real receiver's crypto result. */
+    if(badMac)body[1]^=1;
+    sendPeer(socket,address,5,local,1,id,body,count+1,crc);
+}
 int main(int argc,char **argv) {
-    assert(argc==5);
-    bool crc=atoi(argv[1])!=0,hasResponse=strcmp(argv[3],"-")!=0;
-    missingServer=atoi(argv[4])!=0;
-    uint8_t server[256],response[256];size_t serverSize=unhex(argv[2],server),responseSize=hasResponse?unhex(argv[3],response):0;
+    bool negotiate=argc==6 && !strcmp(argv[1],"--negotiate");assert(negotiate || argc==5);
+    bool crc=atoi(argv[negotiate?2:1])!=0,hasResponse=negotiate || strcmp(argv[3],"-")!=0;
+    bool badMac=negotiate && atoi(argv[5])!=0;
+    missingServer=!negotiate && atoi(argv[4])!=0;
+    uint8_t server[256],response[256],init[256];
+    size_t serverSize=unhex(negotiate?"070a0308c00b":argv[2],server),responseSize=hasResponse?unhex(negotiate?"0208001001":argv[3],response):0;
+    size_t initSize=negotiate?unhex(argv[4],init):0;
     int peer=socket(AF_INET,SOCK_DGRAM,0);assert(peer>=0);
     struct sockaddr_in address={.sin_family=AF_INET,.sin_addr.s_addr=htonl(INADDR_LOOPBACK)};
     assert(!bind(peer,(struct sockaddr *)&address,sizeof(address)));
@@ -68,12 +79,25 @@ int main(int argc,char **argv) {
     IHS_SessionInfo info={.address.port=ntohs(address.sin_port),.sessionKeyLen=32,.steamId=0};
     assert(IHS_IPAddressFromString(&info.address.ip,"127.0.0.1"));
     for(unsigned n=0;n<32;++n)info.sessionKey[n]=(uint8_t)n;
-    IHS_Session *session=IHS_SessionCreate(&client,&info);assert(session && IHS_SessionConnect(session));
+    IHS_Session *session=IHS_SessionCreate(&client,&info);assert(session);
+    sl_stream_settings settings;
+    if(negotiate) {
+        const sl_auth_store legacy={0};assert(sl_stream_settings_init(&settings,&legacy));
+        assert(sl_stream_settings_load(&settings,argv[3])==0);
+        assert(sl_stream_settings_apply(&settings,session));
+        /* Explicit desktop capability input, matching the genuine SDK lookup
+         * observed in the reference. This does not advertise Switch HEVC. */
+        const IHS_StreamClientCapabilities caps={.hasVideoDecoderCapabilities=true,.supportsVideoHevc=true};
+        assert(IHS_SessionSetClientCapabilities(session,&caps));
+    }
+    assert(IHS_SessionConnect(session));
     bool connected=false,handshake=false,reply=false,haveRequest=false;
     uint8_t request[256];size_t requestSize=0;unsigned connects=0,goodbyes=0;
+    bool configReceived=false,completeReceived=false;
+    uint8_t outputPlain[2][512],outputCipher[2][512];size_t plainSizes[2]={0},cipherSizes[2]={0};
     uint64_t deadline=millis()+5000;
     for(;;) {
-        bool finished=missingServer?atomic_load(&serverDrained):hasResponse?atomic_load(&responded):atomic_load(&requested)&&haveRequest;
+        bool finished=negotiate?completeReceived && atomic_load(&session->state.connectionState)==6:missingServer?atomic_load(&serverDrained):hasResponse?atomic_load(&responded):atomic_load(&requested)&&haveRequest;
         if(finished && (!atomic_load(&session->transport.closeRequested) || goodbyes))break;
         assert(millis()<deadline);
         struct pollfd p={.fd=peer,.events=POLLIN};int ready=poll(&p,1,2);assert(ready>=0);if(!ready)continue;
@@ -97,19 +121,48 @@ int main(int argc,char **argv) {
                 assert((size_t)size-13<sizeof(request));
                 if(haveRequest)assert(requestSize==(size_t)size-13 && !memcmp(request,raw+13,requestSize));
                 requestSize=(size_t)size-13;memcpy(request,raw+13,requestSize);haveRequest=true;
-                if(hasResponse && !reply) {sendPeer(peer,&from,5,raw[2],1,1,response,responseSize,crc);reply=true;}
+                if(hasResponse && !reply) {
+                    sendPeer(peer,&from,5,raw[2],1,1,response,responseSize,crc);reply=true;
+                    if(negotiate) {
+                        if(badMac)sendEncryptedPeer(session,peer,&from,raw[2],2,3,init,initSize,0,crc,true);
+                        sendEncryptedPeer(session,peer,&from,raw[2],2+(unsigned)badMac,3,init,initSize,(unsigned)badMac,crc,false);
+                    }
+                }
+            } else if(negotiate && (raw[13]==4 || raw[13]==5)) {
+                unsigned index=raw[13]==4?0:1;uint64_t sequence;
+                IHS_Buffer in=IHS_BUFFER_WRAP(raw+14,(size_t)size-14),plain=IHS_BUFFER_INIT(512,512);
+                assert(IHS_SessionFrameDecrypt(session,&in,&plain,index,&sequence)==IHS_SessionFrameDecryptOK && sequence==index);
+                assert(plain.size+1<sizeof(outputPlain[index]) && (size_t)size-13<sizeof(outputCipher[index]));
+                outputPlain[index][0]=raw[13];memcpy(outputPlain[index]+1,IHS_BufferPointer(&plain),plain.size);plainSizes[index]=plain.size+1;
+                memcpy(outputCipher[index],raw+13,(size_t)size-13);cipherSizes[index]=(size_t)size-13;
+                if(index==0 && !configReceived) {
+                    CNegotiationSetConfigMsg *message=cnegotiation_set_config_msg__unpack(NULL,plain.size,IHS_BufferPointer(&plain));assert(message && message->config);
+                    CNegotiationSetConfigMsg selected=CNEGOTIATION_SET_CONFIG_MSG__INIT;selected.config=message->config;
+                    uint8_t body[256];size_t count=cnegotiation_set_config_msg__get_packed_size(&selected);assert(count<sizeof(body));cnegotiation_set_config_msg__pack(&selected,body);
+                    sendEncryptedPeer(session,peer,&from,raw[2],3+(unsigned)badMac,4,body,count,1+(unsigned)badMac,crc,false);
+                    cnegotiation_set_config_msg__free_unpacked(message,NULL);configReceived=true;
+                } else if(index==1) {assert(configReceived && plain.size==0);completeReceived=true;}
+                IHS_BufferClear(&plain,true);
             }
         }
     }
     int phase=atomic_load(&session->state.connectionState);
     bool closed=atomic_load(&session->transport.closeRequested);
     int mtu=session->state.mtu; /* Handler terminal synchronizes this RX-owned value. */
+    uint64_t receivedSequence=0,sendSequence=0;
+    if(negotiate) {IHS_SessionChannelControl *control=(void *)session->channels[1];IHS_BaseLock(&session->base);receivedSequence=control->recvEncryptSequence;IHS_BaseUnlock(&session->base);IHS_MutexLock(control->sendLock);sendSequence=control->sendEncryptSequence;IHS_MutexUnlock(control->sendLock);}
     if(!closed)IHS_SessionInterrupt(session);
     IHS_SessionThreadedJoin(session);
     assert(!session->sendThread && !session->base.worker);
     assert(goodbyes==(closed?1u:0u));
     printf("{\"phase\":%d,\"closed\":%s,\"mtu\":%d,\"connects\":%u,\"goodbyes\":%u,\"requested\":%s,\"response_handled\":%s,\"request\":\"",phase,closed?"true":"false",mtu,connects,goodbyes,atomic_load(&requested)?"true":"false",atomic_load(&responded)?"true":"false");
     for(size_t n=0;n<requestSize;++n)printf("%02x",request[n]);
-    puts("\"}");
-    IHS_SessionDestroy(session);IHS_Quit();assert(!close(peer));return 0;
+    printf("\"");
+    if(negotiate) {
+        printf(",\"receive_sequence\":%llu,\"send_sequence\":%llu,\"frames\":[",(unsigned long long)receivedSequence,(unsigned long long)sendSequence);
+        for(unsigned i=0;i<2;++i) {printf("%s{\"sequence\":%u,\"plain\":\"",i?",":"",i);for(size_t n=0;n<plainSizes[i];++n)printf("%02x",outputPlain[i][n]);printf("\",\"cipher\":\"");for(size_t n=0;n<cipherSizes[i];++n)printf("%02x",outputCipher[i][n]);printf("\"}");}
+        printf("]");
+    }
+    puts("}");
+    IHS_SessionDestroy(session);if(negotiate)sl_stream_settings_destroy(&settings);IHS_Quit();assert(!close(peer));return 0;
 }

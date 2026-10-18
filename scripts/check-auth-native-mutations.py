@@ -19,12 +19,21 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--negotiation",
+        action="store_true",
+        help="Check the independent legacy capability producer",
+    )
     args = parser.parse_args()
     build, output = args.build.resolve(), args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     source = (
         ROOT / "third_party/ihslib/src/session/channels/ch_control_authentication.c"
     )
+    if args.negotiation:
+        source = (
+            ROOT / "third_party/ihslib/src/session/channels/ch_control_negotiation.c"
+        )
     body = source.read_text()
     historical = subprocess.check_output(
         ["git", "show", BASELINE + ":src/session/channels/ch_control_authentication.c"],
@@ -68,6 +77,27 @@ def main():
         ),
         ("wrong_group_limit", "if (depth >= 100)", "if (depth >= 99)", "group_100"),
     ]
+    if args.negotiation:
+        changes = [
+            (
+                "infer_legacy_from_decoder",
+                "if (caps->hasLegacyHevcCapability)\n        PROTOBUF_C_SET_VALUE(clientCaps, supports_video_hevc_obsolete, caps->legacyHevcCapability);",
+                "if (hevcAvailable)\n        PROTOBUF_C_SET_VALUE(clientCaps, supports_video_hevc_obsolete, true);",
+                "fec_absent_reliable0_crc0",
+            ),
+            (
+                "infer_fec_from_unreliable",
+                "    CNegotiationSetConfigMsg response = CNEGOTIATION_SET_CONFIG_MSG__INIT;",
+                "    if (!message->reliable_data) PROTOBUF_C_SET_VALUE(clientConfig, enable_unreliable_fec, true);\n    CNegotiationSetConfigMsg response = CNEGOTIATION_SET_CONFIG_MSG__INIT;",
+                "fec_absent_reliable0_crc0",
+            ),
+            (
+                "discard_saved_fec_true",
+                "    CNegotiationSetConfigMsg response = CNEGOTIATION_SET_CONFIG_MSG__INIT;",
+                "    if (clientConfig.has_enable_unreliable_fec) clientConfig.enable_unreliable_fec = false;\n    CNegotiationSetConfigMsg response = CNEGOTIATION_SET_CONFIG_MSG__INIT;",
+                "fec_c80101_reliable0_crc0",
+            ),
+        ]
     reports = []
     for name, before, after, expected in changes:
         directory = output / name
@@ -106,7 +136,14 @@ def main():
         tested = subprocess.run(
             [
                 "python3",
-                str(ROOT / "scripts/check-steam-auth-process.py"),
+                str(
+                    ROOT
+                    / (
+                        "scripts/check-steam-negotiation-process.py"
+                        if args.negotiation
+                        else "scripts/check-steam-auth-process.py"
+                    )
+                ),
                 "--receiver",
                 str(executable),
             ],
@@ -132,9 +169,7 @@ def main():
         )
         print(name, "detected by", expected, flush=True)
     (output / "report.json").write_text(json.dumps(reports, indent=2) + "\n")
-    print(
-        "Authentication Native mutants: six compiled policy/parser regressions detected"
-    )
+    print(f"Native policy mutants: {len(reports)} compiled regressions detected")
 
 
 if __name__ == "__main__":
