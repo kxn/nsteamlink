@@ -34,7 +34,8 @@ void sl_ui_layout(sl_ui_model *m) {
     sl_host_registry *r = &m->store.registry;
     sl_host *h = r->selected >= 0 && r->selected < r->count ? &r->hosts[r->selected] : NULL;
     l->fullscreen = m->streaming;
-    bool connecting = m->page == SL_CONNECTING || m->page == SL_SAVING ||
+    bool connecting = m->page == SL_CONNECTING || m->page == SL_NETWORK_TEST ||
+                      m->page == SL_SAVING ||
                       (m->page == SL_PAIRING && !sl_ui_pair_prompt_visible(m));
     l->dialog = m->page != SL_HOME && m->page != SL_STREAM && !connecting;
     if (m->page == SL_HOME) {
@@ -92,8 +93,20 @@ void sl_ui_layout(sl_ui_model *m) {
         /* Full video, no persistent local touch target. */
     } else if (connecting) {
         snprintf(l->title, sizeof(l->title), sl_tr(SL_T_APP_TITLE), NSL_APP_VERSION);
-        center(l, 276, 44, sl_tr(SL_T_CONNECTING));
+        center(l, 276, 44, sl_tr(m->page == SL_NETWORK_TEST ? SL_T_NETWORK_TEST : SL_T_CONNECTING));
         center(l, 354, 30, m->intent.host.name[0] ? m->intent.host.name : m->intent.text);
+        if (m->page == SL_NETWORK_TEST) {
+            char progress[160];
+            if (m->network_test.phase == SL_TEST_REQUESTING)
+                snprintf(progress, sizeof(progress), "%s", sl_tr(SL_T_TEST_REQUESTING));
+            else if (m->network_test.bandwidth_test)
+                snprintf(progress, sizeof(progress), sl_tr(SL_T_TEST_RATE),
+                         m->network_test.target_kbps / 1000.0);
+            else
+                snprintf(progress, sizeof(progress), sl_tr(SL_T_TEST_PROGRESS),
+                         m->network_test.progress > 100 ? 100.0 : m->network_test.progress);
+            center(l, 480, 28, progress);
+        }
         button(l, 9, 40, 632, 180, 64, sl_tr(SL_T_CANCEL_KEY), SL_BACK, 0, false);
     } else {
         switch (m->page) {
@@ -113,7 +126,30 @@ void sl_ui_layout(sl_ui_model *m) {
             row(l, h ? 3 : 2,
                 m->update_check ? sl_tr(SL_T_UPDATE_CHECK_ON) : sl_tr(SL_T_UPDATE_CHECK_OFF),
                 SL_UPDATE_CHECK, 0);
+            if (h && sl_host_online(h, m->now))
+                row(l, 4, sl_tr(SL_T_NETWORK_TEST), SL_RUN_NETWORK_TEST, 0);
             break;
+        case SL_NETWORK_RESULT: {
+            strcpy(l->title, sl_tr(SL_T_TEST_RESULT));
+            char line[192];
+            if (m->network_test.bandwidth_test)
+                snprintf(line, sizeof(line), sl_tr(SL_T_TEST_RATE),
+                         m->network_test.previous_target_kbps / 1000.0);
+            else
+                snprintf(line, sizeof(line), sl_tr(SL_T_TEST_LOSS), m->network_test.loss_percent);
+            text(l, 320, 226, 30, line);
+            snprintf(line, sizeof(line), sl_tr(SL_T_TEST_TIMING), m->network_test.mean_ms,
+                     m->network_test.deviation_ms);
+            text(l, 320, 294, 26, line);
+            const char *description =
+                sl_tr(m->network_test.recommendation == 1   ? SL_T_TEST_RECOMMEND_FAST
+                      : m->network_test.recommendation == 2 ? SL_T_TEST_RECOMMEND_ENHANCED
+                                                            : SL_T_TEST_KEEP_SETTINGS);
+            text(l, 320, 362, 26, description);
+            row(l, 3, sl_tr(m->network_test.recommendation ? SL_T_TEST_APPLY : SL_T_TEST_CONTINUE),
+                SL_TEST_DECIDE, 1);
+            break;
+        }
         case SL_SHORTCUT:
             strcpy(l->title, sl_tr(SL_T_SHORTCUT_QUESTION));
             text(l, 320, 272, 28, sl_tr(SL_T_SHORTCUT_DESCRIPTION));
@@ -154,8 +190,11 @@ void sl_ui_layout(sl_ui_model *m) {
             row(l, 1, sl_tr(SL_T_BANDWIDTH), SL_OPEN_BANDWIDTH, 0);
             row(l, 2, m->store.sound ? sl_tr(SL_T_SOUND_ON) : sl_tr(SL_T_SOUND_OFF), SL_SOUND, 0);
             row(l, 3, sl_tr(SL_T_LANGUAGE), SL_OPEN_LANGUAGE, 0);
+            row(l, 4, sl_tr(SL_T_ERROR_CORRECTION), SL_FEC, 0);
             if (!m->streaming)
-                row(l, 4, sl_tr(SL_T_MANUAL), SL_OPEN_MANUAL, 0);
+                row(l, 5, sl_tr(SL_T_MANUAL), SL_OPEN_MANUAL, 0);
+            else
+                text(l, 784, 560, 24, sl_tr(SL_T_ERROR_CORRECTION_NEXT));
             break;
         case SL_LANGUAGE:
             strcpy(l->title, sl_tr(SL_T_LANGUAGE));
@@ -164,13 +203,26 @@ void sl_ui_layout(sl_ui_model *m) {
             row(l, 2, sl_tr(SL_T_ENGLISH), SL_SET_LANGUAGE, SL_LANG_EN);
             break;
         case SL_BANDWIDTH:
+            if (!sl_bitrate_valid(m->store.bitrate_kbps)) {
+                char rate[96];
+                int32_t value = (int32_t)m->store.bitrate_kbps;
+                if (value == -1)
+                    snprintf(rate, sizeof(rate), "%s", sl_tr(SL_T_BANDWIDTH_AUTO));
+                else if (value == 0)
+                    snprintf(rate, sizeof(rate), "%s", sl_tr(SL_T_BANDWIDTH_UNLIMITED));
+                else
+                    snprintf(rate, sizeof(rate), "%d kbps", value);
+                text(l, 320, 126, 24, rate);
+            }
             strcpy(l->title, sl_tr(SL_T_BANDWIDTH));
             row(l, 0, "4 Mbps", SL_SET_BANDWIDTH, 4000);
             row(l, 1, "6 Mbps", SL_SET_BANDWIDTH, 6000);
             row(l, 2, "10 Mbps", SL_SET_BANDWIDTH, 10000);
             row(l, 3, "20 Mbps", SL_SET_BANDWIDTH, 20000);
+            row(l, 4, sl_tr(SL_T_BANDWIDTH_AUTO), SL_SET_BANDWIDTH, -1);
+            row(l, 5, sl_tr(SL_T_BANDWIDTH_UNLIMITED), SL_SET_BANDWIDTH, 0);
             if (m->streaming)
-                text(l, 320, 548, 26, sl_tr(SL_T_NEXT_CONNECTION));
+                text(l, 320, 580, 26, sl_tr(SL_T_NEXT_CONNECTION));
             break;
         case SL_QUALITY:
             strcpy(l->title, sl_tr(SL_T_QUALITY));
@@ -241,11 +293,14 @@ void sl_ui_layout(sl_ui_model *m) {
             row(l, 1, sl_tr(SL_T_EXIT), SL_CONFIRM_EXIT, 0);
             break;
         case SL_ERROR:
-            strcpy(l->title,
-                   m->ending_game ? sl_tr(SL_T_END_GAME)
-                   : m->had_stream ? sl_tr(SL_T_STREAM_INTERRUPTED) : sl_tr(SL_T_CONNECT_FAILED));
+            strcpy(l->title, m->cancel_only_error ? sl_tr(SL_T_TEST_FAILED)
+                             : m->ending_game     ? sl_tr(SL_T_END_GAME)
+                             : m->had_stream      ? sl_tr(SL_T_STREAM_INTERRUPTED)
+                                                  : sl_tr(SL_T_CONNECT_FAILED));
             text(l, 320, 232, 30, m->error);
-            if (m->intent.host.id && !m->ending_game)
+            if (m->cancel_only_error)
+                row(l, 1, sl_tr(SL_T_TEST_CLOSE), SL_BACK, 0);
+            else if (m->intent.host.id && !m->ending_game)
                 row(l, 2, sl_tr(SL_T_RETRY), SL_RETRY, 0);
             break;
         default:
@@ -254,7 +309,8 @@ void sl_ui_layout(sl_ui_model *m) {
         if (m->page != SL_STOPPING && m->page != SL_INSTALLING && m->page != SL_UPDATING &&
             m->page != SL_CLOSING)
             button(l, 9, 320, 596, 640, 64,
-                   m->page == SL_CONNECTING || m->page == SL_PAIRING || m->page == SL_SAVING
+                   m->page == SL_NETWORK_RESULT ? sl_tr(SL_T_TEST_KEEP)
+                   : m->page == SL_CONNECTING || m->page == SL_PAIRING || m->page == SL_SAVING
                        ? sl_tr(SL_T_CANCEL_KEY)
                        : sl_tr(SL_T_BACK_KEY),
                    SL_BACK, 0, false);
@@ -278,8 +334,13 @@ void sl_ui_layout(sl_ui_model *m) {
                 sl_control *c = &l->controls[i];
                 c->x = 776;
                 c->w = 472;
-                c->y = c->id == 9 ? 624 : 172 + (c->id - 100) * 88;
-                c->h = 72;
+                int step = m->page == SL_SETTINGS ? 72 : 88;
+                c->y = c->id == 9 ? 624 : 172 + (c->id - 100) * step;
+                c->h = m->page == SL_SETTINGS && c->id != 9 ? 64 : 72;
+                if (m->page == SL_BANDWIDTH && c->id != 9) {
+                    c->y = 156 + (c->id - 100) * 68;
+                    c->h = 64;
+                }
             }
             for (int i = 0; i < l->label_count; ++i)
                 l->labels[i].x = 784;
@@ -380,7 +441,7 @@ void sl_ui_layout(sl_ui_model *m) {
             for (int i = 0; i < l->count; ++i)
                 if (l->controls[i].id == 9) {
                     l->controls[i].x = l->panel_x + 40;
-                    l->controls[i].w = 180;
+                    l->controls[i].w = m->page == SL_NETWORK_RESULT ? l->panel_w - 80 : 180;
                 }
         }
         l->opacity = sl_ui_overlay_opacity(m);
@@ -418,7 +479,8 @@ void sl_ui_layout(sl_ui_model *m) {
                     SL_GAMES_LEFT + l->controls[i].arg * SL_CARD_STEP - (int)m->games_scroll;
         return;
     }
-    if (m->page == SL_CONNECTING || m->page == SL_SAVING || m->page == SL_PAIRING) {
+    if (m->page == SL_CONNECTING || m->page == SL_NETWORK_TEST || m->page == SL_SAVING ||
+        m->page == SL_PAIRING) {
         m->focus = 0; /* B/touch shortcut, never an A-selectable cancellation. */
         return;
     }

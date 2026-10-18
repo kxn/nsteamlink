@@ -8,11 +8,13 @@ typedef struct sl_auth_store {
     sl_host_registry registry;
     uint32_t quality;
     bool sound;
-    uint32_t bitrate_kbps;
+    uint32_t bitrate_kbps; /* int32 desired_bitrate_kbps bit pattern; -1 automatic, 0 unlimited. */
+    bool unreliable_fec;
 } sl_auth_store;
-/* Explicit bandwidth choices; independent of the quality preference. */
+/* Values offered by the manual menu; a received full config can use other int32 values. */
 static inline bool sl_bitrate_valid(uint32_t kbps) {
-    return kbps == 4000 || kbps == 6000 || kbps == 10000 || kbps == 20000;
+    return kbps == 0 || kbps == UINT32_MAX || kbps == 4000 || kbps == 6000 || kbps == 10000 ||
+           kbps == 20000;
 }
 /* 0 loaded, 1 created, negative: corrupt/unreadable; never replaces corrupt identity. */
 int sl_auth_load(sl_auth_store *store, const char *directory);

@@ -22,7 +22,9 @@ static bool sync(sl_video_scheduler *s, sl_video_pipeline *p, uint64_t *pending)
 }
 bool sl_video_scheduler_wait(sl_video_scheduler *s, sl_video_pipeline *p, uint64_t now) {
     uint64_t pending=0;
-    return sync(s,p,&pending) && sl_pacer_wait(&s->control,now,pending);
+    (void)now;
+    sync(s,p,&pending); /* Publication metrics do not add a separate wait policy. */
+    return sl_video_wait(p) > 0;
 }
 void sl_video_scheduler_feedback(sl_video_scheduler *s, sl_video_pipeline *p,
     const sl_video_frame *candidate, uint64_t take_us, uint64_t submit_us, bool success) {

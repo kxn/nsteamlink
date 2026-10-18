@@ -1,0 +1,2994 @@
+{
+  "binary_sha256": "50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e",
+  "scope": "Execute original peer SetConfig and explicit StreamStarting entry points.\n\nReal C++ constructors, Frame Get/parser, negotiated-config CopyFrom/serializer,\nstate branches and Complete Frame Put/Send execute. Input is post-decryption.\nNon-debug assertions are recorded. Allocation, hardware-independent seed state,\nnetwork lock, priority setter, timestamp, stats/player callbacks, GetChannel,\nencryption and final Connection send are adapters. Calling StreamStarting here\nis explicit, not proof of the complete application's dispatch/loop ordering.\n",
+  "cases": [
+    {
+      "case": "empty",
+      "input": {
+        "state": 4,
+        "body": ""
+      },
+      "after_peer": {
+        "state": 4,
+        "config": "08011003180428013001",
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 4,
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "sequence": 0,
+        "timestamp1": 0,
+        "timestamp2": 0
+      }
+    },
+    {
+      "case": "config_None_3_4",
+      "input": {
+        "state": 4,
+        "body": "0a0410031804"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "10031804",
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_None_0_4",
+      "input": {
+        "state": 4,
+        "body": "0a0410001804"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "10001804",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_None_3_0",
+      "input": {
+        "state": 4,
+        "body": "0a0410031800"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "10031800",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_None_1_5",
+      "input": {
+        "state": 4,
+        "body": "0a0410011805"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "10011805",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_None_0_0",
+      "input": {
+        "state": 4,
+        "body": "0a0410001800"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "10001800",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_False_3_4",
+      "input": {
+        "state": 4,
+        "body": "0a06080010031804"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080010031804",
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_False_0_4",
+      "input": {
+        "state": 4,
+        "body": "0a06080010001804"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080010001804",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_False_3_0",
+      "input": {
+        "state": 4,
+        "body": "0a06080010031800"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080010031800",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_False_1_5",
+      "input": {
+        "state": 4,
+        "body": "0a06080010011805"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080010011805",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_False_0_0",
+      "input": {
+        "state": 4,
+        "body": "0a06080010001800"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080010001800",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_True_3_4",
+      "input": {
+        "state": 4,
+        "body": "0a06080110031804"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080110031804",
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_True_0_4",
+      "input": {
+        "state": 4,
+        "body": "0a06080110001804"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080110001804",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_True_3_0",
+      "input": {
+        "state": 4,
+        "body": "0a06080110031800"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080110031800",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_True_1_5",
+      "input": {
+        "state": 4,
+        "body": "0a06080110011805"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080110011805",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_True_0_0",
+      "input": {
+        "state": 4,
+        "body": "0a06080110001800"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080110001800",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "bad_ff",
+      "input": {
+        "state": 4,
+        "body": "ff"
+      },
+      "after_peer": {
+        "state": 4,
+        "config": "08011003180428013001",
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 4,
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "sequence": 0,
+        "timestamp1": 0,
+        "timestamp2": 0
+      }
+    },
+    {
+      "case": "bad_0f",
+      "input": {
+        "state": 4,
+        "body": "0f"
+      },
+      "after_peer": {
+        "state": 4,
+        "config": "08011003180428013001",
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 4,
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "sequence": 0,
+        "timestamp1": 0,
+        "timestamp2": 0
+      }
+    },
+    {
+      "case": "all_flags_cleared",
+      "input": {
+        "state": 4,
+        "body": "0a0a08011003180428003000"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "08011003180428003000",
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "ignored_client_config_and_caps",
+      "input": {
+        "state": 4,
+        "body": "0a0a080110031804280130011203c801011a027805"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "08011003180428013001",
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "unknown_config",
+      "input": {
+        "state": 4,
+        "body": "0a0d08011003180428013001a00607"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "08011003180428013001a00607",
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "empty",
+      "input": {
+        "state": 5,
+        "body": ""
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "08011003180428013001",
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_None_3_4",
+      "input": {
+        "state": 5,
+        "body": "0a0410031804"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "10031804",
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_None_0_4",
+      "input": {
+        "state": 5,
+        "body": "0a0410001804"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "10001804",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_None_3_0",
+      "input": {
+        "state": 5,
+        "body": "0a0410031800"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "10031800",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_None_1_5",
+      "input": {
+        "state": 5,
+        "body": "0a0410011805"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "10011805",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_None_0_0",
+      "input": {
+        "state": 5,
+        "body": "0a0410001800"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "10001800",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_False_3_4",
+      "input": {
+        "state": 5,
+        "body": "0a06080010031804"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080010031804",
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_False_0_4",
+      "input": {
+        "state": 5,
+        "body": "0a06080010001804"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080010001804",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_False_3_0",
+      "input": {
+        "state": 5,
+        "body": "0a06080010031800"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080010031800",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_False_1_5",
+      "input": {
+        "state": 5,
+        "body": "0a06080010011805"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080010011805",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_False_0_0",
+      "input": {
+        "state": 5,
+        "body": "0a06080010001800"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080010001800",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_True_3_4",
+      "input": {
+        "state": 5,
+        "body": "0a06080110031804"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080110031804",
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_True_0_4",
+      "input": {
+        "state": 5,
+        "body": "0a06080110001804"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080110001804",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_True_3_0",
+      "input": {
+        "state": 5,
+        "body": "0a06080110031800"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080110031800",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_True_1_5",
+      "input": {
+        "state": 5,
+        "body": "0a06080110011805"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080110011805",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_True_0_0",
+      "input": {
+        "state": 5,
+        "body": "0a06080110001800"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080110001800",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "bad_ff",
+      "input": {
+        "state": 5,
+        "body": "ff"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "08011003180428013001",
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "bad_0f",
+      "input": {
+        "state": 5,
+        "body": "0f"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "08011003180428013001",
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "all_flags_cleared",
+      "input": {
+        "state": 5,
+        "body": "0a0a08011003180428003000"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "08011003180428003000",
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "ignored_client_config_and_caps",
+      "input": {
+        "state": 5,
+        "body": "0a0a080110031804280130011203c801011a027805"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "08011003180428013001",
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "unknown_config",
+      "input": {
+        "state": 5,
+        "body": "0a0d08011003180428013001a00607"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "08011003180428013001a00607",
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "empty",
+      "input": {
+        "state": 6,
+        "body": ""
+      },
+      "after_peer": {
+        "state": 6,
+        "config": "08011003180428013001",
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "sequence": 0,
+        "timestamp1": 0,
+        "timestamp2": 0
+      }
+    },
+    {
+      "case": "config_None_3_4",
+      "input": {
+        "state": 6,
+        "body": "0a0410031804"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "10031804",
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_None_0_4",
+      "input": {
+        "state": 6,
+        "body": "0a0410001804"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "10001804",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_None_3_0",
+      "input": {
+        "state": 6,
+        "body": "0a0410031800"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "10031800",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_None_1_5",
+      "input": {
+        "state": 6,
+        "body": "0a0410011805"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "10011805",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_None_0_0",
+      "input": {
+        "state": 6,
+        "body": "0a0410001800"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "10001800",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_False_3_4",
+      "input": {
+        "state": 6,
+        "body": "0a06080010031804"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080010031804",
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_False_0_4",
+      "input": {
+        "state": 6,
+        "body": "0a06080010001804"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080010001804",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_False_3_0",
+      "input": {
+        "state": 6,
+        "body": "0a06080010031800"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080010031800",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_False_1_5",
+      "input": {
+        "state": 6,
+        "body": "0a06080010011805"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080010011805",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_False_0_0",
+      "input": {
+        "state": 6,
+        "body": "0a06080010001800"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080010001800",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_True_3_4",
+      "input": {
+        "state": 6,
+        "body": "0a06080110031804"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080110031804",
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_True_0_4",
+      "input": {
+        "state": 6,
+        "body": "0a06080110001804"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080110001804",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_True_3_0",
+      "input": {
+        "state": 6,
+        "body": "0a06080110031800"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080110031800",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_True_1_5",
+      "input": {
+        "state": 6,
+        "body": "0a06080110011805"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080110011805",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "config_True_0_0",
+      "input": {
+        "state": 6,
+        "body": "0a06080110001800"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "080110001800",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "bad_ff",
+      "input": {
+        "state": 6,
+        "body": "ff"
+      },
+      "after_peer": {
+        "state": 6,
+        "config": "08011003180428013001",
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "sequence": 0,
+        "timestamp1": 0,
+        "timestamp2": 0
+      }
+    },
+    {
+      "case": "bad_0f",
+      "input": {
+        "state": 6,
+        "body": "0f"
+      },
+      "after_peer": {
+        "state": 6,
+        "config": "08011003180428013001",
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "sequence": 0,
+        "timestamp1": 0,
+        "timestamp2": 0
+      }
+    },
+    {
+      "case": "all_flags_cleared",
+      "input": {
+        "state": 6,
+        "body": "0a0a08011003180428003000"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "08011003180428003000",
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "ignored_client_config_and_caps",
+      "input": {
+        "state": 6,
+        "body": "0a0a080110031804280130011203c801011a027805"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "08011003180428013001",
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "unknown_config",
+      "input": {
+        "state": 6,
+        "body": "0a0d08011003180428013001a00607"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "08011003180428013001a00607",
+        "frames": [],
+        "events": [],
+        "asserts": [],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "empty_required_config",
+      "input": {
+        "state": 4,
+        "body": "0a00"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "empty_required_config",
+      "input": {
+        "state": 5,
+        "body": "0a00"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    },
+    {
+      "case": "empty_required_config",
+      "input": {
+        "state": 6,
+        "body": "0a00"
+      },
+      "after_peer": {
+        "state": 5,
+        "config": "",
+        "frames": [],
+        "events": [],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "returned": 1,
+        "client_config": ""
+      },
+      "after_start": {
+        "state": 6,
+        "frames": [
+          "05"
+        ],
+        "events": [
+          "lock",
+          {
+            "priority": [
+              1,
+              2
+            ]
+          },
+          {
+            "priority": [
+              2,
+              -1
+            ]
+          },
+          "stats_start",
+          "player_started",
+          "unlock"
+        ],
+        "asserts": [
+          2683,
+          2684
+        ],
+        "sequence": 1,
+        "timestamp1": 123456,
+        "timestamp2": 123456
+      }
+    }
+  ]
+}

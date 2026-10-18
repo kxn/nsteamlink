@@ -21,6 +21,9 @@ uint32_t sl_system_dns_begin(void);
 void sl_system_dns_cancel(uint32_t handle);
 
 const char *sl_system_locale(void);
+/* CPU input for the official AVCodec thread-selection gates. Linux preserves
+ * its /proc byte count; Switch uses its SDK's logical-CPU detector (§100). */
+uint8_t sl_system_video_cpu_count(void);
 
 /* Platform facts and application policy, copied into IHS before session start.
  * Unknown values stay zero; no guessed hardware or OS identities. */

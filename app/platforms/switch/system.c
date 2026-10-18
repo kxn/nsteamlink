@@ -2,6 +2,7 @@
 #include "build_identity.h"
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <libavutil/cpu.h>
 #include <stdio.h>
 #include <string.h>
 #include <switch.h>
@@ -117,8 +118,17 @@ const char *sl_system_locale(void) {
     return "en";
 }
 
+uint8_t sl_system_video_cpu_count(void) {
+    /* The installed Switch SDK detector reads InfoType_CoreMask, with its own
+     * fallback. SDL 2.28.5's detector only returns 1 on this target (§100).
+     * This is the platform input; selection gates remain the original policy. */
+    return (uint8_t)av_cpu_count();
+}
+
 sl_system_stream_info sl_system_streaming_info(void) {
-    /* Application limits, not claims about every Tegra model's maximum.
+    /* Describe this backend, not another client's hardware. Unknown decode /
+     * burst bitrate maxima remain zero so negotiation omits those fields;
+     * the former 30/90 Mbps values were neither enforced nor measured (§111).
      * Steam has no confirmed Switch OSType. -197 is Linux 3.6, not Android. */
     return (sl_system_stream_info){
         .system_info = "\"SystemInfo\"\n{\n"
@@ -127,8 +137,6 @@ sl_system_stream_info sl_system_streaming_info(void) {
                        "\t\"VideoDisplayY\"\t\"720\"\n"
                        "\t\"VideoDisplayNameID\"\t\"Nintendo Switch\"\n}\n",
         .decoder_info = "FFmpeg NVDEC",
-        .maximum_decode_bitrate_kbps = 30000,
-        .maximum_burst_bitrate_kbps = 90000,
         .can_suspend = true,
     };
 }

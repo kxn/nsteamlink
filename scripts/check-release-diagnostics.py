@@ -30,6 +30,13 @@ for entry in commands:
         symbols = subprocess.check_output([str(nm), '-u', str(obj)], text=True)
         assert 'dkCmdBufReportCounter' not in symbols, 'GPU diagnostic reports remain'
         assert 'dkTimestampToNs' not in symbols, 'GPU diagnostic conversion remains'
+    if source.name == 'video_scheduler.c':
+        # The historical publication estimator may still collect metrics; only
+        # original media-timestamp readiness is allowed to decide a wait.
+        nm = Path(argv[0]).with_name('aarch64-none-elf-nm') if '__SWITCH__' in ' '.join(argv) else Path('nm')
+        symbols = subprocess.check_output([str(nm), '-u', str(obj)], text=True)
+        assert 'sl_video_wait' in symbols, 'official video timing gate missing'
+        assert 'sl_pacer_wait' not in symbols, 'legacy publication wait still drives video'
     if source.name == 'frame_pacer.c':
         # Check preprocessed source too: disabled counters must not merely rely
         # on the optimizer dropping unused updates or storage.

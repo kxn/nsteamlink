@@ -104,7 +104,7 @@ renderer。主线程协调应用状态，各子系统只销毁自己拥有、且
 flowchart LR
     A[Application 主线程] -->|请求 / 状态事实| R[Runtime / IHS]
     R -->|video callbacks| V[Video pipeline]
-    V -->|FrameLease / 最新帧 mailbox| G[Renderer 主线程]
+    V -->|FrameLease / 按媒体时间戳准入的 FIFO| G[Renderer 主线程]
     A -->|绘制 / collect| G
     G -->|完成 ticket| T[IHS FrameTracker]
     V -->|接收 / 解码 / 丢弃归因| T
@@ -217,7 +217,8 @@ renderer 发布本地故障的同一轮就更新 faulted；不等待 runtime/UI 
 ### 5.1 帧与 GPU 使用期
 
 `FrameLease` 是有界 envelope，包含 AVFrame 强引用、session_id/video_epoch/pool_id/frame_serial、
-颜色/裁剪信息和可选的帧完成 ticket；不含 session 裸指针或 Dk 对象。
+颜色/裁剪信息和不可变的物理解码输入身份ticket；本次呈现任务ticket在独立selection中，
+不含session裸指针或Dk对象。
 数据只读，引用可在 decoder mailbox、current 和 GPU 批次之间移交；使用预分配 AVFrame + move_ref，
 不逐帧 clone/alloc 整帧。最后一个外部 lease 释放只回收帧并减少 domain 的使用计数，
 不能在任意线程顺带销毁 decoder 或 GPU cache。
@@ -236,8 +237,19 @@ present 返回 submitted=true 而 result=ERROR 时，仍保留批次；没有可
 设备错误不能用普通取消释放。emergency-clear 只替换尚未入 queue 的命令，不能撤销已提交工作。
 软件 staging 与软件 current 纹理是不同寿命：批次可复用不等于 current 像素可覆写。
 
-初始容量：pending=1、candidate=1、current=1、GPU 批次=2、应用 AVFrame 壳对象=8
-（最多两个 domain scratch + 六个 FrameLease envelope）。容量统计按唯一对象而非引用数；
+官方消费语义分层见STEAMLINK_PROTOCOL_RE §87–89：按已接受输入任务的媒体时间戳/jitter
+选择最新已到期任务，再按后端PTS从实际输出FIFO选择像素或复用缓存。输入任务持有独立
+CPU ticket与时间戳；像素envelope保留真实解码输入身份、PTS、AVFrame/domain引用。
+本次selection分别拥有任务ticket和可空的像素引用，16/17与完成写任务ticket，不改写像素身份。
+单独decoder Flush清未取走的输出而保留任务/像素缓存/PTS状态；player关闭清任务、等待任务、
+输出和缓存。GPU/map或当前帧已经持有的引用独立退出。空输出EAGAIN不立即flush；
+FFmpeg缺输出等待/NDK超时适配的物理边界仍见§89，不能由顺序像素用例替代验证。
+
+已接受任务队列采用与CPU endpoint容量一致的256个有界槽；这是本地资源约束。实际像素
+采用20个FrameLease共享于待选输出、当前缓存、candidate/current、GPU批次与交接。
+历史pending=1/六个envelope预算撤回：合法60样本等待可达约244ms，按最大60fps需15帧排队。
+应用AVFrame壳预算为22（两个domain scratch + 20个envelope）；不增加renderer自分配96MiB、
+导入backing128MiB等独立上限。容量统计按唯一对象而非引用数；
 包含旧 epoch 在途引用，耗尽时仍处理压缩输入的
 解码参考关系，丢弃无法交付的输出并明确计数。`extra_hw_frames=6` 为显示持有余量，不是 decoder pool 上限。
 
@@ -254,11 +266,13 @@ session/renderer/decoder；IHS 拥有活动引用，帧 ticket 持有记录使�
 接收方完整初始化记录后才发布 ticket；同一帧分片更新同一记录，不重复分配。
 
 接口语义：`begin_received` / `record_decode_stage` / `complete(ticket, outcome, timestamps)` /
-`settle_and_drain` / `close_epoch` / `close_endpoint`。renderer 只调用 complete 并释放 ticket；decoder→renderer 移交时
-一并移交“报告最终结果”的权利，pending 被覆盖由 decoder 侧终结，已取走的帧不能再由它回报。
-关闭时由实际摘出 pending 的 owner 终结该 ticket；移交在 mailbox 临界区完成，main 与 callback
-不能分别给同一帧报告一次丢弃。帧已首呈现后 ticket 可归还，current/GpuBatch 的像素引用继续保留。
-复杂 receive/输出对应关系由 PTS/COPY_OPAQUE fixture 证明；没有可靠归因不能伪造 ticket。
+`settle_and_drain` / `close_epoch` / `close_endpoint`。已接受输入任务队列持有CPU ticket；
+renderer按任务选择时移交完成权，跳过的就绪旧任务以6终结，关闭清队列以7终结。
+实际像素/token只保留自己的解码身份引用，没有替代另一个任务回报的权利；像素被预算淘汰
+不自动终结其输入任务。selection的唯一完成者在present后写任务结果并释放引用。
+同一物理像素可以服务多个输入任务，且在current/GPU/缓存引用中继续保留。
+复杂receive/物理输出对应关系由PTS/COPY_OPAQUE fixture证明，任务/像素关联另由官方调用者
+对照证明；不能把两者混成“最新输入ID”或重写已发布envelope身份。
 
 complete 是非阻塞、无需堆分配的单 writer 发布：写入结果与显式时间戳后 release 发布 ready；
 IHS 消费端 acquire 后才能读 payload。时间在事件发生处采集，用有效位表达零值；硬件导入不伪造为 upload。
@@ -309,26 +323,25 @@ callback 不销毁在 GPU 使用中的对象，也不等待 GPU。
 
 ### 5.4 同 session 的视频重启与 start 失败
 
-IHS 会在同一 session 内移除旧 video channel 再创建新 channel；不能把它当成新 UI 请求或新 session。
-必须区分应用 decoder start 回调与 IHS channel 的 DataStart，启动事务由 channel 层负责：
+【来源更正】以下约束按`STEAMLINK_PROTOCOL_RE.md` §79–80、§95及§98区分实际
+后端和本地资源保护。撤回旧E15设计中“消息80发送失败必须回滚/断连”、
+“所有启动失败均断开”及“第三domain暂不可用必须结束会话”的泛化。
 
-1. 应用回调先预留 domain 容量、完整初始化，再发布 epoch 并返回成功。回调自身失败时，只撤销
-   未发布对象与预留；不得要求 IHS 对失败回调补一次 stop。
-2. 回调成功后，channel 记录 `app_started` 及其 epoch 绑定，继续注册统计 timer、发送 decoder info。
-   这两步也属于启动事务；timer 注册失败或消息发送失败，必须在 DataStart 返回失败前完成 rollback。
-3. rollback 先停止/排除已注册 timer 的执行，再恰好一次关闭已启动的应用 epoch。已发布 domain
-   进入 §5.3 的冻结回收流程，不能当作未发布初始化对象直接 free，也不能等未来 stop callback 才关闭。
-4. 正常 DataStop、失败 rollback 和 ChannelVideoDeinit 的防御清理共用 channel 级幂等收尾入口。
-   deinit 必须先 join data worker，再检查其 timer/app_started 清理记录；不得与仍执行的 start 并发回滚。
-   timer 以 channel 为 owner，停止返回代表没有回调再使用 channel/tracker；清理在 decoder/mailbox/
-   tracker 锁外执行，不能持这些锁等待 timer。channel 内存释放前两项所有权都须归还。
+IHS在同一session中替换video decoder不创建新UI请求。player prepare先于backend
+start；普通codec/backend不可用保留actor，完整帧触发异步reset，由下一轮actor
+stop/join、flush并重建。显式身份/内存/几何保护仍是本地fatal边界，不能把它们
+描述成官方SDK错误策略。callback返回成功后记录app_started/epoch；所有启动、
+正常Stop与失败防御清理必须共享幂等收尾，销毁依赖之前先stop/join应用和IHS workers。
 
-现有 IHS 在 DataStart 失败时断开 session 且跳过常规 DataStop（E15）；该 disconnect 行为保留。
-不能把 start 失败当作可重试 busy。应用回调成功后发生失败是独立验收分支，不包含在“应用初始化逐点失败”中。
+AVCodec的消息80由实际get_format同步触发，不因Start成功或普通重建本身补发。
+按所选backend生成描述并读取SDK threads，每次callback均上报，发送失败仍保留
+原格式返回且不请求reset。会话/epoch仅借用于start/submit调用范围，离开SDK调用
+即清空保存的callback上下文。其他后端的既有Start上报不能据此改变触发时点。
+统计timer失败等本地生命周期保护单列；它不把消息80变成启动事务的成败条件。
 
 全管线同时保留 decoder domain 最多 2（一个活动、一个退役；也可能两个均退役）。新 epoch 可以在
 旧 epoch 的 GPU 使用结束前准备，旧 current 随 close 退役，主线程不再取旧帧。第三个 domain 无容量时
-明确以资源压力使 start 失败并收尾整个会话，向 UI 传递准确原因；不是静默等待或自动重试。
+保留不可用backend actor；后续完整帧请求重建，资源释放后可重新打开。该固定容量是本地保护，非官方常数。
 用户主动切换会话由 §4 的串行 admission 避免这种重叠；主机连续重配的压力行为必须单独验收。
 同一 session 内的不同 pool 仍按 §6.3 分组，domain 上限不能代替 pool 的上限。
 应用 stop/exit 关闭整个 session 的发布准入，和只关闭一个 epoch 的标记分开保存。已进入 start
@@ -422,7 +435,7 @@ fence 对象本身也属于 submission slot；不能在尚有资源引用该 ser
 3. renderer collect 完成批次/退役 pool；发布 renderer 使用结束的事实，runtime 轮询回收关闭的 codec domain。
 4. Stopping 时不再取该 session 视频，正常 gfx 可继续画 UI；Exiting/DeviceFailed 禁止新批次，
    仅处理已经 acquired 的收尾、collect 与停止状态推进。无可呈现 foreground 时有界让出。
-5. Starting/Streaming 及正常 UI 绘制有空批次才 begin；预留必要容量后 acquire，再取最新 pending。
+5. Starting/Streaming 及正常 UI 绘制有空批次才 begin；预留必要容量后 acquire，再取最新已到期帧。
    核对 epoch，导入 candidate 并取得 Recording 引用；失败按错误作用域收尾，不更改 current。
 6. 绘制视频/UI，提交并记录批次 fence，再 present；发布 ticket 完成结果和本地呈现健康快照。
    首帧 UI 事件从当前 session 的真实首次 present 生成，不等待 FrameTracker drain 或一秒诊断采样。
@@ -432,7 +445,7 @@ runtime 中旧的视频首帧/停滞 watchdog 迁至 application，避免两套�
 runtime 可继续读取带 session_id/video_epoch 的呈现快照供既有 launch/activity 逻辑使用，
 不能用跨代累计计数变化推断新会话首帧。诊断开关不改变首帧事件或健康判断。
 
-swapchain 初始 2 张 RGBA8、无 MSAA/深度缓冲；swap interval=1。命令在途最多 2，pending=1。
+swapchain 初始 2 张 RGBA8、无 MSAA/深度缓冲；swap interval=1。命令在途最多2；待选FIFO与20个envelope共享容量，只有已到期帧参与选择。
 不引入积满再播的软件 FIFO。输出固定 1280×720，dock 不自动启用 1080p。
 正常状态每个显示节拍重画 current+UI；不将 UI 动画绑在新视频上，不同时实现 idle 按需渲染。
 busy/suspend 用有界短等待避免忙转；不在正常显示节拍上额外照搬 SDL_Delay(1)。
@@ -546,7 +559,8 @@ DataStop 判断资源存在。channel/tracker 的发送使用退出必须早于�
 
 | 错误类别 | 处理与资源归属 |
 |---|---|
-| 单帧 corrupt / 暂无输出 | 保留 current，按既有丢帧/关键帧策略处理；不启动会话析构 |
+| 压缩帧尚未完整 | 继续普通界面重绘，保留已选像素；不提前创建完整解码任务 |
+| AVCodec收帧错误/占位 | 按§93结算7/5及空DataLost，消费format0任务；send错误独立请求actor重建 |
 | 非必要 UI cache miss / 容量不足 | renderer 使用常驻占位；不覆盖已录制内容，不使会话失败 |
 | 视频格式、导入或 domain/PoolGroup 容量失败 | 带 session_id/video_epoch 的不可丢关闭原因；application 更新 faulted 并进入统一 stop；IHS start 返回失败时接受其断开语义 |
 | device/queue 故障、无法归还输出 | application 级 sticky DeviceFailed，自 gfx 创建起就存在；不按旧视频代次忽略，不接受新会话或新 GPU 工作 |
@@ -658,8 +672,8 @@ ASan/UBSan 覆盖错误释放，TSan 用于 mailbox/tracker/lifecycle/关闭 dom
 - fatal 后下一轮 UI 仍处于串流页，gate 不得重开；旧视频错误不改变新会话，旧提交的 device 错误仍生效。
 - 多次同 epoch pool 变化、第三组/第三 domain 容量拒绝、start 每阶段失败且不调用 stop，
   检查映射、lease、domain、CPU ticket 和完整 pool 的释放，而非只看 frame 数。
-- 应用 start 成功后分别注入 timer 注册失败、decoder-info 发送失败；timer 已运行与 rollback 交错，
-  后续 deinit/重复 stop 只关闭一次 epoch，timer 不访问已释放 channel，冻结 domain 最终释放。
+- timer注册失败等本地保护与收尾交错时，deinit/重复stop只关闭一次epoch；AVCodec info80发送失败
+  则不关闭epoch、不发起reset，后续真实格式协商/解码仍推进，借用上下文在回调退出前归还。
 - 应用 stop/exit 与 channel start 发布竞争：无论谁先取得 mailbox，关闭后不新增 epoch/pending；
   start rollback、channel join、最后 GPU 使用完成可交换顺序，不能遗留域或重开 session 准入。
 - StopVideoData 暂停超过 45s/10s 再同 session StartVideoData，不误触发会话停止；本地 suspend 与
@@ -748,13 +762,13 @@ typedef struct { uint32_t index; uint64_t version; } sl_domain_handle;
 typedef enum { DOMAIN_FREE, DOMAIN_OPENING, DOMAIN_ACTIVE,
                DOMAIN_FROZEN, DOMAIN_DESTROYING } sl_domain_state;
 
-struct sl_frame_lease {               // 固定 6 个 envelope，另有 2 个 domain scratch
+struct sl_frame_lease {               // 固定20个envelope，另有2个domain scratch
     atomic_uint refs;
     AVFrame *frame;                   // 初始化时分配，只在独占 envelope 时 move_ref
     sl_domain_handle domain;
     sl_video_key key;
     uint64_t pool_id, frame_serial;
-    IHS_FrameTicket *completion;      // 可为空；最终结果的唯一报告权
+    IHS_FrameTicket *decoded_identity; // 物理解码身份，呈现完成权在独立selection
     sl_frame_metadata metadata;
 };
 
@@ -778,23 +792,29 @@ envelope 按位不可变。mailbox 的短 mutex 为新帧可见性提供发布/�
 已经持有有效引用或 mailbox 对象引用。`fetch_add(relaxed)` 只适用于这个前提；最后一次
 `fetch_sub(acq_rel)` 释放 AVFrame 后，才将 domain.external_frames 减一。不能先公布外部使用归零。
 free-envelope 管理复用 mailbox 的短锁或专用固定池锁；AVFrame unref 和 ticket 终结始终在锁外。
-scratch 属于这 8 个壳对象预算；不能先建 8 个 envelope 又给每个 domain 额外分配 scratch。
-当前最多 pending/candidate/current 各一、两批各一，共五个不同 envelope，第六个供交接；
-当一次渲染同时持有旧 current 与新 candidate 时，仍按其实际唯一引用集合计数，满时不发布新输出。
-冻结 domain 前清空 packet/scratch 的临时引用；FFmpeg 内部 DPB 依赖保留到最终 codec 析构。
+scratch属于22个壳对象预算中的两个，20个envelope共享于待选FIFO、candidate/current、两GPU批次
+与一次交接，不额外分配。按官方244ms以下的等待上界与已声明60fps，15个排队帧仍能保留到ready，
+避免固定6壳在到期前反复淘汰帧。预算耗尽时可有界淘汰最旧排队引用，作为明确本地保护；
+在途GPU/current不能被强制释放。冻结domain前清空packet/scratch的临时引用；FFmpeg 内部 DPB 依赖保留到最终 codec 析构。
 
-domain 的状态转换只由 pipeline 执行；runtime reaper 在 decoder_lock 下确认冻结、callbacks=0、
-外部帧=0、renderer_groups=0，摘为 DESTROYING，解锁后析构 FFmpeg，再锁内归还 slot。
-析构期间 slot 仍占容量；main 不执行 codec destructor。普通 reaper 可 trylock 后延至后续循环，
-不能在回收旧 A 时持全局 decoder_lock 等待 codec 析构，进而挡住活动 B。G1 仍需证明各 domain
-独立 device/context 的实际析构边界。
+domain 的状态转换只由 pipeline 执行。Stop先关闭准入、释放播放器内部引用，
+在decoder_lock下排除SDK调用，标记stopped/reaping并摘出parser/codec；解锁后按
+parser→codec顺序释放，再锁内清reaping。此时外部FrameLease及renderer group仍可持有
+独立的AVFrame/frames context/map/device引用，不以codec存活替代图片引用。
+依据见协议参考§101；SDK正常成功出口已等待NVTEGRA decode fence并清除private_ref。
+
+runtime reaper在decoder_lock下确认停止、非reaping、外部帧=0、renderer_groups=0，
+才归还domain slot。取消open仍可能遗留codec，reaper保留该清理分支；正常Stop后即使
+codec已NULL，也必须退休domain。SDK析构期间slot仍占容量；main不执行codec destructor。
+不能持全局decoder_lock等待旧A的SDK析构，进而挡住活动B。G1仍需验证实际NVTEGRA/GPU
+及驱动失败边界；源码引用关系不代替实机验收。
 
 ### 14.3 调用接口与锁边
 
 ```c
 sl_video_pipeline *sl_video_create(void);
 void sl_video_close_session(sl_video_pipeline *, uint64_t session_id); // main，短 mailbox
-sl_frame_lease *sl_video_take(sl_video_pipeline *, sl_video_key);      // main，转移 pending
+bool sl_video_select(sl_video_pipeline *, sl_video_selection *); // main，转移任务ticket及像素引用
 bool sl_video_reserve_current(sl_video_pipeline *, sl_frame_lease *); // main，检查关闭并增引用
 void sl_frame_release(sl_frame_lease *);                              // 无 session/GPU 调用
 void sl_video_reap(sl_video_pipeline *);                             // runtime
@@ -803,8 +823,8 @@ void sl_video_destroy(sl_video_pipeline *);                          // 全部 s
 ```
 
 group 构造前先登记 renderer_groups，再分配/import；失败也必须销毁部分 Dk 对象与 map/context
-引用后才减计数。域仍有 FrameLease 时才能登记 group，所以计数从零重新变成非零不会越过 codec
-最终析构判断。回收条件以 acquire 读取归零计数；发布归零用 release。不能用三次不相干的无锁
+引用后才减计数。域仍有FrameLease时才能登记group，所以计数从零重新变成非零不会越过
+最终domain storage退休判断；codec已可在Stop中独立关闭。回收条件以 acquire 读取归零计数；发布归零用 release。不能用三次不相干的无锁
 读取代替状态锁内的冻结和 callbacks 判断。
 
 锁顺序允许 `decoder_lock → mailbox`；renderer 从不取 decoder_lock。runtime.lock 只复制请求/
@@ -878,7 +898,52 @@ legacy adapter 仍进入同一 tracker，但不为迟到、歧义的 16-bit id �
 
 ### 15.2 FFmpeg 输入输出关联
 
-证据：当前 `video_submit_locked` 调 `receive_frames(frame_id, submit_us)`，缓存输出也沿用本次
+AVCodec任务策略以`STEAMLINK_PROTOCOL_RE.md` §91–98的官方Linux客户端为依据：
+完整AU经complete-frame parser后只send一次、receive一次；send失败独立请求异步reset，
+仍尝试receive。receive EAGAIN首次记7，其他错误记5，并反馈空DataLost；无像素占位
+仍按普通jitter进入/离开任务队列。采样和事件15在receive及原错误处理之后。
+任务绑定本次receive交付的对象，不按Android输入PTS查找另一张texture；物理对象仍保留
+不可变的输入token身份。无有效宽高不入队，原format0占位不提交GPU。
+reset与DataLost允许同时表达；枚举/队列引用是本地接口设计，不新增协议消息或FEC策略。
+Linux原DecodeFrame @0x326225在关键标记上调用原FlushPendingData @0x325ec0，
+其完整路径清理partial/压缩buffer引用，不调用AVCodec SDK flush；已交付player的对象保留。
+`audit-steam-client-avcodec-key.py`以原Frame构造、完整DecodeFrame/Flush/OnThink执行
+分片、替换和已排队对象场景，并检测实际send AU字节；不能继续套用Android SDK flush。
+send EIO按§95直接将配置第7项设为显式false，然后请求reset，继续receive；不调用
+配置通知/保存或99。下一epoch读取有效硬件偏好。硬件能力/设备建立不可用且存在软件
+H264时回退软件，SDK未提供目标硬件格式但提供0/12时采用软件格式；这不是对失败硬件帧
+执行download。SDK分配/身份/固定资源上限保护、自然NVTEGRA错误与成功路径、原完整SDK
+启动/ABI及自然硬件decoder-info内容仍有独立证据范围。生命周期保持stop/join后回收，parser
+先于codec销毁。
+
+显式配置的硬解变化另按§97的真实player delegate：检查字段7存在位及播放器cache，
+先请求异步reset再更新cache；字段省略不按默认值触发。player激活时初始化一次cache，
+EIO的直接字段修改及每次epoch打开均不刷新它。因此EIO后再收到显式false仍可能按官方
+请求一次重建。RX/control回调只设置现有原子gate，不在Base锁下join；window/overlay/
+microphone的完整平台delegate接线仍单列，不能据此声称整个回调层已等价。
+
+消息80另按§98的实际AVCodec格式回调触发：软件路径也安装get_format，逐次上报
+SDK threads及所选后端描述；启动/重建本身不补发。发送失败只返回给原callback，不
+升级成reset或断连。借用session/epoch仅在open/submit的SDK调用范围有效，返回前
+清空context；描述先复制到session拥有的当前info缓存，发送失败仍保留，workers
+停止后随session释放。软件描述/缓存与完整80按官方对照；NVTEGRA硬件描述保留平台标识，不能据
+软件/受控SDK证据宣称官方硬件成功映射与自然触发已经验收。
+
+【官方来源范围更正】以下资源/身份模型描述Native实现。撤回把“已接受但无输出继续pending”
+作为所有官方后端共有策略的判断：此前任务选择与完成投影来自Android/MediaCodec。
+`STEAMLINK_PROTOCOL_RE.md` §91另固定官方Linux AVCodec客户端，其receive EAGAIN实际先记7，
+再经原统计门禁保留7并发空DataLost；没有Android的六次SDK等待。这是不同后端的实际差异。
+COPY_OPAQUE在本地证明物理输出的引用归属，不单独证明官方FFmpeg的任务身份/错误结果/
+采样顺序一致；物理像素身份安全与协议任务策略分别核验。本文当前队列/伪代码不能作为
+这些FFmpeg分支已对齐的验收依据。
+
+§92另执行同一官方Linux客户端的完整OnThink、原Put/jitter/播放队列及video update调用者：
+采样与15位于receive之后；EAGAIN的format0占位任务正常出队、跳过像素上传并继续呈现，
+后续尝试完成1不能覆盖先前7。§92记录过Native提前计时与无输出pending的真实反例，现行映射以§93为准。
+历史“接受输入后独立入队/等待”的结构只说明当时Native与Android投影，不能拿它
+覆盖这组AVCodec官方客户端策略；也不能把占位消费推断成物理屏幕必定保留旧图。
+
+历史问题：原 `video_submit_locked` 调 `receive_frames(frame_id, submit_us)`，缓存输出也沿用本次
 输入 id；实际 FFmpeg 的 send/receive 解耦。固定分支及本机 `avcodec.h` 的 COPY_OPAQUE 契约
 允许输入输出不是一一对应，不能仅开一个 flag 就宣称完成归因。
 参见 [固定 FFmpeg API](https://github.com/averne/FFmpeg/blob/caeec83b791be08ed43468a2ef426d6901d51c78/libavcodec/avcodec.h)。
@@ -889,46 +954,37 @@ decoder open 前设置 flag；packet PTS 可用于 fixture 辅助核对，但禁
 “最新输入 id”或只凭 16-bit PTS 猜测。token 元数据和 AVBuffer wrapper 的小额分配单独计量，
 不将其冒称整条解码链零分配；禁止的是应用稳态整帧像素分配/复制。
 
-首版支持经过 fixture 证明的一个组装画面至多一个可归因输出；零输出可由 token 最后引用释放、
-flush/close 或 tracker 过期结算。同一 token 第二个输出、非空输出无 token、跨 epoch token 均为
-归因契约失败：释放该输出并走视频故障收尾，不给两个并行 owner 同一个完成权。若实际支持的
-H.264 流不满足此形状，必须在接入前扩展组装/归因规格并验证，不静默丢弃第二个合法画面作为支持。
+任务策略按§93绑定本次receive返回的对象；原输入token只说明物理像素来源，不能代替当前
+任务完成owner。EAGAIN/EOF等按原客户端7/5与DataLost结算；占位对象正常出队，不等待另一
+任务将来出图。真实B帧fixture同时检验当前任务归因与旧物理身份/像素不变。单个token的多个
+输出、无token输出或跨epoch输出仍属于明确的本地归因/资源保护，不把这种保护当作已核实
+所有Host producer与多画面AU语法。
 
 ```text
-submit(input, ticket):                         // callback；decoder_lock 下
-  validate bytes <= INT_MAX - padding；检查实际压缩包上限
-  若 session 已关闭：不接管新输入，返回停止结果
-  保留既有 need_flush/关键帧恢复策略；flush 不得释放 renderer 持有的输出
-  准备 refcounted packet（压缩字节允许复制，尾部 padding 清零）
-  创建 token 并接管 ticket；packet.opaque_ref = token_ref
-  repeat:
-    rc = avcodec_send_packet(codec, packet)
-    if rc != EAGAIN: break
-    drain_available_outputs()                  // 取每个输出自己的 token
-    若 send/receive 双 EAGAIN 且无进展：API 契约错误，停止；不能 sleep 重试
-    若已关闭：终结仍未送入的 token，退出循环
-  若 send 成功：av_packet_unref(packet)，drain_available_outputs()
-  否则：按真实错误终结尚未接管输出的 token，unref packet
+submit(input, ticket):                         // 同步callback，decoder_lock下
+  校验session/epoch与本地资源上限；complete-frame parser处理有padding的AU
+  parser未消费全部输入：记5、释放packet；不Put、不DataLost
+  packet PTS保留NOPTS；opaque token保留不可变物理输入身份及引用
+  send一次；非0立即设置actor reset请求，仍继续receive一次
+  receive非0：EAGAIN先记7，再尝试5；其他错误记5
+              排入空DataLost，unref失败的SDK输出，创建format0元数据任务
+  receive为0：无有效宽高不Put；有效格式绑定这次实际输出，其余是format0
+  Put任务、采样jitter；释放packet并返回，由协议调用者记录15
 
-drain_available_outputs():
-  每次 receive 前 scratch 为空；receive 返回 EAGAIN 即结束本次 drain
-  成功输出：验证 token/key；claim 唯一 ticket；记录该输出的 decode_end
-  获取空 envelope；无容量则终结该输出结果、unref，继续 drain 保持解码状态
-  move_ref(scratch -> envelope.frame)，登记 external_frames 和只读 metadata
-  mailbox 下复核 session/epoch，交换 pending；锁外终结/释放被覆盖帧
-  关闭后输出不再发布，锁外释放；下次循环检查停止，不为 stop 主动 drain 全部延迟画面
+select_task():                                // mailbox下
+  按媒体timestamp/jitter选最新ready任务；旧ready记6，已完成结果不覆盖
+  绑定该任务的实际输出序号，不查找Android后端PTS或等待未来任务的像素
+  format0任务同样转交呈现，但不交无效AVFrame给GPU
+  任务ticket与物理输入token分别保留/释放，像素引用不会被重新归因
 ```
 
-Claim ticket 在 decoder 串行域内进行；先拿走 token 的完成权，再将 AVFrame 的 opaque_ref 解除
-（像素引用照常保留），避免 current/GpuBatch 额外钉住统计 token。FFmpeg 自身留存的 token
-可以继续存在，但没有第二份完成权。token finalizer 只释放 CPU 引用，并对尚未 claim 的结果
-作有据的未输出/关闭终结，不获取 decoder/tracker mutex、不调用 IHS session、不 free domain。
-软件 decoder 的 FFmpeg 内部线程也可能触发 finalizer，不能假设它总在 submit 线程。
-
-decode_begin/end 用输出 token 关联；send/receive 调用墙钟另记 decode_cpu_wall，不能把解码器
-整体调用时间重复填给本次输出的所有帧。硬件帧直接 move_ref；软件 NV12/IYUV 使用同一 envelope，
-其他软件格式使用有界可复用转换缓冲。所有接管/分配失败分支都必须列出 packet、token、scratch、
-envelope 的唯一释放者。FFmpeg 内部缓冲的引用不计进 renderer external_frames。
+物理输出claim在decoder串行域内，解除AVFrame opaque_ref时保留像素自己的CPU身份引用；
+不把物理输出claim当成呈现完成权。FFmpeg可继续持有token；finalizer只释放引用，不根据
+最后释放时机猜测丢帧原因，也不获取session/GPU指针或析构domain。内部SDK线程可触发它。
+协议14/15对应本次提交；物理输出的begin/end仍描述原输入至实际取出像素的墙钟，二者独立。
+硬件帧直接move_ref；软件YUV420P/YUVJ420P使用同一envelope，未知格式遵循format0而不
+猜测像素布局。接管/分配失败分支须列出packet、token、scratch、envelope的释放者。
+FFmpeg内部缓冲引用不计进renderer external_frames。
 
 ## 16. FrameTracker 记录、发布与发送算法
 
@@ -1063,7 +1119,7 @@ render_tick:
   collect();  若无 Free batch/非前台/应用已退出则返回
   reserve batch + 全部必需容量 + 独立 clear 命令容量
   begin/acquire output；记录 acquired=true、output_index
-  mailbox 下取最新 pending，并预留可能作为 fallback 的 current；每次使用都核对关闭
+  mailbox下取最新已到期帧，并预留可能作为 fallback 的 current；每次使用都核对关闭
   导入/软件上传 candidate；任何 draw 之前 batch_pin(resource_version)
   成功则录制视频与 UI；可选内容失败用占位；必要视频失败锁存会话错误
   若整批需回退且尚未入 queue：取消本批普通命令，录制预留 clear
@@ -1330,7 +1386,7 @@ shader 构建至少包括 textured quad vertex、RGBA/glyph fragment、NV12 frag
 |---|---|
 | main 预留 A → callback close A → main submit/present A | 本批合法；二次核对禁止把 A 重新放回 current；GPU 完成后才释放像素，关闭状态不恢复 |
 | decoder 正准备 B → main close_session → decoder 尝试 publish | 同一 mailbox 决定先后；未发布则回滚，已发布则摘出退役；不靠 stop callback 的到达时机 |
-| start 应用成功 → timer 已开始 → decoder-info 发送失败 → deinit | rollback 排除 timer 使用并关闭 epoch；deinit join 后只补缺项；无 timer/channel UAF、无两次 codec free |
+| AVCodec get_format → info80发送失败 → 继续解码 → 最终deinit | 格式返回及epoch不因info失败改变；借用上下文先清空，最终stop/join后回收；无会话UAF或重复free |
 | worker 在线程创建后立即抢先运行，或线程创建失败 | 前者读到已初始化的 epoch/tracker；后者只回收已建子对象，不执行假 join/stop，不把 NULL channel 加入 session |
 | A 已冻结、main 外部计数先归零，但 callback 尚未返回 | callbacks 条件阻止 reaper；最后 callback 完成事实只在不再访问 domain 后发布 |
 | callback 都结束，GPU 仍读 A，session 先销毁 | binding/session 可释放，FrameLease/ticket 无 session 指针；domain/map 仍被外部计数保护 |
@@ -1374,8 +1430,61 @@ SDK 静态库、NVTEGRA 头文件、ABI adapter、shader 源码和 DKSH 的 SHA-
 错误和三个清理事实。UI 事件的 reply generation 不承担资源归属。application 的 lifecycle 是
 replacement 意图和远端 input gate 的唯一策略所有者；runtime 工作线程负责取消/join/回收。
 所有关闭动作先关闭输入、冻结帧入口，主线程继续 collect，worker 只在 video_clean 后退出。
-解码域 reaper 在全局 decoder 锁外调用 `avcodec_free_context`，其 occupied/reaping 标志阻止
-提前重用，避免旧域 SDK 析构阻塞另一活动域的 decode 锁。
+解码域Stop在全局decoder锁外调用`avcodec_free_context`，occupied/reaping标志阻止
+提前重用；reaper另等外部图片/map归还后退休domain，避免旧域SDK析构占住活动域decode锁。
+
+AVCodec线程选择遵循协议参考§99–100：按codec slice能力查询平台CPU输入，byte计数最多4，
+仅>1时指定slice线程，其余保留SDK默认。get_format逐次报告实际SDK线程元数据，不能把
+静态1线程当成当前SDK事实。Linux按原/proc byte统计，Switch输入由现有SDK的逻辑CPU接口
+提供；后者是平台适配，不是官方Switch实证。该选择不启用FRAME threading。
+
+按协议参考§101，Stop立即关闭parser/context及其SDK线程，外部FrameLease/map仅保留
+domain storage及各自SDK buffer/frames context/device引用。撤回旧设计“必须保留codec
+直到所有图片/map归还”的条件：官方帧owner为嵌入池，Stop不等外部归还；Switch SDK
+成功出口与独立硬件引用关系另有源码依据。软件资源测试在持旧图/map跨Stop和IHS_Quit时
+检查SDK用户线程已经回基线，再核对图片MD5及最终domain退休；Linux oracle按协议参考
+§103.5排除已进入kernel退出的proc条目，并单独检查可观测join返回值；这仍不等同真实
+NVTEGRA/loader验收。
+
+协议参考§106区分StartVideo codec_data与FFmpeg extradata。IHS拥有完整字段并在重建
+时继续传入启动回调；H264 SDK配置不映射这些字节，不向SDK媒体包自行补入。原AVCodec
+在这条路径保存该buffer但open/send时extradata仍为空。空/opaque/截断/Annex-B/AVCC及
+原重建由实际控制链和SDK验证；不泛化到Android或音频。撤回将视频codec_data直接拷到
+AVCodecContext.extradata视作官方等价映射的实现假设。
+
+格式回调按协议参考§102–104区分SDK open guard与运行期异步请求。原+2cc guard在
+avcodec_open2前置1、返回后清0；Native同样在open中同步选择，其余生产submit把offered
+格式值复制到pipeline-owned slot并等待。IHS actor按reset→network→control FIFO→格式
+消费→client stage顺序选择、发送80，再公布结果唤醒SDK。发送失败仍保留cache，不重建。
+直接codec/兼容媒体fixture可显式关闭async，其作用与原async bit分支相同，共用selector。
+
+撤回§102–103所述“Native仍在后台SDK回调中同步发送80”作为现行实现描述；它是改动前
+差异。actor消费读取格式锁保护的后端元数据值，不持decoder锁、不保存借用SDK context；
+复制描述后先释放format锁，再进IHS/Base发送。原SDK formats在取消路径中已观测到free
+及地址复用，Native保留值而非延长借用数组。64项choice界限是本地SDK数组保护，不是
+Steam wire限制；不按AV_PIX_FMT_NB推断共享SDK枚举ABI。
+
+IHS interrupt在join之前取消/唤醒，不调用SDK或获取Base/decoder锁。Stop仍在join后按
+parser→codec释放；同对象reset保留owned pending，后继open更新后端元数据。通道销毁
+在join后再次取消旧请求，清理初次interrupt之后的晚发布；打开失败也登记当前backend key，
+使收尾不会遗留上一epoch请求。按协议参考§104.5，SDK打开失败后的元数据有效性与
+解码准入分开：保存标量快照，仍消费同对象旧pending；Native安全释放失败context不
+阻断该格式阶段。open结束的元数据发布不得重新激活已取消请求。会话freeze取消等待，
+owned slot不含session/epoch指针。
+
+打开期同步get_format可以早于ChannelAdd。IHS用Base保护的starting epoch仅在
+startTracked回调内授权Info80，返回即清除；不能只接受已经注册的视频通道。原client级
+cache/producer@31dd40及open guard支持这一触发，不将受控SDK open回调当作自然硬件出错。
+
+按协议参考§105，正常启动/控制替换/控制停止另用原CStreamPlayer、真实控制加密接收、
+FIFO、StartVideo factory和SDK过程对照，不再仅用组合过程支持替换/停止。原fixture须
+满足Idle注册/有效AuthToken/网络Shutdown前置，并将原assert入口观察持续到进程退出；
+exit0和图片成功不能代替这些条件。控制carrier及媒体Frame仍是parsed输入，完整握手与
+自然UI/renderer生命周期另验。
+
+这些偏序与所有权契约由真实IHS actor/worker/SDK软件图片、原客户端过程投影及取消交错
+验证；explicit Connecting-phase输入、组合的替换向量、SDK terminal注入和应用freeze保护
+分别标注。完整Qt、自然UI/reset producer、真实Switch硬件/driver交错仍有独立边界。
 
 GPU fence 错误使批次隔离并关闭正常渲染。退出阶段仅在 SDK queue idle 正常返回且 queue
 未处于 error state 时释放隔离引用；已故障 queue 进入 Switch fatal，不能返回 hbmenu。

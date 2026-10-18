@@ -2,12 +2,15 @@
 #include "build_identity.h"
 #include "services/auth_store.h"
 #include "services/i18n.h"
+#include "services/network_test.h"
 
 typedef enum sl_page {
     SL_HOME,
     SL_PAIRING,
     SL_SAVING,
     SL_CONNECTING,
+    SL_NETWORK_TEST,
+    SL_NETWORK_RESULT,
     SL_PIN,
     SL_STREAM,
     SL_MENU,
@@ -68,10 +71,13 @@ typedef enum sl_action {
     SL_SET_QUALITY,
     SL_SET_BANDWIDTH,
     SL_SOUND,
+    SL_FEC,
     SL_RETRY,
     SL_UPDATE_CHECK,
     SL_CONFIRM_UPDATE,
-    SL_FINISH_UPDATE
+    SL_FINISH_UPDATE,
+    SL_RUN_NETWORK_TEST,
+    SL_TEST_DECIDE
 } sl_action;
 typedef enum sl_command_type {
     SL_CMD_NONE,
@@ -84,7 +90,8 @@ typedef enum sl_command_type {
     SL_CMD_SAVE,
     SL_CMD_SHORTCUT,
     SL_CMD_MANUAL,
-    SL_CMD_UPDATE
+    SL_CMD_UPDATE,
+    SL_CMD_TEST_CONFIRM
 } sl_command_type;
 typedef struct sl_command {
     sl_command_type type;
@@ -93,6 +100,8 @@ typedef struct sl_command {
     uint64_t game_id;
     uint32_t quality;
     uint32_t bitrate_kbps;
+    bool unreliable_fec;
+    bool test_only, accept_recommendation, security_pin_retry;
     sl_language language;
     bool update_check;
     char text[64];
@@ -135,6 +144,8 @@ typedef enum sl_ui_cue {
     SL_CUE_COUNT
 } sl_ui_cue;
 typedef struct sl_ui_model {
+    sl_network_test_view network_test;
+    uint64_t settings_revision;
     sl_ui_cue cue;
     uint64_t cue_serial, move_sound_at;
     sl_auth_store store;
@@ -146,7 +157,7 @@ typedef struct sl_ui_model {
     uint64_t leave_at;
     float leave_opacity;
     int focus;
-    bool had_stream;
+    bool had_stream, cancel_only_error;
     uint64_t launch_at;
     sl_control launch_card; /* Captured before the HOME layout is replaced. */
     float games_scroll, games_target;

@@ -66,6 +66,7 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
             m->command.type = SL_CMD_STREAM;
             m->command.quality = m->store.quality;
             m->command.bitrate_kbps = m->store.bitrate_kbps;
+            m->command.unreliable_fec = m->store.unreliable_fec;
         } else
             sl_ui_error(m, sl_tr(SL_T_HOST_REMOVED));
         break;
@@ -77,7 +78,7 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
         break;
     case SL_EVENT_FAILURE:
         if (e.account == 1) {
-            if (m->page != SL_CONNECTING)
+            if (m->page != SL_CONNECTING && m->page != SL_NETWORK_TEST)
                 break;
             sl_host *h = sl_host_find(&m->store.registry, m->intent.host.id);
             if (h) {
@@ -127,4 +128,48 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
         break;
     }
     sl_ui_layout(m);
+}
+
+void sl_ui_network_test(sl_ui_model *m, const sl_network_test_view *view) {
+    if (view->generation != m->generation ||
+        (m->network_test.generation == view->generation &&
+         view->revision <= m->network_test.revision) ||
+        (m->page != SL_CONNECTING && m->page != SL_NETWORK_TEST && m->page != SL_NETWORK_RESULT))
+        return;
+    m->network_test = *view;
+    sl_page before = m->page;
+    if (view->phase == SL_TEST_REQUESTING || view->phase == SL_TEST_RUNNING)
+        m->page = SL_NETWORK_TEST;
+    else if (view->phase == SL_TEST_RESULT) {
+        m->page = SL_NETWORK_RESULT;
+        m->focus = 103; /* The apply/continue row; footer B keeps the old settings. */
+    } else if (view->phase == SL_TEST_CONTINUING)
+        m->page = SL_CONNECTING;
+    else if (view->phase == SL_TEST_FAILED) {
+        sl_ui_error(m, view->error);
+        m->cancel_only_error = true;
+        m->focus = 101;
+    } else
+        return;
+    if (m->page != before)
+        m->entered_at = m->now;
+    sl_ui_layout(m);
+}
+
+bool sl_ui_stream_preferences(sl_ui_model *m, const sl_stream_preferences *prefs,
+                              uint64_t revision) {
+    /* A local action awaiting submit owns the visible controls. After submit,
+     * older worker snapshots cannot undo it; a matching/newer snapshot can. */
+    if (m->command.type != SL_CMD_NONE || revision < m->settings_revision)
+        return false;
+    bool changed = m->store.quality != prefs->quality ||
+                   m->store.bitrate_kbps != prefs->bitrate_kbps ||
+                   m->store.unreliable_fec != prefs->unreliable_fec;
+    m->settings_revision = revision;
+    m->store.quality = prefs->quality;
+    m->store.bitrate_kbps = prefs->bitrate_kbps;
+    m->store.unreliable_fec = prefs->unreliable_fec;
+    if (changed)
+        sl_ui_layout(m);
+    return true;
 }

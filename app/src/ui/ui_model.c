@@ -10,6 +10,7 @@ static void page(sl_ui_model *m, sl_page p) {
     m->games_dragging = false;
     m->page = p;
     m->ending_game = false;
+    m->cancel_only_error = false;
     m->focus = 0;
     m->entered_at = m->now;
 }
@@ -109,14 +110,16 @@ void sl_ui_release_games(sl_ui_model *m, float velocity) {
 void sl_ui_init(sl_ui_model *m, const sl_auth_store *s) {
     memset(m, 0, sizeof(*m));
     m->store = *s;
-    if (!sl_bitrate_valid(m->store.bitrate_kbps))
-        m->store.bitrate_kbps = 6000;
     m->page = SL_HOME;
     m->network_ok = true;
     m->update_check = true;
     sl_ui_layout(m);
 }
 void sl_ui_error(sl_ui_model *m, const char *message) {
+    /* This owner requires acknowledgement before cancellation. An unrelated
+     * queued error must not replace its dialog with generic Retry controls. */
+    if (m->cancel_only_error)
+        return;
     bool ending_game = m->ending_game;
     snprintf(m->error, sizeof(m->error), "%s", message);
     page(m, SL_ERROR);
@@ -145,7 +148,12 @@ void sl_ui_stopped(sl_ui_model *m, bool unexpected) {
         page(m, SL_CLOSING);
     else if (unexpected)
         sl_ui_error(m, sl_tr(SL_T_DISCONNECTED));
-    else
+    else if (m->intent.test_only) {
+        page(m, SL_OPTIONS);
+        m->depth = 1;
+        m->stack[0] = SL_HOME;
+        m->focus_stack[0] = 0;
+    } else
         page(m, SL_HOME);
     sl_ui_layout(m);
 }
@@ -182,10 +190,11 @@ static void emit(sl_ui_model *m, sl_command_type type) {
     m->command.generation = m->generation;
     m->command.quality = m->store.quality;
     m->command.bitrate_kbps = m->store.bitrate_kbps;
+    m->command.unreliable_fec = m->store.unreliable_fec;
     m->command.language = sl_i18n_language();
     m->command.update_check = m->update_check;
 }
-static void start(sl_ui_model *m, int game) {
+static void start(sl_ui_model *m, int game, bool test_only) {
     sl_host *h = selected(m);
     if (!h || !sl_host_online(h, m->now))
         return;
@@ -201,6 +210,7 @@ static void start(sl_ui_model *m, int game) {
     memset(&m->intent, 0, sizeof(m->intent));
     m->intent.host = *h;
     m->intent.generation = m->generation;
+    m->intent.test_only = test_only;
     if (game >= 0 && game < SL_RECENT_LIMIT && h->paired)
         m->intent.game_id = h->games[game].id;
     m->depth = 0;
@@ -239,7 +249,7 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
     if (a >= SL_LEFT && a <= SL_DOWN) {
         if (m->layout.compact || m->page == SL_SHORTCUT || m->page == SL_UPDATE ||
             m->page == SL_UPDATE_RESULT || m->page == SL_CONNECTING || m->page == SL_SAVING ||
-            m->page == SL_PAIRING)
+            m->page == SL_PAIRING || m->page == SL_NETWORK_TEST)
             return;
         if (m->page == SL_HOME) {
             int count = sl_ui_game_count(m);
@@ -260,7 +270,8 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
     }
     if (a == SL_ACCEPT) {
         /* A must not activate the only B-labelled control on a wait screen. */
-        if (m->page == SL_CONNECTING || m->page == SL_SAVING || m->page == SL_PAIRING)
+        if (m->page == SL_CONNECTING || m->page == SL_SAVING || m->page == SL_PAIRING ||
+            m->page == SL_NETWORK_TEST)
             return;
         if (m->page == SL_HOME && !sl_ui_game_count(m)) {
             sl_ui_action(m, SL_START, 0);
@@ -300,11 +311,22 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
         break;
     case SL_START:
         if (m->page == SL_HOME)
-            start(m, -1);
+            start(m, -1, false);
         break;
     case SL_RECENT:
         if (m->page == SL_HOME && arg >= 0 && arg < sl_ui_game_count(m))
-            start(m, arg);
+            start(m, arg, false);
+        break;
+    case SL_RUN_NETWORK_TEST:
+        if (m->page == SL_OPTIONS && !m->streaming)
+            start(m, -1, true);
+        break;
+    case SL_TEST_DECIDE:
+        if (m->page == SL_NETWORK_RESULT) {
+            emit(m, SL_CMD_TEST_CONFIRM);
+            m->command.accept_recommendation = arg != 0;
+            page(m, m->intent.test_only ? SL_STOPPING : SL_CONNECTING);
+        }
         break;
     case SL_OPEN_OPTIONS:
         if (m->page == SL_HOME)
@@ -345,10 +367,14 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
     case SL_OPEN_BANDWIDTH: {
         push(m, SL_BANDWIDTH);
         const uint32_t rates[] = {4000, 6000, 10000, 20000};
-        m->focus = 101;
+        m->focus = sl_bitrate_valid(m->store.bitrate_kbps) ? 101 : 9;
         for (int i = 0; i < 4; ++i)
             if (m->store.bitrate_kbps == rates[i])
                 m->focus = 100 + i;
+        if (m->store.bitrate_kbps == UINT32_MAX)
+            m->focus = 104;
+        else if (m->store.bitrate_kbps == 0)
+            m->focus = 105;
         break;
     }
     case SL_OPEN_QUALITY:
@@ -426,10 +452,14 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
         }
         break;
     case SL_BACK:
-        if (m->page == SL_HOME)
+        if (m->page == SL_NETWORK_RESULT) {
+            emit(m, SL_CMD_TEST_CONFIRM);
+            m->command.accept_recommendation = false;
+            page(m, m->intent.test_only ? SL_STOPPING : SL_CONNECTING);
+        } else if (m->page == SL_HOME)
             push(m, SL_EXIT);
         else if (m->page == SL_PAIRING || m->page == SL_SAVING || m->page == SL_CONNECTING ||
-                 m->page == SL_PIN || m->page == SL_ERROR ||
+                 m->page == SL_PIN || m->page == SL_ERROR || m->page == SL_NETWORK_TEST ||
                  (m->page == SL_STOPPING && m->ending_game)) {
             ++m->generation;
             emit(m, SL_CMD_CANCEL);
@@ -459,6 +489,7 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
             snprintf(m->intent.text, sizeof(m->intent.text), "%s", m->input);
             page(m, SL_CONNECTING);
             emit(m, SL_CMD_STREAM);
+            m->command.security_pin_retry = true;
         } else if (m->page == SL_MANUAL) {
             ++m->generation;
             memset(&m->intent, 0, sizeof(m->intent));
@@ -485,8 +516,14 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
         m->store.sound = !m->store.sound;
         emit(m, SL_CMD_SAVE);
         break;
+    case SL_FEC:
+        if (m->page == SL_SETTINGS) {
+            m->store.unreliable_fec = !m->store.unreliable_fec;
+            emit(m, SL_CMD_SAVE);
+        }
+        break;
     case SL_RETRY:
-        if (m->page == SL_ERROR && !m->ending_game) {
+        if (m->page == SL_ERROR && !m->ending_game && !m->cancel_only_error) {
             m->repair_attempted = !m->intent.host.paired;
             m->pairing_code[0] = 0;
             ++m->generation;
