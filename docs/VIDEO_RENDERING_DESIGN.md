@@ -1442,7 +1442,9 @@ AVCodec线程选择遵循协议参考§99–100：按codec slice能力查询平�
 domain storage及各自SDK buffer/frames context/device引用。撤回旧设计“必须保留codec
 直到所有图片/map归还”的条件：官方帧owner为嵌入池，Stop不等外部归还；Switch SDK
 成功出口与独立硬件引用关系另有源码依据。软件资源测试在持旧图/map跨Stop和IHS_Quit时
-检查SDK线程已经回基线，再核对图片MD5及最终domain退休；这仍不等同真实NVTEGRA/loader验收。
+检查SDK用户线程已经回基线，再核对图片MD5及最终domain退休；Linux oracle按协议参考
+§103.5排除已进入kernel退出的proc条目，并单独检查可观测join返回值；这仍不等同真实
+NVTEGRA/loader验收。
 
 格式回调线程边界见协议参考§102：官方Linux后台SDK请求由main consumer选择格式并发80，
 后台等待active/pending；Stop清active可终止等待。Native现有hardware_format/info在SDK

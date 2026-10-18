@@ -117,12 +117,46 @@ sl_video_submit_result sl_video_submit(sl_video_pipeline *p, sl_video_key key, c
 #include <libavutil/md5.h>
 #include <stdio.h>
 #include <dirent.h>
+#include <errno.h>
 #include <unistd.h>
+/* Linux clears/wakes clear_child_tid before unhashing the task/proc entry.
+ * Count user-space workers, excluding PF_EXITING kernel teardown, rather than
+ * treating a directory snapshot as a pthread_join barrier. Kernel v6.8:
+ * kernel/fork.c:mm_release, kernel/exit.c:do_exit, include/linux/sched.h.
+ * A retained SDK worker is still counted; no polling/delay or frame release. */
 static unsigned process_threads(void) {
     DIR *directory=opendir("/proc/self/task");assert(directory);
     unsigned count=0;struct dirent *entry;
-    while((entry=readdir(directory))) if(entry->d_name[0]!='.') ++count;
+    while((entry=readdir(directory))) {
+        if(entry->d_name[0]=='.') continue;
+        char path[512],line[1024];snprintf(path,sizeof(path),"/proc/self/task/%s/stat",entry->d_name);
+        FILE *file=fopen(path,"r");
+        if(!file) {assert(errno==ENOENT);continue;}
+        char *read=fgets(line,sizeof(line),file);assert(!fclose(file));
+        if(!read) {assert(access(path,F_OK) && errno==ENOENT);continue;}
+        /* comm may itself contain spaces and ')'; field9 is task flags. */
+        char *end=strrchr(line,')'),state;unsigned long flags;
+        assert(end && sscanf(end+1," %c %*d %*d %*d %*d %*d %lu",&state,&flags)==2);
+        if(!(flags&0x4ul)) ++count; /* PF_EXITING: task has entered kernel do_exit. */
+    }
     assert(!closedir(directory));return count;
+}
+int __real_pthread_join(pthread_t,void **);
+int __wrap_pthread_join(pthread_t thread,void **value) {
+    int result=__real_pthread_join(thread,value);assert(!result);return result;
+}
+static void describe_threads(unsigned expected,unsigned actual) {
+    fprintf(stderr,"Thread observation mismatch: expected=%u actual=%u\n",expected,actual);
+    DIR *directory=opendir("/proc/self/task");assert(directory);struct dirent *entry;
+    while((entry=readdir(directory))) {
+        if(entry->d_name[0]=='.') continue;
+        char path[512],line[1024];snprintf(path,sizeof(path),"/proc/self/task/%s/stat",entry->d_name);
+        FILE *file=fopen(path,"r");
+        if(!file) {fprintf(stderr,"task %s disappeared\n",entry->d_name);continue;}
+        if(fgets(line,sizeof(line),file)) fprintf(stderr,"task %s",line);
+        assert(!fclose(file));
+    }
+    assert(!closedir(directory));
 }
 sl_gfx_present_result __real_sl_gfx_present(sl_gfx *);
 sl_gfx_present_result __wrap_sl_gfx_present(sl_gfx *g) {
@@ -638,6 +672,7 @@ int main(int argc,char **argv) {
     IHS_SessionDestroy(r.session);IHS_Quit();
     unsigned threadsWithOldFrame=process_threads();
     /* Stop must close codec SDK workers before exported frame/map release. */
+    if(threadsWithOldFrame!=threadBaseline) describe_threads(threadBaseline,threadsWithOldFrame);
     assert(threadsWithOldFrame==threadBaseline);
     if (resourceOld) {
         assert(!sl_media_video_clean());

@@ -8487,3 +8487,35 @@ python3 scripts/audit-steam-client-client-process.py \
 跨线程阶段断言；不冻结端口、ID、timestamp、线程调度或host CPU值。完整Qt、已连接
 Steam、StartVideo/接收/Stats生产者、其他factory/自然硬件、真实Switch/GPU及loader
 仍在各自证据边界之外。
+
+
+### 103.5 Linux线程观察的边界
+
+Native软件资源oracle不能将`/proc/self/task`目录条目数当作pthread_join屏障。
+`audit-linux-joined-task.py`的真实pthread create/join实验在join返回0后
+读到同一子TID的stat，flags含
+PF_EXITING(0x4)，当时state甚至仍为R；数次后续观察才看见目录移除。这不是未join
+的用户代码仍在运行的证据。[Linux v6.8的do_exit](https://github.com/torvalds/linux/blob/v6.8/kernel/exit.c)
+先进入PF_EXITING、exit_mm，再到exit_notify/release_task；
+[mm_release](https://github.com/torvalds/linux/blob/v6.8/kernel/fork.c)在前一阶段
+clear_child_tid并futex wake，PID/proc清理在后。
+
+资源oracle因而读取每TID的stat field9（[原字段输出](https://github.com/torvalds/linux/blob/v6.8/fs/proc/array.c)），
+只计不带[PF_EXITING](https://github.com/torvalds/linux/blob/v6.8/include/linux/sched.h)的
+用户线程；已经消失的条目按ENOENT处理，其他读取/解析失败仍断言。主断言仍要求持旧图/map、
+IHS_Quit后用户线程回同一基线，没有延时等待、补释放旧图或放过活跃SDK线程。oracle另
+包装其实际链接的pthread_join，只转调原函数并断言返回0；不声称这个link wrapper
+拦截共享SDK内部的所有join。保留失败时的完整TID/stat输出。
+
+Conclusion：目录残留有独立的真实反例，旧的瞬时目录计数不是可靠的线程资源断言。
+该修正属于Linux测试观察方式，不修改Steam协议、Native Stop策略或Switch生命周期规则；
+SDK释放时点的反事实仍须被检测。缺少TID/stat的旧CI失败不能仅凭此反例逐个认定为
+同一原因；官方原进程的GDB线程观察与实际pthread_join返回值另存，不与此计数混称。
+
+```sh
+python3 scripts/audit-linux-joined-task.py --output /tmp/linux-joined-task.json
+```
+
+该独立实验保存真实kernel版本、C源码hash、join返回值和完整stat。仅在实际捕获重叠时
+断言PF_EXITING；限定轮数未捕获则明确报告inconclusive，不伪造可重现调度，也不把
+Linux v6.8机制参考称为本机或CI内核版本。

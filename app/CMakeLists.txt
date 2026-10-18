@@ -183,6 +183,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_compile_options(nsl-video-timing-oracle PRIVATE -UNDEBUG -Wall -Wextra -Wno-unknown-pragmas)
     target_link_libraries(nsl-video-timing-oracle PRIVATE nsl_platform ihs-test-session)
     target_link_options(nsl-video-timing-oracle PRIVATE -Wl,--wrap=IHS_SessionPacketTimestamp
+        -Wl,--wrap=pthread_join
         -Wl,--wrap=sl_system_video_cpu_count -Wl,--wrap=fopen
         -Wl,--wrap=avcodec_open2 -Wl,--wrap=avcodec_send_packet -Wl,--wrap=avcodec_receive_frame -Wl,--wrap=avcodec_flush_buffers
         -Wl,--wrap=av_parser_parse2 -Wl,--wrap=sl_video_timing_update
