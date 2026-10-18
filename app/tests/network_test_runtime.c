@@ -23,6 +23,24 @@
 #include <string.h>
 #include <unistd.h>
 
+typedef enum WaitMode { WAIT_NONE, WAIT_CONNECT_TIMEOUT, WAIT_AUTH, WAIT_FIRST_FRAME, WAIT_NEXT_FRAME } WaitMode;
+static atomic_int active_wait;
+static atomic_uint_fast64_t virtual_offset, fixture_frame_session;
+uint64_t __real_sl_system_now(void);
+uint64_t __wrap_sl_system_now(void) {
+    return __real_sl_system_now() + atomic_load(&virtual_offset);
+}
+void __real_stream_media_get_snapshot(stream_media_snapshot *);
+void __wrap_stream_media_get_snapshot(stream_media_snapshot *out) {
+    __real_stream_media_get_snapshot(out);
+    uint64_t id = atomic_load(&fixture_frame_session);
+    if (atomic_load(&active_wait) == WAIT_NEXT_FRAME && id) {
+        /* Explicit renderer observation boundary, not decoded/displayed pixels. */
+        out->session_id = id;
+        out->first_frame_displayed = true;
+        out->displayed_frames = 1;
+    }
+}
 static uint16_t peer_port;
 static sl_runtime *runtime;
 static sl_auth_store store;
@@ -100,7 +118,10 @@ typedef enum Scenario {
     SKIP_READABLE,
     VIDEO_DISABLED
 } Scenario;
-static void one(Scenario scenario, bool crc, size_t key_length) {
+static void one(Scenario scenario, bool crc, size_t key_length, WaitMode waiting) {
+    atomic_store(&active_wait, waiting);
+    atomic_store(&virtual_offset, 0);
+    atomic_store(&fixture_frame_session, 0);
     char directory[] = "/tmp/nsl-test-runtime-XXXXXX";
     assert(mkdtemp(directory) && !setenv("NSL_DATA_DIR", directory, 1));
     memset(&store, 0, sizeof(store));
@@ -116,7 +137,7 @@ static void one(Scenario scenario, bool crc, size_t key_length) {
     sl_host host = {.client_id = 123, .instance_id = 1, .paired = true, .account = 123456};
     strcpy(host.address, "127.0.0.1");
     strcpy(host.name, "Controlled UDP peer");
-    host = *sl_host_observe(&store.registry, &host, sl_system_now());
+    host = *sl_host_observe(&store.registry, &host, __real_sl_system_now());
     bool skip_test = scenario == SKIP_READABLE || scenario == VIDEO_DISABLED;
     if (scenario == SKIP_READABLE || scenario == ENHANCED_MANUAL || scenario == VIDEO_DISABLED) {
         char path[512];
@@ -144,11 +165,11 @@ static void one(Scenario scenario, bool crc, size_t key_length) {
     atomic_store(&requests_after_cancel, 0);
     runtime = sl_runtime_create(&store);
     assert(runtime);
-    uint64_t deadline = sl_system_now() + 15000;
+    uint64_t deadline = __real_sl_system_now() + 15000;
     sl_stream_preferences prefs;
     uint64_t revision;
     while (!sl_runtime_stream_settings(runtime, &prefs, &revision)) {
-        assert(sl_system_now() < deadline);
+        assert(__real_sl_system_now() < deadline);
         poll(NULL, 0, 1);
     }
     IHS_ClientConfig cc = {.deviceId = 1, .secretKey = store.secret, .deviceName = "codec fixture"};
@@ -170,7 +191,8 @@ static void one(Scenario scenario, bool crc, size_t key_length) {
     struct sockaddr_in from = {0};
     unsigned local = 0;
     uint64_t settle = 0;
-    while (!done && sl_system_now() < deadline) {
+    bool clock_advanced = false, saw_first_frame = false;
+    while (!done && __real_sl_system_now() < deadline) {
         sl_network_test_view view;
         if (sl_runtime_network_test(runtime, &view)) {
             if (!decision && scenario == CANCEL_RUNNING && start) {
@@ -199,23 +221,49 @@ static void one(Scenario scenario, bool crc, size_t key_length) {
         }
         sl_runtime_event event;
         while (sl_runtime_poll(runtime, &event)) {
+            if (event.type == SL_EVENT_FIRST_FRAME && waiting == WAIT_NEXT_FRAME) {
+                saw_first_frame = true;
+                atomic_store(&virtual_offset, 60000);
+                settle = __real_sl_system_now() + 200;
+            }
+            if (event.type == SL_EVENT_FAILURE && waiting == WAIT_CONNECT_TIMEOUT) {
+                assert(clock_advanced && !handshake && !auth && !complete);
+                sl_runtime_facts facts;
+                assert(sl_runtime_read_facts(runtime, &facts) && facts.failed &&
+                       !facts.connected && facts.protocol_closed);
+                done = true;
+                continue;
+            }
             if (event.type == SL_EVENT_FAILURE) {
                 fprintf(stderr, "scenario=%d runtime failure: %s\n", scenario, event.text);
                 assert(false);
             }
             if (event.type == SL_EVENT_STOPPED && decision) {
                 assert(manual || scenario == CANCEL_RUNNING || scenario == CANCEL_SAVE);
-                settle = sl_system_now() + 100;
+                settle = __real_sl_system_now() + 100;
             }
         }
         if (scenario == EXIT_RESULT && sl_runtime_finished(runtime))
             done = true;
-        if (settle && sl_system_now() >= settle)
+        if (settle && __real_sl_system_now() >= settle)
             done = true;
         if (complete) {
             sl_runtime_facts facts;
-            if (sl_runtime_read_facts(runtime, &facts) && facts.connected)
-                done = true;
+            if (sl_runtime_read_facts(runtime, &facts) && facts.connected) {
+                if (waiting == WAIT_NONE)
+                    done = true;
+                else if (!clock_advanced) {
+                    clock_advanced = true;
+                    if (waiting == WAIT_NEXT_FRAME) {
+                        atomic_store(&fixture_frame_session, facts.session_id);
+                        atomic_store(&virtual_offset, 1001);
+                    } else {
+                        assert(waiting == WAIT_FIRST_FRAME);
+                        atomic_store(&virtual_offset, 60000);
+                        settle = __real_sl_system_now() + 200;
+                    }
+                }
+            }
         }
         struct pollfd p = {.fd = fd, .events = POLLIN};
         assert(poll(&p, 1, 2) >= 0);
@@ -285,6 +333,13 @@ static void one(Scenario scenario, bool crc, size_t key_length) {
             assert(IHS_CRC32C(wire, count - 4) == sum);
             count -= 4;
         }
+        if (type == 1 && waiting == WAIT_CONNECT_TIMEOUT) {
+            if (!clock_advanced) {
+                clock_advanced = true;
+                atomic_store(&virtual_offset, 10001);
+            }
+            continue;
+        }
         if (type == 1) {
             send_peer(fd, &from, local, 2, 0, 0, wire + 9, 4, crc);
             continue;
@@ -316,6 +371,12 @@ static void one(Scenario scenario, bool crc, size_t key_length) {
                       "\x8a\xf6\x99\x4e\x22\x5c\x0a\xac\x69\x45\x94\x9b\xb4\x2b\xb6\x71";
                 assert(!memcmp(request->token.data, expected, 32));
                 cauthentication_request_msg__free_unpacked(request, NULL);
+                if (waiting == WAIT_AUTH) {
+                    auth = clock_advanced = true;
+                    atomic_store(&virtual_offset, 10001);
+                    settle = __real_sl_system_now() + 200;
+                    continue;
+                }
                 const uint8_t body[] = {2, 16, 1};
                 send_peer(fd, &from, local, 5, 1, 1, body, sizeof(body), crc);
                 if (ordinary) {
@@ -385,6 +446,17 @@ static void one(Scenario scenario, bool crc, size_t key_length) {
         IHS_BufferClear(&plain, true);
     }
     assert(done && (skip_test || (start && decision)));
+    if (waiting != WAIT_NONE) {
+        sl_runtime_facts facts;
+        assert(clock_advanced && sl_runtime_read_facts(runtime, &facts));
+        assert(facts.failed == (waiting == WAIT_CONNECT_TIMEOUT));
+        if (waiting == WAIT_AUTH)
+            assert(handshake && auth && !facts.connected);
+        if (waiting == WAIT_FIRST_FRAME || waiting == WAIT_NEXT_FRAME)
+            assert(facts.connected && facts.presented == (waiting == WAIT_NEXT_FRAME));
+        if (waiting == WAIT_NEXT_FRAME)
+            assert(saw_first_frame);
+    }
     bool no_save = scenario == CANCEL_RUNNING || scenario == EXIT_RESULT || skip_test;
     assert(saves == (no_save ? 0u : 1u));
     /* A queued request can be cancelled before its first UDP send. Check the
@@ -417,8 +489,8 @@ static void one(Scenario scenario, bool crc, size_t key_length) {
     }
     closedir(dir);
     assert(!rmdir(directory));
-    printf("runtime scenario=%d crc=%d key_length=%zu tickets=%u stats_saves=%u passed\n",
-           scenario, crc, key_length, ticket_count, saves);
+    printf("runtime scenario=%d crc=%d key_length=%zu wait=%d tickets=%u stats_saves=%u passed\n",
+           scenario, crc, key_length, waiting, ticket_count, saves);
 }
 int main(void) {
     assert(!setenv("SDL_VIDEODRIVER", "dummy", 1));
@@ -426,9 +498,11 @@ int main(void) {
     assert(!setenv("SDL_RENDER_DRIVER", "software", 1));
     assert(stream_media_init(NULL));
     for (Scenario s = FIXED; s <= VIDEO_DISABLED; ++s)
-        one(s, s & 1, 32);
-    one(FIXED, false, 16);
-    one(ENHANCED_MANUAL, true, 16);
+        one(s, s & 1, 32, WAIT_NONE);
+    one(FIXED, false, 16, WAIT_NONE);
+    one(ENHANCED_MANUAL, true, 16, WAIT_NONE);
+    for (WaitMode waiting = WAIT_CONNECT_TIMEOUT; waiting <= WAIT_NEXT_FRAME; ++waiting)
+        one(SKIP_READABLE, waiting & 1, 32, waiting);
     stream_media_shutdown();
     puts("Production runtime: first-test/ordinary negotiation, accepted/rejected full presets, "
          "manual test, save failure, running cancel, result exit and save-overlap cancel passed");

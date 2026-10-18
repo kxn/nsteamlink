@@ -323,13 +323,19 @@ if(NSL_PLATFORM STREQUAL "desktop")
     add_test(NAME network_test_failure_runtime COMMAND nsl-network-test-failure-runtime)
     set_tests_properties(network_test_failure_runtime PROPERTIES TIMEOUT 40)
     add_executable(nsl-network-test-runtime tests/network_test_runtime.c)
+    add_executable(nsl-connection-wait-oracle tests/connection_wait_oracle.c)
+    target_include_directories(nsl-connection-wait-oracle PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/tests/common)
+    target_compile_options(nsl-connection-wait-oracle PRIVATE -UNDEBUG -Wall -Wextra)
+    target_link_libraries(nsl-connection-wait-oracle PRIVATE nsl_platform ihs-test-session)
     target_include_directories(nsl-network-test-runtime PRIVATE platforms/common
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf ${CMAKE_SOURCE_DIR}/third_party/ihslib/tests/session)
     target_compile_options(nsl-network-test-runtime PRIVATE -UNDEBUG -Wall -Wextra)
     target_link_libraries(nsl-network-test-runtime PRIVATE nsl_platform)
     target_link_options(nsl-network-test-runtime PRIVATE -Wl,--wrap=IHS_ClientStreamingRequest
-        -Wl,--wrap=sl_network_stats_save_session)
+        -Wl,--wrap=sl_network_stats_save_session -Wl,--wrap=sl_system_now
+        -Wl,--wrap=stream_media_get_snapshot)
     add_test(NAME network_test_runtime COMMAND nsl-network-test-runtime)
     set_tests_properties(network_test_runtime PROPERTIES TIMEOUT 120)
     add_executable(nsl-player-owner-runtime tests/player_owner_runtime.c)

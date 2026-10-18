@@ -1166,7 +1166,7 @@ Conclusion：StopVideoData(53) 是明确的视频停止消息，允许音频与�
 仍会触发无帧 watchdog。SetActivity 原只上报非零且有名的游戏 ID，丢失活动类型、
 空 ID 和旧 appid 回退，因此旧日志无法恢复完整语义。
 
-接线规则：解析并保存明确视频停止状态，StartVideoData 清除它；该状态下禁止无帧
+历史接线规则（无帧watchdog本身由§126撤回并移除）：解析并保存明确视频停止状态，StartVideoData 清除它；该状态下禁止无帧
 watchdog，恢复视频时重新给足等待窗口。完整活动回调保留 activity/id/name；
 只有 Game 活动写入最近游戏。状态日志记录 StartVideoData/StopVideoData 和完整
 SetActivity，不再要求新增收包计数实测。保留原有完整会话结束处理和清理顺序。
@@ -3146,7 +3146,7 @@ worker 的 `lifecycle.c` 执行动作。同一轮间快速后台→前台保留�
 
 接收错误退出路径先 Interrupt 唤醒发送队列，再 join send worker，避免空队列下
 无限等待。session Destroy 继续停止/join timer 和媒体 worker，再释放各自依赖。
-应用现有视频首帧/空闲 watchdog 与这里的连接 deadline 分属不同层，没有把它们
+本节当时存在的视频首帧/空闲 watchdog（§126已撤回并移除）与这里的连接 deadline 分属不同层，没有把它们
 解释成官方15/180秒策略。系统真正暂停线程后的时序仍需 Switch 设备证据。
 
 ### 34.4 验证契约和边界
@@ -10218,3 +10218,50 @@ ctest --test-dir build/desktop \
   -R '^(session_key_official_vectors|network_test_discovery_official_vectors|network_test_udp)$' \
   --output-on-failure
 ```
+
+## 126. 普通SDL连接等待与无视频帧处理
+
+Evidence：固定Android core SHA沿§125所用core，
+`audit-steam-connection-wait.py`执行SDL_main的75ce98–75cf24及75cf80循环，
+原Client::OnThink@7a5ff8/HandleStreaming@7a7140、Player::Update@7b76e8、
+BUpdateVideo@7b782c和IStreamPlayer空队列pop。phase、时钟、空队列和旧显示
+timestamp是明确输入；网络处理/transport Update、incoming/log drain、输入/渲染
+平台、错误呈现和最终Quit为边界，控制cipher/final send沿音频player审计适配。
+不是完整main、自然线程、真实Host或设备试验；实际进入的五项方法PC保留。
+
+55组原循环输入：Connecting(1)在75cec4比较elapsed与655360 ticks，75cec8按N位
+B.PL到错误4→Quit；不能仅用有符号elapsed>=10秒替代其极端回绕行为。
+准确谓词为phase1且uint32(now-start-655360)<0x80000000，含起点0/普通/回绕、
+阈值前后、0x80000000/0x800a0000边界。其他已核验phase2/3/4/6进入第二循环，
+不应用这个连接等待期限。该上层10秒与Connection自身15/180秒收包租约分立，
+专用CNetworkTest不经这段SDL_main普通连接循环。
+
+无首帧和旧显示timestamp输入跨10/45/180秒均执行原OnThink/Player Update，
+空队列返回false、主循环Sleep(1ms)后继续，原phase不变、没有错误/退出。
+HandleStreaming继续既有反馈/KeepAlive规则。时钟跳变不代表自然运行180秒，
+空输入不代表所有decoder/renderer或SDK错误路径均验证。
+原期限指令从10秒改5秒，实际命中一次，在原阈值前一tick产生错误4/退出，
+两段回放均到各自声明的循环/退出边界、无断言；不称完整main已返回。
+这是原观察器的独立负向检查。
+
+Conclusion：撤回把本地45秒首帧、游戏10秒无新画面的断连watchdog视作符合官方
+等待策略的解释。普通应用应只在transport尚未接受Connected时应用已核验的10秒
+连接等待；认证/协商/串流状态不因无画面时长自行结束。连接自身收包租约、明确
+Host Stop、实际失败/取消及独立直启游戏结束证据仍分别处理。不能将该差异认定为
+原1–2秒停顿或BigPicture闪烁的原因。
+
+Native使用应用单调毫秒时钟转换为32-bit 16.16 tick；它的采样分辨率与原时钟
+有平台差异，阈值/回绕谓词独立比较。异步Session启动到transport初始化的阶段是
+本地worker边界；公开pending getter包含刚创建状态，已接收Connected后立即false，
+不能用“首帧已显示”或“认证已完成”替代transport准入条件。
+
+Native组件逐输入对照55个原循环判断，并独立检查全部8个Native阶段及取消/关闭
+时的pending getter。实际产品runtime/真实loopback发现与Session双worker中，
+额外四组分别扣住Connected后前移应用时钟10001ms、扣住认证回复后前移10001ms、
+普通协商后无首帧前移60000ms，以及明确renderer快照输入一次首帧后前移60000ms。
+仅第一组报告会话建立失败并join收尾；其余等待期间仍存活，无失败/自行断开。
+最后一组的首帧来自显式快照边界，不冒充已解码/显示像素；Session传输时钟保持
+真实时钟，应用时钟跳变不冒称自然等待一分钟或真实Switch时序。
+三个隔离Native反例均成功编译/链接：5秒期限由正式55例比较器正常exit1检出；
+追加45秒首帧或首帧后10秒断连分别由第三/第四真实runtime场景断言中止检出。
+后二者是语义断言SIGABRT，不计作正常比较器退出，也不将编译失败计作检出。

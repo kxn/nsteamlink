@@ -1,5 +1,6 @@
 #include "platform/runtime.h"
 #include "client_pri.h"
+#include "connection_wait.h"
 #include "discovery.pb-c.h"
 #include "media.h"
 #include "network_stats_file.h"
@@ -58,16 +59,14 @@ struct sl_runtime {
     IHS_ClientConfig config;
     IHS_SessionInfo session_info;
     bool player_hardware_decoding; /* Player cache, distinct from silent EIO config changes. */
-    bool video_suspended;
-    bool activity_changed;
     sl_launch_watch launch;
     uint64_t launch_probe_at;
     sl_end_game_watch end_game;
     bool session_ready, connected, finished, host_stopped, first_reported, auth_ready,
         auth_consumed, request_terminal;
-    uint64_t auth_account, request_at, frame_at, last_diag;
+    uint64_t auth_account, request_at, last_diag;
+    uint32_t connect_wait_tick;
     uint8_t auth_secret[32];
-    uint32_t frames;
     sl_debug_snapshot debug;
     stream_media_snapshot previous;
     int udp;
@@ -424,8 +423,6 @@ static void activity(IHS_Session *s, int kind, uint64_t id, const char *name, vo
     stream_media_snapshot media;
     stream_media_get_snapshot(&media);
     pthread_mutex_lock(&r->lock);
-    if (r->launch.kind != kind)
-        r->activity_changed = true;
     sl_launch_activity(&r->launch, kind, id, media.displayed_frames);
     r->launch_probe_at = 0;
     pthread_mutex_unlock(&r->lock);
@@ -583,7 +580,6 @@ static bool stop_session(sl_runtime *r) {
     r->facts.protocol_closed = true;
     pthread_mutex_unlock(&r->lock);
     r->first_reported = false;
-    r->video_suspended = false;
     r->request_at = 0;
     return host_completed;
 }
@@ -645,6 +641,7 @@ static bool launch_session(sl_runtime *r, IHS_SessionInfo info) {
         IHS_SessionHIDAddProvider(r->session, r->provider);
     if (!IHS_SessionConnect(r->session))
         return false;
+    r->connect_wait_tick = sl_connection_wait_tick(sl_system_now());
     IHS_ClientStreamingEstablished(r->client);
     return true;
 }
@@ -679,9 +676,7 @@ static bool request_stream(sl_runtime *r, bool network_test) {
     };
     snprintf(req.pin, sizeof(req.pin), "%.15s", r->active.text);
     r->request_at = sl_system_now();
-    r->frame_at = r->request_at;
     r->first_reported = false;
-    r->frames = 0;
     if (!network_test) {
         pthread_mutex_lock(&r->lock);
         r->launch = (sl_launch_watch){.target = r->active.game_id};
@@ -873,7 +868,6 @@ static void execute(sl_runtime *r, sl_command cmd) {
         r->facts = (sl_runtime_facts){.request_id = cmd.generation};
     r->active = cmd;
     r->launch = (sl_launch_watch){.target = cmd.game_id};
-    r->activity_changed = false;
     r->launch_probe_at = 0;
     r->auth_ready = r->session_ready = false;
     r->auth_consumed = false;
@@ -915,8 +909,6 @@ static void execute(sl_runtime *r, sl_command cmd) {
     }
     r->request_at = sl_system_now();
     r->first_reported = false;
-    r->frames = 0;
-    r->frame_at = r->request_at;
     if (cmd.type == SL_CMD_PAIR) {
         uint32_t random;
         if (!sl_system_random(&random, sizeof(random))) {
@@ -1001,10 +993,6 @@ static void sample(sl_runtime *r, uint64_t now) {
         pthread_mutex_unlock(&r->lock);
         post(r, (sl_runtime_event){.type = SL_EVENT_FIRST_FRAME});
         r->first_reported = true;
-    }
-    if (s.session_id == r->session_id && s.displayed_frames != r->frames) {
-        r->frames = s.displayed_frames;
-        r->frame_at = now;
     }
 #if NSL_DIAGNOSTICS
     char line[224];
@@ -1303,9 +1291,6 @@ static void *worker_main(void *ctx) {
             sample(r, now);
         pthread_mutex_lock(&r->lock);
         bool launch_done = sl_launch_finished(&r->launch);
-        bool activity_changed = r->activity_changed;
-        r->activity_changed = false;
-        bool desktop = r->launch.kind == 3 || r->launch.kind == 4;
         bool ending_game = r->end_game.at != 0;
         sl_end_game_result end_result = sl_end_game_poll(
             &r->end_game, now, r->session && IHS_SessionHostRequestedStop(r->session));
@@ -1316,8 +1301,6 @@ static void *worker_main(void *ctx) {
         if (probe_launch)
             r->launch_probe_at = now;
         pthread_mutex_unlock(&r->lock);
-        if (activity_changed && r->first_reported)
-            r->frame_at = now; /* Desktop -> Game starts a fresh video wait window. */
         if (end_game_timeout && !launch_done && r->session) {
             /* The callback may arrive after poll above, even during join.
              * Do not destroy/reset the completion evidence before checking it. */
@@ -1358,36 +1341,11 @@ static void *worker_main(void *ctx) {
             if (r->session)
                 IHS_SessionSetForeground(r->session, !(edge & 1u));
         }
-        bool video_suspended =
-            (foreground_requested & 1u) || (r->session && IHS_SessionHostVideoStopped(r->session));
-        if (r->video_suspended && !video_suspended) {
-            r->frame_at = now;
-            if (!r->first_reported)
-                r->request_at = now;
-        }
-        r->video_suspended = video_suspended;
-        if (r->session && !ending_game && !video_suspended && r->request_at &&
-            ((!r->first_reported && now - r->request_at > 45000) ||
-             (r->first_reported && !desktop && now - r->frame_at > 10000))) {
-            /* A host stop may arrive after this loop copied finished. Read the
-             * explicit reason again before teardown, so it wins over the watchdog. */
-            bool normal =
-                r->session && r->first_reported && IHS_SessionHostRequestedStop(r->session);
-#if NSL_DIAGNOSTICS
-            char line[192];
-            snprintf(line, sizeof(line),
-                     "video watchdog: first=%d idle_ms=%llu video_active=%d host_stop=%d game=%llu",
-                     r->first_reported, (unsigned long long)(now - r->frame_at),
-                     r->previous.video_active, normal, (unsigned long long)r->active.game_id);
-            sl_log(line);
-#endif
+        if (r->session && sl_connection_wait_expired(
+                IHS_SessionIsConnectionPending(r->session), r->connect_wait_tick,
+                sl_connection_wait_tick(now))) {
             stop_session(r);
-            stop_client(r);
-            start_client(r);
-            if (normal)
-                post(r, (sl_runtime_event){.type = SL_EVENT_STOPPED});
-            else
-                fail(r, sl_tr(SL_T_VIDEO_TIMEOUT));
+            fail(r, sl_tr(SL_T_SESSION_FAILED));
         }
 #if NSL_DIAGNOSTICS
         udp_poll(r);
