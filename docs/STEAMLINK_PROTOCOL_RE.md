@@ -10265,3 +10265,55 @@ Native组件逐输入对照55个原循环判断，并独立检查全部8个Nativ
 三个隔离Native反例均成功编译/链接：5秒期限由正式55例比较器正常exit1检出；
 追加45秒首帧或首帧后10秒断连分别由第三/第四真实runtime场景断言中止检出。
 后二者是语义断言SIGABRT，不计作正常比较器退出，也不将编译失败计作检出。
+
+## 127. Unauthorized 的授权请求 producer、重发与兼容续接
+
+Evidence：固定§120 Android shell，`audit-steam-authorization-producer.py`执行
+原StartStreaming@cb02a4、HandleStartStreamingResponse@cb5444、
+SendAuthorizeDeviceRequest@cb1bc8、BCreateAuthorizationRequest@cb3e80、
+Update@cafe5c及HandleDeviceAuthorizationResponse@cb4420。输入服务器/账号表、
+identity/token/secret/public key、随机数与墙钟；RSA公钥加载/加密/析构、最终
+SendMessage、libc++字符串存储是明确adapter。RSA输出为标记，不能视作有效加密
+或可直接发送给Steam的线上授权报文。原ticket/request serializer、SHA256/XOR、
+connect PIN的SymmetricEncrypt执行；不是自然授权、X25519响应校验或Qt事件循环。
+15项被选方法的实际进入地址/大小/hash随fixture保留，不称穷尽全部执行函数。
+
+原普通/测网Start均建立state5/编号17；匹配的Streaming Unauthorized(1)进入
+state4并立即发送AuthorizationRequest(3)，编号仍为17。ticket.password来自生成
+的pairing PIN，本例受控随机数42形成0042；原串流请求PIN输入9876独立加密写入
+field8，与独立AES计算一致。ticket还写入受控deviceId、secret payload、usage0、
+name/model/serial及provision；外层field5使用现有请求编号，field4为受控32-byte
+公钥XOR原SHA256(0042)。这些fixture元数据不是Switch能力测量值或真实密钥对。
+
+SendAuthorize成功后在cb1ccc写next=time()+3。原Update在state4且墙钟now>=next
+才重发；1000/1001/1002不重发，1003一次、重复1003不重发、1005不重发、1006
+一次；跳到1300仅发一次并设1303，不补齐所有错过的间隔。原state5的1秒开流重发
+是另一分支。长设备名65bytes、非法universe、RSA失败、device-token失败四种受控
+失败都由原producer进入StopStreaming(1)，发送授权取消9并清编号/目标；RSA失败
+与token失败结果是输入，不冒称复现平台加密故障或自然身份问题。
+
+29组输入覆盖普通/测网重发、authorization结果0–8、不同目标0/1/5、取消后Update
+和上述四失败。所测无auth_key兼容响应中，匹配目标success0使state4→5，立即重发
+完整原StreamingRequest(5)，保留同一编号与test位；InProgress5继续state4等待。
+结果1/2/3/4/6分别映射原错误2/3/4/5/6，7/8映射错误1并取消。不同目标三例保持
+等待；这里不推广成带auth_key响应的来源/密钥校验已经完成。显式Stop发送一次9，
+之后Update不再重发。旧账号表预置同一steamid，所以没有冒称验证新增账号持久化。
+原3秒add指令改1秒的反例实际命中7次、正常返回且无断言；在1001就出现额外请求，
+与原观察差异明确，原观察器可检出这项重试语义变化。
+
+Conclusion：§120明确隔离的Unauthorized producer已补到原请求内容、触发、墙钟
+重发、所列失败/取消及无auth_key兼容成功续接。Native授权模块的1秒timer及产品
+独立配对UI仍与这里的自动state4流程不同；不能仅改成3秒就宣告自动恢复全部对齐。
+带auth_key的完整密钥交换/确认及Qt PIN显示/用户动作的续接仍是独立边界，本节不
+改变生产协议，也不将授权阶段差异认作已建立串流中1–2秒停顿或闪烁的原因。
+
+主分支已有`STEAM_REMOTE_PLAY_NETWORKING.md` §11.2/11.3/20及
+`tools/steam-remote-policy-audit.py`对core对应manager的结果分派、缓存守卫和
+3秒重发静态/离线证据。本节补shell的完整请求producer/serializer及兼容续接，
+不是把那些已有规则当作新发现；两份样本所列state4结果和期限一致。core缓存测试
+在新密码计算前停下，不能拿它填补完整授权密码链的边界。
+
+```sh
+PYTHONPATH=/path/to/audit-deps python3 scripts/audit-steam-authorization-producer.py \
+  --binary /path/to/libshell-arm64.so --output /tmp/authorization-producer.json
+```

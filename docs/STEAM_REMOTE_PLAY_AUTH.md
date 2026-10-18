@@ -299,3 +299,17 @@ version1/steamid0。该实验身份是明确的loopback fixture，不能称Steam
 本地`src/client/streaming.c`先解密streaming response的encrypted_session_key，再将
 sessionKey输入会话；这与pairing授权码、connect/security PIN、配对X25519与持久密钥
 均是分立层次。撤回将会话AuthenticationResponse本身称为密钥派生/交换步骤的推断。
+
+## Android 自动授权 producer 的补充证据
+
+固定SHA Android shell的原指令回放见`STEAMLINK_PROTOCOL_RE.md` §127及
+`audit-steam-authorization-producer.py`。普通/测网串流请求收到匹配Unauthorized后
+自动进入授权state4，沿用原请求编号发送AuthorizationRequest；成功发送后由
+墙钟time()+3和Update到期比较控制重发。这与本文所述Native授权模块1秒timer
+不同，不把本地timer当作官方策略证据。
+
+受控pairing PIN0042进入ticket.password和SHA256/XOR，独立connect PIN9876加密
+进入StreamingRequest.field8。无auth_key的兼容success响应使原state4→5并立即
+重发同编号串流请求；InProgress继续等待。RSA输出、身份与公钥输入、Qt界面和
+持久化是明确边界，完整密钥交换响应未由这组输入证明；这份证据不单独改变本地
+配对/安全码流程，也不声称自动授权全部对齐。
