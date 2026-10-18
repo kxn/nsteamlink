@@ -85,7 +85,9 @@ target_link_libraries(nsl_ui PUBLIC m)
 add_dependencies(nsl_ui nsl_identity nsl_i18n)
 target_include_directories(nsl_ui PUBLIC ${NSL_IDENTITY_DIR} ${NSL_I18N_DIR})
 target_compile_definitions(nsl_ui PUBLIC NSL_DIAGNOSTICS=$<BOOL:${NSL_DIAGNOSTICS}> NSL_ADAPTIVE_PACING=$<BOOL:${NSL_ADAPTIVE_PACING}>)
-add_library(nsl_stream_settings STATIC platforms/common/stream_settings.c)
+add_library(nsl_stream_settings STATIC platforms/common/stream_settings.c
+    platforms/common/network_stats_file.c)
+set_source_files_properties(platforms/common/network_stats_file.c PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
 target_include_directories(nsl_stream_settings PUBLIC src platforms/common
     PRIVATE ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
 target_link_libraries(nsl_stream_settings PUBLIC ihslib Threads::Threads PRIVATE ihs-protobuf)
@@ -161,6 +163,17 @@ if(NSL_PLATFORM STREQUAL "desktop")
     set_tests_properties(nsl-updater PROPERTIES TIMEOUT 30)
 endif()
 if(NSL_PLATFORM STREQUAL "desktop")
+    add_executable(nsl-network-stats-file-oracle tests/network_stats_file_oracle.c)
+    target_include_directories(nsl-network-stats-file-oracle PRIVATE
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+    target_link_libraries(nsl-network-stats-file-oracle PRIVATE nsl_stream_settings ihs-test-session)
+    target_compile_options(nsl-network-stats-file-oracle PRIVATE -Wall -Wextra -UNDEBUG)
+    target_link_options(nsl-network-stats-file-oracle PRIVATE
+        -Wl,--wrap=malloc -Wl,--wrap=fclose -Wl,--wrap=rename)
+    add_test(NAME network_stats_file_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-network-stats-file.py"
+        --receiver $<TARGET_FILE:nsl-network-stats-file-oracle>)
+    set_tests_properties(network_stats_file_official_vectors PROPERTIES TIMEOUT 90)
     add_executable(nsl-stream-settings-tests tests/test_stream_settings.c platforms/desktop/system.c)
     target_include_directories(nsl-stream-settings-tests PRIVATE ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
     target_link_libraries(nsl-stream-settings-tests PRIVATE nsl_stream_settings nsl_ui ihs-protobuf)

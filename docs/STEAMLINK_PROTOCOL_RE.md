@@ -9942,3 +9942,95 @@ ctest --test-dir build/desktop \
   -R '^(network_test_discovery_official_vectors|network_test_udp|launch_transactions)$' \
   --output-on-failure
 ```
+
+## 121. 统计文件、首次测网触发与普通串流续接
+
+### 121.1 原客户端依据
+
+Evidence：沿§120固定Android shell，`audit-steam-network-stats-file.py`执行
+`CShellApplication::LoadNetworkStats`@c9d00c、Save@c9d110、完整Panel构造
+@c6dc2c、SetPanelStateConnecting@c6e1a0、原请求producer/serializer，以及
+OnUpdate→SetPanelStateNetworkTest与OnNetworkTestComplete@c72164。
+原CRC、分组、f32换算、C++ protobuf解析/序列化和CUtlBuffer写入执行；文件端点、
+Qt/基类对象、显示/设置输入、格式化、存储分配、线程启动/join和最终发送为adapter。
+已授权endpoint/token与完成后的统计是明确输入；不称真实Host测试或自然UI事件循环。
+
+Load返回BLoadFile的bool，不使用ParseFromArray的返回值：缺文件返回false且不改
+输出；可读空文件返回true并写三个默认0；可读坏protobuf也返回true，保留解析器
+已写入的前缀值。短fixed32会把实际可读字节放在低位，其余补0，之后停止；不能
+用protobuf-c的整份失败/丢弃行为替代。输出指针为NULL仍执行加载/解析。
+未知字段跳过，group中的同名字段不写外层统计。文件buffer之后的32字节分别为
+0和A5时结果一致；这仅验证所列截断输入，不证明任意内存/坏文件安全性。
+
+Panel构造时，action=0才读取`streaming_stats.bin`；仅在读取失败且保存配置的
+enable_video_streaming=true时改为action3（先测试再连接）。可读空/损坏文件不会
+因此自动重测。action1/2/3不经这个文件判断，均设置network_test=true。
+没有本分支依据支持添加一个enable_auto_network_test配置字段。
+
+Evidence：首次连接的实际构造/请求先产生field12=true；已授权输入后实际OnUpdate
+进入panel state5及原Start入口。完成输入为“无推荐配置”，accepted=0/1与文件
+写入成功/失败四组合均执行SaveNetworkStats；action3随后清测试标志、进入原
+SetPanelStateConnecting，第二个完整请求的field12=false。保存失败只产生warning，
+不阻止续接；拒绝推荐不是取消整个连接。推荐非零时的完整配置工厂/确认规则沿
+§116，本组不把无推荐输入冒称所有推荐配置均端到端执行。
+
+### 121.2 streaming_stats.bin格式
+
+保存的是新的CStreamingSessionStats：显式float fields1/2/3分别为CNetworkStats
+的batch-average loss/mean/deviation（q+112/116/120），field4为test_data。
+这里的loss不是§118的NetworkTest结果span/600 loss；不能混用。
+
+full-record每行按little-endian uint32 targetKbps、uint32 networkTicks共8字节，
+所有行参与标准IEEE CRC32（不是传输CRC32C）。test_data前缀是无符号十进制CRC
+加`=`；后面按连续非零target分组，`signed_target:ms,ms;`。target0行仍参与CRC，
+但不输出文本且不改变前一个非零target，所以隔着0的相同target仍在同组。
+没有非零target时只有`CRC=`，完全空记录是`0=`。
+
+ticks按signed int32的16.16秒换毫秒：以绝对值拆whole/fraction，各乘1000、
+分别转f32、相加，再恢复符号，转double后`%.2f`。不是直接double乘1000/65536。
+target也用signed int32十进制；例如ffffffff输出-1，80000000输出-2147483648。
+本回放的printf adapter使用小数点格式；不同locale未取证。
+
+Source包含7组保存、104组加载（26输入×NULL/非NULL输出×两种buffer尾部）、
+32组构造触发（4 actions×video开关×4种文件）及4组完成续接；每个保留实际进入
+函数身份。两个原指令反例分别反转c6deac文件读取分支、移除c72248清测试位：
+实际命中且正常返回、无原断言，并分别改变首次请求选择或第二次请求测试位。
+
+文件持久化与parser只在应用runtime worker调用，不能放进render/input/RX热路径。
+Native可用临时文件/替换方式保护既有文件；这是本地文件写入机制，不冒称原客户端
+BSaveFile的原子性/耐久性已被上述adapter证明。整份配置文件对坏输入保持旧值的
+§36资源保护，与此统计文件“可读即true”的启动策略是不同契约。
+
+### 121.3 Native文件层与产品接线的边界
+
+应用公共文件层提供Load/Save、action选择与SaveSession。SaveSession要求完整测试
+成功、统计valid/finalized，读取公开快照和每批最多256条full samples，再保存
+batch-average三项；调用者先join测试worker，保存结束后才能销毁Session。取消/
+失败/运行中不当作成功统计保存。长度/分配/IO检查和未知group深度100为本地资源
+守卫，不把坏输入或OOM策略扩大成原客户端全范围等价。
+
+Native用真实临时目录比较52个加载、7个保存（完整protobuf文件逐字节）和32个
+action选择；Source的104加载含两种buffer尾部，Native不虚构对应文件尾部差异。
+两组真实Session collector→完成处理→公开getter/分批复制→文件，分别覆盖仅收到
+frame599时batch-loss约99.9167%而test-loss为0，以及640条跨256复制边界的两段
+target记录。结束阶段为显式驱动，无真实测试UDP/Host；完整网络触发沿§119–120。
+
+另外七组本地失败（3次分配、close、rename、替换后回滚、长度溢出）保留旧文件，
+真实目录替代文件的读取失败也不改输出。五个隔离生产TU反例分别反转readable、
+遇零target错误重分组、CRC漏字节、丢弃短fixed32部分值、保存成test-span-loss：
+均编译/归档/链接成功，完整checker正常exit1检出值/文件差异，非崩溃或超时。
+
+action helper和文件API是runtime产品测网/确认流程的依赖，不等于该流程已调用它们。
+本节不把Source的四次续接当作Native runtime/UI接线证据；普通串流也不因这组
+文件函数新增按丢包开启FEC或重连的策略。能力仍按Switch实际后端。
+
+复播命令（固定binary与可选依赖沿§120）：
+
+```sh
+python3 scripts/audit-steam-network-stats-file.py \
+  --binary /path/to/libshell-arm64.so --output /tmp/network-stats-file.json
+python3 scripts/check-steam-network-stats-file.py \
+  --receiver build/desktop/app/nsl-network-stats-file-oracle
+ctest --test-dir build/desktop -R '^network_stats_file_official_vectors$' \
+  --output-on-failure
+```
