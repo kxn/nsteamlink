@@ -10356,21 +10356,23 @@ Native显式LAN授权API按以上匹配peer分支处理，3秒重发；result前
 三次计算限制、失败继续等待与终态Canceled确认独立落地。producer检查universe与
 RSA返回值，失败不发送未构造的请求。timer失败的通知在owner退休后cleanup发出，
 避免run函数内回调取消其自身task；RX回调终态在通知前标记/停止。分配失败是本地
-资源守卫；timer以单调时钟调度，与原墙钟整秒分辨率是明确平台差异。
+资源守卫。重发条件直接使用墙钟整秒next=time()+3，且在发送后重新取time；
+既有1ms单调timer提供Update轮询，不将相对3000ms调度当作原谓词。
 
 Native比较仅投影显式LAN授权的pending/完成、计算次数、secret、完整14/9正文和
 初始masked key；原5消息与自动续接仍保留Source证据，不伪造为该API的发送。
 成功cache后再次Unauthorized的原完整链未用新建LAN任务代替。原peer检查顺序、
 Qt动作/云端配对、持久化保存时点仍分别处理，不把组件对照推广成整条授权相同。
 
-固定参考含32组Source输入：普通/测网的result0–8、设备ID/配对码/padding/正文长度
+固定参考含34组Source输入：普通/测网的result0–8、设备ID/配对码/padding/正文长度
 错误、0/1/31/33-byte key、失败cache命中、A→B→A交替、第三次成功/第四次拒绝、
-成功后重复与再次Unauthorized。31组Native投影复用相同响应key/token；再次
+成功后重复与再次Unauthorized，以及墙钟整秒边界/回拨/前跳。33组Native投影
+复用响应key/token或受控wall/monotonic输入；再次
 Unauthorized保留原streaming/cache的一组明确留在Source端，不用新建任务伪装。
 原cache命中分支改NOP后实际命中一次，无断言/正常返回；失败key配上修正token的
 第二次响应由重算变成功，和原缓存Denied/继续等待形成独立反例。
-`check-authorization-native-mutations.py`另隔离编译四种回归，要求编译/链接成功、
-receiver正常完成，正式比较器因结果/cache/三次限制/3秒重发语义差异正常exit1。
+`check-authorization-native-mutations.py`另隔离编译五种回归，要求编译/链接成功、
+receiver正常完成，正式比较器因结果/cache/三次限制/1秒重发或仅用单调3000ms的语义差异正常exit1。
 
 ```sh
 PYTHONPATH=/path/to/audit-deps python3 scripts/audit-steam-authorization-exchange.py \
@@ -10380,3 +10382,9 @@ ctest --test-dir build/desktop -R '^authorization_exchange_official_vectors$' \
 python3 scripts/check-authorization-native-mutations.py \
   --build build/desktop --output /tmp/authorization-negative
 ```
+
+
+墙钟向量把原1000秒输入对应到Native单调1000900ms，再到1002999/1003000ms：
+原整秒期限1003在后一时刻到期，不能等相对3000ms的1003900。另一组单调每次
+只增20ms，墙钟依次999/998/1002/1003/1300；回拨不重发，1003和大前跳各只发送
+一次。这些时刻为受控clock provider，不声称自然RTC调整或OS调度已经实机验证。

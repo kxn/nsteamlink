@@ -108,7 +108,7 @@ def main():
             ).read_bytes()
         )
     )
-    assert len(source["cases"]) == 32
+    assert len(source["cases"]) == 34
     compared = 0
     for c in source["cases"]:
         assert not c["source_assertions"]
@@ -116,7 +116,8 @@ def main():
             # This requires retaining the original streaming transaction and
             # cache across automatic Unauthorized. The standalone API does not.
             continue
-        actual = execute(a.receiver, ["normal", *[response(r) for r in c["responses"]]])
+        mode = c["input"]["path"] if "clocks" in c else "normal"
+        actual = execute(a.receiver, [mode, *[response(r) for r in c["responses"]]])
         assert len(actual) == len(c["steps"])
         for observed, step in zip(actual, c["steps"]):
             projected = {k: observed[k] for k in expected(step)}

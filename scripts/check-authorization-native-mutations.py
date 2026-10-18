@@ -53,11 +53,18 @@ def main():
             "state->keyExchangeAttempts++ >= 99",
             "cache_alternation",
         ),
-        ("one_second_retry", "return 3000;", "return 1000;", "retry"),
+        (
+            "one_second_retry",
+            "(uint64_t)sentAt + 3",
+            "(uint64_t)sentAt + 1",
+            "wall_clock",
+        ),
     ]
+    variants.append(("monotonic_deadline", None, None, "wall_clock"))
     reports = []
     for name, before, after, expected in variants:
-        assert body.count(before) == 1
+        if before is not None:
+            assert body.count(before) == 1
         directory = out / name
         directory.mkdir(exist_ok=True)
         copied, obj, exe = (
@@ -65,7 +72,17 @@ def main():
             directory / "authorization.o",
             directory / "receiver",
         )
-        copied.write_text(body.replace(before, after))
+        if before is None:
+            mutant = body.replace(
+                "if (runCount && now < state->nextSendWallSecond) return 1;",
+                "(void)now; (void)runCount;",
+            )
+            old = "    int64_t sentAt = (int64_t)time(NULL);\n    state->nextSendWallSecond = (int64_t)((uint64_t)sentAt + 3);\n    return 1;"
+            assert old in mutant
+            mutant = mutant.replace(old, "    return 3000;")
+        else:
+            mutant = body.replace(before, after)
+        copied.write_text(mutant)
         command = [str(copied) if v == str(source) else v for v in compile_base]
         command[command.index("-o") + 1] = str(obj)
         command += ["-I", str(source.parent)]

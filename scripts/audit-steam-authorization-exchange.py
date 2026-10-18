@@ -147,6 +147,39 @@ def run(binary, inp, patch=None):
     steps = [r.snapshot("authorization")]
     inputs = []
     path = inp["path"]
+    if path in ("wall_clock", "wall_rollback"):
+        clocks = (
+            [
+                (1001000, 1001),
+                (1002000, 1002),
+                (1002999, 1002),
+                (1003000, 1003),
+                (1003000, 1003),
+                (1006000, 1006),
+            ]
+            if path == "wall_clock"
+            else [
+                (1000020, 999),
+                (1000040, 998),
+                (1000060, 1002),
+                (1000080, 1003),
+                (1000100, 1300),
+            ]
+        )
+        for mono, wall in clocks:
+            r.wall_time = wall
+            r.call(r.symbols["_ZN14CServerManager6UpdateEv"], r.manager)
+            steps.append(r.snapshot(str(wall)))
+        assert not r.assertions
+        return dict(
+            input=inp,
+            responses=[],
+            clocks=[list(c) for c in clocks],
+            steps=steps,
+            source_assertions=r.assertions,
+            executed=sorted(r.executed),
+            patch_hits=r.patch_hits,
+        )
     events = [dict(result=0)]
     if path == "result":
         events = [dict(result=inp["result"])]
@@ -218,7 +251,18 @@ def verify(c):
     start, last = c["steps"][0], c["steps"][-1]
     assert start["state"] == 4 and start["attempts"] == 0 and start["derived"] == 0
     confirm = [x["body"] for x in last["messages"] if x["tag"] == 14]
-    if path == "result" and c["input"]["result"]:
+    if path in ("wall_clock", "wall_rollback"):
+        counts = [sum(m["tag"] == 3 for m in step["messages"]) for step in c["steps"]]
+        assert counts == (
+            [1, 1, 1, 1, 2, 2, 3] if path == "wall_clock" else [1, 1, 1, 1, 2, 3]
+        )
+        assert (
+            last["state"] == 4
+            and last["derived"] == 0
+            and not last["errors"]
+            and not confirm
+        )
+    elif path == "result" and c["input"]["result"]:
         result = c["input"]["result"]
         assert last["derived"] == 0 and not last["saved"] and not confirm
         assert last["state"] == (4 if result == 5 else 1)
@@ -302,6 +346,7 @@ def main():
         )
     ]
     ins += [dict(path="key_length", length=n) for n in (0, 1, 31, 33)]
+    ins += [dict(path="wall_clock"), dict(path="wall_rollback")]
     cases = [run(binary, i) for i in ins]
     for c in cases:
         verify(c)

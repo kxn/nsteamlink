@@ -307,7 +307,8 @@ sessionKey输入会话；这与pairing授权码、connect/security PIN、配对X
 `audit-steam-authorization-producer.py`。普通/测网串流请求收到匹配Unauthorized后
 自动进入授权state4，沿用原请求编号发送AuthorizationRequest；成功发送后由
 墙钟time()+3和Update到期比较控制重发。§127时Native仍为1秒timer；§128已将
-LAN授权间隔修正为3秒，Native timer使用单调时钟，不能把平台时基差异忽略。
+LAN授权改为墙钟整秒next=time()+3，到期后只发送一次；单调timer只提供轮询，
+不再把固定3000ms当作该条件的等价实现。
 
 受控pairing PIN0042进入ticket.password和SHA256/XOR，独立connect PIN9876加密
 进入StreamingRequest.field8。无auth_key的兼容success响应使原state4→5并立即
