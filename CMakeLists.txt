@@ -194,6 +194,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
             --collector $<TARGET_FILE:ihs-media-network-stats-oracle>
             --negotiator $<TARGET_FILE:nsl-auth-udp-oracle>)
         set_tests_properties(network_test_media_official_vectors PROPERTIES TIMEOUT 90)
+        add_test(NAME network_test_connect_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-network-test-connect.py"
+            --receiver $<TARGET_FILE:ihs-network-test-connect-oracle>)
+        set_tests_properties(network_test_connect_official_vectors PROPERTIES TIMEOUT 60)
         add_test(NAME network_test_lifecycle_official_vectors COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-network-test-lifecycle.py"
             --receiver $<TARGET_FILE:ihs-network-test-oracle>)

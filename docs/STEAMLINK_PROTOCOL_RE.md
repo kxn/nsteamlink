@@ -9773,8 +9773,11 @@ Evidence：沿§118同一固定Android shell，实际CUtlBuffer构造/SetAuthTok
 运行循环退出时仍status1才改成4。成功Complete写status2，取消/失败不冒称成功评分。
 
 Evidence：原静态全局初始化@ccec98给generic接收延迟设置65tick，以及连接重试/
-RTO/接收lease；在此之前直接读未初始化的全局0不能作为产品默认值。§118的6553
-是明确测试参数，已补充限定。测试媒体由generic窗口/RS直接进入CNetworkStats，
+RTO/接收lease；在此之前直接读未初始化的全局0不能作为产品默认值。
+【更正，§123】撤回把这个构造默认值当作完整测网入口预算的推断：原测网BConnect
+对channel3明确覆盖为6553。§119探针手动恢复65，是受控参数实验；不是该入口证据。
+§118的6553在当时是明确实验输入，真实入口来源由§123另行闭合。
+测试媒体由generic窗口/RS直接进入CNetworkStats，
 没有StartVideoData/AudioData元数据或decoder创建前提；Native会话测试模式应采用
 同一传输状态和专用统计消费者，不能自动启动普通视频解码路径。
 
@@ -10084,3 +10087,36 @@ loopback端口，身份、凭据、Host回应和媒体样本为受控输入；�
 Switch显示/游玩。单元输入中frame599使固定测试完成，只用于验证事务，不能代表真实
 网络测量精度。源端工厂200组输入与17项进入函数身份、一个实际命中反事实，以及73组
 原mode/推荐输入分别由独立Source fixture与Native gate比较。
+
+## 123. 测网BConnect的通道激活预算
+
+Evidence：固定§119/122的Android shell，原RunNetworkTest@ca9de8进入
+BConnect@ca9ed4，随后Connection::Create/constructor、SetChannelMaxRecvDelay、
+Connect、SendConnectPacket和SocketSend执行。BConnect@caa014–24明确对channel3
+写6553tick，再发Connect。generic constructor的65tick是被覆盖前的值；ACK成熟
+年龄与普通未激活媒体仍是各自契约，不能将这里改成全局默认6553。
+
+【更正】撤回把§119探针的constructor_delay=65解释为完整测网入口参数的推断。
+该探针在已建立连接边界之后手动恢复65，所列29组状态/超时对照仍是明确参数下的
+实验；不充当BConnect预算证据。§118的6553当时为输入，真实启动来源由本节闭合。
+固定/带宽两模式均走本设置，不依赖StartVideoData/AudioData或decoder存在。
+
+`audit-steam-network-test-connect.py`24组原线程体案例覆盖两模式、零/普通/回绕
+时钟、首发终点三种返回与backend activation失败；27项实际进入方法身份。激活成功
+时原首发为无CRC尾的17B Connect，body为CRC32C("Connect")；初发终点返回失败
+不阻止入口继续。驱动在首个全局网络边界输入取消，执行原Cancel/Reset，最终status3；
+backend activation失败退出为status4。把caa018的MOV W2,6553改65，原补丁实际
+hit1、正常返回且无断言，首包不变而预算变65，被独立对照区分。
+
+Native在公开Connect开始时创建测试通道3的transport receiver并写6553，再启动
+RX/TX owner；Configure本身不提前创建。此receiver与decoder/data consumer分立，
+仍不创建普通视频/音频/HID路径。创建失败返回Failed且不启动线程是本地资源守卫，
+不冒称原C++ allocation失败行为。普通generic constructor仍65。§119 Native oracle
+明确恢复其Source驱动指定的65；产品入口不恢复，用新gate单独核对真实公开Connect。
+
+`network_test_connect_official_vectors`对照18组公开Connect/真实双worker的首包、
+预算和join后的取消终态，仅规范化opaque connection ID；Source的6种backend
+activation失败不冒充Native errno等价。时钟与最后发送为adapter，无真实Steam。
+Source backend构造/激活、socket/transport-client对象存储、最终I/O/Close及调度
+为明确adapter；UDP类型、mode和endpoint为提供的输入，未执行自然Qt事件或OS线程，
+也未证明Switch不丢包或原卡顿原因。本节不扩大为SNS/SDR所有路径已对齐。
