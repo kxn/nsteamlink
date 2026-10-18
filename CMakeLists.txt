@@ -194,6 +194,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
             --collector $<TARGET_FILE:ihs-media-network-stats-oracle>
             --negotiator $<TARGET_FILE:nsl-auth-udp-oracle>)
         set_tests_properties(network_test_media_official_vectors PROPERTIES TIMEOUT 90)
+        add_test(NAME device_token_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-device-token.py"
+            --receiver $<TARGET_FILE:ihs-device-token-oracle>)
+        set_tests_properties(device_token_official_vectors PROPERTIES TIMEOUT 60)
         add_test(NAME authorization_lifetime_official_vectors COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-authorization-lifetime.py"
             --receiver $<TARGET_FILE:ihs-authorization-exchange-oracle>)

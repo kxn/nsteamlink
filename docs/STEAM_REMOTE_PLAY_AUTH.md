@@ -98,7 +98,8 @@ Steam host 的 Remote Play 配对窗口。
 - `usage = k_EKeyEscrowUsageStreamingDevice`
 - `device_name = client->base.deviceName`
 
-本仓 `third_party/ihslib/src/base.c:59-68` 说明 `deviceToken` 由 `deviceId` 和 `secretKey` 派生。
+本仓 `third_party/ihslib/src/client/client.c` 的 `IHS_ClientCreateDeviceToken` 按§131在每次请求时，
+以当前secret快照加密小端deviceId；BaseInit/SetSecretKey不再提前生成token。
 
 因此可以确定：`IHS_ClientAuthorizationRequest(..., pin)` 的 `pin` 进入 pairing authorization ticket
 的 `password` 字段，并和客户端身份材料一起发给 host。
@@ -362,3 +363,17 @@ RX，再销毁队列/定时器，未新增后台线程。32个槽位是本地内
 并传入请求；旧profile不含此字段，未发现时使用公开版Steam的Public默认值。
 这一默认是应用兼容策略，不是官方对缺失元数据的行为证明；已发现的非法值仍保留，
 不能悄悄改成Public。profile结构和磁盘ABI不变。
+
+## 每次发送重新构造设备 token
+
+§131补充固定shell的BGetDeviceToken@cb3c34和GetDeviceID@cb2c68非零身份分支：
+每次构造3/5正文时，用当前manager secret加密本机小端8-byte device_id，并取得
+新的16-byte IV。授权换secret后的原请求续接使用新secret生成token；安全PIN的
+field8仍保留旧密文。这两个字段的生命周期不同，不能据PIN缓存冻结整个正文。
+§129整包相同是TOKEN123身份adapter约束，不是实际token策略的证据。
+
+本地此前在BaseInit/SetSecretKey时生成并缓存deviceToken，发送时直接复用；这一
+策略与原逐次生成不相同。Native按请求生成token，并用同一secret快照构造授权
+ticket和token；秘密选择不再提前消耗一次token IV。SDK加密返回错误时，不能发
+未完成的3/5；原caller的helper失败输入分别走9/10取消及内部通用错误。Source
+失败输入是明确的BGetDeviceToken bool provider，不冒称已触发真实CSPRNG故障。

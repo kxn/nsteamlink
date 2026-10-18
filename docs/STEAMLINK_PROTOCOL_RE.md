@@ -10508,3 +10508,59 @@ ctest --test-dir build/desktop -R '^authorization_lifetime.*official_vectors$' \
 python3 scripts/check-authorization-native-mutations.py \
   --build build/desktop --output /tmp/authorization-negative
 ```
+
+
+## 131. 设备 token 逐次生成与安全 PIN 的不同生命周期
+
+Evidence：固定§130 shell，`audit-steam-device-token.py`执行原BGetDeviceToken
+@cb3c34和GetDeviceID@cb2c68的非零身份分支、原AES、3/5 producer、完整授权响应
+密码/保存链及Update。helper从manager+218/+22c取得当前secret，每次调用原
+SymmetricEncrypt，明文为本机小端8-byte device_id。新IV是每次调用的熵输入，不能
+把安全PIN缓存推广为整个请求冻结。原token不是session_key或pairing PIN。
+
+| 字段 | 生成时点 | 授权换secret后的同事务 |
+|---|---|---|
+| 5.field8安全PIN | BSetStreamingPIN创建事务时加密一次 | 保留原密文 |
+| 3.field1 / 5.field7 device_token | 每次构造正文调用BGetDeviceToken | 用新的当前secret重新加密 |
+| 3.ticket.payload | 每次BCreateAuthorizationRequest构造并RSA封装 | 同次ticket/token使用当前secret |
+
+本机device_id和逐次16-byte IV为明确输入；对token独立做AES-ECB恢复IV与CBC/PKCS
+解密，核对原小端8-byte ID。普通/测网、空/4/8/16-byte安全PIN、三种非零ID、普通
+重发/授权重发/授权后续接均有覆盖。8-byte PIN特意与8-byte ID同时出现，不能按
+明文长度把两类加密当成同一次。授权前token只用旧secret还原ID，授权后改用新
+secret；四份5的PIN字节相同，token随IV输入不同而变化。
+
+BGetDeviceToken的bool失败输入在初始5、授权3、授权成功后的5及下一次重发分别
+覆盖：state4停止发9，state5停止发10，内部错误1，清目标/编号；不发送未构造的3/5。
+这些失败明确替换helper结果，不声称自然CSPRNG或原AES已失败。早先仅将随机端点
+返回寄存器设0的探针无法确认其返回类型，因此不构成错误处理证据。
+
+Native移除BaseInit/SetSecretKey里的token缓存和提前加密；每次3/5 producer取得
+当前secret快照并调用共享token helper。授权ticket先以同一快照序列化/RSA封装，
+再生成token，随后memset该secret快照。失败的stream timer先标终态、发10并清编号，
+再在owner退休后的cleanup通知；authorization沿既有9/cleanup路径。没有新增线程。
+长度32是当前32-byte secret与8-byte ID的本地资源守卫，不冒称额外线上协商常量。
+
+固定参考含36组，选择的原函数入口和原指令字节见gzip manifest。将@cb3c88的key
+长度改为16(AES128)命中三次，原receiver正常返回、无Source断言，但三份token均
+不能用正确32-byte secret还原ID，证明原加密函数参与了正文而非TOKEN123替身。
+Native用真实timer/UDP/parser、原AES/RSA与受控IV核对完整token/PIN字节、ticket
+payload及失败取消正文；变更secret是显式组件输入，不把这些投影冒充自动授权续接。
+Source Qt、身份/IV、RSA请求加密、低层文件和最终Send仍是边界；GetDeviceID的零值
+文件生成路径、OS socket、真实Steam和Switch存储/退出没有在此执行。
+
+```sh
+PYTHONPATH=/path/to/audit-deps python3 scripts/audit-steam-device-token.py \
+  --binary /path/to/libshell-arm64.so --output /tmp/device-token.json
+ctest --test-dir build/desktop -R '^device_token_official_vectors$' --output-on-failure
+python3 scripts/check-device-token-native-mutations.py \
+  --build build/desktop --output /tmp/device-token-negative
+```
+
+
+正式Native比较器对应36组投影，包含完整32-byte token、field8、网络测试位、授权
+RSA输入的payload secret及9/10取消正文；内部EServerError=1与SDK授权Failed=7/
+开流Failed=3分别解释，不混用枚举。八种隔离Native回归（缓存旧token、丢弃新token、
+ID大端、永久旧secret、AES128、忽略加密失败、3/5各自忽略helper失败）全部编译/链接
+成功、receiver正常完成，由正式比较器正常exit1拒绝。对新token加密后却误发旧密文
+的反例也能检出，不能只用“调用次数增加”声称发送内容已更新。
