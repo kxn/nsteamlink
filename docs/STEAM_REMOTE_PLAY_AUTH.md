@@ -259,3 +259,18 @@ D-017 日志中继续验证。
   https://github.com/ValveSoftware/steam-for-linux/issues/11495
 - Steam community discussion, only as UI terminology corroboration：
   https://steamcommunity.com/groups/homestream/discussions/0/3827541651930464867/
+
+
+## 串流会话AuthenticationResponse与授权配对的分界
+
+Evidence：固定官方Linux Steam Link 1.3.32.316完整OnAuthenticationResponse
+@0x3207d0与真实UDP原进程，详见[协议参考§108](STEAMLINK_PROTOCOL_RE.md#108-真实udp认证响应的版本默认值与关闭策略)。
+此handler解析响应并要求显式version=1；result缺失按默认成功处理。明确失败或版本
+不符会关闭该连接，坏protobuf保留认证阶段；它不在此派生会话密钥。
+
+原AuthenticationRequest在此前使用已由SetAuthToken提供的fixture key，实际wire的
+HMAC-SHA256正文为`Steam In-Home Streaming`；固定实验独立核对该HMAC及显式
+version1/steamid0。该实验身份是明确的loopback fixture，不能称Steam主机已经认证。
+本地`src/client/streaming.c`先解密streaming response的encrypted_session_key，再将
+sessionKey输入会话；这与pairing授权码、connect/security PIN、配对X25519与持久密钥
+均是分立层次。撤回将会话AuthenticationResponse本身称为密钥派生/交换步骤的推断。

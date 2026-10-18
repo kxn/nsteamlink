@@ -195,7 +195,7 @@ codec仍是明确差异，不能以H264/HEVC子集对照代替全能力一致性
        ← ServerHandshake(7, 明文) → StartAuthentication (0x7a7b7c)
 认证:  → AuthenticationRequest(1, 明文) [PlayNextRecordedInput 域内的站点为回放路径,
        真实发送点在 StartAuthentication 调用链]
-       ← AuthenticationResponse(2, 明文) → 派生密钥
+       ← AuthenticationResponse(2, 明文) → 校验版本/结果并进入Negotiating（固定Linux见§108；此handler不派生会话密钥）
 协商:  ← NegotiationInit(3, 加密) → OnNegotiationInit → → NegotiationSetConfig(4, 加密)
        ← NegotiationSetConfig(4)（host 确认）→ OnNegotiationSetConfig（仅audio/video
          两个codec各有Assert；非debug下仍CopyFrom并进入Starting，详见§49）
@@ -438,7 +438,7 @@ PersonalizationResponse(2)/ActiveConfigChange(3)/RequestActiveConfig(4)，客户
 | 2 | → | ClientHandshake(6) | ch1 明文可靠 | CClientHandshakeMsg.info = CStreamingClientHandshakeInfo（network_test 等） |
 | 3 | ← | ServerHandshake(7) | ch1 明文可靠 | CServerHandshakeMsg.info = CStreamingServerHandshakeInfo |
 | 4 | → | AuthenticationRequest(1) | ch1 明文可靠 | CAuthRequestMsg{token=1(HMAC, 见 AUTH 文档), version=2, steamid=3} |
-| 5 | ← | AuthenticationResponse(2) | ch1 明文可靠 | result；密钥协商完成（STEAM_REMOTE_PLAY_AUTH.md） |
+| 5 | ← | AuthenticationResponse(2) | ch1 明文可靠 | 固定Linux要求显式version1并按result默认值处理，成功进入Negotiating；此handler不派生会话密钥（§108） |
 | 6 | ← | NegotiationInit(3) | ch1 **加密**可靠 | CNegotiationInitMsg{reliable_data=1, supported_audio=2, supported_video=3, supports_remote_hid=4, supports_touch=5, os_type=6, gaming_device_type=7} |
 | 7 | → | NegotiationSetConfig(4) | ch1 加密可靠 | 见 §5：config.reliable_data=回显宿宣告；audio=宿列表首个∈{1,3}；video=宿列表首个过 0x330+BAvailable；enable_remote_hid/enable_touch=宿宣告；caps=CStreamingClientCaps（video_codecs 恒 1 + 逐个 4/5/8/9）；streaming_client_config=本机配置 |
 | 8 | ← | NegotiationSetConfig(4) | 同上 | host 确认（与本地不一致则 Assert） |
@@ -8864,3 +8864,72 @@ python3 scripts/audit-steam-client-udp-process.py \
 ```
 
 只有显式`--snapshot`才写新的压缩观察文件；默认审计不会覆盖仓库fixture。
+
+## 108. 真实UDP认证响应的版本、默认值与关闭策略
+
+### 108.1 修改前的官方与Native证据
+
+Evidence：固定§107同一Valve Linux 1.3.32.316 ELF。实际UDP ConnectACK后，fixture
+发送可靠channel1 ServerHandshake(7)，原socket/reliable RX/FIFO/OnThink进入原
+OnServerHandshake@320720→StartAuthentication@31b060。原MTU按有符号值限制到512–1472，
+省略mtu为512；缺required info保持Handshake及原1024默认值。
+原AuthenticationRequest实际wire正文为type1、token=HMAC-SHA256(fixture 32字节key,
+`Steam In-Home Streaming`)、显式version1/steamid0。独立Python HMAC与真实UDP字节
+相同；Frame::Send入口的tag槽尚未填入type，不能把该未提交字节当最终wire信封。
+
+原AuthenticationResponse@3207d0先真实Parse，再要求version存在且为1；正确版本下，
+result缺失使用默认成功。显式失败或缺失/不支持版本调用StopConnection并使client phase0；
+成功进入phase4。坏protobuf保持phase3。原完整进程实际退出及assert空列表另验。
+Native真实UDP修改前：省略result停在phase3；缺失/0/未知version却进入phase4；失败
+仍phase3且未请求关闭。十二组旧Native输出保留于实验日志，不由推测取代。
+
+### 108.2 proto2封闭枚举与重复字段
+
+Evidence：原真实CPP parser将未知enum作为unknown field，保留先前的已知值。
+result1→unknown2仍失败，version1→unknown2仍成功；仅unknown result使用默认成功。
+已知result1→0取最后值而成功；version1→0失败。相同字段的错误wire type及未知group
+不更新顶层已知枚举。原int32 enum读取保留低32位，64位varint的高位截断也有实际输入
+对照。不能只将最终protobuf-c enum值归一化，否则丢失前面已知字段，重复字段反例仍错。
+
+Conclusion：认证响应需要按原proto2 getter/presence解析两个封闭enum，并检查明确的
+version1。合法失败/版本不符应启动传输关闭并结束本次认证；坏protobuf仍不推进。
+该结论依据官方客户端，不涉及pairing授权码、connect/security PIN或另增配对流程。
+
+
+### 108.3 Native实现与正式对照边界
+
+认证响应只消费两个scalar，不再把protobuf-c最后一个未识别enum值当作CPP getter。
+专用有界wire读取保留最后一个已知0/1值、明确version presence，跳过其他字段及匹配
+unknown group；不修改通用配置/protobuf文件或删除其他消息的unknown字段。真实Source
+group99/100成功、101解析失败，zero/trailing-zero tag解析失败，Native相同。字段高位
+截断与未知字段只是已列输入的实际对照，不将27例称任意protobuf语法的全域证明。
+
+版本不符或明确result失败时，RX handler发起既有Disconnect，更新认证phase0；继续由
+现有worker finalization stop/join/destroy，handler不join自身。坏protobuf保留原认证状态。
+Native新增真正UDP peer/session/worker/crypto对照，观察wrapper均原样调用真实handler；
+它比较实际HMAC请求wire、phase/MTU、失败的单次goodbye及线程join，不用受控recv/send
+或直接设置认证阶段。成功/仍等待的输入在观察后由fixture退出，不能把本地测试退出
+解释为该输入的协议失败。
+
+六项编译/链接成功的隔离回退分别恢复完整旧策略、忽略version、强制result presence、
+未知值覆盖已知值、拒绝后继续等待，以及把group上限误改99。必须由指定原客户端
+反例检出；编译失败、receiver崩溃和超时不计检出。
+
+撤回§6/12把AuthenticationResponse写成“派生密钥/密钥协商完成”的过强表述：固定
+Linux完整handler只有解析、版本/结果校验、状态切换或失败关闭。fixture AuthToken
+在请求前经原SetAuthToken已提供；本地sessionKey来自streaming response解密并在
+IHS_SessionCreate输入，不能把发现/配对密钥交换混入此响应。其他官方版本及主机实际
+认证对端、完整协商/Qt/Stats、用户卡顿因果和实机仍各有独立范围。
+
+```sh
+python3 scripts/audit-steam-client-auth-process.py \
+  --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
+  --sdk-directory build/video-recovery-re/linux-1.3.32.316/package/lib \
+  --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/patched-runtime/lib \
+  --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/runtime/lib \
+  --output /tmp/steam-client-auth.json
+```
+
+默认只输出新观察；写仓库snapshot必须显式指定`--snapshot`。正式报告保留原输入、
+实际UDP、原CPP/crypto/状态轨迹、完整FDE身份、helper/Qt SHA、真实join/module refs/
+live proc tasks、原main/ELF正常退出与全程assert列表。

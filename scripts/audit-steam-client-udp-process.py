@@ -136,14 +136,26 @@ def verify(case):
     )
 
 
-def audit(binary, sdk, qt, output, case):
-    helper = ROOT / "scripts/steam-client-udp-gdb.py"
+def audit(
+    binary,
+    sdk,
+    qt,
+    output,
+    case,
+    *,
+    helper=None,
+    reactor=None,
+    probe_config=None,
+    validate=verify,
+):
+    helper = helper or ROOT / "scripts/steam-client-udp-gdb.py"
     bootstrap = ROOT / "scripts/steam-client-sdk-gdb.py"
     received, sent, errors = [], [], []
     stop = threading.Event()
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as peer:
         peer.bind(("127.0.0.1", 0))
         peer.settimeout(0.1)
+        react = reactor(peer, case, sent) if reactor else None
 
         def serve():
             connected = False
@@ -156,6 +168,9 @@ def audit(binary, sdk, qt, output, case):
                     except socket.timeout:
                         continue
                     received.append(dict(data=raw.hex(), peer=list(address)))
+                    if react:
+                        react(raw, address)
+                        continue
                     if len(raw) == 17 and raw[0] == 1 and not connected:
                         reply = (
                             struct.pack(
@@ -217,6 +232,7 @@ def audit(binary, sdk, qt, output, case):
                             else 2
                             if case["bad_length"]
                             else 1,
+                            **(probe_config or {}),
                         )
                     )
                 )
@@ -283,8 +299,8 @@ def audit(binary, sdk, qt, output, case):
             thread.join()
     assert not errors, errors
     result = dict(case, received=received, sent=sent, process=report)
-    verify(result)
     output.write_text(json.dumps(result, indent=2) + "\n")
+    validate(result)
     return result
 
 
