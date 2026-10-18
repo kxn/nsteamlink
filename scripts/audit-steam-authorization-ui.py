@@ -8,6 +8,8 @@ controlled providers with readback; Qt/QString/widgets/layout, random/identity,
 clock, request RSA and final send/Pop/ordinary launcher are adapters. The request
 producer, parsers and all response crypto are original. No actual Qt pixels,
 Steam identity, filesystem durability, natural threads or Switch is proved.
+Constructor defaults now execute on A5-filled independent storage; paired-ID loading
+and client-ID migration are explicit identity/file providers (§130).
 """
 import argparse
 import gzip

@@ -9,6 +9,8 @@ identity/peer/account/token, clock, RSA request encryption, persistence endpoint
 libc storage and final send are explicit adapters. No crypto response result is
 adapted. Qt pairing display, cloud/OS dispatch, actual Steam identity, storage
 reload, Switch or full client process execution are not proved.
+Constructor defaults now execute on A5-filled independent storage; paired-ID loading
+and client-ID migration are explicit identity/file providers (§130).
 """
 import argparse
 import gzip
@@ -37,7 +39,22 @@ class Exchange(p.Authorization):
         self.crypto_entries = []
         self.derive_count = 0
         self.response_crypto = []
+        self.constructing_defaults = False
         super().__init__(b, patch)
+        # Do not infer nonzero defaults from the zero-filled manager fixture.
+        # Run the original constructor on poisoned storage; persistence loading
+        # and migration are explicit providers, while every default write runs.
+        defaults = self.alloc(2048)
+        self.u.mem_write(defaults, b"\xa5" * 2048)
+        self.constructing_defaults = True
+        self.call(self.symbols["_ZN14CServerManagerC1Ev"], defaults)
+        self.constructing_defaults = False
+        self.constructor_defaults = dict(
+            cached_result=self.i(defaults + 0x318),
+            cache_length=self.i(defaults + 0x2EC),
+            attempts=self.i(defaults + 0x2D0),
+        )
+        self.wi(self.manager + 0x318, self.constructor_defaults["cached_result"])
         self.wq(self.manager + 0x10, DID)
         self.call(self.symbols["_ZN10CUtlBufferC1Ev"], self.manager + 0x2D8)
         for off, n, t in [
@@ -55,7 +72,12 @@ class Exchange(p.Authorization):
         ):
             self.derive_count += 1
         name = self.plts.get(pc, "")
-        if name == "memcmp":
+        if self.constructing_defaults and name in (
+            "_ZN14CServerManager18LoadPairedSteamIDsEv",
+            "_ZN14CServerManager18MigrateClientIDMapEv",
+        ):
+            self.ret()  # Storage identity inputs, not constructor field defaults.
+        elif name == "memcmp":
             n = self.r(2)
             left = bytes(u.mem_read(self.r(0), n)) if n else b""
             right = bytes(u.mem_read(self.r(1), n)) if n else b""
@@ -100,6 +122,7 @@ class Exchange(p.Authorization):
     def snapshot(self, label):
         state = self.observe_auth(label)
         state.update(
+            constructor_defaults=self.constructor_defaults,
             derived=self.derive_count,
             attempts=self.i(self.manager + 0x2D0),
             saved=list(self.auth_saved),
@@ -280,7 +303,7 @@ def verify(c):
             and last["derived"] == 0
             and last["attempts"] == int(not empty)
         )
-        assert confirm == ["0800" if empty else "0801"] and not last["saved"]
+        assert confirm == ["0807" if empty else "0801"] and not last["saved"]
     elif path == "cached_failure":
         assert last["state"] == 4 and last["derived"] == 1 and last["attempts"] == 1
         assert confirm == ["0801", "0801"] and not last["saved"]

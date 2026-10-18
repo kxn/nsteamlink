@@ -323,8 +323,15 @@ LAN授权改为墙钟整秒next=time()+3，到期后只发送一次；单调time
 只有Success+auth_key进入交换；密码校验失败先确认Denied，继续等待，不立即回调
 整个授权失败。同一最近auth_key复用缓存结果，不重算；A→B→A重新计算，最多三次，
 第四个不同key终止并取消。终态收到带key响应确认Canceled；非Success不做交换。
-初始present空key匹配初始空cache，仅确认缓存Success而不完成授权。private在任务
-结束时清除；cache与任务同寿命。producer的非法universe或RSA失败停止且不发无效
+证据修订（§130）：撤回“初始present空key确认缓存Success”的结论。原构造函数
+@cae3ac在@cae53c/cae544写cached_result=Failed(7)；旧夹具清零内存遗漏该写入。
+现从A5填充的独立对象执行完整原构造函数，只有身份文件加载/迁移为provider，
+再取得其真实默认值。首次空key命中空cache时确认Failed，仍不完成授权。private在任务
+结束时清除。证据修订（§130）：此前`cache与任务同寿命`只描述Native实现，撤回将其
+理解为官方生命周期已对齐的判断。原manager在取消、重新创建请求/keypair后仍保留
+最近auth_key及结果，只重置三次计算计数；同key只重确认、不重算、不推进新事务。
+该结论来自固定shell的Start/Stop/Unauthorized/完整密码计算与实际保存调用，触发和
+边界见协议参考§130。producer的非法universe或RSA失败停止且不发无效
 请求。本地分配失败处理为明确资源失败守卫，不冒称原C++OOM语义。
 
 比较器使用真实loopback RX/timer worker、discovery parser、原Native密码实现与

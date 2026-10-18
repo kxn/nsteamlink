@@ -43,8 +43,8 @@ def main():
         ),
         (
             "ignore_cache",
-            "bool cached = count == state->lastAuthKeyLen &&",
-            "bool cached = false && count == state->lastAuthKeyLen &&",
+            "bool cached = count == cache->keyLen &&",
+            "bool cached = false && count == cache->keyLen &&",
             "cached_failure",
         ),
         (
@@ -68,14 +68,38 @@ def main():
                 secretKey, client->callbackContexts.authorization);
     }
     memset(secretKey, 0, sizeof(secretKey));
-    AuthorizationConfirm(client, state->host.address, state->lastAuthResult);"""
+    AuthorizationConfirm(client, state->host.address, cache->result);"""
     late = """    if (ok) IHS_BaseSetSecretKey(&client->base, secretKey);
-    AuthorizationConfirm(client, state->host.address, state->lastAuthResult);
+    AuthorizationConfirm(client, state->host.address, cache->result);
     if (ok && client->callbacks.authorization && client->callbacks.authorization->persist)
         client->callbacks.authorization->persist(client, &state->host, resp->steamid,
             secretKey, client->callbackContexts.authorization);
     memset(secretKey, 0, sizeof(secretKey));"""
     variants.append(("persist_after_confirm", order, late, "persist_at_confirm"))
+    variants.append(
+        (
+            "clear_cache_each_request",
+            "    IHS_AuthorizationState *state = calloc(1, sizeof(IHS_AuthorizationState));",
+            "    free(client->authorizationCache.key);\n    memset(&client->authorizationCache, 0, sizeof(client->authorizationCache));\n    client->authorizationCache.result = k_ERemoteDeviceAuthorizationFailed;\n    IHS_AuthorizationState *state = calloc(1, sizeof(IHS_AuthorizationState));",
+            "reauthorizing",
+        )
+    )
+    variants.append(
+        (
+            "per_host_cache",
+            "    IHS_AuthorizationState *state = calloc(1, sizeof(IHS_AuthorizationState));",
+            "    static uint64_t cacheHost;\n    if (cacheHost != host->clientId) { free(client->authorizationCache.key); memset(&client->authorizationCache, 0, sizeof(client->authorizationCache)); client->authorizationCache.result = k_ERemoteDeviceAuthorizationFailed; }\n    cacheHost = host->clientId;\n    IHS_AuthorizationState *state = calloc(1, sizeof(IHS_AuthorizationState));",
+            "reauthorizing",
+        )
+    )
+    variants.append(
+        (
+            "initial_cache_success",
+            "    IHS_AuthorizationState *state = calloc(1, sizeof(IHS_AuthorizationState));",
+            "    if (!client->authorizationCache.keyLen) client->authorizationCache.result = k_ERemoteDeviceAuthorizationSuccess;\n    IHS_AuthorizationState *state = calloc(1, sizeof(IHS_AuthorizationState));",
+            "key_length",
+        )
+    )
     reports = []
     for name, before, after, expected in variants:
         if before is not None:
@@ -123,7 +147,14 @@ def main():
         check = subprocess.run(
             [
                 "python3",
-                str(ROOT / "scripts/check-steam-authorization-exchange.py"),
+                str(
+                    ROOT
+                    / (
+                        "scripts/check-steam-authorization-lifetime.py"
+                        if name in ("clear_cache_each_request", "per_host_cache")
+                        else "scripts/check-steam-authorization-exchange.py"
+                    )
+                ),
                 "--receiver",
                 str(exe),
                 *(["--deferred"] if name == "persist_after_confirm" else []),

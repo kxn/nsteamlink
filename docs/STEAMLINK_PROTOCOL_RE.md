@@ -10337,7 +10337,8 @@ SavePersistentClientKey仅记录原buffer输出，不冒称磁盘写入/重启�
 派生，也不因token变化重新校验。最近key的比较包含长度；A→B→A仍是三次计算，
 不等于全历史去重。第四次不同key在密码计算前以Denied终止并发送取消，最多三次
 计算；第三次可以成功。短/长key同样消耗一次新key计数。初始空cache与present空
-key相同，返回缓存Success但bool=false，故确认Success而不完成事务。
+key相同，返回缓存但bool=false，不完成事务。§130撤回此前确认Success的初值推断：
+原构造函数默认结果为Failed(7)，首次空key实际确认Failed。
 
 完整新key成功先更新secret buffer/调用保存endpoint，再发送Confirmed(Success)，
 之后才转state5重发原串流请求。成功后重复key到达state5走过期分支，发送
@@ -10451,3 +10452,59 @@ Native另以五种PIN长度核对完整field8，与更换Base secret后的重发
 crypto，仅作为产品集成fixture；算法独立证据来自上述原shell回放。未执行Qt像素、
 真实Steam连接或Switch存储/退出生命周期。自动Unauthorized→沿用原编号/keypair/
 缓存→原请求重发尚未由此产品测试证明，也未用新建PAIR/STREAM任务冒充该链。
+
+
+## 130. 授权缓存跨事务、真实构造默认值与广播入口
+
+Evidence：固定§129 shell，`audit-steam-authorization-lifetime.py`执行原Start/Stop、
+Panel、密码计算/实际保存调用，以及BProcess@cb1254的CUtlBuffer读取、原广播header/
+body parser。manager4授权等待时再次StartStreaming，无论同host或不同host均新建
+编号/keypair；manager5同host守卫才保留。取消在state4发9，在state5发10；晚到带
+key的授权响应确认Canceled。成功、Denied、次数耗尽后的最近key/result均跨取消和
+新请求保留；新Start仅重置attempts。即使换目标host，收到相同key也只确认缓存结果，
+不重新计算或推进；不同key才重新计算。本地现将缓存归属IHS_Client，task只持有
+私钥和attempts；Timer visitor串行写，Base锁保护缓存读写，Timer退出后才释放缓存。
+
+【证据撤回】§128关于“首次present空key确认Success”的判断有误，不能继续引用。
+旧夹具把manager分配为零内存，没有核对非零构造默认值。原CServerManager构造
+@cae3ac在@cae53c/cae544写manager+318=7(Failed)，而非0(Success)，StartStreaming
+不清该值。补证从A5填充的独立对象执行整个原构造函数，只有LoadPairedSteamIDs/
+MigrateClientIDMap身份文件输入为provider；cache length=0、attempts=0、result=7来自
+原写入，再用于manager fixture。首次present空key于是回14 Failed、继续等待。Native
+初始化同步修正。§128/§129固定参考按这条更正重生成，原证据差异保留在git历史。
+
+BProcess的完整广播包输入还有如下函数级事实，Socket和真实Steam仍未执行：
+目标clientId123的有效密码响应保存并转state5；非目标456先计算/实际保存456的key，
+确认Success后再确认Canceled并停在state4；clientId0在入口拒绝。坏header、正文
+声明长度不符或尾随数据返回false，不交付；坏正文或缺required result会使用Failed
+分支结束授权；长度0正文跳过parser、使用message默认Success而转state5。撤回本地
+streaming.c“坏protobuf永不到原handler”的注释；当前Native前置peer过滤及空/坏
+正文guard与这些完整入口仍有差异，不能把缓存组件投影冒称入口或自动续接相同。
+Qt、低层文件、身份/熵、RSA请求和最终Send为明确边界；私钥熵重复是受控输入，
+keypair调用次数与自然密钥新鲜度分别陈述。
+
+
+新固定参考共34组：12组普通/测网归属调用、12组Success/Denied/耗尽后的同host/
+换host缓存、9组完整广播入口及首次空key。38个选定原函数入口均实际进入；三个
+原指令反例均正常返回、无Source断言：@cb4b38缓存命中跳转NOP使跨请求同key重算，
+@cb13c0非零clientId守卫NOP使0号包进入密码计算，@cae53c的7改0使首次空key确认
+由Failed变Success。§128的34组密码参考和§129的24组UI/保存参考同步从真实构造
+默认值重生成，选定函数数分别为20/36；历史0值不是官方版本差异，而是旧夹具缺陷。
+
+Native `authorization_lifetime{,_pump}_official_vectors`将12组跨请求输入各自映射到
+真实RX/timer worker的同步与runtime泵送分派，核对最近key/result、派生/保存次数、
+private生成调用、secret及3/9/14字节。Source的5/10、原17/19编号、UI及9组入口
+保留为独立证据；Native通过显式LAN API重新开始，并非自动Unauthorized路径。
+新增隔离回归“每次清cache”“按host清cache”“初始cache Success”均由正式比较器
+在正常receiver退出后以exit1检出；与既有六种回归合为九种。Base锁只围绕缓存
+检查/替换，文件保存和应用回调不持该锁，保留RX排队能力。私钥仍按请求清除，
+public auth_key缓存的释放在Timer销毁之后，不能为了保留它而泄漏请求owner。
+
+```sh
+PYTHONPATH=/path/to/audit-deps python3 scripts/audit-steam-authorization-lifetime.py \
+  --binary /path/to/libshell-arm64.so --output /tmp/authorization-lifetime.json
+ctest --test-dir build/desktop -R '^authorization_lifetime.*official_vectors$' \
+  --output-on-failure
+python3 scripts/check-authorization-native-mutations.py \
+  --build build/desktop --output /tmp/authorization-negative
+```
