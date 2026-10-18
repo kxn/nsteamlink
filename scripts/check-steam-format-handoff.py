@@ -3,8 +3,8 @@
 
 normal/reset-ready/reset-pending compare single original API traces. Failed-open
 compares a declared invalid SDK input; both run the real SDK error return. Cancellation
-cases compare SDK/error/info/pixel projection; replacement composes cancel+decode,
-not an observed original control replacement. Base-lock, frozen admission, initial
+cases compare SDK/error/info/pixel projection; normal/replacement/stop now use
+original encrypted RX/FIFO handlers and factory, with parsed-carrier inputs. Base-lock, frozen admission, initial
 open's injected SDK callback are declared Native guard tests.
 The C oracle runs production callbacks/control FIFO/actor and real OS worker/SDK,
 checks original pixel MD5 across Stop, thread roles, cache and cancellation. No
@@ -38,6 +38,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--receiver", type=Path, required=True)
     p.add_argument("--source-report", type=Path)
+    p.add_argument("--control-source-report", type=Path)
     a = p.parse_args()
     if a.source_report:
         source = json.loads(a.source_report.read_text())
@@ -65,6 +66,8 @@ def main():
         "reset_open_error",
     }
     for c in cases.values():
+        assert not c["source_assertions"]
+        assert c["original_start"]["network_shutdown_before_main"]
         assert (
             c["client_sha256"]
             == "95482ca6120f90bb90798b27206b7946ab732e079f008d7fc90ea58a8b0074e1"
@@ -74,14 +77,46 @@ def main():
             c["sdk_sha256"]
             == "c53a7e3d32a986323ec6bedd28df73a6e5842c4753b67b1d2aa0d6e4f524472f"
         )
+    control_source = (
+        json.loads(a.control_source_report.read_text())
+        if a.control_source_report
+        else json.loads(
+            gzip.decompress(
+                (
+                    ROOT
+                    / "scripts/fixtures/steam-client-control-start-reference.json.gz"
+                ).read_bytes()
+            )
+        )
+    )
+    control_cases = {
+        "control_" + c["original_start"]["mode"]: c for c in control_source["cases"]
+    }
+    assert set(control_cases) == {
+        "control_decode",
+        "control_replace_pending",
+        "control_stop_pending",
+    }
+    for c in control_cases.values():
+        assert c["client_sha256"] == cases["decode"]["client_sha256"]
+        assert c["sdk_sha256"] == cases["decode"]["sdk_sha256"]
+        assert c["original_process_exit_code"] == 0 and c["probe_cleanup_complete"]
+        assert not c["source_assertions"]
+        assert c["original_start"]["network_shutdown_before_main"]
+        assert len(c["source_functions"]) == 54 and len(c["start_functions"]) == 20
+        assert (
+            not c["original_start"]["assertions"]
+            and c["original_start"]["cleanup_complete"]
+        )
+    cases.update(control_cases)
     compare = {
-        "normal": ["decode"],
+        "normal": ["control_decode"],
         "restart": ["reset_ready"],
         "config_pending": ["reset_ready"],  # Control/reset ordering projection.
         "reset_pending": ["reset_pending"],
         "reset_unavailable": ["reset_open_error"],
-        "replace_pending": ["cancel", "decode"],
-        "stop_pending": ["cancel"],
+        "replace_pending": ["control_replace_pending"],
+        "stop_pending": ["control_stop_pending"],
         "disconnect_pending": ["cancel"],
         "freeze_pending": ["cancel"],
     }
@@ -113,7 +148,7 @@ def main():
                 expected,
             )
     print(
-        "Native format handoff: 4 single-source traces (one invalid SDK input), 5 SDK projections/compositions, 2 guard cases passed"
+        "Native format handoff: 6 single-source traces (3 full control chains; one invalid SDK input), 3 SDK/control projections, 2 guard cases passed"
     )
 
 

@@ -103,6 +103,26 @@ report = {
     "table_ref_initial": initial_ref,
     "table_ref_after_init": u32(base + 0x13BD3A0 + 0xC8),
 }
+report["source_assertions"] = []
+
+
+class SourceAssertion(gdb.Breakpoint):
+    def stop(self):
+        report["source_assertions"].append(
+            {
+                "file": cstring(int(gdb.parse_and_eval("$rdi"))).decode(),
+                "line": int(gdb.parse_and_eval("$esi")),
+                "expression": cstring(int(gdb.parse_and_eval("$rdx"))).decode(),
+                "thread": gdb.selected_thread().global_num,
+                "phase": "original_exit"
+                if report.get("probe_cleanup_complete")
+                else "probe",
+            }
+        )
+        return False  # Observe, never override the assertion helper result.
+
+
+source_assertion_observer = SourceAssertion("*" + str(base + 0x1A5610), internal=True)
 decoder = call("void*(*)(int)", table[1], 27)
 selected = call("void*(*)(int,int,void*)", base + 0x1780C0, 27, 0, 0)
 report["table_ref_after_factory"] = u32(base + 0x13BD3A0 + 0xC8)
@@ -253,7 +273,12 @@ for projected in [False, True]:
         )
     report["contexts"].append(case)
 
-if config.get("worker_mode"):
+if config.get("start_mode"):
+    start_path = config["start_helper"]
+    exec(compile(Path(start_path).read_text(), start_path, "exec"))
+    start_report = globals()["exercise_start"](config["start_mode"])
+    report["original_start"] = start_report
+elif config.get("worker_mode"):
     worker_path = config["worker_helper"]
     exec(compile(Path(worker_path).read_text(), worker_path, "exec"))
     start_report = globals()["exercise_worker"](config["worker_mode"])

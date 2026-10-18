@@ -8438,6 +8438,8 @@ Frame::Send在main，发送返回3（未连接）。后台SDK callback/send/rece
 完整构造但未Init的线程数1→5→1；UDP Init后Start/Stop为3→7→3。后者含进程服务，
 不能要求媒体Stop消灭整个原进程线程。原client deleting dtor完成、manager注册表为空；
 保留观察器直至原ELF析构，确认原decoder和全局socket manager的pthread_join实际返回0。
+此处是原fixture的历史观察；§105补充assert前置条件及原网络Shutdown，不能将它当成
+必须延后到ELF dtor才join或无assert完整启动/退出的证明。
 恢复原`--version` main后正常退出0，也检查SDK table引用归零；不以exit0替代join证据。
 
 ### 103.3 pending期间reset的完整调用者
@@ -8648,3 +8650,88 @@ Conclusion：撤回将“SDK打开失败就不再消费旧pending”当作官方
 格式请求在同cycle继续消费；下一cycle先reset，直到下一个SDK请求才再次上报80。
 其依据为§97配置delegate与原OnThink的reset→network→control→format偏序；测试通过
 真实CSetStreamingClientConfig包装与FIFO，不冒称已完成自然Qt配置事件的全链证据。
+
+## 105. 原控制加密接收、FIFO及StartVideo的实际对象创建
+
+### 105.1 原入口和前置条件
+
+Evidence：固定§91的官方Linux客户端及其原SDK。`CStreamPlayer`原构造@337610先经
+base player注册到client+48；真实派生vptr=11001a0，prepare槽+32=@327d50，函数直接
+返回1。它不要求本实验替换窗口/准备返回值，也不能因此称已执行SDL Init或物理renderer。
+完整原Client在Idle构造player，随后执行原SetUseThreads@317a10(true)，实际设置
+client+16/+17/+18并调用原网络线程开关；原SDL串流入口的@2da18e传1、@2da196调用
+同一API。原StartVideo factory@318640从client+18经SetUseThreads传给新decoder。
+不能用手工AVCodec构造时的默认async=true证明整个产品入口已设置该标志。
+
+实验通过原SetAuthToken@317b30复制固定32字节测试输入，再执行原UDP Init、连接本地
+只收包fixture。该输入是明确的会话API边界，不是STEAMVIDEOTOKEN环境变量，不完成
+Steam认证，也不改变配对授权码与connect/security PIN的语义。client保持Connecting、
+Connection仍未连接；没有强写phase、decoder owner、async或SDK/原函数返回值。
+
+### 105.2 加密、接收、排队和实际factory
+
+固定明文StartVideo为`080310042080012848`（channel3、codec4、128×72），StopVideo
+为空protobuf。控制载体头是明确的已解析packet输入；真实Frame Encrypt@194b60签名/
+加密，原OnStreamPacket@31bbd0调用Decrypt@194e60，成功后真实推进接收序号、retain
+carrier并进入原控制FIFO。这里没有Socket RX/CRC/ACK/握手，也没有直接改FIFO字段。
+原Frame输入引用随后释放，排队引用由原dispatcher归还。
+
+实际接收返回时decoder仍未创建；原OnThink在reset→network后消费FIFO。message52
+由@322fea进入OnStartVideo@3212e0，先停止旧owner，再调用实际prepare；之后通过原
+factory@318640选择真实AVCodec、构造/设置size/threads、拷贝codec数据、Start SDK，
+由原代码写client+40。消息53由原OnStopVideo@3214d0进入Stop/删除/清owner和channel。
+正常、pending替换、pending停止三进程分别验证，不再以cancel+decode两个过程的组合
+代替原控制替换/销毁链。
+
+三个过程保留显式parsed媒体Frame输入。真实worker/get_format与actor选择、消息80
+producer、实际SDK send/receive及128×72像素运行，framemd5为独立fixture值
+889019807dd199cebff67658cbc3d78f。pending替换/停止均先取消旧SDK、join0，再销毁旧
+AVCodec；替换仅在新SDK请求时产生一次80，新ID24出图；停止不消费已销毁decoder的
+旧请求、不发80。正常ID23出图并在控制Stop前归还显式pop的外部frame，不将此过程
+扩大为decoder删除后仍持外部帧/自然renderer引用的证明。
+
+### 105.3 收紧旧fixture的证据强度
+
+Evidence：新增原assert helper@1a5610入口观察，不改变其返回值。以41569f2所保存的
+旧worker helper重跑decode，进程实际exit0且有正确SDK像素，但观察到三条probe期
+assert：player在Connecting注册违反streamclient.cpp:250的Idle前置；空AuthToken触发
+crypto_digest_openssl.cpp:284的pubKey及:285的cubKey>0。原main退出阶段还进入
+streaming_tier0_vstdlib.cpp:5424的TLS断言。完整报告及旧helper hash保存在独立
+`steam-client-legacy-boundary-reference.json.gz`，可用脚本的legacy选项重新取证。
+
+Conclusion：撤回将§102–104旧构造/空Token/延后ELF join fixture解释为合法完整启动与
+干净全局退出的依据。exit0、已知像素及实际join0各自仍是所观察事实；它们不能证明
+上述前置条件或无assert生命周期。此修正针对本实验调用环境，不认定官方自然产品故障。
+正式旧八模式/partial四模式现在在Idle注册player，调用原API设置有效测试Token，并在
+资源退出后调用原StreamShutdownNetworkProcessing@1a0170。后者经manager Shutdown
+@19ffb0先signal、实际join，再清资源；原ELF析构再次调用时没有活跃线程。全程assert
+列表必须为空；SDK状态、图片、reset/格式次数与旧机制投影仍逐项核对，未改原返回值。
+
+原SDL串流入口在@2d9a54删除player后，于@2d9a57调用同一网络关闭API。
+新三个完整控制过程也在原main恢复前执行网络关闭；不能再把“manager只在ELF dtor
+join”当成官方产品约束。全局assert观察持续到原进程退出，并区分probe/original_exit；
+新过程两阶段都为零。关闭期间的线程ID集合、实际decoder/manager pthread_join0与
+SDK引用归零仍分别核对。没有据此推导Switch loader或未观测SDK/驱动性质。
+
+### 105.4 固定证据与Native对照
+
+`audit-steam-client-video-start-process.py`保存三个真实进程、54份已有FDE和20份新增
+入口/原SDL caller完整FDE身份。`steam-client-control-start-reference.json.gz`固定该
+实际报告。格式检查的normal/replace_pending/stop_pending分别与三条实际控制链的
+SDK状态、实际图片数、80和DataLost生产者比较；其余同对象reset、配置延后与guard
+范围仍按§104区分，不声称完整Qt/握手/统计/SDL与物理硬件均已覆盖。原wire输入、密文、
+接收序号和真正Decrypt返回均记录；密文含原随机输入，不要求跨进程密文逐字节相同。
+
+```sh
+python3 scripts/audit-steam-client-video-start-process.py \
+  --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
+  --sdk-directory build/video-recovery-re/linux-1.3.32.316/package/lib \
+  --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/patched-runtime/lib \
+  --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/runtime/lib \
+  --output /tmp/steam-control-start.json \
+  --legacy-boundary-output /tmp/steam-legacy-boundary.json
+```
+
+legacy选项需要Git中固定41569f2的原helper；它只替换实验调用器，未替换官方代码。
+真实收发握手、自然Qt/控制producer、所有SDK错误的产品触发、外部图像最终销毁和真实
+Switch/NVTEGRA/显示/loader范围仍不能由这三个parsed边界过程推导。

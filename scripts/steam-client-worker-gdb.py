@@ -315,6 +315,15 @@ def exercise_worker(mode):
     wire = alloc(2)
     inf.write_memory(wire, bytes.fromhex("3800"))
     assert call("int(*)(void*,void*,int)", base + 0x7C9920, client + 456, wire, 2) == 1
+    # Register the actual base player while the complete client is still Idle.
+    # SetAuthToken is a declared fixture API input, separate from Steam's video
+    # environment token. Empty keys violate the original HMAC precondition.
+    call("void(*)(void*,void*)", base + 0x2EE0F0, player, client)
+    if not bootstrap:
+        call("void(*)(void*)", base + 0x2B1F90, client + 64)
+    auth = alloc(32)
+    inf.write_memory(auth, bytes(range(32)))
+    call("void(*)(void*,void*,int)", base + 0x317B30, client, auth, 32)
     transport = connection = 0
     if bootstrap == "udp":
         address = alloc(24)
@@ -367,7 +376,6 @@ def exercise_worker(mode):
         assert output["transport_fd"] == 0xFFFFFFFF
     output["threads_before_start"] = len(inf.threads())
     output["thread_ids_before_start"] = sorted(t.global_num for t in inf.threads())
-    call("void(*)(void*,void*)", base + 0x2EE0F0, player, client)
     call("void(*)(void*,void*,void*,int)", base + 0x324610, dec, client, player, 4)
     # Declared partial-client owner link, also read by original RequestReset.
     # The full control StartVideo handler/Client ctor is outside this probe.
@@ -498,8 +506,11 @@ def exercise_worker(mode):
             call("void(*)(void*)", u64(u64(client) + 8), client)
             output["full_client_deleting_dtor_returned"] = True
         else:
+            call("void(*)(void*,void*,int)", base + 0x317B30, client, 0, 0)
             call("void(*)(void*)", u64(u64(client + 456)), client + 456)
             call("void(*)(void*,unsigned long)", base + 0xE3310, client, 0x22000)
+    call("void(*)()", base + 0x1A0170)
+    output["network_shutdown_before_main"] = True
     output["threads_after_resources"] = len(inf.threads())
     output["thread_ids_after_resources"] = sorted(t.global_num for t in inf.threads())
     return output

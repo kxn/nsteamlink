@@ -35,6 +35,8 @@ def verify(report):
     assert (
         report["original_process_exit_code"] == 0 and report["probe_cleanup_complete"]
     )
+    assert not report["source_assertions"], report["source_assertions"]
+    assert s["network_shutdown_before_main"]
     assert s["threads_started"] > s["threads_before_start"]
     before = set(s["thread_ids_before_start"])
     assert set(s["thread_ids_after_stop"]) <= before
@@ -54,7 +56,10 @@ def verify(report):
         assert s["connection_state"] == 3 and s["transport_fd"] == 0xFFFFFFFF
     assert s["connection_retired"] and s["configured_decoder_owner_link"]
     assert "manager_destructor" in names
-    shutdown = trace[names.index("manager_destructor") :]
+    shutdown = trace
+    assert names.index("manager_pthread_join_completed") < names.index(
+        "manager_destructor"
+    )
     assert ["manager_pthread_join_enter", "main"] in shutdown
     assert ["manager_pthread_join_completed", "main", 0] in shutdown
     if not bootstrap:

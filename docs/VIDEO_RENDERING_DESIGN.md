@@ -1470,6 +1470,12 @@ owned slot不含session/epoch指针。
 startTracked回调内授权Info80，返回即清除；不能只接受已经注册的视频通道。原client级
 cache/producer@31dd40及open guard支持这一触发，不将受控SDK open回调当作自然硬件出错。
 
+按协议参考§105，正常启动/控制替换/控制停止另用原CStreamPlayer、真实控制加密接收、
+FIFO、StartVideo factory和SDK过程对照，不再仅用组合过程支持替换/停止。原fixture须
+满足Idle注册/有效AuthToken/网络Shutdown前置，并将原assert入口观察持续到进程退出；
+exit0和图片成功不能代替这些条件。控制carrier及媒体Frame仍是parsed输入，完整握手与
+自然UI/renderer生命周期另验。
+
 这些偏序与所有权契约由真实IHS actor/worker/SDK软件图片、原客户端过程投影及取消交错
 验证；explicit Connecting-phase输入、组合的替换向量、SDK terminal注入和应用freeze保护
 分别标注。完整Qt、自然UI/reset producer、真实Switch硬件/driver交错仍有独立边界。

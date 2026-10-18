@@ -10,7 +10,9 @@ physical display remain outside all modes. An optional worker extension adds
 original asynchronous submission, deferred format consumption and cancellation/
 restart. Its client boundary can be partial storage, original construction or
 original UDP Init against a receive-only loopback fixture; the default probe
-retains the original direct Start/Stop scope.
+retains the original direct Start/Stop scope. A separate control-start mode uses
+the original player, encrypted packet callback/FIFO and video factory without
+writing the decoder owner link. Its parsed-carrier/auth-token inputs are explicit.
 The process must resume its original --version main and exit normally after
 probe-owned resources and module references are released. No gate/name/token or
 callback bypass is allowed. Qt runtime directories must supply Valve's controller
@@ -48,7 +50,10 @@ def audit(
     client_bootstrap=None,
     endpoint=None,
     format_memory=False,
+    start_mode=None,
 ):
+    assert start_mode in (None, "decode", "replace_pending", "stop_pending")
+    assert not start_mode or (worker_mode is None and client_bootstrap == "udp")
     assert worker_mode in (
         None,
         "empty",
@@ -64,7 +69,7 @@ def audit(
         or client_bootstrap == "udp"
     )
     assert client_bootstrap in (None, "constructed", "udp")
-    assert client_bootstrap is None or worker_mode is not None
+    assert client_bootstrap is None or worker_mode is not None or start_mode is not None
     assert not format_memory or (
         client_bootstrap == "udp" and worker_mode == "reset_pending"
     )
@@ -108,6 +113,8 @@ def audit(
                     fixture=str(fixture),
                     result=str(result),
                     worker_mode=worker_mode,
+                    start_mode=start_mode,
+                    start_helper=str(ROOT / "scripts/steam-client-start-gdb.py"),
                     client_bootstrap=client_bootstrap,
                     endpoint=endpoint,
                     format_memory=format_memory,
@@ -130,6 +137,7 @@ def audit(
                     "set startup-with-shell off",
                     "set disable-randomization off",
                     "set breakpoint pending on",
+                    "set python print-stack full",
                     "break __libc_start_main",
                     "run",
                     "set $source_main = $rdi",
@@ -192,6 +200,11 @@ def audit(
                 )
             }
             if format_memory
+            else {}
+        ),
+        **(
+            {"start_helper_sha256": digest(ROOT / "scripts/steam-client-start-gdb.py")}
+            if start_mode
             else {}
         ),
         qt_dependency_sha256=dependencies,
@@ -262,7 +275,7 @@ def audit(
                         0x19FFB0: "socket_manager_stop",
                         0x1AA260: "original_thread_join",
                     }
-                    if worker_mode
+                    if worker_mode or start_mode
                     else {}
                 ),
             },
