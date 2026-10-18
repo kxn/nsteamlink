@@ -64,11 +64,14 @@ static void sendEncryptedPeer(IHS_Session *s,int socket,const struct sockaddr_in
     sendPeer(socket,address,5,local,1,id,body,count+1,crc);
 }
 int main(int argc,char **argv) {
+    bool gap=argc==8 && !strcmp(argv[1],"--gap");udpGapMode=gap;
     bool recover=argc==7 && !strcmp(argv[1],"--recover");
-    bool video=recover || (argc==7 && !strcmp(argv[1],"--video"));
+    bool video=gap || recover || (argc==7 && !strcmp(argv[1],"--video"));
     bool negotiate=video || (argc==6 && !strcmp(argv[1],"--negotiate"));assert(negotiate || argc==5);
     bool crc=atoi(argv[negotiate?2:1])!=0,hasResponse=negotiate || strcmp(argv[3],"-")!=0;
     bool badMac=negotiate && atoi(argv[5])!=0;
+    if(gap) {assert(strlen(argv[7])<=sizeof(udpExpectedFeedback)*2);udpExpectedFeedbackSize=(uint32_t)unhex(argv[7],udpExpectedFeedback);}
+    bool gapReliable=gap && (udpExpectedFeedback[0]&127)==8;
     missingServer=!negotiate && atoi(argv[4])!=0;
     uint8_t server[256],response[256],init[256];
     size_t serverSize=unhex(negotiate?"070a0308c00b":argv[2],server),responseSize=hasResponse?unhex(negotiate?"0208001001":argv[3],response):0;
@@ -107,13 +110,17 @@ int main(int argc,char **argv) {
     uint8_t request[256];size_t requestSize=0;unsigned connects=0,goodbyes=0;
     bool configReceived=false,completeReceived=false,videoInfo=false,videoStop=false;
     bool repaired=false;uint8_t feedbackWire[64];size_t feedbackSize=0;
+    unsigned gapStage=0;
     struct sockaddr_in videoAddress={0};uint8_t videoLocal=0;
     uint8_t outputPlain[3][512],outputCipher[3][512];size_t plainSizes[3]={0},cipherSizes[3]={0};
     uint64_t deadline=millis()+5000;
     for(;;) {
         if(video) {
             udpTakePicture();
-            if(videoInfo && udpHavePicture && !videoStop) {
+            if(gap && udpPictureCount==1 && !gapStage) {udpReplayMedia(peer,&videoAddress,videoLocal,NULL,crc);gapStage=1;}
+            if(gap && !gapReliable && udpPictureCount==2 && gapStage==1) {assert(repaired);udpReplayMedia(peer,&videoAddress,videoLocal,NULL,crc);gapStage=2;}
+            bool videoDone=gap?(gapReliable?repaired:udpPictureCount==3):udpHavePicture;
+            if(videoInfo && videoDone && !videoStop) {
                 sendEncryptedPeer(session,peer,&videoAddress,videoLocal,5,53,NULL,0,3,crc,false);videoStop=true;
             }
         }
@@ -124,15 +131,17 @@ int main(int argc,char **argv) {
         uint8_t raw[2048];struct sockaddr_in from;socklen_t length=sizeof(from);
         ssize_t size=recvfrom(peer,raw,sizeof(raw),0,(struct sockaddr *)&from,&length);assert(size>=13);
         uint8_t type=raw[0]&127;
-        if(recover && (type==8 || type==10) && raw[4]==3 && !repaired) {
+        if((recover || gap) && (type==8 || type==10 || (gap && type==3 && raw[13]==2)) && raw[4]==3 && !repaired) {
             assert(((raw[0]&128)!=0)==crc && raw[2] && raw[3]==7);
             size_t plainSize=(size_t)size;
             if(crc) {uint32_t value=0;for(unsigned n=0;n<4;++n)value|=(uint32_t)raw[size-4+n]<<(8*n);assert(IHS_CRC32C(raw,(size_t)size-4)==value);plainSize-=4;}
             assert(plainSize<=sizeof(feedbackWire));uint8_t normalized[64];memcpy(normalized,raw,plainSize);normalized[2]=normalized[3]=0;memset(normalized+9,0,4);
             if(udpExpectedFeedbackSize!=plainSize || memcmp(normalized,udpExpectedFeedback,plainSize))continue;
-            assert(!atomic_load(&udpSubmitted) && !atomic_load(&udpSdkPackets));
+            if(gap) {assert(gapStage==1 && udpPictureCount==1 && atomic_load(&udpSdkPackets)==1);}
+            else {assert(!atomic_load(&udpSubmitted) && !atomic_load(&udpSdkPackets));}
             assert((size_t)size<=sizeof(feedbackWire));memcpy(feedbackWire,raw,(size_t)size);feedbackSize=(size_t)size;
-            udpReplayMedia(peer,&from,raw[2],NULL,crc);repaired=true;
+            if(!gap || !gapReliable)udpReplayMedia(peer,&from,raw[2],NULL,crc);
+            repaired=true;
         } else if(type==1) {
             ++connects;assert(size==17 && raw[0]==1 && raw[2] && !memcmp(raw+13,"\xc7\x3d\x8f\x3c",4));
             if(!connected) {sendPeer(peer,&from,2,raw[2],0,0,raw+9,4,crc);connected=true;}
@@ -202,7 +211,8 @@ int main(int argc,char **argv) {
         printf("]");
     }
     if(video) {
-        assert(udpHavePicture && udpStarts==1 && udpSubmits==1 && udpSdkPackets==1 && atomic_load(&udpStopped));
+        unsigned count=gap && !gapReliable?3:1;
+        assert(udpHavePicture && udpStarts==1 && udpSubmits==count && udpSdkPackets==count && atomic_load(&udpStopped));
         printf(",\"video\":{\"id\":%u,\"shape\":[%u,%u,0],\"md5\":\"",udpPictureId,udpWidth,udpHeight);
         for(unsigned i=0;i<16;++i)printf("%02x",udpPixelMd5[i]);
         printf("\",\"sdk_size\":%zu,\"sdk_sha256\":\"",udpSdkSize);for(unsigned i=0;i<32;++i)printf("%02x",udpSdkSha[i]);
@@ -212,6 +222,15 @@ int main(int argc,char **argv) {
         assert(repaired && !udpReplayFile && feedbackSize);
         printf(",\"repair_feedback\":\"");for(size_t n=0;n<feedbackSize;++n)printf("%02x",feedbackWire[n]);
         printf("\",\"sdk_packets_before_repair\":0");
+    }
+    if(gap) {
+        assert(repaired && !udpReplayFile && feedbackSize && udpPictureCount==(gapReliable?1u:3u));
+        printf(",\"gap_feedback\":\"");for(size_t n=0;n<feedbackSize;++n)printf("%02x",feedbackWire[n]);
+        printf("\",\"sdk_packets_before_feedback\":1,\"pictures\":[");
+        for(unsigned n=0;n<udpPictureCount;++n) {printf("%s{\"id\":%u,\"md5\":\"",n?",":"",udpPictures[n].id);for(unsigned j=0;j<16;++j)printf("%02x",udpPictures[n].md5[j]);printf("\"}");}
+        printf("],\"sdk_inputs\":[");
+        for(unsigned n=0;n<atomic_load(&udpSdkPackets);++n) {printf("%s{\"size\":%zu,\"sha256\":\"",n?",":"",udpSdkInputs[n].size);for(unsigned j=0;j<32;++j)printf("%02x",udpSdkInputs[n].sha[j]);printf("\"}");}
+        printf("]");
     }
     puts("}");
     IHS_SessionDestroy(session);if(negotiate)sl_stream_settings_destroy(&settings);

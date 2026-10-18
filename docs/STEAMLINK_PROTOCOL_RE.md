@@ -9185,3 +9185,105 @@ python3 scripts/audit-steam-client-retry-process.py \
 python3 scripts/check-steam-retry-process.py \
   --receiver build/desktop/app/nsl-auth-udp-oracle
 ```
+
+## 113. 未补回视频分片、后续关键帧与 DataLost 的实际线包
+
+### 113.1 CRC 关闭时的生产差异与修正依据
+
+Evidence：`audit-steam-client-gap-process.py`/`steam-client-gap-gdb.py`执行与§112
+同SHA的Linux官方客户端、真实settings/UDP/crypto/窗口/decoder/原SDK。固定四个
+进程覆盖可靠/非可靠及CRC两值。非可靠案例先真正解出frame23，扣留下一P帧的
+末分片，再给不同发送时间戳的后续P帧；原窗口放弃旧缺口后，frame26的真实
+DecodeFrame从strict0/expected1变为strict1/expected4。原网络实际发出channel3、
+type3、packet ID0、正文`02`的DataLost。原CRC关闭线包14B/首字节03，打开则
+18B/首字节83并有真实CRC32C；libc sendto观察与对端recvfrom逐字节相同。
+
+修改前子库`115497e`的同CRC关闭Native真实UDP对照失败，捕获首字节83的18B
+DataLost（本地原失败记录`/tmp/nsl113-native-gap.log`）。其生产来源是
+`ch_data.c::IHS_SessionChannelDataLost`把InitializePacket的hasCrc硬编码为true；
+`session.c::IHS_SessionSendPacketResult`只在连接要求CRC时补加，不移除调用者已置位
+的CRC。因此不是连接协商误读，也不是新的捕获器把合法CRC漏算。
+原客户端SendDataLost @31f7f0的Frame构造/Put/Send也执行真实指令；本结论以
+实际两值线包为准，不从反编译函数名推导。
+
+Conclusion：DataLost producer应与其他通道反馈一样以未置CRC的头/正文进入既有
+队列，最终由连接已协商的CRC策略补加。只调整该入口的初始hasCrc，不修改
+DataLost触发/重请求周期、正文、可靠性、序号或全局Socket接口。既有组件和
+§110/112成功链未覆盖这条CRC关闭的实际DataLost出站组合，不能把它们的通过
+扩大成此分支已无差异。
+
+Hypothesis／待验证：真实Steam主机是否因此丢弃请求、是否与原用户停顿有关，尚无
+对应会话/主机响应证据；不能由这一线包差异推出主机不接受带CRC的可选输入。
+
+### 113.2 同一缺片输入的两种传输后果
+
+Evidence：初始H264 AU0经packet0/1解出frame23，protocol sequence0。其后AU1/P帧
+frame24仅发送packet2的200B首片，原应有的packet3末片231B从未发送，也未补发。
+继续发送AU2/frame25/sequence2/packet4和AU3/frame26/sequence3/packet5；实际
+wire发送时间依次1005000、1010000、1030000。时间是明确的fixture输入，接收时钟、
+RTT及线程仍由原客户端执行；不以调试器墙钟间隔测量官方超时。
+
+非可靠原窗口只将frame26交给OnStreamPacket/DecodeFrame，frame24/25没有进入
+decoder。真实DecodeFrame entry/return只读状态显示：expected1→4、strict0→1，
+没有把该P帧送入SDK。只有实际收到上述DataLost，受控peer才发AU6/IDR关键帧
+frame29/sequence4/packet6+7，之后原strict1→0、expected4→5并解出正确像素。
+在观察到该关键帧图像后，另一个fixture barrier才发AU7/P帧frame30/sequence5/
+packet8；它沿strict0、expected5→6继续解码。此barrier保证逐幅像素可观察，不能
+拿生产最新候选选择可能跳过一幅图像当作协议损坏。
+
+原SDK实际输入只有AU0=2204B、AU6=1953B、AU7=501B；真实send/receive全部0，
+逐包SHA分别为：
+
+- `5ff7383025bb865ea49f5b8b27a38811772281f68fb8dd0285afd3584273e64d`
+- `07ef50a8385ff6d3b09ad0f7ea732dfa22d9a2e28b41074f1a7138d64afb9dad`
+- `72cebba462fa0eb4781d554c21847f21aeb3c95fd7030298ca393e87324b4d79`
+
+三幅128×72/YUV420P图像MD5与独立sequential.framemd5第0/6/7帧一致：
+`889019807dd199cebff67658cbc3d78f`、`2d383e9b3366113532bf1307268de485`、
+`572e6228051d299192a4905bd74a7c2e`。AU边界/关键标记由实际ffprobe另核对，协议
+标记及body仍是明确的受控输入，不冒称真实Host的分片/GOP producer。
+
+可靠案例在seed barrier后发相同残缺P帧和后续P/关键帧，不等DataLost。其原实际
+NACK的base4、累计2、presence0f证明packet4–7均已到达，包括关键帧全部两片；
+peer时间正文为1040000。收到这一完整NACK之后，再执行30次真实Client::OnThink，
+SDK和图像仍各1，DecodeFrame未收到后续frame26/29，expected仍1、strict仍0。
+然后由受控peer发Stop。30轮是显式观察barrier，不是官方重传期限，不能据此宣称
+永远不会恢复、固定停多少毫秒或真实Steam主机不再补片。
+
+Conclusion：给定未补片输入，关键帧已到网络不等于已获视频准入。可靠通道仍先
+受前方缺片的有序窗口约束；非可靠窗口可丢弃过期传输数据，随后的视频序列缺口
+会请求DataLost并等待协议关键标记。完整关键帧准入后，本例无需额外固定1–2秒
+等待即走原SDK，下一P帧也能恢复；这不是允许任意残缺/缺参考帧数据进入SDK。
+§25/45/69的组件公式与触发范围不因此扩成所有真实Host/codec/网络时延证明。
+
+### 113.3 Native 对照与资源边界
+
+`media_gap_udp_official_vectors`让真实Native设置/session/UDP/crypto/生产媒体
+窗口和`nsl_video_pipeline`执行捕获的各阶段线包。初始像素、真实反馈及关键帧
+像素为明确fixture输入barrier，不注入解码后帧、SDK返回或协议状态。只映射连接ID、
+重算原有CRC，outer时间仅在反馈比对中归零；上述peer时间/正文/片号/缺片/次序和
+CRC开关不投影。此门禁从实际DataLost/NACK捕获比较完整线包，不让C端强行补CRC
+后再在checker中忽略。跨线程SDK计数用atomic，像素与SDK输入摘要在正常join后
+汇总；输出前仍须原会话Stop/worker join和pipeline资源回收通过。
+
+四个原进程固定65份完整FDE、5个当前GDB helper及runner SHA、真实Qt依赖、实际
+SDK table0/10/17映射路径/SHA。每例完整消息4/5/80及Native独立加密预期沿§109/110
+逐项核对；两条不可靠路径比3幅图像/3份AU，两条可靠路径比1幅/1份AU及真实NACK。
+原真实decoder/manager join均0、无新增live task、assert空列表、ELF exit0及自然
+atexit引用7→0分别核验，不能只拿SDK像素输出作为生命周期成功的证据。
+
+与§111一致，软件线程4是明确共同测试输入，不要求Switch复制Linux平台能力。
+真实Steam身份/主机补片策略、网络墙钟、自动FEC、其他flags/codec/GOP producer、
+物理renderer/GPU/Switch/loader和原用户停顿根因不由此证明。生产修正仅为§113.1
+的DataLost初始CRC声明，不新增重连、等待时间或按丢包开启FEC策略。
+
+```sh
+python3 scripts/audit-steam-client-gap-process.py \
+  --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
+  --sdk-directory build/video-recovery-re/linux-1.3.32.316/package/lib \
+  --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/patched-runtime/lib \
+  --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/runtime/lib \
+  --output /tmp/steam-client-gap.json
+python3 scripts/check-steam-gap-process.py \
+  --receiver build/desktop/app/nsl-auth-udp-oracle
+```

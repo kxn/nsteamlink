@@ -10,6 +10,10 @@ static sl_video_pipeline *udpVideo;
 static atomic_bool udpSubmitted, udpStopped;
 static unsigned udpStarts, udpSubmits;
 static atomic_uint udpSdkPackets;
+static bool udpGapMode;
+static struct { size_t size; uint8_t sha[32]; } udpSdkInputs[3];
+static struct { unsigned id; uint8_t md5[16]; } udpPictures[3];
+static unsigned udpPictureCount;
 static size_t udpSdkSize;
 static uint8_t udpSdkSha[32], udpPixelMd5[16];
 static unsigned udpPictureId, udpWidth, udpHeight;
@@ -25,8 +29,9 @@ static void udpHash(const uint8_t *p,size_t size,uint8_t out[32]) {
 int __real_avcodec_send_packet(AVCodecContext *, const AVPacket *);
 int __wrap_avcodec_send_packet(AVCodecContext *context,const AVPacket *packet) {
     if(udpVideo && packet) {
-        ++udpSdkPackets;udpSdkSize=(size_t)packet->size;
+        unsigned index=atomic_fetch_add(&udpSdkPackets,1);udpSdkSize=(size_t)packet->size;
         udpHash(packet->data,udpSdkSize,udpSdkSha);
+        if(udpGapMode) {assert(index<3);udpSdkInputs[index].size=udpSdkSize;memcpy(udpSdkInputs[index].sha,udpSdkSha,32);}
     }
     return __real_avcodec_send_packet(context,packet);
 }
@@ -50,7 +55,7 @@ static int udpVideoStart(IHS_Session *session,const IHS_VideoEpochInfo *epoch,co
     ++udpStarts;return 0;
 }
 static IHS_StreamVideoSubmitResult udpVideoSubmit(IHS_Session *session,const IHS_VideoEpochInfo *epoch,uint16_t id,IHS_FrameTicket *ticket,IHS_Buffer *data,IHS_StreamVideoFrameFlag flags,bool *taken,void *context) {
-    (void)context;assert(id==23);udpBorrowed b={session,epoch};
+    (void)context;assert(id==23 || udpGapMode);udpBorrowed b={session,epoch};
     sl_video_submit_result result=sl_video_submit(udpVideo,udpKey(epoch),IHS_BufferPointer(data),data->size,ticket,taken,(flags&IHS_StreamVideoFrameKeyFrame)&&!(flags&IHS_StreamVideoFrameFlushHandled),udpFeedback,udpInfo,&b);
     assert(result!=SL_VIDEO_SUBMIT_ERROR);++udpSubmits;
     atomic_store(&udpSubmitted,true);return IHS_StreamVideoSubmitOK;
@@ -70,7 +75,7 @@ static void udpVideoStop(IHS_Session *s,const IHS_VideoEpochInfo *e,void *ctx) {
     (void)s;(void)ctx;sl_video_stop(udpVideo,udpKey(e));sl_video_reap(udpVideo);atomic_store(&udpStopped,true);
 }
 static void udpTakePicture(void) {
-    if(udpHavePicture || !atomic_load(&udpSubmitted))return;
+    if((udpHavePicture && !udpGapMode) || !atomic_load(&udpSubmitted))return;
     sl_video_frame *f=sl_video_take(udpVideo);if(!f)return;
     AVFrame *af=f->pixels;assert(af->format==AV_PIX_FMT_YUV420P);
     udpWidth=(unsigned)af->width;udpHeight=(unsigned)af->height;
@@ -82,6 +87,7 @@ static void udpTakePicture(void) {
     }
     av_md5_final(md5,udpPixelMd5);av_free(md5);
     udpPictureId=IHS_FrameTicketIdentity(f->ticket).frameId;
+    if(udpGapMode) {assert(udpPictureCount<3);udpPictures[udpPictureCount].id=udpPictureId;memcpy(udpPictures[udpPictureCount].md5,udpPixelMd5,16);++udpPictureCount;}
     sl_resource_release(&f->ref);udpHavePicture=true;
 }
 static FILE *udpReplayFile;
@@ -99,7 +105,9 @@ static void udpReplayMedia(int socket,const struct sockaddr_in *address,uint8_t 
     while(fread(length,1,4,file)==4) {
         uint32_t size=0;for(unsigned i=0;i<4;++i)size|=(uint32_t)length[i]<<(8*i);
         if(!size) {
-            assert(count && !udpExpectedFeedbackSize);
+            assert(count);
+            if(udpGapMode)return; /* Pixel/real-feedback fixture barrier. */
+            assert(!udpExpectedFeedbackSize);
             udpExpectedFeedbackSize=udpReplaySize(file);assert(udpExpectedFeedbackSize>=13 && udpExpectedFeedbackSize<=sizeof(udpExpectedFeedback));
             assert(fread(udpExpectedFeedback,1,udpExpectedFeedbackSize,file)==udpExpectedFeedbackSize);
             return; /* Controlled peer waits for actual matching feedback. */

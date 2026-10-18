@@ -166,6 +166,8 @@ def audit(
                     try:
                         raw, address = peer.recvfrom(65536)
                     except socket.timeout:
+                        if react and hasattr(react, "on_idle"):
+                            react.on_idle()
                         continue
                     received.append(dict(data=raw.hex(), peer=list(address)))
                     if react:
