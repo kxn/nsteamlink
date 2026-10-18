@@ -377,3 +377,20 @@ field8仍保留旧密文。这两个字段的生命周期不同，不能据PIN�
 ticket和token；秘密选择不再提前消耗一次token IV。SDK加密返回错误时，不能发
 未完成的3/5；原caller的helper失败输入分别走9/10取消及内部通用错误。Source
 失败输入是明确的BGetDeviceToken bool provider，不冒称已触发真实CSPRNG故障。
+
+## 原请求续接与Proof的事务边界
+
+官方shell的同编号自动授权42组完整分支见协议参考§132：重复Unauthorized立即
+重发3并以本次time()+3重置期限；成功后同编号5；最近同key只重确认、不能推进；
+state4直接收到有效串流凭据仍可接受。pairing私钥、attempts、连接安全PIN密文
+属于同一原请求，UI另起PAIR/STREAM不能保持该契约。
+
+§133补原Proof的真实SHA256/AES和保存调用链56组：第一次true更新
+SHA256(old_secret\|\|challenge)，先尝试保存再加密；重复true不再派生，false不
+回滚secret。保存失败继续，加密失败保留已经更新的secret/标志且不发回复。
+此标志贯穿同编号自动授权和凭据成功后的state6，新事务才重置；timer停止与
+事务owner退休必须区分。来源及present编号检查、空回复、16/32-byte凭据consumer
+和反例边界见该节，空challenge的原断言不作为正常处理证据。
+
+这些是原客户端契约；显式LAN组件比较不证明自动续接或Proof轮换已实现，真实
+Steam/Switch互操作仍须独立验证。两类PIN的语义不因自动授权或Proof改变。

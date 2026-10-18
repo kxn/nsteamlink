@@ -109,6 +109,7 @@ class Authorization(m.Transaction):
         names = {
             3: "CMsgRemoteDeviceAuthorizationRequest",
             5: "CMsgRemoteDeviceStreamingRequest",
+            8: "CMsgRemoteDeviceProofResponse",
             9: "CMsgRemoteDeviceAuthorizationCancelRequest",
             10: "CMsgRemoteDeviceStreamingCancelRequest",
             14: "CMsgRemoteDeviceAuthorizationConfirmed",

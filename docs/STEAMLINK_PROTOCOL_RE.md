@@ -10564,3 +10564,124 @@ RSA输入的payload secret及9/10取消正文；内部EServerError=1与SDK授权
 ID大端、永久旧secret、AES128、忽略加密失败、3/5各自忽略helper失败）全部编译/链接
 成功、receiver正常完成，由正式比较器正常exit1拒绝。对新token加密后却误发旧密文
 的反例也能检出，不能只用“调用次数增加”声称发送内容已更新。
+
+
+## 132. 自动授权原请求的完整续接分支
+
+Evidence：固定§131 shell SHA256
+`15b2d79881eef0c47ed2f96c17d1d60a5f42d3285abcf9f512cfffdac5b238a2`，
+`audit-steam-auto-authorization.py`执行原Panel连接入口、StartStreaming、3/5 producer、
+回复parser/handler、完整授权密码计算、实际保存调用、Update和UI consumer。
+输入逐条记录收到的protobuf正文、host、墙钟、Update及取消，输出逐步保留编号、
+keypair调用次数、attempts、缓存、secret、14/3/5/9/10正文与UI消费凭据，不能用
+最终“成功”一个布尔值代替事务比较。42组输入覆盖普通/测网两种入口。
+
+| 触发（均为当前目标及匹配编号） | 原指令结果 |
+|---|---|
+| state5收到Unauthorized | 转state4，立即以原编号发送3；生成请求时已有的pairing码/keypair不重建 |
+| state4再次收到Unauthorized | 仍立即发送3，next重新设为本次发送后的time()+3；不等待旧期限 |
+| state4收到Busy/InProgress串流回复 | 保持state4及授权期限；到期继续发送3 |
+| 新key授权成功 | 保存尝试→14 Success→state5→立即发送原编号5；下次期限为time()+1 |
+| 成功后再次Unauthorized，回复最近同key | 重确认缓存Success，保持state4，不重算、不推进、attempts不增加 |
+| 随后回复不同有效key | 再计算一次并保存，转state5，同编号5；整条链keypair调用仍仅一次 |
+| Success无auth_key | 不做交换或保存，直接state5及同编号5，attempts仍为0 |
+| 授权result1–8并携key | 先判断result；5(InProgress)继续等，其余取消；均不进入交换、不发14 |
+| 第三份不同key才有效 / 第四份才有效 | 前者成功；后者先9取消再14 Denied，终止，不能第四次成功 |
+| 授权等待 / 授权成功后的等待中取消 | 分别发9 / 发10，清编号和目标；晚到携key回复只14 Canceled |
+| state4直接收到有效StreamingSuccess | 仍接受并进入state6，无须先等AuthorizationSuccess；16/32-byte会话凭据均交付 |
+
+最后一行分别执行普通launcher入口边界和测网SetAuthToken的原调用：普通入口收到
+原始16/32bytes，测网token同样逐字节相等。普通launcher调用后panel数字仍可为3；
+不能因panel未变就推断未启动。进入state6后的晚到携key授权回复只确认Canceled，
+不会重算secret或重复保存。
+
+重复Unauthorized的具体时间向量：首次wall1000发送3后next1003，wall1001再次
+收到则立即发送并设next1004；Update1003不发，Update1004发3并设next1007。
+@cb1ccc的`add #3`改为`add #1`在反例中实际命中4次，原receiver正常返回且无
+Source断言，但Update1003多发一份3。此反例校验期限分支确实参与输出，不把
+测试断言失败/仿真崩溃作为协议差异证据。41个选定原函数入口均有实际进入记录，
+地址、函数长度和指令SHA256见固定gzip manifest。
+
+Conclusion：自动授权必须保留同一个streaming owner；让UI另建PAIR再新建STREAM
+无法保持这些编号、private、attempts、缓存确认及PIN密文规则。PIN始终是创建时的
+field8密文，device_token按§131逐次以当前secret生成。这份Source输入没有用显式
+SetSecret或重建请求来冒充自动成功续接。
+
+【界限】输入进入实际protobuf parser/handler，不经过OS socket或BProcess的完整
+来源准入；§130已记录的foreign/坏包差异仍须独立处理。Qt呈现、身份/熵/墙钟、
+请求RSA、SDL文件端点、最后Send和普通launcher仍为明确provider边界；密钥对
+调用次数不能证明受控重复熵的自然新鲜度。本节不证明Native自动续接、真实Steam
+互操作、Switch文件耐久性或hbmenu生命周期。
+
+```sh
+PYTHONPATH=/path/to/audit-deps python3 scripts/audit-steam-auto-authorization.py \
+  --binary /path/to/libshell-arm64.so --output /tmp/auto-authorization.json
+```
+
+
+## 133. Proof轮换、实际密码/保存链与事务寿命
+
+Evidence：固定§132 shell，`audit-steam-streaming-proof.py`执行原
+HandleStreamingProofRequest@cb4f50、Proof parser/serializer、SHA256、带随机IV的
+SymmetricEncrypt/AES及实际SavePersistentClientKey/文件helper；不再以§20的
+SymmetricEncrypt替身输出证明此链。独立hashlib和AES解密核对新secret与每份proof
+明文；嵌入NUL/ff以及1/15/16/17/255-byte challenge覆盖原始字节与分组边界。
+
+| 输入/归属 | 原指令行为 |
+|---|---|
+| 当前目标、present且不匹配的request_id（包括0） | 忽略，无派生、保存、加密或回复 |
+| 当前目标、省略request_id | 接受，回复显式携带当前事务编号 |
+| 非目标或host=0（直接handler输入） | 仅回8，required response为空bytes，不带编号/updated_secret；先做host判断，不受错误编号影响 |
+| update_secret缺失或false | 不派生；用当前secret加密，回复显式updated_secret=false |
+| update_secret=true且本事务未更新 | SHA256(old_secret\|\|challenge)→选择新secret→尝试保存→标记已更新→以新secret加密→回8 |
+| 本事务已更新，又收到true（相同或不同challenge） | 不再hash/保存；用当前secret加密本次challenge，回复updated_secret=true |
+| 已更新后收到false | 不撤回新secret，回复updated_secret=false；该字段回显请求意图，不是“本次是否重新hash” |
+| 保存失败 | 原调用者仍设置已更新标志，用新secret加密并回复；不要求保存成功 |
+| 更新后的proof加密失败 | 新secret及已更新标志均保留，不发8、不取消、不报终态错误；下一份请求不重复派生 |
+
+host=0这行仅证明handler分支，不等同于网络准入：BProcess的非零clientId前置
+检查见§130；本节未把空host伪装成真实可入站来源。当前secret从manager+218/
+22c取得，已更新标志为+210。关键地址：目标/编号检查@cb4f8c–cb4fb4，更新门槛
+@cb4fc4–cb4fd0，SHA输入与新secret替换@cb51e4–cb5290，保存@cb52a0，置标志
+@cb52ac，随后跳回加密@cb503c。回复编号来自当前manager，而非缺失字段的0。
+
+原保存实参为当前目标及manager+1f8的当前身份；报告分别保存该字段和调用实参，
+且加入非零身份输入，不能把AuthorizationResponse的steamid直接当成Proof保存实参。
+身份查找仍是provider，这不证明自然账户选择策略。成功文件provider下实际key文件
+逐字节等于lowercase hex(new_secret)+换行；目录/open/零写/短写/close五种失败
+输入检查原文件调用尝试均先于加密，失败不强制事务结束。
+
+生命周期不是“第一次拿到凭据即全清”：原state4（授权等待）、state5（开流等待）
+和state6（已收到凭据）均处理当前目标及编号的Proof，保持各自state/编号/重试期限。
+轮换后的下一次3或5使用新secret生成device_token；field8仍是创建时的安全PIN密文。
+轮换后收到16/32-byte有效StreamingSuccess，普通launcher与测网token consumer均
+得到精确原始凭据，不把proof密文当session_key。
+
+同目标state5再次Start的等待守卫保留已更新标志，不再hash。state4再次Start或
+取消/替换后真正建立新事务，编号17→19、keypair调用1→2，标志重置，允许下一次
+更新；此前持久secret仍为输入，不自动恢复旧secret。在相同原编号内自动授权成功
+换secret后，Proof已更新标志仍保留，下一次true请求用授权后的当前secret加密，
+不再套一次SHA256。此处不能用“secret改变”代替“新事务创建”作为重置条件。
+
+56组固定输入均正常返回且无Source断言，44个选定原函数入口实际进入，指令manifest
+随gzip固定参考保存。四个原指令反例分别强制重复hash
+（@cb4fd0，两次命中）、跳过保存（@cb52a0）、忽略编号（@cb4fb4）及把加密key长度
+改为16（@cb5014）。均执行到正常返回、无Source断言，再由同一正式语义检查拒绝；
+原版基线均通过。它们检验实际输出/顺序差异，未以异常或指令预算耗尽充当检出。
+
+Conclusion：轮换状态应属于完整的原streaming事务，贯穿自动授权、请求重发和
+state6；停止重发timer不等于删除握手owner。原版“先更新/尝试保存，后加密”同时
+决定失败重试和后续会话凭据解密。Native的固定updated_secret=false及成功后退休
+timer owner，不能据当前普通proof加密可运行就称这份契约已对齐。
+
+【界限】Qt、身份/随机IV/墙钟、请求RSA、SDL文件端点、最终Send/普通launcher和
+OS线程仍为明确adapter。保存失败为受控文件返回值；加密失败明确替换helper的
+bool，不声称自然熵故障。空challenge的探索会触发原crypto plaintext长度断言
+（@cdbd80–cdbda8，line93），默认断言provider继续后的输出不能证明自然客户端
+断言处置，因此未混入本节56组无断言证据。本节未执行完整BProcess/OS入站、真实
+Steam、Switch存储耐久性或退出生命周期，也没有将Source回放冒称Native实现验收。
+
+```sh
+PYTHONPATH=/path/to/audit-deps python3 scripts/audit-steam-streaming-proof.py \
+  --binary /path/to/libshell-arm64.so --output /tmp/streaming-proof.json
+```
