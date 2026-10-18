@@ -19,8 +19,8 @@ typedef struct sl_video_frame {
     void *domain;
     atomic_bool available;
 } sl_video_frame;
-/* Called synchronously inside open/submit SDK format negotiation. Its context
- * is borrowed for that call only; the pipeline clears it before returning. */
+/* Borrowed only within the invoking open/submit or actor-pump call. Deferred
+ * requests never retain this callback/context across calls or cancellation. */
 typedef void (*sl_video_info_fn)(void *, const char *, unsigned threads);
 typedef uint8_t (*sl_video_cpu_count_fn)(void);
 typedef struct sl_video_config {
@@ -33,6 +33,9 @@ typedef struct sl_video_config {
     /* Platform CPU input, queried only for a slice-thread-capable codec.
      * NULL leaves SDK defaults intact. Not retained after open. */
     sl_video_cpu_count_fn cpu_count;
+    /* Original async flag; SDK open temporarily selects synchronously. The
+     * actor must pump formats and cancel before joining a submitting worker. */
+    bool deferred_formats;
 } sl_video_config;
 
 sl_video_pipeline *sl_video_create(void);
@@ -48,6 +51,12 @@ sl_video_open_result sl_video_open_ex(sl_video_pipeline *, sl_video_key, const s
 bool sl_video_has_hardware_context(sl_video_pipeline *, sl_video_key);
 void sl_video_close(sl_video_pipeline *, sl_video_key);
 void sl_video_stop(sl_video_pipeline *, sl_video_key);
+/* Non-SDK cancellation, including from a Base-locked interrupt. Same-object
+ * restart retains owned request values; replacement/destruction discards them. */
+void sl_video_cancel_formats(sl_video_pipeline *, sl_video_key, bool restarting);
+/* Lifecycle actor only, after control FIFO. `info/context` are borrowed here. */
+void sl_video_process_formats(sl_video_pipeline *, sl_video_key, sl_video_info_fn, void *);
+bool sl_video_formats_pending(sl_video_pipeline *);
 /* Decoder flush phase: the protocol owner purges encoded fragments. Linux
  * AVCodec is not SDK-flushed; queued/held pixel objects survive until their
  * owners release them. Stop closes parser/codec; reap retires domain storage. */

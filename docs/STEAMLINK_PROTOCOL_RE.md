@@ -8519,3 +8519,132 @@ python3 scripts/audit-linux-joined-task.py --output /tmp/linux-joined-task.json
 该独立实验保存真实kernel版本、C源码hash、join返回值和完整stat。仅在实际捕获重叠时
 断言PF_EXITING；限定轮数未捕获则明确报告inconclusive，不伪造可重现调度，也不把
 Linux v6.8机制参考称为本机或CI内核版本。
+
+
+## 104. AVCodec格式交接的打开期分支与数组所有权
+
+### 104.1 固定官方入口与触发
+
+Evidence：固定Linux 1.3.32.316的StartDecoding@3246d0在@32477e将decoder+2cc置1，
+调用原SDK avcodec_open2后在@32478f清0。原dispatch@324c90检查async byte(+100)
+与+2cc：async=false或+2cc=true时尾调selector@324990；其余路径发布pending并等
+active/main consumer，没有格式请求超时。§102–103实际后台路径保持async=true，
+SDK打开时的同步guard与运行期actor交接分开；不能凭线程ID猜测何时走同步选择。
+
+Conclusion：Native可用同一selector实现打开期同步分支和后台等待分支，生产路径
+不按Switch硬件再拆分decoder。原SDK回调提供的formats仅在回调存活时借用，跨取消/
+重启的请求必须持有自己的值，不能延长Native借用session、epoch或SDK context寿命。
+数组取消后的原API能力向量与自然产品触发分开，不能把手工phase1 reset等同真实UI事件。
+
+### 104.2 Native交接与取消契约
+
+按§103，IHS actor先reset、网络、control FIFO，再消费格式请求，最后处理client stage；
+格式选择及80发送在这个actor，不能靠SDK worker直接发送替代。SDK open guard内仍同步
+选择。原Start/Stop和格式请求分别建模，保留同一decoder重启后的pending值；通道替换/
+对象销毁则关闭旧请求，禁止向下一session借用旧指针。
+
+应用format等待使用独立锁/条件，不能持actor所需decoder锁来消费它；actor只读保护下
+的后端元数据快照、选择格式并复制描述，释放format锁后才发送80，再发布结果/唤醒SDK。
+任何Base锁下的interrupt回调都只能取消/唤醒，不能调用SDK、join或获取Base/decoder锁。
+IHS在worker join之前通知取消；Stop/Flush及SDK资源释放仍在join后。关闭会话冻结
+准入也取消格式等待；同对象reset可保留owned formats值，后继open更新后端元数据。
+
+Source只证明原偏序/guard/消息策略；owned formats、同步保护和session/epoch标签属于
+Native内存/线程表示，不声称复制官方对象布局或读取已失效的SDK数组。原始软件/硬件
+renderer、完整接收与自然reset producer等边界仍按前各节分别验证。
+
+
+### 104.3 原数组分配、取消及复用
+
+Evidence：`audit-steam-client-format-memory.py`沿§103的完整原Client/Init与显式phase1
+RequestReset(false)向量，在原FinalDecode入口启用allocator观察。真实SDK先通过
+posix_memalign分配16字节候选表，实际内容98/44/0/-1；原callback取消返回-1后，同一
+allocation进入libc free并返回，之后同地址至少有一次malloc(11)复用，原main consumer
+仍读取decoder+2d0所保存地址。第二张图的候选表则在consumer时仍属本次活跃分配，
+callback返回后才释放。SDK自定义free override保持NULL；原SDK/allocator返回不替换。
+
+观察器按(thread,return-PC,stack)配对真实API入口/返回，不用GDB FinishBreakpoint；
+分配ID随成功返回产生，free只归属于已观察的live generation。未匹配的再次free标为
+unattributed，不能把地址相同说成同一对象或double free。公开API观察不是所有libc
+内部allocator覆盖，报告中的last observed generation不是当前占用者的完整证明；
+原候选allocation已完成free、至少一次地址复用则有直接入口/返回支持。
+
+Conclusion：不能把原借用指针当Native长期owner；取消后保留pending的策略必须与
+SDK数组寿命分开。此显式API场景不证明自然UI/网络必然触发同一路径，不据此认定官方
+自然产品UAF或原用户停顿根因。Native保留原offered值和条件性上报策略，不复制失效指针。
+
+全局allocator观察曾被原日志懒初始化的大量调用耗尽探针观察预算；正式观察从
+FinalDecode（SDK候选分配之前）开始，保留此前失败日志，不增加Source超时/强制返回。
+扩展观测也见完整Client dtor后进程服务已退出、原ELF析构仍实际join0。更正把§103
+快速fixture的线程计数3当成所有全局服务一直存活的invariant：验证应比较实际线程ID，
+Stop/资源销毁后的集合不得超出Start前baseline，另独立核对真正join，而非冻结残留数量。
+
+```sh
+python3 scripts/audit-steam-client-format-memory.py \
+  --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
+  --sdk-directory build/video-recovery-re/linux-1.3.32.316/package/lib \
+  --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/patched-runtime/lib \
+  --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/runtime/lib \
+  --output /tmp/steam-client-format-memory.json
+```
+
+### 104.4 原过程与Native验证边界
+
+完整原Client探针增加reset_ready：第一张图完成后调用原RequestReset(false)，再由原
+OnThink处理reset。原Restart/主线程DataLost先于network/control/format消费；此时无
+pending，不增加80；新ID24的SDK请求才产生第二次80，旧ID23跨重建/Stop仍有相同像素。
+它与直接public Restart（不含外层DataLost）分开，不用两个API的相似名字替代调用者。
+
+保存的`steam-client-format-handoff-reference.json.gz`包含八个真实原进程报告、54份
+FDE身份及声明边界。`check-steam-format-handoff.py`将normal、reset_ready、reset_pending
+的SDK状态、info次数、实际图片数和DataLost producer逐项与Native比较；取消/替换使用
+明确的SDK投影或cancel+decode组合，不冒称原完整控制替换链的单进程观测。
+
+Native fixture实际运行生产回调、控制FIFO和session actor、真实worker/SDK；在格式
+pending时验证worker尚未完成，消息80实际来自actor，SDK状态及独立framemd5和跨Stop
+旧图片保持一致。控制停止/替换通过完整actor update消费FIFO后才消费格式请求。
+Base-held interrupt与actor Info竞争验证锁依赖；freeze关闭后的晚Put可按原本地准入
+保护拒绝，不能将它算作Source仍交付占位壳的全路径等价。SDK open失败和打开期callback
+是声明的SDK terminal输入，不冒称自然硬件触发。
+
+原Start的+2cc guard与client级SendDecoderInfo@31dd40（先copy client+648再构造/发送80）
+表明打开期同步上报不依赖一个已完成注册的video endpoint。Native在startTracked作用域
+持有starting epoch值，允许匹配上报、拒绝旧epoch，返回立即清除，包含打开失败收尾。
+这仍是借用API作用域，不将starting epoch扩展为全局放宽准入。
+
+
+取消hook位于Native通用ChannelClass的可选dataInterrupt槽，不能假设所有调用通用data
+清理函数的消费者都有更大的DataClass布局。真实generic消费者/关闭向量与ASan验证这
+个类边界。Native的actor是IHS会话网络/生命周期线程，承担Source OnThink的排序角色；
+不是把SDL/GFX资源移到该线程。该消费者只选格式、复制描述及发送80，不调用SDK/GFX。
+软件描述保留原字符串@8e2578的`%d thread%s`签名，协议threads仍按uint32编码，不把
+SDK字段的显示类型悄悄改成unsigned。
+
+
+### 104.5 SDK open错误后的格式消费
+
+Evidence：原Start@324798判定SDK非零后，@324818仅记录错误并返回；decoder+268
+仍保留context，parser+270未创建。原consumer@324d10只检查pending，软件selector
+@324a53–80从当前context+290读取线程数，不检查SDK已打开或parser存在。
+`reset_open_error`在原完整Client的pending reset场景，于第二次SDK open调用前明确
+注入`extradata_size=-1`（bundled context+50，SDK@69fcc检查大小）；真实SDK返回
+EINVAL(-22)，原错误分支继续运行。没有替换返回值、原方法、async、phase或回调。
+
+该真实过程先取消旧SDK请求、join、释放旧context，再原Start分配新context；open失败
+后仍active=true、context存在、parser不存在、opening guard已清0。原OnThink随后消费
+旧pending，缓存软件4 threads、尝试80（unconnected返回3），清pending；DataLost分别
+由旧worker和reset actor产生。最终Stop释放新context，原进程正常退出并实际join0。
+独立巨大尺寸输入尝试的SDK open返回0，不能算打开失败证据；无效SDK输入也不是已证实
+的网络/UI自然producer，不据此声称自然硬件失败或原用户卡顿触发方式。
+
+Conclusion：撤回将“SDK打开失败就不再消费旧pending”当作官方策略的推断。Native
+格式后端的元数据有效性必须与解码准入分开：在真实open返回后复制硬件格式/线程数，
+即便SDK失败、Native释放其context，actor仍可按原顺序消费owned格式值；后续媒体
+不准入失败后端。取消/freeze保持生效，元数据发布不能重新激活已取消请求。Native
+无效SDK输入向量同样调用真实open2得到-22，再与该原过程的80/图片/SDK/DataLost投影
+比较，不把本地安全释放称为官方context布局/所有权复制。
+
+控制FIFO的`config_pending`另外验证：本cycle的control配置修改只设置reset，现有
+格式请求在同cycle继续消费；下一cycle先reset，直到下一个SDK请求才再次上报80。
+其依据为§97配置delegate与原OnThink的reset→network→control→format偏序；测试通过
+真实CSetStreamingClientConfig包装与FIFO，不冒称已完成自然Qt配置事件的全链证据。

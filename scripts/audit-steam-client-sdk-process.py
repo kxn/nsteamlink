@@ -40,7 +40,14 @@ def digest(path):
 
 
 def audit(
-    binary, sdk, qt, output, worker_mode=None, client_bootstrap=None, endpoint=None
+    binary,
+    sdk,
+    qt,
+    output,
+    worker_mode=None,
+    client_bootstrap=None,
+    endpoint=None,
+    format_memory=False,
 ):
     assert worker_mode in (
         None,
@@ -49,10 +56,18 @@ def audit(
         "cancel",
         "restart",
         "reset_pending",
+        "reset_ready",
+        "reset_open_error",
     )
-    assert worker_mode != "reset_pending" or client_bootstrap == "udp"
+    assert (
+        worker_mode not in ("reset_pending", "reset_ready", "reset_open_error")
+        or client_bootstrap == "udp"
+    )
     assert client_bootstrap in (None, "constructed", "udp")
     assert client_bootstrap is None or worker_mode is not None
+    assert not format_memory or (
+        client_bootstrap == "udp" and worker_mode == "reset_pending"
+    )
     if client_bootstrap == "udp":
         assert (
             endpoint
@@ -95,6 +110,10 @@ def audit(
                     worker_mode=worker_mode,
                     client_bootstrap=client_bootstrap,
                     endpoint=endpoint,
+                    format_memory=format_memory,
+                    format_memory_helper=str(
+                        ROOT / "scripts/steam-client-format-memory-gdb.py"
+                    ),
                     worker_helper=str(ROOT / "scripts/steam-client-worker-gdb.py"),
                 )
             )
@@ -166,6 +185,15 @@ def audit(
         worker_helper_sha256=digest(ROOT / "scripts/steam-client-worker-gdb.py")
         if worker_mode
         else None,
+        **(
+            {
+                "format_memory_helper_sha256": digest(
+                    ROOT / "scripts/steam-client-format-memory-gdb.py"
+                )
+            }
+            if format_memory
+            else {}
+        ),
         qt_dependency_sha256=dependencies,
         qt_required_controller_patch=QT_PATCH,
         source_functions=boundary.inventory(

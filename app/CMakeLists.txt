@@ -189,6 +189,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
         -Wl,--wrap=av_parser_parse2 -Wl,--wrap=sl_video_timing_update
         -Wl,--wrap=IHS_SessionVideoDecodeFeedback -Wl,--wrap=IHS_SessionVideoRequestReset -Wl,--wrap=IHS_SessionChannelQueuePacket
         -Wl,--wrap=sl_gfx_present -Wl,--wrap=sl_video_open_ex
+        -Wl,--wrap=IHS_SessionVideoDecoderInfo
         -Wl,--wrap=IHS_FrameTicketVideoDecodeStage
         -Wl,--wrap=sl_video_select -Wl,--wrap=IHS_FrameTicketUploadStage
         -Wl,--wrap=IHS_SessionPacketsWindowReleaseFrame -Wl,--wrap=IHS_BaseSend
@@ -205,6 +206,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-video-recovery.py"
         --receiver $<TARGET_FILE:nsl-video-timing-oracle>)
     set_tests_properties(video_avcodec_recovery_vectors PROPERTIES TIMEOUT 90)
+    add_test(NAME video_format_handoff COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-format-handoff.py"
+        --receiver $<TARGET_FILE:nsl-video-timing-oracle>)
+    set_tests_properties(video_format_handoff PROPERTIES TIMEOUT 120)
     add_test(NAME player_hardware_config_vectors COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-player-config.py"
         --receiver $<TARGET_FILE:nsl-video-timing-oracle>)

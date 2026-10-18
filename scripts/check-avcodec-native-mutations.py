@@ -33,6 +33,7 @@ def main():
     media = ROOT / "app/platforms/common/media.c"
     oracle = ROOT / "app/tests/video_timing_oracle.c"
     system = ROOT / "app/platforms/desktop/system.c"
+    session = ROOT / "third_party/ihslib/src/session/session.c"
     mutations = [
         (
             "defer_codec_until_external_release",
@@ -252,10 +253,10 @@ def main():
             "info",
         ),
         (
-            "omit_submit_info_context",
+            "omit_actor_info_callback",
             pipeline,
-            "d->info = info;",
-            "d->info = NULL;",
+            "if (info) info(context, description, (unsigned)threads);",
+            "(void)info; (void)context;",
             "info",
         ),
         (
@@ -280,6 +281,79 @@ def main():
             "info",
         ),
     ]
+    # Full protocol/runtime/SDK format path, including actual actor scheduling.
+    lock_begin = "    ++f->consumers;\n"
+    lock_end = "    --f->consumers;\n"
+    text = pipeline.read_text()
+    assert text.count(lock_begin) == text.count(lock_end) == 1
+    locked = text[text.index(lock_begin) : text.index(lock_end)]
+    assert locked.count("pthread_mutex_unlock(&f->lock);") == 1
+    assert locked.count("pthread_mutex_lock(&f->lock);") == 1
+    holding = locked.replace(
+        "    pthread_mutex_unlock(&f->lock);", "    /* hold format while sending */"
+    )
+    holding = holding.replace(
+        "    pthread_mutex_lock(&f->lock);", "    /* already held */"
+    )
+    mutations += [
+        (
+            "worker_synchronous_format",
+            media,
+            ".deferred_formats = deferred_formats,",
+            ".deferred_formats = false,",
+            "formats",
+        ),
+        (
+            "omit_actor_format_phase",
+            session,
+            "IHS_SessionVideoHandleFormatRequests(session);",
+            "/* omit actor format phase */",
+            "formats",
+        ),
+        (
+            "drop_reset_format_values",
+            pipeline,
+            "if (!restarting && (same(f->backend, key) || same(f->request, key))) f->pending = false;",
+            "if (same(f->backend, key) || same(f->request, key)) f->pending = false;",
+            "formats",
+        ),
+        (
+            "retain_replaced_format_values",
+            pipeline,
+            "if (!restarting && (same(f->backend, key) || same(f->request, key))) f->pending = false;",
+            "/* incorrectly retain requests for a deleted decoder */",
+            "formats",
+        ),
+        (
+            "omit_prejoin_format_cancel",
+            media,
+            "if (video) sl_video_cancel_formats(video,\n        (sl_video_key){epoch->session_id, epoch->video_epoch}, restarting);",
+            "(void)epoch; (void)restarting;",
+            "formats",
+        ),
+        (
+            "omit_initial_info_scope",
+            video,
+            "bool starting = session->videoStarting &&\n        session->videoStartingEpoch.session_id == epoch->session_id &&\n        session->videoStartingEpoch.video_epoch == epoch->video_epoch;",
+            "bool starting = false;",
+            "formats",
+        ),
+        (
+            "retain_starting_info_scope",
+            video,
+            "session->videoStarting = false;",
+            "/* leak initializing epoch */",
+            "formats",
+        ),
+        (
+            "discard_failed_open_metadata",
+            pipeline,
+            "    if (opened < 0) {\n        failure = opened == AVERROR(ENOMEM)",
+            "    if (opened < 0) {\n        p->format.metadata_valid = false;\n        failure = opened == AVERROR(ENOMEM)",
+            "formats",
+        ),
+        ("format_lock_across_info", pipeline, locked, holding, "formats"),
+    ]
     if a.only:
         assert set(a.only) <= {item[0] for item in mutations}, a.only
         mutations = [item for item in mutations if item[0] in a.only]
@@ -294,7 +368,16 @@ def main():
         changed.write_text(body)
         target = (
             "nsl-video-timing-oracle"
-            if kind in ("oracle", "recovery", "player", "info", "threads", "resources")
+            if kind
+            in (
+                "oracle",
+                "recovery",
+                "player",
+                "info",
+                "threads",
+                "resources",
+                "formats",
+            )
             else "nsl-video-pipeline-tests"
         )
         link = shlex.split(
@@ -319,7 +402,15 @@ def main():
                 )
             return obj
 
-        if kind in ("oracle", "recovery", "player", "info", "threads", "resources"):
+        if kind in (
+            "oracle",
+            "recovery",
+            "player",
+            "info",
+            "threads",
+            "resources",
+            "formats",
+        ):
             text = oracle.read_text().replace(
                 '#include "../platforms/common/',
                 '#include "' + str(ROOT / "app/platforms/common") + "/",
@@ -333,7 +424,7 @@ def main():
                 i for i, x in enumerate(link) if x.endswith("video_timing_oracle.c.o")
             )
             link[index] = str(obj)
-            if source in (video, config, media, system):
+            if source in (video, config, media, system, session):
                 objects.append(compile_file(source, changed, source.stem))
         else:
             objects.append(compile_file(pipeline, changed, "pipeline"))
@@ -349,7 +440,7 @@ def main():
                 stdout=log,
                 stderr=subprocess.STDOUT,
             )
-        if kind in ("oracle", "recovery", "player", "info", "threads"):
+        if kind in ("oracle", "recovery", "player", "info", "threads", "formats"):
             command = [
                 "python3",
                 str(
@@ -360,6 +451,7 @@ def main():
                         "player": "scripts/check-steam-player-config.py",
                         "info": "scripts/check-steam-decoder-info.py",
                         "threads": "scripts/check-steam-decode-threads.py",
+                        "formats": "scripts/check-steam-format-handoff.py",
                     }[kind]
                 ),
                 "--receiver",
@@ -393,6 +485,29 @@ def main():
                 "oracle crashed",
                 r.stderr[-2000:],
             )
+        elif kind == "formats":
+            expected = {
+                "worker_synchronous_format": (
+                    "normal",
+                    "atomic_load(&processed)<target",
+                ),
+                "omit_actor_format_phase": (
+                    "normal",
+                    "sl_video_formats_pending(pipeline)",
+                ),
+                "drop_reset_format_values": ("reset_pending", "infoCount=="),
+                "discard_failed_open_metadata": ("reset_unavailable", "infoCount==1"),
+                "retain_replaced_format_values": ("replace_pending", "infoCount==0"),
+                "omit_prejoin_format_cancel": ("reset_pending", "TimeoutExpired"),
+                "omit_initial_info_scope": ("opening_guard", "infoCount==1"),
+                "retain_starting_info_scope": ("normal", "videoStarting"),
+                "format_lock_across_info": ("base_cancel", "TimeoutExpired"),
+            }[name]
+            assert all(value in r.stderr for value in expected), (
+                name,
+                r.stderr[-3000:],
+            )
+            assert "-11," not in r.stderr, (name, "unexpected segmentation fault")
         elif kind == "resources":
             expected = (
                 "threadsWithOldFrame==threadBaseline"

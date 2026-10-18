@@ -7,9 +7,9 @@
 #undef sl_video_create
 #undef sl_video_submit
 static sl_video_pipeline *pipeline;
-static uint32_t clockTick;
+static atomic_uint clockTick;
 static unsigned inputTicks, outputTicks;
-static bool recording;
+static atomic_bool recording;
 static unsigned action;
 static uint8_t golden[16];
 static int forcedSend=INT_MAX, forcedReceive=INT_MAX, parseDelta, parsedSize=-1;
@@ -21,6 +21,10 @@ static unsigned controlCount, controlSteps[512], controlSizes[512];
 static uint8_t controlBodies[512][1024];
 static unsigned infoCount, infoPhase;
 static bool infoSendOk=true, infoOpenCallback;
+static bool formatChecking;
+static pthread_t formatActor;
+static atomic_bool formatWrongThread, formatInfoEntered;
+static bool formatOpeningCheck, formatFailOpen;
 /* Existing frozen comparisons declare the one-CPU input explicitly. */
 static uint8_t testCpuCount=1;
 static unsigned cpuQueries;
@@ -53,11 +57,14 @@ sl_video_open_result __wrap_sl_video_open_ex(sl_video_pipeline *p,sl_video_key k
 static int64_t forcedPts=AV_NOPTS_VALUE;
 static unsigned eventCount;
 static int64_t events[8192][5];
+static pthread_mutex_t eventLock=PTHREAD_MUTEX_INITIALIZER;
 static void event(unsigned kind,int64_t a,int64_t b,int64_t c) {
     if (!recording) return;
+    pthread_mutex_lock(&eventLock);
     assert(eventCount<8192);
     events[eventCount][0]=action;events[eventCount][1]=kind;
     events[eventCount][2]=a;events[eventCount][3]=b;events[eventCount++][4]=c;
+    pthread_mutex_unlock(&eventLock);
 }
 static unsigned action, pictureCount, submitCount, completionCount, selectCount, waitCount;
 static uint32_t pictures[512][3], submits[512][3], completed[2048][2];
@@ -65,7 +72,7 @@ static unsigned decodeCount;
 static uint32_t decodeEvents[1024][4];
 static int64_t selected[512][3], waits[512][2];
 static uint8_t payload[2204];
-static bool recording, presenting;
+static bool presenting;
 static int suppressOutput = -1;
 static unsigned physicalCount, prepCount, inputCount;
 static uint64_t inputSerials[512][4];
@@ -84,7 +91,10 @@ sl_video_submit_result sl_video_submit(sl_video_pipeline *p, sl_video_key key, c
     sl_video_submit_result result = timing_submit(p, key, data, size, ticket, taken, keyframe, feedback, info, context);
     domain *reported=find_domain(p,key);
     assert(!reported || (!reported->info && !reported->info_context));
-    assert(result != SL_VIDEO_SUBMIT_ERROR && p->publish_seq <= before + (size != 0));
+    pthread_mutex_lock(&p->mailbox);
+    bool closing = formatChecking && p->frozen;
+    pthread_mutex_unlock(&p->mailbox);
+    assert((result != SL_VIDEO_SUBMIT_ERROR || closing) && p->publish_seq <= before + (size != 0));
     pthread_mutex_lock(&p->mailbox);
     assert(inputCount < 512);
     if (!p->job_count) { pthread_mutex_unlock(&p->mailbox); return result; }
@@ -170,7 +180,10 @@ int __real_avcodec_open2(AVCodecContext *,const AVCodec *,AVDictionary **);
 int __wrap_avcodec_open2(AVCodecContext *c,const AVCodec *codec,AVDictionary **options) {
     sdkThreadSetup[0]=c->thread_count;sdkThreadSetup[1]=c->thread_type;
     sdkThreadSetup[2]=codec->capabilities;
+    bool invalidOpenInput=formatFailOpen;formatFailOpen=false;
+    if(invalidOpenInput) c->extradata_size=-1; /* Declared SDK input, same as Source. */
     int result=__real_avcodec_open2(c,codec,options);
+    if(invalidOpenInput) assert(result==AVERROR(EINVAL));
     sdkThreadResult[0]=c->thread_count;sdkThreadResult[1]=c->thread_type;
     sdkThreadResult[2]=c->active_thread_type;
     if(!result && infoOpenCallback) {
@@ -257,6 +270,8 @@ bool __wrap_IHS_SessionSendControlMessage(IHS_Session *s, EStreamControlMessage 
                                           const ProtobufCMessage *message) {
     (void)s;
     if(t==k_EStreamControlVideoDecoderInfo) {
+        if(formatChecking && !pthread_equal(formatActor,pthread_self()))
+            atomic_store(&formatWrongThread,true);
         assert(infoCount<512);size_t n=protobuf_c_message_get_packed_size(message);
         assert(n+1<=sizeof(infoBodies[0]));
         infoSteps[infoCount]=action;infoPhases[infoCount]=infoPhase;infoSizes[infoCount]=(unsigned)n+1;
@@ -272,6 +287,17 @@ bool __wrap_IHS_SessionSendControlMessage(IHS_Session *s, EStreamControlMessage 
         ++controlCount;
     }
     event(9,t,0,clockTick); return t!=k_EStreamControlVideoDecoderInfo || infoSendOk;
+}
+bool __real_IHS_SessionVideoDecoderInfo(IHS_Session *,const IHS_VideoEpochInfo *,const char *,uint32_t);
+bool __wrap_IHS_SessionVideoDecoderInfo(IHS_Session *s,const IHS_VideoEpochInfo *epoch,
+                                        const char *info,uint32_t threads) {
+    if(formatChecking) atomic_store(&formatInfoEntered,true);
+    if(formatOpeningCheck && infoPhase==4) {
+        assert(s->videoStarting && !IHS_SessionChannelForType(s,IHS_SessionChannelTypeDataVideo));
+        IHS_VideoEpochInfo stale=*epoch;--stale.video_epoch;
+        assert(!__real_IHS_SessionVideoDecoderInfo(s,&stale,info,threads));
+    }
+    return __real_IHS_SessionVideoDecoderInfo(s,epoch,info,threads);
 }
 static void config_changed(IHS_Session *s,const uint8_t *p,size_t n,bool local,void *context) {
     event(10,n,local,clockTick);
@@ -327,7 +353,7 @@ static void controlMessage(IHS_Session *s, EStreamControlMessage t, const Protob
     IHS_SessionChannelControlDrainIncoming(s->channels[1]);
     IHS_BufferClear(&b,true);
 }
-static void packet(IHS_Session *s, unsigned fid, unsigned seq, unsigned flags, uint32_t stamp,
+static void packet_enqueue(IHS_Session *s, unsigned fid, unsigned seq, unsigned flags, uint32_t stamp,
                    unsigned offset, unsigned size) {
     assert(offset <= sizeof(payload) && size <= sizeof(payload)-offset);
     IHS_SessionFrame f = {.header={.type=IHS_SessionPacketTypeReliable,.channelId=3,
@@ -346,7 +372,14 @@ static void packet(IHS_Session *s, unsigned fid, unsigned seq, unsigned flags, u
     IHS_SessionDeliverReliableFrame(s,&f);
     IHS_SessionFrameClear(&f,true);
     ++target;
-    for (unsigned n=0;n<5000 && atomic_load(&processed)<target;++n) usleep(1000);
+}
+static void packet(IHS_Session *s, unsigned fid, unsigned seq, unsigned flags, uint32_t stamp,
+                   unsigned offset, unsigned size) {
+    packet_enqueue(s,fid,seq,flags,stamp,offset,size);
+    for (unsigned n=0;n<5000 && atomic_load(&processed)<target;++n) {
+        IHS_SessionVideoHandleFormatRequests(s);
+        usleep(1000);
+    }
     assert(atomic_load(&processed)==target && !s->base.interrupted);
 }
 static void hash(sl_video_frame *frame, uint8_t out[16]) {
@@ -530,10 +563,12 @@ static void resources(sl_runtime *r) {
     uint8_t actual[16];hash(resourceOld,actual);
     assert(!memcmp(actual,golden,16) && resourceOld->media_timestamp==resourceStamp);
 }
+#include "video_format_handoff.h"
 int main(int argc,char **argv) {
-    assert(argc==2 || ((argc==3 || argc==4) && !strcmp(argv[2],"--resources")));
-    bool resourceMode=argc>=3;
-    if (argc==4) {
+    bool formatMode=argc==4 && !strcmp(argv[2],"--formats");
+    assert(argc==2 || formatMode || ((argc==3 || argc==4) && !strcmp(argv[2],"--resources")));
+    bool resourceMode=argc>=3 && !formatMode;
+    if (argc==4 && !formatMode) {
         char *end;unsigned long count=strtoul(argv[3],&end,10);
         assert(*argv[3] && !*end && count<=65535);testCpuCount=(uint8_t)count;
     }
@@ -568,6 +603,7 @@ int main(int argc,char **argv) {
     for(unsigned n=0;n<16;++n) { unsigned value;assert(sscanf(digest+n*2,"%2x",&value)==1);golden[n]=value; }
     sl_video_scheduler_init(&scheduler,true);
     recording=true;
+    if (formatMode) format_handoff_case(&r,&m,argv[3]);
     if (resourceMode) {controlMessage(r.session,k_EStreamControlStartVideoData,&m.base);resources(&r);}
     bool videoStarted=false;
     char line[512];
@@ -653,12 +689,12 @@ int main(int argc,char **argv) {
         } else if (line[0]=='X') {
             assert(sscanf(line,"X %d",&suppressOutput)==1);
         } else if (line[0]=='D') {
-            assert(sscanf(line,"D %u",&clockTick)==1);
+            unsigned tick;assert(sscanf(line,"D %u",&tick)==1);clockTick=tick;
             presenting=true;stream_media_present();presenting=false;
         } else if (line[0]=='N') {
-            assert(sscanf(line,"N %u",&clockTick)==1);consume();
+            unsigned tick;assert(sscanf(line,"N %u",&tick)==1);clockTick=tick;consume();
         } else if (line[0]=='W') {
-            assert(sscanf(line,"W %u",&clockTick)==1);assert(waitCount<512);
+            unsigned tick;assert(sscanf(line,"W %u",&tick)==1);clockTick=tick;assert(waitCount<512);
             waits[waitCount][0]=action; waits[waitCount++][1]=sl_video_wait(pipeline);
         } else {
             assert(line[0]=='R');IHS_SessionVideoHandlePendingReset(r.session);

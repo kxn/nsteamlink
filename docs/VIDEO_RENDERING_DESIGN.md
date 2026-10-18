@@ -1446,15 +1446,33 @@ domain storage及各自SDK buffer/frames context/device引用。撤回旧设计�
 §103.5排除已进入kernel退出的proc条目，并单独检查可观测join返回值；这仍不等同真实
 NVTEGRA/loader验收。
 
-格式回调线程边界见协议参考§102：官方Linux后台SDK请求由main consumer选择格式并发80，
-后台等待active/pending；Stop清active可终止等待。Native现有hardware_format/info在SDK
-回调线程内同步执行，借用session/epoch只覆盖SDK调用。这不证明主线程调度已等价，
-消息内容/回调内上报与完整线程交接必须分开论证；不能跨线程长期保存借用指针。
-§103完整原Client的OnThink补齐外层顺序：pending reset先取消/join旧worker并重建context，
-随后才处理network/control/main格式请求；Restart刚返回时pending仍可为true。不能仅把
-info排到main就假定对齐，等待者取消必须先于join，遗留请求及session/epoch/context存活
-必须单独建模。该原进程fixture在connecting phase显式接入媒体API，不是自然控制启动
-或真实Switch硬件交错证明。
+格式回调按协议参考§102–104区分SDK open guard与运行期异步请求。原+2cc guard在
+avcodec_open2前置1、返回后清0；Native同样在open中同步选择，其余生产submit把offered
+格式值复制到pipeline-owned slot并等待。IHS actor按reset→network→control FIFO→格式
+消费→client stage顺序选择、发送80，再公布结果唤醒SDK。发送失败仍保留cache，不重建。
+直接codec/兼容媒体fixture可显式关闭async，其作用与原async bit分支相同，共用selector。
+
+撤回§102–103所述“Native仍在后台SDK回调中同步发送80”作为现行实现描述；它是改动前
+差异。actor消费读取格式锁保护的后端元数据值，不持decoder锁、不保存借用SDK context；
+复制描述后先释放format锁，再进IHS/Base发送。原SDK formats在取消路径中已观测到free
+及地址复用，Native保留值而非延长借用数组。64项choice界限是本地SDK数组保护，不是
+Steam wire限制；不按AV_PIX_FMT_NB推断共享SDK枚举ABI。
+
+IHS interrupt在join之前取消/唤醒，不调用SDK或获取Base/decoder锁。Stop仍在join后按
+parser→codec释放；同对象reset保留owned pending，后继open更新后端元数据。通道销毁
+在join后再次取消旧请求，清理初次interrupt之后的晚发布；打开失败也登记当前backend key，
+使收尾不会遗留上一epoch请求。按协议参考§104.5，SDK打开失败后的元数据有效性与
+解码准入分开：保存标量快照，仍消费同对象旧pending；Native安全释放失败context不
+阻断该格式阶段。open结束的元数据发布不得重新激活已取消请求。会话freeze取消等待，
+owned slot不含session/epoch指针。
+
+打开期同步get_format可以早于ChannelAdd。IHS用Base保护的starting epoch仅在
+startTracked回调内授权Info80，返回即清除；不能只接受已经注册的视频通道。原client级
+cache/producer@31dd40及open guard支持这一触发，不将受控SDK open回调当作自然硬件出错。
+
+这些偏序与所有权契约由真实IHS actor/worker/SDK软件图片、原客户端过程投影及取消交错
+验证；explicit Connecting-phase输入、组合的替换向量、SDK terminal注入和应用freeze保护
+分别标注。完整Qt、自然UI/reset producer、真实Switch硬件/driver交错仍有独立边界。
 
 GPU fence 错误使批次隔离并关闭正常渲染。退出阶段仅在 SDK queue idle 正常返回且 queue
 未处于 error state 时释放隔离引用；已故障 queue 进入 Switch fatal，不能返回 hbmenu。

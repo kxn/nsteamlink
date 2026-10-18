@@ -18,6 +18,7 @@
 #define LEASE_COUNT  20
 #define INPUT_JOB_COUNT 256 /* matches bounded CPU endpoint storage; not an SDK queue policy */
 #define MAX_PACKET   (2u * 1024u * 1024u)
+#define FORMAT_CHOICES 64 /* Local SDK-array guard, not a Steam wire limit. */
 typedef struct domain {
     sl_video_key key;
     AVCodecContext *codec;
@@ -28,7 +29,20 @@ typedef struct domain {
     enum AVPixelFormat hardware_format;
     sl_video_info_fn info;
     void *info_context; /* Non-NULL only within the borrowed SDK call scope. */
+    sl_video_pipeline *pipeline;
+    bool deferred_formats, opening;
 } domain;
+typedef struct format_handoff {
+    pthread_mutex_t lock;
+    pthread_cond_t wake;
+    sl_video_key backend, request;
+    bool active, metadata_valid, pending, frozen;
+    unsigned waiters, consumers;
+    int threads;
+    enum AVPixelFormat hardware, result;
+    enum AVPixelFormat offered[FORMAT_CHOICES + 1];
+    uint64_t serial;
+} format_handoff;
 typedef struct input_job {
     IHS_FrameTicket *ticket;
     sl_video_key key;
@@ -39,6 +53,7 @@ typedef struct input_job {
 } input_job;
 struct sl_video_pipeline {
     pthread_mutex_t mailbox, decoder;
+    format_handoff format;
     domain domains[DOMAIN_COUNT];
     sl_video_frame leases[LEASE_COUNT];
     sl_video_frame *pending[LEASE_COUNT];
@@ -124,6 +139,19 @@ sl_video_pipeline *sl_video_create(void) {
         free(p);
         return NULL;
     }
+    if (pthread_mutex_init(&p->format.lock, NULL)) {
+        pthread_mutex_destroy(&p->decoder);
+        pthread_mutex_destroy(&p->mailbox);
+        free(p);
+        return NULL;
+    }
+    if (pthread_cond_init(&p->format.wake, NULL)) {
+        pthread_mutex_destroy(&p->format.lock);
+        pthread_mutex_destroy(&p->decoder);
+        pthread_mutex_destroy(&p->mailbox);
+        free(p);
+        return NULL;
+    }
     for (unsigned i = 0; i < DOMAIN_COUNT; ++i) {
         atomic_init(&p->domains[i].external, 0);
         atomic_init(&p->domains[i].mappings, 0);
@@ -143,38 +171,114 @@ fail:
         av_frame_free(&p->domains[i].scratch);
     for (unsigned i = 0; i < LEASE_COUNT; ++i)
         av_frame_free(&p->leases[i].pixels);
+    pthread_cond_destroy(&p->format.wake);
+    pthread_mutex_destroy(&p->format.lock);
     pthread_mutex_destroy(&p->decoder);
     pthread_mutex_destroy(&p->mailbox);
     free(p);
     return NULL;
 }
+static enum AVPixelFormat choose_format(enum AVPixelFormat hardware,
+                                         const enum AVPixelFormat *formats) {
+    const enum AVPixelFormat *first = formats;
+    for (; *formats != AV_PIX_FMT_NONE; ++formats)
+        if (*formats == hardware) return *formats;
+    for (formats = first; *formats != AV_PIX_FMT_NONE; ++formats)
+        if (*formats == AV_PIX_FMT_YUV420P || *formats == AV_PIX_FMT_YUVJ420P)
+            return *formats;
+    return AV_PIX_FMT_NONE;
+}
+static void describe_format(char *description, size_t size, enum AVPixelFormat hardware,
+                             enum AVPixelFormat selected, int threads) {
+    if (selected != AV_PIX_FMT_NONE && selected == hardware)
+        snprintf(description, size, "FFmpeg NVDEC");
+    else
+        snprintf(description, size, "libavcodec software decoding with %d thread%s",
+                 threads, threads >= 2 ? "s" : "");
+}
 static enum AVPixelFormat hardware_format(AVCodecContext *ctx, const enum AVPixelFormat *formats) {
     domain *d = ctx->opaque;
-    const enum AVPixelFormat *first = formats;
-    enum AVPixelFormat selected = AV_PIX_FMT_NONE;
-    for (; *formats != AV_PIX_FMT_NONE; ++formats)
-        if (*formats == d->hardware_format) {
-            selected = *formats;
-            break;
+    if (d->deferred_formats && !d->opening) {
+        format_handoff *f = &d->pipeline->format;
+        unsigned count = 0;
+        while (count < FORMAT_CHOICES && formats[count] != AV_PIX_FMT_NONE) ++count;
+        if (formats[count] != AV_PIX_FMT_NONE) return AV_PIX_FMT_NONE; /* SDK array guard. */
+        pthread_mutex_lock(&f->lock);
+        if (f->serial == UINT64_MAX) {
+            pthread_mutex_unlock(&f->lock);
+            return AV_PIX_FMT_NONE;
         }
-    /* Original selector permits an offered software format when the target
-     * hardware path is unavailable. No download of a failed HW frame occurs. */
-    if (selected == AV_PIX_FMT_NONE)
-        for (formats = first; *formats != AV_PIX_FMT_NONE; ++formats)
-            if (*formats == AV_PIX_FMT_YUV420P || *formats == AV_PIX_FMT_YUVJ420P) {
-                selected = *formats;
-                break;
-            }
+        uint64_t serial = ++f->serial;
+        memcpy(f->offered, formats, (count + 1) * sizeof(*formats));
+        f->request = d->key;
+        f->result = AV_PIX_FMT_NONE;
+        f->pending = true;
+        if (same(f->backend, d->key)) {
+            f->threads = ctx->thread_count;
+            f->hardware = d->hardware_format;
+        }
+        ++f->waiters;
+        while (f->active && !f->frozen && same(f->backend, d->key) &&
+               f->pending && f->serial == serial)
+            pthread_cond_wait(&f->wake, &f->lock);
+        enum AVPixelFormat selected = f->active && !f->frozen &&
+            same(f->backend, d->key) && f->serial == serial ? f->result : AV_PIX_FMT_NONE;
+        --f->waiters;
+        pthread_mutex_unlock(&f->lock);
+        return selected;
+    }
+    /* Original +2cc guard is true only during avcodec_open2. Async=false is
+     * also available to direct local codec fixtures, not a second HW decoder. */
+    enum AVPixelFormat selected = choose_format(d->hardware_format, formats);
     if (d->info) {
         char description[128];
-        if (selected != AV_PIX_FMT_NONE && selected == d->hardware_format)
-            snprintf(description, sizeof(description), "FFmpeg NVDEC");
-        else
-            snprintf(description, sizeof(description), "libavcodec software decoding with %d thread%s",
-                     ctx->thread_count, ctx->thread_count >= 2 ? "s" : "");
+        describe_format(description, sizeof(description), d->hardware_format, selected,
+                         ctx->thread_count);
         d->info(d->info_context, description, (unsigned)ctx->thread_count);
     }
     return selected;
+}
+void sl_video_cancel_formats(sl_video_pipeline *p, sl_video_key key, bool restarting) {
+    format_handoff *f = &p->format;
+    pthread_mutex_lock(&f->lock);
+    if (same(f->backend, key)) f->active = false;
+    if (!restarting && (same(f->backend, key) || same(f->request, key))) f->pending = false;
+    pthread_cond_broadcast(&f->wake);
+    pthread_mutex_unlock(&f->lock);
+}
+void sl_video_process_formats(sl_video_pipeline *p, sl_video_key key,
+                               sl_video_info_fn info, void *context) {
+    format_handoff *f = &p->format;
+    pthread_mutex_lock(&f->lock);
+    if (!f->pending || !f->active || !f->metadata_valid || f->frozen ||
+        !same(f->backend, key) || f->request.session != key.session) {
+        pthread_mutex_unlock(&f->lock);
+        return;
+    }
+    uint64_t serial = f->serial;
+    int threads = f->threads;
+    enum AVPixelFormat selected = choose_format(f->hardware, f->offered);
+    char description[128];
+    describe_format(description, sizeof(description), f->hardware, selected, threads);
+    ++f->consumers;
+    pthread_mutex_unlock(&f->lock);
+    /* Never take Base or send a message under format.lock: interrupts holding
+     * Base cancel here before joining the SDK worker. No SDK context escapes. */
+    if (info) info(context, description, (unsigned)threads);
+    pthread_mutex_lock(&f->lock);
+    --f->consumers;
+    if (f->pending && f->serial == serial && f->active && same(f->backend, key)) {
+        f->result = selected;
+        f->pending = false;
+        pthread_cond_broadcast(&f->wake);
+    }
+    pthread_mutex_unlock(&f->lock);
+}
+bool sl_video_formats_pending(sl_video_pipeline *p) {
+    pthread_mutex_lock(&p->format.lock);
+    bool pending = p->format.pending;
+    pthread_mutex_unlock(&p->format.lock);
+    return pending;
 }
 static domain *find_domain(sl_video_pipeline *p, sl_video_key key) {
     for (unsigned i = 0; i < DOMAIN_COUNT; ++i)
@@ -219,6 +323,14 @@ sl_video_open_result sl_video_open_ex(sl_video_pipeline *p, sl_video_key key, co
 #endif
     }
     pthread_mutex_unlock(&p->mailbox);
+    if (admissible) {
+        pthread_mutex_lock(&p->format.lock);
+        p->format.backend = key;
+        p->format.active = true;
+        p->format.metadata_valid = false;
+        if (p->format.request.session != key.session) p->format.pending = false;
+        pthread_mutex_unlock(&p->format.lock);
+    }
     domain *d = NULL;
     if (admissible)
         for (unsigned i = 0; i < DOMAIN_COUNT; ++i)
@@ -240,6 +352,8 @@ sl_video_open_result sl_video_open_ex(sl_video_pipeline *p, sl_video_key key, co
     if (!d->codec)
         goto fail;
     d->key = key;
+    d->pipeline = p;
+    d->deferred_formats = config->deferred_formats;
     d->hardware_format = AV_PIX_FMT_NONE;
     d->codec->width = config->width;
     d->codec->height = config->height;
@@ -288,9 +402,21 @@ sl_video_open_result sl_video_open_ex(sl_video_pipeline *p, sl_video_key key, co
     }
     d->info = config->info;
     d->info_context = config->info_context;
+    d->opening = true; /* Original +2cc @32477e..78f. */
     int opened = avcodec_open2(d->codec, codec, NULL);
+    d->opening = false;
     d->info = NULL;
     d->info_context = NULL;
+    /* Original Start retains context metadata after open2 errors; its next
+     * actor pass can still consume a previous pending request (§104.5). Store
+     * values independently of decoder readiness and SDK context ownership.
+     * An interrupt during open remains sticky; publishing cannot reactivate it. */
+    pthread_mutex_lock(&p->format.lock);
+    p->format.hardware = d->hardware_format;
+    p->format.threads = d->codec->thread_count;
+    p->format.metadata_valid = true;
+    p->format.active = p->format.active && !p->format.frozen;
+    pthread_mutex_unlock(&p->format.lock);
     if (opened < 0) {
         failure = opened == AVERROR(ENOMEM) ? SL_VIDEO_OPEN_GUARD : SL_VIDEO_OPEN_UNAVAILABLE;
         goto fail;
@@ -305,6 +431,13 @@ sl_video_open_result sl_video_open_ex(sl_video_pipeline *p, sl_video_key key, co
     p->accepting = accepted;
     d->stopped = !accepted;
     pthread_mutex_unlock(&p->mailbox);
+    pthread_mutex_lock(&p->format.lock);
+    p->format.backend = key;
+    p->format.hardware = d->hardware_format;
+    p->format.threads = d->codec->thread_count;
+    p->format.active = p->format.active && accepted && !p->format.frozen;
+    if (p->format.request.session != key.session) p->format.pending = false;
+    pthread_mutex_unlock(&p->format.lock);
     pthread_mutex_unlock(&p->decoder);
     return accepted ? SL_VIDEO_OPEN_READY : SL_VIDEO_OPEN_GUARD;
 fail:
@@ -359,6 +492,7 @@ void sl_video_close(sl_video_pipeline *p, sl_video_key key) {
     for (unsigned n = 0; n < count; ++n) sl_resource_release(&old[n]->ref);
 }
 void sl_video_stop(sl_video_pipeline *p, sl_video_key key) {
+    sl_video_cancel_formats(p, key, true);
     sl_video_close(p, key);
     pthread_mutex_lock(&p->decoder);
     domain *d = find_domain(p, key);
@@ -800,6 +934,9 @@ bool sl_video_clean(sl_video_pipeline *p) {
     bool clean = true;
     for (unsigned i = 0; i < DOMAIN_COUNT; ++i)
         clean &= !p->domains[i].occupied;
+    pthread_mutex_lock(&p->format.lock);
+    clean &= !p->format.waiters && !p->format.consumers;
+    pthread_mutex_unlock(&p->format.lock);
     pthread_mutex_lock(&p->mailbox);
     clean &= !p->job_count && !p->pending_count && !p->image;
     pthread_mutex_unlock(&p->mailbox);
@@ -818,6 +955,8 @@ bool sl_video_destroy(sl_video_pipeline *p) {
         av_frame_free(&p->domains[i].scratch);
     for (unsigned i = 0; i < LEASE_COUNT; ++i)
         av_frame_free(&p->leases[i].pixels);
+    pthread_cond_destroy(&p->format.wake);
+    pthread_mutex_destroy(&p->format.lock);
     pthread_mutex_destroy(&p->decoder);
     pthread_mutex_destroy(&p->mailbox);
     free(p);
@@ -839,12 +978,20 @@ void sl_video_freeze(sl_video_pipeline *p) {
     p->frozen=true;p->cancelled=true;p->accepting=false;
     sl_video_key key=p->active;
     pthread_mutex_unlock(&p->mailbox);
+    pthread_mutex_lock(&p->format.lock);
+    p->format.frozen = true;
+    p->format.active = p->format.pending = false;
+    pthread_cond_broadcast(&p->format.wake);
+    pthread_mutex_unlock(&p->format.lock);
     sl_video_close(p,key);
 }
 void sl_video_thaw(sl_video_pipeline *p) {
     pthread_mutex_lock(&p->mailbox);
     p->frozen = false;
     pthread_mutex_unlock(&p->mailbox);
+    pthread_mutex_lock(&p->format.lock);
+    p->format.frozen = false;
+    pthread_mutex_unlock(&p->format.lock);
 }
 
 bool sl_video_read_counters(sl_video_pipeline *p, sl_video_key key, sl_video_counters *out) {

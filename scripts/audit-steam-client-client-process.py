@@ -40,6 +40,7 @@ def verify(report, bootstrap, mode, packets):
     if bootstrap == "constructed":
         assert not packets and mode == "empty"
         return
+    assert ["manager_pthread_join_completed", "main", 0] in s["trace"]
     assert s["transport_init_return"] == 1 and s["client_phase"] == 1
     assert s["client_phase_after_stop"] == 1
     assert s["connection_state_after_stop"] == 0
@@ -51,9 +52,22 @@ def verify(report, bootstrap, mode, packets):
         assert data[3:9] == bytes(6) and data[-4:] == bytes.fromhex("c73d8f3c")
         assert p["peer"][0] == "127.0.0.1"
     trace = [x[0] for x in s["trace"]]
-    if mode in ("empty", "decode", "restart"):
+    if mode in (
+        "empty",
+        "decode",
+        "restart",
+        "reset_ready",
+        "reset_pending",
+        "reset_open_error",
+    ):
         begins = [i for i, n in enumerate(trace) if n == "client_think"]
-        assert len(begins) == (2 if mode == "restart" else 1)
+        assert len(begins) == (
+            3
+            if mode == "reset_ready"
+            else 2
+            if mode in ("restart", "reset_pending")
+            else 1
+        )
         for i, start in enumerate(begins):
             end = begins[i + 1] if i + 1 < len(begins) else len(trace)
             names = trace[start:end]
@@ -63,12 +77,10 @@ def verify(report, bootstrap, mode, packets):
                 "network_poll",
                 "control_dispatch",
             ]
-            if mode != "empty":
+            if mode != "empty" and not (mode == "reset_ready" and i == 1):
                 stages += ["main_format", "format_selector", "decoder_info"]
             order = [names.index(n) for n in stages]
             assert order == sorted(order)
-    elif mode == "reset_pending":
-        assert trace.count("client_think") == 2
     elif mode == "cancel":
         assert "client_think" not in trace and "main_format" not in trace
 
@@ -85,7 +97,15 @@ def main():
         ("constructed", "empty"),
         *[
             ("udp", m)
-            for m in ("empty", "decode", "cancel", "restart", "reset_pending")
+            for m in (
+                "empty",
+                "decode",
+                "cancel",
+                "restart",
+                "reset_pending",
+                "reset_ready",
+                "reset_open_error",
+            )
         ],
     ]:
         name = bootstrap + "_" + mode
@@ -123,7 +143,7 @@ def main():
             flush=True,
         )
     a.output.write_text(json.dumps(dict(scope=__doc__, cases=cases), indent=2) + "\n")
-    print("Original complete client: six ctor/Init/OnThink/worker/Stop modes passed")
+    print("Original complete client: eight ctor/Init/OnThink/worker/Stop modes passed")
 
 
 if __name__ == "__main__":

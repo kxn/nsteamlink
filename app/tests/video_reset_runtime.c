@@ -181,8 +181,10 @@ static void feed(IHS_Session *s, uint16_t id, bool key, const uint8_t *bytes, si
     IHS_SessionDeliverReliableFrame(s, &f);
     IHS_SessionFrameClear(&f, true);
     ++target;
-    for (unsigned n = 0; n < 5000 && atomic_load(&processed) < target; ++n)
+    for (unsigned n = 0; n < 5000 && atomic_load(&processed) < target; ++n) {
+        IHS_SessionVideoHandleFormatRequests(s);
         usleep(1000);
+    }
     assert(atomic_load(&processed) == target);
 }
 static void reset(sl_runtime *r, unsigned epoch, unsigned expectedOpens, unsigned expectedInfos,

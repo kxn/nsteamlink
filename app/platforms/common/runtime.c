@@ -403,6 +403,15 @@ static void video_flush(IHS_Session *s, const IHS_VideoEpochInfo *epoch,
     (void)ctx;
     sl_media_video_flush_tracked(s, epoch, phase);
 }
+static void video_interrupt(IHS_Session *s, const IHS_VideoEpochInfo *epoch,
+                             bool restarting, void *ctx) {
+    (void)ctx;
+    sl_media_video_interrupt_tracked(s, epoch, restarting);
+}
+static void video_think(IHS_Session *s, const IHS_VideoEpochInfo *epoch, void *ctx) {
+    (void)ctx;
+    sl_media_video_think_tracked(s, epoch);
+}
 static void activity(IHS_Session *s, int kind, uint64_t id, const char *name, void *ctx) {
     (void)s;
     sl_runtime *r = ctx;
@@ -479,7 +488,8 @@ static const IHS_StreamSessionCallbacks session_cb = {.configuring = configuring
                                                       .clientConfigChanged = client_config_changed};
 static const IHS_StreamVideoCallbacks video_cb = {
     .startTracked = video_start, .submitTracked = video_submit, .stopTracked = video_stop,
-    .prepare = video_prepare, .flushTracked = video_flush, .reportsDecoderInfo = true};
+    .prepare = video_prepare, .flushTracked = video_flush, .reportsDecoderInfo = true,
+    .interruptTracked = video_interrupt, .thinkTracked = video_think};
 static const IHS_StreamInputCallbacks input_cb = {.activityState = activity};
 static void stop_client(sl_runtime *r) {
     if (!r->client)

@@ -1058,8 +1058,8 @@ static void video_decoder_info(void *context, const char *description, unsigned 
     /* Original format selection ignores an informational send failure. */
     IHS_SessionVideoDecoderInfo(borrowed->session, borrowed->epoch, description, threads);
 }
-int sl_media_video_start_tracked(IHS_Session *session, const IHS_VideoEpochInfo *epoch,
-                                 const IHS_StreamVideoConfig *config) {
+static int media_video_start_tracked(IHS_Session *session, const IHS_VideoEpochInfo *epoch,
+                                      const IHS_StreamVideoConfig *config, bool deferred_formats) {
     if (!video || config->codec != IHS_StreamVideoCodecH264)
         return -1;
     sl_video_reap(video);
@@ -1071,6 +1071,7 @@ int sl_media_video_start_tracked(IHS_Session *session, const IHS_VideoEpochInfo 
                                .hardware = IHS_SessionVideoHardwareDecodingEnabled(session),
                                .info = video_decoder_info, .info_context = &info,
                                .cpu_count = sl_system_video_cpu_count,
+                               .deferred_formats = deferred_formats,
     };
     sl_video_key key = {epoch->session_id, epoch->video_epoch};
     pthread_mutex_lock(&state_lock);
@@ -1102,6 +1103,22 @@ int sl_media_video_start_tracked(IHS_Session *session, const IHS_VideoEpochInfo 
     snapshot.last_error[0] = 0;
     pthread_mutex_unlock(&state_lock);
     return opened == SL_VIDEO_OPEN_UNAVAILABLE ? 1 : 0;
+}
+int sl_media_video_start_tracked(IHS_Session *session, const IHS_VideoEpochInfo *epoch,
+                                 const IHS_StreamVideoConfig *config) {
+    return media_video_start_tracked(session, epoch, config, true);
+}
+void sl_media_video_interrupt_tracked(IHS_Session *session, const IHS_VideoEpochInfo *epoch,
+                                      bool restarting) {
+    (void)session;
+    if (video) sl_video_cancel_formats(video,
+        (sl_video_key){epoch->session_id, epoch->video_epoch}, restarting);
+}
+void sl_media_video_think_tracked(IHS_Session *session, const IHS_VideoEpochInfo *epoch) {
+    if (!video) return;
+    video_feedback_context info = {.session = session, .epoch = epoch};
+    sl_video_process_formats(video, (sl_video_key){epoch->session_id, epoch->video_epoch},
+                              video_decoder_info, &info);
 }
 static void video_decode_feedback(void *context, sl_video_submit_result result) {
     video_feedback_context *borrowed = context;
@@ -1843,7 +1860,7 @@ int stream_media_video_start(IHS_Session *session, const IHS_StreamVideoConfig *
     if (!test_tracker || !IHS_FrameTrackerOpenEpoch(test_tracker, 1))
         return -1;
     IHS_VideoEpochInfo epoch = {test_session_id, 1};
-    return sl_media_video_start_tracked(session, &epoch, config) == 0 ? 0 : -1;
+    return media_video_start_tracked(session, &epoch, config, false) == 0 ? 0 : -1;
 }
 IHS_StreamVideoSubmitResult stream_media_video_submit(IHS_Session *session, uint16_t id,
                                                       IHS_Buffer *data,

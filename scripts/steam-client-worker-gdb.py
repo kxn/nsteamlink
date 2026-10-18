@@ -16,13 +16,22 @@ from the independent fixture.
 
 
 def exercise_worker(mode):
-    assert mode in ("empty", "decode", "cancel", "restart", "reset_pending")
+    assert mode in (
+        "empty",
+        "decode",
+        "cancel",
+        "restart",
+        "reset_pending",
+        "reset_ready",
+        "reset_open_error",
+    )
     bootstrap = config.get("client_bootstrap")
     fixed = bool(bootstrap)
     client = cpp_alloc(0x1F6F8 if bootstrap else 0x22000)
     player, dec = cpp_alloc(0x168), cpp_alloc(0x2E0)
     main_thread = gdb.selected_thread().global_num
     trace, breaks, roles = [], [], {}
+    format_memory = None
     output = {
         "mode": mode,
         "trace": trace,
@@ -77,6 +86,8 @@ def exercise_worker(mode):
             ):
                 return False
             trace.append([self.name, role()])
+            if self.name == "final_decode" and format_memory:
+                format_memory.start()
             if self.name == "sdk_get_format":
                 offered = int(gdb.parse_and_eval("$rsi"))
                 formats = []
@@ -88,6 +99,10 @@ def exercise_worker(mode):
                 else:
                     raise AssertionError("unterminated SDK formats")
                 output.setdefault("offered_formats", []).append(formats)
+                if format_memory:
+                    format_memory.borrow(offered, formats)
+            if self.name == "main_format" and format_memory:
+                format_memory.consume()
             if self.name == "player_put":
                 frame = int(gdb.parse_and_eval("$rsi"))
                 af = u64(frame + 48)
@@ -151,6 +166,7 @@ def exercise_worker(mode):
                 return False
 
         for address, name in (
+            (0x32478F, "sdk_open"),
             (0x324365, "sdk_send"),
             (0x324381, "sdk_receive"),
             (0x324CEB, "sdk_get_format"),
@@ -182,6 +198,25 @@ def exercise_worker(mode):
     for index, name in ((10, "sdk_send"), (6, "sdk_receive")):
         breaks.append(Entered(name, table[index], True))
 
+    if mode == "reset_open_error":
+
+        class InvalidOpenInput(gdb.Breakpoint):
+            def stop(self):
+                if pending():
+                    context = u64(dec + 0x268)
+                    output["sdk_open_input"] = {
+                        "boundary": "Explicit invalid SDK extradata_size input; no natural protocol producer claimed.",
+                        "original": u32(context + 0x50),
+                        "injected": -1,
+                    }
+                    # Bundled open2@69fcc checks this signed size as unsigned.
+                    # Only its input changes; the SDK and original error branch
+                    # execute, without a return-value or method replacement.
+                    w32(context + 0x50, 0xFFFFFFFF)
+                return False
+
+        breaks.append(InvalidOpenInput("*" + str(base + 0x32477E), internal=True))
+
     def pause_until(predicate, label):
         for _ in range(1000):
             if predicate():
@@ -189,10 +224,23 @@ def exercise_worker(mode):
             # Resume all real inferior threads; this is an OS scheduling input,
             # not an SDK return/status terminal or Python replacement worker.
             call("int(*)(unsigned int)", symbol("usleep"), 1000)
+        if format_memory:
+            gdb.write(
+                json.dumps(dict(trace=trace, memory=format_memory.snapshot())) + "\n"
+            )
+            gdb.write(gdb.execute("thread apply all bt 12", to_string=True))
         raise AssertionError(label)
 
     def pending():
         return bool(read(dec + 0x2CD, 1)[0])
+
+    if config.get("format_memory"):
+        scope = dict(globals())
+        helper = Path(config["format_memory_helper"])
+        exec(compile(helper.read_text(), str(helper), "exec"), scope, scope)
+        format_memory = scope["observe_formats"](
+            table, dec, output, role, u64, pending, symbol
+        )
 
     def start():
         call("void(*)(void*,void*)", base + 0x2ED980, dec, dec + 32)
@@ -318,6 +366,7 @@ def exercise_worker(mode):
         output["transport_fd"] = u32(transport + 20)
         assert output["transport_fd"] == 0xFFFFFFFF
     output["threads_before_start"] = len(inf.threads())
+    output["thread_ids_before_start"] = sorted(t.global_num for t in inf.threads())
     call("void(*)(void*,void*)", base + 0x2EE0F0, player, client)
     call("void(*)(void*,void*,void*,int)", base + 0x324610, dec, client, player, 4)
     # Declared partial-client owner link, also read by original RequestReset.
@@ -356,19 +405,37 @@ def exercise_worker(mode):
     if mode != "empty":
         submit(23)
         output["pending_stack"] = gdb.execute("thread apply all bt", to_string=True)
-        if mode == "reset_pending":
+        if mode in ("reset_pending", "reset_open_error"):
             trace.append(["reset_while_pending", "main"])
             call("void(*)(void*,int)", base + 0x319360, client, 0)
             output["request_before_think"] = u32(dec + 96)
             call("void(*)(void*)", base + 0x3230A0, client)
             output["pending_after_reset_think"] = pending()
             output["request_after_reset_think"] = u32(dec + 96)
-            submit(24)
-        if mode in ("decode", "restart", "reset_pending"):
+            if mode == "reset_open_error":
+                context = u64(dec + 0x268)
+                output["failed_open_state"] = dict(
+                    codec_alive=bool(context),
+                    parser_alive=bool(u64(dec + 0x270)),
+                    active=bool(read(dec + 24, 1)[0]),
+                    guard=bool(read(dec + 0x2CC, 1)[0]),
+                    pending=pending(),
+                    threads=u32(context + 0x290),
+                )
+            else:
+                submit(24)
+        if mode == "reset_open_error":
+            pass  # No further media is submitted to the failed backend.
+        elif mode in ("decode", "restart", "reset_pending", "reset_ready"):
             held.append(finish_picture(24 if mode == "reset_pending" else 23))
-            if mode == "restart":
+            if mode in ("restart", "reset_ready"):
                 output["picture_before_restart"] = output.pop("picture")
-                call("void(*)(void*)", base + 0x2EDC50, dec)
+                if mode == "reset_ready":
+                    trace.append(["reset_after_picture", "main"])
+                    call("void(*)(void*,int)", base + 0x319360, client, 0)
+                    call("void(*)(void*)", base + 0x3230A0, client)
+                else:
+                    call("void(*)(void*)", base + 0x2EDC50, dec)
                 output["pending_after_restart"] = pending()
                 assert not pending()
                 assert hash_frame(held[0]) == expected
@@ -385,6 +452,7 @@ def exercise_worker(mode):
     output["context_cleared_after_stop"] = u64(dec + 0x268) == 0
     output["parser_cleared_after_stop"] = u64(dec + 0x270) == 0
     output["threads_after_stop"] = len(inf.threads())
+    output["thread_ids_after_stop"] = sorted(t.global_num for t in inf.threads())
     output["reset_request_after_stop"] = u32(dec + 96)
     output["cached_info_after_stop"] = (
         cstring(u64(client + 648)).decode() if u64(client + 648) else None
@@ -403,6 +471,8 @@ def exercise_worker(mode):
         output["late_frame_returned_to_pool"] = True
         call("void(*)(void*)", base + 0x2EDBF0, dec)
         assert u32(dec + 0x2AC) == 0xFFFFFFFF
+    if format_memory:
+        format_memory.close()
     for bp in breaks:
         bp.delete()
     inf.write_memory(client + 40, struct.pack("<Q", 0))
@@ -431,4 +501,5 @@ def exercise_worker(mode):
             call("void(*)(void*)", u64(u64(client + 456)), client + 456)
             call("void(*)(void*,unsigned long)", base + 0xE3310, client, 0x22000)
     output["threads_after_resources"] = len(inf.threads())
+    output["thread_ids_after_resources"] = sorted(t.global_num for t in inf.threads())
     return output

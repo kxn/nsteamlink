@@ -36,7 +36,9 @@ def verify(report):
         report["original_process_exit_code"] == 0 and report["probe_cleanup_complete"]
     )
     assert s["threads_started"] > s["threads_before_start"]
-    assert s["threads_after_stop"] == s["threads_before_start"]
+    before = set(s["thread_ids_before_start"])
+    assert set(s["thread_ids_after_stop"]) <= before
+    assert set(s["thread_ids_after_resources"]) <= before
     assert s["context_cleared_after_stop"] and s["parser_cleared_after_stop"]
     assert ["decoder_pthread_join_completed", "main", 0] in trace
     if mode == "empty":
@@ -44,7 +46,7 @@ def verify(report):
         expected = (
             s["threads_before_start"] if bootstrap == "udp" else s["threads_before"]
         )
-        assert s["threads_after_resources"] == expected
+        assert s["threads_after_resources"] <= expected
         return
     if bootstrap == "udp":
         assert s["connection_state"] == 0 and s["transport_fd"] != 0xFFFFFFFF
@@ -60,7 +62,9 @@ def verify(report):
     assert s["offered_formats"] and all(0 in f for f in s["offered_formats"])
     # The original process-global socket manager persists until its ELF dtor;
     # only the explicitly constructed connection/transport retire in the probe.
-    assert s["threads_after_resources"] == s["threads_before_start"]
+    # Baseline process services may terminate after the complete client dtor;
+    # no new SDK/decoder thread may remain. Joins are observed separately.
+    assert s["threads_after_resources"] <= s["threads_before_start"]
     assert (
         names.index("submit")
         < names.index("decode_frame")
@@ -101,6 +105,57 @@ def verify(report):
         assert s["player_objects"] == [
             {"id": 23, "shape": [0, 0, 0xFFFFFFFF], "has_pixels": False}
         ]
+        return
+    if mode == "reset_open_error":
+        assert (
+            s["sdk_open_input"]["original"] == 0
+            and s["sdk_open_input"]["injected"] == -1
+        )
+        assert [e[2] for e in trace if e[0] == "sdk_open_return"] == [0, -22]
+        assert s["failed_open_state"] == dict(
+            codec_alive=True,
+            parser_alive=False,
+            active=True,
+            guard=False,
+            pending=False,
+            threads=s["sdk_threads"],
+        )
+        assert s["after_actor_restart"] == dict(
+            pending=True, request=0, codec_alive=True
+        )
+        assert s["request_before_think"] == 1 and s["request_after_reset_think"] == 0
+        assert not s["pending_after_reset_think"] and s["reset_request_after_stop"] == 0
+        assert s["control"] == [{"channel": 1, "type": 80}]
+        assert s["player_objects"] == [
+            {"id": 23, "shape": [0, 0, 0xFFFFFFFF], "has_pixels": False}
+        ]
+        for label, expected in (
+            ("sdk_get_format_return", [-1]),
+            ("sdk_send_return", [-1094995529]),
+            ("sdk_receive_return", [-11]),
+            ("frame_send_return", [3]),
+            ("format_selector_return", [0]),
+        ):
+            assert [e[2] for e in trace if e[0] == label] == expected
+        assert [e[1] for e in trace if e[0] == "data_lost"] == ["background1", "main"]
+        ordered = [
+            "reset_while_pending",
+            "restart",
+            "codec_stop",
+            "public_start",
+            "sdk_open_return",
+            "actor_restart_completed",
+            "network_poll",
+            "control_dispatch",
+            "main_format",
+            "decoder_info",
+        ]
+        part = names[names.index("reset_while_pending") :]
+        indexes = [part.index(label) for label in ordered]
+        assert indexes == sorted(indexes)
+        assert s["cached_info_after_stop"].startswith(
+            "libavcodec software decoding with "
+        )
         return
     if mode == "reset_pending":
         assert s["after_actor_restart"] == {
@@ -164,7 +219,7 @@ def verify(report):
         assert names.count("public_start") == 2 and names.count("restart") == 1
         return
     pictures = [s["picture"]]
-    if mode == "restart":
+    if mode in ("restart", "reset_ready"):
         assert not s["pending_after_restart"]
         pictures.append(s["picture_before_restart"])
         assert s["picture_before_restart"]["id"] == 23 and s["picture"]["id"] == 24

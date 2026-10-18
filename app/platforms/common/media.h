@@ -211,6 +211,8 @@ IHS_StreamVideoSubmitResult sl_media_video_submit_tracked(IHS_Session *, const I
                                                           uint16_t, IHS_FrameTicket *, IHS_Buffer *,
                                                           IHS_StreamVideoFrameFlag, bool *);
 void sl_media_video_stop_tracked(IHS_Session *, const IHS_VideoEpochInfo *);
+void sl_media_video_interrupt_tracked(IHS_Session *, const IHS_VideoEpochInfo *, bool restarting);
+void sl_media_video_think_tracked(IHS_Session *, const IHS_VideoEpochInfo *);
 void sl_media_video_flush_tracked(IHS_Session *, const IHS_VideoEpochInfo *,
                                    IHS_StreamVideoFlushPhase);
 void sl_media_close_video(void);
