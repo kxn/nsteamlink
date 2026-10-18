@@ -9647,3 +9647,105 @@ ctest --test-dir build/desktop \
   -R '^(media_network_stats_official_vectors|media_network_stats_lifetime|negotiation_stage_worker)$' \
   --output-on-failure
 ```
+
+## 118. 网络测试有媒体输入时的窗口、结束和评分契约
+
+### 118.1 原客户端入口与可控边界
+
+Evidence：`audit-steam-network-test-media.py`使用§32/116固定的官方Android shell，
+执行原UI选mode/Start、明确已连接且已发送认证请求后的响应入口、原请求8、
+Socket::HandlePacket@ccfd04、Connection/Channel/窗口/CRC/FEC RS及原媒体Frame。
+交付后进入CNetworkTest::OnStreamPacket@cab250、RecordFrameReceived@cab7bc、
+HandleNetworkTest@caa1a4、Complete@caa2fc和原结果/确认/完整配置serializer。
+61份身份只包含本探针观察到进入的所选类方法；不是全部执行指令的函数清单。
+
+连接表/地址比较、clock/OS/锁、packet引用计数、identity crypto、最终发送/Close、
+Qt图形回调/呈现和文件终点为明确adapter。未运行自然RunNetworkTest线程循环，
+而是显式驱动Socket/Channel Update/Handle/Complete。帧号、包号、时钟与payload为
+受控输入；不能把允许进入的合成序列当作实际Steam Host一定生成该序列的证据。
+固定模式达到state5后继续送601/1200帧的案例专门观察该回调边界，不称自然主机会
+在测试结束后继续发送这些帧。
+
+FEC输入由同一原shell内**独立的**Channel encoder产生，显式MTU64、percentage50，
+直接调用encoder绕过上行启用门；传输出口source/dest、send/receive时间与CRC是
+明确重播参数。接收连接的gate与percentage保持0。四个所需独特shard、反序、
+六片完整组、三片未完成组→下一组及CRC两值覆盖接收/恢复，不证明网络测试会
+请求Host开启FEC或使用50%冗余。请求8仍无字段25，两个mode握手均network_test=1。
+
+### 118.2 触发条件、计数与丢帧率的两种含义
+
+| 条件/入口 | 原动作与可观察字段 |
+|---|---|
+| UI Start@ca9d28 | 对TEST+16的CNetworkStats调用Start，开启full samples；构造的测试目标为600帧/60fps |
+| media channel>=3且data subtype=1 | 原Frame解析，send/frame时间减connection+848后交给Record；不是先提交decoder再统计 |
+| Record@cab7d4返回 | 即使该frame ID被统计对象当作重复旧帧忽略，调用者仍以frame.receiveEnd更新TEST+0x150 |
+| TEST+0x24累计跨度>=TEST+0x14c且mode!=2 | 设置state5；这里读的是CNetworkStats全局跨度，不是full samples条目数 |
+| mode2，累计跨度达到或超过600 | 不因该计数结束；GetProgressPercentage返回原跨度比例，没有在该函数钳制到100% |
+| Handle与last_data相差恰196608tick/再加1 | 前者维持state4，后者转state5；与§116无媒体边界一致 |
+| Complete | Stop统计，按100−span×100/600计算测试丢帧率，再用最终mean/deviation和这个率调用GetResult；status2，ResetConnection |
+| 原UI轮询与结果页 | 另行按同一测试计数/最终延迟重新评分；mode2的推荐仍由previous目标和quality决定 |
+| 用户确认且有推荐 | 应用原预设、序列化/保存完整配置；取消或无推荐保持原字节 |
+
+Evidence：56组/410状态包含6339条受控datagram、6246次原Record入口（含被统计
+过滤的旧帧），以及full sample/图形callback序列和112次原评分调用。普通连续
+0/1/2/7/8/9/599/600/601/1200帧、起始ID/重复/缺口、±123 offset、坏CRC、FEC恢复/
+未完成组及94中途变化均执行。full samples只记录实际入样的(target,ticks)，缺失
+帧只产生graph lost回调；target初始0，94把新目标写入该记录来源，与UI读取的
+previous目标分开。Qt graph consumer是终点adapter，不据回调证明图形真实绘制。
+
+受控单个frame ID599、UDP packet ID0的输入使跨度600，mode1立即state5。Stop后的
+内部批次loss约99.9167%，但Complete及结果页使用span/600得到测试loss=0，mean>0/
+deviation0使分类为2。相反，9个带大延迟波动的帧可使分类0；mode2仍可能在previous
+目标100000、quality2且用户确认时推荐增强配置并保存FEC=true。不能把默认媒体统计
+getter的result或内部batch-loss直接拿来代替网络测试的评分输入，也不能从分类0
+推导自动启用FEC。§117的默认统计规则继续成立，两类消费者使用的丢帧率不同。
+
+### 118.3 本地等待与发送时间包龄不是同一计时器
+
+Evidence：追加两个包号与帧号相同的窗口案例。先接packet/frame599，普通窗口前方
+0–598缺失；在receiveEnd+6553和+6554分别Update仍不交付。之后接send=1007000、
+receive=1007065的packet/frame600：原窗口按发送时间元数据丢弃旧范围，连同被阻挡
+的旧599，只有600交给Record。统计跨度601、mode1转state5，mode2仍state4。
+
+这与§25.12同源：UpdateUnreliableState@cca7cc先消费dirty，成功反馈后要新输入
+重新激活；@cca98c–ccaa78的过期阈值来自窗口末端发送时间及接收延迟/RTT预算，
+不是单纯当地Update时刻。网络测试无数据超时仍按本地last_data判断。不能据本地
+等待超过约100ms就声称窗口必定会跳过缺片；也不能用这两个合成案例认定原玩家
+一两秒停顿的原因。真实Host包号/帧号关联、生成时机和自然线程调度仍需另外证据。
+
+### 118.4 反例、Native执行与实现约束
+
+两处补丁都施加到实际加载的原指令，各命中1次且正常返回、assert为空。@cab7d8把
+读取跨度改成full sample条目数，单frame599之后由state5变state4，要等后续超时。
+@caa34c把Complete评分使用的测试loss改成内部最终loss，该调用从分类2变0；原UI
+随后独立重算仍为2，所以此反例不冒称已改变结果页推荐或保存值。完整原/变体观察
+分开保存，未把模拟器异常、错误offset或未执行补丁当作检出。
+
+`network_test_media_official_vectors`把相同完整raw datagram（含实际CRC和受控
+损坏尾）输入Native Base收包、窗口/FEC和媒体Prepare，再在410检查点逐位比较默认
+collector的当前/批次/最终三浮点、帧跨度和序号。额外把112组原评分输入交给生产
+GetResult helper。Native测试模式的结束/超时/结果页没有由这些底层对照实现，
+full record/callback也只是原客户端观察。worker消费由有界显式步骤驱动，不能扩大
+成自然调度或真实Steam/Switch执行。
+
+新产生的8种完整最终配置是§116的12种配置的**字节相等子集**，与原Linux24进程
+文件/协商参考的接口相同。本门禁复跑现有Native真实文件/UDP/crypto/worker、24份
+原消息4/5明文/独立密文和24份当前Switch请求限制；没有把旧原进程参考称为本次
+新运行，也没有把两个原客户端的接口连接说成同一个Android进程的端到端网络。
+Switch仍使用实际平台能力；本探针不新增测试/预设UI或丢包自动FEC。
+
+Native反例在隔离packet.c TU/静态库中分别移除CRC拒绝、拒绝所有type11：两者均
+成功编译链接，由本门禁在坏CRC、FEC统计检查点正常exit1逐值检出。它们不进入生产
+树，不把旧二进制、编译错误、崩溃或超时计为成功。
+
+复播命令（可选逆向依赖及固定样本沿§24.1）：
+
+```sh
+python3 scripts/audit-steam-network-test-media.py \
+  --binary /path/to/libshell-arm64.so --output /tmp/network-test-media.json
+python3 scripts/check-steam-network-test-media.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-network-wire-oracle \
+  --collector build/desktop/third_party/ihslib/tests/session/ihs-media-network-stats-oracle \
+  --negotiator build/desktop/app/nsl-auth-udp-oracle
+ctest --test-dir build/desktop -R '^network_test_media_official_vectors$' --output-on-failure
+```
