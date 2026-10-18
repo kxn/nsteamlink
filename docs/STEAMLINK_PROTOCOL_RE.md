@@ -1388,7 +1388,9 @@ AuthorizationCallback 都忽略来源地址；后者没有开流那样的 reques
 - 启动事务取消立即撤销其 timer owner，保留 8 条、60 秒有效的取消编号；
   已取消 InProgress 按原编号重发取消；当时加入的250ms本地节流并无官方依据，
   与仅依赖8条/60s记录的限制一起由§120的新证据修正。已消费为会话的
-  成功请求单独标记 Established，之后不再把会话断开当作启动取消。
+  【更正，§124】撤回“Established后清除编号、不再发送启动取消”的推断。
+  原成功state6保留编号；显式Stop仍发送10。新Start替换成功请求则不发送10，
+  两个入口必须分开；Established只停止等待重试。
 - runtime 保留 client 接收 socket，取消的 timer/回调先被同步隔离，再修改
   active generation。STOPPING 仍等待 worker 完成；不等待不存在的取消 ACK。
 - 接收前校验来源 IP/端口、目标 client_id、可用的 instance_id 及请求编号；
@@ -10120,3 +10122,49 @@ activation失败不冒充Native errno等价。时钟与最后发送为adapter，
 Source backend构造/激活、socket/transport-client对象存储、最终I/O/Close及调度
 为明确adapter；UDP类型、mode和endpoint为提供的输入，未执行自然Qt事件或OS线程，
 也未证明Switch不丢包或原卡顿原因。本节不扩大为SNS/SDR所有路径已对齐。
+
+## 124. 成功凭据后的请求归属与测网失败确认
+
+Evidence：固定§123官方shell，原CServerManager::StartStreaming@cb02a4建立
+state5/编号，实际请求producer/serializer发送5；原response parser/handler与AES
+成功后进入state6但仍保留编号。匹配这个编号的InProgress不发送取消；显式
+StopStreaming@cb0ef8发送10并清编号/目标。重复Stop不重复发。新Start接替state6
+直接生成新编号并发送5，不先发10；state5同一目标的重复Start直接返回，换目标则
+静默接替。旧编号的InProgress仍按其自身编号发送10，不误取消新编号。
+
+【更正】撤回§22.6以“成功请求已消费”为由清空lastLaunchId的本地策略。该做法
+既使之后的显式Stop丢失取消编号，也把仍匹配的InProgress误当迟到响应。停止重试、
+保留可取消归属和被新请求替代是不同动作；不能把它们合成一次Cancel或清零。
+
+原Panel OnUpdate进入测试，Run在BConnect=false明确边界下实际产生Failed4；
+CheckNetworkTestState@c707c4→HandleNetworkTestFailed@c70d88显示style0的
+“Network Test Failed”。QObject将finished(int)接到无参OnActionCancel；显示期间
+manager仍state6且编号保留，没有保存/推荐或普通续接。用户关闭后实际OnActionCancel
+@c72770调用StopStreaming(0)，发送原编号10、清归属，再PopState。错误提示期间自动
+Stop与错误页直接重试不是这条官方分支；平台可以改用Switch确认控件，但保留这个
+确认/取消顺序。配对授权码与connect PIN语义不受影响。
+
+`audit-steam-streaming-transaction.py`执行16案例：普通/测试的等待取消、成功后
+取消、等待同目标去重/换目标、成功后同/不同目标接替，以及action2/3测试失败的
+关闭确认；21项所选实际进入函数身份。捕获完整原请求/取消字节与逐步state/编号/
+目标，Native比对只投影编号、测试位、归属及完整取消正文，不把Android平台元数据、
+适配的随机数/临时keypair当作Switch能力或密钥协商等价。原Stop的state1返回比较
+改为state6，补丁实际hit1/正常返回/无断言，成功后Stop漏发取消且保留旧编号。
+
+Server lookup、授权secret/token/account、random/keypair与空PIN输入、时钟、线程
+启动、BConnect失败bool、Qt存储/显示/格式化、最终SendMessage与PopState为明确
+adapter；finished信号交付由驱动调用原slot。这里没有自然Steam授权、Qt/OS线程或
+Switch验收，也不证明原停顿/闪烁因果。所有其他未核协议/producer/设备范围保留。
+
+Native成功解密在success callback前就标记ticket归属；Established只停timer，
+保留编号。重复waiting同目标返回，其他Start先同步退休旧timer再安静替换，显式
+Cancel才发送10。退休记录用于已知主机来源/迟到响应校验；8槽与随机编号避碰是本地
+资源/隔离机制，不宣称等价于官方无限服务器表或随机实现。timer建立失败清归属以
+免留下不可重试的waiting状态，这是本地失败守卫，不冒称原C++OOM策略。
+
+产品错误提示使用持久FAILED快照和test_failure_pending事实：停止/join/destroy
+测试owner后保留请求，主应用不自动Stop；确认关闭才执行Cancel。错误页没有直接
+重试，不保存统计/预设或自动普通续接；A/B和触摸关闭映射到同一取消动作。端口取
+已收到的真实会话endpoint，配对/安全PIN仍是独立流程。自动测网成功续接通过
+Request安静替换，不能在runtime helper中额外先Cancel。UI布局/worker适配不充当
+自然Qt或Switch显示证明。

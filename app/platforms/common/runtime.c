@@ -578,6 +578,7 @@ static bool stop_session(sl_runtime *r) {
     r->end_game = (sl_end_game_watch){0};
     r->connected = r->finished = r->host_stopped = r->session_ready = false;
     r->facts.connected = false;
+    r->facts.test_failure_pending = false;
     r->facts.requests_closed = true;
     r->facts.protocol_closed = true;
     pthread_mutex_unlock(&r->lock);
@@ -659,7 +660,6 @@ static bool request_stream(sl_runtime *r, bool network_test) {
     IHS_HostInfo host;
     if (!r->client || !host_info(&r->active.host, &host))
         return false;
-    IHS_ClientStreamingCancel(r->client);
     IHS_ClientStopDiscovery(r->client);
     const sl_host *paired = sl_host_find(&r->store.registry, r->active.host.id);
     IHS_ClientSetSecretKey(r->client,
@@ -709,6 +709,21 @@ static bool launch_network_test(sl_runtime *r, IHS_SessionInfo info) {
                                            .bandwidth_test = mode == IHS_NetworkTestBandwidth});
     return true;
 }
+static void fail_network_test(sl_runtime *r) {
+    /* Original failed test is already closed, but manager state6/ID remains
+     * until finished(int)->OnActionCancel. Do not turn this into an automatic
+     * Stop, a retry, a successful result, or a new ordinary request (RE §124). */
+    stop_network_test(r);
+    pthread_mutex_lock(&r->lock);
+    r->facts.failed = r->facts.test_failure_pending = true;
+    unsigned port = r->session_info.address.port;
+    pthread_mutex_unlock(&r->lock);
+    sl_network_test_view view = {.phase = SL_TEST_FAILED};
+    snprintf(view.error, sizeof(view.error), sl_tr(SL_T_TEST_FAILED_DETAIL),
+             r->active.host.name, port);
+    sl_log(view.error);
+    publish_test(r, view);
+}
 static void sample_network_test(sl_runtime *r, uint64_t now) {
     if (!r->test_session || r->test_joined)
         return;
@@ -729,8 +744,7 @@ static void sample_network_test(sl_runtime *r, uint64_t now) {
     r->test_joined = true;
     IHS_SessionGetNetworkTestResult(r->test_session, &result);
     if (result.status != IHS_NetworkTestComplete || !result.valid) {
-        stop_network_test(r);
-        fail(r, sl_tr(SL_T_TEST_FAILED));
+        fail_network_test(r);
         return;
     }
     /* Keep the joined Session/full samples until the result is acknowledged.
@@ -1242,10 +1256,16 @@ static void *worker_main(void *ctx) {
             r->request_at = 0;
         }
         memset(auth_secret, 0, sizeof(auth_secret));
-        if (ready && !r->session && !r->test_session &&
-            !(r->test_active ? launch_network_test(r, info) : launch_session(r, info))) {
-            stop_session(r);
-            fail(r, sl_tr(SL_T_SESSION_FAILED));
+        if (ready && !r->session && !r->test_session) {
+            bool testing = r->test_active;
+            if (!(testing ? launch_network_test(r, info) : launch_session(r, info))) {
+                if (testing)
+                    fail_network_test(r);
+                else {
+                    stop_session(r);
+                    fail(r, sl_tr(SL_T_SESSION_FAILED));
+                }
+            }
         }
         if (conn && r->session) {
             stream_media_set_hid_session(r->session, true);

@@ -145,7 +145,11 @@ void sl_ui_network_test(sl_ui_model *m, const sl_network_test_view *view) {
         m->focus = 103; /* The apply/continue row; footer B keeps the old settings. */
     } else if (view->phase == SL_TEST_CONTINUING)
         m->page = SL_CONNECTING;
-    else
+    else if (view->phase == SL_TEST_FAILED) {
+        sl_ui_error(m, view->error);
+        m->cancel_only_error = true;
+        m->focus = 101;
+    } else
         return;
     if (m->page != before)
         m->entered_at = m->now;

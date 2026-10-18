@@ -293,11 +293,14 @@ void sl_ui_layout(sl_ui_model *m) {
             row(l, 1, sl_tr(SL_T_EXIT), SL_CONFIRM_EXIT, 0);
             break;
         case SL_ERROR:
-            strcpy(l->title, m->ending_game  ? sl_tr(SL_T_END_GAME)
-                             : m->had_stream ? sl_tr(SL_T_STREAM_INTERRUPTED)
-                                             : sl_tr(SL_T_CONNECT_FAILED));
+            strcpy(l->title, m->cancel_only_error ? sl_tr(SL_T_TEST_FAILED)
+                             : m->ending_game     ? sl_tr(SL_T_END_GAME)
+                             : m->had_stream      ? sl_tr(SL_T_STREAM_INTERRUPTED)
+                                                  : sl_tr(SL_T_CONNECT_FAILED));
             text(l, 320, 232, 30, m->error);
-            if (m->intent.host.id && !m->ending_game)
+            if (m->cancel_only_error)
+                row(l, 1, sl_tr(SL_T_TEST_CLOSE), SL_BACK, 0);
+            else if (m->intent.host.id && !m->ending_game)
                 row(l, 2, sl_tr(SL_T_RETRY), SL_RETRY, 0);
             break;
         default:

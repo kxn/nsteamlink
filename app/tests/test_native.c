@@ -334,6 +334,7 @@ int main(int argc, char **argv) {
     for (int lang = SL_LANG_ZH_CN; lang <= SL_LANG_EN; ++lang) {
         sl_i18n_set(lang);
         for (int p = SL_HOME; p <= SL_CLOSING; ++p) {
+            ui.cancel_only_error = false;
             ui.page = p;
             ui.depth = 0;
             ui.leaving = false;
@@ -358,6 +359,14 @@ int main(int argc, char **argv) {
                      p);
             save_image(image);
         }
+        ui.page = SL_ERROR;
+        ui.cancel_only_error = true;
+        snprintf(ui.error, sizeof(ui.error), sl_tr(SL_T_TEST_FAILED_DETAIL), "CONTROLLED-PC",
+                 61024u);
+        sl_ui_layout(&ui);
+        stream_media_present();
+        save_image(lang == SL_LANG_EN ? "i18n-en-network-failed" : "i18n-zh-network-failed");
+        ui.cancel_only_error = false;
     }
     sl_i18n_set(SL_LANG_ZH_CN);
     ui.page = SL_HOME;

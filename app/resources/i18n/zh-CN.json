@@ -168,5 +168,7 @@
   "TEST_APPLY": "应用建议设置",
   "TEST_CONTINUE": "继续",
   "TEST_KEEP": "B  保持当前设置",
-  "TEST_FAILED": "网络测试失败，请检查连接后重试"
+  "TEST_FAILED": "网络测试失败",
+  "TEST_FAILED_DETAIL": "无法连接到 %s\n端口 %u。",
+  "TEST_CLOSE": "关闭"
 }

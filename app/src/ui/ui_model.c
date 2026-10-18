@@ -10,6 +10,7 @@ static void page(sl_ui_model *m, sl_page p) {
     m->games_dragging = false;
     m->page = p;
     m->ending_game = false;
+    m->cancel_only_error = false;
     m->focus = 0;
     m->entered_at = m->now;
 }
@@ -518,7 +519,7 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
         }
         break;
     case SL_RETRY:
-        if (m->page == SL_ERROR && !m->ending_game) {
+        if (m->page == SL_ERROR && !m->ending_game && !m->cancel_only_error) {
             m->repair_attempted = !m->intent.host.paired;
             m->pairing_code[0] = 0;
             ++m->generation;

@@ -51,6 +51,7 @@ void sl_runtime_player_focus(sl_runtime *, bool);
 typedef struct sl_runtime_facts {
     uint64_t request_id, session_id, epoch, video_transition;
     bool connected, paused, presented, failed;
+    bool test_failure_pending; /* Failed test awaits user acknowledgement/cancel. */
     bool requests_closed, protocol_closed, video_clean;
 } sl_runtime_facts;
 bool sl_runtime_read_facts(sl_runtime *, sl_runtime_facts *);

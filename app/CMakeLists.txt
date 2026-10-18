@@ -313,6 +313,15 @@ if(NSL_PLATFORM STREQUAL "desktop")
     add_test(NAME video_reset_runtime COMMAND nsl-video-reset-runtime
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video/sequential.h264)
     set_tests_properties(video_reset_runtime PROPERTIES TIMEOUT 20)
+    add_executable(nsl-network-test-failure-runtime tests/network_test_failure_runtime.c)
+    target_include_directories(nsl-network-test-failure-runtime PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf ${CMAKE_SOURCE_DIR}/third_party/ihslib/tests/session)
+    target_compile_options(nsl-network-test-failure-runtime PRIVATE -UNDEBUG -Wall -Wextra)
+    target_link_libraries(nsl-network-test-failure-runtime PRIVATE nsl_platform)
+    target_link_options(nsl-network-test-failure-runtime PRIVATE -Wl,--wrap=IHS_ClientStreamingRequest)
+    add_test(NAME network_test_failure_runtime COMMAND nsl-network-test-failure-runtime)
+    set_tests_properties(network_test_failure_runtime PROPERTIES TIMEOUT 40)
     add_executable(nsl-network-test-runtime tests/network_test_runtime.c)
     target_include_directories(nsl-network-test-runtime PRIVATE platforms/common
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client

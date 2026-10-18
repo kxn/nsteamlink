@@ -157,7 +157,7 @@ typedef struct sl_ui_model {
     uint64_t leave_at;
     float leave_opacity;
     int focus;
-    bool had_stream;
+    bool had_stream, cancel_only_error;
     uint64_t launch_at;
     sl_control launch_card; /* Captured before the HOME layout is replaced. */
     float games_scroll, games_target;

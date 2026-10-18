@@ -168,5 +168,7 @@
   "TEST_APPLY": "Use recommended settings",
   "TEST_CONTINUE": "Continue",
   "TEST_KEEP": "B  Keep current settings",
-  "TEST_FAILED": "Network test failed. Check the connection and retry."
+  "TEST_FAILED": "Network test failed",
+  "TEST_FAILED_DETAIL": "Couldn't connect to %s\nPort %u.",
+  "TEST_CLOSE": "Close"
 }

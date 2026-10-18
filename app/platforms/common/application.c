@@ -152,7 +152,7 @@ static void lifecycle_facts(application *a) {
         return;
     if (f.session_id && !a->lifecycle.session_id)
         sl_app_session_created(&a->lifecycle, f.request_id, f.session_id);
-    if (f.failed &&
+    if (f.failed && !f.test_failure_pending &&
         (a->lifecycle.phase == SL_APP_STARTING || a->lifecycle.phase == SL_APP_STREAMING)) {
         sl_app_request_stop(&a->lifecycle);
         sl_media_gate(false);
@@ -166,7 +166,7 @@ static void lifecycle_facts(application *a) {
         sl_app_video_state(&a->lifecycle, f.session_id, f.video_transition, f.epoch, f.paused);
     if (f.presented)
         sl_app_presented(&a->lifecycle, f.session_id, f.epoch);
-    if (f.requests_closed &&
+    if (f.requests_closed && !f.test_failure_pending &&
         (a->lifecycle.phase == SL_APP_STARTING || a->lifecycle.phase == SL_APP_STREAMING))
         sl_app_request_stop(&a->lifecycle);
     uint64_t next = sl_app_cleanup(&a->lifecycle, f.request_id, f.session_id, f.requests_closed,

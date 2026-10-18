@@ -668,6 +668,35 @@ static void host_secrets(void) {
     assert(!snapshot.hosts[0].has_secret);
 }
 static void network_test_flow(void) {
+    for (unsigned accept = 0; accept < 2; ++accept) {
+        sl_ui_model m = model();
+        add(&m, 1, "HOST");
+        m.store.registry.hosts[0].paired = true;
+        sl_ui_action(&m, SL_START, 0);
+        sl_command cmd;
+        assert(sl_ui_take_command(&m, &cmd));
+        uint64_t generation = cmd.generation;
+        sl_network_test_view failed = {
+            .generation = generation, .revision = 1, .phase = SL_TEST_FAILED};
+        strcpy(failed.error, "Couldn't connect to HOST on port 61024.");
+        sl_ui_network_test(&m, &failed);
+        assert(m.page == SL_ERROR && m.cancel_only_error && !strcmp(m.error, failed.error));
+        assert(!strcmp(m.layout.title, sl_tr(SL_T_TEST_FAILED)));
+        layout_check(&m);
+        for (int i = 0; i < m.layout.count; ++i)
+            assert(m.layout.controls[i].action != SL_RETRY);
+        sl_ui_action(&m, SL_RETRY, 0);
+        assert(!sl_ui_take_command(&m, &cmd));
+        failed.revision++;
+        failed.phase = SL_TEST_RUNNING;
+        sl_ui_network_test(&m, &failed);
+        assert(m.page == SL_ERROR && m.cancel_only_error);
+        sl_ui_action(&m, accept ? SL_ACCEPT : SL_BACK, 0);
+        assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_CANCEL &&
+               cmd.generation > generation && m.page == SL_STOPPING);
+        sl_ui_stopped(&m, false);
+        assert(m.page == SL_HOME && !m.cancel_only_error);
+    }
     for (unsigned manual = 0; manual < 2; ++manual) {
         for (unsigned accept = 0; accept < 2; ++accept) {
             sl_ui_model m = model();

@@ -164,7 +164,7 @@ static void one(Scenario scenario, bool crc) {
     sl_command cmd = {
         .type = SL_CMD_STREAM, .generation = 1, .host = host, .test_only = manual, .game_id = 570};
     assert(sl_runtime_submit(runtime, &cmd, &store));
-    unsigned ticket_count = 0, sequence = 0, keepalives = 0;
+    unsigned ticket_count = 0, sequence = 0, keepalives = 0, test_request_id = 0;
     bool ordinary = false, handshake = false, auth = false, start = false;
     bool decision = false, done = false, config_seen = false, complete = false;
     struct sockaddr_in from = {0};
@@ -233,6 +233,16 @@ static void one(Scenario scenario, bool crc) {
             assert(header);
             unsigned tag = header->msg_type;
             cmsg_remote_client_broadcast_header__free_unpacked(header, NULL);
+            if (tag == k_ERemoteDeviceStreamingCancelRequest) {
+                assert(decision && (scenario == CANCEL_RUNNING || scenario == EXIT_RESULT ||
+                                    scenario == CANCEL_SAVE));
+                unsigned size = test_discovery_u32(wire + 12 + hs);
+                CMsgRemoteDeviceStreamingCancelRequest *cancel =
+                    cmsg_remote_device_streaming_cancel_request__unpack(NULL, size, wire + 16 + hs);
+                assert(cancel && cancel->request_id == test_request_id);
+                cmsg_remote_device_streaming_cancel_request__free_unpacked(cancel, NULL);
+                continue;
+            }
             if (tag != k_ERemoteDeviceStreamingRequest)
                 continue;
             unsigned size = test_discovery_u32(wire + 12 + hs);
@@ -242,6 +252,8 @@ static void one(Scenario scenario, bool crc) {
             assert(req && req->has_network_test);
             ++ticket_count;
             ordinary = !req->network_test;
+            if (!ordinary)
+                test_request_id = req->request_id;
             assert(ticket_count == (ordinary && !skip_test ? 2u : 1u));
             assert(!ordinary || (!manual && scenario != CANCEL_SAVE && scenario != CANCEL_RUNNING &&
                                  scenario != EXIT_RESULT));
