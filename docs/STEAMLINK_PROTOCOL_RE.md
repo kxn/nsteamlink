@@ -9666,6 +9666,11 @@ Qt图形回调/呈现和文件终点为明确adapter。未运行自然RunNetwork
 固定模式达到state5后继续送601/1200帧的案例专门观察该回调边界，不称自然主机会
 在测试结束后继续发送这些帧。
 
+【补充限定，§119】§118探针显式调用SetChannelMaxRecvDelay(6553)，沿用了活跃
+音视频的受控接收参数；这不是网络测试产品入口设置6553的证据。不能将该参数
+直接当作Native网络测试默认值。§119执行原静态连接全局初始化@ccec98之后，
+原generic Channel构造读取到65；其与测试产品调用者的关系分别核对。
+
 FEC输入由同一原shell内**独立的**Channel encoder产生，显式MTU64、percentage50，
 直接调用encoder绕过上行启用门；传输出口source/dest、send/receive时间与CRC是
 明确重播参数。接收连接的gate与percentage保持0。四个所需独特shard、反序、
@@ -9748,4 +9753,97 @@ python3 scripts/check-steam-network-test-media.py \
   --collector build/desktop/third_party/ihslib/tests/session/ihs-media-network-stats-oracle \
   --negotiator build/desktop/app/nsl-auth-udp-oracle
 ctest --test-dir build/desktop -R '^network_test_media_official_vectors$' --output-on-failure
+```
+
+## 119. 网络测试认证与原运行循环的会话分界
+
+### 119.1 实现前的源代码依据
+
+Evidence：沿§118同一固定Android shell，实际CUtlBuffer构造/SetAuthToken@ca9cc8
+与CCrypto::GenerateHMAC256执行，固定32-byte输入的token与独立HMAC-SHA256计算
+相同。原StartAuthentication@caa460只设置token字段1和version字段2；省略steamid
+字段3。普通串流请求包含steamid，不能不加区分地复用该发送producer。配对授权码
+与connect/security PIN语义继续依照STEAM_REMOTE_PLAY_AUTH，不由测试模式改写。
+
+原RunNetworkTest@ca9de8在StreamProcessNetwork/transport Update之后选择阶段：
+媒体回调当轮将state置5则进入Complete；HandleNetworkTest判断无数据超时置5后，
+先经历下一轮网络处理再Complete。不能把超时判断与结算无条件合成同一个调用。
+原Cancel@ca9b64设置status3/state0；OnStreamDisconnected@cab870设置state0，
+运行循环退出时仍status1才改成4。成功Complete写status2，取消/失败不冒称成功评分。
+
+Evidence：原静态全局初始化@ccec98给generic接收延迟设置65tick，以及连接重试/
+RTO/接收lease；在此之前直接读未初始化的全局0不能作为产品默认值。§118的6553
+是明确测试参数，已补充限定。测试媒体由generic窗口/RS直接进入CNetworkStats，
+没有StartVideoData/AudioData元数据或decoder创建前提；Native会话测试模式应采用
+同一传输状态和专用统计消费者，不能自动启动普通视频解码路径。
+
+### 119.2 原运行循环、迟到数据与协议发送的对照契约
+
+`audit-steam-network-test-lifecycle.py`在上述固定shell中执行29场景、248个原检查点，
+保存59份所选实际进入的方法身份，包含CUtlBuffer构造与原HMAC函数。真实构造器为
+buffer设置overflow入口；用全零buffer替代后出现的空入口异常不是官方行为证据。
+16/32-byte输入的HMAC原始调用分别核对独立SHA256；16-byte只是原函数实验输入，
+不构成现代Steam提供16-byte会话ticket的证据。
+
+场景覆盖两种测试模式、认证presence/已知与未知枚举/坏protobuf、各阶段取消和
+断线、Handshake缺失info与MTU边界、严格10s及tick回绕、握手前媒体、94目标替换，
+以及无数据超时之后下一网络轮的迟到媒体。后者原回调仍能推进跨度及full samples，
+随后才Complete；在超时判断当轮直接关闭会丢掉这次数据。将原Run循环@ca9e5c的
+`B.PL`改为`B.GT`使Handshake在10s等值处提前关闭，实际补丁hit1、正常返回且
+assert为空；原/变体trace分别7/5项，证明严格边界由原指令选择。
+
+Native `network_test_lifecycle_official_vectors`在136个对应检查点比较实际HMAC、
+握手/认证/三条KeepAlive/请求8/统计消息的完整正文、加密序号、阶段、帧跨度、
+逐位批次和最终三浮点，以及通过公开复制接口读取的全部`[targetKbps,ticks]`。
+请求8的600帧/60fps/burst0是原网络测试协议负载，不是Switch解码能力声明。
+测试统计即使没有视频帧也发送channel2的五项网络数据；普通视频统计的无帧守卫
+不能直接用于这里。固定模式以跨度600结束，带宽模式不使用该数量停止条件；
+测试loss和评分仍沿§118，不能换成默认统计的batch average loss。
+
+原BConnect返回值/已建立连接、全局网络事件驱动、transport Update、OS/时钟/锁、
+地址比较、packet refcount、Qt、最终I/O/Close及identity frame cipher是显式adapter。
+原Socket/窗口/Frame/protobuf/Run选择/Handle/Complete/Cancel/断线回调执行原指令。
+这组回放没有取得真实Steam ticket，也不证明自然后台线程、Qt事件循环或设备行为。
+
+### 119.3 专用Native会话与Switch能力的边界
+
+`IHS_SessionConfigureNetworkTest`在Connect前选择专用会话模式和明确目标码率；
+它复用已有收发owner、可靠控制、generic媒体窗口/RS和统计，不创建音视频decoder、
+输入worker，不进入普通stream-connected/game-start/game-stop流程。测试结束再使用
+新的普通Session。配置及发送采用同一协议语义，平台能力仍来自Switch实际后端；
+没有为了匹配Android去新增另一种硬件能力、codec声明或未经测量的码率上限。
+
+Base锁保护模式状态、full-record追加与公开快照/复制；单次复制最多256条，调用方
+拥有输出。关闭先处理连接再Stop/评分；取消和失败不执行成功Stop。调用者Disconnect
+在运行时标Cancelled，内部HMAC/控制/统计发送准备失败标Failed，避免把本地错误
+解释成用户取消。Full-record或批次分配失败标invalid并终止测试；普通媒体默认
+collector仍沿§117继续媒体。这是本地资源保护，不冒称已证明官方OOM策略。
+公开入口要求32-byte会话key和正int32目标，属于可用ticket/参数的本地守卫，不能
+由原HMAC16实验扩大成产品接受其他ticket长度。
+
+真实loopback UDP用实际Session双worker、HMAC、控制加解密和join，覆盖CRC开/关
+各三种路径：普通fixed完成、原RS样本fixed完成、bandwidth目标替换后取消。原RS
+样本来自§118显式MTU64/50%编码实验，仍不证明Host会自然启用FEC。额外用并发快照/
+复制、full-record首分配失败和七处发送失败核对资源归属/状态清理；不把一次组件
+线程测试扩大成Switch loader的生命周期证明。
+
+三个隔离生产TU变体分别加入认证steamid、漏发测试统计、将超时当轮直接结算，
+均成功编译/归档/链接，由完整正文或状态/迟到数据差异正常exit1检出。编译错误、
+崩溃、超时和未执行补丁不计入反例成功。
+
+专用Session入口要求调用者提供已授权的测试endpoint/key。发现层
+`CMsgRemoteDeviceStreamingRequest.network_test`与UI发起/凭据获取不由该接口提供；
+不能拿普通串流凭据作为已验证的测试ticket，也不能据此宣称已经与真实Steam端到端
+工作。测试结果的产品展示、推荐确认与保存仍与§116/118的原客户端证据分开核对。
+
+复播命令（固定binary及可选逆向依赖沿§24.1）：
+
+```sh
+python3 scripts/audit-steam-network-test-lifecycle.py \
+  --binary /path/to/libshell-arm64.so --output /tmp/network-test-lifecycle.json
+python3 scripts/check-steam-network-test-lifecycle.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-network-test-oracle
+ctest --test-dir build/desktop \
+  -R '^(network_test_lifecycle_official_vectors|network_test_lifetime|network_test_udp)$' \
+  --output-on-failure
 ```
