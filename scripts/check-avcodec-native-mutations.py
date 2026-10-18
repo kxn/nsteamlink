@@ -31,7 +31,71 @@ def main():
     runtime = ROOT / "app/platforms/common/runtime.c"
     media = ROOT / "app/platforms/common/media.c"
     oracle = ROOT / "app/tests/video_timing_oracle.c"
+    system = ROOT / "app/platforms/desktop/system.c"
     mutations = [
+        (
+            "ignore_slice_capability",
+            pipeline,
+            "if (!(codec->capabilities & AV_CODEC_CAP_SLICE_THREADS) || !cpu_count)",
+            "if (!cpu_count)",
+            "threads",
+        ),
+        (
+            "wrong_thread_limit",
+            pipeline,
+            "if (count > 4) count = 4;",
+            "if (count > 3) count = 3;",
+            "threads",
+        ),
+        (
+            "overwrite_sdk_thread_defaults",
+            pipeline,
+            "if (count > 1) {",
+            "if (true) {",
+            "threads",
+        ),
+        (
+            "select_frame_threads",
+            pipeline,
+            "context->thread_type = FF_THREAD_SLICE;",
+            "context->thread_type = FF_THREAD_FRAME;",
+            "threads",
+        ),
+        (
+            "guess_cpu_count",
+            pipeline,
+            "unsigned count = cpu_count();",
+            "unsigned count = 4;",
+            "threads",
+        ),
+        (
+            "omit_production_thread_setup",
+            pipeline,
+            "configure_threads(d->codec, codec, config->cpu_count);",
+            "d->codec->thread_count = 1;",
+            "threads",
+        ),
+        (
+            "omit_media_cpu_input",
+            media,
+            ".cpu_count = sl_system_video_cpu_count,",
+            ".cpu_count = NULL,",
+            "threads",
+        ),
+        (
+            "count_physical_cores",
+            system,
+            'strncasecmp(line, "processor", 9)',
+            'strncasecmp(line, "core id", 7)',
+            "threads",
+        ),
+        (
+            "reread_cpu_count",
+            system,
+            "pthread_once(&video_cpu_once, read_video_cpu_count);",
+            "read_video_cpu_count();",
+            "threads",
+        ),
         (
             "omit_again_first_result",
             pipeline,
@@ -212,7 +276,7 @@ def main():
         changed.write_text(body)
         target = (
             "nsl-video-timing-oracle"
-            if kind in ("oracle", "recovery", "player", "info")
+            if kind in ("oracle", "recovery", "player", "info", "threads")
             else "nsl-video-pipeline-tests"
         )
         link = shlex.split(
@@ -237,7 +301,7 @@ def main():
                 )
             return obj
 
-        if kind in ("oracle", "recovery", "player", "info"):
+        if kind in ("oracle", "recovery", "player", "info", "threads"):
             text = oracle.read_text().replace(
                 '#include "../platforms/common/',
                 '#include "' + str(ROOT / "app/platforms/common") + "/",
@@ -251,7 +315,7 @@ def main():
                 i for i, x in enumerate(link) if x.endswith("video_timing_oracle.c.o")
             )
             link[index] = str(obj)
-            if source in (video, config, media):
+            if source in (video, config, media, system):
                 objects.append(compile_file(source, changed, source.stem))
         else:
             objects.append(compile_file(pipeline, changed, "pipeline"))
@@ -267,7 +331,7 @@ def main():
                 stdout=log,
                 stderr=subprocess.STDOUT,
             )
-        if kind in ("oracle", "recovery", "player", "info"):
+        if kind in ("oracle", "recovery", "player", "info", "threads"):
             command = [
                 "python3",
                 str(
@@ -277,6 +341,7 @@ def main():
                         "recovery": "scripts/check-steam-video-recovery.py",
                         "player": "scripts/check-steam-player-config.py",
                         "info": "scripts/check-steam-decoder-info.py",
+                        "threads": "scripts/check-steam-decode-threads.py",
                     }[kind]
                 ),
                 "--receiver",
@@ -292,7 +357,7 @@ def main():
         (directory / "stdout.log").write_text(r.stdout)
         (directory / "stderr.log").write_text(r.stderr)
         assert r.returncode != 0, (name, "undetected")
-        if kind in ("oracle", "recovery", "player", "info"):
+        if kind in ("oracle", "recovery", "player", "info", "threads"):
             assert (
                 "AssertionError:" in r.stderr
                 and "returncode" not in r.stderr

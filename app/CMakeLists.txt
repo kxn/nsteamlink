@@ -183,6 +183,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_compile_options(nsl-video-timing-oracle PRIVATE -UNDEBUG -Wall -Wextra -Wno-unknown-pragmas)
     target_link_libraries(nsl-video-timing-oracle PRIVATE nsl_platform ihs-test-session)
     target_link_options(nsl-video-timing-oracle PRIVATE -Wl,--wrap=IHS_SessionPacketTimestamp
+        -Wl,--wrap=sl_system_video_cpu_count -Wl,--wrap=fopen
         -Wl,--wrap=avcodec_open2 -Wl,--wrap=avcodec_send_packet -Wl,--wrap=avcodec_receive_frame -Wl,--wrap=avcodec_flush_buffers
         -Wl,--wrap=av_parser_parse2 -Wl,--wrap=sl_video_timing_update
         -Wl,--wrap=IHS_SessionVideoDecodeFeedback -Wl,--wrap=IHS_SessionVideoRequestReset -Wl,--wrap=IHS_SessionChannelQueuePacket
@@ -211,6 +212,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-decoder-info.py"
         --receiver $<TARGET_FILE:nsl-video-timing-oracle>)
     set_tests_properties(decoder_info_official_vectors PROPERTIES TIMEOUT 60)
+    add_test(NAME decoder_threads_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-decode-threads.py"
+        --receiver $<TARGET_FILE:nsl-video-timing-oracle>)
+    set_tests_properties(decoder_threads_official_vectors PROPERTIES TIMEOUT 120)
     add_executable(nsl-video-keyframe-runtime tests/video_keyframe_runtime.c)
     target_include_directories(nsl-video-keyframe-runtime PRIVATE platforms/common
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client

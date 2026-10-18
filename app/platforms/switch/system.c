@@ -2,6 +2,7 @@
 #include "build_identity.h"
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <libavutil/cpu.h>
 #include <stdio.h>
 #include <string.h>
 #include <switch.h>
@@ -115,6 +116,13 @@ const char *sl_system_locale(void) {
                                 language == SetLanguage_ZHHANS || language == SetLanguage_ZHHANT))
         return "zh-CN";
     return "en";
+}
+
+uint8_t sl_system_video_cpu_count(void) {
+    /* The installed Switch SDK detector reads InfoType_CoreMask, with its own
+     * fallback. SDL 2.28.5's detector only returns 1 on this target (§100).
+     * This is the platform input; selection gates remain the original policy. */
+    return (uint8_t)av_cpu_count();
 }
 
 sl_system_stream_info sl_system_streaming_info(void) {

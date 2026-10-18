@@ -569,7 +569,7 @@ static bool launch_session(sl_runtime *r, IHS_SessionInfo info) {
     IHS_StreamClientCapabilities caps = {
         .systemInfo = platform.system_info[0] ? platform.system_info : NULL,
         .decoderInfo = platform.decoder_info,
-        .decoderThreads = 1, /* video_pipeline.c sets AVCodecContext.thread_count = 1. */
+        /* Actual SDK thread metadata is reported by get_format, not guessed here. */
         .hasVideoDecoderCapabilities = true,
         .supportsVideoHevc = false, /* The runtime's validated pipeline is H264. */
         .maximumDecodeBitrateKbps = platform.maximum_decode_bitrate_kbps,

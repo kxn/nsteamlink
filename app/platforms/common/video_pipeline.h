@@ -22,6 +22,7 @@ typedef struct sl_video_frame {
 /* Called synchronously inside open/submit SDK format negotiation. Its context
  * is borrowed for that call only; the pipeline clears it before returning. */
 typedef void (*sl_video_info_fn)(void *, const char *, unsigned threads);
+typedef uint8_t (*sl_video_cpu_count_fn)(void);
 typedef struct sl_video_config {
     unsigned width, height;
     bool hardware;
@@ -29,6 +30,9 @@ typedef struct sl_video_config {
     size_t extradata_size;
     sl_video_info_fn info;
     void *info_context;
+    /* Platform CPU input, queried only for a slice-thread-capable codec.
+     * NULL leaves SDK defaults intact. Not retained after open. */
+    sl_video_cpu_count_fn cpu_count;
 } sl_video_config;
 
 sl_video_pipeline *sl_video_create(void);

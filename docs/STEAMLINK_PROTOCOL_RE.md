@@ -8055,7 +8055,7 @@ Switch输入或推荐CPU探测方式。文件打开失败的原assert分支未�
 五项原指令反事实分别改变CPU增量、上限、能力guard、count写入、slice写入，均要求
 命中、原函数完整返回、无原assert，再以状态差异检出。
 
-【差异与契约】Native `video_pipeline.c`的固定thread_count=1不能再被当作已与原
+【差异与契约（取证时；实现修订见§100）】Native `video_pipeline.c`的固定thread_count=1不能再被当作已与原
 Start线程策略对齐。适配需按**实际codec能力、平台逻辑处理器输入和SDK默认值**保留
 同一门禁与slice选择，消息80继续读取实际SDK元数据。Switch逻辑CPU输入的来源、SDK
 能力与线程资源清理需单独核验；不能把Linux读取/proc的代码或本机4直接当作Switch
@@ -8076,4 +8076,107 @@ python3 scripts/audit-steam-client-sdk-process.py \
   --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/patched-runtime/lib \
   --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/runtime/lib \
   --output /tmp/steam-client-sdk-process.json
+```
+
+## 100. 官方线程选择至消息80，以及平台CPU输入
+
+### 100.1 原始分支的组合复播
+
+【证据】`audit-steam-client-thread-reports.py`沿§99固定Valve Linux客户端ELF SHA，
+执行原cached CPU getter @0x1a7350、线程getter @0x326be0、codec能力guard、
+Start实际写入、已安装get_format、完整info80/cache/protobuf/Frame和reset actor。
+原SDK能力为明确输入0x3022，未open context默认1/type3沿真实SDK观察设置。SDK
+open终点先读取**原Start已经写出的值**，再保持该元数据；没有从Native或Python
+公式生成“期望线程数”。缓存CPU byte为声明的OS输入，冷文件producer另由§99
+72例独立执行；这些边界不能合并成完整Qt/SDK/硬件自然启动证明。
+
+既有Recovery bootstrap及其唯一CPU文件失败assert原样保留、单列，不属于测量动作。
+在该bootstrap之后才设置本节cached CPU输入及原指令反事实，随后config/Start/
+提交/重建全程不接受原assert。SDK callback机会、软件formats、send outcome以及
+OS/UI/加密/最终Connection交接仍是声明边界。原源范围不以新增缓存输入伪称完成
+实际deferred-format主线程消费；调度输入继承§95，SDK多线程元数据不是OS并发证明。
+
+54案例=CPU输入0/1/2/3/4/8/255/256/257 × 硬解字段缺失/false/true × send成功/失败，
+每例六状态，共324状态、54个所列完整FDE。每例执行SDK send内首次callback、普通
+提交、普通重建、再次格式callback、SDK open内重建callback及再次提交；逐次记录原
+SDK pre-open count/type、完整80、拥有缓存、配置及原actor。四项原指令反事实分别
+破坏上限、能力guard、slice写入和消息80调用，命中且正常返回后由状态差异检出。
+旧§98的30例/204状态/函数hash及独立cache列不改，新组合轨迹独立冻结。
+
+### 100.2 Native契约与Linux输入
+
+【修订】§99取证时Native固定thread_count=1的差异作为历史反例保留。本契约用
+生产`configure_threads`替代固定值：只有codec带AV_CODEC_CAP_SLICE_THREADS才查询
+CPU输入，取byte输入的min(value,4)，仅结果>1时写thread_count及FF_THREAD_SLICE。
+其他情况保留SDK默认count/type；不无条件设置4、不把slice换成frame threading。
+内部未提供CPU getter的调用者保留SDK默认，生产media接入平台getter，并且只在
+open期间调用，不持有该函数的临时上下文。runtime不再把静态decoderThreads=1
+作为当前SDK的事实；格式callback仍按§98逐次读取实际SDK元数据并发送80。
+
+Linux平台getter按原CPU-info的256B fgets、前缀processor的9字节不区分大小写比较、
+byte增量和进程级缓存实现，不用物理core id、affinity或SDL计数替代。pthread_once
+串行初始化，成功打开但零processor行返回0，256/257行分别返回0/1。打开失败保留
+原fallback数值1；Native不复制原debug assert交互，此处是明确的本地OS错误保护，
+不是新的网络/解码恢复策略。CPU getter只在Start的能力分支调用，不在每帧热路径。
+
+Native同一生产helper以真实未open context和明确capability/default元数据对照§99
+72例，包含7/type9保留哨兵，不能把哨兵当作自然SDK设置。真实Linux getter以文件
+终点对照九种processor数、两次读取的一次打开缓存，另测打开失败，共10例。旧单
+线程Native对照通过显式一CPU输入保留，未回写旧golden来适配新实现。
+
+### 100.3 Switch平台适配的独立证据
+
+【证据】本机安装switch-ffmpeg 7.1-5（libavcodec 61.19.100）。
+`audit-switch-decoder-thread-input.py`从实际静态归档抽取定义av_cpu_count的cpu.o
+（同名成员有两个，按符号选择，不误取AArch64 SIMD特征函数）。完整函数原指令
+在AArch64执行器运行，svcGetInfo/av_log为明确终点。原调用参数为InfoType_CoreMask=0、
+CUR_PROCESS_HANDLE=0xffff8001、subid=0；成功对64bit掩码执行cnt/addv，失败保持初始3。
+函数自身不缓存CPU数；一次性日志的原atomic分支也执行。七种mask × 两种status，
+14例各调用两次，核对结果、两次svc及一次log。不是实际Switch内核返回值证明。
+
+同一脚本用实际目标编译器/header导出AVCodec.capabilities offset=24、slice能力
+0x2000和FF_THREAD_SLICE=2，再读取归档ff_h264_decoder对象，能力为0x3022。
+SDK归档、对象、完整函数span长度/指令SHA均冻结。可选Native object参数还执行
+**实际编译的**sl_system_video_cpu_count → 原SDK av_cpu_count → svc终点，14例结果
+一致；报告另存，不拿某次构建的整个object hash作为所有构建的黄金值。
+
+【平台选择】Switch getter调用这个已有SDK API并转为byte，再交给同一官方能力/
+count/default/slice分支。它是平台输入适配，不是“发现了官方Switch客户端”。其
+allowed-core mask/failure默认与Linux /proc全体逻辑CPU统计并不相同，不能伪称跨OS
+探测等价。也不从SystemInfo中已有的固定4推导decoder线程数。本机SDL 2.28.5的
+SDL_GetCPUCount冷分支只缓存并返回1，不能用它证明实际逻辑CPU输入。实际设备掩码、
+硬件SDK是否调整元数据和NVTEGRA自然格式/错误仍须各自原始运行证据。
+
+### 100.4 媒体比较与资源边界
+
+`check-steam-decode-threads.py`在72个helper和10个Linux producer案例之外，对上述
+54例/324状态执行生产media/callback/epoch actor、真实FFmpeg SDK及完整80 pack；
+逐次比较pre-open count/type、CPU查询次数、真实SDK元数据、完整消息、缓存、配置及
+epoch。每次实际SDK输出先验已有独立framemd5，再施加受控receive结果；实际SDK的
+active_thread_type不得出现FRAME位。这是软件/硬件不可用回退投影，不能据此确认
+NVTEGRA成功描述或其他平台backend。两次普通提交没有新格式时仍不补发80。
+
+另外以2/3/4 CPU输入执行既有四epoch旧图片/map跨Session销毁和IHS_Quit后的读取与
+释放，实际像素不变。最终context析构后，/proc/self/task计数回到media初始化基线；
+在软件3 CPU例中baseline=2、持有旧图像时IHS_Quit后=4、最终=2。这提供了本地最终
+SDK线程清理证据，不等于Switch loader或Stop时点一致。原客户端§99实际Start→Stop
+立即free context，进程探针也看到SDK workers退出；Native目前仍按旧域/映射引用在
+reaper阶段free，held图像期间可以保留SDK线程。**两者不是同一Stop释放时点**。
+不能因最终回收通过，就把旧图像/映射期间提前释放NVTEGRA codec视为已经安全或对齐；
+原Stop的帧资源归属及目标硬件引用关系需与最终线程清理分别论证。
+
+隔离Native反事实新增能力门禁、上限、默认保留、slice/frame选择、猜CPU数、漏生产
+helper调用、漏media输入、误统计physical core及重复读取cache；与旧24项合为33项。
+每项先成功编译/链接，策略项要求真实oracle正常返回后再由官方比较拒绝，不把崩溃或
+编译失败当作检出。这个范围不证明全部SDK/窗口/硬件/设备消费者或FEC启用策略。
+
+```sh
+python3 scripts/audit-steam-client-thread-reports.py \
+  --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
+  --output /tmp/steam-client-thread-reports.json
+python3 scripts/audit-switch-decoder-thread-input.py \
+  --native-object build/switch/app/CMakeFiles/nsl_platform.dir/platforms/switch/system.o \
+  --output /tmp/switch-decoder-thread-input.json
+python3 scripts/check-steam-decode-threads.py \
+  --receiver build/desktop/app/nsl-video-timing-oracle
 ```

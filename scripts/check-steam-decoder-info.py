@@ -24,8 +24,8 @@ playback = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(playback)
 
 
-def verify(receiver, case, cache):
-    commands = [
+def verify(receiver, case, cache, prefix=()):
+    commands = list(prefix) + [
         "C " + (case["config"] or "-"),
         f"I {int(case['send_ok'])}",
         "E 0 -11 0 -1 -1 -1 -1",
@@ -49,11 +49,15 @@ def verify(receiver, case, cache):
         positions.append(len(commands) - 1)
         epochs.append(epoch)
     native = playback.execute(receiver, commands)
-    assert native[2]["decoder_infos"] == [], (
+    startup = len(prefix) + 2
+    assert native[startup]["decoder_infos"] == [], (
         case["name"],
         "startup must not report before format",
     )
-    assert native[2]["decoder_info_cache"] == cache[0], (case["name"], "initial cache")
+    assert native[startup]["decoder_info_cache"] == cache[0], (
+        case["name"],
+        "initial cache",
+    )
     for index, (source, position, epoch, action) in enumerate(
         zip(case["states"], positions, epochs, case["actions"], strict=True)
     ):
@@ -83,6 +87,7 @@ def verify(receiver, case, cache):
             position,
             "complete config",
         )
+    return native, positions
 
 
 def main():

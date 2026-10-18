@@ -1,7 +1,9 @@
 #include "platform/system.h"
 #include <errno.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <strings.h>
 #include <sys/random.h>
 #include <sys/stat.h>
 #include <sys/utsname.h>
@@ -74,6 +76,25 @@ const char *sl_system_locale(void) {
     if (!locale || !*locale)
         locale = getenv("LANG");
     return locale && *locale ? locale : "en";
+}
+
+static pthread_once_t video_cpu_once = PTHREAD_ONCE_INIT;
+static uint8_t video_cpu_count;
+static void read_video_cpu_count(void) {
+    FILE *file = fopen("/proc/cpuinfo", "r");
+    if (!file) {
+        video_cpu_count = 1; /* Original CPU-info fopen-failure fallback. */
+        return;
+    }
+    char line[256];
+    while (fgets(line, sizeof(line), file))
+        if (!strncasecmp(line, "processor", 9))
+            ++video_cpu_count;
+    fclose(file);
+}
+uint8_t sl_system_video_cpu_count(void) {
+    pthread_once(&video_cpu_once, read_video_cpu_count);
+    return video_cpu_count;
 }
 
 #ifndef NSL_PREFLIGHT_TEST

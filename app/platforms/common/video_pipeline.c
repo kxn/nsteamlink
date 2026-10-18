@@ -182,6 +182,19 @@ static domain *find_domain(sl_video_pipeline *p, sl_video_key key) {
             return &p->domains[i];
     return NULL;
 }
+/* Original Linux Start @324767–7ec / GetDecodeThreadCount @326be0 (§99).
+ * Keep SDK defaults unless both the capability and >1 CPU gates pass. */
+static void configure_threads(AVCodecContext *context, const AVCodec *codec,
+                              sl_video_cpu_count_fn cpu_count) {
+    if (!(codec->capabilities & AV_CODEC_CAP_SLICE_THREADS) || !cpu_count)
+        return;
+    unsigned count = cpu_count();
+    if (count > 4) count = 4;
+    if (count > 1) {
+        context->thread_count = (int)count;
+        context->thread_type = FF_THREAD_SLICE;
+    }
+}
 bool sl_video_open(sl_video_pipeline *p, sl_video_key key, const sl_video_config *config) {
     return sl_video_open_ex(p, key, config) == SL_VIDEO_OPEN_READY;
 }
@@ -236,7 +249,7 @@ sl_video_open_result sl_video_open_ex(sl_video_pipeline *p, sl_video_key key, co
     d->codec->coded_width = (config->width + 31u) & ~31u;
     d->codec->coded_height = (config->height + 15u) & ~15u;
     d->codec->flags2 |= AV_CODEC_FLAG2_FAST;
-    d->codec->thread_count = 1;
+    configure_threads(d->codec, codec, config->cpu_count);
     d->codec->opaque = d;
     d->codec->get_format = hardware_format;
     d->codec->flags |= AV_CODEC_FLAG_COPY_OPAQUE;

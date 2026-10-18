@@ -1427,6 +1427,16 @@ replacement 意图和远端 input gate 的唯一策略所有者；runtime 工作
 解码域 reaper 在全局 decoder 锁外调用 `avcodec_free_context`，其 occupied/reaping 标志阻止
 提前重用，避免旧域 SDK 析构阻塞另一活动域的 decode 锁。
 
+AVCodec线程选择遵循协议参考§99–100：按codec slice能力查询平台CPU输入，byte计数最多4，
+仅>1时指定slice线程，其余保留SDK默认。get_format逐次报告实际SDK线程元数据，不能把
+静态1线程当成当前SDK事实。Linux按原/proc byte统计，Switch输入由现有SDK的逻辑CPU接口
+提供；后者是平台适配，不是官方Switch实证。该选择不启用FRAME threading。
+
+原Linux Stop立即释放context；本设计在仍持有旧FrameLease/map时保留domain/context，
+可以保留SDK线程。最终回收后的线程数回到基线只证明最终清理，不证明Stop释放时点与
+官方相同。提前释放codec时硬件帧/映射的独立引用归属必须另有证据，不能由软件像素
+仍可读推导NVTEGRA安全，也不能把这一生命周期差异称为已对齐。
+
 GPU fence 错误使批次隔离并关闭正常渲染。退出阶段仅在 SDK queue idle 正常返回且 queue
 未处于 error state 时释放隔离引用；已故障 queue 进入 Switch fatal，不能返回 hbmenu。
 SDK acquire、NVDEC 和 queue idle 的不可取消等待仍属于 G1 必须用真机证明的限制；

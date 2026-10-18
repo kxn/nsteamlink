@@ -12,6 +12,7 @@ void sl_media_adaptive_pacing(bool enabled) {
 #include "events_backend.h"
 #include "gfx_backend.h"
 #include "platform/rumble.h"
+#include "platform/system.h"
 #include "protobuf/remoteplay.pb-c.h"
 #include "session/frame_tracker.h"
 #include "ui_audio.h"
@@ -1069,6 +1070,7 @@ int sl_media_video_start_tracked(IHS_Session *session, const IHS_VideoEpochInfo 
                                .extradata_size = config->codecDataLen,
                                .hardware = IHS_SessionVideoHardwareDecodingEnabled(session),
                                .info = video_decoder_info, .info_context = &info,
+                               .cpu_count = sl_system_video_cpu_count,
     };
     sl_video_key key = {epoch->session_id, epoch->video_epoch};
     pthread_mutex_lock(&state_lock);

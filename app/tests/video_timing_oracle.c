@@ -21,6 +21,26 @@ static unsigned controlCount, controlSteps[512], controlSizes[512];
 static uint8_t controlBodies[512][1024];
 static unsigned infoCount, infoPhase;
 static bool infoSendOk=true, infoOpenCallback;
+/* Existing frozen comparisons declare the one-CPU input explicitly. */
+static uint8_t testCpuCount=1;
+static unsigned cpuQueries;
+static int threadPolicy[3]={-1,-1,-1}, sdkThreadSetup[3]={-1,-1,-1};
+static int sdkThreadResult[3]={-1,-1,-1};
+uint8_t __wrap_sl_system_video_cpu_count(void) { ++cpuQueries;return testCpuCount; }
+static bool cpuFileFake,cpuFileFail;
+static unsigned cpuFileProcessors,cpuFileOpens;
+static int linuxCpuProbe[3]={-1,-1,-1};
+FILE *__real_fopen(const char *,const char *);
+FILE *__wrap_fopen(const char *name,const char *mode) {
+    if (!cpuFileFake || strcmp(name,"/proc/cpuinfo")) return __real_fopen(name,mode);
+    assert(!strcmp(mode,"r"));++cpuFileOpens;
+    if (cpuFileFail) return NULL;
+    FILE *file=tmpfile();assert(file);
+    for(unsigned n=0;n<cpuFileProcessors;++n) assert(fprintf(file,"processor\t: %u\n",n)>0);
+    assert(fputs("core id\t: 0\nphysical id\t: 0\n",file)>=0);
+    rewind(file);return file;
+}
+uint8_t __real_sl_system_video_cpu_count(void);
 static unsigned infoSteps[512], infoPhases[512], infoSizes[512];
 static uint8_t infoBodies[512][512];
 sl_video_open_result __real_sl_video_open_ex(sl_video_pipeline *,sl_video_key,const sl_video_config *);
@@ -96,7 +116,14 @@ sl_video_submit_result sl_video_submit(sl_video_pipeline *p, sl_video_key key, c
 #include <libavutil/imgutils.h>
 #include <libavutil/md5.h>
 #include <stdio.h>
+#include <dirent.h>
 #include <unistd.h>
+static unsigned process_threads(void) {
+    DIR *directory=opendir("/proc/self/task");assert(directory);
+    unsigned count=0;struct dirent *entry;
+    while((entry=readdir(directory))) if(entry->d_name[0]!='.') ++count;
+    assert(!closedir(directory));return count;
+}
 sl_gfx_present_result __real_sl_gfx_present(sl_gfx *);
 sl_gfx_present_result __wrap_sl_gfx_present(sl_gfx *g) {
     sl_gfx_present_result result=__real_sl_gfx_present(g);
@@ -107,7 +134,11 @@ static atomic_uint processed;
 static unsigned target;
 int __real_avcodec_open2(AVCodecContext *,const AVCodec *,AVDictionary **);
 int __wrap_avcodec_open2(AVCodecContext *c,const AVCodec *codec,AVDictionary **options) {
+    sdkThreadSetup[0]=c->thread_count;sdkThreadSetup[1]=c->thread_type;
+    sdkThreadSetup[2]=codec->capabilities;
     int result=__real_avcodec_open2(c,codec,options);
+    sdkThreadResult[0]=c->thread_count;sdkThreadResult[1]=c->thread_type;
+    sdkThreadResult[2]=c->active_thread_type;
     if(!result && infoOpenCallback) {
         infoOpenCallback=false;unsigned previous=infoPhase;infoPhase=4;
         enum AVPixelFormat formats[]={AV_PIX_FMT_YUV420P,AV_PIX_FMT_NONE};
@@ -392,7 +423,12 @@ static void observe(sl_runtime *runtime) {
         for(unsigned k=0;k<controlSizes[n];++k)printf("%02x",controlBodies[n][k]);
         printf("\"]");
     }
-    printf("],\"decoder_info_cache\":");
+    printf("],\"thread_policy\":[%d,%d,%d],\"cpu_queries\":%u,",
+        threadPolicy[0],threadPolicy[1],threadPolicy[2],cpuQueries);
+    printf("\"linux_cpu_probe\":[%d,%d,%d],",linuxCpuProbe[0],linuxCpuProbe[1],linuxCpuProbe[2]);
+    printf("\"thread_setup\":[%d,%d,%d],\"thread_result\":[%d,%d,%d],\"decoder_info_cache\":",
+        sdkThreadSetup[0],sdkThreadSetup[1],sdkThreadSetup[2],
+        sdkThreadResult[0],sdkThreadResult[1],sdkThreadResult[2]);
     if(runtime->session->videoDecoderInfo) printf("\"%s\"",runtime->session->videoDecoderInfo);
     else printf("null");
     printf(",\"decoder_infos\":[");
@@ -461,11 +497,17 @@ static void resources(sl_runtime *r) {
     assert(!memcmp(actual,golden,16) && resourceOld->media_timestamp==resourceStamp);
 }
 int main(int argc,char **argv) {
-    assert(argc==2 || (argc==3 && !strcmp(argv[2],"--resources")));
+    assert(argc==2 || ((argc==3 || argc==4) && !strcmp(argv[2],"--resources")));
+    bool resourceMode=argc>=3;
+    if (argc==4) {
+        char *end;unsigned long count=strtoul(argv[3],&end,10);
+        assert(*argv[3] && !*end && count<=65535);testCpuCount=(uint8_t)count;
+    }
     assert(!setenv("SDL_VIDEODRIVER","dummy",1));
     assert(!setenv("SDL_AUDIODRIVER","dummy",1));
     assert(!setenv("SDL_RENDER_DRIVER","software",1));
     assert(stream_media_init(NULL));
+    unsigned threadBaseline=process_threads();
     IHS_Init();
     sl_runtime r={0}; pthread_mutex_init(&r.lock,NULL); r.facts.session_id=90;
     r.session=IHS_TestSessionCreate(); assert(r.session);
@@ -492,11 +534,11 @@ int main(int argc,char **argv) {
     for(unsigned n=0;n<16;++n) { unsigned value;assert(sscanf(digest+n*2,"%2x",&value)==1);golden[n]=value; }
     sl_video_scheduler_init(&scheduler,true);
     recording=true;
-    if (argc==3) {controlMessage(r.session,k_EStreamControlStartVideoData,&m.base);resources(&r);}
+    if (resourceMode) {controlMessage(r.session,k_EStreamControlStartVideoData,&m.base);resources(&r);}
     bool videoStarted=false;
     char line[512];
     while (argc==2 && fgets(line,sizeof(line),stdin)) {
-        if(!videoStarted && line[0]!='C') {
+        if(!videoStarted && line[0]!='C' && line[0]!='H' && line[0]!='J' && line[0]!='L') {
             recording=false;
             infoPhase=1; /* Original control Start vs SDK callback are separate. */
             controlMessage(r.session,k_EStreamControlStartVideoData,&m.base);
@@ -519,6 +561,28 @@ int main(int argc,char **argv) {
             } else {
                 assert(IHS_SessionSetStreamingClientConfig(r.session,config,n,local));
             }
+        } else if (line[0]=='H') {
+            unsigned count;assert(sscanf(line,"H %u",&count)==1 && count<=65535);
+            testCpuCount=(uint8_t)count;
+        } else if (line[0]=='L') {
+            unsigned failure;
+            assert(sscanf(line,"L %u %u",&cpuFileProcessors,&failure)==2 && cpuFileProcessors<=65535 && failure<2);
+            cpuFileFake=true;cpuFileFail=failure;
+            linuxCpuProbe[0]=__real_sl_system_video_cpu_count();
+            linuxCpuProbe[1]=__real_sl_system_video_cpu_count();
+            linuxCpuProbe[2]=(int)cpuFileOpens;
+        } else if (line[0]=='J') {
+            unsigned count,capabilities;int initialCount,initialType;
+            assert(sscanf(line,"J %u %u %d %d",&count,&capabilities,&initialCount,&initialType)==4 && count<=65535);
+            testCpuCount=(uint8_t)count;
+            AVCodecContext *context=avcodec_alloc_context3(NULL);assert(context);
+            context->thread_count=initialCount;context->thread_type=initialType;
+            const AVCodec declared={.capabilities=(int)capabilities};
+            unsigned before=cpuQueries;
+            configure_threads(context,&declared,__wrap_sl_system_video_cpu_count);
+            threadPolicy[0]=context->thread_count;threadPolicy[1]=context->thread_type;
+            threadPolicy[2]=(int)(cpuQueries-before);
+            avcodec_free_context(&context);assert(!context);
         } else if (line[0]=='I') {
             unsigned value;assert(sscanf(line,"I %u",&value)==1 && value<2);infoSendOk=value;
         } else if (line[0]=='O') {
@@ -572,6 +636,7 @@ int main(int argc,char **argv) {
     controlMessage(r.session,k_EStreamControlStopVideoData,&stop.base);
     sl_media_collect();
     IHS_SessionDestroy(r.session);IHS_Quit();
+    unsigned threadsWithOldFrame=process_threads();
     if (resourceOld) {
         assert(!sl_media_video_clean());
         uint8_t actual[16];hash(resourceOld,actual);
@@ -581,7 +646,11 @@ int main(int argc,char **argv) {
         sl_video_release_mapping(resourceMapping);
     }
     assert(sl_media_video_clean());
-    if (argc==3) puts("Video timing resources passed");
+    unsigned threadFinal=process_threads();
+    assert(threadFinal==threadBaseline);
+    if (resourceMode) printf("Native resource threads: baseline=%u held_after_IHS=%u final=%u\n",
+        threadBaseline,threadsWithOldFrame,threadFinal);
+    if (resourceMode) puts("Video timing resources passed");
     pthread_mutex_destroy(&r.lock);stream_media_shutdown();
     return 0;
 }
