@@ -1386,7 +1386,8 @@ AuthorizationCallback 都忽略来源地址；后者没有开流那样的 reques
 - 通用断开只使用传输 Disconnect；worker 等有界断开重试结束再 join，
   不在发送之前立即 interrupt。无差别 StopRequest 及其 ACK 等待状态已移除。
 - 启动事务取消立即撤销其 timer owner，保留 8 条、60 秒有效的取消编号；
-  已取消 InProgress 按原编号重发取消，至少间隔 250ms。已消费为会话的
+  已取消 InProgress 按原编号重发取消；当时加入的250ms本地节流并无官方依据，
+  与仅依赖8条/60s记录的限制一起由§120的新证据修正。已消费为会话的
   成功请求单独标记 Established，之后不再把会话断开当作启动取消。
 - runtime 保留 client 接收 socket，取消的 timer/回调先被同步隔离，再修改
   active generation。STOPPING 仍等待 worker 完成；不等待不存在的取消 ACK。
@@ -9845,5 +9846,99 @@ python3 scripts/check-steam-network-test-lifecycle.py \
   --receiver build/desktop/third_party/ihslib/tests/session/ihs-network-test-oracle
 ctest --test-dir build/desktop \
   -R '^(network_test_lifecycle_official_vectors|network_test_lifetime|network_test_udp)$' \
+  --output-on-failure
+```
+
+## 120. 网络测试发现请求、凭据与启动事务
+
+### 120.1 实现前的原客户端证据
+
+Evidence：沿§119固定shell，`audit-steam-network-test-discovery.py`执行
+SetPanelStateConnecting@c6e1a0：panel+d4复制到manager+1e5；随后完整
+SendStartStreamingRequest@cb0980与原C++ serializer将其作为显式field12
+`network_test`发送，普通/测试均携带presence。manager+1e4对应field15
+`restricted`，不是field6 `stream_desktop`。8组测试/普通、restricted开关和
+控制器数量输入分别核对；显示/设置/控制器/Qt输入明确作为平台adapter，
+不把Android能力数值复制给Switch。
+
+原HandleStartStreamingResponse@cb5444先核对非零request_id，成功时复制peer
+endpoint并按有效IP/非零peer端口守卫替换响应port；原
+BSaveEncryptedSessionKey@cb3d38使用manager+218中已提供的持久secret，执行
+CCrypto::SymmetricDecrypt及原AES指令，把结果写manager+398/+3ac。
+独立已知secret/IV/plaintext生成的响应经过该链得到原32-byte key；真实
+Panel::OnUpdate@c7279c随后因测试标志进入SetPanelStateNetworkTest，实际
+SetAuthToken得到相同key。原AES、buffer构造/扩容/写入、parser和handler执行；
+peer/账号表/已授权secret/token、UI输入与StartStreaming启动边界、格式化、
+OS/时间/最终SendMessage是显式adapter，不称已完成真实Steam授权。
+
+43组响应输入还覆盖坏padding/截断、0/16/31/33-byte解密结果、各result、错编号、
+端口与地址守卫、两组坏protobuf及同一时刻两次错编号InProgress。空cipher及
+省略cipher分别触发原诊断524/526并正常返回失败，原断言被保留，
+不说成无断言成功用例。BSave不自行强制32-byte；专用Switch Session的32-byte
+入口守卫仍是本地可用ticket约束。
+
+原坏密文执行StopStreaming@cb0ef8，通知错误、发送消息10取消原编号并清除事务；
+不能只记录解密日志、关闭timer却不给调用方终态。正确编号的Busy(4)/InProgress(5)
+都保持等待；Unauthorized(1)跳入单独授权producer，该producer在本探针是明确边界，
+不据此混用pairing授权码与connect PIN。其他错误沿原错误通知/取消链。
+错编号的success忽略，错编号InProgress立即按响应自身编号发送10；不要求该编号
+已在本地取消缓存中，也没有此handler中的250ms节流。撤回以这些本地限制代表官方
+策略的推断；来源/主机身份校验仍是独立前置条件。
+
+Evidence：原Manager::Update@cafe5c与Panel::OnUpdate在等待阶段执行：发送后
+nextSend=time()+1；到期等值发送，重复同一秒不重发。受控时间1000/1001/1001/
+1002/1015/1300/86400对应累计发送1/2/2/3/4/5/6，均仍state5且无失败通知。
+该连接阶段没有本地原先15s静默超时的依据，不能把它称为官方超时策略。
+时间跳变是显式输入，不是连续运行一天的OS/真实Host实验。
+
+### 120.2 Native发现层与专用Session的接口契约
+
+`IHS_StreamingRequest.networkTest`在普通/测试请求均显式设置field12。成功回调
+借出解密后的endpoint/key；调用方复制凭据，创建新的Session，再调用§119的
+ConfigureNetworkTest/Connect。网络测试不使用配对PIN代替会话key，也不从普通
+串流成功回调自行推断“已经取得测试ticket”。完整产品操作/确认流程与底层接口
+分立，网络测试本身不自动改变保存的FEC设置。
+
+发现层收到Busy/InProgress保持等待；坏密钥及其他终态错误通知调用方、取消原
+请求并清除其活动编号。解密是否执行不依赖调用方是否安装success回调，避免只
+注册failed的使用者漏掉错误。坏protobuf不能传NULL给响应handler。原错误枚举
+到公开IHS错误值是API映射，不比较两个不同枚举的裸整数。
+
+重试改为1s，移除无原客户端依据的15s静默截止；取消仍由明确的用户/上层操作
+发起。Native用单调毫秒timer承载该周期；原wall-second取整、系统时钟回拨和
+自然线程调度不由这组输入控制的对照证明相同。错编号InProgress在已选定/已知
+主机来源校验后立即取消其自身编号，不再用缓存编号命中、60s有效期或250ms节流
+挡住补发。8条旧主机记录只是有界身份保留，不能扩大为完整无限期的主机发现表。
+Unauthorized在原客户端进入自动授权producer；本地仍交给现有独立配对UI。此
+handoff是明确的产品边界，本节没有证明两者自动授权流程已经相同。
+
+`network_test_discovery_official_vectors`比较4组Switch实际restricted=false的
+请求producer及12项相关field/presence、40组凭据/错误/取消与7个重试检查点；
+另核对1组公开Unauthorized handoff，以及缺success/缺全部回调时仍执行解密/
+取消的本地API守卫。原restricted=true的4组是原客户端输入观察，不冒称Native
+已经提供相同产品选择。版本、token、transport列表及控制器类型按实际平台来源，
+不把部分field相同说成整个Android请求报文字节相等。
+
+真实`network_test_udp`将发现请求、受控peer的加密凭据响应、实际解密和专用
+Session连接接成同一闭环，再覆盖CRC开/关的普通fixed、原RS输入fixed和bandwidth
+目标替换后取消六场景。发现client和会话收发worker均停止/join/destroy，始终不
+创建普通音视频decoder。受控secret/peer/媒体数据不构成真实Steam授权或Host自然
+发送FEC的证据。两组address/peer-port守卫只在原客户端输入中核对；公开测试入口
+的32-byte守卫及其他key长度的完整控制加密可用性也不能由此扩大验证范围。
+
+原UI的field12写指令@c6e28c从`STRB w8`改`STRB wzr`，实际hit1且无原断言，完整
+producer/serializer输出的field12从1变0。五个隔离生产streaming.c TU分别省略测试
+标志、Busy误终止、改回3s重试、漏掉未知编号取消、缺success时跳过解密；均成功
+编译/归档/链接，完整checker正常exit1逐值检出，不把编译错误、崩溃、超时算成功。
+
+复播命令（原binary/可选逆向依赖沿§24.1，另需cryptography生成独立密文输入）：
+
+```sh
+python3 scripts/audit-steam-network-test-discovery.py \
+  --binary /path/to/libshell-arm64.so --output /tmp/network-test-discovery.json
+python3 scripts/check-steam-network-test-discovery.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-network-test-discovery-oracle
+ctest --test-dir build/desktop \
+  -R '^(network_test_discovery_official_vectors|network_test_udp|launch_transactions)$' \
   --output-on-failure
 ```
