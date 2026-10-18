@@ -114,7 +114,7 @@ if (type <= 7 && ((1u << type) & 0xC6)) {    // 0xC6 = 位 1,2,6,7
   （含 125Hz 的 RemoteHID 输入流）都走可靠有序通道。§16 末"官方输入可能默认走不可靠通道"
   的猜测不成立；`SendUnreliable` 在客户端控制面存在但 SendControlMessage 不使用
   （数据面/其他路径是否使用待查）。
-- 所有 Send* 函数发送前检查连接态 == 6（k_EStreamConnectionStateConnected，CStreamClient+0x100）。
+- 此处所列Android普通串流Send*入口发送前检查连接态 == 6（k_EStreamConnectionStateConnected，CStreamClient+0x100）；握手/认证入口独立。撤回将这一条件泛化为所有平台、所有SendControl调用的表述：Linux实际phase2的type6调用见§107。
 - `SendRemoteHIDMessage(msg, bool)`（0x7ab374）的 bool 参数 = `CRemoteHIDMsg.active_input`
   （信封字段，proto field 2），不是可靠性开关；发送前另有一道字节闸门 CStreamClient+0x267
   （HID 子系统使能）。body 序列化 → 装入 CRemoteHIDMsg.data → SendControlMessage(106)；
@@ -8796,3 +8796,71 @@ python3 scripts/audit-steam-client-codec-data.py \
   --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/runtime/lib \
   --output /tmp/steam-video-codec-data.json
 ```
+
+## 107. 原客户端真实UDP建连、CRC与ClientHandshake
+
+### 107.1 材料和实际入口
+
+Evidence：固定§106同一Valve Linux Steam Link 1.3.32.316及ELF SHA。
+`audit-steam-client-udp-process.py`启动原`bin/steamlink --version`，在原main前调用
+完整Client/CStreamPlayer构造、UseThreads(true)、SetAuthToken及UDP Init；随后原
+OnThink/网络线程实际运行。loopback fixture从真实socket收到Connect，再从同一
+socket返回明确的ConnectACK输入。没有创建/注入已解析Packet或Frame，没有直接调用
+HandleConnected、OnStreamConnected，没有改client phase、连接state、函数体或返回值。
+
+GDB helper只复用既有SDK helper在首次实验前的分配/读值/call定义，记录完整bootstrap
+SHA；本过程不初始化SDK或decoder。独立21份完整FDE身份覆盖所列构造、连接、回调、
+控制发送及清理入口，不把函数身份清单冒称每条指令的覆盖率。确定性32字节fixture
+AuthToken通过原API提供，不是Steam认证结果，也不涉及pairing码或connect/security PIN。
+
+### 107.2 四个原进程的观察
+
+Evidence：CRC off/on、CRC on后的三次重复ACK、CRC off的首个错误长度ACK，四个
+过程均由真实UDP推进。原Connect为17B，类型1、连接ID中仅local ID非零、末4B cookie为
+`c73d8f3c`。有效ConnectACK在去CRC后为13B头加4B echoed timestamp；CRC on时
+线上另有4B CRC32C。捕获的原HandleConnected@19b720输入与fixture实际发送、去CRC
+后的字节逐字节相同。该handler原指令@19b754把bit7写Connection+10（CRC），再写
+state1、peer ID和时钟反馈，实际经delegate槽+0x28调用Client::OnStreamConnected
+@3203b0。原客户端phase由Connecting(1)变Handshake(2)。
+
+Linux原回调@32041a调用SendControlMessage@31af60，实际参数type6，再执行原
+Frame::Send@1947a0；接收socket捕获的可靠type5、channel1媒体外控制正文均为
+`060a00`。CRC要求也出现在实际发出的握手包，CRC32C独立核验。此Linux调用链不能
+套用§1中Android“ClientHandshake绕过SendControlMessage”的函数级结论；两者的
+已观察协议正文和可靠发送一致。没有将不同版本/架构的内部调用方式混成统一方法体。
+
+重复ACK确实四次进入原handler：首次connection state0/client phase1，后三次为
+state1/phase2，只产生一次原delegate、一次type6逻辑Frame发送。可靠sender的实际
+重传仍可以产生相同正文的额外UDP包；不把“只生产一条逻辑消息”写成“线上只能一包”。
+首个错误ACK去CRC后16B，原handler实际拒绝并记录Bad size，client仍Connecting；
+后续17B有效ACK才进入Handshake。未冻结/要求具体墙钟重传次数或间隔。
+
+四过程观察到Connection+11的自身outgoing FEC gate均为0，包括CRC on与重复ACK。
+Conclusion：这些真实建连输入没有开启本机上行FEC，CRC与该gate继续分立。它不穷尽
+其余产品入口，不否定请求对端FEC的字段25，也不支持增加按丢包自动开FEC的策略。
+
+### 107.3 Native投影与生命周期边界
+
+`steam-client-udp-reference.json.gz`保留四条实际UDP收发、原handler/回调/发送轨迹及
+清理观察。`check-steam-transport.py`把捕获ACK的peer/local ID映射为既有Native夹具的
+34/12并重算CRC，其余内容保留，经生产ingress/control queue执行。逐次phase、CRC和
+逻辑C6生产数与原实际handler间轨迹比较，错误长度与重复确认不能再触发握手。Native
+此处仍以受控时钟、最终I/O和queue consumer为边界；原完整UDP过程不能冒称Native
+也已经做完真实UDP或真实Steam握手互通，握手正文的实际wire观察属于原进程证据。
+
+原Client shutdown→解除player→player/client删除→manager update→公共network
+Shutdown实际执行，观察到manager pthread_join返回0；module引用0→0，结束时无新增
+live proc task，X/Z条目与live分开。原main继续输出版本并正常ELF退出，官方assert列表
+持续观察为空。原实验停在client Handshake，不包含ServerHandshake、密码学认证、协商、
+Qt/SDL事件循环、媒体、真实Steam、NVTEGRA或Switch/loader验收。
+
+```sh
+python3 scripts/audit-steam-client-udp-process.py \
+  --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
+  --sdk-directory build/video-recovery-re/linux-1.3.32.316/package/lib \
+  --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/patched-runtime/lib \
+  --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/runtime/lib \
+  --output /tmp/steam-client-udp.json
+```
+
+只有显式`--snapshot`才写新的压缩观察文件；默认审计不会覆盖仓库fixture。

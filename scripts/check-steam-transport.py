@@ -3,15 +3,30 @@
 
 Runs the production C oracle. It does not reinterpret raw datagrams as a model
 of the local protocol. The final disconnect/decoder actions and clock are doubles.
+Four original Linux UDP processes additionally provide real incoming packets and
+delegate/CRC observations. Their IDs are mapped to the Native fixture's IDs and
+CRC recomputed; only ingress phase/CRC/control-production is compared. Native
+OS I/O, original authentication and the rest of either full client are not covered.
 """
 
 import argparse
+import gzip
+import hashlib
 import json
 import struct
 import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def crc32c(data):
+    value = 0xFFFFFFFF
+    for byte in data:
+        value ^= byte
+        for _ in range(8):
+            value = (value >> 1) ^ (0x82F63B78 if value & 1 else 0)
+    return value ^ 0xFFFFFFFF
 
 
 def varint(value):
@@ -199,8 +214,66 @@ def main():
     # field: echo older by 200 is rejected; the -130 boundary is accepted.
     assert actual[2]["last_echo"] == 1000100
     assert actual[3]["last_echo"] == 999970
+
+    udp = json.loads(
+        gzip.decompress(
+            (ROOT / "scripts/fixtures/steam-client-udp-reference.json.gz").read_bytes()
+        )
+    )
+    assert (
+        udp["client_sha256"]
+        == "95482ca6120f90bb90798b27206b7946ab732e079f008d7fc90ea58a8b0074e1"
+    )
+    assert len(udp["source_functions"]) == 21 and len(udp["cases"]) == 4
+    for key, filename in [
+        ("helper_sha256", "steam-client-udp-gdb.py"),
+        ("bootstrap_helper_sha256", "steam-client-sdk-gdb.py"),
+    ]:
+        assert (
+            udp[key]
+            == hashlib.sha256((ROOT / "scripts" / filename).read_bytes()).hexdigest()
+        )
+    for case in udp["cases"]:
+        source = case["process"]
+        assert (
+            source["exit_code"] == 0
+            and source["cleanup_complete"]
+            and not source["source_assertions"]
+        )
+        assert source["module_refs"] == [0, 0]
+        trace = source["trace"]
+        handlers = [i for i, e in enumerate(trace) if e[0] == "connected_handler"]
+        assert len(handlers) == len(case["sent"])
+        commands = []
+        for packet, index in zip(case["sent"], handlers):
+            wire = bytes.fromhex(packet["data"])
+            has_crc = bool(wire[0] & 128)
+            if has_crc:
+                assert struct.unpack("<I", wire[-4:])[0] == crc32c(wire[:-4])
+                wire = wire[:-4]
+            assert trace[index][2] == wire.hex()
+            raw = bytearray(wire)
+            raw[2:4] = bytes([34, 12])  # Native fixture's peer/local IDs.
+            if has_crc:
+                raw += struct.pack("<I", crc32c(raw))
+            commands.append(f"WIRE 1000000 1 {raw.hex()}")
+        native = run(commands)
+        for n, index in enumerate(handlers):
+            end = handlers[n + 1] if n + 1 < len(handlers) else len(trace)
+            phase = (
+                trace[end][4]
+                if end < len(trace)
+                else source["connected_state"]["client_phase"]
+            )
+            crc = (
+                trace[end][5] if end < len(trace) else source["connected_state"]["crc"]
+            )
+            expected = [f"C{e[2]}" for e in trace[index:end] if e[0] == "frame_send"]
+            assert native[n]["phase"] == phase, case["name"]
+            assert native[n]["crc"] == bool(crc), case["name"]
+            assert native[n]["actions"].split() == expected, case["name"]
     print(
-        f"Production transport: {count} official-reference and boundary scenarios passed"
+        f"Production transport: {count} official-reference and boundary scenarios passed (4 original UDP ingress projections)"
     )
 
 
