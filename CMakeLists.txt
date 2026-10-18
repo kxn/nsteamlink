@@ -194,6 +194,14 @@ if(NSL_PLATFORM STREQUAL "desktop")
             --collector $<TARGET_FILE:ihs-media-network-stats-oracle>
             --negotiator $<TARGET_FILE:nsl-auth-udp-oracle>)
         set_tests_properties(network_test_media_official_vectors PROPERTIES TIMEOUT 90)
+        add_test(NAME authorization_pump_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-authorization-exchange.py"
+            --receiver $<TARGET_FILE:ihs-authorization-exchange-oracle> --deferred)
+        set_tests_properties(authorization_pump_official_vectors PROPERTIES TIMEOUT 60)
+        add_test(NAME streaming_pin_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-streaming-pin.py"
+            --receiver $<TARGET_FILE:ihs-streaming-pin-oracle>)
+        set_tests_properties(streaming_pin_official_vectors PROPERTIES TIMEOUT 30)
         add_test(NAME authorization_exchange_official_vectors COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-authorization-exchange.py"
             --receiver $<TARGET_FILE:ihs-authorization-exchange-oracle>)

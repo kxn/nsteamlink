@@ -10388,3 +10388,66 @@ python3 scripts/check-authorization-native-mutations.py \
 原整秒期限1003在后一时刻到期，不能等相对3000ms的1003900。另一组单调每次
 只增20ms，墙钟依次999/998/1002/1003/1300；回拨不重发，1003和大前跳各只发送
 一次。这些时刻为受控clock provider，不声称自然RTC调整或OS调度已经实机验证。
+
+## 129. 自动授权UI、实际保存调用与连接安全码缓存
+
+Evidence：固定§128 shell，`audit-steam-authorization-ui.py`沿原Panel
+SetPanelStateConnecting/StartStreaming→Unauthorized→OnUpdate/Authorizing执行。
+manager4映射为panel3，原QLabel::setText收到pairing码；重复Update不重新创建
+keypair。取消执行原OnActionCancel/Stop，发送9、清归属并PopState。授权新key成功
+后manager5，OnUpdate重新调用SetPanelStateConnecting；其StartStreaming相同目标
+等待守卫保留编号/keypair。后续成功凭据按panel test位分别进入专用测试或普通
+launcher边界，不把manager/Panel/Session的数字状态混用。
+
+原SavePersistentClientKey@cb33c4实际调用BSaveHexData@cb2b70及
+SavePairedSteamID@cb2d64/SavePairedSteamIDs；原BSaveFile@ca7770执行路径构造及
+SDL mkdir/open/write/close分支。密钥是lowercase hex+换行，文件目录按clientId/
+steamid原小端8字节的hex组织；paired_steamid.txt按同样字节序逐行存储。
+这些是官方文件格式证据，不要求Switch复用Android文件布局。
+
+【界限】SavePersistentClientKey忽略BSaveHexData的bool；文件目录/打开/写入/关闭
+失败不能直接解释成“官方不确认授权”。现取证是先尝试保存，再确认/续接；不等于
+必须保存成功或fsync完成。SDL文件端点为受控provider/readback，不声称实机存储
+耐久性。原零写路径不调用本函数内Close，正数短写未比较完整长度；这些是该函数
+观察，不作为Switch资源清理模式。Qt/QString/layout、身份/随机/时钟、请求RSA、
+最后Send/Pop/普通launcher仍为明确adapter；响应密码计算及以上原保存调用执行。
+
+同一原链的独立connect PIN由BSetStreamingPIN@cb07f8先以当时secret进行带IV的
+AES加密，保存在manager+358的buffer；空PIN仍为present空字段。pairing PIN来自
+另一字段/随机生成，并在mod10000为0时重取。原安全PIN密文在授权换secret后的
+立即重发以及OnUpdate同目标守卫后继续保留；不能把安全PIN明文直接放field8，
+也不能每轮重发或换secret时重新加密。Native以请求创建时的secret快照加密一次，
+缓存于同一streaming owner，关闭/替换后释放；API返回失败的crypto守卫取消新编号，
+不发送未构造请求。安装token、源准入及自动串流事务仍为独立契约。
+
+
+Native的显式LAN新key成功路径将persist observer放在Base secret选定之后、14确认
+之前；本应用以有界owned消息队列将授权分派移到既有runtime worker，避免从RX
+线程直接写worker持有的profile，也不新增线程。原默认同步分派保留给其他SDK调用者。
+Pump不持有Base锁调用timer visitor，队列满时丢弃并释放，销毁时释放尚未消费的消息；
+调用者先停/join RX。32是本地内存预算，不是官方协议常量。文件失败仅记诊断，仍确认
+和完成配对。旧UI快照的同host认证事实合并发生在worker内，显式删除不被重新插入。
+
+产品`host_info`曾丢弃发现消息的euniverse，使零初始化值0触发§128新公钥失败守卫；
+这是新产品配对测试发现的真实集成回归，不能用SDK层向量通过掩盖。现在运行期缓存
+按clientId/instanceId传递实际发现的universe/ostype；旧profile缺失元数据时取Public，
+是面向公开版Steam的应用兼容默认，尚非官方缺失值策略证据。无磁盘ABI变更；已发现
+非法universe不会改写成Public，仍走失败守卫。
+
+固定Source参考含24组：普通/测网取消、各六种文件provider结果、16/32-byte凭据
+consumer、五种connect PIN长度和零随机重取；选择的34个原函数入口均有实际进入
+记录。SavePersistentClientKey调用点@cb4d6c改NOP命中一次，原receiver正常返回，
+文件2→0而确认/续接仍发生，证明文件observer及调用者忽略返回的界限。
+Native另以五种PIN长度核对完整field8，与更换Base secret后的重发字节一致；三个
+隔离编译反例（明文/每次重加密/忽略crypto失败）均正常结束，比较器正常exit1检出。
+授权的延后泵送路径复用§128的33组响应投影，并比较每次14之前的保存次数；丢弃
+未消费队列、33包填满32槽后分批泵送、已终止事务收到余包的Canceled均由真实RX
+覆盖。把persist移到14之后的第六个Native反例同样正常返回且被正式比较器检出。
+
+`pairing_runtime`以真实产品worker、RX/timer、UDP及实际profile写入/读回核对：保存
+成功、保存失败继续、保存期间提交旧UI快照、真实发现解析传入Beta universe四种输入。
+在14发送包装器内、转发到UDP前读回文件并断言与当前secret一致；失败用受控save
+返回值，熵输入包含0/10000/10042以证明配对码非0000。fake peer的密码响应使用本地
+crypto，仅作为产品集成fixture；算法独立证据来自上述原shell回放。未执行Qt像素、
+真实Steam连接或Switch存储/退出生命周期。自动Unauthorized→沿用原编号/keypair/
+缓存→原请求重发尚未由此产品测试证明，也未用新建PAIR/STREAM任务冒充该链。

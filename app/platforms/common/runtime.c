@@ -50,6 +50,9 @@ struct sl_runtime {
     sl_runtime_event events[48];
     int count;
     IHS_Client *client;
+    /* Discovery metadata is transient; keep it out of the profile ABI. */
+    IHS_HostInfo discovered_hosts[SL_HOST_LIMIT];
+    unsigned discovered_count, discovered_next;
     IHS_Session *session;
     IHS_Session *test_session; /* Dedicated protocol owner; never a video player. */
     bool test_active, test_joined;
@@ -63,7 +66,7 @@ struct sl_runtime {
     uint64_t launch_probe_at;
     sl_end_game_watch end_game;
     bool session_ready, connected, finished, host_stopped, first_reported, auth_ready,
-        auth_consumed, request_terminal;
+        auth_consumed, auth_persist_attempted, request_terminal;
     uint64_t auth_account, request_at, last_diag;
     uint32_t connect_wait_tick;
     uint8_t auth_secret[32];
@@ -255,6 +258,20 @@ static void discovered(IHS_Client *client, const IHS_HostInfo *h, void *ctx) {
     (void)client;
     sl_runtime *r = ctx;
     pthread_mutex_lock(&r->lock);
+    unsigned index;
+    for (index = 0; index < r->discovered_count; ++index)
+        if (r->discovered_hosts[index].clientId == h->clientId &&
+            r->discovered_hosts[index].instanceId == h->instanceId)
+            break;
+    if (index == r->discovered_count) {
+        if (r->discovered_count < SL_HOST_LIMIT)
+            ++r->discovered_count;
+        else {
+            index = r->discovered_next;
+            r->discovered_next = (index + 1) % SL_HOST_LIMIT;
+        }
+    }
+    r->discovered_hosts[index] = *h;
     if (r->active.type == SL_CMD_STREAM && h->clientId == r->active.host.client_id &&
         h->instanceId == r->active.host.instance_id && h->address.port == 27036) {
         char *ip = IHS_IPAddressToString(&h->address.ip);
@@ -274,6 +291,36 @@ static void discovered(IHS_Client *client, const IHS_HostInfo *h, void *ctx) {
     sl_log(line);
     post(r, (sl_runtime_event){.type = SL_EVENT_HOST, .host = observed});
 }
+/* Deferred authorization dispatch runs on this runtime worker, which owns
+ * store. Attempt persistence before the library emits Confirmed; source ignores
+ * filesystem failure for protocol progression (protocol RE §129). */
+static void persist_authorization(IHS_Client *client, const IHS_HostInfo *host, uint64_t account,
+                                  const uint8_t secret[32], void *ctx) {
+    (void)client;
+    (void)host;
+    sl_runtime *r = ctx;
+    if (r->active.type != SL_CMD_PAIR)
+        return;
+    post(r, (sl_runtime_event){.type = SL_EVENT_SAVING});
+    sl_host *h = sl_host_find(&r->store.registry, r->active.host.id);
+    if (!h && r->store.registry.count < SL_HOST_LIMIT) {
+        h = &r->store.registry.hosts[r->store.registry.count++];
+        *h = r->active.host;
+    }
+    if (h) {
+        h->paired = true;
+        h->account = account;
+        h->has_secret = memcmp(secret, r->store.secret, 32) != 0;
+        if (h->has_secret)
+            memcpy(h->secret, secret, 32);
+        else
+            memset(h->secret, 0, sizeof(h->secret));
+        if (!sl_auth_save(&r->store, sl_system_data_dir()))
+            sl_log("pair: profile save failed; authorization continues");
+        r->auth_persist_attempted = true;
+    }
+}
+
 static void authorized(IHS_Client *client, const IHS_HostInfo *h, uint64_t account, void *ctx) {
     (void)h;
     sl_runtime *r = ctx;
@@ -436,8 +483,8 @@ static void activity(IHS_Session *s, int kind, uint64_t id, const char *name, vo
     post(r, e);
 }
 static const IHS_ClientDiscoveryCallbacks discovery_cb = {.discovered = discovered};
-static const IHS_ClientAuthorizationCallbacks auth_cb = {.success = authorized,
-                                                         .failed = auth_failed};
+static const IHS_ClientAuthorizationCallbacks auth_cb = {
+    .persist = persist_authorization, .success = authorized, .failed = auth_failed};
 static const IHS_ClientStreamingCallbacks stream_cb = {.success = accepted, .failed = rejected};
 static void client_config_saved(IHS_Session *session, const uint8_t *wire, size_t size, void *ctx) {
     sl_runtime *r = ctx;
@@ -537,6 +584,7 @@ static bool start_client(sl_runtime *r) {
     r->client = IHS_ClientCreate(&r->config);
     if (!r->client)
         return false;
+    IHS_ClientSetAuthorizationDeferred(r->client, true);
     IHS_ClientSetLogFunction(r->client, ihs_log);
     IHS_ClientSetDiscoveryCallbacks(r->client, &discovery_cb, r);
     IHS_ClientSetAuthorizationCallbacks(r->client, &auth_cb, r);
@@ -645,17 +693,29 @@ static bool launch_session(sl_runtime *r, IHS_SessionInfo info) {
     IHS_ClientStreamingEstablished(r->client);
     return true;
 }
-static bool host_info(const sl_host *h, IHS_HostInfo *out) {
+static bool host_info(sl_runtime *r, const sl_host *h, IHS_HostInfo *out) {
     memset(out, 0, sizeof(*out));
     out->clientId = h->client_id;
     out->instanceId = h->instance_id;
     out->address.port = 27036;
+    /* Legacy profiles do not contain universe. Public is this application's
+     * retail-Steam default; observed metadata must override it, even if invalid. */
+    out->universe = IHS_SteamUniversePublic;
+    pthread_mutex_lock(&r->lock);
+    for (unsigned n = 0; n < r->discovered_count; ++n)
+        if (r->discovered_hosts[n].clientId == h->client_id &&
+            r->discovered_hosts[n].instanceId == h->instance_id) {
+            out->universe = r->discovered_hosts[n].universe;
+            out->ostype = r->discovered_hosts[n].ostype;
+            break;
+        }
+    pthread_mutex_unlock(&r->lock);
     snprintf(out->hostname, sizeof(out->hostname), "%s", h->name);
     return IHS_IPAddressFromString(&out->address.ip, h->address);
 }
 static bool request_stream(sl_runtime *r, bool network_test) {
     IHS_HostInfo host;
-    if (!r->client || !host_info(&r->active.host, &host))
+    if (!r->client || !host_info(r, &r->active.host, &host))
         return false;
     IHS_ClientStopDiscovery(r->client);
     const sl_host *paired = sl_host_find(&r->store.registry, r->active.host.id);
@@ -714,8 +774,8 @@ static void fail_network_test(sl_runtime *r) {
     unsigned port = r->session_info.address.port;
     pthread_mutex_unlock(&r->lock);
     sl_network_test_view view = {.phase = SL_TEST_FAILED};
-    snprintf(view.error, sizeof(view.error), sl_tr(SL_T_TEST_FAILED_DETAIL),
-             r->active.host.name, port);
+    snprintf(view.error, sizeof(view.error), sl_tr(SL_T_TEST_FAILED_DETAIL), r->active.host.name,
+             port);
     sl_log(view.error);
     publish_test(r, view);
 }
@@ -870,7 +930,7 @@ static void execute(sl_runtime *r, sl_command cmd) {
     r->launch = (sl_launch_watch){.target = cmd.game_id};
     r->launch_probe_at = 0;
     r->auth_ready = r->session_ready = false;
-    r->auth_consumed = false;
+    r->auth_consumed = r->auth_persist_attempted = false;
     r->request_terminal = false;
     pthread_mutex_unlock(&r->lock);
     if (cmd.type == SL_CMD_EXIT) {
@@ -903,7 +963,7 @@ static void execute(sl_runtime *r, sl_command cmd) {
         return;
     }
     IHS_HostInfo h;
-    if (!host_info(&cmd.host, &h)) {
+    if (!host_info(r, &cmd.host, &h)) {
         fail(r, sl_tr(SL_T_ADDRESS_UNAVAILABLE));
         return;
     }
@@ -911,10 +971,12 @@ static void execute(sl_runtime *r, sl_command cmd) {
     r->first_reported = false;
     if (cmd.type == SL_CMD_PAIR) {
         uint32_t random;
-        if (!sl_system_random(&random, sizeof(random))) {
-            fail(r, sl_tr(SL_T_CODE_FAILED));
-            return;
-        }
+        do {
+            if (!sl_system_random(&random, sizeof(random))) {
+                fail(r, sl_tr(SL_T_CODE_FAILED));
+                return;
+            }
+        } while (random % 10000 == 0); /* Official GenerateAuthorizationPin excludes 0000. */
         sl_runtime_event e = {.type = SL_EVENT_CODE};
         snprintf(e.text, sizeof(e.text), "%04u", random % 10000);
         post(r, e);
@@ -1165,6 +1227,8 @@ static void *worker_main(void *ctx) {
             execute(r, (sl_command){.type = SL_CMD_EXIT});
             continue;
         }
+        if (r->client)
+            IHS_ClientPumpAuthorization(r->client, 32);
         sl_command cmd = {0};
         sl_auth_store save;
         bool save_pending, snapshot_pending;
@@ -1203,6 +1267,19 @@ static void *worker_main(void *ctx) {
         memset(r->auth_secret, 0, sizeof(r->auth_secret));
         pthread_mutex_unlock(&r->lock);
         if (snapshot_pending) {
+            /* A UI snapshot queued before authorization completed must not
+             * undo the just-accepted host facts. An explicitly removed host
+             * stays absent; the actor will honor its queued command below. */
+            if (auth && account && r->auth_persist_attempted) {
+                const sl_host *known = sl_host_find(&r->store.registry, r->active.host.id);
+                sl_host *incoming = sl_host_find(&save.registry, r->active.host.id);
+                if (known && incoming && known->client_id == incoming->client_id) {
+                    incoming->paired = known->paired;
+                    incoming->account = known->account;
+                    incoming->has_secret = known->has_secret;
+                    memcpy(incoming->secret, known->secret, sizeof(incoming->secret));
+                }
+            }
             sl_host_registry_keep_secrets(&save.registry, &r->store.registry);
             r->store = save;
         }
@@ -1219,7 +1296,8 @@ static void *worker_main(void *ctx) {
             continue;
         }
         if (auth && account) {
-            post(r, (sl_runtime_event){.type = SL_EVENT_SAVING});
+            if (!r->auth_persist_attempted)
+                post(r, (sl_runtime_event){.type = SL_EVENT_SAVING});
             sl_host *h = sl_host_find(&r->store.registry, r->active.host.id);
             if (!h && r->store.registry.count < SL_HOST_LIMIT) {
                 h = &r->store.registry.hosts[r->store.registry.count++];
@@ -1236,11 +1314,14 @@ static void *worker_main(void *ctx) {
                 sl_log(h->has_secret ? "pair: key exchange, host-specific key stored"
                                      : "pair: legacy pairing, installation key kept");
             }
-            if (!h || !sl_auth_save(&r->store, sl_system_data_dir()))
+            if (!h)
                 fail(r, sl_tr(SL_T_SAVE_PAIR_FAILED));
-            else
+            else {
+                if (!r->auth_persist_attempted && !sl_auth_save(&r->store, sl_system_data_dir()))
+                    sl_log("pair: legacy profile save failed; authorization continues");
                 post(r, (sl_runtime_event){
                             .type = SL_EVENT_AUTHORIZED, .account = account, .host = *h});
+            }
             r->request_at = 0;
         }
         memset(auth_secret, 0, sizeof(auth_secret));
@@ -1325,7 +1406,7 @@ static void *worker_main(void *ctx) {
         }
         if (probe_launch) {
             IHS_HostInfo host;
-            if (host_info(&r->active.host, &host)) {
+            if (host_info(r, &r->active.host, &host)) {
                 CMsgRemoteClientBroadcastDiscovery probe =
                     CMSG_REMOTE_CLIENT_BROADCAST_DISCOVERY__INIT;
                 probe.has_seq_num = true;
@@ -1341,9 +1422,9 @@ static void *worker_main(void *ctx) {
             if (r->session)
                 IHS_SessionSetForeground(r->session, !(edge & 1u));
         }
-        if (r->session && sl_connection_wait_expired(
-                IHS_SessionIsConnectionPending(r->session), r->connect_wait_tick,
-                sl_connection_wait_tick(now))) {
+        if (r->session &&
+            sl_connection_wait_expired(IHS_SessionIsConnectionPending(r->session),
+                                       r->connect_wait_tick, sl_connection_wait_tick(now))) {
             stop_session(r);
             fail(r, sl_tr(SL_T_SESSION_FAILED));
         }

@@ -330,5 +330,28 @@ LAN授权改为墙钟整秒next=time()+3，到期后只发送一次；单调time
 比较器使用真实loopback RX/timer worker、discovery parser、原Native密码实现与
 发送字节；只将LAN显式授权API的确认/取消、secret、计算次数和完成事实与官方
 state4部分对照。自动Unauthorized保留开流事务及成功cache后再次授权的续接、
-来源校验顺序、持久化前确认顺序和云端state3仍是独立契约，不能用这组分量对照
-宣称全部完成。产品当前保存发生在runtime消费成功事件后，不冒称已同步落盘再确认。
+来源校验顺序和云端state3仍是独立契约，不能用这组分量对照宣称全部完成。
+证据修订（§129）：此前产品在runtime消费成功事件后才保存；新key路径现已改成
+由runtime worker泵送授权消息，在确认前尝试保存。保存失败仍继续，不宣称fsync耐久性。
+
+## UI/保存调用与连接安全码的完整输入链
+
+§129执行原UI连接入口、未授权提示、响应密码计算、原密钥/paired-ID保存调用及
+文件helper分支，再到同编号请求和16/32-byte凭据consumer。目录/打开/零写/短写/
+关闭失败均未使原调用者停止授权：应区分“先尝试保存再确认”和“必须保存成功”。
+SDL文件端点与普通launcher仍为provider边界，不声称自然文件耐久性或整条OS线程。
+
+连接安全码是请求创建时以当时secret加密的field8字节，重发及授权换secret后的
+同一事务重用它；Native旧明文字段已修正。pairing码仍走ticket.password和masked
+key路径，且随机mod10000为0时重取。当前PIN组件的Native secret替换是受控输入，
+不据此称自动Unauthorized同编号续接已经完成。显式LAN配对的保存时点另以
+实际runtime/UDP/文件读回核验：新key选择→保存尝试→14确认→成功事件；保存失败
+仍确认和成功。RX仅排入有界owned消息，runtime worker消费后释放；退出先停/join
+RX，再销毁队列/定时器，未新增后台线程。32个槽位是本地内存预算，不是协议限制。
+旧UI保存快照不得覆盖同host刚接受的配对事实，显式删除仍生效。
+
+应用HostInfo曾遗漏universe（默认为0），而§128的公钥校验拒绝0；§129的产品测试
+发现并修正该集成错误。发现消息euniverse现按clientId/instanceId保存在运行期元数据
+并传入请求；旧profile不含此字段，未发现时使用公开版Steam的Public默认值。
+这一默认是应用兼容策略，不是官方对缺失元数据的行为证明；已发现的非法值仍保留，
+不能悄悄改成Public。profile结构和磁盘ABI不变。

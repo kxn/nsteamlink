@@ -100,6 +100,7 @@ def expected(step):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--receiver", type=Path, required=True)
+    p.add_argument("--deferred", action="store_true")
     a = p.parse_args()
     source = json.loads(
         gzip.decompress(
@@ -116,7 +117,11 @@ def main():
             # This requires retaining the original streaming transaction and
             # cache across automatic Unauthorized. The standalone API does not.
             continue
-        mode = c["input"]["path"] if "clocks" in c else "normal"
+        mode = (
+            c["input"]["path"]
+            if "clocks" in c
+            else ("pump" if a.deferred else "normal")
+        )
         actual = execute(a.receiver, [mode, *[response(r) for r in c["responses"]]])
         assert len(actual) == len(c["steps"])
         for observed, step in zip(actual, c["steps"]):
@@ -126,6 +131,17 @@ def main():
                 step["label"],
                 projected,
                 expected(step),
+            )
+        if a.deferred:
+            assert actual[-1]["persist"] == len(c["steps"][-1]["saved"])
+            stages = []
+            for step in c["steps"]:
+                count = sum(m["tag"] == 14 for m in step["messages"])
+                stages.extend([len(step["saved"])] * (count - len(stages)))
+            assert actual[-1]["persist_at_confirm"] == stages, (
+                c["input"],
+                stages,
+                actual[-1],
             )
         compared += 1
     retry = execute(a.receiver, ["retry"])
@@ -137,6 +153,24 @@ def main():
             len(failed) == 1 and failed[0]["failed"] == 1 and not failed[0]["pending"]
         )
         assert failed[0]["messages"] == [dict(tag=9, body="")]
+    if a.deferred:
+        valid = source["cases"][0]["responses"][0]
+        dropped = execute(a.receiver, ["drop", response(valid)])
+        assert len(dropped) == 1 and dropped[0]["pending"] and not dropped[0]["derived"]
+        denied = next(
+            c
+            for c in source["cases"]
+            if c["input"] == dict(path="result", result=1, test=False)
+        )["responses"][0]
+        full = execute(a.receiver, ["queue_full", response(denied)])
+        assert (
+            len(full) == 2
+            and not full[-1]["pending"]
+            and not full[-1]["derived"]
+            and full[-1]["failed"] == 1
+        )
+        assert [m["tag"] for m in full[-1]["messages"]] == [3, 9] + [14] * 31
+        assert all(m["body"] == "0808" for m in full[-1]["messages"] if m["tag"] == 14)
     n = source["negative"]
     assert (
         n["mutant"]["patch_hits"] == [n["site"]]

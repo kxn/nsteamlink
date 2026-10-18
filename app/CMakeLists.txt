@@ -322,6 +322,16 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_link_options(nsl-network-test-failure-runtime PRIVATE -Wl,--wrap=IHS_ClientStreamingRequest)
     add_test(NAME network_test_failure_runtime COMMAND nsl-network-test-failure-runtime)
     set_tests_properties(network_test_failure_runtime PROPERTIES TIMEOUT 40)
+    add_executable(nsl-pairing-runtime tests/pairing_runtime.c)
+    target_include_directories(nsl-pairing-runtime PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/tests/session)
+    target_compile_options(nsl-pairing-runtime PRIVATE -UNDEBUG -Wall -Wextra)
+    target_link_libraries(nsl-pairing-runtime PRIVATE nsl_platform)
+    target_link_options(nsl-pairing-runtime PRIVATE -Wl,--wrap=IHS_ClientAuthorizationRequest
+        -Wl,--wrap=IHS_ClientSend -Wl,--wrap=IHS_ClientBroadcast
+        -Wl,--wrap=sl_auth_save -Wl,--wrap=sl_system_random)
+    add_test(NAME pairing_runtime COMMAND nsl-pairing-runtime)
+    set_tests_properties(pairing_runtime PROPERTIES TIMEOUT 60)
     add_executable(nsl-network-test-runtime tests/network_test_runtime.c)
     add_executable(nsl-connection-wait-oracle tests/connection_wait_oracle.c)
     target_include_directories(nsl-connection-wait-oracle PRIVATE platforms/common

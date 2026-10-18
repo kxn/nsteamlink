@@ -1,0 +1,291 @@
+/* Product pairing actor, actual RX/timer UDP, real profile writes/readback.
+ * Peer/entropy and a storage failure are controlled inputs, not Steam/SDL pixels. */
+#include "crypto.h"
+#include "ihs_buffer.h"
+#include "ihs_buffer_ext.h"
+#include "ihslib/client.h"
+#include "media.h"
+#include "network_test_discovery_peer.h"
+#include "platform/runtime.h"
+#include "platform/system.h"
+#include <arpa/inet.h>
+#include <assert.h>
+#include <dirent.h>
+#include <poll.h>
+#include <pthread.h>
+#include <stdatomic.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+static uint16_t peer_port;
+static atomic_uint random_calls, save_calls, confirmations;
+static atomic_bool peer_secret_ready;
+static bool fail_save, stale_snapshot;
+static bool discover_universe;
+static pthread_t save_thread;
+static sl_runtime *runtime;
+static sl_auth_store initial;
+static sl_host host;
+static uint8_t peer_secret[32];
+bool __wrap_sl_system_random(void *data, size_t size) {
+    assert(size == 4);
+    unsigned n = atomic_fetch_add(&random_calls, 1);
+    assert(n < 3);
+    const uint32_t values[] = {0, 10000, 10042};
+    memcpy(data, &values[n], 4);
+    return true;
+}
+bool __real_IHS_ClientAuthorizationRequest(IHS_Client *, const IHS_HostInfo *, const char *);
+bool __wrap_IHS_ClientAuthorizationRequest(IHS_Client *c, const IHS_HostInfo *h, const char *pin) {
+    assert(h->universe == (discover_universe ? IHS_SteamUniverseBeta : IHS_SteamUniversePublic));
+    IHS_HostInfo peer = *h;
+    peer.address.port = peer_port;
+    return __real_IHS_ClientAuthorizationRequest(c, &peer, pin);
+}
+bool __real_sl_auth_save(const sl_auth_store *, const char *);
+bool __wrap_sl_auth_save(const sl_auth_store *s, const char *dir) {
+    unsigned n = atomic_fetch_add(&save_calls, 1) + 1;
+    save_thread = pthread_self();
+    bool ok = !fail_save && __real_sl_auth_save(s, dir);
+    if (stale_snapshot && n == 1) {
+        sl_command cmd = {.type = SL_CMD_SAVE, .generation = 1};
+        assert(sl_runtime_submit(runtime, &cmd, &initial));
+    }
+    return ok;
+}
+bool __real_IHS_ClientSend(IHS_Client *, IHS_SocketAddress, ERemoteClientBroadcastMsg,
+                           ProtobufCMessage *);
+bool __real_IHS_ClientBroadcast(IHS_Client *, ERemoteClientBroadcastMsg, ProtobufCMessage *);
+bool __wrap_IHS_ClientBroadcast(IHS_Client *c, ERemoteClientBroadcastMsg type,
+                                ProtobufCMessage *m) {
+    if (discover_universe && type == k_ERemoteClientBroadcastMsgDiscovery) {
+        IHS_SocketAddress a = {.port = peer_port};
+        assert(IHS_IPAddressFromString(&a.ip, "127.0.0.1"));
+        return __real_IHS_ClientSend(c, a, type, m);
+    }
+    return __real_IHS_ClientBroadcast(c, type, m);
+}
+bool __wrap_IHS_ClientSend(IHS_Client *c, IHS_SocketAddress a, ERemoteClientBroadcastMsg type,
+                           ProtobufCMessage *m) {
+    if (discover_universe && type == k_ERemoteClientBroadcastMsgDiscovery) {
+        a.port = peer_port;
+        assert(IHS_IPAddressFromString(&a.ip, "127.0.0.1"));
+    }
+    if (type == k_ERemoteDeviceAuthorizationConfirmed &&
+        ((CMsgRemoteDeviceAuthorizationConfirmed *)m)->result == 0) {
+        assert(atomic_load_explicit(&peer_secret_ready, memory_order_acquire));
+        assert(atomic_load(&save_calls) == 1 && pthread_equal(save_thread, pthread_self()));
+        char path[512];
+        snprintf(path, sizeof(path), "%s/profile.bin", sl_system_data_dir());
+        if (fail_save)
+            assert(access(path, F_OK) != 0);
+        else {
+            sl_auth_store loaded;
+            assert(sl_auth_load(&loaded, sl_system_data_dir()) == 0);
+            const sl_host *saved = sl_host_find(&loaded.registry, host.id);
+            assert(saved && saved->paired && saved->account == 76561198000000001ULL &&
+                   saved->has_secret && !memcmp(saved->secret, peer_secret, 32));
+        }
+        atomic_fetch_add(&confirmations, 1);
+    }
+    return __real_IHS_ClientSend(c, a, type, m);
+}
+static void response(int fd, const struct sockaddr_in *to, const uint8_t *masked, const char *pin) {
+    uint8_t hash[32], public[32], private[32], ours[32], auth[32], id[8], token[64];
+    assert(!IHS_CryptoSHA256((const uint8_t *)pin, 4, hash));
+    for (unsigned n = 0; n < 32; ++n) {
+        public[n] = masked[n] ^ hash[n];
+        private[n] = 32 + n;
+    }
+    assert(!IHS_CryptoX25519PublicKey(private, ours));
+    assert(!IHS_CryptoKeyExchange(private, public, peer_secret));
+    atomic_store_explicit(&peer_secret_ready, true, memory_order_release);
+    for (unsigned n = 0; n < 32; ++n)
+        auth[n] = ours[n] ^ hash[n];
+    uint64_t device = initial.device_id;
+    for (unsigned n = 0; n < 8; ++n)
+        id[n] = (uint8_t)(device >> (8 * n));
+    size_t count = sizeof(token);
+    assert(!IHS_CryptoSymmetricEncrypt(id, 8, peer_secret, 32, token, &count));
+    CMsgRemoteDeviceAuthorizationResponse r = CMSG_REMOTE_DEVICE_AUTHORIZATION_RESPONSE__INIT;
+    r.result = 0;
+    r.has_steamid = r.has_auth_key = r.has_device_token = true;
+    r.steamid = 76561198000000001ULL;
+    r.auth_key = (ProtobufCBinaryData){32, auth};
+    r.device_token = (ProtobufCBinaryData){count, token};
+    CMsgRemoteClientBroadcastHeader h = CMSG_REMOTE_CLIENT_BROADCAST_HEADER__INIT;
+    h.has_client_id = h.has_msg_type = true;
+    h.client_id = 123;
+    h.msg_type = k_ERemoteDeviceAuthorizationResponse;
+    IHS_Buffer wire = IHS_BUFFER_INIT(1024, 0);
+    IHS_BufferAppendMem(&wire, test_discovery_magic, 8);
+    IHS_BufferAppendUInt32LE(&wire, cmsg_remote_client_broadcast_header__get_packed_size(&h));
+    IHS_BufferAppendMessage(&wire, (void *)&h);
+    IHS_BufferAppendUInt32LE(&wire, cmsg_remote_device_authorization_response__get_packed_size(&r));
+    IHS_BufferAppendMessage(&wire, (void *)&r);
+    assert(sendto(fd, IHS_BufferPointer(&wire), wire.size, 0, (void *)to, sizeof(*to)) ==
+           (ssize_t)wire.size);
+    IHS_BufferClear(&wire, true);
+}
+static void one(unsigned mode) {
+    char directory[] = "/tmp/nsl-pair-runtime-XXXXXX";
+    assert(mkdtemp(directory) && !setenv("NSL_DATA_DIR", directory, 1));
+    memset(&initial, 0, sizeof(initial));
+    initial.device_id = 0x1122334455667788ULL;
+    initial.sound = true;
+    initial.bitrate_kbps = 6000;
+    strcpy(initial.device_name, "Pair runtime fixture");
+    for (unsigned n = 0; n < 32; ++n)
+        initial.secret[n] = 32 + n;
+    sl_host_registry_init(&initial.registry);
+    host = (sl_host){.client_id = 123, .instance_id = 1};
+    strcpy(host.address, "127.0.0.1");
+    strcpy(host.name, "Controlled authorization peer");
+    host = *sl_host_observe(&initial.registry, &host, sl_system_now());
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    assert(fd >= 0);
+    struct sockaddr_in a = {.sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
+    assert(!bind(fd, (void *)&a, sizeof(a)));
+    socklen_t len = sizeof(a);
+    assert(!getsockname(fd, (void *)&a, &len));
+    peer_port = ntohs(a.sin_port);
+    fail_save = mode == 1;
+    stale_snapshot = mode == 2;
+    discover_universe = mode == 3;
+    atomic_store(&save_calls, 0);
+    atomic_store(&confirmations, 0);
+    atomic_store(&random_calls, 0);
+    atomic_store(&peer_secret_ready, false);
+    runtime = sl_runtime_create(&initial);
+    assert(runtime);
+    sl_stream_preferences prefs;
+    uint64_t revision, deadline = sl_system_now() + 15000;
+    while (!sl_runtime_stream_settings(runtime, &prefs, &revision)) {
+        assert(sl_system_now() < deadline);
+        poll(NULL, 0, 1);
+    }
+    if (discover_universe) {
+        /* Feed real discovery parsing before the command constructs HostInfo. */
+        struct pollfd p = {.fd = fd, .events = POLLIN};
+        assert(poll(&p, 1, 3000) == 1);
+        uint8_t request[4096];
+        struct sockaddr_in receiver;
+        len = sizeof(receiver);
+        assert(recvfrom(fd, request, sizeof(request), 0, (void *)&receiver, &len) > 16);
+        CMsgRemoteClientBroadcastHeader header = CMSG_REMOTE_CLIENT_BROADCAST_HEADER__INIT;
+        header.has_client_id = header.has_instance_id = header.has_msg_type = true;
+        header.client_id = 123;
+        header.instance_id = 1;
+        header.msg_type = k_ERemoteClientBroadcastMsgStatus;
+        CMsgRemoteClientBroadcastStatus status = CMSG_REMOTE_CLIENT_BROADCAST_STATUS__INIT;
+        status.hostname = "Controlled beta peer";
+        status.has_euniverse = true;
+        status.euniverse = IHS_SteamUniverseBeta;
+        IHS_Buffer wire = IHS_BUFFER_INIT(1024, 0);
+        IHS_BufferAppendMem(&wire, test_discovery_magic, 8);
+        IHS_BufferAppendUInt32LE(&wire,
+                                 cmsg_remote_client_broadcast_header__get_packed_size(&header));
+        IHS_BufferAppendMessage(&wire, (void *)&header);
+        IHS_BufferAppendUInt32LE(&wire,
+                                 cmsg_remote_client_broadcast_status__get_packed_size(&status));
+        IHS_BufferAppendMessage(&wire, (void *)&status);
+        assert(sendto(fd, IHS_BufferPointer(&wire), wire.size, 0, (void *)&receiver,
+                      sizeof(receiver)) == (ssize_t)wire.size);
+        IHS_BufferClear(&wire, true);
+        bool found = false;
+        while (!found) {
+            assert(sl_system_now() < deadline);
+            sl_runtime_event event;
+            while (sl_runtime_poll(runtime, &event))
+                found |= event.type == SL_EVENT_HOST && event.host.client_id == 123;
+            poll(NULL, 0, 1);
+        }
+    }
+    sl_command cmd = {.type = SL_CMD_PAIR, .generation = 1, .host = host};
+    assert(sl_runtime_submit(runtime, &cmd, &initial));
+    char pin[5] = {0};
+    uint8_t key[32];
+    bool have_key = false, replied = false, authorized = false;
+    struct sockaddr_in to = {0};
+    while (!authorized || !atomic_load(&confirmations)) {
+        assert(sl_system_now() < deadline);
+        sl_runtime_event e;
+        while (sl_runtime_poll(runtime, &e)) {
+            if (e.type == SL_EVENT_FAILURE)
+                fprintf(stderr, "pair failure: %s\n", e.text);
+            assert(e.type != SL_EVENT_FAILURE);
+            if (e.type == SL_EVENT_CODE) {
+                assert(!strcmp(e.text, "0042"));
+                strcpy(pin, e.text);
+            }
+            if (e.type == SL_EVENT_AUTHORIZED) {
+                assert(e.account == 76561198000000001ULL && e.host.has_secret &&
+                       !memcmp(e.host.secret, peer_secret, 32));
+                authorized = true;
+            }
+        }
+        struct pollfd p = {.fd = fd, .events = POLLIN};
+        if (poll(&p, 1, 2) > 0) {
+            uint8_t wire[4096];
+            len = sizeof(to);
+            ssize_t n = recvfrom(fd, wire, sizeof(wire), 0, (void *)&to, &len);
+            assert(n > 16);
+            unsigned hs = test_discovery_u32(wire + 8), size = test_discovery_u32(wire + 12 + hs);
+            assert(hs + size + 16u == (size_t)n);
+            CMsgRemoteClientBroadcastHeader *h =
+                cmsg_remote_client_broadcast_header__unpack(NULL, hs, wire + 12);
+            assert(h);
+            if (h->msg_type == k_ERemoteDeviceAuthorizationRequest) {
+                CMsgRemoteDeviceAuthorizationRequest *r =
+                    cmsg_remote_device_authorization_request__unpack(NULL, size, wire + 16 + hs);
+                assert(r && r->has_auth_key && r->auth_key.len == 32);
+                memcpy(key, r->auth_key.data, 32);
+                have_key = true;
+                cmsg_remote_device_authorization_request__free_unpacked(r, NULL);
+            }
+            cmsg_remote_client_broadcast_header__free_unpacked(h, NULL);
+        }
+        if (have_key && pin[0] && !replied) {
+            response(fd, &to, key, pin);
+            replied = true;
+        }
+    }
+    assert(atomic_load(&random_calls) == 3 &&
+           atomic_load(&save_calls) == (stale_snapshot ? 2u : 1u));
+    if (stale_snapshot) {
+        sl_auth_store loaded;
+        assert(sl_auth_load(&loaded, directory) == 0);
+        const sl_host *saved = sl_host_find(&loaded.registry, host.id);
+        assert(saved && saved->paired && saved->has_secret &&
+               !memcmp(saved->secret, peer_secret, 32));
+    }
+    sl_runtime_destroy(runtime);
+    runtime = NULL;
+    close(fd);
+    DIR *dir = opendir(directory);
+    assert(dir);
+    struct dirent *entry;
+    while ((entry = readdir(dir))) {
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
+            continue;
+        char path[512];
+        snprintf(path, sizeof(path), "%s/%s", directory, entry->d_name);
+        assert(!unlink(path));
+    }
+    closedir(dir);
+    assert(!rmdir(directory));
+    printf("Pair runtime mode=%u: nonzero PIN, actor persistence before ACK, file "
+           "readback/failure, stale-snapshot handling and joined teardown passed\n",
+           mode);
+}
+int main(void) {
+    assert(!setenv("SDL_VIDEODRIVER", "dummy", 1));
+    assert(!setenv("SDL_AUDIODRIVER", "dummy", 1));
+    assert(!setenv("SDL_RENDER_DRIVER", "software", 1));
+    assert(stream_media_init(NULL));
+    for (unsigned n = 0; n < 4; ++n)
+        one(n);
+    stream_media_shutdown();
+    return 0;
+}

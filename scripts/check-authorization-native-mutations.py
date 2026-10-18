@@ -61,6 +61,21 @@ def main():
         ),
     ]
     variants.append(("monotonic_deadline", None, None, "wall_clock"))
+    order = """    if (ok) {
+        IHS_BaseSetSecretKey(&client->base, secretKey);
+        if (client->callbacks.authorization && client->callbacks.authorization->persist)
+            client->callbacks.authorization->persist(client, &state->host, resp->steamid,
+                secretKey, client->callbackContexts.authorization);
+    }
+    memset(secretKey, 0, sizeof(secretKey));
+    AuthorizationConfirm(client, state->host.address, state->lastAuthResult);"""
+    late = """    if (ok) IHS_BaseSetSecretKey(&client->base, secretKey);
+    AuthorizationConfirm(client, state->host.address, state->lastAuthResult);
+    if (ok && client->callbacks.authorization && client->callbacks.authorization->persist)
+        client->callbacks.authorization->persist(client, &state->host, resp->steamid,
+            secretKey, client->callbackContexts.authorization);
+    memset(secretKey, 0, sizeof(secretKey));"""
+    variants.append(("persist_after_confirm", order, late, "persist_at_confirm"))
     reports = []
     for name, before, after, expected in variants:
         if before is not None:
@@ -111,6 +126,7 @@ def main():
                 str(ROOT / "scripts/check-steam-authorization-exchange.py"),
                 "--receiver",
                 str(exe),
+                *(["--deferred"] if name == "persist_after_confirm" else []),
             ],
             capture_output=True,
             text=True,
