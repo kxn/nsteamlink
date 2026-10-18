@@ -189,6 +189,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-media-process.py"
         --receiver $<TARGET_FILE:nsl-auth-udp-oracle>)
     set_tests_properties(media_udp_official_vectors PROPERTIES TIMEOUT 60)
+    add_test(NAME media_retry_udp_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-retry-process.py"
+        --receiver $<TARGET_FILE:nsl-auth-udp-oracle>)
+    set_tests_properties(media_retry_udp_official_vectors PROPERTIES TIMEOUT 60)
     add_executable(nsl-stream-settings-oracle tests/stream_settings_oracle.c)
     target_link_libraries(nsl-stream-settings-oracle PRIVATE nsl_stream_settings)
     target_compile_options(nsl-stream-settings-oracle PRIVATE -UNDEBUG)

@@ -9108,3 +9108,80 @@ Evidence：Switch `system.c`此前填maximum decode=30000、maximum burst=90000�
 已接线的H264、Raw/Opus播放、当前1280×720输出等平台能力与协议恢复/FEC策略分别
 核验；未接线的HEVC不宣告可用。其他平台的信息查询策略不是Switch必须实现的同名
 查询，原SystemInfo/自然UI producer取证保留为参考，不能作为复制平台数值的理由。
+
+## 112. 真实 UDP 缺片反馈、受控补片与原 SDK 图像恢复
+
+### 112.1 原客户端发送反馈的可观察证据
+
+Evidence：`audit-steam-client-retry-process.py`沿§108–110固定Linux官方客户端、
+Qt和原SDK身份，使用真实settings文件、socket、认证/加密协商、原OnThink、worker、
+媒体窗口和软件decoder。正文仍为§110的2224B/frame23/flags24输入，这次分成
+800/800/624三片（packet ID 0/1/2）。受控对端先扣留首片0或中片1，发另外两片；
+只有实际socket收到匹配的完整缺口反馈，才把扣留片的retry count设1发送。
+不注入parsed Packet/Frame、phase、SDK状态或替换原方法。
+
+8个原进程覆盖可靠/非可靠、CRC开/关和缺首片/中片。原客户端可靠媒体实际发送
+channel3/type8，非可靠媒体实际发送channel3/type10。投影连接ID和外层发送时间戳、
+核验后去掉CRC，其他字节保留：缺首片时packet ID=1、正文`40420f00ffff03`；
+缺中片时packet ID=2、正文`40420f00000001`。正文中的peer时间1000000、累积编号
+FFFF/0和bitmap03/01均精确保留，不把它们列为可忽略字段。
+若worker在只处理第一份到包时已经反馈，受控对端继续等待与完整缺口匹配的反馈，
+不假定只有一条反馈，也不把探针调度造成的次数/墙钟间隔解释成官方定时策略。
+
+`steam-client-retry-gdb.py`在真实libc sendto入口只读记录原缓冲、调用线程、栈、
+client phase和已提交SDK包/图像数量，FinishBreakpoint只读真实返回值。
+每条用于补片的反馈实际sendto返回完整20B或24B；发送时phase6、SDK包0、图像0，
+在网络worker而非探针主线程。对端实际recvfrom字节与该记录逐字节相同。
+反馈调用栈实际PC所属的10份完整FDE身份加上§110的49份固定为59份；这是原函数
+身份和受测执行链证据，不冒称所有指令/分支均已穷尽。三个实际SDK table入口的
+module路径/SHA于媒体结束后读取核验，避免在媒体接收热路径做库文件hash。
+
+### 112.2 补片后结果与保留的原诊断
+
+Evidence：8例补片后原SDK仅收到一次2204B AVPacket，SHA256仍为
+`5ff7383025bb865ea49f5b8b27a38811772281f68fb8dd0285afd3584273e64d`，
+send/receive均0；原player图像仍为128×72/YUV420P、frame23，像素MD5
+`889019807dd199cebff67658cbc3d78f`。真实加密消息4/5/80、Stop53后的decoder0、
+RX4/TX3、decoder/manager join、无新增live task及原ELF正常退出分别核验。
+SDK table自然引用7由原libc atexit ForceRelease降至0，探针不主动平账引用。
+
+两例**可靠通道首片缺失**保留原release非致命诊断：
+`streamnetwork.cpp:1139`的
+`STREAM_OLDER_PACKET_ID( m_ReliableState.m_nPendingAckID, nPendingAckID )`。
+这与§45的初始缺口诊断边界一致，不能记为“全程无assert”，也不是原进程崩溃。
+这两例只允许这一条确切file/line/expression/phase记录；其余六例要求assert空列表。
+共享媒体校验器默认仍严格空列表，不删除、不全局屏蔽原诊断。
+
+Conclusion：给定受测输入，原客户端在完整视频包进入SDK前发出了真实缺片反馈；
+受控对端按反馈补回一片后，原窗口/组帧/SDK/player确实能恢复正确图像。这不是把
+不完整H264包送进SDK后“凑合渲染”的证据。
+
+### 112.3 Native 对照与适用边界
+
+`media_retry_udp_official_vectors`重放捕获的两份初始datagram，随后以明确的测试
+barrier等待Native生产网络线程实际发送匹配反馈，才重放捕获的最后补片。仅映射
+实际连接ID并重算CRC；补片正文、片号、count和顺序不改。发补片前要求实际SDK提交
+计数和图像数均0，计数跨线程以atomic读取；测试barrier和5秒进程观察期限不上协议线。
+生产settings/session/OS UDP/crypto/媒体窗口和`nsl_video_pipeline`继续真实执行，
+SDK observer原样forward，不替换回包、超时、SDK结果或decoder。
+
+逐项比较完整NACK（仅投影连接ID/外层时间）、CRC、消息4/5/80明文及独立加密预期、
+加密序号、SDK包和独立像素、Stop与资源释放。mandatory Raw能力投影仍沿§109；
+软件线程4仍是明确的共同测试输入，不据此要求Switch复制Linux/Android能力值。
+8个给定案例未观察到需修改生产协议实现的差异，测试没有新增生产收包策略。
+
+这些是**官方客户端**真实收发/恢复证据；补片发送者是受控fixture peer，不是真实
+Steam host。因此不证明主机重传延迟/RTO、何时自动启用FEC、按丢包率调冗余比例，
+也不证明用户1–2秒停顿/大屏闪烁根因。未补回片、后续关键帧、不同flags/语法、
+物理渲染/GPU/Switch与完整UI路径分别有其证据边界，本节不扩大结论。
+
+```sh
+python3 scripts/audit-steam-client-retry-process.py \
+  --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
+  --sdk-directory build/video-recovery-re/linux-1.3.32.316/package/lib \
+  --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/patched-runtime/lib \
+  --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/runtime/lib \
+  --output /tmp/steam-client-retry.json
+python3 scripts/check-steam-retry-process.py \
+  --receiver build/desktop/app/nsl-auth-udp-oracle
+```

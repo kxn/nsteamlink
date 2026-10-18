@@ -8,7 +8,8 @@
 
 static sl_video_pipeline *udpVideo;
 static atomic_bool udpSubmitted, udpStopped;
-static unsigned udpStarts, udpSubmits, udpSdkPackets;
+static unsigned udpStarts, udpSubmits;
+static atomic_uint udpSdkPackets;
 static size_t udpSdkSize;
 static uint8_t udpSdkSha[32], udpPixelMd5[16];
 static unsigned udpPictureId, udpWidth, udpHeight;
@@ -83,15 +84,30 @@ static void udpTakePicture(void) {
     udpPictureId=IHS_FrameTicketIdentity(f->ticket).frameId;
     sl_resource_release(&f->ref);udpHavePicture=true;
 }
+static FILE *udpReplayFile;
+static uint8_t udpExpectedFeedback[64];
+static uint32_t udpExpectedFeedbackSize;
+static uint32_t udpReplaySize(FILE *file) {
+    uint8_t bytes[4];assert(fread(bytes,1,4,file)==4);uint32_t size=0;
+    for(unsigned i=0;i<4;++i)size|=(uint32_t)bytes[i]<<(8*i);
+    return size;
+}
 static void udpReplayMedia(int socket,const struct sockaddr_in *address,uint8_t local,const char *filename,bool crc) {
-    FILE *file=fopen(filename,"rb");assert(file);
+    if(filename) {assert(!udpReplayFile);udpReplayFile=fopen(filename,"rb");assert(udpReplayFile);}
+    FILE *file=udpReplayFile;assert(file);
     uint8_t length[4];unsigned count=0;
     while(fread(length,1,4,file)==4) {
         uint32_t size=0;for(unsigned i=0;i<4;++i)size|=(uint32_t)length[i]<<(8*i);
+        if(!size) {
+            assert(count && !udpExpectedFeedbackSize);
+            udpExpectedFeedbackSize=udpReplaySize(file);assert(udpExpectedFeedbackSize>=13 && udpExpectedFeedbackSize<=sizeof(udpExpectedFeedback));
+            assert(fread(udpExpectedFeedback,1,udpExpectedFeedbackSize,file)==udpExpectedFeedbackSize);
+            return; /* Controlled peer waits for actual matching feedback. */
+        }
         uint8_t wire[2048];assert(size>=13 && size<=sizeof(wire));assert(fread(wire,1,size,file)==size);
         assert(wire[4]==3 && ((wire[0]&128)!=0)==crc);wire[3]=local;
         if(crc) {uint32_t value=IHS_CRC32C(wire,size-4);for(unsigned i=0;i<4;++i)wire[size-4+i]=(uint8_t)(value>>(8*i));}
         assert(sendto(socket,wire,size,0,(const struct sockaddr *)address,sizeof(*address))==(ssize_t)size);++count;
     }
-    assert(feof(file) && !ferror(file) && count>=2);assert(!fclose(file));
+    assert(feof(file) && !ferror(file) && count>=1);assert(!fclose(file));udpReplayFile=NULL;
 }

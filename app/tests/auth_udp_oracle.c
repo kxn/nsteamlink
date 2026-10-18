@@ -64,7 +64,8 @@ static void sendEncryptedPeer(IHS_Session *s,int socket,const struct sockaddr_in
     sendPeer(socket,address,5,local,1,id,body,count+1,crc);
 }
 int main(int argc,char **argv) {
-    bool video=argc==7 && !strcmp(argv[1],"--video");
+    bool recover=argc==7 && !strcmp(argv[1],"--recover");
+    bool video=recover || (argc==7 && !strcmp(argv[1],"--video"));
     bool negotiate=video || (argc==6 && !strcmp(argv[1],"--negotiate"));assert(negotiate || argc==5);
     bool crc=atoi(argv[negotiate?2:1])!=0,hasResponse=negotiate || strcmp(argv[3],"-")!=0;
     bool badMac=negotiate && atoi(argv[5])!=0;
@@ -105,6 +106,7 @@ int main(int argc,char **argv) {
     bool connected=false,handshake=false,reply=false,haveRequest=false;
     uint8_t request[256];size_t requestSize=0;unsigned connects=0,goodbyes=0;
     bool configReceived=false,completeReceived=false,videoInfo=false,videoStop=false;
+    bool repaired=false;uint8_t feedbackWire[64];size_t feedbackSize=0;
     struct sockaddr_in videoAddress={0};uint8_t videoLocal=0;
     uint8_t outputPlain[3][512],outputCipher[3][512];size_t plainSizes[3]={0},cipherSizes[3]={0};
     uint64_t deadline=millis()+5000;
@@ -122,7 +124,16 @@ int main(int argc,char **argv) {
         uint8_t raw[2048];struct sockaddr_in from;socklen_t length=sizeof(from);
         ssize_t size=recvfrom(peer,raw,sizeof(raw),0,(struct sockaddr *)&from,&length);assert(size>=13);
         uint8_t type=raw[0]&127;
-        if(type==1) {
+        if(recover && (type==8 || type==10) && raw[4]==3 && !repaired) {
+            assert(((raw[0]&128)!=0)==crc && raw[2] && raw[3]==7);
+            size_t plainSize=(size_t)size;
+            if(crc) {uint32_t value=0;for(unsigned n=0;n<4;++n)value|=(uint32_t)raw[size-4+n]<<(8*n);assert(IHS_CRC32C(raw,(size_t)size-4)==value);plainSize-=4;}
+            assert(plainSize<=sizeof(feedbackWire));uint8_t normalized[64];memcpy(normalized,raw,plainSize);normalized[2]=normalized[3]=0;memset(normalized+9,0,4);
+            if(udpExpectedFeedbackSize!=plainSize || memcmp(normalized,udpExpectedFeedback,plainSize))continue;
+            assert(!atomic_load(&udpSubmitted) && !atomic_load(&udpSdkPackets));
+            assert((size_t)size<=sizeof(feedbackWire));memcpy(feedbackWire,raw,(size_t)size);feedbackSize=(size_t)size;
+            udpReplayMedia(peer,&from,raw[2],NULL,crc);repaired=true;
+        } else if(type==1) {
             ++connects;assert(size==17 && raw[0]==1 && raw[2] && !memcmp(raw+13,"\xc7\x3d\x8f\x3c",4));
             if(!connected) {sendPeer(peer,&from,2,raw[2],0,0,raw+9,4,crc);connected=true;}
         } else if(type==9) {
@@ -196,6 +207,11 @@ int main(int argc,char **argv) {
         for(unsigned i=0;i<16;++i)printf("%02x",udpPixelMd5[i]);
         printf("\",\"sdk_size\":%zu,\"sdk_sha256\":\"",udpSdkSize);for(unsigned i=0;i<32;++i)printf("%02x",udpSdkSha[i]);
         printf("\",\"starts\":%u,\"submits\":%u,\"stopped\":true}",udpStarts,udpSubmits);
+    }
+    if(recover) {
+        assert(repaired && !udpReplayFile && feedbackSize);
+        printf(",\"repair_feedback\":\"");for(size_t n=0;n<feedbackSize;++n)printf("%02x",feedbackWire[n]);
+        printf("\",\"sdk_packets_before_repair\":0");
     }
     puts("}");
     IHS_SessionDestroy(session);if(negotiate)sl_stream_settings_destroy(&settings);

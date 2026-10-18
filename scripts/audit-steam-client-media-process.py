@@ -185,9 +185,10 @@ class Peer(neg.Peer):
             )
 
 
-def verify(case):
+def verify(case, *, expected_assertions=()):
     r = case["process"]
-    assert r["exit_code"] == 0 and r["cleanup_complete"] and not r["source_assertions"]
+    assert r["exit_code"] == 0 and r["cleanup_complete"]
+    assert r["source_assertions"] == list(expected_assertions)
     assert r["settings_reads"] == [dict(loaded=True, bytes=case["settings"])]
     decode = case.get("source_decode", True)
     assert r["media_final"] == dict(phase=6, decoder=0, rx=4, tx=3 if decode else 2)
