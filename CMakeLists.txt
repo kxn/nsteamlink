@@ -210,6 +210,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-network-test-discovery.py"
             --receiver $<TARGET_FILE:ihs-network-test-discovery-oracle>)
         set_tests_properties(network_test_discovery_official_vectors PROPERTIES TIMEOUT 60)
+        add_test(NAME session_key_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-session-key.py"
+            --receiver $<TARGET_FILE:ihs-session-key-oracle>)
+        set_tests_properties(session_key_official_vectors PROPERTIES TIMEOUT 60)
         add_test(NAME receive_cycle_official_vectors COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-receive-cycle.py"
             --receiver $<TARGET_FILE:ihs-network-wire-oracle>)

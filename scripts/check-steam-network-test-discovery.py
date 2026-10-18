@@ -148,7 +148,7 @@ def main():
                 and row["key"] == c["key"]
                 and row["port"] == c["port"]
             ), (i, row, c)
-            assert row["configured"] == (c["key_length"] == 32), (i, row)
+            assert row["configured"] == (c["key_length"] in (16, 32)), (i, row)
             if row["configured"]:
                 expected = hmac.new(
                     bytes.fromhex(c["key"]), b"Steam In-Home Streaming", hashlib.sha256

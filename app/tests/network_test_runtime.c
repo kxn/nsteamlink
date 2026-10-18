@@ -100,7 +100,7 @@ typedef enum Scenario {
     SKIP_READABLE,
     VIDEO_DISABLED
 } Scenario;
-static void one(Scenario scenario, bool crc) {
+static void one(Scenario scenario, bool crc, size_t key_length) {
     char directory[] = "/tmp/nsl-test-runtime-XXXXXX";
     assert(mkdtemp(directory) && !setenv("NSL_DATA_DIR", directory, 1));
     memset(&store, 0, sizeof(store));
@@ -152,7 +152,7 @@ static void one(Scenario scenario, bool crc) {
         poll(NULL, 0, 1);
     }
     IHS_ClientConfig cc = {.deviceId = 1, .secretKey = store.secret, .deviceName = "codec fixture"};
-    IHS_SessionInfo info = {.sessionKeyLen = 32};
+    IHS_SessionInfo info = {.sessionKeyLen = key_length};
     for (unsigned i = 0; i < 32; ++i)
         info.sessionKey[i] = i;
     IHS_Session *codec = IHS_SessionCreate(&cc, &info);
@@ -265,7 +265,7 @@ static void one(Scenario scenario, bool crc) {
             reply.port = peer_port;
             uint8_t cipher[128], body[256];
             size_t capacity = sizeof(cipher);
-            assert(!IHS_CryptoSymmetricEncrypt(info.sessionKey, 32, store.secret, 32, cipher,
+            assert(!IHS_CryptoSymmetricEncrypt(info.sessionKey, key_length, store.secret, 32, cipher,
                                                &capacity));
             reply.encrypted_session_key = (ProtobufCBinaryData){capacity, cipher};
             size = cmsg_remote_device_streaming_response__pack(&reply, body);
@@ -308,6 +308,13 @@ static void one(Scenario scenario, bool crc) {
                 CAuthenticationRequestMsg *request =
                     cauthentication_request_msg__unpack(NULL, count - 14, wire + 14);
                 assert(request && request->has_steamid == ordinary && request->token.len == 32);
+                /* Exact original-client HMACs from §125, including ordinary continuation. */
+                const char *expected = key_length == 16
+                    ? "\x17\x8f\x4b\xa6\x1b\x1d\xeb\x8e\x3a\x25\x8d\xcc\xe0\xbc\xfb\xd7"
+                      "\x9f\x33\xe5\xc6\x51\x34\x2b\x84\x71\x55\x22\xbd\xd6\x9b\x8e\xd6"
+                    : "\x8f\xf3\xa6\xe9\xdf\x0b\xb5\xaa\x37\x68\x46\xc0\x1b\xfd\x2c\x0c"
+                      "\x8a\xf6\x99\x4e\x22\x5c\x0a\xac\x69\x45\x94\x9b\xb4\x2b\xb6\x71";
+                assert(!memcmp(request->token.data, expected, 32));
                 cauthentication_request_msg__free_unpacked(request, NULL);
                 const uint8_t body[] = {2, 16, 1};
                 send_peer(fd, &from, local, 5, 1, 1, body, sizeof(body), crc);
@@ -410,8 +417,8 @@ static void one(Scenario scenario, bool crc) {
     }
     closedir(dir);
     assert(!rmdir(directory));
-    printf("runtime scenario=%d crc=%d tickets=%u stats_saves=%u passed\n", scenario, crc,
-           ticket_count, saves);
+    printf("runtime scenario=%d crc=%d key_length=%zu tickets=%u stats_saves=%u passed\n",
+           scenario, crc, key_length, ticket_count, saves);
 }
 int main(void) {
     assert(!setenv("SDL_VIDEODRIVER", "dummy", 1));
@@ -419,7 +426,9 @@ int main(void) {
     assert(!setenv("SDL_RENDER_DRIVER", "software", 1));
     assert(stream_media_init(NULL));
     for (Scenario s = FIXED; s <= VIDEO_DISABLED; ++s)
-        one(s, s & 1);
+        one(s, s & 1, 32);
+    one(FIXED, false, 16);
+    one(ENHANCED_MANUAL, true, 16);
     stream_media_shutdown();
     puts("Production runtime: first-test/ordinary negotiation, accepted/rejected full presets, "
          "manual test, save failure, running cancel, result exit and save-overlap cancel passed");

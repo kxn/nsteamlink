@@ -9824,8 +9824,8 @@ Base锁保护模式状态、full-record追加与公开快照/复制；单次复�
 在运行时标Cancelled，内部HMAC/控制/统计发送准备失败标Failed，避免把本地错误
 解释成用户取消。Full-record或批次分配失败标invalid并终止测试；普通媒体默认
 collector仍沿§117继续媒体。这是本地资源保护，不冒称已证明官方OOM策略。
-公开入口要求32-byte会话key和正int32目标，属于可用ticket/参数的本地守卫，不能
-由原HMAC16实验扩大成产品接受其他ticket长度。
+本节初版公开入口要求32-byte会话key和正int32目标，属于当时的本地守卫，不能
+由本节HMAC16实验单独扩大接受范围；§125补齐凭据到控制加密证据后改为16/32-byte。
 
 真实loopback UDP用实际Session双worker、HMAC、控制加解密和join，覆盖CRC开/关
 各三种路径：普通fixed完成、原RS样本fixed完成、bandwidth目标替换后取消。原RS
@@ -9879,8 +9879,8 @@ OS/时间/最终SendMessage是显式adapter，不称已完成真实Steam授权�
 43组响应输入还覆盖坏padding/截断、0/16/31/33-byte解密结果、各result、错编号、
 端口与地址守卫、两组坏protobuf及同一时刻两次错编号InProgress。空cipher及
 省略cipher分别触发原诊断524/526并正常返回失败，原断言被保留，
-不说成无断言成功用例。BSave不自行强制32-byte；专用Switch Session的32-byte
-入口守卫仍是本地可用ticket约束。
+不说成无断言成功用例。BSave不自行强制32-byte；本节当时的专用Switch Session
+32-byte守卫是本地约束，§125已据完整输入链证据修正为16/32-byte。
 
 原坏密文执行StopStreaming@cb0ef8，通知错误、发送消息10取消原编号并清除事务；
 不能只记录解密日志、关闭timer却不给调用方终态。正确编号的Busy(4)/InProgress(5)
@@ -10168,3 +10168,53 @@ Cancel才发送10。退休记录用于已知主机来源/迟到响应校验；8�
 已收到的真实会话endpoint，配对/安全PIN仍是独立流程。自动测网成功续接通过
 Request安静替换，不能在runtime helper中额外先Cancel。UI布局/worker适配不充当
 自然Qt或Switch显示证明。
+
+## 125. 会话密钥从凭据到认证与控制加密
+
+Evidence：沿§120固定Android shell，`audit-steam-session-key.py`执行原响应
+parser/HandleStartStreamingResponse、BSaveEncryptedSessionKey/AES、Panel OnUpdate、
+Start/SetAuthToken、OnStreamConnected、ServerHandshake、认证响应和控制dispatcher。
+16/32-byte各固定/带宽模式四组输入，均将解密所得完整key送入原SetAuthToken，
+产生正确HMAC-SHA256认证，随后发送三份加密KeepAlive及StartNetworkTest；原入口
+成功解密sequence=0的target94并更新目标为100000、接收sequence为1。
+认证、控制HMAC-MD5和AES-CBC不再使用§119的identity cipher adapter。
+真实OS连接是明确输入边界；Qt/存储、已授权身份/secret、peer、线程/锁/时钟、
+packet所有权和最终send沿§120适配，不称已取得真实Steam凭据或运行自然UI线程。
+
+原Frame::BEncrypt@cc38e0/BDecrypt@cc3b3c调用原HMAC-MD5及AES；原
+SymmetricDecryptWithIV@cdcc70在cdce20/28列出16/32-byte诊断条件。
+250个原指令crypto输入覆盖两长度、十种正文长度、四种64-bit sequence、
+错sequence、短包、坏HMAC和坏padding；有效输出另与独立Python AES/HMAC核对。
+这些长度的正常路径无原断言。IV-only输入会进入原诊断，未混入无断言向量；
+Native对IV-only的拒绝属于已有短包保护，不以此宣称完整失败内存行为相同。
+原sequence存储指令cc39a4从x24改为xzr后实际命中一次、正常返回且无断言，
+密文与独立预期不同；该反例只验证观察器能检出原加密语义变化。
+
+Conclusion：16-byte并非仅HMAC原语能力，已证明所列官方发现凭据→专用测试→
+认证/双向控制加密链接受它。撤回§119.3/§120把32-byte本地守卫继续视作足够
+接受范围的解释；入口应接受已证明的16/32-byte。其他长度的诊断不等于必然拒绝，
+不能推断24-byte、空或任意长度的完整产品策略；Native仍拒绝其他长度作为本地
+已验证范围守卫。现代Steam是否自然签发16-byte会话key仍待真实Host证据。
+这与Switch的硬件decoder种类无关，不新增平台能力数值或FEC启动策略。
+
+Native对照按组件边界逐字节比较认证HMAC、原四条链的16份发送密文、四份target
+解密及250个crypto向量；独立真实UDP测例覆盖两长度×CRC×固定完成/原RS样本
+固定完成/带宽取消，使用实际发现worker、凭据AES、Session双worker、认证/控制、
+样本和join。受控peer不冒充Steam，组件对照不冒充整条UI/OS调度等价。
+产品runtime另覆盖16-byte自动固定测试→普通协商和手动带宽测试；连同原32-byte
+十场景共十二场景，两种会话认证token均与原客户端HMAC逐字节核对。
+隔离Native反例恢复32-only入口，成功编译/归档/链接，正式比较器正常exit1检出
+`configured=false`；不把编译失败、崩溃或超时当作有效反例。
+发现重试比较器的人工时钟驱动原先在收到UDP后立即前移；TaskExecute仍可能尚未
+返回run并写nextExecution，故会把新时钟用于上一轮重排。在ASan执行中曾观察
+累计发送[1,2,2,3,3,4,5]。驱动改在每份UDP收到后访问timer owner，等待上一轮
+run及deadline发布完成才移动人工时钟；应发点等最多2秒、明确不应发点仍检查
+静默。不改变生产timer、重试时钟或协议阈值，也不将这个驱动竞态认作用户卡顿。
+
+```sh
+PYTHONPATH=/path/to/audit-deps python3 scripts/audit-steam-session-key.py \
+  --binary /path/to/libshell-arm64.so --output /tmp/session-key.json
+ctest --test-dir build/desktop \
+  -R '^(session_key_official_vectors|network_test_discovery_official_vectors|network_test_udp)$' \
+  --output-on-failure
+```
