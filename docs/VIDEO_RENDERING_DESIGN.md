@@ -1444,6 +1444,11 @@ domain storage及各自SDK buffer/frames context/device引用。撤回旧设计�
 成功出口与独立硬件引用关系另有源码依据。软件资源测试在持旧图/map跨Stop和IHS_Quit时
 检查SDK线程已经回基线，再核对图片MD5及最终domain退休；这仍不等同真实NVTEGRA/loader验收。
 
+格式回调线程边界见协议参考§102：官方Linux后台SDK请求由main consumer选择格式并发80，
+后台等待active/pending；Stop清active可终止等待。Native现有hardware_format/info在SDK
+回调线程内同步执行，借用session/epoch只覆盖SDK调用。这不证明主线程调度已等价，
+消息内容/回调内上报与完整线程交接必须分开论证；不能跨线程长期保存借用指针。
+
 GPU fence 错误使批次隔离并关闭正常渲染。退出阶段仅在 SDK queue idle 正常返回且 queue
 未处于 error state 时释放隔离引用；已故障 queue 进入 Switch fatal，不能返回 hbmenu。
 SDK acquire、NVDEC 和 queue idle 的不可取消等待仍属于 G1 必须用真机证明的限制；

@@ -1,0 +1,184 @@
+#!/usr/bin/env python3
+"""Exercise original client worker/SDK/main callback and frame ownership in-process.
+
+Genuine pinned official Linux executable, bundled SDK and Valve-compatible Qt.
+Already-parsed video Frame input and a configured partial client are explicit
+boundaries. Original UDP transport/factory/Connection remain unopened and state3;
+control80 is produced but rejected as unconnected. No authenticated Steam session,
+full Client ctor/Qt consumer, rendering or hardware equivalence is claimed.
+
+Each mode runs a separate original process and resumes its --version main after
+probe resources retire. Source statuses are observed real SDK returns. Debugger
+breakpoints record entries/returns and affect scheduling; no SDK status, code gate,
+callback, async flag or original method body is replaced. Stable runtime invariants
+are checked rather than freezing host CPU/Qt hashes, ASLR, PIDs or interleavings.
+"""
+
+import argparse
+import importlib.util
+import json
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SPEC = importlib.util.spec_from_file_location(
+    "process", ROOT / "scripts/audit-steam-client-sdk-process.py"
+)
+process = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(process)
+
+
+def verify(report):
+    s = report["original_start"]
+    mode, trace = s["mode"], s["trace"]
+    names = [x[0] for x in trace]
+    assert (
+        report["original_process_exit_code"] == 0 and report["probe_cleanup_complete"]
+    )
+    assert s["threads_started"] > s["threads_before_start"]
+    assert s["threads_after_stop"] == s["threads_before_start"]
+    assert s["context_cleared_after_stop"] and s["parser_cleared_after_stop"]
+    assert ["decoder_pthread_join_completed", "main", 0] in trace
+    if mode == "empty":
+        assert not any(x in names for x in ("submit", "sdk_get_format", "decoder_info"))
+        assert s["threads_after_resources"] == s["threads_before"]
+        return
+    assert s["connection_state"] == 3 and s["transport_fd"] == 0xFFFFFFFF
+    assert s["connection_retired"] and s["configured_decoder_owner_link"]
+    assert "manager_destructor" in names
+    shutdown = trace[names.index("manager_destructor") :]
+    assert ["manager_pthread_join_enter", "main"] in shutdown
+    assert ["manager_pthread_join_completed", "main", 0] in shutdown
+    assert next(x[2] & 255 for x in shutdown if x[0] == "manager_join_return") == 1
+    assert s["offered_formats"] and all(0 in f for f in s["offered_formats"])
+    # The original process-global socket manager persists until its ELF dtor;
+    # only the explicitly constructed connection/transport retire in the probe.
+    assert s["threads_after_resources"] == s["threads_before_start"]
+    assert (
+        names.index("submit")
+        < names.index("decode_frame")
+        < names.index("final_decode")
+    )
+    for event in trace:
+        if event[0] in (
+            "decode_frame",
+            "final_decode",
+            "sdk_get_format",
+            "sdk_send",
+            "sdk_receive",
+            "player_put",
+        ):
+            assert event[1].startswith("background"), event
+        elif event[0] in (
+            "submit",
+            "public_start",
+            "public_stop",
+            "codec_stop",
+            "main_format",
+            "format_selector",
+            "decoder_info",
+        ):
+            assert event[1] == "main", event
+    if mode == "cancel":
+        assert "main_format" not in names and "decoder_info" not in names
+        assert ["sdk_get_format_return", "background1", -1] in trace
+        assert ["sdk_send_return", "background1", -1094995529] in trace
+        assert ["sdk_receive_return", "background1", -11] in trace
+        assert (
+            names.index("public_stop")
+            < names.index("player_put")
+            < names.index("codec_stop")
+        )
+        assert s["pending_after_cancel"] and s["cancel_cleared_codec"]
+        assert s["reset_request_after_stop"] == 1
+        assert s["player_objects"] == [
+            {"id": 23, "shape": [0, 0, 0xFFFFFFFF], "has_pixels": False}
+        ]
+        return
+    pictures = [s["picture"]]
+    if mode == "restart":
+        assert not s["pending_after_restart"]
+        pictures.append(s["picture_before_restart"])
+        assert s["picture_before_restart"]["id"] == 23 and s["picture"]["id"] == 24
+        assert names.count("restart") == 1 and names.count("public_start") == 2
+    assert s["late_frame_returned_to_pool"]
+    expected = report["contexts"][0]["pixel_md5"]
+    for pic in pictures:
+        assert pic["md5_before_stop"] == pic["md5_after_stop"] == expected
+        assert pic["timestamp"] == 1000000
+    assert s["control"] == [{"channel": 1, "type": 80}] * len(pictures)
+    assert names.count("decoder_info") == len(pictures)
+    assert names.count("player_put") == len(pictures)
+    assert all(
+        x["shape"] == [128, 72, 0] and x["has_pixels"] for x in s["player_objects"]
+    )
+    assert s["reset_request_after_stop"] == 0
+    assert s["cached_info_after_stop"].startswith("libavcodec software decoding with ")
+    # Inspect each actual submission rather than prescribing which side runs
+    # immediately after main clears the callback flag. Tail-call finish BPs can
+    # share a return PC and their relative observer order is not semantic order.
+    begins = [i for i, x in enumerate(names) if x == "submit"]
+    for i, begin in enumerate(begins):
+        end = begins[i + 1] if i + 1 < len(begins) else len(trace)
+        events = trace[begin:end]
+        labels = [x[0] for x in events]
+        order = [
+            labels.index(x)
+            for x in (
+                "sdk_send",
+                "sdk_get_format",
+                "pending_observed",
+                "main_format",
+                "format_selector",
+                "decoder_info",
+                "frame_send",
+                "sdk_send_return",
+                "sdk_receive",
+                "player_put",
+            )
+        ]
+        assert order == sorted(order)
+        assert next(x[2] for x in events if x[0] == "frame_send_return") == 3
+        assert next(x[2] for x in events if x[0] == "sdk_get_format_return") == 0
+        assert next(x[2] for x in events if x[0] == "sdk_send_return") == 0
+        assert next(x[2] for x in events if x[0] == "sdk_receive_return") == 0
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--binary", type=Path, required=True)
+    p.add_argument("--sdk-directory", type=Path, required=True)
+    p.add_argument("--qt-library-directory", type=Path, action="append", required=True)
+    p.add_argument("--output", type=Path, required=True)
+    a = p.parse_args()
+    cases = []
+    for mode in ("empty", "decode", "cancel", "restart"):
+        path = a.output.with_name(a.output.stem + "-" + mode + ".json")
+        report = process.audit(
+            a.binary.resolve(),
+            a.sdk_directory.resolve(),
+            [q.resolve() for q in a.qt_library_directory],
+            path,
+            worker_mode=mode,
+        )
+        path.write_text(json.dumps(report, indent=2) + "\n")
+        verify(report)
+        cases.append(report)
+        s = report["original_start"]
+        print(
+            mode,
+            "threads",
+            s["threads_before_start"],
+            s["threads_started"],
+            s["threads_after_stop"],
+            "trace entries",
+            len(s["trace"]),
+            flush=True,
+        )
+    a.output.write_text(json.dumps(dict(scope=__doc__, cases=cases), indent=2) + "\n")
+    print(
+        "Original worker process: four modes, real SDK callback/pixels/Stop/restart, normal exits"
+    )
+
+
+if __name__ == "__main__":
+    main()

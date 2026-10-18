@@ -4,8 +4,9 @@
 Runs in a genuine, hash-pinned official executable paused before original main.
 The client boundary is zeroed/configured storage, not a full Client constructor.
 No name/token/gate/callback bypass. SDK-only pixel tests keep its own callback;
-original Start installs the original callback, but does not decode with the
-incomplete client/transport boundary. All objects and probe-acquired table refs
+default original Start installs the original callback without decoding. The
+optional worker extension declares its partial client/transport/media boundary
+and exercises real asynchronous decoding. All objects and probe-acquired table refs
 are released before resuming the original --version entry.
 """
 
@@ -252,59 +253,72 @@ for projected in [False, True]:
         )
     report["contexts"].append(case)
 
-client, player, decoder = cpp_alloc(0x22000), cpp_alloc(0x168), cpp_alloc(0x2E0)
-call("void(*)(void*,void*)", base + 0x2EE0F0, player, client)
-call("void(*)(void*,void*,void*,int)", base + 0x324610, decoder, client, player, 4)
-inf.write_memory(decoder + 0x184, struct.pack("<II", 128, 72))
-call("void(*)(void*,void*)", base + 0x3246D0, decoder, 0)
-ctx = u64(decoder + 0x268)
-start_report = {
-    "scope": "Actual original base-player/AVCodec constructors and StartDecoding in official process; zeroed configured client boundary, no complete client ctor/Qt/streaming startup.",
-    "callback_deferred": bool(inf.read_memory(decoder + 100, 1)[0]),
-    "decoder_active": bool(inf.read_memory(decoder + 24, 1)[0]),
-    "context_created": bool(ctx),
-    "parser_created": bool(u64(decoder + 0x270)),
-}
-assert ctx
-start_report["source_callback_installed"] = u64(ctx + 0xC0) == base + 0x324D00
-start_report["sdk_threads"] = u32(ctx + 0x290)
-start_report["sdk_thread_type"] = u32(ctx + 0x294)
-start_report["codec_capabilities"] = u32(selected + 24)
-params = call("void*(*)()", int(gdb.parse_and_eval("(void*)avcodec_parameters_alloc")))
-assert (
+if config.get("worker_mode"):
+    worker_path = config["worker_helper"]
+    exec(compile(Path(worker_path).read_text(), worker_path, "exec"))
+    start_report = globals()["exercise_worker"](config["worker_mode"])
+    report["original_start"] = start_report
+else:
+    client, player, decoder = cpp_alloc(0x22000), cpp_alloc(0x168), cpp_alloc(0x2E0)
+    call("void(*)(void*,void*)", base + 0x2EE0F0, player, client)
+    call("void(*)(void*,void*,void*,int)", base + 0x324610, decoder, client, player, 4)
+    inf.write_memory(decoder + 0x184, struct.pack("<II", 128, 72))
+    call("void(*)(void*,void*)", base + 0x3246D0, decoder, 0)
+    ctx = u64(decoder + 0x268)
+    start_report = {
+        "scope": "Actual original base-player/AVCodec constructors and StartDecoding in official process; zeroed configured client boundary, no complete client ctor/Qt/streaming startup.",
+        "callback_deferred": bool(inf.read_memory(decoder + 100, 1)[0]),
+        "decoder_active": bool(inf.read_memory(decoder + 24, 1)[0]),
+        "context_created": bool(ctx),
+        "parser_created": bool(u64(decoder + 0x270)),
+    }
+    assert ctx
+    start_report["source_callback_installed"] = u64(ctx + 0xC0) == base + 0x324D00
+    start_report["sdk_threads"] = u32(ctx + 0x290)
+    start_report["sdk_thread_type"] = u32(ctx + 0x294)
+    start_report["codec_capabilities"] = u32(selected + 24)
+    params = call(
+        "void*(*)()", int(gdb.parse_and_eval("(void*)avcodec_parameters_alloc"))
+    )
+    assert (
+        call(
+            "int(*)(void*,void*)",
+            int(gdb.parse_and_eval("(void*)avcodec_parameters_from_context")),
+            params,
+            ctx,
+        )
+        == 0
+    )
+    start_report["parameter_dimensions"] = [u32(params + 0x48), u32(params + 0x4C)]
+    slot = cpp_alloc(8)
+    inf.write_memory(slot, struct.pack("<Q", params))
     call(
-        "int(*)(void*,void*)",
-        int(gdb.parse_and_eval("(void*)avcodec_parameters_from_context")),
-        params,
-        ctx,
+        "void(*)(void*)",
+        int(gdb.parse_and_eval("(void*)avcodec_parameters_free")),
+        slot,
     )
-    == 0
-)
-start_report["parameter_dimensions"] = [u32(params + 0x48), u32(params + 0x4C)]
-slot = cpp_alloc(8)
-inf.write_memory(slot, struct.pack("<Q", params))
-call("void(*)(void*)", int(gdb.parse_and_eval("(void*)avcodec_parameters_free")), slot)
-call("void(*)(void*)", base + 0x324840, decoder)
-start_report["context_cleared_after_stop"] = u64(decoder + 0x268) == 0
-start_report["parser_cleared_after_stop"] = u64(decoder + 0x270) == 0
-assert u64(u64(decoder) + 8) == base + 0x323FC0
-call("void(*)(void*)", u64(u64(decoder) + 8), decoder)
-call("void(*)(void*)", base + 0x2EE370, player)
-call("void(*)(void*,unsigned long)", base + 0xE3310, client, 0x22000)
-call("void(*)(void*,unsigned long)", base + 0xE3310, slot, 8)
+    call("void(*)(void*)", base + 0x324840, decoder)
+    start_report["context_cleared_after_stop"] = u64(decoder + 0x268) == 0
+    start_report["parser_cleared_after_stop"] = u64(decoder + 0x270) == 0
+    assert u64(u64(decoder) + 8) == base + 0x323FC0
+    call("void(*)(void*)", u64(u64(decoder) + 8), decoder)
+    call("void(*)(void*)", base + 0x2EE370, player)
+    call("void(*)(void*,unsigned long)", base + 0xE3310, client, 0x22000)
+    call("void(*)(void*,unsigned long)", base + 0xE3310, slot, 8)
 
-report["original_start"] = start_report
-assert all(
-    start_report[key]
-    for key in (
-        "context_created",
-        "parser_created",
-        "source_callback_installed",
-        "context_cleared_after_stop",
-        "parser_cleared_after_stop",
+    report["original_start"] = start_report
+    assert all(
+        start_report[key]
+        for key in (
+            "context_created",
+            "parser_created",
+            "source_callback_installed",
+            "context_cleared_after_stop",
+            "parser_cleared_after_stop",
+        )
     )
-)
-assert start_report["parameter_dimensions"] == [72, 128]
+    assert start_report["parameter_dimensions"] == [72, 128]
+
 report["cpu_info"] = {}
 info = call("void*(*)()", base + 0x1A7350)
 count = read(info + 8, 1)[0]

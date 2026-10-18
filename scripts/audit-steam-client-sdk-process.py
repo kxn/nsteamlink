@@ -4,8 +4,11 @@
 GDB pauses at original main after dynamic/static initialization. Explicit calls
 exercise the original codec factory, real SDK decoding, and original base-player/
 AVCodec constructors, Start, Stop and deleting destructors. The configured client
-storage is not a full Client/Connection; original deferred get_format/FinalDecode,
-Qt event-loop, network, hardware and physical display remain outside this probe.
+storage is not a full Client/Connection. The default excludes original deferred
+get_format/FinalDecode; Qt event-loop, authenticated networking, hardware and
+physical display remain outside all modes. An optional worker extension adds original asynchronous submission, deferred
+format consumption and cancellation/restart under its declared partial-client
+boundary; the default probe retains the original direct Start/Stop scope.
 The process must resume its original --version main and exit normally after
 probe-owned resources and module references are released. No gate/name/token or
 callback bypass is allowed. Qt runtime directories must supply Valve's controller
@@ -34,7 +37,8 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def audit(binary, sdk, qt, output):
+def audit(binary, sdk, qt, output, worker_mode=None):
+    assert worker_mode in (None, "empty", "decode", "cancel", "restart")
     assert digest(binary) == boundary.codec.SHA
     assert binary.name == "steamlink" and binary.parent.name == "bin"
     assert digest(sdk / "libavcodec.so.61") == boundary.CODEC_SHA
@@ -68,6 +72,8 @@ def audit(binary, sdk, qt, output):
                     sdk_directory=str(sdk),
                     fixture=str(fixture),
                     result=str(result),
+                    worker_mode=worker_mode,
+                    worker_helper=str(ROOT / "scripts/steam-client-worker-gdb.py"),
                 )
             )
         )
@@ -135,6 +141,9 @@ def audit(binary, sdk, qt, output):
         fixture_sha256=digest(fixture),
         framemd5_sha256=digest(fixture.with_suffix(".framemd5")),
         helper_sha256=digest(helper),
+        worker_helper_sha256=digest(ROOT / "scripts/steam-client-worker-gdb.py")
+        if worker_mode
+        else None,
         qt_dependency_sha256=dependencies,
         qt_required_controller_patch=QT_PATCH,
         source_functions=boundary.inventory(
@@ -151,6 +160,43 @@ def audit(binary, sdk, qt, output):
                 0x323FC0: "avcodec_deleting_destructor",
                 0x1A7350: "cpu_info",
                 0x326BE0: "decode_thread_count",
+                **(
+                    {
+                        0x2ED830: "decoder_submit_frame",
+                        0x2ED980: "public_decoder_start",
+                        0x2EDBF0: "public_decoder_stop",
+                        0x2EDB20: "decoder_join_purge",
+                        0x2EDA20: "decoder_worker_loop",
+                        0x2EDAF0: "decoder_worker_entry",
+                        0x2EDC50: "decoder_restart",
+                        0x3260D0: "decode_frame",
+                        0x326F30: "decode_pending",
+                        0x324190: "final_decode",
+                        0x324C90: "format_dispatch",
+                        0x324D00: "sdk_get_format",
+                        0x324D10: "main_format_consumer",
+                        0x324990: "format_selector",
+                        0x31DD40: "decoder_info",
+                        0x1947A0: "frame_send",
+                        0x198AA0: "carrier_constructor",
+                        0x1942F0: "frame_constructor",
+                        0x194310: "frame_copy",
+                        0x194540: "frame_destructor",
+                        0x2EDF70: "player_put",
+                        0x2EF250: "player_queue_pop",
+                        0x323FF0: "output_release",
+                        0x1A4210: "udp_transport_constructor",
+                        0x19BD00: "connection_factory",
+                        0x19BB80: "connection_constructor",
+                        0x19A860: "connection_close",
+                        0x1A0C10: "socket_manager_update",
+                        0x1A00E0: "socket_manager_destructor",
+                        0x19FFB0: "socket_manager_stop",
+                        0x1AA260: "original_thread_join",
+                    }
+                    if worker_mode
+                    else {}
+                ),
             },
         ),
     )

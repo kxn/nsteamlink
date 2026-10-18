@@ -8279,3 +8279,101 @@ python3 scripts/check-avcodec-native-mutations.py --build build/desktop \
   --output /tmp/native-stop-mutants \
   --only defer_codec_until_external_release --only skip_retirement_after_codec_stop
 ```
+
+
+## 102. 官方真实进程的后台解码、主线程格式处理和取消
+
+### 102.1 可复现进程与输入边界
+
+Evidence：`audit-steam-client-worker-process.py`沿§99未改的固定Linux
+1.3.32.316 ELF/随包SDK/Valve兼容Qt，在真实原进程main前暂停。
+`steam-client-worker-gdb.py`经默认SDK探针共享初始化；默认§99 direct模式保留。
+原构造/析构、public Start@2ed980、Submit@2ed830、OS worker、DecodeFrame@3260d0、
+FinalDecode@324190、SDK parser/send/receive/get_format、main consumer@324d10、
+原player Put/queue-pop/Release、Stop/Join、Restart均可在同一进程执行。
+观察器只读入口/返回，保留原callback、async flag、SDK gate/name/token和方法体；
+GDB软件断点/finish断点会影响调度，不是无调试器的自然时序或竞态验收。
+
+原config构造/解析显式`3800`（硬解false）。client仍是零初始化配置storage，
+用明确owner link `client+40=decoder`支持原RequestReset，`client+280`接原Connection。
+原UDP transport构造@1a4210及Connection factory@19bd00实际创建adapter/Connection；
+transport未Init、fd=-1，Connection保持原构造state3，未Connect/认证或与Steam通信。
+原control80完整producer执行，Frame::Send实际返回3（未连接）；不把type80 descriptor
+当作已经发送的加密wire。完整Client构造、控制StartVideo handler、网络准入及Stats
+Start/RecordFrameReceived/完整接收槽生命周期不属于这份部分client投影。
+
+输入为显式already-parsed Frame/carrier边界：原packet/frame构造后填已知AU与
+ID/timestamp，原Submit执行copy/atomic retain、queue唤醒，fixture侧原析构归还引用。
+没有替换输入buffer虚表、SDK返回码、原packet copy/refcount或player输出。
+不能从该输入证明Socket/CRC/Frame header parser或完整Host分片producer。
+所列42份完整FDE是代码身份清单；不是全Client自然覆盖声明。
+
+### 102.2 实际SDK回调与主线程职责
+
+四个独立原进程模式为empty、decode、cancel、restart。每次原main --version正常退出0；
+两份默认SDK-only物理图片与原Start/Stop基线也由共享探针保留。
+实际SDK提供formats `[98,44,0,-1]`，不是Python指定；原software selector返回0。
+原async flag保持构造值true。实际顺序为：后台Submit消费→FinalDecode→SDK send→
+原get_format@324d00/dispatch@324c90，后者写decoder+2cd=true及+2d0 formats指针，
+按active检查并Sleep(1ms)等待。主线程显式调用原main consumer@324d10，执行原selector、
+info80及缓存，再保存格式结果并清pending。后台原callback返回0，真实send/receive均0，
+进入原player queue。主线程入口是声明消费者边界，不冒称完整Client::OnThink/Qt运行。
+
+Info生产及原Frame::Send的线程为main，send返回3后SDK仍输出图片；不补reset。
+观察尾调用的get_format/dispatch两个finish断点可能共享返回PC；两条返回观察的排列
+不是函数栈语义先后，检查使用跨线程的实际阶段偏序，不冻结调度偶然性。
+Source队列取出的wrapper保留原ID23/time1000000，SDK AVFrame为128×72/YUV420P；
+逐plane/stride读取像素的MD5为889019807dd199cebff67658cbc3d78f，核对独立framemd5。
+没有修改§99所观察原raw尺寸写入：初始SDK参数72×128由SPS纠正到128×72；
+其确切构建ABI原因仍不由这条成功图片推导。
+
+### 102.3 等待中取消、重启与引用
+
+cancel模式先等实际pending，保持main consumer未调用，随后原public Stop清active并join。
+原get_format自然返回-1；真实SDK send=-1094995529、receive=-11，原RequestReset(false)
+通过配置owner link置请求1，DataLost入口和player Put均执行。当前未连接/未streaming
+client边界不能据此声称DataLost已上wire。输出对象shape=0/0/-1、无像素，是占位壳。
+worker退出后才到原AVCodec Stop清queue/pool/parser/codec；未需main消费格式来解除join。
+pending字节在这个Stop后仍为true；不能将Stop描述为“清掉所有待处理格式请求”。
+自然Client停止/删除/重建的消费者关系须与这个public API能力边界分开。
+
+restart模式在格式已经处理、第一张真实图片外部持有时，调用原Restart@2edc50；
+Stop/清请求/Start重建后，第二张图片ID24仍通过原后台/SDK/main callback链输出。
+原decoder/嵌入池保持存活；第一张图片跨重启、两张图片跨最终Stop后均保持独立MD5。
+晚到Release回原池，再次Stop实际清空池；不证明decoder对象销毁后仍能归还。
+曾探索“取消pending后直接Restart并期待pending清零”，该期待被观察否定；它不属于
+正式restart正常消费路径，不据此认定官方自然客户端存在悬空formats使用。
+
+### 102.4 线程退出与Native边界
+
+本机32个processor的原cached byte为32，原线程getter返回4，实际SDK count4/type2。
+empty模式线程1→5→1；有Connection时，进程全局socket manager先创建一线程，
+解码Start/Stop阶段2→6→2。原decoder线程在pthread_join真实call@1aa2d0/续点@1aa2d5
+观测返回0，之后才codec Stop。Connection Close@19a860和原manager Update@1a0c10
+退休Connection/adapter，transport引用回1后原Release到0；manager本身仍活到原进程退出。
+观察器保留到原ELF manager析构@1a00e0，另见实际pthread_join返回0；
+不能仅由原进程exit0推断这个join。SDK/decoder/table引用与进程全局服务分开计数。
+
+Conclusion：§101的帧owner/Stop和SDK独立引用获得真实软件像素及线程路径补证；
+§98的消息80位置/失败不重建获得真实SDK格式请求补证。它们均不扩大到自然硬件、
+完整Client/Connection握手/Qt消费者、完整Stats或实际Steam/Switch/loader。
+
+Native `video_pipeline.c::hardware_format`仍直接在SDK回调线程调用info，
+`media.c::video_decoder_info`在该借用调用内发送80；没有本节原后台等待main consumer的
+线程交接。已有同步SDK回调/完整80对照只证明其已声明顺序/内容范围，不能称这一层
+完整线程时序等价。本节不以消息相同代替原调度策略，也不未经平台/锁/Stop证据就把
+跨线程借用session/epoch指针长期保存。该线程交接与停止取消契约属于独立设计边界。
+
+```sh
+python3 scripts/audit-steam-client-worker-process.py \
+  --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
+  --sdk-directory build/video-recovery-re/linux-1.3.32.316/package/lib \
+  --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/patched-runtime/lib \
+  --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/runtime/lib \
+  --output /tmp/steam-client-worker-process.json
+```
+
+报告保存每模式原进程GDB日志、实际入口/返回/线程角色、SDK自然formats/状态、像素MD5、
+Stop/重启及原ELF析构join。断言约束真实运行的阶段和所有权；不冻结host CPU数、Qt库hash、
+PID、ASLR或OS线程交错，也不通过刷新旧golden掩盖探针前置条件错误。§99默认模式的
+contexts/original_start/factory/CPU/function清单和SDK默认元数据与原记录逐项保持。
