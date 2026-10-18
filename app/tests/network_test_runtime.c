@@ -28,10 +28,14 @@ static sl_runtime *runtime;
 static sl_auth_store store;
 static bool cancel_on_save, fail_save;
 static unsigned saves;
+static atomic_bool cancel_queued;
+static atomic_uint requests_after_cancel;
 bool __real_IHS_ClientStreamingRequest(IHS_Client *, const IHS_HostInfo *,
                                        const IHS_StreamingRequest *);
 bool __wrap_IHS_ClientStreamingRequest(IHS_Client *c, const IHS_HostInfo *h,
                                        const IHS_StreamingRequest *req) {
+    if (!req->networkTest && atomic_load(&cancel_queued))
+        atomic_fetch_add(&requests_after_cancel, 1);
     IHS_HostInfo redirected = *h;
     redirected.address.port = peer_port;
     return __real_IHS_ClientStreamingRequest(c, &redirected, req);
@@ -43,6 +47,7 @@ bool __wrap_sl_network_stats_save_session(const char *dir, IHS_Session *s) {
     if (cancel_on_save) {
         sl_command cancel = {.type = SL_CMD_CANCEL, .generation = 2};
         assert(sl_runtime_submit(runtime, &cancel, &store));
+        atomic_store(&cancel_queued, true);
     }
     return ok;
 }
@@ -135,6 +140,8 @@ static void one(Scenario scenario, bool crc) {
     cancel_on_save = scenario == CANCEL_SAVE;
     fail_save = scenario == SAVE_FAILURE;
     saves = 0;
+    atomic_store(&cancel_queued, false);
+    atomic_store(&requests_after_cancel, 0);
     runtime = sl_runtime_create(&store);
     assert(runtime);
     uint64_t deadline = sl_system_now() + 15000;
@@ -361,6 +368,9 @@ static void one(Scenario scenario, bool crc) {
     assert(done && (skip_test || (start && decision)));
     bool no_save = scenario == CANCEL_RUNNING || scenario == EXIT_RESULT || skip_test;
     assert(saves == (no_save ? 0u : 1u));
+    /* A queued request can be cancelled before its first UDP send. Check the
+     * actual producer call as well as absence of an ordinary wire ticket. */
+    assert(atomic_load(&requests_after_cancel) == 0);
     assert(ticket_count == (manual || no_save || scenario == CANCEL_SAVE ? 1u : 2u));
     assert(sl_network_stats_load(directory, NULL) ==
            ((!no_save && !fail_save) || scenario == SKIP_READABLE));
