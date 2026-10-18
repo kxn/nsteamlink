@@ -147,6 +147,7 @@ void sl_ui_connected(sl_ui_model *m) {
     sl_ui_layout(m);
 }
 void sl_ui_stopped(sl_ui_model *m, bool unexpected) {
+    bool failed = m->page == SL_ERROR;
     if (m->ending_game && !unexpected)
         ++m->generation; /* retire late errors from the completed end-game operation */
     m->streaming = false;
@@ -154,7 +155,10 @@ void sl_ui_stopped(sl_ui_model *m, bool unexpected) {
     m->depth = 0;
     if (m->closing)
         page(m, SL_CLOSING);
-    else if (unexpected)
+    else if (failed) {
+        /* The lifecycle owner also stops a failed request. Its cleanup ACK
+         * must not dismiss the error before the user can read or retry it. */
+    } else if (unexpected)
         sl_ui_error(m, sl_tr(SL_T_DISCONNECTED));
     else
         page(m, SL_HOME);

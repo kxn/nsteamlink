@@ -20,6 +20,11 @@ extern "C" void sl_gns_set_steam_link_app_id() {
     using namespace SteamNetworkingSocketsLib;
     static_cast<CSteamNetworkingUtils *>(SteamNetworkingUtils())->SetAppID(353380);
 }
+extern "C" int sl_gns_certificate_seconds() {
+    using namespace SteamNetworkingSocketsLib;
+    SteamNetworkingGlobalLock lock("nsl certificate lifetime");
+    return static_cast<CSteamNetworkingSockets *>(SteamNetworkingSockets())->GetSecondsUntilCertExpiry();
+}
 extern "C" bool sl_gns_import_trust(const char *json, size_t size) {
     using namespace SteamNetworkingSocketsLib;
     if (!json || size > 1024 * 1024)

@@ -7,6 +7,9 @@ extern "C" {
 #include <steam/steamnetworkingsockets.h>
 #include <steam/steamnetworkingcustomsignaling.h>
 #include <steam/isteamnetworkingutils.h>
+#if NSL_DIAGNOSTICS
+#include "sns_start_diagnostics.h"
+#endif
 #include <mbedtls/base64.h>
 #include <curl/curl.h>
 #include <atomic>
@@ -26,6 +29,7 @@ extern "C" void SteamNetworkingSockets_SetManualPollMode(bool);
 extern "C" void SteamNetworkingSockets_Poll(int);
 extern "C" void sl_gns_set_steam_link_app_id();
 extern "C" bool sl_gns_import_trust(const char *, size_t);
+extern "C" int sl_gns_certificate_seconds();
 
 namespace {
 enum { DATAGRAM_MAX = 2048, DATAGRAM_COUNT = 4096, SIGNAL_COUNT = 64 };
@@ -219,7 +223,27 @@ static bool begin_connection(sl_sns *b) {
     options[3].SetInt32(k_ESteamNetworkingConfig_SendRateMax, 104857600);
     options[4].SetInt32(k_ESteamNetworkingConfig_TimeoutInitial, 20000);
     options[5].SetInt32(k_ESteamNetworkingConfig_P2P_Transport_ICE_Implementation, 1);
+#if NSL_DIAGNOSTICS
+    int certificate_seconds = sl_gns_certificate_seconds();
+    SteamNetAuthenticationStatus_t authentication{};
+    b->sockets->GetAuthenticationStatus(&authentication);
+    nsl::StartFailure failure;
+    unsigned errors = 0;
+    {
+        nsl::StartDiagnostics capture(SteamNetworkingUtils());
+        b->connection = b->sockets->ConnectP2PCustomSignaling(new Signaling(b->q), nullptr, 0, 6, options);
+        failure = capture.failure;
+        errors = capture.messages;
+    }
+    if (b->connection == k_HSteamNetConnection_Invalid) {
+        char line[224];
+        snprintf(line, sizeof(line), "sns_start failed_stage=%s detail=%u sdk_errors=%u auth=%d cert_seconds=%d",
+            failure.stage, failure.detail, errors, int(authentication.m_eAvail), certificate_seconds);
+        sl_dns_policy_report(line);
+    }
+#else
     b->connection = b->sockets->ConnectP2PCustomSignaling(new Signaling(b->q), nullptr, 0, 6, options);
+#endif
     return b->connection != k_HSteamNetConnection_Invalid;
 }
 static void pump_config(sl_sns *b) {

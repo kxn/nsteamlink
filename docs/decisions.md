@@ -2703,3 +2703,24 @@ UDP截断应答在验证问题/来源后改用同一配置DNS的非阻塞TCP查�
 HTTP结果、信任导入、证书安装与P2P创建阶段，不输出身份/证书正文/信令payload。
 除夹具测试外，check-switch-dns-policy.py检查最终ELF反汇编：curl与GNS实际调用都必须
 进入统一适配器，原getaddrinfo和curl工厂只允许从适配器调用；出现其他未审计入口则失败。
+
+## D-076 失败连接的清理确认不关闭错误页；SDK创建失败保留数字原因
+
+依据：10a9ca9热点运行 `session-00000000001792253094-085069920-00000.log` 的四次请求均为
+开流信令成功、SDR配置HTTP200、信任/证书安装成功、随后P2P创建失败且无IHS会话。
+固定SDK `InternalConnectP2P` 返回invalid handle前把拒绝原因送到错误回调；
+应用原先禁用所有SDK回调，因此terminal source=START仍无法区分拒绝分支。
+这不支持把该轮失败解释为SDR配置DNS/HTTP卡住，或直接断言某一socket/证书原因。
+
+应用的`lifecycle_facts`在runtime facts.failed后仍提交STOP以完成依赖清理，
+runtime返回同generation的正常STOPPED。`sl_ui_stopped`若无条件回HOME，会覆盖先前
+FAILURE显示的SL_ERROR，与用户观察的连接状态直接消失一致。
+
+决策：保留既有错误页和具体消息，清理确认仍更新streaming/debug/depth；用户主动返回时
+进入STOPPING并增加generation，正常取消确认仍回HOME。错误页不等同仍有存活串流。
+
+仅在同步`ConnectP2PCustomSignaling`调用期间安装SDK Error回调，最多接纳8条，
+从固定版本已核对的失败格式提取固定分类和数字；不存储或输出SDK原文、身份或证书数据。
+回调内不做I/O，调用后恢复None，再由现有有界日志记录结果。保留证书剩余秒数和认证状态。
+SDR socket创建失败向该路径传递原OpenRawUDPSocket错误，避免被泛化消息覆盖。
+这不改变Steam认证、传输选择、SDK配置项、重试或超时；未知格式保留unknown，不猜原因。

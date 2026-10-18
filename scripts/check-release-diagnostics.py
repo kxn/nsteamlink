@@ -81,6 +81,7 @@ for marker in (b'cloud_net event=', b'cloud_time total_ms=', b'cloud_subscriptio
 sns_archive = build / 'app/libnsl_sns.a'
 if sns_archive.exists():
     assert b'sns_config event=' not in sns_archive.read_bytes(), 'SNS HTTP diagnostics remain in release'
+    assert b'sns_start failed_stage=' not in sns_archive.read_bytes(), 'SDK startup diagnostics remain in release'
 manifest = json.loads((build / 'generated/graphics_manifest.json').read_text())
 if any(e['file'].endswith('/platforms/switch/gfx.c') for e in commands):
     assert manifest['backend'] == 'deko', 'Switch must use deko'

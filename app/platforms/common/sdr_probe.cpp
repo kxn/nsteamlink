@@ -12,6 +12,7 @@ extern "C" {
 #include "sdr_policy.h"
 }
 #include <memory>
+#include <cstdio>
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -445,7 +446,7 @@ static void receive_packet(const RecvPktInfo_t &packet, sl_sdr_probe *probe) {
     if (probe->owner_receive)
         probe->owner_receive(packet, *r, probe->owner);
 }
-static sl_sdr_probe *make_network(uint32_t handle, const sl_sdr_config &config) {
+static sl_sdr_probe *make_network(uint32_t handle, const sl_sdr_config &config, char *socket_error = nullptr) {
     std::unique_ptr<sl_sdr_probe> p(new sl_sdr_probe);
     p->connection = handle;
     p->config = config;
@@ -480,6 +481,8 @@ static sl_sdr_probe *make_network(uint32_t handle, const sl_sdr_config &config) 
     int family = k_nAddressFamily_IPv4;
     SteamNetworkingErrMsg error;
     p->socket = OpenRawUDPSocket(CRecvPacketCallback(receive_packet, p.get()), error, &local, &family);
+    if (!p->socket && socket_error)
+        snprintf(socket_error, sizeof(SteamNetworkingErrMsg), "SDR socket: %.990s", error);
     if (!p->socket)
         return nullptr;
     return p.release();
@@ -1831,10 +1834,9 @@ bool NSL_SDR_Init(CSteamNetworkConnectionP2P &connection, char *error) {
         return false;
     }
     auto *t = new SDRTransport(connection);
-    t->network = make_network(connection.m_hConnectionSelf, network_config);
+    t->network = make_network(connection.m_hConnectionSelf, network_config, error);
     if (!t->network) {
         delete t;
-        strcpy(error, "SDR relay socket initialization failed");
         return false;
     }
     t->network->owner = t;

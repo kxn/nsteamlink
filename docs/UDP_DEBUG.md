@@ -88,6 +88,12 @@ HTTPS成功。旧4e810d5的cloud_dns仅覆盖目录，不能据此判断SDR配�
 该单点补丁已被D-075统一策略替代。`sns_config`另外记录GetSDRConfig HTTP/curl结果、
 信任导入、证书安装与P2P创建。须继续对应后续SDK状态、IHS和媒体进度，不把发现成功当作
 传输成功。清理时DNS scope/socket结果在日志关闭前保存。
+`sns_start failed_stage=... detail=...` 在SDK尚未返回有效连接句柄时记录拒绝类别：
+`option` 的detail是配置项ID；`udp_socket/nonblock/send_buffer/recv_buffer/bind/local_address`
+的detail是底层socket错误码；`crypto` 的detail=1表示尚无可用签名证书。
+同时保留SDK认证可用性和本地证书剩余秒数（无证书为INT_MIN）。只有同步创建连接期间
+临时启用SDK错误回调，最多接纳8条并转换成固定分类/数字，不保存SDK原文或身份；
+回调内不输出日志，调用返回后恢复禁用，正常收流不增加SDK日志。
 `cloud_watch` 记录保存主机中有多少具备配对/账户/设备信息；`cloud_subscription queued`
 仅代表订阅进入发送队列，`cloud_host event=online` 才代表收到并接纳主机状态。
 

@@ -252,6 +252,19 @@ static void session_end_events(void) {
     e.generation = m.generation;
     sl_ui_runtime_event(&m, &e);
     assert(!strcmp(m.layout.title, "连接未完成"));
+    e.type = SL_EVENT_STOPPED; /* lifecycle_facts stops the failed owner */
+    sl_ui_runtime_event(&m, &e);
+    sl_ui_runtime_event(&m, &e); /* repeated cleanup ACK remains harmless */
+    assert(m.page == SL_ERROR && !strcmp(m.error, "等待电脑画面超时"));
+    assert(!strcmp(m.layout.title, "连接未完成"));
+    sl_ui_action(&m, SL_BACK, 0);
+    sl_command cancel;
+    assert(sl_ui_take_command(&m, &cancel) && cancel.type == SL_CMD_CANCEL);
+    sl_ui_runtime_event(&m, &e); /* old ACK cannot dismiss explicit cancellation */
+    assert(m.page == SL_STOPPING);
+    e.generation = m.generation;
+    sl_ui_runtime_event(&m, &e);
+    assert(m.page == SL_HOME);
 }
 static void carousel(void) {
     sl_ui_model m = model();
