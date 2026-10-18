@@ -9287,3 +9287,107 @@ python3 scripts/audit-steam-client-gap-process.py \
 python3 scripts/check-steam-gap-process.py \
   --receiver build/desktop/app/nsl-auth-udp-oracle
 ```
+
+## 114. 客户端主动麦克风上行：方向、协商可靠性与CRC
+
+### 114.1 实际原客户端证据与旧实现的差异
+
+Evidence：沿§109固定Linux客户端/Qt/SDK，真实UDP认证/加密协商达到state6后，
+执行原StartMicrophoneStream @31b480、SendMicrophoneData @31ae90、Stop @31bd50。
+与§90/96的Channel边界对照不同，此链执行原最终sender/socket，libc sendto实际
+返回与peer recvfrom保留完整datagram。输入是调用producer的编码payload，不声称
+实际采集/Opus编码或Switch麦克风硬件已运行。
+
+原客户端主动发加密控制107，正文`100318032880f7023002`（channel3/Opus/48000/
+stereo），本地Stop主动发108空正文。真实peer预先发送107/108，原解密序号推进到4
+而mic channel仍0；活动期间再次发108，原序号推进到5而mic channel仍3。它们未
+替代本地Start/Stop。原state6与真实dispatcher/加密过程执行，不以名字推测方向。
+原Start/Stop/API重启产生channel3→0→4→5→0；active替换只发新107，不隐含发108；
+Stop之后Send不发包/不增frame ID，重复Stop不新增控制/加密序号。
+AllocateChannel @318960是递增计数，越过31回3，不扫描接收decoder的channel表。
+
+两份4B输入及一份4000B输入产生frame ID0/1/2，数据头为tag1+12B字段（除ID外
+均0），4000B帧按MTU1472预留4B分成3片。CRC关闭时长度30/30/1468/1468/1116；
+CRC打开时按连接策略加4B。reliable_data=false走type3/4，true走type5/6；这与
+请求对端FEC字段25独立，不从麦克风回调/CRC/QoS推导本机FEC gate。
+
+旧子库5792afb的麦克风代码存在独立差异：控制接收端107/108被当作启停请求；
+公开Send只能等待这条错误的启动路径；header强制CRC且始终Unreliable；注册回调
+还会覆盖完整config字段15为true。固定2048B frame容量不足以容纳受测4000B输入。
+`callbacks.c`声称查表即保证跨线程安全亦缺少生命周期保护，表项可在接收侧删除。
+撤回上述源码/API注释中的“由server启动/停止”“回调即capability”“mic不重传”及
+“查表自然线程安全”解释；§90/96已证实的发送选择继续有效，不能因那些组件门禁
+通过就把当前库接口视为已经接线。
+
+### 114.2 本地接口和资源实现约束
+
+协议producer以本地Start/Stop API驱动，回调注册不改用户完整config字段15；peer
+107/108不启动/删除发送流。数据类型由已协商reliable_data选择，CRC留给最终连接
+发送，完整帧可大于MTU并沿既有事务分片。编码数据、格式和是否准备好采集仍由平台
+提供，不能因修正库协议就在Switch能力/UI中宣告麦克风可用。
+
+发送状态独立于接收decoder表：在Base锁下保存当前channel/frame ID/递增channel
+计数与协商可靠性，Send构造临时发送descriptor，提交的payload由队列独立拥有。
+这样本机上行channel3可与对端下行channel3共存，不新增可被接收owner删除的裸指针。
+数据提交与Stop的协议事务由同一Base锁排序，Stop之后提交不再接纳。
+
+本地Start/Stop的采集资源通知由应用owner串行调用；回调在Base锁外，Stop callback
+负责停止/join应用自有采集线程。API调用者须在销毁session前结束Start/Stop调用；
+Send可与Stop并发。会话收尾在Base/Socket仍存活时关闭尚存回调资源，不能带着应用
+采集线程返回。所有回调外部对象仍由调用者持有至停止完成。它是本地平台适配契约，
+不是原官方Capture/encoder实现已经运行的证据。
+
+当前config delegate可能在外层Base内；启停设备的delegate只投递应用owner事件，
+不在该回调内同步运行阻塞采集生命周期。Start/Stop释放自身锁不等于释放调用者的
+外层锁，不能据此承诺从任意持锁delegate直接join线程也安全。
+
+单次payload/codec_data的1MiB上限为项目资源保护，不是官方硬件或协议上限。
+本节不改变请求对端FEC/自动重连/用户配置策略，不以可发送编码测试字节证明设备采集。
+
+### 114.3 对照范围、时钟差异及回调资源核验
+
+八个原进程覆盖CRC两值、reliable_data两值、保存的字段25 false/true。每例真实
+peer 107/108/活动108均在原OnStreamPacket返回、原control FIFO为空后才取状态，
+不把“已解密但未分派”误当作忽略。Start、三次输入、Stop、停止后输入、重启、
+活动替换及重复Stop分别观察channel/frame ID/crypto序号/gate，priority实际调用为
+3→1、3→0、4→1、5→1、5→0。原gate始终0，字段25仅在请求对端配置中保留。
+
+每例七份初发datagram按channel和packet ID对照完整字节，仅映射连接ID/外层发送
+时间；CRC先独立核验，标志保留。4000B实际输入并未因旧2048B容量截断或越界。
+完整加密控制4/5/107/108/107/107/108的原明文/独立加密预期与Native实际密文比较，
+注册Native本地回调亦不向完整配置强加字段15。原codec61/util59实际函数表映射路径/
+SHA、四个GDB helper、runner与56份完整FDE身份固定；原SDK module引用5经自然
+atexit降为0，原manager join=0、无新增live task、assert空、ELF正常退出分别核验。
+GDB dummy caller单独标出边界，不把暂停的原main地址误算成已执行的发送调用者。
+没有在此提交已经采集、编码或主机播放成功的结论。
+
+【时序边界／待验证】Source和Native都保留十二个控制/数据首发事件的实际全序，
+门禁比较控制channel内部的加密/消息顺序及各数据channel内部的完整编号/字节。
+探索时，快速Native可靠重启出现data5先于control107(channel4/5)发出的顺序，而
+常规Source样本在其实际调用/时钟下没有该顺序。另五个仅缩短原API调用间隔的
+原进程探索（0/10/50/200/1000us间隔、外部调用器，不替换原函数）亦未复现该顺序。
+这些不同进程的时钟/配额状态不同，既不能据此断言全局发送策略错误，也不能
+宣布该顺序差异已经证明等价。初版尝试把跨channel全序直接互比的断言撤回；
+完整原始事件仍保存，不删除差异记录。§37/44/58的同clock组件证据不穷尽这组
+多producer组合；其统一时钟/调度下的全局初发仍需要自身证据，本节未修改全局
+sender来迎合任一墙钟样本，也不以该边界缩减整个协议对齐目标。
+
+本地`microphone_lifetime`以真实公开接口/控制准备/队列配合可join的采集资源探针，
+验证Stop和活动替换在Base外允许采集线程完成最后一次拒绝提交并退出；销毁active
+流会在Base/Socket释放前stop/join资源。等待2秒是测试barrier，不是协议计时。
+它不启动真实采集或Opus encoder，不把资源探针计作官方设备行为。Start/Stop由
+应用owner串行，配置delegate只投递owner事件；不能把此测试扩大成任意持锁回调
+可同步销毁session或join自己。本节不增加Switch麦克风能力声明或UI入口；平台采集
+仍未接线。
+
+```sh
+python3 scripts/audit-steam-client-microphone-process.py \
+  --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
+  --sdk-directory build/video-recovery-re/linux-1.3.32.316/package/lib \
+  --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/patched-runtime/lib \
+  --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/runtime/lib \
+  --output /tmp/steam-client-microphone.json
+python3 scripts/check-steam-microphone-process.py \
+  --receiver build/desktop/app/nsl-auth-udp-oracle
+ctest --test-dir build/desktop -R 'microphone' --output-on-failure
+```

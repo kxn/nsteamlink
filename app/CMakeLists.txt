@@ -176,6 +176,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
         -Wl,--wrap=IHS_SessionChannelControlRequestAuthentication
         -Wl,--wrap=IHS_SessionChannelControlOnAuthentication
         -Wl,--wrap=IHS_SessionChannelControlDrainIncoming
+        -Wl,--wrap=IHS_SessionChannelControlOnMessageReceived
         -Wl,--wrap=avcodec_send_packet)
     add_test(NAME auth_udp_official_vectors COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-auth-process.py"
@@ -197,6 +198,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-gap-process.py"
         --receiver $<TARGET_FILE:nsl-auth-udp-oracle>)
     set_tests_properties(media_gap_udp_official_vectors PROPERTIES TIMEOUT 60)
+    add_test(NAME microphone_udp_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-microphone-process.py"
+        --receiver $<TARGET_FILE:nsl-auth-udp-oracle>)
+    set_tests_properties(microphone_udp_official_vectors PROPERTIES TIMEOUT 60)
     add_executable(nsl-stream-settings-oracle tests/stream_settings_oracle.c)
     target_link_libraries(nsl-stream-settings-oracle PRIVATE nsl_stream_settings)
     target_compile_options(nsl-stream-settings-oracle PRIVATE -UNDEBUG)

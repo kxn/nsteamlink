@@ -17,6 +17,7 @@
 #include <time.h>
 #include <unistd.h>
 #include "udp_video_backend.h"
+#include "udp_microphone_backend.h"
 
 static atomic_bool requested, responded, serverDrained;
 static bool missingServer;
@@ -67,7 +68,8 @@ int main(int argc,char **argv) {
     bool gap=argc==8 && !strcmp(argv[1],"--gap");udpGapMode=gap;
     bool recover=argc==7 && !strcmp(argv[1],"--recover");
     bool video=gap || recover || (argc==7 && !strcmp(argv[1],"--video"));
-    bool negotiate=video || (argc==6 && !strcmp(argv[1],"--negotiate"));assert(negotiate || argc==5);
+    bool microphone=argc==6 && !strcmp(argv[1],"--microphone");
+    bool negotiate=microphone || video || (argc==6 && !strcmp(argv[1],"--negotiate"));assert(negotiate || argc==5);
     bool crc=atoi(argv[negotiate?2:1])!=0,hasResponse=negotiate || strcmp(argv[3],"-")!=0;
     bool badMac=negotiate && atoi(argv[5])!=0;
     if(gap) {assert(strlen(argv[7])<=sizeof(udpExpectedFeedback)*2);udpExpectedFeedbackSize=(uint32_t)unhex(argv[7],udpExpectedFeedback);}
@@ -95,6 +97,10 @@ int main(int argc,char **argv) {
         /* Session borrows this static table through worker teardown. */
         IHS_SessionSetVideoCallbacks(session,&callbacks,NULL);
     }
+    if(microphone) {
+        static const IHS_StreamMicrophoneCallbacks callbacks={.start=micStart,.stop=micStop};
+        IHS_SessionSetMicrophoneCallbacks(session,&callbacks,&micStarts);
+    }
     sl_stream_settings settings;
     if(negotiate) {
         const sl_auth_store legacy={0};assert(sl_stream_settings_init(&settings,&legacy));
@@ -112,9 +118,34 @@ int main(int argc,char **argv) {
     bool repaired=false;uint8_t feedbackWire[64];size_t feedbackSize=0;
     unsigned gapStage=0;
     struct sockaddr_in videoAddress={0};uint8_t videoLocal=0;
-    uint8_t outputPlain[3][512],outputCipher[3][512];size_t plainSizes[3]={0},cipherSizes[3]={0};
+    uint8_t outputPlain[7][512],outputCipher[7][512];size_t plainSizes[7]={0},cipherSizes[7]={0};
+    unsigned micStage=0,micWireCount=0;uint8_t micWires[7][2048];size_t micWireSizes[7]={0};
+    bool micControlSeen[5]={0};
+    char micEvents[12][32];unsigned micEventCount=0;
     uint64_t deadline=millis()+5000;
     for(;;) {
+        if(microphone && micStage==0 && atomic_load(&micPeerMessages)==2) {
+            assert(!micStarts && !micStops && !session->microphone.channel);
+            assert(micStartStream(session));assert(session->microphone.channel==3);
+            assert(IHS_SessionSendMicrophoneData(session,micSmall[0],4));assert(IHS_SessionSendMicrophoneData(session,micSmall[1],4));
+            uint8_t large[4000];for(unsigned n=0;n<sizeof(large);++n)large[n]=(uint8_t)n;
+            assert(IHS_SessionSendMicrophoneData(session,large,sizeof(large)));micStage=1;
+        }
+        if(microphone && micStage==1 && micWireCount==5) {
+            sendEncryptedPeer(session,peer,&videoAddress,videoLocal,6,108,NULL,0,4,crc,false);micStage=2;
+        }
+        if(microphone && micStage==2 && atomic_load(&micPeerMessages)==3) {
+            assert(session->microphone.channel==3 && micStarts==1 && !micStops);
+            assert(IHS_SessionStopMicrophoneStream(session));assert(!IHS_SessionSendMicrophoneData(session,micSmall[0],4));
+            assert(micStartStream(session));assert(session->microphone.channel==4);
+            assert(IHS_SessionSendMicrophoneData(session,micSmall[2],4));
+            assert(micStartStream(session));assert(session->microphone.channel==5);
+            assert(IHS_SessionSendMicrophoneData(session,micSmall[2],4));
+            micStage=3;
+        }
+        if(microphone && micStage==3 && micWireCount==7) {
+            assert(IHS_SessionStopMicrophoneStream(session));assert(!IHS_SessionStopMicrophoneStream(session));micStage=4;
+        }
         if(video) {
             udpTakePicture();
             if(gap && udpPictureCount==1 && !gapStage) {udpReplayMedia(peer,&videoAddress,videoLocal,NULL,crc);gapStage=1;}
@@ -124,7 +155,9 @@ int main(int argc,char **argv) {
                 sendEncryptedPeer(session,peer,&videoAddress,videoLocal,5,53,NULL,0,3,crc,false);videoStop=true;
             }
         }
-        bool finished=video?videoStop && atomic_load(&udpStopped):negotiate?completeReceived && atomic_load(&session->state.connectionState)==6:missingServer?atomic_load(&serverDrained):hasResponse?atomic_load(&responded):atomic_load(&requested)&&haveRequest;
+        bool micDone=microphone && micStage==4 && micWireCount==7 && micStarts==3 && micStops==3;
+        for(unsigned n=0;n<5;++n)if(!micControlSeen[n])micDone=false;
+        bool finished=microphone?micDone:video?videoStop && atomic_load(&udpStopped):negotiate?completeReceived && atomic_load(&session->state.connectionState)==6:missingServer?atomic_load(&serverDrained):hasResponse?atomic_load(&responded):atomic_load(&requested)&&haveRequest;
         if(finished && (!atomic_load(&session->transport.closeRequested) || goodbyes))break;
         assert(millis()<deadline);
         struct pollfd p={.fd=peer,.events=POLLIN};int ready=poll(&p,1,2);assert(ready>=0);if(!ready)continue;
@@ -142,6 +175,12 @@ int main(int argc,char **argv) {
             assert((size_t)size<=sizeof(feedbackWire));memcpy(feedbackWire,raw,(size_t)size);feedbackSize=(size_t)size;
             if(!gap || !gapReliable)udpReplayMedia(peer,&from,raw[2],NULL,crc);
             repaired=true;
+        } else if(microphone && raw[4]>=3 && raw[4]<=5 && (type==3 || type==4 || type==5 || type==6)) {
+            assert(((raw[0]&128)!=0)==crc && raw[2] && raw[3]==7 && (size_t)size<=sizeof(micWires[0]));
+            if(crc) {uint32_t value=0;for(unsigned n=0;n<4;++n)value|=(uint32_t)raw[size-4+n]<<(8*n);assert(IHS_CRC32C(raw,(size_t)size-4)==value);}
+            unsigned id=raw[7]|(unsigned)raw[8]<<8,index=raw[4]==3?id:5u+(unsigned)raw[4]-4u;assert(index<7);
+            if(micWireSizes[index]) {assert(micWireSizes[index]==(size_t)size && !memcmp(micWires[index]+13,raw+13,(size_t)size-13-(crc?4:0)));}
+            else {assert(micEventCount<12);snprintf(micEvents[micEventCount++],32,"data:%u:%u",raw[4],id);memcpy(micWires[index],raw,(size_t)size);micWireSizes[index]=(size_t)size;++micWireCount;}
         } else if(type==1) {
             ++connects;assert(size==17 && raw[0]==1 && raw[2] && !memcmp(raw+13,"\xc7\x3d\x8f\x3c",4));
             if(!connected) {sendPeer(peer,&from,2,raw[2],0,0,raw+9,4,crc);connected=true;}
@@ -167,8 +206,10 @@ int main(int argc,char **argv) {
                         sendEncryptedPeer(session,peer,&from,raw[2],2+(unsigned)badMac,3,init,initSize,(unsigned)badMac,crc,false);
                     }
                 }
-            } else if(negotiate && (raw[13]==4 || raw[13]==5 || (video && raw[13]==80))) {
-                unsigned index=raw[13]==4?0:raw[13]==5?1:2;uint64_t sequence;
+            } else if(negotiate && (raw[13]==4 || raw[13]==5 || (video && raw[13]==80) || (microphone && (raw[13]==107 || raw[13]==108)))) {
+                unsigned index=raw[13]==4?0:raw[13]==5?1:2;
+                if(microphone) {unsigned id=raw[7]|(unsigned)raw[8]<<8;assert(id>=2 && id<9);index=id-2;static const uint8_t tags[]={4,5,107,108,107,107,108};assert(raw[13]==tags[index]);if(index>=2) {if(!micControlSeen[index-2]) {assert(micEventCount<12);snprintf(micEvents[micEventCount++],32,"control:%u:%u",raw[13],index);}micControlSeen[index-2]=true;}}
+                uint64_t sequence;
                 IHS_Buffer in=IHS_BUFFER_WRAP(raw+14,(size_t)size-14),plain=IHS_BUFFER_INIT(512,512);
                 assert(IHS_SessionFrameDecrypt(session,&in,&plain,index,&sequence)==IHS_SessionFrameDecryptOK && sequence==index);
                 assert(plain.size+1<sizeof(outputPlain[index]) && (size_t)size-13<sizeof(outputCipher[index]));
@@ -182,6 +223,12 @@ int main(int argc,char **argv) {
                     cnegotiation_set_config_msg__free_unpacked(message,NULL);configReceived=true;
                 } else if(index==1 && !completeReceived) {
                     assert(configReceived && plain.size==0);completeReceived=true;
+                    if(microphone) {
+                        const uint8_t start[]={0x10,3,0x18,3,0x28,0x80,0xf7,2,0x30,2};
+                        videoAddress=from;videoLocal=raw[2];
+                        sendEncryptedPeer(session,peer,&from,raw[2],4,107,start,sizeof(start),2,crc,false);
+                        sendEncryptedPeer(session,peer,&from,raw[2],5,108,NULL,0,3,crc,false);
+                    }
                     if(video) {
                         const uint8_t start[]={0x08,3,0x10,4,0x20,0x80,1,0x28,0x48};
                         videoAddress=from;videoLocal=raw[2];
@@ -207,7 +254,7 @@ int main(int argc,char **argv) {
     printf("\"");
     if(negotiate) {
         printf(",\"receive_sequence\":%llu,\"send_sequence\":%llu,\"frames\":[",(unsigned long long)receivedSequence,(unsigned long long)sendSequence);
-        for(unsigned i=0;i<(video?3u:2u);++i) {printf("%s{\"sequence\":%u,\"plain\":\"",i?",":"",i);for(size_t n=0;n<plainSizes[i];++n)printf("%02x",outputPlain[i][n]);printf("\",\"cipher\":\"");for(size_t n=0;n<cipherSizes[i];++n)printf("%02x",outputCipher[i][n]);printf("\"}");}
+        for(unsigned i=0;i<(microphone?7u:video?3u:2u);++i) {printf("%s{\"sequence\":%u,\"plain\":\"",i?",":"",i);for(size_t n=0;n<plainSizes[i];++n)printf("%02x",outputPlain[i][n]);printf("\",\"cipher\":\"");for(size_t n=0;n<cipherSizes[i];++n)printf("%02x",outputCipher[i][n]);printf("\"}");}
         printf("]");
     }
     if(video) {
@@ -231,6 +278,12 @@ int main(int argc,char **argv) {
         printf("],\"sdk_inputs\":[");
         for(unsigned n=0;n<atomic_load(&udpSdkPackets);++n) {printf("%s{\"size\":%zu,\"sha256\":\"",n?",":"",udpSdkInputs[n].size);for(unsigned j=0;j<32;++j)printf("%02x",udpSdkInputs[n].sha[j]);printf("\"}");}
         printf("]");
+    }
+    if(microphone) {
+        assert(!session->microphone.channel && session->microphone.nextFrame==1 && micStarts==3 && micStops==3);
+        printf(",\"microphone\":{\"starts\":%u,\"stops\":%u,\"peer_messages\":%u,\"wires\":[",micStarts,micStops,atomic_load(&micPeerMessages));
+        for(unsigned n=0;n<7;++n) {printf("%s\"",n?",":"");for(size_t j=0;j<micWireSizes[n];++j)printf("%02x",micWires[n][j]);printf("\"");}
+        assert(micEventCount==12);printf("],\"events\":[");for(unsigned n=0;n<micEventCount;++n)printf("%s\"%s\"",n?",":"",micEvents[n]);printf("]}");
     }
     puts("}");
     IHS_SessionDestroy(session);if(negotiate)sl_stream_settings_destroy(&settings);
