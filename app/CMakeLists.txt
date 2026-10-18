@@ -77,7 +77,7 @@ target_include_directories(nsl_updater PUBLIC platforms/common
 target_compile_options(nsl_updater PRIVATE -Wall -Wextra)
 target_link_libraries(nsl_updater PUBLIC nsl_ui PkgConfig::CURL ${MBEDCRYPTO_LIBRARY} Threads::Threads)
 add_library(nsl_ui STATIC src/ui/ui_model.c src/ui/ui_layout.c src/ui/ui_events.c src/input/input_router.c
-    src/services/host_registry.c src/services/auth_store.c src/services/i18n.c
+    src/services/host_registry.c src/services/auth_store.c src/services/host_key_store.c src/services/i18n.c
     src/services/update_config.c)
 target_include_directories(nsl_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(nsl_ui PRIVATE -Wall -Wextra)
@@ -323,6 +323,11 @@ if(NSL_PLATFORM STREQUAL "desktop")
         -Wl,--wrap=sl_runtime_read_facts)
     add_test(NAME network_test_failure_runtime COMMAND nsl-network-test-failure-runtime)
     set_tests_properties(network_test_failure_runtime PROPERTIES TIMEOUT 40)
+    add_executable(nsl-host-key-store tests/host_key_store.c src/services/host_key_store.c)
+    target_include_directories(nsl-host-key-store PRIVATE src)
+    target_compile_options(nsl-host-key-store PRIVATE -UNDEBUG -Wall -Wextra)
+    target_link_options(nsl-host-key-store PRIVATE -Wl,--wrap=rename)
+    add_test(NAME host_key_store COMMAND nsl-host-key-store)
     add_executable(nsl-pairing-runtime tests/pairing_runtime.c)
     target_include_directories(nsl-pairing-runtime PRIVATE platforms/common
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/tests/session)
@@ -332,7 +337,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
         -Wl,--wrap=IHS_ClientSend -Wl,--wrap=IHS_ClientBroadcast
         -Wl,--wrap=sl_auth_save -Wl,--wrap=sl_system_random
         -Wl,--wrap=IHS_ClientStreamingRequest -Wl,--wrap=IHS_CryptoRandomBytes
-        -Wl,--wrap=sl_network_stats_load)
+        -Wl,--wrap=sl_network_stats_load -Wl,--wrap=sl_host_key_save)
     add_test(NAME pairing_runtime COMMAND nsl-pairing-runtime)
     set_tests_properties(pairing_runtime PROPERTIES TIMEOUT 60)
     add_executable(nsl-network-test-runtime tests/network_test_runtime.c)

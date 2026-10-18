@@ -410,3 +410,16 @@ UI提示和恢复不提交新PAIR/STREAM；显式LAN授权API单独保留。
 不把该生命周期修正当作Proof轮换已实现。Proof更新secret、完整入口/foreign顺序、
 自然账户选择和真实Steam/Switch验证仍是独立契约。比较器投影字段和provider边界
 见§135，不能把44组匹配目标的事务对照推广到全部协议或硬件验收。
+
+## Proof更新的实现与身份命名空间
+
+协议参考§136将§133的Proof轮换接到实际同请求owner：第一次true按原始challenge
+派生，先选择secret/尝试保存、后加密；重复true不再派生，false不回滚。8的
+updated_secret回显请求bool，optional请求编号缺失仍回复当前编号。加密失败不
+退休owner，下一份请求沿用已更新secret。此状态贯穿自动授权与凭据后的state6。
+
+持久key身份在创建请求时从所选server record取得，不随授权回复steamid变化。
+SDK的keySteamId承载该输入；应用按(remote clientId, SteamID)保存独立key文件，
+原profile仅镜像当前账号。Proof属于A、自动授权回应B时不能用A的新key覆盖B。
+真实record选择与key加载仍是Source provider边界；完整入口的零clientId/无效Proof
+拒绝及空正文原断言边界见§136，不将Proof验收推广成所有LAN授权入口都已等价。

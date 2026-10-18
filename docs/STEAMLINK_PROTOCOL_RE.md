@@ -10766,3 +10766,89 @@ ctest --test-dir build/desktop -R 'auto_authorization|pairing_runtime' --output-
 python3 scripts/check-auto-authorization-native-mutations.py \
   --build build/desktop --output /tmp/auto-authorization-negative
 ```
+
+## 136. Proof的选定身份、完整广播入口与Native接线
+
+Evidence：固定§133同一shell SHA256
+`15b2d79881eef0c47ed2f96c17d1d60a5f42d3285abcf9f512cfffdac5b238a2`。
+`audit-steam-proof-transaction.py`保留原56组handler输入，另执行6组**建请求前**
+选定server record身份输入及一组1280-byte challenge，共63组。与旧account输入
+在Start后直接写manager+1f8不同，新输入写fallback record(manager+120)+8；
+原StartStreaming@cb02a4的@cb03b8读record+8，@cb03c0写manager+1f8，
+@cb03c4将同身份传LoadPersistentClientKey。实际SavePersistentClientKey以
+clientId/SteamID两者形成命名空间。Source原密码/保存/序列化继续执行，独立
+hashlib/AES校验保留；每份入站正文及外部Start/Stop/Update记录为可复播事件。
+
+【更正限定】§133夹具默认account=0来自未填入fallback record+8，不能将它称为
+官方总是选0账号。新增123与76561198000000002两种record输入均由原Start复制；
+自动授权响应的76561198000000001实际另存其key，但不改manager+1f8。Proof仍按
+创建请求时的身份保存。HandleStartStreamingResponse@cb553c–cb5564读取持久
+client-info accounts首项并在@cb56b8写manager+320；该launcher身份与Proof的
++1f8是不同字段。**record查找和LoadPersistentClientKey仍为身份provider**，
+这里证明复制与保存实参，不证明自然账户选择或完整key文件加载策略。
+
+`audit-steam-proof-ingress.py`执行原BProcess@cb1254、CUtlBuffer、header/Proof
+parser及完整处理，固定14组无断言输入：10种原始广播包及state4/已授权state5/
+state6/取消后的当前目标输入。clientId=0、坏header、声明长度不足、尾随字节、
+坏Proof正文或缺required challenge均不处理/不回复；当前目标但错误present编号
+返回已处理但不执行Proof；省略编号有效；非目标非零clientId仅发required空8。
+state4/5/6保持原phase/编号/期限处理Proof；取消后仅空8。地址比较、查找、OS
+收包、最终发送端点仍是provider，不把地址adapter当自然网络准入策略。
+
+空正文另存`assertion_boundary`：原BProcess跳过parser后到crypto line93断言。
+原provider继续后的输出不用于验收自然行为；Native安全拒绝空/无required字段
+正文，这一断言配置边界**未声称等价**。Authorization坏正文的Failed fallback、
+foreign响应先计算/保存再做归属判断等§130差异也不因Proof接线而消失。
+
+Conclusion与实现契约：`IHS_StreamingRequest.keySteamId`是创建时选择的持久key
+身份输入，不上网序列化、不被AuthorizationResponse改写。Native Proof专属handler
+按当前clientId再检查optional request_id；不以旧的端口/instance过滤替代此顺序。
+SHA256(old_secret||原始challenge)→选择secret→persistProof观察者→标记updated→
+AES加密→8；重复true不派生，回复updated_secret回显请求bool。保存失败不阻断；
+加密失败保留已更新secret/标志。输出按challenge长度分配，1280-byte样本不再受
+旧1024输出上限限制。owner贯穿自动授权及state6，新事务才重置；省略编号的请求
+仍回复当前编号。非目标/无owner为空8。广播入口增加非零clientId、精确正文长度、
+无效Proof正文拒绝；不由此推广其他消息正文fallback相同。
+
+`check-steam-proof-transaction.py`将63组事件投向实际Native owner/FIFO/RX/crypto/
+发送器，并比较77组事务/入口的secret、phase、编号、keypair调用、hash/save/encrypt/
+send顺序及字节。63组中两份host=0刻意走直接handler，与原证据边界一致；其余
+61组及14份完整包通过UDP/RX。原始坏包检查以接收回调返回后的原子计数作栅栏，
+不以“睡一会儿没回复”证明拒绝。Source文件失败投影到SDK持久化观察者契约，
+不声称SDK自身写了Source文件或复现短写泄漏。
+
+产品将选定host.account传入keySteamId；长期key以(remote clientId, selected
+SteamID)存独立文本文件，profile v5仅镜像当前选定账号，ABI不变。自动授权存
+响应账号B；Proof按创建时A存，不覆盖B的profile。A=B才更新活动host及UI的密钥
+事实，事件不触发PAIR/STREAM或改变页面；旧UI快照不得回滚worker刚接受的key。
+新请求先读对应身份文件，缺失才兼容原profile/installation key；损坏文件明确
+失败。临时文件/备份与Horizon替换恢复是本地存储设计，非官方文件故障实现复刻。
+失败仅影响耐久性，当前协议仍用已选新secret应答。
+
+【验收边界】原身份选择、真实Steam触发Proof/账号切换、Switch存储耐久性、自然
+调度与退出仍需各自证据；离线Source与Native一致不证明用户所述卡顿已经解决。
+
+```sh
+PYTHONPATH=/path/to/audit-deps python3 scripts/audit-steam-proof-transaction.py \
+  --binary /path/to/libshell-arm64.so --output /tmp/proof-transactions.json
+PYTHONPATH=/path/to/audit-deps python3 scripts/audit-steam-proof-ingress.py \
+  --binary /path/to/libshell-arm64.so --output /tmp/proof-ingress.json
+python3 scripts/check-steam-proof-transaction.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-auto-authorization-oracle
+```
+
+§136反例与产品投影：原Start的@cb03c0单独改NOP仍正常返回、无Source断言，
+同一正式检查因selected record身份未复制而拒绝；原版基线通过。Native另有12份
+隔离编译回归：重复派生、跳过保存、保存移到加密后、回显本次changed、缺失回复
+编号、忽略编号、授权后清标志、固定1024输出、保存到0号身份、忽略foreign空8、
+放行0号clientId、接受尾随字节。均要求receiver正常退出后由正式比较器拒绝，
+编译错误/崩溃不计检出。执行命令为`check-proof-native-mutations.py --build ...
+--output ...`。
+
+产品`pairing_runtime`共20场景（原13及新增7）：真实runtime worker/RX/UDP与UI
+接线，按同账号、不同账号、0号选定身份检查Proof保存；同/不同账号受控保存失败
+仍发可正确解密的8，连续true/false/true只有一次保存。Send调用边界读回真实身份
+key文件/profile，UI不新建命令；另以互相矛盾的旧profile和身份文件验证新文件
+优先，以及旧profile缺文件时的兼容。`host_key_store`核验账号/主机隔离、65-byte
+精确文本、重复原子替换、Horizon EEXIST适配/备份恢复、写失败保留旧文件及坏文件
+不污染输出。这些是本地实现检查，不作为官方自然磁盘故障/真实账号选择证据。

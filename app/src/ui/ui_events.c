@@ -61,6 +61,16 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
         m->page = e.account ? SL_NETWORK_TEST : SL_CONNECTING;
         break;
     }
+    case SL_EVENT_HOST_KEY: {
+        sl_host *h = sl_host_find(&m->store.registry, e.host.id);
+        if (h && h->client_id == e.host.client_id && h->account == e.host.account) {
+            h->has_secret = e.host.has_secret;
+            memcpy(h->secret, e.host.secret, sizeof(h->secret));
+            if (m->intent.host.id == h->id)
+                m->intent.host = *h;
+        }
+        break;
+    }
     case SL_EVENT_CODE:
         if (m->page != SL_PAIRING || m->pairing_code[0])
             break;

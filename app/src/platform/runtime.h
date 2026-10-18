@@ -8,6 +8,7 @@ typedef enum sl_event_type {
     SL_EVENT_CODE,
     SL_EVENT_STREAM_AUTHORIZATION,
     SL_EVENT_STREAM_RESUMED, /* host: accepted facts, account: network-test owner */
+    SL_EVENT_HOST_KEY, /* accepted key facts; no new transaction or page change */
     SL_EVENT_SAVING,
     SL_EVENT_AUTHORIZED,
     SL_EVENT_PIN,

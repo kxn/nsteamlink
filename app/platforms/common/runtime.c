@@ -8,6 +8,7 @@
 #include "platform/system.h"
 #include "protobuf/remoteplay.pb-c.h"
 #include "services/i18n.h"
+#include "services/host_key_store.h"
 #include "services/launch_watch.h"
 #include "services/update_config.h"
 #include "stream_settings.h"
@@ -297,10 +298,11 @@ static void discovered(IHS_Client *client, const IHS_HostInfo *h, void *ctx) {
 static void persist_authorization(IHS_Client *client, const IHS_HostInfo *host, uint64_t account,
                                   const uint8_t secret[32], void *ctx) {
     (void)client;
-    (void)host;
     sl_runtime *r = ctx;
     if (r->active.type != SL_CMD_PAIR && r->active.type != SL_CMD_STREAM)
         return;
+    if (!sl_host_key_save(sl_system_data_dir(), host->clientId, account, secret))
+        sl_log("pair: identity key save failed; authorization continues");
     if (r->active.type == SL_CMD_PAIR)
         post(r, (sl_runtime_event){.type = SL_EVENT_SAVING});
     sl_host *h = sl_host_find(&r->store.registry, r->active.host.id);
@@ -323,6 +325,31 @@ static void persist_authorization(IHS_Client *client, const IHS_HostInfo *host, 
         r->active.host = *h;
         pthread_mutex_unlock(&r->lock);
     }
+}
+
+/* Proof persistence uses the request's selected account, which authorization
+ * may subsequently differ from. Never replace that other account's mirror. */
+static void persist_proof(IHS_Client *client, const IHS_HostInfo *host, uint64_t account,
+                          const uint8_t secret[32], void *ctx) {
+    (void)client;
+    sl_runtime *r = ctx;
+    if (!sl_host_key_save(sl_system_data_dir(), host->clientId, account, secret))
+        sl_log("proof: identity key save failed; response continues");
+    sl_host *h = sl_host_find(&r->store.registry, r->active.host.id);
+    if (!h || h->client_id != host->clientId || h->account != account)
+        return;
+    h->has_secret = memcmp(secret, r->store.secret, 32) != 0;
+    if (h->has_secret)
+        memcpy(h->secret, secret, 32);
+    else
+        memset(h->secret, 0, sizeof(h->secret));
+    r->auth_persist_attempted = true;
+    if (!sl_auth_save(&r->store, sl_system_data_dir()))
+        sl_log("proof: profile save failed; response continues");
+    pthread_mutex_lock(&r->lock);
+    r->active.host = *h;
+    pthread_mutex_unlock(&r->lock);
+    post(r, (sl_runtime_event){.type = SL_EVENT_HOST_KEY, .host = *h});
 }
 
 static void stream_authorization(IHS_Client *client, const IHS_HostInfo *host, const char *pin,
@@ -519,7 +546,8 @@ static const IHS_ClientAuthorizationCallbacks auth_cb = {
 static const IHS_ClientStreamingCallbacks stream_cb = {.success = accepted,
                                                        .failed = rejected,
                                                        .authorization = stream_authorization,
-                                                       .authorizationFailed = auth_failed};
+                                                       .authorizationFailed = auth_failed,
+                                                       .persistProof = persist_proof};
 static void client_config_saved(IHS_Session *session, const uint8_t *wire, size_t size, void *ctx) {
     sl_runtime *r = ctx;
     sl_stream_settings_receive(session, wire, size, &r->settings);
@@ -753,11 +781,20 @@ static bool request_stream(sl_runtime *r, bool network_test) {
         return false;
     IHS_ClientStopDiscovery(r->client);
     const sl_host *paired = sl_host_find(&r->store.registry, r->active.host.id);
-    IHS_ClientSetSecretKey(r->client,
-                           paired && paired->has_secret ? paired->secret : r->store.secret);
+    uint8_t selected[32];
+    int loaded = sl_host_key_load(sl_system_data_dir(), host.clientId, r->active.host.account,
+                                  selected);
+    if (loaded < 0)
+        return false;
+    if (loaded > 0)
+        memcpy(selected, paired && paired->account == r->active.host.account && paired->has_secret
+                             ? paired->secret : r->store.secret, sizeof(selected));
+    IHS_ClientSetSecretKey(r->client, selected);
+    memset(selected, 0, sizeof(selected));
     const CStreamingClientConfig *config = r->settings.config;
     IHS_StreamingRequest req = {
         .networkTest = network_test,
+        .keySteamId = r->active.host.account,
         .streamingEnable = {config->enable_video_streaming, config->enable_audio_streaming,
                             config->enable_input_streaming},
         .maxResolution = {1280, 720},
