@@ -5,9 +5,11 @@
 #include "ihs_buffer_ext.h"
 #include "ihslib/client.h"
 #include "media.h"
+#include "network_stats_file.h"
 #include "network_test_discovery_peer.h"
 #include "platform/runtime.h"
 #include "platform/system.h"
+#include "ui/ui_events.h"
 #include <arpa/inet.h>
 #include <assert.h>
 #include <dirent.h>
@@ -22,7 +24,8 @@ static uint16_t peer_port;
 static atomic_uint random_calls, save_calls, confirmations;
 static atomic_bool peer_secret_ready;
 static bool fail_save, stale_snapshot;
-static bool discover_universe;
+static bool discover_universe, automatic, testing, compatibility;
+static unsigned stream_calls;
 static pthread_t save_thread;
 static sl_runtime *runtime;
 static sl_auth_store initial;
@@ -35,6 +38,28 @@ bool __wrap_sl_system_random(void *data, size_t size) {
     const uint32_t values[] = {0, 10000, 10042};
     memcpy(data, &values[n], 4);
     return true;
+}
+int __real_IHS_CryptoRandomBytes(uint8_t *, size_t);
+int __wrap_IHS_CryptoRandomBytes(uint8_t *out, size_t n) {
+    if (automatic && n == 4)
+        return __wrap_sl_system_random(out, n) ? 0 : -1;
+    return __real_IHS_CryptoRandomBytes(out, n);
+}
+bool __wrap_sl_network_stats_load(const char *dir, sl_network_stats_average *stats) {
+    (void)dir;
+    (void)stats;
+    return automatic && !testing; /* Controlled stats-readability selection. */
+}
+bool __real_IHS_ClientStreamingRequest(IHS_Client *, const IHS_HostInfo *,
+                                       const IHS_StreamingRequest *);
+bool __wrap_IHS_ClientStreamingRequest(IHS_Client *c, const IHS_HostInfo *h,
+                                       const IHS_StreamingRequest *request) {
+    assert(automatic && ++stream_calls == 1);
+    assert(h->universe == (discover_universe ? IHS_SteamUniverseBeta : IHS_SteamUniversePublic));
+    assert(request->networkTest == testing);
+    IHS_HostInfo target = *h;
+    target.address.port = peer_port;
+    return __real_IHS_ClientStreamingRequest(c, &target, request);
 }
 bool __real_IHS_ClientAuthorizationRequest(IHS_Client *, const IHS_HostInfo *, const char *);
 bool __wrap_IHS_ClientAuthorizationRequest(IHS_Client *c, const IHS_HostInfo *h, const char *pin) {
@@ -112,6 +137,8 @@ static void response(int fd, const struct sockaddr_in *to, const uint8_t *masked
     r.result = 0;
     r.has_steamid = r.has_auth_key = r.has_device_token = true;
     r.steamid = 76561198000000001ULL;
+    if (compatibility)
+        r.has_auth_key = r.has_device_token = false;
     r.auth_key = (ProtobufCBinaryData){32, auth};
     r.device_token = (ProtobufCBinaryData){count, token};
     CMsgRemoteClientBroadcastHeader h = CMSG_REMOTE_CLIENT_BROADCAST_HEADER__INIT;
@@ -143,6 +170,11 @@ static void one(unsigned mode) {
     strcpy(host.address, "127.0.0.1");
     strcpy(host.name, "Controlled authorization peer");
     host = *sl_host_observe(&initial.registry, &host, sl_system_now());
+    if (mode >= 4 && mode < 8) {
+        host.paired = true;
+        host.account = 76561198000000002ULL;
+        *sl_host_find(&initial.registry, host.id) = host;
+    }
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
     assert(fd >= 0);
     struct sockaddr_in a = {.sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
@@ -150,9 +182,13 @@ static void one(unsigned mode) {
     socklen_t len = sizeof(a);
     assert(!getsockname(fd, (void *)&a, &len));
     peer_port = ntohs(a.sin_port);
-    fail_save = mode == 1;
-    stale_snapshot = mode == 2;
-    discover_universe = mode == 3;
+    compatibility = mode == 12;
+    automatic = mode >= 4;
+    testing = mode >= 8;
+    fail_save = mode % 4 == 1;
+    stale_snapshot = mode % 4 == 2;
+    discover_universe = mode % 4 == 3;
+    stream_calls = 0;
     atomic_store(&save_calls, 0);
     atomic_store(&confirmations, 0);
     atomic_store(&random_calls, 0);
@@ -202,26 +238,48 @@ static void one(unsigned mode) {
             poll(NULL, 0, 1);
         }
     }
-    sl_command cmd = {.type = SL_CMD_PAIR, .generation = 1, .host = host};
+    sl_command cmd = {.type = automatic ? SL_CMD_STREAM : SL_CMD_PAIR,
+                      .generation = 1,
+                      .host = host,
+                      .test_only = testing};
+    sl_ui_model ui;
+    sl_ui_init(&ui, &initial);
+    ui.generation = 1;
+    ui.intent = cmd;
+    ui.page = testing ? SL_NETWORK_TEST : SL_CONNECTING;
+    if (automatic)
+        strcpy(cmd.text, "9876");
     assert(sl_runtime_submit(runtime, &cmd, &initial));
     char pin[5] = {0};
     uint8_t key[32];
     bool have_key = false, replied = false, authorized = false;
     struct sockaddr_in to = {0};
-    while (!authorized || !atomic_load(&confirmations)) {
+    bool unauthorized = false, resumed_stream = false;
+    uint32_t original_id = 0;
+    uint8_t original_pin[64];
+    size_t original_pin_len = 0;
+    while (!authorized || (!compatibility && !atomic_load(&confirmations)) ||
+           (automatic && !resumed_stream)) {
         assert(sl_system_now() < deadline);
         sl_runtime_event e;
         while (sl_runtime_poll(runtime, &e)) {
             if (e.type == SL_EVENT_FAILURE)
                 fprintf(stderr, "pair failure: %s\n", e.text);
             assert(e.type != SL_EVENT_FAILURE);
-            if (e.type == SL_EVENT_CODE) {
+            if (automatic) {
+                assert(e.type != SL_EVENT_CODE && e.type != SL_EVENT_AUTHORIZED);
+                sl_ui_runtime_event(&ui, &e);
+                assert(ui.command.type == SL_CMD_NONE);
+            }
+            if (e.type == SL_EVENT_CODE || e.type == SL_EVENT_STREAM_AUTHORIZATION) {
                 assert(!strcmp(e.text, "0042"));
                 strcpy(pin, e.text);
             }
-            if (e.type == SL_EVENT_AUTHORIZED) {
-                assert(e.account == 76561198000000001ULL && e.host.has_secret &&
-                       !memcmp(e.host.secret, peer_secret, 32));
+            if (e.type == SL_EVENT_AUTHORIZED || e.type == SL_EVENT_STREAM_RESUMED) {
+                assert(e.host.account == 76561198000000001ULL && e.host.paired);
+                assert(e.host.has_secret == !compatibility);
+                if (!compatibility)
+                    assert(!memcmp(e.host.secret, peer_secret, 32));
                 authorized = true;
             }
         }
@@ -244,6 +302,39 @@ static void one(unsigned mode) {
                 have_key = true;
                 cmsg_remote_device_authorization_request__free_unpacked(r, NULL);
             }
+            if (automatic && h->msg_type == k_ERemoteDeviceStreamingRequest) {
+                CMsgRemoteDeviceStreamingRequest *request =
+                    cmsg_remote_device_streaming_request__unpack(NULL, size, wire + 16 + hs);
+                assert(request && request->has_pin && request->network_test == testing);
+                if (!unauthorized) {
+                    original_id = request->request_id;
+                    original_pin_len = request->pin.len;
+                    assert(original_pin_len < sizeof(original_pin));
+                    memcpy(original_pin, request->pin.data, original_pin_len);
+                    CMsgRemoteDeviceStreamingResponse response =
+                        CMSG_REMOTE_DEVICE_STREAMING_RESPONSE__INIT;
+                    response.request_id = original_id;
+                    response.result = k_ERemoteDeviceStreamingUnauthorized;
+                    uint8_t raw[64];
+                    size_t count = cmsg_remote_device_streaming_response__pack(&response, raw);
+                    test_discovery_send(fd, &to, raw, count);
+                    unauthorized = true;
+                } else if (compatibility ? replied : atomic_load(&confirmations)) {
+                    assert(request->request_id == original_id &&
+                           request->pin.len == original_pin_len &&
+                           !memcmp(request->pin.data, original_pin, original_pin_len));
+                    uint8_t plain[64];
+                    size_t plain_len = sizeof(plain);
+                    assert(!IHS_CryptoSymmetricDecrypt(request->device_token.data,
+                                                       request->device_token.len,
+                                                       compatibility ? initial.secret : peer_secret,
+                                                       32, plain, &plain_len) &&
+                           plain_len == 8);
+                    assert(!memcmp(plain, &initial.device_id, 8));
+                    resumed_stream = true;
+                }
+                cmsg_remote_device_streaming_request__free_unpacked(request, NULL);
+            }
             cmsg_remote_client_broadcast_header__free_unpacked(h, NULL);
         }
         if (have_key && pin[0] && !replied) {
@@ -251,14 +342,23 @@ static void one(unsigned mode) {
             replied = true;
         }
     }
-    assert(atomic_load(&random_calls) == 3 &&
-           atomic_load(&save_calls) == (stale_snapshot ? 2u : 1u));
+    assert(atomic_load(&random_calls) == 3 && atomic_load(&save_calls) == (compatibility    ? 0u
+                                                                           : stale_snapshot ? 2u
+                                                                                            : 1u));
     if (stale_snapshot) {
         sl_auth_store loaded;
         assert(sl_auth_load(&loaded, directory) == 0);
         const sl_host *saved = sl_host_find(&loaded.registry, host.id);
         assert(saved && saved->paired && saved->has_secret &&
                !memcmp(saved->secret, peer_secret, 32));
+    }
+    if (automatic) {
+        assert(stream_calls == 1 && ui.command.type == SL_CMD_NONE);
+        assert(ui.page == (testing ? SL_NETWORK_TEST : SL_CONNECTING));
+        assert(ui.intent.host.account == 76561198000000001ULL && ui.intent.host.paired);
+        assert(ui.intent.host.has_secret == !compatibility);
+        if (!compatibility)
+            assert(!memcmp(ui.intent.host.secret, peer_secret, 32));
     }
     sl_runtime_destroy(runtime);
     runtime = NULL;
@@ -284,7 +384,7 @@ int main(void) {
     assert(!setenv("SDL_AUDIODRIVER", "dummy", 1));
     assert(!setenv("SDL_RENDER_DRIVER", "software", 1));
     assert(stream_media_init(NULL));
-    for (unsigned n = 0; n < 4; ++n)
+    for (unsigned n = 0; n < 13; ++n)
         one(n);
     stream_media_shutdown();
     return 0;

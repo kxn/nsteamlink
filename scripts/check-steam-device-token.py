@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Project official token/PIN bytes onto actual Native producers and UDP output.
 
-Native secret replacement is explicit input at selected stream sends; it does
-not implement Source's automatic Unauthorized resumption. Source metadata, OS,
+This component projection replaces the Native secret explicitly; §132's automatic
+same-owner path is checked separately by check-steam-auto-authorization.py. Source metadata, OS,
 Qt and unselected message kinds are not claimed equal. SDK encrypt failure is
 compared with Source's helper-bool failure at the caller, not inside the crypto.
 """

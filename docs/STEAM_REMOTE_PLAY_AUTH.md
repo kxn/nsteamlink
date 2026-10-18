@@ -394,3 +394,19 @@ SHA256(old_secret\|\|challenge)，先尝试保存再加密；重复true不再派
 
 这些是原客户端契约；显式LAN组件比较不证明自动续接或Proof轮换已实现，真实
 Steam/Switch互操作仍须独立验证。两类PIN的语义不因自动授权或Proof改变。
+
+
+## 同一串流请求的自动授权实现契约
+
+协议参考§135以§132的42组及新增2组state4坏凭据分支，核对实际Native自动事务。
+普通/测网连接（包括未配对host）统一建立STREAM；收到Unauthorized才进入同一
+owner的授权阶段，保存原编号、私钥、attempts和安全PIN密文。新key选择→worker
+保存尝试→14确认→同编号5；文件失败继续。最近同key只确认缓存、不推进；再次
+Unauthorized不重新生成码/私钥。stream重发按整秒time()+1，授权按time()+3。
+UI提示和恢复不提交新PAIR/STREAM；显式LAN授权API单独保留。
+
+握手消息按owned FIFO交给runtime actor，排空后再处理streaming期限，避免成功包
+尚未消费就发送旧授权重试。成功凭据停止重发但保留握手owner至Cancel/替换/销毁；
+不把该生命周期修正当作Proof轮换已实现。Proof更新secret、完整入口/foreign顺序、
+自然账户选择和真实Steam/Switch验证仍是独立契约。比较器投影字段和provider边界
+见§135，不能把44组匹配目标的事务对照推广到全部协议或硬件验收。

@@ -49,8 +49,8 @@ def main():
         ),
         (
             "fourth_key_allowed",
-            "state->keyExchangeAttempts++ >= 3",
-            "state->keyExchangeAttempts++ >= 99",
+            "flow->keyExchangeAttempts++ >= 3",
+            "flow->keyExchangeAttempts++ >= 99",
             "cache_alternation",
         ),
         (
@@ -64,15 +64,15 @@ def main():
     order = """    if (ok) {
         IHS_BaseSetSecretKey(&client->base, secretKey);
         if (client->callbacks.authorization && client->callbacks.authorization->persist)
-            client->callbacks.authorization->persist(client, &state->host, resp->steamid,
+            client->callbacks.authorization->persist(client, host, resp->steamid,
                 secretKey, client->callbackContexts.authorization);
     }
     memset(secretKey, 0, sizeof(secretKey));
-    AuthorizationConfirm(client, state->host.address, cache->result);"""
+    IHS_ClientAuthorizationConfirm(client, host->address, cache->result);"""
     late = """    if (ok) IHS_BaseSetSecretKey(&client->base, secretKey);
-    AuthorizationConfirm(client, state->host.address, cache->result);
+    IHS_ClientAuthorizationConfirm(client, host->address, cache->result);
     if (ok && client->callbacks.authorization && client->callbacks.authorization->persist)
-        client->callbacks.authorization->persist(client, &state->host, resp->steamid,
+        client->callbacks.authorization->persist(client, host, resp->steamid,
             secretKey, client->callbackContexts.authorization);
     memset(secretKey, 0, sizeof(secretKey));"""
     variants.append(("persist_after_confirm", order, late, "persist_at_confirm"))

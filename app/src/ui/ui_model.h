@@ -151,7 +151,6 @@ typedef struct sl_ui_model {
     sl_auth_store store;
     sl_page page, stack[8];
     int focus_stack[8];
-    bool repair_attempted;
     int depth;
     bool streaming, debug, network_ok, closing, leaving, ending_game;
     uint64_t leave_at;

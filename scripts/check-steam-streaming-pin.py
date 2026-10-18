@@ -3,7 +3,7 @@
 
 Only field8 and its transaction lifetime are projected. IV is a controlled
 provider, crypto executes unchanged. Native secret replacement is explicit input,
-not an implemented automatic authorization path. SDK metadata/token, UI, save
+not the same-owner path checked separately by the auto-authorization comparator. SDK metadata/token, UI, save
 ordering and real Steam/Switch are not claimed by this component comparison.
 """
 import argparse

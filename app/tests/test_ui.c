@@ -271,7 +271,7 @@ static void wait_screen_cancel_shortcut(void) {
 }
 static void confirmation_shortcuts(void) {
     const sl_page pages[] = {SL_FORGET, SL_DISCONNECT, SL_EXIT, SL_ERROR, SL_END_GAME};
-    const sl_command_type expected[] = {SL_CMD_SAVE, SL_CMD_STOP, SL_CMD_EXIT, SL_CMD_PAIR,
+    const sl_command_type expected[] = {SL_CMD_SAVE, SL_CMD_STOP, SL_CMD_EXIT, SL_CMD_STREAM,
                                         SL_CMD_END_GAME};
     for (int p = 0; p < 5; ++p) {
         for (int path = 0; path < 4; ++path) {
@@ -787,11 +787,18 @@ static void network_test_flow(void) {
     add(&m, 1, "HOST");
     sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
     sl_ui_action(&m, SL_RUN_NETWORK_TEST, 0);
-    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_PAIR && cmd.test_only);
-    sl_runtime_event paired = {
-        .type = SL_EVENT_AUTHORIZED, .generation = cmd.generation, .account = 12, .host = cmd.host};
-    sl_ui_runtime_event(&m, &paired);
     assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_STREAM && cmd.test_only);
+    sl_runtime_event prompt = {.type = SL_EVENT_STREAM_AUTHORIZATION, .generation = cmd.generation};
+    strcpy(prompt.text, "0042");
+    sl_ui_runtime_event(&m, &prompt);
+    sl_runtime_event paired = {.type = SL_EVENT_STREAM_RESUMED,
+                               .generation = cmd.generation,
+                               .account = 1,
+                               .host = cmd.host};
+    paired.host.paired = true;
+    paired.host.account = 12;
+    sl_ui_runtime_event(&m, &paired);
+    assert(!sl_ui_take_command(&m, &cmd) && m.page == SL_NETWORK_TEST && m.intent.test_only);
 
     for (unsigned automatic = 0; automatic < 2; ++automatic) {
         m = model();
@@ -843,8 +850,8 @@ int main(void) {
     assert(m.store.registry.selected == 1);
     assert(!sl_ui_take_command(&m, &cmd));
     sl_ui_action(&m, SL_START, 0);
-    assert(m.page == SL_PAIRING);
-    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_PAIR && cmd.host.client_id == 2);
+    assert(m.page == SL_CONNECTING);
+    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_STREAM && cmd.host.client_id == 2);
     uint64_t generation = m.generation;
     sl_ui_action(&m, SL_BACK, 0);
     sl_ui_tick(&m, m.now + 160);
@@ -972,10 +979,10 @@ int main(void) {
     add(&m, 3, "HOST");
     sl_ui_action(&m, SL_START, 0);
     sl_ui_take_command(&m, &cmd);
-    sl_runtime_event late = {.type = SL_EVENT_AUTHORIZED,
-                             .generation = m.generation,
-                             .account = 88,
-                             .host = m.intent.host};
+    sl_runtime_event late = {
+        .type = SL_EVENT_STREAM_RESUMED, .generation = m.generation, .host = m.intent.host};
+    late.host.account = 88;
+    late.host.paired = true;
     sl_ui_action(&m, SL_BACK, 0);
     sl_ui_tick(&m, m.now + 160);
     sl_ui_take_command(&m, &cmd);
@@ -986,12 +993,13 @@ int main(void) {
     sl_ui_take_command(&m, &cmd);
     sl_ui_error(&m, "无法保存配对");
     sl_ui_action(&m, SL_RETRY, 0);
-    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_PAIR);
+    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_STREAM);
     late.generation = m.generation;
     late.host = m.intent.host;
+    late.host.account = 88;
+    late.host.paired = true;
     sl_ui_runtime_event(&m, &late);
-    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_STREAM &&
-           cmd.generation == m.generation && cmd.host.account == 88);
+    assert(!sl_ui_take_command(&m, &cmd) && m.intent.host.account == 88);
     sl_runtime_event pin = {.type = SL_EVENT_PIN, .generation = m.generation};
     sl_ui_runtime_event(&m, &pin);
     assert(m.page == SL_PIN);
@@ -1009,9 +1017,8 @@ int main(void) {
     sl_ui_model flow = model();
     add(&flow, 4, "PAIR-HOST");
     sl_ui_action(&flow, SL_START, 0);
-    assert(flow.repair_attempted);
-    assert(sl_ui_take_command(&flow, &cmd) && cmd.type == SL_CMD_PAIR);
-    sl_runtime_event code = {.type = SL_EVENT_CODE, .generation = flow.generation};
+    assert(sl_ui_take_command(&flow, &cmd) && cmd.type == SL_CMD_STREAM);
+    sl_runtime_event code = {.type = SL_EVENT_STREAM_AUTHORIZATION, .generation = flow.generation};
     strcpy(code.text, "1234");
     sl_ui_runtime_event(&flow, &code);
     strcpy(code.text, "5678");
@@ -1022,18 +1029,18 @@ int main(void) {
     assert(!sl_ui_pair_prompt_visible(&flow));
     sl_ui_tick(&flow, flow.pair_code_at + 1800);
     assert(sl_ui_pair_prompt_visible(&flow) && flow.layout.dialog);
-    sl_runtime_event success = {.type = SL_EVENT_AUTHORIZED,
-                                .generation = flow.generation,
-                                .host = flow.intent.host,
-                                .account = 88};
+    sl_runtime_event success = {
+        .type = SL_EVENT_STREAM_RESUMED, .generation = flow.generation, .host = flow.intent.host};
+    success.host.paired = true;
+    success.host.account = 88;
     success.host.has_secret = true;
     memset(success.host.secret, 0x17, sizeof(success.host.secret));
     sl_ui_runtime_event(&flow, &success);
-    assert(sl_ui_take_command(&flow, &cmd) && cmd.type == SL_CMD_STREAM);
+    assert(!sl_ui_take_command(&flow, &cmd));
     /* The UI's copy keeps the negotiated key, so its later saves carry it. */
     const sl_host *stored = sl_host_find(&flow.store.registry, flow.intent.host.id);
     assert(stored && stored->has_secret && stored->secret[0] == 0x17);
-    assert(cmd.host.has_secret && cmd.host.secret[31] == 0x17);
+    assert(flow.intent.host.has_secret && flow.intent.host.secret[31] == 0x17);
     sl_ui_runtime_event(&flow, &success);
     assert(!sl_ui_take_command(&flow, &cmd));
     sl_runtime_event refusal = {
@@ -1044,8 +1051,8 @@ int main(void) {
     sl_ui_runtime_event(&flow, &success);
     assert(flow.page == SL_ERROR && !sl_ui_take_command(&flow, &cmd));
     sl_ui_action(&flow, SL_RETRY, 0);
-    assert(flow.page == SL_PAIRING && !flow.pairing_code[0]);
-    assert(sl_ui_take_command(&flow, &cmd) && cmd.type == SL_CMD_PAIR);
+    assert(flow.page == SL_CONNECTING && !flow.pairing_code[0]);
+    assert(sl_ui_take_command(&flow, &cmd) && cmd.type == SL_CMD_STREAM);
     /* A centered axis works immediately after opening a stream. Held axes
      * remain neutral across the menu until returning through the deadzone. */
     sl_input_init(&r, &m, send_event, reset_remote, NULL);

@@ -37,6 +37,30 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
         m->entered_at = m->now;
         m->focus = 9;
         break;
+    case SL_EVENT_STREAM_AUTHORIZATION:
+        if (m->page != SL_CONNECTING && m->page != SL_NETWORK_TEST && m->page != SL_PAIRING)
+            break;
+        if (m->page == SL_PAIRING && m->pairing_code[0])
+            break;
+        m->page = SL_PAIRING;
+        m->pair_code_at = m->now;
+        snprintf(m->pairing_code, sizeof(m->pairing_code), "%.4s", e.text);
+        break;
+    case SL_EVENT_STREAM_RESUMED: {
+        if (m->page != SL_PAIRING && m->page != SL_CONNECTING && m->page != SL_NETWORK_TEST)
+            break;
+        sl_host *h = sl_host_find(&m->store.registry, e.host.id);
+        if (h) {
+            h->paired = e.host.paired;
+            h->account = e.host.account;
+            h->has_secret = e.host.has_secret;
+            memcpy(h->secret, e.host.secret, sizeof(h->secret));
+            m->intent.host = *h;
+        }
+        m->pairing_code[0] = 0;
+        m->page = e.account ? SL_NETWORK_TEST : SL_CONNECTING;
+        break;
+    }
     case SL_EVENT_CODE:
         if (m->page != SL_PAIRING || m->pairing_code[0])
             break;
@@ -77,26 +101,6 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
         m->focus = 0;
         break;
     case SL_EVENT_FAILURE:
-        if (e.account == 1) {
-            if (m->page != SL_CONNECTING && m->page != SL_NETWORK_TEST)
-                break;
-            sl_host *h = sl_host_find(&m->store.registry, m->intent.host.id);
-            if (h) {
-                h->paired = false;
-                m->intent.host = *h;
-                if (m->repair_attempted) {
-                    sl_ui_error(m, e.text);
-                    break;
-                }
-                m->repair_attempted = true;
-                m->page = SL_PAIRING;
-                m->pairing_code[0] = 0;
-                m->command = m->intent;
-                m->command.generation = m->generation;
-                m->command.type = SL_CMD_PAIR;
-                break;
-            }
-        }
         if (m->streaming) {
             m->streaming = false;
             m->debug = false;

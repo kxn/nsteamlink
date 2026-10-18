@@ -10671,8 +10671,9 @@ host=0这行仅证明handler分支，不等同于网络准入：BProcess的非�
 
 Conclusion：轮换状态应属于完整的原streaming事务，贯穿自动授权、请求重发和
 state6；停止重发timer不等于删除握手owner。原版“先更新/尝试保存，后加密”同时
-决定失败重试和后续会话凭据解密。Native的固定updated_secret=false及成功后退休
-timer owner，不能据当前普通proof加密可运行就称这份契约已对齐。
+决定失败重试和后续会话凭据解密。§133时Native的固定updated_secret=false及成功后退休
+timer owner，不能据普通proof加密可运行就称这份契约已对齐。§135保留了握手owner，
+但Proof轮换/回显/保存契约仍须独立接线。
 
 【界限】Qt、身份/随机IV/墙钟、请求RSA、SDL文件端点、最终Send/普通launcher和
 OS线程仍为明确adapter。保存失败为受控文件返回值；加密失败明确替换helper的
@@ -10684,4 +10685,83 @@ Steam、Switch存储耐久性或退出生命周期，也没有将Source回放冒
 ```sh
 PYTHONPATH=/path/to/audit-deps python3 scripts/audit-steam-streaming-proof.py \
   --binary /path/to/libshell-arm64.so --output /tmp/streaming-proof.json
+```
+
+
+## 135. 同一原请求的自动授权、actor顺序与产品入口
+
+Evidence：§132原shell42组完整输入，以及
+`audit-steam-auto-authorization-errors.py`追加的普通/测网两组。后者复用§120的
+bad_padding正文，在state4执行原parser、HandleStartStreamingResponse、原AES及
+Stop，再交付迟到auth_key：解密失败取消9、清编号/目标、内部错误1；晚到key只14
+Canceled，不派生、不保存。两组均正常返回、无Source断言，独立gzip保存其函数
+指令manifest；不把state5的取消10推广到授权阶段。
+
+Native的`authorization_flow.h`/`authorization.c`将ticket/token producer和密码/缓存/
+保存/确认逻辑供显式LAN授权与streaming owner共享。新streaming owner创建时
+生成非0000四位pairing码及keypair，随后以当时secret加密一次connect PIN；两类
+PIN不合并。Unauthorized只切换该owner的authorizing阶段，原编号、private、
+attempts及field8继续存活。Success新key、无key兼容success、最近key缓存命中、
+第四份不同key及各非Success结果，按§132分支推进或等待。失败取消按当前阶段9/10，
+加密producer失败不发半成品，cleanup在退休后通知；晚到key确认Canceled。
+
+`IHS_ClientStreamingEstablished`不再销毁握手owner：成功凭据只停止重发，保留
+显式取消和迟到授权/普通Proof的归属，新Start或Cancel/Destroy才释放private。
+返回main前仍由既有stop/join RX→销毁owned消息/定时器路径清理，没有新后台线程
+或detach。此改动没有完成Proof update_secret轮换：其false回显、来源过滤顺序及
+保存接线仍是与§133不同的独立契约，不能据owner存活就认定轮换已对齐。
+
+延后分派现对授权、开流、进度和Proof共用32槽owned FIFO，runtime worker消费，
+不在RX/render/input线程写profile。streaming timer在此模式只保留生命周期，出站
+由Pump在队列排空后比较墙钟期限；budget=0或仍有待处理包时不重试旧阶段。
+这是原manager Update先接收入站、再处理期限的有界actor适配；32是本地资源预算，
+不是线上常量。同步SDK调用者仍由timer轮询。自然OS调度及排空后新包到达的竞态
+不是固定时钟输入证明的内容。
+
+产品的普通/测网连接入口对已配对和未配对host均发STREAM，重试亦同。只有实际
+Unauthorized回调才显示该owner的pairing码；STREAM_AUTHORIZATION/STREAM_RESUMED
+事件保留generation、测试意图和原command，不另建PAIR/STREAM。显式LAN授权API
+仍可独立调用，不能将其新请求投影当作自动续接。worker在14前尝试保存新key和
+主机事实，失败继续；旧UI快照不能覆盖刚接受的key，显式删除仍生效。测网恢复
+事件明确携带当前owner的test位，不能依赖UI是否已经读到测网view。
+
+`check-steam-auto-authorization.py`把44组逐条输入送过真实UDP/RX、owned FIFO与
+Pump，执行原Native AES/RSA、共享交换/缓存/producer及callbacks；不显式SetSecret，
+不重建PAIR。逐步比较state、编号、keypair生成、派生、缓存/secret、3/5选定字段完整
+token/PIN字节、ticket.payload和9/10/14正文。保存次数在IHS_ClientSend调用边界
+取样，逐次与Source保存/发送timeline精确对应，不能在事后收包时取样冒充先保存。
+普通/测网16/32-byte凭据逐字节进入success callback，Source UI consumer另行核对。
+另将InProgress与Success同时排队，在旧3秒期限处依次Pump 0/1/1，证明剩余成功包
+尚未处理时没有插入旧授权重发。UI/文件adapter不据此升级为真实Steam证据。
+
+八种隔离Native回归：换编号、重生keypair、授权改1秒、重加密PIN、缓存命中推进、
+先确认后保存、FIFO未排空就重发、授权解密失败错发10；均须成功编译/链接、receiver
+正常完成，再由正式比较器正常exit1拒绝。既有9个显式授权、8个token、3个PIN反例
+仍独立保留，不能以编译失败/断言/crash/超时计为语义检出。
+
+产品`pairing_runtime`保留4组显式LAN测试，另以普通/测网各4组调用真实worker、
+RX/UDP、UI model和实际profile保存/读回，覆盖已配对普通入口、未配对测网入口、
+保存失败、保存期间旧快照及Beta发现元数据；每个STREAM只调用一次请求API，
+授权后原编号5、原PIN密文和新token可核对，UI不发新请求。文件成功的14前读回
+与当前secret相等，失败仍继续；UI连接入口/重试以及network-test意图另有UI测试。
+另有第13组无key兼容success：不发14、不保存、不换secret，仍更新内存配对/账户
+事实并保留原owner与测网意图。PC stop/join和sanitizer并非Switch hbmenu/二次启动证据。
+
+长度纪律：§120的43组对照表明，成功解密不等于长度必须为16/32；SDK保留成功
+交付，consumer再判断是否可用。§132的16/32成功消费向量不能据以收窄RPC准入。
+普通Proof和会话凭据解密取得Base锁保护的secret快照，避免把owner生命周期延长后
+继续裸读可被外部SetSecretKey改变的字节；不改变已核验的明文/密文规则。
+
+【界限】匹配目标的已建事务是44组比较范围；平台能力/RSA密文、自然身份/账户
+选择、来源准入先后、坏/空正文的完整入口及云端state3没有据此宣称相同。
+Proof轮换、真实Steam互操作、Switch存储/解码/退出及原用户停顿的因果仍须另证。
+固定Source有Qt、身份/熵/时钟、RSA请求、SDL文件端点和最后Send/普通launcher
+provider，故不能把不同层的绿色测试拼成整条官方客户端执行证明。
+
+```sh
+PYTHONPATH=/path/to/audit-deps python3 scripts/audit-steam-auto-authorization-errors.py \
+  --binary /path/to/libshell-arm64.so --output /tmp/auto-authorization-errors.json
+ctest --test-dir build/desktop -R 'auto_authorization|pairing_runtime' --output-on-failure
+python3 scripts/check-auto-authorization-native-mutations.py \
+  --build build/desktop --output /tmp/auto-authorization-negative
 ```

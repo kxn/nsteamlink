@@ -299,9 +299,10 @@ static void persist_authorization(IHS_Client *client, const IHS_HostInfo *host, 
     (void)client;
     (void)host;
     sl_runtime *r = ctx;
-    if (r->active.type != SL_CMD_PAIR)
+    if (r->active.type != SL_CMD_PAIR && r->active.type != SL_CMD_STREAM)
         return;
-    post(r, (sl_runtime_event){.type = SL_EVENT_SAVING});
+    if (r->active.type == SL_CMD_PAIR)
+        post(r, (sl_runtime_event){.type = SL_EVENT_SAVING});
     sl_host *h = sl_host_find(&r->store.registry, r->active.host.id);
     if (!h && r->store.registry.count < SL_HOST_LIMIT) {
         h = &r->store.registry.hosts[r->store.registry.count++];
@@ -318,6 +319,40 @@ static void persist_authorization(IHS_Client *client, const IHS_HostInfo *host, 
         if (!sl_auth_save(&r->store, sl_system_data_dir()))
             sl_log("pair: profile save failed; authorization continues");
         r->auth_persist_attempted = true;
+        pthread_mutex_lock(&r->lock);
+        r->active.host = *h;
+        pthread_mutex_unlock(&r->lock);
+    }
+}
+
+static void stream_authorization(IHS_Client *client, const IHS_HostInfo *host, const char *pin,
+                                 uint64_t account, void *ctx) {
+    (void)client;
+    (void)host;
+    sl_runtime *r = ctx;
+    if (r->active.type != SL_CMD_STREAM)
+        return;
+    if (pin) {
+        sl_runtime_event e = {.type = SL_EVENT_STREAM_AUTHORIZATION};
+        snprintf(e.text, sizeof(e.text), "%.4s", pin);
+        post(r, e);
+    } else {
+        /* A compatibility no-key Success carries the account without a new
+         * secret. Keep the original STREAM command/generation/test intent. */
+        pthread_mutex_lock(&r->lock);
+        r->active.host.paired = true;
+        if (account)
+            r->active.host.account = account;
+        pthread_mutex_unlock(&r->lock);
+        sl_host *known = sl_host_find(&r->store.registry, r->active.host.id);
+        if (known) {
+            known->paired = true;
+            if (account)
+                known->account = account;
+        }
+        post(r, (sl_runtime_event){.type = SL_EVENT_STREAM_RESUMED,
+                                   .account = r->test_active,
+                                   .host = r->active.host});
     }
 }
 
@@ -374,11 +409,7 @@ static void rejected(IHS_Client *c, const IHS_HostInfo *h, IHS_StreamingResult r
     pthread_mutex_unlock(&r->lock);
     if (result == IHS_StreamingPINRequired)
         post(r, (sl_runtime_event){.type = SL_EVENT_PIN});
-    else if (result == IHS_StreamingUnauthorized) {
-        sl_runtime_event e = {.type = SL_EVENT_FAILURE, .account = 1};
-        strcpy(e.text, sl_tr(SL_T_REPAIR));
-        post(r, e);
-    } else
+    else
         fail(r, result == IHS_StreamingScreenLocked       ? sl_tr(SL_T_UNLOCK_PC)
                 : result == IHS_StreamingBusy             ? sl_tr(SL_T_PC_BUSY)
                 : result == IHS_StreamingGameLaunchFailed ? sl_tr(SL_T_GAME_FAILED)
@@ -485,7 +516,10 @@ static void activity(IHS_Session *s, int kind, uint64_t id, const char *name, vo
 static const IHS_ClientDiscoveryCallbacks discovery_cb = {.discovered = discovered};
 static const IHS_ClientAuthorizationCallbacks auth_cb = {
     .persist = persist_authorization, .success = authorized, .failed = auth_failed};
-static const IHS_ClientStreamingCallbacks stream_cb = {.success = accepted, .failed = rejected};
+static const IHS_ClientStreamingCallbacks stream_cb = {.success = accepted,
+                                                       .failed = rejected,
+                                                       .authorization = stream_authorization,
+                                                       .authorizationFailed = auth_failed};
 static void client_config_saved(IHS_Session *session, const uint8_t *wire, size_t size, void *ctx) {
     sl_runtime *r = ctx;
     sl_stream_settings_receive(session, wire, size, &r->settings);
@@ -1270,7 +1304,7 @@ static void *worker_main(void *ctx) {
             /* A UI snapshot queued before authorization completed must not
              * undo the just-accepted host facts. An explicitly removed host
              * stays absent; the actor will honor its queued command below. */
-            if (auth && account && r->auth_persist_attempted) {
+            if (r->auth_persist_attempted) {
                 const sl_host *known = sl_host_find(&r->store.registry, r->active.host.id);
                 sl_host *incoming = sl_host_find(&save.registry, r->active.host.id);
                 if (known && incoming && known->client_id == incoming->client_id) {

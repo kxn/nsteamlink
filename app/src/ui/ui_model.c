@@ -206,7 +206,6 @@ static void start(sl_ui_model *m, int game, bool test_only) {
             if (m->layout.controls[i].action == SL_RECENT && m->layout.controls[i].arg == game)
                 m->launch_card = m->layout.controls[i];
     m->generation++;
-    m->repair_attempted = !h->paired;
     memset(&m->intent, 0, sizeof(m->intent));
     m->intent.host = *h;
     m->intent.generation = m->generation;
@@ -216,8 +215,8 @@ static void start(sl_ui_model *m, int game, bool test_only) {
     m->depth = 0;
     m->input[0] = 0;
     m->pairing_code[0] = 0;
-    page(m, h->paired ? SL_CONNECTING : SL_PAIRING);
-    emit(m, h->paired ? SL_CMD_STREAM : SL_CMD_PAIR);
+    page(m, SL_CONNECTING);
+    emit(m, SL_CMD_STREAM);
 }
 static void move(sl_ui_model *m, sl_action direction) {
     const sl_control *from = NULL;
@@ -524,12 +523,10 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
         break;
     case SL_RETRY:
         if (m->page == SL_ERROR && !m->ending_game && !m->cancel_only_error) {
-            m->repair_attempted = !m->intent.host.paired;
             m->pairing_code[0] = 0;
             ++m->generation;
-            page(m, m->intent.host.paired ? SL_CONNECTING : SL_PAIRING);
-            emit(m, m->intent.host.id ? (m->intent.host.paired ? SL_CMD_STREAM : SL_CMD_PAIR)
-                                      : SL_CMD_CANCEL);
+            page(m, SL_CONNECTING);
+            emit(m, m->intent.host.id ? SL_CMD_STREAM : SL_CMD_CANCEL);
         }
         break;
     default:

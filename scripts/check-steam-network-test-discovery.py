@@ -5,7 +5,8 @@ The oracle executes the production producer, raw-envelope parser, AES/HMAC and
 actual UDP sends. Ingress is explicitly driven. Peer identity and endpoint are
 fixtures; the independent full worker UDP test is still not a real Steam host.
 Platform/version/token/transport/gamepad details are not byte-equal Android
-capabilities. Unauthorized is an explicit caller-owned pairing/UI handoff.
+capabilities. Unauthorized enters the same stream owner; full crypto/continuation is checked
+separately against §132 by check-steam-auto-authorization.py.
 """
 import argparse
 import gzip
@@ -132,13 +133,9 @@ def main():
             c["messages"],
         )
         if i.get("result", 0) == 1:
-            # Source enters its authorization producer boundary. Native reports
-            # Unauthorized to the application's separate pairing UI.
-            assert (
-                row["failures"] == 1
-                and row["failure_result"] == 1
-                and not row["success"]
-            )
+            # This Source audit stops at its producer boundary; compare entry
+            # only here. §132 separately checks actual full owner continuation.
+            assert row["failures"] == 0 and row["authorizing"] and not row["success"]
             handoffs += 1
             continue
         if c["state"] == 6:
@@ -182,7 +179,7 @@ def main():
         assert row["cancels"] == ["0811"] and not row["success"], row
         assert row["failures"] == (callback_mode == 1), row
     print(
-        f"Discovery: {producers} Native request producers, {matched} credential/error/cancel vectors, 7 original retry checkpoints; {handoffs} explicit pairing/UI handoff"
+        f"Discovery: {producers} Native request producers, {matched} credential/error/cancel vectors, 7 original retry checkpoints; {handoffs} same-owner authorization entry"
     )
 
 
