@@ -126,7 +126,9 @@ uint8_t sl_system_video_cpu_count(void) {
 }
 
 sl_system_stream_info sl_system_streaming_info(void) {
-    /* Application limits, not claims about every Tegra model's maximum.
+    /* Describe this backend, not another client's hardware. Unknown decode /
+     * burst bitrate maxima remain zero so negotiation omits those fields;
+     * the former 30/90 Mbps values were neither enforced nor measured (§111).
      * Steam has no confirmed Switch OSType. -197 is Linux 3.6, not Android. */
     return (sl_system_stream_info){
         .system_info = "\"SystemInfo\"\n{\n"
@@ -135,8 +137,6 @@ sl_system_stream_info sl_system_streaming_info(void) {
                        "\t\"VideoDisplayY\"\t\"720\"\n"
                        "\t\"VideoDisplayNameID\"\t\"Nintendo Switch\"\n}\n",
         .decoder_info = "FFmpeg NVDEC",
-        .maximum_decode_bitrate_kbps = 30000,
-        .maximum_burst_bitrate_kbps = 90000,
         .can_suspend = true,
     };
 }

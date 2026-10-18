@@ -9090,3 +9090,21 @@ logger acquire读取。该修正不修改wire、加密序号、媒体反馈或�
 的实际快照调用都能完成；超时后先解锁并join才以明确失败返回，不靠挂死整个测试
 作为判据。该2秒是本地测试barrier期限，不上协议线。真实UDP媒体TSan门禁另保持，
 不禁用deadlock detector，也不通过关闭日志回调绕过原加锁路径。
+
+## 111. 平台能力事实与跨平台协议策略的边界
+
+协议的字段含义、presence、协商、接收/反馈和恢复策略按官方客户端证据核对；平台
+能力值按本项目实际Switch后端填写，不要求复制Android/Linux设备的CPU、RAM、GPU、
+显示器或codec集合。平台不同本身不是协议缺陷。对本产品尚未测定的上限应省略，
+不能用其他客户端预设或一个保守猜值代替硬件能力测量。
+
+Evidence：Switch `system.c`此前填maximum decode=30000、maximum burst=90000。
+当前应用代码中两数只用于这处声明，没有对应的解码预算/峰值限制实现；
+`stream_settings.c::sl_stream_settings_apply_limited`限制尺寸/帧率/HEVC，不限制码率。
+因此撤回旧注释把30/90 Mbps称为已有应用限制的表述，也不把它们说成已测Switch
+硬件上限。Switch能力对象保持两值0，由已有协商producer省略相应optional字段。
+这不表示设备能力为零，不改变用户请求的码率，也不据省略推导主机会如何调整码率。
+
+已接线的H264、Raw/Opus播放、当前1280×720输出等平台能力与协议恢复/FEC策略分别
+核验；未接线的HEVC不宣告可用。其他平台的信息查询策略不是Switch必须实现的同名
+查询，原SystemInfo/自然UI producer取证保留为参考，不能作为复制平台数值的理由。
