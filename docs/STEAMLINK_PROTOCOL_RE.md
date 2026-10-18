@@ -8992,3 +8992,101 @@ python3 scripts/audit-steam-client-negotiation-process.py \
 默认不覆盖snapshot；报告保留原文件读取字节、实际UDP/cipher/状态、完整FDE身份、
 当前helper与Qt SHA、原atexit与join、live proc tasks及全程assert列表。36节中坏文件
 保护差异仍按原范围保留，不能由这些有效文件案例推导异常加载策略已经一致。
+
+## 110. 真实UDP媒体分片、FEC恢复与AVCodec像素的完整客户端路径
+
+### 110.1 官方客户端原进程证据
+
+Evidence：`audit-steam-client-media-process.py`继续固定§109同一Linux官方客户端和
+随包libavcodec61/libavutil59 SHA。18个独立完整原进程经真实设置文件、UDP连接/
+认证/加密协商进入Streaming；对端随后发送加密StartVideo(52)、channel3视频线包和
+加密StopVideo(53)。原socket/CRC、接收窗口、FEC、Frame解析、控制FIFO/OnThink、
+原Generic player准备、factory/decoder构造、SDK异步回调及播放队列实际执行。
+没有直接调用收包/StartVideo handler，没有构造已解析Packet/Frame，没有写decoder
+owner、阶段/async/gate，未替换SDK状态、vptr或callback返回。
+
+八例普通传输覆盖reliable_data两值、CRC两值和两个分片的正序/倒序。媒体正文为
+message1、12B扩展头、7B视频头和独立fixture的首个2204B Annex-B AU；媒体ID23，
+原视频头sequence0/flags24/subrange0。对端按13B传输头发出type3/4或5/6，原客户端
+实际组帧并提交。每例原SDK收到的完整AVPacket SHA256为
+`5ff7383025bb865ea49f5b8b27a38811772281f68fb8dd0285afd3584273e64d`，
+实际send/receive均0；原player交付128×72/YUV420P，平面逐行像素MD5为
+`889019807dd199cebff67658cbc3d78f`，与独立sequential.framemd5首行一致。
+
+八例FEC传输覆盖CRC两值及全部shard、缺数据0、缺数据1、parity先到四种输入。
+编码字节由固定Android**客户端**原AddPacket/RS生成，MTU1200、比例20，原生成
+k2/m1/shard1168、组ID1、完整媒体正文2224B。其分配/队列/packet/refcount适配边界
+沿§26，不冒称自然Host producer；Linux接收、恢复、组帧、SDK和像素则是实际原进程。
+这些输入均只交付一次正确SDK包和像素，原消息80包含实际软件后端说明及threads4，
+出站加密序号为0/1/2；Stop后decoder=0、client仍6、入站加密序号4。
+这证明给定冗余字节足以恢复受测缺片，不证明主机何时启用或选择此比例。
+
+两例另复现§26.4/33已声明的duplicate-count反例：parity2重复后再来data1，原客户端
+提前上交2224B错误正文，首32B仍是parity原字节，未进入SDK、无像素和消息80。
+受控对端在实际control ACK确认Start后发送Stop，原正常销毁/退出；不能把观察期限
+当作官方超时策略，也不把“没有像素”列为成功恢复。原回调仅留头/长度/前缀/摘要，
+不保存错误重建缓冲区的其余未定义内容。
+
+49份完整函数FDE身份、四个当前helper SHA、真实Qt依赖和两SDK SHA分别固定。
+原实际decoder pthread_join=0、manager join=0、无新增live proc task、全程官方assert
+空列表、原main/ELF exit0分别核验。媒体路径自然保留SDK table计数7到原main，随后
+真正libc atexit ForceRelease降至0；探针没有主动平账引用。
+
+### 110.2 Native对照、明确差异与证据范围
+
+`media_udp_official_vectors`让Native生产设置loader/session/OS UDP/crypto/媒体通道
+和`nsl_video_pipeline`接收捕获的实际视频datagram。仅映射实际连接ID并重算CRC；
+数据、分片编号/顺序、组ID和冗余字节不改。headless endpoint adapter通过公开tracked
+callbacks连接生产pipeline，deferred format由真实IHS actor消费，SDK send observer原样
+forward；没有SDK状态/帧组装替身，没有注入parsed媒体，也未更改生产协议策略。
+CPU4是匹配受测官方实际Info的明确输入，不声称已完成SystemInfo/其他平台producer。
+
+16条成功路径逐项比较消息4/5/80完整明文、独立HMAC-MD5 IV/AES-CBC预期密文、
+加密序号、实际SDK包长度/SHA、媒体ID、图像尺寸/格式、独立像素MD5和Stop后清理。
+能力投影仅沿§109移除mandatory Raw条目。Source与Native进程时钟独立，绝对本地媒体
+时间戳不互比；本节不增加AV同步结论。原测试在观察到像素后才继续消费Stop，Native
+对端在实际像素取出后发Stop，均为明确成功路径barrier，不据此证明并发停止竞态。
+
+两条duplicate反例明确要求Native保留既有唯一shard计数防护，恢复正确图像；这是已
+记录的产品防护差异，不过滤成官方等价。其消息80预期来自同CRC的真正成功原进程，
+不会把原失败案例的缺失80替换成“官方也发了”。完整进程retval、Stop后的session/
+worker join和pipeline资源释放均须通过，不能仅stdout出现MD5就认定完成。
+
+```sh
+python3 scripts/audit-steam-client-media-process.py \
+  --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
+  --sdk-directory build/video-recovery-re/linux-1.3.32.316/package/lib \
+  --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/patched-runtime/lib \
+  --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/runtime/lib \
+  --android-binary /path/to/libmain-arm64.so \
+  --output /tmp/steam-client-media.json
+python3 scripts/check-steam-media-process.py \
+  --receiver build/desktop/app/nsl-auth-udp-oracle
+```
+
+原进程调用器是暂停原main后驱动公开Client/player/OnThink入口，Qt/SDL shell启动、
+真实Steam身份/自然Host媒体分片、主机FEC启用与自适应、非空自身上行FEC入口、音频、
+其他codec/flags/片段语法及平台renderer/GPU/Switch/loader各有独立边界。首帧fixture的
+成功不能证明原用户1–2秒停顿或菜单闪烁根因。本节补齐真实socket到软件解码像素的
+给定输入链，不能合称完整产品策略和官方全域等价。
+
+### 110.3 同链触发的日志锁反序与实现约束
+
+Evidence：新增Native真实UDP媒体对照在修改前的ihslib `56beb83`触发TSan
+`lock-order-inversion`：`ControlSendLocked`持sendLock调用`IHS_BaseLog`取得Base；
+同一真实会话的format actor经`IHS_SessionVideoDecoderInfo`先持Base再进入control
+sendLock。诊断栈分别定位`ch_control.c:265`、`base.c:120`及
+`ch_data_video.c:833`。该日志即使没有注册callback也先取Base。实际接收/解码像素
+仍成功；没有观察到真实死锁，不能把此warning等同设备卡顿或原用户故障。
+
+Conclusion：两条生产入口存在相反锁序，诊断功能引入的sendLock→Base边必须移除。
+原子发布/读取纯日志function pointer可保持原来的callback快照语义，不获取会话状态锁。
+更换callback不承诺等待旧callback返回，此前解锁后调用亦无该承诺；没有新增callback
+对象所有权、线程或退出依赖。`IHS_BaseInit`显式初始化该atomic，setter release发布、
+logger acquire读取。该修正不修改wire、加密序号、媒体反馈或官方FEC策略。
+§38/44既有sender事务锁序约束仍保留，不能据日志这一条边消失宣布所有锁关系已证明。
+
+`base_log_lock`在独立线程持Base期间，分别验证未注册logger、有logger及更换logger
+的实际快照调用都能完成；超时后先解锁并join才以明确失败返回，不靠挂死整个测试
+作为判据。该2秒是本地测试barrier期限，不上协议线。真实UDP媒体TSan门禁另保持，
+不禁用deadlock detector，也不通过关闭日志回调绕过原加锁路径。

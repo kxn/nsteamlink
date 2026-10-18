@@ -16,6 +16,7 @@
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
+#include "udp_video_backend.h"
 
 static atomic_bool requested, responded, serverDrained;
 static bool missingServer;
@@ -63,7 +64,8 @@ static void sendEncryptedPeer(IHS_Session *s,int socket,const struct sockaddr_in
     sendPeer(socket,address,5,local,1,id,body,count+1,crc);
 }
 int main(int argc,char **argv) {
-    bool negotiate=argc==6 && !strcmp(argv[1],"--negotiate");assert(negotiate || argc==5);
+    bool video=argc==7 && !strcmp(argv[1],"--video");
+    bool negotiate=video || (argc==6 && !strcmp(argv[1],"--negotiate"));assert(negotiate || argc==5);
     bool crc=atoi(argv[negotiate?2:1])!=0,hasResponse=negotiate || strcmp(argv[3],"-")!=0;
     bool badMac=negotiate && atoi(argv[5])!=0;
     missingServer=!negotiate && atoi(argv[4])!=0;
@@ -80,6 +82,15 @@ int main(int argc,char **argv) {
     assert(IHS_IPAddressFromString(&info.address.ip,"127.0.0.1"));
     for(unsigned n=0;n<32;++n)info.sessionKey[n]=(uint8_t)n;
     IHS_Session *session=IHS_SessionCreate(&client,&info);assert(session);
+    if(video) {
+        udpVideo=sl_video_create();assert(udpVideo);
+        assert(IHS_SessionSetVideoTrackingIdentity(session,1));
+        static const IHS_StreamVideoCallbacks callbacks={.startTracked=udpVideoStart,.submitTracked=udpVideoSubmit,
+            .stopTracked=udpVideoStop,.interruptTracked=udpVideoInterrupt,.thinkTracked=udpVideoThink,
+            .flushTracked=udpVideoFlush,.reportsDecoderInfo=true};
+        /* Session borrows this static table through worker teardown. */
+        IHS_SessionSetVideoCallbacks(session,&callbacks,NULL);
+    }
     sl_stream_settings settings;
     if(negotiate) {
         const sl_auth_store legacy={0};assert(sl_stream_settings_init(&settings,&legacy));
@@ -93,11 +104,18 @@ int main(int argc,char **argv) {
     assert(IHS_SessionConnect(session));
     bool connected=false,handshake=false,reply=false,haveRequest=false;
     uint8_t request[256];size_t requestSize=0;unsigned connects=0,goodbyes=0;
-    bool configReceived=false,completeReceived=false;
-    uint8_t outputPlain[2][512],outputCipher[2][512];size_t plainSizes[2]={0},cipherSizes[2]={0};
+    bool configReceived=false,completeReceived=false,videoInfo=false,videoStop=false;
+    struct sockaddr_in videoAddress={0};uint8_t videoLocal=0;
+    uint8_t outputPlain[3][512],outputCipher[3][512];size_t plainSizes[3]={0},cipherSizes[3]={0};
     uint64_t deadline=millis()+5000;
     for(;;) {
-        bool finished=negotiate?completeReceived && atomic_load(&session->state.connectionState)==6:missingServer?atomic_load(&serverDrained):hasResponse?atomic_load(&responded):atomic_load(&requested)&&haveRequest;
+        if(video) {
+            udpTakePicture();
+            if(videoInfo && udpHavePicture && !videoStop) {
+                sendEncryptedPeer(session,peer,&videoAddress,videoLocal,5,53,NULL,0,3,crc,false);videoStop=true;
+            }
+        }
+        bool finished=video?videoStop && atomic_load(&udpStopped):negotiate?completeReceived && atomic_load(&session->state.connectionState)==6:missingServer?atomic_load(&serverDrained):hasResponse?atomic_load(&responded):atomic_load(&requested)&&haveRequest;
         if(finished && (!atomic_load(&session->transport.closeRequested) || goodbyes))break;
         assert(millis()<deadline);
         struct pollfd p={.fd=peer,.events=POLLIN};int ready=poll(&p,1,2);assert(ready>=0);if(!ready)continue;
@@ -113,6 +131,7 @@ int main(int argc,char **argv) {
             assert(((raw[0]&128)!=0)==crc);
             if(crc) {uint32_t value=0;for(unsigned n=0;n<4;++n)value|=(uint32_t)raw[size-4+n]<<(8*n);assert(IHS_CRC32C(raw,(size_t)size-4)==value);}
         } else if(type==5) {
+            if(video && raw[4]!=1)continue;
             assert(raw[2] && raw[3]==7 && raw[4]==1);
             bool actualCrc=(raw[0]&128)!=0;assert(actualCrc==crc);
             if(actualCrc) {uint32_t value=0;for(unsigned n=0;n<4;++n)value|=(uint32_t)raw[size-4+n]<<(8*n);assert(IHS_CRC32C(raw,(size_t)size-4)==value);size-=4;}
@@ -128,8 +147,8 @@ int main(int argc,char **argv) {
                         sendEncryptedPeer(session,peer,&from,raw[2],2+(unsigned)badMac,3,init,initSize,(unsigned)badMac,crc,false);
                     }
                 }
-            } else if(negotiate && (raw[13]==4 || raw[13]==5)) {
-                unsigned index=raw[13]==4?0:1;uint64_t sequence;
+            } else if(negotiate && (raw[13]==4 || raw[13]==5 || (video && raw[13]==80))) {
+                unsigned index=raw[13]==4?0:raw[13]==5?1:2;uint64_t sequence;
                 IHS_Buffer in=IHS_BUFFER_WRAP(raw+14,(size_t)size-14),plain=IHS_BUFFER_INIT(512,512);
                 assert(IHS_SessionFrameDecrypt(session,&in,&plain,index,&sequence)==IHS_SessionFrameDecryptOK && sequence==index);
                 assert(plain.size+1<sizeof(outputPlain[index]) && (size_t)size-13<sizeof(outputCipher[index]));
@@ -141,7 +160,15 @@ int main(int argc,char **argv) {
                     uint8_t body[256];size_t count=cnegotiation_set_config_msg__get_packed_size(&selected);assert(count<sizeof(body));cnegotiation_set_config_msg__pack(&selected,body);
                     sendEncryptedPeer(session,peer,&from,raw[2],3+(unsigned)badMac,4,body,count,1+(unsigned)badMac,crc,false);
                     cnegotiation_set_config_msg__free_unpacked(message,NULL);configReceived=true;
-                } else if(index==1) {assert(configReceived && plain.size==0);completeReceived=true;}
+                } else if(index==1 && !completeReceived) {
+                    assert(configReceived && plain.size==0);completeReceived=true;
+                    if(video) {
+                        const uint8_t start[]={0x08,3,0x10,4,0x20,0x80,1,0x28,0x48};
+                        videoAddress=from;videoLocal=raw[2];
+                        sendEncryptedPeer(session,peer,&from,raw[2],4,52,start,sizeof(start),2,crc,false);
+                        udpReplayMedia(peer,&from,raw[2],argv[6],crc);
+                    }
+                } else if(index==2)videoInfo=true;
                 IHS_BufferClear(&plain,true);
             }
         }
@@ -160,9 +187,18 @@ int main(int argc,char **argv) {
     printf("\"");
     if(negotiate) {
         printf(",\"receive_sequence\":%llu,\"send_sequence\":%llu,\"frames\":[",(unsigned long long)receivedSequence,(unsigned long long)sendSequence);
-        for(unsigned i=0;i<2;++i) {printf("%s{\"sequence\":%u,\"plain\":\"",i?",":"",i);for(size_t n=0;n<plainSizes[i];++n)printf("%02x",outputPlain[i][n]);printf("\",\"cipher\":\"");for(size_t n=0;n<cipherSizes[i];++n)printf("%02x",outputCipher[i][n]);printf("\"}");}
+        for(unsigned i=0;i<(video?3u:2u);++i) {printf("%s{\"sequence\":%u,\"plain\":\"",i?",":"",i);for(size_t n=0;n<plainSizes[i];++n)printf("%02x",outputPlain[i][n]);printf("\",\"cipher\":\"");for(size_t n=0;n<cipherSizes[i];++n)printf("%02x",outputCipher[i][n]);printf("\"}");}
         printf("]");
     }
+    if(video) {
+        assert(udpHavePicture && udpStarts==1 && udpSubmits==1 && udpSdkPackets==1 && atomic_load(&udpStopped));
+        printf(",\"video\":{\"id\":%u,\"shape\":[%u,%u,0],\"md5\":\"",udpPictureId,udpWidth,udpHeight);
+        for(unsigned i=0;i<16;++i)printf("%02x",udpPixelMd5[i]);
+        printf("\",\"sdk_size\":%zu,\"sdk_sha256\":\"",udpSdkSize);for(unsigned i=0;i<32;++i)printf("%02x",udpSdkSha[i]);
+        printf("\",\"starts\":%u,\"submits\":%u,\"stopped\":true}",udpStarts,udpSubmits);
+    }
     puts("}");
-    IHS_SessionDestroy(session);if(negotiate)sl_stream_settings_destroy(&settings);IHS_Quit();assert(!close(peer));return 0;
+    IHS_SessionDestroy(session);if(negotiate)sl_stream_settings_destroy(&settings);
+    if(video) {sl_video_reap(udpVideo);assert(sl_video_destroy(udpVideo));udpVideo=NULL;}
+    IHS_Quit();assert(!close(peer));return 0;
 }
