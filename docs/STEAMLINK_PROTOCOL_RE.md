@@ -10302,8 +10302,9 @@ SendAuthorize成功后在cb1ccc写next=time()+3。原Update在state4且墙钟now
 与原观察差异明确，原观察器可检出这项重试语义变化。
 
 Conclusion：§120明确隔离的Unauthorized producer已补到原请求内容、触发、墙钟
-重发、所列失败/取消及无auth_key兼容成功续接。Native授权模块的1秒timer及产品
-独立配对UI仍与这里的自动state4流程不同；不能仅改成3秒就宣告自动恢复全部对齐。
+重发、所列失败/取消及无auth_key兼容成功续接。本节核验时Native为1秒timer，
+§128修正该期限及响应consumer；独立配对UI与自动state4仍不同，不能只改期限就
+宣告自动恢复全部对齐。
 带auth_key的完整密钥交换/确认及Qt PIN显示/用户动作的续接仍是独立边界，本节不
 改变生产协议，也不将授权阶段差异认作已建立串流中1–2秒停顿或闪烁的原因。
 
@@ -10316,4 +10317,66 @@ Conclusion：§120明确隔离的Unauthorized producer已补到原请求内容�
 ```sh
 PYTHONPATH=/path/to/audit-deps python3 scripts/audit-steam-authorization-producer.py \
   --binary /path/to/libshell-arm64.so --output /tmp/authorization-producer.json
+```
+
+## 128. 授权响应的结果准入、完整密码校验与最近key缓存
+
+Evidence：沿§127固定shell，`audit-steam-authorization-exchange.py`执行原
+GenerateKeyExchangeKeyPair@ce53dc、key对象导入、curve25519_donna@d9c4d8、
+PerformKeyExchange@cdb744/SHA256、SymmetricDecrypt/token读取、
+BHandleKeyExchangeAuthorization@cb4ac4及完整response parser/handler。
+真实private输入为受控32bytes，公钥和共享secret独立用Python X25519/SHA256核对，
+响应token由独立AES构造；没有替换response端密码结果。安装identity、账号表、
+随机输入、请求RSA加密、保存endpoint/最终发送和libc工具仍为明确adapter。
+SavePersistentClientKey仅记录原buffer输出，不冒称磁盘写入/重启恢复。
+
+原handler只在result=Success后检查auth_key。InProgress即使带key也继续等待，
+其他非Success按对应错误结束，不交换、不发送key确认。新key的密码校验失败时
+发送Confirmed(Denied)，保持授权state4，保留原secret；不立即对上层报告授权终止。
+原handler缓存本次auth_key原字节及校验结果，同key重复只发送缓存确认，不重新
+派生，也不因token变化重新校验。最近key的比较包含长度；A→B→A仍是三次计算，
+不等于全历史去重。第四次不同key在密码计算前以Denied终止并发送取消，最多三次
+计算；第三次可以成功。短/长key同样消耗一次新key计数。初始空cache与present空
+key相同，返回缓存Success但bool=false，故确认Success而不完成事务。
+
+完整新key成功先更新secret buffer/调用保存endpoint，再发送Confirmed(Success)，
+之后才转state5重发原串流请求。成功后重复key到达state5走过期分支，发送
+Confirmed(Canceled)，不重算、不再通知成功。若原开流请求再次返回Unauthorized，
+原state4会保留刚才的缓存；再次收到相同成功key只重发Success确认，bool=false
+使其保持state4而不再次续接。这是原事务的完整链，不把重新创建配对任务当成
+等价的重复包处理。
+
+这补强`STEAM_REMOTE_PLAY_NETWORKING.md` §11.2/20已有的结果/缓存分支证据，
+并保留其上游来源检查顺序与自然云端/UI边界。Native入口的peer检查、显式LAN
+配对任务与自动Unauthorized续接、安装/按主机secret和持久化时点是不同层次，
+不能用单个密码函数相同推成全部授权/事务已相同。
+
+
+Native显式LAN授权API按以上匹配peer分支处理，3秒重发；result前置、最近key缓存、
+三次计算限制、失败继续等待与终态Canceled确认独立落地。producer检查universe与
+RSA返回值，失败不发送未构造的请求。timer失败的通知在owner退休后cleanup发出，
+避免run函数内回调取消其自身task；RX回调终态在通知前标记/停止。分配失败是本地
+资源守卫；timer以单调时钟调度，与原墙钟整秒分辨率是明确平台差异。
+
+Native比较仅投影显式LAN授权的pending/完成、计算次数、secret、完整14/9正文和
+初始masked key；原5消息与自动续接仍保留Source证据，不伪造为该API的发送。
+成功cache后再次Unauthorized的原完整链未用新建LAN任务代替。原peer检查顺序、
+Qt动作/云端配对、持久化保存时点仍分别处理，不把组件对照推广成整条授权相同。
+
+固定参考含32组Source输入：普通/测网的result0–8、设备ID/配对码/padding/正文长度
+错误、0/1/31/33-byte key、失败cache命中、A→B→A交替、第三次成功/第四次拒绝、
+成功后重复与再次Unauthorized。31组Native投影复用相同响应key/token；再次
+Unauthorized保留原streaming/cache的一组明确留在Source端，不用新建任务伪装。
+原cache命中分支改NOP后实际命中一次，无断言/正常返回；失败key配上修正token的
+第二次响应由重算变成功，和原缓存Denied/继续等待形成独立反例。
+`check-authorization-native-mutations.py`另隔离编译四种回归，要求编译/链接成功、
+receiver正常完成，正式比较器因结果/cache/三次限制/3秒重发语义差异正常exit1。
+
+```sh
+PYTHONPATH=/path/to/audit-deps python3 scripts/audit-steam-authorization-exchange.py \
+  --binary /path/to/libshell-arm64.so --output /tmp/authorization-exchange.json
+ctest --test-dir build/desktop -R '^authorization_exchange_official_vectors$' \
+  --output-on-failure
+python3 scripts/check-authorization-native-mutations.py \
+  --build build/desktop --output /tmp/authorization-negative
 ```

@@ -87,7 +87,7 @@ Steam host 的 Remote Play 配对窗口。
 - encrypted ticket 里有 `password`、`identifier`、`payload`、`usage`、`device_name`。
 - 外层有 `device_token`、`device_name`、`encrypted_request`，以及可选 `auth_key`、`request_id`。
 
-本仓 `third_party/ihslib/src/client/authorization.c:139-168` 每 1 秒发送一次
+本仓 `third_party/ihslib/src/client/authorization.c` 按 §128 已核验的 3 秒期限发送
 `k_ERemoteDeviceAuthorizationRequest`。
 
 本仓 `third_party/ihslib/src/client/authorization.c:171-188` 配置 encrypted ticket：
@@ -124,7 +124,8 @@ Steam host 的 Remote Play 配对窗口。
 - 不带 auth_key 的普通结果分支：`InProgress` 调 progress 回调并继续等待；`Success` 调 success
   回调并停止任务；其他结果调 failed 回调并停止任务。
 - 当前代码会把 response 中的 `result`、`steamid`、`auth_key` 长度和 `device_token` 长度写入日志。
-- 当前 IHSlib 对带 `auth_key` 的 response 不看 `result`，直接按密钥交换处理。此前依据的 Linux
+- 历史 IHSlib 对带 `auth_key` 的 response 不看 `result`，直接按密钥交换处理；§128已修正为
+  先要求Success，再进入交换。此前依据的 Linux
   局部指令是在 @0x18c8c9 检查 `auth_key` 存在后，
   于 @0x18c992 调用 @0x18b110：`主机公钥 = auth_key XOR SHA256(配对码)`；
   `secret = SHA256(X25519(本机私钥, 主机公钥))`（@0x1ad110，X25519 后在 @0x1ad25a 调用 SHA256）；
@@ -305,11 +306,28 @@ sessionKey输入会话；这与pairing授权码、connect/security PIN、配对X
 固定SHA Android shell的原指令回放见`STEAMLINK_PROTOCOL_RE.md` §127及
 `audit-steam-authorization-producer.py`。普通/测网串流请求收到匹配Unauthorized后
 自动进入授权state4，沿用原请求编号发送AuthorizationRequest；成功发送后由
-墙钟time()+3和Update到期比较控制重发。这与本文所述Native授权模块1秒timer
-不同，不把本地timer当作官方策略证据。
+墙钟time()+3和Update到期比较控制重发。§127时Native仍为1秒timer；§128已将
+LAN授权间隔修正为3秒，Native timer使用单调时钟，不能把平台时基差异忽略。
 
 受控pairing PIN0042进入ticket.password和SHA256/XOR，独立connect PIN9876加密
 进入StreamingRequest.field8。无auth_key的兼容success响应使原state4→5并立即
 重发同编号串流请求；InProgress继续等待。RSA输出、身份与公钥输入、Qt界面和
 持久化是明确边界，完整密钥交换响应未由这组输入证明；这份证据不单独改变本地
 配对/安全码流程，也不声称自动授权全部对齐。
+
+
+## LAN 授权响应与最近key缓存
+
+§128原shell完整keypair/X25519/SHA256/AES/token链及结果/缓存向量支持以下实现：
+只有Success+auth_key进入交换；密码校验失败先确认Denied，继续等待，不立即回调
+整个授权失败。同一最近auth_key复用缓存结果，不重算；A→B→A重新计算，最多三次，
+第四个不同key终止并取消。终态收到带key响应确认Canceled；非Success不做交换。
+初始present空key匹配初始空cache，仅确认缓存Success而不完成授权。private在任务
+结束时清除；cache与任务同寿命。producer的非法universe或RSA失败停止且不发无效
+请求。本地分配失败处理为明确资源失败守卫，不冒称原C++OOM语义。
+
+比较器使用真实loopback RX/timer worker、discovery parser、原Native密码实现与
+发送字节；只将LAN显式授权API的确认/取消、secret、计算次数和完成事实与官方
+state4部分对照。自动Unauthorized保留开流事务及成功cache后再次授权的续接、
+来源校验顺序、持久化前确认顺序和云端state3仍是独立契约，不能用这组分量对照
+宣称全部完成。产品当前保存发生在runtime消费成功事件后，不冒称已同步落盘再确认。
