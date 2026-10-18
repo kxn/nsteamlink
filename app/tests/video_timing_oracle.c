@@ -637,6 +637,8 @@ int main(int argc,char **argv) {
     sl_media_collect();
     IHS_SessionDestroy(r.session);IHS_Quit();
     unsigned threadsWithOldFrame=process_threads();
+    /* Stop must close codec SDK workers before exported frame/map release. */
+    assert(threadsWithOldFrame==threadBaseline);
     if (resourceOld) {
         assert(!sl_media_video_clean());
         uint8_t actual[16];hash(resourceOld,actual);

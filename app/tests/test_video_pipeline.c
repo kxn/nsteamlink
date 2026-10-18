@@ -359,7 +359,7 @@ int main(int argc, char **argv) {
     assert(a.reordered);
     sl_video_stop(pipeline, a.key);
     sl_video_reap(pipeline);
-    assert(!sl_video_clean(pipeline)); /* held output keeps its codec domain alive */
+    assert(!sl_video_clean(pipeline)); /* held output pins domain storage after codec Stop */
     IHS_FrameTrackerClose(a.tracker);  /* displayed lease survives endpoint close */
     run b = {.pipeline = pipeline, .tracker = IHS_FrameTrackerCreate(2), .key = {2, 1}, .use_selection=true};
     assert(IHS_FrameTrackerOpenEpoch(b.tracker, 1));

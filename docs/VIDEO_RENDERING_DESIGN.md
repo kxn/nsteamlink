@@ -797,11 +797,17 @@ scratch属于22个壳对象预算中的两个，20个envelope共享于待选FIFO
 避免固定6壳在到期前反复淘汰帧。预算耗尽时可有界淘汰最旧排队引用，作为明确本地保护；
 在途GPU/current不能被强制释放。冻结domain前清空packet/scratch的临时引用；FFmpeg 内部 DPB 依赖保留到最终 codec 析构。
 
-domain 的状态转换只由 pipeline 执行；runtime reaper 在 decoder_lock 下确认冻结、callbacks=0、
-外部帧=0、renderer_groups=0，摘为 DESTROYING，解锁后析构 FFmpeg，再锁内归还 slot。
-析构期间 slot 仍占容量；main 不执行 codec destructor。普通 reaper 可 trylock 后延至后续循环，
-不能在回收旧 A 时持全局 decoder_lock 等待 codec 析构，进而挡住活动 B。G1 仍需证明各 domain
-独立 device/context 的实际析构边界。
+domain 的状态转换只由 pipeline 执行。Stop先关闭准入、释放播放器内部引用，
+在decoder_lock下排除SDK调用，标记stopped/reaping并摘出parser/codec；解锁后按
+parser→codec顺序释放，再锁内清reaping。此时外部FrameLease及renderer group仍可持有
+独立的AVFrame/frames context/map/device引用，不以codec存活替代图片引用。
+依据见协议参考§101；SDK正常成功出口已等待NVTEGRA decode fence并清除private_ref。
+
+runtime reaper在decoder_lock下确认停止、非reaping、外部帧=0、renderer_groups=0，
+才归还domain slot。取消open仍可能遗留codec，reaper保留该清理分支；正常Stop后即使
+codec已NULL，也必须退休domain。SDK析构期间slot仍占容量；main不执行codec destructor。
+不能持全局decoder_lock等待旧A的SDK析构，进而挡住活动B。G1仍需验证实际NVTEGRA/GPU
+及驱动失败边界；源码引用关系不代替实机验收。
 
 ### 14.3 调用接口与锁边
 
@@ -817,8 +823,8 @@ void sl_video_destroy(sl_video_pipeline *);                          // 全部 s
 ```
 
 group 构造前先登记 renderer_groups，再分配/import；失败也必须销毁部分 Dk 对象与 map/context
-引用后才减计数。域仍有 FrameLease 时才能登记 group，所以计数从零重新变成非零不会越过 codec
-最终析构判断。回收条件以 acquire 读取归零计数；发布归零用 release。不能用三次不相干的无锁
+引用后才减计数。域仍有FrameLease时才能登记group，所以计数从零重新变成非零不会越过
+最终domain storage退休判断；codec已可在Stop中独立关闭。回收条件以 acquire 读取归零计数；发布归零用 release。不能用三次不相干的无锁
 读取代替状态锁内的冻结和 callbacks 判断。
 
 锁顺序允许 `decoder_lock → mailbox`；renderer 从不取 decoder_lock。runtime.lock 只复制请求/
@@ -1424,18 +1430,19 @@ SDK 静态库、NVTEGRA 头文件、ABI adapter、shader 源码和 DKSH 的 SHA-
 错误和三个清理事实。UI 事件的 reply generation 不承担资源归属。application 的 lifecycle 是
 replacement 意图和远端 input gate 的唯一策略所有者；runtime 工作线程负责取消/join/回收。
 所有关闭动作先关闭输入、冻结帧入口，主线程继续 collect，worker 只在 video_clean 后退出。
-解码域 reaper 在全局 decoder 锁外调用 `avcodec_free_context`，其 occupied/reaping 标志阻止
-提前重用，避免旧域 SDK 析构阻塞另一活动域的 decode 锁。
+解码域Stop在全局decoder锁外调用`avcodec_free_context`，occupied/reaping标志阻止
+提前重用；reaper另等外部图片/map归还后退休domain，避免旧域SDK析构占住活动域decode锁。
 
 AVCodec线程选择遵循协议参考§99–100：按codec slice能力查询平台CPU输入，byte计数最多4，
 仅>1时指定slice线程，其余保留SDK默认。get_format逐次报告实际SDK线程元数据，不能把
 静态1线程当成当前SDK事实。Linux按原/proc byte统计，Switch输入由现有SDK的逻辑CPU接口
 提供；后者是平台适配，不是官方Switch实证。该选择不启用FRAME threading。
 
-原Linux Stop立即释放context；本设计在仍持有旧FrameLease/map时保留domain/context，
-可以保留SDK线程。最终回收后的线程数回到基线只证明最终清理，不证明Stop释放时点与
-官方相同。提前释放codec时硬件帧/映射的独立引用归属必须另有证据，不能由软件像素
-仍可读推导NVTEGRA安全，也不能把这一生命周期差异称为已对齐。
+按协议参考§101，Stop立即关闭parser/context及其SDK线程，外部FrameLease/map仅保留
+domain storage及各自SDK buffer/frames context/device引用。撤回旧设计“必须保留codec
+直到所有图片/map归还”的条件：官方帧owner为嵌入池，Stop不等外部归还；Switch SDK
+成功出口与独立硬件引用关系另有源码依据。软件资源测试在持旧图/map跨Stop和IHS_Quit时
+检查SDK线程已经回基线，再核对图片MD5及最终domain退休；这仍不等同真实NVTEGRA/loader验收。
 
 GPU fence 错误使批次隔离并关闭正常渲染。退出阶段仅在 SDK queue idle 正常返回且 queue
 未处于 error state 时释放隔离引用；已故障 queue 进入 Switch fatal，不能返回 hbmenu。

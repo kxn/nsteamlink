@@ -8180,3 +8180,102 @@ python3 scripts/audit-switch-decoder-thread-input.py \
 python3 scripts/check-steam-decode-threads.py \
   --receiver build/desktop/app/nsl-video-timing-oracle
 ```
+
+
+## 101. AVCodec帧池、播放器Flush与Stop释放时点
+
+### 101.1 官方策略和观察边界
+
+Evidence：固定Linux Steam Link 1.3.32.316 / SHA见§99–100。
+`audit-steam-client-frame-pool.py`执行原FinalDecode、frame构造@3240e0、
+Release@323ff0、析构@323ce0/323d70、原播放器Put/queue-pop/current选择/Flush、
+public Stop@2edbf0、AVCodec Stop@324840及Start。SDK分配、unref/free/返回码、
+libc分配器和OS锁为声明的终点；不产生物理像素，不声称自然GPU或完整Qt。
+沿用§95单线程调度边界，bootstrap CPU assert单列，测量动作不得有原assert。
+外部消费者使用原queue-pop@2ef250，作为显式消费者边界，并非已证明自然renderer路径。
+
+frame+0x20保存decoder+0x278的嵌入帧池地址，**不是codec指针**；SDK AVFrame在+0x30。
+Release的owner非NULL分支先SDK av_frame_unref，再锁池并追加frame壳。
+下次FinalDecode可复用壳。Stop先原base VideoStop@325bd0→player Flush@2eeac0，
+后者释放队列及player+108/+110/+118所持帧，再清协议partial；随后AVCodec Stop
+清空帧池、销毁scratch，关闭parser、释放codec并清NULL。外部pop的frame尚未归还时，
+Stop仍释放codec；decoder/内嵌池仍活着时，晚到Release可归池，再次Stop清理该壳，
+或Start后由FinalDecode复用。这不证明decoder析构后还能归还。
+
+原GetNextVideoFrame@2eeaa0返回值仅AL为bool；选中的frame在player+0x110，
+不能把未定义的高RAX位当frame指针。Release的NULL-owner分支执行析构/delete，
+用显式NULL构造参数单独验证其能力；正常FinalDecode构造传嵌入池，尚无自然NULL-owner
+生产者证据，不加入本地“Stop时detach所有frame”策略。格式51/157分支请求reset，
+不能据此声称它负责detach owner。
+
+Conclusion：官方Stop关闭codec不依赖所有外部图片先归还。§100的最终线程数回基线
+证据不能代替这个Stop时点。帧壳池/播放器引用与SDK资源释放是不同的所有权边界。
+
+### 101.2 Switch SDK引用归属的独立依据
+
+平台安全依据来自devkitPro的[switch-ffmpeg 7.1-5配方](https://github.com/devkitPro/pacman-packages/blob/5cf3a4da7665a04032565a3e788656cb485dd279/switch/ffmpeg/PKGBUILD)，
+不是官方客户端策略的替代来源。配方blob为66e08d92d4829e76bd90d8e7f753ac24e063214f，
+上游7.1 tar SHA为40973d44970dbc83ef302b0609f2e74982be2d85916dd2ee7472d30678a7abe6，
+[端口补丁](https://github.com/devkitPro/pacman-packages/blob/5cf3a4da7665a04032565a3e788656cb485dd279/switch/ffmpeg/ffmpeg-7.1.patch)
+SHA为1792380b992e3554a4abcddf0d7b395bfd8c118ac7c6e38c8f2fb0d39753a390。
+
+Evidence：补丁后的libavcodec/decode.c::decode_receive_frame_internal在成功输出前
+执行fdd->post_process，再释放frame->private_ref；nvtegra_decode.c安装的post_process
+为ff_nvtegra_wait_decode，等待decode fence，清in_flight并核对硬件状态。
+其私有tf->ctx是裸指针，但不作为成功输出AVFrame的长期所有权。
+错误路径先unref；不得绕过SDK成功出口直接导出仍在解码的frame。
+libavutil/hwcontext.c::av_hwframe_get_buffer独立ref frames context，后者独立ref
+设备；frames context最后释放时才uninit pool与device_ref。
+hwcontext_nvtegra.c的输出frame->buf[0]持map_ref，frame/map free不读取opaque codec。
+
+本地gfx.c::import_surface独立ref frames context及map；free_group先销毁Dk映射、
+释放map引用，再frames引用，最后归还domain mapping计数。视频lease的AVFrame引用
+同样独立，release_frame先SDK unref再归还external计数。由这些引用维持图片/映射，
+不需要以AVCodecContext存活代替它们。domain本身仍须等外部frame/map归还才复用。
+这是源码及本地所有权契约依据；真实NVTEGRA/GPU fence、驱动失败及loader仍须独立实机验证，
+不能由软件MD5或包版本相同直接推导已完成硬件验收。
+
+安装目标SDK原AArch64函数的静态反汇编另作交叉核对：av_hwframe_get_buffer
++0xc0 ref、+0xc4存入frame+352；decode_receive_frame_internal +0x14c调用post_process，
+成功后+0x158/+0x15c释放frame+400的private_ref；ff_nvtegra_wait_decode +0x4c等fence，
++0x5c清in_flight。nvtegra_frame_free/map_free不读取opaque参数。以下为archive member内
+完整函数span（含未重定位call占位字节）的SHA，不是已执行目标硬件或整包可复现构建声明：
+
+| archive/member | 函数 | bytes | SHA256 |
+| --- | --- | ---: | --- |
+| libavutil.a/hwcontext.o | av_hwframe_get_buffer | 284 | 010c8ebfd4e4378d2b88641e6c179cf59ddd9d300fae71f7a2e6dbfcb3a0dc97 |
+| libavutil.a/hwcontext.o | hwframe_ctx_free | 116 | c4134c7803dc78b74be9ce57de6b6476120905c9904eae5f68699e3befd50c9b |
+| libavutil.a/hwcontext_nvtegra.o | nvtegra_frame_free | 36 | a541f8f2325d6ed67a58da77d35ba63a4199f272237998ca339e23e310b7914c |
+| libavutil.a/hwcontext_nvtegra.o | nvtegra_map_free | 52 | 2e4b3615dcddf1f1df45bc0f00f13bd09a06d6f0e2dd505448cc847355f1546f |
+| libavcodec.a/decode.o | decode_receive_frame_internal | 712 | 99d058e59a1518746947970dda1b7f80b6905bcccac09a0be5778096bc98a4a8 |
+| libavcodec.a/nvtegra_decode.o | ff_nvtegra_wait_decode | 224 | f1ea9db3eec14b9181b5178d60cbf79c41e354792c14adf24a85b5ac6c398d88 |
+| libavcodec.a/nvtegra_decode.o | nvtegra_fdd_priv_free | 88 | 9d46b83efd4f67ef8950f5aa1063fcaf79c18383057fb3bb1ee50ba5a802e709 |
+
+### 101.3 Native停止与退休的分工
+
+撤回§100所述保留codec直到外部引用归零作为既定设计的条件：该观察仍是旧实现的真实
+行为，但与官方Stop时点不同。Native Stop先close准入/内部图片与任务，decoder锁排除SDK
+调用后标记stopped/reaping并摘出parser/codec，在锁外按parser→codec释放；最后清reaping。
+occupied保持，外部frame/mapping计数及key不重置。reaper独立等待这些计数归零才归还slot，
+也处理codec已NULL的正常Stop，避免“已释放codec所以不退休domain”的泄漏。
+取消open可能仍有codec，由reaper的既有清理分支处理；析构均不占用全局decoder锁。
+
+官方原指令复播46案例/201状态，覆盖三种声明receive结果、1/3/17帧、queue/current、
+外部归还早于Stop、晚于Stop和跨Start复用，另列NULL-owner构造能力输入。
+所列59个完整FDE是代码身份清单，不声称全部自然分支已覆盖。四项等长原指令修改分别
+跳过Release的SDK unref、base Stop/player Flush、parser close和codec free；变体均正常
+返回且观察不同，原46案例状态未因新增变体改写。外部消费者仍是声明边界。
+
+Native资源测试持旧图/map跨四epoch、Stop、session销毁及IHS_Quit；要求旧引用尚在时
+SDK线程已回基线，旧图MD5/时间戳仍正确；释放图片后domain仍被map固定，最后释放map
+才clean。隔离Native变体分别延后codec释放、漏退休NULL-codec域，由线程时点/最终clean
+断言检出。软件线程计数和图片验证不证明真实Switch GPU、原自然renderer或loader。
+
+```sh
+python3 scripts/audit-steam-client-frame-pool.py \
+  --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
+  --output /tmp/steam-client-frame-pool.json
+python3 scripts/check-avcodec-native-mutations.py --build build/desktop \
+  --output /tmp/native-stop-mutants \
+  --only defer_codec_until_external_release --only skip_retirement_after_codec_stop
+```

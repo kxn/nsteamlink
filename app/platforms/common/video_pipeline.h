@@ -37,8 +37,9 @@ typedef struct sl_video_config {
 
 sl_video_pipeline *sl_video_create(void);
 /* Decoder operations are serialized internally; close admission never waits on
- * FFmpeg. stop joins the callback domain via the decoder lock, then freezes it.
- * Reap/destroy belong to the runtime worker after callbacks have been excluded. */
+ * FFmpeg. stop excludes callbacks, closes parser/codec outside the decoder
+ * lock, and preserves the domain while external frames/maps remain. Reap
+ * retires that storage; stop/reap/destroy belong to the runtime worker. */
 bool sl_video_open(sl_video_pipeline *, sl_video_key, const sl_video_config *);
 typedef enum sl_video_open_result {
     SL_VIDEO_OPEN_GUARD = -1, SL_VIDEO_OPEN_UNAVAILABLE = 0, SL_VIDEO_OPEN_READY = 1,
@@ -49,7 +50,7 @@ void sl_video_close(sl_video_pipeline *, sl_video_key);
 void sl_video_stop(sl_video_pipeline *, sl_video_key);
 /* Decoder flush phase: the protocol owner purges encoded fragments. Linux
  * AVCodec is not SDK-flushed; queued/held pixel objects survive until their
- * owners release them. Stop/reap separately closes parser and codec. */
+ * owners release them. Stop closes parser/codec; reap retires domain storage. */
 void sl_video_discard_buffers(sl_video_pipeline *, sl_video_key);
 typedef enum sl_video_submit_result {
     SL_VIDEO_SUBMIT_ERROR = 0,

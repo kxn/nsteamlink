@@ -362,10 +362,29 @@ void sl_video_stop(sl_video_pipeline *p, sl_video_key key) {
     sl_video_close(p, key);
     pthread_mutex_lock(&p->decoder);
     domain *d = find_domain(p, key);
-    if (d) {
+    AVCodecContext *codec = NULL;
+    AVCodecParserContext *parser = NULL;
+    if (d && !d->reaping) {
         av_frame_unref(d->scratch);
         d->stopped = true;
+        d->reaping = true;
+        codec = d->codec;
+        d->codec = NULL;
+        parser = d->parser;
+        d->parser = NULL;
+    } else {
+        d = NULL;
     }
+    pthread_mutex_unlock(&p->decoder);
+    if (!d) return;
+    /* Official Stop frees parser/codec after player Flush (§101). Exported
+     * AVFrames and renderer groups own their buffers/frames/device references;
+     * their counters pin the domain storage, not the codec or its SDK threads.
+     * Keep the slot occupied while SDK teardown runs outside the decoder lock. */
+    if (parser) av_parser_close(parser);
+    avcodec_free_context(&codec);
+    pthread_mutex_lock(&p->decoder);
+    d->reaping = false;
     pthread_mutex_unlock(&p->decoder);
 }
 void sl_video_discard_buffers(sl_video_pipeline *p, sl_video_key key) {
@@ -751,21 +770,25 @@ void sl_video_reap(sl_video_pipeline *p) {
         domain *d = &p->domains[i];
         AVCodecContext *codec = NULL;
         AVCodecParserContext *parser = NULL;
+        bool retire = false;
         if (d->occupied && d->stopped && !d->reaping &&
             atomic_load_explicit(&d->external, memory_order_acquire) == 0 &&
             atomic_load_explicit(&d->mappings, memory_order_acquire) == 0) {
             d->reaping = true;
+            retire = true;
             codec = d->codec;
             d->codec = NULL;
             parser = d->parser;
             d->parser = NULL;
         }
         pthread_mutex_unlock(&p->decoder);
-        if (!codec)
+        if (!retire)
             continue;
-        /* No active B decode can be blocked by A's SDK teardown. The occupied
+        /* A cancelled open can still own a codec. A normal Stop already freed
+         * it; either way the domain retires after the last external/map owner.
+         * No active B decode can be blocked by A's SDK teardown. The occupied
          * flag prevents A's storage from being reused until destruction returns. */
-        av_parser_close(parser);
+        if (parser) av_parser_close(parser);
         avcodec_free_context(&codec);
         pthread_mutex_lock(&p->decoder);
         d->occupied = d->reaping = false;

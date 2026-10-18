@@ -20,6 +20,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--build", type=Path, required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--only", action="append", help="Run a named mutation (repeatable)")
     a = p.parse_args()
     build = a.build.resolve()
     out = a.output.resolve()
@@ -33,6 +34,20 @@ def main():
     oracle = ROOT / "app/tests/video_timing_oracle.c"
     system = ROOT / "app/platforms/desktop/system.c"
     mutations = [
+        (
+            "defer_codec_until_external_release",
+            pipeline,
+            "        codec = d->codec;\n        d->codec = NULL;\n        parser = d->parser;\n        d->parser = NULL;",
+            "        /* leave codec/parser for final reap */",
+            "resources",
+        ),
+        (
+            "skip_retirement_after_codec_stop",
+            pipeline,
+            "        if (!retire)\n            continue;",
+            "        if (!codec)\n            continue;",
+            "resources",
+        ),
         (
             "ignore_slice_capability",
             pipeline,
@@ -265,6 +280,9 @@ def main():
             "info",
         ),
     ]
+    if a.only:
+        assert set(a.only) <= {item[0] for item in mutations}, a.only
+        mutations = [item for item in mutations if item[0] in a.only]
     reports = []
     for name, source, before, after, kind in mutations:
         directory = out / name
@@ -276,7 +294,7 @@ def main():
         changed.write_text(body)
         target = (
             "nsl-video-timing-oracle"
-            if kind in ("oracle", "recovery", "player", "info", "threads")
+            if kind in ("oracle", "recovery", "player", "info", "threads", "resources")
             else "nsl-video-pipeline-tests"
         )
         link = shlex.split(
@@ -301,7 +319,7 @@ def main():
                 )
             return obj
 
-        if kind in ("oracle", "recovery", "player", "info", "threads"):
+        if kind in ("oracle", "recovery", "player", "info", "threads", "resources"):
             text = oracle.read_text().replace(
                 '#include "../platforms/common/',
                 '#include "' + str(ROOT / "app/platforms/common") + "/",
@@ -347,6 +365,13 @@ def main():
                 "--receiver",
                 str(exe),
             ]
+        elif kind == "resources":
+            command = [
+                str(exe),
+                str(ROOT / "app/tests/fixtures/video/sequential.h264"),
+                "--resources",
+                "3",
+            ]
         else:
             command = [
                 str(exe),
@@ -368,6 +393,13 @@ def main():
                 "oracle crashed",
                 r.stderr[-2000:],
             )
+        elif kind == "resources":
+            expected = (
+                "threadsWithOldFrame==threadBaseline"
+                if name == "defer_codec_until_external_release"
+                else "sl_media_video_clean()"
+            )
+            assert r.returncode == -6 and expected in r.stderr, (name, r.stderr[-2000:])
         elif kind == "reordered":
             assert "current[j].statsComplete" in r.stderr, (name, r.stderr[-2000:])
         else:
