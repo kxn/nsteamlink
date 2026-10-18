@@ -247,6 +247,8 @@ def verify(c):
     authorized = c["steps"][2]
     assert authorized["state"] == 5 and authorized["rid"] == 17
     assert [m["tag"] for m in authorized["messages"]] == [5, 3, 14, 5]
+    # Full-body equality here depends on the TOKEN123 identity adapter. The PIN
+    # comparator projects field8 only; this is not a real-token retry contract.
     assert authorized["messages"][0] == authorized["messages"][3]
     assert [x.get("tag", x["op"]) for x in authorized["timeline"]] == [
         5,

@@ -73,9 +73,8 @@ def main():
             continue
         s = c["steps"][2]
         initial, resumed = s["messages"][0], s["messages"][3]
-        assert (
-            initial["tag"] == resumed["tag"] == 5 and initial["body"] == resumed["body"]
-        )
+        assert initial["tag"] == resumed["tag"] == 5
+        assert pin_field(initial["body"]) == pin_field(resumed["body"])
         pin = c["input"].get("pin", "9876")
         value = pin_field(initial["body"])
         if pin in expected:

@@ -14,6 +14,18 @@
 #include <poll.h>
 #include <unistd.h>
 static uint16_t peer_port;
+/* Main/test thread only: make the documented try-lock miss deterministic. */
+static bool inject_facts_busy;
+static unsigned facts_busy_calls;
+bool __real_sl_runtime_read_facts(sl_runtime *, sl_runtime_facts *);
+bool __wrap_sl_runtime_read_facts(sl_runtime *r, sl_runtime_facts *facts) {
+    if (inject_facts_busy) {
+        inject_facts_busy = false;
+        ++facts_busy_calls;
+        return false;
+    }
+    return __real_sl_runtime_read_facts(r, facts);
+}
 bool __real_IHS_ClientStreamingRequest(IHS_Client *, const IHS_HostInfo *,
                                        const IHS_StreamingRequest *);
 bool __wrap_IHS_ClientStreamingRequest(IHS_Client *c, const IHS_HostInfo *h,
@@ -69,6 +81,8 @@ static void one(bool manual, bool press_a) {
     assert(command(&a, &cmd));
     bool requested = false, handshake = false, refused = false, prompt = false, ack = false,
          progress = false, done = false;
+    bool busy_injected = false;
+    facts_busy_calls = 0;
     unsigned id = 0, cancels = 0;
     uint64_t prompt_at = 0, deadline = sl_system_now() + 8000;
     struct sockaddr_in client_address = {0};
@@ -77,9 +91,14 @@ static void one(bool manual, bool press_a) {
         runtime_events(&a);
         lifecycle_facts(&a);
         sl_network_test_view view;
-        if (sl_runtime_network_test(a.runtime, &view) && view.phase == SL_TEST_FAILED && !ack) {
-            sl_runtime_facts facts;
-            assert(sl_runtime_read_facts(a.runtime, &facts));
+        bool failed_view =
+            sl_runtime_network_test(a.runtime, &view) && view.phase == SL_TEST_FAILED && !ack;
+        if (failed_view && !busy_injected) {
+            inject_facts_busy = true;
+            busy_injected = true;
+        }
+        sl_runtime_facts facts;
+        if (failed_view && sl_runtime_read_facts(a.runtime, &facts)) {
             assert(facts.failed && facts.test_failure_pending &&
                    a.lifecycle.phase == SL_APP_STARTING);
             assert(a.ui.page == SL_ERROR && a.ui.cancel_only_error);
@@ -179,7 +198,8 @@ static void one(bool manual, bool press_a) {
                 assert(wire[13] != 8); /* Auth refusal must not reach the test producer. */
         }
     }
-    assert(done && requested && refused && prompt && ack && cancels == 1);
+    assert(done && requested && refused && prompt && ack && cancels == 1 && busy_injected &&
+           facts_busy_calls == 1 && !inject_facts_busy);
     char stats[512];
     snprintf(stats, sizeof(stats), "%s/streaming_stats.bin", directory);
     assert(access(stats, F_OK) != 0);
@@ -199,7 +219,7 @@ static void one(bool manual, bool press_a) {
     assert(!rmdir(directory));
     printf("failure manual=%d acknowledge=%s: real application held ID through prompt/matching "
            "InProgress, one matching cancel10 after ack, no save/retry/ordinary ticket, joined "
-           "cleanup passed\n",
+           "cleanup and one injected facts-busy retry passed\n",
            manual, press_a ? "A" : "B");
 }
 int main(void) {
