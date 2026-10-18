@@ -10700,7 +10700,7 @@ Canceled，不派生、不保存。两组均正常返回、无Source断言，独
 Native的`authorization_flow.h`/`authorization.c`将ticket/token producer和密码/缓存/
 保存/确认逻辑供显式LAN授权与streaming owner共享。新streaming owner创建时
 生成非0000四位pairing码及keypair，随后以当时secret加密一次connect PIN；两类
-PIN不合并。Unauthorized只切换该owner的authorizing阶段，原编号、private、
+PIN不合并。state4/5的匹配Unauthorized只切换该owner的authorizing阶段，原编号、private、
 attempts及field8继续存活。Success新key、无key兼容success、最近key缓存命中、
 第四份不同key及各非Success结果，按§132分支推进或等待。失败取消按当前阶段9/10，
 加密producer失败不发半成品，cleanup在退休后通知；晚到key确认Canceled。
@@ -10753,7 +10753,8 @@ RX/UDP、UI model和实际profile保存/读回，覆盖已配对普通入口、�
 继续裸读可被外部SetSecretKey改变的字节；不改变已核验的明文/密文规则。
 
 【界限】匹配目标的已建事务是44组比较范围；平台能力/RSA密文、自然身份/账户
-选择、来源准入先后、坏/空正文的完整入口及云端state3没有据此宣称相同。
+选择、来源准入先后、坏/空正文的完整入口、state6重复串流回复、自然launcher退出
+及云端state3没有据此宣称相同。
 Proof轮换、真实Steam互操作、Switch存储/解码/退出及原用户停顿的因果仍须另证。
 固定Source有Qt、身份/熵/时钟、RSA请求、SDL文件端点和最后Send/普通launcher
 provider，故不能把不同层的绿色测试拼成整条官方客户端执行证明。
