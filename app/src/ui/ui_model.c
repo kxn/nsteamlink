@@ -116,6 +116,10 @@ void sl_ui_init(sl_ui_model *m, const sl_auth_store *s) {
     sl_ui_layout(m);
 }
 void sl_ui_error(sl_ui_model *m, const char *message) {
+    /* This owner requires acknowledgement before cancellation. An unrelated
+     * queued error must not replace its dialog with generic Retry controls. */
+    if (m->cancel_only_error)
+        return;
     bool ending_game = m->ending_game;
     snprintf(m->error, sizeof(m->error), "%s", message);
     page(m, SL_ERROR);

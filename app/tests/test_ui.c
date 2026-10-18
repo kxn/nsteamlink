@@ -682,6 +682,8 @@ static void network_test_flow(void) {
         sl_ui_network_test(&m, &failed);
         assert(m.page == SL_ERROR && m.cancel_only_error && !strcmp(m.error, failed.error));
         assert(!strcmp(m.layout.title, sl_tr(SL_T_TEST_FAILED)));
+        sl_ui_error(&m, "unrelated queued error");
+        assert(m.cancel_only_error && !strcmp(m.error, failed.error));
         layout_check(&m);
         for (int i = 0; i < m.layout.count; ++i)
             assert(m.layout.controls[i].action != SL_RETRY);
