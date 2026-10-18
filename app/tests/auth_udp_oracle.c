@@ -69,7 +69,8 @@ int main(int argc,char **argv) {
     bool recover=argc==7 && !strcmp(argv[1],"--recover");
     bool video=gap || recover || (argc==7 && !strcmp(argv[1],"--video"));
     bool microphone=argc==6 && !strcmp(argv[1],"--microphone");
-    bool negotiate=microphone || video || (argc==6 && !strcmp(argv[1],"--negotiate"));assert(negotiate || argc==5);
+    bool limited=argc==6 && !strcmp(argv[1],"--negotiate-limited");
+    bool negotiate=limited || microphone || video || (argc==6 && !strcmp(argv[1],"--negotiate"));assert(negotiate || argc==5);
     bool crc=atoi(argv[negotiate?2:1])!=0,hasResponse=negotiate || strcmp(argv[3],"-")!=0;
     bool badMac=negotiate && atoi(argv[5])!=0;
     if(gap) {assert(strlen(argv[7])<=sizeof(udpExpectedFeedback)*2);udpExpectedFeedbackSize=(uint32_t)unhex(argv[7],udpExpectedFeedback);}
@@ -105,10 +106,13 @@ int main(int argc,char **argv) {
     if(negotiate) {
         const sl_auth_store legacy={0};assert(sl_stream_settings_init(&settings,&legacy));
         assert(sl_stream_settings_load(&settings,argv[3])==0);
-        assert(sl_stream_settings_apply(&settings,session));
-        /* Explicit desktop capability input, matching the genuine SDK lookup
-         * observed in the reference. This does not advertise Switch HEVC. */
-        const IHS_StreamClientCapabilities caps={.hasVideoDecoderCapabilities=true,.supportsVideoHevc=true};
+        const sl_stream_request_limits limits={.width=1280,.height=720,.fps=60,.hevc=false};
+        assert(limited ? sl_stream_settings_apply_limited(&settings,session,&limits)
+                       : sl_stream_settings_apply(&settings,session));
+        /* Default desktop capability input matches the original SDK lookup.
+         * Limited mode exercises current Switch request limits/H264 support
+         * through common production functions, without physical-device claims. */
+        const IHS_StreamClientCapabilities caps={.hasVideoDecoderCapabilities=true,.supportsVideoHevc=!limited};
         assert(IHS_SessionSetClientCapabilities(session,&caps));
     }
     assert(IHS_SessionConnect(session));

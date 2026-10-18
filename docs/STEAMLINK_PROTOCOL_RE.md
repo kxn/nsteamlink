@@ -2872,7 +2872,7 @@ Host 为测试设置 FEC 的另一个入口见 §30.4，不能混成正常会话
 【证据】`HandleNetworkTestComplete @0xc71078` 先将 recommendation
 （panel+704）清为 0，再区分测试模式。mode=2 的 `0xc711dc–0xc71468`：
 
-| 测试结果 panel+596，kbps | 当前 quality | recommendation / 对话框 |
+| 记录的测试码率 panel+596，kbps（上一目标，见§116） | 当前 quality | recommendation / 对话框 |
 |---|---|---|
 | <100000 | 已为 Fast(1) | 0，不推荐修改 |
 | <100000 | 不是 Fast(1) | 1，询问是否优化为 low bandwidth |
@@ -2880,9 +2880,11 @@ Host 为测试设置 FEC 的另一个入口见 §30.4，不能混成正常会话
 | ≥100000 | 不是 Beautiful(3) | 2，询问是否优化为 high quality |
 
 单位由同一函数的 `"Streaming bandwidth test successful up to %1 Mb/s"` 与
-`value / 1000` 交叉确定；因此 100000 对应 100 Mb/s。该值所在成员还由
-`CNetworkTest::OnSetTargetBitrate @0xcab700` 从 `CSetTargetBitrateMsg.bitrate`
-记录；不能把这个门槛改写为实测丢包率或所有网络质量的总评分。
+`value / 1000` 交叉确定；因此 100000 对应 100 Mb/s。§116补充实际producer：
+OnStreamPacket在@cab3d4–cab3f0内联更新，panel+596保存首个或上一目标，
+panel+600保存最新目标。导出的OnSetTargetBitrate @cab700具有相同写入逻辑，
+但不是此dispatcher的实际调用。撤回把结果成员当作最新收到bitrate的解释；
+这个门槛也不是客户端实测丢包率或所有网络质量的总评分。
 
 mode=1 的丢帧/网络波动评分经 `CNetworkStats::GetResult @0xca930c` 选择结果
 说明，不写 recommendation=1/2，也不直接保存 FEC；复播包含零丢帧、轻微丢帧、
@@ -9469,4 +9471,93 @@ PYTHONPATH=/path/to/python-dependencies python3 scripts/audit-steam-client-micro
   --qt-library-directory /path/to/qt/patched-runtime/lib \
   --qt-library-directory /path/to/qt/runtime/lib --output /tmp/microphone-schedule-process.json
 ctest --test-dir build/desktop -R microphone_schedule_official_vectors --output-on-failure
+```
+
+## 116. 官方网络测试结果到FEC配置、文件及真实协商的跨客户端边界
+
+### 116.1 原shell的实际目标码率producer与用户确认链
+
+Evidence：`audit-steam-network-test-fec-flow.py`使用§32固定SHA的官方Android
+shell，执行原CNetworkTest/CNetworkStats和Connection构造、SetPanelStateNetworkTest、
+实际Start API和OnStreamConnected。以明确已连接/认证请求后的边界输入有效响应2，
+经原OnStreamPacket/Frame/parser进入StartNetworkTest；不直接调用推荐工厂或注入
+结果成员。随后从同一原dispatcher输入94、执行原HandleNetworkTest/Complete，
+再由CheckNetworkTestState自然选择结果页与用户confirm/cancel回调。
+
+显式边界是平台线程/clock/锁、授权元数据、已连接对象和认证请求后的state3、identity
+加解密、最终Channel发送/Close、Qt呈现及文件读取/保存终点。没有运行原BConnect的
+完整OS/认证请求、真实网络、背景线程或媒体帧；不将模拟的3秒无媒体输入称为实测
+网络故障。61个所选导出函数身份包含相关类与工厂，逐一记录地址/长度/指令SHA；
+身份清单不等于全部条目都在每个案例执行。
+
+64案例616状态覆盖自动/无限制/明确20000 kbps、quality1/2/3、旧FEC false/true、
+取消/确认和99999/100000的单值/先后交换。记录全部控制/统计完整body、两个阶段
+状态、前/最新目标、收发crypto计数、FEC gate的宽/别名写、channel percentage与
+原C++ serializer产生的初始和保存完整配置。
+
+原初发顺序是握手6正文`060a021001`（network_test=1），随后三次KeepAlive9和
+StartNetworkTest8。消息8明确带frames600、framerate60、根据设置选择的目标、
+burst0以及`bandwidth_test=(mode==2)`。两种mode的握手标志都是1，不能把mode2
+改写为握手network_test=2。消息8没有字段25，它的bandwidth_test也不是FEC位。
+
+实际OnStreamPacket在@cab3d4–cab3f0内联处理94：第一次把收到值同时记为previous/
+current，以后把旧current移到previous，再记新current。结果页读previous，因此
+`99999→100000`仍落低带宽分支，`100000→99999`仍落高质量分支。这里的“结果”是
+客户端按主机目标码率消息记录的成员，不能冒称本实验测得对应网络吞吐或成功率。
+导出同名handler不是此producer的实际调用；§32相应表述已更正。
+
+无媒体输入时，测试距上次数据时间恰为196608 tick仍state4，再增加1 tick才state5；
+Complete随后使总体status2、ResetConnection恢复state0/计数，UI轮询据status2进入
+结果页。mode2才按previous与当前quality选择推荐；mode1无推荐。只有确认且推荐
+非零时才执行原预设和保存。取消、已有对应quality、固定码率测试均保留原完整配置，
+不因超时自行设置FEC。此受测链的连接gate与channel percentage始终0；它不证明
+其他产品入口不存在。
+
+原dispatcher内联CSEL @cab3e8被隔离改为MOV“直接用最新值”后，实际指令hit被记录，
+全部原函数仍返回且原assert空，但quality=Fast、旧FEC=false时，`99999→100000`
+从无推荐/不保存变成推荐增强预设，并把保存的FEC改为true；原始/变体完整观察单列。
+未把读取错误ELF文件偏移、未执行补丁或模拟器
+异常当作检出。
+
+### 116.2 原保存配置到原Linux客户端、Native真实加密UDP
+
+上述64案例产生12种不同完整配置。`audit-steam-network-test-fec-negotiation.py`
+不改任何字段，把原C++保存终点的完整字节（取消时为原已保存字节）作为真实
+streaming_settings.bin交给§109固定Linux官方客户端。两个客户端与执行边界明确
+分开：不是同一个原Android进程完成所有文件/网络动作，也不声称Qt真实事件循环。
+
+24个Linux原进程覆盖12配置×CRC开/关，实际文件加载、UDP连接/认证/加密/协商到
+Streaming及自然退出。使用软件解码偏好是明确配置输入，预设通过原保留helper保留
+该值；不直接改保存结果以迁就平台。原完整配置在消息4中逐字节相同，原客户端自身
+outgoing FEC gate仍0。35FDE、三个helpers、Qt/SDK身份、原assert空、join/live task
+和自然atexit引用5→0分别核验。受控peer确认协商，不冒称真实Steam主机已发送冗余。
+
+`network_test_fec_flow_vectors`先独立校验64个原shell输入、状态、完整body/保存条件，
+再把12配置×CRC交给生产Native设置文件/会话/真实UDP/crypto worker。逐例核对消息
+4/5完整明文与独立密文及阶段/计数，文件读回保持原字节。仅沿§109映射平台强制Raw
+能力差异，其余完整配置和能力字段不删。每次Native worker停止/join后再销毁资源。
+这证明保存值可以进入我们正常串流的请求，尚不证明主机启用、发送比例、自适应或
+物理网络效果。
+
+另24条Native真实UDP路径调用runtime当前同一apply_limited，输入1280×720/60fps/
+HEVC=false限制及H264解码能力。完整请求只按既有平台限制改变尺寸/帧率/HEVC字段，
+字段25的presence和值及其余字段保持原样，原保存文件不变。这是桌面执行共同生产
+函数的请求限制证据，不是Switch实机或原Android客户端会选择这些硬件参数的证明。
+
+Conclusion：官方网络测试的模式选择、94更新、结果推荐、确认保存与正常串流字段25
+是有条件衔接的产品策略；消息8测试参数、请求主机FEC、本机上行FEC仍是独立概念。
+本项目现有手动保存/协商通路能够原样承载相应配置。这不是新增网络测试/增强预设UI，
+不把Android的HEVC/1080p预设或硬件数值复制为Switch能力，也不新增丢包自动FEC或
+自动重连规则。Switch仍按§111的实际后端声明能力，其余原协议/设备范围未由此闭合。
+
+```sh
+PYTHONPATH=/path/to/python-dependencies python3 scripts/audit-steam-network-test-fec-flow.py \
+  --binary /path/to/official/libshell-arm64.so --output /tmp/test-fec-flow.json --verify-mutations
+PYTHONPATH=/path/to/python-dependencies python3 scripts/audit-steam-network-test-fec-negotiation.py \
+  --binary /path/to/package/bin/steamlink --sdk-directory /path/to/package/lib \
+  --qt-library-directory /path/to/qt/patched-runtime/lib --qt-library-directory /path/to/qt/runtime/lib \
+  --flow-report /tmp/test-fec-flow.json --output /tmp/test-fec-negotiation.json
+python3 scripts/check-steam-network-test-fec-flow.py \
+  --receiver build/desktop/app/nsl-auth-udp-oracle
+ctest --test-dir build/desktop -R network_test_fec_flow_vectors --output-on-failure
 ```

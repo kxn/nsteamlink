@@ -186,6 +186,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-negotiation-process.py"
         --receiver $<TARGET_FILE:nsl-auth-udp-oracle>)
     set_tests_properties(negotiation_udp_official_vectors PROPERTIES TIMEOUT 60)
+    add_test(NAME network_test_fec_flow_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-network-test-fec-flow.py"
+        --receiver $<TARGET_FILE:nsl-auth-udp-oracle>)
+    set_tests_properties(network_test_fec_flow_vectors PROPERTIES TIMEOUT 90)
     add_test(NAME media_udp_official_vectors COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-media-process.py"
         --receiver $<TARGET_FILE:nsl-auth-udp-oracle>)
