@@ -7954,3 +7954,126 @@ Native另复制当前info到session持有缓存，Base锁串行更新；退出�
 仍需各自调用链。隔离Native反事实扩为24项，新增启动上报、生产flag、SDK callback、
 借用info接线、threads wire、错误升级及漏持有缓存；正常返回后的官方比较拒绝这些
 策略差异，不用编译错误/崩溃充当policy检出。
+
+## 99. 原客户端进程的SDK直连、真实启动与线程选择
+
+### 99.1 固定材料与可重复执行边界
+
+【证据】仍固定§91/§94的Valve Linux Steam Link **1.3.32.316**归档、客户端和
+随包libavcodec/libavutil SHA；不是“最新版”或所有官方平台的等价证明。
+`audit-steam-client-sdk-linkage.py`执行原表Init @0x173b10、Release @0x173c40、
+ForceRelease @0x173c60三个完整FDE，核对25个函数槽及ELF GLOB_DAT/version要求：
+前15个要求LIBAVCODEC_61，后10个要求LIBAVUTIL_59。原Init直接复制动态链接后的
+GOT地址，没有在这条初始化路径插入ABI转换器。九状态的refcount为
+1/2/1/0/0/1/2/0/0；归零/ForceRelease后槽位仍保留。RAX是机器观察值，不能凭此
+给原Release补造C返回类型。三项原指令反事实分别破坏首对函数槽、ref增量和release
+写入，均命中、正常返回且观察不同。其他写者/完整启动不能由这条表初始化证明。
+
+`audit-steam-client-sdk-process.py`与`steam-client-sdk-gdb.py`使用GDB运行未改的原
+客户端ELF，停在原main前、动态/静态初始化之后。没有修改执行文件名、视频token、
+SDK门禁或SDK/客户端指令。真实getauxval(31)指向原`bin/steamlink`，token不存在；
+原SDK gate @0x258f20返回1。实际映射库的路径/SHA受核验；原factory @0x1780c0
+显式以H264/software参数调用，返回真实find_decoder(27)的同一codec。
+
+本机普通Qt6.9.2缺少客户端所需的六个controller-event符号，不能把这一依赖错误
+当作客户端协议/解码失败。运行依赖采用Valve发布的QtBase 6.9.2源包及Steam Link
+Flatpak打包清单中的controller patch，另用Qt上游6.9.2 QtSvg；客户端/SDK没有修改。
+依赖来源固定如下；实际加载Qt库的构建SHA逐次写入report，不作为跨主机黄金值：
+
+- [QtBase源包](https://repo.steampowered.com/steamlink/qtbase-everywhere-src-6.9.2.tar.xz)，
+  SHA256 `44be9c9ecfe04129c4dea0a7e1b36ad476c9cc07c292016ac98e7b41514f2440`。
+- [controller patch](https://raw.githubusercontent.com/flathub/com.valvesoftware.SteamLink/28b8ff1a858e2cc2e6b931e1918a6a105d886b58/patches/steamlink/qtbase.patch)，
+  SHA256 `a16417819f00c310a4859913112f3ba354ecfafa4b0aeae972e099c4ed6a0c3a`，在源目录`patch -p2`。
+- [QtSvg归档](https://download.qt.io/online/qtsdkrepository/linux_x64/desktop/qt6_692/qt6_692/qt.qt6.692.linux_gcc_64/6.9.2-0-202508181146qtsvg-Linux-RHEL_8_10-GCC-Linux-RHEL_8_10-X86_64.7z)，
+  SHA256 `15d2427216f5e5e2b6cf77a76bd40266de73efd9062e898da29eb9dc5a9daf72`。
+
+QtBase以系统GCC/ICU配置Release，关闭examples/tests/PCH，使用linked OpenSSL/system
+SQLite。不能混入Conda头文件再链接系统ICU；本机曾由此产生`_73`引用与系统76.1
+不匹配，属于探针依赖构建错误。可将Conda前缀加入CMAKE_IGNORE_PREFIX_PATH并显式
+指定系统ICU include/uc/i18n/data。源包/patch/QtSvg来源及本次实际进程观察保存在
+`steam-client-sdk-process-observation.json.gz`；它是指定机器的观察，不是其他主机的
+固定CPU数/Qt构建hash断言。
+
+### 99.2 实际SDK图片与原构造/Start/Stop
+
+第一部分单独分配两个真实SDK context，仅将threads设1作为明确解码输入：一个保留
+SDK尺寸默认值，另一个只投影§94原Start的四个标量。二者都保留SDK自己的get_format，
+实际open/send/receive均返回0，解出128×72/yuv420p图片，逐平面有效像素MD5均为
+`889019807dd199cebff67658cbc3d78f`，与已有独立framemd5相同。投影context在open前
+参数为72×128，读取该AU的SPS后变为128×72。SDK默认callback只在context+0xc0
+匹配到真实avcodec_default_get_format地址；可选linkage SDK探针也独立核验此槽。
+这部分不是原客户端callback/FinalDecode或完整视频的物理解码证明。
+
+第二部分实际执行原base-player构造 @0x2ee0f0、AVCodec构造 @0x324610、
+Start @0x3246d0、Stop @0x324840及两者原deleting destructors
+@0x323fc0/@0x2ee370。client是明确的零初始化配置边界，不冒称完整Client构造；
+128×72由decoder配置字段输入。原Start直接调用真实SDK，创建context/parser、安装
+原callback @0x324d00，参数API仍读出72×128。本机SDK元数据为threads=4/type=2，
+原decoder active及deferred-callback标志均为true。Stop后context/parser均清NULL；
+探针创建的引用通过原Release逐个归还，实际refcount 0→1→2→3→0；不直接写计数，
+也不ForceRelease其他owner。随后恢复原main执行`--version`，输出1.3.32.316并由
+GDB exit event确认exit_code=0；仅有GDB命令退出码不算成功。原API分配的frame/
+packet/context/parameters均释放并核对指针NULL。该清理不属于Switch loader证据。
+
+【补正§94范围】撤回将“原raw layout如何进入真实SDK”继续整体列为未知的表述：
+本节已在这条实际factory/Start路径确认直接函数地址与真实SDK对象，没有额外尺寸
+适配，且首次AU的SPS能纠正投影值。确切构建ABI原因、完整客户端/硬件路径以及其他
+输入的显示行为仍不由此证明；不能推出可见尺寸bug，也不能据此反转Switch的命名
+尺寸字段。§94的独立Python环境gate=0观察仍成立，与原客户端进程gate=1不冲突。
+
+完整Client/Connection未构造，因此不将原deferred callback交给这一零client执行。
+原format dispatcher @0x324c90等待主线程pending consumer @0x324d10；格式选择会
+进入消息80发送，原SendControl @0x31af60对80走加密/Connection路径。只把active/
+deferred改掉、伪造Connection或替换原callback，不能用来宣称完整启动已经自然可达。
+此处没有执行原FinalDecode、主事件循环、网络收发、GPU或物理显示。
+
+### 99.3 原线程分支、CPU生产者与适配契约
+
+【证据】`audit-steam-client-decode-threads.py`执行原CPU-info @0x1a7350、
+GetDecodeThreadCount @0x326be0、Start @0x3246d0三个所列完整FDE，复用既有原
+构造和SDK调用边界。SDK能力/default metadata及`/proc/cpuinfo`文本是声明输入，
+文件/字符串、SDL CPU-feature和brand/vendor helper是终点；CPU统计、缓存、截断、
+门禁与context写入均是原指令。没有由观察器直接返回一个“期望线程数”。
+
+原CPU getter读取`/proc/cpuinfo`，每个前缀`processor`行执行@0x1a7441的byte增量，
+存入CPU-info+8；core id/physical id统计在另一个byte，不是线程函数读取的值。
+Getter以结构大小0x38判断缓存。原GetDecodeThreadCount从+8零扩展并取unsigned
+min(value,4)，**没有最小值1钳制**。本路径不是SDL_GetCPUCount，也不是物理核心数。
+计数按byte绕回；256/257个受控processor行分别得到0/1。这是边界观察，不代表正常
+Switch输入或推荐CPU探测方式。文件打开失败的原assert分支未在本节作为自然可达
+成功证据，既有bootstrap观察仍按原范围保留。
+
+原Start @0x324767检查codec+24能力位`0x2000`。不存在时不调用线程getter，不改SDK
+默认值；存在才取上述min，结果<=1仍保留默认值，>1才写context+0x290=结果及
++0x294=2。不能无条件固定4，也不能无条件启用帧多线程。真实SDK的未open context
+默认threads=1/type=3；真实av_opt_eval_flags解析`thread_type=slice`得到2，独立核验
+了模式含义。真实原Start的4/type2与此分支吻合。
+
+72组原复播组合processor数0/1/2/3/4/8/255/256/257、能力0/0x1000/0x2000/0x3000
+及两组SDK初始元数据1/3、7/9。后者是保留值哨兵，不声称SDK自然使用7/9。覆盖未
+满足能力、<=1保持默认、2/3/4/更多CPU、8bit边界以及getter缓存只打开文件一次。
+五项原指令反事实分别改变CPU增量、上限、能力guard、count写入、slice写入，均要求
+命中、原函数完整返回、无原assert，再以状态差异检出。
+
+【差异与契约】Native `video_pipeline.c`的固定thread_count=1不能再被当作已与原
+Start线程策略对齐。适配需按**实际codec能力、平台逻辑处理器输入和SDK默认值**保留
+同一门禁与slice选择，消息80继续读取实际SDK元数据。Switch逻辑CPU输入的来源、SDK
+能力与线程资源清理需单独核验；不能把Linux读取/proc的代码或本机4直接当作Switch
+平台策略。§98的单线程Native对照仍只证明其明确受控投影，不扩张成全部线程策略。
+
+```sh
+LD_LIBRARY_PATH="$PWD/build/video-recovery-re/linux-1.3.32.316/package/lib" \
+python3 scripts/audit-steam-client-sdk-linkage.py \
+  --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
+  --sdk-directory build/video-recovery-re/linux-1.3.32.316/package/lib \
+  --output /tmp/steam-client-sdk-linkage.json
+python3 scripts/audit-steam-client-decode-threads.py \
+  --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
+  --output /tmp/steam-client-decode-threads.json
+python3 scripts/audit-steam-client-sdk-process.py \
+  --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
+  --sdk-directory build/video-recovery-re/linux-1.3.32.316/package/lib \
+  --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/patched-runtime/lib \
+  --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/runtime/lib \
+  --output /tmp/steam-client-sdk-process.json
+```
