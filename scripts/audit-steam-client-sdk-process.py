@@ -6,9 +6,11 @@ exercise the original codec factory, real SDK decoding, and original base-player
 AVCodec constructors, Start, Stop and deleting destructors. The configured client
 storage is not a full Client/Connection. The default excludes original deferred
 get_format/FinalDecode; Qt event-loop, authenticated networking, hardware and
-physical display remain outside all modes. An optional worker extension adds original asynchronous submission, deferred
-format consumption and cancellation/restart under its declared partial-client
-boundary; the default probe retains the original direct Start/Stop scope.
+physical display remain outside all modes. An optional worker extension adds
+original asynchronous submission, deferred format consumption and cancellation/
+restart. Its client boundary can be partial storage, original construction or
+original UDP Init against a receive-only loopback fixture; the default probe
+retains the original direct Start/Stop scope.
 The process must resume its original --version main and exit normally after
 probe-owned resources and module references are released. No gate/name/token or
 callback bypass is allowed. Qt runtime directories must supply Valve's controller
@@ -37,8 +39,26 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def audit(binary, sdk, qt, output, worker_mode=None):
-    assert worker_mode in (None, "empty", "decode", "cancel", "restart")
+def audit(
+    binary, sdk, qt, output, worker_mode=None, client_bootstrap=None, endpoint=None
+):
+    assert worker_mode in (
+        None,
+        "empty",
+        "decode",
+        "cancel",
+        "restart",
+        "reset_pending",
+    )
+    assert worker_mode != "reset_pending" or client_bootstrap == "udp"
+    assert client_bootstrap in (None, "constructed", "udp")
+    assert client_bootstrap is None or worker_mode is not None
+    if client_bootstrap == "udp":
+        assert (
+            endpoint
+            and endpoint.startswith("127.0.0.1:")
+            and 0 < int(endpoint.split(":")[1]) < 65536
+        )
     assert digest(binary) == boundary.codec.SHA
     assert binary.name == "steamlink" and binary.parent.name == "bin"
     assert digest(sdk / "libavcodec.so.61") == boundary.CODEC_SHA
@@ -73,6 +93,8 @@ def audit(binary, sdk, qt, output, worker_mode=None):
                     fixture=str(fixture),
                     result=str(result),
                     worker_mode=worker_mode,
+                    client_bootstrap=client_bootstrap,
+                    endpoint=endpoint,
                     worker_helper=str(ROOT / "scripts/steam-client-worker-gdb.py"),
                 )
             )
@@ -160,6 +182,24 @@ def audit(binary, sdk, qt, output, worker_mode=None):
                 0x323FC0: "avcodec_deleting_destructor",
                 0x1A7350: "cpu_info",
                 0x326BE0: "decode_thread_count",
+                **(
+                    {
+                        0x31A6F0: "client_constructor",
+                        0x31AAB0: "client_destructor",
+                        0x31AC40: "client_deleting_destructor",
+                        0x3181A0: "client_transport_init_connect",
+                        0x3230A0: "client_on_think",
+                        0x31F9D0: "handle_pending_resets",
+                        0x2AED10: "address_parse",
+                        0x2AEF30: "address_format",
+                        0x1918A0: "message_channel_constructor",
+                        0x191F90: "message_channel_poll",
+                        0x1A3D10: "udp_transport_init",
+                        0x31AA60: "client_cleanup",
+                    }
+                    if client_bootstrap
+                    else {}
+                ),
                 **(
                     {
                         0x2ED830: "decoder_submit_frame",

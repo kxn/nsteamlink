@@ -1448,6 +1448,11 @@ domain storage及各自SDK buffer/frames context/device引用。撤回旧设计�
 后台等待active/pending；Stop清active可终止等待。Native现有hardware_format/info在SDK
 回调线程内同步执行，借用session/epoch只覆盖SDK调用。这不证明主线程调度已等价，
 消息内容/回调内上报与完整线程交接必须分开论证；不能跨线程长期保存借用指针。
+§103完整原Client的OnThink补齐外层顺序：pending reset先取消/join旧worker并重建context，
+随后才处理network/control/main格式请求；Restart刚返回时pending仍可为true。不能仅把
+info排到main就假定对齐，等待者取消必须先于join，遗留请求及session/epoch/context存活
+必须单独建模。该原进程fixture在connecting phase显式接入媒体API，不是自然控制启动
+或真实Switch硬件交错证明。
 
 GPU fence 错误使批次隔离并关闭正常渲染。退出阶段仅在 SDK queue idle 正常返回且 queue
 未处于 error state 时释放隔离引用；已故障 queue 进入 Switch fatal，不能返回 hbmenu。

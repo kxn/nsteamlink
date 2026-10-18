@@ -30,6 +30,7 @@ SPEC.loader.exec_module(process)
 def verify(report):
     s = report["original_start"]
     mode, trace = s["mode"], s["trace"]
+    bootstrap = s.get("client_bootstrap")
     names = [x[0] for x in trace]
     assert (
         report["original_process_exit_code"] == 0 and report["probe_cleanup_complete"]
@@ -40,15 +41,22 @@ def verify(report):
     assert ["decoder_pthread_join_completed", "main", 0] in trace
     if mode == "empty":
         assert not any(x in names for x in ("submit", "sdk_get_format", "decoder_info"))
-        assert s["threads_after_resources"] == s["threads_before"]
+        expected = (
+            s["threads_before_start"] if bootstrap == "udp" else s["threads_before"]
+        )
+        assert s["threads_after_resources"] == expected
         return
-    assert s["connection_state"] == 3 and s["transport_fd"] == 0xFFFFFFFF
+    if bootstrap == "udp":
+        assert s["connection_state"] == 0 and s["transport_fd"] != 0xFFFFFFFF
+    else:
+        assert s["connection_state"] == 3 and s["transport_fd"] == 0xFFFFFFFF
     assert s["connection_retired"] and s["configured_decoder_owner_link"]
     assert "manager_destructor" in names
     shutdown = trace[names.index("manager_destructor") :]
     assert ["manager_pthread_join_enter", "main"] in shutdown
     assert ["manager_pthread_join_completed", "main", 0] in shutdown
-    assert next(x[2] & 255 for x in shutdown if x[0] == "manager_join_return") == 1
+    if not bootstrap:
+        assert next(x[2] & 255 for x in shutdown if x[0] == "manager_join_return") == 1
     assert s["offered_formats"] and all(0 in f for f in s["offered_formats"])
     # The original process-global socket manager persists until its ELF dtor;
     # only the explicitly constructed connection/transport retire in the probe.
@@ -93,6 +101,67 @@ def verify(report):
         assert s["player_objects"] == [
             {"id": 23, "shape": [0, 0, 0xFFFFFFFF], "has_pixels": False}
         ]
+        return
+    if mode == "reset_pending":
+        assert s["after_actor_restart"] == {
+            "pending": True,
+            "request": 0,
+            "codec_alive": True,
+        }
+        assert s["request_before_think"] == 1 and s["request_after_reset_think"] == 0
+        assert not s["pending_after_reset_think"]
+        pic = s["picture"]
+        assert pic["id"] == 24 and pic["timestamp"] == 1000000
+        assert (
+            pic["md5_before_stop"]
+            == pic["md5_after_stop"]
+            == report["contexts"][0]["pixel_md5"]
+        )
+        assert s["late_frame_returned_to_pool"] and s["reset_request_after_stop"] == 0
+        assert s["control"] == [{"channel": 1, "type": 80}] * 2
+        assert s["player_objects"] == [
+            {"id": 23, "shape": [0, 0, 0xFFFFFFFF], "has_pixels": False},
+            {"id": 24, "shape": [128, 72, 0], "has_pixels": True},
+        ]
+        assert [x[2] for x in trace if x[0] == "sdk_get_format_return"] == [-1, 0]
+        assert [x[2] for x in trace if x[0] == "sdk_send_return"] == [-1094995529, 0]
+        assert [x[2] for x in trace if x[0] == "sdk_receive_return"] == [-11, 0]
+        assert [x[2] for x in trace if x[0] == "frame_send_return"] == [3, 3]
+        assert [x[2] for x in trace if x[0] == "format_selector_return"] == [0, 0]
+        assert [x[1] for x in trace if x[0] == "data_lost"] == [
+            "background1",
+            "main",
+        ]
+        stages = [
+            "reset_while_pending",
+            "client_think",
+            "pending_resets",
+            "restart",
+            "public_stop",
+            "decoder_pthread_join_enter",
+            "sdk_get_format_return",
+            "sdk_send_return",
+            "sdk_receive_return",
+            "player_put",
+            "decoder_pthread_join_completed",
+            "codec_stop",
+            "public_start",
+            "actor_restart_completed",
+            "network_poll",
+            "control_dispatch",
+            "main_format",
+            "decoder_info",
+        ]
+        # The first public_stop follows restart, not the final cleanup stop.
+        start = names.index("reset_while_pending")
+        part = names[start:]
+        # Background failure signals DataLost before join; the reset handler
+        # signals it again after Restart, before polling the network.
+        actor = part.index("actor_restart_completed")
+        assert part.index("data_lost", actor) < part.index("network_poll")
+        order = [part.index(n) for n in stages]
+        assert order == sorted(order)
+        assert names.count("public_start") == 2 and names.count("restart") == 1
         return
     pictures = [s["picture"]]
     if mode == "restart":

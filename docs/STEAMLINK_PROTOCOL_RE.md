@@ -8377,3 +8377,113 @@ python3 scripts/audit-steam-client-worker-process.py \
 Stop/重启及原ELF析构join。断言约束真实运行的阶段和所有权；不冻结host CPU数、Qt库hash、
 PID、ASLR或OS线程交错，也不通过刷新旧golden掩盖探针前置条件错误。§99默认模式的
 contexts/original_start/factory/CPU/function清单和SDK默认元数据与原记录逐项保持。
+
+
+## 103. 完整原Client构造、UDP初始化与OnThink中的格式取消
+
+### 103.1 身份、调用入口与外部边界
+
+Evidence：`audit-steam-client-client-process.py`复用§99、§102固定的官方Linux
+1.3.32.316 ELF、随包SDK和Valve兼容Qt，在同一真实原进程执行完整CStreamClient
+构造@31a6f0及deleting destructor@31ac40。对象大小0x1f6f8，构造后的vptr为
+ELF+10ff908、phase=0、硬解偏好byte=1；随后原config parser显式解析`3800`选择软件。
+这份完整构造与§102部分client storage分开，默认direct与四个partial模式不被替换。
+
+UDP五模式执行原入口@3181a0，其直接调用点为原SDL_main范围内@2dac3d。
+按该调用点传入`(this,1,1,0,NULL,address,"","",0)`；不为尚未核实的参数命名
+认证语义。原地址parser@2aed10接收24字节地址对象，port输出为对象+22；原formatter
+@2aef30必须先roundtrip成同一`127.0.0.1:port`。入口实际构造/Init UDP transport
+@1a3d10、message channel@1918a0与Connection，再进入Connect，bool返回1。
+
+fixture只在本地UDP端口收包，不回任何报文。保存的原始17字节Connect datagram具有
+type1、非零source ID、bytes3..8为零、尾部`c73d8f3c`；ID、timestamp及端口随运行变化。
+原client phase=1，Connection state=0，transport fd有效；在媒体Stop后仍保持这些值。
+这只证明原初始化、原Connect发包及实际OnThink可调用；没有握手完成、认证、streaming
+phase或向Steam交付80。与§102相同，视频owner link和already-parsed Frame仍显式接入，
+不把phase1下手工调用媒体API当作原控制StartVideo或自然媒体准入。
+
+Source身份报告为54份完整FDE（§102的42份加完整client/初始化相关12份），不等同
+54函数均自然可达或所有分支覆盖。关键新增完整函数：
+
+| 函数 | ELF地址 | 字节数 | SHA256 |
+| --- | --- | --- | --- |
+| Client ctor | 31a6f0 | 774 | 84ee4bcea6235f4e7b725d516618aad9cbc978dae4838d3d1c2bea5894433fa0 |
+| Client Init/Connect入口 | 3181a0 | 616 | aa00e6f67349623a6d560aea28d84cc30dde9c098aca9c4a35f70cc960467826 |
+| Client::OnThink | 3230a0 | 555 | 7a2aed4ae7bb64e77ed6db035cc492c303643668af35c607e3a4d022fce2b8a1 |
+| HandlePendingResets | 31f9d0 | 278 | 763fdc4caec39d6ce2ee1d01c7e9e9c8a5df4fa53bf033e53756d1911de7c444 |
+| Client dtor | 31aab0 | 394 | 8a82277c3f2e259428a37c4a7622e3505a1222978ba33239f06f5f5df97b1d6a |
+| Client deleting dtor | 31ac40 | 33 | 199b967d8eaabc2795bcd28fc087274292d9b4d96bb5e0e4d821b26072ee1e82 |
+
+### 103.2 原OnThink调用顺序及六模式
+
+原OnThink检查`client+0x108`为非空；由原Init建立，fixture不伪造这个字段或client phase。
+随后依次处理pending resets@31f9d0、网络poll@191f90、控制FIFO@322b90，再经各decoder
+虚表slot+24调用主线程消费者。原函数尾部另有phase分支和统计调用；本fixture仅进入
+connecting分支，不据此声称完整Stats startup/接收槽已覆盖。
+
+| 模式 | 原Client/网络入口 | 观测到的媒体行为 |
+| --- | --- | --- |
+| constructed_empty | 完整构造，不Init | Start/Stop，没有格式请求 |
+| udp_empty | 完整构造、原UDP Init、原OnThink | 原poll/control/消费者入口，没有格式选择或80 |
+| udp_decode | 同上，显式Submit一帧 | 原后台SDK请求由OnThink消费，正常输出ID23 |
+| udp_cancel | 同上，保持格式pending，直接public Stop | 不调用OnThink，SDK取消，输出无像素ID23占位壳 |
+| udp_restart | 同上，第一帧完成后原Restart | ID23、24均有真实像素，旧图跨Restart/Stop保持有效 |
+| udp_reset_pending | 同上，pending期间原RequestReset(false)，再OnThink | 先取消/重建，再消费遗留pending；新ID24正常输出 |
+
+正常模式格式由实际SDK提供`[98,44,0,-1]`，原selector选择0，info80 producer与
+Frame::Send在main，发送返回3（未连接）。后台SDK callback/send/receive随后返回0，
+原player Put产生128×72/YUV420P，MD5仍为889019807dd199cebff67658cbc3d78f，
+与独立framemd5一致；普通/重启图片跨最终Stop再次读取MD5。
+
+完整构造但未Init的线程数1→5→1；UDP Init后Start/Stop为3→7→3。后者含进程服务，
+不能要求媒体Stop消灭整个原进程线程。原client deleting dtor完成、manager注册表为空；
+保留观察器直至原ELF析构，确认原decoder和全局socket manager的pthread_join实际返回0。
+恢复原`--version` main后正常退出0，也检查SDK table引用归零；不以exit0替代join证据。
+
+### 103.3 pending期间reset的完整调用者
+
+Evidence：udp_reset_pending先等真实SDK挂起，调用原RequestReset@319360(false)，
+由其经video owner将请求置1，未直接写reset byte。随后原OnThink调用
+HandlePendingResets；它检查video decoder+96并在@31fa30调用原Restart。观测顺序为：
+
+1. 原Stop清active并开始join。后台get_format自然返回-1、SDK send=-1094995529、
+   receive=-11；原失败路径再次RequestReset、DataLost，Put无像素占位ID23。
+2. pthread_join返回0后，AVCodec Stop释放parser/codec，public Start建立新context。
+   @31fa35（Restart调用续点）仍pending=true、request=0、新codec非空。
+3. 外层reset handler调用DataLost，再返回OnThink，之后才network poll、control FIFO、
+   main format consumer。后者处理遗留pending、调用selector及info80并清pending。
+4. 提交新ID24，真实SDK再次发格式请求，由下一次OnThink消费；callback/send/receive
+   返回0，输出真实像素，最终Stop后仍可读取同一MD5。
+
+此向量有两次条件性的80 producer尝试，均实际返回未连接3：一次来自reset后遗留
+pending，一次来自新SDK callback。不能将前一次解释为“每次Start无条件上报80”。
+它补齐§102“单独Stop仍pending”的外层消费者，但不将所有Stop、删除、控制重配及硬件
+场景概括为同一路径，也不证明本fixture的显式API触发是某个自然UI/网络事件。
+
+Conclusion：官方主循环不保证先消费格式再reset；SDK取消、线程join、context重建、
+遗留请求消费分属不同阶段。Native若只将80排入main而仍在join后才取消等待，不能
+据消息内容一致声称调度对齐。§102记录的Native同步SDK回调/info路径差异仍成立。
+官方借用formats/context的存活边界不能未经验证直接搬到Native跨session/epoch队列。
+
+### 103.4 观察方式与复现
+
+完整client实验使用固定指令续点观察返回值，避免GDB thread-bound FinishBreakpoint
+在额外线程退出后触发内部`find_program_space_for_breakpoint: thr != nullptr`断言。
+探索时该GDB内部错误发生在探针清理后恢复原main阶段；不计作通过，也不归因为官方
+业务错误。正式六模式均恢复原main并正常退出。观察器不改原方法、SDK状态/返回值、
+callback、async flag、gate、name/token或phase；调试断点仍影响线程调度，不能冒称
+无调试器竞态/真实设备验收。
+
+```sh
+python3 scripts/audit-steam-client-client-process.py \
+  --binary build/video-recovery-re/linux-1.3.32.316/package/bin/steamlink \
+  --sdk-directory build/video-recovery-re/linux-1.3.32.316/package/lib \
+  --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/patched-runtime/lib \
+  --qt-library-directory build/video-recovery-re/linux-1.3.32.316/qt692/runtime/lib \
+  --output /tmp/steam-client-client-process.json
+```
+
+每模式JSON保存原始UDP datagrams、原进程日志、SDK自然状态/图片、完整函数身份及
+跨线程阶段断言；不冻结端口、ID、timestamp、线程调度或host CPU值。完整Qt、已连接
+Steam、StartVideo/接收/Stats生产者、其他factory/自然硬件、真实Switch/GPU及loader
+仍在各自证据边界之外。

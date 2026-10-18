@@ -4,8 +4,11 @@
 Original worker, SDK callback, main format consumer and player execute. Media is
 an explicit already-parsed Frame/carrier boundary. Connection/UDP transport are
 constructed by original code and stay unconnected/unopened; no network or full
-Client constructor is claimed. Breakpoints observe entries/returns, never change
-policy/status/callbacks/async flag. Pixel MD5 comes from the independent fixture.
+Client constructor is claimed in the default mode. Optional bootstrap constructs
+the full client and can run UDP Init/OnThink against a loopback fixture; received
+video and decoder owner link remain explicit boundaries. Breakpoints observe
+entries/returns, never change policy/status/callbacks/async flag. Pixel MD5 comes
+from the independent fixture.
 """
 
 # The parent GDB helper supplies this module namespace and initialized SDK.
@@ -13,11 +16,19 @@ policy/status/callbacks/async flag. Pixel MD5 comes from the independent fixture
 
 
 def exercise_worker(mode):
-    assert mode in ("empty", "decode", "cancel", "restart")
-    client, player, dec = cpp_alloc(0x22000), cpp_alloc(0x168), cpp_alloc(0x2E0)
+    assert mode in ("empty", "decode", "cancel", "restart", "reset_pending")
+    bootstrap = config.get("client_bootstrap")
+    fixed = bool(bootstrap)
+    client = cpp_alloc(0x1F6F8 if bootstrap else 0x22000)
+    player, dec = cpp_alloc(0x168), cpp_alloc(0x2E0)
     main_thread = gdb.selected_thread().global_num
     trace, breaks, roles = [], [], {}
-    output = {"mode": mode, "trace": trace, "boundaries": __doc__}
+    output = {
+        "mode": mode,
+        "trace": trace,
+        "boundaries": __doc__,
+        "client_bootstrap": bootstrap,
+    }
 
     def role():
         tid = gdb.selected_thread().global_num
@@ -92,7 +103,7 @@ def exercise_worker(mode):
                 output.setdefault("control", []).append(
                     {"channel": read(frame + 24, 1)[0], "type": read(frame + 25, 1)[0]}
                 )
-            if self.returns:
+            if self.returns and not fixed:
                 Returned(self.name)
             return False
 
@@ -124,6 +135,50 @@ def exercise_worker(mode):
         Entered("pthread_join_completed", base + 0x1AA2D5),
     ]
     output["manager_observers"] = len(manager_observers)
+    if fixed:
+        # Observe actual instruction continuations instead of thread-bound
+        # GDB FinishBreakpoints (GDB can fail internally on extra thread exits).
+        class AtReturn(gdb.Breakpoint):
+            def __init__(self, name, address):
+                super().__init__("*" + str(base + address), internal=True)
+                self.name = name
+
+            def stop(self):
+                value = int(gdb.parse_and_eval("$eax")) & 0xFFFFFFFF
+                if value & 0x80000000:
+                    value -= 1 << 32
+                trace.append([self.name + "_return", role(), value])
+                return False
+
+        for address, name in (
+            (0x324365, "sdk_send"),
+            (0x324381, "sdk_receive"),
+            (0x324CEB, "sdk_get_format"),
+            (0x324CFE, "sdk_get_format"),
+            (0x324D35, "format_selector"),
+            (0x31B000, "frame_send"),
+            (0x31B040, "frame_send"),
+        ):
+            breaks.append(AtReturn(name, address))
+
+        class AfterActorRestart(gdb.Breakpoint):
+            def stop(self):
+                output["after_actor_restart"] = dict(
+                    pending=pending(),
+                    request=u32(dec + 96),
+                    codec_alive=bool(u64(dec + 0x268)),
+                )
+                trace.append(["actor_restart_completed", role()])
+                return False
+
+        breaks.append(AfterActorRestart("*" + str(base + 0x31FA35), internal=True))
+        for address, name in (
+            (0x3230A0, "client_think"),
+            (0x31F9D0, "pending_resets"),
+            (0x191F90, "network_poll"),
+            (0x322B90, "control_dispatch"),
+        ):
+            breaks.append(Entered(name, base + address))
     for index, name in ((10, "sdk_send"), (6, "sdk_receive")):
         breaks.append(Entered(name, table[index], True))
 
@@ -178,7 +233,10 @@ def exercise_worker(mode):
 
     def finish_picture(fid):
         assert pending()
-        call("void(*)(void*)", base + 0x324D10, dec)
+        if bootstrap == "udp":
+            call("void(*)(void*)", base + 0x3230A0, client)
+        else:
+            call("void(*)(void*)", base + 0x324D10, dec)
         assert not pending()
         trace.append(["main_format_completed", "main"])
         pause_until(lambda: u32(player + 0xEC) != 0xFFFFFFFF, "no player output")
@@ -196,12 +254,61 @@ def exercise_worker(mode):
 
     output["threads_before"] = len(inf.threads())
     # Actual config constructor/parser, with explicit software preference false.
-    call("void(*)(void*)", base + 0x45A330, client + 456)
+    if bootstrap:
+        call("void(*)(void*)", base + 0x31A6F0, client)
+        assert u64(client) == base + 0x10FF908
+        output["constructed_client"] = dict(
+            vptr_offset=u64(client) - base,
+            phase=u32(client + 256),
+            hardware_preference=read(client + 612, 1)[0],
+        )
+    else:
+        call("void(*)(void*)", base + 0x45A330, client + 456)
     wire = alloc(2)
     inf.write_memory(wire, bytes.fromhex("3800"))
     assert call("int(*)(void*,void*,int)", base + 0x7C9920, client + 456, wire, 2) == 1
     transport = connection = 0
-    if mode != "empty":
+    if bootstrap == "udp":
+        address = alloc(24)
+        assert (
+            call(
+                "int(*)(void*,void*,void*)",
+                base + 0x2AED10,
+                address,
+                string(config["endpoint"].encode()),
+                address + 22,
+            )
+            & 255
+        )
+        text = alloc(128)
+        call("void(*)(void*,void*,int,int)", base + 0x2AEF30, address, text, 128, 0)
+        assert cstring(text).decode() == config["endpoint"]
+        status = (
+            call(
+                "int(*)(void*,int,int,int,void*,void*,void*,void*,int)",
+                base + 0x3181A0,
+                client,
+                1,
+                1,
+                0,
+                0,
+                address,
+                string(b""),
+                string(b""),
+                0,
+            )
+            & 255
+        )
+        assert status == 1
+        output["transport_init_return"] = status
+        output["client_phase"] = u32(client + 256)
+        connection, transport = u64(client + 280), u64(client + 272)
+        assert connection and transport and u64(client + 264)
+        output["connection_state"] = u32(connection + 16)
+        output["transport_fd"] = u32(transport + 20)
+        assert output["client_phase"] == 1 and output["connection_state"] == 0
+        assert output["transport_fd"] != 0xFFFFFFFF
+    elif mode != "empty":
         transport = cpp_alloc(0x48)
         call("void(*)(void*)", base + 0x1A4210, transport)
         connection = call("void*(*)(void*)", base + 0x19BD00, transport)
@@ -221,7 +328,17 @@ def exercise_worker(mode):
     start()
     ctx = u64(dec + 0x268)
     output.update(
-        scope="Original worker with partial configured client; no full Client/Qt/network startup.",
+        scope=(
+            "Original complete client ctor"
+            + (
+                "/UDP Init/OnThink; loopback peer without handshake"
+                if bootstrap == "udp"
+                else "; no Init"
+            )
+            + "; explicit video owner/admission boundary; no full Qt/Steam startup."
+        )
+        if bootstrap
+        else "Original worker with partial configured client; no full Client/Qt/network startup.",
         callback_deferred=True,
         decoder_active=bool(read(dec + 24, 1)[0]),
         context_created=True,
@@ -234,11 +351,21 @@ def exercise_worker(mode):
     )
     assert output["source_callback_installed"]
     held = []
+    if mode == "empty" and bootstrap == "udp":
+        call("void(*)(void*)", base + 0x3230A0, client)
     if mode != "empty":
         submit(23)
         output["pending_stack"] = gdb.execute("thread apply all bt", to_string=True)
-        if mode in ("decode", "restart"):
-            held.append(finish_picture(23))
+        if mode == "reset_pending":
+            trace.append(["reset_while_pending", "main"])
+            call("void(*)(void*,int)", base + 0x319360, client, 0)
+            output["request_before_think"] = u32(dec + 96)
+            call("void(*)(void*)", base + 0x3230A0, client)
+            output["pending_after_reset_think"] = pending()
+            output["request_after_reset_think"] = u32(dec + 96)
+            submit(24)
+        if mode in ("decode", "restart", "reset_pending"):
+            held.append(finish_picture(24 if mode == "reset_pending" else 23))
             if mode == "restart":
                 output["picture_before_restart"] = output.pop("picture")
                 call("void(*)(void*)", base + 0x2EDC50, dec)
@@ -263,6 +390,9 @@ def exercise_worker(mode):
         cstring(u64(client + 648)).decode() if u64(client + 648) else None
     )
     assert output["context_cleared_after_stop"] and output["parser_cleared_after_stop"]
+    if bootstrap == "udp":
+        output["client_phase_after_stop"] = u32(client + 256)
+        output["connection_state_after_stop"] = u32(connection + 16)
     if held:
         output["picture"]["md5_after_stop"] = hash_frame(held[-1])
         if len(held) > 1:
@@ -278,16 +408,27 @@ def exercise_worker(mode):
     inf.write_memory(client + 40, struct.pack("<Q", 0))
     call("void(*)(void*)", u64(u64(dec) + 8), dec)
     call("void(*)(void*)", base + 0x2EE370, player)
-    call("void(*)(void*,void*)", base + 0x2B5C80, client + 648, 0)
-    if connection:
-        call("void(*)(void*)", base + 0x19A860, connection)
+    if bootstrap == "udp":
+        call("void(*)(void*)", u64(u64(client) + 8), client)
+        output["full_client_deleting_dtor_returned"] = True
         call("unsigned int(*)(void*)", base + 0x1A0C10, base + 0x13BD6A0)
-        assert u32(base + 0x13BD6A0 + 0x88) == 0
-        assert u32(base + 0x13BD6A0 + 0xA0) == 0
-        assert u32(transport + 8) == 1
-        assert call("int(*)(void*)", base + 0x1A41B0, transport) == 0
+        assert u32(base + 0x13BD6A0 + 0x88) == 0 and u32(base + 0x13BD6A0 + 0xA0) == 0
         output["connection_retired"] = True
-    call("void(*)(void*)", u64(u64(client + 456)), client + 456)
-    call("void(*)(void*,unsigned long)", base + 0xE3310, client, 0x22000)
+    else:
+        call("void(*)(void*,void*)", base + 0x2B5C80, client + 648, 0)
+        if connection:
+            call("void(*)(void*)", base + 0x19A860, connection)
+            call("unsigned int(*)(void*)", base + 0x1A0C10, base + 0x13BD6A0)
+            assert u32(base + 0x13BD6A0 + 0x88) == 0
+            assert u32(base + 0x13BD6A0 + 0xA0) == 0
+            assert u32(transport + 8) == 1
+            assert call("int(*)(void*)", base + 0x1A41B0, transport) == 0
+            output["connection_retired"] = True
+        if bootstrap:
+            call("void(*)(void*)", u64(u64(client) + 8), client)
+            output["full_client_deleting_dtor_returned"] = True
+        else:
+            call("void(*)(void*)", u64(u64(client + 456)), client + 456)
+            call("void(*)(void*,unsigned long)", base + 0xE3310, client, 0x22000)
     output["threads_after_resources"] = len(inf.threads())
     return output
