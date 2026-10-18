@@ -9561,3 +9561,89 @@ python3 scripts/check-steam-network-test-fec-flow.py \
   --receiver build/desktop/app/nsl-auth-udp-oracle
 ctest --test-dir build/desktop -R network_test_fec_flow_vectors --output-on-failure
 ```
+
+## 117. 媒体帧网络质量统计与传输丢包的分界
+
+### 117.1 原客户端构造、接收与600单位批次
+
+Evidence：固定§24.1 Android core的CNetworkStats构造@77a0f8、Start@77a15c、
+RecordFrameReceived@77a228、批次汇总@77a494、Stop@77a844与两种GetResult
+@77a908/@77a954。client的对象位于+968。原HandleStreamStarting在发送Complete5
+之后@7a70b4–7a70b8调用Start；原媒体接收在@7abf94–7abf9c仅对视频调用此对象，
+在decoder之前。它与§56的传输packet-loss和滑动视频带宽collector是独立统计。
+
+原Record以uint16帧号和有符号差判断旧帧，重复/旧帧直接忽略。向前缺口推进全局与
+本批帧号计数，但只有实际交付的完整帧加入延迟样本；延迟为完成接收减本地化send，
+负差归零。真实帧入样后批次计数达到600才汇总，因此一次大帧号跳跃可使该批超过
+600，并不在缺口中每600单位切批。延迟均值、样本标准差及帧丢失率按此批存储。
+
+Evidence：原函数探针对0/1/3/重复3/旧2/600记录、直接Start/Stop及实际向量执行。
+在601单位批次汇总后，Stop仍调用一次空批次汇总，空批为loss100/mean0/deviation0；
+最终对各批等权平均。不得据预期合理性改为按全部帧加权或跳过空批。这里是原统计
+函数行为，不是已确定的玩家停顿原因，也不产生自行开启FEC或重连的策略。
+
+### 117.2 可复播的统计与评分契约
+
+`audit-steam-media-network-stats.py`执行原指令并固定完整core SHA与12份所选
+CNetworkStats符号身份；不是每个案例都调用这12个符号。26组组件输入、137个状态
+覆盖空对象、Start/Stop重复、重启、1/2/7/8/9/599/600/601/1200个样本、重复旧帧、
+uint16回绕/半区边界、598/599/600/1199/32768缺口、负时差/uint32时钟回绕及不同
+大小批次。帧号初始水位为0，首帧23将0–22算缺失；初始65534/65535按旧帧忽略，
+32768为接受边界，32769为旧帧。大缺口中没有真实样本时，不自行补延迟样本。
+
+均值按原ticks拆整/小数转毫秒；标准差除以n−1，少于2个样本为0。原八样本分支
+平方乘法先舍入再累加，尾部使用FMADD；Native用显式舍入与fmaf保持这些分支。
+每个状态比较当前三浮点、所有批次三浮点及Stop最终三浮点的原始位。没有以近似
+容差掩盖不同算法。GetResult(mean,deviation,loss)的507组显式float输入覆盖0/负0、
+阈值前一位/阈值、Inf与NaN：mean==0、deviation>=16ms或loss>=1%为0；剩余
+deviation>=8ms或loss>=0.25%为1，其余为2。NaN必须按原ARM浮点条件处理，
+不能把negated GE无条件换成C的LT。极端值是组件输入，不证明自然收包会产生NaN。
+
+46条实际普通分片/FEC路径、2140个状态继续执行原Socket/CRC准入、窗口、RS恢复、
+完整帧交付与原OnDataPacket统计。时钟/OS/锁/libc/refcounts、decoder、最终发送准入
+等沿§56/74既有明确adapter，不能扩大成自然线程、真实Host或设备执行。比较不只
+是新增统计对象，还包括原传输/视频带宽collector、完整payload、保留header、报告
+正文及加密序号等原观察。普通与FEC保留的send header可能不同；受测13帧的普通
+路径延迟20ticks、对应FEC路径13ticks，这是各自原路径结果，不应强行归一。
+
+反例直接修改已加载原Stop中@77a854的BL-to-fold为NOP，两条路径各实际命中1次、
+正常返回且原assert为空：600个成功帧后的空批次使原最终loss=50%，跳过汇总则
+为0%。开始Stop前的状态完全一致。Native另将Stop改成跳过空批、Record改成计入
+重复旧帧，在隔离TU/静态库中成功编译链接，逐值比较均正常exit1检出；编译错误、
+崩溃和超时不计为反例成功。
+
+### 117.3 Native所有权与明确的平台实现边界
+
+`media_network_stats.c/h`实现默认不记录full samples的CNetworkStats路径。对象由
+Session持有，Base锁保护；Starting在Complete入队、释放control producer锁后清空
+统计，再通知connected。完整视频帧在解码前记录，音频不进入此全局统计对象，已
+Prepare的帧不重复计入。Stopping依次完成媒体停止/join、player通知、HID关闭，再
+Stop统计、回到phase0；Destroy在媒体/控制worker结束后释放批次内存。
+
+平台存储选择：延迟数组固定600项（每个实际样本至少推进1单位，到600即汇总），
+批次数组动态增长；不复制原对象私有ABI。分配失败使统计valid=false，媒体交付/
+协议仍继续，后续Start重置valid；这是本地资源防护，不冒称原分配失败策略。公开
+`IHS_SessionGetMediaNetworkStats`在锁内返回当前/最终值与valid/finalized，读取不
+发协议消息、不改变FEC，不自动应用评分。调用者必须先检查valid。
+
+生命周期检查实际覆盖视频/音频与重复Prepare、首次分配/扩容失败、保留旧分配、
+Start恢复、joinable并发读取、connected回调前Start清空及Stopping顺序。并发读探针
+有有限次数，避免测试自身无限抢锁造成写方饥饿。故障注入在帧构造完成后启用，
+防止误打到帧缓冲而声称验证了统计分配。两者为夹具边界，不是协议规则。
+
+可选full sample记录/回调、统计文件保存、网络测试自然媒体producer及设备/UI消费者
+并非本节默认路径证据；§116的无媒体超时案例也不能据此称为完整网络测试验收。
+本节不新增Switch能力、网络测试UI、丢包自动FEC或重连，不证明原玩家停顿原因。
+
+复播命令（Python依赖及固定样本沿§24.1）：
+
+```sh
+python3 scripts/audit-steam-media-network-stats.py \
+  --binary /path/to/libmain-arm64.so --output /tmp/media-network-stats.json
+python3 scripts/check-steam-media-network-stats.py \
+  --collector build/desktop/third_party/ihslib/tests/session/ihs-media-network-stats-oracle \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-network-wire-oracle
+ctest --test-dir build/desktop \
+  -R '^(media_network_stats_official_vectors|media_network_stats_lifetime|negotiation_stage_worker)$' \
+  --output-on-failure
+```

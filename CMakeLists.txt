@@ -183,6 +183,11 @@ if(NSL_PLATFORM STREQUAL "desktop")
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-video-network.py"
             --receiver $<TARGET_FILE:ihs-network-wire-oracle>)
         set_tests_properties(video_network_official_vectors PROPERTIES TIMEOUT 60)
+        add_test(NAME media_network_stats_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-media-network-stats.py"
+            --collector $<TARGET_FILE:ihs-media-network-stats-oracle>
+            --receiver $<TARGET_FILE:ihs-network-wire-oracle>)
+        set_tests_properties(media_network_stats_official_vectors PROPERTIES TIMEOUT 60)
         add_test(NAME receive_cycle_official_vectors COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-receive-cycle.py"
             --receiver $<TARGET_FILE:ihs-network-wire-oracle>)
