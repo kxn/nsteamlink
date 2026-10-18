@@ -23,6 +23,12 @@ int main(void) {
     atomic_store(&session->transport.shutdown, 1);
     assert(!IHS_SessionIsConnectionPending(session));
     atomic_store(&session->transport.shutdown, 0);
+    atomic_store(&session->transport.detached, true);
+    assert(!IHS_SessionIsConnectionPending(session));
+    atomic_store(&session->transport.detached, false);
+    atomic_store(&session->base.interrupted, true);
+    assert(!IHS_SessionIsConnectionPending(session));
+    atomic_store(&session->base.interrupted, false);
     unsigned pending;
     uint32_t begin, now;
     while (scanf("%u %" SCNu32 " %" SCNu32, &pending, &begin, &now) == 3)
