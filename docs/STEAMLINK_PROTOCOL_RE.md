@@ -11255,3 +11255,92 @@ python3 scripts/check-decoder-queue-native-mutations.py --build build/desktop \
   --output /tmp/decoder-queue-negatives
 ctest --test-dir build/desktop -R 'decoder_queue|video_reset_worker' --output-on-failure
 ```
+
+## 144. 统计/所有权记录不能先于关键帧恢复耗尽
+
+固定官方客户端、入口和SDK terminal沿用§143。扩大的只读queue observer读取
+原队列全部有效元素，放宽旧observer的128项断言；这不是改原客户端容量或指令。
+临时证据`/tmp/nsl145-pressure-source.{py,json,log}`和
+`/tmp/nsl145-native-pressure/observed.json`均以app1b88c48/SDK66e31b8为本地基线。
+
+Evidence：254/255/256/257/300个不同ID的连续未结束输入后，接一个完整关键帧，
+原RunDecodeLoop全部消费并提交最后关键帧。Native实际worker在前缀255及以上
+时，第256个ID的FrameTrackerBegin返回Capacity，触发Disconnect；receiver正常
+退出，未把fixture超时/断言当成产品失败。连续300个完整关键帧也得到相同分界：
+Source清旧pending后最终提交最后一帧，Native只完成255次flush、没有最终提交。
+此第二组每次key都清pending，不会触及256 partial/2MiB的既有协议资源保护。
+
+Conclusion：本地256条FrameTracker存储把“统计尚未settle”或“真实外部帧引用仍
+占用”误当成协议恢复不能继续的条件。原DecodeFrame/OnThink路径没有这个统计
+容量门槛。仅调大固定常数不能消除这种耦合；也不能把未采集完成、仍有外部引用的
+记录强制覆盖。此前§143的16例/20批次及其CI结论不涵盖此压力边界。
+
+本地资源契约：已完成、引用为0且完成/阶段快照已被统计消费者采集的记录可复用；
+快照时仍有引用的记录不准据此复用。仍无空记录时按需增加固定地址的存储块，不能
+realloc正在被decoder/GPU持有的ticket。新增块沿用owner引用/epoch/serial保护，
+最后一个引用释放后才销毁整组存储；真正分配失败仍走明确的本地资源错误保护。
+统计scratch须覆盖全部已分配存储，保持completion serial排序和既有240帧报告
+窗口，不可只收首256条。块大小不是线上frame ID、网络窗口或FEC参数。
+
+这里定义的是消除本地记录上限对原协议分支的干扰，不能声称原版使用相同ticket
+分配器。既有256 partial/2MiB和有界FIFO仍是独立平台保护；越界案例必须保留
+Source/Native差异，不能以新增存储能力改写它们。受控压力尚未证明真实Steam
+发包/自然慢SDK、Switch硬件表现或玩家卡顿因果。既有frame-ID历史/歧义准入和完整线程调度也未由
+本容量实验穷尽；不得将无容量断连扩大为全部decoder准入已对齐。
+
+### 144.1 压力输入、引用及报告投影
+
+正式`steam-decoder-pressure-reference.json.gz`保存7组媒体输入、36个消费批次状态。
+254/255/256个未结束输入后接key、300 key同批、每10个普通完整图像消费一批并
+保留全部300个输出引用，共5组34状态在本地实际FIFO/worker中与原指令投影一致。
+比较消费ID、strict/soft/reset、flush/反馈/提交顺序、提交payload SHA256、保留字节、
+等待参数与player任务ID；摘要取自完整实际SDK输入字节，不以本地生成参考值。
+最后一组刻意保留frame0和300个输出任务；它不是Switch同时持有301幅物理图像的
+能力声明。worker、backend/SDK terminal及批次间join/resume范围沿用§143。
+
+前缀257/300两组越过本地256 partial保护：Source只flush/提交最后key；Native在
+第257个partial报告一次DataLost并清旧pending，最后key在strict=1时flush、随后
+正常提交。正式比较保留这一额外反馈和flush入口差异，仍要求全部输入被消费、
+最终payload/身份相同且会话未关闭，不能称这两组完整协议全序等价。
+
+另2组直接执行原FrameStats receive/event/complete/SendFrameEvents和C++ protobuf
+序列化：先记录300个接收，再完成300、250，分别full=false/true，两次报告共4个
+flush状态。Native从300个实际ticket经过真实collector、报告/accumulator/protobuf和
+StatsSend进入最终frame准入，对比游标、选定slot、完整message body及detail行；
+其资源tracker不是Source实现的替身。第二块的300必须有decode begin/end及完成，
+completion serial顺序不能被物理存储位置250→300取代。既有240槽协议窗口不扩容。
+full大报告进入原Frame的动态数组分配分支，新增`operator new[]/delete[]`仅作
+allocator terminal；保留原扩容/复制/序列化逻辑，不替换报告或发送结果。
+
+### 144.2 本地存储与失败不变量
+
+`FrameTracker`保持256为历史horizon/分配块大小，按需串接固定地址块。遍历、
+epoch关闭、统计快照和settlement覆盖全部块；节点及owner在最后一个引用后才释放。
+记录复用优先选空/已settle槽，其次才选被复制时已经READY且refs=0的已采集记录；
+仅在之后观察到refs=0不够，仍持引用时复制的snapshot不能授权复用。`Begin`在真正
+分配失败时仍返回Capacity，没有新FEC、DataLost或重连策略用于掩盖记录压力。
+
+collector在自己的锁域增长scratch，失败不覆盖旧指针/容量、不先消费完成记录；
+下次能按原完成顺序重试。已完成行向前compact后按原completion serial排序，
+每条原始stage仍先应用，避免扩大存储后固定256个completion指针越界/漏报。
+300连续key的本地存储仍为256；300外部任务引用下为512。这是本地资源不变量，
+不是从官方取出的容量常数，也不等于GPU图像池大小。
+
+单独故障注入覆盖新增块calloc失败后重试、scratch realloc失败后完整统计重试；
+三块活跃存储同时存在时旧ticket地址/身份保持，关闭后全部块最终回收。
+保留旧ticket地址/epoch/serial及外部引用，第二块ticket能在owner关闭和IHS_Quit后
+安全最后释放。四份隔离回归分别恢复固定256门槛、禁用已采集复用、collector只读
+第一块、按存储位置完成；各适用receiver编译/链接并正常退出后才按媒体状态、
+本地容量不变量或原统计wire差异检出，不把断言/崩溃/超时作成功的语义反例。
+
+```sh
+python3 scripts/audit-steam-decoder-pressure.py /path/to/libmain-arm64.so \
+  --check scripts/fixtures/steam-decoder-pressure-reference.json.gz
+python3 scripts/check-steam-decoder-pressure.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-video-pressure-oracle \
+  --stats-receiver build/desktop/third_party/ihslib/tests/session/ihs-frame-stats-oracle
+python3 scripts/check-decoder-pressure-native-mutations.py --build build/desktop \
+  --output /tmp/decoder-pressure-negatives
+ctest --test-dir build/desktop -R 'decoder_pressure|frame_tracker|frame_stats_growth' \
+  --output-on-failure
+```
