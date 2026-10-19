@@ -66,6 +66,13 @@ def successful(result):
             and result.get('cases_expected') == expected)
 
 
+def deployment_command(nxlink, address, nro, fixture, output_height):
+    # nxlink appends positional arguments before the string from --args.
+    # Keep both probe arguments together to preserve their order on-device.
+    return [nxlink, '-a', address, '-r', '3', '-s', str(nro),
+            '--args', f'{fixture} {output_height}']
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--build', type=Path, default=Path('build/switch-deko'))
@@ -82,7 +89,7 @@ def main():
     archived_nro = directory / nro.name
     shutil.copyfile(nro, archived_nro)
     nxlink = shutil.which('nxlink') or '/opt/devkitpro/tools/bin/nxlink'
-    command = [nxlink, '-a', a.address, '-r', '3', '-s', str(archived_nro), '--args', a.fixture, str(a.output_height)]
+    command = deployment_command(nxlink, a.address, archived_nro, a.fixture, a.output_height)
     if shutil.which('stdbuf'):
         command = ['stdbuf', '-oL', '-eL', *command]
     nro_sha256 = hashlib.sha256(archived_nro.read_bytes()).hexdigest()

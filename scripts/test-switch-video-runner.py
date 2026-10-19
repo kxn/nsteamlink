@@ -24,6 +24,10 @@ def parse(text, **overrides):
 
 
 class Results(unittest.TestCase):
+    def test_deployment_argument_order(self):
+        command = runner.deployment_command('nxlink', '10.10.10.25', Path('/tmp/probe.nro'), 'suite', 1080)
+        self.assertEqual(command[command.index('--args'):], ['--args', 'suite 1080'])
+
     def test_complete(self):
         self.assertTrue(runner.successful(parse(LOG)))
 
