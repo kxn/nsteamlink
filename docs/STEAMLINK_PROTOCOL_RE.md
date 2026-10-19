@@ -13057,11 +13057,11 @@ DecodeFrame消费1/2，OnThink在active=0时仍执行FinalDecode(2)，实际复�
 ID1被后来的关键标记flush，原完成通知的raw参数是(1,7)，不能把它当作图像2
 提交完成或SDK已产出像素。SDK/JNI/NAL元数据/OS终点沿用原queue审计声明。
 
-本地视频DataThink以interrupted门控AssembleFrame，与上述原OnThink行为不同。
-公共循环的对齐不证明视频组帧/SDK路径对齐。该平台取消/组帧门控需要独立的
-runtime所有权及格式交接证据；Source在SDK terminal的成功不能证明本地停止后
-真实get_format安全。§159的显式freeze取消不能因此改成解码错误；也不能据此
-解释#55、Switch退出耗时或原玩家停顿。
+SDK至927d5dc的本地视频DataThink以interrupted门控AssembleFrame，与上述原
+OnThink行为不同。该差异的实际SDK/格式交接补证与修正见§167；本节音频对照
+自身不证明视频完整路径等价。撤回把公共循环或音频单独通过解释为视频Stop已
+全部对齐的推导。§159的显式freeze取消仍不能改成解码错误，也不能由这些控制
+输入解释#55、Switch退出耗时或原玩家停顿。
 
 ```sh
 PYTHONPATH=/path/to/audit-deps python3 scripts/audit-steam-decoder-stop-queue.py \
@@ -13071,3 +13071,44 @@ python3 scripts/check-steam-decoder-stop-queue.py \
 PYTHONPATH=/path/to/audit-deps python3 scripts/audit-steam-video-stop-drain.py \
   --binary /path/to/official/libmain-arm64.so --output /tmp/source-video-stop-drain.json
 ```
+
+## 167. 停止批次的视频组帧与格式取消反馈
+
+§166的原Android指令执行证明active清零不阻止已进入批次的OnThink/FinalDecode。
+同一固定Linux 1.3.32.316 ELF的RunDecodeLoop@2eda20也只在入口@2eda3e及Wait后
+@2edab2读取active，非空FIFO循环不重新判断。两份平台代码支持同一公共消费边界。
+
+不能因停止后观察到DataLost就判断取消策略错误。§102的真实官方Linux进程在
+取消模式下保留原回调/SDK实现：public Stop→实际get_format返回-1→SDK send
+返回-1094995529、receive返回-11→原RequestReset/DataLost/player Put→实际
+pthread_join完成→codec Stop。Connection未连接，不把DataLost入口称为已上wire。
+`audit-steam-client-worker-process.py`的四模式执行可复验同一顺序；像素/线程/SDK
+边界与§102相同，调试器断点影响调度，不冒称自然网络或无调试器竞态。
+
+原格式dispatch@324c90在异步线程模式中先保存pending/formats，再以active判断
+是否继续等待；@324cdd/324ce3看到active=0即返回-1，不要求此前已等待过一轮。
+因此冷批次在Stop后首次进入SDK格式选择，也不能由“尚未发生pending”推导它必须
+跳过整个FinalDecode。Native恢复在已进入消费批次后执行AssembleFrame；原有
+pending-reset gate、格式取消和显式freeze契约继续独立适用。
+
+`video_stop_queue_runtime.c`使用生产runtime callback表、真实完整帧FIFO/pthread、
+组帧、tracked tickets、实际软件FFmpeg/format handoff与媒体pipeline。在第一份
+DecodeFrame前暂停，排入第二份关键帧，再实际ChannelRemove至worker join；
+fixture gate放行后，最新ID2才到真实submit。可选暖机先正常处理ID0，可选显式
+freeze对应§159的本地退出输入。没有Steam、OS UDP、GPU像素或Switch/ABI证明。
+
+Native fixture以转发proxy观察已安装get_format，保留原formats/返回值；实际SDK
+send/receive包装同样只转发并记录。该Native观测与官方GDB不改原callback的证据
+边界不同，不能用二者声称原函数地址相同或物理调度等价。
+
+| Native受控输入 | 后续ID2提交与真实结果 |
+|---|---|
+| 冷、未freeze | format=-1、send=AVERROR_INVALIDDATA、receive=EAGAIN，DataLost一次 |
+| 暖、未freeze | 沿用已选YUV420P，send=0，无新增DataLost |
+| 冷、显式freeze | ID2进入应用提交边界但未交SDK，taken=false，无新增DataLost |
+| 暖、显式freeze | 同上，先前已选择格式不改变本地取消语义 |
+
+四组均实际消费/释放已排队输入、join后关闭decoder，没有session interrupted或
+media error。暖机/冷机的SDK区别有真实返回见证；不把它推广成所有厂商硬件错误
+映射或玩家卡顿原因。移除前的本地组帧guard使四组均无ID2提交，与§166原码的
+在途批次不符；这不是要求忽略SDK错误或在任意停止阶段继续消费。

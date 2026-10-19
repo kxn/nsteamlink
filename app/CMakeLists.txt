@@ -433,6 +433,25 @@ if(NSL_PLATFORM STREQUAL "desktop")
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video/sequential.h264 --${mode})
         set_tests_properties(video_stop_${mode} PROPERTIES TIMEOUT 20)
     endforeach()
+    add_executable(nsl-video-stop-queue-runtime tests/video_stop_queue_runtime.c)
+    target_include_directories(nsl-video-stop-queue-runtime PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf ${CMAKE_SOURCE_DIR}/third_party/ihslib/tests/common)
+    target_compile_options(nsl-video-stop-queue-runtime PRIVATE -UNDEBUG -Wall -Wextra -Wno-unknown-pragmas)
+    target_link_libraries(nsl-video-stop-queue-runtime PRIVATE nsl_platform ihs-test-session)
+    target_link_options(nsl-video-stop-queue-runtime PRIVATE
+        -Wl,--wrap=IHS_SessionChannelDataReceiveFrame -Wl,--wrap=IHS_SessionChannelDataThink
+        -Wl,--wrap=IHS_ThreadJoin -Wl,--wrap=sl_media_video_submit_tracked
+        -Wl,--wrap=IHS_SessionChannelDataLost -Wl,--wrap=IHS_SessionPacketTimestamp
+        -Wl,--wrap=IHS_BaseSend -Wl,--wrap=avcodec_open2
+        -Wl,--wrap=avcodec_send_packet -Wl,--wrap=avcodec_receive_frame)
+    foreach(warm 0 1)
+        foreach(freeze 0 1)
+            add_test(NAME video_stop_queue_${warm}_${freeze} COMMAND nsl-video-stop-queue-runtime
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video/sequential.h264 ${warm} ${freeze})
+            set_tests_properties(video_stop_queue_${warm}_${freeze} PROPERTIES TIMEOUT 25)
+        endforeach()
+    endforeach()
     add_executable(nsl-network-test-failure-runtime tests/network_test_failure_runtime.c)
     target_include_directories(nsl-network-test-failure-runtime PRIVATE platforms/common
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
