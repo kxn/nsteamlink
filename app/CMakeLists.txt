@@ -435,6 +435,14 @@ if(NSL_PLATFORM STREQUAL "desktop")
     endforeach()
     # Actual client worker, real condition waits and stop/join/destroy.
     add_executable(nsl-discovery-error-runtime tests/discovery_error_runtime.c)
+    # Explicit differential oracle; no probe code is linked into products.
+    add_executable(nsl-discovery-send-runtime EXCLUDE_FROM_ALL tests/discovery_send_runtime.c)
+    target_include_directories(nsl-discovery-send-runtime PRIVATE
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+    target_compile_options(nsl-discovery-send-runtime PRIVATE -Wall -Wextra -Werror -Wno-unknown-pragmas)
+    target_link_libraries(nsl-discovery-send-runtime PRIVATE ihslib ihs-platforms ihslib)
+    target_link_options(nsl-discovery-send-runtime PRIVATE -Wl,--wrap=socket -Wl,--wrap=close
+        -Wl,--wrap=sendto -Wl,--wrap=IHS_UDPBroadcastAddresses)
     add_executable(nsl-client-startup-runtime tests/client_startup_runtime.c)
     target_include_directories(nsl-client-startup-runtime PRIVATE platforms/common
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client

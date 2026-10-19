@@ -13317,3 +13317,65 @@ Connected，再停止并join发送/RX owner，全部资源回归基线。构造�
 测网成功，也不能为满足错误断言修改既有统计语义。生命周期检查有实际资源计数
 和worker join身份，内存检查另行执行；不从进程exit0推断Switch已回到hbmenu，
 不将桌面受控资源恢复称为自然网络切换或官方Qt的线程实现。
+
+## 172. 发现发送触发、广播 fd 恢复与快速发现轮
+
+Evidence：`audit-steam-discovery-send.py`固定 Core `50e1d314…38e` 与 shell
+`15b2d798…238a2`，各27组连续程序，记录原方法、完整wire、sockaddr、fd与阶段。
+Core `SendMessage@79ad64` / `BSend@7966ec`、两版BStart/BInit、Update/RequestStatus、
+Enable/Trigger、CUtlBuffer及生成protobuf实际执行。manager存储、缓存deviceId42和
+空host表是受控前置，未执行整个manager构造。初始资源空Stop、OS返回、分配/libc/
+libc++字符串存储为适配；无效地址的远端token失败是终点。两组读先于重建的程序
+以opaque BProcess终点观察排序，不声称有效wire admission、自然Qt、Steam或Switch。
+
+对§168–169“保留socket/不重建”的含义作明确限定：非正读本身不销毁发现owner，
+不等于运行期底层fd永不重建。先前读错误程序将RequestStatus作为终点，不能由其
+推出后续发送路径也不重开fd；“运行期fd永不重建”的全称推断在此撤回。以下完整
+BSend执行证明广播全失败后的重建分支，manager与socket对象仍保持。
+
+`SendMessage`先生成完整发现头/消息。有效IP、非零port、local启用时，才检查
+manager+32的CDiscoverySocket；为空则BStart，成功后BSend，已有对象则复用。
+`WakeComputer`也内联此检查（Core@79ac90），本组未执行完整唤醒producer。
+无IP/port会进入远端token分支，不能笼统当作本地参数拒绝。SendMessage没有可作
+投递判断的返回值；测试只观察原BSend的bool及实际sendto终点，不能用清理后的x0
+残值冒称成功。local有效IPv4、deviceId42、seq17的两版完整报文均为：
+`ffffffff214c5fa004000000082a1000020000000811`。
+
+原BSend先固定目标数组。IPv4 socket使用一个目标；IPv6 socket的IPv4广播同时加入
+`ff02::1`，按其原ToSockadr方法发送。负sendto通常计作失败，但Android/Linux的
+`EHOSTUNREACH=113`不增加失败数；正返回与长度不等则必计失败，不能仅按errno113
+忽略短写。聚合返回为“失败数小于目标数”，并非主机已收到。只要有一个目标成功
+或被EHOSTUNREACH规则接受，就不触发本轮全失败重建。
+
+仅广播且所有目标均被计失败时：关闭非负fd，在同一CDiscoverySocket上BInit，
+重发整轮目标；最多两次重建、总计三轮，循环内没有新增等待。单播失败不走此分支。
+BInit仍优先按当前族状态创建socket，既有非关键选项失败含义见§168；不能将重建
+误写成无条件切到IPv4。IPv4映射程序验证失败后也按IPv4重建。初始化失败可以留下
+state1、同一对象但fd=-1，三轮结束后仍不销毁manager。后续正常快速发现轮可先
+在无效fd上失败，再触发BInit并恢复；无需预先收到网络通知。
+
+广播开启计数位于manager+40。Enable递增该计数并清零full期限，Trigger只清零
+full期限；二者均调用Update。原Update先完成接收/处理，再判断以下wall秒期限：
+
+| 分支 | 更新 | 报文序号 |
+| --- | --- | --- |
+| now >= full(+48) | full=now+12+rand(1,5)，tries(+80)=1，fast(+88)=now+rand(1,3) | +44递增一次 |
+| 未到full，tries<=2且now>=fast | tries递增，fast=now+rand(4,7) | 沿用当前序号 |
+| 其余 | 本轮不RequestStatus | 不变 |
+
+随机下界程序的发送为t=0/1/5/13秒，前3包序号相同，第4包递增；上界程序为
+0/3/10/17秒。它们是受控time/RNG边界，不是自然Qt精确耗时。tries达到3后，即使
+fast字段已到期也需等full；不能把固定3秒、每次递增seq的广播当作同一策略。
+这些期限适用于发现RequestStatus，不替换开流票据原1秒/3秒重试契约。
+
+平台映射约束：保留发现owner、身份和事务，只在对应广播策略中有界重建fd；不能
+套到媒体Session。多目标在一轮重试中保持稳定，错误码按平台符号映射。线程端口
+还须保证更换fd与RX/发送/关闭互斥，并保持完整读批次、已排队回调先于自动广播的
+顺序；仅序列化单次recv系统调用不足以证明原manager的完整Update顺序。重建失败
+需可继续处理后续轮次并安全退出，不得产生无效句柄关闭、悬挂worker或阻塞日志。
+
+Native差异比较器 `check-steam-discovery-send.py` 通过显式目标
+`nsl-discovery-send-runtime` 观察真实client/UDP/protobuf/timer/清理，控制sendto
+错误、poisoned descriptor generation及loopback目标；不向LAN发送。输出中的
+cleanup=true只证明该受控观察清理完成；兼容性另行比较并在不符时exit1，不能将
+进程正常结束当作协议一致。成功loopback回复属于Native验证，非原码或Steam证据。
