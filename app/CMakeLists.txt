@@ -176,6 +176,20 @@ if(NSL_PLATFORM STREQUAL "switch")
         ICON "${CMAKE_SOURCE_DIR}/assets/branding/icon.jpg")
 endif()
 if(NSL_PLATFORM STREQUAL "desktop")
+    add_executable(nsl-fec-channel-oracle tests/fec_channels_oracle.c)
+    target_include_directories(nsl-fec-channel-oracle PRIVATE
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+    target_link_libraries(nsl-fec-channel-oracle PRIVATE ihs-test-session ihslib)
+    target_compile_options(nsl-fec-channel-oracle PRIVATE -Wall -Wextra -Werror
+        -Wno-unknown-pragmas -UNDEBUG)
+    target_link_options(nsl-fec-channel-oracle PRIVATE -Wl,--wrap=IHS_BaseSend
+        -Wl,--wrap=IHS_SessionPacketTimestamp -Wl,--wrap=IHS_SessionPacketParse
+        -Wl,--wrap=IHS_FECReceiverAdd -Wl,--wrap=IHS_SessionDeliverReliableFrame)
+    add_test(NAME fec_channel_isolation_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-fec-channel-isolation.py"
+        --receiver "$<TARGET_FILE:ihs-network-wire-oracle>"
+        --channel-receiver "$<TARGET_FILE:nsl-fec-channel-oracle>")
+    set_tests_properties(fec_channel_isolation_official_vectors PROPERTIES TIMEOUT 30)
     add_test(NAME live_media_probe_log_contract COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/scripts/test-live-media-probe.py")
     add_executable(nsl-video-settings-tests tests/test_video_settings.c)

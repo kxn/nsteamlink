@@ -12734,7 +12734,7 @@ observer5的显式`--fec-request on --fec-loss drop-group`沿用§160的post-CRC
 owner、首次新组水位及120次真实submit返回暖机边界，且要求此前视频DataLost为0，
 避免把启动时已排队的请求归于此次擦除。index0必须含完整20B媒体/视频头，tag=1、
 FrameFinish置位、KeyFrame/Encrypted清零、视频范围四字节为0，L/S≥20、S≤1472、
-k+m≤255。与drop-one不同，整组擦除允许k=1或m=0；无法确认单媒体片段/P帧的
+k+m≤255。与drop-one不同，整组擦除允许k=1或m=0；无法确认单媒体片段/非关键帧的
 输入保持原样转发，最终没有合格组则未验证。
 
 选中组全部数据片、parity及所有重复副本均不进入原FEC Add；固定255索引账要求
@@ -12794,3 +12794,75 @@ python3 tools/live-media-probe.py --steam 10.10.10.166 --switch 10.10.10.25 \
 ```
 
 最后一条只准备包，`--run`仅在该次netloader准备确认后使用，不探测端口或自动重启。
+
+## 163. 不同 channel 的 FEC 活动组、成功水位与普通窗口隔离
+
+### 163.1 官方原指令和明确的输入边界
+
+`audit-steam-fec-channel-isolation.py`固定Android客户端ELF SHA256
+`50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e`。原
+Socket/CRC、Connection准入、GetChannel/构造器、HandlePacket/HandleFECPacket、
+BAddPacket/Reset/ReconstructData/RS和普通channel Update执行；11份完整函数的
+符号范围/代码SHA及实际入口命中计数保存。每份实际Socket入口datagram在原CRC
+剥离之前采集，避免只比较适配器宣称发送的内容。
+
+连接已经建立、时钟和默认媒体delay是显式前态；复用§58/69的分配、CUtl存储、
+refcount、mutex、最终transport及完整正文delegate适配器。这里不是完整认证会话、
+OS UDP或真实媒体worker。channel3/4是通用transport槽位，未启动音频或视频；
+不能把它们的编号当成自然Steam角色分配。
+
+两份不同的80B不透明正文均由原Android AddPacket/RS编码器实际生成k3/m2/S32
+码字。MTU64、冗余输入50%和固定group/outer timestamp是受控fixture条件，
+不代表Host默认参数、自然启用策略或音频in-band FEC。第一份完整码字另与§26
+已固定向量逐字节相等。涉及重建的组只提供systematic0和parity3/4，缺失数据1/2。
+
+### 163.2 触发条件和原版观察
+
+| 计划 | 实际输入 | 原版结果 |
+|---|---|---|
+| same_group | A/B相同group1，交错0/3/4，B先收齐 | 分别交付B1、A1，实际执行两次RS |
+| other_newer | A1只到0；B2/B3完整；再补A1的3/4 | B2、B3、A1均交付；较新B水位不拒绝A1 |
+| other_rollback | A1只到0；B1只到0后换B2；A1补齐；B回到1补3/4及重新发送0，再完整B2 | A1、B1、B2均交付；B换组丢弃旧片，A保留原片 |
+| ordinary_during | A1只到0；A普通窗口ID0输入并Update；B1完整；A1补3/4 | 普通正文、B1、A1依次交付；普通/FEC窗口独立 |
+
+前三种计划交换A/B的channel3/4角色后重复，四种计划都执行CRC开/关，共14组、
+120个输入/Update步骤、38次完整正文交付、22次原RS执行。Source每次交付直接读取
+实际packet header的channel/group和正文，记录对应输入步骤，不用预期顺序重排结果。
+
+Conclusion：单活动组是**每个channel**的状态，不是全连接共用一个receiver。
+活动组替换、回退重新收集和成功group水位均限于所属channel；同一channel的普通
+unreliable窗口不使用FEC水位。Native的连接所有者`unreliable[id]`/独立`fec`已符合
+这些输入，无须为此新增全局缓存、重试、自动FEC切换或decoder重置。
+
+原GetChannel实际构造0…最高索引的通用channel；本fixture最终均观察到0…4。
+Native按活动槽位懒建的策略并不因此被判为分配/内存峰值相等；功能交付一致不能
+掩盖不同的容器和生命周期实现。原始活跃组内重复计数缺陷仍按§26/33独立处理，
+本组计划不以复制该缺陷来证明一致。
+
+### 163.3 两份 Native 执行及证据限度
+
+`fec_channel_isolation_official_vectors`对每份Source计划运行两份独立Native进程：
+既有network-wire oracle通过实际CRC/Base/session/window/FEC/RS，逐步比较完整
+正文与collector状态；新增`nsl-fec-channel-oracle`重新输入同一原始datagram，核对
+实际delegate的channel/group/正文/发生步骤、全部输入解析数、原FEC Add委托数和
+两channel稳定且不同的receiver地址。它保留原Add参数/返回，仅最终delegate和
+最终发送是适配器。两份执行不是同一份进程中的联合时序证明。
+
+比较器逐项检查Source helpers、函数身份/命中、完整输入及CRC、声明的计划与输出
+归因；16份篡改Source或Native记录的反例均必须拒绝。这些是证据记录反例，不是
+修改过生产receiver的语义mutant。正式入口拒绝`python -O`。普通/诊断桌面构建均
+注册该用例，Switch产品不链接这个oracle，也不增加运行期诊断接口。
+
+这一范围支持transport channel状态隔离，不证明自然音视频角色、Opus/H264解码、
+OS线程竞态、真实Steam突发/乱序、Host重发/GOP/FEC策略、Switch硬解、物理输出或
+完整会话峰值。验收记录在GitHub #70；§162的真实整组擦除仍是另一份设备验证。
+§162的非关键flag只标记媒体信封属性，不据此判定NAL slice类型或参考图像关系。
+
+```sh
+PYTHONPATH=/path/to/audit-deps python3 scripts/audit-steam-fec-channel-isolation.py \
+  --binary /path/to/official/libmain-arm64.so --output /tmp/source-fec-channels.json
+python3 scripts/check-steam-fec-channel-isolation.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-network-wire-oracle \
+  --channel-receiver build/desktop/app/nsl-fec-channel-oracle --output /tmp/native-fec-channels.json
+ctest --test-dir build/desktop --output-on-failure -R '^fec_channel_isolation_official_vectors$'
+```
