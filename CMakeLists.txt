@@ -172,6 +172,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
         add_test(NAME decoder_pressure_official_vectors COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-decoder-pressure.py"
             --receiver $<TARGET_FILE:ihs-video-pressure-oracle>
+            --reuse-receiver $<TARGET_FILE:ihs-frame-reuse-oracle>
             --stats-receiver $<TARGET_FILE:ihs-frame-stats-oracle>)
         set_tests_properties(decoder_pressure_official_vectors PROPERTIES TIMEOUT 60)
         add_test(NAME decoder_queue_wake_native COMMAND ihs-video-queue-oracle

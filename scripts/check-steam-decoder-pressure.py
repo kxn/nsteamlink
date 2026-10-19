@@ -112,6 +112,23 @@ def execute_stats(receiver, case):
     return rows
 
 
+def execute_reuse(receiver):
+    result = subprocess.run(
+        [str(receiver.resolve())], text=True, capture_output=True, timeout=15
+    )
+    assert result.returncode == 0, (
+        "local reuse",
+        result.returncode,
+        result.stderr[-2000:],
+    )
+    return json.loads(result.stdout)
+
+
+def verify_reuse(receiver, row=None):
+    row = execute_reuse(receiver) if row is None else row
+    assert row == {"submitted": 300, "storage": 256}, ("local collected reuse", row)
+
+
 def verify_stats(receiver, case, rows=None):
     spec = importlib.util.spec_from_file_location(
         "stats_check", ROOT / "scripts/check-steam-frame-stats.py"
@@ -169,6 +186,7 @@ def main():
         default=ROOT / "scripts/fixtures/steam-decoder-pressure-reference.json.gz",
     )
     parser.add_argument("--stats-receiver", required=True, type=Path)
+    parser.add_argument("--reuse-receiver", type=Path)
     args = parser.parse_args()
     reference = json.loads(gzip.decompress(args.reference.read_bytes()))
     cases = reference["cases"]
@@ -178,6 +196,9 @@ def main():
         verify_stats(args.stats_receiver, case) for case in reference["stats_cases"]
     )
     print("Overflow statistics: 2 original-client cases/", stats_states, "flush states")
+    if args.reuse_receiver:
+        verify_reuse(args.reuse_receiver)
+        print("Local collected reuse: 300 submitted/completed inputs, storage 256")
     print(
         f"Decoder pressure: {len(cases)} official cases/{states} states; {guards} explicit port guards"
     )

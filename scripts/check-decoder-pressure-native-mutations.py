@@ -44,6 +44,7 @@ def main():
         check.verify(media_base, case)
     for case in reference["stats_cases"]:
         check.verify_stats(stats_base, case)
+    check.verify_reuse(directory / "ihs-frame-reuse-oracle")
     variants = [
         (
             "fixed_256_records",
@@ -99,6 +100,11 @@ def main():
         for kind, target in [
             ("media", "ihs-video-pressure-oracle"),
             *([("stats", "ihs-frame-stats-oracle")] if use_stats else []),
+            *(
+                [("reuse", "ihs-frame-reuse-oracle")]
+                if name == "no_collected_reuse"
+                else []
+            ),
         ]:
             link = shlex.split(
                 (directory / f"CMakeFiles/{target}.dir/link.txt").read_text()
@@ -134,6 +140,12 @@ def main():
                     check.verify_stats(receivers["stats"], case, rows)
                 except AssertionError:
                     mismatches.append("stats/full=" + str(case["full"]))
+        if "reuse" in receivers:
+            row = check.execute_reuse(receivers["reuse"])
+            try:
+                check.verify_reuse(receivers["reuse"], row)
+            except AssertionError:
+                mismatches.append("local/submitted_collected_reuse")
         assert mismatches, (name, "undetected")
         reports.append(
             dict(
@@ -144,6 +156,7 @@ def main():
                 normal_exit_stats_cases=(
                     len(reference["stats_cases"]) if use_stats else 0
                 ),
+                normal_exit_reuse_cases=int("reuse" in receivers),
                 mismatches=mismatches,
             )
         )

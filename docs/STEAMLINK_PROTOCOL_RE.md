@@ -11338,6 +11338,7 @@ python3 scripts/audit-steam-decoder-pressure.py /path/to/libmain-arm64.so \
   --check scripts/fixtures/steam-decoder-pressure-reference.json.gz
 python3 scripts/check-steam-decoder-pressure.py \
   --receiver build/desktop/third_party/ihslib/tests/session/ihs-video-pressure-oracle \
+  --reuse-receiver build/desktop/third_party/ihslib/tests/session/ihs-frame-reuse-oracle \
   --stats-receiver build/desktop/third_party/ihslib/tests/session/ihs-frame-stats-oracle
 python3 scripts/check-decoder-pressure-native-mutations.py --build build/desktop \
   --output /tmp/decoder-pressure-negatives
@@ -11420,6 +11421,13 @@ key区间取消；各22个receiver编译链接并正常退出后，正式比较�
 实际FFmpeg/runtime另保留旧AVFrame与mapping，对重复ID/半区跳变/大跨度key
 核验独立ticket、已解码像素及旧引用不变。旧AVCodec对照读真实协议统计ring，
 不再用本地任务endpoint列表代替取消后的协议状态；物理对象检查仍独立保留。
+
+§144的300个同批key仍证明最终提交/资源有界，但在提前退休未提交输入后，
+它不再证明READY记录复用。该复用不变量由单独的300次endpoint API输入→decode
+begin/end→Complete→release→真实collector工作负载验证（不经过SDK），正常退出后
+比较实际storage；不把本地256
+说成官方常数。旧“禁止已采集复用”隔离回退仍须在此工作负载正常退出后被检出，
+不能依赖同批key的原资源用途，也不能把单元断言崩溃计作正常退出语义反例。
 
 ```sh
 python3 scripts/audit-steam-decoder-identity.py /path/to/libmain-arm64.so \
