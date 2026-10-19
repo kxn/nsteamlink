@@ -3,6 +3,7 @@
  * Every consumer is stopped/joined before SDL/session dependencies are freed. */
 #include "audio_jitter.h"
 #include "audio_recovery.h"
+#include "crypto.h"
 #include "ihs_buffer.h"
 #include "ihs_buffer_ext.h"
 #include "ihslib.h"
@@ -16,6 +17,7 @@
 #include <math.h>
 #include <opus.h>
 #include <opus_multistream.h>
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,7 +47,42 @@ static sl_audio_decode_step activeStep;
 static sl_audio_recovery recovery;
 static unsigned decoderConfig[6], decoderConfigCount;
 static atomic_uint started, completed, stopped;
-static bool legacy, guard;
+static bool legacy, guard, stop_probe;
+static unsigned pause_index;
+static IHS_Thread *audio_worker;
+static atomic_uint codec_blocked, codec_release, codec_calls;
+static atomic_uint join_entered, join_returned, decoder_destroyed, remove_done;
+static uint8_t stop_tokens[32769 * 12];
+static unsigned stop_steps;
+static void wait_for(atomic_uint *value, unsigned target);
+
+void __real_IHS_ThreadJoin(IHS_Thread *);
+void __wrap_IHS_ThreadJoin(IHS_Thread *thread) {
+    bool watched = stop_probe && thread == audio_worker;
+    if (watched) {
+        assert(atomic_load(&codec_blocked) && !atomic_load(&decoder_destroyed));
+        assert(atomic_load(&completed) == 1);
+        atomic_store(&join_entered, 1);
+    }
+    __real_IHS_ThreadJoin(thread);
+    if (watched) {
+        assert(atomic_load(&completed) == 2 && !atomic_load(&decoder_destroyed));
+        atomic_store(&join_returned, 1);
+    }
+}
+void __real_opus_multistream_decoder_destroy(OpusMSDecoder *);
+void __wrap_opus_multistream_decoder_destroy(OpusMSDecoder *decoder) {
+    if (stop_probe) {
+        assert(atomic_load(&join_returned) && atomic_load(&completed) == 2);
+        atomic_fetch_add(&decoder_destroyed, 1);
+    }
+    __real_opus_multistream_decoder_destroy(decoder);
+}
+static void *remove_channel(void *context) {
+    IHS_SessionChannelRemove(context, 3);
+    atomic_store(&remove_done, 1);
+    return NULL;
+}
 static int (*forwardDecode)(void *, const sl_audio_decode_step *);
 static void *forwardContext;
 
@@ -57,6 +94,18 @@ void __wrap_sl_audio_recovery_reset(sl_audio_recovery *s) {
 static int record_step(void *unused, const sl_audio_decode_step *step) {
     (void)unused;
     activeStep = *step;
+    if (stop_probe && atomic_load(&completed) == 1) {
+        assert(stop_steps < 32769);
+        uint8_t *p = stop_tokens + stop_steps++ * 12;
+        p[0] = step->id;
+        p[1] = step->id >> 8;
+        for (unsigned i = 0; i < 4; ++i) {
+            p[2 + i] = step->timestamp >> (8 * i);
+            p[6 + i] = (uint32_t)step->max_samples >> (8 * i);
+        }
+        p[10] = step->use_packet;
+        p[11] = step->fec;
+    }
     return forwardDecode(forwardContext, step);
 }
 int __real_sl_audio_recovery_run(sl_audio_recovery *, uint16_t, uint32_t,
@@ -88,6 +137,13 @@ int __real_opus_multistream_decode_float(OpusMSDecoder *, const unsigned char *,
                                          float *, int, int);
 int __wrap_opus_multistream_decode_float(OpusMSDecoder *d, const unsigned char *packet,
                                          opus_int32 size, float *pcm, int maxSamples, int fec) {
+    if (stop_probe && atomic_load(&completed) == 1) {
+        if (atomic_fetch_add(&codec_calls, 1) == pause_index) {
+            atomic_store(&codec_blocked, 1);
+            wait_for(&codec_release, 1); /* Fixture gate, never a product wait. */
+            assert(atomic_load(&join_entered) && !atomic_load(&decoder_destroyed));
+        }
+    }
     if (guard)
         return __real_opus_multistream_decode_float(d, packet, size, pcm, maxSamples, fec);
     assert(current && current->count < 64 && size >= 0 && size < 4096);
@@ -160,6 +216,8 @@ static int audio_legacy(IHS_Session *s, IHS_Buffer *b, void *ctx) {
 }
 static void audio_stop(IHS_Session *s, void *unused) {
     (void)unused;
+    if (stop_probe)
+        assert(atomic_load(&join_returned) && atomic_load(&completed) == 2);
     stream_media_audio_stop(s);
     atomic_fetch_add(&stopped, 1);
 }
@@ -188,6 +246,14 @@ int main(int argc, char **argv) {
     assert(argc == 2 || argc == 3);
     legacy = argc == 3 && strcmp(argv[2], "legacy") == 0;
     guard = argc == 3 && strcmp(argv[2], "guard") == 0;
+    stop_probe = argc == 3 && strncmp(argv[2], "stop-", 5) == 0;
+    if (stop_probe) {
+        char *end;
+        unsigned long value = strtoul(argv[2] + 5, &end, 10);
+        assert(!*end && value <= 32768);
+        pause_index = (unsigned)value;
+        guard = true;
+    }
     assert(!setenv("SDL_AUDIODRIVER", "dummy", 1));
     assert(!setenv("SDL_VIDEODRIVER", "dummy", 1));
     assert(!setenv("SDL_RENDER_DRIVER", "software", 1));
@@ -206,6 +272,8 @@ int main(int argc, char **argv) {
     IHS_SessionSetAudioCallbacks(s, &callbacks, NULL);
     unsigned channels = (unsigned)atoi(argv[1]);
     IHS_SessionChannel *ch = configure(s, channels);
+    audio_worker = ((IHS_SessionChannelData *)ch)->worker;
+    assert(audio_worker);
     unsigned rows = 0, fed = 0;
     char line[8192];
     while (fgets(line, sizeof(line), stdin)) {
@@ -237,16 +305,46 @@ int main(int argc, char **argv) {
             }
             assert(IHS_SessionDeliverReliableFrame(s, &f) == IHS_ReliableData);
             IHS_BufferClear(&f.body, true);
-            wait_for(&completed, ++fed);
+            ++fed;
+            if (stop_probe && fed == 2) {
+                wait_for(&codec_blocked, 1);
+                pthread_t remover;
+                assert(!pthread_create(&remover, NULL, remove_channel, s));
+                wait_for(&join_entered, 1);
+                assert(!atomic_load(&join_returned) && !atomic_load(&remove_done));
+                assert(!atomic_load(&decoder_destroyed) && atomic_load(&completed) == 1);
+                atomic_store(&codec_release, 1);
+                assert(!pthread_join(remover, NULL));
+                assert(atomic_load(&remove_done) && atomic_load(&join_returned));
+                assert(atomic_load(&decoder_destroyed) == 1 && atomic_load(&stopped) == 1);
+                assert(atomic_load(&completed) == 2 && stop_steps == 32769);
+                ch = NULL;
+            } else {
+                wait_for(&completed, fed);
+            }
         }
     }
     stream_media_snapshot snapshot;
     stream_media_get_snapshot(&snapshot);
-    IHS_SessionChannelRemove(s, ch->id);
+    if (ch)
+        IHS_SessionChannelRemove(s, ch->id);
     assert(atomic_load(&started) == atomic_load(&stopped));
     IHS_SessionDestroy(s);
     IHS_Quit();
     stream_media_shutdown();
+    if (stop_probe) {
+        assert(rows == 2 && fed == 2 && snapshot.audio_frames == 32770);
+        uint8_t sha[32];
+        assert(!IHS_CryptoSHA256(stop_tokens, stop_steps * 12, sha));
+        printf("{\"pause_index\":%u,\"steps\":%u,\"frames\":%u,\"errors\":%u,"
+               "\"joined\":%u,\"destroyed\":%u,\"trace_sha256\":\"",
+               pause_index, stop_steps, snapshot.audio_frames, snapshot.audio_decode_errors,
+               atomic_load(&join_returned), atomic_load(&decoder_destroyed));
+        for (unsigned i = 0; i < sizeof(sha); ++i)
+            printf("%02x", sha[i]);
+        puts("\"}");
+        return 0;
+    }
     if (guard) {
         printf("{\"frames\":%u,\"queued\":%u,\"drops\":%u,\"errors\":%u}\n", snapshot.audio_frames,
                snapshot.audio_queued_bytes, snapshot.audio_queue_drops,

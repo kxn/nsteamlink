@@ -547,7 +547,8 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_link_options(nsl-opus-recovery-oracle PRIVATE -Wl,--wrap=sl_audio_jitter_push
         -Wl,--wrap=SDL_OpenAudioDevice -Wl,--wrap=SDL_PauseAudioDevice
         -Wl,--wrap=opus_multistream_decode_float -Wl,--wrap=opus_multistream_decoder_create
-        -Wl,--wrap=sl_audio_recovery_run -Wl,--wrap=sl_audio_recovery_reset)
+        -Wl,--wrap=sl_audio_recovery_run -Wl,--wrap=sl_audio_recovery_reset
+        -Wl,--wrap=IHS_ThreadJoin -Wl,--wrap=opus_multistream_decoder_destroy)
     add_test(NAME opus_recovery_official_vectors COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-opus-recovery.py"
         --receiver $<TARGET_FILE:nsl-opus-recovery-oracle>)
@@ -562,6 +563,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
         --receiver $<TARGET_FILE:nsl-audio-gap-policy-oracle>
         --media-receiver $<TARGET_FILE:nsl-opus-recovery-oracle>)
     set_tests_properties(audio_gap_policy_official_vectors PROPERTIES TIMEOUT 60)
+    add_test(NAME audio_stop_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-audio-stop.py"
+        --receiver $<TARGET_FILE:nsl-opus-recovery-oracle>)
+    set_tests_properties(audio_stop_official_vectors PROPERTIES TIMEOUT 90)
     add_executable(nsl-native-tests tests/test_native.c)
     target_include_directories(nsl-native-tests PRIVATE platforms/common)
     target_compile_options(nsl-native-tests PRIVATE -UNDEBUG)

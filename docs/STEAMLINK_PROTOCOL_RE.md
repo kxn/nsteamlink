@@ -12948,3 +12948,62 @@ python3 scripts/check-steam-audio-gap-policy.py \
 ctest --test-dir build/desktop --output-on-failure \
   -R '^(audio_gap_policy_official_vectors|opus_recovery_official_vectors)$'
 ```
+
+## 165. 线程模式下音频补偿中的停止顺序
+
+### 165.1 官方原码与受控交错
+
+`audit-steam-audio-stop.py`沿用§164固定Android core SHA和7项原函数，增加实际
+`IStreamDecoder::OnStreamStopped @0x767160`（80B，代码SHA
+`7fccd7a294d8c82cd03730c2dec972b5846abee4be9fd3cb4a1e4e7e98681c18`）。
+原指令@76716c先清decoder active；thread flag非零才signal event、Join(-1)、
+purge输入FIFO，最后经真实Opus vtable虚调用StopDecoding，销毁codec。
+
+本节在明确输入的active/threaded decoder边界执行：先正常处理ID0，再输入
+ID32769；在32769次codec API调用的零基序号0、16384、32767、32768分别暂停。
+保存消费者全部CPU寄存器/栈，执行原OnStreamStopped直到Join终点，观察active
+已清而codec仍存活；保存停止方CPU/栈，再恢复消费者至DecodeFrame返回，最后
+恢复停止方，使Join返回后执行原StopDecoding。共享heap/恢复状态始终保留，
+不以观察器写入next/first或重跑替代原循环。恢复字段写入仍限制在§164原指令。
+
+Evidence：4组均在active=false后完成剩余补偿和当前帧；完整32769份12B参数
+身份、首末token、next=32770与§164无交错halfspace结果逐项一致。每组都观察到
+signal→Join进入（codec存活）→消费者返回→Join返回→空FIFO purge终点→原
+StopDecoding；最后active=false、codec=null。
+
+边界：codec decode仍为返回480的API terminal；event、Join成功和空FIFO purge
+为显式终点，没有运行原OS线程或实际Purge。原active/thread flag和Opus vtable
+是受控描述符，不代表已证明自然Android产品如何开启线程。CPU/栈交错只验证该
+在途DecodeFrame与Stop的顺序，不证明所有锁、排队帧、调度或平台可达性；没有
+Source大跨度DSP/PCM、自然丢包、设备耗时或峰值证据。非线程模式的自然串行
+owner并未被本探针改成并行Stop，也不能用线程模式结论概括所有官方配置。
+
+### 165.2 Native实际工作线程与资源所有权
+
+`nsl-opus-recovery-oracle 2 stop-N`通过生产完整帧dispatcher/FIFO、实际pthread
+音频worker、应用submitFrame、实际fixed-point Opus和生产jitter处理同一两个帧。
+仅在选定的真实codec API入口放置fixture gate；另一个可join控制线程调用实际
+ChannelRemove。包装实际IHS_ThreadJoin记录其进入/返回，始终转发真实join；包装
+实际Opus destroy同样转发，要求decoder只能在join完成及两帧回调返回后销毁。
+控制方在gate未放行时断言remove/join未完成、decoder未销毁；放行后join控制
+线程，所有session/media依赖最后按既有顺序清理。fixture等待上限不进入产品。
+
+4组均完成32769次本批次调用、累计32770次有效输出、codec errors=0；全部参数
+顺序SHA与Source相同。decoder销毁恰好一次，且真实worker join已完成。SDL dummy
+callback维持暂停；不以排队计数或进程退出冒充可听声音、Switch返回hbmenu、
+loader ABI、峰值或Switch停止耗时。13份篡改Source/Native记录的反例必须拒绝，
+不将这些记录反例称作产品语义变异测试。
+
+Conclusion：在这4个受控在途补偿边界，Native保留官方“完成当前DecodeFrame，
+join后销毁decoder”的顺序，没有观察到提前释放；不是补偿可抢占的证明。既有
+协议/产品/SDK未因此改变。真实Switch长批次是否增加退出等待仍为hypothesis／
+待验证，不能据此解释#55或原玩家停顿，也不新增补偿上限、超时、自动重连。
+
+```sh
+PYTHONPATH=/path/to/audit-deps python3 scripts/audit-steam-audio-stop.py \
+  --binary /path/to/official/libmain-arm64.so --output /tmp/source-audio-stop.json
+python3 scripts/check-steam-audio-stop.py \
+  --receiver build/desktop/app/nsl-opus-recovery-oracle --output /tmp/native-audio-stop.json
+ctest --test-dir build/desktop --output-on-failure \
+  -R '^(audio_stop_official_vectors|audio_gap_policy_official_vectors|opus_recovery_official_vectors)$'
+```
