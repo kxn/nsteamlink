@@ -194,6 +194,7 @@ sl_gfx_present_result __wrap_sl_gfx_present(sl_gfx *g) {
     return result;
 }
 static atomic_uint processed;
+#include "decoder_think_observer.h"
 static unsigned target;
 int __real_avcodec_open2(AVCodecContext *,const AVCodec *,AVDictionary **);
 int __wrap_avcodec_open2(AVCodecContext *c,const AVCodec *codec,AVDictionary **options) {
@@ -350,7 +351,7 @@ bool __wrap_IHS_SessionVideoRequestReset(IHS_Session *s) {
 void __real_IHS_SessionPacketsWindowReleaseFrame(IHS_SessionFrame *);
 void __wrap_IHS_SessionPacketsWindowReleaseFrame(IHS_SessionFrame *f) {
     __real_IHS_SessionPacketsWindowReleaseFrame(f);
-    atomic_fetch_add(&processed, 1);
+    atomic_fetch_add(&decoderInputsConsumed, 1);
 }
 bool __real_IHS_FrameTicketVideoDecodeStage(IHS_FrameTicket *, bool);
 bool __wrap_IHS_FrameTicketVideoDecodeStage(IHS_FrameTicket *ticket, bool end) {

@@ -164,6 +164,13 @@ if(NSL_PLATFORM STREQUAL "desktop")
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-video-content-mode.py"
             --receiver $<TARGET_FILE:ihs-video-content-mode-oracle>)
         set_tests_properties(video_content_mode_official_vectors PROPERTIES TIMEOUT 60)
+        add_test(NAME decoder_queue_wake_native COMMAND ihs-video-queue-oracle
+            "${CMAKE_SOURCE_DIR}/app/tests/fixtures/video/sequential.h264" --wake)
+        set_tests_properties(decoder_queue_wake_native PROPERTIES TIMEOUT 20)
+        add_test(NAME decoder_queue_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-decoder-queue.py"
+            --receiver $<TARGET_FILE:ihs-video-queue-oracle>)
+        set_tests_properties(decoder_queue_official_vectors PROPERTIES TIMEOUT 60)
         add_test(NAME keyframe_flush_official_vectors COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-keyframe-flush.py"
             --receiver $<TARGET_FILE:ihs-video-keyframe-oracle>)

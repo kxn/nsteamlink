@@ -19,6 +19,7 @@
 #include <unistd.h>
 static sl_video_pipeline *pipeline;
 static atomic_uint processed, flushes, protocolFlushes, sends, losses;
+#include "decoder_think_observer.h"
 static unsigned extraLosses;
 static unsigned target, opens;
 static unsigned expectedPacketSize = 2204;
@@ -49,7 +50,7 @@ int __wrap_avcodec_send_packet(AVCodecContext *c, const AVPacket *p) {
 void __real_IHS_SessionPacketsWindowReleaseFrame(IHS_SessionFrame *);
 void __wrap_IHS_SessionPacketsWindowReleaseFrame(IHS_SessionFrame *f) {
     __real_IHS_SessionPacketsWindowReleaseFrame(f);
-    atomic_fetch_add(&processed, 1);
+    atomic_fetch_add(&decoderInputsConsumed, 1);
 }
 uint32_t __wrap_IHS_SessionPacketTimestamp(void) {
     return 1000000;

@@ -283,7 +283,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_compile_definitions(nsl-video-timing-oracle PRIVATE NSL_DIAGNOSTICS=$<BOOL:${NSL_DIAGNOSTICS}>)
     target_compile_options(nsl-video-timing-oracle PRIVATE -UNDEBUG -Wall -Wextra -Wno-unknown-pragmas)
     target_link_libraries(nsl-video-timing-oracle PRIVATE nsl_platform ihs-test-session)
-    target_link_options(nsl-video-timing-oracle PRIVATE -Wl,--wrap=IHS_SessionPacketTimestamp
+    target_link_options(nsl-video-timing-oracle PRIVATE -Wl,--wrap=IHS_SessionChannelDataThink -Wl,--wrap=IHS_SessionPacketTimestamp
         -Wl,--wrap=pthread_join
         -Wl,--wrap=sl_system_video_cpu_count -Wl,--wrap=fopen
         -Wl,--wrap=avcodec_open2 -Wl,--wrap=avcodec_send_packet -Wl,--wrap=avcodec_receive_frame -Wl,--wrap=avcodec_flush_buffers
@@ -331,7 +331,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_compile_definitions(nsl-video-keyframe-runtime PRIVATE NSL_DIAGNOSTICS=$<BOOL:${NSL_DIAGNOSTICS}>)
     target_compile_options(nsl-video-keyframe-runtime PRIVATE -UNDEBUG -Wall -Wextra -Wno-unknown-pragmas)
     target_link_libraries(nsl-video-keyframe-runtime PRIVATE nsl_platform ihs-test-session)
-    target_link_options(nsl-video-keyframe-runtime PRIVATE -Wl,--wrap=sl_video_create -Wl,--wrap=avcodec_open2
+    target_link_options(nsl-video-keyframe-runtime PRIVATE -Wl,--wrap=IHS_SessionChannelDataThink -Wl,--wrap=sl_video_create -Wl,--wrap=avcodec_open2
         -Wl,--wrap=avcodec_flush_buffers -Wl,--wrap=sl_video_discard_buffers -Wl,--wrap=avcodec_send_packet
         -Wl,--wrap=IHS_SessionPacketsWindowReleaseFrame -Wl,--wrap=IHS_SessionPacketTimestamp
         -Wl,--wrap=IHS_BaseSend -Wl,--wrap=IHS_SessionSendControlMessage
@@ -346,7 +346,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_compile_definitions(nsl-video-reset-runtime PRIVATE NSL_DIAGNOSTICS=$<BOOL:${NSL_DIAGNOSTICS}>)
     target_compile_options(nsl-video-reset-runtime PRIVATE -UNDEBUG -Wall -Wextra -Wno-unknown-pragmas)
     target_link_libraries(nsl-video-reset-runtime PRIVATE nsl_platform ihs-test-session)
-    target_link_options(nsl-video-reset-runtime PRIVATE -Wl,--wrap=sl_video_create -Wl,--wrap=avcodec_open2
+    target_link_options(nsl-video-reset-runtime PRIVATE -Wl,--wrap=IHS_SessionChannelDataThink -Wl,--wrap=sl_video_create -Wl,--wrap=avcodec_open2
         -Wl,--wrap=sl_video_close -Wl,--wrap=sl_video_discard_buffers -Wl,--wrap=sl_video_stop
         -Wl,--wrap=avcodec_flush_buffers -Wl,--wrap=avcodec_free_context
         -Wl,--wrap=sl_media_video_submit_tracked -Wl,--wrap=IHS_SessionPacketsWindowReleaseFrame

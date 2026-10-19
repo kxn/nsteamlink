@@ -1893,9 +1893,11 @@ ClearAndRestartWindow(0)，与 reliable 的 `0x7f8720–0x7f8734` 相同。因�
 61/62，分别返回 1/-1；该案例的 append/backend/链表释放和诊断函数为替身，
 证明的是调度控制流，不是 H.264 或原始链表实现正确性。
 
-【结论】本项目在补齐较老帧后也要继续提交 pending 中已完整的后续帧。项目在
-同一个可中断 worker 中排空可组装帧，不另起官方的 1ms think 调度；这是明确的
-调度实现差异。单帧失败仍按 ReportLost 继续，致命错误或 interrupted 则停止排空。
+【结论更正，§143】补齐后不应依赖新包触发后续完整图像，这点仍成立；撤回把
+DataReceived 内立即排空组帧视为可保留的调度差异。它会在预排队的新关键片段
+到来前额外提交旧完整图像。当前按原 RunDecodeLoop 先排空输入 FIFO，再调用
+独立 OnThink；每轮至多完成一次图像提交，仍有后续 partial 时请求 1ms 再运行。
+这里的 1ms 是等待参数，不是物理执行期限保证；不可推进的 partial 仍可无限等待输入。
 
 ### 25.14 证据边界与实现差异矩阵
 
@@ -1910,7 +1912,7 @@ ClearAndRestartWindow(0)，与 reliable 的 `0x7f8720–0x7f8734` 相同。因�
 | 视频准入与恢复请求 | DecodeFrame、FinalDecode；DataReceived / SubmitFrame | 同输入比较严格/软同步、6553 tick 边界、关键帧及后端失败反馈；原始视频 slice 组装和实际 codec 不在这组对比内 |
 | 积压范围消息 148 | §25.11；CheckPartialOverflow | 帧 ID 的有符号含端点范围；相等可报告，较小范围也保存；不是时间阈值加 412 |
 | 接收窗口交付、退休与反馈的调度顺序 | UpdateUnreliableState 0x7fa470–0x7fa6fc；DataUpdateAt / SessionReceiveUpdateAt | 撤回本项目仍由两个worker各自推进/反馈的当前状态；§62由同一接收批次按priority快照先推进窗口再反馈。F/U旧分步案例不能替代新增完整Socket批次对照；发送actor全局交错仍单列 |
-| 已完整 pending 的后续处理 | §25.13；DataReceived 的排空循环 | 官方仍有 pending 时约 1ms think；本项目在同 worker 中排空，不等新包；调度方式不同 |
+| 已完整 pending 的后续处理 | §25.13/143；输入 FIFO / DataThink | 先排空输入，再独立组帧；提交后仍有 partial 返回 1ms，否则无限等待。撤回原每输入帧立即排空策略；停止、资源上限和物理时序另列边界 |
 | 帧损坏的判断 | §25.5/25.10；video_pipeline.c | FFmpeg 明确 INVALIDDATA/损坏标记是项目映射，不是从 MediaCodec 逆向出的错误码对照表 |
 | 后端重建 | Android 输入 buffer 超时/参数变化/Surface 变化与 Reset 调用链 | 异步actor生命周期与已核实触发见§79–83；FFmpeg flush与backend重建分立，各SDK错误/平台producer映射仍独立；250ms常数边界见§78 |
 | 视频标志 bit 6 的内容模式变化 | OnThink 0x7b2648–0x7b26f8 / CheckContentMode 0x7b2804 | 原OnThink用末片bit6与已见模式判断转换，转换请求异步Reset并门控FinalDecode，执行对照与Native契约见§83；主机侧含义未确认，不解释为缺参考帧标记 |
@@ -11155,4 +11157,101 @@ python3 scripts/check-steam-rx-capture.py \
   --receiver build/desktop/third_party/ihslib/tests/session/ihs-network-wire-oracle
 python3 scripts/check-network-adaptation-native-mutations.py --build build/desktop \
   --capture-only --output /tmp/rx-capture-negatives
+```
+
+## 143. 解码输入 FIFO 与组帧 OnThink 的调度边界
+
+本节固定同一官方 Android 1.3.32 core，完整 ELF SHA256 为
+`50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e`。
+`audit-steam-decoder-queue.py` 执行原构造、CStreamFrame、接收拷贝、入队/出队、
+DecodeFrame、Release、OnThink、原组帧/FinalDecode 和 Android SDK 输入复制；
+SDK/JNI、OS同步/分配和 NAL 元数据沿用§82–86声明的 terminal，不产生真实像素。
+参考保存六个完整指令范围的 SHA，不能用 Host API 能力替代这些客户端入口。
+
+| 原客户端入口 | 地址 | 完整长度 | 直接观察 |
+|---|---:|---:|---|
+| IStreamDecoder::RunDecodeLoop | 0x766d50 | 276 | 输入非空时反复取队首→DecodeFrame→Release；空后才 OnThink→Wait |
+| IStreamDecoder::OnReceiveFrame | 0x76727c | 236 | threads/active 门控；活动线程路径复制 releasable frame 到 FIFO |
+| IStreamDecoder::OnStreamStopped | 0x767160 | 80 | 先清active，再判断是否执行OS线程signal/join，最后StopDecoding |
+| CStreamFrameQueue::AddToTail | 0x767368 | 212 | 原动态数组入队与字节累计；本函数未见项目容量常数 |
+| CStreamDecoderVideo::DecodeFrame | 0x7b2000 | 1244 | 关键标记清旧 pending，检查序号并追加 partial；不在此提交 SDK |
+| CStreamDecoderVideo::OnThink | 0x7b24dc | 808 | 组装至一个结束片段、模式门控/提交、CheckOverflow 和等待值 |
+
+### 143.1 预排队输入的触发与提交结果
+
+触发条件是 decoder worker 取队列前已有多个完整传输帧，或处理一个输入期间
+又有输入入队；它与一个图像是否跨多个视频片段、传输是否使用 FEC 是不同层次。
+首关键片段的 flush 由 DecodeFrame 发生，因此后来的关键标记可以在 OnThink
+提交前清掉旧完整图像。这不是让损坏图像勉强解码，也不产生额外网络补片请求。
+
+Evidence：参考先把图像0经原链提交并保留在 player 队列，再预排队图像1/2：
+
+- 两个完整关键帧同批：消费1/2、各自 flush，SDK只提交2，player0保留。
+- 普通1→关键2同批：只提交2；关键1→普通2或两个普通帧同批：提交1/2。
+- 两个关键帧分两个消费批次：分别提交1/2。不能仅凭媒体字节相同就忽略消费边界。
+- 多幅普通图像同批：OnThink 每次至多提交一幅，后续 partial 存在时 Wait(1)，
+  下一轮再处理；无 partial 返回 UINT32_MAX。只有不完整片段时，也可以返回
+  UINT32_MAX等待输入，不是见到任何 pending 都不断轮询。
+- 序号缺口按既有 strict/关键标记规则恢复；跨批次的不完整片段仍由同一 decoder
+  保留。CheckOverflow 在每次原 OnThink 尾部发生，不能提前至每个输入追加之后。
+
+Conclusion：原每个 DataReceived 立即组帧/排空会改变实际提交集合和 overflow
+消息时机；不能把该调度差异只解释成同样结果的性能选择。§25.13/25.14已更正。
+Hypothesis：高负载时额外提交可能增加解码工作；尚无本节证据证明其造成玩家的
+一两秒停顿、Steam大屏闪烁，或证明该修改改善了 Switch 的物理表现。
+
+### 143.2 Native 消费边界、等待和观测
+
+生产 DataReceived 只执行输入准入/引用和 partial 追加；独立 DataThink 对应原
+OnThink。DataThreadWorker先排空同一完整帧 FIFO，再运行 decoder step，并使用
+它返回的等待值。音频没有额外 think 消费者，仍在其原 dataFrame 内解码。
+`ch_data_decode.c`承载原有完整媒体信封消费函数及 think 分派；迁移没有更改信封
+解析、媒体时间戳转换或回调输入。worker不持 FIFO mutex 执行 decoder/SDK 回调。
+
+原同步对象的 signal 与本项目条件变量不同。本项目在 OnThink 返回后重新持
+windowLock检查 FIFO/stop；输入若在 OnThink 期间入队，即使 signal 早于 Wait，
+也不会随后睡过该输入。`decoder_queue_wake_native`让实际 SDK/组帧返回后暂停
+worker，由另一线程投递下一帧并释放暂停；实际 worker 完成两次提交并 join。
+它验证本地同步不变量，不冒充原客户端物理事件调度对照。
+
+测试的输入 ReleaseFrame 现在发生于 OnThink/SDK 提交之前，不能再作“解码步骤
+完成”的屏障。runtime/worker fixture 改为在真实 think 返回后观察，保持原像素、
+配置、格式交接、所有权和顺序断言。观测器仅转发完整消费者调用，不替换返回值、
+不复制/更改生产 class 身份，也不额外调用 SDK。直接消费者 fixture 显式执行与
+各自原客户端 action 相同的 OnThink 边界；这些直接驱动 fixture 明确暂缓 OS
+video worker 启动，避免它额外执行一次未指定的 OnThink。实际 worker 验收仍由
+独立队列/runtime/并发测试承担。
+
+原 OnStreamStopped@76716c 在任何线程分支前先清 active。本地初始 OS Start
+失败时保留 backend/FIFO，停止也必须置 interrupted，再进入资源退休；不能因
+worker=NULL 跳过停止标志。`DataThreadInterrupt`对已初始化FIFO的无worker分支
+补齐该标志，部分初始化仍不触碰不存在的mutex。直接Stop/Reset原向量现在同时
+覆盖此启动失败边界；实际线程退出/join仍由独立worker/runtime测试验证。
+
+### 143.3 对照范围与资源差异
+
+正式参考16例、20个批次状态，覆盖完整关键/普通帧组合、16关键帧突发、跨批次
+分片、旧 partial 替换和序号缺口。Native通过真实session交付、完整FIFO、实际
+pthread worker、真实parser/组帧/tracker及SDK terminal，比较消费ID、flush/反馈/
+提交全序、提交字节、player引用、strict/soft/reset、保留编码字节和等待参数。
+原客户端 Wait 为有界调度 terminal：1允许下一轮，0/UINT32_MAX让driver暂停；
+下一批恢复同一decoder。Native初始线程工厂暂缓启动，批次间join/resume同一
+backend/pending对象，实际条件等待执行。两者都不是自然持续负载或物理时钟等价。
+
+两份隔离生产回归分别恢复逐输入 eager think、忽略 follow-up timeout；各自全部
+16个receiver正常退出后，正式输出比较仍拒绝它们。崩溃、超时和编译失败不算检出。
+
+既有有界FIFO、256 partial/2MiB、tracker容量与停止保护继续属于本地资源策略。
+本节没有扩大成官方所有动态容量/分配失败等价，也没有把原loop中active检查点
+和本地stop中止时机宣称完全相同。持续输入、满队列、慢SDK、真实Steam发包、
+Switch硬解/显示/输入及长期音画同步仍须独立证据。
+
+```sh
+python3 scripts/audit-steam-decoder-queue.py /path/to/libmain-arm64.so \
+  --check scripts/fixtures/steam-decoder-queue-reference.json
+python3 scripts/check-steam-decoder-queue.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-video-queue-oracle
+python3 scripts/check-decoder-queue-native-mutations.py --build build/desktop \
+  --output /tmp/decoder-queue-negatives
+ctest --test-dir build/desktop -R 'decoder_queue|video_reset_worker' --output-on-failure
 ```

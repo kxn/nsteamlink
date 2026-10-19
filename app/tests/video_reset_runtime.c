@@ -18,6 +18,7 @@
 
 static sl_video_pipeline *pipeline;
 static atomic_uint processed;
+#include "decoder_think_observer.h"
 static unsigned infos, losses, opens;
 static bool failOpen = true;
 static atomic_bool requestReset, requestBoth, requestEio;
@@ -122,7 +123,7 @@ __wrap_sl_media_video_submit_tracked(IHS_Session *s, const IHS_VideoEpochInfo *e
 void __real_IHS_SessionPacketsWindowReleaseFrame(IHS_SessionFrame *);
 void __wrap_IHS_SessionPacketsWindowReleaseFrame(IHS_SessionFrame *f) {
     __real_IHS_SessionPacketsWindowReleaseFrame(f);
-    atomic_fetch_add(&processed, 1);
+    atomic_fetch_add(&decoderInputsConsumed, 1);
 }
 uint32_t __wrap_IHS_SessionPacketTimestamp(void) {
     if (watchStop && buffersDiscarded && !recoveryMarked) {
