@@ -62,6 +62,12 @@ def main():
             "(int32_t)(p->lastSendTimestamp + delay - nowTicks) < 0",
             "(int32_t)(p->lastSendTimestamp + delay - nowTicks) <= 0",
         ),
+        (
+            "keep_expired_present_slot",
+            "window.c",
+            "if ((int32_t)(newest - item->senderTimestamp) <= (int32_t)diff)",
+            "if (FrameItemIsUsed(item) || (int32_t)(newest - item->senderTimestamp) <= (int32_t)diff)",
+        ),
     ]
     checker = ROOT / "scripts/check-steam-network-cycle.py"
     link_dir = build / "third_party/ihslib/tests/session"
@@ -118,7 +124,17 @@ def main():
         (work / "link.log").write_text(linked.stdout + linked.stderr)
         assert linked.returncode == 0, (name, "link", linked.stderr[-1000:])
         result = subprocess.run(
-            ["python3", str(checker), "--receiver", str(receiver), "--adaptive-only"],
+            [
+                "python3",
+                str(checker),
+                "--receiver",
+                str(receiver),
+                (
+                    "--burst-only"
+                    if name == "keep_expired_present_slot"
+                    else "--adaptive-only"
+                ),
+            ],
             text=True,
             capture_output=True,
             timeout=90,

@@ -262,7 +262,47 @@ def schedules():
                 )
             ],
         )
-    return cases + adaptive_schedules()
+    return cases + adaptive_schedules() + burst_schedules()
+
+
+def burst_schedules():
+    """Same peer bytes, explicit Socket read batches, no decoder replacement claim."""
+    cases = []
+    for crc in (False, True):
+        for mode in ("whole", "first_only", "chunks5"):
+
+            def packet(pid):
+                stamp = 1000000 + pid * 655 + (20000 if pid >= 3 else 0)
+                payload = struct.pack(
+                    "<BHIHI", 1, 10 + pid, stamp, 0, 0
+                ) + bytes.fromhex("f0fffe")
+                row = cycle.packet(pid, kind=3, channel=3, payload=payload.hex())
+                row[5] = stamp
+                return row
+
+            blocks = [[0], [2]]
+            if mode == "whole":
+                blocks += [list(range(3, 18))]
+            elif mode == "first_only":
+                blocks += [[3], list(range(4, 18))]
+            else:
+                blocks += [list(range(i, min(i + 5, 18))) for i in range(3, 18, 5)]
+            cases.append(
+                dict(
+                    name=f"burst_retire_{mode}_{int(crc)}",
+                    crc=crc,
+                    seeds=[],
+                    cycles=[
+                        batch(
+                            2000000 + i * 100,
+                            rows=[packet(pid) for pid in block],
+                            eof=0,
+                        )
+                        for i, block in enumerate(blocks)
+                    ],
+                )
+            )
+    return cases
 
 
 def adaptive_schedules():
@@ -486,6 +526,15 @@ def audit(binary):
                 [s["delivered"] for s in observed],
                 flush=True,
             )
+        if inp["name"].startswith("burst_retire_"):
+            ids = [
+                struct.unpack_from("<H", bytes.fromhex(p), 1)[0]
+                for state in observed
+                for p in state["delivered"]
+            ]
+            expected = [10, *range(17 if "_whole_" in inp["name"] else 13, 28)]
+            assert ids == expected and not r.asserts, (inp["name"], ids, r.asserts)
+            assert observed[1]["delivered"] == []
         cases.append(
             dict(input=inp, observed=observed, source_assertions=list(r.asserts))
         )

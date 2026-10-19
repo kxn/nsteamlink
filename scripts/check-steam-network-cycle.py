@@ -20,6 +20,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--receiver", type=Path, required=True)
     p.add_argument("--adaptive-only", action="store_true")
+    p.add_argument("--burst-only", action="store_true")
     a = p.parse_args()
     source = json.loads(
         (ROOT / "scripts/fixtures/steam-network-cycle-reference.json").read_text()
@@ -32,6 +33,10 @@ def main():
     if a.adaptive_only:
         cases = [c for c in cases if c["input"]["name"].startswith("adaptive_")]
         assert len(cases) == 40
+    if a.burst_only:
+        assert not a.adaptive_only
+        cases = [c for c in cases if c["input"]["name"].startswith("burst_retire_")]
+        assert len(cases) == 6
     states = wires = 0
     for c in cases:
         i = c["input"]

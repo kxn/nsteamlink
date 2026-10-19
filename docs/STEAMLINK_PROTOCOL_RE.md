@@ -11022,3 +11022,50 @@ python3 scripts/check-steam-audio-process.py \
 python3 scripts/check-audio-native-mutations.py --build build/desktop \
   --output /tmp/audio-mutations
 ```
+
+
+## 141. 同一缺口数据按不同Socket批次退休
+
+§140最初无屏障drop的16/12帧差异不能仅凭假设解释。本节把完全相同的媒体字节和
+发送timestamp放进原版Android Socket读循环，用显式批次检验该机制；不据此声称
+当时Linux实际采用了哪种批次。固定原main SHA与§139相同，执行真实CRC、窗口
+插入/Pop/过期、连接同轮更新、反馈与发送。Read/Write/时钟/交付delegate仍是明确
+adapter，没有运行完整Linux OS收包、播放器或Switch硬件。
+
+Evidence：channel3通过原Start*Data实际使用的setter请求budget=6553，不把它
+冒充通用channel构造默认值。首批只有packet0/frame10，第二批只有packet2/frame12，
+packet1一直缺失；两批后交付序列为[10]、[]。后续packet3…17的媒体frame ID为
+13…27，sender timestamp均为1000000+packetId×655+20000，只有末项决定窗口最新时间。
+CRC开/关各自采用三种Read分组，payload和发送时间完全相同：
+
+| Socket后续读批次 | 原版完整交付frame ID | 总帧数 |
+|---|---|---:|
+| 一批3…17，排空后Update | 10，17…27 | 12 |
+| 先3并Update，再4…17 | 10，13…27 | 16 |
+| 先3…7并Update，再8…12、13…17 | 10，13…27 | 16 |
+
+Conclusion：有缺口时，退休过程按窗口最新sender timestamp检查槽位，允许同时退休
+超龄的已占用槽；“一个完整包已收到”不保证它还会交付decoder。一次读批次的末尾
+时间推进较多，可以使更多已到帧在Pop前退休；较早完成一次Update则会先交付这些帧。
+不能为了多交付几帧就把生产逻辑改为永远保留已占用槽，那会偏离本组官方行为。
+此结论只解释已给定的输入和批次，不证明原用户卡顿因果，也不证明GDB观察下的
+Linux样本与自然运行的收包批次相同。
+
+原§139的80个input/observed逐项保持不变，追加6组24状态；共86组276状态、
+168份初发/212份周期wire。Native正式比较包含全部collector/clock/metadata、窗口
+状态、反馈/发送wire和交付序列，各批次逐字段相同。新的隔离反例只把窗口退休改为
+“遇到已占用槽就停止”；编译/链接及receiver正常退出后，由这6组正式比较检出，
+不以超时/崩溃为检出。原7份网络环境反例仍针对原40个ACK环境输入验证。
+
+本节建立的是批次敏感性的原指令证据。高负载下真实Read批次如何形成、callback和
+队列/decoder背压对其影响，以及Linux/Native/Switch实际批次的观测，仍有各自范围，
+不能用本节的受控Read替代实际设备的延迟/显示/输入验收。
+
+```sh
+python3 scripts/audit-steam-network-cycle.py --binary /path/to/libmain-arm64.so \
+  --output /tmp/network-cycle.json
+python3 scripts/check-steam-network-cycle.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-network-wire-oracle --burst-only
+python3 scripts/check-network-adaptation-native-mutations.py --build build/desktop \
+  --output /tmp/network-mutations
+```
