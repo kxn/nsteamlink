@@ -3002,7 +3002,8 @@ shard 的 16 位 index 全范围（index=65535），不能把 index 当有符号
   这是对 §26.4 原版重复计数错误的有意防护，不复制其错误 payload 上交行为。
 - 重建结果通过既有媒体 worker 消费；不在收包线程调用 decoder。受 windowLock
   保护的完成 FIFO，项数≤windowCapacity，分配字节（含节点）≤windowCapacity×2048。
-  超预算淘汰最旧完整项；单项超预算或分配失败直接释放。这是线程桥的背压资源策略，
+  超预算淘汰最旧完整项；单项分配容量超预算、但实际使用字节含节点可容纳时，先收缩
+  独占存储；真实使用量超限或分配失败直接释放，细节与证据见§154。这是线程桥的背压资源策略，
   不是 Steam 的额外网络补包算法。视频后续帧 ID 的断裂仍由既有恢复层处理。
 - worker 停止/唤醒/join 后才释放 FIFO、活动分组、GF 表、接收窗口及锁。
   不增加 detach 线程，也不把 stop 后的 packet 留在组或 FIFO 中。
@@ -12061,4 +12062,97 @@ python3 scripts/check-steam-hid-disabled.py \
 python3 scripts/check-hid-disabled-native-mutations.py \
   --build build/desktop --output /tmp/hid-disabled-negatives
 ctest --test-dir build/desktop -R 'hid_disabled_official_vectors|hid_producer_official_vectors'
+```
+
+## 154. 普通媒体组装的分配容量与压缩图像上限
+
+Evidence：固定Android ELF（SHA同§24.1）的原
+`HandleDataPacket@0x7f9400 → BInsertPacket → PopHeadOfPacketWindow_WithRef@0x7f743c →
+Advance/Update`执行八组完整普通分片。`PopHead 0x7f74fc–0x7f751c`在多片分支按
+`fragmentCount×1472`计算容量，head容量不足才调用`new[]`；容量含13B传输包头，
+不是压缩图像长度或Switch预算。fixture的初始head容量2200是显式适配器条件，不能
+称作官方所有包的默认值。单片分支复用head，未调用该多片分配入口。
+
+| 正文字节数 / 每片上限 | 片数 | 原交付正文 | 原head容量 / 实际new[]请求 |
+|---|---:|---:|---:|
+| 100 / 100 | 1 | 100 | 2200 / 无 |
+| 200 / 100 | 2 | 200 | 2944 / 2944 |
+| 2400 / 1200 | 2 | 2400 | 2944 / 2944 |
+| 3600 / 1200 | 3 | 3600 | 4416 / 4416 |
+| 1228800 / 1200 | 1024 | 1228800 | 1507328 / 1507328 |
+| 2097151、2097152、2097153 / 1200 | 各1748 | 各完整交付 | 各2573056 / 各2573056 |
+
+正式fixture `steam-media-allocation-reference.json`固定ELF、两个传递helper的SHA、
+输入分片、原分配请求、输出完整SHA及窗口水位；refresh只允许保留已有case前缀。
+allocator/refcount/libc/锁/socket/最终raw-frame回调是显式适配器。原指令完成窗口组装，
+但fixture的`consumer_projection_sha256`只对去掉13B媒体信封后的字节投影做hash，
+没有执行原视频decoder。额外映射的scratch不是Android或Switch可用内存证据。
+原`new[]`调用后直接使用指针，本函数未见布尔分配失败分支；不以强制其返回NULL
+推断官方会静默丢帧。
+
+### 154.1 不同单位与旧行为的实际反例
+
+| 数量 | 范围和证据 |
+|---|---|
+| transport body | 不含外部UDP/13B传输头；视频的普通信封是tag1B+数据头12B+视频头7B+编码输入 |
+| FEC L | type11重建的transport body；本地`IHS_FEC_MAX_PAYLOAD=2MiB`仅约束L，不约束全部padded shard/RS峰值 |
+| FIFO保留字节 | `body.capacity + sizeof(node)`，含offset/suffix；不是`body.size`，也不是编码长度 |
+| 视频pending/组装 | 本地视频consumer累计编码输入2MiB、partial数256，独立于transport及FEC |
+| AVCodec输入 | 应用`video_pipeline.c::MAX_PACKET=2MiB`；既有本地防护，尚未证明为Switch硬件最大值 |
+
+SDK `6aa3a1a`的普通RX误用FEC L上限组装type3/4。2097153B的完整正文在Debug触发
+buffer断言，在Release按几何扩容获得4194304B。实际Release生产RX→dispatch→FIFO→
+手动generic consumer捕获证明：2097151/2097152B均入队并消费，2097153B因加上
+节点后超过4194304B而没有入队；后续小帧仍可消费，窗口均已推进。该反例不再只靠
+QueueFrame源码推导，但它没有执行OS视频worker或codec，不能解释玩家停顿根因。
+
+### 154.2 本地资源失败与所有权契约
+
+普通组装移除无关FEC最大值，可靠组装仍沿用自身无该限制的路径。共享窗口先校验
+descriptor与求和溢出，再检查调用者maxCapacity并保留原几何扩容；合法非2次幂上限
+可按实际需要预留。分配失败保留原指针、输出和窗口，不先改写frame元数据或取走片。
+`Poll`的bool仍表示是否有完整帧，另在同一owner锁内读取`LastError`，区分缺片等待
+和Limit/NoMemory。后两者的生产caller先释放窗口锁，再沿既有Disconnect关闭，
+不会把本地资源失败变成缺片NACK、DataLost或无限重试。这是明确的本地保护策略，
+不是已经证明的官方OOM策略；正常接收、年龄推进及反馈语义不由此更改。
+
+完成FIFO在原session/pause准入后验证owned descriptor。单项几何或FEC padded容量
+超预算、但`offset+size+suffix+node`可容纳时，收缩其独占存储，保留prefix/body/suffix。
+失败在退休旧队列之前释放新项；真实使用量超限仍拒绝，正常满队列仍退休最旧完整项。
+预算没有调高，FEC L上限也未调高。窗口已释放原分片，FEC receiver已经转移shards
+并置NULL/reset，不收缩仍被其他owner引用的存储。
+
+`window_resource`覆盖显式max、非2次幂、零正文、溢出与分配失败后的保留/重试。
+`media_resource_lifetime`覆盖prefix/suffix、收缩失败保留旧FIFO、真实超限、节点失败、
+恰好一次释放及可靠/普通分配失败关闭前的锁释放、无额外ACK/NACK/DataLost。
+其中k1/m254/S17000/L20的padded FEC只是post-admission资源形状：它超出协商UDP
+MTU，系统片直接完成、不执行RS，不能当作自然Steam流量或真实丢片重建证据。
+
+### 154.3 有效视频输入的消费与拒绝后恢复
+
+`media_decode_boundary`使用CRC wire RX、生产普通/可靠窗口、FIFO和实际OS视频worker，
+经真实tracked callbacks、partial组装及应用software AVCodec得到可读YUV像素。Socket
+发送成功是显式适配器；没有真实Steam peer。固定720p H.264 fixture附加合法Annex B
+filler NAL，普通与可靠正文分别为2097151、2097152、2097153B，对应编码输入为
+2097131、2097132、2097133B；关键帧及两张P帧的完整可见Y/U/V MD5与独立参考一致。
+另在两种载体上提交编码输入恰好2097152B的关键帧/P帧，含信封的正文2097172B仍能
+入队、消费并得到正确像素；不把信封开销从编码输入预算中扣除。
+
+另注入编码输入2097153B：既有视频pending保护在AVCodec之前拒绝并请求恢复；紧接
+的P帧不提交，随后有效关键帧及P帧均恢复正确像素。该行为核验既有本地防护，未将
+该2MiB值推广为官方或Switch硬件限制。FEC另用完整正文65536B、S1200、k55/m3，
+每组明确不投递index1而提供parity0，真实type11/RS/FIFO/worker/软件decoder重建三张
+关键/P图像并核对像素。它与普通2MiB±1正文的测试范围分开，未修改FEC L上限。
+
+这些fixture在Debug、Release及实际生产对象和测试均插桩的ASan+UBSan下执行；
+所有app-owned对象在worker停止/join后销毁。像素checksum只完成headless任务，不
+报告物理Displayed。Switch硬解、GPU持有、内存峰值、FEC求解峰值及loader ABI不由
+桌面结果证明；FIFO保留预算也不等于分片+临时重分配+decoder/GPU的全程峰值预算。
+
+```sh
+PYTHONPATH=/path/to/python-dependencies python3 scripts/audit-steam-media-allocation.py \
+  --binary /path/to/libmain-arm64.so --output /tmp/source-media-allocation.json
+python3 scripts/check-steam-media-allocation.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-media-budget-oracle
+ctest --test-dir build/desktop -R 'media_allocation_official_vectors|media_decode_boundary|media_resource_lifetime|window_resource|media_budget.*bridge'
 ```

@@ -1,0 +1,152 @@
+{
+  "binary_sha256": "50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e",
+  "helpers": {
+    "scripts/audit-steam-video-recovery.py": "b08713bad09c3e7984aaa792171717d89a36f9a1620aeb6fbc9135dea56f5892",
+    "scripts/compare-steam-video-recovery.py": "d88190e688504d3a206ca80f0d737850b0f6f5c8f92645db775d49b213c11304"
+  },
+  "scope": "Execute fixed official ordinary receive/window assembly and record allocations.\n\nOriginal HandleDataPacket/BInsert/PopHead/Advance/Update instructions execute.\nChannel/window initial state, initial packet capacity2200, allocator/refcount/\ncopy/socket and final raw-packet callback are explicit adapters. Consumer hash\nis a byte projection after the known 13B media envelope, not a codec execution.\nNo real Steam host, OS allocation failure, decoder, Switch or peak is proved.\n",
+  "cases": [
+    {
+      "input": {
+        "bytes": 100,
+        "chunk": 100
+      },
+      "fragments": 1,
+      "observed": {
+        "frame": 0,
+        "bytes": 100,
+        "sha256": "17bc51c088edde5ab1da2f36cac94f7ac9d45a9e23c18ae7d5332a0bafd66f34",
+        "consumer_projection_sha256": "69a4d78bd3ff7e598bea7faf184809c5881d459e36dccbf1ddef161499c3e7b5",
+        "capacity_including_transport_header": 2200
+      },
+      "array_new_requests": [],
+      "head_after": 1
+    },
+    {
+      "input": {
+        "bytes": 200,
+        "chunk": 100
+      },
+      "fragments": 2,
+      "observed": {
+        "frame": 0,
+        "bytes": 200,
+        "sha256": "c9ead4c1d82bc110a72ced75d9e04e1157bb0497e6f713c82dbcffc59aeca17b",
+        "consumer_projection_sha256": "c2aae1d2863e12c417400ac038ac3126a1e5b52a8d8d45f6e1c5bf9f057fccab",
+        "capacity_including_transport_header": 2944
+      },
+      "array_new_requests": [
+        2944
+      ],
+      "head_after": 2
+    },
+    {
+      "input": {
+        "bytes": 2400,
+        "chunk": 1200
+      },
+      "fragments": 2,
+      "observed": {
+        "frame": 0,
+        "bytes": 2400,
+        "sha256": "6630b2f4e20014674c57508e9b253ec6005542861a237c245f4155b64a2918a5",
+        "consumer_projection_sha256": "c380a7de88e669d40d5eced2bc3a9426529cae9bdf13b8f57c6affbb03f498b1",
+        "capacity_including_transport_header": 2944
+      },
+      "array_new_requests": [
+        2944
+      ],
+      "head_after": 2
+    },
+    {
+      "input": {
+        "bytes": 3600,
+        "chunk": 1200
+      },
+      "fragments": 3,
+      "observed": {
+        "frame": 0,
+        "bytes": 3600,
+        "sha256": "1b23ce068aa7641c708c019288c1069b537a82178ce05c811ea95574a9e5a15c",
+        "consumer_projection_sha256": "8bd0ae4134214c0de2cfd5a47a09eb868d92af3870da3204313c4c35fcfcdc60",
+        "capacity_including_transport_header": 4416
+      },
+      "array_new_requests": [
+        4416
+      ],
+      "head_after": 3
+    },
+    {
+      "input": {
+        "bytes": 1228800,
+        "chunk": 1200
+      },
+      "fragments": 1024,
+      "observed": {
+        "frame": 0,
+        "bytes": 1228800,
+        "sha256": "1ab38341357a5ccd9ddba44e825199ffd06ce3a55ddfc5f5320061180a2d93bf",
+        "consumer_projection_sha256": "546c20231aad4a954640c3ede1ebb2597b8e3fc528e613426d4ed0d2b575a500",
+        "capacity_including_transport_header": 1507328
+      },
+      "array_new_requests": [
+        1507328
+      ],
+      "head_after": 1024
+    },
+    {
+      "input": {
+        "bytes": 2097151,
+        "chunk": 1200
+      },
+      "fragments": 1748,
+      "observed": {
+        "frame": 0,
+        "bytes": 2097151,
+        "sha256": "89fe66887fe61a43da1e8e039cbca7ca82c91f0c657536bc32b7becb6744e690",
+        "consumer_projection_sha256": "981e12d7917a1e06fb75f99c88c6d9cc47e30caf7898c497d4fcbc551686324e",
+        "capacity_including_transport_header": 2573056
+      },
+      "array_new_requests": [
+        2573056
+      ],
+      "head_after": 1748
+    },
+    {
+      "input": {
+        "bytes": 2097152,
+        "chunk": 1200
+      },
+      "fragments": 1748,
+      "observed": {
+        "frame": 0,
+        "bytes": 2097152,
+        "sha256": "e628c353f5e8ed2f22d2190746707a718677e53118960555f97766562e66fe63",
+        "consumer_projection_sha256": "3465a9b180b1c19b3aae1102a7e6ccc32a88eb9ba023f616ab85b8f999d4d42d",
+        "capacity_including_transport_header": 2573056
+      },
+      "array_new_requests": [
+        2573056
+      ],
+      "head_after": 1748
+    },
+    {
+      "input": {
+        "bytes": 2097153,
+        "chunk": 1200
+      },
+      "fragments": 1748,
+      "observed": {
+        "frame": 0,
+        "bytes": 2097153,
+        "sha256": "153a09dae0a43fdc7fcb35ed878284d749e0b50cbefa7ecb0c6c44e5bf01ba5a",
+        "consumer_projection_sha256": "12c9b879218e50095ed23b4d18528fe9884a20bd4bcf14ef273c9712527b7815",
+        "capacity_including_transport_header": 2573056
+      },
+      "array_new_requests": [
+        2573056
+      ],
+      "head_after": 1748
+    }
+  ]
+}

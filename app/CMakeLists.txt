@@ -594,6 +594,21 @@ if(NSL_PLATFORM STREQUAL "desktop")
 endif()
 
 if(NSL_PLATFORM STREQUAL "desktop")
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_executable(nsl-media-decode-boundary-tests tests/test_media_decode_boundary.c)
+        target_include_directories(nsl-media-decode-boundary-tests PRIVATE
+            ${CMAKE_SOURCE_DIR}/third_party/ihslib/src
+            ${CMAKE_SOURCE_DIR}/third_party/ihslib/tests/common)
+        target_link_libraries(nsl-media-decode-boundary-tests PRIVATE nsl_video_pipeline ihs-test-session)
+        target_compile_options(nsl-media-decode-boundary-tests PRIVATE
+            -Wall -Wextra -Wno-unknown-pragmas -UNDEBUG)
+        target_link_options(nsl-media-decode-boundary-tests PRIVATE -Wl,--wrap=IHS_BaseSend
+            -Wl,--wrap=IHS_SessionPacketTimestamp -Wl,--wrap=IHS_SessionChannelDataReceiveFrame
+            -Wl,--wrap=IHS_SessionChannelDataLost)
+        add_test(NAME media_decode_boundary COMMAND nsl-media-decode-boundary-tests
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video/recovery720.h264)
+        set_tests_properties(media_decode_boundary PROPERTIES TIMEOUT 30)
+    endif()
     add_executable(nsl-video-recovery-probe-tests tests/test_video_recovery_probe.c)
     target_include_directories(nsl-video-recovery-probe-tests PRIVATE platforms/common ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
     target_link_libraries(nsl-video-recovery-probe-tests PRIVATE nsl_video_pipeline)
