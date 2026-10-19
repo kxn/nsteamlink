@@ -10,6 +10,7 @@
 #include "services/i18n.h"
 #include "services/video_settings.h"
 #include "session/channels/ch_data.h"
+#include "session/channels/video/ch_data_video.h"
 #include "session/session_pri.h"
 #include "session/unreliable.h"
 #include "stream_settings.h"
@@ -29,6 +30,48 @@ static atomic_uint_fast64_t fec_complete, complete, recovery, feedback, send_fai
 static _Atomic(IHS_UDPSocket *) ordinary_socket;
 static _Thread_local bool ordinary_rx;
 static uint64_t run_id;
+/* Each channel is indexed before its video role is known; no endpoint pointer
+ * is retained or read from a different thread. These are observation counts,
+ * not packet admission, unique frames, receiver ACKs or coherent snapshots. */
+static atomic_uint_fast64_t wire_ordinary[32], wire_fec[32], wire_retry[32];
+static atomic_uint video_channel = 32;
+static atomic_uint_fast64_t video_complete, video_key, video_finish, video_last;
+static atomic_uint_fast64_t video_worker, worker_key, worker_finish, worker_last;
+static atomic_uint_fast64_t submit_calls, submit_returns, submit_keys, submit_errors, submit_last;
+static atomic_uint_fast64_t decode_feedback, feedback_accepted, reset_flags, lost_flags,
+    disable_flags;
+static atomic_uint_fast64_t video_requests, request_sent, request_failed;
+
+static bool watch_video(const IHS_SessionChannel *c) {
+    if (c->type != IHS_SessionChannelTypeDataVideo || c->id < 3 || c->id >= 32 ||
+        c->session->networkTest.mode)
+        return false;
+    atomic_store_explicit(&video_channel, c->id, memory_order_relaxed);
+    return true;
+}
+static void video_header(const IHS_SessionFrame *f, atomic_uint_fast64_t *keys,
+                         atomic_uint_fast64_t *finishes, atomic_uint_fast64_t *last) {
+    /* Message tag + 12B data header + 7B video header, before either consumer
+     * offsets the buffer. These are raw flags, not accepted keyframe evidence.
+     * Official DecodeFrame/header layout: protocol RE §25/59/69. */
+    if (!f->body.data || f->body.size < 20)
+        return;
+    const uint8_t *b = IHS_BufferPointer(&f->body);
+    if (b[0] != k_EStreamDataPacket)
+        return;
+    uint16_t id = b[1] | (uint16_t)b[2] << 8;
+    uint16_t sequence = b[13] | (uint16_t)b[14] << 8;
+    uint8_t flags = b[15];
+    if (flags & VideoFrameFlagKeyFrame)
+        atomic_fetch_add_explicit(keys, 1, memory_order_relaxed);
+    if (flags & VideoFrameFlagFrameFinish)
+        atomic_fetch_add_explicit(finishes, 1, memory_order_relaxed);
+    /* One packed observation avoids pairing an ID with another input's flags.
+     * Bit40 denotes presence, including a legitimate all-zero header. */
+    atomic_store_explicit(
+        last, (UINT64_C(1) << 40) | (uint64_t)flags << 32 | (uint64_t)sequence << 16 | id,
+        memory_order_relaxed);
+}
 
 void __real_IHS_SessionUnreliableReceived(IHS_Session *, IHS_SessionPacket *);
 void __wrap_IHS_SessionUnreliableReceived(IHS_Session *s, IHS_SessionPacket *p) {
@@ -36,6 +79,17 @@ void __wrap_IHS_SessionUnreliableReceived(IHS_Session *s, IHS_SessionPacket *p) 
     ordinary_rx = !s->networkTest.mode && p->header.channelId >= 3;
     if (ordinary_rx) {
         atomic_store_explicit(&ordinary_socket, s->base.socket, memory_order_relaxed);
+        unsigned id = p->header.channelId;
+        if (id < 32) {
+            if (p->header.type == IHS_SessionPacketTypeUnreliableFEC)
+                atomic_fetch_add_explicit(&wire_fec[id], 1, memory_order_relaxed);
+            else if (p->header.type == IHS_SessionPacketTypeUnreliable ||
+                     p->header.type == IHS_SessionPacketTypeUnreliableFrag) {
+                atomic_fetch_add_explicit(&wire_ordinary[id], 1, memory_order_relaxed);
+                if (p->header.retransmitCount)
+                    atomic_fetch_add_explicit(&wire_retry[id], 1, memory_order_relaxed);
+            }
+        }
         if (p->header.type == IHS_SessionPacketTypeUnreliableFEC) {
             atomic_fetch_add_explicit(&fec, 1, memory_order_relaxed);
             if (p->body.data && p->body.size >= 8) {
@@ -72,12 +126,74 @@ void __real_IHS_SessionChannelDataReceiveReliableFrame(IHS_SessionChannel *, IHS
 void __wrap_IHS_SessionChannelDataReceiveReliableFrame(IHS_SessionChannel *c, IHS_SessionFrame *f) {
     if (c->id >= 3 && !c->session->networkTest.mode)
         atomic_fetch_add_explicit(&complete, 1, memory_order_relaxed);
+    if (watch_video(c)) {
+        atomic_fetch_add_explicit(&video_complete, 1, memory_order_relaxed);
+        video_header(f, &video_key, &video_finish, &video_last);
+    }
     __real_IHS_SessionChannelDataReceiveReliableFrame(c, f);
+}
+void __real_IHS_SessionChannelDataReceiveFrame(IHS_SessionChannelData *, IHS_SessionFrame *);
+void __wrap_IHS_SessionChannelDataReceiveFrame(IHS_SessionChannelData *c, IHS_SessionFrame *f) {
+    if (watch_video(&c->base)) {
+        atomic_fetch_add_explicit(&video_worker, 1, memory_order_relaxed);
+        video_header(f, &worker_key, &worker_finish, &worker_last);
+    }
+    __real_IHS_SessionChannelDataReceiveFrame(c, f);
+}
+IHS_StreamVideoSubmitResult __real_sl_media_video_submit_tracked(IHS_Session *,
+                                                                 const IHS_VideoEpochInfo *,
+                                                                 uint16_t, IHS_FrameTicket *,
+                                                                 IHS_Buffer *,
+                                                                 IHS_StreamVideoFrameFlag, bool *);
+IHS_StreamVideoSubmitResult
+__wrap_sl_media_video_submit_tracked(IHS_Session *s, const IHS_VideoEpochInfo *epoch, uint16_t id,
+                                     IHS_FrameTicket *ticket, IHS_Buffer *data,
+                                     IHS_StreamVideoFrameFlag flags, bool *taken) {
+    bool watched = !s->networkTest.mode;
+    if (watched) {
+        atomic_fetch_add_explicit(&submit_calls, 1, memory_order_relaxed);
+        if (flags & IHS_StreamVideoFrameKeyFrame)
+            atomic_fetch_add_explicit(&submit_keys, 1, memory_order_relaxed);
+        atomic_store_explicit(&submit_last,
+                              (UINT64_C(1) << 48) | (uint64_t)(uint32_t)flags << 16 | id,
+                              memory_order_relaxed);
+    }
+    IHS_StreamVideoSubmitResult result =
+        __real_sl_media_video_submit_tracked(s, epoch, id, ticket, data, flags, taken);
+    if (watched) {
+        atomic_fetch_add_explicit(&submit_returns, 1, memory_order_relaxed);
+        if (result == IHS_StreamVideoSubmitError)
+            atomic_fetch_add_explicit(&submit_errors, 1, memory_order_relaxed);
+    }
+    return result;
+}
+bool __real_IHS_SessionVideoDecodeFeedback(IHS_Session *, const IHS_VideoEpochInfo *,
+                                           IHS_StreamVideoSubmitResult);
+bool __wrap_IHS_SessionVideoDecodeFeedback(IHS_Session *s, const IHS_VideoEpochInfo *epoch,
+                                           IHS_StreamVideoSubmitResult flags) {
+    bool watched = s && !s->networkTest.mode;
+    if (watched) {
+        atomic_fetch_add_explicit(&decode_feedback, 1, memory_order_relaxed);
+        if (flags >= IHS_StreamVideoSubmitOK && !((unsigned)flags & ~7u)) {
+            if (flags & IHS_StreamVideoSubmitReset)
+                atomic_fetch_add_explicit(&reset_flags, 1, memory_order_relaxed);
+            if (flags & IHS_StreamVideoSubmitReportLost)
+                atomic_fetch_add_explicit(&lost_flags, 1, memory_order_relaxed);
+            if (flags & IHS_StreamVideoSubmitDisableHardware)
+                atomic_fetch_add_explicit(&disable_flags, 1, memory_order_relaxed);
+        }
+    }
+    bool accepted = __real_IHS_SessionVideoDecodeFeedback(s, epoch, flags);
+    if (watched && accepted)
+        atomic_fetch_add_explicit(&feedback_accepted, 1, memory_order_relaxed);
+    return accepted;
 }
 void __real_IHS_SessionChannelDataLost(IHS_SessionChannel *);
 void __wrap_IHS_SessionChannelDataLost(IHS_SessionChannel *c) {
     if (c->id >= 3 && !c->session->networkTest.mode)
         atomic_fetch_add_explicit(&recovery, 1, memory_order_relaxed);
+    if (watch_video(c))
+        atomic_fetch_add_explicit(&video_requests, 1, memory_order_relaxed);
     __real_IHS_SessionChannelDataLost(c);
 }
 bool __real_IHS_UDPSocketSend(IHS_UDPSocket *, const IHS_UDPPacket *);
@@ -86,7 +202,14 @@ bool __wrap_IHS_UDPSocketSend(IHS_UDPSocket *s, const IHS_UDPPacket *p) {
         p->buffer.data && p->buffer.size >= 13 ? IHS_BufferPointer(&p->buffer) : NULL;
     bool watched = s == atomic_load_explicit(&ordinary_socket, memory_order_relaxed) && b &&
                    p->buffer.size >= 13 && b[4] >= 3 && (b[0] & 127) == 10;
+    bool video_request =
+        b && p->buffer.size >= 14 &&
+        s == atomic_load_explicit(&ordinary_socket, memory_order_relaxed) && b[4] >= 3 &&
+        b[4] < 32 && b[4] == atomic_load_explicit(&video_channel, memory_order_relaxed) &&
+        (b[0] & 127) == IHS_SessionPacketTypeUnreliable && b[13] == k_EStreamDataLost;
     bool sent = __real_IHS_UDPSocketSend(s, p);
+    if (video_request)
+        atomic_fetch_add_explicit(sent ? &request_sent : &request_failed, 1, memory_order_relaxed);
     if (watched)
         atomic_fetch_add_explicit(sent ? &feedback : &send_fail, 1, memory_order_relaxed);
     return sent;
@@ -113,6 +236,28 @@ static void record(const char *tag, const char *format, ...) {
 #endif
 }
 static void counters(void) {
+    unsigned ch = atomic_load_explicit(&video_channel, memory_order_relaxed);
+#define OBS(x) ((uint64_t)atomic_load_explicit(&(x), memory_order_relaxed))
+    record("VCHANNEL", "channel=%u ordinary=%" PRIu64 " fec=%" PRIu64 " retry=%" PRIu64, ch,
+           ch < 32 ? OBS(wire_ordinary[ch]) : 0, ch < 32 ? OBS(wire_fec[ch]) : 0,
+           ch < 32 ? OBS(wire_retry[ch]) : 0);
+    record("VRECV", "complete=%" PRIu64 " key=%" PRIu64 " finish=%" PRIu64 " last=%" PRIu64,
+           OBS(video_complete), OBS(video_key), OBS(video_finish), OBS(video_last));
+    record("VWORK", "calls=%" PRIu64 " key=%" PRIu64 " finish=%" PRIu64 " last=%" PRIu64,
+           OBS(video_worker), OBS(worker_key), OBS(worker_finish), OBS(worker_last));
+    record("VSUBMIT",
+           "calls=%" PRIu64 " returned=%" PRIu64 " keys=%" PRIu64 " errors=%" PRIu64
+           " last=%" PRIu64,
+           OBS(submit_calls), OBS(submit_returns), OBS(submit_keys), OBS(submit_errors),
+           OBS(submit_last));
+    record("VDECODE",
+           "calls=%" PRIu64 " accepted=%" PRIu64 " reset=%" PRIu64 " lost=%" PRIu64
+           " disable=%" PRIu64,
+           OBS(decode_feedback), OBS(feedback_accepted), OBS(reset_flags), OBS(lost_flags),
+           OBS(disable_flags));
+    record("VREQUEST", "requested=%" PRIu64 " sent=%" PRIu64 " failed=%" PRIu64,
+           OBS(video_requests), OBS(request_sent), OBS(request_failed));
+#undef OBS
     record("WIRE",
            "ordinary=%" PRIuFAST64 " fec=%" PRIuFAST64 " parity_enabled=%" PRIuFAST64
            " parity_shards=%" PRIuFAST64 " fec_complete=%" PRIuFAST64,
@@ -137,7 +282,7 @@ int main(int argc, char **argv) {
     if (!sl_system_init())
         return 1;
     run_id = sl_system_now();
-    record("BEGIN", "build=%s host=%s seconds=%lu", NSL_GIT_COMMIT, argv[1], seconds);
+    record("BEGIN", "build=%s host=%s seconds=%lu observer=2", NSL_GIT_COMMIT, argv[1], seconds);
     const char *failure = "profile_missing";
     sl_runtime *runtime = NULL;
     bool media = false, log = false, submitted = false, passed = false;

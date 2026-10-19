@@ -10,10 +10,16 @@ spec = importlib.util.spec_from_file_location(
 probe = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(probe)
 BUILD = "a" * 40
-LOG = f"""LIVE_BEGIN run=42 build={BUILD} host=192.0.2.1 seconds=30
+LOG = f"""LIVE_BEGIN run=42 build={BUILD} host=192.0.2.1 seconds=30 observer=2
 LIVE_SETTINGS run=42 stored_fec=0 sound=1
 LIVE_SUBMITTED run=42 existing_identity=1
 LIVE_FIRST run=42 elapsed_ms=1000
+LIVE_VCHANNEL run=42 channel=9 ordinary=300 fec=0 retry=4
+LIVE_VRECV run=42 complete=100 key=1 finish=100 last=1202590908417
+LIVE_VWORK run=42 calls=99 key=1 finish=99 last=1202590908417
+LIVE_VSUBMIT run=42 calls=100 returned=100 keys=1 errors=0 last=281474976776193
+LIVE_VDECODE run=42 calls=0 accepted=0 reset=0 lost=0 disable=0
+LIVE_VREQUEST run=42 requested=0 sent=0 failed=0
 LIVE_WIRE run=42 ordinary=500 fec=0 parity_enabled=0 parity_shards=0 fec_complete=0
 LIVE_FLOW run=42 complete=200 recovery=0 feedback_sent=300 feedback_failed=0
 LIVE_RESULT run=42 decoded=100 presented=90 audio=100 hardware=1 play_ms=30001 gap_ms=35 tail_ms=10
@@ -84,6 +90,33 @@ class Contract(unittest.TestCase):
         silent = check(LOG.replace("audio=100", "audio=0"))
         self.assertTrue(silent["passed"])
         self.assertFalse(silent["audio_decode_observed"])
+
+    def test_video_boundaries_and_failure_cleanup(self):
+        for before, after in [
+            ("observer=2", "observer=1"),
+            ("channel=9", "channel=32"),
+            ("retry=4", "retry=301"),
+            ("complete=100", "complete=0"),
+            ("calls=99", "calls=101"),
+            ("returned=100", "returned=99"),
+            ("errors=0", "errors=1"),
+            ("last=1202590908417", "last=0"),
+            ("last=281474976776193", "last=0"),
+            ("key=1", "key=101"),
+            ("accepted=0", "accepted=1"),
+        ]:
+            with self.subTest(before=before):
+                self.assertFalse(check(LOG.replace(before, after))["passed"])
+        failed = check(
+            LOG.replace(
+                "result=PASS reason=none", "result=FAIL reason=playback_stalled"
+            )
+        )
+        self.assertIn("probe failed", failed["errors"])
+        self.assertNotIn("cleanup incomplete", failed["errors"])
+        self.assertEqual(failed["final"]["reason"], "playback_stalled")
+        legacy = LOG.replace(" observer=2", "")
+        self.assertFalse(check(legacy)["passed"])
 
     def test_malformed_duplicate_and_order(self):
         for log in [

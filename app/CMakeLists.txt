@@ -626,7 +626,9 @@ if(NSL_DIAGNOSTICS)
     target_link_options(nsl-live-media-probe PRIVATE
         -Wl,--wrap=IHS_SessionUnreliableReceived -Wl,--wrap=IHS_FECReceiverAdd
         -Wl,--wrap=IHS_SessionChannelDataReceiveReliableFrame
-        -Wl,--wrap=IHS_SessionChannelDataLost -Wl,--wrap=IHS_UDPSocketSend)
+        -Wl,--wrap=IHS_SessionChannelDataLost -Wl,--wrap=IHS_UDPSocketSend
+        -Wl,--wrap=IHS_SessionChannelDataReceiveFrame -Wl,--wrap=sl_media_video_submit_tracked
+        -Wl,--wrap=IHS_SessionVideoDecodeFeedback)
     if(NSL_PLATFORM STREQUAL "switch")
         nx_create_nro(nsl-live-media-probe OUTPUT nsl-live-media-probe.nro)
     else()

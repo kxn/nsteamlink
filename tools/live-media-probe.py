@@ -63,7 +63,8 @@ def analyze(log, build, steam, seconds):
         for tag in ("BEGIN", "SETTINGS", "SUBMITTED", "FIRST", "RESULT", "FINAL")
     )
     require(
-        begin == {"build": build, "host": steam, "seconds": str(seconds)},
+        begin
+        == {"build": build, "host": steam, "seconds": str(seconds), "observer": "2"},
         "identity mismatch",
     )
     require(settings.get("stored_fec") in ("0", "1"), "missing FEC preference")
@@ -71,14 +72,14 @@ def analyze(log, build, steam, seconds):
     require(submitted == {"existing_identity": "1"}, "no existing identity submission")
     number(first, "elapsed_ms")
     require(
-        final
-        == {
-            "result": "PASS",
-            "reason": "none",
-            "workers": "joined",
-            "media": "destroyed",
-        },
-        "probe failed or cleanup incomplete",
+        final.get("result") == "PASS" and final.get("reason") == "none", "probe failed"
+    )
+    require(
+        final.get("workers") == "joined" and final.get("media") == "destroyed",
+        "cleanup incomplete",
+    )
+    require(
+        set(final) == {"result", "reason", "workers", "media"}, "invalid FINAL fields"
     )
     tags = [tag for tag, _ in records]
     require(
@@ -125,6 +126,62 @@ def analyze(log, build, steam, seconds):
         "FEC counts",
     )
     require(0 <= wire["fec_complete"] <= flow["complete"], "completion counts")
+    detail_tags = ["VCHANNEL", "VRECV", "VWORK", "VSUBMIT", "VDECODE", "VREQUEST"]
+    require(
+        tags[-10:] == detail_tags + ["WIRE", "FLOW", "RESULT", "FINAL"],
+        "missing final video counter group",
+    )
+    details = dict(records[-10:-4]) if tags[-10:-4] == detail_tags else {}
+    schemas = {
+        "VCHANNEL": "channel ordinary fec retry",
+        "VRECV": "complete key finish last",
+        "VWORK": "calls key finish last",
+        "VSUBMIT": "calls returned keys errors last",
+        "VDECODE": "calls accepted reset lost disable",
+        "VREQUEST": "requested sent failed",
+    }
+    video = {}
+    for tag, schema in schemas.items():
+        value = details.get(tag, {})
+        require(set(value) == set(schema.split()), "invalid " + tag + " fields")
+        video[tag] = {key: number(value, key) for key in schema.split()}
+    channel, rx, worker, submit, fb, requests = (video[tag] for tag in detail_tags)
+    require(3 <= channel["channel"] < 32, "missing video channel role")
+    require(
+        0 <= channel["retry"] <= channel["ordinary"] <= wire["ordinary"]
+        and 0 <= channel["fec"] <= wire["fec"],
+        "video wire counts",
+    )
+    require(
+        0 < rx["complete"] <= flow["complete"]
+        and 0 < worker["calls"] <= rx["complete"],
+        "video receive/worker missing",
+    )
+    for value, count in ((rx, "complete"), (worker, "calls")):
+        require(
+            0 <= value["key"] <= value[count] and 0 <= value["finish"] <= value[count],
+            "video header counts",
+        )
+        packed = value["last"]
+        require((1 << 40) <= packed < (1 << 41), "missing video header identity")
+        value["last_header"] = {
+            "id": packed & 65535,
+            "sequence": (packed >> 16) & 65535,
+            "flags": (packed >> 32) & 255,
+        }
+    require(
+        0 < submit["calls"] == submit["returned"]
+        and submit["errors"] == 0
+        and 0 <= submit["keys"] <= submit["calls"],
+        "video submit failed/incomplete",
+    )
+    require((1 << 48) <= submit["last"] < (1 << 49), "missing submitted identity")
+    require(
+        0 <= fb["accepted"] <= fb["calls"]
+        and all(0 <= fb[key] <= fb["calls"] for key in ("reset", "lost", "disable"))
+        and all(requests[key] >= 0 for key in ("requested", "sent", "failed")),
+        "video feedback counts",
+    )
     return {
         "passed": not errors,
         "errors": errors,
@@ -132,6 +189,8 @@ def analyze(log, build, steam, seconds):
         "wire": wire,
         "flow": flow,
         "media": result,
+        "video": video,
+        "final": final,
         "scope": "real-host video playback smoke; audio counters observed; no loss injected",
         "audio_decode_observed": audio > 0,
         "rs_reconstruction": "unverified",

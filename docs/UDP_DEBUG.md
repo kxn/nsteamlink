@@ -65,6 +65,32 @@ feedback_sent/failed 是普通会话实际 Socket 发送 type10 的结果，不�
 读取元数据前先检查数据指针和长度；空/短 FEC 包仍交给原接收器拒绝，
 不会为诊断提前请求空缓冲的指针。空/短出站缓冲也保留原发送结果，不读取其包头。
 
+观察器格式 2 在 `LIVE_BEGIN` 中声明 `observer=2`，另按实际 Video channel 类型识别
+视频角色，不预设 channel ID=4。每个计数周期与最终计数组还包含：
+
+| 记录 | 直接观察的边界 |
+|---|---|
+| `VCHANNEL` | 当前视频 channel 的普通/type11 入站计数；retry 仅计普通包重发字节非零，不等于唯一丢片或主机已处理反馈 |
+| `VRECV` | 送往视频完整媒体回调的次数；key/finish 是其中明文视频头的原始标志，在 FIFO 准入/退休之前 |
+| `VWORK` | decoder worker 取得完整媒体的次数；key/finish 在消费者偏移缓冲之前读取，不表示关键帧已完成组装/解码 |
+| `VSUBMIT` | 应用视频提交入口、返回、关键帧参数、致命返回计数；不把入口/返回当作产生图像 |
+| `VDECODE` | 解码反馈调用与实际布尔返回；reset/lost/disable 是提供的有效标志，accepted 不证明异步重建已完成 |
+| `VREQUEST` | 实际 Video 类型 endpoint 的 DataLost 入口，以及普通会话同 channel 的 DataLost datagram Socket 成功/失败；不证明主机收到或响应 |
+
+`VRECV/VWORK.last` 是一次原始头观察的打包值：bit40 为存在位、低16位为媒体
+frame ID、bit16–31 为视频片段 sequence、bit32–39 为原始 flags；工具在 JSON 中展开。
+`VSUBMIT.last` 的 bit48 为存在位、低16位为提交 frame ID、bit16–47 为应用提交 flags。
+这些 ID/flags 与原子计数不是跨字段事务快照，也不是完整帧像素身份；关键帧标志依据
+协议参考 §24/59，不能直接当作成功恢复。入站在角色确定前也按 channel 记账，未保留
+跨线程的 channel 指针；不同视频 epoch/channel 的计数不能误作同一连续帧序列。
+网络/decoder 观察器只做固定上限的原子操作，不逐包输出；主线程每秒采样，单行保持
+在平台 240B 日志上限内。丢失/截断记录按原规则拒绝通过。
+
+格式 2 的最终六组视频计数均为验收必需项，并要求提交已返回；播放失败原因与
+清理结果分别保留，不能因为 `result=FAIL` 就把已记录的 join/destroy 称作失败。
+旧格式归档仍保留其原提交工具生成的报告，不补造缺失的视频计数；新工具拒绝把
+旧格式当作本版本验收。
+
 `LIVE_RESULT` 保留实际解码/首次呈现/音频解码计数、硬解事实、首帧后的播放时间、
 主循环观察的最大呈现计数推进间隔 gap_ms 和结束前无推进时间 tail_ms。它不是逐帧
 GPU 时间戳；epoch 内计数在两次采样间多次增加时，只能观察到最后一次主循环采样。
