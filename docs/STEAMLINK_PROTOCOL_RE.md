@@ -12509,7 +12509,7 @@ ctest --test-dir build/diagnostics --output-on-failure -R '^live_media_probe_'
 python3 scripts/check-live-media-probe-build.py --build build/switch-diagnostics \
   --ordinary-build build/switch --output /tmp/live-probe-build.json
 python3 tools/live-media-probe.py --steam 10.10.10.166 --switch 10.10.10.25 \
-  --fec-request on --output build/live-fec-on-prepared
+  --build-dir build/switch-diagnostics --fec-request on --output build/live-fec-on-prepared
 ```
 
 最后一条仅准备自包含NRO及机器采集命令，不连接Switch；只有`--run`才执行nxlink，
