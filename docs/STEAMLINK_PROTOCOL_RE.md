@@ -11440,3 +11440,75 @@ python3 scripts/check-decoder-identity-native-mutations.py --build build/desktop
 ctest --test-dir build/desktop -R 'decoder_identity|video_keyframe_runtime|frame_tracker' \
   --output-on-failure
 ```
+
+## 146. SDK 输入期间到达的数据与持久唤醒
+
+Evidence：固定 Android core 沿用§145。新实验在原 AMediaCodec_queueInputBuffer
+入口暂停消费者，保存CPU寄存器与栈，执行原OnReceiveFrame/copy/AddToTail，再
+只恢复CPU与栈继续同一个RunDecodeLoop；堆、FIFO、事件状态的真实变更保留。
+不是在SDK终端直接调用DecodeFrame，也不是每批停止/重建worker。原事件构造
+90d390、Set@90d9ec、Wait@90d124、匿名对象初始化90d3e0实际执行，pthread
+创建/互斥/通知为平台终端，有限cond等待返回ETIMEDOUT，无限等待停在观察边界。
+
+自动复位标志+0x6d为0。Set在+0x6e保存1；Wait先检查该位，有信号就清零返回，
+不进入pthread等待。尚未收到信号才以固定期限等待，正常/中断唤醒后仍检查事件
+状态，虚假唤醒不等于输入。源码样本中的event不是无记忆的condition signal。
+两个完整输入已经排队时，第一次OnThink提交后返回1，但原事件仍有信号，因而
+不进入1ms OS等待。旧本地app2a95cee/SDK7459d0e实际worker会额外进入一次
+1ms条件等待；三个初始输入亦有该差异。这里的旧版本指生产源码基线，配合新增
+本地观察器，不是已发布包的实机记录。证据
+`/tmp/nsl148-overlap-baseline.json`：11个receiver正常退出，仅这2例的OS等待不同。
+不能把“进入1ms等待”扩大为已实测固定增加1ms或玩家停顿的根因。
+
+Conclusion：应保留生产者提前到达的唤醒位，在decoder think之后的等待步骤
+消费；已有信号或新FIFO数据不睡眠。真正进入OS等待后，信号在返回时消费；
+虚假唤醒继续等，有限等待不反复重新获得完整超时预算。只改变具有think的
+decoder等待，普通音频消费者的既有调度保持其原契约。协议sequence/恢复请求/
+FEC、FIFO/partial上限及本地停止检查点不由此推导新策略。
+
+这补齐§143“返回值为1ms”的OS层含义，撤回把返回值一概等同一次实际睡眠的
+隐含假设。§143–145原参考的Wait是明确有界调度终端；对应Native观察器也必须
+在同一think/返回值边界暂停，不能拿自然事件循环多走的一轮冒充参考变化。
+新的重叠实验独立观察真实OS等待及持续存活的worker，不重写旧参考迁就实现。
+
+### 146.1 重叠、唤醒、容量和停止的验收边界
+
+正式参考15例、42个SDK暂停点；其中11个普通及1个中断唤醒以原输入完整对照，
+另3例保存完整原客户端结果和独立的保留输入投影，共18次原指令执行/48个SDK
+暂停点。比较编码payload SHA、完整消费/flush/反馈/提交顺序、实际任务身份与
+时间戳、FIFO内容、think次数、OS等待及最终buffer/strict/soft状态。包括初始
+多帧、SDK期间新key/分片、16次连续提交、空闲后新输入、虚假与EINTR唤醒。
+EINTR实际从POSIX decoder cond_wait返回，观察器计数必须为1；不以一次普通
+signal冒充中断。POSIX接口将EINTR作为需复查谓词的瞬时唤醒，普通错误/超时
+仍返回false；Source Wait对0/4的共同分支提供依据。
+
+容量投影保留独立差异：1100个2204B输入时，本地按4MiB字节预算保留994个；
+2050个小partial-key输入按2048项上限保留最后2048个。完整官方输入不丢前缀。
+同一官方消费者另执行保留后的输入，才用作本地对照；普通前缀被截断时原完整
+执行没有DataLost，而保留输入执行及Native多一次DataLost，仍提交最后key。
+无损保存这两个结果，不能把投影叫作官方主动丢弃规则或取消Switch资源保护。
+
+Native只在Source给定的SDK/空闲点交付生产者输入；真实pthread worker跨暂停点
+持续存活，直到最终停止才join。Native预算采样时钟固定15s，常规有限/
+无限条件等待实际执行。底层POSIX期限仍取CLOCK_REALTIME，而Source使用
+CLOCK_MONOTONIC；本节不把这两个实际时钟域判为相同，也未验证系统时间跳变。
+独立deadline输入在1ms预算边界制造一次虚假唤醒，校验
+没有重新取得完整预算；此项是受控平台终端，不证明自然墙钟精度。另在SDK阻塞且
+队列承压时发停止，经合法interrupt/think回调配对唤醒、join、清FIFO、退休backend
+和全部保留引用；不声称这已经覆盖官方所有停止检查点或Switch退出ABI。
+
+四份隔离回退分别忘记提前信号、让虚假唤醒直接运行think、每次重置有限等待
+预算、把EINTR当超时；每份都编译链接并运行全部15例和2个本地场景，正常退出
+后按原指令状态或局部预算不变量检出。崩溃、fixture超时、编译错误不算检出。
+自然高码率/慢硬解、真实Steam策略、物理解码/显示/输入和全部线程交错仍须
+独立证据；未从此次OS等待差异推断原玩家一两秒停顿的根因。
+
+```sh
+python3 scripts/audit-steam-decoder-overlap.py /path/to/libmain-arm64.so \
+  --check scripts/fixtures/steam-decoder-overlap-reference.json.gz
+python3 scripts/check-steam-decoder-overlap.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-video-overlap-oracle
+python3 scripts/check-decoder-overlap-native-mutations.py --build build/desktop \
+  --output /tmp/decoder-overlap-negatives
+ctest --test-dir build/desktop -R 'decoder_overlap|decoder_queue' --output-on-failure
+```
