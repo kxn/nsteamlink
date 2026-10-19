@@ -13269,3 +13269,9 @@ peer已收到Cancel，但停止任务仍待end callback，采样为pending=true/
 实际owner slot退役及实际失败callback（最多2秒，超期仍失败），不替换Stop或
 callback，不放宽令牌/PIN字节、错误码、计数或pending=false的原参考期望。生产
 退出/清理顺序仍由实际worker与timer实现承担，不能从wire到达推导全部清理结束。
+
+带真实condition的oracle不能仅覆盖SDK的clock_gettime却保留OS condition自己的
+真实monotonic时钟。令牌/PIN/发现重试夹具过去这样推进fake monotonic，导致计算
+的绝对等待期限与OS时钟域不一致：可能立即超时忙等，也可能长时间等待而没有
+新的完成轮。三项夹具只控制协议wall time，RX/condition/任务调度使用一致的真实
+monotonic时间。令牌字节、PIN复用、失败状态和wall重试计数参考不随此适配改变。
