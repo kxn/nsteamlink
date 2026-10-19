@@ -13275,3 +13275,45 @@ callback，不放宽令牌/PIN字节、错误码、计数或pending=false的原�
 的绝对等待期限与OS时钟域不一致：可能立即超时忙等，也可能长时间等待而没有
 新的完成轮。三项夹具只控制协议wall time，RX/condition/任务调度使用一致的真实
 monotonic时间。令牌字节、PIN复用、失败状态和wall重试计数参考不随此适配改变。
+
+## 171. 发现启动失败的返回、清理与再触发
+
+Evidence：§168固定shell的原watcher/BStart/BInit，新增
+`audit-steam-discovery-startup.py`四组连续程序：构造时两次socket创建均失败，
+manager保持state0且未发布socket；连续三次timer meta-dispatch只Update，不再
+BStart、不读取socket。随后网络slot输入-1/0/1，或显式BStart，在资源恢复后
+各启动一次并进入state1/Update。Stop terminal仅用于初始空manager；没有执行
+自然Qt网络事件，不能据此给Switch发明自动重连或新的重试计时器。
+
+93a329d/SDKb9978fd的实际POSIX owner注入已证实两种差异：socket EMFILE在
+Release仍返回client并读取fd=-1，带断言构建中止；拒绝IHSClient线程创建时两种
+构建均返回client但没有worker/socket。Source的本地socket失败返回false/state0，
+不能把后台创建请求提交成功等同于已建立可接收的owner。
+
+平台映射要求：Base先同步取得有效socket，再发布/创建RX worker；任一步失败
+都保留空worker/socket并返回false，不能运行initialized/receive/finalized回调。
+客户端构造失败时按依赖逆序销毁已创建的timer、condition和Base mutex后返回NULL。
+这些是Switch所需线程/锁的资源契约，不声称Qt原类也有同一线程布局。POSIX的
+socket存储、fd、mutex均需有效；资源失败释放此前获得的对象/句柄。既有非关键
+socket选项失败仍不改成协议失败，保留§168原BInit的分支含义。
+
+同一Base入口用于session：socket/RX worker失败应由既有SessionConnect false路径
+传播，并完成已有测网Finalize；不启动发送/媒体线程或发送握手。显式下一次Connect
+可在资源恢复后尝试，失败本身不增加timer重试。新可失败的timer构造由client及
+session各自回收已创建依赖；global IHS_Init和后续媒体组件的资源契约分别适用。
+
+Native oracle覆盖13种client/runtime和15种session资源失败：实际构造、POSIX
+socket、timer、pthread和清理路径执行，仅资源返回失败是注入。client恢复后以
+真实loopback Discovery/Status验证解析字段及回调；session的socket/RX失败必须
+同步Connect=false、空worker/socket、无initialized/receive/finalized/握手，
+既有测网状态Finalize为Failed。无新接收的300ms是受控观察窗口，不是新增协议
+重试期限；恢复后显式重试同一session，通过真实Connect/ConnectACK进入Transport
+Connected，再停止并join发送/RX owner，全部资源回归基线。构造失败另以新owner
+重试。Session的早期send/reliable mutex、condition、两条队列及timer各分支独立
+检查；这不等于覆盖所有后续HID/媒体对象或IHSSessSend创建失败。
+
+测网的Result.valid来自统计容器q->valid，并非测网完成或成功标志。上述失败的
+判断使用status=Failed、phase=0、无完成样本；不能将容器初始valid=true解释为
+测网成功，也不能为满足错误断言修改既有统计语义。生命周期检查有实际资源计数
+和worker join身份，内存检查另行执行；不从进程exit0推断Switch已回到hbmenu，
+不将桌面受控资源恢复称为自然网络切换或官方Qt的线程实现。

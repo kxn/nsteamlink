@@ -656,6 +656,7 @@ static bool start_client(sl_runtime *r) {
     sl_log("discovery: client created; registering periodic broadcast");
     bool started = IHS_ClientStartDiscovery(r->client, 3000);
     sl_log(started ? "discovery: periodic broadcast registered" : "discovery: registration failed");
+    if (!started) stop_client(r);
     return started;
 }
 /* Return completion observed before/during join, before destroying its owner. */

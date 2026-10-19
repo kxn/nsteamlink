@@ -435,6 +435,24 @@ if(NSL_PLATFORM STREQUAL "desktop")
     endforeach()
     # Actual client worker, real condition waits and stop/join/destroy.
     add_executable(nsl-discovery-error-runtime tests/discovery_error_runtime.c)
+    add_executable(nsl-client-startup-runtime tests/client_startup_runtime.c)
+    target_include_directories(nsl-client-startup-runtime PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf)
+    target_compile_options(nsl-client-startup-runtime PRIVATE -Wall -Wextra -Werror -Wno-unknown-pragmas)
+    target_link_libraries(nsl-client-startup-runtime PRIVATE nsl_platform)
+    target_link_options(nsl-client-startup-runtime PRIVATE -Wl,--wrap=malloc -Wl,--wrap=calloc
+        -Wl,--wrap=IHS_MutexCreate -Wl,--wrap=IHS_MutexDestroy
+        -Wl,--wrap=IHS_CondCreate -Wl,--wrap=IHS_CondDestroy
+        -Wl,--wrap=IHS_QueueCreate -Wl,--wrap=IHS_QueueDestroy -Wl,--wrap=IHS_QueueItemObtain
+        -Wl,--wrap=IHS_TimerCreate -Wl,--wrap=IHS_UDPSocketOpen
+        -Wl,--wrap=socket -Wl,--wrap=close -Wl,--wrap=sendto
+        -Wl,--wrap=IHS_ThreadCreate -Wl,--wrap=IHS_ThreadJoin
+        -Wl,--wrap=IHS_ClientCreate -Wl,--wrap=IHS_ClientStartDiscovery -Wl,--wrap=IHS_UDPSocketReceive)
+    add_test(NAME discovery_startup_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-discovery-startup.py"
+        --receiver $<TARGET_FILE:nsl-client-startup-runtime>)
+    set_tests_properties(discovery_startup_official_vectors PROPERTIES TIMEOUT 45)
     target_include_directories(nsl-discovery-error-runtime PRIVATE
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
     target_compile_options(nsl-discovery-error-runtime PRIVATE -Wall -Wextra -Werror -Wno-unknown-pragmas)
