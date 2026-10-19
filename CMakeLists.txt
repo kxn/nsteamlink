@@ -172,6 +172,11 @@ if(NSL_PLATFORM STREQUAL "desktop")
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-decoder-overlap.py"
             --receiver $<TARGET_FILE:ihs-video-overlap-oracle>)
         set_tests_properties(decoder_overlap_official_vectors PROPERTIES TIMEOUT 90)
+        add_test(NAME capacity_recovery_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-capacity-recovery.py"
+            --receiver $<TARGET_FILE:ihs-video-overlap-oracle>
+            --output "${CMAKE_BINARY_DIR}/steam-capacity-native.json")
+        set_tests_properties(capacity_recovery_official_vectors PROPERTIES TIMEOUT 60)
         add_test(NAME decoder_identity_official_vectors COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-decoder-identity.py"
             --receiver $<TARGET_FILE:ihs-video-identity-oracle>

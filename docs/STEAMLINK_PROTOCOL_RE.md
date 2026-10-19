@@ -11862,3 +11862,66 @@ python3 scripts/check-steam-large-process.py \
 ctest --test-dir build/desktop -R 'media_large_fec.*udp_official_vectors' \
   --output-on-failure
 ```
+
+## 151. 容量退休造成的序列缺口与恢复请求归因
+
+本节保留§149的完整原Linux UDP执行及Native实际UDP/FFmpeg输入，增加Native只读
+观察：producer持windowLock释放旧完整body时记录真实图像ID；实际视频输入消费
+入口记录当前ID，原DataLost调用前记录该ID及消费序号。观察器仍转发所有原调用，
+workers join后输出，不在热路径日志或修改客户端状态。
+
+Evidence：CRC两值的两份新实际UDP捕获均RX302；真实消费63、容量退休239，
+两组ID无交集且并集正好为100…401。SDK实际输入为100、280、400、401，
+每份完整65536字节SHA、原FFmpeg返回和最后key/P像素沿既有正式检查核验。
+消费序列为100、250…280、371…401；唯一DataLost发生于第33次消费、图像371。
+退休ID为101…249及281…370，不用预计数量代替真实释放记录。
+
+### 151.1 同一保留输入的官方原指令投影
+
+`audit-steam-capacity-recovery.py`把每份捕获实际消费的ID、媒体sequence/flags/
+timestamp及完整64KiB AU送入固定官方Android原FIFO/RunDecodeLoop/DecodeFrame/
+OnThink/Android提交。按实际SDK入口的消费数1、32、63划定producer注入批次，
+保留同一worker和持久事件机制。另一次原指令执行仅恢复被容量退休的输入，按
+相同批次末端划分完整100…401输入，作为反事实对照。CRC已在UDP捕获接收层
+通过；这些解码边界投影本身不再执行CRC或网络收包。
+
+两组投影各观察到：100→250时，250带关键标记，先把expected sequence设为150，
+没有恢复请求；280→371时，原expected为181，新sequence为271且不是关键标记，
+第33次消费发一次DataLost。SDK ID及每份完整输入SHA均与实际Native捕获一致。
+恢复全部输入的两组原执行均不发DataLost，仍提交100、280、400、401。SDK处
+注入边界、固定时间及SDK/JNI/NAL/OS terminals都是显式条件，不称自然时序或像素
+验收。完整官方输入没有按4MiB主动丢帧；保留输入的执行不代表官方资源退休规则。
+
+Conclusion：这组额外请求来自本地容量保护先改变了decoder收到的输入集合，
+原decoder面对同一保留集合也产生它。不能据“比完整Source多一次”就删除该请求；
+那会改变已经核验的序列缺口处理。4MiB/项数边界仍是项目资源策略，尚未证明其
+Switch预算依据、自然负载下恢复代价或原玩家停顿因果，不由此宣布容量策略相同。
+
+### 151.2 大输入的fixture存储与正式回归边界
+
+原packet输入terminal改为独立payload存储，避免64KiB数据覆盖packet尾部pool
+字段；原packet/frame析构仍执行。声明的allocator arena使用0x22000000起的128MiB
+映射，SDK输入terminal容量131072；二者都不是原客户端或Switch的容量常数。
+只读assembled-body观察上限扩至2MiB，允许完整65536字节；原来的小观察上限不能
+当成原decoder拒绝。旧allocator边界失败、inline存储错误和观察断言均不计为协议
+失败。原指令、stack check、组帧/flush/提交分支及实际提交字节未替换。
+
+Native持续worker复播两组保留输入，逐SDK暂停点比较完整输入SHA、消费/flush/
+恢复请求全序、队列、任务身份/时间戳、最终状态和join。测试stdin和媒体信封存储
+扩容仅属于oracle，允许完整64KiB AU；没有提高生产FIFO或partial限制。受控SDK
+结果不代替实际硬件解码；实际UDP捕获的FFmpeg结果与此原指令投影分别保存。
+
+两份隔离生产回归分别抑制普通序列缺口的恢复请求、在关键标记重设序列之前额外
+请求恢复。编译/链接成功且两种CRC receiver均正常退出后，相同正式比较器均按
+实际全序差异检出；构建失败、崩溃或等待超时不计作语义检出。
+
+```sh
+python3 scripts/check-steam-pressure-process.py \
+  --receiver build/desktop/app/nsl-auth-udp-oracle --output /tmp/native-pressure.json
+python3 scripts/audit-steam-capacity-recovery.py \
+  --binary /path/to/libmain-arm64.so --native-capture /tmp/native-pressure.json \
+  --output /tmp/source-capacity.json
+ctest --test-dir build/desktop -R 'capacity_recovery_official_vectors' --output-on-failure
+python3 scripts/check-capacity-recovery-native-mutations.py \
+  --build build/desktop --output /tmp/capacity-negatives
+```

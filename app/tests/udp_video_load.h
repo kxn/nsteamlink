@@ -25,6 +25,11 @@ static atomic_bool udpLoadBusy;
 static atomic_bool udpLoadChannelReady;
 static bool udpLoadPacketObserve;
 static atomic_uint udpLoadRecoveryCalls;
+static struct {
+    unsigned id, consumed;
+} udpLoadRecoveryInputs[UDP_LOAD_LIMIT];
+static unsigned udpLoadRetiredIds[UDP_LOAD_LIMIT];
+static _Thread_local unsigned udpLoadCurrentInput;
 static unsigned udpLoadOutgoingCount;
 static atomic_uint udpLoadSocketSendCount;
 static struct {
@@ -56,8 +61,12 @@ static struct {
 } udpLoadOutgoing[256];
 void __real_IHS_SessionChannelDataLost(IHS_SessionChannel *);
 void __wrap_IHS_SessionChannelDataLost(IHS_SessionChannel *channel) {
-    if (udpLoadPacketObserve)
-        atomic_fetch_add(&udpLoadRecoveryCalls, 1);
+    if (udpLoadMode) {
+        unsigned n = atomic_fetch_add(&udpLoadRecoveryCalls, 1);
+        assert(n < UDP_LOAD_LIMIT);
+        udpLoadRecoveryInputs[n].id = udpLoadCurrentInput;
+        udpLoadRecoveryInputs[n].consumed = udpLoadConsumed;
+    }
     __real_IHS_SessionChannelDataLost(channel);
 }
 static void udpLoadPeerWire(const uint8_t *wire, size_t size) {
@@ -161,6 +170,7 @@ IHS_FrameBeginResult __wrap_IHS_FrameTrackerBeginInput(IHS_FrameTracker *tracker
     if (udpLoadMode) {
         assert(udpLoadConsumed < UDP_LOAD_LIMIT);
         udpLoadConsumedIds[udpLoadConsumed++] = id;
+        udpLoadCurrentInput = id;
     }
     return __real_IHS_FrameTrackerBeginInput(tracker, epoch, id, received, out);
 }
@@ -170,7 +180,10 @@ void __wrap_IHS_BufferClear(IHS_Buffer *body, bool release) {
      * bodies, excluding the worker/stop paths and all initially empty buffers. */
     if (udpLoadMode && udpLoadEnqueueDepth && release && body->size &&
         IHS_BufferPointer(body)[0] == 1) {
-        atomic_fetch_add(&udpLoadRetired, 1);
+        unsigned n = atomic_fetch_add(&udpLoadRetired, 1);
+        assert(n < UDP_LOAD_LIMIT && body->size >= 3);
+        const uint8_t *bytes = IHS_BufferPointer(body);
+        udpLoadRetiredIds[n] = bytes[1] | (unsigned)bytes[2] << 8;
         atomic_fetch_add(&udpLoadRetiredCapacity, body->capacity);
     }
     __real_IHS_BufferClear(body, release);
@@ -362,6 +375,13 @@ static void udpLoadReport(void) {
     printf("],\"consumed_ids\":[");
     for (unsigned n = 0; n < udpLoadConsumed; ++n)
         printf("%s%u", n ? "," : "", udpLoadConsumedIds[n]);
+    printf("],\"retired_ids\":[");
+    for (unsigned n = 0; n < atomic_load(&udpLoadRetired); ++n)
+        printf("%s%u", n ? "," : "", udpLoadRetiredIds[n]);
+    printf("],\"recovery_inputs\":[");
+    for (unsigned n = 0; n < atomic_load(&udpLoadRecoveryCalls); ++n)
+        printf("%s{\"id\":%u,\"consumed\":%u}", n ? "," : "", udpLoadRecoveryInputs[n].id,
+               udpLoadRecoveryInputs[n].consumed);
     printf("],\"feedback\":[");
     for (unsigned n = 0; n < udpLoadNacks && n < 256; ++n) {
         printf("%s\"", n ? "," : "");
