@@ -47,6 +47,7 @@ void *__wrap_malloc(size_t size) {
 }
 void *__real_calloc(size_t, size_t);
 void *__wrap_calloc(size_t n, size_t size) {
+    if (in_discovery && inject(DISCOVERY_CONTEXT)) return NULL;
     /* Release GCC folds malloc+memset into calloc (either argument order). */
     if (creating && ((n == 1 && size == sizeof(IHS_Client)) ||
                      (size == 1 && n == sizeof(IHS_Client))) && inject(CLIENT_ALLOC)) return NULL;
@@ -165,10 +166,10 @@ IHS_Client *__wrap_IHS_ClientCreate(const IHS_ClientConfig *cfg) {
     if (c) associated_cond = c->receiveWake;
     return c;
 }
-bool __real_IHS_ClientStartDiscovery(IHS_Client *, uint32_t);
-bool __wrap_IHS_ClientStartDiscovery(IHS_Client *c, uint32_t ms) {
+bool __real_IHS_ClientEnableDiscovery(IHS_Client *);
+bool __wrap_IHS_ClientEnableDiscovery(IHS_Client *c) {
     in_discovery = true;
-    bool result = __real_IHS_ClientStartDiscovery(c, ms);
+    bool result = __real_IHS_ClientEnableDiscovery(c);
     in_discovery = false;
     return result;
 }

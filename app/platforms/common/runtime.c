@@ -53,6 +53,10 @@ struct sl_runtime {
     sl_runtime_event events[48];
     int count;
     IHS_Client *client;
+    bool discovery_subscription;
+    char discovery_hint[64];
+    IHS_DiscoveryTarget discovery_targets[SL_HOST_LIMIT + 1];
+    size_t discovery_target_count;
     /* Discovery metadata is transient; keep it out of the profile ABI. */
     IHS_HostInfo discovered_hosts[SL_HOST_LIMIT];
     unsigned discovered_count, discovered_next;
@@ -632,6 +636,37 @@ static void stop_network_test(sl_runtime *r) {
     r->test_sample_at = 0;
     publish_test(r, (sl_network_test_view){.phase = SL_TEST_IDLE});
 }
+/* Runtime actor publishes a complete saved-address snapshot; the IHS timer
+ * owns all scheduled discovery sends and their shared round sequence. */
+static bool sync_discovery_targets(sl_runtime *r) {
+    IHS_DiscoveryTarget targets[SL_HOST_LIMIT + 1] = {0};
+    size_t count = 0;
+    for (int i = -1; i < r->store.registry.count; ++i) {
+        const char *ip = i < 0 ? r->discovery_hint : r->store.registry.hosts[i].address;
+        IHS_DiscoveryTarget target = {0};
+        if (!ip[0] || !IHS_IPAddressFromString(&target.ip, ip)) continue;
+        target.clientId = i < 0 ? 0 : r->store.registry.hosts[i].client_id;
+        targets[count++] = target;
+    }
+    bool same = count == r->discovery_target_count;
+    for (size_t i = 0; same && i < count; ++i)
+        same = targets[i].clientId == r->discovery_targets[i].clientId &&
+               IHS_IPAddressCompare(&targets[i].ip, &r->discovery_targets[i].ip) == 0;
+    if (same) return true;
+    if (!IHS_ClientSetDiscoveryTargets(r->client, targets, count)) return false;
+    memcpy(r->discovery_targets, targets, count * sizeof(*targets));
+    r->discovery_target_count = count;
+    return true;
+}
+static bool start_discovery(sl_runtime *r) {
+    if (r->discovery_subscription) return IHS_ClientTriggerDiscovery(r->client);
+    r->discovery_subscription = IHS_ClientEnableDiscovery(r->client);
+    return r->discovery_subscription;
+}
+static void pause_discovery(sl_runtime *r) {
+    if (r->discovery_subscription) IHS_ClientDisableDiscovery(r->client);
+    r->discovery_subscription = false;
+}
 static void stop_client(sl_runtime *r) {
     if (!r->client)
         return;
@@ -642,6 +677,8 @@ static void stop_client(sl_runtime *r) {
     IHS_ClientThreadedJoin(r->client);
     IHS_ClientDestroy(r->client);
     r->client = NULL;
+    r->discovery_subscription = false;
+    r->discovery_target_count = 0;
 }
 static bool start_client(sl_runtime *r) {
     sl_log("discovery: creating IHS client");
@@ -654,7 +691,7 @@ static bool start_client(sl_runtime *r) {
     IHS_ClientSetAuthorizationCallbacks(r->client, &auth_cb, r);
     IHS_ClientSetStreamingCallbacks(r->client, &stream_cb, r);
     sl_log("discovery: client created; registering periodic broadcast");
-    bool started = IHS_ClientStartDiscovery(r->client, 3000);
+    bool started = sync_discovery_targets(r) && start_discovery(r);
     sl_log(started ? "discovery: periodic broadcast registered" : "discovery: registration failed");
     if (!started) stop_client(r);
     return started;
@@ -780,7 +817,7 @@ static bool request_stream(sl_runtime *r, bool network_test) {
     IHS_HostInfo host;
     if (!r->client || !host_info(r, &r->active.host, &host))
         return false;
-    IHS_ClientStopDiscovery(r->client);
+    pause_discovery(r);
     const sl_host *paired = sl_host_find(&r->store.registry, r->active.host.id);
     uint8_t selected[32];
     int loaded = sl_host_key_load(sl_system_data_dir(), host.clientId, r->active.host.account,
@@ -939,7 +976,7 @@ static void confirm_network_test(sl_runtime *r, const sl_command *cmd) {
     if (test_only) {
         stop_session(r);
         post(r, (sl_runtime_event){.type = SL_EVENT_STOPPED});
-        IHS_ClientStartDiscovery(r->client, 3000);
+        start_discovery(r);
     } else {
         publish_test(r, (sl_network_test_view){.phase = SL_TEST_CONTINUING});
         if (!request_stream(r, false))
@@ -1025,7 +1062,7 @@ static void execute(sl_runtime *r, sl_command cmd) {
         fail(r, sl_tr(SL_T_NETWORK_UNAVAILABLE));
         return;
     }
-    IHS_ClientStartDiscovery(r->client, 3000);
+    start_discovery(r);
     if (cmd.type == SL_CMD_CANCEL || cmd.type == SL_CMD_STOP) {
         post(r, (sl_runtime_event){.type = SL_EVENT_STOPPED});
         return;
@@ -1284,10 +1321,8 @@ static void udp_poll(sl_runtime *r) {
 static void *worker_main(void *ctx) {
     sl_runtime *r = ctx;
     sl_log("runtime: worker entered; initializing IHS");
-    char legacy_address[64] = {0};
-    sl_auth_discovery_hint(&r->store, sl_system_data_dir(), legacy_address, sizeof(legacy_address));
-    uint64_t last_probe = 0;
-    uint32_t discovery_seq = 0;
+    sl_auth_discovery_hint(&r->store, sl_system_data_dir(), r->discovery_hint, sizeof(r->discovery_hint));
+    uint32_t launch_probe_seq = 0;
     IHS_Init();
     sl_log("runtime: IHS initialized");
     if (sl_stream_settings_load(&r->settings, sl_system_data_dir()) < 0)
@@ -1369,6 +1404,7 @@ static void *worker_main(void *ctx) {
             sl_host_registry_keep_secrets(&save.registry, &r->store.registry);
             r->store = save;
         }
+        if (r->client) sync_discovery_targets(r);
         sync_stream_settings(r, snapshot_pending);
         if (save_pending) {
             r->resolution = save_resolution;
@@ -1432,30 +1468,10 @@ static void *worker_main(void *ctx) {
             bool had_video = r->first_reported;
             bool normal = (stop_session(r) || host_stopped) && had_video;
             post(r, (sl_runtime_event){.type = SL_EVENT_STOPPED, .account = normal ? 0 : 1});
-            IHS_ClientStartDiscovery(r->client, 3000);
+            start_discovery(r);
         }
         uint64_t now = sl_system_now();
         sample_network_test(r, now);
-        if (r->client && !r->session && !r->test_active && !r->request_at &&
-            now - last_probe >= 3000) {
-            last_probe = now;
-            CMsgRemoteClientBroadcastDiscovery probe = CMSG_REMOTE_CLIENT_BROADCAST_DISCOVERY__INIT;
-            probe.has_seq_num = true;
-            probe.seq_num = ++discovery_seq;
-            for (int i = -1; i < r->store.registry.count; ++i) {
-                const char *ip = i < 0 ? legacy_address : r->store.registry.hosts[i].address;
-                IHS_SocketAddress address = {.port = 27036};
-                if (!ip[0] || !IHS_IPAddressFromString(&address.ip, ip))
-                    continue;
-                bool sent = IHS_ClientSend(r->client, address, k_ERemoteClientBroadcastMsgDiscovery,
-                                           (ProtobufCMessage *)&probe);
-                if (discovery_seq <= 2) {
-                    char line[160];
-                    snprintf(line, sizeof(line), "discovery: saved address %s sent=%d", ip, sent);
-                    sl_log(line);
-                }
-            }
-        }
         if (now - r->last_diag >= 1000)
             sample(r, now);
         pthread_mutex_lock(&r->lock);
@@ -1476,7 +1492,7 @@ static void *worker_main(void *ctx) {
             if (stop_session(r)) {
                 sl_log("user end game: host completion during timeout cleanup");
                 post(r, (sl_runtime_event){.type = SL_EVENT_STOPPED});
-                IHS_ClientStartDiscovery(r->client, 3000);
+                start_discovery(r);
             } else {
                 fail(r, sl_tr(SL_T_END_GAME_FAILED));
             }
@@ -1489,7 +1505,7 @@ static void *worker_main(void *ctx) {
                     : "launch: target played, Desktop, fresh host reports no games; normal return");
             stop_session(r);
             post(r, (sl_runtime_event){.type = SL_EVENT_STOPPED});
-            IHS_ClientStartDiscovery(r->client, 3000);
+            start_discovery(r);
             continue;
         }
         if (probe_launch) {
@@ -1498,7 +1514,7 @@ static void *worker_main(void *ctx) {
                 CMsgRemoteClientBroadcastDiscovery probe =
                     CMSG_REMOTE_CLIENT_BROADCAST_DISCOVERY__INIT;
                 probe.has_seq_num = true;
-                probe.seq_num = ++discovery_seq;
+                probe.seq_num = ++launch_probe_seq;
                 IHS_ClientSend(r->client, host.address, k_ERemoteClientBroadcastMsgDiscovery,
                                (ProtobufCMessage *)&probe);
             }

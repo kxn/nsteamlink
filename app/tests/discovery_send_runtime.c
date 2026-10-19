@@ -327,7 +327,7 @@ int main(int argc, char **argv) {
     const IHS_ClientDiscoveryCallbacks callbacks = {.discovered = found};
     IHS_ClientSetDiscoveryCallbacks(client, &callbacks, NULL);
     if (cadence) {
-        require(IHS_ClientStartDiscovery(client, 3000), "real periodic discovery task");
+        require(IHS_ClientEnableDiscovery(client), "real round discovery manager");
         for (unsigned i = 0; i < 12500 && atomic_load(&attempts) < 3; ++i)
             usleep(1000);
         require(IHS_ClientStopDiscovery(client), "stop actual discovery task");

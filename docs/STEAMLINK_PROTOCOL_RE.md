@@ -13405,3 +13405,63 @@ SDL后端更换主UDP socket时保留interrupt socket/packet/set及等待模式�
 边界oracle分别扣住真实recv、真实发现回调返回和已出队streaming回调返回，再
 请求自动或手工广播，验证读取/处理完成前不替换fd。壁钟/快速轮调度是独立于
 该互斥契约的策略；不能因广播恢复边界通过就扩大为全部发现行为对齐。
+
+## 174. 发现轮次、弱随机流及已保存地址的统一 RequestStatus
+
+Evidence：`audit-steam-discovery-rounds.py` 在§172固定的两份官方二进制上分别执行
+12组连续调度程序、7组显式seed流和4个受控随机拒绝边界。原Update、Enable、Trigger、
+Disable、RequestStatus、CUtlBuffer及生成protobuf运行；time/RNG端点与OS返回是受控
+边界。保存地址程序用显式预载记录/ID查找终点代替文件加载和hash查找，只证明其后
+原RequestStatus的循环、端口覆盖、身份列表和完整wire，不证明持久化缓存生产过程。
+
+墙钟倒退或同秒重复Update不提前发送。晚到fast只发一次，下一fast从当前wall重新
+计算；大幅前跳时full优先，只开启一个新轮次，不追赶历史期限。两次补发后即使
+fast已过也等待full。失败广播自身最多三次的fd重建循环不增加发现轮次计数，也
+不清除full/fast期限。序号只在full中按uint32递增，回绕后补发仍复用零序号。
+
+Enable每次递增广播引用并清零full，Trigger只清零full；同一wall秒的独立原调用
+仍各自Update/开启新轮次。平衡Disable只减引用，不停止manager的wall状态更新。
+没有广播引用也没有定向ID时RequestStatus不发送广播；定向ID存在时，先向每个
+预载地址的**27036**发送，再发携带唯一ID列表的全局广播。有广播引用时，广播
+不附该ID列表；单播消息同样不附列表，单播与广播沿用同一个当前轮次序号。
+预载记录端口7000在原程序中被覆盖为27036，不能把回复源端口直接用作下一次发现端口。
+
+原Core `CUniformRandomStream` ctor@90a630以time与getpid的32位异或调用SetSeed
+@90a680；WeakRandomInt@90a584通过全局安装指针及vtable调用RandomInt@90a8cc。
+原流使用16807/2147483647、32项shuffle。闭区间宽度w的接受上界为
+`0x7fffffff - (0x80000000 % w)`，高于上界须再次生成；直接取模会改变此分支。
+7个seed包括0、负数、INT32_MAX、INT32_MIN，两版各2688个输出逐项记录；4个受控
+内部状态另外强制上界接受及上界+1拒绝，并核对消费后的seed/shuffle状态。此证据
+不证明生产随机seed、全局安装生命周期、自然发生频率或随机质量。
+
+线程端口的常规发现使用Enable/Disable/Trigger与有界owner计数；Disable保留任务，
+StopDiscovery是显式销毁任务。单独保留带interval的SDK接口以表达调用方的一发或
+指定间隔请求；应用的常规定时发现不调用该接口。应用actor发布自有完整地址快照，
+不再另外每三秒发一组独立序号的保存地址请求。零ID仅作本地地址hint，不冒称已知
+远端身份；IPv4能力、定向子网广播等仍按平台能力映射，不能由此宣称IPv6完整对齐。
+
+快照发布和“请求full”的标记同受Base保护；任务在选择full/fast前消费标记，不能
+先公布新地址、释放锁后再单独重置期限。分配失败保留旧快照；输入大小溢出/地址族
+错误在公布前拒绝。这些是Native所有权约束，保存地址测试中的故障不冒称官方OOM
+执行证据。弱随机状态属于发现manager，不作认证熵；端口按manager存储而原客户端
+使用可安装全局流，不主张不同进程、不同manager或自然调用次序的seed完全相同。
+
+原码区分独立刷新与Update内重入：两个独立Trigger各发一个新full；在一个原
+BProcess终点内调用两次原Trigger，内层Update被reentry guard拒绝，外层只发一个
+full。嵌套程序使用独立仿真栈、保存/恢复外层CPU，在严格核对的原BProcess返回PC
+续跑外层指令；没有修改原函数或宣称有效Source报文admission。Native旧版把两种
+情况都合并的策略不能保留：b2caba7受控burst仅增加一包，原码增加两包，这一差异
+已经由实际执行证明，不能以线程适配笼统忽略。
+
+线程端口用有界pending计数保留独立刷新，每个新的完整RX/回调周期处理一个；
+同一client的接收/已出队处理内仅设置一次nested标记。线程局部的dispatch owner
+区分“本回调重入”和“另一线程在接收期间提交”，不能用全局receiveBatchActive
+代替这个判断。Native另用真实UDP Status callback、回调暂扣时的外部调用及已解析/
+出队的StreamingProgress处理核对这三种边界；deferred投影仍以原BProcess内的
+重入行为为Source契约，不冒称原客户端也有同一个Native队列。
+
+执行边界仍需保留：Native API接受后由完成RX/回调的100ms任务执行，原方法同步
+调用Update。上述程序不证明API同步返回、Enable/Disable快速交错、目标替换与
+刷新并发或自然Qt事件的全部时序等价。手工地址查询、应用启动监测的一秒探针是
+其他producer，不属于本节常规定时RequestStatus的覆盖；不能把局部比较通过扩大
+成全部发现流程已对齐。

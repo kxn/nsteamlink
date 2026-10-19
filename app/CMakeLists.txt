@@ -444,11 +444,22 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_link_options(nsl-discovery-send-runtime PRIVATE -Wl,--wrap=socket -Wl,--wrap=close
         -Wl,--wrap=sendto -Wl,--wrap=IHS_UDPBroadcastAddresses -Wl,--wrap=recvfrom -Wl,--wrap=fcntl
         -Wl,--wrap=IHS_ClientBroadcast)
-    add_test(NAME discovery_broadcast_recovery_official_vectors COMMAND "${Python3_EXECUTABLE}" -O
+    add_test(NAME discovery_send_official_vectors COMMAND "${Python3_EXECUTABLE}" -O
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-discovery-send.py"
-        --receiver $<TARGET_FILE:nsl-discovery-send-runtime>
-        --modes transient,poisoned,host,all-fail,short,partial,partial-host,multi-fail,reopen,reopen-stop,nonblock,nonblock-init,manual-read,read-order,dispatch-order)
-    set_tests_properties(discovery_broadcast_recovery_official_vectors PROPERTIES TIMEOUT 45)
+        --receiver $<TARGET_FILE:nsl-discovery-send-runtime>)
+    set_tests_properties(discovery_send_official_vectors PROPERTIES TIMEOUT 45)
+    add_executable(nsl-discovery-rounds-runtime tests/discovery_rounds_runtime.c)
+    target_include_directories(nsl-discovery-rounds-runtime PRIVATE
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+    target_compile_options(nsl-discovery-rounds-runtime PRIVATE -Wall -Wextra -Werror -Wno-unknown-pragmas)
+    target_link_libraries(nsl-discovery-rounds-runtime PRIVATE ihslib ihs-platforms ihslib)
+    target_link_options(nsl-discovery-rounds-runtime PRIVATE -Wl,--wrap=malloc -Wl,--wrap=time -Wl,--wrap=getpid
+        -Wl,--wrap=IHS_DiscoveryRandomInt -Wl,--wrap=IHS_UDPBroadcastAddresses -Wl,--wrap=sendto
+        -Wl,--wrap=IHS_ClientStreamingCallback)
+    add_test(NAME discovery_rounds_official_vectors COMMAND "${Python3_EXECUTABLE}" -O
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-discovery-rounds.py"
+        --receiver $<TARGET_FILE:nsl-discovery-rounds-runtime>)
+    set_tests_properties(discovery_rounds_official_vectors PROPERTIES TIMEOUT 45)
     add_executable(nsl-client-startup-runtime tests/client_startup_runtime.c)
     target_include_directories(nsl-client-startup-runtime PRIVATE platforms/common
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
@@ -462,7 +473,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
         -Wl,--wrap=IHS_TimerCreate -Wl,--wrap=IHS_UDPSocketOpen
         -Wl,--wrap=socket -Wl,--wrap=close -Wl,--wrap=sendto
         -Wl,--wrap=IHS_ThreadCreate -Wl,--wrap=IHS_ThreadJoin
-        -Wl,--wrap=IHS_ClientCreate -Wl,--wrap=IHS_ClientStartDiscovery -Wl,--wrap=IHS_UDPSocketReceive)
+        -Wl,--wrap=IHS_ClientCreate -Wl,--wrap=IHS_ClientEnableDiscovery -Wl,--wrap=IHS_UDPSocketReceive)
     add_test(NAME discovery_startup_official_vectors COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-discovery-startup.py"
         --receiver $<TARGET_FILE:nsl-client-startup-runtime>)
