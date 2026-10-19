@@ -148,6 +148,21 @@ class Peer(neg.Peer):
             )
 
 
+class BurstPeer(Peer):
+    """Controlled peer sends key fragments and P in one uninterrupted call."""
+
+    def recovery(self):
+        if self.sent_key:
+            return
+        first = len(self.sent)
+        super().recovery()
+        assert not self.case["reliable"]
+        self.sent_post = True
+        self.case["post_key_sent_index"] = len(self.sent)
+        self.data(8, body(30, 5, 1040100, 6505, 501, 8), 1040100)
+        self.case["recovery_burst_indices"] = list(range(first, len(self.sent)))
+
+
 def verify(case):
     controls = {}
     for item in case["received"]:
@@ -186,6 +201,11 @@ def main():
     p.add_argument("--qt-library-directory", type=Path, action="append", required=True)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--snapshot", type=Path)
+    p.add_argument(
+        "--burst",
+        action="store_true",
+        help="Send recovery key/P consecutively, without a picture barrier",
+    )
     args = p.parse_args()
     binary, sdk, qt = (
         args.binary.resolve(),
@@ -230,10 +250,10 @@ def main():
     ]
     assert [i for i, v in enumerate(packets) if v["flags"].startswith("K")] == [0, 6]
     cases = []
-    for reliable in (False, True):
+    for reliable in ((False,) if args.burst else (False, True)):
         for crc in (False, True):
             case = dict(
-                name=f"gap_reliable{int(reliable)}_crc{int(crc)}",
+                name=f"{'burst' if args.burst else 'gap'}_reliable{int(reliable)}_crc{int(crc)}",
                 reliable=reliable,
                 crc=crc,
                 settings="3800c80101",
@@ -257,7 +277,7 @@ def main():
                     output,
                     case,
                     helper=ROOT / "scripts/steam-client-gap-gdb.py",
-                    reactor=Peer,
+                    reactor=BurstPeer if args.burst else Peer,
                     probe_config=dict(
                         udp_helper=str(ROOT / "scripts/steam-client-udp-gdb.py"),
                         negotiation_helper=str(
@@ -275,9 +295,11 @@ def main():
             cases.append(result)
             print(
                 case["name"],
-                "reliable gap blocks later key"
-                if reliable
-                else "DataLost -> key/P exact pixels",
+                (
+                    "reliable gap blocks later key"
+                    if reliable
+                    else "DataLost -> key/P exact pixels"
+                ),
                 "Stop/exit verified",
                 flush=True,
             )
@@ -332,12 +354,20 @@ def main():
         au_boundaries=packets,
         cases=cases,
     )
+    if args.burst:
+        report["recovery_delivery"] = (
+            "consecutive key fragments/P, no decoded-picture barrier"
+        )
+        report["burst_runner_sha256"] = neg.udp.process.digest(Path(__file__))
     data = (json.dumps(report, indent=2) + "\n").encode()
     args.output.write_bytes(data)
     if args.snapshot:
         args.snapshot.write_bytes(gzip.compress(data, mtime=0))
     print(
-        "Original UDP unrepaired gap: 4 client processes/strict states/SDK/pixels/Stop verified"
+        "Original UDP gap:",
+        len(cases),
+        "consecutive recovery" if args.burst else "bounded reliable/strict recovery",
+        "client processes/SDK/pixels/Stop verified",
     )
 
 

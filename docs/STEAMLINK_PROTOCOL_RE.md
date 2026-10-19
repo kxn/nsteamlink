@@ -10852,3 +10852,40 @@ key文件/profile，UI不新建命令；另以互相矛盾的旧profile和身份
 优先，以及旧profile缺文件时的兼容。`host_key_store`核验账号/主机隔离、65-byte
 精确文本、重复原子替换、Horizon EEXIST适配/备份恢复、写失败保留旧文件及坏文件
 不污染输出。这些是本地实现检查，不作为官方自然磁盘故障/真实账号选择证据。
+
+## 138. 未补片后的连续关键帧/P帧恢复
+
+Evidence：沿§113固定官方Linux客户端、随包SDK、Qt、原构造/UDP/加密协商/
+网络及decoder线程；`audit-steam-client-gap-process.py --burst`只改变受控peer的
+恢复输入时机。实际收到DataLost之后，在同一次producer调用中连续发送IDR的
+两片及下一张P帧，中间不等待关键帧像素，不注入解析对象、decoder状态或SDK结果。
+初始正确像素与DataLost仍各有明确输入屏障；此证据不是高码率/满队列压力测试。
+
+CRC开、关两个原进程均将AU0、AU6、AU7依次送入实际SDK，各一次，send/receive
+均0；三份SHA和player Put的frame23/29/30像素MD5均与§113相同。恢复后的
+strict1→0及expected4→5→6保留，Stop、decoder/manager join、无新增live task、
+自然退出及SDK引用7→0分别检查。固定64份完整FDE与原§113相同，少的一份为
+本组未使用的可靠ACK调用者；五个GDB helper、SDK/Qt、完整peer字节和burst runner
+均记录哈希，三次连续send索引也随参考保存。
+
+Conclusion：给定非可靠视频输入，官方完整客户端能处理没有逐幅像素屏障的
+关键帧→P帧恢复。不能将先前逐幅屏障当作协议要求，也不能把这个小批次推广成
+所有积压、码率、Switch硬件或真实Steam的恢复时延已经验收。
+
+Native的`media_burst_udp_official_vectors`复播相同UDP字节，只保留seed及实际
+DataLost输入屏障；关键帧两片和P帧同批发出。检查三份完整SDK输入/哈希、控制
+明文和独立加密预期、CRC/DataLost、最终frame30像素及停止/join/释放。原observer
+记录player Put，本地observer取最新已解码像素；按§92–93的既有选择契约允许
+frame29在take之前被frame30替代，不能因此要求物理显示每幅中间画面。两种
+允许的像素序列均逐份检查MD5，不能只按最后计数放行错误像素。
+
+这项仅扩展验证输入，不修改生产接收、FEC、反馈、重连或解码策略。真实Steam
+重传/GOP、Switch NVTEGRA/zero-copy/实际显示及原用户停顿仍需要相应设备证据。
+
+```sh
+python3 scripts/audit-steam-client-gap-process.py --burst \
+  --binary /path/to/official/bin/steamlink --sdk-directory /path/to/official/lib \
+  --qt-library-directory /path/to/qt/lib --output /tmp/burst.json
+python3 scripts/check-steam-gap-process.py --burst \
+  --receiver build/desktop/app/nsl-auth-udp-oracle
+```

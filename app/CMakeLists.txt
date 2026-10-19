@@ -215,6 +215,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-gap-process.py"
         --receiver $<TARGET_FILE:nsl-auth-udp-oracle>)
     set_tests_properties(media_gap_udp_official_vectors PROPERTIES TIMEOUT 60)
+    add_test(NAME media_burst_udp_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-gap-process.py"
+        --receiver $<TARGET_FILE:nsl-auth-udp-oracle> --burst)
+    set_tests_properties(media_burst_udp_official_vectors PROPERTIES TIMEOUT 60)
     add_test(NAME microphone_udp_official_vectors COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-microphone-process.py"
         --receiver $<TARGET_FILE:nsl-auth-udp-oracle>)

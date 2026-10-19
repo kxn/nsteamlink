@@ -197,6 +197,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--receiver", type=Path, required=True)
     p.add_argument("--source-report", type=Path)
+    p.add_argument("--burst", action="store_true")
     args = p.parse_args()
     source = (
         json.loads(args.source_report.read_text())
@@ -204,7 +205,12 @@ def main():
         else json.loads(
             gzip.decompress(
                 (
-                    ROOT / "scripts/fixtures/steam-client-gap-process-reference.json.gz"
+                    ROOT
+                    / (
+                        "scripts/fixtures/steam-client-burst-process-reference.json.gz"
+                        if args.burst
+                        else "scripts/fixtures/steam-client-gap-process-reference.json.gz"
+                    )
                 ).read_bytes()
             )
         )
@@ -221,9 +227,24 @@ def main():
         source["util_sha256"]
         == "6df6556b6026144eb545dd95c0e2cc8c4568f462c9bd7e036531207d4172db34"
     )
-    assert len(source["cases"]) == 4 and len(source["helpers"]) == 5
+    assert (
+        len(source["cases"]) == (2 if args.burst else 4) and len(source["helpers"]) == 5
+    )
+    if args.burst:
+        assert (
+            source["recovery_delivery"]
+            == "consecutive key fragments/P, no decoded-picture barrier"
+        )
+        assert (
+            source["burst_runner_sha256"]
+            == hashlib.sha256(
+                (ROOT / "scripts/audit-steam-client-gap-process.py").read_bytes()
+            ).hexdigest()
+        )
     assert {(c["reliable"], c["crc"]) for c in source["cases"]} == {
-        (r, c) for r in (False, True) for c in (False, True)
+        (r, c)
+        for r in ((False,) if args.burst else (False, True))
+        for c in (False, True)
     }
     for name, digest in source["helpers"].items():
         assert (
@@ -251,7 +272,19 @@ def main():
     assert {
         k: source["source_functions"][k] for k in baseline["source_functions"]
     } == baseline["source_functions"]
-    assert len(source["source_functions"]) == 65
+    assert len(source["source_functions"]) == (64 if args.burst else 65)
+    if args.burst:
+        gap = json.loads(
+            gzip.decompress(
+                (
+                    ROOT / "scripts/fixtures/steam-client-gap-process-reference.json.gz"
+                ).read_bytes()
+            )
+        )
+        # Reliable ACK sender is not on the unreliable DataLost call stack.
+        expected_functions = dict(gap["source_functions"])
+        del expected_functions["gap_send_caller_19c960"]
+        assert source["source_functions"] == expected_functions
     assert source["source_functions"]["decode_frame"]["address"] == 0x3260D0
     boundaries = source["au_boundaries"]
     assert [(int(p["pos"]), int(p["size"])) for p in boundaries[:8]] == [
@@ -267,6 +300,12 @@ def main():
     assert [i for i, p in enumerate(boundaries) if p["flags"].startswith("K")] == [0, 6]
     for case in source["cases"]:
         verify_source(case)
+        if args.burst:
+            indices = case["recovery_burst_indices"]
+            assert len(indices) == 3 and indices == list(
+                range(indices[0], indices[0] + 3)
+            )
+            assert [case["sent"][i] for i in indices] == case["media_input"][5:]
         old = next(
             c
             for c in baseline["cases"]
@@ -307,6 +346,8 @@ def main():
 
             if case["reliable"]:
                 staged = [wires[:2], wires[2:]]
+            elif args.burst:
+                staged = [wires[:2], wires[2:5], wires[5:]]
             else:
                 staged = [wires[:2], wires[2:5], wires[5:7], wires[7:]]
             payload = bytes(4).join(
@@ -317,7 +358,7 @@ def main():
             result = subprocess.run(
                 [
                     str(args.receiver.resolve()),
-                    "--gap",
+                    "--gap-burst" if args.burst else "--gap",
                     str(int(case["crc"])),
                     d,
                     "080110031804" if case["reliable"] else "080010031804",
@@ -362,6 +403,12 @@ def main():
                 stopped=True,
             ),
         )
+        if args.burst:
+            # Original observer records player Put, Native observer takes the
+            # newest decoded pixels. Consecutive recovery may replace frame29
+            # before take; require all SDK inputs and the exact final P pixels.
+            assert native["pictures"] in (pictures, [pictures[0], pictures[-1]])
+            expected["pictures"] = native["pictures"]
         assert {k: native[k] for k in expected} == expected, (
             case["name"],
             native,
@@ -371,7 +418,10 @@ def main():
             case
         )
     print(
-        "Native/original UDP unrepaired gap: 4 bounded reliable-block/strict-wait/key/P-pixel/Stop cases passed"
+        "Native/original UDP gap:",
+        len(source["cases"]),
+        "consecutive recovery" if args.burst else "bounded reliable/strict recovery",
+        "SDK inputs/final pixels/Stop cases passed",
     )
 
 
