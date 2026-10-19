@@ -218,6 +218,9 @@ if(NSL_PLATFORM STREQUAL "desktop")
         -Wl,--wrap=IHS_SessionChannelControlOnMessageReceived
         -Wl,--wrap=IHS_FrameTrackerBeginInput
         -Wl,--wrap=IHS_BufferClear
+        -Wl,--wrap=IHS_SessionChannelAdd
+        -Wl,--wrap=IHS_SessionChannelDataLost
+        -Wl,--wrap=IHS_UDPSocketSend
         -Wl,--wrap=IHS_SessionChannelDataReceiveReliableFrame
         -Wl,--wrap=avcodec_send_packet -Wl,--wrap=sl_audio_recovery_run
         -Wl,--wrap=opus_multistream_decoder_create -Wl,--wrap=opus_multistream_decode_float
@@ -249,6 +252,16 @@ if(NSL_PLATFORM STREQUAL "desktop")
         --receiver $<TARGET_FILE:nsl-auth-udp-oracle>
         --output "${CMAKE_BINARY_DIR}/steam-pressure-native.json")
     set_tests_properties(media_pressure_udp_official_vectors PROPERTIES TIMEOUT 120)
+    add_test(NAME media_large_fec_udp_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-large-process.py"
+        --receiver $<TARGET_FILE:nsl-auth-udp-oracle>
+        --output "${CMAKE_BINARY_DIR}/steam-large-native.json")
+    set_tests_properties(media_large_fec_udp_official_vectors PROPERTIES TIMEOUT 90)
+    add_test(NAME media_large_fec_burst_udp_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-large-process.py"
+        --receiver $<TARGET_FILE:nsl-auth-udp-oracle> --burst
+        --output "${CMAKE_BINARY_DIR}/steam-large-burst-native.json")
+    set_tests_properties(media_large_fec_burst_udp_official_vectors PROPERTIES TIMEOUT 60)
     add_test(NAME media_retry_udp_official_vectors COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-retry-process.py"
         --receiver $<TARGET_FILE:nsl-auth-udp-oracle>)

@@ -70,7 +70,13 @@ static void sendEncryptedPeer(IHS_Session *s,int socket,const struct sockaddr_in
     sendPeer(socket,address,5,local,1,id,body,count+1,crc);
 }
 int main(int argc,char **argv) {
-    bool pressure=argc==12 && !strcmp(argv[1],"--pressure");
+    bool pressureReady=(argc==12 || argc==14) && !strcmp(argv[1],"--pressure-ready");
+    bool pressure=pressureReady || (argc==12 && !strcmp(argv[1],"--pressure"));
+    udpLoadPacketObserve=pressureReady;
+    if(pressureReady && argc==14) {
+        udpLoadSpacingUS=(unsigned)atoi(argv[12]);udpLoadTailSpacingUS=(unsigned)atoi(argv[13]);
+        assert(udpLoadSpacingUS<=1000 && udpLoadTailSpacingUS<=1000);
+    }
     bool load=pressure || (argc==10 && !strcmp(argv[1],"--load"));
     if(pressure) {
         udpLoadFault=!strcmp(argv[10],"repair")?1:!strcmp(argv[10],"drop")?2:0;
@@ -154,9 +160,15 @@ int main(int argc,char **argv) {
     char micEvents[12][32];unsigned micEventCount=0;
     uint64_t deadline=millis()+(load?20000:5000);
     for(;;) {
+        if(pressureReady && completeReceived && !loadStart && atomic_load(&udpLoadChannelReady)) {
+            /* Fixture boundary: start large bursts after the actual channel
+             * is published and its real decoder worker exists. Early-media
+             * cache behavior remains a separate input scenario. */
+            loadStart=udpLoadNow();
+        }
         if(load && loadStart) {
             while(loadSent<loadFrames && udpLoadNow()-loadStart>=(uint64_t)loadSent*1000000000/loadRate) {
-                udpLoadSend(peer,&videoAddress,videoLocal,loadSent?NULL:argv[6],crc,loadSent+1==loadFrames);++loadSent;
+                udpLoadSend(peer,&videoAddress,videoLocal,loadSent?NULL:argv[6],crc,loadSent+1==loadFrames,loadFrames-loadSent<=2);++loadSent;
             }
         }
         if(audio && !audioStage && atomic_load(&audFrames)>=1) {
@@ -208,11 +220,24 @@ int main(int argc,char **argv) {
         if(finished && (!atomic_load(&session->transport.closeRequested) || goodbyes))break;
         if(audio && millis()>=deadline)fprintf(stderr,"audio timeout: frames=%u calls=%u played=%u stage=%u feedback=%u stops=%u\n",
             atomic_load(&audFrames),atomic_load(&audCalls),atomic_load(&audPlayed),audioStage,repaired,atomic_load(&audStops));
+        if(pressureReady && millis()>=deadline) {
+            fprintf(stderr,"pressure timeout: complete_rx=%u socket_drops=%ld admitted/unique:",
+                    atomic_load(&udpLoadReceived),udpLoadSocketDrops(ntohs(videoAddress.sin_port)));
+            for(unsigned group=1;group<=26;++group)
+                fprintf(stderr," %u:%u/%u",group,atomic_load(&udpLoadFECAdmitted[group]),atomic_load(&udpLoadFECUnique[group]));
+            fputc('\n',stderr);
+        }
         assert(millis()<deadline);
         struct pollfd p={.fd=peer,.events=POLLIN};int ready=poll(&p,1,2);assert(ready>=0);if(!ready)continue;
         uint8_t raw[2048];struct sockaddr_in from;socklen_t length=sizeof(from);
         ssize_t size=recvfrom(peer,raw,sizeof(raw),0,(struct sockaddr *)&from,&length);assert(size>=13);
         uint8_t type=raw[0]&127;
+        /* Explicit large-fixture input: acknowledge each received reliable
+         * control packet. Without this, peer-side retry traffic can overflow
+         * the peer's own socket while its producer paces a large group. */
+        if(pressureReady && type==5 && raw[4]==1)
+            sendPeer(peer,&from,7,raw[2],1,(uint16_t)(raw[7]|(unsigned)raw[8]<<8),raw+9,4,crc);
+        udpLoadPeerWire(raw,(size_t)size);
         if(load)udpLoadOnFeedback(peer,&from,raw,(size_t)size,crc);
         if(load && type==3 && raw[4]==3 && size==(crc?18:14) && raw[13]==2)++udpLoadDataLost;
         if((recover || gap || audioGap) && (type==8 || type==10 || (gap && type==3 && raw[13]==2)) && raw[4]==3 && !repaired) {
@@ -285,7 +310,7 @@ int main(int argc,char **argv) {
                         const uint8_t start[]={0x08,3,0x10,4,0x20,0x80,1,0x28,0x48};
                         videoAddress=from;videoLocal=raw[2];
                         sendEncryptedPeer(session,peer,&from,raw[2],4,52,start,sizeof(start),2,crc,false);
-                        if(load)loadStart=udpLoadNow();else udpReplayMedia(peer,&from,raw[2],argv[6],crc);
+                        if(load) {if(!pressureReady)loadStart=udpLoadNow();}else udpReplayMedia(peer,&from,raw[2],argv[6],crc);
                     }
                     if(audio) {
                         const uint8_t start[]={0x10,3,0x18,3,0x28,0x80,0xf7,2,0x30,2};
@@ -303,6 +328,11 @@ int main(int argc,char **argv) {
     int mtu=session->state.mtu; /* Handler terminal synchronizes this RX-owned value. */
     uint64_t receivedSequence=0,sendSequence=0;
     if(negotiate) {IHS_SessionChannelControl *control=(void *)session->channels[1];IHS_BaseLock(&session->base);receivedSequence=control->recvEncryptSequence;IHS_BaseUnlock(&session->base);IHS_MutexLock(control->sendLock);sendSequence=control->sendEncryptSequence;IHS_MutexUnlock(control->sendLock);}
+    /* Socket counters disappear when the real receive worker closes its fd.
+     * Snapshot after the peer/decoder Stop, before interrupt/join; report the
+     * atomic admission rows only after those workers have joined. */
+    long finalSocketDrops=pressureReady?udpLoadSocketDrops(ntohs(videoAddress.sin_port)):-1;
+    long finalPeerDrops=pressureReady?udpLoadSocketDrops(ntohs(address.sin_port)):-1;
     if(!closed)IHS_SessionInterrupt(session);
     IHS_SessionThreadedJoin(session);
     assert(!session->sendThread && !session->base.worker);
@@ -325,6 +355,7 @@ int main(int argc,char **argv) {
         printf("\",\"starts\":%u,\"submits\":%u,\"stopped\":true}",udpStarts,udpSubmits);
     }
     if(load)udpLoadReport();
+    if(pressureReady)udpLoadSocketReport(ntohs(videoAddress.sin_port),finalSocketDrops,ntohs(address.sin_port),finalPeerDrops);
     if(audio)audReport(audioBurst?atomic_load(&audFrames):audioFrames,audioCalls,audioBlocked);
     if(audioBurst)rxReport();
     if(audioGap) {

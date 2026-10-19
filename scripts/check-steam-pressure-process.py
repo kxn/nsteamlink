@@ -61,7 +61,7 @@ def verify_flow(report):
     assert sdk_ids == [p["id"] for p in report["pictures"]]
 
 
-def verify_source(case):
+def verify_source(case, payloads=None, allow_missing=False):
     r = case["process"]
     verify_flow(r)
     count = case["frames"]
@@ -77,7 +77,7 @@ def verify_source(case):
     if case["profile"] in ("drop", "fec_drop"):
         expected.remove(101)
     assert ids == sorted(set(ids)) and ids[-2:] == [last - 1, last]
-    if case["profile"] == "drop":
+    if case["profile"] == "drop" or allow_missing:
         assert set(ids) <= expected
     else:
         assert set(ids) == expected
@@ -104,12 +104,12 @@ def verify_source(case):
         .splitlines()
         if not line.startswith("#")
     ]
-    payloads = stim.payloads()
+    payloads = payloads if payloads is not None else stim.payloads()
     sdk = [e for e in r["media_events"] if e["name"] == "sdk_send"]
     assert len(sdk) == len(pixels)
     for e, p in zip(sdk, pixels):
         assert (
-            e["size"] == 65536
+            e["size"] == payloads[(p["id"] - 100) % 6]["size"]
             and e["sha256"] == payloads[(p["id"] - 100) % 6]["sha256"]
             and p["md5"] == md5[(p["id"] - 100) % 6]
         )

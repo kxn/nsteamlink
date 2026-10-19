@@ -11781,3 +11781,84 @@ python3 scripts/check-steam-pressure-process.py \
 ctest --test-dir build/desktop -R 'media_pressure_udp_official_vectors' \
   --output-on-failure
 ```
+
+## 150. 大型type11组的零校验分支与双向UDP丢包边界
+
+本节沿用§149固定的官方Linux、原SDK、Qt和53份完整函数范围。新增参考由
+`audit-steam-client-large-process.py`捕获，保存于
+`scripts/fixtures/steam-client-large-process-reference.json.gz`；所有原函数、SDK
+返回值和客户端时钟保持原样。受控peer、低像素填充AU、显式节奏、配置完成屏障和
+headless消费者仍是fixture条件，不能视为自然高分辨率性能或Switch上屏证据。
+
+### 150.1 请求校验比例不保证每组都有校验片
+
+Evidence：固定官方Android ELF的原AddPacket@`0x7f7904`接受MTU1200、比例5、
+393236字节媒体信封，26次均输出337份type11数据片，shard1168、parity字段0，
+未调用RS encode。媒体AU由原六份128×72 H264加type12 filler NAL填至393216
+字节；原body SHA、每片wire和编码调用记录逐组保存。原sender的codeword上限
+分支在数据片加预计校验片超过255时令校验数为0，继续输出type11；不能把type11
+本身或请求非零比例当成实际具有纠错冗余的证明。
+
+此处仍是官方**客户端通用编码器**的显式能力输入，不证明Steam视频producer
+自然采用这份大小/MTU/比例，也不增加任何自动启用或动态调节FEC的策略结论。
+较大fixture分配从`0x20400000`开始，避开原审计terminal固定在`0x20300000`的TLS；
+原stack canary和编码/分支指令不替换。原先分配覆盖TLS造成的stack-check失败属于
+fixture内存布局错误，不能记为原编码器的超大组拒绝策略。
+
+### 150.2 配置完成、确定缺片和恢复尾部
+
+26帧ID100…125，sequence0…25，5fps目标、timestamp步长13107；每六帧关键标记。
+Source在真实OnThink返回且decoder存在、active=1、phase=6后才通知peer开始；
+Native从真实ChannelAdd返回后观察channel3已发布及其worker存在，再通过atomic
+通知peer。两者都不写入客户端状态，也不把“已发StartVideo”假作配置完成证据。
+
+| 输入 | 原Linux实际结果及Native约束 |
+|---|---|
+| 每片显式间隔250us，全部337片 | CRC开/关均完整RX26、SDK26，实际字节及像素正确 |
+| 同节奏，仅ID101所属组删shard17 | RX25；该组不交付；SDK21，key106后继续，最终key124/P125正确 |
+| 前24组组内不加间隔，末尾key124/P125每片250us | 保留实际socket丢包和准入数量；完整组须进入消费者，末尾恢复且正常Stop |
+
+间隔由fixture的sleep实现，是输入条件而非客户端定时器；不声称自然精确250us。
+第三类共两份原进程实测RX26/SDK26、socket drops0；Native不强迫不同运行环境得到
+相同burst丢包数。无校验组缺一片时不能纠错，也没有普通type10 NACK；两种CRC的
+缺片原进程均实际发出4份DataLost，Native核验从真实入口调用、Socket发送字节/
+目标端口/结果到peer实际收到的wire。请求次数不作为跨自然调度的固定协议常数。
+
+### 150.3 区分内核丢包、协议准入与完整帧
+
+Native仅在新增fixture模式以有界atomic计数观察CRC/解析通过后的每组准入片数
+与唯一ordinal数，转发原接收方法；不在热路径做文件IO。正常Stop后、真实session
+interrupt/join关闭socket前，按实际端口读取Linux每socket drop计数；workers join后
+才输出观察数组。Source按实际peer观察到的客户端端口同时查udp/udp6，不能因为
+原客户端使用IPv6 dual-stack socket而把缺失IPv4条目当作drops0。
+
+完整输入要求每组337份唯一片；明确删去一片的组保持336。paced场景要求实际
+内核额外丢包和准入缺失均为0；burst允许缺失，但须有实际内核drop支撑，全部完整
+组仍须出现在RX及消费账中。该比较只给出缺失数不超过socket drops的约束，不能
+给每个丢弃包编造精确归属。每份实际SDK输入检查完整393216字节SHA、返回值，
+每份观察像素检查独立MD5，最终key/P、正常Stop和线程/模块释放分别验证。
+
+Evidence：此前无节奏的TSan输入实测8762份发送、8508份准入、该socket drops254，
+只完成2组并等待超时。它是完整交付失败，不能记作Sanitizer通过；并非320项
+pending完整帧缓存被337个shard直接占满。另一次测试peer不ACK可靠控制包，在
+大组发送等待期间自身socket drops3065；四份DataLost实际sendto到正确端口成功，
+peer未记录到。仅凭该peer的0计数不能推出客户端没有发出恢复请求。
+
+正式large fixture两端peer均对实际收到的可靠channel1控制包提供累计ACK，并
+echo该包实际timestamp；这是明确增加的网络输入，未替换客户端ACK处理或发送
+结果。Native另外要求peer自身drops0，并逐字节对照Socket发送与peer收包，缺片
+时仍要求真实DataLost到达，不能通过删掉请求断言掩盖差异。这些受控loopback结果
+不确立最初用户停顿现象的原因，也不证明真实Steam的重发/FEC启用策略或长期同步。
+
+```sh
+python3 scripts/audit-steam-large-fec-encode.py \
+  --binary /path/to/libmain-arm64.so --output /tmp/fec-large.json
+python3 scripts/audit-steam-client-large-process.py \
+  --binary /path/to/official/bin/steamlink --sdk-directory /path/to/official/lib \
+  --qt-library-directory /path/to/qt/lib --fec-bank /tmp/fec-large.json \
+  --output /tmp/source-large.json
+python3 scripts/check-steam-large-process.py \
+  --source-report /tmp/source-large.json --receiver build/desktop/app/nsl-auth-udp-oracle
+ctest --test-dir build/desktop -R 'media_large_fec.*udp_official_vectors' \
+  --output-on-failure
+```

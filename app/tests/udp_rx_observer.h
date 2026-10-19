@@ -56,6 +56,7 @@ void __wrap_IHS_StreamClockFeedback(IHS_StreamClock *clock, uint32_t echo, uint3
 
 void __real_IHS_SessionUnreliableReceived(IHS_Session *, IHS_SessionPacket *);
 void __wrap_IHS_SessionUnreliableReceived(IHS_Session *session, IHS_SessionPacket *packet) {
+    udpLoadObserveFEC(packet);
     if (udpRXObserve) {
         assert(rxPacketCount && packet->header.channelId == 3);
         rxPackets[rxPacketCount - 1].tick = packet->header.receiveTimestamp;

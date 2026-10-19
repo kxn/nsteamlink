@@ -1,5 +1,6 @@
 /* Controlled slow-SDK adapter and read-only load observations. No production
  * packet, decoder outcome or clock is substituted. Only this fixture sleeps. */
+#include "ihs_udp.h"
 #include "session/channels/ch_data.h"
 #include "session/frame_tracker.h"
 #include <errno.h>
@@ -18,8 +19,67 @@ static struct {
     uint8_t wire[96];
 } udpLoadFeedbacks[256];
 static unsigned udpLoadDelayUS, udpLoadSubmittingId, udpLoadSdkCount, udpLoadPictureCount;
+static unsigned udpLoadSpacingUS, udpLoadTailSpacingUS;
 static IHS_Session *udpLoadSession;
 static atomic_bool udpLoadBusy;
+static atomic_bool udpLoadChannelReady;
+static bool udpLoadPacketObserve;
+static atomic_uint udpLoadRecoveryCalls;
+static unsigned udpLoadOutgoingCount;
+static atomic_uint udpLoadSocketSendCount;
+static struct {
+    IHS_SocketAddress address;
+    size_t size;
+    uint8_t wire[96];
+    bool result;
+} udpLoadSocketSends[128];
+bool __real_IHS_UDPSocketSend(IHS_UDPSocket *, const IHS_UDPPacket *);
+bool __wrap_IHS_UDPSocketSend(IHS_UDPSocket *socket, const IHS_UDPPacket *packet) {
+    const uint8_t *wire = IHS_BufferPointer(&packet->buffer);
+    bool watch = udpLoadPacketObserve && packet->buffer.size >= 13 && wire[4] == 3;
+    unsigned index = 0;
+    if (watch) {
+        index = atomic_fetch_add(&udpLoadSocketSendCount, 1);
+        assert(index < 128 && packet->buffer.size <= sizeof(udpLoadSocketSends[index].wire));
+        udpLoadSocketSends[index].address = packet->address;
+        udpLoadSocketSends[index].size = packet->buffer.size;
+        memcpy(udpLoadSocketSends[index].wire, wire, packet->buffer.size);
+    }
+    bool result = __real_IHS_UDPSocketSend(socket, packet);
+    if (watch)
+        udpLoadSocketSends[index].result = result;
+    return result;
+}
+static struct {
+    size_t size;
+    uint8_t wire[96];
+} udpLoadOutgoing[256];
+void __real_IHS_SessionChannelDataLost(IHS_SessionChannel *);
+void __wrap_IHS_SessionChannelDataLost(IHS_SessionChannel *channel) {
+    if (udpLoadPacketObserve)
+        atomic_fetch_add(&udpLoadRecoveryCalls, 1);
+    __real_IHS_SessionChannelDataLost(channel);
+}
+static void udpLoadPeerWire(const uint8_t *wire, size_t size) {
+    if (!udpLoadPacketObserve || wire[4] != 3)
+        return;
+    assert(udpLoadOutgoingCount < 256 && size <= sizeof(udpLoadOutgoing[0].wire));
+    udpLoadOutgoing[udpLoadOutgoingCount].size = size;
+    memcpy(udpLoadOutgoing[udpLoadOutgoingCount++].wire, wire, size);
+}
+static atomic_uint udpLoadFECAdmitted[27], udpLoadFECUnique[27];
+static atomic_uint_fast64_t udpLoadFECSeen[27][6];
+static void udpLoadObserveFEC(const IHS_SessionPacket *packet) {
+    if (!udpLoadPacketObserve || packet->header.channelId != 3 ||
+        packet->header.type != IHS_SessionPacketTypeUnreliableFEC)
+        return;
+    unsigned group = packet->header.packetId, shard = (uint16_t)packet->header.fragmentId;
+    assert(group && group <= 26 && shard < 337);
+    atomic_fetch_add(&udpLoadFECAdmitted[group], 1);
+    uint64_t bit = UINT64_C(1) << (shard % 64);
+    if (!(atomic_fetch_or(&udpLoadFECSeen[group][shard / 64], bit) & bit))
+        atomic_fetch_add(&udpLoadFECUnique[group], 1);
+}
 static atomic_uint udpLoadReceived, udpLoadReceivedBusy;
 static struct {
     unsigned id, consumed;
@@ -32,6 +92,15 @@ static struct {
     unsigned id;
     uint8_t md5[16];
 } udpLoadPictures[UDP_LOAD_LIMIT];
+void __real_IHS_SessionChannelAdd(IHS_Session *, IHS_SessionChannel *);
+void __wrap_IHS_SessionChannelAdd(IHS_Session *session, IHS_SessionChannel *channel) {
+    bool observe = udpLoadMode && channel && channel->type == IHS_SessionChannelTypeDataVideo;
+    __real_IHS_SessionChannelAdd(session, channel);
+    /* Observe publication on its owning actor, before returning to that actor.
+     * The peer polls only the atomic result, not the mutable channel table. */
+    if (observe && IHS_SessionChannelFor(session, 3) == channel)
+        atomic_store(&udpLoadChannelReady, ((IHS_SessionChannelData *)channel)->worker != NULL);
+}
 static uint64_t udpLoadNow(void) {
     struct timespec t;
     assert(!clock_gettime(CLOCK_MONOTONIC, &t));
@@ -113,7 +182,7 @@ static void udpLoadPixel(unsigned id, const uint8_t md5[16]) {
 }
 static FILE *udpLoadReplay;
 static void udpLoadSend(int socket, const struct sockaddr_in *address, uint8_t local,
-                        const char *filename, bool crc, bool last) {
+                        const char *filename, bool crc, bool last, bool tail) {
     if (filename) {
         assert(!udpLoadReplay);
         udpLoadReplay = fopen(filename, "rb");
@@ -148,6 +217,12 @@ static void udpLoadSend(int socket, const struct sockaddr_in *address, uint8_t l
             assert(sendto(socket, wire, size, 0, (const struct sockaddr *)address,
                           sizeof(*address)) == (ssize_t)size);
         ++count;
+        unsigned spacing = tail ? udpLoadTailSpacingUS : udpLoadSpacingUS;
+        if (spacing) {
+            struct timespec left = {0, (long)spacing * 1000};
+            while (nanosleep(&left, &left) && errno == EINTR) {
+            }
+        }
     }
     assert(count);
     if (last) {
@@ -165,6 +240,66 @@ static bool udpLoadRequested(const uint8_t *wire, size_t size, unsigned id) {
         return true;
     unsigned offset = (uint16_t)(id - base);
     return offset < (size - 19) * 8 && !(wire[19 + offset / 8] & (1u << (offset % 8)));
+}
+static long udpLoadSocketDrops(unsigned port) {
+    /* Linux-only evidence at the reporting boundary, never on the RX path.
+     * Match the actual peer-observed client port; do not infer drops from a
+     * machine-wide counter or reinterpret a failed frame as a socket error. */
+    FILE *file = fopen("/proc/self/net/udp", "r");
+    char line[512], address[9];
+    unsigned candidate;
+    bool found = false;
+    unsigned long drops = 0;
+    while (file && fgets(line, sizeof(line), file)) {
+        if (sscanf(line, " %*u: %8[0-9A-Fa-f]:%x", address, &candidate) != 2 || candidate != port)
+            continue;
+        char *end = line + strlen(line);
+        while (end > line && (end[-1] == ' ' || end[-1] == '\n' || end[-1] == '\t'))
+            --end;
+        char *begin = end;
+        while (begin > line && begin[-1] >= '0' && begin[-1] <= '9')
+            --begin;
+        if (begin == end)
+            break;
+        drops = strtoul(begin, NULL, 10);
+        found = true;
+        break;
+    }
+    if (file)
+        assert(!fclose(file));
+    return found ? (long)drops : -1;
+}
+static void udpLoadSocketReport(unsigned port, long drops, unsigned peerPort, long peerDrops) {
+    printf(",\"udp_socket\":{\"port\":%u,\"drops\":", port);
+    if (drops >= 0)
+        printf("%ld}", drops);
+    else
+        printf("null}");
+    assert(peerDrops >= 0);
+    printf(",\"peer_socket\":{\"port\":%u,\"drops\":%ld}", peerPort, peerDrops);
+    printf(",\"fec_admitted\":[");
+    for (unsigned group = 1; group <= 26; ++group)
+        printf("%s{\"group\":%u,\"packets\":%u,\"unique\":%u}", group > 1 ? "," : "", group,
+               atomic_load(&udpLoadFECAdmitted[group]), atomic_load(&udpLoadFECUnique[group]));
+    printf("]");
+    printf(",\"socket_sends\":[");
+    for (unsigned n = 0; n < atomic_load(&udpLoadSocketSendCount); ++n) {
+        printf("%s{\"port\":%u,\"family\":%d,\"result\":%s,\"wire\":\"", n ? "," : "",
+               udpLoadSocketSends[n].address.port, udpLoadSocketSends[n].address.ip.family,
+               udpLoadSocketSends[n].result ? "true" : "false");
+        for (size_t b = 0; b < udpLoadSocketSends[n].size; ++b)
+            printf("%02x", udpLoadSocketSends[n].wire[b]);
+        printf("\"}");
+    }
+    printf("]");
+    printf(",\"recovery_calls\":%u,\"outgoing_media\":[", atomic_load(&udpLoadRecoveryCalls));
+    for (unsigned index = 0; index < udpLoadOutgoingCount; ++index) {
+        printf("%s\"", index ? "," : "");
+        for (size_t n = 0; n < udpLoadOutgoing[index].size; ++n)
+            printf("%02x", udpLoadOutgoing[index].wire[n]);
+        printf("\"");
+    }
+    printf("]");
 }
 static void udpLoadOnFeedback(int socket, const struct sockaddr_in *address, const uint8_t *wire,
                               size_t size, bool crc) {
