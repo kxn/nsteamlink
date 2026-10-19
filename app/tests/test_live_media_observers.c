@@ -23,6 +23,65 @@ static IHS_StreamVideoSubmitResult submitted_result, expected_feedback;
 static uint16_t expected_id;
 static bool expected_taken, decode_accepted;
 static unsigned pointer_calls;
+static const ProtobufCMessage *expected_config_message;
+static EStreamControlMessage expected_config_type;
+static int32_t expected_config_id;
+static IHS_SendAdmission config_admission;
+static bool emit_config, accept_config, config_crc;
+static unsigned config_calls, config_queue_calls, negotiation_calls;
+static IHS_Buffer *expected_payload;
+static const IHS_SessionPacketHeader *expected_header;
+
+IHS_SendAdmission __real_IHS_SessionQueuePacketResult(IHS_Session *s, IHS_SessionPacket *p,
+                                                     bool retransmit) {
+    assert(s == expected_session && retransmit && p->header.channelId == 1);
+    ++config_queue_calls;
+    if (config_admission == IHS_SendAdmissionAccepted) {
+        uint8_t raw[64] = {0};
+        raw[0] = p->header.type | (config_crc ? 128 : 0);
+        raw[2] = p->header.srcConnectionId;
+        raw[3] = p->header.dstConnectionId;
+        raw[4] = p->header.channelId;
+        raw[7] = p->header.packetId;
+        raw[8] = p->header.packetId >> 8;
+        memcpy(raw + 13, IHS_BufferPointer(&p->body), p->body.size);
+        IHS_UDPPacket udp = {.buffer = IHS_BUFFER_WRAP(raw, 13 + p->body.size + 4 * config_crc)};
+        expected_udp = &udp;
+        expected_socket = s->base.socket;
+        /* The head must already be published in the ledger when a sender
+         * runs before producer admission returns. */
+        (void)__wrap_IHS_UDPSocketSend(expected_socket, &udp);
+    }
+    return config_admission;
+}
+bool __real_IHS_SessionChannelControlSend(IHS_SessionChannel *c, EStreamControlMessage type,
+                                          const ProtobufCMessage *message, int32_t id) {
+    assert(c == expected_channel && type == expected_config_type &&
+           message == expected_config_message && id == expected_config_id);
+    ++config_calls;
+    if (!emit_config)
+        return config_admission == IHS_SendAdmissionAccepted;
+    uint8_t body[24] = {0};
+    body[0] = type;
+    memset(body + 1, 0xa5, sizeof(body) - 1); /* controlled encrypted body terminal */
+    IHS_SessionPacket p = {.header = {.type = IHS_SessionPacketTypeReliable,
+                                      .srcConnectionId = 7,
+                                      .dstConnectionId = 12,
+                                      .channelId = 1,
+                                      .packetId = 100 + config_calls},
+                           .body = IHS_BUFFER_WRAP(body, sizeof(body))};
+    return __wrap_IHS_SessionQueuePacketResult(c->session, &p, true) ==
+           IHS_SendAdmissionAccepted;
+}
+void __real_IHS_SessionChannelControlOnNegotiation(IHS_SessionChannel *c, EStreamControlMessage t,
+                                                   IHS_Buffer *p,
+                                                   const IHS_SessionPacketHeader *h) {
+    assert(c == expected_channel && t == expected_config_type && p == expected_payload &&
+           h == expected_header);
+    ++negotiation_calls;
+    if (accept_config)
+        c->session->state.connectionState = IHS_SessionConnectionStateStarting;
+}
 uint8_t *__real_IHS_BufferPointer(const IHS_Buffer *);
 uint8_t *__wrap_IHS_BufferPointer(const IHS_Buffer *b) {
     /* Enforce the real helper's Debug preconditions even if the SDK library
@@ -279,6 +338,89 @@ int main(void) {
     assert(decode_feedback_calls == 3 && atomic_load(&decode_feedback) == 2);
     assert(atomic_load(&feedback_accepted) == 1 && atomic_load(&reset_flags) == 1 &&
            atomic_load(&lost_flags) == 1 && atomic_load(&disable_flags) == 1);
+    CStreamingClientConfig cfg = CSTREAMING_CLIENT_CONFIG__INIT;
+    CNegotiationSetConfigMsg initial = CNEGOTIATION_SET_CONFIG_MSG__INIT;
+    CSetStreamingClientConfig update = CSET_STREAMING_CLIENT_CONFIG__INIT;
+    initial.streaming_client_config = update.config = &cfg;
+    IHS_SessionChannel control = {.id = 1, .session = &normal};
+    expected_channel = &control;
+    expected_session = &normal;
+    expected_config_id = IHS_PACKET_ID_NEXT;
+    config_admission = IHS_SendAdmissionAccepted;
+    emit_config = socket_result = true;
+    for (unsigned i = 0; i < 2; ++i) {
+        config_crc = i;
+        expected_config_type = i ? k_EStreamControlSetStreamingClientConfig
+                                 : k_EStreamControlNegotiationSetConfig;
+        expected_config_message = i ? (void *)&update : (void *)&initial;
+        cfg.has_enable_unreliable_fec = cfg.enable_unreliable_fec = i;
+        assert(__wrap_IHS_SessionChannelControlSend(&control, expected_config_type,
+                                                    expected_config_message, expected_config_id));
+        assert(!probe_config_current);
+        assert(atomic_load(&probe_config_calls[i]) == 1 &&
+               atomic_load(&probe_config_admitted[i]) == 1 &&
+               atomic_load(&probe_config_queued[i]) == 1 &&
+               atomic_load(&probe_config_sent[i]) == 1 &&
+               atomic_load(&probe_config_sent_fec[i]) == (i ? 8 : 1) &&
+               atomic_load(&probe_config_fec[i]) == (i ? 7 : 4));
+    }
+    socket_result = false;
+    assert(__wrap_IHS_SessionChannelControlSend(&control, expected_config_type,
+                                                expected_config_message, expected_config_id));
+    assert(atomic_load(&probe_config_failed[1]) == 1 &&
+           atomic_load(&probe_config_sent_fec[1]) == 8);
+    config_admission = IHS_SendAdmissionLocalFailure;
+    assert(!__wrap_IHS_SessionChannelControlSend(&control, expected_config_type,
+                                                 expected_config_message, expected_config_id));
+    assert(atomic_load(&probe_config_admitted[1]) == 2 &&
+           atomic_load(&probe_config_queued[1]) == 2);
+    /* Exact head bytes, endpoint, CRC exclusion and continuation classification. */
+    const probe_config_entry *entry = &probe_config_entries[0];
+    uint8_t cfg_wire[64] = {5, 0, 7, 12, 1};
+    cfg_wire[7] = entry->id;
+    cfg_wire[8] = entry->id >> 8;
+    memcpy(cfg_wire + 13, entry->body, entry->bytes);
+    IHS_UDPPacket cfg_udp = {.buffer = IHS_BUFFER_WRAP(cfg_wire, 13 + entry->bytes)};
+    probe_config_socket(normal.base.socket, &cfg_udp, true);
+    assert(atomic_load(&probe_config_sent[0]) == 2); /* same head retry */
+    cfg_wire[13] ^= 1;
+    probe_config_socket(normal.base.socket, &cfg_udp, true);
+    cfg_wire[13] ^= 1;
+    cfg_wire[0] = 6;
+    probe_config_socket(normal.base.socket, &cfg_udp, true);
+    cfg_wire[0] = 5;
+    probe_config_socket(test.base.socket, &cfg_udp, true);
+    cfg_wire[2] ^= 1;
+    probe_config_socket(normal.base.socket, &cfg_udp, true);
+    assert(atomic_load(&probe_config_sent[0]) == 2);
+    control.session = &test;
+    expected_session = &test;
+    emit_config = false;
+    assert(!__wrap_IHS_SessionChannelControlSend(&control, expected_config_type,
+                                                 expected_config_message, expected_config_id));
+    assert(atomic_load(&probe_config_calls[1]) == 3); /* test session excluded */
+    control.session = &normal;
+    expected_session = &normal;
+    expected_config_type = k_EStreamControlNegotiationSetConfig;
+    IHS_Buffer negotiation = {0};
+    IHS_SessionPacketHeader header = {0};
+    expected_payload = &negotiation;
+    expected_header = &header;
+    for (unsigned i = 0; i < 3; ++i) {
+        normal.state.connectionState = i == 2 ? IHS_SessionConnectionStateConnected
+                                              : IHS_SessionConnectionStateNegotiating;
+        accept_config = i != 0;
+        __wrap_IHS_SessionChannelControlOnNegotiation(&control, expected_config_type,
+                                                      &negotiation, &header);
+    }
+    assert(atomic_load(&probe_peer_config) == 1 && negotiation_calls == 3);
+    /* A saturated ledger reports loss instead of silently reusing a record. */
+    atomic_store(&probe_config_used, PROBE_CONFIG_SLOTS);
+    expected_config_message = (void *)&initial;
+    emit_config = true;
+    assert(!__wrap_IHS_SessionChannelControlSend(&control, expected_config_type,
+                                                 expected_config_message, expected_config_id));
+    assert(atomic_load(&probe_config_overflow) == 1 && !probe_config_current);
     puts("Observer forwarding, network-test exclusion, m0/parity and actual socket outcomes "
          "passed.");
     return 0;

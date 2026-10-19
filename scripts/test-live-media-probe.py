@@ -31,6 +31,31 @@ def check(log):
     return probe.analyze(log, BUILD, "192.0.2.1", 30)
 
 
+def version3(mode="saved"):
+    enabled = mode == "on"
+    log = LOG.replace("observer=2", "observer=3 fec=" + mode).replace(
+        "stored_fec=0 sound=1",
+        f"original_known=1 original_has=0 stored_fec=0 effective_fec={int(enabled)} sound=1",
+    )
+    prefix = (
+        f"LIVE_PREFS run=42 loads={0 if mode == 'saved' else 2} saves=0 profiles=0 errors=0\n"
+        f"LIVE_NEGOTIATE run=42 type=4 calls=1 admitted=1 queued=1 sent=2 failed=1 fec={7 if enabled else 4 if mode == 'saved' else 6} sent_fec={8 if enabled else 1 if mode == 'saved' else 4}\n"
+        "LIVE_NEGOTIATE run=42 type=99 calls=0 admitted=0 queued=0 sent=0 failed=0 fec=0 sent_fec=0\n"
+        "LIVE_PEER run=42 config_accepted=1 overflow=0\n"
+    )
+    log = log.replace("LIVE_VCHANNEL", prefix + "LIVE_VCHANNEL")
+    log = log.replace("retry=4\n", f"retry=4 fec_complete={10 if enabled else 0}\n")
+    if enabled:
+        log = log.replace(
+            "channel=9 ordinary=300 fec=0", "channel=9 ordinary=300 fec=50"
+        )
+        log = log.replace(
+            "fec=0 parity_enabled=0 parity_shards=0 fec_complete=0",
+            "fec=100 parity_enabled=90 parity_shards=4 fec_complete=10",
+        )
+    return log
+
+
 class Contract(unittest.TestCase):
     def test_complete(self):
         result = check(LOG)
@@ -129,6 +154,53 @@ class Contract(unittest.TestCase):
         ]:
             with self.subTest(log=log):
                 self.assertFalse(check(log)["passed"])
+
+    def test_negotiation_and_fec_modes(self):
+        for mode in ("saved", "on", "off"):
+            result = probe.analyze(version3(mode), BUILD, "192.0.2.1", 30, mode)
+            self.assertTrue(result["passed"], result["errors"])
+            self.assertEqual(result["rs_reconstruction"], "unverified")
+            self.assertEqual(
+                result["negotiation"]["video_type11_observed"], mode == "on"
+            )
+            self.assertEqual(result["negotiation"]["configs"][0]["sent"], 2)
+        self.assertFalse(probe.analyze(LOG, BUILD, "192.0.2.1", 30, "on")["passed"])
+
+    def test_negotiation_failure_boundaries(self):
+        log = version3("on")
+        for before, after in [
+            ("sent=2", "sent=0"),
+            ("admitted=1", "admitted=0"),
+            ("queued=1", "queued=0"),
+            ("fec=7", "fec=6"),
+            ("sent_fec=8", "sent_fec=0"),
+            ("sent_fec=8", "sent_fec=4"),
+            ("sent_fec=8", "sent_fec=12"),
+            ("fec=7 sent_fec=8", "fec=5 sent_fec=2"),
+            ("config_accepted=1", "config_accepted=0"),
+            ("overflow=0", "overflow=1"),
+            ("loads=2", "loads=1"),
+            ("errors=0\nLIVE_NEGOTIATE", "errors=1\nLIVE_NEGOTIATE"),
+            ("original_known=1", "original_known=0"),
+            ("effective_fec=1", "effective_fec=0"),
+            ("effective_fec=1", "effective_fec=broken"),
+            ("channel=9 ordinary=300 fec=50", "channel=9 ordinary=300 fec=0"),
+            ("retry=4 fec_complete=10", "retry=4 fec_complete=0"),
+            ("retry=4 fec_complete=10", "retry=4 fec_complete=11"),
+        ]:
+            with self.subTest(before=before):
+                result = probe.analyze(
+                    log.replace(before, after), BUILD, "192.0.2.1", 30, "on"
+                )
+                self.assertFalse(result["passed"], result)
+        for line in log.splitlines(True):
+            with self.subTest(removed=line):
+                self.assertFalse(
+                    probe.analyze(log.replace(line, ""), BUILD, "192.0.2.1", 30, "on")[
+                        "passed"
+                    ]
+                )
+        self.assertFalse(probe.analyze(log, BUILD, "192.0.2.1", 30, "saved")["passed"])
 
 
 if __name__ == "__main__":

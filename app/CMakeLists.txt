@@ -690,11 +690,15 @@ if(NSL_DIAGNOSTICS)
     target_compile_options(nsl-live-media-probe PRIVATE -Wall -Wextra -Werror -Wno-unknown-pragmas)
     target_link_libraries(nsl-live-media-probe PRIVATE nsl_platform)
     target_link_options(nsl-live-media-probe PRIVATE
+        "-Wl,-Map=${CMAKE_CURRENT_BINARY_DIR}/nsl-live-media-probe.map"
         -Wl,--wrap=IHS_SessionUnreliableReceived -Wl,--wrap=IHS_FECReceiverAdd
         -Wl,--wrap=IHS_SessionChannelDataReceiveReliableFrame
         -Wl,--wrap=IHS_SessionChannelDataLost -Wl,--wrap=IHS_UDPSocketSend
         -Wl,--wrap=IHS_SessionChannelDataReceiveFrame -Wl,--wrap=sl_media_video_submit_tracked
-        -Wl,--wrap=IHS_SessionVideoDecodeFeedback)
+        -Wl,--wrap=IHS_SessionVideoDecodeFeedback
+        -Wl,--wrap=IHS_SessionChannelControlSend -Wl,--wrap=IHS_SessionQueuePacketResult
+        -Wl,--wrap=IHS_SessionChannelControlOnNegotiation
+        -Wl,--wrap=sl_stream_settings_load -Wl,--wrap=sl_stream_settings_save -Wl,--wrap=sl_auth_save)
     if(NSL_PLATFORM STREQUAL "switch")
         nx_create_nro(nsl-live-media-probe OUTPUT nsl-live-media-probe.nro)
     else()
@@ -704,8 +708,32 @@ if(NSL_DIAGNOSTICS)
         target_compile_options(nsl-live-media-observer-tests PRIVATE -Wall -Wextra -Werror
             -Wno-unknown-pragmas -UNDEBUG)
         target_link_libraries(nsl-live-media-observer-tests PRIVATE nsl_platform)
-        target_link_options(nsl-live-media-observer-tests PRIVATE -Wl,--wrap=IHS_BufferPointer)
+        target_link_options(nsl-live-media-observer-tests PRIVATE -Wl,--wrap=IHS_BufferPointer
+            -Wl,--wrap=sl_stream_settings_load -Wl,--wrap=sl_stream_settings_save -Wl,--wrap=sl_auth_save)
         add_test(NAME live_media_probe_observers COMMAND nsl-live-media-observer-tests)
+        add_executable(nsl-live-media-fec-settings-tests tests/test_live_media_fec_settings.c
+            platforms/desktop/system.c)
+        target_include_directories(nsl-live-media-fec-settings-tests PRIVATE platforms/common
+            ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+        target_compile_options(nsl-live-media-fec-settings-tests PRIVATE -Wall -Wextra -Werror
+            -Wno-unknown-pragmas -UNDEBUG)
+        target_link_libraries(nsl-live-media-fec-settings-tests PRIVATE nsl_stream_settings
+            nsl_ui ihs-protobuf)
+        target_link_options(nsl-live-media-fec-settings-tests PRIVATE
+            -Wl,--wrap=sl_stream_settings_load -Wl,--wrap=sl_stream_settings_save -Wl,--wrap=sl_auth_save)
+        add_test(NAME live_media_probe_fec_settings COMMAND nsl-live-media-fec-settings-tests)
+        add_executable(nsl-live-media-config-wire-tests tests/test_live_media_config_wire.c)
+        target_include_directories(nsl-live-media-config-wire-tests PRIVATE platforms/common
+            ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+        target_compile_options(nsl-live-media-config-wire-tests PRIVATE -Wall -Wextra -Werror
+            -Wno-unknown-pragmas -UNDEBUG)
+        target_link_libraries(nsl-live-media-config-wire-tests PRIVATE ihs-test-session
+            ihslib ihs-platforms ihslib)
+        target_link_options(nsl-live-media-config-wire-tests PRIVATE
+            -Wl,--wrap=IHS_SessionChannelControlSend -Wl,--wrap=IHS_SessionQueuePacketResult
+            -Wl,--wrap=IHS_SessionChannelControlOnNegotiation -Wl,--wrap=IHS_BaseSend)
+        add_test(NAME live_media_probe_config_wire COMMAND nsl-live-media-config-wire-tests)
+        set_tests_properties(live_media_probe_config_wire PROPERTIES TIMEOUT 15)
     endif()
 endif()
 if(NSL_PLATFORM STREQUAL "switch" AND NSL_DIAGNOSTICS)

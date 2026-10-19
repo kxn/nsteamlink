@@ -7,6 +7,7 @@ equivalence, physical scanout, hbmenu return or RS reconstruction proof.
 """
 import argparse
 import hashlib
+import importlib.util
 import ipaddress
 import json
 import os
@@ -20,7 +21,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def analyze(log, build, steam, seconds):
+def analyze(log, build, steam, seconds, fec_mode="saved"):
     records, run = [], None
     for line in log.splitlines():
         match = re.fullmatch(r"LIVE_([A-Z]+) run=(\d+) (.+)", line)
@@ -62,13 +63,47 @@ def analyze(log, build, steam, seconds):
         one(tag)
         for tag in ("BEGIN", "SETTINGS", "SUBMITTED", "FIRST", "RESULT", "FINAL")
     )
+    version = begin.get("observer")
+    require(fec_mode in ("saved", "on", "off"), "invalid FEC test mode")
+    expected_begin = {"build": build, "host": steam, "seconds": str(seconds)}
+    expected_begin["observer"] = version
+    if version == "3":
+        expected_begin["fec"] = fec_mode
     require(
-        begin
-        == {"build": build, "host": steam, "seconds": str(seconds), "observer": "2"},
+        begin == expected_begin
+        and version in ("2", "3")
+        and (version == "3" or fec_mode == "saved"),
         "identity mismatch",
     )
     require(settings.get("stored_fec") in ("0", "1"), "missing FEC preference")
     require(settings.get("sound") in ("0", "1"), "missing sound preference")
+    if version == "3":
+        require(
+            set(settings)
+            == {
+                "original_known",
+                "original_has",
+                "stored_fec",
+                "effective_fec",
+                "sound",
+            }
+            and all(value in ("0", "1") for value in settings.values()),
+            "invalid SETTINGS fields",
+        )
+        effective = settings.get("effective_fec")
+        require(
+            effective
+            == (
+                settings.get("stored_fec")
+                if fec_mode == "saved"
+                else str(int(fec_mode == "on"))
+            ),
+            "FEC test input mismatch",
+        )
+        if fec_mode != "saved":
+            require(
+                settings.get("original_known") == "1", "saved FEC preference unknown"
+            )
     require(submitted == {"existing_identity": "1"}, "no existing identity submission")
     number(first, "elapsed_ms")
     require(
@@ -133,7 +168,8 @@ def analyze(log, build, steam, seconds):
     )
     details = dict(records[-10:-4]) if tags[-10:-4] == detail_tags else {}
     schemas = {
-        "VCHANNEL": "channel ordinary fec retry",
+        "VCHANNEL": "channel ordinary fec retry"
+        + (" fec_complete" if version == "3" else ""),
         "VRECV": "complete key finish last",
         "VWORK": "calls key finish last",
         "VSUBMIT": "calls returned keys errors last",
@@ -182,6 +218,99 @@ def analyze(log, build, steam, seconds):
         and all(requests[key] >= 0 for key in ("requested", "sent", "failed")),
         "video feedback counts",
     )
+    negotiation = {"scope": "unverified in observer v2"}
+    if version == "3":
+        require(
+            tags[-14:]
+            == ["PREFS", "NEGOTIATE", "NEGOTIATE", "PEER"]
+            + detail_tags
+            + ["WIRE", "FLOW", "RESULT", "FINAL"],
+            "missing final negotiation group",
+        )
+        group = records[-13:-10] if len(records) >= 14 else []
+        configs = []
+        for i in range(2):
+            value = group[i][1] if len(group) == 3 else {}
+            schema = "type calls admitted queued sent failed fec sent_fec".split()
+            require(set(value) == set(schema), "invalid NEGOTIATE fields")
+            config = {key: number(value, key) for key in schema}
+            require(
+                config["type"] == (4 if i == 0 else 99), "config message type/order"
+            )
+            require(
+                0 <= config["admitted"] <= config["queued"] <= config["calls"]
+                and config["sent"] >= 0
+                and config["failed"] >= 0,
+                "config producer/socket counters",
+            )
+            require(
+                (config["sent"] == 0 and config["sent_fec"] == 0)
+                or (config["sent"] > 0 and 1 <= config["sent_fec"] <= 15),
+                "config socket FEC observations",
+            )
+            if config["calls"]:
+                require(4 <= config["fec"] <= 7, "missing config FEC observation")
+            else:
+                require(
+                    all(config[key] == 0 for key in schema if key != "type"),
+                    "empty config counters",
+                )
+            config["fec_present"] = bool(config["fec"] & 2)
+            config["fec_value"] = bool(config["fec"] & 1)
+            configs.append(config)
+        initial = configs[0]
+        require(
+            min(initial[key] for key in ("calls", "admitted", "queued", "sent")) > 0,
+            "initial config not admitted/queued/sent",
+        )
+        require(
+            int(initial["fec_value"]) == number(settings, "effective_fec"),
+            "negotiation config FEC differs from test input",
+        )
+        require(
+            initial["sent_fec"] == 1 << (initial["fec"] & 3),
+            "sent config heads differ from observed FEC input",
+        )
+        if fec_mode != "saved":
+            require(initial["fec_present"], "explicit FEC field missing from config")
+        peer = group[2][1] if len(group) == 3 else {}
+        require(set(peer) == {"config_accepted", "overflow"}, "invalid PEER fields")
+        accepted, overflow = number(peer, "config_accepted"), number(peer, "overflow")
+        require(accepted > 0, "no accepted peer negotiation")
+        require(overflow == 0, "config observation ledger overflow")
+        prefs = one("PREFS")
+        require(
+            set(prefs) == {"loads", "saves", "profiles", "errors"},
+            "invalid PREFS fields",
+        )
+        prefs = {
+            key: number(prefs, key) for key in ("loads", "saves", "profiles", "errors")
+        }
+        require(prefs["errors"] == 0, "preference I/O failed")
+        if fec_mode == "saved":
+            require(
+                all(v == 0 for v in prefs.values()), "unexpected preference override"
+            )
+        else:
+            require(prefs["loads"] >= 2, "initial FEC override path missing")
+        if fec_mode == "on":
+            require(channel["fec"] > 0, "no video type11 received after FEC request")
+            require(channel["fec_complete"] > 0, "no completed video FEC group")
+        elif fec_mode == "off":
+            require(channel["fec"] == 0, "video type11 received after explicit FEC off")
+        require(
+            0 <= channel["fec_complete"] <= wire["fec_complete"],
+            "video FEC completion counts",
+        )
+        negotiation = {
+            "requested_mode": fec_mode,
+            "configs": configs,
+            "peer_config_accepted": accepted,
+            "video_type11_observed": channel["fec"] > 0,
+            "video_fec_completion_observed": channel["fec_complete"] > 0,
+            "preferences": prefs,
+            "scope": "producer inputs/admission and exact encrypted head socket attempts; peer config is not a FEC ACK; received type11 does not prove RS reconstruction",
+        }
     return {
         "passed": not errors,
         "errors": errors,
@@ -190,6 +319,7 @@ def analyze(log, build, steam, seconds):
         "flow": flow,
         "media": result,
         "video": video,
+        "negotiation": negotiation,
         "final": final,
         "scope": "real-host video playback smoke; audio counters observed; no loss injected",
         "audio_decode_observed": audio > 0,
@@ -252,6 +382,18 @@ def main():
     )
     parser.add_argument("--build-dir", type=Path, default=ROOT / "build/switch-deko")
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument(
+        "--fec-request",
+        choices=("saved", "on", "off"),
+        default="saved",
+        help="diagnostic initial config input; preserve the saved FEC preference on normal saves",
+    )
+    parser.add_argument(
+        "--ordinary-build-dir",
+        type=Path,
+        default=ROOT / "build/switch",
+        help="ordinary build from the same source identity, used for probe exclusion checks",
+    )
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--run", action="store_true")
     modes.add_argument("--analyze-log", type=Path)
@@ -265,7 +407,11 @@ def main():
         ):
             parser.error("offline analysis requires --expected-build (40 hex)")
         report = analyze(
-            args.analyze_log.read_text(), args.expected_build, args.steam, args.seconds
+            args.analyze_log.read_text(),
+            args.expected_build,
+            args.steam,
+            args.seconds,
+            args.fec_request,
         )
         args.output.write_text(json.dumps(report, indent=2) + "\n")
         return 0 if report["passed"] else 1
@@ -285,6 +431,12 @@ def main():
         or head.encode() not in source.read_bytes()
     ):
         parser.error("NRO/build identity does not match clean HEAD")
+    spec = importlib.util.spec_from_file_location(
+        "live_probe_build", ROOT / "scripts/check-live-media-probe-build.py"
+    )
+    checker = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(checker)
+    observer_build = checker.check(ROOT, args.build_dir, args.ordinary_build_dir)
     args.output.mkdir(parents=True, exist_ok=False)
     nro = args.output / source.name
     shutil.copyfile(source, nro)
@@ -305,7 +457,7 @@ def main():
         "-s",
         str(nro.resolve()),
         "--args",
-        f"{args.steam} {args.seconds}",
+        f"{args.steam} {args.seconds} {args.fec_request}",
     ]
     package = {
         "build": head,
@@ -313,9 +465,13 @@ def main():
         "steam": args.steam,
         "switch": args.switch,
         "seconds": args.seconds,
+        "fec_request": args.fec_request,
         "command": command,
-        "scope": "existing paired identity; saved preferences; no loss injection",
+        "scope": "existing paired identity; diagnostic initial FEC input; saved FEC preference preserved on normal saves; no loss injection",
     }
+    (args.output / "observer_build.json").write_text(
+        json.dumps(observer_build, indent=2) + "\n"
+    )
     (args.output / "package.json").write_text(json.dumps(package, indent=2) + "\n")
     if not args.run:
         print("Prepared " + str(args.output.resolve()))
@@ -326,6 +482,7 @@ def main():
         head,
         args.steam,
         args.seconds,
+        args.fec_request,
     )
     report.update(nxlink_exit=code, timed_out=timeout, nro_sha256=sha(nro))
     report["passed"] = report["passed"] and code == 0 and not timeout

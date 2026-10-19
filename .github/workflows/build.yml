@@ -69,6 +69,8 @@ jobs:
           NSL_BUILD_DIR="$GITHUB_WORKSPACE/build/switch-deko" scripts/build-switch.sh -DNSL_DIAGNOSTICS=ON -DNSL_BUILD_TOOLS=OFF -DHACBREWPACK="$GITHUB_WORKSPACE/build/deps/hacBrewPack/hacbrewpack"
       - name: Verify release exclusion counterexamples
         run: python3 scripts/test-release-exclusion.py --build build/switch --diagnostic-build build/switch-deko
+      - name: Verify actual live FEC observer paths and ordinary exclusion
+        run: python3 -O scripts/test-live-media-probe-build.py --build build/switch-deko --ordinary-build build/switch --output build/switch-deko/generated/live-probe-build.json
       - name: Verify isolated large VCL capability probe
         run: |
           python3 scripts/check-vcl-probe-build.py --build build/switch-deko --ordinary build/switch/app/nsteamlink.nro --output build/switch-deko/generated/vcl-probe-build.json

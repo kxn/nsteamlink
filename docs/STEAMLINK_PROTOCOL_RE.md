@@ -12415,3 +12415,102 @@ python3 scripts/audit-steam-udp-receive.py --binary /path/to/libmain-arm64.so \
 ctest --test-dir build/diagnostics --output-on-failure \
   -R '^(udp_receive_official_vectors|udp_error_worker|receive_cycle_worker|network_cycle_worker|udp_send|udp_broadcast)$'
 ```
+
+## 158. 真实会话 FEC 观测：初始请求、实际发送与完整分组
+
+### 158.1 官方策略边界与诊断输入
+
+本节沿用§32固定官方 Android shell/core 的证据范围：shell
+`OnUnreliableFECChanged @0xc911a8`保存字段25；`StartStreaming @0xc98f08`
+重新加载完整配置，core `OnNegotiationInit @0x7ada6c–0x7ada9c`复制到消息4。
+配置消息99是真实的运行时通路，但不把它解释为丢包触发的自动FEC开关，
+也不把对端消息4、控制ACK或网络测试字段`bandwidth_test`当作FEC专属确认。
+本节没有新增官方策略结论，也没有把Host的冗余比例变成客户端请求字段。
+
+`nsl-live-media-probe`的可选第三个参数为`saved|on|off`，默认`saved`。
+`on/off`只是一次诊断会话的初始完整配置输入，显式设置字段25的存在位和值；
+不更改产品默认值，不实现运行期丢包自适应、不强制重连、不改decoder输入。
+普通NRO不包含此探针、参数入口或观察器。
+
+`live_media_fec_settings.h`在启动runtime owner之前读取既有配置，保留原FEC字段
+的存在位和值；随后runtime的加载路径只在内存覆盖该字段。正常保存完整配置时
+临时恢复原字段，保留其他已更新/未知字段；保存profile时复制**当前**profile，
+只恢复FEC偏好，保留新授权凭据和主机数据，不恢复旧profile快照。该有界副本
+在已有文件持久化owner内分配/释放，避免在原持久化调用栈再放16主机的profile。
+缺少文件时沿用产品的legacy迁移来源；显式模式遇到损坏/不可读配置则停止，
+不替换它。`saved`保持产品preview的加载失败fallback，不扩大为文件修复策略。
+保存失败后的内存值仍恢复为本次诊断输入，错误计入最终记录。
+
+`sl_stream_settings_preview`与其内部Load在同一翻译单元，GNU `--wrap`不能改写
+这种内部调用。探针因此显式执行Init → wrapped Load → Project → Destroy；
+不能仅检查链接命令出现`--wrap`便认定实际启动输入已经覆盖。
+
+### 158.2 观察事实与不能推出的结论
+
+观察器v3区分以下边界，均转发原参数和返回值：
+
+| 记录 | 直接事实 | 不能据此声称 |
+|---|---|---|
+| `NEGOTIATE calls/fec` | 消息4/99序列化前的完整配置输入，存在位和值分别记录 | 对端收到或应用了配置 |
+| `admitted/queued` | 原ControlSend结果与真实可靠队列头部入队结果 | socket已发送、对端ACK |
+| `sent/failed/sent_fec` | 对应实际加密头部的socket尝试结果，以及成功头部对应的FEC输入位图 | 每个分片均交付、每个尝试都是唯一消息 |
+| `PEER config_accepted` | 普通会话真实消息4处理后由Negotiating进入Starting | FEC专属确认或冗余比例确认 |
+| `VCHANNEL fec` | 已识别video channel上的type11输入次数 | metadata合法或实际RS恢复 |
+| `VCHANNEL fec_complete` | 该channel的真实FECReceiverAdd返回完整组 | 原始data shard曾丢失；m=0也可完成 |
+| `WIRE parity_enabled/parity_shards` | 输入头声明m>0、观察到parity index | receiver采纳了该输入、确实用到parity |
+
+消息4/99作用域通过TLS关联到真实QueuePacketResult。在原队列可能暴露给发送线程
+**之前**发布32槽固定ledger，每槽复制至多1472B的加密头部，包含socket/连接ID/
+packetId/消息种类/FEC输入值；release/acquire发布后不再改写。总ledger为48128B，
+无包路径分配、I/O、等待或protobuf指针持有。溢出明确失败，不覆盖旧槽冒充完整观察。
+匹配实际socket数据时核对完整头部payload及长度，排除尾部CRC；type6 continuation
+不参与头部识别。重试仍是新的尝试次数，不把它当作新配置或唯一消息。
+
+`fec`编码为`4 | (has << 1) | value`；`sent_fec`为成功头部对应的
+`1 << ((has << 1) | value)`并集。后者必须与初始请求一致，显式模式还要求has=1。
+因此不能把“早先成功发送”与“后来失败请求的最后值”拼成启用证据。
+若输入改变、观察ledger溢出或记录缺失，解析器拒绝通过。
+
+`--fec-request on`要求实际video type11和完整FEC组；`off`要求未观察到video
+type11。它们是受控诊断验收条件，不成为产品接收器拒包规则。无注入丢包、
+没有证明缺data shard的重建时，报告始终保留`rs_reconstruction=unverified`。
+有完整组、画面继续、甚至收到parity，都不能把该值改成“已验证”。
+音频解码计数单独记录，不把静音会话伪装成音频通过；physical scanout、hbmenu
+返回与完整loader ABI也各自保持未验证。观察器v2旧日志仍可离线解析，但不能
+满足显式on/off的v3协商验收。
+
+### 158.3 可复播验证边界
+
+`test_live_media_config_wire.c`使用实际SDK ControlSend → 加密 → 可靠分片队列 →
+SendPacketResult/CRC → window重组 → 解密 → protobuf，覆盖CRC开/关×FEC开/关。
+1200B caps字符串迫使MTU512下出现至少3片，初始头部先返回EAGAIN再显式重试，
+核对发送头部ledger、字段25存在/值和消息4/99。peer消息4进入真实解密后handler，
+Negotiating→Starting的观察与网络测试排除分别验证。
+测试的post-auth transport/client状态、queue drain、重试调用和最后BaseSend是
+显式fixture适配边界；它不等于真实Steam、实际socket或decoder运行。
+
+文件测试覆盖三模式×原字段缺省/false/true，并保留未知字段、正常码率修改与
+更新后的身份/主机密钥；另覆盖缺文件legacy0/1及损坏文件，检查失败不覆盖原文件。
+观察器测试用透明终端验证参数/返回值、TLS恢复、先发布再发送、CRC、重试、
+不匹配字节/endpoint、网络测试排除和ledger溢出。日志反例覆盖缺字段/记录、
+发送FEC位图不符、无实际type11、无完整组和偏好保存错误。
+
+`check-live-media-probe-build.py`核对真实Switch ELF的生产调用→wrapper→原函数
+分支、生产archive provider、固定ledger、NRO/ELF可加载段一致性，以及普通ELF/NRO
+排除；prepare/run入口和CI都执行它。链接/离线/日志契约通过只证明各自边界，
+真实网络、Steam是否启用、RS恢复耗时和原玩家停顿根因仍必须由独立会话证据证明。
+CI在`python -O`下使用实际构建的反例：拒绝诊断main冒充普通包、NRO字节修改、
+缺失wrap选项；另在临时副本中同时修改ELF/NRO的真实AArch64分支为NOP，保持
+可加载段一致，再分别验证缺生产→wrapper调用和缺wrapper→原函数委托都会失败。
+这些损坏副本只供离线门禁检查，绝不执行或部署。
+
+```sh
+ctest --test-dir build/diagnostics --output-on-failure -R '^live_media_probe_'
+python3 scripts/check-live-media-probe-build.py --build build/switch-diagnostics \
+  --ordinary-build build/switch --output /tmp/live-probe-build.json
+python3 tools/live-media-probe.py --steam 10.10.10.166 --switch 10.10.10.25 \
+  --fec-request on --output build/live-fec-on-prepared
+```
+
+最后一条仅准备自包含NRO及机器采集命令，不连接Switch；只有`--run`才执行nxlink，
+需要该次明确准备好的netloader。无需复制SD素材，不用TCP探测28280，不自动重试启动。

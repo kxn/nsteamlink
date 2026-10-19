@@ -3,6 +3,8 @@
  * I/O, allocation or waiting is added to the network/decoder observers. */
 #include "build_identity.h"
 #include "ihs_udp.h"
+#include "live_media_config_observer.h"
+#include "live_media_fec_settings.h"
 #include "media.h"
 #include "platform/events.h"
 #include "platform/runtime.h"
@@ -34,6 +36,7 @@ static uint64_t run_id;
  * is retained or read from a different thread. These are observation counts,
  * not packet admission, unique frames, receiver ACKs or coherent snapshots. */
 static atomic_uint_fast64_t wire_ordinary[32], wire_fec[32], wire_retry[32];
+static atomic_uint_fast64_t wire_fec_complete[32];
 static atomic_uint video_channel = 32;
 static atomic_uint_fast64_t video_complete, video_key, video_finish, video_last;
 static atomic_uint_fast64_t video_worker, worker_key, worker_finish, worker_last;
@@ -118,8 +121,12 @@ bool __real_IHS_FECReceiverAdd(IHS_FECReceiver *, const IHS_SessionPacket *, IHS
 bool __wrap_IHS_FECReceiverAdd(IHS_FECReceiver *r, const IHS_SessionPacket *p,
                                IHS_SessionFrame *f) {
     bool ready = __real_IHS_FECReceiverAdd(r, p, f);
-    if (ready && ordinary_rx)
+    if (ready && ordinary_rx) {
         atomic_fetch_add_explicit(&fec_complete, 1, memory_order_relaxed);
+        if (p->header.channelId < 32)
+            atomic_fetch_add_explicit(&wire_fec_complete[p->header.channelId], 1,
+                                      memory_order_relaxed);
+    }
     return ready;
 }
 void __real_IHS_SessionChannelDataReceiveReliableFrame(IHS_SessionChannel *, IHS_SessionFrame *);
@@ -208,6 +215,7 @@ bool __wrap_IHS_UDPSocketSend(IHS_UDPSocket *s, const IHS_UDPPacket *p) {
         b[4] < 32 && b[4] == atomic_load_explicit(&video_channel, memory_order_relaxed) &&
         (b[0] & 127) == IHS_SessionPacketTypeUnreliable && b[13] == k_EStreamDataLost;
     bool sent = __real_IHS_UDPSocketSend(s, p);
+    probe_config_socket(s, p, sent);
     if (video_request)
         atomic_fetch_add_explicit(sent ? &request_sent : &request_failed, 1, memory_order_relaxed);
     if (watched)
@@ -236,11 +244,22 @@ static void record(const char *tag, const char *format, ...) {
 #endif
 }
 static void counters(void) {
+    for (unsigned i = 0; i < 2; ++i)
+        record("NEGOTIATE",
+               "type=%u calls=%" PRIuFAST64 " admitted=%" PRIuFAST64 " queued=%" PRIuFAST64
+               " sent=%" PRIuFAST64 " failed=%" PRIuFAST64 " fec=%u sent_fec=%u",
+               i ? 99 : 4, atomic_load(&probe_config_calls[i]),
+               atomic_load(&probe_config_admitted[i]), atomic_load(&probe_config_queued[i]),
+               atomic_load(&probe_config_sent[i]), atomic_load(&probe_config_failed[i]),
+               atomic_load(&probe_config_fec[i]), atomic_load(&probe_config_sent_fec[i]));
+    record("PEER", "config_accepted=%u overflow=%u", atomic_load(&probe_peer_config),
+           atomic_load(&probe_config_overflow));
     unsigned ch = atomic_load_explicit(&video_channel, memory_order_relaxed);
 #define OBS(x) ((uint64_t)atomic_load_explicit(&(x), memory_order_relaxed))
-    record("VCHANNEL", "channel=%u ordinary=%" PRIu64 " fec=%" PRIu64 " retry=%" PRIu64, ch,
+    record("VCHANNEL", "channel=%u ordinary=%" PRIu64 " fec=%" PRIu64 " retry=%" PRIu64
+                       " fec_complete=%" PRIu64, ch,
            ch < 32 ? OBS(wire_ordinary[ch]) : 0, ch < 32 ? OBS(wire_fec[ch]) : 0,
-           ch < 32 ? OBS(wire_retry[ch]) : 0);
+           ch < 32 ? OBS(wire_retry[ch]) : 0, ch < 32 ? OBS(wire_fec_complete[ch]) : 0);
     record("VRECV", "complete=%" PRIu64 " key=%" PRIu64 " finish=%" PRIu64 " last=%" PRIu64,
            OBS(video_complete), OBS(video_key), OBS(video_finish), OBS(video_last));
     record("VWORK", "calls=%" PRIu64 " key=%" PRIu64 " finish=%" PRIu64 " last=%" PRIu64,
@@ -273,7 +292,14 @@ int main(int argc, char **argv) {
     /* Numeric address prevents a diagnostic argument from starting an unrelated
      * DNS workflow. Existing paired host identity must also match discovery. */
     struct in_addr ip;
-    if (argc != 3 || inet_pton(AF_INET, argv[1], &ip) != 1)
+    if ((argc != 3 && argc != 4) || inet_pton(AF_INET, argv[1], &ip) != 1)
+        return 2;
+    const char *fec_mode = argc == 4 ? argv[3] : "saved";
+    if (!strcmp(fec_mode, "on"))
+        probe_fec_mode = 1;
+    else if (!strcmp(fec_mode, "off"))
+        probe_fec_mode = 0;
+    else if (strcmp(fec_mode, "saved"))
         return 2;
     char *end;
     unsigned long seconds = strtoul(argv[2], &end, 10);
@@ -282,7 +308,8 @@ int main(int argc, char **argv) {
     if (!sl_system_init())
         return 1;
     run_id = sl_system_now();
-    record("BEGIN", "build=%s host=%s seconds=%lu observer=2", NSL_GIT_COMMIT, argv[1], seconds);
+    record("BEGIN", "build=%s host=%s seconds=%lu observer=3 fec=%s", NSL_GIT_COMMIT, argv[1],
+           seconds, fec_mode);
     const char *failure = "profile_missing";
     sl_runtime *runtime = NULL;
     bool media = false, log = false, submitted = false, passed = false;
@@ -300,8 +327,13 @@ int main(int argc, char **argv) {
     failure = "profile_invalid";
     if (sl_auth_load(&store, sl_system_data_dir()) != 0)
         goto cleanup;
-    sl_stream_settings_preview(&store, sl_system_data_dir());
-    record("SETTINGS", "stored_fec=%u sound=%u", store.unreliable_fec, store.sound);
+    failure = "settings_invalid";
+    if (!probe_fec_preview(&store, sl_system_data_dir()))
+        goto cleanup;
+    record("SETTINGS", "original_known=%u original_has=%u stored_fec=%u effective_fec=%u sound=%u",
+           probe_fec_original_set, probe_fec_original_has,
+           probe_fec_original_set ? probe_fec_original_value : store.unreliable_fec,
+           store.unreliable_fec, store.sound);
     sl_i18n_load(sl_system_data_dir(), sl_system_locale());
     failure = "log_start";
     log = sl_log_start();
@@ -442,6 +474,25 @@ cleanup:
         stream_media_shutdown();
     if (log)
         sl_log_finish();
+    unsigned vch = atomic_load(&video_channel);
+    if (passed && (!atomic_load(&probe_config_admitted[0]) ||
+                   !atomic_load(&probe_config_sent[0]) || !atomic_load(&probe_peer_config) ||
+                   atomic_load(&probe_config_overflow))) {
+        passed = false;
+        failure = "negotiation_unobserved";
+    }
+    if (passed && probe_fec_mode >= 0 &&
+        (vch >= 32 || (atomic_load(&wire_fec[vch]) != 0) != (probe_fec_mode == 1) ||
+         (probe_fec_mode == 1 && !atomic_load(&wire_fec_complete[vch])))) {
+        passed = false;
+        failure = "fec_mode_unobserved";
+    }
+    if (probe_fec_io_errors) {
+        passed = false;
+        failure = "preferences_io";
+    }
+    record("PREFS", "loads=%u saves=%u profiles=%u errors=%u", probe_fec_loads, probe_fec_saves,
+           probe_fec_profiles, probe_fec_io_errors);
     counters();
     record("RESULT",
            "decoded=%u presented=%u audio=%u hardware=%u play_ms=%" PRIu64 " gap_ms=%" PRIu64
