@@ -13379,3 +13379,29 @@ Native差异比较器 `check-steam-discovery-send.py` 通过显式目标
 错误、poisoned descriptor generation及loopback目标；不向LAN发送。输出中的
 cleanup=true只证明该受控观察清理完成；兼容性另行比较并在不符时exit1，不能将
 进程正常结束当作协议一致。成功loopback回复属于Native验证，非原码或Steam证据。
+
+## 173. 线程端口中的发现 fd 更换边界
+
+§172的原码在单个Update中完成读/处理后再广播；端口不能在自动广播中关闭仍被
+读或处理路径借用的fd。client原始recv与广播替换同受Base互斥保护，回调执行于
+该锁外；自动任务另检查完整批次active、完成generation、deferred队列及已出队
+但尚未返回的dispatch计数。只看队列为空不能证明最后一个回调已完成。任务按
+既有timer→Base顺序持锁至发送/替换完成，不能先持Base再访问timer visitor。
+手工广播也须与正在进行的recv互斥，但不能阻塞等待本线程回调自己结束。
+
+IHS_UDPSocketReopen保留对象和mutex，仅关闭非负fd并创建/配置新的原始socket。
+失败留下fd=-1，后续轮次仍可尝试；销毁该状态不关闭无效句柄。对象地址不变，
+BaseWorker最终清理持有的指针仍有效。目标枚举每次外层广播仅一次，子网定向
+目标与有限广播一起固定到三轮结束。此策略只用于发现client；媒体Session不
+触发该重建，且不采用发现的EHOSTUNREACH接受规则。
+
+POSIX端口以mutex串行SetBlocking和fd更换，保存非阻塞请求。普通成功fcntl仍用
+原recv标志；仅O_NONBLOCK请求失败时补单次MSG_DONTWAIT，避免把持锁RX/退出变成
+阻塞读。原BInit仍忽略非关键fcntl失败，这一备用标志是线程平台对非阻塞意图的
+实现约束，不声称与原异常系统调用逐指令相同。重建不重复输出接收缓冲cap告警。
+SDL后端更换主UDP socket时保留interrupt socket/packet/set及等待模式，主socket
+失败可安全接收为空、再次重建和销毁；语法检查不等于SDL实机运行证明。
+
+边界oracle分别扣住真实recv、真实发现回调返回和已出队streaming回调返回，再
+请求自动或手工广播，验证读取/处理完成前不替换fd。壁钟/快速轮调度是独立于
+该互斥契约的策略；不能因广播恢复边界通过就扩大为全部发现行为对齐。

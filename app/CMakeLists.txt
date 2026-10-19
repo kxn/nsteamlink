@@ -435,14 +435,20 @@ if(NSL_PLATFORM STREQUAL "desktop")
     endforeach()
     # Actual client worker, real condition waits and stop/join/destroy.
     add_executable(nsl-discovery-error-runtime tests/discovery_error_runtime.c)
-    # Explicit differential oracle; no probe code is linked into products.
-    add_executable(nsl-discovery-send-runtime EXCLUDE_FROM_ALL tests/discovery_send_runtime.c)
+    # Differential oracle; no probe code is linked into products.
+    add_executable(nsl-discovery-send-runtime tests/discovery_send_runtime.c)
     target_include_directories(nsl-discovery-send-runtime PRIVATE
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
     target_compile_options(nsl-discovery-send-runtime PRIVATE -Wall -Wextra -Werror -Wno-unknown-pragmas)
     target_link_libraries(nsl-discovery-send-runtime PRIVATE ihslib ihs-platforms ihslib)
     target_link_options(nsl-discovery-send-runtime PRIVATE -Wl,--wrap=socket -Wl,--wrap=close
-        -Wl,--wrap=sendto -Wl,--wrap=IHS_UDPBroadcastAddresses)
+        -Wl,--wrap=sendto -Wl,--wrap=IHS_UDPBroadcastAddresses -Wl,--wrap=recvfrom -Wl,--wrap=fcntl
+        -Wl,--wrap=IHS_ClientBroadcast)
+    add_test(NAME discovery_broadcast_recovery_official_vectors COMMAND "${Python3_EXECUTABLE}" -O
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-discovery-send.py"
+        --receiver $<TARGET_FILE:nsl-discovery-send-runtime>
+        --modes transient,poisoned,host,all-fail,short,partial,partial-host,multi-fail,reopen,reopen-stop,nonblock,nonblock-init,manual-read,read-order,dispatch-order)
+    set_tests_properties(discovery_broadcast_recovery_official_vectors PROPERTIES TIMEOUT 45)
     add_executable(nsl-client-startup-runtime tests/client_startup_runtime.c)
     target_include_directories(nsl-client-startup-runtime PRIVATE platforms/common
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client

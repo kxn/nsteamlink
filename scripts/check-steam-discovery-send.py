@@ -5,7 +5,10 @@ The Native executable uses real client/UDP/protobuf/timers/cleanup. Explicit
 sendto-error and loopback-destination adapters control transient/poisoned-fd
 faults without sending to a LAN. Source IPv4 plans provide policy and full wire
 bytes. Successful loopback reply/RX is separate Native evidence, not Source or
-Steam network proof. Cadence checks relative sequence reuse, not startup's
+Steam network proof. Two-target aggregation maps to controlled IPv4 subnet
+targets; the reopen continuation is an explicit second broadcast, not proof of
+the Source timer cadence. Receive/dispatch gates and fcntl failure test Native
+thread/nonblocking contracts. Cadence checks relative sequence reuse, not startup's
 absolute counter or a real Qt timer. Missing policies are reported as gaps and
 exit nonzero; observation/cleanup success alone never means alignment.
 """
@@ -51,9 +54,18 @@ def policies(reference):
         require(binary["binary_sha256"] == digest and len(binary["cases"]) == 27, "source identity/plans")
         cases = {case["name"]: case for case in binary["cases"]}
         expected = {}
-        for mode in ("transient", "poisoned", "host"):
-            case = cases["broadcast_ipv4_" + ("host_unreachable" if mode == "host" else "recover")]
-            row = case["stages"][-1]
+        modes = dict(transient="broadcast_ipv4_recover", poisoned="broadcast_ipv4_recover",
+            host="broadcast_ipv4_host_unreachable", **{"all-fail": "broadcast_ipv4_all_fail",
+            "short": "broadcast_ipv4_short_host_errno", "partial": "broadcast_one_success",
+            "partial-host": "broadcast_one_host_unreachable", "multi-fail": "broadcast_ipv6_all_fail",
+            "reopen": "broadcast_reopen_failure_next_fast_update_recovers",
+            "reopen-stop": "broadcast_reopen_failure_next_fast_update_recovers",
+            "nonblock": "broadcast_ipv4_recover", "nonblock-init": "broadcast_ipv4_recover",
+            "manual-read": "broadcast_ipv4_recover", "read-order": "broadcast_ipv4_recover",
+            "dispatch-order": "broadcast_ipv4_recover"})
+        for mode, case_name in modes.items():
+            case = cases[case_name]
+            row = case["stages"][0 if mode == "reopen-stop" else -1]
             expected[mode] = dict(result=bool(row["returns"][-1]),
                 opens_before_cleanup=sum(t[0] == "socket" and t[2] >= 0 for t in row["trace"]),
                 closes_before_cleanup=sum(t[0] == "close" for t in row["trace"]), attempts=len(row["sends"]),
@@ -68,8 +80,11 @@ def policies(reference):
     return result[0]
 
 
-def compare(receiver, reference):
+def compare(receiver, reference, modes=None):
     expected = policies(reference)
+    if modes is not None:
+        require(bool(modes) and all(mode in expected for mode in modes), "known nonempty mode selection")
+        expected = {mode: expected[mode] for mode in modes}
     cases = []
     for mode, wanted in expected.items():
         process = subprocess.run([str(receiver.resolve()), mode], text=True, capture_output=True, timeout=20)
@@ -89,7 +104,7 @@ def compare(receiver, reference):
             projection = {name: observed[name] for name in wanted}
         differences = {name: dict(expected=wanted[name], actual=projection[name]) for name in wanted
                        if wanted[name] != projection[name]}
-        if mode in ("transient", "poisoned") and not observed["delivered"]:
+        if mode in ("transient", "poisoned", "partial", "reopen", "nonblock", "nonblock-init", "manual-read", "read-order", "dispatch-order") and not observed["delivered"]:
             differences["native_loopback_status_after_recovery"] = dict(expected=1, actual=observed["delivered"])
         cases.append(dict(mode=mode, observed=observed, expected=wanted, differences=differences,
                           compatible=not differences, stderr=process.stderr))
@@ -101,8 +116,9 @@ def main():
     parser.add_argument("--receiver", required=True, type=Path)
     parser.add_argument("--reference", type=Path, default=ROOT / "scripts/fixtures/steam-discovery-send-reference.json.gz")
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--modes", help="Comma-separated explicit contract subset; default includes cadence")
     args = parser.parse_args()
-    result = compare(args.receiver, args.reference)
+    result = compare(args.receiver, args.reference, args.modes.split(",") if args.modes is not None else None)
     if args.output:
         args.output.write_text(json.dumps(result, indent=2) + "\n")
     gaps = [case["mode"] for case in result["cases"] if not case["compatible"]]
