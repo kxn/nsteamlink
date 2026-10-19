@@ -553,6 +553,20 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-opus-recovery.py"
         --receiver $<TARGET_FILE:nsl-opus-recovery-oracle>)
     set_tests_properties(opus_recovery_official_vectors PROPERTIES TIMEOUT 90)
+    add_executable(nsl-decoder-stop-queue-oracle tests/decoder_stop_queue_oracle.c)
+    target_include_directories(nsl-decoder-stop-queue-oracle PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/tests/common)
+    target_compile_options(nsl-decoder-stop-queue-oracle PRIVATE -UNDEBUG -Wall -Wextra -Werror
+        -Wno-unknown-pragmas)
+    target_link_libraries(nsl-decoder-stop-queue-oracle PRIVATE nsl_platform ihs-test-session)
+    target_link_options(nsl-decoder-stop-queue-oracle PRIVATE
+        -Wl,--wrap=IHS_ThreadCreate -Wl,--wrap=IHS_ThreadJoin
+        -Wl,--wrap=IHS_SessionChannelDataThink -Wl,--wrap=IHS_SessionChannelDataReceiveFrame
+        -Wl,--wrap=IHS_SessionPacketsWindowReleaseFrame -Wl,--wrap=sl_audio_recovery_run
+        -Wl,--wrap=opus_multistream_decode_float -Wl,--wrap=opus_multistream_decoder_destroy
+        -Wl,--wrap=sl_audio_jitter_push -Wl,--wrap=SDL_OpenAudioDevice
+        -Wl,--wrap=SDL_PauseAudioDevice -Wl,--wrap=SDL_CloseAudioDevice)
     add_executable(nsl-audio-gap-policy-oracle tests/audio_gap_policy_oracle.c)
     target_include_directories(nsl-audio-gap-policy-oracle PRIVATE platforms/common
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
@@ -567,6 +581,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-audio-stop.py"
         --receiver $<TARGET_FILE:nsl-opus-recovery-oracle>)
     set_tests_properties(audio_stop_official_vectors PROPERTIES TIMEOUT 90)
+    add_test(NAME decoder_stop_queue_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-decoder-stop-queue.py"
+        --receiver $<TARGET_FILE:nsl-decoder-stop-queue-oracle>)
+    set_tests_properties(decoder_stop_queue_official_vectors PROPERTIES TIMEOUT 90)
     add_executable(nsl-native-tests tests/test_native.c)
     target_include_directories(nsl-native-tests PRIVATE platforms/common)
     target_compile_options(nsl-native-tests PRIVATE -UNDEBUG)

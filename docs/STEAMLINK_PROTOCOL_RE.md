@@ -13007,3 +13007,67 @@ python3 scripts/check-steam-audio-stop.py \
 ctest --test-dir build/desktop --output-on-failure \
   -R '^(audio_stop_official_vectors|audio_gap_policy_official_vectors|opus_recovery_official_vectors)$'
 ```
+
+## 166. Stop 与完整帧 FIFO 的消费批次边界
+
+`audit-steam-decoder-stop-queue.py`固定§24.1 Android core SHA，执行原Audio Start
+控制消息解析/factory/构造、OnStreamPacket/OnDataPacket、OnReceiveFrame/复制、
+FIFO、RunDecodeLoop、原embedded Opus、Release/Purge及StopDecoding。9项原函数
+范围/代码SHA、实际入口计数和辅助工具身份均保存；不是第三方策略推测。
+
+原RunDecodeLoop在入口及OnThink→Wait返回后读取active；非空FIFO的内循环不在
+每个DecodeFrame之后再检查active。OnStreamStopped先清active、signal、Join(-1)，
+返回后才Purge与StopDecoding。因此“停止就无条件排空”和“每帧后立即停止”都不
+等价。`decoder-stop-stimuli.py`明确三个暂停位置及完整媒体ID/本地timestamp/payload：
+
+| 暂停位置 | 停止前已排队的数据 | 原消费/清理 |
+|---|---|---|
+| 当前帧的codec API入口 | 当前帧外另有完整帧 | 完成当前帧，继续排空同一FIFO批次，最后OnThink/Wait后退出 |
+| 空队列OnThink后的Wait入口 | 暂停时新入队帧 | Stop后Wait返回即退出，余项由join后的Purge释放 |
+| RunDecodeLoop入口检查之前 | 已入队帧 | active已清，循环不开始；join后Purge释放 |
+
+9组包含在途无余项/三余项/ID缺口/回绕/重复、等待阶段空/非空、入口空/非空。
+全部在Stop进入Join后再投递ID99，原OnReceiveFrame不再入队。实际消费ID/时间戳/
+active、codec参数和结果、PCM提交身份/样本数、Release、OnThink和join/purge/stop
+顺序逐项记录。codec执行真实原Opus；PCM存储/提交是terminal，只观察大小/身份，
+不读取PCM。OS线程/事件/锁/Join、设备打开、分配及packet refcount仍是明确adapter。
+CPU寄存器与栈在消费者/Stop之间切换，共享heap/FIFO始终保留；不冒充真实OS调度、
+自然线程开关、网络丢包、设备耗时/峰值、物理音频或loader ABI。
+
+Evidence：旧SDK e32bcc4的独立真实worker对照在所有进程正常退出时仍有5个在途
+计划不匹配：遗漏批次后的OnThink，并丢弃本应继续消费的余项。原始记录保留。
+新的Native循环仅在首次进入及等待阶段之后采样interrupted，批次内继续消费。
+Stop后的生产者准入仍拒收；原有join后purge、codec销毁和player尾部保留不变。
+若停止发生在入口/等待阶段，不能因FIFO非空而重新启动一轮消费。
+
+Native桌面oracle运行实际dispatcher、FIFO、pthread worker、应用音频callback、
+实际Opus及jitter，fixture仅在worker入口/codec/OnThink返回处安排交错。实际join与
+codec destroy始终转发，全部控制线程join后再清理依赖。消费后的Release调用单独
+记录；没有消费的项由原deinit purge释放，并在audio stop callback内断言FIFO计数/
+字节预算均归零。两种引用布局不同，不把预算归零说成逐指令refcount等价。
+SDL dummy保持暂停，decoder stop保留player；最后正常关闭设备一次。比较同一
+媒体输入和动作边界，Source媒体接收及Native完整帧dispatcher都是声明的测试入口，
+未声称相同OS UDP/wire接收或真实Steam会话。
+
+独立`audit-steam-video-stop-drain.py`执行7项原函数范围并固定20项helper身份：
+两个完整关键帧ID1/2，在1的DecodeFrame入口暂停并执行Stop至Join；恢复后原
+DecodeFrame消费1/2，OnThink在active=0时仍执行FinalDecode(2)，实际复制2204B
+原fixture到SDK输入terminal，SHA为
+`5ff7383025bb865ea49f5b8b27a38811772281f68fb8dd0285afd3584273e64d`。
+ID1被后来的关键标记flush，原完成通知的raw参数是(1,7)，不能把它当作图像2
+提交完成或SDK已产出像素。SDK/JNI/NAL元数据/OS终点沿用原queue审计声明。
+
+本地视频DataThink以interrupted门控AssembleFrame，与上述原OnThink行为不同。
+公共循环的对齐不证明视频组帧/SDK路径对齐。该平台取消/组帧门控需要独立的
+runtime所有权及格式交接证据；Source在SDK terminal的成功不能证明本地停止后
+真实get_format安全。§159的显式freeze取消不能因此改成解码错误；也不能据此
+解释#55、Switch退出耗时或原玩家停顿。
+
+```sh
+PYTHONPATH=/path/to/audit-deps python3 scripts/audit-steam-decoder-stop-queue.py \
+  --binary /path/to/official/libmain-arm64.so --output /tmp/source-decoder-stop-queue.json
+python3 scripts/check-steam-decoder-stop-queue.py \
+  --receiver build/desktop/app/nsl-decoder-stop-queue-oracle
+PYTHONPATH=/path/to/audit-deps python3 scripts/audit-steam-video-stop-drain.py \
+  --binary /path/to/official/libmain-arm64.so --output /tmp/source-video-stop-drain.json
+```
