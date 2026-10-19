@@ -41,8 +41,8 @@ def main():
         (
             "batch_consumes_before_streaming",
             hid,
-            "if (!IHS_SessionStreaming(session) || !IHS_SessionInputEnabled(session)) return false;",
-            "if (!IHS_SessionInputEnabled(session)) return false;",
+            "if (!IHS_SessionStreaming(session)) return false;",
+            "",
         ),
     ]
     hashes = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in (control, hid)}

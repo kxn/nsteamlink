@@ -11983,6 +11983,7 @@ holder前检查Streaming，保留既有InputEnabled保护；generic显式写acti
 本节只比较该分支不发送/不消耗加密序号，不把二者设备缓冲清理策略称为等价；真实
 generator及poll/输入禁用期间的缓冲策略需独立证据。所有producer与network锁、设备
 线程/HOME/Stop交错也不由这里的临界区观察证明；没有认定原玩家停顿/闪烁因果。
+本段的早退是§152时的实现边界；§153以原Generic生成器补证后修正SDL/public batch路径。
 
 ```sh
 PYTHONPATH=/path/to/python-dependencies python3 scripts/audit-steam-hid-producer.py \
@@ -11992,4 +11993,72 @@ python3 scripts/check-steam-hid-producer.py \
 python3 scripts/check-hid-producer-native-mutations.py \
   --build build/desktop --output /tmp/hid-negatives
 ctest --test-dir build/desktop -R 'hid_producer_official_vectors|hid_send_order|control_hid_admission'
+```
+
+## 153. Generic报告生成器在输入禁用期间仍推进基线
+
+Evidence：固定Android ELF（SHA同§24.1）执行原生成器构造器`0x7cf2bc`，Info由原parser
+解析is_generic_gamepad=true，report length=72；原构造器选择kind4、建立队列/初始buffer，
+按`(72+7)>>3`设置9B位图并分配scratch。执行原SDL3 focus-gained事件`0x20e`经
+`BHandleEvent@0x7b8110`设置input focus，不直接强制player+1785。input-enable使用原
+配置parser/setter，并接入真实player::SetStreamingClientConfig@0x7c5504；本分支未出现
+隐藏的报告重置/补发。播放器无overlay/dialog等前态是明确受控条件。
+这里的禁用指配置字段11 `enable_input_streaming`，不与独立的输入暂时禁用通知或Pause混同。
+
+随后执行原`UpdateHIDDeviceReports@0x7bd838 → BCollectReports@0x7cf884 →
+Generic Parse@0x7d089c → BFilterGamepadState@0x7bc5c8 → SendBuffer@0x7d00f0 /
+EncodeDelta@0x7d1218`及§152的HID/control/BEncrypt/Frame/Connection/factory。
+IHIDDevice::Read是显式输入终点，每拍提供RAW72/version3状态后返回0；它不是实际Android
+SDL backend、Switch手柄或OS报告线程。Generic解析/过滤、构造、队列、buffer和编码原
+指令均执行，不再以整个collect或C++报告CopyFrom替代。密码原语、OS/allocator/libc、
+锁及save仍为适配器，Channel::Send终点记录完整密文，不证明Socket/ACK/主机状态。
+
+### 153.1 可复播的禁用与恢复序列
+
+十二组63阶段涵盖普通变化、禁用期间按下/释放/多次变化、初始禁用、无变化切换、
+重复禁用、交替开关、摇杆阈值、扳机及组合输入。每拍保留完整READ输入与容量、
+加密前正文、实际channel密文、序号和原generator当前buffer的完整72B内容。
+
+在正常focus、无本地过滤器的受测分支中，禁用只阻止最后的HID消息发布：原生成器
+仍读取并处理状态、构造delta/full并更新本地基线。重新启用时，相同状态不重发；
+之后的变化从禁用期间已处理的基线编码。disabled阶段没有控制正文或加密序号消耗。
+这不是host已应用/ACK的基线；不能以本地buffer内容推断主机状态，真实Host在切换
+时是否另外发RequestFullReport仍须独立会话证据。
+
+【撤回】旧`sdl_hid_event.c`用“host的delta链保持完整，启用后补齐整个缺口”解释
+InputEnabled早退与官方一致，缺少客户端依据。相同输入下原Generator并不保留禁用
+期间的变化等恢复后追发，故该解释不成立。§152记录的public batch早退在此范围内
+也被原生成器证据替代；不能为看起来更稳而擅自增加重新启用时强制full/重连策略。
+
+Native修正前63阶段有37个差异，包括禁用时基线未推进、恢复后多发报告及后续密文/
+序号变化。现在普通SDL flush在串流态继续生成/消费报告，public batch消费后仍由
+最终SubmitHIDReport检查InputEnabled，不发布禁用期间的消息。保留非串流态准入；
+SDL诊断lastSubmitted不因这些禁用期间处理而增加，processed baseline与发送诊断
+分开。holder历史字段lastSent按处理/ResetMessage推进，不冒充wire发送或主机ACK。
+
+Native oracle执行真实SDL事件入口、状态、holder、配置API、初次StartInputReports、
+flush/control加密与队列，只有controller/joystick-ID查询为假handle适配器，不创建
+物理设备。完整63份密文/序号/基线与原版一致，保持§152的128组准入对照。三份隔离
+生产回退（禁用时跳过SDL处理、保留禁用batch、恢复时强制full）分别产生36/36/29个
+正常退出差异；不是以构建失败/崩溃/超时计通过。§152旧mutation入口同步保持可运行，
+当前实现下其检出数为62/2/28；旧60/2/14对应当时仍有InputEnabled早退的代码，不改写
+为当前数量或宣布新增协议故障。
+
+探索中的短delta来自不完整fixture未初始化generator+336位图长度，不能作为Native
+协议错误。改用原完整构造器后恢复正常9B位图，原EncodeDelta指令/输入未修改。
+最初函数身份清单误写Generic Parse的mangled长度34（实际32）被inventory拒绝，也
+不算协议故障或语义反例。完整参考固定18份原函数和5份传递helper身份。
+
+范围：显式refresh/full-request、其他provider poll、实际SDL后台读取/所有filter/overlay、
+producer/network/UI/Stop线程交错仍各自核验；不把本组同步tick的密文一致推广到
+所有设备调度、真实Steam响应、Switch运行或原玩家停顿原因。
+
+```sh
+PYTHONPATH=/path/to/python-dependencies python3 scripts/audit-steam-hid-disabled.py \
+  --binary /path/to/libmain-arm64.so --output /tmp/source-hid-disabled.json
+python3 scripts/check-steam-hid-disabled.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-hid-disabled-oracle
+python3 scripts/check-hid-disabled-native-mutations.py \
+  --build build/desktop --output /tmp/hid-disabled-negatives
+ctest --test-dir build/desktop -R 'hid_disabled_official_vectors|hid_producer_official_vectors'
 ```

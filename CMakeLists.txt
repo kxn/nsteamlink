@@ -84,6 +84,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-hid-producer.py"
             --receiver $<TARGET_FILE:ihs-hid-producer-oracle>)
         set_tests_properties(hid_producer_official_vectors PROPERTIES TIMEOUT 60)
+        add_test(NAME hid_disabled_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-hid-disabled.py"
+            --receiver $<TARGET_FILE:ihs-hid-disabled-oracle>)
+        set_tests_properties(hid_disabled_official_vectors PROPERTIES TIMEOUT 60)
         add_test(NAME reliable_sender_official_vectors COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-outgoing.py"
             --receiver $<TARGET_FILE:ihs-retry-sender-oracle>)
