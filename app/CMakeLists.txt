@@ -149,6 +149,8 @@ if(NSL_PLATFORM STREQUAL "switch")
         ICON "${CMAKE_SOURCE_DIR}/assets/branding/icon.jpg")
 endif()
 if(NSL_PLATFORM STREQUAL "desktop")
+    add_test(NAME live_media_probe_log_contract COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/test-live-media-probe.py")
     add_executable(nsl-video-settings-tests tests/test_video_settings.c)
     target_link_libraries(nsl-video-settings-tests PRIVATE nsl_ui)
     target_compile_options(nsl-video-settings-tests PRIVATE -Wall -Wextra -UNDEBUG)
@@ -615,6 +617,28 @@ if(NSL_PLATFORM STREQUAL "desktop")
     set_tests_properties(nsl-video-pipeline PROPERTIES TIMEOUT 20)
 endif()
 
+if(NSL_DIAGNOSTICS)
+    add_executable(nsl-live-media-probe tests/live_media_probe.c)
+    target_include_directories(nsl-live-media-probe PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+    target_compile_options(nsl-live-media-probe PRIVATE -Wall -Wextra -Werror -Wno-unknown-pragmas)
+    target_link_libraries(nsl-live-media-probe PRIVATE nsl_platform)
+    target_link_options(nsl-live-media-probe PRIVATE
+        -Wl,--wrap=IHS_SessionUnreliableReceived -Wl,--wrap=IHS_FECReceiverAdd
+        -Wl,--wrap=IHS_SessionChannelDataReceiveReliableFrame
+        -Wl,--wrap=IHS_SessionChannelDataLost -Wl,--wrap=IHS_UDPSocketSend)
+    if(NSL_PLATFORM STREQUAL "switch")
+        nx_create_nro(nsl-live-media-probe OUTPUT nsl-live-media-probe.nro)
+    else()
+        add_executable(nsl-live-media-observer-tests tests/test_live_media_observers.c)
+        target_include_directories(nsl-live-media-observer-tests PRIVATE platforms/common
+            ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+        target_compile_options(nsl-live-media-observer-tests PRIVATE -Wall -Wextra -Werror
+            -Wno-unknown-pragmas -UNDEBUG)
+        target_link_libraries(nsl-live-media-observer-tests PRIVATE nsl_platform)
+        add_test(NAME live_media_probe_observers COMMAND nsl-live-media-observer-tests)
+    endif()
+endif()
 if(NSL_PLATFORM STREQUAL "switch" AND NSL_DIAGNOSTICS)
     add_executable(nsl-video-probe tests/switch_video_probe.c)
     target_include_directories(nsl-video-probe PRIVATE platforms/common ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)

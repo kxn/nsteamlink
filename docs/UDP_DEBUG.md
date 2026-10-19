@@ -28,6 +28,52 @@ tools/switch-debugctl.py 10.10.10.17 diag prev
 独立 `switch-discover` 工具的 `hosts/select/pair/code/exit` 等命令属于其工具接口，
 不适用于正式应用。
 
+## 自包含真实主机会话测试
+
+诊断构建单独生成 `nsl-live-media-probe.nro`；普通发布构建不包含此测试入口。
+测试包直接读取 Switch 现有 `profile.bin`、按主机密钥和串流设置，不需复制 SD 文件。
+它只选择与指定地址的实际发现回复匹配、且已保存为配对的主机；身份缺失、损坏、
+需要授权码/安全码或连接失败时记录失败并退出，不猜测 PIN，也不新建测试身份。
+正常串流过程中的密钥轮换、配置和测网统计保存仍由生产 runtime 执行。
+
+测试执行一次被动播放，不发送用户控制输入。若普通开流先进入正式测网，工具使用
+生产结果确认命令执行“继续但不接受推荐”，保留已有设置，再进入播放。
+测网 session 的流量不纳入普通媒体计数。此自动确认只属于独立测试程序；
+正式应用的推荐确认、FEC 保存/初始请求策略仍见协议参考 §32、§116。
+
+```sh
+# 先完成 clean 提交及对应诊断构建；默认仅归档，不启动设备。
+python3 tools/live-media-probe.py --steam 10.10.10.166 --switch 10.10.10.25 \
+  --seconds 30 --output build/live-media-ready
+# 用户准备好 netloader 后，另选一个新归档目录，明确 --run，只部署一次。
+python3 tools/live-media-probe.py --steam 10.10.10.166 --switch 10.10.10.25 \
+  --seconds 30 --output build/live-media-run --run
+```
+
+工具归档实际 NRO/SHA256、提交身份、graphics manifest、命令、nxlink 原始日志与
+机器结果；不探测 netloader TCP，也不自动重复启动。示例地址只是明确的测试参数，
+设备或主机变化时应使用实际确认地址。离线复核可用 `--analyze-log`、
+`--expected-build`、相同 `--steam/--seconds` 和一个输出 JSON 路径。
+
+`LIVE_WIRE` 是通过连接入口的普通 type3/4、type11 包数；`parity_enabled` 仅表示
+包头声明 m>0，`parity_shards` 表示到达的校验片，`fec_complete` 是生产 FEC 接收器
+实际交付次数。收到 type11（可为 m=0）或 FEC 交付，都不单独证明发生了 RS 修复。
+`LIVE_FLOW` 的 complete 是完整媒体回调次数，recovery 是 DataLost 入口调用次数；
+feedback_sent/failed 是普通会话实际 Socket 发送 type10 的结果，不把每份反馈都当作
+请求缺片，更不等于主机收到/执行了请求。计数覆盖普通会话的所有媒体 channel，
+不是只覆盖视频。观察器原样转发生产调用，只做有界原子记账，不逐包输出或等待。
+
+`LIVE_RESULT` 保留实际解码/首次呈现/音频解码计数、硬解事实、首帧后的播放时间、
+主循环观察的最大呈现计数推进间隔 gap_ms 和结束前无推进时间 tail_ms。它不是逐帧
+GPU 时间戳；epoch 内计数在两次采样间多次增加时，只能观察到最后一次主循环采样。
+测试至少要求两次实际呈现，且结束前两秒仍有推进，拒绝“首帧后冻结仍通过”；
+两秒仅是 smoke 验收阈值，不进入生产重发、丢帧或重连决策。历史 gap_ms 仍单独保留。
+PASS 只表示已有配对身份完成真实主机视频播放 smoke 与应用资源清理；音频计数
+需单独判断，未注入丢包，不证明异常网络恢复、长期同步或全部线程交错。
+GPU/显示 API 的呈现计数也不证明物理扫描完成；FINAL 在关闭日志 socket 之前输出，
+不证明 socketExit、返回 hbmenu 或第二次启动。缺少当前 BEGIN/完整终态、
+计数或清理记录、播放时间不足、超时及 nxlink 非零退出均不能通过。
+
 ## 屏幕诊断
 
 串流中同时长按 **− 和 + 0.8 秒**打开本地游玩菜单；菜单内单独长按 **X 一秒**切换只读 Debug 浮层，
