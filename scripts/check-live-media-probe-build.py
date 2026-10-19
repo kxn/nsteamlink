@@ -15,6 +15,8 @@ import struct
 import subprocess
 
 WRAPPED = (
+    "IHS_SessionUnreliableReceived",
+    "IHS_FECReceiverAdd",
     "IHS_SessionChannelControlSend",
     "IHS_SessionQueuePacketResult",
     "IHS_SessionChannelControlOnNegotiation",
@@ -24,6 +26,9 @@ WRAPPED = (
     "sl_auth_save",
 )
 EDGES = (
+    ("SessionRecvAt", "__wrap_IHS_SessionUnreliableReceived"),
+    ("IHS_SessionChannelDataReceived", "__wrap_IHS_SessionUnreliableReceived"),
+    ("IHS_SessionUnreliableReceived", "__wrap_IHS_FECReceiverAdd"),
     ("OnNegotiationInit", "__wrap_IHS_SessionChannelControlSend"),
     ("IHS_SessionSendControlMessage", "__wrap_IHS_SessionChannelControlSend"),
     ("IHS_SessionChannelQueueFrameResult", "__wrap_IHS_SessionQueuePacketResult"),
@@ -105,13 +110,14 @@ def check(root, build, ordinary):
         identity["commit"].encode() in nro.read_bytes(), "probe source identity missing"
     )
     for marker in (
-        b"observer=3 fec=",
+        b"observer=4 fec=",
+        b"fec_repair_unverified",
         b"sent_fec=",
         b"original_known=",
         b"LIVE_%s run=",
     ):
         require(
-            marker in nro.read_bytes(), "missing observer-v3 marker " + repr(marker)
+            marker in nro.read_bytes(), "missing observer-v4 marker " + repr(marker)
         )
     link = shlex.split(
         (app / "CMakeFiles/nsl-live-media-probe.dir/link.txt").read_text()
@@ -126,6 +132,10 @@ def check(root, build, ordinary):
         ("ihslib", "ch_control_negotiation"),
         ("ihslib", "channel"),
         ("ihslib", "base"),
+        ("ihslib", "fec"),
+        ("ihslib", "unreliable"),
+        ("ihslib", "session"),
+        ("ihslib", "ch_data"),
         ("nsl_platform", "runtime"),
         ("nsl_stream_settings", "stream_settings"),
         ("nsl_ui", "auth_store"),
@@ -139,6 +149,11 @@ def check(root, build, ordinary):
     )
     names = {line.split()[-1] for line in symbol_text.splitlines() if line.split()}
     require("probe_config_sent_fec" in names, "per-sent-head FEC observation missing")
+    loss_state = [line.split() for line in symbol_text.splitlines() if line.endswith(" probe_loss")]
+    require(
+        len(loss_state) == 1 and 2000 <= int(loss_state[0][1], 16) <= 4096,
+        "missing/unbounded erasure witness storage",
+    )
     ledger = [
         line.split()
         for line in symbol_text.splitlines()
@@ -172,15 +187,17 @@ def check(root, build, ordinary):
     for name in ["__wrap_" + name for name in WRAPPED] + [
         "probe_config_entries",
         "probe_config_sent_fec",
+        "probe_loss",
     ]:
         require(name not in ordinary_names, "probe remains in ordinary ELF: " + name)
     require(
-        b"observer=3 fec=" not in (ordinary / "app/nsteamlink.nro").read_bytes(),
+        b"observer=4 fec=" not in (ordinary / "app/nsteamlink.nro").read_bytes(),
         "probe remains in ordinary NRO",
     )
     return {
         "status": "passed",
-        "observer": 3,
+        "observer": 4,
+        "erasure_state_bytes": int(loss_state[0][1], 16),
         "identity": identity,
         "ledger_bytes": int(ledger[0][1], 16),
         "production_edges": [list(edge) for edge in EDGES],
@@ -202,7 +219,7 @@ def main():
     report = check(Path(__file__).resolve().parents[1], args.build, args.ordinary_build)
     args.output.write_text(json.dumps(report, indent=2) + "\n")
     print(
-        "PASS: actual observer-v3 call paths, original delegation, fixed ledger and ordinary exclusion"
+        "PASS: actual observer-v4 call paths, original delegation, fixed storage and ordinary exclusion"
     )
 
 

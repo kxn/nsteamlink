@@ -1,9 +1,10 @@
-/* Real-host smoke probe, never a synthetic peer or a new protocol policy.
- * Observers forward every production call unchanged. No packet logging, file
- * I/O, allocation or waiting is added to the network/decoder observers. */
+/* Real-host probe, never a synthetic peer or a new protocol policy. Calls are
+ * unchanged except the explicit optional drop-one diagnostic erasure. No
+ * packet logging, file I/O, allocation or waits in network/decoder observers. */
 #include "build_identity.h"
 #include "ihs_udp.h"
 #include "live_media_config_observer.h"
+#include "live_media_fec_loss.h"
 #include "live_media_fec_settings.h"
 #include "media.h"
 #include "platform/events.h"
@@ -44,6 +45,7 @@ static atomic_uint_fast64_t submit_calls, submit_returns, submit_keys, submit_er
 static atomic_uint_fast64_t decode_feedback, feedback_accepted, reset_flags, lost_flags,
     disable_flags;
 static atomic_uint_fast64_t video_requests, request_sent, request_failed;
+static probe_fec_loss probe_loss;
 
 static bool watch_video(const IHS_SessionChannel *c) {
     if (c->type != IHS_SessionChannelTypeDataVideo || c->id < 3 || c->id >= 32 ||
@@ -120,7 +122,13 @@ void __wrap_IHS_SessionUnreliableReceived(IHS_Session *s, IHS_SessionPacket *p) 
 bool __real_IHS_FECReceiverAdd(IHS_FECReceiver *, const IHS_SessionPacket *, IHS_SessionFrame *);
 bool __wrap_IHS_FECReceiverAdd(IHS_FECReceiver *r, const IHS_SessionPacket *p,
                                IHS_SessionFrame *f) {
+    if (probe_fec_loss_before(&probe_loss, r, p, ordinary_rx,
+                              atomic_load_explicit(&video_channel, memory_order_relaxed),
+                              atomic_load_explicit(&submit_returns, memory_order_relaxed)))
+        return false;
     bool ready = __real_IHS_FECReceiverAdd(r, p, f);
+    if (ordinary_rx)
+        probe_fec_loss_after(&probe_loss, r, p, f, ready);
     if (ready && ordinary_rx) {
         atomic_fetch_add_explicit(&fec_complete, 1, memory_order_relaxed);
         if (p->header.channelId < 32)
@@ -292,14 +300,19 @@ int main(int argc, char **argv) {
     /* Numeric address prevents a diagnostic argument from starting an unrelated
      * DNS workflow. Existing paired host identity must also match discovery. */
     struct in_addr ip;
-    if ((argc != 3 && argc != 4) || inet_pton(AF_INET, argv[1], &ip) != 1)
+    if ((argc < 3 || argc > 5) || inet_pton(AF_INET, argv[1], &ip) != 1)
         return 2;
-    const char *fec_mode = argc == 4 ? argv[3] : "saved";
+    const char *fec_mode = argc >= 4 ? argv[3] : "saved";
     if (!strcmp(fec_mode, "on"))
         probe_fec_mode = 1;
     else if (!strcmp(fec_mode, "off"))
         probe_fec_mode = 0;
     else if (strcmp(fec_mode, "saved"))
+        return 2;
+    const char *loss_mode = argc == 5 ? argv[4] : "none";
+    if (!strcmp(loss_mode, "drop-one") && probe_fec_mode == 1)
+        probe_loss.enabled = true;
+    else if (strcmp(loss_mode, "none"))
         return 2;
     char *end;
     unsigned long seconds = strtoul(argv[2], &end, 10);
@@ -308,13 +321,15 @@ int main(int argc, char **argv) {
     if (!sl_system_init())
         return 1;
     run_id = sl_system_now();
-    record("BEGIN", "build=%s host=%s seconds=%lu observer=3 fec=%s", NSL_GIT_COMMIT, argv[1],
-           seconds, fec_mode);
+    record("BEGIN", "build=%s host=%s seconds=%lu observer=4 fec=%s loss=%s", NSL_GIT_COMMIT,
+           argv[1], seconds, fec_mode, loss_mode);
     const char *failure = "profile_missing";
     sl_runtime *runtime = NULL;
     bool media = false, log = false, submitted = false, passed = false;
     uint64_t play_ms = 0, last_present_at = 0, gap_ms = 0, tail_ms = 0;
     uint32_t seen_presented = 0;
+    bool repair_seen = false;
+    uint32_t repair_decoded = 0, repair_presented = 0, after_decoded = 0, after_presented = 0;
     stream_media_snapshot last = {0};
     char path[512];
     snprintf(path, sizeof(path), "%s/profile.bin", sl_system_data_dir());
@@ -412,6 +427,17 @@ int main(int argc, char **argv) {
         sl_media_gate(false); /* Passive playback probe; no remote input. */
         stream_media_present();
         stream_media_get_snapshot(&last);
+        if (atomic_load_explicit(&probe_loss.witnessed, memory_order_acquire)) {
+            if (!repair_seen) {
+                repair_seen = true;
+                repair_decoded = last.decoded_frames;
+                repair_presented = last.displayed_frames;
+            }
+            after_decoded = last.decoded_frames >= repair_decoded
+                                ? last.decoded_frames - repair_decoded : 0;
+            after_presented = last.displayed_frames >= repair_presented
+                                  ? last.displayed_frames - repair_presented : 0;
+        }
         if (last.displayed_frames && last.displayed_frames != seen_presented) {
             uint64_t gap = last_present_at ? now - last_present_at : 0;
             if (gap > gap_ms)
@@ -497,6 +523,22 @@ cleanup:
         passed = false;
         failure = "video_submit_failed";
     }
+    /* Owner is joined: these plain witness fields can now be read safely.
+     * Playback continuing after a repaired body is distinct from a checksum
+     * of the decoded/repaired image or proof of physical scanout. */
+    if (passed && probe_loss.enabled &&
+        (!probe_loss.selected || !probe_loss.completed || !probe_loss.matched ||
+         probe_loss.conflict || probe_loss.replaced || after_decoded < 10 || after_presented < 10)) {
+        passed = false;
+        failure = "fec_repair_unverified";
+    }
+    record("FECLOSS", "selected=%u blocked=%u complete=%u matched=%u conflict=%u replaced=%u",
+           probe_loss.selected, probe_loss.blocked, probe_loss.completed, probe_loss.matched,
+           probe_loss.conflict, probe_loss.replaced);
+    record("FECSHAPE", "channel=%u group=%u index=0 bytes=%u length=%u k=%u m=%u data=%u parity=%u",
+           probe_loss.channel, probe_loss.group, probe_loss.width, probe_loss.length,
+           probe_loss.data, probe_loss.parity, probe_loss.unique_data, probe_loss.unique_parity);
+    record("FECAFTER", "decoded=%u presented=%u", after_decoded, after_presented);
     record("PREFS", "loads=%u saves=%u profiles=%u errors=%u", probe_fec_loads, probe_fec_saves,
            probe_fec_profiles, probe_fec_io_errors);
     counters();

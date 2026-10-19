@@ -130,9 +130,17 @@ def main():
             "IHS_SessionQueuePacketResult",
         )
         rejected(changed, ordinary, "observer does not call original")
+        changed = base / "fec-producer"
+        overlay(build, changed)
+        remove_edge(changed, "IHS_SessionUnreliableReceived", "__wrap_IHS_FECReceiverAdd")
+        rejected(changed, ordinary, "production call missing")
+        changed = base / "fec-delegate"
+        overlay(build, changed)
+        remove_edge(changed, "__wrap_IHS_FECReceiverAdd", "IHS_FECReceiverAdd")
+        rejected(changed, ordinary, "observer does not call original")
     report["counterexamples"] = checks
     args.output.write_text(json.dumps(report, indent=2) + "\n")
-    print("PASS: actual observer build and five artifact/call-path fault cases")
+    print("PASS: actual observer build and seven artifact/call-path fault cases")
 
 
 if __name__ == "__main__":

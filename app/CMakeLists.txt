@@ -740,6 +740,18 @@ if(NSL_DIAGNOSTICS)
             -Wl,--wrap=IHS_SessionChannelControlOnNegotiation -Wl,--wrap=IHS_BaseSend)
         add_test(NAME live_media_probe_config_wire COMMAND nsl-live-media-config-wire-tests)
         set_tests_properties(live_media_probe_config_wire PROPERTIES TIMEOUT 15)
+        add_executable(nsl-live-media-fec-loss-tests tests/test_live_media_fec_loss.c)
+        target_include_directories(nsl-live-media-fec-loss-tests PRIVATE platforms/common
+            ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+        target_compile_options(nsl-live-media-fec-loss-tests PRIVATE -Wall -Wextra -Werror
+            -Wno-unknown-pragmas -UNDEBUG)
+        target_link_libraries(nsl-live-media-fec-loss-tests PRIVATE nsl_platform)
+        get_target_property(NSL_LIVE_PROBE_TEST_LINK_OPTIONS nsl-live-media-probe LINK_OPTIONS)
+        list(FILTER NSL_LIVE_PROBE_TEST_LINK_OPTIONS EXCLUDE REGEX "^-Wl,-Map=")
+        target_link_options(nsl-live-media-fec-loss-tests PRIVATE ${NSL_LIVE_PROBE_TEST_LINK_OPTIONS})
+        add_test(NAME live_media_probe_fec_loss COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/test-live-media-fec-loss.py"
+            --receiver "$<TARGET_FILE:nsl-live-media-fec-loss-tests>")
     endif()
 endif()
 if(NSL_PLATFORM STREQUAL "switch" AND NSL_DIAGNOSTICS)

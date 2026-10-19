@@ -2,8 +2,9 @@
 """Prepare/run one real-host probe, or validate a captured machine record.
 
 Only --run deploys; use it after the user prepares netloader. Never probe TCP
-28280 or retry a launch. PASS covers a playback smoke test, not adverse-network
-equivalence, physical scanout, hbmenu return or RS reconstruction proof.
+28280 or retry a launch. Optional drop-one requires a missing-systematic byte
+witness and continued playback. Neither mode proves adverse-network equivalence,
+decoded pixel identity, physical scanout or hbmenu/loader ABI.
 """
 import argparse
 import hashlib
@@ -21,7 +22,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def analyze(log, build, steam, seconds, fec_mode="saved"):
+def analyze(log, build, steam, seconds, fec_mode="saved", loss_mode="none"):
     records, run = [], None
     for line in log.splitlines():
         match = re.fullmatch(r"LIVE_([A-Z]+) run=(\d+) (.+)", line)
@@ -67,17 +68,24 @@ def analyze(log, build, steam, seconds, fec_mode="saved"):
     require(fec_mode in ("saved", "on", "off"), "invalid FEC test mode")
     expected_begin = {"build": build, "host": steam, "seconds": str(seconds)}
     expected_begin["observer"] = version
-    if version == "3":
+    if version in ("3", "4"):
         expected_begin["fec"] = fec_mode
+    if version == "4":
+        expected_begin["loss"] = loss_mode
+    require(
+        loss_mode in ("none", "drop-one")
+        and (loss_mode == "none" or (fec_mode == "on" and version == "4")),
+        "invalid erasure mode/version",
+    )
     require(
         begin == expected_begin
-        and version in ("2", "3")
-        and (version == "3" or fec_mode == "saved"),
+        and version in ("2", "3", "4")
+        and (version != "2" or fec_mode == "saved"),
         "identity mismatch",
     )
     require(settings.get("stored_fec") in ("0", "1"), "missing FEC preference")
     require(settings.get("sound") in ("0", "1"), "missing sound preference")
-    if version == "3":
+    if version in ("3", "4"):
         require(
             set(settings)
             == {
@@ -169,7 +177,7 @@ def analyze(log, build, steam, seconds, fec_mode="saved"):
     details = dict(records[-10:-4]) if tags[-10:-4] == detail_tags else {}
     schemas = {
         "VCHANNEL": "channel ordinary fec retry"
-        + (" fec_complete" if version == "3" else ""),
+        + (" fec_complete" if version in ("3", "4") else ""),
         "VRECV": "complete key finish last",
         "VWORK": "calls key finish last",
         "VSUBMIT": "calls returned keys errors last",
@@ -238,7 +246,7 @@ def analyze(log, build, steam, seconds, fec_mode="saved"):
             "scope": "main-thread snapshot before local close/exit; not a causal error classification",
         }
     negotiation = {"scope": "unverified in observer v2"}
-    if version == "3":
+    if version in ("3", "4"):
         require(
             tags[-14:]
             == ["PREFS", "NEGOTIATE", "NEGOTIATE", "PEER"]
@@ -330,6 +338,66 @@ def analyze(log, build, steam, seconds, fec_mode="saved"):
             "preferences": prefs,
             "scope": "producer inputs/admission and exact encrypted head socket attempts; peer config is not a FEC ACK; received type11 does not prove RS reconstruction",
         }
+    erasure = {"mode": loss_mode, "scope": "no diagnostic erasure"}
+    repair_proved = False
+    if version == "4":
+        witness, shape, after = (one(tag) for tag in ("FECLOSS", "FECSHAPE", "FECAFTER"))
+        schemas = (
+            (witness, "selected blocked complete matched conflict replaced"),
+            (shape, "channel group index bytes length k m data parity"),
+            (after, "decoded presented"),
+        )
+        parsed = []
+        for values, schema in schemas:
+            require(set(values) == set(schema.split()), "invalid erasure fields")
+            parsed.append({key: number(values, key) for key in schema.split()})
+        witness, shape, after = parsed
+        require(
+            tags[-17:-14] == ["FECLOSS", "FECSHAPE", "FECAFTER"],
+            "missing final erasure group",
+        )
+        if loss_mode == "none":
+            require(
+                all(value == 0 for group in parsed for value in group.values()),
+                "unexpected diagnostic erasure",
+            )
+        else:
+            require(
+                witness["selected"] == witness["complete"] == witness["matched"] == 1
+                and witness["blocked"] >= 1
+                and witness["blocked"] <= channel["fec"]
+                and witness["conflict"] == witness["replaced"] == 0,
+                "no exact erasure reconstruction witness",
+            )
+            require(
+                shape["channel"] == channel["channel"]
+                and 0 <= shape["group"] <= 65535
+                and shape["index"] == 0
+                and 1 <= shape["bytes"] <= 1472
+                and 2 <= shape["k"] < 255
+                and 1 <= shape["m"] <= 255 - shape["k"]
+                and (shape["k"] - 1) * shape["bytes"] < shape["length"]
+                <= shape["k"] * shape["bytes"]
+                and 0 <= shape["data"] < shape["k"]
+                and 1 <= shape["parity"] <= shape["m"]
+                and shape["k"] <= shape["data"] + shape["parity"]
+                <= channel["fec"] - witness["blocked"]
+                and channel["fec_complete"] >= 1,
+                "invalid missing-systematic/parity witness",
+            )
+            require(
+                10 <= after["decoded"] <= number(result, "decoded")
+                and 10 <= after["presented"] <= number(result, "presented"),
+                "no continued playback after reconstruction",
+            )
+            repair_proved = not errors
+        erasure = {
+            "mode": loss_mode,
+            "witness": witness,
+            "shape": shape,
+            "after": after,
+            "scope": "one withheld systematic shard, including all its duplicates; exact useful-byte comparison in production receiver output; not decoded pixel identity or physical scanout",
+        }
     return {
         "passed": not errors,
         "errors": errors,
@@ -340,10 +408,12 @@ def analyze(log, build, steam, seconds, fec_mode="saved"):
         "video": video,
         "negotiation": negotiation,
         "stopping": stopping,
+        "erasure": erasure,
         "final": final,
-        "scope": "real-host video playback smoke; audio counters observed; no loss injected",
+        "scope": "real-host video playback smoke; audio counters observed; "
+        + ("one diagnostic FEC data erasure" if loss_mode == "drop-one" else "no loss injected"),
         "audio_decode_observed": audio > 0,
-        "rs_reconstruction": "unverified",
+        "rs_reconstruction": "one diagnostic erasure byte-verified" if repair_proved else "unverified",
         "physical_scanout": "unverified",
         "loader_return": "unverified",
     }
@@ -392,6 +462,12 @@ def capture(command, path, timeout):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--fec-loss",
+        choices=("none", "drop-one"),
+        default="none",
+        help="isolated diagnostic data-shard erasure; drop-one requires --fec-request on",
+    )
+    parser.add_argument(
         "--steam", required=True, type=lambda x: str(ipaddress.IPv4Address(x))
     )
     parser.add_argument(
@@ -421,6 +497,8 @@ def main():
         "--expected-build", help="full commit for offline log validation"
     )
     args = parser.parse_args()
+    if args.fec_loss == "drop-one" and args.fec_request != "on":
+        parser.error("--fec-loss drop-one requires --fec-request on")
     if args.analyze_log:
         if not args.expected_build or not re.fullmatch(
             r"[0-9a-f]{40}", args.expected_build
@@ -432,6 +510,7 @@ def main():
             args.steam,
             args.seconds,
             args.fec_request,
+            args.fec_loss,
         )
         args.output.write_text(json.dumps(report, indent=2) + "\n")
         return 0 if report["passed"] else 1
@@ -477,7 +556,7 @@ def main():
         "-s",
         str(nro.resolve()),
         "--args",
-        f"{args.steam} {args.seconds} {args.fec_request}",
+        f"{args.steam} {args.seconds} {args.fec_request} {args.fec_loss}",
     ]
     package = {
         "build": head,
@@ -486,8 +565,10 @@ def main():
         "switch": args.switch,
         "seconds": args.seconds,
         "fec_request": args.fec_request,
+        "fec_loss": args.fec_loss,
         "command": command,
-        "scope": "existing paired identity; diagnostic initial FEC input; saved FEC preference preserved on normal saves; no loss injection",
+        "scope": "existing paired identity; saved FEC preference preserved on normal saves; "
+        + ("one optional diagnostic data-shard erasure" if args.fec_loss == "drop-one" else "no loss injection"),
     }
     (args.output / "observer_build.json").write_text(
         json.dumps(observer_build, indent=2) + "\n"
@@ -503,6 +584,7 @@ def main():
         args.steam,
         args.seconds,
         args.fec_request,
+        args.fec_loss,
     )
     report.update(nxlink_exit=code, timed_out=timeout, nro_sha256=sha(nro))
     report["passed"] = report["passed"] and code == 0 and not timeout

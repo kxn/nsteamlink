@@ -56,7 +56,68 @@ def version3(mode="saved"):
     return log
 
 
+def version4(loss="none"):
+    log = version3("on").replace("observer=3 fec=on", "observer=4 fec=on loss=" + loss)
+    selected = loss == "drop-one"
+    prefix = (
+        f"LIVE_FECLOSS run=42 selected={int(selected)} blocked={2 if selected else 0} complete={int(selected)} matched={int(selected)} conflict=0 replaced=0\n"
+        + (
+            "LIVE_FECSHAPE run=42 channel=9 group=27 index=0 bytes=32 length=80 k=3 m=2 data=2 parity=1\n"
+            "LIVE_FECAFTER run=42 decoded=50 presented=40\n"
+            if selected else
+            "LIVE_FECSHAPE run=42 channel=0 group=0 index=0 bytes=0 length=0 k=0 m=0 data=0 parity=0\n"
+            "LIVE_FECAFTER run=42 decoded=0 presented=0\n"
+        )
+    )
+    return log.replace("LIVE_PREFS", prefix + "LIVE_PREFS")
+
+
 class Contract(unittest.TestCase):
+    def test_diagnostic_erasure_witness(self):
+        for loss in ("none", "drop-one"):
+            result = probe.analyze(version4(loss), BUILD, "192.0.2.1", 30, "on", loss)
+            self.assertTrue(result["passed"], result["errors"])
+            self.assertEqual(
+                result["rs_reconstruction"],
+                "unverified" if loss == "none" else "one diagnostic erasure byte-verified",
+            )
+        log = version4("drop-one")
+        for before, after in [
+            ("selected=1", "selected=0"), ("blocked=2", "blocked=0"),
+            ("blocked=2", "blocked=51"), ("blocked=2", "blocked=48"),
+            ("complete=1 matched=1", "complete=0 matched=1"),
+            ("matched=1", "matched=0"), ("conflict=0", "conflict=1"),
+            ("replaced=0", "replaced=1"), ("group=27", "group=65536"),
+            ("channel=9 group=27", "channel=8 group=27"),
+            ("index=0", "index=1"), ("bytes=32", "bytes=1473"),
+            ("length=80", "length=65"), ("length=80", "length=64"),
+            ("length=80", "length=97"), ("k=3", "k=1"),
+            ("m=2", "m=0"), ("m=2", "m=253"),
+            ("data=2", "data=3"), ("data=2", "data=1"),
+            ("parity=1\nLIVE_FECAFTER", "parity=0\nLIVE_FECAFTER"),
+            ("parity=1\nLIVE_FECAFTER", "parity=3\nLIVE_FECAFTER"),
+            ("decoded=50", "decoded=9"), ("decoded=50", "decoded=101"),
+            ("presented=40", "presented=9"), ("presented=40", "presented=91"),
+        ]:
+            # length65 still describes k3/S32 and is intentionally valid.
+            if after == "length=65":
+                self.assertTrue(probe.analyze(log.replace(before, after), BUILD,
+                                             "192.0.2.1", 30, "on", "drop-one")["passed"])
+                continue
+            with self.subTest(before=before, after=after):
+                result = probe.analyze(log.replace(before, after), BUILD,
+                                       "192.0.2.1", 30, "on", "drop-one")
+                self.assertFalse(result["passed"], result)
+                self.assertEqual(result["rs_reconstruction"], "unverified")
+        for line in log.splitlines(True):
+            self.assertFalse(probe.analyze(log.replace(line, ""), BUILD,
+                                          "192.0.2.1", 30, "on", "drop-one")["passed"])
+        self.assertFalse(probe.analyze(version3("on"), BUILD, "192.0.2.1", 30,
+                                      "on", "drop-one")["passed"])
+        self.assertFalse(probe.analyze(log, BUILD, "192.0.2.1", 30, "on")["passed"])
+        self.assertFalse(probe.analyze(version4().replace("selected=0", "selected=1"),
+                                      BUILD, "192.0.2.1", 30, "on")["passed"])
+
     def test_complete(self):
         result = check(LOG)
         self.assertTrue(result["passed"])

@@ -12563,3 +12563,76 @@ FrameTicket的单次Claim/Publish保证SDK对untaken输入的后续corrupt fallb
 ctest --test-dir build/diagnostics --output-on-failure \
   -R '^(video_reset_runtime|video_stop_.*|nsl-video-pipeline)$'
 ```
+
+## 160. 真实会话的单数据片擦除诊断契约
+
+### 160.1 官方依据和注入边界
+
+§26/33的固定Android客户端`libmain-arm64.so` SHA256
+`50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e`
+原AddPacket/RS和接收队列的71项执行用例，覆盖缺片恢复、重复、换组与独立普通窗口；
+§110另有Linux官方原进程通过真实UDP/CRC/媒体worker/AVCodec恢复缺片图像的证据。
+两者的分配/容器/队列或受控对端适配边界保持不变，不能替代自然Steam主机/Switch。
+探针没有据此增加接收超时、NACK、自动FEC切换、冗余比例或多组窗口。
+
+`live_media_probe`的observer4增加可选`drop-one`，仅显式FEC-on允许启用。缺省`none`
+原样委托所有生产调用；该模式不会隐式启用FEC，也不把用户设置持久化为另一值。
+注入位于真实Session地址/连接/CRC准入之后、持有接收owner锁时、生产FECReceiverAdd
+之前：故它是媒体数据片擦除，**不是**无线链路丢包、socket空读或整体网络质量采样。
+SDK及普通产品包的协议逻辑不因该诊断变化。
+
+### 160.2 单组选择与字节见证
+
+每个媒体channel从首次FEC输入即记录receiver身份和已见group水位；在识别视频角色
+之前也记录。因此不能在已转发index0的同组、回退组、首个未知组或半途组开始擦除。
+视频已有120次submit返回后，仅选择同一receiver上一个首次观察到、正向16位距离
+为1…32767的新组，且其首片为index0、k≥2、m>0、k+m≤255、S≤1472、完整合法body。
+先确认接收器没有本地分配错误。保留index0的S字节，**不调用**真实Add；该组所有
+index0重复片也不调用Add。未选中的所有输入继续原样委托，不重发保存的对照数据。
+
+对照存储和最多255个唯一转发索引均为固定数组，无热路径分配、日志、等待或I/O。
+完成见证要求真实Add返回owned完整正文，group/channel/type/L匹配，index0从未转发、
+至少一个parity已转发、不同数据片少于k但不同shard合计至少k，正文首S字节逐字节
+等于保存的原片。因k≥2，index0的S字节全部是有效正文，不把padding相等当作证明。
+元数据冲突或该receiver在完成前收到另一个有效组时，见证失败，不能将换组后再回退
+的完成归入无替换恢复。无足够冗余时仍等待原路径；探针最终明确失败而非降级PASS。
+
+网络owner仅以release发布成功标志，主线程acquire后记录媒体计数，并要求随后至少
+新增10次decode及10次present。其余普通字段只在runtime/session owner join后读取，
+无跨线程读取变化中的expected/bitmap。额外计数避免无符号下溢，并由PC报告核对
+不超过最终累计值。它只证明字节重建后播放继续，不证明修复的特定图像已解码、
+像素正确或物理scanout，也不证明所有自然弱网形状、恢复耗时或loader ABI。
+
+observer4最终`FECLOSS/FECSHAPE/FECAFTER`记录在PREFS/协商/视频累计记录之前；
+PC核对模式、唯一记录、数值/形状、缺失数据与parity门槛、输入累计边界和继续播放。
+只有所有原烟测条件及上述见证都通过才标记单次诊断擦除字节验证；普通模式和旧
+observer2/3捕获始终保持RS未验证。旧版本不能验收drop-one请求。该标记不扩大为
+全包校验、特定帧像素校验或“FEC策略已完全对齐”。
+
+### 160.3 离线和实际产物的验证边界
+
+`live_media_probe_fec_loss`直接使用§26固定官方k3/m2/S32码字，执行生产PacketParse/
+实际探针wrapper/原FECReceiverAdd/RS；正常恢复路径只修改group ID与调度条件，
+显式设置wrapper接收上下文和暖机计数；反例明确修改metadata、parity或对照字节。
+穷举三个幸存片的六种顺序，
+包括parity先到、index0/其他片重复和后续正常组；核对整个恢复正文。另覆盖未热身、
+未识别/其他channel、网络测试上下文、首组、已有index0、index1先到、m0/k1/坏形状/
+过宽输入、16位回绕、冗余不足、对照或parity字节损坏、元数据冲突、分组替换。
+这些测试不运行Steam、OS UDP、worker或decoder，不冒充实机结果。
+
+实际Switch门禁另核对SessionRecvAt/ChannelDataReceived→Unreliable wrapper→原函数，
+原UnreliableReceived→FEC wrapper→原Add的真实AArch64调用，生产archive provider、
+固定见证存储、ELF/NRO加载段一致性和普通包排除。故障副本同时改ELF/NRO调用指令，
+确保缺失FEC插桩或缺失真实Add委托都会拒绝；副本从不执行或部署。
+
+```sh
+ctest --test-dir build/diagnostics --output-on-failure -R '^live_media_probe_'
+python3 -O scripts/test-live-media-probe-build.py --build build/switch-diagnostics \
+  --ordinary-build build/switch --output /tmp/live-probe-build.json
+python3 tools/live-media-probe.py --steam 10.10.10.166 --switch 10.10.10.25 \
+  --build-dir build/switch-diagnostics --fec-request on --fec-loss drop-one \
+  --output build/live-fec-erasure-prepared
+```
+
+最后一条只准备自包含包；`--run`仍只用于该次用户明确准备的netloader，无TCP探测、
+无自动再次启动、无需手工复制SD文件。实际设备运行证据及缺口跟踪在GitHub #67。
