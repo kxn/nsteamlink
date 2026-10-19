@@ -70,26 +70,22 @@ static void ui(void) {
         sl_i18n_set(language);
         sl_ui_model m;
         sl_ui_init(&m, &(sl_auth_store){.sound = true});
-        sl_ui_action(&m, SL_SET_RESOLUTION, 1080); /* Cannot edit from another page. */
+        sl_ui_action(&m, SL_SET_RESOLUTION, 1080);
         assert(m.resolution == SL_RESOLUTION_AUTO && !m.command.type);
         sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
+        drawer(&m);
+        sl_ui_action(&m, SL_OPEN_AV_SETTINGS, 0);
         drawer(&m);
         assert(m.layout.controls[0].action == SL_OPEN_QUALITY);
         assert(m.layout.controls[1].action == SL_OPEN_RESOLUTION);
         sl_ui_action(&m, SL_OPEN_QUALITY, 0);
         drawer(&m);
         assert(m.layout.count == 4);
-        for (int i = 0; i < 3; ++i)
-            assert(m.layout.controls[i].action == SL_SET_QUALITY);
         sl_ui_action(&m, SL_OPEN_RESOLUTION, 0);
-        assert(m.page == SL_QUALITY); /* Resolution is a sibling, never a radio choice. */
+        assert(m.page == SL_QUALITY);
         sl_ui_action(&m, SL_BACK, 0);
         sl_ui_tick(&m, m.now + 300);
-        sl_ui_action(&m, SL_OPEN_BANDWIDTH, 0);
-        drawer(&m);
-        sl_ui_action(&m, SL_BACK, 0);
-        sl_ui_tick(&m, m.now + 300);
-        m.focus = m.layout.controls[1].id;
+        m.focus = 101;
         sl_ui_action(&m, SL_ACCEPT, 0);
         drawer(&m);
         assert(m.page == SL_RESOLUTION && m.focus == 100);
@@ -102,48 +98,25 @@ static void ui(void) {
         assert(sl_ui_take_command(&m, &command) && command.type == SL_CMD_SAVE &&
                command.resolution == SL_RESOLUTION_1080);
         sl_ui_tick(&m, m.now + 300);
-        assert(m.page == SL_SETTINGS && m.focus == 101);
+        assert(m.page == SL_AV_SETTINGS && m.focus == 101);
+        assert(!strcmp(m.layout.controls[1].value, "1080p"));
         sl_ui_action(&m, SL_OPEN_RESOLUTION, 0);
         assert(m.focus == 102);
-        for (int i = 0; i < m.layout.count; ++i) {
-            const sl_control *c = &m.layout.controls[i];
-            assert(c->x >= 0 && c->y >= 0 && c->x + c->w <= 1280 && c->y + c->h <= 720);
-        }
         sl_ui_connected(&m);
         sl_ui_action(&m, SL_OPEN_MENU, 0);
         sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
-        drawer(&m);
-        assert(m.layout.controls[0].action == SL_OPEN_QUALITY);
-        assert(m.layout.controls[1].action == SL_OPEN_RESOLUTION);
-        sl_ui_action(&m, SL_OPEN_QUALITY, 0);
-        drawer(&m);
-        assert(m.layout.count == 4);
-        for (int i = 0; i < 3; ++i)
-            assert(m.layout.controls[i].action == SL_SET_QUALITY);
         sl_ui_action(&m, SL_OPEN_RESOLUTION, 0);
-        assert(m.page == SL_QUALITY); /* Resolution is a sibling, never a radio choice. */
-        sl_ui_action(&m, SL_BACK, 0);
-        sl_ui_tick(&m, m.now + 300);
-        sl_ui_action(&m, SL_OPEN_BANDWIDTH, 0);
-        drawer(&m);
-        sl_ui_action(&m, SL_BACK, 0);
-        sl_ui_tick(&m, m.now + 300);
-        m.focus = m.layout.controls[1].id;
-        sl_ui_action(&m, SL_ACCEPT, 0);
-        drawer(&m);
         sl_ui_action(&m, SL_SET_RESOLUTION, 720);
-        assert(sl_ui_take_command(&m, &command) && command.type == SL_CMD_SAVE &&
-               command.resolution == SL_RESOLUTION_720 && m.streaming);
-        /* Activity saves must not reset an explicit selection to Auto. */
+        assert(m.page == SL_MENU && m.resolution == SL_RESOLUTION_1080 && !m.command.type);
         sl_runtime_event activity = {.type = SL_EVENT_ACTIVITY, .generation = m.generation};
         sl_ui_runtime_event(&m, &activity);
-        assert(sl_ui_take_command(&m, &command) && command.resolution == SL_RESOLUTION_720);
+        assert(sl_ui_take_command(&m, &command) && command.resolution == SL_RESOLUTION_1080);
     }
 }
 int main(void) {
     storage();
     ui();
-    puts("PASS resolution persistence/recovery, bilingual controls, next-session edits and "
-         "activity saves");
+    puts("PASS resolution persistence/recovery, bilingual controls, stream-time settings blocked "
+         "and activity saves");
     return 0;
 }

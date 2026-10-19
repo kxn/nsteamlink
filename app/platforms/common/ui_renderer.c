@@ -484,6 +484,8 @@ static sl_gfx_color action_color(sl_action a) {
     case SL_BACK:
         return green;
     case SL_OPEN_SETTINGS:
+    case SL_OPEN_AV_SETTINGS:
+    case SL_OPEN_APP_SETTINGS:
     case SL_OPEN_BANDWIDTH:
     case SL_SET_BANDWIDTH:
     case SL_OPEN_QUALITY:
@@ -507,7 +509,8 @@ static sl_gfx_color action_color(sl_action a) {
 static void action_icon(sl_gfx *r, sl_action a, int x, int y, sl_gfx_color c) {
     if (a == SL_BACK || a == SL_START || a == SL_RECENT) {
         play_icon(r, x + 7, y + 14, 19, c);
-    } else if (a == SL_OPEN_SETTINGS || a == SL_OPEN_BANDWIDTH || a == SL_SET_QUALITY) {
+    } else if (a == SL_OPEN_SETTINGS || a == SL_OPEN_APP_SETTINGS || a == SL_OPEN_BANDWIDTH ||
+               a == SL_SET_QUALITY) {
         for (int i = 0; i < 3; ++i) {
             int yy = y + 6 + i * 8, xx = x + (i == 1 ? 17 : 9);
             line(r, x + 3, yy, x + 27, yy, c);
@@ -537,7 +540,7 @@ static void action_icon(sl_gfx *r, sl_action a, int x, int y, sl_gfx_color c) {
         line(r, x + 16, y + 4, x + 16, y + 24, c);
         line(r, x + 23, y + 8, x + 27, y + 14, c);
         line(r, x + 27, y + 14, x + 23, y + 20, c);
-    } else if (a == SL_OPEN_LANGUAGE) {
+    } else if (a == SL_OPEN_LANGUAGE || a == SL_OPEN_NETWORK_SETTINGS) {
         for (int i = 0; i < 32; ++i) {
             float u = i * 6.2831853f / 32, v = (i + 1) * 6.2831853f / 32;
             line(r, x + 14 + 12 * cosf(u), y + 14 + 12 * sinf(u), x + 14 + 12 * cosf(v),
@@ -546,7 +549,8 @@ static void action_icon(sl_gfx *r, sl_action a, int x, int y, sl_gfx_color c) {
                  y + 14 + 12 * sinf(v), c);
         }
         line(r, x + 2, y + 14, x + 26, y + 14, c);
-    } else if (a == SL_OPEN_QUALITY || a == SL_OPEN_RESOLUTION || a == SL_OPEN_MANUAL) {
+    } else if (a == SL_OPEN_QUALITY || a == SL_OPEN_RESOLUTION || a == SL_OPEN_MANUAL ||
+               a == SL_OPEN_AV_SETTINGS || a == SL_OPEN_HOST_SETTINGS) {
         monitor(r, x + 1, y + 3, 28, c);
     } else {
         rounded(r, (sl_gfx_rect){x + 2, y + 2, 26, 26}, 13, c);
@@ -854,7 +858,7 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
         bool tab = c->action == SL_SELECT_HOST;
         bool footer = c->label[0] && c->label[1] == ' ' && c->label[2] == ' ';
         bool shoulder = c->action == SL_PREV_HOST || c->action == SL_NEXT_HOST;
-        bool focused = focused_scene && c->id == m->focus;
+        bool focused = focused_scene && c->id == m->focus && !c->disabled;
         bool menu_row = l->drawer && !footer;
         sl_gfx_color role = action_color(c->action);
         if (c->action == SL_START &&
@@ -875,8 +879,7 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
         } else if (menu_row) {
             if (focused)
                 rounded(r->renderer, box, 8, fg);
-            if (c->action == SL_SET_QUALITY || c->action == SL_SET_RESOLUTION ||
-                c->action == SL_SET_BANDWIDTH || c->action == SL_SET_LANGUAGE) {
+            if (c->kind == SL_CONTROL_RADIO) {
                 int x = box.x + 23, y = box.y + (box.h - 26) / 2;
                 sl_gfx_color surface = focused ? fg : panel;
                 sl_gfx_color ring = focused ? bg : muted;
@@ -890,8 +893,9 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
                             focused ? bg : green);
             } else {
                 sl_gfx_color tile = mix(panel, role, .16f);
-                rounded(r->renderer, (sl_gfx_rect){box.x + 14, box.y + 14, 44, 44}, 10, tile);
-                action_icon(r->renderer, c->action, box.x + 21, box.y + 21, role);
+                int tile_y = box.y + (box.h - 44) / 2;
+                rounded(r->renderer, (sl_gfx_rect){box.x + 14, tile_y, 44, 44}, 10, tile);
+                action_icon(r->renderer, c->action, box.x + 21, tile_y + 7, role);
             }
         } else if (!plain || focused) {
             sl_gfx_color fill = focused              ? fg
@@ -907,9 +911,9 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
             ink = focused ? bg : accent;
         }
         int size = c->action == SL_RECENT ? 30 : footer ? 26 : 30;
-        const char *label = c->action == SL_SOUND ? sl_tr(SL_T_SOUND)
-                            : footer              ? c->label + 3
-                                                  : c->label;
+        const char *label = footer ? c->label + 3 : c->label;
+        if (c->disabled)
+            ink = muted;
         int x = c->x + (menu_row ? 78 : 24), width = c->w - (menu_row ? 110 : 48);
         bool centered = l->compact || tab || c->action == SL_START || c->action == SL_DIGIT ||
                         c->action == SL_SUBMIT || c->action == SL_ERASE || shoulder || footer;
@@ -923,6 +927,12 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
             x = box.x + 44;
             width = box.w - 60;
         }
+        int value_width = c->value[0] ? text_width(r, c->value, 24) : 0;
+        int label_width = width - (c->kind == SL_CONTROL_TOGGLE ? 64 : 28);
+        if (value_width)
+            label_width -= value_width + 16;
+        if (menu_row)
+            width = label_width;
         int measured = text_width(r, label, size);
         if (footer) {
             int group = measured + 48;
@@ -956,18 +966,25 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
                        viewport, focused, m);
             continue;
         } else if (!centered && !footer) {
-            width -= 28;
-            if (c->action == SL_SOUND || c->action == SL_FEC) {
-                bool enabled = c->action == SL_FEC ? m->store.unreliable_fec : m->store.sound;
+            if (!menu_row)
+                width -= 28;
+            if (c->kind == SL_CONTROL_TOGGLE) {
+                bool enabled = c->action == SL_FEC            ? m->store.unreliable_fec
+                               : c->action == SL_UPDATE_CHECK ? m->update_check
+                                                              : m->store.sound;
                 sl_gfx_color track = enabled ? green : muted;
                 int tx = box.x + box.w - 74, ty = box.y + (box.h - 28) / 2;
                 rounded(r->renderer, (sl_gfx_rect){tx, ty, 50, 28}, 14, track);
                 rounded(r->renderer, (sl_gfx_rect){tx + (enabled ? 25 : 3), ty + 3, 22, 22}, 11,
                         bg);
-            } else if (c->action != SL_BACK && c->action != SL_SET_QUALITY &&
-                       c->action != SL_SET_RESOLUTION && c->action != SL_SET_BANDWIDTH &&
-                       c->action != SL_SET_LANGUAGE)
+            } else if (c->kind == SL_CONTROL_SUBMENU)
                 chevron(r->renderer, box.x + box.w - 35, box.y + box.h / 2, focused ? bg : muted);
+            if (value_width) {
+                int value_x = box.x + box.w - 56 - value_width;
+                draw_text(r, c->value, value_x,
+                          centered_y(r, c->value, 24, c->y, c->h, value_width + 2), value_width + 2,
+                          c->h, 24, focused ? bg : muted);
+            }
         }
         sl_gfx_clip(r->renderer, card ? &clip : &box);
         draw_text(r, label, x, y, width, c->y + c->h - 8 - y, size, ink);

@@ -15,7 +15,6 @@ typedef enum sl_page {
     SL_PIN,
     SL_STREAM,
     SL_MENU,
-    SL_OPTIONS,
     SL_SHORTCUT,
     SL_INSTALLING,
     SL_INSTALL_RESULT,
@@ -23,6 +22,10 @@ typedef enum sl_page {
     SL_UPDATING,
     SL_UPDATE_RESULT,
     SL_SETTINGS,
+    SL_AV_SETTINGS,
+    SL_NETWORK_SETTINGS,
+    SL_HOST_SETTINGS,
+    SL_APP_SETTINGS,
     SL_MANUAL,
     SL_QUALITY,
     SL_RESOLUTION,
@@ -51,8 +54,11 @@ typedef enum sl_action {
     SL_RECENT,
     SL_OPEN_MENU,
     SL_DEBUG,
-    SL_OPEN_OPTIONS,
     SL_OPEN_SETTINGS,
+    SL_OPEN_AV_SETTINGS,
+    SL_OPEN_NETWORK_SETTINGS,
+    SL_OPEN_HOST_SETTINGS,
+    SL_OPEN_APP_SETTINGS,
     SL_OPEN_SHORTCUT,
     SL_CONFIRM_SHORTCUT,
     SL_OPEN_MANUAL,
@@ -111,11 +117,19 @@ typedef struct sl_command {
     bool update_check;
     char text[64];
 } sl_command;
+typedef enum sl_control_kind {
+    SL_CONTROL_ACTION,
+    SL_CONTROL_SUBMENU,
+    SL_CONTROL_TOGGLE,
+    SL_CONTROL_RADIO
+} sl_control_kind;
 typedef struct sl_control {
     int id, x, y, w, h;
     sl_action action;
     int arg;
-    bool primary;
+    bool primary, disabled;
+    sl_control_kind kind;
+    char value[80];
     char label[160];
 } sl_control;
 typedef struct sl_label {

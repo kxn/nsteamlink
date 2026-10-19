@@ -149,10 +149,13 @@ void sl_ui_stopped(sl_ui_model *m, bool unexpected) {
     else if (unexpected)
         sl_ui_error(m, sl_tr(SL_T_DISCONNECTED));
     else if (m->intent.test_only) {
-        page(m, SL_OPTIONS);
-        m->depth = 1;
+        page(m, SL_NETWORK_SETTINGS);
+        m->depth = 2;
         m->stack[0] = SL_HOME;
+        m->stack[1] = SL_SETTINGS;
         m->focus_stack[0] = 0;
+        m->focus_stack[1] = 101;
+        m->focus = 102;
     } else
         page(m, SL_HOME);
     sl_ui_layout(m);
@@ -229,6 +232,8 @@ static void move(sl_ui_model *m, sl_action direction) {
     int best = 0, score = 2147483647, fx = from->x + from->w / 2, fy = from->y + from->h / 2;
     for (int i = 0; i < m->layout.count; ++i) {
         const sl_control *c = &m->layout.controls[i];
+        if (c->disabled)
+            continue;
         int dx = c->x + c->w / 2 - fx, dy = c->y + c->h / 2 - fy;
         int along = (direction == SL_LEFT    ? -dx
                      : direction == SL_RIGHT ? dx
@@ -318,7 +323,7 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
             start(m, arg, false);
         break;
     case SL_RUN_NETWORK_TEST:
-        if (m->page == SL_OPTIONS && !m->streaming)
+        if (m->page == SL_NETWORK_SETTINGS && !m->streaming)
             start(m, -1, true);
         break;
     case SL_TEST_DECIDE:
@@ -328,12 +333,12 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
             page(m, m->intent.test_only ? SL_STOPPING : SL_CONNECTING);
         }
         break;
-    case SL_OPEN_OPTIONS:
-        if (m->page == SL_HOME)
-            push(m, SL_OPTIONS);
+    case SL_OPEN_SETTINGS:
+        if (m->page == SL_HOME && !m->streaming)
+            push(m, SL_SETTINGS);
         break;
     case SL_OPEN_SHORTCUT:
-        if (m->page == SL_OPTIONS && !m->streaming)
+        if (m->page == SL_APP_SETTINGS && !m->streaming)
             push(m, SL_SHORTCUT);
         break;
     case SL_CONFIRM_SHORTCUT:
@@ -343,17 +348,24 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
             emit(m, SL_CMD_SHORTCUT);
         }
         break;
-    case SL_OPEN_SETTINGS:
-        push(m, SL_SETTINGS);
+    case SL_OPEN_AV_SETTINGS:
+    case SL_OPEN_NETWORK_SETTINGS:
+    case SL_OPEN_HOST_SETTINGS:
+    case SL_OPEN_APP_SETTINGS:
+        if (m->page == SL_SETTINGS && !m->streaming)
+            push(m, a == SL_OPEN_AV_SETTINGS        ? SL_AV_SETTINGS
+                    : a == SL_OPEN_NETWORK_SETTINGS ? SL_NETWORK_SETTINGS
+                    : a == SL_OPEN_HOST_SETTINGS    ? SL_HOST_SETTINGS
+                                                    : SL_APP_SETTINGS);
         break;
     case SL_OPEN_MANUAL:
-        if (!m->streaming && m->page == SL_SETTINGS) {
+        if (!m->streaming && m->page == SL_HOST_SETTINGS) {
             m->input[0] = 0;
             push(m, SL_MANUAL);
         }
         break;
     case SL_OPEN_LANGUAGE:
-        if (m->page == SL_SETTINGS) {
+        if (m->page == SL_APP_SETTINGS && !m->streaming) {
             push(m, SL_LANGUAGE);
             m->focus = 100 + sl_i18n_language();
         }
@@ -365,6 +377,8 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
         }
         break;
     case SL_OPEN_BANDWIDTH: {
+        if (m->page != SL_NETWORK_SETTINGS || m->streaming)
+            break;
         push(m, SL_BANDWIDTH);
         const uint32_t rates[] = {4000, 6000, 10000, 20000};
         m->focus = sl_bitrate_valid(m->store.bitrate_kbps) ? 101 : 9;
@@ -378,11 +392,13 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
         break;
     }
     case SL_OPEN_QUALITY:
+        if (m->page != SL_AV_SETTINGS || m->streaming)
+            break;
         push(m, SL_QUALITY);
         m->focus = 100 + (m->store.quality <= 2 ? (int)m->store.quality : 0);
         break;
     case SL_OPEN_RESOLUTION:
-        if (m->page == SL_SETTINGS) {
+        if (m->page == SL_AV_SETTINGS && !m->streaming) {
             push(m, SL_RESOLUTION);
             m->focus = m->resolution == SL_RESOLUTION_1080  ? 102
                        : m->resolution == SL_RESOLUTION_720 ? 101
@@ -390,7 +406,7 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
         }
         break;
     case SL_OPEN_FORGET:
-        if (h)
+        if (h && m->page == SL_HOST_SETTINGS && !m->streaming)
             push(m, SL_FORGET);
         break;
     case SL_CONFIRM_FORGET:
@@ -439,8 +455,10 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
         }
         break;
     case SL_UPDATE_CHECK:
-        m->update_check = !m->update_check;
-        emit(m, SL_CMD_SAVE);
+        if (m->page == SL_APP_SETTINGS && !m->streaming) {
+            m->update_check = !m->update_check;
+            emit(m, SL_CMD_SAVE);
+        }
         break;
     case SL_CONFIRM_UPDATE:
         if ((m->page == SL_UPDATE || (m->page == SL_UPDATE_RESULT && !m->update_succeeded)) &&
@@ -528,11 +546,13 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
         }
         break;
     case SL_SOUND:
-        m->store.sound = !m->store.sound;
-        emit(m, SL_CMD_SAVE);
+        if (m->page == SL_AV_SETTINGS && !m->streaming) {
+            m->store.sound = !m->store.sound;
+            emit(m, SL_CMD_SAVE);
+        }
         break;
     case SL_FEC:
-        if (m->page == SL_SETTINGS) {
+        if (m->page == SL_NETWORK_SETTINGS && !m->streaming) {
             m->store.unreliable_fec = !m->store.unreliable_fec;
             emit(m, SL_CMD_SAVE);
         }
@@ -559,6 +579,7 @@ void sl_ui_action(sl_ui_model *m, sl_action a, int arg) {
     int focus = m->focus, host = m->store.registry.selected;
     uint32_t quality = m->store.quality;
     bool sound = m->store.sound, leaving = m->leaving;
+    bool fec = m->store.unreliable_fec, update_check = m->update_check;
     sl_language language = sl_i18n_language();
     char input[64];
     memcpy(input, m->input, sizeof(input));
@@ -567,7 +588,8 @@ void sl_ui_action(sl_ui_model *m, sl_action a, int arg) {
     if (before != m->page || leaving != m->leaving)
         cue = a == SL_BACK || a == SL_CONFIRM_STOP || a == SL_CONFIRM_EXIT ? SL_CUE_BACK
                                                                            : SL_CUE_CONFIRM;
-    else if (sound != m->store.sound || quality != m->store.quality ||
+    else if (sound != m->store.sound || fec != m->store.unreliable_fec ||
+             update_check != m->update_check || quality != m->store.quality ||
              language != sl_i18n_language())
         cue = SL_CUE_TOGGLE;
     else if (strcmp(input, m->input))
@@ -589,6 +611,8 @@ int sl_ui_hit(const sl_layout *l, int x, int y) {
     y -= l->offset_y;
     for (int i = l->count - 1; i >= 0; --i) {
         const sl_control *c = &l->controls[i];
+        if (c->disabled)
+            continue;
         if (c->action == SL_RECENT && (x < 40 || x >= 1240))
             continue;
         if (x >= c->x && y >= c->y && x < c->x + c->w && y < c->y + c->h)
@@ -602,6 +626,8 @@ void sl_ui_activate(sl_ui_model *m, int id) {
     for (int i = 0; i < m->layout.count; ++i)
         if (m->layout.controls[i].id == id) {
             sl_control c = m->layout.controls[i];
+            if (c.disabled)
+                return;
             if (!m->layout.compact && (m->page != SL_HOME || c.action == SL_RECENT))
                 m->focus = id;
             sl_ui_action(m, c.action, c.arg);

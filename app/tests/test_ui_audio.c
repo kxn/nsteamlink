@@ -8,10 +8,10 @@ static void feedback_model(void) {
     sl_ui_model m;
     sl_ui_init(&m, &store);
     m.now = 100;
-    sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
+    sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
     assert(m.cue_serial == 1 && m.cue == SL_CUE_CONFIRM);
     sl_ui_action(&m, SL_ACCEPT, 0);
-    assert(m.page == SL_SETTINGS && m.cue_serial == 2); /* nested accept emits only once */
+    assert(m.page == SL_AV_SETTINGS && m.cue_serial == 2); /* nested accept emits only once */
     sl_ui_action(&m, SL_DOWN, 0);
     assert(m.cue == SL_CUE_MOVE && m.cue_serial == 3);
     sl_ui_action(&m, SL_DOWN, 0);

@@ -207,13 +207,14 @@ static void carousel(void) {
 static void overlay_interaction(void) {
     sl_ui_model m = model();
     add(&m, 7, "HOST");
-    sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
+    sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
     sl_ui_tick(&m, 160);
     const sl_control *c = &m.layout.controls[0];
     assert(m.layout.drawer && m.layout.offset_x > 0);
     assert(sl_ui_hit(&m.layout, c->x + m.layout.offset_x + 8, c->y + 8) == c->id);
     assert(sl_ui_hit(&m.layout, c->x + 1, c->y + 8) == 0);
     sl_ui_tick(&m, 320);
+    sl_ui_action(&m, SL_OPEN_HOST_SETTINGS, 0);
     sl_ui_action(&m, SL_OPEN_FORGET, 0);
     assert(m.focus == 102); /* A executes the named action; B cancels. */
     sl_ui_tick(&m, 540);
@@ -225,7 +226,7 @@ static void overlay_interaction(void) {
     sl_ui_tick(&m, 699);
     assert(m.page == SL_FORGET);
     sl_ui_tick(&m, 700);
-    assert(m.page == SL_OPTIONS && !m.leaving && m.focus == 100);
+    assert(m.page == SL_HOST_SETTINGS && !m.leaving && m.focus == 100);
 
     sl_ui_connected(&m);
     sl_ui_action(&m, SL_OPEN_MENU, 0);
@@ -335,11 +336,11 @@ static void update_flow(void) {
     assert(m.update_check);
 
     /* Found while another page is open: offered once back on HOME. */
-    sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
+    sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
     sl_runtime_event found = update_event(&m, SL_EVENT_UPDATE, true, "0.2.2");
     sl_ui_runtime_event(&m, &found);
     sl_ui_tick(&m, m.now + 16);
-    assert(m.page == SL_OPTIONS);
+    assert(m.page == SL_SETTINGS);
     sl_ui_action(&m, SL_BACK, 0);
     sl_ui_tick(&m, m.now + 160);
     sl_ui_tick(&m, m.now + 16);
@@ -379,6 +380,8 @@ static void update_flow(void) {
     assert(m.page == SL_HOME && !sl_ui_take_command(&m, &cmd));
 
     /* The toggle is saved with every save command, activity ones too. */
+    sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
+    sl_ui_action(&m, SL_OPEN_APP_SETTINGS, 0);
     sl_ui_action(&m, SL_UPDATE_CHECK, 0);
     assert(!m.update_check && sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_SAVE &&
            !cmd.update_check);
@@ -389,53 +392,99 @@ static void update_flow(void) {
     sl_ui_runtime_event(&m, &activity);
     assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_SAVE && !cmd.update_check);
 }
+static void settings_category(sl_ui_model *m, sl_action category) {
+    while (m->page != SL_SETTINGS) {
+        assert(m->depth > 0);
+        sl_ui_action(m, SL_BACK, 0);
+        sl_ui_tick(m, m->now + 220);
+    }
+    sl_ui_action(m, category, 0);
+}
 static void actionable_settings(void) {
     sl_ui_model m = model();
-    sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
-    assert(m.layout.count == 4); /* Settings, HOME shortcut, update check and back. */
-    assert(m.layout.controls[2].action == SL_UPDATE_CHECK);
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
-    assert(m.layout.count ==
-           8); /* Quality, resolution, bandwidth, FEC, sound, language, manual, back. */
-    assert(m.layout.controls[6].action == SL_OPEN_MANUAL);
+    assert(m.page == SL_SETTINGS && m.depth == 1 && m.layout.count == 5);
+    const sl_action categories[] = {SL_OPEN_AV_SETTINGS, SL_OPEN_NETWORK_SETTINGS,
+                                    SL_OPEN_HOST_SETTINGS, SL_OPEN_APP_SETTINGS};
+    for (int i = 0; i < 4; ++i) {
+        assert(m.layout.controls[i].action == categories[i]);
+        assert(m.layout.controls[i].kind == SL_CONTROL_SUBMENU);
+    }
+    settings_category(&m, SL_OPEN_HOST_SETTINGS);
+    assert(m.layout.controls[0].kind == SL_CONTROL_SUBMENU);
+    assert(m.layout.controls[1].disabled && m.layout.controls[1].kind == SL_CONTROL_ACTION);
+    sl_ui_activate(&m, m.layout.controls[1].id);
+    assert(m.page == SL_HOST_SETTINGS && !m.command.type);
+    sl_ui_action(&m, SL_DOWN, 0);
+    assert(m.focus == 9); /* Disabled removal is skipped by the controller. */
+    sl_ui_action(&m, SL_UP, 0);
+    assert(m.focus == 100);
     sl_ui_action(&m, SL_OPEN_MANUAL, 0);
     assert(m.page == SL_MANUAL);
-    sl_ui_action(&m, SL_BACK, 0);
-    sl_ui_tick(&m, m.now + 160);
+    settings_category(&m, SL_OPEN_AV_SETTINGS);
+    assert(m.layout.count == 4 && !strcmp(m.layout.controls[0].value, "均衡"));
+    assert(m.layout.controls[2].kind == SL_CONTROL_TOGGLE);
     sl_ui_action(&m, SL_SOUND, 0);
     sl_command command;
     assert(!m.store.sound && sl_ui_take_command(&m, &command) && command.type == SL_CMD_SAVE);
-    assert(!m.store.unreliable_fec);
-    sl_ui_action(&m, SL_FEC, 0);
-    assert(m.store.unreliable_fec && sl_ui_take_command(&m, &command));
-    assert(command.type == SL_CMD_SAVE && command.unreliable_fec);
-    sl_ui_action(&m, SL_OPEN_BANDWIDTH, 0);
-    sl_ui_action(&m, SL_SET_BANDWIDTH, 20000);
-    assert(m.store.bitrate_kbps == 20000 && m.store.quality == 0);
-    assert(sl_ui_take_command(&m, &command) && command.type == SL_CMD_SAVE);
-    assert(command.bitrate_kbps == 20000 && command.quality == 0);
-    sl_ui_tick(&m, m.now + 160);
     sl_ui_action(&m, SL_OPEN_QUALITY, 0);
+    assert(m.layout.count == 4);
     assert(!strcmp(m.layout.controls[0].label, "均衡"));
     assert(!strcmp(m.layout.controls[1].label, "流畅"));
     assert(!strcmp(m.layout.controls[2].label, "清晰"));
     sl_ui_action(&m, SL_DOWN, 0);
-    assert(m.store.quality == 0); /* Focus movement does not change the radio selection. */
+    assert(m.store.quality == 0);
     sl_ui_action(&m, SL_SET_QUALITY, 2);
-    assert(m.store.quality == 2 && sl_ui_take_command(&m, &command) && command.type == SL_CMD_SAVE);
-    assert(m.store.bitrate_kbps == 20000 && command.bitrate_kbps == 20000);
+    assert(m.store.quality == 2 && sl_ui_take_command(&m, &command));
+    sl_ui_tick(&m, m.now + 220);
+    assert(!strcmp(m.layout.controls[0].value, "清晰"));
+    settings_category(&m, SL_OPEN_NETWORK_SETTINGS);
+    assert(m.layout.controls[1].kind == SL_CONTROL_TOGGLE);
+    assert(m.layout.controls[2].kind == SL_CONTROL_ACTION && m.layout.controls[2].disabled);
+    sl_ui_activate(&m, m.layout.controls[2].id);
+    assert(m.page == SL_NETWORK_SETTINGS && !m.command.type);
+    sl_ui_action(&m, SL_FEC, 0);
+    assert(m.store.unreliable_fec && sl_ui_take_command(&m, &command));
+    assert(command.type == SL_CMD_SAVE && command.unreliable_fec && m.cue == SL_CUE_TOGGLE);
+    sl_ui_action(&m, SL_OPEN_BANDWIDTH, 0);
+    sl_ui_action(&m, SL_SET_BANDWIDTH, 20000);
+    assert(sl_ui_take_command(&m, &command) && command.type == SL_CMD_SAVE);
+    assert(command.bitrate_kbps == 20000 && command.quality == 2);
+    sl_ui_tick(&m, m.now + 220);
+    assert(!strcmp(m.layout.controls[0].value, "20 Mbps"));
+    settings_category(&m, SL_OPEN_APP_SETTINGS);
+    assert(m.layout.controls[1].kind == SL_CONTROL_TOGGLE);
+    assert(m.layout.controls[2].kind == SL_CONTROL_ACTION);
+    sl_ui_action(&m, SL_UPDATE_CHECK, 0);
+    assert(!m.update_check && sl_ui_take_command(&m, &command) && m.cue == SL_CUE_TOGGLE);
     sl_ui_connected(&m);
     sl_ui_action(&m, SL_OPEN_MENU, 0);
-    sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
-    assert(m.layout.count == 7); /* Settings omit manual host entry while streaming. */
-    sl_ui_action(&m, SL_FEC, 0);
-    assert(!m.store.unreliable_fec && sl_ui_take_command(&m, &command));
-    assert(command.type == SL_CMD_SAVE && !command.unreliable_fec);
-    assert(m.streaming && m.page == SL_SETTINGS); /* save only, no restart */
-    for (int i = 0; i < m.layout.count; ++i)
-        assert(m.layout.controls[i].action != SL_OPEN_MANUAL);
-    sl_ui_action(&m, SL_OPEN_MANUAL, 0);
-    assert(m.page == SL_SETTINGS); /* No empty advanced page or stream-time host entry. */
+    assert(m.layout.count == 4 && !strcmp(m.layout.title, "串流"));
+    const sl_action session_actions[] = {SL_BACK, SL_OPEN_END_GAME, SL_OPEN_DISCONNECT};
+    for (int i = 0; i < 3; ++i) {
+        assert(m.layout.controls[i].action == session_actions[i]);
+        assert(m.layout.controls[i].kind == SL_CONTROL_ACTION);
+    }
+    const sl_action blocked[] = {SL_OPEN_SETTINGS,
+                                 SL_OPEN_AV_SETTINGS,
+                                 SL_OPEN_NETWORK_SETTINGS,
+                                 SL_OPEN_HOST_SETTINGS,
+                                 SL_OPEN_APP_SETTINGS,
+                                 SL_OPEN_QUALITY,
+                                 SL_OPEN_RESOLUTION,
+                                 SL_OPEN_BANDWIDTH,
+                                 SL_OPEN_LANGUAGE,
+                                 SL_OPEN_MANUAL,
+                                 SL_OPEN_FORGET,
+                                 SL_OPEN_SHORTCUT,
+                                 SL_SOUND,
+                                 SL_FEC,
+                                 SL_UPDATE_CHECK,
+                                 SL_RUN_NETWORK_TEST};
+    for (unsigned i = 0; i < sizeof(blocked) / sizeof(blocked[0]); ++i) {
+        sl_ui_action(&m, blocked[i], 0);
+        assert(m.page == SL_MENU && m.streaming && !m.command.type);
+    }
 }
 static void end_game_failure(void) {
     sl_ui_model m = model();
@@ -705,8 +754,10 @@ static void network_test_flow(void) {
             sl_ui_model m = model();
             add(&m, 1, "HOST");
             m.store.registry.hosts[0].paired = true;
-            if (manual)
-                sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
+            if (manual) {
+                sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
+                sl_ui_action(&m, SL_OPEN_NETWORK_SETTINGS, 0);
+            }
             sl_ui_action(&m, manual ? SL_RUN_NETWORK_TEST : SL_START, 0);
             sl_command cmd;
             assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_STREAM &&
@@ -743,7 +794,8 @@ static void network_test_flow(void) {
             if (manual) {
                 sl_runtime_event done = {.type = SL_EVENT_STOPPED, .generation = generation};
                 sl_ui_runtime_event(&m, &done);
-                assert(m.page == SL_OPTIONS && m.depth == 1 && m.stack[0] == SL_HOME);
+                assert(m.page == SL_NETWORK_SETTINGS && m.depth == 2 && m.stack[0] == SL_HOME &&
+                       m.stack[1] == SL_SETTINGS);
             } else {
                 view.revision++;
                 view.phase = SL_TEST_CONTINUING;
@@ -786,7 +838,8 @@ static void network_test_flow(void) {
 
     m = model();
     add(&m, 1, "HOST");
-    sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
+    sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
+    sl_ui_action(&m, SL_OPEN_NETWORK_SETTINGS, 0);
     sl_ui_action(&m, SL_RUN_NETWORK_TEST, 0);
     assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_STREAM && cmd.test_only);
     sl_runtime_event prompt = {.type = SL_EVENT_STREAM_AUTHORIZATION, .generation = cmd.generation};
@@ -803,8 +856,8 @@ static void network_test_flow(void) {
 
     for (unsigned automatic = 0; automatic < 2; ++automatic) {
         m = model();
-        sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
         sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
+        sl_ui_action(&m, SL_OPEN_NETWORK_SETTINGS, 0);
         sl_ui_action(&m, SL_OPEN_BANDWIDTH, 0);
         layout_check(&m);
         sl_ui_action(&m, SL_SET_BANDWIDTH, automatic ? -1 : 0);
@@ -843,7 +896,7 @@ int main(void) {
     assert(!sl_ui_take_command(&m, &cmd));
     sl_ui_tick(&m, m.now + 160);
     tap(&r, 1140, 660);
-    assert(m.page == SL_OPTIONS);
+    assert(m.page == SL_SETTINGS);
     assert(!sl_ui_take_command(&m, &cmd));
     sl_ui_action(&m, SL_BACK, 0);
     sl_ui_tick(&m, m.now + 160);
@@ -1075,7 +1128,7 @@ int main(void) {
     assert(n == 3);
     /* Alternating X/Y events must not turn one held direction into a burst. */
     m = model();
-    sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
+    sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
     sl_input_init(&r, &m, send_event, reset_remote, NULL);
     axis = (sl_input_event){.type = SL_AXIS, .code = 1, .value = 25000};
     sl_input_event_handle(&r, &axis, 14000);
@@ -1192,7 +1245,8 @@ int main(void) {
     /* HOME install has fixed A/B actions and cannot be cancelled halfway through. */
     sl_ui_init(&m, &s);
     m.now = 5000;
-    sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
+    sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
+    sl_ui_action(&m, SL_OPEN_APP_SETTINGS, 0);
     sl_ui_action(&m, SL_OPEN_SHORTCUT, 0);
     assert(m.page == SL_SHORTCUT);
     m.focus = 9;
@@ -1212,7 +1266,7 @@ int main(void) {
     assert(m.page == SL_INSTALL_RESULT);
     sl_ui_action(&m, SL_BACK, 0);
     sl_ui_tick(&m, m.now + 200);
-    assert(m.page == SL_OPTIONS);
+    assert(m.page == SL_APP_SETTINGS);
     puts("PASS model, touch ownership, controller commands, hotkey timing, debug, host/account "
          "isolation, expiry, layouts and atomic storage");
     return 0;
