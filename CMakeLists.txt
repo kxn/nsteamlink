@@ -164,6 +164,11 @@ if(NSL_PLATFORM STREQUAL "desktop")
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-video-content-mode.py"
             --receiver $<TARGET_FILE:ihs-video-content-mode-oracle>)
         set_tests_properties(video_content_mode_official_vectors PROPERTIES TIMEOUT 60)
+        add_test(NAME decoder_identity_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-decoder-identity.py"
+            --receiver $<TARGET_FILE:ihs-video-identity-oracle>
+            --stats-receiver $<TARGET_FILE:ihs-frame-stats-oracle>)
+        set_tests_properties(decoder_identity_official_vectors PROPERTIES TIMEOUT 60)
         add_test(NAME decoder_pressure_official_vectors COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-decoder-pressure.py"
             --receiver $<TARGET_FILE:ihs-video-pressure-oracle>

@@ -11,6 +11,7 @@
 #include "session/channels/video/ch_data_video.h"
 #include "session/session_pri.h"
 #include "session/frame_tracker.h"
+#include "session/frame_stats.h"
 #include "test_session.h"
 #include <assert.h>
 #include <libavcodec/avcodec.h>
@@ -235,18 +236,23 @@ static unsigned rangeFrame(sl_runtime *r, const uint8_t *packet, uint16_t firstI
     assert(!memcmp(decoded, saved, 16));
     IHS_TrackedFrame stats[IHS_FRAME_TRACKER_CAPACITY];
     size_t count = IHS_FrameTrackerCopyStats(r->session->frameTracker, stats, IHS_FRAME_TRACKER_CAPACITY);
-    bool foundContributor = false, foundFinish = false;
+    bool foundFinish = false;
     for (size_t n = 0; n < count; ++n) {
-        if (stats[n].identity.frameId == firstId) {
-            assert(!stats[n].statsComplete && !stats[n].hasDecodeBegin && !stats[n].hasDecodeEnd);
-            foundContributor = true;
-        }
+        /* Consumed, unsubmitted contributor ownership is retired. Its
+         * protocol receive slot remains independently pending. */
+        assert(stats[n].identity.frameId != firstId);
         if (stats[n].identity.frameId == firstId + 1) {
             assert(!stats[n].statsComplete && stats[n].hasDecodeBegin && stats[n].hasDecodeEnd);
             foundFinish = true;
         }
     }
-    assert(foundContributor && foundFinish);
+    assert(foundFinish);
+    IHS_FrameStatsAggregator *agg = r->session->frameStats;
+    IHS_MutexLock(agg->lock);
+    const IHS_FrameStatsSlot *contributor = &agg->ring[firstId % IHS_FRAME_STATS_RING_SIZE];
+    assert(contributor->frameId == firstId && contributor->result == IHS_VideoFrameResultPending &&
+           !contributor->events[14] && !contributor->events[15]);
+    IHS_MutexUnlock(agg->lock);
     sl_resource_release(&frame->ref);
     return sequence;
 }
@@ -382,10 +388,32 @@ int main(int argc, char **argv) {
     reset(&r);modeCounts(&r,20,13,4,old,saved);
     expectedPacketSize=2204;
     feed(r.session,24,sequence++,24,packet,sizeof(packet));
-    modeCounts(&r,21,14,4,old,saved);output(4);
+    modeCounts(&r,21,14,4,old,saved);
+    /* Actual FFmpeg output and physical leases must remain separate even
+     * when a following SDK task repeats the wire ID or crosses half-range. */
+    sl_video_frame *repeatedOld=sl_video_take(pipeline);
+    assert(repeatedOld && repeatedOld->ticket);
+    IHS_FrameIdentity repeatedIdentity=IHS_FrameTicketIdentity(repeatedOld->ticket);
+    feed(r.session,24,sequence++,24,packet,sizeof(packet));
+    modeCounts(&r,22,15,4,old,saved);
+    sl_video_frame *repeatedNew=sl_video_take(pipeline);
+    assert(repeatedNew && repeatedNew->ticket);
+    IHS_FrameIdentity newIdentity=IHS_FrameTicketIdentity(repeatedNew->ticket);
+    assert(repeatedIdentity.frameId==24 && newIdentity.frameId==24 &&
+           repeatedIdentity.receiveSerial!=newIdentity.receiveSerial);
+    feed(r.session,32792,sequence++,24,packet,sizeof(packet));
+    modeCounts(&r,23,16,4,old,saved);output(4);
+    feed(r.session,40000,sequence++,24,packet,sizeof(packet));
+    modeCounts(&r,24,17,4,old,saved);output(4);
+    uint8_t repeatedHash[16];
+    hash(repeatedOld,repeatedHash);assert(!memcmp(repeatedHash,saved,16));
+    hash(repeatedNew,repeatedHash);assert(!memcmp(repeatedHash,saved,16));
+    assert(IHS_FrameTicketIdentity(repeatedOld->ticket).receiveSerial==repeatedIdentity.receiveSerial);
+    sl_resource_release(&repeatedOld->ref);
+    sl_resource_release(&repeatedNew->ref);
     CStopVideoDataMsg stop = CSTOP_VIDEO_DATA_MSG__INIT;
     control(r.session, k_EStreamControlStopVideoData, &stop.base);
-    assert(atomic_load(&protocolFlushes)==22 && atomic_load(&flushes)==0);
+    assert(atomic_load(&protocolFlushes)==25 && atomic_load(&flushes)==0);
     IHS_SessionDestroy(r.session);
     IHS_Quit();
     assert(!sl_media_video_clean());

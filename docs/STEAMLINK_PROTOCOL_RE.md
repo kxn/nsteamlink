@@ -11344,3 +11344,91 @@ python3 scripts/check-decoder-pressure-native-mutations.py --build build/desktop
 ctest --test-dir build/desktop -R 'decoder_pressure|frame_tracker|frame_stats_growth' \
   --output-on-failure
 ```
+
+## 145. 线上的图像 ID、统计取消与本地解码任务身份
+
+Evidence：固定官方 Android core SHA/完整 FIFO/SDK 终端沿用§143–144。
+`audit-steam-decoder-identity.py`从 OnReceiveFrame 交付连续 video sequence，改变
+16位 image ID、key/finish 位和时间戳；真实 RunDecodeLoop/DecodeFrame/OnThink
+及 Android BSubmitFrame 创建的 CAndroidFrame 保留在原 player 队列中。
+直接读取原 SetFrameProperties@76769c 写入的 ID(+28)/timestamp(+32)，以实际
+对象指针的等价关系标记任务；不按 wire ID 猜测两个任务是否相同。
+
+在已提交并保留图像0后，key ID32768、32769、40000均被官方接纳。旧本地
+app a0ea9bf/SDK f1b7965分别断连或保持连接却不提交；对应
+`FrameTrackerBegin`的半区歧义与256历史范围门槛。重复ID的连续完整普通图像
+在原客户端生成不同任务，旧任务时间戳不被新输入改写；旧本地OPEN记录按ID
+合并，会把这些提交关联到同一ticket。基线
+`/tmp/nsl146-identity-baseline-compact.json`及`/tmp/nsl146-baseline-sha.txt`
+记录完整实际worker输出和基线二进制身份，receiver正常退出才参与比较。
+
+另一个不能省略的官方分支：DecodeFrame@7b208c..20d8在key上将+418游标逐次
+加1，除新key自身外，依模65536顺序调用RecordFrameComplete(video,id,7)。
+随后flush pending、清strict/soft、写入新sequence，并把游标设为key ID−1。
+OnThink@7b258c..2594在消费finish时把游标设为该finish ID，即使随后pending
+reset阻止SDK提交。构造器@7b1c08..1cbc初始化游标65535；同对象Start/Stop
+没有重置该成员。不能用“最近接收的ID”或只遍历本地pending代替这个游标。
+同ID key在不同消费批次到达时可以取消65535个其他ID；同批两个key在首次
+OnThink之前则不产生相同范围。PLT的uint16参数必须在观察时截成16位，
+寄存器中的65536不代表线上存在第65536号图像。
+
+Conclusion：16位ID是协议关联标签，不是本地GPU/SDK任务的唯一身份，也不能
+把统计unwrap/历史判断当成decoder的额外准入。每个接收输入使用新的本地
+receiveSerial；finish片的ticket随最终任务保留。尚未提交的contributors在消费/
+flush/严格等待丢弃时只退休本地引用，不制造协议Complete。协议取消由上述
+key游标控制，播放器持有的旧任务继续存活；真正提交后的outcome仍由其自身
+ticket发布。这撤回旧代码把统计历史准入视为可保留防护、把清pending等同于
+对每个本地ticket发布DroppedReset的隐含假设。
+
+decoder边界可接纳这些输入，不证明真实Steam会自然发送所有大跨度或重复ID。
+此证据也不是物理解码/显示、自然线程时间或原玩家停顿的因果证明。原客户端
+statistics完成终端、显式C动作和SDK/OS终端边界必须继续在参考中声明；不能将
+客户端方法调用计数直接当成最终线上报告字节等价。
+
+### 145.1 本地所有权与对照边界
+
+生产视频消费者改用`FrameTrackerBeginInput`，每个输入分配独立endpoint，
+不经过历史unwrap/半区歧义/seen去重；session/epoch、分配失败、引用与serial
+溢出仍是本地生命周期保护。旧`FrameTrackerBegin`的历史聚合契约供原有直接
+消费者保留，不再用于视频准入。`wireSequence`只是相关标签，任务身份以
+receiveSerial/epoch/slotVersion为准。既有video sequence、strict/soft、partial
+与FIFO保护不被这项改动跳过。
+
+组帧选finish片的endpoint；更早的contributors和未提交pending在消耗或flush时
+通过`AbandonInput`退休，不发布结果。该操作不能退休已进入decode、已claim或
+已完成的任务，活跃引用释放前存储仍不可覆盖。新任务不会更改旧任务的timestamp
+或竞争它的唯一完成权。统计取消直接进入真实FrameStats，保持模65536顺序、
+排除新key和完成游标；不以取消统计为由回收旧图像。
+
+正式参考22组、32批次，覆盖半区/历史边界、回绕后旧ID、同ID完整普通图像、
+同批/跨批关键帧、已完成旧任务后再用ID、未完成替换、同ID/跨ID分片，以及
+sequence缺口后的同ID key。比较实际消费、flush/反馈/SDK提交全序、payload
+SHA256、等待、保留字节、真实任务指针等价关系/属性、decode事件及取消序列。
+取消序列用`[first,count,result]`无损连续区间编码，保留回绕、顺序与重复；
+不是只比较首尾或摘要。Native在实际collector复制的READY记录中观察任务
+完成，另观察直接协议取消；不依赖只能看到跨TU调用的Complete包装器，避免
+遗漏tracker内部错误发布。此处C动作只注入一个实际保留任务的完成。
+
+4组统计投影将原decoder实际产生的255/256 key取消序列分别交给原客户端
+receive/event/complete/report/C++序列化；full=false/true，两次Send共8个报告
+状态，Native真实ticket/collector/StatsSend逐字节比较正文/detail及slot/cursor。
+接收表与最终Displayed为明确边界输入，这是组合证据，不冒充真实SDK输出或
+整个客户端事件循环。大报告数组new/delete只是分配/释放终端，序列化未替换。
+
+三种隔离生产回退分别恢复历史准入、把pending退休错误发布为Complete、移除
+key区间取消；各22个receiver编译链接并正常退出后，正式比较均检出语义差异。
+实际FFmpeg/runtime另保留旧AVFrame与mapping，对重复ID/半区跳变/大跨度key
+核验独立ticket、已解码像素及旧引用不变。旧AVCodec对照读真实协议统计ring，
+不再用本地任务endpoint列表代替取消后的协议状态；物理对象检查仍独立保留。
+
+```sh
+python3 scripts/audit-steam-decoder-identity.py /path/to/libmain-arm64.so \
+  --check scripts/fixtures/steam-decoder-identity-reference.json
+python3 scripts/check-steam-decoder-identity.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-video-identity-oracle \
+  --stats-receiver build/desktop/third_party/ihslib/tests/session/ihs-frame-stats-oracle
+python3 scripts/check-decoder-identity-native-mutations.py --build build/desktop \
+  --output /tmp/decoder-identity-negatives
+ctest --test-dir build/desktop -R 'decoder_identity|video_keyframe_runtime|frame_tracker' \
+  --output-on-failure
+```

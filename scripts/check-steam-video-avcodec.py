@@ -71,10 +71,7 @@ def commands_for(case):
 def verify(case, native, mapping):
     for index, (source, action) in enumerate(zip(case["states"], mapping, strict=True)):
         got = native[action]
-        results = {
-            str(row["id"]): row["result"] if row["complete"] else 0
-            for row in got["tracker"]
-        }
+        results = got["protocol_stats"]
         assert results == source["stats"], (
             case["name"],
             index,

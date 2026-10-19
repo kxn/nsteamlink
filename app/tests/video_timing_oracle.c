@@ -6,6 +6,8 @@
 #include "../platforms/common/video_pipeline.c"
 #undef sl_video_create
 #undef sl_video_submit
+#include "session/frame_stats.h"
+#include "session/frame_tracker.h"
 static sl_video_pipeline *pipeline;
 static atomic_uint clockTick;
 static unsigned inputTicks, outputTicks;
@@ -17,6 +19,8 @@ static int forcedWidth=-1, forcedHeight=-1, forcedFormat=-1;
 static bool resetRequested, presentReturned=true;
 static int formatResult=-2;
 static bool requestedHardware;
+static IHS_TrackedFrame observedStats[IHS_FRAME_TRACKER_CAPACITY];
+static bool receivedIds[65536];
 static unsigned controlCount, controlSteps[512], controlSizes[512];
 static uint8_t controlBodies[512][1024];
 static unsigned infoCount, infoPhase;
@@ -369,6 +373,11 @@ bool __wrap_IHS_FrameTicketVideoDecodeStage(IHS_FrameTicket *ticket, bool end) {
 bool __real_IHS_FrameTicketComplete(IHS_FrameTicket *, const IHS_FrameOutcome *);
 bool __wrap_IHS_FrameTicketComplete(IHS_FrameTicket *ticket, const IHS_FrameOutcome *outcome) {
     bool done = __real_IHS_FrameTicketComplete(ticket, outcome);
+    if (done) {
+        IHS_FrameIdentity identity = IHS_FrameTicketIdentity(ticket);
+        observedStats[identity.frameId % IHS_FRAME_TRACKER_CAPACITY] =
+            (IHS_TrackedFrame){.identity=identity, .statsComplete=true, .outcome=*outcome};
+    }
     event(1,IHS_FrameTicketIdentity(ticket).frameId,outcome->result,done);
     if (recording && done && (outcome->result == IHS_VideoFrameResultDisplayed ||
                              outcome->result == IHS_VideoFrameResultDroppedLate)) {
@@ -388,6 +397,7 @@ static void controlMessage(IHS_Session *s, EStreamControlMessage t, const Protob
 }
 static void packet_enqueue(IHS_Session *s, unsigned fid, unsigned seq, unsigned flags, uint32_t stamp,
                    unsigned offset, unsigned size) {
+    receivedIds[(uint16_t)fid]=true;
     assert(offset <= sizeof(payload) && size <= sizeof(payload)-offset);
     IHS_SessionFrame f = {.header={.type=IHS_SessionPacketTypeReliable,.channelId=3,
                                    .sendTimestamp=clockTick,.receiveTimestamp=clockTick,
@@ -463,8 +473,10 @@ static void consume(void) {
 }
 /* CopyStats consumes each completion once. Retain that actual consumed
  * record in observer history; a later non-repeat must not look pending again. */
-static IHS_TrackedFrame observedStats[IHS_FRAME_TRACKER_CAPACITY];
 static void observe(sl_runtime *runtime) {
+    /* Protocol outcomes include key-interval cancellation of unsubmitted
+     * inputs. Resource tickets alone are not the protocol statistics ring. */
+    IHS_FrameStatsCollectTracked(runtime->session->frameStats,runtime->session->frameTracker);
     pthread_mutex_lock(&pipeline->mailbox);
     sl_video_timing *timing=&pipeline->timing;
     uint32_t sum; memcpy(&sum,&timing->sum,4);
@@ -517,7 +529,17 @@ static void observe(sl_runtime *runtime) {
             n?",":"",f->identity.frameId,f->statsComplete?"true":"false",f->outcome.result,
             f->hasDecodeBegin?"true":"false",f->hasDecodeEnd?"true":"false");
     }
-    printf("],\"control_bodies\":[");
+    printf("],\"protocol_stats\":{");
+    bool comma=false;
+    IHS_FrameStatsAggregator *agg=runtime->session->frameStats;
+    IHS_MutexLock(agg->lock);
+    for(unsigned id=0;id<65536;++id) {
+        IHS_FrameStatsSlot *slot=&agg->ring[id%IHS_FRAME_STATS_RING_SIZE];
+        if(!receivedIds[id] || slot->frameId!=id)continue;
+        printf("%s\"%u\":%d",comma?",":"",id,slot->result);comma=true;
+    }
+    IHS_MutexUnlock(agg->lock);
+    printf("},\"control_bodies\":[");
     for(unsigned n=0;n<controlCount;++n) {
         printf("%s[%u,\"",n?",":"",controlSteps[n]);
         for(unsigned k=0;k<controlSizes[n];++k)printf("%02x",controlBodies[n][k]);
