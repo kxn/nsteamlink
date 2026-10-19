@@ -11512,3 +11512,87 @@ python3 scripts/check-decoder-overlap-native-mutations.py --build build/desktop 
   --output /tmp/decoder-overlap-negatives
 ctest --test-dir build/desktop -R 'decoder_overlap|decoder_queue' --output-on-failure
 ```
+
+## 147. 事件绝对期限与 Switch 条件等待的时钟能力
+
+Evidence：固定 Android core SHA 沿用§146。`audit-steam-wait-clock.py`
+执行原 EventConstructor@90d390、匿名初始化@90d3e0、Set@90d9ec 与
+Wait@90d124；pthread 属性/互斥/条件变量、clock_gettime 和诊断文本是明确的
+OS终端。匿名初始化用 Android CLOCK_MONOTONIC（该平台编号1）设置属性，
+创建condition后销毁属性；初始化失败不发布initialized位，已成功创建的
+属性/互斥对象按原路径释放。五个创建失败输入分别覆盖两种attr初始化、
+setclock、mutex初始化及cond初始化，不以构造函数返回寄存器替代initialized位。
+
+11个等待输入覆盖零、1/16/1000/4294967294ms、普通错误、虚假唤醒、EINTR、
+无限等待错误及两种提前信号。正有限等待只取一次clock_gettime(1)，给秒/纳秒
+加上无符号毫秒并规范化进位；虚假/EINTR再次调用timedwait时使用同一绝对期限。
+例如输入15s+999500000ns、1ms得到16s+500000ns。零期限和已有信号不取时钟；
+UINT32_MAX选择无限wait而非约49天的timedwait。提前信号按自动复位消费。
+此处控制clock输入与pthread返回，不证明真实系统时间调整、内核调度精度或
+完整decoder线程；§146单独验证保留信号和预算谓词。
+
+### 147.1 Switch 安装库的实际转换链
+
+`audit-switch-wait-clock.py`从本机实际归档提取未修改对象，链接时只GC无关section，
+执行其中原ARM64指令。固定libsysbase.a SHA256为
+`eb73b6e31491fe0310db3a975ef54327b37deb58e8de7e1bce38b59570a7117b`，
+libnx.a为`12a59cdfdceab83e39ee129b0275dd803e393e83f19de3922a3b6cc95c767edd`。
+参考保存每个对象及保留函数的SHA，不把Android编号当成Switch常数。
+本机devkitA64 time.h中CLOCK_REALTIME=1、CLOCK_MONOTONIC=4。
+
+实际pthread_condattr_setclock只存入编号，不验证支持范围；cond_init复制编号
+（默认属性为1），timedwait读取该编号交给abstimespec2nsec。后者调用实际
+clock_gettime→libnx __syscall_clock_gettime，计算剩余纳秒，再经
+__libc_cond_wait[_recursive]→libnx→condvarWaitTimeout→
+svcWaitProcessWideKeyAtomic提交相对期限。仅setter成功不足以证明可等待。
+
+原__syscall_clock_gettime接受1/4，两者走同一段代码，用__boottime与
+CNTPCT_EL0减__bootticks计算时间；其他编号报EINVAL，初始化失败的boot anchor
+另有EIO分支。__libnx_init_time的静态重定位/指令显示初始化时取系统时间保存
+anchor并读取计数器。这里不把CLOCK_MONOTONIC的名字扩大为零epoch，也不推断
+运行中系统校时必定改变此库的REALTIME读数。§146记录的是接口选择差异，
+不能单凭该差异认定Switch会出现桌面绝对wall-clock等待的跳变问题。
+
+正式执行3个clock输入及90个等待组合：两种有效编号、普通/递归深度1/递归
+深度2、0/0.5/16/1000ms及已过期期限，分别结合内核成功、timeout和其他错误。
+读出两时钟相同的1700000001s；未知编号2报EINVAL。实际原指令将过期期限钳为0，
+递归深度2返回9而不进内核；timeout映射116并重取mutex，其他内核错误映射5。
+errno存储、硬件计数器/TLS寄存器读取、最终svc结果及timeout重取mutex为明确
+终端；boot anchor/ticks、锁布局和内核返回是受控输入。这是已安装库的指令
+证据，不是Switch内核实际计时、锁唤醒、物理设备或loader生命周期验收。
+
+### 147.2 本地期限契约与校验投影
+
+POSIX后端用符号CLOCK_MONOTONIC同时设置cond属性和生成绝对期限；attr初始化、
+setclock或cond初始化失败时按已创建资源清理并返回NULL，不静默退回其他时钟。
+读取clock失败直接返回false，不把未初始化timespec交给pthread；这是本地错误
+保护，不声称原Wait也检查clock返回。Darwin没有相同的属性API，使用相对
+pthread_cond_timedwait_relative_np；依据[Apple原实现](https://github.com/apple-oss-distributions/libpthread/blob/main/src/pthread_cond.c)
+的relative分支，未在本节Linux/Switch构建中冒称Apple已运行。无限等待和
+EINTR结果契约保持§146；外层消费者仍须复查谓词/预算。
+
+Native观察生产IHS_CondCreate/WaitTimeout及实际pthread属性。四种创建路径
+核验资源释放；40个有限等待组合比较官方正期限的秒/纳秒，以及本地零期限、
+成功/EINTR/timeout/普通错误；受控REALTIME前后移动一小时而MONOTONIC输入不变。
+这些是clock终端输入，不是特权修改主机时间。另验读clock失败不进入timedwait，
+以及实际Linux内核2ms等待确实进入并超时；只设低于请求时长的宽松下界，不要求
+上界或把实测耗时称为官方墙钟等价。primitive不包含event的零/无限/保留信号
+策略，不能把一次primitive调用扩大成完整事件等价。
+
+四份隔离回退分别改回REALTIME、使期限与属性时钟不同、漏纳秒进位、忽略
+setclock失败。全部编译链接并正常退出后由正式比较检出；正常路径实际进入
+内核。观察器遇到时钟不匹配/无效纳秒先返回EINVAL，避免错误epoch期限让测试
+等待几十年，并要求正例实际内核调用标志。超时、崩溃或编译失败不算语义检出。
+最初观察器没有该保护，错误期限回退触发fixture超时；该结果不计作通过，
+加入保护后重新完成四份正常退出比较。
+
+```sh
+python3 scripts/audit-steam-wait-clock.py /path/to/libmain-arm64.so \
+  --check scripts/fixtures/steam-wait-clock-reference.json
+python3 scripts/audit-switch-wait-clock.py \
+  --check scripts/fixtures/switch-wait-clock-reference.json
+python3 scripts/check-steam-wait-clock.py \
+  --receiver build/desktop/third_party/ihslib/tests/ihs-thread-clock-oracle
+python3 scripts/check-wait-clock-native-mutations.py --output /tmp/wait-clock-negatives
+ctest --test-dir build/desktop -R 'wait_clock|decoder_overlap' --output-on-failure
+```

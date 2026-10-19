@@ -1,0 +1,1325 @@
+{
+  "boundary": "Execute installed Switch runtime's original cond/clock conversion instructions.\n\nLink unmodified archive objects with GC. Only errno, hardware register reads,\nsvcWaitProcessWideKeyAtomic and timeout mutex reacquisition are terminals. Clock\narithmetic, attribute propagation, absolute-to-relative conversion, recursive\nchecks and errno mapping run original instructions. Boot anchor/ticks and kernel\nresults are explicit inputs. This does not prove physical OS timing or lifecycle.\n",
+  "identities": [
+    {
+      "archive": "libsysbase.a",
+      "archive_sha256": "eb73b6e31491fe0310db3a975ef54327b37deb58e8de7e1bce38b59570a7117b",
+      "object": "libsysbase_libsysbase_a-pthread.o",
+      "sha256": "ed39a2f94232b7f4a3afe4b6bc24bfb7111d0ff821588d491c98f60afe3fc5f2"
+    },
+    {
+      "archive": "libsysbase.a",
+      "archive_sha256": "eb73b6e31491fe0310db3a975ef54327b37deb58e8de7e1bce38b59570a7117b",
+      "object": "libsysbase_libsysbase_a-clocks.o",
+      "sha256": "634c6e484f7b808611cf49851965e4e293a9f41978a18c9f40cd5b7313c4f3a5"
+    },
+    {
+      "archive": "libsysbase.a",
+      "archive_sha256": "eb73b6e31491fe0310db3a975ef54327b37deb58e8de7e1bce38b59570a7117b",
+      "object": "libsysbase_libsysbase_a-syscall_support.o",
+      "sha256": "f218be5d4bd2da7d32d979d8bcf44c4ade4bb327002e70c0dbfae6678c38c5b1"
+    },
+    {
+      "archive": "libnx.a",
+      "archive_sha256": "12a59cdfdceab83e39ee129b0275dd803e393e83f19de3922a3b6cc95c767edd",
+      "object": "newlib.o",
+      "sha256": "49b209c664eb670d1aaeb0c0ce5319b4b84e6a1da92dbd45033b17c54ce94815"
+    },
+    {
+      "archive": "libnx.a",
+      "archive_sha256": "12a59cdfdceab83e39ee129b0275dd803e393e83f19de3922a3b6cc95c767edd",
+      "object": "condvar.o",
+      "sha256": "dcc91a59134a3a6700e5044294a4a0fa236a1b4e9cc988858325c2f6deed67c9"
+    }
+  ],
+  "functions": [
+    {
+      "name": "__libc_cond_wait",
+      "size": 24,
+      "sha256": "27fdb87a1f4bef10c2ed2b137ceb48758c5811fccb3cd46bd5aa0e3e641a632e"
+    },
+    {
+      "name": "__libc_cond_wait_recursive",
+      "size": 24,
+      "sha256": "b10e30eb15a0ef53a6c019fe9ecc6fdccd2ed100aec8c29aad1d9d67768e3cfa"
+    },
+    {
+      "name": "__syscall_clock_gettime",
+      "size": 232,
+      "sha256": "dde1743fc125ff3b7c90c3d3d1535dcd94acf14f8eb280d83234ad1985ef242d"
+    },
+    {
+      "name": "__syscall_cond_wait",
+      "size": 60,
+      "sha256": "7dc899ad4a1d5c87ee3947ccdff0ab637bdbbb6df25f74d57fe5713371c7feb8"
+    },
+    {
+      "name": "__syscall_cond_wait_recursive",
+      "size": 92,
+      "sha256": "49d5fd77f34ce8cb97bc59882a551e04d8a572a274dd46d9303346787fabc784"
+    },
+    {
+      "name": "abstimespec2nsec",
+      "size": 200,
+      "sha256": "9f89f6f927fc174afe6edcece0ef849e3067670725cf2f4bd57fd79e8706636a"
+    },
+    {
+      "name": "clock_gettime",
+      "size": 48,
+      "sha256": "50fbc705378d080c12519923be0fb0aa43325193a8fa5b7da51a66c1ef8960d8"
+    },
+    {
+      "name": "condvarWaitTimeout",
+      "size": 112,
+      "sha256": "b38b71f07427a5e7e1f03af9bf47a6b26e0bef810d0ed3582ab0f9cecb4306e9"
+    },
+    {
+      "name": "pthread_cond_init",
+      "size": 88,
+      "sha256": "537d466f1e269d7bfc3c13146c3c3f3cb2b71b87833e6d28486737e6edfb47ff"
+    },
+    {
+      "name": "pthread_cond_timedwait",
+      "size": 144,
+      "sha256": "df932162a12903523c67ed8100b5aac750b5beb156b591d2e6abac95827ccfe1"
+    },
+    {
+      "name": "pthread_condattr_init",
+      "size": 28,
+      "sha256": "a7d57962ecac43fb2f2c6a2f31a12e51776676214122535c9c33da7ea8221f23"
+    },
+    {
+      "name": "pthread_condattr_setclock",
+      "size": 24,
+      "sha256": "4cddc3d6b9778c31596f8ef53d0d2eb3fb09286623df7cde6aa5a04b0a2949f2"
+    }
+  ],
+  "clocks": [
+    {
+      "clock": 1,
+      "result": 0,
+      "errno": 0,
+      "value": [
+        1700000001,
+        0
+      ]
+    },
+    {
+      "clock": 4,
+      "result": 0,
+      "errno": 0,
+      "value": [
+        1700000001,
+        0
+      ]
+    },
+    {
+      "clock": 2,
+      "result": 4294967295,
+      "errno": 22,
+      "value": null
+    }
+  ],
+  "cases": [
+    {
+      "clock": 1,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": 0,
+      "kernel": 0,
+      "result": 0,
+      "waits": [
+        [
+          123,
+          0
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": 0,
+      "kernel": 59905,
+      "result": 116,
+      "waits": [
+        [
+          123,
+          0
+        ]
+      ],
+      "relocks": 1
+    },
+    {
+      "clock": 1,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": 0,
+      "kernel": 4660,
+      "result": 5,
+      "waits": [
+        [
+          123,
+          0
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": 500000,
+      "kernel": 0,
+      "result": 0,
+      "waits": [
+        [
+          123,
+          500000
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": 500000,
+      "kernel": 59905,
+      "result": 116,
+      "waits": [
+        [
+          123,
+          500000
+        ]
+      ],
+      "relocks": 1
+    },
+    {
+      "clock": 1,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": 500000,
+      "kernel": 4660,
+      "result": 5,
+      "waits": [
+        [
+          123,
+          500000
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": 16000000,
+      "kernel": 0,
+      "result": 0,
+      "waits": [
+        [
+          123,
+          16000000
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": 16000000,
+      "kernel": 59905,
+      "result": 116,
+      "waits": [
+        [
+          123,
+          16000000
+        ]
+      ],
+      "relocks": 1
+    },
+    {
+      "clock": 1,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": 16000000,
+      "kernel": 4660,
+      "result": 5,
+      "waits": [
+        [
+          123,
+          16000000
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": 1000000000,
+      "kernel": 0,
+      "result": 0,
+      "waits": [
+        [
+          123,
+          1000000000
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": 1000000000,
+      "kernel": 59905,
+      "result": 116,
+      "waits": [
+        [
+          123,
+          1000000000
+        ]
+      ],
+      "relocks": 1
+    },
+    {
+      "clock": 1,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": 1000000000,
+      "kernel": 4660,
+      "result": 5,
+      "waits": [
+        [
+          123,
+          1000000000
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": -1,
+      "kernel": 0,
+      "result": 0,
+      "waits": [
+        [
+          123,
+          0
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": -1,
+      "kernel": 59905,
+      "result": 116,
+      "waits": [
+        [
+          123,
+          0
+        ]
+      ],
+      "relocks": 1
+    },
+    {
+      "clock": 1,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": -1,
+      "kernel": 4660,
+      "result": 5,
+      "waits": [
+        [
+          123,
+          0
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": 0,
+      "kernel": 0,
+      "result": 0,
+      "waits": [
+        [
+          123,
+          0
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": 0,
+      "kernel": 59905,
+      "result": 116,
+      "waits": [
+        [
+          123,
+          0
+        ]
+      ],
+      "relocks": 1
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": 0,
+      "kernel": 4660,
+      "result": 5,
+      "waits": [
+        [
+          123,
+          0
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": 500000,
+      "kernel": 0,
+      "result": 0,
+      "waits": [
+        [
+          123,
+          500000
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": 500000,
+      "kernel": 59905,
+      "result": 116,
+      "waits": [
+        [
+          123,
+          500000
+        ]
+      ],
+      "relocks": 1
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": 500000,
+      "kernel": 4660,
+      "result": 5,
+      "waits": [
+        [
+          123,
+          500000
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": 16000000,
+      "kernel": 0,
+      "result": 0,
+      "waits": [
+        [
+          123,
+          16000000
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": 16000000,
+      "kernel": 59905,
+      "result": 116,
+      "waits": [
+        [
+          123,
+          16000000
+        ]
+      ],
+      "relocks": 1
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": 16000000,
+      "kernel": 4660,
+      "result": 5,
+      "waits": [
+        [
+          123,
+          16000000
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": 1000000000,
+      "kernel": 0,
+      "result": 0,
+      "waits": [
+        [
+          123,
+          1000000000
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": 1000000000,
+      "kernel": 59905,
+      "result": 116,
+      "waits": [
+        [
+          123,
+          1000000000
+        ]
+      ],
+      "relocks": 1
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": 1000000000,
+      "kernel": 4660,
+      "result": 5,
+      "waits": [
+        [
+          123,
+          1000000000
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": -1,
+      "kernel": 0,
+      "result": 0,
+      "waits": [
+        [
+          123,
+          0
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": -1,
+      "kernel": 59905,
+      "result": 116,
+      "waits": [
+        [
+          123,
+          0
+        ]
+      ],
+      "relocks": 1
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": -1,
+      "kernel": 4660,
+      "result": 5,
+      "waits": [
+        [
+          123,
+          0
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": 0,
+      "kernel": 0,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": 0,
+      "kernel": 59905,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": 0,
+      "kernel": 4660,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": 500000,
+      "kernel": 0,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": 500000,
+      "kernel": 59905,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": 500000,
+      "kernel": 4660,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": 16000000,
+      "kernel": 0,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": 16000000,
+      "kernel": 59905,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": 16000000,
+      "kernel": 4660,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": 1000000000,
+      "kernel": 0,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": 1000000000,
+      "kernel": 59905,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": 1000000000,
+      "kernel": 4660,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": -1,
+      "kernel": 0,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": -1,
+      "kernel": 59905,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 1,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": -1,
+      "kernel": 4660,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": 0,
+      "kernel": 0,
+      "result": 0,
+      "waits": [
+        [
+          123,
+          0
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": 0,
+      "kernel": 59905,
+      "result": 116,
+      "waits": [
+        [
+          123,
+          0
+        ]
+      ],
+      "relocks": 1
+    },
+    {
+      "clock": 4,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": 0,
+      "kernel": 4660,
+      "result": 5,
+      "waits": [
+        [
+          123,
+          0
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": 500000,
+      "kernel": 0,
+      "result": 0,
+      "waits": [
+        [
+          123,
+          500000
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": 500000,
+      "kernel": 59905,
+      "result": 116,
+      "waits": [
+        [
+          123,
+          500000
+        ]
+      ],
+      "relocks": 1
+    },
+    {
+      "clock": 4,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": 500000,
+      "kernel": 4660,
+      "result": 5,
+      "waits": [
+        [
+          123,
+          500000
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": 16000000,
+      "kernel": 0,
+      "result": 0,
+      "waits": [
+        [
+          123,
+          16000000
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": 16000000,
+      "kernel": 59905,
+      "result": 116,
+      "waits": [
+        [
+          123,
+          16000000
+        ]
+      ],
+      "relocks": 1
+    },
+    {
+      "clock": 4,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": 16000000,
+      "kernel": 4660,
+      "result": 5,
+      "waits": [
+        [
+          123,
+          16000000
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": 1000000000,
+      "kernel": 0,
+      "result": 0,
+      "waits": [
+        [
+          123,
+          1000000000
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": 1000000000,
+      "kernel": 59905,
+      "result": 116,
+      "waits": [
+        [
+          123,
+          1000000000
+        ]
+      ],
+      "relocks": 1
+    },
+    {
+      "clock": 4,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": 1000000000,
+      "kernel": 4660,
+      "result": 5,
+      "waits": [
+        [
+          123,
+          1000000000
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": -1,
+      "kernel": 0,
+      "result": 0,
+      "waits": [
+        [
+          123,
+          0
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": -1,
+      "kernel": 59905,
+      "result": 116,
+      "waits": [
+        [
+          123,
+          0
+        ]
+      ],
+      "relocks": 1
+    },
+    {
+      "clock": 4,
+      "kind": 0,
+      "depth": 0,
+      "nanoseconds": -1,
+      "kernel": 4660,
+      "result": 5,
+      "waits": [
+        [
+          123,
+          0
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": 0,
+      "kernel": 0,
+      "result": 0,
+      "waits": [
+        [
+          123,
+          0
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": 0,
+      "kernel": 59905,
+      "result": 116,
+      "waits": [
+        [
+          123,
+          0
+        ]
+      ],
+      "relocks": 1
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": 0,
+      "kernel": 4660,
+      "result": 5,
+      "waits": [
+        [
+          123,
+          0
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": 500000,
+      "kernel": 0,
+      "result": 0,
+      "waits": [
+        [
+          123,
+          500000
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": 500000,
+      "kernel": 59905,
+      "result": 116,
+      "waits": [
+        [
+          123,
+          500000
+        ]
+      ],
+      "relocks": 1
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": 500000,
+      "kernel": 4660,
+      "result": 5,
+      "waits": [
+        [
+          123,
+          500000
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": 16000000,
+      "kernel": 0,
+      "result": 0,
+      "waits": [
+        [
+          123,
+          16000000
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": 16000000,
+      "kernel": 59905,
+      "result": 116,
+      "waits": [
+        [
+          123,
+          16000000
+        ]
+      ],
+      "relocks": 1
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": 16000000,
+      "kernel": 4660,
+      "result": 5,
+      "waits": [
+        [
+          123,
+          16000000
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": 1000000000,
+      "kernel": 0,
+      "result": 0,
+      "waits": [
+        [
+          123,
+          1000000000
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": 1000000000,
+      "kernel": 59905,
+      "result": 116,
+      "waits": [
+        [
+          123,
+          1000000000
+        ]
+      ],
+      "relocks": 1
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": 1000000000,
+      "kernel": 4660,
+      "result": 5,
+      "waits": [
+        [
+          123,
+          1000000000
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": -1,
+      "kernel": 0,
+      "result": 0,
+      "waits": [
+        [
+          123,
+          0
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": -1,
+      "kernel": 59905,
+      "result": 116,
+      "waits": [
+        [
+          123,
+          0
+        ]
+      ],
+      "relocks": 1
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 1,
+      "nanoseconds": -1,
+      "kernel": 4660,
+      "result": 5,
+      "waits": [
+        [
+          123,
+          0
+        ]
+      ],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": 0,
+      "kernel": 0,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": 0,
+      "kernel": 59905,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": 0,
+      "kernel": 4660,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": 500000,
+      "kernel": 0,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": 500000,
+      "kernel": 59905,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": 500000,
+      "kernel": 4660,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": 16000000,
+      "kernel": 0,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": 16000000,
+      "kernel": 59905,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": 16000000,
+      "kernel": 4660,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": 1000000000,
+      "kernel": 0,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": 1000000000,
+      "kernel": 59905,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": 1000000000,
+      "kernel": 4660,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": -1,
+      "kernel": 0,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": -1,
+      "kernel": 59905,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    },
+    {
+      "clock": 4,
+      "kind": 1,
+      "depth": 2,
+      "nanoseconds": -1,
+      "kernel": 4660,
+      "result": 9,
+      "waits": [],
+      "relocks": 0
+    }
+  ]
+}
