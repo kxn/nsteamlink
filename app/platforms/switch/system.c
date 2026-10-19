@@ -3,6 +3,7 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <libavutil/cpu.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
 #include <switch.h>
@@ -11,8 +12,10 @@
 #include <time.h>
 #include <unistd.h>
 static bool sockets, fonts;
+static atomic_bool docked;
 static int log_fd = -1;
 bool sl_system_init(void) {
+    atomic_store(&docked, appletGetOperationMode() == AppletOperationMode_Console);
     padConfigureInput(1, HidNpadStyleSet_NpadStandard);
     SocketInitConfig cfg = *socketGetDefaultInitConfig();
     /* Preserve the proven client configuration. Enlarging UDP defaults made
@@ -38,7 +41,12 @@ bool sl_system_init(void) {
     return true;
 }
 bool sl_system_running(void) {
-    return appletMainLoop();
+    bool running = appletMainLoop();
+    atomic_store(&docked, appletGetOperationMode() == AppletOperationMode_Console);
+    return running;
+}
+bool sl_system_docked(void) {
+    return atomic_load(&docked);
 }
 void sl_system_shutdown(void) {
     if (log_fd >= 0) {
@@ -130,13 +138,15 @@ sl_system_stream_info sl_system_streaming_info(void) {
      * burst bitrate maxima remain zero so negotiation omits those fields;
      * the former 30/90 Mbps values were neither enforced nor measured (§111).
      * Steam has no confirmed Switch OSType. -197 is Linux 3.6, not Android. */
-    return (sl_system_stream_info){
-        .system_info = "\"SystemInfo\"\n{\n"
-                       "\t\"LogicalCPUCount\"\t\"4\"\n"
-                       "\t\"VideoDisplayX\"\t\"1280\"\n"
-                       "\t\"VideoDisplayY\"\t\"720\"\n"
-                       "\t\"VideoDisplayNameID\"\t\"Nintendo Switch\"\n}\n",
+    sl_system_stream_info info = {
         .decoder_info = "FFmpeg NVDEC",
         .can_suspend = true,
     };
+    bool tv = sl_system_docked();
+    snprintf(info.system_info, sizeof(info.system_info),
+             "\"SystemInfo\"\n{\n\t\"LogicalCPUCount\"\t\"4\"\n"
+             "\t\"VideoDisplayX\"\t\"%u\"\n\t\"VideoDisplayY\"\t\"%u\"\n"
+             "\t\"VideoDisplayNameID\"\t\"Nintendo Switch\"\n}\n",
+             tv ? 1920u : 1280u, tv ? 1080u : 720u);
+    return info;
 }

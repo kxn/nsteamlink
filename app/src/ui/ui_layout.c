@@ -229,8 +229,17 @@ void sl_ui_layout(sl_ui_model *m) {
             row(l, 0, sl_tr(SL_T_BALANCED), SL_SET_QUALITY, 0);
             row(l, 1, sl_tr(SL_T_FAST), SL_SET_QUALITY, 1);
             row(l, 2, sl_tr(SL_T_SHARP), SL_SET_QUALITY, 2);
+            row(l, 4, sl_tr(SL_T_RESOLUTION), SL_OPEN_RESOLUTION, 0);
             if (m->streaming)
                 text(l, 320, 500, 26, sl_tr(SL_T_NEXT_CONNECTION));
+            break;
+        case SL_RESOLUTION:
+            strcpy(l->title, sl_tr(SL_T_RESOLUTION));
+            row(l, 0, sl_tr(SL_T_RESOLUTION_AUTO), SL_SET_RESOLUTION, SL_RESOLUTION_AUTO);
+            row(l, 1, "720p", SL_SET_RESOLUTION, SL_RESOLUTION_720);
+            row(l, 2, "1080p", SL_SET_RESOLUTION, SL_RESOLUTION_1080);
+            text(l, 320, 500, 26, sl_tr(SL_T_RESOLUTION_HANDHELD));
+            text(l, 320, 548, 26, sl_tr(SL_T_NEXT_CONNECTION));
             break;
         case SL_PAIRING:
         case SL_SAVING:

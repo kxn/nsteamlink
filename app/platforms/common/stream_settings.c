@@ -297,13 +297,13 @@ bool sl_stream_settings_apply_limited(const sl_stream_settings *s, IHS_Session *
     free(wire);
     if (!request)
         return false;
-    if (limits->width &&
-        (!request->desired_resolution_x || request->desired_resolution_x > limits->width)) {
+    if (limits->width && (limits->force_resolution || !request->desired_resolution_x ||
+                          request->desired_resolution_x > limits->width)) {
         request->has_desired_resolution_x = true;
         request->desired_resolution_x = limits->width;
     }
-    if (limits->height &&
-        (!request->desired_resolution_y || request->desired_resolution_y > limits->height)) {
+    if (limits->height && (limits->force_resolution || !request->desired_resolution_y ||
+                           request->desired_resolution_y > limits->height)) {
         request->has_desired_resolution_y = true;
         request->desired_resolution_y = limits->height;
     }

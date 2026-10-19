@@ -41,6 +41,8 @@ struct sl_runtime {
     bool started, quit, request_pending, save_pending, snapshot_pending;
     sl_language save_language;
     bool save_update_check;
+    sl_resolution resolution, save_resolution;
+    sl_stream_request_limits stream_limits; /* Frozen from ticket through negotiation. */
     sl_command pending, active;
     sl_auth_store store, save;
     sl_stream_settings settings;
@@ -340,14 +342,14 @@ static void rejected(IHS_Client *c, const IHS_HostInfo *h, IHS_StreamingResult r
 }
 static void configuring(IHS_Session *s, IHS_SessionConfig *c, void *ctx) {
     (void)s;
-    (void)ctx;
+    sl_runtime *r = ctx;
     /* The full saved config supplies preferences. Only apply actual platform
      * limits here; copying legacy command defaults would erase saved fields. */
     c->enableHevc = false;
-    if (!c->maxWidth || c->maxWidth > 1280)
-        c->maxWidth = 1280;
-    if (!c->maxHeight || c->maxHeight > 720)
-        c->maxHeight = 720;
+    if (!c->maxWidth || c->maxWidth > r->stream_limits.width)
+        c->maxWidth = r->stream_limits.width;
+    if (!c->maxHeight || c->maxHeight > r->stream_limits.height)
+        c->maxHeight = r->stream_limits.height;
     if (!c->maxFps || c->maxFps > 60)
         c->maxFps = 60;
 }
@@ -597,9 +599,7 @@ static bool launch_session(sl_runtime *r, IHS_SessionInfo info) {
     }
     if (!r->session)
         return false;
-    const sl_stream_request_limits limits = {
-        .width = 1280, .height = 720, .fps = 60, .hevc = false};
-    if (!sl_stream_settings_apply_limited(&r->settings, r->session, &limits)) {
+    if (!sl_stream_settings_apply_limited(&r->settings, r->session, &r->stream_limits)) {
         IHS_SessionDestroy(r->session);
         r->session = NULL;
         return false;
@@ -662,11 +662,22 @@ static bool request_stream(sl_runtime *r, bool network_test) {
     IHS_ClientSetSecretKey(r->client,
                            paired && paired->has_secret ? paired->secret : r->store.secret);
     const CStreamingClientConfig *config = r->settings.config;
+    /* Freeze one selection through this ticket and its subsequent handshake. */
+    if (!network_test) {
+        unsigned height = sl_resolution_height(r->resolution, sl_system_docked());
+        r->stream_limits = (sl_stream_request_limits){
+            .width = height * 16 / 9, .height = height, .fps = 60, .force_resolution = true};
+        char line[128];
+        snprintf(line, sizeof(line), "video request: %ux%u fps<=60 H264 selection=%u",
+                 r->stream_limits.width, r->stream_limits.height, (unsigned)r->resolution);
+        sl_log(line);
+    }
     IHS_StreamingRequest req = {
         .networkTest = network_test,
         .streamingEnable = {config->enable_video_streaming, config->enable_audio_streaming,
                             config->enable_input_streaming},
-        .maxResolution = {1280, 720},
+        .maxResolution = {network_test ? 1280 : r->stream_limits.width,
+                          network_test ? 720 : r->stream_limits.height},
         .audioChannelCount = 2,
         .streamingInterface = IHS_StreamInterfaceBigPicture,
         .gamepadCount = 1,
@@ -770,7 +781,7 @@ static void confirm_network_test(sl_runtime *r, const sl_command *cmd) {
     pthread_mutex_unlock(&r->lock);
     if (cmd->accept_recommendation && recommendation) {
         /* Current validated display path has no 4K/HEVC capability. The stored
-         * preset remains distinct from the final 720p60/H264 request limits. */
+         * preset remains distinct from the selected resolution/H264 request limits. */
         sl_stream_preset preset = recommendation == 1 ? SL_PRESET_FAST : SL_PRESET_ENHANCED_1080;
         if (!sl_stream_settings_preset(&r->settings, preset)) {
             stop_network_test(r);
@@ -1170,6 +1181,7 @@ static void *worker_main(void *ctx) {
         bool save_pending, snapshot_pending;
         sl_language save_language;
         bool save_update_check;
+        sl_resolution save_resolution;
         pthread_mutex_lock(&r->lock);
         if (r->request_pending) {
             cmd = r->pending;
@@ -1178,6 +1190,7 @@ static void *worker_main(void *ctx) {
         save_pending = r->save_pending;
         save_language = r->save_language;
         save_update_check = r->save_update_check;
+        save_resolution = r->save_resolution;
         snapshot_pending = r->snapshot_pending;
         if (snapshot_pending) {
             save = r->save;
@@ -1208,10 +1221,12 @@ static void *worker_main(void *ctx) {
         }
         sync_stream_settings(r, snapshot_pending);
         if (save_pending) {
+            r->resolution = save_resolution;
             bool profile_saved = sl_auth_save(&r->store, sl_system_data_dir());
             bool language_saved = sl_i18n_save(sl_system_data_dir(), save_language);
             bool update_saved = sl_update_config_save(sl_system_data_dir(), save_update_check);
-            if (!profile_saved || !language_saved || !update_saved)
+            bool video_saved = sl_video_settings_save(sl_system_data_dir(), save_resolution);
+            if (!profile_saved || !language_saved || !update_saved || !video_saved)
                 fail(r, sl_tr(SL_T_SAVE_SETTINGS_FAILED));
         }
         if (cmd.type) {
@@ -1397,6 +1412,7 @@ sl_runtime *sl_runtime_create(const sl_auth_store *store) {
     if (!r)
         return NULL;
     r->store = *store;
+    r->resolution = sl_video_settings_load(sl_system_data_dir());
     r->udp = -1;
     atomic_init(&r->exit_requested, false);
     atomic_init(&r->foreground_generation, 0);
@@ -1438,6 +1454,8 @@ sl_runtime *sl_runtime_create(const sl_auth_store *store) {
     return r;
 }
 bool sl_runtime_submit(sl_runtime *r, const sl_command *cmd, const sl_auth_store *store) {
+    if (!sl_resolution_valid(cmd->resolution))
+        return false;
     pthread_mutex_lock(&r->lock);
     if (cmd->type == SL_CMD_STOP || cmd->type == SL_CMD_CANCEL || cmd->type == SL_CMD_EXIT)
         sl_media_close_video();
@@ -1447,6 +1465,7 @@ bool sl_runtime_submit(sl_runtime *r, const sl_command *cmd, const sl_auth_store
         r->save_pending = true;
         r->save_language = cmd->language;
         r->save_update_check = cmd->update_check;
+        r->save_resolution = cmd->resolution;
     } else {
         if (r->request_pending && cmd->type != SL_CMD_EXIT && cmd->type != SL_CMD_CANCEL &&
             cmd->type != SL_CMD_STOP) {

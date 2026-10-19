@@ -246,6 +246,7 @@ int sl_application_run(int argc, char **argv) {
     if (auth >= 0)
         sl_stream_settings_preview(&store, sl_system_data_dir());
     sl_ui_init(&a->ui, &store);
+    a->ui.resolution = sl_video_settings_load(sl_system_data_dir());
     a->ui.update_check = sl_update_config_load(sl_system_data_dir());
     sl_log_start();
     if (!offline)
@@ -323,7 +324,8 @@ int sl_application_run(int argc, char **argv) {
                     sl_ui_error(&a->ui, sl_tr(SL_T_BUSY));
             } else if (cmd.type == SL_CMD_SAVE) {
                 if (!sl_i18n_save(sl_system_data_dir(), cmd.language) ||
-                    !sl_update_config_save(sl_system_data_dir(), cmd.update_check))
+                    !sl_update_config_save(sl_system_data_dir(), cmd.update_check) ||
+                    !sl_video_settings_save(sl_system_data_dir(), cmd.resolution))
                     sl_ui_error(&a->ui, sl_tr(SL_T_SAVE_SETTINGS_FAILED));
             } else if (cmd.type == SL_CMD_CANCEL || cmd.type == SL_CMD_STOP ||
                        cmd.type == SL_CMD_END_GAME)

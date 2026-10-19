@@ -452,7 +452,10 @@ int main(int argc, char **argv) {
     edited.quality = 1;
     edited.bitrate_kbps = 20000;
     edited.unreliable_fec = false;
-    sl_command edit = {.type = SL_CMD_SAVE, .language = SL_LANG_SYSTEM, .update_check = true};
+    sl_command edit = {.type = SL_CMD_SAVE,
+                       .language = SL_LANG_SYSTEM,
+                       .update_check = true,
+                       .resolution = SL_RESOLUTION_1080};
     assert(sl_runtime_submit(settings_runtime, &edit, &edited));
     uint64_t submitted = sl_runtime_settings_revision(settings_runtime);
     ready = false;
@@ -465,6 +468,7 @@ int main(int argc, char **argv) {
     }
     assert(ready && !prefs.unreliable_fec && prefs.quality == 1 && prefs.bitrate_kbps == 20000);
     sl_runtime_destroy(settings_runtime);
+    assert(sl_video_settings_load(dir) == SL_RESOLUTION_1080);
     sl_auth_store reloaded = auth;
     sl_stream_settings_preview(&reloaded, dir);
     assert(!reloaded.unreliable_fec && reloaded.quality == 1 && reloaded.bitrate_kbps == 20000);
@@ -487,7 +491,7 @@ int main(int argc, char **argv) {
     sl_ui_renderer_destroy(renderer);
     stream_media_shutdown();
     const char *settings_files[] = {"profile.bin", "streaming_settings.bin", "language.conf",
-                                    "update.conf"};
+                                    "update.conf", "video.conf"};
     for (size_t i = 0; i < sizeof(settings_files) / sizeof(settings_files[0]); ++i) {
         snprintf(blocked_temp, sizeof(blocked_temp), "%s/%s", dir, settings_files[i]);
         assert(!unlink(blocked_temp));

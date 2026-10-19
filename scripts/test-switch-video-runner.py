@@ -7,12 +7,13 @@ import unittest
 spec = importlib.util.spec_from_file_location('runner', Path(__file__).with_name('test-switch-video.py'))
 runner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runner)
-START = '[42 startup] PROBE_BEGIN build=abc\n'
+START = '[42 startup] PROBE_BEGIN build=abc output_height=720\n'
+RESOLUTION = '[42 resolution-pixels] RESOLUTION_ORACLE output=1280x720 native_detail=PASS\n'
 CASE = '[42 cleanup-decoder] CASE_FINAL fixture=padding720 iteration=0 result=PASS failed_stage=none\n'
 COUNTS = '[42 cleanup-sdl] SUITE cases_completed=1 cases_expected=1\n'
 FINAL = '[42 complete] PROBE_FINAL result=PASS failed_stage=none\n'
 CLEAN = '[42 complete] PROBE_CLEANUP resources=clean transport=closing\n'
-LOG = START + CASE + COUNTS + FINAL + CLEAN
+LOG = START + RESOLUTION + CASE + COUNTS + FINAL + CLEAN
 
 
 def parse(text, **overrides):
@@ -51,9 +52,16 @@ class Results(unittest.TestCase):
     def test_suite(self):
         fixtures = ['padding720', 'padding1080', 'sequential', 'reordered']
         cases = ''.join(CASE.replace('iteration=0', f'iteration={i}').replace('padding720', fixtures[i % 4]) for i in range(12))
-        log = START + cases + COUNTS.replace('=1', '=12') + FINAL + CLEAN
+        log = START + RESOLUTION * 12 + cases + COUNTS.replace('=1', '=12') + FINAL + CLEAN
         self.assertTrue(runner.successful(parse(log, fixture='suite')))
         self.assertFalse(runner.successful(parse(log.replace('iteration=1', 'iteration=0'), fixture='suite')))
+
+    def test_native_1080_required(self):
+        log = LOG.replace('output_height=720', 'output_height=1080').replace('output=1280x720', 'output=1920x1080')
+        self.assertTrue(runner.successful(parse(log, requested_output_height=1080)))
+        self.assertFalse(runner.successful(parse(LOG, requested_output_height=1080)))
+        self.assertFalse(runner.successful(parse(log.replace('native_detail=PASS', 'native_detail=FAIL'))))
+        self.assertFalse(runner.successful(parse(LOG.replace(RESOLUTION, ''))))
 
 
 if __name__ == '__main__':
