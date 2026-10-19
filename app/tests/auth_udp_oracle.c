@@ -16,6 +16,7 @@
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
+#include "udp_video_load.h"
 #include "udp_video_backend.h"
 #include "udp_microphone_backend.h"
 #include "udp_audio_backend.h"
@@ -69,6 +70,11 @@ static void sendEncryptedPeer(IHS_Session *s,int socket,const struct sockaddr_in
     sendPeer(socket,address,5,local,1,id,body,count+1,crc);
 }
 int main(int argc,char **argv) {
+    bool load=argc==10 && !strcmp(argv[1],"--load");
+    udpLoadMode=load;
+    unsigned loadSent=0,loadFrames=load?(unsigned)atoi(argv[8]):0,loadRate=load?(unsigned)atoi(argv[9]):0;
+    if(load) {udpLoadDelayUS=(unsigned)atoi(argv[7]);assert(loadFrames && loadFrames<UDP_LOAD_LIMIT && loadRate);}
+    uint64_t loadStart=0;
     bool audio=argc==11 && !strcmp(argv[1],"--audio");
     bool audioBurst=audio && !strcmp(argv[9],"burst");udpRXObserve=audioBurst;
     unsigned audioFrames=audio?(unsigned)atoi(argv[7]):0,audioCalls=audio?(unsigned)atoi(argv[8]):0;
@@ -77,7 +83,7 @@ int main(int argc,char **argv) {
     bool burst=argc==8 && !strcmp(argv[1],"--gap-burst");
     bool gap=burst || (argc==8 && !strcmp(argv[1],"--gap"));udpGapMode=gap || audio;
     bool recover=argc==7 && !strcmp(argv[1],"--recover");
-    bool video=gap || recover || (argc==7 && !strcmp(argv[1],"--video"));
+    bool video=load || gap || recover || (argc==7 && !strcmp(argv[1],"--video"));
     bool microphone=argc==6 && !strcmp(argv[1],"--microphone");
     bool limited=argc==6 && !strcmp(argv[1],"--negotiate-limited");
     bool negotiate=audio || limited || microphone || video || (argc==6 && !strcmp(argv[1],"--negotiate"));assert(negotiate || argc==5);
@@ -101,6 +107,7 @@ int main(int argc,char **argv) {
     assert(IHS_IPAddressFromString(&info.address.ip,"127.0.0.1"));
     for(unsigned n=0;n<32;++n)info.sessionKey[n]=(uint8_t)n;
     IHS_Session *session=IHS_SessionCreate(&client,&info);assert(session);
+    if(load)udpLoadSession=session;
     if(audio)audInstall(session);
     if(video) {
         udpVideo=sl_video_create();assert(udpVideo);
@@ -140,8 +147,13 @@ int main(int argc,char **argv) {
     unsigned micStage=0,micWireCount=0;uint8_t micWires[7][2048];size_t micWireSizes[7]={0};
     bool micControlSeen[5]={0};
     char micEvents[12][32];unsigned micEventCount=0;
-    uint64_t deadline=millis()+5000;
+    uint64_t deadline=millis()+(load?20000:5000);
     for(;;) {
+        if(load && loadStart) {
+            while(loadSent<loadFrames && udpLoadNow()-loadStart>=(uint64_t)loadSent*1000000000/loadRate) {
+                udpLoadSend(peer,&videoAddress,videoLocal,loadSent?NULL:argv[6],crc,loadSent+1==loadFrames);++loadSent;
+            }
+        }
         if(audio && !audioStage && atomic_load(&audFrames)>=1) {
             udpReplayMedia(peer,&videoAddress,videoLocal,NULL,crc);audioStage=1;
         }
@@ -180,7 +192,7 @@ int main(int argc,char **argv) {
             udpTakePicture();
             if(gap && udpPictureCount==1 && !gapStage) {udpReplayMedia(peer,&videoAddress,videoLocal,NULL,crc);gapStage=1;}
             if(gap && !burst && !gapReliable && udpPictureCount==2 && gapStage==1) {assert(repaired);udpReplayMedia(peer,&videoAddress,videoLocal,NULL,crc);gapStage=2;}
-            bool videoDone=gap?(gapReliable?repaired:burst?udpPictureId==30:udpPictureCount==3):udpHavePicture;
+            bool videoDone=load?udpHavePicture && udpPictureId==100+loadFrames-1:gap?(gapReliable?repaired:burst?udpPictureId==30:udpPictureCount==3):udpHavePicture;
             if(videoInfo && videoDone && !videoStop) {
                 sendEncryptedPeer(session,peer,&videoAddress,videoLocal,5,53,NULL,0,3,crc,false);videoStop=true;
             }
@@ -196,6 +208,7 @@ int main(int argc,char **argv) {
         uint8_t raw[2048];struct sockaddr_in from;socklen_t length=sizeof(from);
         ssize_t size=recvfrom(peer,raw,sizeof(raw),0,(struct sockaddr *)&from,&length);assert(size>=13);
         uint8_t type=raw[0]&127;
+        if(load && type==3 && raw[4]==3 && size==(crc?18:14) && raw[13]==2)++udpLoadDataLost;
         if((recover || gap || audioGap) && (type==8 || type==10 || (gap && type==3 && raw[13]==2)) && raw[4]==3 && !repaired) {
             assert(((raw[0]&128)!=0)==crc && raw[2] && raw[3]==7);
             size_t plainSize=(size_t)size;
@@ -266,7 +279,7 @@ int main(int argc,char **argv) {
                         const uint8_t start[]={0x08,3,0x10,4,0x20,0x80,1,0x28,0x48};
                         videoAddress=from;videoLocal=raw[2];
                         sendEncryptedPeer(session,peer,&from,raw[2],4,52,start,sizeof(start),2,crc,false);
-                        udpReplayMedia(peer,&from,raw[2],argv[6],crc);
+                        if(load)loadStart=udpLoadNow();else udpReplayMedia(peer,&from,raw[2],argv[6],crc);
                     }
                     if(audio) {
                         const uint8_t start[]={0x10,3,0x18,3,0x28,0x80,0xf7,2,0x30,2};
@@ -299,12 +312,13 @@ int main(int argc,char **argv) {
     }
     if(video) {
         unsigned count=gap && !gapReliable?3:1;
-        assert(udpHavePicture && udpStarts==1 && udpSubmits==count && udpSdkPackets==count && atomic_load(&udpStopped));
+        assert(udpHavePicture && udpStarts==1 && (load || (udpSubmits==count && udpSdkPackets==count)) && atomic_load(&udpStopped));
         printf(",\"video\":{\"id\":%u,\"shape\":[%u,%u,0],\"md5\":\"",udpPictureId,udpWidth,udpHeight);
         for(unsigned i=0;i<16;++i)printf("%02x",udpPixelMd5[i]);
         printf("\",\"sdk_size\":%zu,\"sdk_sha256\":\"",udpSdkSize);for(unsigned i=0;i<32;++i)printf("%02x",udpSdkSha[i]);
         printf("\",\"starts\":%u,\"submits\":%u,\"stopped\":true}",udpStarts,udpSubmits);
     }
+    if(load)udpLoadReport();
     if(audio)audReport(audioBurst?atomic_load(&audFrames):audioFrames,audioCalls,audioBlocked);
     if(audioBurst)rxReport();
     if(audioGap) {

@@ -33,7 +33,10 @@ int __wrap_avcodec_send_packet(AVCodecContext *context,const AVPacket *packet) {
         udpHash(packet->data,udpSdkSize,udpSdkSha);
         if(udpGapMode) {assert(index<3);udpSdkInputs[index].size=udpSdkSize;memcpy(udpSdkInputs[index].sha,udpSdkSha,32);}
     }
-    return __real_avcodec_send_packet(context,packet);
+    uint64_t begin=udpLoadMode?udpLoadSDKBegin(udpSdkSize,udpSdkSha):0;
+    int result=__real_avcodec_send_packet(context,packet);
+    if(udpLoadMode)udpLoadSDKEnd(begin,result);
+    return result;
 }
 typedef struct udpBorrowed { IHS_Session *session; const IHS_VideoEpochInfo *epoch; } udpBorrowed;
 static void udpInfo(void *context,const char *text,unsigned threads) {
@@ -55,7 +58,9 @@ static int udpVideoStart(IHS_Session *session,const IHS_VideoEpochInfo *epoch,co
     ++udpStarts;return 0;
 }
 static IHS_StreamVideoSubmitResult udpVideoSubmit(IHS_Session *session,const IHS_VideoEpochInfo *epoch,uint16_t id,IHS_FrameTicket *ticket,IHS_Buffer *data,IHS_StreamVideoFrameFlag flags,bool *taken,void *context) {
-    (void)context;assert(id==23 || udpGapMode);udpBorrowed b={session,epoch};
+    (void)context;assert(id==23 || udpGapMode || udpLoadMode);
+    if(udpLoadMode)udpLoadSubmittingId=id;
+    udpBorrowed b={session,epoch};
     sl_video_submit_result result=sl_video_submit(udpVideo,udpKey(epoch),IHS_BufferPointer(data),data->size,ticket,taken,(flags&IHS_StreamVideoFrameKeyFrame)&&!(flags&IHS_StreamVideoFrameFlushHandled),udpFeedback,udpInfo,&b);
     assert(result!=SL_VIDEO_SUBMIT_ERROR);++udpSubmits;
     atomic_store(&udpSubmitted,true);return IHS_StreamVideoSubmitOK;
@@ -75,8 +80,16 @@ static void udpVideoStop(IHS_Session *s,const IHS_VideoEpochInfo *e,void *ctx) {
     (void)s;(void)ctx;sl_video_stop(udpVideo,udpKey(e));sl_video_reap(udpVideo);atomic_store(&udpStopped,true);
 }
 static void udpTakePicture(void) {
-    if((udpHavePicture && !udpGapMode) || !atomic_load(&udpSubmitted))return;
-    sl_video_frame *f=sl_video_take(udpVideo);if(!f)return;
+    if((udpHavePicture && !udpGapMode && !udpLoadMode) || !atomic_load(&udpSubmitted))return;
+    sl_video_selection selected={0};
+    sl_video_frame *f;
+    if(udpLoadMode) {
+        /* Sustained playback consumes both jobs and pixels, as media.c does.
+         * Raw sl_video_take is only the bounded codec-probe observation API. */
+        if(!sl_video_select(udpVideo,&selected))return;
+        f=selected.frame;
+        if(!f) {sl_video_selection_release(&selected);return;}
+    } else {f=sl_video_take(udpVideo);if(!f)return;}
     AVFrame *af=f->pixels;assert(af->format==AV_PIX_FMT_YUV420P);
     udpWidth=(unsigned)af->width;udpHeight=(unsigned)af->height;
     struct AVMD5 *md5=av_md5_alloc();assert(md5);av_md5_init(md5);
@@ -88,7 +101,11 @@ static void udpTakePicture(void) {
     av_md5_final(md5,udpPixelMd5);av_free(md5);
     udpPictureId=IHS_FrameTicketIdentity(f->ticket).frameId;
     if(udpGapMode) {assert(udpPictureCount<3);udpPictures[udpPictureCount].id=udpPictureId;memcpy(udpPictures[udpPictureCount].md5,udpPixelMd5,16);++udpPictureCount;}
-    sl_resource_release(&f->ref);udpHavePicture=true;
+    if(udpLoadMode)udpLoadPixel(udpPictureId,udpPixelMd5);
+    /* Headless observation has no physical Displayed outcome. Release the
+     * consumed task through its normal cancellation/retirement contract. */
+    if(udpLoadMode)sl_video_selection_release(&selected);else sl_resource_release(&f->ref);
+    udpHavePicture=true;
 }
 static FILE *udpReplayFile;
 static uint8_t udpExpectedFeedback[64];

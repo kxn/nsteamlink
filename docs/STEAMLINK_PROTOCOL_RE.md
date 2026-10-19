@@ -11596,3 +11596,90 @@ python3 scripts/check-steam-wait-clock.py \
 python3 scripts/check-wait-clock-native-mutations.py --output /tmp/wait-clock-negatives
 ctest --test-dir build/desktop -R 'wait_clock|decoder_overlap' --output-on-failure
 ```
+
+## 148. 持续 UDP 输入、慢 SDK 与关键帧后的 P 帧
+
+Evidence：固定Linux客户端/随包SDK/Qt与§138相同。新增
+`audit-steam-client-load-process.py`和`steam-client-load-gdb.py`，真实构造、设置
+文件、UDP/CRC/加密控制、窗口、decoder worker、原codec与player执行。
+受控peer按60fps时钟目标发送302帧，持续约5秒，不设逐帧像素屏障；最后两份是
+关键帧400及其P帧401。输入重复自有128×72 H264 fixture的前六份AU，帧号/
+sequence/timestamp连续，普通3/4分片经过原Socket。peer的1ms超时仅驱动fixture
+输入，不修改客户端网络timer。该低码率输入不能冒称高码率/大分组容量验收。
+
+SDK延迟是显式平台输入：临时共享库在send_packet终端等待0/30/80ms，再用
+未修改的参数调用固定原SDK，原返回值直接返回。C源、实际共享库SHA、原client/
+codec/util、Qt、五个GDB helper、runner、H264与52份完整FDE/SHA均保存。
+只临时包装SDK函数表的该终端；原decoder/网络方法与SDK结果不替换。停止视频
+且worker join后恢复原函数表、关闭adapter，再正常销毁client/network并执行
+原main/atexit；原module ForceRelease后为0，没有新增live task。GDB停顿和
+受控SDK延迟不能当作自然硬解、主机性能、物理显示或墙钟精度证明。
+
+CRC开/关各三组，共六个原进程。每组消费者都得到完整302份输入，原SDK
+send/receive均返回0，逐份AU大小/SHA与每份player Put像素MD5正确，均输出
+最后400→401。固定记录中的SDK/像素份数如下；同样的受控延迟不保证不同自然
+调度再次产生完全相同的数量，不能把这些数量解释为协议阈值或帧率承诺。
+
+| SDK附加延迟 | CRC关 | CRC开 |
+|---|---:|---:|
+| 0ms | 302 | 302 |
+| 30ms | 145 | 144 |
+| 80ms | 60 | 60 |
+
+有延迟时，在SDK forwarding调用尚未返回期间，原网络入口仍交付267/269、
+288/283份有decoder的完整媒体；这是实际运行的接收线程与decoder线程重叠，
+不是把预排队输入叫作持续输入。FIFO head/tail/bytes在SDK入口只作无锁读取快照，
+不是线性化队列最大值或整套线程锁的证明。丢弃/替换的完整方法与有界调度对照
+仍由§143–146独立提供；本组不要求自然Source与Native提交相同数量。
+
+### 148.1 入口重入与播放器消费者的两类观察陷阱
+
+原OnStreamPacket有时观察到303次channel3回调，但DecodeFrame只有完整、连续的
+302份输入。保存的`load_receive_callbacks`区分frameId、是否已有decoder和SDK
+是否仍活动：首帧可能在decoder创建前进入pending，再在配置后重入。它是§68–69
+已取证的早到缓存路径，不能当作线上多收到一份媒体或直接用所有回调数比较
+消费者交付。正式比较分别保留原始回调与映射后的302次入口，不删掉早到记录。
+
+Native首次扩大到301帧时，在frame356的第257次SDK提交之后触发
+SL_VIDEO_SUBMIT_ERROR。调试器`/tmp/nsl150-native-failure-gdb.log`直接读到
+`udpVideo->job_count=256`、sdkPackets=257、pictureCount=257。测试当时只调用
+sl_video_take取像素；`video_pipeline.c::queue_task`还会为每次提交保留独立job，
+该Raw/probe接口不消费job。实际`media.c`使用sl_video_select，并在消费后释放
+selection。该失败来自新fixture沿用短片观察端点，不能据此推论生产播放器或
+协议tracker存在256帧上限错误。
+
+持续输入fixture改用实际sl_video_select消费任务与图像，读取像素后正常释放
+selection；headless观察没有物理Displayed结果，不伪造显示完成。原301份失败
+输入在此修正后完整通过，仍保留原失败日志与debugger证据。原有短片codec/probe
+测试继续沿用其明确有界的Raw观察契约；没有由该失败增大生产INPUT_JOB_COUNT
+或改变协议恢复请求。最终302份输入再覆盖最后关键帧之后的P帧。
+
+### 148.2 Native 运行和比较契约
+
+Native复播相同普通媒体字节，按同样60fps目标调度，由实际session/Socket/
+CRC/控制加密/worker及生产video pipeline处理；SDK调用由fixture等待后继续
+调用真实FFmpeg。接收回调以atomic记录SDK活动期间的完整输入，队列计数用
+windowLock读取。停止/join后才读取SDK观察数组及销毁session/pipeline。
+
+逐组检查：完整302份RX、慢SDK期间RX推进、每次实际SDK输入的ID/大小/完整
+SHA与成功返回、每张实际取出图像的独立MD5、最后400后的401恢复、没有额外
+DataLost及正常停止。提交/取图数量与Source的自然调度分开保留，不为了相同
+数量阻挡生产者或篡改SDK返回。sl_video_select可按既有最新图像策略替换中间
+输出；不要求physical display每一张，也不将headless取消结果当成完整帧统计
+或渲染上屏结果一致。
+
+这补充普通媒体持续输入/受控慢SDK的线程和像素证据。不能扩大为真实Steam
+发送/补片/GOP/FEC启用、type11持续压力、Switch硬解/zero-copy/显示/输入/退出、
+自然高码率/4MiB满FIFO、长期音画同步或原用户停顿因果。配置请求FEC不等于
+本组受控peer实际发送type11；本节输入始终是普通3/4路径。
+
+```sh
+python3 scripts/audit-steam-client-load-process.py \
+  --binary /path/to/official/bin/steamlink --sdk-directory /path/to/official/lib \
+  --qt-library-directory /path/to/qt/lib --output /tmp/source-load.json
+python3 scripts/check-steam-load-process.py \
+  --source-report /tmp/source-load.json \
+  --receiver build/desktop/app/nsl-auth-udp-oracle
+ctest --test-dir build/desktop -R 'media_load_udp|media_burst_udp|media_gap_udp' \
+  --output-on-failure
+```
