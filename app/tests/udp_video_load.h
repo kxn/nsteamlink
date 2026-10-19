@@ -6,6 +6,7 @@
 #include <errno.h>
 #define UDP_LOAD_LIMIT 1024
 static bool udpLoadMode;
+static bool udpLoadAllowEmpty; /* Explicit reorder-fixture producer ticks only. */
 static unsigned udpLoadDataLost, udpLoadNacks, udpLoadFault, udpLoadRepairSize;
 static int udpLoadHole = -1;
 static bool udpLoadRepaired;
@@ -237,7 +238,7 @@ static void udpLoadSend(int socket, const struct sockaddr_in *address, uint8_t l
             }
         }
     }
-    assert(count);
+    assert(count || udpLoadAllowEmpty);
     if (last) {
         assert(fgetc(udpLoadReplay) == EOF && !ferror(udpLoadReplay));
         assert(!fclose(udpLoadReplay));

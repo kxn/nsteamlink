@@ -12636,3 +12636,86 @@ python3 tools/live-media-probe.py --steam 10.10.10.166 --switch 10.10.10.25 \
 
 最后一条只准备自包含包；`--run`仍只用于该次用户明确准备的netloader，无TCP探测、
 无自动再次启动、无需手工复制SD文件。实际设备运行证据及缺口跟踪在GitHub #67。
+
+## 161. 跨FEC组交错、较旧分组的重新准入与严格恢复
+
+### 161.1 原客户端进程及输入边界
+
+`audit-steam-client-fec-reorder-process.py`固定§149的原Linux客户端SHA256
+`95482ca6120f90bb90798b27206b7946ab732e079f008d7fc90ea58a8b0074e1`、随包
+AVCodec61 `c53a7e3d32a986323ec6bedd28df73a6e5842c4753b67b1d2aa0d6e4f524472f`
+和AVUtil59 `6df6556b6026144eb545dd95c0e2cc8c4568f462c9bd7e036531207d4172db34`。
+61份完整函数FDE、27份fixture程序、Qt库及派生观察程序均记录身份；十个独立进程
+执行原构造、实际UDP/CRC、FEC队列/RS、媒体worker、decoder、SDK、请求发送及收尾。
+`GapDecode/GapSend`只读原strict/soft/expected sequence与原sendto返回，并记录当时
+消费的媒体ID；没有写decoder gate、注入parsed Frame或替代SDK结果。
+
+码字直接复用§149官方Android客户端原编码器的26组k57/m3/S1168输出；每个正文
+65556B，编码输入65536B，为128×72 H264加合法filler。原编码器的显式5%/MTU1200
+能力输入、分配/容器/packet/refcount适配边界保持不变，不把它当成自然Host producer。
+受控peer每秒5个生产tick、每片间隔250us，保留该bank的60Hz媒体时间戳，明确增加
+收包间隔；两端配置完成后开始。空tick不发送datagram。headless OnThink/队列消费、
+零延迟SDK forwarding、断点开销都明确存在，不能据此度量自然延迟或吞吐能力。
+
+初始媒体ID100为关键帧，101…105为P帧，106为下一关键帧；此后六帧一循环到125。
+每组transport ID是媒体index+1，不能把它与媒体ID/视频sequence或普通窗口混用。
+CRC两值分别执行下面五种计划；所有未提到的后续组正常发送。
+
+### 161.2 原版和Native的观察结果
+
+| 受控输入 | 完整/消费帧数 | SDK输入数 | DataLost数 |
+|---|---:|---:|---:|
+| 组2缺数据0/17/55，其余57片逆序、parity先到 | 26 | 26 | 0 |
+| 组2前28片→组3前28片→组2后32片→组3后32片 | 24 | 21 | 3 |
+| 上述交错后，再完整重送组2和组3 | 26 | 26 | 0 |
+| 组2前28片→组3完整→组2剩余片及前28片 | 25 | 21 | 4 |
+| 连续组2/3各缺0/17/30/55，超过m=3 | 24 | 21 | 3 |
+
+每行的两个CRC进程均得到表中结果。Native使用同一实际datagram字节和顺序，
+通过OS UDP/CRC、生产FEC、完成FIFO、实际worker和应用AVCodec；每行的完整/消费
+ID、全部SDK输入身份/完整SHA、恢复来源与表中计数一致。每张实际观察到的像素均与
+独立framemd5匹配，最后关键124/P125、Stop、join、无新增live task及原模块7→0
+分别核验；不要求物理显示每一幅中间图像。
+
+Conclusion：原版只有一个活动FEC组。尚未交付的组可被另一有效组替换，再回到
+较旧组时也会重新收集；先前丢弃的shard不会自动找回。因此两组的所有shard都曾
+到达，不等于它们能够组装完成。完整重送可在成功水位推进之前恢复；水位已由
+较新组交付推进后，旧组全部片均拒绝。不能自行改成按最高见过组号永久拒绝旧组，
+也不能为此添加多组缓存、type10 FEC补片或自动FEC切换并声称与该原版一致。
+
+组2/3未能恢复时，完整帧103的sequence暴露缺口，strict由0变1；102开始的缺口
+则在102进入strict。103/104/105或102/103/104/105虽已完整接收并消费，仍未提交SDK；
+106关键帧清strict后恢复正确像素。恢复计数不能只按strict 0→1转换次数估计：本组
+200ms输入间隔下，后续非关键输入按既有100ms门槛再次发送DataLost。初版fixture
+“只在首次转换发送一次”的假设已由原sendto/peer字节证据否定并撤回。它不说明
+每个P帧必发请求，也不证明无输入时存在独立的100ms定时请求。
+
+### 161.3 回归、反例和证据限度
+
+测试peer对实际可靠控制收包累计ACK并echo其timestamp。Source读取实际客户端socket
+的udp/udp6 drops；Native同时核对客户端和peer socket drops=0、解析后的全部输入及
+唯一ordinal数。迟到/重复片被PacketParse接纳不等于被FEC存储；计数账独立于最终
+完整帧账。Native全部实际DataLost socket发送成功、目的端口/peer收包及媒体ID来源
+逐项比较，不能由对端漏采误判“没有请求”。
+
+`media_fec_reorder_udp_official_vectors`加入常规ON/OFF回归，显式新fixture模式才允许
+空生产tick；其他fixture仍拒绝空槽，产品代码不因此变化。正式入口拒绝`python -O`。
+另以实际成功Native结果构造正常退出的transcript adapter，验证错误完整帧、输入/
+unique账、peer drops、请求来源/重复、SDK字节、像素和省略SDK帧均拒绝；三份Source
+strict清除/请求来源/像素反例亦拒绝。共12份是比较器反例，不声称修改过原客户端或
+生产decoder。原始fixture初始化NameError和错误请求次数假设的捕获均保留，不记作
+原客户端失败或协议缺陷。
+
+本节证明给定跨组调度下的官方策略和Native对照；不替代真实Steam的重发/GOP策略、
+Switch硬解、无线socket突发/乱序、长期弱网、峰值、物理显示及loader ABI，也不确定
+最初用户停顿/闪烁的根因。该范围的验收在GitHub #68，宏观弱网目标仍在#52。
+
+```sh
+PYTHONPATH=/path/to/audit-deps python3 scripts/audit-steam-client-fec-reorder-process.py \
+  --binary /path/to/official/bin/steamlink --sdk-directory /path/to/official/lib \
+  --qt-library-directory /path/to/qt/lib --fec-bank /path/to/original-pressure-fec.json \
+  --output /tmp/source-fec-reorder.json
+python3 scripts/test-steam-fec-reorder-contract.py \
+  --receiver build/desktop/app/nsl-auth-udp-oracle
+ctest --test-dir build/desktop --output-on-failure -R '^media_fec_reorder_udp_official_vectors$'
+```

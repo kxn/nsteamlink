@@ -70,7 +70,9 @@ static void sendEncryptedPeer(IHS_Session *s,int socket,const struct sockaddr_in
     sendPeer(socket,address,5,local,1,id,body,count+1,crc);
 }
 int main(int argc,char **argv) {
-    bool pressureReady=(argc==12 || argc==14) && !strcmp(argv[1],"--pressure-ready");
+    bool fecReorder=(argc==12 || argc==14) && !strcmp(argv[1],"--pressure-fec-reorder");
+    udpLoadAllowEmpty=fecReorder;
+    bool pressureReady=fecReorder || ((argc==12 || argc==14) && !strcmp(argv[1],"--pressure-ready"));
     bool pressure=pressureReady || (argc==12 && !strcmp(argv[1],"--pressure"));
     udpLoadPacketObserve=pressureReady;
     if(pressureReady && argc==14) {

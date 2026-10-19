@@ -281,6 +281,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
         --receiver $<TARGET_FILE:nsl-auth-udp-oracle>
         --output "${CMAKE_BINARY_DIR}/steam-pressure-native.json")
     set_tests_properties(media_pressure_udp_official_vectors PROPERTIES TIMEOUT 120)
+    add_test(NAME media_fec_reorder_udp_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/test-steam-fec-reorder-contract.py"
+        --receiver $<TARGET_FILE:nsl-auth-udp-oracle>)
+    set_tests_properties(media_fec_reorder_udp_official_vectors PROPERTIES TIMEOUT 120)
     add_test(NAME media_large_fec_udp_official_vectors COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-large-process.py"
         --receiver $<TARGET_FILE:nsl-auth-udp-oracle>
