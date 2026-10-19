@@ -24,6 +24,9 @@ typedef struct sl_gfx_config {
     unsigned width, height;
     const char *title;
     void (*diagnostic)(const char *message); /* optional bounded callback */
+    /* Zero follows operation mode. Explicit 720/1080 exercises either output
+     * pipeline without a dock; the physical panel is still 720p. */
+    unsigned output_height;
 } sl_gfx_config;
 typedef struct sl_gfx_present_result {
     sl_gfx_result result;
@@ -64,6 +67,10 @@ bool sl_gfx_intersect(const sl_gfx_rect *, const sl_gfx_rect *, sl_gfx_rect *);
 /* Readback must be requested before recording and completed with its batch. */
 bool sl_gfx_request_readback(sl_gfx *);
 bool sl_gfx_readback(sl_gfx *, const sl_gfx_rect *, void *rgba, size_t bytes, int pitch);
+/* Native captured output, before compositor scaling. Dimensions describe this
+ * completed capture, not the current operation mode. NULL pixels queries size. */
+bool sl_gfx_readback_native(sl_gfx *, void *rgba, size_t bytes, int pitch, unsigned *width,
+                            unsigned *height);
 
 /* Exit-only SDK idle boundary. Does not treat a timeout as safe release. */
 void sl_gfx_finish(sl_gfx *);

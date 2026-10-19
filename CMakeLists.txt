@@ -24,6 +24,7 @@ message(STATUS "nsteamlink target platform: ${NSL_PLATFORM}")
 option(NSL_ADAPTIVE_PACING "Enable legacy publication estimator metrics on deko (official timestamp gate is unconditional)" ON)
 option(NSL_DIAGNOSTICS "Compile advanced diagnostics, UDP console and log collection" OFF)
 option(NSL_BUILD_TOOLS "Build standalone Switch diagnostic tools" ${NSL_DIAGNOSTICS})
+option(NSL_TEST_FORCE_1080 "Build a clearly labelled manual-test app that always requests/renders 1080p" OFF)
 set(NSL_IDENTITY_DIR "${CMAKE_BINARY_DIR}/generated")
 execute_process(COMMAND "${CMAKE_COMMAND}" -DSOURCE_DIR=${CMAKE_SOURCE_DIR}
     -DOUTPUT_DIR=${NSL_IDENTITY_DIR} -DAPP_VERSION=${PROJECT_VERSION}

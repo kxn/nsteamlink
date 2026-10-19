@@ -19,15 +19,15 @@
 #define SAMPLER_OFFSET    (DESCRIPTOR_OFFSET + DESCRIPTORS * sizeof(DkImageDescriptor))
 #define DATA_BYTES        ((SAMPLER_OFFSET + 4095u + sizeof(DkSamplerDescriptor)) & ~4095u)
 #define UI_BUDGET         (64u * 1024u * 1024u)
-/* 32 MiB reserved outside images: two command/data batches, swapchain,
+/* 64 MiB reserved outside images: two command/data batches, swapchain,
  * shaders, and diagnostic readbacks. Software planes count as image bytes. */
-_Static_assert(BATCHES *(COMMAND_BYTES + DATA_BYTES) + 2 * 1280u * 736u * 4u + 65536u +
-                       BATCHES * ((1280u * 720u * 4u + 4095u) & ~4095u) <=
-                   32u * 1024u * 1024u,
-               "96 MiB graphics budget");
+_Static_assert(BATCHES *(COMMAND_BYTES + DATA_BYTES) + 2 * 1920u * 1088u * 4u + 65536u +
+                       BATCHES * ((1920u * 1080u * 4u + 4095u) & ~4095u) <=
+                   64u * 1024u * 1024u,
+               "128 MiB graphics budget including 64 MiB UI images");
 #define MAP_BUDGET     (128u * 1024u * 1024u)
 #define REFERENCES     1024
-#define READBACK_BYTES (1280u * 720u * 4u)
+#define READBACK_BYTES (1920u * 1080u * 4u)
 
 extern const unsigned char nsl_quad_vert[];
 extern const size_t nsl_quad_vert_size;
@@ -82,6 +82,7 @@ typedef struct batch {
     DkFence fence, available;
     unsigned quads, descriptors;
     bool readback_recorded;
+    unsigned readback_width, readback_height;
 #if NSL_DIAGNOSTICS
     uint64_t submitted_ticks;
     DkMemBlock timing;
@@ -111,6 +112,8 @@ struct sl_gfx {
     sl_gfx_counters counters;
     bool failed, readback_requested, readback_valid, finished;
     unsigned char *readback_cpu;
+    unsigned output_height_override, output_width, output_height;
+    unsigned readback_width, readback_height;
     sl_gfx_rect viewport, clip;
     bool clipped;
     sl_gfx_color color;
@@ -301,6 +304,8 @@ void sl_gfx_collect(sl_gfx *g) {
             if (b->readback_recorded && b->life.serial > g->readback_serial) {
                 memcpy(g->readback_cpu, dkMemBlockGetCpuAddr(b->readback), READBACK_BYTES);
                 g->readback_serial = b->life.serial;
+                g->readback_width = b->readback_width;
+                g->readback_height = b->readback_height;
                 g->readback_valid = true;
             }
             sl_batch_complete(&b->life, b->life.serial);
@@ -337,11 +342,13 @@ static void device_diagnostic(void *context, const char *where, DkResult result,
         g->failed = true;
 }
 sl_gfx *sl_gfx_create(const sl_gfx_config *config) {
-    if (config->width != 1280 || config->height != 720)
+    if (config->width != 1280 || config->height != 720 ||
+        (config->output_height && config->output_height != 720 && config->output_height != 1080))
         return NULL;
     sl_gfx *g = calloc(1, sizeof(*g));
     if (!g)
         return NULL;
+    g->output_height_override = config->output_height;
     DkDeviceMaker device;
     dkDeviceMakerDefaults(&device);
     g->diagnostic = config->diagnostic;
@@ -361,8 +368,10 @@ sl_gfx *sl_gfx_create(const sl_gfx_config *config) {
     DkImageLayoutMaker maker;
     dkImageLayoutMakerDefaults(&maker, g->device);
     maker.format = DkImageFormat_RGBA8_Unorm;
-    maker.dimensions[0] = 1280;
-    maker.dimensions[1] = 720;
+    /* Allocate once at the maximum. Crop selects 720p/1080p without replacing
+     * swapchains, buffers or in-flight decoder references on a dock edge. */
+    maker.dimensions[0] = 1920;
+    maker.dimensions[1] = 1080;
     maker.flags = DkImageFlags_UsageRender | DkImageFlags_UsagePresent;
     DkImageLayout layout;
     dkImageLayoutInitialize(&layout, &maker);
@@ -381,6 +390,12 @@ sl_gfx *sl_gfx_create(const sl_gfx_config *config) {
     g->swapchain = dkSwapchainCreate(&swapchain);
     if (!g->swapchain)
         goto fail;
+    unsigned height = config->output_height ? config->output_height
+                      : appletGetOperationMode() == AppletOperationMode_Console ? 1080
+                                                                                : 720;
+    g->output_height = height;
+    g->output_width = height * 16 / 9;
+    dkSwapchainSetCrop(g->swapchain, 0, 0, g->output_width, g->output_height);
     g->code = memory(g, 65536,
                      DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached | DkMemBlockFlags_Code,
                      NULL);
@@ -440,6 +455,16 @@ sl_gfx_result sl_gfx_begin(sl_gfx *g) {
         ++g->counters.no_free_batch;
 #endif
         return SL_GFX_BUSY;
+    }
+    /* libnx's operation-mode getter reads its event-pump cache; no IPC here.
+     * Each queued buffer captures its crop, so older submissions stay valid. */
+    unsigned height = g->output_height_override ? g->output_height_override
+                      : appletGetOperationMode() == AppletOperationMode_Console ? 1080
+                                                                                : 720;
+    if (height != g->output_height) {
+        g->output_height = height;
+        g->output_width = height * 16 / 9;
+        dkSwapchainSetCrop(g->swapchain, 0, 0, g->output_width, g->output_height);
     }
     if (g->serial == UINT64_MAX || !sl_batch_begin(&b->life, ++g->serial)) {
         g->failed = true;
@@ -507,13 +532,15 @@ sl_gfx_present_result sl_gfx_present(sl_gfx *g) {
     if (g->readback_requested) {
         DkImageView source;
         dkImageViewDefaults(&source, &g->outputs[g->output]);
-        DkImageRect region = {0, 0, 0, 1280, 720, 1};
-        DkCopyBuf destination = {dkMemBlockGetGpuAddr(b->readback), 1280 * 4, 0};
+        DkImageRect region = {0, 0, 0, g->output_width, g->output_height, 1};
+        DkCopyBuf destination = {dkMemBlockGetGpuAddr(b->readback), g->output_width * 4, 0};
         dkCmdBufBarrier(b->commands, DkBarrier_Full, 0);
         if (g->diagnostic && b->life.serial == 1)
             g->diagnostic("present: record-readback");
         dkCmdBufCopyImageToBuffer(b->commands, &source, &region, &destination, 0);
         b->readback_recorded = true;
+        b->readback_width = g->output_width;
+        b->readback_height = g->output_height;
     }
     if (g->diagnostic && b->life.serial == 1)
         g->diagnostic("present: record-fence");
@@ -729,8 +756,8 @@ int sl_gfx_clear(sl_gfx *g) {
     if (!g->recording)
         return -1;
     /* Clear the entire attachment, independent of the previous draw's scissor. */
-    unsigned width = g->target ? g->target->width : 1280;
-    unsigned height = g->target ? g->target->height : 720;
+    unsigned width = g->target ? g->target->width : g->output_width;
+    unsigned height = g->target ? g->target->height : g->output_height;
     DkViewport viewport = {0, 0, (float)width, (float)height, 0, 1};
     DkScissor scissor = {0, 0, width, height};
     dkCmdBufSetViewports(g->recording->commands, 0, &viewport, 1);
@@ -765,13 +792,13 @@ static bool draw_quad(sl_gfx *g, params *p, const DkImage *first, const DkImage 
     sl_gfx_intersect(&bounds, &target, &bounds);
     if (!bounds.w || !bounds.h)
         return true;
-    DkViewport viewport = {(float)g->viewport.x,
-                           (float)g->viewport.y,
-                           (float)g->viewport.w,
-                           (float)g->viewport.h,
-                           0,
-                           1};
-    DkScissor scissor = {bounds.x, bounds.y, bounds.w, bounds.h};
+    float sx = g->target ? 1.f : g->output_width / 1280.f;
+    float sy = g->target ? 1.f : g->output_height / 720.f;
+    DkViewport viewport = {
+        g->viewport.x * sx, g->viewport.y * sy, g->viewport.w * sx, g->viewport.h * sy, 0, 1};
+    unsigned left = (unsigned)floorf(bounds.x * sx), top = (unsigned)floorf(bounds.y * sy);
+    DkScissor scissor = {left, top, (unsigned)ceilf((bounds.x + bounds.w) * sx) - left,
+                         (unsigned)ceilf((bounds.y + bounds.h) * sy) - top};
     dkCmdBufSetViewports(b->commands, 0, &viewport, 1);
     dkCmdBufSetScissors(b->commands, 0, &scissor, 1);
     DkColorState color;
@@ -926,14 +953,23 @@ bool sl_gfx_request_readback(sl_gfx *g) {
 }
 bool sl_gfx_readback(sl_gfx *g, const sl_gfx_rect *r, void *pixels, size_t bytes, int pitch) {
     sl_gfx_collect(g);
-    sl_gfx_rect box = r ? *r : (sl_gfx_rect){0, 0, 1280, 720};
-    if (!g->readback_valid || box.x < 0 || box.y < 0 || box.w <= 0 || box.h <= 0 ||
-        box.w > 1280 - box.x || box.h > 720 - box.y || pitch < box.w * 4 ||
-        bytes < (size_t)pitch * (box.h - 1) + (size_t)box.w * 4)
+    return g->readback_valid && sl_gfx_readback_copy(g->readback_cpu, g->readback_width,
+                                                     g->readback_height, r, pixels, bytes, pitch);
+}
+bool sl_gfx_readback_native(sl_gfx *g, void *pixels, size_t bytes, int pitch, unsigned *width,
+                            unsigned *height) {
+    sl_gfx_collect(g);
+    if (!g->readback_valid || !width || !height)
         return false;
-    for (int y = 0; y < box.h; ++y)
+    *width = g->readback_width;
+    *height = g->readback_height;
+    if (!pixels)
+        return true;
+    if (pitch < (int)*width * 4 || bytes < (size_t)pitch * (*height - 1) + (size_t)*width * 4)
+        return false;
+    for (unsigned y = 0; y < *height; ++y)
         memcpy((unsigned char *)pixels + (size_t)y * pitch,
-               g->readback_cpu + ((size_t)(box.y + y) * 1280 + box.x) * 4, (size_t)box.w * 4);
+               g->readback_cpu + (size_t)y * *width * 4, (size_t)*width * 4);
     return true;
 }
 static imported_map *import_surface(sl_gfx *g, sl_video_frame *frame, const sl_nv_surface *surface,

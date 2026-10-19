@@ -1,6 +1,7 @@
 /* Self-contained G1 diagnostic. No Steam session/authentication dependency. */
 #include "build_identity.h"
 #include "gfx_backend.h"
+#include "resolution_pixels.h"
 #include "session/frame_tracker.h"
 #include <SDL.h>
 #include <arpa/inet.h>
@@ -24,6 +25,7 @@
 static unsigned char *golden[FRAMES], *readback;
 static uint16_t golden_id[FRAMES];
 static unsigned golden_count;
+static unsigned output_height = 720;
 static int log_fd = -1;
 static char transcript[1024 * 1024];
 static size_t transcript_size, transmitted;
@@ -565,8 +567,11 @@ static bool run_case(const fixture_data *fixture, unsigned iteration, bool measu
     if (!pipeline)
         goto cleanup;
     enter("gfx-create");
-    gfx = sl_gfx_create(&(sl_gfx_config){
-        .width = 1280, .height = 720, .title = "Video probe", .diagnostic = diagnostic});
+    gfx = sl_gfx_create(&(sl_gfx_config){.width = 1280,
+                                         .height = 720,
+                                         .title = "Video probe",
+                                         .diagnostic = diagnostic,
+                                         .output_height = output_height});
     if (!gfx)
         goto cleanup;
     enter("readback-allocate");
@@ -597,6 +602,11 @@ static bool run_case(const fixture_data *fixture, unsigned iteration, bool measu
         if (!benchmark(gfx, held, session + 3, iteration >= 4))
             goto cleanup;
     }
+    enter("resolution-pixels");
+    if (!resolution_pixels(gfx, output_height))
+        goto cleanup;
+    trace("RESOLUTION_ORACLE output=%ux%u native_detail=PASS", output_height * 16 / 9,
+          output_height);
     ok = true;
 cleanup:;
     const char *failed = ok ? "none" : stage;
@@ -642,13 +652,20 @@ cleanup:;
     return ok;
 }
 int main(int argc, char **argv) {
+    if (argc > 2) {
+        if (!strcmp(argv[2], "1080"))
+            output_height = 1080;
+        else if (strcmp(argv[2], "720"))
+            return 1;
+    }
     run_id = armGetSystemTick();
     bool sockets = R_SUCCEEDED(socketInitializeDefault());
     if (sockets)
         connect_log();
-    trace("PROBE_BEGIN build=%s fixture=%s avcodec=%u avutil=%u sockets=%d transport=%d",
-          NSL_GIT_COMMIT, argc > 1 ? argv[1] : "padding720", avcodec_version(), avutil_version(),
-          sockets, log_fd >= 0);
+    trace("PROBE_BEGIN build=%s fixture=%s output_height=%u avcodec=%u avutil=%u sockets=%d "
+          "transport=%d",
+          NSL_GIT_COMMIT, argc > 1 ? argv[1] : "padding720", output_height, avcodec_version(),
+          avutil_version(), sockets, log_fd >= 0);
     /* Retrieve the old diagnostic automatically, before replacing its file. */
     FILE *old = fopen("sdmc:/switch/nsteamlink-video-probe.log", "r");
     if (old) {

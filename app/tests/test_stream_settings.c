@@ -250,7 +250,7 @@ static void request_limits(void) {
     assert(sl_stream_settings_init(&settings, &view));
     publish(&settings, NULL, 0);
     IHS_Session *s = session(&settings);
-    const sl_stream_request_limits limits = {1280, 720, 60, false};
+    const sl_stream_request_limits limits = {.width = 1280, .height = 720, .fps = 60};
     assert(sl_stream_settings_apply_limited(&settings, s, &limits));
     assert(s->clientConfig->desired_resolution_x == 1280 &&
            s->clientConfig->desired_resolution_y == 720 &&

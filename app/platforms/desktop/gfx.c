@@ -19,15 +19,20 @@ struct sl_gfx {
     sl_gfx_counters counters;
     bool recording, failed, readback_requested, readback_valid;
     unsigned char *readback;
+    unsigned output_width, output_height;
 };
 static SDL_Rect rect(const sl_gfx_rect *r) {
     return (SDL_Rect){r->x, r->y, r->w, r->h};
 }
 sl_gfx *sl_gfx_create(const sl_gfx_config *config) {
+    if (config->output_height && config->output_height != 720 && config->output_height != 1080)
+        return NULL;
     sl_gfx *g = calloc(1, sizeof(*g));
     if (!g)
         return NULL;
-    g->window = SDL_CreateWindow(config->title, 0, 0, config->width, config->height, 0);
+    g->output_height = config->output_height ? config->output_height : config->height;
+    g->output_width = config->output_height ? config->output_height * 16 / 9 : config->width;
+    g->window = SDL_CreateWindow(config->title, 0, 0, g->output_width, g->output_height, 0);
     if (!g->window)
         goto fail;
     g->renderer =
@@ -54,7 +59,7 @@ sl_gfx_present_result sl_gfx_present(sl_gfx *g) {
         return (sl_gfx_present_result){.result = SL_GFX_ERROR};
     if (g->readback_requested)
         g->readback_valid = SDL_RenderReadPixels(g->renderer, NULL, SDL_PIXELFORMAT_RGBA32,
-                                                 g->readback, 1280 * 4) == 0;
+                                                 g->readback, g->output_width * 4) == 0;
     SDL_RenderPresent(g->renderer);
     g->recording = false;
     return (sl_gfx_present_result){SL_GFX_READY, true, true, ++g->serial};
@@ -155,19 +160,27 @@ int sl_gfx_clip(sl_gfx *g, const sl_gfx_rect *r) {
 }
 bool sl_gfx_request_readback(sl_gfx *g) {
     if (!g->readback)
-        g->readback = malloc(1280u * 720u * 4u);
+        g->readback = malloc((size_t)g->output_width * g->output_height * 4);
     g->readback_requested = g->readback != NULL;
     return g->readback_requested;
 }
 bool sl_gfx_readback(sl_gfx *g, const sl_gfx_rect *r, void *pixels, size_t bytes, int pitch) {
-    sl_gfx_rect box = r ? *r : (sl_gfx_rect){0, 0, 1280, 720};
-    if (!g->readback_valid || box.x < 0 || box.y < 0 || box.w <= 0 || box.h <= 0 ||
-        box.w > 1280 - box.x || box.h > 720 - box.y || pitch < box.w * 4 ||
-        bytes < (size_t)pitch * (box.h - 1) + (size_t)box.w * 4)
+    return g->readback_valid && sl_gfx_readback_copy(g->readback, g->output_width, g->output_height,
+                                                     r, pixels, bytes, pitch);
+}
+bool sl_gfx_readback_native(sl_gfx *g, void *pixels, size_t bytes, int pitch, unsigned *width,
+                            unsigned *height) {
+    if (!g->readback_valid || !width || !height)
         return false;
-    for (int y = 0; y < box.h; ++y)
-        memcpy((unsigned char *)pixels + (size_t)y * pitch,
-               g->readback + ((size_t)(box.y + y) * 1280 + box.x) * 4, (size_t)box.w * 4);
+    *width = g->output_width;
+    *height = g->output_height;
+    if (!pixels)
+        return true;
+    if (pitch < (int)*width * 4 || bytes < (size_t)pitch * (*height - 1) + (size_t)*width * 4)
+        return false;
+    for (unsigned y = 0; y < *height; ++y)
+        memcpy((unsigned char *)pixels + (size_t)y * pitch, g->readback + (size_t)y * *width * 4,
+               (size_t)*width * 4);
     return true;
 }
 bool sl_gfx_video(sl_gfx *g, sl_video_frame *lease) {

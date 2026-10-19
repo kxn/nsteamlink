@@ -191,6 +191,7 @@ static void emit(sl_ui_model *m, sl_command_type type) {
     m->command.quality = m->store.quality;
     m->command.bitrate_kbps = m->store.bitrate_kbps;
     m->command.unreliable_fec = m->store.unreliable_fec;
+    m->command.resolution = m->resolution;
     m->command.language = sl_i18n_language();
     m->command.update_check = m->update_check;
 }
@@ -381,6 +382,14 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
         push(m, SL_QUALITY);
         m->focus = 100 + (m->store.quality <= 2 ? (int)m->store.quality : 0);
         break;
+    case SL_OPEN_RESOLUTION:
+        if (m->page == SL_SETTINGS) {
+            push(m, SL_RESOLUTION);
+            m->focus = m->resolution == SL_RESOLUTION_1080  ? 102
+                       : m->resolution == SL_RESOLUTION_720 ? 101
+                                                            : 100;
+        }
+        break;
     case SL_OPEN_FORGET:
         if (h)
             push(m, SL_FORGET);
@@ -508,6 +517,13 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
     case SL_SET_QUALITY:
         if (m->page == SL_QUALITY && arg >= 0 && arg <= 2) {
             m->store.quality = (uint32_t)arg;
+            emit(m, SL_CMD_SAVE);
+            back(m);
+        }
+        break;
+    case SL_SET_RESOLUTION:
+        if (m->page == SL_RESOLUTION && sl_resolution_valid((unsigned)arg)) {
+            m->resolution = (sl_resolution)arg;
             emit(m, SL_CMD_SAVE);
             back(m);
         }

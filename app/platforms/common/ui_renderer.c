@@ -488,6 +488,8 @@ static sl_gfx_color action_color(sl_action a) {
     case SL_SET_BANDWIDTH:
     case SL_OPEN_QUALITY:
     case SL_SET_QUALITY:
+    case SL_OPEN_RESOLUTION:
+    case SL_SET_RESOLUTION:
         return violet;
     case SL_OPEN_MANUAL:
         return amber;
@@ -544,7 +546,7 @@ static void action_icon(sl_gfx *r, sl_action a, int x, int y, sl_gfx_color c) {
                  y + 14 + 12 * sinf(v), c);
         }
         line(r, x + 2, y + 14, x + 26, y + 14, c);
-    } else if (a == SL_OPEN_QUALITY || a == SL_OPEN_MANUAL) {
+    } else if (a == SL_OPEN_QUALITY || a == SL_OPEN_RESOLUTION || a == SL_OPEN_MANUAL) {
         monitor(r, x + 1, y + 3, 28, c);
     } else {
         rounded(r, (sl_gfx_rect){x + 2, y + 2, 26, 26}, 13, c);
@@ -873,14 +875,15 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
         } else if (menu_row) {
             if (focused)
                 rounded(r->renderer, box, 8, fg);
-            if (c->action == SL_SET_QUALITY || c->action == SL_SET_BANDWIDTH ||
-                c->action == SL_SET_LANGUAGE) {
+            if (c->action == SL_SET_QUALITY || c->action == SL_SET_RESOLUTION ||
+                c->action == SL_SET_BANDWIDTH || c->action == SL_SET_LANGUAGE) {
                 int x = box.x + 23, y = box.y + (box.h - 26) / 2;
                 sl_gfx_color surface = focused ? fg : panel;
                 sl_gfx_color ring = focused ? bg : muted;
                 rounded(r->renderer, (sl_gfx_rect){x, y, 26, 26}, 13, ring);
                 rounded(r->renderer, (sl_gfx_rect){x + 2, y + 2, 22, 22}, 11, surface);
-                if (c->arg == (c->action == SL_SET_LANGUAGE    ? (int)sl_i18n_language()
+                if (c->arg == (c->action == SL_SET_RESOLUTION  ? (int)m->resolution
+                               : c->action == SL_SET_LANGUAGE  ? (int)sl_i18n_language()
                                : c->action == SL_SET_BANDWIDTH ? (int)m->store.bitrate_kbps
                                                                : (int)m->store.quality))
                     rounded(r->renderer, (sl_gfx_rect){x + 6, y + 6, 14, 14}, 7,
@@ -962,7 +965,8 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
                 rounded(r->renderer, (sl_gfx_rect){tx + (enabled ? 25 : 3), ty + 3, 22, 22}, 11,
                         bg);
             } else if (c->action != SL_BACK && c->action != SL_SET_QUALITY &&
-                       c->action != SL_SET_BANDWIDTH && c->action != SL_SET_LANGUAGE)
+                       c->action != SL_SET_RESOLUTION && c->action != SL_SET_BANDWIDTH &&
+                       c->action != SL_SET_LANGUAGE)
                 chevron(r->renderer, box.x + box.w - 35, box.y + box.h / 2, focused ? bg : muted);
         }
         sl_gfx_clip(r->renderer, card ? &clip : &box);

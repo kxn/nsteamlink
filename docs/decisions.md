@@ -2187,3 +2187,45 @@ Decision：
 
 待验证：Switch 真机上的完整查询、下载、替换与重新启动；hbmenu 与 HOME 入口两种启动方式下
 argv[0] 的实际取值；下载中途断网、SD 卡空间不足时的提示与回滚结果。
+
+
+## D-061：区分串流分辨率、输出缓冲与物理显示（2026-10-19）
+
+Evidence：`runtime.c` 的开流请求、Session 配置副本与 configuring callback 原本均限制
+1280×720；`switch/gfx.c` 的 swapchain 也固定 1280×720。因此只修改请求不能得到原生
+1080p 输出。`video_pipeline.c`、`switch/video_surface.c` 已接纳最高 1920×1080，NV12
+backing 的 pitch/storage-height 单独校验；`padding1080.h264` 与 framemd5 是已有合成 fixture。
+`ihslib/src/client/streaming.c:StreamingRequestTimer` 序列化 maximum_resolution_x/y，
+`ch_control_negotiation.c:OnNegotiationInit` 从完整 client config 构造 SetConfig，
+这两处是分辨率策略的接入点，不改变授权或连接 PIN 的语义。
+
+Evidence：libnx `AppletOperationMode_Console` 表示 dock/TV，不能用 APM 性能档位代替。
+[deko3d Swapchain::initialize/presentImage/setCrop](https://github.com/devkitPro/deko3d/blob/master/source/dk_swapchain.cpp)
+根据 image 配置 NWindow 尺寸，提供 crop 更新；
+[libnx nwindowQueueBuffer](https://github.com/switchbrew/libnx/blob/master/nx/source/display/native_window.c)
+将当前 crop 拷入每个 queued buffer 的输入。模式改变不要求销毁已有 buffer。
+`appletGetOperationMode` 读取由 applet 消息循环更新的缓存，不增加每帧 IPC。
+
+Conclusion：内屏物理尺寸不限制编码/解码尺寸；可以在掌机接收/解码 1080p 再缩放显示。
+撤回 D-005 背景与 kickoff 中把“1080p 必须超频”当作普遍硬限制的断言；现有源码/离线像素
+证据不能证明真机 1080p60 性能，也不能证明所有码率都需要超频。掌机和底座的频率、负载不同，
+掌机管线测试不能替代底座帧率、功耗、HDMI 物理输出或热插拔验收。
+
+Decision：
+
+1. 用户可选自动、720p、1080p。自动在每次普通开流时按 operation mode 选择掌机 720p / 底座
+   1080p，H264、最高 60 fps，不超频。手动 1080p 在掌机也可用。选项位于设置→分辨率。
+2. 选择写入独立 `video.conf`（resolution=0/720/1080），与 profile.bin 身份布局、host 写回的
+   完整 streaming_settings.bin 分离。保留完整 host 配置与未知字段；有效请求尺寸覆盖此前会话
+   保存的 desired_resolution_x/y，避免自动被上一次 720p 限制锁住。
+3. 从普通 ticket 到 SetConfig 使用同一份尺寸快照；编辑在下次连接生效。插拔底座只改变当前
+   本地输出，视频保持原协商尺寸，重连后再选择。测网继续使用原有专用 Session 和请求上限。
+4. 两张最大 1080p present image 只分配一次；每次提交以掌机 720p / 底座 1080p 的 crop 与
+   viewport/scissor 渲染，保持原 1280×720 逻辑 UI/输入。视频直接采样原始解码面，没有中间
+   720p 视频 target。不因模式变化等待 GPU idle、替换 swapchain 或停止/重建 decoder。
+5. 普通截图仍为逻辑 720p；native readback 记录完成提交的真实尺寸，不读取后来变化的模式。
+   Switch probe 可强制 1080p 输出，内置软件/硬件 fixture、逐像素高频细节 oracle、清理与资源
+   统计；由脚本自动部署和收集结果，物理显示/loader 返回保持独立证据边界。
+6. 正式构建保留自动/720p/1080p 三个选择，默认自动。单独的 `NSL_TEST_FORCE_1080=ON`
+   手测构建固定请求/渲染 1080p，界面及 NACP 标明测试版；强制值不写入 video.conf。
+   测试构建不运行自更新器，使用独立 NRO 文件名，避免替换正式 HOME 入口目标。

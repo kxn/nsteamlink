@@ -127,7 +127,7 @@ cd ~/hello-switch && make    # 产出 hello-switch.nro
 
 - `.nro` 放 SD 卡 `sd:/switch/` 下，从 hbmenu 启动。
 - **串流类应用必须经 Title Redirection 方式启动 hbmenu**（获得完整内存访问；applet 模式内存受限不够用）。Moonlight-Switch README 同款要求。
-- 高码率 1080p 需超频（sys-clk 或 4IFIR 整合包）；720p60 默认频率可达。
+- 1080p 高码率的默认频率性能需要真机测量；不将超频作为功能前置条件（D-061）。
 
 ---
 
@@ -148,7 +148,8 @@ Switch（真机联调阶段加入）
 
 ### 性能预期（对齐 Moonlight-Switch 实测）
 
-- 默认目标 **720p60**；1080p 高码率需 CPU/GPU 超频。这是 Tegra X1 的物理限制，不是实现缺陷。
+- 自动模式目标为掌机 **720p60**、底座 **1080p60**，可手动指定 720p/1080p。
+  1080p 默认频率下的稳定帧率与延迟需要实测，不预先认定必须超频（D-061）。
 - NVDEC 硬解 H264 是既定路线（软件解不可行），方案已被 Moonlight-Switch 验证。
 
 ---

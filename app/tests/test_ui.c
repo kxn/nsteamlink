@@ -395,8 +395,9 @@ static void actionable_settings(void) {
     assert(m.layout.count == 4); /* Settings, HOME shortcut, update check and back. */
     assert(m.layout.controls[2].action == SL_UPDATE_CHECK);
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
-    assert(m.layout.count == 7); /* Quality, bandwidth, sound, language, FEC, manual, back. */
-    assert(m.layout.controls[5].action == SL_OPEN_MANUAL);
+    assert(m.layout.count ==
+           8); /* Quality, resolution, bandwidth, FEC, sound, language, manual, back. */
+    assert(m.layout.controls[6].action == SL_OPEN_MANUAL);
     sl_ui_action(&m, SL_OPEN_MANUAL, 0);
     assert(m.page == SL_MANUAL);
     sl_ui_action(&m, SL_BACK, 0);
@@ -426,7 +427,7 @@ static void actionable_settings(void) {
     sl_ui_connected(&m);
     sl_ui_action(&m, SL_OPEN_MENU, 0);
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
-    assert(m.layout.count == 6); /* Sound, quality, bandwidth, language, FEC and back. */
+    assert(m.layout.count == 7); /* Settings omit manual host entry while streaming. */
     sl_ui_action(&m, SL_FEC, 0);
     assert(!m.store.unreliable_fec && sl_ui_take_command(&m, &command));
     assert(command.type == SL_CMD_SAVE && !command.unreliable_fec);
