@@ -13262,3 +13262,10 @@ join。旧f5d984d发送模块及移除generation guard的实际模块重链接�
 新generation，再pump，而非手工增加epoch或将任意空pump当作新轮。参考期望值
 保持不变。`n`是本地idle pump、`g`是声明的gate、`w`仅写入实际UDP而不等待消费，
 这些为受控测试入口，不是新增产品接口、Steam消息或用户操作。
+
+令牌producer的失败观察也必须处于同一逻辑阶段。419bf6d的完整回归中，Native
+peer已收到Cancel，但停止任务仍待end callback，采样为pending=true/failed=0；
+这不能与原failed producer完整返回后的状态直接比较。令牌oracle在Cancel后等待
+实际owner slot退役及实际失败callback（最多2秒，超期仍失败），不替换Stop或
+callback，不放宽令牌/PIN字节、错误码、计数或pending=false的原参考期望。生产
+退出/清理顺序仍由实际worker与timer实现承担，不能从wire到达推导全部清理结束。
