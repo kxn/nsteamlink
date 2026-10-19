@@ -756,6 +756,13 @@ if(NSL_DIAGNOSTICS)
         add_test(NAME live_media_probe_fec_loss COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/scripts/test-live-media-fec-loss.py"
             --receiver "$<TARGET_FILE:nsl-live-media-fec-loss-tests>")
+        add_executable(nsl-live-media-gap-observer-tests tests/test_live_media_gap_observer.c)
+        target_include_directories(nsl-live-media-gap-observer-tests PRIVATE
+            ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+        target_compile_options(nsl-live-media-gap-observer-tests PRIVATE -Wall -Wextra -Werror
+            -Wno-unknown-pragmas -UNDEBUG)
+        target_link_libraries(nsl-live-media-gap-observer-tests PRIVATE ihslib)
+        add_test(NAME live_media_probe_gap_observer COMMAND nsl-live-media-gap-observer-tests)
     endif()
 endif()
 if(NSL_PLATFORM STREQUAL "switch" AND NSL_DIAGNOSTICS)

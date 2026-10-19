@@ -6,6 +6,7 @@
 #include "live_media_config_observer.h"
 #include "live_media_fec_loss.h"
 #include "live_media_fec_settings.h"
+#include "live_media_gap_observer.h"
 #include "media.h"
 #include "platform/events.h"
 #include "platform/runtime.h"
@@ -122,10 +123,20 @@ void __wrap_IHS_SessionUnreliableReceived(IHS_Session *s, IHS_SessionPacket *p) 
 bool __real_IHS_FECReceiverAdd(IHS_FECReceiver *, const IHS_SessionPacket *, IHS_SessionFrame *);
 bool __wrap_IHS_FECReceiverAdd(IHS_FECReceiver *r, const IHS_SessionPacket *p,
                                IHS_SessionFrame *f) {
+    bool selected = probe_loss.selected; /* receive-owner state only */
+    uint64_t submissions = atomic_load_explicit(&submit_returns, memory_order_relaxed);
+    /* Refuse this diagnostic if recovery already happened before its loss;
+     * queued startup requests could otherwise be misattributed to the gap. */
+    if (probe_loss.drop_group && atomic_load(&video_requests))
+        submissions = 0;
     if (probe_fec_loss_before(&probe_loss, r, p, ordinary_rx,
                               atomic_load_explicit(&video_channel, memory_order_relaxed),
-                              atomic_load_explicit(&submit_returns, memory_order_relaxed)))
+                              submissions)) {
+        if (!selected && probe_loss.drop_group)
+            probe_gap_loss(probe_gap_header(probe_loss.channel, probe_loss.expected,
+                                             probe_loss.width), sl_system_now());
         return false;
+    }
     bool ready = __real_IHS_FECReceiverAdd(r, p, f);
     if (ordinary_rx)
         probe_fec_loss_after(&probe_loss, r, p, f, ready);
@@ -144,16 +155,29 @@ void __wrap_IHS_SessionChannelDataReceiveReliableFrame(IHS_SessionChannel *c, IH
     if (watch_video(c)) {
         atomic_fetch_add_explicit(&video_complete, 1, memory_order_relaxed);
         video_header(f, &video_key, &video_finish, &video_last);
+        if (probe_loss.drop_group && f->body.data && f->body.size >= 20 &&
+            !atomic_load(&probe_gap.key) && atomic_load(&probe_gap.sent_ms)) {
+            const uint8_t *b = IHS_BufferPointer(&f->body);
+            if (b[15] & VideoFrameFlagKeyFrame)
+                probe_gap_key(c->id, b, f->body.size, sl_system_now());
+        }
     }
     __real_IHS_SessionChannelDataReceiveReliableFrame(c, f);
 }
 void __real_IHS_SessionChannelDataReceiveFrame(IHS_SessionChannelData *, IHS_SessionFrame *);
 void __wrap_IHS_SessionChannelDataReceiveFrame(IHS_SessionChannelData *c, IHS_SessionFrame *f) {
-    if (watch_video(&c->base)) {
+    bool watched = watch_video(&c->base);
+    probe_gap_scope scope = {0};
+    const probe_gap_scope *previous = probe_gap_current;
+    if (watched) {
         atomic_fetch_add_explicit(&video_worker, 1, memory_order_relaxed);
         video_header(f, &worker_key, &worker_finish, &worker_last);
+        if (probe_loss.drop_group && f->body.data && f->body.size >= 20)
+            scope.input = probe_gap_header(c->base.id, IHS_BufferPointer(&f->body), f->body.size);
     }
+    probe_gap_current = &scope;
     __real_IHS_SessionChannelDataReceiveFrame(c, f);
+    probe_gap_current = previous;
 }
 IHS_StreamVideoSubmitResult __real_sl_media_video_submit_tracked(IHS_Session *,
                                                                  const IHS_VideoEpochInfo *,
@@ -179,6 +203,13 @@ __wrap_sl_media_video_submit_tracked(IHS_Session *s, const IHS_VideoEpochInfo *e
         atomic_fetch_add_explicit(&submit_returns, 1, memory_order_relaxed);
         if (result == IHS_StreamVideoSubmitError)
             atomic_fetch_add_explicit(&submit_errors, 1, memory_order_relaxed);
+        if (probe_loss.drop_group) {
+            uint64_t loss = atomic_load(&probe_gap.loss), key = atomic_load(&probe_gap.key);
+            bool interesting = (loss && id == (uint16_t)loss) ||
+                               (key && id == (uint16_t)key && !atomic_load(&probe_gap.submitted));
+            if (interesting && probe_gap_submit(id, flags, result, sl_system_now()))
+                atomic_store_explicit(&probe_loss.witnessed, true, memory_order_release);
+        }
     }
     return result;
 }
@@ -207,8 +238,11 @@ void __real_IHS_SessionChannelDataLost(IHS_SessionChannel *);
 void __wrap_IHS_SessionChannelDataLost(IHS_SessionChannel *c) {
     if (c->id >= 3 && !c->session->networkTest.mode)
         atomic_fetch_add_explicit(&recovery, 1, memory_order_relaxed);
-    if (watch_video(c))
+    if (watch_video(c)) {
         atomic_fetch_add_explicit(&video_requests, 1, memory_order_relaxed);
+        if (probe_loss.drop_group)
+            probe_gap_request(c->id, sl_system_now());
+    }
     __real_IHS_SessionChannelDataLost(c);
 }
 bool __real_IHS_UDPSocketSend(IHS_UDPSocket *, const IHS_UDPPacket *);
@@ -224,8 +258,11 @@ bool __wrap_IHS_UDPSocketSend(IHS_UDPSocket *s, const IHS_UDPPacket *p) {
         (b[0] & 127) == IHS_SessionPacketTypeUnreliable && b[13] == k_EStreamDataLost;
     bool sent = __real_IHS_UDPSocketSend(s, p);
     probe_config_socket(s, p, sent);
-    if (video_request)
+    if (video_request) {
         atomic_fetch_add_explicit(sent ? &request_sent : &request_failed, 1, memory_order_relaxed);
+        if (probe_loss.drop_group)
+            probe_gap_socket(sent, sl_system_now());
+    }
     if (watched)
         atomic_fetch_add_explicit(sent ? &feedback : &send_fail, 1, memory_order_relaxed);
     return sent;
@@ -312,6 +349,8 @@ int main(int argc, char **argv) {
     const char *loss_mode = argc == 5 ? argv[4] : "none";
     if (!strcmp(loss_mode, "drop-one") && probe_fec_mode == 1)
         probe_loss.enabled = true;
+    else if (!strcmp(loss_mode, "drop-group") && probe_fec_mode == 1)
+        probe_loss.enabled = probe_loss.drop_group = true;
     else if (strcmp(loss_mode, "none"))
         return 2;
     char *end;
@@ -321,7 +360,7 @@ int main(int argc, char **argv) {
     if (!sl_system_init())
         return 1;
     run_id = sl_system_now();
-    record("BEGIN", "build=%s host=%s seconds=%lu observer=4 fec=%s loss=%s", NSL_GIT_COMMIT,
+    record("BEGIN", "build=%s host=%s seconds=%lu observer=5 fec=%s loss=%s", NSL_GIT_COMMIT,
            argv[1], seconds, fec_mode, loss_mode);
     const char *failure = "profile_missing";
     sl_runtime *runtime = NULL;
@@ -526,12 +565,40 @@ cleanup:
     /* Owner is joined: these plain witness fields can now be read safely.
      * Playback continuing after a repaired body is distinct from a checksum
      * of the decoded/repaired image or proof of physical scanout. */
-    if (passed && probe_loss.enabled &&
+    if (passed && probe_loss.enabled && !probe_loss.drop_group &&
         (!probe_loss.selected || !probe_loss.completed || !probe_loss.matched ||
          probe_loss.conflict || probe_loss.replaced || after_decoded < 10 || after_presented < 10)) {
         passed = false;
         failure = "fec_repair_unverified";
     }
+    if (passed && probe_loss.drop_group &&
+        (!probe_loss.selected || probe_loss.completed || probe_loss.conflict ||
+         probe_loss.blocked_unique != probe_loss.data + probe_loss.parity ||
+         atomic_load(&probe_gap.unscoped) || !atomic_load(&probe_gap.calls) ||
+         atomic_load(&probe_gap.calls) != atomic_load(&video_requests) ||
+         atomic_load(&probe_gap.sent) != atomic_load(&probe_gap.calls) ||
+         atomic_load(&probe_gap.sent) != atomic_load(&request_sent) ||
+         atomic_load(&probe_gap.failed) || atomic_load(&request_failed) ||
+         !atomic_load(&probe_gap.submitted) ||
+         atomic_load(&probe_gap.lost_submits) || after_decoded < 10 || after_presented < 10)) {
+        passed = false;
+        failure = "key_recovery_unverified";
+    }
+    record("GROUPDROP", "unique=%u loss=%" PRIuFAST64,
+           probe_loss.drop_group ? probe_loss.blocked_unique : 0, atomic_load(&probe_gap.loss));
+    record("GAPFLOW", "calls=%" PRIuFAST64 " unscoped=%" PRIuFAST64 " sent=%" PRIuFAST64
+                      " failed=%" PRIuFAST64 " producer=%" PRIuFAST64,
+           atomic_load(&probe_gap.calls), atomic_load(&probe_gap.unscoped),
+           atomic_load(&probe_gap.sent), atomic_load(&probe_gap.failed),
+           atomic_load(&probe_gap.producer));
+    record("GAPKEY", "header=%" PRIuFAST64 " submitted=%u lost_submits=%" PRIuFAST64,
+           atomic_load(&probe_gap.key), atomic_load(&probe_gap.submitted),
+           atomic_load(&probe_gap.lost_submits));
+    record("GAPTIME", "loss=%" PRIuFAST64 " producer=%" PRIuFAST64 " sent=%" PRIuFAST64
+                      " key=%" PRIuFAST64 " submit=%" PRIuFAST64,
+           atomic_load(&probe_gap.lost_ms), atomic_load(&probe_gap.producer_ms),
+           atomic_load(&probe_gap.sent_ms), atomic_load(&probe_gap.key_ms),
+           atomic_load(&probe_gap.submit_ms));
     record("FECLOSS", "selected=%u blocked=%u complete=%u matched=%u conflict=%u replaced=%u",
            probe_loss.selected, probe_loss.blocked, probe_loss.completed, probe_loss.matched,
            probe_loss.conflict, probe_loss.replaced);

@@ -12719,3 +12719,78 @@ python3 scripts/test-steam-fec-reorder-contract.py \
   --receiver build/desktop/app/nsl-auth-udp-oracle
 ctest --test-dir build/desktop --output-on-failure -R '^media_fec_reorder_udp_official_vectors$'
 ```
+
+## 162. 真实会话的整组擦除与关键帧恢复诊断契约
+
+### 162.1 官方依据与擦除边界
+
+§25/113的官方视频输入、DataLost发送和§161固定Linux原客户端进程表明：完整媒体
+输入的sequence缺口可进入strict，后续P输入按既有门槛请求恢复，关键帧清strict后
+恢复SDK输入。它们不规定自然Steam主机的关键帧响应时间；§160的单片RS字节见证
+也不能回答所有shard都丢失时的恢复。这里新增的是隔离诊断，不新增产品重试、FEC
+切换、冗余比例、接收窗口或恢复计时器。
+
+observer5的显式`--fec-request on --fec-loss drop-group`沿用§160的post-CRC、接收
+owner、首次新组水位及120次真实submit返回暖机边界，且要求此前视频DataLost为0，
+避免把启动时已排队的请求归于此次擦除。index0必须含完整20B媒体/视频头，tag=1、
+FrameFinish置位、KeyFrame/Encrypted清零、视频范围四字节为0，L/S≥20、S≤1472、
+k+m≤255。与drop-one不同，整组擦除允许k=1或m=0；无法确认单媒体片段/P帧的
+输入保持原样转发，最终没有合格组则未验证。
+
+选中组全部数据片、parity及所有重复副本均不进入原FEC Add；固定255索引账要求
+全部k+m唯一shard确实到达并被扣住，元数据冲突拒绝验收。保存的对照字节从不
+重新注入。其他组继续原生产路径，不要求被丢弃组进行RS重建。目标媒体ID若进入
+实际SDK提交回调，即拒绝验收。该注入不是无线/socket丢包，也不代表自然网络分布。
+
+### 162.2 请求、关键帧与提交的独立观察
+
+真实`IHS_SessionChannelDataReceiveFrame` wrapper在原调用期间安装线程局部输入
+身份，返回后恢复此前作用域。原`DataReceived`调用DataLost时，记录其媒体ID、
+sequence、flags和channel；只有同channel且ID/sequence均在目标之后的非关键输入
+可作为producer。首份身份在委托原DataLost之前发布，允许sender在线程返回前
+消费真实生产队列。无作用域或不符身份单独计数，不把backend/reset请求猜成缺帧。
+
+`IHS_UDPSocketSend`仍实际调用原socket方法，返回成功才记录发送时间；这只证明
+本地发送，不证明对端收到或应答。要求scoped producer数=视频DataLost总数=成功
+socket发送数，失败及不明来源均0。收到关键帧时，先于原完成FIFO发布其完整
+媒体身份和时间；仅接受实际send之后、ID/sequence都晚于producer的完整范围0
+KeyFrame/FrameFinish输入。真实tracked提交回调原返回OK且ID/KeyFlag吻合才记录
+提交时间，之后还要求至少新增10次decode及present。
+
+所有新热路径状态为固定原子计数/TLS，无分配、锁、等待、I/O或新增线程。时间只
+在上述里程碑采样，最终打印在既有stop/join后；没有每帧或每片输出。原设置加载/
+保存契约不变，不持久化临时FEC输入。`GROUPDROP/GAPFLOW/GAPKEY/GAPTIME`记录
+先于§160最终组；PC严格核对唯一记录、全部shard账、身份/模65536顺序、无目标
+提交、loss→producer→send→key→submit单调时间及继续播放。非drop-group模式的
+这四份记录必须全零；旧observer2/3/4不能验收drop-group。
+
+### 162.3 验证边界
+
+`live_media_probe_fec_loss`运行实际PacketParse、wrapper及生产FEC/RS。整组擦除
+用例在固定官方k3/m2/S32向量的首个systematic片内显式构造媒体头；目标组全部
+shard被扣住，不将修改过头部的parity解释为有效RS码字。后续组恢复原向量并核对
+完整正文，另拒绝key/encrypted/分片范围/非媒体tag/启动已请求的选择。这是接收
+注入边界测试，不是Steam或decoder执行。
+
+`live_media_probe_gap_observer`以显式时间/身份/TLS适配输入检验发布、成功发送前
+的key拒绝、错误提交结果、作用域污染、错误channel和16位回绕；原wrapper透明性
+用例另让受控producer在返回前同步调用socket terminal，验证作用域、发布和原
+回调返回/ownership均保留。两者不冒充生产网络或SDK。Switch产物门禁独立检查
+真实worker→wrapper、DataReceived→DataLost wrapper、实际submit→wrapper及各
+原函数委托，并要求普通ELF/NRO排除、固定存储和九种产物/调用故障拒绝。
+
+时间链条成立仍不能区分请求触发的关键帧和自然周期关键帧；不能从一次结果推断
+Steam的GOP/超时/重发策略。提交OK和后续播放不证明特定恢复图像像素、所有帧
+硬解、物理显示、峰值或loader ABI。测试包、实机记录和严格验收跟踪在GitHub #69，
+不得用nxlink正常退出补足设备画面或ABI证据。
+
+```sh
+ctest --test-dir build/diagnostics --output-on-failure -R '^live_media_probe_'
+python3 -O scripts/test-live-media-probe-build.py --build build/switch-diagnostics \
+  --ordinary-build build/switch --output /tmp/live-group-probe-build.json
+python3 tools/live-media-probe.py --steam 10.10.10.166 --switch 10.10.10.25 \
+  --build-dir build/switch-diagnostics --ordinary-build-dir build/switch \
+  --fec-request on --fec-loss drop-group --output build/live-group-prepared
+```
+
+最后一条只准备包，`--run`仅在该次netloader准备确认后使用，不探测端口或自动重启。

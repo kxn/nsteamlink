@@ -31,9 +31,10 @@ static bool emit_config, accept_config, config_crc;
 static unsigned config_calls, config_queue_calls, negotiation_calls;
 static IHS_Buffer *expected_payload;
 static const IHS_SessionPacketHeader *expected_header;
+static bool emit_gap_request;
 
 IHS_SendAdmission __real_IHS_SessionQueuePacketResult(IHS_Session *s, IHS_SessionPacket *p,
-                                                     bool retransmit) {
+                                                      bool retransmit) {
     assert(s == expected_session && retransmit && p->header.channelId == 1);
     ++config_queue_calls;
     if (config_admission == IHS_SendAdmissionAccepted) {
@@ -70,8 +71,7 @@ bool __real_IHS_SessionChannelControlSend(IHS_SessionChannel *c, EStreamControlM
                                       .channelId = 1,
                                       .packetId = 100 + config_calls},
                            .body = IHS_BUFFER_WRAP(body, sizeof(body))};
-    return __wrap_IHS_SessionQueuePacketResult(c->session, &p, true) ==
-           IHS_SendAdmissionAccepted;
+    return __wrap_IHS_SessionQueuePacketResult(c->session, &p, true) == IHS_SendAdmissionAccepted;
 }
 void __real_IHS_SessionChannelControlOnNegotiation(IHS_SessionChannel *c, EStreamControlMessage t,
                                                    IHS_Buffer *p,
@@ -112,6 +112,13 @@ void __real_IHS_SessionChannelDataReceiveReliableFrame(IHS_SessionChannel *c, IH
 void __real_IHS_SessionChannelDataLost(IHS_SessionChannel *c) {
     assert(c == expected_channel);
     ++lost_calls;
+    if (emit_gap_request) {
+        /* A sender may run before the producer returns. The observation must
+         * already have published its input, without replacing the call. */
+        assert(probe_gap_current && atomic_load(&probe_gap.producer_ready));
+        assert(atomic_load(&probe_gap.producer) == probe_gap_current->input);
+        assert(__wrap_IHS_UDPSocketSend(expected_socket, expected_udp));
+    }
 }
 bool __real_IHS_UDPSocketSend(IHS_UDPSocket *s, const IHS_UDPPacket *p) {
     assert(s == expected_socket && p == expected_udp);
@@ -121,6 +128,8 @@ bool __real_IHS_UDPSocketSend(IHS_UDPSocket *s, const IHS_UDPPacket *p) {
 void __real_IHS_SessionChannelDataReceiveFrame(IHS_SessionChannelData *c, IHS_SessionFrame *f) {
     assert(&c->base == expected_channel && f == expected_frame);
     ++worker_calls;
+    if (emit_gap_request)
+        __wrap_IHS_SessionChannelDataLost(&c->base);
 }
 IHS_StreamVideoSubmitResult
 __real_sl_media_video_submit_tracked(IHS_Session *session, const IHS_VideoEpochInfo *epoch,
@@ -350,8 +359,8 @@ int main(void) {
     emit_config = socket_result = true;
     for (unsigned i = 0; i < 2; ++i) {
         config_crc = i;
-        expected_config_type = i ? k_EStreamControlSetStreamingClientConfig
-                                 : k_EStreamControlNegotiationSetConfig;
+        expected_config_type =
+            i ? k_EStreamControlSetStreamingClientConfig : k_EStreamControlNegotiationSetConfig;
         expected_config_message = i ? (void *)&update : (void *)&initial;
         cfg.has_enable_unreliable_fec = cfg.enable_unreliable_fec = i;
         assert(__wrap_IHS_SessionChannelControlSend(&control, expected_config_type,
@@ -407,11 +416,11 @@ int main(void) {
     expected_payload = &negotiation;
     expected_header = &header;
     for (unsigned i = 0; i < 3; ++i) {
-        normal.state.connectionState = i == 2 ? IHS_SessionConnectionStateConnected
-                                              : IHS_SessionConnectionStateNegotiating;
+        normal.state.connectionState =
+            i == 2 ? IHS_SessionConnectionStateConnected : IHS_SessionConnectionStateNegotiating;
         accept_config = i != 0;
-        __wrap_IHS_SessionChannelControlOnNegotiation(&control, expected_config_type,
-                                                      &negotiation, &header);
+        __wrap_IHS_SessionChannelControlOnNegotiation(&control, expected_config_type, &negotiation,
+                                                      &header);
     }
     assert(atomic_load(&probe_peer_config) == 1 && negotiation_calls == 3);
     /* A saturated ledger reports loss instead of silently reusing a record. */
@@ -421,6 +430,43 @@ int main(void) {
     assert(!__wrap_IHS_SessionChannelControlSend(&control, expected_config_type,
                                                  expected_config_message, expected_config_id));
     assert(atomic_load(&probe_config_overflow) == 1 && !probe_config_current);
+    /* Controlled terminals exercise the actual wrapper nesting/publication,
+     * not a real protocol producer, socket, SDK or decoder. */
+    probe_loss.drop_group = true;
+    expected_session = &normal;
+    expected_channel = &data_channel.base;
+    expected_frame = &frame;
+    expected_socket = normal.base.socket;
+    expected_udp = &lost_udp;
+    socket_result = true;
+    frame.body = saved;
+    uint8_t *video = padded + 7;
+    video[1] = 100;
+    video[2] = video[13] = video[14] = 0;
+    video[15] = VideoFrameFlagFrameFinish;
+    probe_gap_loss(probe_gap_header(9, video, 20), sl_system_now());
+    video[1] = 101;
+    video[13] = 1;
+    emit_gap_request = true;
+    __wrap_IHS_SessionChannelDataReceiveFrame(&data_channel, &frame);
+    emit_gap_request = false;
+    assert(!probe_gap_current && atomic_load(&probe_gap.calls) == 1 &&
+           atomic_load(&probe_gap.sent) == 1 && !atomic_load(&probe_gap.submitted));
+    video[1] = 102;
+    video[13] = 2;
+    video[15] |= VideoFrameFlagKeyFrame;
+    __wrap_IHS_SessionChannelDataReceiveReliableFrame(expected_channel, &frame);
+    assert(atomic_load(&probe_gap.key));
+    expected_id = 102;
+    expected_flags = IHS_StreamVideoFrameKeyFrame;
+    expected_taken = false;
+    submitted_result = IHS_StreamVideoSubmitOK;
+    bool taken = false;
+    assert(__wrap_sl_media_video_submit_tracked(&normal, &epoch, expected_id, expected_ticket,
+                                                expected_data, expected_flags,
+                                                &taken) == submitted_result);
+    assert(taken && atomic_load(&probe_gap.submitted) && atomic_load(&probe_loss.witnessed));
+    assert(!atomic_load(&probe_gap.unscoped) && !atomic_load(&probe_gap.lost_submits));
     puts("Observer forwarding, network-test exclusion, m0/parity and actual socket outcomes "
          "passed.");
     return 0;

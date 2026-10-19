@@ -17,6 +17,10 @@ import subprocess
 WRAPPED = (
     "IHS_SessionUnreliableReceived",
     "IHS_FECReceiverAdd",
+    "IHS_SessionChannelDataReceiveReliableFrame",
+    "IHS_SessionChannelDataReceiveFrame",
+    "IHS_SessionChannelDataLost",
+    "sl_media_video_submit_tracked",
     "IHS_SessionChannelControlSend",
     "IHS_SessionQueuePacketResult",
     "IHS_SessionChannelControlOnNegotiation",
@@ -29,6 +33,13 @@ EDGES = (
     ("SessionRecvAt", "__wrap_IHS_SessionUnreliableReceived"),
     ("IHS_SessionChannelDataReceived", "__wrap_IHS_SessionUnreliableReceived"),
     ("IHS_SessionUnreliableReceived", "__wrap_IHS_FECReceiverAdd"),
+    (
+        "IHS_SessionDeliverReliableFrame",
+        "__wrap_IHS_SessionChannelDataReceiveReliableFrame",
+    ),
+    ("DataThreadWorker", "__wrap_IHS_SessionChannelDataReceiveFrame"),
+    ("DataReceived", "__wrap_IHS_SessionChannelDataLost"),
+    ("video_submit", "__wrap_sl_media_video_submit_tracked"),
     ("OnNegotiationInit", "__wrap_IHS_SessionChannelControlSend"),
     ("IHS_SessionSendControlMessage", "__wrap_IHS_SessionChannelControlSend"),
     ("IHS_SessionChannelQueueFrameResult", "__wrap_IHS_SessionQueuePacketResult"),
@@ -110,14 +121,15 @@ def check(root, build, ordinary):
         identity["commit"].encode() in nro.read_bytes(), "probe source identity missing"
     )
     for marker in (
-        b"observer=4 fec=",
+        b"observer=5 fec=",
         b"fec_repair_unverified",
+        b"key_recovery_unverified",
         b"sent_fec=",
         b"original_known=",
         b"LIVE_%s run=",
     ):
         require(
-            marker in nro.read_bytes(), "missing observer-v4 marker " + repr(marker)
+            marker in nro.read_bytes(), "missing observer-v5 marker " + repr(marker)
         )
     link = shlex.split(
         (app / "CMakeFiles/nsl-live-media-probe.dir/link.txt").read_text()
@@ -136,6 +148,9 @@ def check(root, build, ordinary):
         ("ihslib", "unreliable"),
         ("ihslib", "session"),
         ("ihslib", "ch_data"),
+        ("ihslib", "ch_data_decode"),
+        ("ihslib", "ch_data_video"),
+        ("nsl_platform", "media"),
         ("nsl_platform", "runtime"),
         ("nsl_stream_settings", "stream_settings"),
         ("nsl_ui", "auth_store"),
@@ -149,10 +164,21 @@ def check(root, build, ordinary):
     )
     names = {line.split()[-1] for line in symbol_text.splitlines() if line.split()}
     require("probe_config_sent_fec" in names, "per-sent-head FEC observation missing")
-    loss_state = [line.split() for line in symbol_text.splitlines() if line.endswith(" probe_loss")]
+    loss_state = [
+        line.split()
+        for line in symbol_text.splitlines()
+        if line.endswith(" probe_loss")
+    ]
     require(
         len(loss_state) == 1 and 2000 <= int(loss_state[0][1], 16) <= 4096,
         "missing/unbounded erasure witness storage",
+    )
+    gap_state = [
+        line.split() for line in symbol_text.splitlines() if line.endswith(" probe_gap")
+    ]
+    require(
+        len(gap_state) == 1 and 100 <= int(gap_state[0][1], 16) <= 256,
+        "missing/unbounded recovery timeline storage",
     )
     ledger = [
         line.split()
@@ -188,15 +214,17 @@ def check(root, build, ordinary):
         "probe_config_entries",
         "probe_config_sent_fec",
         "probe_loss",
+        "probe_gap",
     ]:
         require(name not in ordinary_names, "probe remains in ordinary ELF: " + name)
     require(
-        b"observer=4 fec=" not in (ordinary / "app/nsteamlink.nro").read_bytes(),
+        b"observer=5 fec=" not in (ordinary / "app/nsteamlink.nro").read_bytes(),
         "probe remains in ordinary NRO",
     )
     return {
         "status": "passed",
-        "observer": 4,
+        "observer": 5,
+        "recovery_state_bytes": int(gap_state[0][1], 16),
         "erasure_state_bytes": int(loss_state[0][1], 16),
         "identity": identity,
         "ledger_bytes": int(ledger[0][1], 16),
@@ -219,7 +247,7 @@ def main():
     report = check(Path(__file__).resolve().parents[1], args.build, args.ordinary_build)
     args.output.write_text(json.dumps(report, indent=2) + "\n")
     print(
-        "PASS: actual observer-v4 call paths, original delegation, fixed storage and ordinary exclusion"
+        "PASS: actual observer-v5 call paths, original delegation, fixed storage and ordinary exclusion"
     )
 
 

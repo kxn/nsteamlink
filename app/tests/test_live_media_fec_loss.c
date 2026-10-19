@@ -195,6 +195,59 @@ int main(int argc, char **argv) {
     repair(wrap, r, 0, true);
     assert(wrap->matched);
     IHS_FECReceiverDestroy(r);
+
+    /* Whole-group mode uses an explicitly constructed media header in the
+     * withheld systematic shard. Its parity is never decoded; the following
+     * unmodified group still checks the complete original codeword payload. */
+    uint8_t saved[32];
+    memcpy(saved, wires[0] + 21, sizeof(saved));
+    memset(wires[0] + 21, 0, sizeof(saved));
+    wires[0][21] = k_EStreamDataPacket;
+    wires[0][22] = 100;
+    wires[0][34] = 10;
+    wires[0][36] = VideoFrameFlagFrameFinish;
+    probe_loss = (probe_fec_loss){.enabled = true, .drop_group = true};
+    probe_gap = (probe_gap_observer){0};
+    atomic_store(&video_requests, 0);
+    r = begin(&probe_loss, 0);
+    uint64_t completed_before = atomic_load(&fec_complete);
+    for (unsigned i = 0; i < 5; ++i)
+        assert(!input(&probe_loss, r, i, 1, true, 3, 120, false));
+    assert(!input(&probe_loss, r, 0, 1, true, 3, 120, false));
+    assert(probe_loss.blocked == 6 && probe_loss.blocked_unique == 5);
+    assert(probe_loss.selected && !probe_loss.completed && !probe_loss.matched);
+    assert(atomic_load(&probe_gap.loss) && !atomic_load(&probe_gap.submitted));
+    assert(atomic_load(&fec_complete) == completed_before);
+    memcpy(wires[0] + 21, saved, sizeof(saved));
+    assert(!input(&probe_loss, r, 0, 2, true, 3, 120, true));
+    assert(!input(&probe_loss, r, 1, 2, true, 3, 120, true));
+    assert(input(&probe_loss, r, 2, 2, true, 3, 120, true));
+    assert(!probe_loss.replaced && atomic_load(&fec_complete) == completed_before + 1);
+    IHS_FECReceiverDestroy(r);
+
+    /* Key/encrypted/partial/short envelope cannot be selected as the lost P.
+     * A preexisting recovery request also prevents diagnostic attribution. */
+    for (unsigned mode = 0; mode < 5; ++mode) {
+        memset(wires[0] + 21, 0, sizeof(saved));
+        wires[0][21] = k_EStreamDataPacket;
+        wires[0][36] = VideoFrameFlagFrameFinish;
+        if (mode == 0)
+            wires[0][36] |= VideoFrameFlagKeyFrame;
+        if (mode == 1)
+            wires[0][36] |= VideoFrameFlagEncrypted;
+        if (mode == 2)
+            wires[0][37] = 1;
+        if (mode == 3)
+            wires[0][21] = 0;
+        probe_loss = (probe_fec_loss){.enabled = true, .drop_group = true};
+        probe_gap = (probe_gap_observer){0};
+        atomic_store(&video_requests, mode == 4);
+        r = begin(&probe_loss, 0);
+        assert(!input(&probe_loss, r, 0, 1, true, 3, 120, false));
+        assert(!probe_loss.selected && !atomic_load(&probe_gap.loss));
+        IHS_FECReceiverDestroy(r);
+    }
+    memcpy(wires[0] + 21, saved, sizeof(saved));
     puts(
         "PASS: official codeword erasure, duplicates, survivor orders and witness counterexamples");
     return 0;

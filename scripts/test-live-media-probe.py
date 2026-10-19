@@ -64,59 +64,193 @@ def version4(loss="none"):
         + (
             "LIVE_FECSHAPE run=42 channel=9 group=27 index=0 bytes=32 length=80 k=3 m=2 data=2 parity=1\n"
             "LIVE_FECAFTER run=42 decoded=50 presented=40\n"
-            if selected else
-            "LIVE_FECSHAPE run=42 channel=0 group=0 index=0 bytes=0 length=0 k=0 m=0 data=0 parity=0\n"
+            if selected
+            else "LIVE_FECSHAPE run=42 channel=0 group=0 index=0 bytes=0 length=0 k=0 m=0 data=0 parity=0\n"
             "LIVE_FECAFTER run=42 decoded=0 presented=0\n"
         )
     )
     return log.replace("LIVE_PREFS", prefix + "LIVE_PREFS")
 
 
+def packed(fid, seq, flags, channel=9):
+    return (1 << 48) | channel << 40 | flags << 32 | seq << 16 | fid
+
+
+def version5(loss="none"):
+    whole = loss == "drop-group"
+    log = version4("drop-one" if whole else loss).replace("observer=4", "observer=5")
+    if whole:
+        log = log.replace("loss=drop-one", "loss=drop-group")
+        log = log.replace(
+            "blocked=2 complete=1 matched=1", "blocked=5 complete=0 matched=0"
+        )
+        log = log.replace("k=3 m=2 data=2 parity=1", "k=3 m=2 data=0 parity=0")
+        log = log.replace("requested=0 sent=0 failed=0", "requested=1 sent=1 failed=0")
+        prefix = (
+            f"LIVE_GROUPDROP run=42 unique=5 loss={packed(100, 10, 8)}\n"
+            f"LIVE_GAPFLOW run=42 calls=1 unscoped=0 sent=1 failed=0 producer={packed(101, 11, 8)}\n"
+            f"LIVE_GAPKEY run=42 header={packed(102, 12, 24)} submitted=1 lost_submits=0\n"
+            "LIVE_GAPTIME run=42 loss=1000 producer=1001 sent=1002 key=1003 submit=1004\n"
+        )
+    else:
+        prefix = (
+            "LIVE_GROUPDROP run=42 unique=0 loss=0\n"
+            "LIVE_GAPFLOW run=42 calls=0 unscoped=0 sent=0 failed=0 producer=0\n"
+            "LIVE_GAPKEY run=42 header=0 submitted=0 lost_submits=0\n"
+            "LIVE_GAPTIME run=42 loss=0 producer=0 sent=0 key=0 submit=0\n"
+        )
+    return log.replace("LIVE_FECLOSS", prefix + "LIVE_FECLOSS")
+
+
 class Contract(unittest.TestCase):
+    def test_group_loss_requires_recovery_chain(self):
+        for mode in ("none", "drop-one", "drop-group"):
+            result = probe.analyze(version5(mode), BUILD, "192.0.2.1", 30, "on", mode)
+            self.assertTrue(result["passed"], result["errors"])
+            self.assertEqual(
+                result["keyframe_recovery"]["verified"], mode == "drop-group"
+            )
+            if mode == "drop-group":
+                self.assertEqual(result["rs_reconstruction"], "unverified")
+                self.assertEqual(result["keyframe_recovery"]["loss_to_send_ms"], 2)
+        log = version5("drop-group")
+        mutations = [
+            ("unique=5", "unique=4"),
+            ("unique=5", "unique=6"),
+            ("blocked=5", "blocked=4"),
+            ("blocked=5", "blocked=51"),
+            ("complete=0 matched=0", "complete=1 matched=0"),
+            ("matched=0", "matched=1"),
+            ("conflict=0", "conflict=1"),
+            ("replaced=0", "replaced=1"),
+            ("data=0 parity=0", "data=1 parity=0"),
+            ("GAPFLOW run=42 calls=1", "GAPFLOW run=42 calls=0"),
+            ("unscoped=0", "unscoped=1"),
+            ("submitted=1", "submitted=0"),
+            ("lost_submits=0", "lost_submits=1"),
+            (f"loss={packed(100,10,8)}", f"loss={packed(100,10,24)}"),
+            (f"loss={packed(100,10,8)}", f"loss={packed(100,10,0)}"),
+            (f"producer={packed(101,11,8)}", f"producer={packed(101,11,24)}"),
+            (f"producer={packed(101,11,8)}", f"producer={packed(101,10,8)}"),
+            (f"producer={packed(101,11,8)}", f"producer={packed(100,11,8)}"),
+            (f"header={packed(102,12,24)}", f"header={packed(102,12,8)}"),
+            (f"header={packed(102,12,24)}", f"header={packed(102,12,24,8)}"),
+            (f"header={packed(102,12,24)}", f"header={packed(101,12,24)}"),
+            ("loss=1000", "loss=0"),
+            ("producer=1001", "producer=999"),
+            ("sent=1002", "sent=1004"),
+            ("submit=1004", "submit=1002"),
+            ("decoded=50", "decoded=9"),
+            ("presented=40", "presented=9"),
+        ]
+        for before, after in mutations:
+            with self.subTest(before=before, after=after):
+                result = probe.analyze(
+                    log.replace(before, after),
+                    BUILD,
+                    "192.0.2.1",
+                    30,
+                    "on",
+                    "drop-group",
+                )
+                self.assertFalse(result["passed"], result)
+                self.assertFalse(result["keyframe_recovery"]["verified"])
+        for line in log.splitlines(True):
+            self.assertFalse(
+                probe.analyze(
+                    log.replace(line, ""), BUILD, "192.0.2.1", 30, "on", "drop-group"
+                )["passed"]
+            )
+        self.assertFalse(
+            probe.analyze(log, BUILD, "192.0.2.1", 30, "on", "drop-one")["passed"]
+        )
+        self.assertFalse(
+            probe.analyze(
+                version4("drop-one"), BUILD, "192.0.2.1", 30, "on", "drop-group"
+            )["passed"]
+        )
+
     def test_diagnostic_erasure_witness(self):
         for loss in ("none", "drop-one"):
             result = probe.analyze(version4(loss), BUILD, "192.0.2.1", 30, "on", loss)
             self.assertTrue(result["passed"], result["errors"])
             self.assertEqual(
                 result["rs_reconstruction"],
-                "unverified" if loss == "none" else "one diagnostic erasure byte-verified",
+                (
+                    "unverified"
+                    if loss == "none"
+                    else "one diagnostic erasure byte-verified"
+                ),
             )
         log = version4("drop-one")
         for before, after in [
-            ("selected=1", "selected=0"), ("blocked=2", "blocked=0"),
-            ("blocked=2", "blocked=51"), ("blocked=2", "blocked=48"),
+            ("selected=1", "selected=0"),
+            ("blocked=2", "blocked=0"),
+            ("blocked=2", "blocked=51"),
+            ("blocked=2", "blocked=48"),
             ("complete=1 matched=1", "complete=0 matched=1"),
-            ("matched=1", "matched=0"), ("conflict=0", "conflict=1"),
-            ("replaced=0", "replaced=1"), ("group=27", "group=65536"),
+            ("matched=1", "matched=0"),
+            ("conflict=0", "conflict=1"),
+            ("replaced=0", "replaced=1"),
+            ("group=27", "group=65536"),
             ("channel=9 group=27", "channel=8 group=27"),
-            ("index=0", "index=1"), ("bytes=32", "bytes=1473"),
-            ("length=80", "length=65"), ("length=80", "length=64"),
-            ("length=80", "length=97"), ("k=3", "k=1"),
-            ("m=2", "m=0"), ("m=2", "m=253"),
-            ("data=2", "data=3"), ("data=2", "data=1"),
+            ("index=0", "index=1"),
+            ("bytes=32", "bytes=1473"),
+            ("length=80", "length=65"),
+            ("length=80", "length=64"),
+            ("length=80", "length=97"),
+            ("k=3", "k=1"),
+            ("m=2", "m=0"),
+            ("m=2", "m=253"),
+            ("data=2", "data=3"),
+            ("data=2", "data=1"),
             ("parity=1\nLIVE_FECAFTER", "parity=0\nLIVE_FECAFTER"),
             ("parity=1\nLIVE_FECAFTER", "parity=3\nLIVE_FECAFTER"),
-            ("decoded=50", "decoded=9"), ("decoded=50", "decoded=101"),
-            ("presented=40", "presented=9"), ("presented=40", "presented=91"),
+            ("decoded=50", "decoded=9"),
+            ("decoded=50", "decoded=101"),
+            ("presented=40", "presented=9"),
+            ("presented=40", "presented=91"),
         ]:
             # length65 still describes k3/S32 and is intentionally valid.
             if after == "length=65":
-                self.assertTrue(probe.analyze(log.replace(before, after), BUILD,
-                                             "192.0.2.1", 30, "on", "drop-one")["passed"])
+                self.assertTrue(
+                    probe.analyze(
+                        log.replace(before, after),
+                        BUILD,
+                        "192.0.2.1",
+                        30,
+                        "on",
+                        "drop-one",
+                    )["passed"]
+                )
                 continue
             with self.subTest(before=before, after=after):
-                result = probe.analyze(log.replace(before, after), BUILD,
-                                       "192.0.2.1", 30, "on", "drop-one")
+                result = probe.analyze(
+                    log.replace(before, after), BUILD, "192.0.2.1", 30, "on", "drop-one"
+                )
                 self.assertFalse(result["passed"], result)
                 self.assertEqual(result["rs_reconstruction"], "unverified")
         for line in log.splitlines(True):
-            self.assertFalse(probe.analyze(log.replace(line, ""), BUILD,
-                                          "192.0.2.1", 30, "on", "drop-one")["passed"])
-        self.assertFalse(probe.analyze(version3("on"), BUILD, "192.0.2.1", 30,
-                                      "on", "drop-one")["passed"])
+            self.assertFalse(
+                probe.analyze(
+                    log.replace(line, ""), BUILD, "192.0.2.1", 30, "on", "drop-one"
+                )["passed"]
+            )
+        self.assertFalse(
+            probe.analyze(version3("on"), BUILD, "192.0.2.1", 30, "on", "drop-one")[
+                "passed"
+            ]
+        )
         self.assertFalse(probe.analyze(log, BUILD, "192.0.2.1", 30, "on")["passed"])
-        self.assertFalse(probe.analyze(version4().replace("selected=0", "selected=1"),
-                                      BUILD, "192.0.2.1", 30, "on")["passed"])
+        self.assertFalse(
+            probe.analyze(
+                version4().replace("selected=0", "selected=1"),
+                BUILD,
+                "192.0.2.1",
+                30,
+                "on",
+            )["passed"]
+        )
 
     def test_complete(self):
         result = check(LOG)

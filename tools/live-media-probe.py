@@ -3,8 +3,10 @@
 
 Only --run deploys; use it after the user prepares netloader. Never probe TCP
 28280 or retry a launch. Optional drop-one requires a missing-systematic byte
-witness and continued playback. Neither mode proves adverse-network equivalence,
-decoded pixel identity, physical scanout or hbmenu/loader ABI.
+witness; drop-group requires an actual scoped request/send, later key/submit and
+continued playback. Temporal order does not prove host causal/GOP policy. These
+modes do not prove adverse-network equivalence, decoded pixel identity, physical
+scanout or hbmenu/loader ABI.
 """
 import argparse
 import hashlib
@@ -68,24 +70,25 @@ def analyze(log, build, steam, seconds, fec_mode="saved", loss_mode="none"):
     require(fec_mode in ("saved", "on", "off"), "invalid FEC test mode")
     expected_begin = {"build": build, "host": steam, "seconds": str(seconds)}
     expected_begin["observer"] = version
-    if version in ("3", "4"):
+    if version in ("3", "4", "5"):
         expected_begin["fec"] = fec_mode
-    if version == "4":
+    if version in ("4", "5"):
         expected_begin["loss"] = loss_mode
     require(
-        loss_mode in ("none", "drop-one")
-        and (loss_mode == "none" or (fec_mode == "on" and version == "4")),
+        loss_mode in ("none", "drop-one", "drop-group")
+        and (loss_mode == "none" or (fec_mode == "on" and version in ("4", "5"))),
         "invalid erasure mode/version",
     )
+    require(loss_mode != "drop-group" or version == "5", "group loss needs observer5")
     require(
         begin == expected_begin
-        and version in ("2", "3", "4")
+        and version in ("2", "3", "4", "5")
         and (version != "2" or fec_mode == "saved"),
         "identity mismatch",
     )
     require(settings.get("stored_fec") in ("0", "1"), "missing FEC preference")
     require(settings.get("sound") in ("0", "1"), "missing sound preference")
-    if version in ("3", "4"):
+    if version in ("3", "4", "5"):
         require(
             set(settings)
             == {
@@ -177,7 +180,7 @@ def analyze(log, build, steam, seconds, fec_mode="saved", loss_mode="none"):
     details = dict(records[-10:-4]) if tags[-10:-4] == detail_tags else {}
     schemas = {
         "VCHANNEL": "channel ordinary fec retry"
-        + (" fec_complete" if version in ("3", "4") else ""),
+        + (" fec_complete" if version in ("3", "4", "5") else ""),
         "VRECV": "complete key finish last",
         "VWORK": "calls key finish last",
         "VSUBMIT": "calls returned keys errors last",
@@ -246,7 +249,7 @@ def analyze(log, build, steam, seconds, fec_mode="saved", loss_mode="none"):
             "scope": "main-thread snapshot before local close/exit; not a causal error classification",
         }
     negotiation = {"scope": "unverified in observer v2"}
-    if version in ("3", "4"):
+    if version in ("3", "4", "5"):
         require(
             tags[-14:]
             == ["PREFS", "NEGOTIATE", "NEGOTIATE", "PEER"]
@@ -340,8 +343,11 @@ def analyze(log, build, steam, seconds, fec_mode="saved", loss_mode="none"):
         }
     erasure = {"mode": loss_mode, "scope": "no diagnostic erasure"}
     repair_proved = False
-    if version == "4":
-        witness, shape, after = (one(tag) for tag in ("FECLOSS", "FECSHAPE", "FECAFTER"))
+    key_recovery = {"verified": False, "scope": "not tested"}
+    if version in ("4", "5"):
+        witness, shape, after = (
+            one(tag) for tag in ("FECLOSS", "FECSHAPE", "FECAFTER")
+        )
         schemas = (
             (witness, "selected blocked complete matched conflict replaced"),
             (shape, "channel group index bytes length k m data parity"),
@@ -361,7 +367,7 @@ def analyze(log, build, steam, seconds, fec_mode="saved", loss_mode="none"):
                 all(value == 0 for group in parsed for value in group.values()),
                 "unexpected diagnostic erasure",
             )
-        else:
+        elif loss_mode == "drop-one":
             require(
                 witness["selected"] == witness["complete"] == witness["matched"] == 1
                 and witness["blocked"] >= 1
@@ -376,11 +382,13 @@ def analyze(log, build, steam, seconds, fec_mode="saved", loss_mode="none"):
                 and 1 <= shape["bytes"] <= 1472
                 and 2 <= shape["k"] < 255
                 and 1 <= shape["m"] <= 255 - shape["k"]
-                and (shape["k"] - 1) * shape["bytes"] < shape["length"]
+                and (shape["k"] - 1) * shape["bytes"]
+                < shape["length"]
                 <= shape["k"] * shape["bytes"]
                 and 0 <= shape["data"] < shape["k"]
                 and 1 <= shape["parity"] <= shape["m"]
-                and shape["k"] <= shape["data"] + shape["parity"]
+                and shape["k"]
+                <= shape["data"] + shape["parity"]
                 <= channel["fec"] - witness["blocked"]
                 and channel["fec_complete"] >= 1,
                 "invalid missing-systematic/parity witness",
@@ -398,6 +406,126 @@ def analyze(log, build, steam, seconds, fec_mode="saved", loss_mode="none"):
             "after": after,
             "scope": "one withheld systematic shard, including all its duplicates; exact useful-byte comparison in production receiver output; not decoded pixel identity or physical scanout",
         }
+    if version == "5":
+        gap_tags = ["GROUPDROP", "GAPFLOW", "GAPKEY", "GAPTIME"]
+        schemas = (
+            "unique loss",
+            "calls unscoped sent failed producer",
+            "header submitted lost_submits",
+            "loss producer sent key submit",
+        )
+        groups = []
+        for tag, schema in zip(gap_tags, schemas):
+            value = one(tag)
+            require(set(value) == set(schema.split()), "invalid " + tag + " fields")
+            groups.append({key: number(value, key) for key in schema.split()})
+        require(tags[-21:-17] == gap_tags, "missing final group recovery records")
+        dropped, gap, key, times = groups
+        if loss_mode != "drop-group":
+            require(
+                all(v == 0 for group in groups for v in group.values()),
+                "unexpected group recovery observation",
+            )
+        else:
+            witness, shape, after = (
+                erasure.get(k, {}) for k in ("witness", "shape", "after")
+            )
+            require(
+                witness.get("selected") == 1
+                and witness.get("blocked", -1) >= dropped["unique"]
+                and dropped["unique"] >= 1
+                and witness.get("blocked", -1) <= channel["fec"]
+                and all(
+                    witness.get(k) == 0
+                    for k in ("complete", "matched", "conflict", "replaced")
+                ),
+                "group erasure not witnessed",
+            )
+            require(
+                shape.get("channel") == channel["channel"]
+                and 0 <= shape.get("group", -1) <= 65535
+                and shape.get("index") == 0
+                and 20 <= shape.get("bytes", -1) <= 1472
+                and 1 <= shape.get("k", -1) <= 255
+                and 0 <= shape.get("m", -1)
+                and shape.get("k", -1) + shape.get("m", -1) == dropped["unique"] <= 255
+                and (shape.get("k", -1) - 1) * shape.get("bytes", -1)
+                < shape.get("length", -1)
+                <= shape.get("k", -1) * shape.get("bytes", -1)
+                and shape.get("length", -1) >= 20
+                and shape.get("data") == shape.get("parity") == 0,
+                "not all group shards withheld",
+            )
+
+            def header(value):
+                require((1 << 48) <= value < (1 << 49), "invalid recovery header")
+                parsed = dict(
+                    channel=(value >> 40) & 255,
+                    flags=(value >> 32) & 255,
+                    sequence=(value >> 16) & 65535,
+                    id=value & 65535,
+                )
+                require(
+                    parsed["channel"] == channel["channel"], "recovery channel mismatch"
+                )
+                return parsed
+
+            loss_header, producer, key_header = (
+                header(x) for x in (dropped["loss"], gap["producer"], key["header"])
+            )
+            for newer, older in ((producer, loss_header), (key_header, producer)):
+                require(
+                    all(
+                        0 < (newer[k] - older[k]) & 65535 < 32768
+                        for k in ("id", "sequence")
+                    ),
+                    "recovery header order",
+                )
+            require(
+                loss_header["flags"] & 8
+                and not loss_header["flags"] & (16 | 32)
+                and not producer["flags"] & 16
+                and key_header["flags"] & 16
+                and key_header["flags"] & 8,
+                "not P loss to key recovery",
+            )
+            require(
+                gap["calls"] > 0
+                and gap["unscoped"] == gap["failed"] == 0
+                and gap["sent"]
+                == gap["calls"]
+                == requests["requested"]
+                == requests["sent"]
+                and requests["failed"] == 0
+                and key["submitted"] == 1
+                and key["lost_submits"] == 0,
+                "missing scoped successful recovery send/submit",
+            )
+            ordered = [times[k] for k in ("loss", "producer", "sent", "key", "submit")]
+            require(
+                ordered[0] >= int(run or 0) > 0 and ordered == sorted(ordered),
+                "invalid recovery timeline",
+            )
+            require(
+                10 <= after.get("decoded", -1) <= number(result, "decoded")
+                and 10 <= after.get("presented", -1) <= number(result, "presented"),
+                "no playback after recovery key submit",
+            )
+            key_recovery = dict(
+                verified=not errors,
+                loss=loss_header,
+                producer=producer,
+                key=key_header,
+                requests=gap,
+                times_ms=times,
+                loss_to_send_ms=times["sent"] - times["loss"],
+                send_to_key_ms=times["key"] - times["sent"],
+                loss_to_submit_ms=times["submit"] - times["loss"],
+                scope="one whole post-CRC non-key group withheld; actual scoped producer/send, later key and submit, continuing playback; temporal order does not establish host causal/GOP policy",
+            )
+            erasure["scope"] = (
+                "all observed shards of one non-key group withheld, including duplicates; no RS reconstruction expected"
+            )
     return {
         "passed": not errors,
         "errors": errors,
@@ -409,11 +537,22 @@ def analyze(log, build, steam, seconds, fec_mode="saved", loss_mode="none"):
         "negotiation": negotiation,
         "stopping": stopping,
         "erasure": erasure,
+        "keyframe_recovery": key_recovery,
         "final": final,
         "scope": "real-host video playback smoke; audio counters observed; "
-        + ("one diagnostic FEC data erasure" if loss_mode == "drop-one" else "no loss injected"),
+        + (
+            "one diagnostic FEC data erasure"
+            if loss_mode == "drop-one"
+            else (
+                "one whole non-key FEC group erased"
+                if loss_mode == "drop-group"
+                else "no loss injected"
+            )
+        ),
         "audio_decode_observed": audio > 0,
-        "rs_reconstruction": "one diagnostic erasure byte-verified" if repair_proved else "unverified",
+        "rs_reconstruction": (
+            "one diagnostic erasure byte-verified" if repair_proved else "unverified"
+        ),
         "physical_scanout": "unverified",
         "loader_return": "unverified",
     }
@@ -463,9 +602,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--fec-loss",
-        choices=("none", "drop-one"),
+        choices=("none", "drop-one", "drop-group"),
         default="none",
-        help="isolated diagnostic data-shard erasure; drop-one requires --fec-request on",
+        help="isolated diagnostic shard/group erasure; requires --fec-request on",
     )
     parser.add_argument(
         "--steam", required=True, type=lambda x: str(ipaddress.IPv4Address(x))
@@ -497,8 +636,8 @@ def main():
         "--expected-build", help="full commit for offline log validation"
     )
     args = parser.parse_args()
-    if args.fec_loss == "drop-one" and args.fec_request != "on":
-        parser.error("--fec-loss drop-one requires --fec-request on")
+    if args.fec_loss != "none" and args.fec_request != "on":
+        parser.error("--fec-loss requires --fec-request on")
     if args.analyze_log:
         if not args.expected_build or not re.fullmatch(
             r"[0-9a-f]{40}", args.expected_build
@@ -568,7 +707,15 @@ def main():
         "fec_loss": args.fec_loss,
         "command": command,
         "scope": "existing paired identity; saved FEC preference preserved on normal saves; "
-        + ("one optional diagnostic data-shard erasure" if args.fec_loss == "drop-one" else "no loss injection"),
+        + (
+            "one diagnostic data-shard erasure"
+            if args.fec_loss == "drop-one"
+            else (
+                "one whole non-key group erasure"
+                if args.fec_loss == "drop-group"
+                else "no loss injection"
+            )
+        ),
     }
     (args.output / "observer_build.json").write_text(
         json.dumps(observer_build, indent=2) + "\n"
