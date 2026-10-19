@@ -5001,8 +5001,9 @@ worker调度的预期而改变官方批次规则。SDL fallback补同一readines
 当前验证平台是POSIX desktop与Switch交叉构建，不冒称Windows/SDL_net已实测。
 
 【范围与更正】普通媒体窗口/feedback的独立worker差异由§62更正；发送仍有独立
-worker。decoder没有移到网络线程，也未复制Source未知fatal read行为，Native负返回仍走本地stop/join
-关闭保护。停止检查可在持续drain中生效，是loader ABI所需的本地生存期保护。
+worker。decoder没有移到网络线程。原Native负read返回走本地stop/join的做法，
+经§157真实UDP实现取证后撤回：运行期读失败只结束本轮读取，仍执行连接更新。
+停止检查可在持续drain中生效，是loader ABI所需的本地生存期保护。
 两条PIN语义和Connect/Connected正文协议未因传输readiness改动而合并或重写。
 
 ## 61. 官方网络管理器的等待、锁、线程入口与主循环
@@ -12353,4 +12354,64 @@ python3 scripts/check-vcl-probe-build.py --build build/switch-deko \
 # 离线准备，不连接设备；执行需在设备已准备netloader时显式使用 --run。
 python3 tools/switch-vcl-probe.py --prepare --host 10.10.10.25 \
   --output build/vcl-probe-package
+```
+
+## 157. 实际 UDP 接收缓冲、空读和错误后的连接更新
+
+固定官方Android ELF（§24.1 SHA）的`CStreamTransportUDP::Recv @80286c–8029dc`
+先分配2344B的真实`CStreamPacket`并调用构造函数`7f6d90`；构造后`+48`容量是
+2272B、`+40/+56`指向内嵌`packet+64`。`8028b8–8028d4`将该容量和flags0直接
+传给recvfrom。先前§154–155窗口fixture的2200B是注入条件，不是实际transport
+构造值，不能据其推导真实UDP接收上限；它们的固定字节交付证据不作改写。
+
+`8028dc–802918`将recvfrom返回值≤0统一视为“当前没有包”，保留缓存packet，
+不读取errno、不请求断连。`Socket::Update @7fecd4`随后清read-ready并继续真实
+`Connection::Update`。后续正长度好包可复用缓存、正确交付并推进lastReceive；读
+失败本身不刷新lastReceive，也不发DataLost/额外重试/FEC/重连，原连接期限仍执行。
+`BWait @802664–802750`执行select后检查输出fd_set，不按select返回值另行退出。
+错误后fd_set内容是显式syscall输入：保留或清空两种均复播，不宣称所有OS都相同。
+
+`audit-steam-udp-receive.py`执行上述实际Recv/BWait/packet构造、Socket/CRC/
+Connection/窗口，最终select/recvfrom、地址转换、分配/refcount及媒体delegate是
+适配器。30组覆盖CRC开关、1472/2048/2049/2200/2201/2272/2273/3000B、负读、
+零读、select错误时保留/清fd_set、timeout和好包后的负/零读。recvfrom适配器只
+复制min(wire,实际请求容量)；截断行为另用Native真实loopback独立核验。原版
+flags0也会截断更大datagram：无CRC普通单包可交付截断正文，CRC包校验不通过。
+这不是声称Steam producer会违反协商MTU，也不把截断当FEC恢复。
+
+修正前SDK68067b9的真实Base worker/UDP/CRC/window在16个同输入形状中，仅4份
+收到的datagram字节和6份交付正文与Source一致；接收容量全部2048B。旧wait在
+select负值/保留fd_set时返回错误而非readiness；真实Session worker的错误注入
+反例已在收到后续好包前退出并完成收尾，不能只看“没有泄漏”判策略正确。
+
+生产修正将协议receiveCycle使用的Base缓冲设为2272B；generic discovery仍2048B。
+POSIX wait检查输出read-set，Session owner把平台负wait或非正read视为本轮读取
+结束，仍更新连接/超时；显式interrupt/关闭门保留。POSIX helper仍可向generic
+owner报告负read，但不再在会话可能继续的每次错误上同步fprintf。撤回§60/62中
+将“local fatal-I/O shutdown”描述为官方运行期读错误策略的含义；初始化失败和
+其他transport/backend的错误语义不由本节扩大推定。
+
+`udp_error_worker`通过真实Session Base RX/send和媒体worker，覆盖CRC开/关与
+负wait/read四组；错误后接真实transport ACK，再输入2272B的type11-m0完整帧，
+核对consumer字节及stop/join。transport ACK之后的客户端Connected态是显式
+fixture前置条件，不是完整认证/协商到Streaming的运行证据。独立重建旧SDK三处
+生产对象、链接同一测试对象，可见四组均在后续好包前退出；修正版继续交付。
+原指令的错误后Connection::Update/lastReceive由30组Source记录独立证明；
+worker测试不能代替原始syscall适配边界或真实Steam互通。
+`transport_worker`在空读、持续负read、持续负wait三种情况下分别跨过前台15秒/
+后台180秒的既有接收期限，检查期限前一tick不超时、lastReceive不被错误刷新、
+正常超时通知/关闭及join；这些是受控协议tick，不是让设备实际等待三分钟。
+`connect_worker`的脚本终点改为显式Interrupt，不能再以负read模拟用户退出。
+
+这是接收容量，不是协商MTU（仍512–1472）或编码图像上限。raw packet移入窗口时
+也持有这份容量，因此每个在途datagram可能多224B；例如2048个占用槽合计多
+458752B，不只一个临时缓冲增加224B。FIFO/pending/FEC数据预算保持独立，完整
+会话/系统峰值仍需各自证据。合成syscall错误发生率、Switch网络异常和原玩家
+停顿因果不由离线复播或本机loopback证明。
+
+```sh
+python3 scripts/audit-steam-udp-receive.py --binary /path/to/libmain-arm64.so \
+  --output /tmp/official-udp-receive.json
+ctest --test-dir build/diagnostics --output-on-failure \
+  -R '^(udp_receive_official_vectors|udp_error_worker|receive_cycle_worker|network_cycle_worker|udp_send|udp_broadcast)$'
 ```

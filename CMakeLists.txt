@@ -52,6 +52,11 @@ if(NSL_PLATFORM STREQUAL "desktop")
     add_subdirectory(third_party/ihslib/tests)
     if(TARGET ihs-fec-oracle)
         find_package(Python3 COMPONENTS Interpreter REQUIRED)
+        add_test(NAME udp_receive_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-udp-receive.py"
+            --receiver $<TARGET_FILE:ihs-udp-receive-oracle>
+            --output "${CMAKE_BINARY_DIR}/udp-receive-native.json")
+        set_tests_properties(udp_receive_official_vectors PROPERTIES TIMEOUT 60)
         add_test(NAME fec_resources_official_vectors COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-fec-resources.py"
             --receiver $<TARGET_FILE:ihs-fec-resource-oracle>
