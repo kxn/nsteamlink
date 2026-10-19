@@ -1,0 +1,36 @@
+{
+  "command": "ffmpeg -v error -y -i app/tests/fixtures/video/sequential.h264 -vf scale=1280:720:flags=neighbor -c:v libx264 -preset veryfast -tune zerolatency -x264-params keyint=6:min-keyint=6:scenecut=0:bframes=0:ref=1:repeat-headers=1 -frames:v 6 -pix_fmt yuv420p app/tests/fixtures/video/recovery720.h264",
+  "source_sha256": "e002d047777c86323a1f6855fd05c6e60b8b0ad106e914268f8d98b7eb66cada",
+  "fixture_sha256": "08c70965605f1efb722893cd6c516d8252dc697c60165caa11002c92c56b9a37",
+  "frame_md5_sha256": "b3215d1120a66eac4c1f43398a38cbd795d39d015e9f3ff1bfe15e6b5b16ba28",
+  "encoder_version": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+  "packets": [
+    {
+      "size": "25334",
+      "pos": "0"
+    },
+    {
+      "size": "12307",
+      "pos": "25334"
+    },
+    {
+      "size": "13619",
+      "pos": "37641"
+    },
+    {
+      "size": "15358",
+      "pos": "51260"
+    },
+    {
+      "size": "14251",
+      "pos": "66618"
+    },
+    {
+      "size": "16198",
+      "pos": "80869"
+    }
+  ],
+  "width": 1280,
+  "height": 720,
+  "scope": "Synthetic decoder-boundary stimulus; no Steam host or network policy claim."
+}

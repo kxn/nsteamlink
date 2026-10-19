@@ -3,12 +3,14 @@
 #include "gfx_backend.h"
 #include "resolution_pixels.h"
 #include "session/frame_tracker.h"
+#include "video_recovery_probe.h"
 #include <SDL.h>
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <libavcodec/avcodec.h>
 #include <libavutil/hwcontext.h>
+#include <libavutil/sha.h>
 #include <malloc.h>
 #include <poll.h>
 #include <stdarg.h>
@@ -38,6 +40,7 @@ EMBED(padding720);
 EMBED(padding1080);
 EMBED(sequential);
 EMBED(reordered);
+EMBED(recovery720);
 static void send_pending(void) {
     if (log_fd < 0 || transmitted == transcript_size)
         return;
@@ -261,8 +264,9 @@ static bool packet(sl_video_pipeline *pipeline, sl_gfx *gfx, IHS_FrameTracker *t
         IHS_FrameBeginOK)
         return false;
     bool taken = false;
-    sl_video_submit_result submitted=sl_video_submit(pipeline,key,data,bytes,ticket,&taken,false,NULL,NULL,NULL);
-    bool ok=submitted!=SL_VIDEO_SUBMIT_ERROR && !(submitted&SL_VIDEO_SUBMIT_RESET);
+    sl_video_submit_result submitted =
+        sl_video_submit(pipeline, key, data, bytes, ticket, &taken, false, NULL, NULL, NULL);
+    bool ok = submitted != SL_VIDEO_SUBMIT_ERROR && !(submitted & SL_VIDEO_SUBMIT_RESET);
     IHS_FrameTicketRelease(ticket);
     return ok && taken && take(pipeline, gfx, hardware, held, outputs);
 }
@@ -651,6 +655,170 @@ cleanup:;
         stage = failed;
     return ok;
 }
+typedef struct recovery_display {
+    sl_gfx *gfx;
+    bool hardware, padded;
+    unsigned seen, pass;
+} recovery_display;
+static uint64_t recovery_clock(void *context) {
+    (void)context;
+    return now_us();
+}
+static bool recovery_active(void *context) {
+    (void)context;
+    return running();
+}
+static void recovery_stage(void *context, const char *name, unsigned id) {
+    recovery_display *display = context;
+    trace("RECOVERY_STAGE name=%s input=%u", name, id);
+    if (!strcmp(name, "opened") || !strcmp(name, "decoded")) {
+        u64 used = 0;
+        Result rc = svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0);
+        struct mallinfo heap = mallinfo();
+        trace("RECOVERY_RESOURCE {\"padded\":%s,\"pass\":%u,\"stage\":\"%s\","
+              "\"heap_live_bytes\":%llu,\"process_used_bytes\":%llu,\"query_result\":%u}",
+              display->padded ? "true" : "false", display->pass, name,
+              (unsigned long long)heap.uordblks, (unsigned long long)used, rc);
+    }
+}
+static bool recovery_picture(void *context, sl_video_selection *selection,
+                             IHS_FrameOutcome *outcome) {
+    recovery_display *display = context;
+    unsigned id = IHS_FrameTicketIdentity(selection->frame->ticket).frameId;
+    unsigned index = recovery_index(id);
+    if (index >= RECOVERY_INPUTS || (display->seen & (1u << index)))
+        return false;
+    if (!display->hardware && !recovery_reference_pixels(selection->frame))
+        return false;
+    bool ok = draw(display->gfx, selection->frame);
+    uint64_t readback_us = now_us();
+    if (!ok)
+        return false;
+    if (display->hardware) {
+        ok = golden[index] && compare(selection->frame, true, index);
+    } else {
+        golden[index] = malloc(PIXELS);
+        ok = golden[index] != NULL;
+        if (ok) {
+            memcpy(golden[index], readback, PIXELS);
+            golden_id[index] = (uint16_t)id;
+        }
+    }
+    if (ok) {
+        display->seen |= 1u << index;
+        *outcome = (IHS_FrameOutcome){.result = IHS_VideoFrameResultDisplayed,
+                                      .completionUs = readback_us,
+                                      .presentationSerial = index + 1};
+    }
+    return ok;
+}
+static bool run_recovery_profile(bool padded) {
+    sl_video_pipeline *pipeline = NULL;
+    sl_gfx *gfx = NULL;
+    bool ok = false;
+    const char *failed = "recovery-create";
+    enter(failed);
+    for (unsigned n = 0; n < FRAMES; ++n) {
+        free(golden[n]);
+        golden[n] = NULL;
+    }
+    golden_count = 0;
+    pipeline = sl_video_create();
+    if (!pipeline)
+        goto cleanup;
+    gfx = sl_gfx_create(&(sl_gfx_config){.width = 1280,
+                                         .height = 720,
+                                         .title = "Decoder recovery probe",
+                                         .diagnostic = diagnostic,
+                                         .output_height = output_height});
+    if (!gfx || !sl_gfx_request_readback(gfx))
+        goto cleanup;
+    for (unsigned pass = 0; pass < 3; ++pass) {
+        bool hardware = pass != 0;
+        enter(hardware ? (pass == 1 ? "recovery-hardware" : "recovery-reopen")
+                       : "recovery-software");
+        recovery_display display = {
+            .gfx = gfx, .hardware = hardware, .padded = padded, .pass = pass};
+        recovery_callbacks cb = {.now = recovery_clock,
+                                 .picture = recovery_picture,
+                                 .running = recovery_active,
+                                 .stage = recovery_stage,
+                                 .context = &display};
+        recovery_result result;
+        sl_gfx_counters before, after;
+        sl_gfx_get_counters(gfx, &before);
+        bool passed = recovery_run(pipeline, (sl_video_key){1000u + padded * 3u + pass, 1},
+                                   nsl_probe_recovery720, nsl_probe_recovery720_size, hardware,
+                                   padded, &cb, &result);
+        sl_gfx_get_counters(gfx, &after);
+        bool zero_copy =
+            hardware && after.uploads == before.uploads && after.downloads == before.downloads;
+        if (hardware && !zero_copy) {
+            passed = false;
+            result.failure = "hardware-copy";
+        }
+        if (!hardware && display.seen != ((1u << RECOVERY_INPUTS) - 1)) {
+            passed = false;
+            result.failure = "software-reference";
+        }
+        for (unsigned n = 0; n < result.inputs; ++n) {
+            recovery_row *row = &result.rows[n];
+            trace("RECOVERY_ROW {\"padded\":%s,\"pass\":%u,\"input\":%u,\"task\":%u,"
+                  "\"pixels\":%s,\"pixel_input\":%u,\"bytes\":%u,\"submit_result\":%u,"
+                  "\"submit_us\":%llu,\"select_us\":%llu,\"render_verify_us\":%llu}",
+                  padded ? "true" : "false", pass, row->input_id, row->task_id,
+                  row->pixels ? "true" : "false", row->pixel_id, row->bytes, row->result,
+                  (unsigned long long)row->submit_us, (unsigned long long)row->select_us,
+                  (unsigned long long)row->render_us);
+        }
+        trace("RECOVERY_CASE "
+              "{\"width\":1280,\"height\":720,\"padded\":%s,\"pass\":%u,\"hardware_requested\":%s,"
+              "\"hardware_context\":%s,\"zero_copy\":%s,\"inputs\":%u,\"tasks\":%u,"
+              "\"pictures\":%u,\"key_seen\":%s,\"next_p_seen\":%s,"
+              "\"key_to_readback_us\":%llu,\"stopped\":%s,\"passed\":%s,\"failure\":\"%s\"}",
+              padded ? "true" : "false", pass, hardware ? "true" : "false",
+              result.hardware_context ? "true" : "false", zero_copy ? "true" : "false",
+              result.inputs, result.tasks, result.pictures, result.key_seen ? "true" : "false",
+              result.next_p_seen ? "true" : "false", (unsigned long long)result.key_to_readback_us,
+              result.stopped ? "true" : "false", passed ? "true" : "false", result.failure);
+        if (!passed) {
+            failed = result.failure;
+            goto cleanup;
+        }
+        if (!hardware)
+            golden_count = RECOVERY_INPUTS;
+        sl_video_reap(pipeline);
+    }
+    ok = true;
+cleanup:
+    enter("recovery-cleanup-gfx");
+    if (gfx) {
+        sl_gfx_finish(gfx);
+        sl_gfx_destroy(gfx);
+    }
+    enter("recovery-cleanup-decoder");
+    if (pipeline) {
+        sl_video_reap(pipeline);
+        if (!sl_video_destroy(pipeline))
+            abort();
+    }
+    for (unsigned n = 0; n < FRAMES; ++n) {
+        free(golden[n]);
+        golden[n] = NULL;
+    }
+    golden_count = 0;
+    u64 used = 0;
+    Result rc = svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0);
+    struct mallinfo heap = mallinfo();
+    trace("RECOVERY_MEMORY {\"padded\":%s,\"heap_live_bytes\":%llu,\"process_used_bytes\":%llu,"
+          "\"query_result\":%u,\"cleanup_passed\":%s}",
+          padded ? "true" : "false", (unsigned long long)heap.uordblks, (unsigned long long)used,
+          rc, ok ? "true" : "false");
+    if (!ok)
+        stage = failed;
+    return ok;
+}
+
 int main(int argc, char **argv) {
     if (argc > 2) {
         if (!strcmp(argv[2], "1080"))
@@ -686,7 +854,8 @@ int main(int argc, char **argv) {
 #define FIXTURE(name) {#name, nsl_probe_##name, nsl_probe_##name##_size}
         FIXTURE(padding720), FIXTURE(padding1080), FIXTURE(sequential), FIXTURE(reordered)};
     const char *selection = argc > 1 ? argv[1] : "padding720";
-    bool suite = !strcmp(selection, "suite"), known = suite;
+    bool suite = !strcmp(selection, "suite"), recovery = !strcmp(selection, "recovery"),
+         known = suite || recovery;
     bool ok = false, sdl = false;
     unsigned completed = 0;
     readback = malloc(PIXELS);
@@ -700,6 +869,29 @@ int main(int argc, char **argv) {
     sdl = true;
     if (SDL_WasInit(SDL_INIT_VIDEO))
         goto cleanup;
+    if (recovery) {
+        struct AVSHA *sha = av_sha_alloc();
+        unsigned char digest[32];
+        char hex[65];
+        if (!sha || av_sha_init(sha, 256)) {
+            av_free(sha);
+            goto cleanup;
+        }
+        av_sha_update(sha, nsl_probe_recovery720, nsl_probe_recovery720_size);
+        av_sha_final(sha, digest);
+        av_free(sha);
+        for (unsigned n = 0; n < 32; ++n)
+            snprintf(hex + n * 2, 3, "%02x", digest[n]);
+        trace("RECOVERY_FIXTURE size=%zu sha256=%s boundary=decoder", nsl_probe_recovery720_size,
+              hex);
+        for (unsigned n = 0; n < 2; ++n) {
+            if (!run_recovery_profile(n != 0))
+                goto cleanup;
+            ++completed;
+        }
+        ok = completed == 2;
+        goto cleanup;
+    }
     for (unsigned iteration = 0; iteration < (suite ? 12u : 4u); ++iteration) {
         const fixture_data *fixture = &fixtures[iteration % 4];
         if (!suite && strcmp(selection, fixture->name))
@@ -720,7 +912,10 @@ cleanup:;
     for (unsigned i = 0; i < FRAMES; ++i)
         free(golden[i]);
     free(readback);
-    trace("SUITE cases_completed=%u cases_expected=%u", completed, suite ? 12u : 1u);
+    trace("SUITE cases_completed=%u cases_expected=%u", completed,
+          recovery ? 2u
+          : suite  ? 12u
+                   : 1u);
     av_log_set_callback(av_log_default_callback);
     enter("complete");
     trace("PROBE_FINAL result=%s failed_stage=%s", ok ? "PASS" : "FAIL", failed);

@@ -592,6 +592,16 @@ if(NSL_PLATFORM STREQUAL "desktop")
 endif()
 
 if(NSL_PLATFORM STREQUAL "desktop")
+    add_executable(nsl-video-recovery-probe-tests tests/test_video_recovery_probe.c)
+    target_include_directories(nsl-video-recovery-probe-tests PRIVATE platforms/common ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+    target_link_libraries(nsl-video-recovery-probe-tests PRIVATE nsl_video_pipeline)
+    target_compile_options(nsl-video-recovery-probe-tests PRIVATE -Wall -Wextra -Wno-unknown-pragmas -UNDEBUG)
+    add_test(NAME video_recovery_probe_fixture COMMAND nsl-video-recovery-probe-tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video/recovery720.h264)
+    set_tests_properties(video_recovery_probe_fixture PROPERTIES TIMEOUT 30)
+    add_test(NAME switch_recovery_probe_log_contract COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/test-switch-recovery-probe.py")
+    set_tests_properties(switch_recovery_probe_log_contract PROPERTIES TIMEOUT 15)
     add_executable(nsl-video-pipeline-tests tests/test_video_pipeline.c)
     target_link_libraries(nsl-video-pipeline-tests PRIVATE nsl_video_pipeline)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -612,7 +622,7 @@ if(NSL_PLATFORM STREQUAL "switch" AND NSL_DIAGNOSTICS)
     target_link_libraries(nsl-video-probe PRIVATE nsl_gfx nx)
     target_include_directories(nsl-video-probe PRIVATE "${NSL_IDENTITY_DIR}")
     add_dependencies(nsl-video-probe nsl_identity)
-    foreach(fixture padding720 padding1080 sequential reordered)
+    foreach(fixture padding720 padding1080 sequential reordered recovery720)
         set(embedded "${CMAKE_CURRENT_BINARY_DIR}/probe_${fixture}.c")
         add_custom_command(OUTPUT "${embedded}"
             COMMAND "${CMAKE_COMMAND}" -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video/${fixture}.h264

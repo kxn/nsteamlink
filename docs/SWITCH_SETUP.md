@@ -227,6 +227,46 @@ probe 先验证 UI alpha/atlas/方向，再比较软件 YUV 与硬件导入输�
 内存释放后返回 loader。正式启用 deko 的验收契约见 [渲染设计](VIDEO_RENDERING_DESIGN.md)。
 
 
+## 解码边界的关键帧恢复验证
+
+诊断 probe 的 `recovery` 模式嵌入独立的 1280×720 H.264 素材。输入为初始关键帧100、
+跳过101…105后的关键帧106及其后五份P帧107…111。素材由已有小尺寸视频放大生成，
+属于合成解码输入；不模拟Steam收包、FEC、协议组帧或主机补片，也不将其当作自然游戏负载。
+每种输入大小分别执行软件参考、硬解和停止后重开硬解，共六轮；第二种大小使用有效的
+Annex B filler NAL把每个访问单元补至64KiB。
+
+在干净、已提交的研究分支上构建诊断包，然后先生成部署清单：
+
+```sh
+NSL_BUILD_DIR=build/switch-deko scripts/build-switch.sh -DNSL_DIAGNOSTICS=ON -DNSL_BUILD_TOOLS=OFF
+python3 tools/switch-recovery-probe.py --prepare --output build/recovery-prepare
+```
+
+清单保存NRO哈希、完整提交、嵌入素材哈希、图形SDK/shader manifest及部署命令。
+准备好 `10.10.10.17` 的hbmenu netloader后，以下命令只部署一次并自动保存日志与结果：
+
+```sh
+python3 tools/switch-recovery-probe.py --run --output build/recovery-device-001
+```
+
+不需手动复制SD文件或抄写日志。每次采集使用新的输出目录；脚本不会自动重试启动。
+`--timeout`默认180秒，超时只结束电脑上的nxlink进程，设备完成状态仍标为未验证。
+离线检查已保存的日志可用 `--analyze-log PATH --expected-build FULL_COMMIT --output DIR`。
+
+测试走实际的 `sl_video_submit`、`sl_video_select`、任务完成/释放及GPU读回。
+软件YUV逐行MD5必须与独立ffmpeg参考一致，硬解读回按实际像素所属输入与软件参考比较。
+任务身份与像素身份分别记录，允许硬解输出属于更早输入；空输出不能伪装成恢复图像。
+必须观察到关键帧106和P帧107的正确像素。请求硬解时，硬件context及零上传/下载检查
+均须通过，软件回退不能计为硬解成功。每轮停止后才重开；最后先销毁图形资源，再回收
+解码域，与既有probe的映射引用清理顺序一致。
+
+机器记录包含42条输入/任务观察、六轮结果、打开/解码后及清理后的资源快照。
+`submit_us`和`select_us`只测对应调用；`render_verify_us`含渲染、GPU等待、读回及校验。
+`key_to_readback_us`从关键帧提交前到其GPU读回完成，包含诊断开销，不等于正式串流延迟。
+资源查询失败会单独标记；这些局部快照不能证明整客户端峰值或4MiB媒体队列预算合理。
+完整PASS仅证明本模式的解码和读回检查通过；真实Steam网络、物理屏幕扫描输出、
+`socketExit`完成及返回hbmenu均不由nxlink退出或这些记录证明。
+
 ## 分辨率与无底座管线验证
 
 设置→分辨率提供自动、720p、1080p。自动在连接时按掌机/底座选择；手动 1080p
