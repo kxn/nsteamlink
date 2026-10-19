@@ -11683,3 +11683,101 @@ python3 scripts/check-steam-load-process.py \
 ctest --test-dir build/desktop -R 'media_load_udp|media_burst_udp|media_gap_udp' \
   --output-on-failure
 ```
+
+## 149. 大帧分片、反馈补片、FEC超限与字节队列压力
+
+本节固定§148的官方Linux客户端、原SDK和Qt依赖；增加只读的实际decoder
+消费/OnThink/SDK调用全序。原视频OnThink由RunDecodeLoop的虚调用直接读得
+`0x326f30`，完整FDE长度1188、SHA256
+`386a948db84d05a4b298baaab9a9511e2969dcb402b8ee8b7524b6af35d626d4`。
+`steam-client-pressure-gdb.py`在原DecodeFrame入口/返回、原循环调用OnThink前/
+返回后及实际SDK入口读取状态，不替换原方法、时钟、线包或SDK结果。连同原
+DecodeFrame、FIFO pop、循环及既有控制/媒体链，共保存53个完整原函数范围。
+peer、60fps目标节奏、SDK forwarding附加等待和headless播放器消费者仍是
+明确的fixture条件；GDB观察开销不构成自然网络/设备时序证据。
+
+### 149.1 合法普通分片与按实际反馈补片
+
+`media-pressure-stimuli.py`把六份原128×72 H264 AU以type12 filler NAL填充至
+每份65536字节，原解码像素不变。媒体信封总长65556；按1200字节切为55个
+普通3/4线包。首片写tail数54，续片ordinal依次0…53。§25.10的官方sender
+约定与项目额外ordinal防护应同时遵守，不能因官方receiver接受重复ordinal
+就把该输入当成合法sender产物。filler只增加传输/队列字节，不增加像素复杂度，
+不是自然高分辨率解码性能测试。
+
+短片每例26帧，ID100…125、sequence0…25，每六帧一个关键标记。repair/drop
+只扣住ID101下标18的切片，线包ID73；其余输入保持不变。repair的peer必须
+先实际收到channel3的type10，且其累计watermark/bitmap确实请求73，才发送
+retry=1的原缺片；CRC打开时重新计算校验。观察器保留触发补片的实际反馈wire，
+Native也从真实peer socket接收反馈后才补片。不能把预先定时补发当作请求成功。
+
+Evidence：CRC两值的官方原进程和Native真实UDP/session/worker/生产FFmpeg
+都恢复26份完整输入；每份实际SDK输入65536字节及SHA、每份观察像素的独立MD5、
+最后key124→P125和Stop均核验。drop不补片，实际NACK持续发生，ID101没有完整
+交付，后续key/P仍恢复。NACK次数和自然SDK提交数量作为观察值分别保留，不要求
+不同进程的墙钟/调度次数相同。
+
+### 149.2 原编码器codeword与FEC的独立接收分支
+
+FEC参考只由固定官方Android客户端的原AddPacket@`0x7f7904`、RS encode@
+`0x7f6b7c`等指令生成；完整ELF SHA沿用§143。fixture显式给定MTU1200和5%，
+每份65556字节信封得到1168字节shard、k57/m3、共60片。26份codeword分别
+核对原body SHA和group ID，Native复播的每片payload与原codeword逐字节一致。
+容器/分配/packet builder沿用原FEC审计已声明的terminal，parity没有本地生成替身。
+
+| 触发输入 | 官方实际结果与Native检查 |
+|---|---|
+| 每组都删shard0/17/55，含数据片与校验片 | 每组仍交付原完整body，26份实际SDK字节及像素正确 |
+| 只在ID101所属组删0/17/30/55 | 该组不交付，后续组继续；最后key124/P125恢复 |
+| 两种场景的普通type10反馈 | 均未出现；不把FEC缺片假装成普通3/4窗口补片 |
+
+Conclusion：本组证明这些受控type11输入的纠错/失败后推进路径；5%是编码
+能力入口的显式输入，不能由此推导视频producer选择5%、真实Steam何时启用、
+客户端依据丢包自动开启或运行中自动调整比例。启用策略仍受§32/116的官方
+客户端设置/预设/推荐确认链约束，Host能力不能代替客户端触发证据。
+
+### 149.3 字节容量保护与真实消费边界
+
+capacity例实际发送302份64KiB AU，60fps目标约5秒；每次SDK forwarding显式
+附加3000000us等待，随后仍执行原SDK并原样返回。慢SDK期间网络入口继续交付；
+最终key400/P401恢复，真实Stop、worker join、原客户端自然退出及模块引用
+7→0均观察。Source FIFO计数仍是无锁样本，不称全局线性化峰值。
+
+Native使用生产4MiB有界FIFO，不将其冒称官方常数。观察器在producer持有
+windowLock的入队调用内记录实际释放的非空完整媒体body；另在真实视频输入
+消费入口记录ID。核对`已消费数+容量退休数=完整RX数`，未退休场景也须得到0，
+不能用预计丢弃数代替实际释放。一次完整观测为消费63、退休239、RX302；
+SDK期间队列31项/4066952字节，单项包含131072字节已分配body容量与120字节
+node（本桌面构建）。实际SDK字节/像素及末尾恢复正确，但Native比Source多一次DataLost，
+属于本地容量退休后的可观察策略差异，不能声明请求副作用已与官方完全相同。
+
+原用户一两秒停顿的因果不由此成立。人为3秒SDK等待不是实机测得解码延迟；
+字节边界、约5秒受控输入和headless任务释放也不是长期音画同步或物理上屏验收。
+
+### 149.4 提交数量差异的证据强度
+
+旧的无完整消费全序观察中，普通drop例Source提交12份、Native21份。
+不能仅凭相同媒体字节和最终像素就断言全部调度等价，也不能把这两个数直接
+判为协议错误。增加只读观察后，新一轮两种CRC的Source均实际提交10份：
+100、106、118…125。其原线程先消费106/107/108，OnThink只提交106；下一次
+OnThink前又消费109…118，其中关键112、118依次清掉旧pending，因此下次SDK
+输入已是118。该观察直接验证§143的批次/关键标记分支在真实UDP原进程中可达。
+
+Native保留每次实际SDK入口对应的消费计数，可据此核对输入与提交先后。自然
+进程之间没有施加相同调度屏障，正式压力比较检查实际字节、像素、输入归属、
+完整帧退休账、终态和关键帧后P帧恢复；不据提交数量相同宣布等价。旧12份案例
+缺少对应全序，不能事后补造其精确批次；完整自然并发/墙钟等价仍超出本fixture。
+
+```sh
+python3 scripts/audit-steam-pressure-fec-encode.py \
+  --binary /path/to/libmain-arm64.so --output /tmp/fec-pressure.json
+python3 scripts/audit-steam-client-pressure-process.py \
+  --binary /path/to/official/bin/steamlink --sdk-directory /path/to/official/lib \
+  --qt-library-directory /path/to/qt/lib --fec-bank /tmp/fec-pressure.json \
+  --output /tmp/source-pressure.json
+python3 scripts/check-steam-pressure-process.py \
+  --source-report /tmp/source-pressure.json \
+  --receiver build/desktop/app/nsl-auth-udp-oracle
+ctest --test-dir build/desktop -R 'media_pressure_udp_official_vectors' \
+  --output-on-failure
+```

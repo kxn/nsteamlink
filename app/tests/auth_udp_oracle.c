@@ -70,7 +70,12 @@ static void sendEncryptedPeer(IHS_Session *s,int socket,const struct sockaddr_in
     sendPeer(socket,address,5,local,1,id,body,count+1,crc);
 }
 int main(int argc,char **argv) {
-    bool load=argc==10 && !strcmp(argv[1],"--load");
+    bool pressure=argc==12 && !strcmp(argv[1],"--pressure");
+    bool load=pressure || (argc==10 && !strcmp(argv[1],"--load"));
+    if(pressure) {
+        udpLoadFault=!strcmp(argv[10],"repair")?1:!strcmp(argv[10],"drop")?2:0;
+        udpLoadHole=atoi(argv[11]);
+    }
     udpLoadMode=load;
     unsigned loadSent=0,loadFrames=load?(unsigned)atoi(argv[8]):0,loadRate=load?(unsigned)atoi(argv[9]):0;
     if(load) {udpLoadDelayUS=(unsigned)atoi(argv[7]);assert(loadFrames && loadFrames<UDP_LOAD_LIMIT && loadRate);}
@@ -208,6 +213,7 @@ int main(int argc,char **argv) {
         uint8_t raw[2048];struct sockaddr_in from;socklen_t length=sizeof(from);
         ssize_t size=recvfrom(peer,raw,sizeof(raw),0,(struct sockaddr *)&from,&length);assert(size>=13);
         uint8_t type=raw[0]&127;
+        if(load)udpLoadOnFeedback(peer,&from,raw,(size_t)size,crc);
         if(load && type==3 && raw[4]==3 && size==(crc?18:14) && raw[13]==2)++udpLoadDataLost;
         if((recover || gap || audioGap) && (type==8 || type==10 || (gap && type==3 && raw[13]==2)) && raw[4]==3 && !repaired) {
             assert(((raw[0]&128)!=0)==crc && raw[2] && raw[3]==7);
