@@ -2214,7 +2214,7 @@ Conclusion：内屏物理尺寸不限制编码/解码尺寸；可以在掌机接
 Decision：
 
 1. 用户可选自动、720p、1080p。自动在每次普通开流时按 operation mode 选择掌机 720p / 底座
-   1080p，H264、最高 60 fps，不超频。手动 1080p 在掌机也可用。选项位于设置→画面偏好→分辨率。
+   1080p，H264、最高 60 fps，不超频。手动 1080p 在掌机也可用。选项位于设置→分辨率。
 2. 选择写入独立 `video.conf`（resolution=0/720/1080），与 profile.bin 身份布局、host 写回的
    完整 streaming_settings.bin 分离。保留完整 host 配置与未知字段；有效请求尺寸覆盖此前会话
    保存的 desired_resolution_x/y，避免自动被上一次 720p 限制锁住。

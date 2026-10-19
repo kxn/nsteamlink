@@ -58,7 +58,7 @@ The home screen and menus also support touch. **Disconnect** leaves the PC game 
 
 ![The in-game menu: resume, settings, end game and disconnect](docs/images/streaming-menu.jpg)
 
-Open **Settings → Video quality → Resolution** to choose Auto, 720p or 1080p.
+Open **Settings → Resolution** to choose Auto, 720p or 1080p.
 Auto selects 720p in handheld mode and 1080p when docked at each connection, targeting up to 60 fps.
 Changes apply on the next connection. Forced 1080p also works in handheld mode: the full video is
 received and decoded at 1080p, then scaled to the 720p panel. Docking changes local output dimensions;

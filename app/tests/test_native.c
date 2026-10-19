@@ -359,6 +359,13 @@ int main(int argc, char **argv) {
                      p);
             save_image(image);
         }
+        /* The settings drawer has an extra host-entry row outside streaming. */
+        ui.page = SL_SETTINGS;
+        ui.streaming = true;
+        sl_ui_layout(&ui);
+        stream_media_present();
+        save_image(lang == SL_LANG_EN ? "i18n-en-settings-streaming"
+                                      : "i18n-zh-settings-streaming");
         ui.page = SL_ERROR;
         ui.cancel_only_error = true;
         snprintf(ui.error, sizeof(ui.error), sl_tr(SL_T_TEST_FAILED_DETAIL), "CONTROLLED-PC",

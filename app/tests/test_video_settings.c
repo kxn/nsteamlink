@@ -50,6 +50,21 @@ static void storage(void) {
     assert(sl_video_settings_load(dir) == SL_RESOLUTION_AUTO);
     assert(!unlink(path) && !rmdir(dir));
 }
+/* All settings drawers keep options separate from the fixed Back row. */
+static void drawer(const sl_ui_model *m) {
+    const sl_layout *l = &m->layout;
+    assert(l->drawer && l->label_count == 0);
+    for (int i = 0; i < l->count; ++i) {
+        const sl_control *c = &l->controls[i];
+        assert(c->x >= l->panel_x && c->y >= 136 && c->h >= 64);
+        assert(c->x + c->w <= l->panel_x + l->panel_w);
+        assert(c->y + c->h <= 720);
+        for (int j = i + 1; j < l->count; ++j) {
+            const sl_control *other = &l->controls[j];
+            assert(c->y + c->h <= other->y || other->y + other->h <= c->y);
+        }
+    }
+}
 static void ui(void) {
     for (unsigned language = SL_LANG_ZH_CN; language <= SL_LANG_EN; ++language) {
         sl_i18n_set(language);
@@ -58,8 +73,25 @@ static void ui(void) {
         sl_ui_action(&m, SL_SET_RESOLUTION, 1080); /* Cannot edit from another page. */
         assert(m.resolution == SL_RESOLUTION_AUTO && !m.command.type);
         sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
+        drawer(&m);
+        assert(m.layout.controls[0].action == SL_OPEN_QUALITY);
+        assert(m.layout.controls[1].action == SL_OPEN_RESOLUTION);
         sl_ui_action(&m, SL_OPEN_QUALITY, 0);
+        drawer(&m);
+        assert(m.layout.count == 4);
+        for (int i = 0; i < 3; ++i)
+            assert(m.layout.controls[i].action == SL_SET_QUALITY);
         sl_ui_action(&m, SL_OPEN_RESOLUTION, 0);
+        assert(m.page == SL_QUALITY); /* Resolution is a sibling, never a radio choice. */
+        sl_ui_action(&m, SL_BACK, 0);
+        sl_ui_tick(&m, m.now + 300);
+        sl_ui_action(&m, SL_OPEN_BANDWIDTH, 0);
+        drawer(&m);
+        sl_ui_action(&m, SL_BACK, 0);
+        sl_ui_tick(&m, m.now + 300);
+        m.focus = m.layout.controls[1].id;
+        sl_ui_action(&m, SL_ACCEPT, 0);
+        drawer(&m);
         assert(m.page == SL_RESOLUTION && m.focus == 100);
         sl_ui_action(&m, SL_SET_RESOLUTION, 1440);
         assert(!m.command.type && m.resolution == SL_RESOLUTION_AUTO);
@@ -70,7 +102,7 @@ static void ui(void) {
         assert(sl_ui_take_command(&m, &command) && command.type == SL_CMD_SAVE &&
                command.resolution == SL_RESOLUTION_1080);
         sl_ui_tick(&m, m.now + 300);
-        assert(m.page == SL_QUALITY);
+        assert(m.page == SL_SETTINGS && m.focus == 101);
         sl_ui_action(&m, SL_OPEN_RESOLUTION, 0);
         assert(m.focus == 102);
         for (int i = 0; i < m.layout.count; ++i) {
@@ -80,8 +112,25 @@ static void ui(void) {
         sl_ui_connected(&m);
         sl_ui_action(&m, SL_OPEN_MENU, 0);
         sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
+        drawer(&m);
+        assert(m.layout.controls[0].action == SL_OPEN_QUALITY);
+        assert(m.layout.controls[1].action == SL_OPEN_RESOLUTION);
         sl_ui_action(&m, SL_OPEN_QUALITY, 0);
+        drawer(&m);
+        assert(m.layout.count == 4);
+        for (int i = 0; i < 3; ++i)
+            assert(m.layout.controls[i].action == SL_SET_QUALITY);
         sl_ui_action(&m, SL_OPEN_RESOLUTION, 0);
+        assert(m.page == SL_QUALITY); /* Resolution is a sibling, never a radio choice. */
+        sl_ui_action(&m, SL_BACK, 0);
+        sl_ui_tick(&m, m.now + 300);
+        sl_ui_action(&m, SL_OPEN_BANDWIDTH, 0);
+        drawer(&m);
+        sl_ui_action(&m, SL_BACK, 0);
+        sl_ui_tick(&m, m.now + 300);
+        m.focus = m.layout.controls[1].id;
+        sl_ui_action(&m, SL_ACCEPT, 0);
+        drawer(&m);
         sl_ui_action(&m, SL_SET_RESOLUTION, 720);
         assert(sl_ui_take_command(&m, &command) && command.type == SL_CMD_SAVE &&
                command.resolution == SL_RESOLUTION_720 && m.streaming);

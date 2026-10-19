@@ -383,7 +383,7 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
         m->focus = 100 + (m->store.quality <= 2 ? (int)m->store.quality : 0);
         break;
     case SL_OPEN_RESOLUTION:
-        if (m->page == SL_QUALITY) {
+        if (m->page == SL_SETTINGS) {
             push(m, SL_RESOLUTION);
             m->focus = m->resolution == SL_RESOLUTION_1080  ? 102
                        : m->resolution == SL_RESOLUTION_720 ? 101
