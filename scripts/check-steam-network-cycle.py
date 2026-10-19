@@ -15,16 +15,30 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
+    if not __debug__:
+        raise SystemExit("Assertions required")
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--receiver", type=Path, required=True)
+    p.add_argument("--adaptive-only", action="store_true")
     a = p.parse_args()
-    cases = json.loads(
+    source = json.loads(
         (ROOT / "scripts/fixtures/steam-network-cycle-reference.json").read_text()
-    )["cases"]
+    )
+    assert (
+        source["binary_sha256"]
+        == "50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e"
+    )
+    cases = source["cases"]
+    if a.adaptive_only:
+        cases = [c for c in cases if c["input"]["name"].startswith("adaptive_")]
+        assert len(cases) == 40
     states = wires = 0
     for c in cases:
         i = c["input"]
-        lines = ["A " + " ".join(map(str, row)) for row in i["seeds"]]
+        lines = []
+        if "initial_deadline" in i:
+            lines.append(f"D {i['initial_deadline']}")
+        lines.extend("A " + " ".join(map(str, row)) for row in i["seeds"])
         lines.extend(f"Q {ch} {priority}" for ch, priority in i.get("priorities", []))
         if "budget" in i:
             lines.append("I " + " ".join(map(str, i["budget"])))

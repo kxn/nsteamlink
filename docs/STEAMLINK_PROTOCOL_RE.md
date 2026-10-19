@@ -10889,3 +10889,54 @@ python3 scripts/audit-steam-client-gap-process.py --burst \
 python3 scripts/check-steam-gap-process.py --burst \
   --receiver build/desktop/app/nsl-auth-udp-oracle
 ```
+
+## 139. ACK驱动的RTT变化、媒体缺口等待与反馈节流
+
+Evidence：固定§64的Android客户端main SHA，扩展
+`audit-steam-network-cycle.py`。保留原40个案例不变，新增40个案例通过原
+Socket::Update/HandlePacket、CRC、Channel::HandleAckPacket @7f94b8及
+Connection::ProcessTimestamp @7f9a2c进入原Ping/TimeOffset队列，再驱动同轮
+可靠发送及普通媒体接收/反馈。RTT由ACK正文的echo与本地接收时间产生，
+没有直接seed smoothed RTT或调用本地metric setter。
+
+受控输入覆盖65、655、1966、3276、6553、32768、65536 tick（约1–1000ms）
+RTT、普通与32位回绕起点、CRC两值，以及约10→80→20→500→50ms的波动。
+后一组再送130/131 tick回退echo：前者仍进入采样，后者不改clock状态。
+快/慢RTT还分别驱动同一组普通媒体缺口，以及反馈deadline的等号前/等号时刻。
+固定12份完整符号范围/指令SHA，包含实际ACK、时钟、采样、Socket/Connection
+Update、可靠sender及不可靠receiver；本组所有新增案例无原诊断断言。
+
+Conclusion：原可靠RTO将平滑RTT限制在65…3276 tick后加其四分之一，严格超过
+才重试；不能把所有网络等待统一解释为RTT或固定一两秒。普通媒体最大接收延迟
+含自身budget及RTT均值贡献：额外等待取trunc((RTT均值毫秒+2)/2)毫秒，再转tick。
+反馈节流@7fa984–7fa9b8则取max(65, clamp(平滑RTT,65,3276)/4) tick，整数除法；
+本组在deadline前1tick不发、等号时发送。给定本组缺口输入，约10ms
+RTT时后续新数据使通道交付最后一份payload；约500ms时仍保留等待。单独推进一秒
+墙钟而无新数据，本组不交付，因此不能将它称为无条件墙钟丢帧timer。这里观察的是
+完整传输payload交付，不是视频decoder/像素恢复。
+
+回绕中恰好在tick0成功发送，原sender @7f8b80仍把last-send=0当作未发送；下一轮
+会再次发送，随后恢复严格RTO。Native的同一实际保留窗口/周期路径也必须保留此
+分支，不能因正常时刻的重传检查通过而删除零值含义。
+
+时钟、连接初态、平台锁/refcount、Read/Write结果及交付delegate仍是明确adapter。
+回绕案例另显式提供初始shaper deadline=起点，避免把零初始化的fixture deadline
+当成自然构造事实；新Native `D`命令只提供同一初态。此项不证明自然Socket构造、
+OS网络调度、真实Steam/高码率/满队列、decoder、Switch或原用户停顿因果。
+
+Native保留初发Queue/Dispatch、CRC接收、ACK处理、采样和同轮RX/反馈/TX，比较
+80组252状态、168份初发及206份周期完整wire、两类保留窗口、媒体交付/元数据、
+clock、Ping样本/float比特、budget、优先级和rotation。七份隔离生产反例分别将
+RTO固定、去上限、媒体等待去RTT、反馈固定、echo边界提前1tick、移除零stamp
+分支、等号就重试；全部先编译/链接并要求receiver正常退出，再由新增环境案例的
+正式状态/wire比较拒绝。不以崩溃或编译失败计为检出，也不因本组匹配而新增
+按丢包开启FEC、主动重连或其他无官方依据的策略。
+
+```sh
+python3 scripts/audit-steam-network-cycle.py --binary /path/to/libmain-arm64.so \
+  --output /tmp/network-cycle.json
+python3 scripts/check-steam-network-cycle.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-network-wire-oracle
+python3 scripts/check-network-adaptation-native-mutations.py --build build/desktop \
+  --output /tmp/network-adaptation-mutants
+```

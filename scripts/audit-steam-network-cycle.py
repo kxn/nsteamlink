@@ -17,6 +17,8 @@ import importlib.util
 import json
 from pathlib import Path
 import struct
+import io
+from elftools.elf.elffile import ELFFile
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location(
@@ -24,6 +26,47 @@ spec = importlib.util.spec_from_file_location(
 )
 cycle = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cycle)
+
+
+def function_manifest(binary):
+    addresses = {
+        0x7F9A2C,
+        0x7F94B8,
+        0x7F8AC4,
+        0x7FA3B0,
+        0x7FC108,
+        0x7FECD4,
+        0x7FF3E0,
+        0x7FC070,
+        0x7FC7B4,
+        0x7FC938,
+        0x7FC0BC,
+        0x7FC994,
+    }
+    elf = ELFFile(io.BytesIO(binary))
+    segments = [s for s in elf.iter_segments() if s["p_type"] == "PT_LOAD"]
+    result = {}
+    for section in elf.iter_sections():
+        if section["sh_type"] not in ("SHT_SYMTAB", "SHT_DYNSYM"):
+            continue
+        for symbol in section.iter_symbols():
+            address, size = symbol["st_value"], symbol["st_size"]
+            if address not in addresses or not size:
+                continue
+            segment = next(
+                s
+                for s in segments
+                if s["p_vaddr"] <= address < s["p_vaddr"] + s["p_filesz"]
+            )
+            start = segment["p_offset"] + address - segment["p_vaddr"]
+            result[str(address)] = dict(
+                name=symbol.name,
+                address=address,
+                size=size,
+                sha256=hashlib.sha256(binary[start : start + size]).hexdigest(),
+            )
+    assert {int(a) for a in result} == addresses
+    return result
 
 
 class Network(cycle.Cycle):
@@ -69,20 +112,22 @@ class Network(cycle.Cycle):
                     tail=tail,
                     cursor=struct.unpack("<H", self.u.mem_read(ch + 244, 2))[0],
                     count=self.u.mem_read(raw + 1, 1)[0] if p else 0,
-                    stamp=struct.unpack("<I", self.u.mem_read(raw + 9, 4))[0]
-                    if p
-                    else 0,
+                    stamp=(
+                        struct.unpack("<I", self.u.mem_read(raw + 9, 4))[0] if p else 0
+                    ),
                 )
             windows.append(state)
         shaper = self.q(self.sock + 64)
         result = dict(
             windows=windows,
-            order=[
-                self.u.mem_read(self.q(self.connection + 384 + n * 8) + 16, 1)[0]
-                for n in range(len(self.channels))
-            ]
-            if include_order
-            else [],
+            order=(
+                [
+                    self.u.mem_read(self.q(self.connection + 384 + n * 8) + 16, 1)[0]
+                    for n in range(len(self.channels))
+                ]
+                if include_order
+                else []
+            ),
             rotation=self.u.mem_read(self.connection + 377, 1)[0],
             blocked=bool(self.u.mem_read(self.sock + 57, 1)[0]),
             deadlines=[self.i(shaper + 8), self.i(shaper + 12)],
@@ -217,7 +262,106 @@ def schedules():
                 )
             ],
         )
-    return cases
+    return cases + adaptive_schedules()
+
+
+def adaptive_schedules():
+    """RTT enters through actual ACK/CRC admission, not a metric setter."""
+    out = []
+    mask = 0xFFFFFFFF
+
+    def ack(echo, peer=900000):
+        row = cycle.packet(0, kind=7, channel=4, payload=struct.pack("<I", echo).hex())
+        row[5] = peer & mask
+        return row
+
+    for crc in (False, True):
+        for base in (1000000, 0xFFFF0000):
+            for rtt in (65, 655, 1966, 3276, 6553, 32768, 65536):
+                period = min(max(rtt, 65), 3276)
+                period += period // 4
+                sample = (base + rtt) & mask
+                last = sample if rtt > period else base
+                edge = (last + period) & mask
+                out.append(
+                    dict(
+                        name=f"adaptive_rto_{base}_{rtt}_{int(crc)}",
+                        crc=crc,
+                        seeds=[seed(tick=base), seed(tick=base)],
+                        cycles=[
+                            batch(base, ready=False, eof=0),
+                            batch(sample, rows=[ack(base)], eof=0),
+                            batch(edge, ready=False, eof=0),
+                            batch((edge + 1) & mask, ready=False, eof=0),
+                        ],
+                        rtt_input=rtt,
+                        initial_deadline=base,
+                    )
+                )
+        for rtt in (655, 32768):
+            base = 1000000
+            first = cycle.packet(1, kind=3, channel=3, payload="06aa")
+            last = cycle.packet(3, kind=3, channel=3, payload="06bb")
+            last[5] = 900000 + 7209  # controlled 110ms peer-time gap
+            first[5] = 900000
+            newer = cycle.packet(4, kind=3, channel=3, payload="06cc")
+            newer[5] = 900000 + 26214  # controlled 400ms peer-time gap
+            out.append(
+                dict(
+                    name=f"adaptive_media_{rtt}_{int(crc)}",
+                    crc=crc,
+                    seeds=[seed(tick=base)],
+                    rtt_input=rtt,
+                    cycles=[
+                        batch(base, ready=False, eof=0),
+                        batch(base + rtt, rows=[ack(base), first, last], eof=0),
+                        batch(base + rtt + 65536, ready=False, eof=0),
+                        batch(base + rtt + 65537, rows=[newer], eof=0),
+                    ],
+                )
+            )
+        for rollback in (130, 131):
+            base = 1000000
+            cycles = [batch(base, ready=False, eof=0)]
+            latencies = (655, 5243, 1310, 32768, 3276)
+            for n, rtt in enumerate(latencies):
+                echo = base + n * 65536
+                cycles.append(
+                    batch(echo + rtt, rows=[ack(echo, 900000 + n * 65536)], eof=0)
+                )
+            echo = base + 4 * 65536 - rollback
+            cycles.append(batch(base + 5 * 65536, rows=[ack(echo, 1200000)], eof=0))
+            out.append(
+                dict(
+                    name=f"adaptive_jitter_{rollback}_{int(crc)}",
+                    crc=crc,
+                    seeds=[seed(tick=base), seed(tick=base)],
+                    cycles=cycles,
+                )
+            )
+    for crc in (False, True):
+        for rtt in (655, 32768):
+            base = 1000000
+            sample = base + rtt
+            interval = max(min(rtt, 3276) // 4, 65)
+            first = cycle.packet(1, kind=3, channel=3, payload="06aa")
+            later = cycle.packet(3, kind=3, channel=3, payload="06bb")
+            first[5], later[5] = 900000, 900100
+            out.append(
+                dict(
+                    name=f"adaptive_feedback_{rtt}_{int(crc)}",
+                    crc=crc,
+                    seeds=[seed(tick=base)],
+                    cycles=[
+                        batch(base, ready=False, eof=0),
+                        batch(sample, rows=[ack(base), first], eof=0),
+                        batch(sample + 100, rows=[later], eof=0),
+                        batch(sample + interval - 1, ready=False, eof=0),
+                        batch(sample + interval, ready=False, eof=0),
+                    ],
+                )
+            )
+    return out
 
 
 def audit(binary):
@@ -225,6 +369,10 @@ def audit(binary):
     cases = []
     for inp in schedules():
         r = Network(binary, inp["crc"])
+        if "initial_deadline" in inp:
+            shaper = r.q(r.sock + 64)
+            r.wi(shaper + 8, inp["initial_deadline"])
+            r.wi(shaper + 12, inp["initial_deadline"])
         for row in inp["seeds"]:
             r.seed(*row)
         initial = list(r.wires)
@@ -297,6 +445,47 @@ def audit(binary):
             }
         if inp["name"].startswith("write_cost_batch_tick"):
             assert [bytes.fromhex(w)[4] for w in observed[0]["wires"]] == [3, 5]
+        if inp["name"].startswith("adaptive_rto"):
+            assert observed[1]["clock"]["smooth"] == inp["rtt_input"]
+            assert observed[1]["tx"]["windows"][0]["retained"] is False
+            if inp["cycles"][1]["tick"] == 0:
+                # Original sender treats a last-send timestamp of zero as
+                # unsent, even after a successful send exactly at wrap.
+                assert [len(s["wires"]) for s in observed] == [0, 1, 1, 0]
+                sent = observed[2]["wires"][0]
+            else:
+                assert not observed[2]["wires"] and len(observed[3]["wires"]) == 1, inp
+                sent = observed[3]["wires"][0]
+            assert struct.unpack_from("<H", bytes.fromhex(sent), 7)[0] == 1
+        if inp["name"].startswith("adaptive_media"):
+            assert not any(s["delivered"] for s in observed[:3])
+            assert observed[-1]["delivered"] == (
+                ["06cc"] if inp["rtt_input"] == 655 else []
+            )
+        if inp["name"].startswith("adaptive_jitter"):
+            previous, final = observed[-2]["clock"], observed[-1]["clock"]
+            if "_130_" in inp["name"]:
+                assert (
+                    final["echo"] == previous["echo"] - 130
+                    and final["smooth"] != previous["smooth"]
+                )
+            else:
+                assert final == previous
+        if inp["name"].startswith("adaptive_feedback"):
+            assert [len(s["wires"]) for s in observed] == [0, 1, 0, 0, 1]
+            assert all(
+                bytes.fromhex(w)[0] & 127 == 10 for s in observed for w in s["wires"]
+            )
+        if inp["name"].startswith("adaptive_"):
+            assert not r.asserts, (inp["name"], r.asserts)
+            print(
+                inp["name"],
+                "clock",
+                observed[-1]["clock"],
+                "delivered",
+                [s["delivered"] for s in observed],
+                flush=True,
+            )
         cases.append(
             dict(input=inp, observed=observed, source_assertions=list(r.asserts))
         )
@@ -304,15 +493,19 @@ def audit(binary):
 
 
 def main():
+    if not __debug__:
+        raise SystemExit("Assertions required")
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--binary", type=Path, required=True)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--refresh-reference", action="store_true")
     a = p.parse_args()
+    binary = a.binary.read_bytes()
     report = dict(
         binary_sha256=cycle.config.SHA,
         scope=__doc__,
-        cases=audit(a.binary.read_bytes()),
+        cases=audit(binary),
+        functions=function_manifest(binary),
     )
     ref = ROOT / "scripts/fixtures/steam-network-cycle-reference.json"
     if a.refresh_reference:
