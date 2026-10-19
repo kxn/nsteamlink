@@ -13112,3 +13112,69 @@ send/receive包装同样只转发并记录。该Native观测与官方GDB不改�
 media error。暖机/冷机的SDK区别有真实返回见证；不把它推广成所有厂商硬件错误
 映射或玩家卡顿原因。移除前的本地组帧guard使四组均无ID2提交，与§166原码的
 在途批次不符；这不是要求忽略SDK错误或在任意停止阶段继续消费。
+
+## 168. 发现管理器的网络事件、启动与接收错误边界
+
+Evidence：`audit-steam-network-discovery.py`固定§24的Android shell SHA
+`15b2d79881eef0c47ed2f96c17d1d60a5f42d3285abcf9f512cfffdac5b238a2`，
+执行11项原函数并保存范围/代码SHA、两个审计helper身份及55组完整输入/观察。
+Qt、OS socket、空CUtlBuffer存储和远端会话API为明确terminal；BStart的Stop
+terminal仅允许初始state=0且没有socket/remote的空manager，不冒充真实清理。
+成功的Source数据报只到BProcess terminal，不证明原协议解析/主机发现。
+
+| 实际触发 | 原码效果及边界 |
+|---|---|
+| watcher构造@c9643c | 连接networkAccessibleChanged到OnNetworkStateChanged，timeout到OnUpdate，启动100ms QTimer；查询networkAccessible但不使用其返回值门控启动 |
+| 网络slot@c96588 | 仅manager+8为0时BStart；输入标量-1/0/1均相同，非零manager state不启动，也不调用HandleNetworkChanged |
+| Qt meta dispatch@f9f184 | 经QObject基类ID terminal后，InvokeMetaMethod的本地ID1进入网络slot、ID0进入Update slot；矩阵实际经过原dispatch |
+| BStart@cafd90 | 先Stop，再按local/remote启用位创建依赖；本地socket初始化返回false则不进入state1/Update；远端BConnect返回false仍保存remote、进入state1并Update |
+| BReceive@cae2c0 | recvfrom返回值<=0统一false，不读取errno、不Close；正值设置地址及buffer put位置再返回true |
+| Update@cafe5c | false只结束当前BReceive循环；保留manager/socket并继续该轮管理逻辑，下一次timer dispatch还能收取后续数据 |
+| 显式HandleNetworkChanged@cb1d4c | 仅state1处理；104B行中signed字段+96>=-1才清64位字段+40，再清manager+48并Update；不是重建整个会话 |
+
+原BInit@caddbc先尝试IPv6 datagram socket，创建失败才尝试IPv4。两次socket
+创建均失败才在所测初始化路径返回false；受控bind/setsockopt/fcntl返回-1仍
+返回true，不能将“socket初始化失败”泛化成任一配置系统调用失败。成功路径请求
+O_NONBLOCK；此处是描述原码，不为Switch新增IPv6能力或建议忽略配置失败。
+
+55组覆盖构造/slot/meta网络入口的state0/1/4/5×输入-1/0/1，local/remote启动
+组合、两种socket创建结果/IPv4回退及配置调用失败，四组空/非空接收循环结束后
+再入Update，和四种state的显式network API。100ms是原Qt计时器的参数；未运行
+实际Qt事件循环，不证明OS自然触发时刻、物理网络变化、计时精度或Switch调度。
+已核对的watcher路径没有调用HandleNetworkChanged；该API的自然producer未由
+此审计确立。不能因函数名推导网络变化自动清DNS、重连云端或重建IHS会话。
+
+Native `discovery_error_runtime.c`运行真实IHS_ClientCreate、Base/pthread worker、
+POSIX接收分类、protobuf解析、主机callback及stop→join→destroy→IHS_Quit。
+仅recvfrom被适配为一个受控errno失败后紧接有效Status数据报；临时零secret是
+完整的夹具配置，不连接Steam。确认client/instance/hostname及gamesRunning=0
+确实到达callback，实际join后socket/worker归零。adapter余下空读每次1ms是测试
+节拍，不是产品重试策略或官方计时器的替代。
+
+| Native输入（Linux errno标记） | 真实worker结果 |
+|---|---|
+| 无错误及EAGAIN/ETIMEDOUT/EINTR/ECONNREFUSED/ECONNRESET/ENETUNREACH/EHOSTUNREACH | 后续有效Status被交付，主动Stop前socket存活 |
+| ENETDOWN/EIO/EINVAL/EBADF/ENOMEM/ENOBUFS | 实际POSIX分类返回-1，BaseWorker结束并关socket；后续Status未被读取 |
+
+Conclusion：SDK048e1b4的发现owner对这些剩余错误与原manager存在可复现差异。
+原BReceive不读取errno，表中的名称只标记Native输入，不声称Android/Switch自然
+产生过它们。`check-steam-network-discovery.py`默认完整比较明确返回失败，不能用
+进程exit0或8项control通过宣称全错误策略等价。CTest只注册已兼容的controls；
+保留完整失败oracle供策略修正前后对照，不把旧错误行为写成必须保持的回归断言。
+
+Hypothesis／待验证：Switch真实网络变化是否会产生这些错误，以及是否解释用户
+不可见/停顿。该发现worker不同于已有receiveCycle的媒体session owner，不能把
+差异直接当作串流中断根因。完整修正还需要有证据的调度、连续失败时的CPU边界、
+初始socket失败的owner反馈与退出顺序；不从此证据直接实现无限重试、定时重新
+配对、DNS刷新或全会话重建。Switch当前DNS适配另见PR54分支D-075，不是本节
+所还原的Valve策略。
+
+```sh
+PYTHONPATH=/path/to/audit-deps python3 scripts/audit-steam-network-discovery.py \
+  --binary /path/to/official/libshell-arm64.so --output /tmp/source-discovery.json
+python3 scripts/check-steam-network-discovery.py \
+  --receiver build/desktop/app/nsl-discovery-error-runtime --controls-only
+# 完整比较目前应明确报告6项不兼容并返回1：
+python3 scripts/check-steam-network-discovery.py \
+  --receiver build/desktop/app/nsl-discovery-error-runtime --output /tmp/native-discovery.json
+```
