@@ -2,6 +2,39 @@
 
 [简体中文](CHANGELOG.md)
 
+## [0.5.0] - 2026-10-19
+
+Previous stable release: **v0.4.0**. This release: **v0.5.0**. Target branch: `main`; tagged source: [`v0.5.0`](https://github.com/kxn/nsteamlink/tree/v0.5.0).
+
+### Highlights
+
+- **1080p streaming**: choose Auto, 720p, or 1080p. Auto requests 720p in handheld mode and 1080p when docked at connection time. Handheld mode also supports manually selected 1080p, decoded at full resolution and scaled to the internal screen. Docked presentation preserves native 1080p detail.
+- **Settings categories**: X on the home screen opens Settings directly, with Video & audio, Network, Host management, and Application. Quality, resolution, bitrate, and language entries show the saved value. Sound, error correction, and update checks use consistent graphical switches. Only entries that navigate to another page show arrows.
+- **Simpler streaming menu**: Streaming offers only Resume game, End game and disconnect, and Disconnect. Settings are available from the home screen. Confirmations distinguish closing the host game from disconnecting while leaving it running.
+- **Interface cleanup**: consolidate host terminology, remove repeated timing explanations, and revise Chinese/English layouts, return focus, and controller/touch behavior for disabled actions.
+
+### Commits by type
+
+- **Features**: `3560194`, selectable resolution, automatic docked negotiation, and native 1080p presentation ([PR #60](https://github.com/kxn/nsteamlink/pull/60), [Issue #12](https://github.com/kxn/nsteamlink/issues/12)); `719deef`, settings categories and streaming menu reorganization.
+- **Fixes**: `be19b8a`, resolution navigation and drawer layout; `1e74f71`, nxlink argument ordering for device probes.
+- **Development tests**: `1e4e13c`, an isolated forced-1080p test build. The published application defaults to automatic resolution.
+
+### Validation and evidence scope
+
+All 173 local regression tests ultimately passed, along with the ordinary Switch build and release diagnostic exclusion check. Chinese and English menus were inspected using actual rendering. All 12 Switch hardware-decode/native-1080p pixel cases passed, with clean test resources and no heap growth; the maintainer reported successful handheld playtesting of forced-1080p streaming.
+
+A physical dock was unavailable, so HDMI output and physical dock hotplug remain untested. These results do not establish sustained 1080p60 performance or a complete latency baseline. The tag workflow repeats desktop diagnostics ON/OFF tests, ordinary and diagnostic Switch builds, and checks the version, NRO structure, source identity, and attachment checksums before publishing.
+
+### Download and update
+
+Download the ordinary `.nro` from [this release](https://github.com/kxn/nsteamlink/releases/tag/v0.5.0), or use the existing in-app updater. An installed HOME shortcut targets `sdmc:/switch/nsteamlink/nsteamlink.nro`. Resolution is under **Settings → Video & audio → Resolution**; automatic update checks are under **Settings → Application**. Netloader launches skip update checks.
+
+Attachments contain the ordinary NRO, `SHA256SUMS`, `build_identity.json`, the SDK package list, and license text. Forced-1080p test packages and standalone NSPs are not published.
+
+Thanks to users for the 1080p request and menu feedback, Sven for the original-model Switch, and the authors and maintainers of IHSlib, FFmpeg, Opus, SDL, libnx, devkitPro, deko3d, and nx-hbloader.
+
+[Full changelog: v0.4.0 → v0.5.0](https://github.com/kxn/nsteamlink/compare/v0.4.0...v0.5.0)
+
 ## [0.4.0] - 2026-10-19
 
 Previous stable release: **v0.3.0**. This release: **v0.4.0**. Target branch: `main`; tagged source: [`v0.4.0`](https://github.com/kxn/nsteamlink/tree/v0.4.0). Runtime code is unchanged from the tested `d05abab` candidate, with IHSlib pinned to `afed70e`; the release commit only updates the version and bilingual notes.
