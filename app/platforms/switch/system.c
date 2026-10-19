@@ -33,11 +33,13 @@ bool sl_system_init(void) {
         return false;
     }
     mkdir("sdmc:/switch/nsteamlink", 0777);
-    if (NSL_DIAGNOSTICS && __nxlink_host.s_addr) {
+#if NSL_DIAGNOSTICS
+    if (__nxlink_host.s_addr) {
         log_fd = nxlinkConnectToHost(false, false);
         if (log_fd >= 0)
             fcntl(log_fd, F_SETFL, O_NONBLOCK);
     }
+#endif
     return true;
 }
 bool sl_system_running(void) {

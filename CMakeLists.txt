@@ -38,6 +38,8 @@ add_custom_target(nsl_identity ALL
 
 set(IHSLIB_HID_SDL ON CACHE BOOL "Build ihslib SDL HID provider" FORCE)
 set(IHSLIB_HID_SDL_USE_SDL2 ON CACHE BOOL "Build ihslib SDL HID provider against SDL2" FORCE)
+# SDK diagnostics follow the application profile, including cached builds.
+set(IHSLIB_DIAGNOSTICS ${NSL_DIAGNOSTICS} CACHE BOOL "Compile IHS diagnostic collection" FORCE)
 add_subdirectory(third_party/ihslib)
 
 enable_testing()

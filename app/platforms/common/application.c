@@ -235,7 +235,9 @@ int sl_application_run(int argc, char **argv) {
     (void)argv;
 #endif
     if (!sl_system_init()) {
+#if NSL_DIAGNOSTICS
         fprintf(stderr, "Platform initialization failed\n");
+#endif
         return 1;
     }
     application *a = calloc(1, sizeof(*a));
@@ -260,7 +262,9 @@ int sl_application_run(int argc, char **argv) {
         a->updater = start_updater(argc, argv);
     a->ui.now = a->ui.entered_at = sl_system_now();
     if (!stream_media_init(sl_log)) {
+#if NSL_DIAGNOSTICS
         fprintf(stderr, "Media initialization failed\n");
+#endif
         sl_updater_destroy(a->updater);
         sl_artwork_destroy(a->artwork);
         free(a);
@@ -270,7 +274,9 @@ int sl_application_run(int argc, char **argv) {
     }
     a->renderer = sl_ui_renderer_create(sl_media_gfx());
     if (!a->renderer) {
+#if NSL_DIAGNOSTICS
         fprintf(stderr, "Font initialization failed: %s\n", SDL_GetError());
+#endif
         sl_updater_destroy(a->updater);
         sl_artwork_destroy(a->artwork);
         stream_media_shutdown();
