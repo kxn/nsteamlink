@@ -13158,9 +13158,10 @@ POSIX接收分类、protobuf解析、主机callback及stop→join→destroy→IH
 
 Conclusion：SDK048e1b4的发现owner对这些剩余错误与原manager存在可复现差异。
 原BReceive不读取errno，表中的名称只标记Native输入，不声称Android/Switch自然
-产生过它们。`check-steam-network-discovery.py`默认完整比较明确返回失败，不能用
-进程exit0或8项control通过宣称全错误策略等价。CTest只注册已兼容的controls；
-保留完整失败oracle供策略修正前后对照，不把旧错误行为写成必须保持的回归断言。
+产生过它们。05d9b96的`check-steam-network-discovery.py`完整比较明确返回失败，
+不能用进程exit0或8项control通过宣称全错误策略等价；该版本CTest仅注册controls。
+这是SDK048e1b4的历史对照，后续恢复/调度契约见§169；不把旧错误行为写成必须
+保持的回归断言。
 
 Hypothesis／待验证：Switch真实网络变化是否会产生这些错误，以及是否解释用户
 不可见/停顿。该发现worker不同于已有receiveCycle的媒体session owner，不能把
@@ -13174,7 +13175,52 @@ PYTHONPATH=/path/to/audit-deps python3 scripts/audit-steam-network-discovery.py 
   --binary /path/to/official/libshell-arm64.so --output /tmp/source-discovery.json
 python3 scripts/check-steam-network-discovery.py \
   --receiver build/desktop/app/nsl-discovery-error-runtime --controls-only
-# 完整比较目前应明确报告6项不兼容并返回1：
+# 完整比较；SDK048e1b4历史对照的6项差异及后续映射见§169：
 python3 scripts/check-steam-network-discovery.py \
   --receiver build/desktop/app/nsl-discovery-error-runtime --output /tmp/native-discovery.json
 ```
+
+## 169. 发现接收批次的有界更新与本地取消
+
+Evidence：`audit-steam-discovery-cycles.py`沿用§168固定shell及原函数/terminal，
+实际运行构造与meta dispatch→Update→BReceive。四个程序共24次原Update，覆盖
+连续五次负读、连续五次零读、成功数据报后负读、正/零/负交替；后续成功数据报
+均到原BProcess terminal，socket和state1保留。构造请求的Qt周期始终100ms。
+fixture按该参数安排tick，不把fixture调度当成真实Qt事件循环或物理计时证明。
+
+本地映射契约：发现client使用自己的receiveCycle，socket非阻塞；正读连续分派，
+任一非正读结束该批次，不结束owner。每轮以monotonic时钟确定下一次100ms更新
+期限；条件变量的提前/虚假唤醒必须重新检查期限，不得提前重新读socket。长批次
+已超过期限时只进入一次新周期，不循环追赶错过的tick。此为Switch/POSIX owner
+映射，不声称与Qt的coarse timer精度或OS调度相同。
+
+显式本地Stop独立于网络错误：在同一Base mutex保护下设置中断并唤醒等待；worker
+在等待谓词及每个数据报边界检查中断，调用者join后才能销毁condition、client、
+timer及Base mutex。此取消检查是本地线程适配，不是新增Steam wire取消/重配对
+消息。Base仍拥有socket的发布/关闭，不能在错误路径另起socket或孤立worker。
+
+发现buffer保持既有2048B预算；receiveCycle的容量由owner显式给出，媒体owner
+继续使用既有2272B与原receiveCycle。此处不将2048B当作已证实的官方发现上限，
+不改变发现广播周期、云重连、DNS、认证或媒体收包语义。初始socket创建失败的
+owner传播及自然网络事件来源与本节运行中负读恢复是不同契约。
+
+Native oracle实际运行client/Base/pthread/POSIX分类/protobuf callback及清理。
+四个Source程序分别配ENETDOWN和EAGAIN+三次提前唤醒，形成8项批次/顺序对照；
+Source正读长度9/7是opaque标签，Native用有效Status的timestamp9/7观察相同标签
+顺序，不声称Source已解析同一wire。初始化gate转发真实SetBlocking后等待main
+安装夹具，放在首轮deadline采样之前，不把夹具启动延迟算成产品提前重试。
+
+另有四项持续ENETDOWN/EAGAIN/EIO/零读，recvfrom adapter不sleep：真实condition
+等待保持批次间隔，再于持Base mutex、即将进入真实wait的位置设置Stop gate。
+main先发布Stop请求，再通过真实Stop取得mutex、设置中断/signal并join；测试本身
+不得先获取被gate占用的mutex，否则会制造夹具死锁。最后condition分配失败路径
+拒绝client并正常清理。比较器以显式异常检查，不因Python -O取消验证。
+
+桌面验证要求非正读后的间隔至少90ms、Stop至join少于1秒，持续失败约300ms中
+接收线程CPU少于50ms；均是有余量的测试断言，不是Qt精准计时、Switch耗时或
+峰值保证。真实signal/join/condition destroy身份与次数独立检查，不能仅凭进程
+exit0推导生命周期安全。完整原14输入也注册为回归，不再仅跑8项controls。
+
+独立重链接四种实际client模块反例：负读退出、跳过等待、提前唤醒后不检查deadline、
+移除Stop signal，分别被完整/批次比较器拒绝；原产品源文件和全量回归的构建输入
+始终不被变异。它们是实际模块策略反例，与损坏JSON记录的拒绝测试分开。

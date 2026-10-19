@@ -3,8 +3,8 @@
 
 The official BReceive does not read errno. Named errno values below belong to
 the Native POSIX adapter, not a claim that an Android/Switch network emitted
-those errors. Default includes the known issue #78 failures and returns 1;
---controls-only runs the compatible subset, without certifying all-error parity.
+those errors. Default includes all fourteen inputs; --controls-only preserves
+the original control subset for independent comparisons.
 """
 import argparse
 import errno
@@ -43,7 +43,9 @@ def compare(receiver, reference, names):
         native = json.loads(process.stdout)
         require(native["errno"] == number and native["joined_closed_destroyed"] is True,
                 f"{name}: input/cleanup evidence")
-        compatible = native["delivered"] == 1 and native["socket_live_before_stop"] is True
+        compatible = (native["delivered"] == 1 and native["socket_live_before_stop"] is True
+                      and native["nonblocking"] is True
+                      and native["signals"] == native["joins"] == native["destroys"] == 1)
         results.append(dict(name=name, observed=native, compatible=compatible))
     return dict(scope=__doc__, source_binary_sha256=source["binary_sha256"],
                 compatible=all(r["compatible"] for r in results), cases=results)

@@ -433,19 +433,23 @@ if(NSL_PLATFORM STREQUAL "desktop")
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video/sequential.h264 --${mode})
         set_tests_properties(video_stop_${mode} PROPERTIES TIMEOUT 20)
     endforeach()
-    # Diagnostic oracle only: non-whitelisted discovery receive errors still
-    # expose the known official-policy gap in issue #78. Do not encode the
-    # current fatal behavior as a passing compatibility regression test.
+    # Actual client worker, real condition waits and stop/join/destroy.
     add_executable(nsl-discovery-error-runtime tests/discovery_error_runtime.c)
     target_include_directories(nsl-discovery-error-runtime PRIVATE
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
     target_compile_options(nsl-discovery-error-runtime PRIVATE -Wall -Wextra -Werror -Wno-unknown-pragmas)
     target_link_libraries(nsl-discovery-error-runtime PRIVATE ihslib ihs-platforms ihslib)
-    target_link_options(nsl-discovery-error-runtime PRIVATE -Wl,--wrap=recvfrom)
-    add_test(NAME discovery_receive_official_controls COMMAND "${Python3_EXECUTABLE}"
+    target_link_options(nsl-discovery-error-runtime PRIVATE -Wl,--wrap=recvfrom
+        -Wl,--wrap=IHS_CondWaitTimeout -Wl,--wrap=IHS_CondSignal
+        -Wl,--wrap=IHS_ThreadJoin -Wl,--wrap=IHS_CondDestroy -Wl,--wrap=IHS_CondCreate
+        -Wl,--wrap=IHS_UDPSocketSetBlocking)
+    add_test(NAME discovery_receive_official_vectors COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-network-discovery.py"
-        --receiver $<TARGET_FILE:nsl-discovery-error-runtime> --controls-only)
-    set_tests_properties(discovery_receive_official_controls PROPERTIES TIMEOUT 30)
+        --receiver $<TARGET_FILE:nsl-discovery-error-runtime>)
+    add_test(NAME discovery_cycles_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-discovery-cycles.py"
+        --receiver $<TARGET_FILE:nsl-discovery-error-runtime>)
+    set_tests_properties(discovery_receive_official_vectors discovery_cycles_official_vectors PROPERTIES TIMEOUT 30)
     add_executable(nsl-video-stop-queue-runtime tests/video_stop_queue_runtime.c)
     target_include_directories(nsl-video-stop-queue-runtime PRIVATE platforms/common
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
