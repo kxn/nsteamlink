@@ -324,6 +324,7 @@ static void ui_projection(void) {
            model.store.quality == 2);
     assert(model.store.device_id == 123 && !memcmp(model.store.secret, view.secret, 32));
     sl_ui_action(&model, SL_OPEN_SETTINGS, 0);
+    sl_ui_action(&model, SL_OPEN_NETWORK_SETTINGS, 0);
     sl_ui_action(&model, SL_OPEN_BANDWIDTH, 0);
     assert(model.focus == 9 && model.layout.label_count > 0);
     model.command = (sl_command){.type = SL_CMD_SAVE};

@@ -72,7 +72,7 @@ static sl_action key_action(int k) {
     case SL_KEY_B:
         return SL_BACK;
     case SL_KEY_X:
-        return SL_OPEN_OPTIONS;
+        return SL_OPEN_SETTINGS;
     case SL_KEY_Y:
         return SL_START;
     case SL_KEY_L:

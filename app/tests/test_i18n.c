@@ -30,6 +30,7 @@ int main(void) {
     sl_ui_model m;
     sl_ui_init(&m, &store);
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
+    sl_ui_action(&m, SL_OPEN_APP_SETTINGS, 0);
     sl_ui_action(&m, SL_OPEN_LANGUAGE, 0);
     assert(m.page == SL_LANGUAGE && m.focus == 100);
     sl_ui_action(&m, SL_DOWN, 0);
@@ -67,10 +68,11 @@ int main(void) {
     sl_ui_connected(&m);
     sl_ui_action(&m, SL_OPEN_MENU, 0);
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
+    sl_ui_action(&m, SL_OPEN_APP_SETTINGS, 0);
     sl_ui_action(&m, SL_OPEN_LANGUAGE, 0);
-    sl_ui_activate(&m, 102);
-    assert(m.streaming && m.page == SL_LANGUAGE);
-    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_SAVE);
+    sl_ui_action(&m, SL_SET_LANGUAGE, SL_LANG_EN);
+    assert(m.streaming && m.page == SL_MENU && sl_i18n_language() == SL_LANG_SYSTEM);
+    assert(!sl_ui_take_command(&m, &cmd));
     sl_ui_stopped(&m, true);
     assert(!strcmp(m.layout.title, "Stream interrupted"));
     assert(!strcmp(m.error, "Connection lost"));
