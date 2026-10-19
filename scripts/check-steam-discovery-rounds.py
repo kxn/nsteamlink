@@ -13,6 +13,7 @@ import argparse
 import gzip
 import hashlib
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -82,7 +83,11 @@ def main():
         process = subprocess.run([str(args.receiver.resolve()), mode], capture_output=True,
                                  text=True, timeout=20)
         require(process.returncode == 0, f'{mode} observation failed: {process.stderr}')
-        require(not process.stderr, f'{mode} unexpected stderr: {process.stderr}')
+        for line in process.stderr.splitlines():
+            require(re.fullmatch(
+                r'IHS_UDPSocketOpen: SO_RCVBUF capped at \d+ bytes \(wanted \d+\); '
+                r'raise net.core.rmem_max to avoid dropped video packets', line),
+                f'{mode} unexpected stderr: {line}')
         observed = json.loads(process.stdout)
         if mode == 'random':
             actual = dict(cases=observed['random'], forced=observed['forced'])
@@ -91,7 +96,7 @@ def main():
             require(observed['cleanup'] is True, mode + ' completed cleanup')
             actual, expected = observed['stages'], wanted['schedules'][mode]
         cases.append(dict(mode=mode, compatible=actual == expected,
-                          observed=actual, expected=expected))
+                          observed=actual, expected=expected, stderr=process.stderr))
     result = dict(scope=__doc__, compatible=all(c['compatible'] for c in cases), cases=cases)
     if args.output:
         args.output.write_text(json.dumps(result, indent=2) + '\n')
