@@ -67,6 +67,9 @@ jobs:
       - name: Build Switch diagnostics and video correctness probe
         run: |
           NSL_BUILD_DIR="$GITHUB_WORKSPACE/build/switch-deko" scripts/build-switch.sh -DNSL_DIAGNOSTICS=ON -DNSL_BUILD_TOOLS=OFF -DHACBREWPACK="$GITHUB_WORKSPACE/build/deps/hacBrewPack/hacbrewpack"
+      - name: Verify isolated large VCL capability probe
+        run: |
+          python3 scripts/check-vcl-probe-build.py --build build/switch-deko --ordinary build/switch/app/nsteamlink.nro --output build/switch-deko/generated/vcl-probe-build.json
       - uses: actions/upload-artifact@v4
         with:
           name: switch-deko-diagnostic

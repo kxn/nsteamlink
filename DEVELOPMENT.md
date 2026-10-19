@@ -42,6 +42,9 @@ UI 替换的目标模块边界见 `docs/UI_UX_DESIGN.md` §5：`app/src/ui/` 负
 `app/src/diagnostics/` 负责有界统计快照，平台 runtime 与 renderer 仍经 HAL 接口约束。
 `app/platforms/common/` 提供双目标共用的 SDL2/FFmpeg/IHS runtime adapter，平台初始化与字体来源
 位于 `app/platforms/<plat>/system.c`。`app/tests/` 包含业务状态与原生事件／媒体测试。UI 替换任务在 Issue #9 维护。
+`app/tests/fixtures/video/vcl/` 保存可重建的压缩大 VCL 能力刺激；
+`scripts/generate-vcl-fixtures.py` 定义样本，`prepare-vcl-probe.py` 生成独立诊断副本，
+`tools/switch-vcl-probe.py` 封装单次部署和机器日志校验，作用域见协议参考 §156。
 
 Switch 图形后端迁移的目标边界见 [VIDEO_RENDERING_DESIGN](docs/VIDEO_RENDERING_DESIGN.md) 与 D-051：
 `platform/gfx.h` / `platform/events.h` 定义图形与事件 HAL；`platforms/common/video_pipeline.*`

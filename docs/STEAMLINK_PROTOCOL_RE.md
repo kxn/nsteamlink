@@ -12268,3 +12268,89 @@ python3 scripts/check-steam-fec-resources.py \
   --output /tmp/native-fec-resources.json
 ctest --test-dir build/desktop -R 'fec_resource|media_resource_lifetime|fec_official_vectors|media_decode_boundary'
 ```
+
+## 156. 大 VCL 能力刺激与 Nvtegra 输入映射的观察边界
+
+§154–155 的 Source 普通/FEC 接收器证据针对 opaque 正文；软件解码的大 AU 则用
+NAL12 filler 扩大长度。两者不能证明 Switch 真正处理了同样大小的 VCL，也不能将
+Android 的接收能力直接作为 Switch 的申请能力。本节定义独立的平台能力实验，
+不增加 Steam 协议策略，不更改官方原始指令比较器。
+
+### 156.1 独立生成的输入与像素参照
+
+`scripts/generate-vcl-fixtures.py` 直接写入 AVC Annex B：Baseline/CAVLC、level4.2、
+8-bit 4:2:0、POC type2、一个参考图像、不含 B/场编码、禁用 deblocking。IDR 的全部
+宏块是 I_PCM，后续 P 全部 skip。两个 AU 的 NAL types 固定为 `[9,7,8,5,9,1]`，
+没有 filler NAL12。1080p 的编码高度为1088，SPS bottom crop 得到1080可见行。
+
+| 刺激 | 可见图像 | IDR AU | IDR VCL（含NAL header） | P AU | 可见YUV MD5 |
+|---|---|---:|---:|---:|---|
+| pcm720 | 1280×720 | 1389635B | 1389604B | 16B | `8c43dc01ecf0f3dc275f8917414f0b93` |
+| pcm1080 | 1920×1080 | 3149796B | 3149764B | 16B | `786f656124c419aaf331c9cb7130313b` |
+
+Y样本为`16+(3*floor(x/16)+5*floor(y/16))%220`；U为`64+floor(x/8)%128`，
+V为`64+floor(y/8)%128`，色度坐标独立计算。参照由公式和固定 MD5 定义，不从
+硬解输出反向生成。gzip 只压缩仓库存储，构建时验证压缩/解压 SHA、AU/NAL 边界，
+并将完整原始数据嵌入 NRO，无 SD 素材或 Steam 依赖。`--check` 重建原始字节并
+比较固定归档，不要求不同 zlib 版本重新压缩得到相同 gzip 字节。
+
+桌面 fixture 经真实 FrameTracker/AVCodec/selection 检查逐样本值、可见YUV MD5和
+独立的 task/pixel input ID。普通生产 pipeline 接纳 pcm720，并在调用 decoder 前按
+现有2MiB保护拒绝 pcm1080；单独的 capability 副本接纳两组。拒收路径显式 abandon
+未移交 ticket，已打开的 domain 先 stop，再由 owner reap/destroy；所有无物理显示
+的完成结果为 DroppedReset。软件成功只能证明指定合成输入的软件路径。
+
+### 156.2 安装 SDK 的实际调用与实验隔离
+
+平台依据是 devkitPro `switch-ffmpeg 7.1-5`，不是官方 Steam 的 decoder 策略。
+对应包构建提交`5cf3a4da7665a04032565a3e788656cb485dd279`，patch SHA256
+`1792380b992e3554a4abcddf0d7b395bfd8c118ac7c6e38c8f2fb0d39753a390`；
+安装 `libavcodec.a` SHA256
+`132eb58da1d2e97f902216979c5a64f05f0b4df2f99dbb0b0ddec08ab6a15316`。
+补丁重建的`nvtegra_decode.c`283–315行及安装对象的
+`ff_nvtegra_decode_slice`说明：预留16B终止序列后不够存放 slice 时扩大 input map，
+按0x1000对齐，再调用`av_nvtegra_map_realloc`；负返回直接回传错误。
+初始码流空间按分辨率选取64KiB/256KiB/1MiB，不是最大输入长度。
+
+`prepare-vcl-probe.py`只对生成副本将`MAX_PACKET`由2MiB替换为4MiB，并加
+`NSL_DIAGNOSTICS`编译保护及唯一limit符号；原生产源和 pending/FEC/FIFO预算不变。
+4MiB只是容纳本次3149796B刺激的实验 guard，不是测得的硬件上限或官方限额。
+`nsl-vcl-probe`独立链接该副本；`check-vcl-probe-build.py`检查实际 linker map 中
+pipeline provider、ELF limit值及 submit 的实际4MiB比较，并确认未选入生产
+pipeline对象。普通NRO不得带入新刺激或 VCL_BEGIN 标记。
+
+该 NRO 通过 linker wrap 观察安装 SDK 的`av_nvtegra_map_realloc`，原参数和返回值
+原样转发；记录固定32槽的old/requested/after、alignment、heap、flags、result，
+不在钩子中分配、格式化日志或I/O。安装的`ff_nvtegra_decode_slice`必须实际调用
+wrapper，wrapper必须实际调用 SDK 函数，两处由最终ELF反汇编核验。
+运行成功要求硬解pass确实发生覆盖该VCL大小的成功扩容，不能以源码有扩容分支
+代替实际调用观察。
+
+### 156.3 自包含设备实验的验收含义
+
+每组先软件解码并按上述公式核验，再生成720p输出的GPU读回参照；硬解必须同时有
+硬件 context、实际`nvtegra`帧格式、新导入且无upload/download增长，两个AU的
+task/pixel ID正确，GPU读回各字节与参照差值不超过3。该固定低延迟刺激要求两个AU
+各返回图像；不输出或返回错误将保留submit结果和最后阶段，不能据此推断所有 AVC
+输入的硬件上限或修改正常串流的延迟/排队策略。
+
+清理顺序为stop decoder（runner退出前）、renderer forget/drain、最终gfx finish/
+销毁、decoder reap/destroy、SDL_Quit、关闭日志连接、socketExit。记录renderer
+import/map/pool/batch归零及销毁后的内存样本；decoder仍有domain时拒绝脏返回。
+日志走固定64KiB缓冲及非阻塞send，连接/末尾发送均限时；机器解析器拒绝软件回退、
+扩容失败/缺失、错误像素、缺失/重复/损坏/乱序结果和不完整清理。
+
+`VCL_RESOURCE`是少数阶段的heap/process读数，查询失败另标记，不是连续峰值。
+实验不经过真实Steam transport/FEC，不证明完整会话峰值、自然网络恢复、物理
+扫描输出、socketExit完成、回到hbmenu或完整loader ABI；nxlink退出也不补足这些
+证据。最终 NRO 的结构校验和交叉构建不构成设备运行证明。
+
+```sh
+python3 scripts/generate-vcl-fixtures.py --check
+ctest --test-dir build/diagnostics -R 'vcl_fixture|switch_vcl_probe'
+python3 scripts/check-vcl-probe-build.py --build build/switch-deko \
+  --ordinary build/switch/app/nsteamlink.nro --output /tmp/vcl-build.json
+# 离线准备，不连接设备；执行需在设备已准备netloader时显式使用 --run。
+python3 tools/switch-vcl-probe.py --prepare --host 10.10.10.25 \
+  --output build/vcl-probe-package
+```

@@ -1,0 +1,49 @@
+{
+  "scope": "Author deterministic AVC I_PCM key/skip-P fixtures, with no filler NAL.\n\nThese are decoder capability stimuli, not Steam producer samples. Baseline\nCAVLC, 8-bit 4:2:0, no interlace/B-frames, deblocking disabled. The visible\nsample formula is independent of any decoder; compressed storage is packaging.\n",
+  "cases": [
+    {
+      "name": "pcm720",
+      "width": 1280,
+      "height": 720,
+      "macroblocks": 3600,
+      "sizes": [
+        1389635,
+        16
+      ],
+      "nal_types": [
+        9,
+        7,
+        8,
+        5,
+        9,
+        1
+      ],
+      "vcl_bytes": 1389604,
+      "fixture_sha256": "efa838ab8ceefbe8867104a86bb642890627a714c40bc314ee353d5768e37882",
+      "visible_yuv_md5": "8c43dc01ecf0f3dc275f8917414f0b93",
+      "archive_sha256": "bb82b22fffc0e10f104a5f3158250759ab789a94f2f92bd00a6f55ed9e898656"
+    },
+    {
+      "name": "pcm1080",
+      "width": 1920,
+      "height": 1080,
+      "macroblocks": 8160,
+      "sizes": [
+        3149796,
+        16
+      ],
+      "nal_types": [
+        9,
+        7,
+        8,
+        5,
+        9,
+        1
+      ],
+      "vcl_bytes": 3149764,
+      "fixture_sha256": "bb048e2820af0431fc1f4acc658f6485f7f68d075d4bd5ec853bb8b4d5a70f71",
+      "visible_yuv_md5": "786f656124c419aaf331c9cb7130313b",
+      "archive_sha256": "fd12f2c2a14c1010553bf0da7cfd1ce2d6e30d23e8a6a972c19b0bed658c689e"
+    }
+  ]
+}

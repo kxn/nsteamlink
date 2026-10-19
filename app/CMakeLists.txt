@@ -24,6 +24,33 @@ target_include_directories(nsl_video_pipeline PUBLIC platforms/common
     PRIVATE ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
 target_compile_options(nsl_video_pipeline PRIVATE -Wall -Wextra -Wno-unknown-pragmas)
 target_link_libraries(nsl_video_pipeline PUBLIC nsl_video_contracts ihslib PkgConfig::FFMPEG Threads::Threads)
+if(NSL_PLATFORM STREQUAL "desktop" OR NSL_DIAGNOSTICS)
+    set(NSL_VCL_DIR "${CMAKE_CURRENT_BINARY_DIR}/vcl_probe")
+    add_custom_command(OUTPUT "${NSL_VCL_DIR}/pcm720.h264" "${NSL_VCL_DIR}/pcm1080.h264"
+        "${NSL_VCL_DIR}/vcl_fixture_metadata.h" "${NSL_VCL_DIR}/video_pipeline_capability.c"
+        "${NSL_VCL_DIR}/vcl_probe_manifest.json"
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/prepare-vcl-probe.py"
+            --pipeline "${CMAKE_CURRENT_SOURCE_DIR}/platforms/common/video_pipeline.c"
+            --fixtures "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video/vcl" --output "${NSL_VCL_DIR}"
+        DEPENDS "${CMAKE_SOURCE_DIR}/scripts/prepare-vcl-probe.py"
+            platforms/common/video_pipeline.c tests/fixtures/video/vcl/manifest.json
+            tests/fixtures/video/vcl/pcm720.h264.gz tests/fixtures/video/vcl/pcm1080.h264.gz
+        VERBATIM)
+    add_custom_target(nsl_vcl_assets DEPENDS "${NSL_VCL_DIR}/pcm720.h264"
+        "${NSL_VCL_DIR}/pcm1080.h264" "${NSL_VCL_DIR}/vcl_fixture_metadata.h"
+        "${NSL_VCL_DIR}/video_pipeline_capability.c" "${NSL_VCL_DIR}/vcl_probe_manifest.json")
+    if(NSL_DIAGNOSTICS)
+        add_library(nsl_vcl_capability_pipeline STATIC "${NSL_VCL_DIR}/video_pipeline_capability.c"
+            platforms/common/video_timing.c)
+        add_dependencies(nsl_vcl_capability_pipeline nsl_vcl_assets)
+        target_compile_definitions(nsl_vcl_capability_pipeline PRIVATE NSL_DIAGNOSTICS=1)
+        target_include_directories(nsl_vcl_capability_pipeline PUBLIC platforms/common
+            PRIVATE ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+        target_compile_options(nsl_vcl_capability_pipeline PRIVATE -Wall -Wextra -Wno-unknown-pragmas)
+        target_link_libraries(nsl_vcl_capability_pipeline PUBLIC nsl_video_contracts ihslib
+            PkgConfig::FFMPEG Threads::Threads)
+    endif()
+endif()
 # Backend is a platform property, not a selectable Switch fallback. Clear old
 # caches so an existing SDL Switch build directory also migrates to deko.
 unset(NSL_GFX_BACKEND CACHE)
@@ -594,6 +621,30 @@ if(NSL_PLATFORM STREQUAL "desktop")
 endif()
 
 if(NSL_PLATFORM STREQUAL "desktop")
+    add_executable(nsl-vcl-product-tests tests/test_vcl_fixture.c)
+    add_dependencies(nsl-vcl-product-tests nsl_vcl_assets)
+    target_include_directories(nsl-vcl-product-tests PRIVATE "${NSL_VCL_DIR}"
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+    target_link_libraries(nsl-vcl-product-tests PRIVATE nsl_video_pipeline)
+    target_compile_options(nsl-vcl-product-tests PRIVATE -Wall -Wextra -Wno-unknown-pragmas -UNDEBUG)
+    add_test(NAME vcl_fixture_production_guard COMMAND nsl-vcl-product-tests "${NSL_VCL_DIR}")
+    set_tests_properties(vcl_fixture_production_guard PROPERTIES TIMEOUT 20)
+    add_test(NAME vcl_fixture_reproducibility COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/generate-vcl-fixtures.py" --check)
+    add_test(NAME switch_vcl_probe_log_contract COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/test-switch-vcl-probe.py")
+    set_tests_properties(vcl_fixture_reproducibility switch_vcl_probe_log_contract PROPERTIES TIMEOUT 20)
+    if(NSL_DIAGNOSTICS)
+        add_executable(nsl-vcl-capability-tests tests/test_vcl_fixture.c)
+        add_dependencies(nsl-vcl-capability-tests nsl_vcl_assets)
+        target_include_directories(nsl-vcl-capability-tests PRIVATE "${NSL_VCL_DIR}"
+            ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+        target_compile_definitions(nsl-vcl-capability-tests PRIVATE NSL_VCL_CAPABILITY_TEST=1)
+        target_compile_options(nsl-vcl-capability-tests PRIVATE -Wall -Wextra -Wno-unknown-pragmas -UNDEBUG)
+        target_link_libraries(nsl-vcl-capability-tests PRIVATE nsl_vcl_capability_pipeline)
+        add_test(NAME vcl_fixture_capability COMMAND nsl-vcl-capability-tests "${NSL_VCL_DIR}")
+        set_tests_properties(vcl_fixture_capability PROPERTIES TIMEOUT 20)
+    endif()
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_executable(nsl-media-decode-boundary-tests tests/test_media_decode_boundary.c)
         target_include_directories(nsl-media-decode-boundary-tests PRIVATE
@@ -658,6 +709,28 @@ if(NSL_DIAGNOSTICS)
     endif()
 endif()
 if(NSL_PLATFORM STREQUAL "switch" AND NSL_DIAGNOSTICS)
+    add_executable(nsl-vcl-probe tests/switch_vcl_probe.c)
+    target_include_directories(nsl-vcl-probe PRIVATE platforms/common "${NSL_VCL_DIR}"
+        "${NSL_IDENTITY_DIR}" ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+    target_compile_options(nsl-vcl-probe PRIVATE -Wall -Wextra -Wno-unknown-pragmas)
+    # Resolve every pipeline function from the generated capability copy before
+    # nsl_gfx's normal dependency. Verify the actual archive provider/link map.
+    target_link_libraries(nsl-vcl-probe PRIVATE nsl_vcl_capability_pipeline nsl_gfx nx)
+    target_link_options(nsl-vcl-probe PRIVATE -Wl,--wrap=av_nvtegra_map_realloc
+        "-Wl,-Map=${CMAKE_CURRENT_BINARY_DIR}/nsl-vcl-probe.map")
+    add_dependencies(nsl-vcl-probe nsl_identity nsl_vcl_assets)
+    foreach(fixture pcm720 pcm1080)
+        set(embedded "${NSL_VCL_DIR}/embed_${fixture}.c")
+        add_custom_command(OUTPUT "${embedded}"
+            COMMAND "${CMAKE_COMMAND}" -DINPUT=${NSL_VCL_DIR}/${fixture}.h264
+                -DOUTPUT=${embedded} -DSYMBOL=nsl_vcl_${fixture}
+                -P "${CMAKE_SOURCE_DIR}/cmake/EmbedAsset.cmake"
+            DEPENDS "${NSL_VCL_DIR}/${fixture}.h264" "${CMAKE_SOURCE_DIR}/cmake/EmbedAsset.cmake"
+            VERBATIM)
+        target_sources(nsl-vcl-probe PRIVATE "${embedded}")
+    endforeach()
+    nx_generate_nacp(OUTPUT vcl_probe.nacp NAME "NSteamLink VCL Probe" AUTHOR "NSteamLink" VERSION "1.0.0")
+    nx_create_nro(nsl-vcl-probe OUTPUT nsl-vcl-probe.nro NACP "${CMAKE_CURRENT_BINARY_DIR}/vcl_probe.nacp")
     add_executable(nsl-video-probe tests/switch_video_probe.c)
     target_include_directories(nsl-video-probe PRIVATE platforms/common ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
     target_compile_options(nsl-video-probe PRIVATE -Wall -Wextra -Wno-unknown-pragmas)
