@@ -38,8 +38,8 @@ void __wrap_IHS_SessionUnreliableReceived(IHS_Session *s, IHS_SessionPacket *p) 
         atomic_store_explicit(&ordinary_socket, s->base.socket, memory_order_relaxed);
         if (p->header.type == IHS_SessionPacketTypeUnreliableFEC) {
             atomic_fetch_add_explicit(&fec, 1, memory_order_relaxed);
-            const uint8_t *b = IHS_BufferPointer(&p->body);
-            if (b && p->body.size >= 8) {
+            if (p->body.data && p->body.size >= 8) {
+                const uint8_t *b = IHS_BufferPointer(&p->body);
                 uint32_t length =
                     b[0] | (uint32_t)b[1] << 8 | (uint32_t)b[2] << 16 | (uint32_t)b[3] << 24;
                 unsigned width = b[4] | (unsigned)b[5] << 8;
@@ -82,7 +82,8 @@ void __wrap_IHS_SessionChannelDataLost(IHS_SessionChannel *c) {
 }
 bool __real_IHS_UDPSocketSend(IHS_UDPSocket *, const IHS_UDPPacket *);
 bool __wrap_IHS_UDPSocketSend(IHS_UDPSocket *s, const IHS_UDPPacket *p) {
-    const uint8_t *b = IHS_BufferPointer(&p->buffer);
+    const uint8_t *b =
+        p->buffer.data && p->buffer.size >= 13 ? IHS_BufferPointer(&p->buffer) : NULL;
     bool watched = s == atomic_load_explicit(&ordinary_socket, memory_order_relaxed) && b &&
                    p->buffer.size >= 13 && b[4] >= 3 && (b[0] & 127) == 10;
     bool sent = __real_IHS_UDPSocketSend(s, p);

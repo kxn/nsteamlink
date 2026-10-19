@@ -636,6 +636,7 @@ if(NSL_DIAGNOSTICS)
         target_compile_options(nsl-live-media-observer-tests PRIVATE -Wall -Wextra -Werror
             -Wno-unknown-pragmas -UNDEBUG)
         target_link_libraries(nsl-live-media-observer-tests PRIVATE nsl_platform)
+        target_link_options(nsl-live-media-observer-tests PRIVATE -Wl,--wrap=IHS_BufferPointer)
         add_test(NAME live_media_probe_observers COMMAND nsl-live-media-observer-tests)
     endif()
 endif()
