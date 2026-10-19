@@ -668,8 +668,9 @@ static bool request_stream(sl_runtime *r, bool network_test) {
         r->stream_limits = (sl_stream_request_limits){
             .width = height * 16 / 9, .height = height, .fps = 60, .force_resolution = true};
         char line[128];
-        snprintf(line, sizeof(line), "video request: %ux%u fps<=60 H264 selection=%u",
-                 r->stream_limits.width, r->stream_limits.height, (unsigned)r->resolution);
+        snprintf(line, sizeof(line), "video request: %ux%u fps<=60 H264 selection=%u test_force=%d",
+                 r->stream_limits.width, r->stream_limits.height, (unsigned)r->resolution,
+                 NSL_TEST_FORCE_1080);
         sl_log(line);
     }
     IHS_StreamingRequest req = {

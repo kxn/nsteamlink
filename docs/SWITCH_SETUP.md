@@ -246,3 +246,9 @@ python3 scripts/test-switch-video.py --build build/switch-diagnostic --fixture s
 到物理内屏。suite 对四组内置素材运行软件、硬件及重开 decoder 路径，并核对清理计数。
 脚本不会将 nxlink 正常退出当作返回 hbmenu 的证据。HDMI 实际显示和真实插拔行为只能由
 对应硬件确认；这些边界不会由离线测试或掌机 native readback 冒充。
+
+实际 Steam 串流的独立手测包使用 `-DNSL_TEST_FORCE_1080=ON` 构建。该开关默认关闭，
+不是用户设置项；启用后开流固定请求 1920×1080，最终渲染缓冲也固定 1080p，内屏由系统缩放。
+界面版本后有 `[1080p TEST]`，NACP 名称为 `NSteamLink 1080p Test`。测试包不把强制值写进
+`video.conf`，也不自更新；netloader 部署使用独立路径 `nsteamlink/nsteamlink-1080p-test.nro`。
+普通包仍保留自动/720p/1080p 选择，自动按每次连接时的 operation mode 判断。

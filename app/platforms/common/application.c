@@ -102,7 +102,12 @@ static void runtime_events(application *a) {
 /* D-060: the NRO that was launched is replaced, and the HOME shortcut's copy
  * with it. Without a launched NRO on the SD card there is nothing to check. */
 static sl_updater *start_updater(int argc, char **argv) {
-#ifdef __SWITCH__
+#if NSL_TEST_FORCE_1080
+    /* Keep the private manual-test binary intact while testing. */
+    (void)argc;
+    (void)argv;
+    return NULL;
+#elif defined(__SWITCH__)
     size_t n = argc > 0 && argv && argv[0] ? strlen(argv[0]) : 0;
     if (n <= 4 || strncmp(argv[0], "sdmc:/", 6) || strcmp(argv[0] + n - 4, ".nro"))
         return NULL;

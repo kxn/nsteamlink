@@ -67,6 +67,8 @@ static void negotiation(sl_runtime *r, unsigned expected) {
     IHS_SessionDestroy(s);
 }
 static void request(sl_resolution mode, bool docked, unsigned expected) {
+    if (NSL_TEST_FORCE_1080)
+        expected = 1080;
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
     assert(fd >= 0);
     struct sockaddr_in peer = {.sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};

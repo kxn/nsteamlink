@@ -3,6 +3,11 @@
 #include "ui_model.h"
 #include <stdio.h>
 #include <string.h>
+#if NSL_TEST_FORCE_1080
+#define UI_APP_VERSION NSL_APP_VERSION " [1080p TEST]"
+#else
+#define UI_APP_VERSION NSL_APP_VERSION
+#endif
 static void text(sl_layout *l, int x, int y, int size, const char *s) {
     if (l->label_count == 16)
         return;
@@ -39,7 +44,7 @@ void sl_ui_layout(sl_ui_model *m) {
                       (m->page == SL_PAIRING && !sl_ui_pair_prompt_visible(m));
     l->dialog = m->page != SL_HOME && m->page != SL_STREAM && !connecting;
     if (m->page == SL_HOME) {
-        snprintf(l->title, sizeof(l->title), sl_tr(SL_T_APP_TITLE), NSL_APP_VERSION);
+        snprintf(l->title, sizeof(l->title), sl_tr(SL_T_APP_TITLE), UI_APP_VERSION);
         if (h) {
             int begin = r->selected / 3 * 3, end = begin + 3;
             if (end > r->count)
@@ -92,7 +97,7 @@ void sl_ui_layout(sl_ui_model *m) {
     } else if (m->page == SL_STREAM) {
         /* Full video, no persistent local touch target. */
     } else if (connecting) {
-        snprintf(l->title, sizeof(l->title), sl_tr(SL_T_APP_TITLE), NSL_APP_VERSION);
+        snprintf(l->title, sizeof(l->title), sl_tr(SL_T_APP_TITLE), UI_APP_VERSION);
         center(l, 276, 44, sl_tr(m->page == SL_NETWORK_TEST ? SL_T_NETWORK_TEST : SL_T_CONNECTING));
         center(l, 354, 30, m->intent.host.name[0] ? m->intent.host.name : m->intent.text);
         if (m->page == SL_NETWORK_TEST) {

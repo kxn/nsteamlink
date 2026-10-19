@@ -85,6 +85,7 @@ target_link_libraries(nsl_ui PUBLIC m)
 add_dependencies(nsl_ui nsl_identity nsl_i18n)
 target_include_directories(nsl_ui PUBLIC ${NSL_IDENTITY_DIR} ${NSL_I18N_DIR})
 target_compile_definitions(nsl_ui PUBLIC NSL_DIAGNOSTICS=$<BOOL:${NSL_DIAGNOSTICS}> NSL_ADAPTIVE_PACING=$<BOOL:${NSL_ADAPTIVE_PACING}>)
+target_compile_definitions(nsl_ui PUBLIC NSL_TEST_FORCE_1080=$<BOOL:${NSL_TEST_FORCE_1080}>)
 add_library(nsl_stream_settings STATIC platforms/common/stream_settings.c
     platforms/common/network_stats_file.c)
 set_source_files_properties(platforms/common/network_stats_file.c PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
@@ -134,10 +135,14 @@ if(NSL_PLATFORM STREQUAL "switch")
             "${CMAKE_SOURCE_DIR}/packaging/switch/application.json"
             "${CMAKE_SOURCE_DIR}/assets/branding/icon.jpg" VERBATIM)
     target_sources(nsl_platform PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/shortcut_template.c")
+    set(NSL_NACP_NAME "NSteamLink")
+    if(NSL_TEST_FORCE_1080)
+        set(NSL_NACP_NAME "NSteamLink 1080p Test")
+    endif()
     add_custom_command(OUTPUT "${NSL_NACP}"
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/switch-metadata.py"
             --identity "${NSL_IDENTITY_DIR}/build_identity.json" --nacptool "${NX_NACPTOOL_EXE}"
-            --output "${NSL_NACP}"
+            --output "${NSL_NACP}" --name "${NSL_NACP_NAME}"
         DEPENDS nsl_identity "${NSL_IDENTITY_DIR}/build_identity.json"
             "${CMAKE_SOURCE_DIR}/scripts/switch-metadata.py" VERBATIM)
     nx_create_nro(nsteamlink OUTPUT nsteamlink.nro NACP "${NSL_NACP}"
