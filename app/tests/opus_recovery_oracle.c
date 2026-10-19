@@ -164,7 +164,9 @@ static void audio_stop(IHS_Session *s, void *unused) {
     atomic_fetch_add(&stopped, 1);
 }
 static void wait_for(atomic_uint *value, unsigned target) {
-    uint64_t until = SDL_GetTicks64() + 3000;
+    /* Fixture bound for a full half-range PLC burst under sanitizers; this
+     * does not change any product timeout or recovery policy. */
+    uint64_t until = SDL_GetTicks64() + (guard ? 15000 : 3000);
     while (atomic_load(value) < target && SDL_GetTicks64() < until)
         usleep(1000);
     assert(atomic_load(value) == target);

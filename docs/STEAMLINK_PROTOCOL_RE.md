@@ -12866,3 +12866,85 @@ python3 scripts/check-steam-fec-channel-isolation.py \
   --channel-receiver build/desktop/app/nsl-fec-channel-oracle --output /tmp/native-fec-channels.json
 ctest --test-dir build/desktop --output-on-failure -R '^fec_channel_isolation_official_vectors$'
 ```
+
+## 164. 音频媒体ID半区间、大跨度补偿调用与有界输出
+
+### 164.1 原码和观察边界
+
+`audit-steam-audio-gap-policy.py`使用§72固定官方Android core SHA256
+`50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e`。实际
+StartDecoding@7b134c、DecodeFrame@7b1414、StopDecoding@7b16fc、
+IStreamPlayer::CreateAudioFrame@7679c4以及Frame构造/SetMessage/SetFrame共7项
+原函数执行，记录完整符号范围/代码SHA和实际入口计数。媒体ID、timestamp和
+有效非空payload由decoder输入边界提供；没有执行transport、自然接收或媒体worker。
+decoder/player的48000Hz、2声道、player format2及channel3是明确的受控描述符，
+不是实际BOpenAudio、设备协商或平台能力发现的执行。
+
+本节只把`opus_multistream_decode_float`设为每次返回480的API terminal，用于
+执行原循环和记录参数，不执行原codec的补偿DSP，不读取/生成PCM。80B输出对象
+分配终点复用固定存储，GetWriteArea终点使用固定64KiB；提交为同步终点，不冒充
+原分配生存期、player队列、峰值或自然耗时。Start时的原Opus创建/初始化仍执行。
+恢复字段+408…411的写入记录PC并限制在原Start/Decode/Stop指令范围，观察器重置
+只清自己的计数/哈希，不强制修改first/next。
+
+输出ID从真实CreateAudioFrame/SetFrame后的CStreamFrame字段读取，不直接把ABI
+寄存器值当作unsigned short：同一补偿循环跨65535时，调用者寄存器可含65536，
+原SetFrame的16位写入将其保存为0。该范围与§72原小跨度/实际codec PCM证据分开。
+
+### 164.2 触发条件
+
+原DecodeFrame@7b1460–146c对`next-current`执行sxth，正值直接返回；first=true
+先把next设为current。不是所有模65536的正向距离都进入补偿，也不能拒绝任意
+首次大ID。9组计划覆盖下表，普通帧用有效非空静音payload，timestamp独立输入。
+
+| 前态/输入 | 原API调用数 | 后态 |
+|---|---:|---|
+| fresh，首次ID40000 | 1 | first=false，next=40001 |
+| 已处理0，输入1 | 1 | next=2 |
+| 已处理0，输入4 | 3份补偿+当前，共4 | next=5 |
+| 已处理0，输入32768 | 32767份补偿+当前，共32768 | next=32769 |
+| 已处理0，输入32769 | 32768份补偿+当前，共32769 | next=32770 |
+| 已处理0，输入32770 | 0，走旧帧判定分支 | next仍1；随后输入1正常 |
+| 已处理65534，输入1 | 补偿65535/0和当前1，共3 | next=2 |
+| 已处理0，输入65535 | 0 | next仍1；随后输入1正常 |
+| 已处理0，实际Stop/Start，再输入32769 | 当前1次 | 首次输入重新定基准 |
+
+每份补偿沿用当前输入timestamp，max_samples=480；只有最后一份补偿传入当前
+payload并请求codec FEC，其余传NULL/fec0。当前包以max_samples=5760、fec0调用。
+max_samples是API容量，不是对实际解码样本数或时长的观察。该codec内FEC/PLC与
+Steam type11传输RS是不同层，不能把补偿调用数当成已证实丢失的UDP包数。
+
+20个动作后观察共65557份完整调用身份，以无padding的12B token保存
+`uint16 ID / uint32 timestamp / uint32 max_samples / uint8 use_packet / uint8 fec`
+的完整顺序SHA及首末token。max_samples保留32位，不能通过16位截断掩盖错误API
+参数。Native生产`sl_audio_recovery_run/reset`的只读callback oracle逐动作比较全部
+字段及first/next，未在oracle中重新实现序号算法。产品恢复循环未因本节改变。
+
+### 164.3 独立 Native codec/worker 压力与限制
+
+另一个Native进程使用既有opus-recovery oracle，经实际完整帧dispatcher、FIFO、
+真实worker、应用submitFrame、实际fixed-point Opus和生产jitter。仅输入两个完整
+媒体帧ID0/32769，实际累计32770次有效音频输出、codec errors=0；SDL dummy设备
+在首次callback前保持暂停，queued按现有S16快照为65532B，dropped计数增长。
+这是既有16384帧环形缓冲保留一个空槽的结果，不将dropped解释为网络丢包。
+原stop/join/destroy及SDL/session清理仍执行；PC正常退出不代表Switch loader ABI。
+
+本压力不读取全部PCM，不比较Source大跨度codec输出或声音质量。Source本节的
+codec API替身也不能用于比较DSP耗时。正式测试只给guard fixture 15秒等待批次
+完成，普通观察仍3秒；它不是产品timeout、网络期限或新的丢帧规则。新/旧Opus
+契约独立回归；13份篡改Source/Native记录的反例必须拒绝，正式比较入口拒绝-O。
+
+Conclusion：现有Native在这些边界保留官方补偿调用策略，并在该PC真实codec批次
+中维持既有队列上限。它不证明在补偿途中可抢占Stop、Switch耗时/峰值、自然音频
+角色或主机恢复策略。长PLC批次是否增加真实Switch退出等待是hypothesis／待验证，
+不能据此解释原玩家停顿或擅自截断补偿/新增自动重连。验收及边界跟踪在GitHub #72。
+
+```sh
+PYTHONPATH=/path/to/audit-deps python3 scripts/audit-steam-audio-gap-policy.py \
+  --binary /path/to/official/libmain-arm64.so --output /tmp/source-audio-gap.json
+python3 scripts/check-steam-audio-gap-policy.py \
+  --receiver build/desktop/app/nsl-audio-gap-policy-oracle \
+  --media-receiver build/desktop/app/nsl-opus-recovery-oracle --output /tmp/native-audio-gap.json
+ctest --test-dir build/desktop --output-on-failure \
+  -R '^(audio_gap_policy_official_vectors|opus_recovery_official_vectors)$'
+```

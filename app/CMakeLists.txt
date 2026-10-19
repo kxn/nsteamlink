@@ -552,6 +552,16 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-opus-recovery.py"
         --receiver $<TARGET_FILE:nsl-opus-recovery-oracle>)
     set_tests_properties(opus_recovery_official_vectors PROPERTIES TIMEOUT 90)
+    add_executable(nsl-audio-gap-policy-oracle tests/audio_gap_policy_oracle.c)
+    target_include_directories(nsl-audio-gap-policy-oracle PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+    target_link_libraries(nsl-audio-gap-policy-oracle PRIVATE nsl_platform)
+    target_compile_options(nsl-audio-gap-policy-oracle PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+    add_test(NAME audio_gap_policy_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-audio-gap-policy.py"
+        --receiver $<TARGET_FILE:nsl-audio-gap-policy-oracle>
+        --media-receiver $<TARGET_FILE:nsl-opus-recovery-oracle>)
+    set_tests_properties(audio_gap_policy_official_vectors PROPERTIES TIMEOUT 60)
     add_executable(nsl-native-tests tests/test_native.c)
     target_include_directories(nsl-native-tests PRIVATE platforms/common)
     target_compile_options(nsl-native-tests PRIVATE -UNDEBUG)
