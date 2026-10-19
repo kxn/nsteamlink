@@ -2995,8 +2995,9 @@ shard 的 16 位 index 全范围（index=65535），不能把 index 当有符号
 
 以下是本项目的边界，不能标为原客户端逐指令等价：
 
-- `IHS_FEC_MAX_PAYLOAD=2MiB`，拒绝零长、过大、无效 index、坏 shard 长度及
-  同组元数据变化。输入先校验再替换组；失败分配不交付。parity 组上限约束也限制
+- 数据存储预算及申请失败见§155：原L≤2MiB限制改为检查dataCount×S，不把媒体
+  信封计入编码图像限额。拒绝零长、预算超限、无效index、坏shard长度及同组元数据
+  变化；输入先校验再替换组，失败分配不交付。parity组上限约束也限制
   矩阵尺寸，m=0 的总 shard 数最多 65536。
 - 按唯一片计数，重复片不改变已存数据或满足 k；检查恢复成功才交付。
   这是对 §26.4 原版重复计数错误的有意防护，不复制其错误 payload 上交行为。
@@ -12155,4 +12156,115 @@ PYTHONPATH=/path/to/python-dependencies python3 scripts/audit-steam-media-alloca
 python3 scripts/check-steam-media-allocation.py \
   --receiver build/desktop/third_party/ihslib/tests/session/ihs-media-budget-oracle
 ctest --test-dir build/desktop -R 'media_allocation_official_vectors|media_decode_boundary|media_resource_lifetime|window_resource|media_budget.*bridge'
+```
+
+本节所述FEC L的2MiB防护对应当时实现，§155改为原有最坏data存储预算；FIFO与
+codec约束仍独立，未据此声明Switch硬件最大值。
+
+## 155. FEC正文、padded存储与本地申请失败
+
+Evidence：固定Android ELF（SHA同§24.1）经原`BAddPacket@0x7f7fcc`、Reset、
+`ReconstructData@0x7f84dc`及`reed_solomon_decode@0x7f609c`执行八组输入。
+`audit-steam-fec-resources.py`固定两个传递helper的SHA；初始queue、packet/CUtl、
+allocator/refcount/libc为显式适配器，受控MTU值1472不是默认值或握手执行证明。
+仅记录真实调用到`new[]@0xc09ab0`、`calloc@0xc0bae0`的请求，不包括packet/CUtl
+适配器scratch及其他malloc入口。这些请求/包容量不证明原版完整live/RSS峰值。
+
+Native `fec_resource_oracle`执行实际PacketParse及FEC Add/RS；calloc/free的固定
+台账跟踪请求仍被owner持有的字节，包含receiver对象，排除输入/打印/hash临时区、
+allocator自身开销、其他会话owner、stack和GPU。原packet的容量包含13B传输头，
+Native的capacity只含重建存储；不能要求这两种分配布局逐字节相等。
+
+| 输入L/S/m及到达 | 原交付正文 / packet容量 | Native正文 / capacity | Native持有请求字节峰值 |
+|---|---:|---:|---:|
+| 80/32/2，三份systematic | 80 / 2200 | 80 / 160 | 66037 |
+| 80/32/2，仅index2/3/4 | 80 / 2200 | 80 / 160 | 66109 |
+| 1/1440/254，仅index0 | 1 / 367213 | 1 / 367200 | 433327 |
+| 1/17000/254，仅index0 | 1 / 4335013 | 1 / 4335000 | 4401127 |
+| 2097151、2097152、2097153、2097172/1440/0，完整1457片 | 各完整 / 各2098093 | 各完整 / 各2098080 | 各2165409 |
+
+两处缺片使用§26固定原codeword，确实执行原RS且与完整正文SHA一致。
+S17000一例是超协商MTU的post-admission资源形状，不是自然Steam datagram证据；
+S1440组的raw wire为1461B，符合本次受控MTU，但这里未运行实际Socket准入。
+仅index0满足k=1时不会进入RS，不能把大padded分配当作大RS求解或丢片纠错证据。
+Native固定receiver在该desktop ABI为65872B；这不是Switch ABI大小或物理内存读数。
+
+### 155.1 已确认的长度差异不能被比较器抹平
+
+原接收器在m=0时能交付超过2MiB的opaque正文，Native在既有L上限处拒绝，且此时
+没有发生分配错误。修正前`check-steam-fec-resources.py`在全部八组上比较实际交付
+长度/SHA，确实以非零返回报告6组一致、2组未交付，未把本地拒绝归一化为相等。
+§155.3按实际data存储预算修正后，同一比较器得到8/8，才注册正式CTest；比较器
+仍在任何原交付缺失时返回非零，没有跳过两份反例或改写Source结果。
+
+2097172B等于既有2MiB编码输入加20B普通视频信封的长度；这批FEC刺激本身使用
+确定的opaque字节，不冒称原Steam producer自然发送该图像或官方codec已成功解码。
+§154原先只验证Native普通/可靠软件路径；扩展fixture另验证FEC-m0经CRC RX、实际
+OS视频worker、tracked software AVCodec得到正文2MiB±1、编码恰好2MiB的key/P正确
+像素，编码超限后恢复仍经过既有pending保护。64KiB单片缺失的RS案例独立保留。
+这些filler增大的AU不证明大VCL或Switch硬解范围。
+
+原通用sender另以MTU1472、注入比例5、L2097172执行AddPacket，实际产生1457份
+S1440/m0 type11，并由原receiver完整恢复；wire bank及正文SHA均固定。这是已执行
+的codeword超过255时清零parity分支，触发条件不是“网络开始变差”，也不是host自然
+百分比/视频producer的默认值证据，更不能把本例type11称作有RS纠错的输入。
+
+### 155.2 真正的分配失败与等待分片分开
+
+SDK `1de590a`的实际故障注入捕获：分别使分片存储、present数组、缺列矩阵、RS临时
+数据四个calloc位置失败，四次均未交付，但会话仍未请求关闭，恢复通知与反馈均为0。
+因此旧bool的false确实混合了输入未完成和本地申请失败，而非仅从函数名推测。
+没有向原`new[]`返回NULL来臆测官方OOM分支。
+
+本地FEC对象为每次Add重置error；坏包、重复、尚未收齐继续返回false/OK，实际
+calloc失败返回false/NoMemory。RS矩阵/RHS失败保留已有分片由owner收尾；初始
+存储/present失败释放局部分配。调用方在同一RX锁下取error，释放锁后才沿已有
+Disconnect关闭，与§154普通/可靠组装的本地资源保护一致。它没有把OOM变成
+DataLost、NACK、重连或自动调FEC；不是已经证明的官方OOM策略。
+
+直接fixture对四处失败验证输出未改、错误不粘到后续坏包、所有权最终释放；显式
+加入新的systematic数据可完成只说明低层API可用，不改生产caller关闭的策略。
+Native会话RX分支（媒体failed-start适配器）的四处失败另检查关闭前Base/reliable/RX/
+FIFO锁均可由独立线程获取，
+没有DataLost方法调用，也没有额外ACK/NACK实际发送。未交付帧没有伪造Complete。
+
+`fec_resource_worker`启动真实Base RX/send和媒体worker，用受控CRC Connected输入
+进入transport连接态，随后注入合法type11及四处calloc失败。它核验一次goodbye、
+一次disconnected、media stop及实际ThreadJoin、RX/send退出后SessionDestroy清理，
+最后才IHS_Quit。Thread-local失败只在真实Add调用内启用，不随机破坏其他线程申请。
+另四轮在同一RX owner明确设置Streaming前态，检验该分支的StopStreaming移除媒体
+通道、实际join和销毁；这不是认证/协商到Streaming的接线、codec或Switch loader
+证明。握手前态先发媒体停止，SessionDestroy时join/销毁；受控Streaming前态由
+StopStreaming移除和join。核验使用实际ThreadJoin及销毁后计数，不以线程函数返回
+或handle仍非NULL单独判断已经join。
+
+### 155.3 约束实际data存储，不提高旧理论最坏申请域
+
+旧L≤2097152允许的data存储是`ceil(L/S)×S`。对全部S=1…65535穷举，旧最大值为
+2162655B，发生于S65535、k33。将`IHS_FEC_MAX_DATA_BYTES`定义为这个已有预算，
+同时检查L和dataCount×S，保留总index范围、parity时k+m≤255及同组元数据一致性。
+它是本地数据存储预算，既不是协议最大L，也不是从Android推算的Switch硬件限制。
+小audio/test FIFO原2MiB+node底线单独保留，不再引用FEC L常量，未增加FIFO预算。
+
+parity>0时missing≤min(k,m)，在固定S下取total255、最大missing即可求本实现同时
+持有的encoded+present+缺列矩阵+RHS上界。对全部S，旧/新准入域的全局最大值均为
+18876513B（S65535、missing33），不含固定receiver、allocator开销和stack。m0不分配
+RS矩阵；65536个索引的限制仍生效。正式C fixture穷举这些metadata算术、核验预算
+边界及边界外真实Add的申请/拒收，而非实际分配每份metadata组合。
+
+该全域包含S65535等不能经过现有UDP/MTU入口的post-admission形状，不能从全域
+上界相等推出真实MTU下每个输入的分配量不变。
+这是全metadata域理论上界不增加的证据；特定S下新接纳的L可能比先前申请更多，但
+仍在预算内。本表四份大正文实际k/S相同，data存储和持有请求字节峰值也相同。它不
+证明完整session、pending、allocator、codec、GPU和OS合计峰值已闭合；超协商MTU
+的大padded/RS形状及实际Switch大VCL/固件申请能力仍须各自证据。
+
+```sh
+PYTHONPATH=/path/to/python-dependencies python3 scripts/audit-steam-fec-resources.py \
+  --binary /path/to/libmain-arm64.so --output /tmp/source-fec-resources.json
+# 任一原交付缺失时返回非零，保留完整差异，不归一化本地拒收。
+python3 scripts/check-steam-fec-resources.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-fec-resource-oracle \
+  --output /tmp/native-fec-resources.json
+ctest --test-dir build/desktop -R 'fec_resource|media_resource_lifetime|fec_official_vectors|media_decode_boundary'
 ```

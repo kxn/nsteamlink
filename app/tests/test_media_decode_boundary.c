@@ -172,9 +172,9 @@ static uint8_t inverse(unsigned a) {
 }
 static void send_frame(IHS_Session *s, const IHS_Buffer *body, unsigned mode, unsigned *packet_id,
                        unsigned group) {
-    const size_t chunk = 1200;
+    const size_t chunk = mode == 3 ? 1440 : 1200;
     unsigned count = (body->size + chunk - 1) / chunk;
-    if (mode != 2) {
+    if (mode < 2) {
         for (unsigned i = 0; i < count; ++i) {
             size_t off = i * chunk, n = body->size - off;
             if (n > chunk)
@@ -191,20 +191,24 @@ static void send_frame(IHS_Session *s, const IHS_Buffer *body, unsigned mode, un
             IHS_SessionUnreliableUpdateAt(s, 9, atomic_load(&tick));
         return;
     }
-    assert(count + 3 <= 255);
-    unsigned char parity[1200] = {0};
-    for (unsigned col = 0; col < count; ++col) {
-        uint8_t coefficient = inverse(3 + col);
-        for (unsigned j = 0; j < chunk && col * chunk + j < body->size; ++j)
-            parity[j] ^= multiply(body->data[col * chunk + j], coefficient);
+    unsigned parity_count = mode == 2 ? 3 : 0;
+    assert(!parity_count || count + parity_count <= 255);
+    unsigned char parity[1440] = {0};
+    if (parity_count) {
+        for (unsigned col = 0; col < count; ++col) {
+            uint8_t coefficient = inverse(parity_count + col);
+            for (unsigned j = 0; j < chunk && col * chunk + j < body->size; ++j)
+                parity[j] ^= multiply(body->data[col * chunk + j], coefficient);
+        }
     }
-    for (unsigned i = 0; i <= count; ++i) {
-        if (i == 1)
+    unsigned sent = count + (parity_count ? 1 : 0);
+    for (unsigned i = 0; i < sent; ++i) {
+        if (parity_count && i == 1)
             continue; /* one real data erasure, recovered by parity row0 */
-        IHS_Buffer shard = IHS_BUFFER_INIT(1208, 1208);
+        IHS_Buffer shard = IHS_BUFFER_INIT(chunk + 8, chunk + 8);
         IHS_BufferAppendUInt32LE(&shard, body->size);
         IHS_BufferAppendUInt16LE(&shard, chunk);
-        IHS_BufferAppendUInt16LE(&shard, 3);
+        IHS_BufferAppendUInt16LE(&shard, parity_count);
         for (unsigned j = 0; j < chunk; ++j)
             IHS_BufferAppendUInt8(
                 &shard, i == count ? parity[j]
@@ -220,7 +224,7 @@ int main(int argc, char **argv) {
     assert(f && fread(fixture, 1, sizeof(fixture), f) == sizeof(fixture) && fgetc(f) == EOF);
     assert(!fclose(f));
     IHS_Init();
-    for (unsigned mode = 0; mode < 3; ++mode) {
+    for (unsigned mode = 0; mode < 4; ++mode) {
         atomic_store(&submitted, 0);
         atomic_store(&received, 0);
         atomic_store(&lost, 0);
@@ -258,7 +262,7 @@ int main(int argc, char **argv) {
         }
         if (mode != 2) {
             /* Encoded limit itself is a different unit from transport body.
-             * Its 20B envelope also needs FIFO compaction on both carriers. */
+             * Its 20B envelope must fit ordinary/reliable and zero-parity FEC. */
             for (unsigned au = 0; au < 2; ++au) {
                 IHS_Buffer b = payload(fixture, au, MIB2, 103 + au, 3 + au);
                 send_frame(s, &b, mode, &packet_id, 3 + au);
@@ -289,7 +293,7 @@ int main(int argc, char **argv) {
         assert(stops == mode + 1 && sl_video_destroy(pipeline));
     }
     IHS_Quit();
-    puts("Media decode boundary: ordinary/reliable 2MiB+-1 bodies, guarded encoded excess, "
-         "key/P recovery; FEC 64KiB with one erasure; software pixels verified");
+    puts("Media decode boundary: ordinary/reliable/FEC-m0 2MiB+-1 bodies, encoded2MiB, "
+         "guarded excess, key/P recovery; FEC64KiB one erasure; software pixels verified");
     return 0;
 }

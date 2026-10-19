@@ -52,6 +52,11 @@ if(NSL_PLATFORM STREQUAL "desktop")
     add_subdirectory(third_party/ihslib/tests)
     if(TARGET ihs-fec-oracle)
         find_package(Python3 COMPONENTS Interpreter REQUIRED)
+        add_test(NAME fec_resources_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-fec-resources.py"
+            --receiver $<TARGET_FILE:ihs-fec-resource-oracle>
+            --output "${CMAKE_BINARY_DIR}/fec-resources-native.json")
+        set_tests_properties(fec_resources_official_vectors PROPERTIES TIMEOUT 60)
         add_test(NAME media_allocation_official_vectors COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-media-allocation.py"
             --receiver $<TARGET_FILE:ihs-media-budget-oracle>)
