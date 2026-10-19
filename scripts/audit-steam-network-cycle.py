@@ -70,7 +70,8 @@ def function_manifest(binary):
 
 
 class Network(cycle.Cycle):
-    def __init__(self, binary, crc):
+    def __init__(self, binary, crc, constructor_tick=None):
+        self.constructor_tick = constructor_tick
         super().__init__(binary, crc)
         self.seeds = []
         self.write_cost = 0
@@ -80,6 +81,13 @@ class Network(cycle.Cycle):
                 0xC11220: lambda: self.jump(0x7F8CBC),
             }
         )
+
+    def construct(self):
+        # Capture replays carry their actual clock epoch. Execute the original
+        # channel constructor with that clock; do not seed its deadline fields.
+        if self.constructor_tick is not None:
+            self.now = self.constructor_tick
+        super().construct()
 
     def seed(self, tick, kind, channel, payload, result):
         self.now, self.transport_result = tick, result
@@ -408,7 +416,7 @@ def audit(binary):
     assert hashlib.sha256(binary).hexdigest() == cycle.config.SHA
     cases = []
     for inp in schedules():
-        r = Network(binary, inp["crc"])
+        r = Network(binary, inp["crc"], inp.get("constructor_tick"))
         if "initial_deadline" in inp:
             shaper = r.q(r.sock + 64)
             r.wi(shaper + 8, inp["initial_deadline"])

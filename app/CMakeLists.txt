@@ -192,7 +192,9 @@ if(NSL_PLATFORM STREQUAL "desktop")
         -Wl,--wrap=IHS_SessionChannelControlOnMessageReceived
         -Wl,--wrap=avcodec_send_packet -Wl,--wrap=sl_audio_recovery_run
         -Wl,--wrap=opus_multistream_decoder_create -Wl,--wrap=opus_multistream_decode_float
-        -Wl,--wrap=sl_audio_jitter_pop -Wl,--wrap=sl_audio_jitter_push -Wl,--wrap=SDL_OpenAudioDevice)
+        -Wl,--wrap=sl_audio_jitter_pop -Wl,--wrap=sl_audio_jitter_push -Wl,--wrap=SDL_OpenAudioDevice
+        -Wl,--wrap=IHS_UDPSocketReceive -Wl,--wrap=IHS_StreamClockFeedback
+        -Wl,--wrap=IHS_SessionUnreliableUpdateAt -Wl,--wrap=IHS_SessionUnreliableReceived)
     add_test(NAME auth_udp_official_vectors COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-auth-process.py"
         --receiver $<TARGET_FILE:nsl-auth-udp-oracle>)
@@ -229,6 +231,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-audio-process.py"
         --receiver $<TARGET_FILE:nsl-auth-udp-oracle>)
     set_tests_properties(audio_udp_official_vectors PROPERTIES TIMEOUT 90)
+    add_test(NAME rx_capture_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-rx-capture.py"
+        --receiver $<TARGET_FILE:ihs-network-wire-oracle>)
+    set_tests_properties(rx_capture_official_vectors PROPERTIES TIMEOUT 60)
     add_test(NAME microphone_schedule_official_vectors COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-microphone-schedule.py"
         --receiver $<TARGET_FILE:ihs-microphone-schedule-oracle>)

@@ -11051,6 +11051,11 @@ Conclusion：有缺口时，退休过程按窗口最新sender timestamp检查槽
 此结论只解释已给定的输入和批次，不证明原用户卡顿因果，也不证明GDB观察下的
 Linux样本与自然运行的收包批次相同。
 
+证据边界更正：新的两份Linux只读Socket观察中，后续3…17确为同一读批次，
+仍交付16帧；其Connected实测RTT约300ms。撤回把这两份16帧样本推为
+必然拆批的假设。上表在固定clock条件下的批次敏感性仍成立；跨进程对照还须
+同时带入实际ProcessTimestamp输入和接收budget，不能只比较媒体字节与批次。
+
 原§139的80个input/observed逐项保持不变，追加6组24状态；共86组276状态、
 168份初发/212份周期wire。Native正式比较包含全部collector/clock/metadata、窗口
 状态、反馈/发送wire和交付序列，各批次逐字段相同。新的隔离反例只把窗口退休改为
@@ -11068,4 +11073,86 @@ python3 scripts/check-steam-network-cycle.py \
   --receiver build/desktop/third_party/ihslib/tests/session/ihs-network-wire-oracle --burst-only
 python3 scripts/check-network-adaptation-native-mutations.py --build build/desktop \
   --output /tmp/network-mutations
+```
+
+## 142. 实际收包批次必须连同实测RTT复播
+
+§141的固定clock批次对照不能单独解释跨进程的帧数差异。本节捕获固定官方Linux
+1.3.32.316与本地实际OS UDP输入，取消drop的frame13继续屏障，保留原初始帧返回、
+实际NACK后发包及最终Stop的fixture条件。peer在NACK后一次给出packet3…17；不按
+decoder逐帧放行。原客户端仍执行构造、真实Socket/CRC/crypto/50–51控制、decoder
+worker、实际Opus/SDL及自然Stop/join/析构。GDB的只读断点会影响调度，不冒称自然
+收包节奏，也不替换任何原方法、包、时钟或返回。
+
+### 142.1 直接观察点与原指令预测
+
+固定Linux完整ELF SHA与§140相同。完整43份FDE范围/指令SHA随参考保存，保留
+原38份，新增五份实际观察范围：
+
+| 入口 | 相对地址 | 长度 | 作用 |
+|---|---:|---:|---|
+| Socket Update | 0x1a0760 | 361 | 原读批次开始/返回；先排空Read再更新connection |
+| Socket HandleMessage | 0x1a0500 | 604 | 原始datagram及该包实际接收tick |
+| ProcessTimestamp | 0x19b0a0 | 389 | Connected带入的echo/peer/local三元组及实际结果 |
+| UpdateUnreliableState | 0x19c010 | 2382 | +0x2df处读取实际计算后的接收budget，不手工设置它 |
+| RTT budget getter | 0x1997e0 | 21 | 读connection+0x2dc的RTT毫秒均值，再加2 |
+
+最后两项与§139相符：原19c2a4处乘0.5、截断到整毫秒再转tick，加channel+0x1c。
+本节直接读出的budget必须与捕获RTT相符；平滑RTT、均值RTT和channel原budget
+分别记录，不把smoothed RTT冒充接收等待的均值来源。
+
+每种CRC各捕获一份原Linux和一份Native。Native仅在新增burst观察模式，原样转发
+OS Receive、ProcessTimestamp及普通媒体准入/更新，以固定数组保存包、tick与批次，
+停止并join后输出。没有在收发worker上新增日志、动态分配、发包屏障或IO替身；
+统计getter仍取原锁，记录器并非对自然调度零影响的证明。真实音频callback/固定
+Opus/jitter Push与实际SDL2取出和Stop仍执行。
+
+把各自捕获的Connected时钟输入与媒体读批次交给固定官方Android原指令：原
+Socket/CRC/window/Update/反馈/发送先预测交付字节，再由原Opus预测decode顺序
+与固定S16。时钟重放边界显式用一个ACK携该样本，建立真实初发seed及shaper初态；
+不是再次执行原Linux握手。Native在同一受控网络入口比较完整wire、collector、clock、
+窗口/交付及时间元数据；实际Native音频产物另与原指令预测逐样本核对。
+
+Evidence：捕获中Linux整批收到3…17仍交付16帧，实际Connected RTT约300ms，budget
+约16000多tick；Native低RTT的整批样本交付12帧，budget6618tick。四份各自的实测
+环境均被原指令预测。另一次未固化的Native运行把后续分成两批并交付16帧，说明
+不应把帧数本身当成批次证据。撤回“原Linux16帧必然来自拆批”的假设；前述§141
+固定clock下的批次差异仍成立。
+
+### 142.2 反事实、夹具构造时钟与证据边界
+
+两个明确的反事实保留Linux媒体字节、接收tick和Read分组，把校准ACK改成实测的
+低RTT区间，并同步调整该校准seed/echo/构造时钟的配套初态。原指令预测变为12帧。
+这是受控网络边界的反事实，不是另一份原Linux实际会话，也不是Host重传策略。
+它证明在这些输入下不能忽略RTT，仅以相同媒体字节/帧数判断一致性。
+
+首次完整投影检查出现的NACK/wire差异来自夹具：旧通道在固定tick1000000构造，
+捕获时钟已越过有符号半区，而原Channel构造@7f86ec–7f86f0会以当时clock初始化
+反馈deadline。新`constructor_tick`只为捕获重放提供相同clock范围，仍执行原构造
+指令，没有直接改deadline字段或RTT指标。原86组不传此参数，input/observed保持
+不变并只读复跑。本节也不把该夹具修正称为生产协议bug。
+
+正式参考包含四份实际捕获的投影与两份反事实。Native比较全部网络状态/wire，
+Linux decode策略与独立Android固定点边界一致；Native实际固定PCM与jitter入队
+逐样本一致。实际fresh ASan/UBSan、TSan捕获各有CRC两值，并按各自新测得的
+环境重新执行原指令预测，不能直接拿旧捕获的帧数作为检查结果。
+两个隔离生产回归（接收等待忽略RTT、遇已占用槽停止退休）要求编译/链接且receiver
+正常退出，再由这些正式投影检出；不把崩溃/超时当成检出。
+
+这建立给定捕获的接收/codec投影，不证明持续高码率、满队列、全部worker交错、
+真实Steam发包行为、物理播放/显示或Switch硬件恢复，也不证明原玩家停顿的根因。
+GDB造成的初始RTT不可据为用户网络的真实RTT；不会因此增加自动FEC或重连策略。
+
+```sh
+python3 scripts/audit-steam-rx-capture.py \
+  --binary /path/to/package/bin/steamlink --android-binary /path/to/libmain-arm64.so \
+  --sdk-directory /path/to/package/lib \
+  --qt-library-directory /path/to/qt/patched-runtime/lib \
+  --qt-library-directory /path/to/qt/runtime/lib \
+  --native-receiver build/desktop/app/nsl-auth-udp-oracle \
+  --output /tmp/rx-capture.json --snapshot scripts/fixtures/steam-rx-capture-reference.json.gz
+python3 scripts/check-steam-rx-capture.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-network-wire-oracle
+python3 scripts/check-network-adaptation-native-mutations.py --build build/desktop \
+  --capture-only --output /tmp/rx-capture-negatives
 ```

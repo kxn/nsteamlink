@@ -20,6 +20,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--build", type=Path, required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--capture-only", action="store_true")
     a = p.parse_args()
     build, output = a.build.resolve(), a.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -70,6 +71,15 @@ def main():
         ),
     ]
     checker = ROOT / "scripts/check-steam-network-cycle.py"
+    baseline_flags = ["--adaptive-only"]
+    if a.capture_only:
+        variants = [
+            v
+            for v in variants
+            if v[0] in ("media_ignores_rtt", "keep_expired_present_slot")
+        ]
+        checker = ROOT / "scripts/check-steam-rx-capture.py"
+        baseline_flags = []
     link_dir = build / "third_party/ihslib/tests/session"
     link_base = shlex.split(
         (link_dir / "CMakeFiles/ihs-network-wire-oracle.dir/link.txt").read_text()
@@ -81,7 +91,7 @@ def main():
             str(checker),
             "--receiver",
             str(link_dir / "ihs-network-wire-oracle"),
-            "--adaptive-only",
+            *baseline_flags,
         ],
         text=True,
         capture_output=True,
@@ -129,10 +139,16 @@ def main():
                 str(checker),
                 "--receiver",
                 str(receiver),
-                (
-                    "--burst-only"
-                    if name == "keep_expired_present_slot"
-                    else "--adaptive-only"
+                *(
+                    []
+                    if a.capture_only
+                    else [
+                        (
+                            "--burst-only"
+                            if name == "keep_expired_present_slot"
+                            else "--adaptive-only"
+                        )
+                    ]
                 ),
             ],
             text=True,
@@ -140,7 +156,15 @@ def main():
             timeout=90,
         )
         (work / "check.log").write_text(result.stdout + result.stderr)
-        assert result.returncode == 1 and "assert actual == want" in result.stderr, (
+        assert (
+            result.returncode == 1
+            and (
+                'assert actual == case["observed"]'
+                if a.capture_only
+                else "assert actual == want"
+            )
+            in result.stderr
+        ), (
             name,
             "must reject on official state/wire mismatch",
             result.stderr[-2000:],

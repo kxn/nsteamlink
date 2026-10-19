@@ -19,6 +19,7 @@
 #include "udp_video_backend.h"
 #include "udp_microphone_backend.h"
 #include "udp_audio_backend.h"
+#include "udp_rx_observer.h"
 
 static atomic_bool requested, responded, serverDrained;
 static bool missingServer;
@@ -69,6 +70,7 @@ static void sendEncryptedPeer(IHS_Session *s,int socket,const struct sockaddr_in
 }
 int main(int argc,char **argv) {
     bool audio=argc==11 && !strcmp(argv[1],"--audio");
+    bool audioBurst=audio && !strcmp(argv[9],"burst");udpRXObserve=audioBurst;
     unsigned audioFrames=audio?(unsigned)atoi(argv[7]):0,audioCalls=audio?(unsigned)atoi(argv[8]):0;
     bool audioBlocked=audio && !strcmp(argv[9],"blocked");
     bool audioGap=audio && strcmp(argv[10],"-");
@@ -147,7 +149,8 @@ int main(int argc,char **argv) {
         if(audio && !strcmp(argv[9],"drop") && audioStage==1 && repaired && atomic_load(&audFrames)>=2) {
             udpReplayMedia(peer,&videoAddress,videoLocal,NULL,crc);audioStage=2;
         }
-        if(audio && !videoStop && atomic_load(&audFrames)>=audioFrames && atomic_load(&audCalls)>=audioCalls &&
+        if(audio && !videoStop && atomic_load(&audFrames)>=(audioBurst?1:audioFrames) && atomic_load(&audCalls)>=audioCalls &&
+            (!audioBurst || audInputs[atomic_load(&audFrames)-1].id==27) &&
             (audioBlocked?audioBlockedPolls>=30:atomic_load(&audPlayed)>0)) {
             sendEncryptedPeer(session,peer,&videoAddress,videoLocal,5,51,NULL,0,3,crc,false);videoStop=true;
         }
@@ -302,7 +305,8 @@ int main(int argc,char **argv) {
         printf("\",\"sdk_size\":%zu,\"sdk_sha256\":\"",udpSdkSize);for(unsigned i=0;i<32;++i)printf("%02x",udpSdkSha[i]);
         printf("\",\"starts\":%u,\"submits\":%u,\"stopped\":true}",udpStarts,udpSubmits);
     }
-    if(audio)audReport(audioFrames,audioCalls,audioBlocked);
+    if(audio)audReport(audioBurst?atomic_load(&audFrames):audioFrames,audioCalls,audioBlocked);
+    if(audioBurst)rxReport();
     if(audioGap) {
         assert(repaired && feedbackSize && !udpReplayFile);
         printf(",\"audio_feedback\":\"");for(size_t n=0;n<feedbackSize;++n)printf("%02x",feedbackWire[n]);printf("\"");
