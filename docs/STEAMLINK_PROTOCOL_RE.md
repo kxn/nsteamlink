@@ -118,8 +118,9 @@ if (type <= 7 && ((1u << type) & 0xC6)) {    // 0xC6 = 位 1,2,6,7
 - `SendRemoteHIDMessage(msg, bool)`（0x7ab374）的 bool 参数 = `CRemoteHIDMsg.active_input`
   （信封字段，proto field 2），不是可靠性开关；发送前另有一道字节闸门 CStreamClient+0x267
   （HID 子系统使能）。body 序列化 → 装入 CRemoteHIDMsg.data → SendControlMessage(106)；
-  另在录制标志（CStreamClient+0x6b0 非零）时追加 CRecordedInput{type=106, timestamp=GetStreamTimestamp()}
+  另在录制标志（CStreamClient+0x1f6b0 非零）时追加 CRecordedInput{type=106, timestamp=GetStreamTimestamp()}
   到 CRecordedInputStream。
+  更正：旧文的`+0x6b0`漏计`0x7ab4cc`的`ADD #0x1f000`；完整地址及录制锁边界见§152。
 
 ## 3. 加密层【已验证】
 
@@ -11924,4 +11925,71 @@ python3 scripts/audit-steam-capacity-recovery.py \
 ctest --test-dir build/desktop -R 'capacity_recovery_official_vectors' --output-on-failure
 python3 scripts/check-capacity-recovery-native-mutations.py \
   --build build/desktop --output /tmp/capacity-negatives
+```
+
+## 152. HID生产入口的串流准入、完整信封和控制临界区
+
+本节使用§24.1固定SHA的官方Android客户端，执行`SendRemoteHIDMessage@0x7ab374`、
+`SendControlMessage@0x7a7d90`、原C++ protobuf解析/序列化、Frame::BEncrypt@0x7f342c、
+Frame::Send@0x7f3078、Connection::Send/GetChannel及原channel构造器。另一个入口执行
+`UpdateHIDDeviceReports@0x7bd838`。参考保存十一份完整原函数的地址/长度/SHA及四份helper
+身份；`Channel::Send`为保留完整body的终点，不称已执行可靠窗口、UDP、主机或OS线程。
+HMAC-MD5/AES-CBC使用hashlib/cryptography适配器，原BEncrypt仍执行序号拼接、IV位置、
+容量、Resize和正文回写；不是运行原库的密码原语。Native使用实际生产加密并比较完整密文。
+
+### 152.1 触发条件与锁范围
+
+Evidence：`0x7ab39c–0x7ab3b0`要求client+256等于6、client+615非零，任何一个不满足
+都在protobuf和加密序号准备前返回。client+615对应config+159的enable_input_streaming
+字段11；向量先用原parser解析该字段，再通过原local-only配置setter写入，不直接把
+enable字节强制设为受测值。配置delegate/save是明确终点，不称活动消息99实收。
+进入后，原wrapper始终显式写CRemoteHIDMsg的data
+及active_input两字段，包括active_input=false；这个bool不是可靠性选择。
+`UpdateHIDDeviceReports`另在`0x7bd860–0x7bd86c`以state6限制设备采集入口。
+
+Evidence：普通录制关闭时，实际控制加密、Frame发送和channel终点都由channel+56的
+mutex包围；原channel构造器的其他mutex初始化不等同于全局network mutex。batch先锁
+player+2040采集，再解锁，才发送报告批次；device collect在本向量为显式合成输入，
+通过原DeviceInputReports::CopyFrom装入一份已解析的device1/full_report=010203。
+它不证明物理设备poll、真实generator清空缓冲或自然线程交错。
+
+录制分支的静态地址须完整计算：`0x7ab4cc`先将client加0x1f000，再在+0x6b0读标志；
+因此字段是client+0x1f6b0，录制mutex是client+0x1f680。显式撤回旧§3.2的client+0x6b0
+地址解释。录制锁只包围CRecordedInput追加/CopyFrom，正常出口在`0x7ab5dc`解锁后才
+进入`SendControlMessage`；本节动态向量明确关闭录制，不冒称已验证整个录制实现。
+
+### 152.2 同输入对照与生产接线
+
+128例由generic两种oneof×8状态×enable bool（32）、report再乘active bool（64），
+以及单设备batch×8状态×enable×active（32）组成。连接已建立是独立受控前态；不以
+所有client/transport组合可执行推成全部由UI可达。拒绝时不得生成控制正文或消耗序号；
+接纳时比较完整type106+IV+密文、序号变化及实际queued状态。batch非state6时另检查
+Native尚未消费的报告仍在holder中。
+
+Evidence：修正前Native出现76个差异：fast report路径60、batch非串流提前消费14、
+generic显式false字段2。部分尚未进入可用transport的case没有实际入队，但已消耗
+加密序号，因此不能只看队列为空就当作准入一致。旧`hid_send_order`在Handshaking
+运行的成功记录不能证明合法串流入口；该fixture改为Connected后仍验证四线程256份
+delta的完整顺序。仅诊断HID的局部fixture同步改为Connected，不修改其他握手测试前态。
+
+生产fast report在封装/加密前检查Streaming及InputEnabled；public batch在取/重置
+holder前检查Streaming，保留既有InputEnabled保护；generic显式写active_input=false。
+实际生产oracle通过相同128例，包括完整密文及未接纳时序号不变，不以bool入队结果
+冒充原同步Socket结果。三份隔离生产回归分别移除fast准入、移除false字段、允许batch
+提前消费；全部128个receiver正常退出后，由正式比较器分别检出60、2、14个差异。
+构建、崩溃或超时不计为语义检出，真实生产源文件不被mutation脚本改写。
+
+边界：Source在state6/input-disabled仍会进入合成collect终点，Native保留早退保护。
+本节只比较该分支不发送/不消耗加密序号，不把二者设备缓冲清理策略称为等价；真实
+generator及poll/输入禁用期间的缓冲策略需独立证据。所有producer与network锁、设备
+线程/HOME/Stop交错也不由这里的临界区观察证明；没有认定原玩家停顿/闪烁因果。
+
+```sh
+PYTHONPATH=/path/to/python-dependencies python3 scripts/audit-steam-hid-producer.py \
+  --binary /path/to/libmain-arm64.so --output /tmp/source-hid.json
+python3 scripts/check-steam-hid-producer.py \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-hid-producer-oracle
+python3 scripts/check-hid-producer-native-mutations.py \
+  --build build/desktop --output /tmp/hid-negatives
+ctest --test-dir build/desktop -R 'hid_producer_official_vectors|hid_send_order|control_hid_admission'
 ```
