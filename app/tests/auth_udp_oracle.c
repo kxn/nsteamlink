@@ -18,6 +18,7 @@
 #include <unistd.h>
 #include "udp_video_backend.h"
 #include "udp_microphone_backend.h"
+#include "udp_audio_backend.h"
 
 static atomic_bool requested, responded, serverDrained;
 static bool missingServer;
@@ -59,22 +60,29 @@ static void sendPeer(int socket,const struct sockaddr_in *address,uint8_t type,u
 }
 static void sendEncryptedPeer(IHS_Session *s,int socket,const struct sockaddr_in *address,uint8_t local,uint16_t id,uint8_t kind,const uint8_t *plain,size_t size,uint64_t sequence,bool crc,bool badMac) {
     uint8_t body[512];body[0]=kind;size_t count=sizeof(body)-1;
+    /* Match production serialization's non-null empty-body storage. */
+    const uint8_t empty=0;if(!size)plain=&empty;
     assert(IHS_SessionFrameEncrypt(s,plain,size,body+1,&count,sequence)==0);
     /* Corrupt ciphertext input, not the real receiver's crypto result. */
     if(badMac)body[1]^=1;
     sendPeer(socket,address,5,local,1,id,body,count+1,crc);
 }
 int main(int argc,char **argv) {
+    bool audio=argc==11 && !strcmp(argv[1],"--audio");
+    unsigned audioFrames=audio?(unsigned)atoi(argv[7]):0,audioCalls=audio?(unsigned)atoi(argv[8]):0;
+    bool audioBlocked=audio && !strcmp(argv[9],"blocked");
+    bool audioGap=audio && strcmp(argv[10],"-");
     bool burst=argc==8 && !strcmp(argv[1],"--gap-burst");
-    bool gap=burst || (argc==8 && !strcmp(argv[1],"--gap"));udpGapMode=gap;
+    bool gap=burst || (argc==8 && !strcmp(argv[1],"--gap"));udpGapMode=gap || audio;
     bool recover=argc==7 && !strcmp(argv[1],"--recover");
     bool video=gap || recover || (argc==7 && !strcmp(argv[1],"--video"));
     bool microphone=argc==6 && !strcmp(argv[1],"--microphone");
     bool limited=argc==6 && !strcmp(argv[1],"--negotiate-limited");
-    bool negotiate=limited || microphone || video || (argc==6 && !strcmp(argv[1],"--negotiate"));assert(negotiate || argc==5);
+    bool negotiate=audio || limited || microphone || video || (argc==6 && !strcmp(argv[1],"--negotiate"));assert(negotiate || argc==5);
     bool crc=atoi(argv[negotiate?2:1])!=0,hasResponse=negotiate || strcmp(argv[3],"-")!=0;
     bool badMac=negotiate && atoi(argv[5])!=0;
     if(gap) {assert(strlen(argv[7])<=sizeof(udpExpectedFeedback)*2);udpExpectedFeedbackSize=(uint32_t)unhex(argv[7],udpExpectedFeedback);}
+    if(audioGap)udpExpectedFeedbackSize=(uint32_t)unhex(argv[10],udpExpectedFeedback);
     bool gapReliable=gap && (udpExpectedFeedback[0]&127)==8;
     assert(!burst || !gapReliable);
     missingServer=!negotiate && atoi(argv[4])!=0;
@@ -91,6 +99,7 @@ int main(int argc,char **argv) {
     assert(IHS_IPAddressFromString(&info.address.ip,"127.0.0.1"));
     for(unsigned n=0;n<32;++n)info.sessionKey[n]=(uint8_t)n;
     IHS_Session *session=IHS_SessionCreate(&client,&info);assert(session);
+    if(audio)audInstall(session);
     if(video) {
         udpVideo=sl_video_create();assert(udpVideo);
         assert(IHS_SessionSetVideoTrackingIdentity(session,1));
@@ -123,6 +132,7 @@ int main(int argc,char **argv) {
     bool configReceived=false,completeReceived=false,videoInfo=false,videoStop=false;
     bool repaired=false;uint8_t feedbackWire[64];size_t feedbackSize=0;
     unsigned gapStage=0;
+    unsigned audioStage=0,audioBlockedPolls=0;
     struct sockaddr_in videoAddress={0};uint8_t videoLocal=0;
     uint8_t outputPlain[7][512],outputCipher[7][512];size_t plainSizes[7]={0},cipherSizes[7]={0};
     unsigned micStage=0,micWireCount=0;uint8_t micWires[7][2048];size_t micWireSizes[7]={0};
@@ -130,6 +140,17 @@ int main(int argc,char **argv) {
     char micEvents[12][32];unsigned micEventCount=0;
     uint64_t deadline=millis()+5000;
     for(;;) {
+        if(audio && !audioStage && atomic_load(&audFrames)>=1) {
+            udpReplayMedia(peer,&videoAddress,videoLocal,NULL,crc);audioStage=1;
+        }
+        if(audio && audioBlocked && repaired)++audioBlockedPolls;
+        if(audio && !strcmp(argv[9],"drop") && audioStage==1 && repaired && atomic_load(&audFrames)>=2) {
+            udpReplayMedia(peer,&videoAddress,videoLocal,NULL,crc);audioStage=2;
+        }
+        if(audio && !videoStop && atomic_load(&audFrames)>=audioFrames && atomic_load(&audCalls)>=audioCalls &&
+            (audioBlocked?audioBlockedPolls>=30:atomic_load(&audPlayed)>0)) {
+            sendEncryptedPeer(session,peer,&videoAddress,videoLocal,5,51,NULL,0,3,crc,false);videoStop=true;
+        }
         if(microphone && micStage==0 && atomic_load(&micPeerMessages)==2) {
             assert(!micStarts && !micStops && !session->microphone.channel);
             assert(micStartStream(session));assert(session->microphone.channel==3);
@@ -163,23 +184,26 @@ int main(int argc,char **argv) {
         }
         bool micDone=microphone && micStage==4 && micWireCount==7 && micStarts==3 && micStops==3;
         for(unsigned n=0;n<5;++n)if(!micControlSeen[n])micDone=false;
-        bool finished=microphone?micDone:video?videoStop && atomic_load(&udpStopped):negotiate?completeReceived && atomic_load(&session->state.connectionState)==6:missingServer?atomic_load(&serverDrained):hasResponse?atomic_load(&responded):atomic_load(&requested)&&haveRequest;
+        bool finished=audio?videoStop && atomic_load(&audStops):microphone?micDone:video?videoStop && atomic_load(&udpStopped):negotiate?completeReceived && atomic_load(&session->state.connectionState)==6:missingServer?atomic_load(&serverDrained):hasResponse?atomic_load(&responded):atomic_load(&requested)&&haveRequest;
         if(finished && (!atomic_load(&session->transport.closeRequested) || goodbyes))break;
+        if(audio && millis()>=deadline)fprintf(stderr,"audio timeout: frames=%u calls=%u played=%u stage=%u feedback=%u stops=%u\n",
+            atomic_load(&audFrames),atomic_load(&audCalls),atomic_load(&audPlayed),audioStage,repaired,atomic_load(&audStops));
         assert(millis()<deadline);
         struct pollfd p={.fd=peer,.events=POLLIN};int ready=poll(&p,1,2);assert(ready>=0);if(!ready)continue;
         uint8_t raw[2048];struct sockaddr_in from;socklen_t length=sizeof(from);
         ssize_t size=recvfrom(peer,raw,sizeof(raw),0,(struct sockaddr *)&from,&length);assert(size>=13);
         uint8_t type=raw[0]&127;
-        if((recover || gap) && (type==8 || type==10 || (gap && type==3 && raw[13]==2)) && raw[4]==3 && !repaired) {
+        if((recover || gap || audioGap) && (type==8 || type==10 || (gap && type==3 && raw[13]==2)) && raw[4]==3 && !repaired) {
             assert(((raw[0]&128)!=0)==crc && raw[2] && raw[3]==7);
             size_t plainSize=(size_t)size;
             if(crc) {uint32_t value=0;for(unsigned n=0;n<4;++n)value|=(uint32_t)raw[size-4+n]<<(8*n);assert(IHS_CRC32C(raw,(size_t)size-4)==value);plainSize-=4;}
             assert(plainSize<=sizeof(feedbackWire));uint8_t normalized[64];memcpy(normalized,raw,plainSize);normalized[2]=normalized[3]=0;memset(normalized+9,0,4);
             if(udpExpectedFeedbackSize!=plainSize || memcmp(normalized,udpExpectedFeedback,plainSize))continue;
-            if(gap) {assert(gapStage==1 && udpPictureCount==1 && atomic_load(&udpSdkPackets)==1);}
+            if(audio) {assert(audioStage==1 && atomic_load(&audFrames)==1);}
+            else if(gap) {assert(gapStage==1 && udpPictureCount==1 && atomic_load(&udpSdkPackets)==1);}
             else {assert(!atomic_load(&udpSubmitted) && !atomic_load(&udpSdkPackets));}
             assert((size_t)size<=sizeof(feedbackWire));memcpy(feedbackWire,raw,(size_t)size);feedbackSize=(size_t)size;
-            if(!gap || !gapReliable)udpReplayMedia(peer,&from,raw[2],NULL,crc);
+            if(audio ? !audioBlocked : (!gap || !gapReliable))udpReplayMedia(peer,&from,raw[2],NULL,crc);
             repaired=true;
         } else if(microphone && raw[4]>=3 && raw[4]<=5 && (type==3 || type==4 || type==5 || type==6)) {
             assert(((raw[0]&128)!=0)==crc && raw[2] && raw[3]==7 && (size_t)size<=sizeof(micWires[0]));
@@ -241,6 +265,12 @@ int main(int argc,char **argv) {
                         sendEncryptedPeer(session,peer,&from,raw[2],4,52,start,sizeof(start),2,crc,false);
                         udpReplayMedia(peer,&from,raw[2],argv[6],crc);
                     }
+                    if(audio) {
+                        const uint8_t start[]={0x10,3,0x18,3,0x28,0x80,0xf7,2,0x30,2};
+                        videoAddress=from;videoLocal=raw[2];
+                        sendEncryptedPeer(session,peer,&from,raw[2],4,50,start,sizeof(start),2,crc,false);
+                        udpReplayMedia(peer,&from,raw[2],argv[6],crc);
+                    }
                 } else if(index==2)videoInfo=true;
                 IHS_BufferClear(&plain,true);
             }
@@ -254,6 +284,7 @@ int main(int argc,char **argv) {
     if(!closed)IHS_SessionInterrupt(session);
     IHS_SessionThreadedJoin(session);
     assert(!session->sendThread && !session->base.worker);
+    if(audio)stream_media_audio_close(NULL);
     assert(goodbyes==(closed?1u:0u));
     printf("{\"phase\":%d,\"closed\":%s,\"mtu\":%d,\"connects\":%u,\"goodbyes\":%u,\"requested\":%s,\"response_handled\":%s,\"request\":\"",phase,closed?"true":"false",mtu,connects,goodbyes,atomic_load(&requested)?"true":"false",atomic_load(&responded)?"true":"false");
     for(size_t n=0;n<requestSize;++n)printf("%02x",request[n]);
@@ -270,6 +301,11 @@ int main(int argc,char **argv) {
         for(unsigned i=0;i<16;++i)printf("%02x",udpPixelMd5[i]);
         printf("\",\"sdk_size\":%zu,\"sdk_sha256\":\"",udpSdkSize);for(unsigned i=0;i<32;++i)printf("%02x",udpSdkSha[i]);
         printf("\",\"starts\":%u,\"submits\":%u,\"stopped\":true}",udpStarts,udpSubmits);
+    }
+    if(audio)audReport(audioFrames,audioCalls,audioBlocked);
+    if(audioGap) {
+        assert(repaired && feedbackSize && !udpReplayFile);
+        printf(",\"audio_feedback\":\"");for(size_t n=0;n<feedbackSize;++n)printf("%02x",feedbackWire[n]);printf("\"");
     }
     if(recover) {
         assert(repaired && !udpReplayFile && feedbackSize);
@@ -295,5 +331,6 @@ int main(int argc,char **argv) {
     puts("}");
     IHS_SessionDestroy(session);if(negotiate)sl_stream_settings_destroy(&settings);
     if(video) {sl_video_reap(udpVideo);assert(sl_video_destroy(udpVideo));udpVideo=NULL;}
+    if(audio)stream_media_shutdown();
     IHS_Quit();assert(!close(peer));return 0;
 }

@@ -10940,3 +10940,85 @@ python3 scripts/check-steam-network-cycle.py \
 python3 scripts/check-network-adaptation-native-mutations.py --build build/desktop \
   --output /tmp/network-adaptation-mutants
 ```
+
+
+## 140. 实际UDP音频恢复、独立固定点PCM与设备API边界
+
+Evidence：固定官方Linux 1.3.32.316 ELF SHA256
+`95482ca6120f90bb90798b27206b7946ab732e079f008d7fc90ea58a8b0074e1`，
+原构造、真实Socket/CRC/可靠控制/解密、OnThink、audio decoder worker和自然
+Stop/join/析构均执行；peer提供受控握手和加密50/51消息，没有替换原Frame、方法、
+阶段或codec返回。SDL3 dummy的Init/Quit是显式平台fixture，不等同完整UI启动。
+完整38份函数FDE范围/SHA随参考保存，新增直接音频入口为：
+
+| 原版入口 | 相对地址 | 完整长度 | 指令SHA256 |
+|---|---:|---:|---|
+| Opus Start | 0x3252a0 | 250 | 82282054c71cf880c7613dafa00ad10bf47e66d04f65f0146cb2fff4ef49b6d2 |
+| Opus Stop | 0x3253a0 | 57 | f5b11a3ea2919a77c575d078c8c20cf7c7259ac09e287a730f57fe2de0e02812 |
+| Opus Decode | 0x3253e0 | 657 | e94359d532117bec1a3f638a35c6834d94bd913c8afec97988e67290966fd7e4 |
+
+Linux实际映射的外部Opus为系统`libopus.so.0.10.1`，API版本1.5.2，SHA256
+`621e97f23655dbf2727873b7717e3b65ae8c734f84a0848f88c21edb95202357`。
+它不是官方Android内嵌的unknown-fixed；不要求Linux浮点PCM与固定点逐位相同。
+独立Android组件边界再执行原Start/Decode/Stop（同§72固定main SHA），输入取自
+Linux实际decoder收到的frame ID、经当时offset规范化的timestamp和原始Opus字节。
+两原版的调用参数、返回、first/next必须相同；Android的有效S16作为项目固定点后端
+的逐样本参考，没有读取原版无效输出或将该组件入口冒充Android网络全链。
+
+九类输入各CRC开/关，共18个原进程、280次原Frame回调、290次真实Opus decode：
+
+| 输入 | 触发和交付边界 |
+|---|---|
+| continuous | 首帧实际Decode返回后，交付连续后续frame |
+| gap1 / gap3 | transport packet连续，媒体frame ID分别缺1/3；区分codec恢复与transport补片 |
+| old | 重复和旧frame仍进入原DecodeFrame，但不调用Opus、不倒退next |
+| wrap | frame ID跨65535，含迟到65535，按原16位差值判断 |
+| repair | reliable channel缺packet1、已收到2；只有实际匹配NACK到达peer后，才补1并发送后续 |
+| drop | unreliable相同缺口，NACK后只给更晚packet3；待原frame13实际返回，再给4…17 |
+| blocked | reliable缺口收到实际NACK仍不补；继续30次原OnThink后请求正常Stop |
+| silk | 原§72的五份非静音SILK刺激（frame0/1/2/4/5），再接静音后缀达到真实player输出条件 |
+
+blocked的30次OnThink及Native peer的30次poll是明确观察界限，彼此不是墙钟等价，
+更不是协议超时。没有把一直等不到补片推为最终必然恢复。drop的frame13屏障也属于
+受控输入条件；它允许单独比较越过缺口后的行为，不是完整突发流量对齐证明。
+
+Conclusion：本组原版对缺口最后一帧用当前包做480样本FEC，较早缺帧用480样本PLC，
+再正常解码当前包（上限5760）；旧frame只返回。这里是Opus in-band FEC，不能据此
+推断type11 Reed–Solomon何时启用。实际初始配置和Complete密文亦保留；Native仅作
+既有、明确的Raw视频能力投影，没有过滤其他字段/crypto字节。
+
+Native输入从原peer实际wire生成，经真实UDP/CRC/可靠重组/解密/50-51控制、媒体
+worker和应用`sl_media_audio_callbacks()`，使用生产固定Opus、jitter和SDL2 dummy。
+观察wrapper始终原样转发，在decoder线程保存PCM，设备回调仅增加atomic计数；停止
+并join后才输出。逐项比较实际Frame元数据/恢复状态、290份Opus参数和有效S16，
+另比较进入真实jitter Push的PCM，不能仅用codec入口正确替代播放队列交付。
+SDL3实际Put返回成功、SDL2实际device callback从jitter取出样本分别记录，API模式和
+墙钟调度不同，不比较回调次数，也不声称物理声音、音画同步或Switch音频已验收。
+
+隔离Native语义反例分别关闭FEC、FEC不使用当前包、恢复改20ms、恢复timestamp偏1、
+实际入播放队列前清零PCM；要求编译/链接和receiver正常退出后，由相同正式比较器
+检出元数据或PCM不符，崩溃/超时/编译失败不计成功。
+
+Evidence边界：最初未给drop的frame13屏障时，原Linux一次交付16帧，Native CRC1
+一次交付12帧而仍进行18次decode并取出8640样本。保存的失败显示“播放继续”不证明
+transport交付相同。`window.c::DiscardEx`允许有缺口时按最新sender timestamp退休
+超龄的已占用slot；不同实际RX批次可能改变交付子集。批次差异是待验证解释，不把它
+写成已经证实的产品bug，也不通过扩大timeout或删掉场景宣称整体等价。此处受控drop
+契约不能关闭无屏障突发/高码率/满队列的独立验收。
+
+原Linux退出诊断仍出现`100.00 percent frame loss`，与实际codec/SDL提交记录同时
+保留；该统计尚未解释，不能用解码成功覆盖它。真实Steam host响应/FEC启用、全局
+调度与完整统计、长期同步、实际网络/声学/硬件/资源异常保持各自证据边界。
+
+```sh
+python3 scripts/audit-steam-client-audio-process.py \
+  --binary /path/to/package/bin/steamlink --sdk-directory /path/to/package/lib \
+  --qt-library-directory /path/to/qt/patched-runtime/lib \
+  --qt-library-directory /path/to/qt/runtime/lib \
+  --android-binary /path/to/libmain-arm64.so --output /tmp/audio-process.json \
+  --snapshot scripts/fixtures/steam-client-audio-process-reference.json.gz
+python3 scripts/check-steam-audio-process.py \
+  --receiver build/desktop/app/nsl-auth-udp-oracle
+python3 scripts/check-audio-native-mutations.py --build build/desktop \
+  --output /tmp/audio-mutations
+```

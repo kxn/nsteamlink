@@ -183,14 +183,16 @@ if(NSL_PLATFORM STREQUAL "desktop")
     set_tests_properties(nsl-stream-settings PROPERTIES TIMEOUT 20)
     add_executable(nsl-auth-udp-oracle tests/auth_udp_oracle.c)
     target_include_directories(nsl-auth-udp-oracle PRIVATE ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
-    target_link_libraries(nsl-auth-udp-oracle PRIVATE nsl_stream_settings nsl_video_pipeline)
+    target_link_libraries(nsl-auth-udp-oracle PRIVATE nsl_platform)
     target_compile_options(nsl-auth-udp-oracle PRIVATE -Wall -Wextra -UNDEBUG)
     target_link_options(nsl-auth-udp-oracle PRIVATE
         -Wl,--wrap=IHS_SessionChannelControlRequestAuthentication
         -Wl,--wrap=IHS_SessionChannelControlOnAuthentication
         -Wl,--wrap=IHS_SessionChannelControlDrainIncoming
         -Wl,--wrap=IHS_SessionChannelControlOnMessageReceived
-        -Wl,--wrap=avcodec_send_packet)
+        -Wl,--wrap=avcodec_send_packet -Wl,--wrap=sl_audio_recovery_run
+        -Wl,--wrap=opus_multistream_decoder_create -Wl,--wrap=opus_multistream_decode_float
+        -Wl,--wrap=sl_audio_jitter_pop -Wl,--wrap=sl_audio_jitter_push -Wl,--wrap=SDL_OpenAudioDevice)
     add_test(NAME auth_udp_official_vectors COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-auth-process.py"
         --receiver $<TARGET_FILE:nsl-auth-udp-oracle>)
@@ -223,6 +225,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-microphone-process.py"
         --receiver $<TARGET_FILE:nsl-auth-udp-oracle>)
     set_tests_properties(microphone_udp_official_vectors PROPERTIES TIMEOUT 60)
+    add_test(NAME audio_udp_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-audio-process.py"
+        --receiver $<TARGET_FILE:nsl-auth-udp-oracle>)
+    set_tests_properties(audio_udp_official_vectors PROPERTIES TIMEOUT 90)
     add_test(NAME microphone_schedule_official_vectors COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-microphone-schedule.py"
         --receiver $<TARGET_FILE:ihs-microphone-schedule-oracle>)
