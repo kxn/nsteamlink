@@ -254,6 +254,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-proof-transaction.py"
             --receiver $<TARGET_FILE:ihs-auto-authorization-oracle>)
         set_tests_properties(proof_transaction_official_vectors PROPERTIES TIMEOUT 90)
+        add_test(NAME discovery_update_order_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-discovery-order.py"
+            --receiver $<TARGET_FILE:ihs-auto-authorization-oracle>)
+        set_tests_properties(discovery_update_order_official_vectors PROPERTIES TIMEOUT 30)
         add_test(NAME auto_authorization_official_vectors COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-auto-authorization.py"
             --receiver $<TARGET_FILE:ihs-auto-authorization-oracle>)

@@ -13224,3 +13224,41 @@ exit0推导生命周期安全。完整原14输入也注册为回归，不再仅�
 独立重链接四种实际client模块反例：负读退出、跳过等待、提前唤醒后不检查deadline、
 移除Stop signal，分别被完整/批次比较器拒绝；原产品源文件和全量回归的构建输入
 始终不被变异。它们是实际模块策略反例，与损坏JSON记录的拒绝测试分开。
+
+## 170. 发现读批次与开流到期发送的同轮顺序
+
+Evidence：8fad3ca的完整回归中network_test_runtime观察到重复票据，network_test_udp
+随后把额外发现请求误当会话报文并在CRC断言失败。独立重链接的只读内存trace记录
+同一fixture请求于wall秒`.997013213`发送、下一秒`.017112192`再次发送，中间没有
+新的client接收轮。日志只在已观察到断言失败后输出，不在热路径打印。不能仅为
+让测试通过而接受该重复：原shell Update@cafe5c先BReceive/BProcess循环，随后
+才在state5且wall time>=manager+520时@cb01c4调用SendStartStreamingRequest。
+这与§124/§129的原到期重试契约共同约束发送次序；不修改1秒/3秒wall重试间隔。
+
+100ms收包周期暴露了旧的并行owner差异：deferred pump在两轮收包之间反复判断
+到期，非deferred timer也独立于收包轮。平台映射必须记录receive batch active和
+完成generation；正读处理结束后才发布完成。到期发送在同一Base mutex下验证
+当前没有未完读批次、deferred队列已空且该事务尚未消费新完成generation，再
+判断原wall期限。没有到期也消费该轮，不能在同一轮的空闲时间反复判断wall期限。
+新事务的首次发送独立保留，旧generation不作为新事务的重试机会；已有响应导致
+的即时状态转换/发送继续由原response路径处理。状态/发送仍受原timer visitor
+串行保护，不能持Base再反向申请timer lock。Stop后不发新的到期请求。
+
+`audit-steam-discovery-order.py`执行原Start/producer/Update及实际生成response
+parser、handler、AES：两分支均先产生一个请求，idle未调用Update时不增加；在
+到期1001调用Update，已有成功ticket则state6且请求仍1，无输入则state5且请求2，
+同一wall时间再Update不会多发。BReceive为终点，BProcess dispatch adapter转入
+实际已解析response handler再返回原Update；不冒称完整wire admission或自然Qt。
+
+Native扩展真实UDP/crypto/owner oracle，在真实condition wait前设置明确idle gate，
+暂时释放/恢复Base mutex允许runtime-style pumps运行，不伪造完成generation。
+先以1000消费已完成批次，再于1001重复pump；解除gate前无新Update，不应重发。
+可向内核排入Source成功response，再解除gate：实际protobuf/AES/ticket callback
+必须先于到期判断；无回复的对照则在新完成轮发出到期重试。两分支均正常停止并
+join。旧f5d984d发送模块及移除generation guard的实际模块重链接均被该比较器
+拒绝，不能靠修改测网fixture接受重复票据。
+
+既有事务oracle的`u`表示原manager的一次完整Update；Native现等待实际RX完成
+新generation，再pump，而非手工增加epoch或将任意空pump当作新轮。参考期望值
+保持不变。`n`是本地idle pump、`g`是声明的gate、`w`仅写入实际UDP而不等待消费，
+这些为受控测试入口，不是新增产品接口、Steam消息或用户操作。
