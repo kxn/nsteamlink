@@ -61,8 +61,10 @@ static void one(bool manual, bool press_a) {
     a.ui.now = sl_system_now();
     a.runtime = sl_runtime_create(&store);
     assert(a.runtime);
-    if (manual)
-        sl_ui_action(&a.ui, SL_OPEN_OPTIONS, 0);
+    if (manual) {
+        sl_ui_action(&a.ui, SL_OPEN_SETTINGS, 0);
+        sl_ui_action(&a.ui, SL_OPEN_NETWORK_SETTINGS, 0);
+    }
     sl_ui_action(&a.ui, manual ? SL_RUN_NETWORK_TEST : SL_START, 0);
     sl_command cmd;
     assert(sl_ui_take_command(&a.ui, &cmd) && cmd.type == SL_CMD_STREAM && cmd.test_only == manual);
@@ -110,7 +112,7 @@ static void one(bool manual, bool press_a) {
             }
         }
         if (ack && cancels == 1 && a.lifecycle.phase == SL_APP_IDLE &&
-            a.ui.page == (manual ? SL_OPTIONS : SL_HOME))
+            a.ui.page == (manual ? SL_NETWORK_SETTINGS : SL_HOME))
             done = true;
         struct pollfd p = {.fd = fd, .events = POLLIN};
         assert(poll(&p, 1, 2) >= 0);

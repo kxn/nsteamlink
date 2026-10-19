@@ -135,8 +135,25 @@ static void decode(const char *path) {
     stream_media_present();
     save_image("stream");
     sl_ui_action(&ui, SL_OPEN_MENU, 0);
-    stream_media_present();
-    save_image("stream-menu");
+    for (int lang = SL_LANG_ZH_CN; lang <= SL_LANG_EN; ++lang) {
+        sl_i18n_set(lang);
+        sl_ui_tick(&ui, ui.now + 220);
+        stream_media_present();
+        save_image(lang == SL_LANG_EN ? "menu-en-stream" : "menu-zh-stream");
+        sl_ui_action(&ui, SL_OPEN_END_GAME, 0);
+        sl_ui_tick(&ui, ui.now + 220);
+        stream_media_present();
+        save_image(lang == SL_LANG_EN ? "menu-en-end-game" : "menu-zh-end-game");
+        sl_ui_action(&ui, SL_BACK, 0);
+        sl_ui_tick(&ui, ui.now + 220);
+        sl_ui_action(&ui, SL_OPEN_DISCONNECT, 0);
+        sl_ui_tick(&ui, ui.now + 220);
+        stream_media_present();
+        save_image(lang == SL_LANG_EN ? "menu-en-disconnect" : "menu-zh-disconnect");
+        sl_ui_action(&ui, SL_BACK, 0);
+        sl_ui_tick(&ui, ui.now + 220);
+    }
+    sl_i18n_set(SL_LANG_ZH_CN);
     stream_media_get_snapshot(&s);
     assert(s.displayed_frames == shown);
     stream_media_video_stop(NULL);
@@ -182,7 +199,7 @@ int main(int argc, char **argv) {
     stream_media_present();
     save_image("empty");
     tap(1140, 660);
-    assert(ui.page == SL_OPTIONS);
+    assert(ui.page == SL_SETTINGS);
     assert(ui.command.type == SL_CMD_NONE);
     key(SDLK_ESCAPE);
     assert(ui.page == SL_HOME);
@@ -204,7 +221,7 @@ int main(int argc, char **argv) {
     touch.type = SDL_FINGERUP;
     SDL_PushEvent(&touch);
     stream_media_present();
-    assert(ui.page == SL_OPTIONS && ui.command.type == SL_CMD_NONE);
+    assert(ui.page == SL_SETTINGS && ui.command.type == SL_CMD_NONE);
     key(SDLK_ESCAPE);
     ui.store.registry.hosts[0].paired = true;
     ui.store.registry.hosts[0].account = 1;
@@ -302,8 +319,8 @@ int main(int argc, char **argv) {
     ui.page = SL_HOME;
     ui.depth = 0;
     ui.leaving = false;
-    sl_ui_action(&ui, SL_OPEN_OPTIONS, 0);
     sl_ui_action(&ui, SL_OPEN_SETTINGS, 0);
+    sl_ui_action(&ui, SL_OPEN_AV_SETTINGS, 0);
     sl_ui_action(&ui, SL_OPEN_QUALITY, 0);
     sl_ui_tick(&ui, ui.now + 220);
     sl_ui_action(&ui, SL_DOWN, 0);
@@ -316,7 +333,7 @@ int main(int argc, char **argv) {
         sl_ui_layout(&ui);
         for (int frame = 0; frame < 120; ++frame) {
             if (frame == 9)
-                sl_ui_action(&ui, SL_OPEN_OPTIONS, 0);
+                sl_ui_action(&ui, SL_OPEN_SETTINGS, 0);
             if (frame == 28)
                 sl_ui_action(&ui, SL_ACCEPT, 0);
             if (frame == 45 || frame == 80 || frame == 100)
@@ -338,7 +355,7 @@ int main(int argc, char **argv) {
             ui.page = p;
             ui.depth = 0;
             ui.leaving = false;
-            ui.streaming = p == SL_STREAM || p == SL_MENU || p == SL_BANDWIDTH;
+            ui.streaming = p == SL_STREAM || p == SL_MENU;
             ui.ending_game = p == SL_STOPPING;
             ui.debug = p == SL_STREAM;
             ui.stream_started_at = ui.now;
@@ -359,13 +376,34 @@ int main(int argc, char **argv) {
                      p);
             save_image(image);
         }
-        /* The settings drawer has an extra host-entry row outside streaming. */
-        ui.page = SL_SETTINGS;
-        ui.streaming = true;
-        sl_ui_layout(&ui);
+        ui.page = SL_HOME;
+        ui.streaming = false;
+        ui.depth = 0;
+        ui.leaving = false;
+        ui.store.quality = 0;
+        ui.store.bitrate_kbps = UINT32_MAX;
+        ui.store.sound = ui.update_check = true;
+        ui.resolution = SL_RESOLUTION_AUTO;
+        /* Keep the fixture host present while navigating all category screenshots. */
+        sl_host observation = ui.store.registry.hosts[ui.store.registry.selected];
+        sl_host_observe(&ui.store.registry, &observation, ui.now);
+        sl_ui_action(&ui, SL_OPEN_SETTINGS, 0);
+        sl_ui_tick(&ui, ui.now + 220);
         stream_media_present();
-        save_image(lang == SL_LANG_EN ? "i18n-en-settings-streaming"
-                                      : "i18n-zh-settings-streaming");
+        char menu_image[64];
+        const char *code = lang == SL_LANG_EN ? "en" : "zh";
+        snprintf(menu_image, sizeof(menu_image), "menu-%s-settings", code);
+        save_image(menu_image);
+        const char *categories[] = {"video-audio", "network", "hosts", "application"};
+        for (int i = 0; i < 4; ++i) {
+            sl_ui_activate(&ui, 100 + i);
+            sl_ui_tick(&ui, ui.now + 220);
+            stream_media_present();
+            snprintf(menu_image, sizeof(menu_image), "menu-%s-%s", code, categories[i]);
+            save_image(menu_image);
+            sl_ui_action(&ui, SL_BACK, 0);
+            sl_ui_tick(&ui, ui.now + 220);
+        }
         ui.page = SL_ERROR;
         ui.cancel_only_error = true;
         snprintf(ui.error, sizeof(ui.error), sl_tr(SL_T_TEST_FAILED_DETAIL), "CONTROLLED-PC",
