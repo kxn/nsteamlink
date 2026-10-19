@@ -455,6 +455,8 @@ int main(int argc, char **argv) {
         SDL_Delay(1);
     }
 cleanup:
+    record("STOPPING", "submit_calls=%" PRIuFAST64 " submit_errors=%" PRIuFAST64,
+           atomic_load(&submit_calls), atomic_load(&submit_errors));
     if (media) {
         sl_media_gate(false);
         sl_media_close_video();
@@ -490,6 +492,10 @@ cleanup:
     if (probe_fec_io_errors) {
         passed = false;
         failure = "preferences_io";
+    }
+    if (passed && atomic_load(&submit_errors)) {
+        passed = false;
+        failure = "video_submit_failed";
     }
     record("PREFS", "loads=%u saves=%u profiles=%u errors=%u", probe_fec_loads, probe_fec_saves,
            probe_fec_profiles, probe_fec_io_errors);

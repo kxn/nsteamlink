@@ -218,6 +218,25 @@ def analyze(log, build, steam, seconds, fec_mode="saved"):
         and all(requests[key] >= 0 for key in ("requested", "sent", "failed")),
         "video feedback counts",
     )
+    stopping = {"scope": "unverified in captures without STOPPING"}
+    if "STOPPING" in tags:
+        value = one("STOPPING")
+        require(
+            set(value) == {"submit_calls", "submit_errors"}, "invalid STOPPING fields"
+        )
+        calls, stop_errors = number(value, "submit_calls"), number(
+            value, "submit_errors"
+        )
+        require(
+            0 <= calls <= submit["calls"] and 0 <= stop_errors <= submit["errors"],
+            "invalid pre-cleanup submit counts",
+        )
+        require(tags.index("STOPPING") < len(tags) - 4, "STOPPING after final counters")
+        stopping = {
+            "submit_calls": calls,
+            "submit_errors": stop_errors,
+            "scope": "main-thread snapshot before local close/exit; not a causal error classification",
+        }
     negotiation = {"scope": "unverified in observer v2"}
     if version == "3":
         require(
@@ -320,6 +339,7 @@ def analyze(log, build, steam, seconds, fec_mode="saved"):
         "media": result,
         "video": video,
         "negotiation": negotiation,
+        "stopping": stopping,
         "final": final,
         "scope": "real-host video playback smoke; audio counters observed; no loss injected",
         "audio_decode_observed": audio > 0,

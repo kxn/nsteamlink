@@ -69,6 +69,9 @@ typedef enum sl_video_submit_result {
 /* Synchronous borrowed callback, before player handoff/clock sampling. The
  * backend never retains its context or a session after this call returns. */
 typedef void (*sl_video_feedback_fn)(void *, sl_video_submit_result);
+/* A matching explicit freeze cancels a valid submission as DroppedReset/OK;
+ * it does not turn local shutdown into a decoder/resource failure. Invalid
+ * identity/payload and active resource/capacity failures remain errors. */
 sl_video_submit_result sl_video_submit(sl_video_pipeline *, sl_video_key, const unsigned char *,
                                        size_t, IHS_FrameTicket *, bool *ticket_taken,
                                        bool keyframe, sl_video_feedback_fn, sl_video_info_fn, void *);

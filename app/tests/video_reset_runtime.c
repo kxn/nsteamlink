@@ -9,6 +9,7 @@
 #include "session/channels/ch_data.h"
 #include "session/channels/video/ch_data_video.h"
 #include "session/session_pri.h"
+#include "session/frame_tracker.h"
 #include "test_session.h"
 #include <assert.h>
 #include <libavcodec/avcodec.h>
@@ -22,9 +23,20 @@ static atomic_uint processed;
 static unsigned infos, losses, opens;
 static bool failOpen = true;
 static atomic_bool requestReset, requestBoth, requestEio;
+static atomic_bool freezeBeforeSubmit, freezeAfterReceive, failPacketAllocation;
 static unsigned submitCallbacks;
 static bool watchStop, buffersDiscarded, recoveryMarked;
 static unsigned phaseOrder, playerAt, decoderAt, markAt, stopAt, codecFlushAt, codecFreeAt;
+AVPacket *__real_av_packet_alloc(void);
+AVPacket *__wrap_av_packet_alloc(void) {
+    return atomic_exchange(&failPacketAllocation, false) ? NULL : __real_av_packet_alloc();
+}
+int __real_avcodec_receive_frame(AVCodecContext *, AVFrame *);
+int __wrap_avcodec_receive_frame(AVCodecContext *codec, AVFrame *frame) {
+    int result = __real_avcodec_receive_frame(codec, frame);
+    if (atomic_exchange(&freezeAfterReceive, false)) sl_media_close_video();
+    return result;
+}
 void __real_sl_video_close(sl_video_pipeline *, sl_video_key);
 void __wrap_sl_video_close(sl_video_pipeline *p, sl_video_key key) {
     if (watchStop)
@@ -101,6 +113,7 @@ __wrap_sl_media_video_submit_tracked(IHS_Session *s, const IHS_VideoEpochInfo *e
                                      IHS_FrameTicket *t, IHS_Buffer *b, IHS_StreamVideoFrameFlag f,
                                      bool *taken) {
     ++submitCallbacks;
+    if (atomic_exchange(&freezeBeforeSubmit, false)) sl_media_close_video();
     if (atomic_exchange(&requestEio,false)) {
         *taken=false;
         return (IHS_StreamVideoSubmitResult)(IHS_StreamVideoSubmitResetAndReportLost |
@@ -214,7 +227,10 @@ static sl_video_frame *take(unsigned epoch) {
     return f;
 }
 int main(int argc, char **argv) {
-    assert(argc == 2);
+    assert(argc == 2 || argc == 3);
+    const char *late = argc == 3 ? argv[2] : "";
+    assert(!*late || !strcmp(late,"--freeze-before") || !strcmp(late,"--freeze-during") ||
+           !strcmp(late,"--packet-oom"));
     assert(!setenv("SDL_AUDIODRIVER", "dummy", 1));
     assert(!setenv("SDL_VIDEODRIVER", "dummy", 1));
     assert(!setenv("SDL_RENDER_DRIVER", "software", 1));
@@ -294,13 +310,37 @@ int main(int argc, char **argv) {
      * then the real pending gate excludes another complete submission. The
      * stale-epoch helper call above must produce neither effect. */
     unsigned beforeLoss=losses,beforeCallbacks=submitCallbacks;
-    atomic_store(&requestBoth,true);feed(r.session,9,false,packet,bytes);
-    assert(losses==beforeLoss+1 && submitCallbacks==beforeCallbacks+1);
-    feed(r.session,10,false,packet,bytes);
-    assert(losses==beforeLoss+1 && submitCallbacks==beforeCallbacks+1);
+    if (*late) {
+        atomic_store(&freezeBeforeSubmit, !strcmp(late,"--freeze-before"));
+        atomic_store(&freezeAfterReceive, !strcmp(late,"--freeze-during"));
+        atomic_store(&failPacketAllocation, !strcmp(late,"--packet-oom"));
+        feed(r.session,9,false,packet,bytes);
+        stream_media_snapshot late_snapshot; stream_media_get_snapshot(&late_snapshot);
+        bool real_failure = !strcmp(late,"--packet-oom");
+        assert(!!r.session->base.interrupted == real_failure);
+        assert(!!late_snapshot.last_error[0] == real_failure);
+        assert(submitCallbacks == beforeCallbacks+1 && losses == beforeLoss);
+        if (!real_failure) {
+            IHS_TrackedFrame rows[IHS_FRAME_TRACKER_CAPACITY];
+            size_t count = IHS_FrameTrackerCopyStats(r.session->frameTracker,rows,IHS_FRAME_TRACKER_CAPACITY);
+            bool found=false;
+            for (size_t i=0;i<count;++i) if(rows[i].identity.frameId==9) {
+                assert(rows[i].statsComplete && rows[i].outcome.result==IHS_VideoFrameResultDroppedReset);
+                found=true;
+            }
+            assert(found); /* SDK's untaken fallback cannot overwrite cancellation. */
+        }
+    } else {
+        atomic_store(&requestBoth,true);feed(r.session,9,false,packet,bytes);
+        assert(losses==beforeLoss+1 && submitCallbacks==beforeCallbacks+1);
+        feed(r.session,10,false,packet,bytes);
+        assert(losses==beforeLoss+1 && submitCallbacks==beforeCallbacks+1);
+    }
     CStopVideoDataMsg stop = CSTOP_VIDEO_DATA_MSG__INIT;
     control(r.session, k_EStreamControlStopVideoData, &stop.base);
-    assert(r.facts.paused);
+    /* A real local failure has already closed control admission; its later
+     * Stop message may be rejected. SessionDestroy still owns final teardown. */
+    if (strcmp(late,"--packet-oom")) assert(r.facts.paused);
     IHS_SessionDestroy(r.session);
     r.session = NULL;
     IHS_Quit();

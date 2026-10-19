@@ -403,12 +403,18 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_link_options(nsl-video-reset-runtime PRIVATE -Wl,--wrap=IHS_SessionChannelDataThink -Wl,--wrap=sl_video_create -Wl,--wrap=avcodec_open2
         -Wl,--wrap=sl_video_close -Wl,--wrap=sl_video_discard_buffers -Wl,--wrap=sl_video_stop
         -Wl,--wrap=avcodec_flush_buffers -Wl,--wrap=avcodec_free_context
+        -Wl,--wrap=avcodec_receive_frame -Wl,--wrap=av_packet_alloc
         -Wl,--wrap=sl_media_video_submit_tracked -Wl,--wrap=IHS_SessionPacketsWindowReleaseFrame
         -Wl,--wrap=IHS_SessionPacketTimestamp -Wl,--wrap=IHS_BaseSend
         -Wl,--wrap=IHS_SessionSendControlMessage -Wl,--wrap=IHS_SessionChannelDataLost)
     add_test(NAME video_reset_runtime COMMAND nsl-video-reset-runtime
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video/sequential.h264)
     set_tests_properties(video_reset_runtime PROPERTIES TIMEOUT 20)
+    foreach(mode freeze-before freeze-during packet-oom)
+        add_test(NAME video_stop_${mode} COMMAND nsl-video-reset-runtime
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video/sequential.h264 --${mode})
+        set_tests_properties(video_stop_${mode} PROPERTIES TIMEOUT 20)
+    endforeach()
     add_executable(nsl-network-test-failure-runtime tests/network_test_failure_runtime.c)
     target_include_directories(nsl-network-test-failure-runtime PRIVATE platforms/common
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client

@@ -91,12 +91,14 @@ static bool same(sl_video_key a, sl_video_key b) {
 }
 /* Official Linux PutVideoFrame is after receive/error handling (§91–92).
  * A task owns this call's returned object, not an Android input-PTS lookup. */
-static bool queue_task(sl_video_pipeline *p, domain *d, IHS_FrameTicket *ticket,
+/* 1 admitted, 0 explicit local shutdown, -1 ownership/capacity failure. */
+static int queue_task(sl_video_pipeline *p, domain *d, IHS_FrameTicket *ticket,
                            bool hasTimestamp, uint32_t timestamp, uint64_t outputSeq, bool placeholder) {
-    if (!IHS_FrameTicketRetain(ticket)) return false;
+    if (!IHS_FrameTicketRetain(ticket)) return -1;
     uint64_t serial = IHS_FrameTicketIdentity(ticket).receiveSerial;
     pthread_mutex_lock(&p->mailbox);
     bool active = p->accepting && same(p->active,d->key) && p->job_count < INPUT_JOB_COUNT;
+    bool cancelled = p->frozen && same(p->active,d->key);
     if (active) {
         if (hasTimestamp) sl_video_timing_update(&p->timing,timestamp,IHS_SessionPacketTimestamp(),false);
         p->jobs[p->job_count++] = (input_job){ticket,d->key,serial,timestamp,hasTimestamp,placeholder,
@@ -104,7 +106,7 @@ static bool queue_task(sl_video_pipeline *p, domain *d, IHS_FrameTicket *ticket,
     }
     pthread_mutex_unlock(&p->mailbox);
     if (!active) IHS_FrameTicketRelease(ticket);
-    return active;
+    return active ? 1 : cancelled ? 0 : -1;
 }
 static void dropped(IHS_FrameTicket *ticket, IHS_VideoFrameResult reason) {
     IHS_FrameOutcome result = {.result = reason, .completionUs = now_us()};
@@ -662,8 +664,20 @@ sl_video_submit_result sl_video_submit(sl_video_pipeline *p, sl_video_key key,
     if (identity.sessionId != key.session || identity.epoch != key.epoch)
         return SL_VIDEO_SUBMIT_ERROR;
     pthread_mutex_lock(&p->decoder);
+    /* freeze closes admission before the session worker can finish stopping.
+     * Read both states in one snapshot: a second current-state check could
+     * race freeze and turn a legitimate cancellation into a codec failure. */
+    pthread_mutex_lock(&p->mailbox);
+    bool current = p->accepting && same(p->active,key);
+    bool cancelled = p->frozen && same(p->active,key);
+    pthread_mutex_unlock(&p->mailbox);
+    if (cancelled) {
+        dropped(ticket, IHS_VideoFrameResultDroppedReset);
+        pthread_mutex_unlock(&p->decoder);
+        return SL_VIDEO_SUBMIT_OK;
+    }
     domain *d = find_domain(p, key);
-    if (!d || d->stopped || !sl_video_is_current(p, key))
+    if (!d || d->stopped || !current)
         goto fail;
     /* A mark purges encoded fragments in the protocol owner. The AVCodec
      * backend retains its state; an asynchronous reset rebuilds it separately. */
@@ -773,9 +787,12 @@ sl_video_submit_result sl_video_submit(sl_video_pipeline *p, sl_video_key key,
             feedback(feedback_context, SL_VIDEO_SUBMIT_CORRUPT);
         if (result != 0) av_frame_unref(d->scratch);
         if (result != 0 || valid_size) {
-            if (!queue_task(p,d,ticket,token->has_media_timestamp,token->media_timestamp,
-                                output_seq,output_seq == 0))
+            int queued = queue_task(p,d,ticket,token->has_media_timestamp,token->media_timestamp,
+                                      output_seq,output_seq == 0);
+            if (queued < 0)
                 status = SL_VIDEO_SUBMIT_ERROR;
+            else if (!queued)
+                dropped(ticket, IHS_VideoFrameResultDroppedReset);
         }
     }
     av_packet_free(&packet);

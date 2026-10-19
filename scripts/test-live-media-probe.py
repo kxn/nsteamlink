@@ -166,6 +166,25 @@ class Contract(unittest.TestCase):
             self.assertEqual(result["negotiation"]["configs"][0]["sent"], 2)
         self.assertFalse(probe.analyze(LOG, BUILD, "192.0.2.1", 30, "on")["passed"])
 
+    def test_pre_cleanup_snapshot_keeps_strict_errors(self):
+        log = version3("on").replace(
+            "LIVE_PREFS",
+            "LIVE_STOPPING run=42 submit_calls=99 submit_errors=0\nLIVE_PREFS",
+        )
+        result = probe.analyze(log, BUILD, "192.0.2.1", 30, "on")
+        self.assertTrue(result["passed"], result["errors"])
+        self.assertEqual(result["stopping"]["submit_errors"], 0)
+        for before, after in [
+            ("submit_calls=99", "submit_calls=101"),
+            ("submit_errors=0", "submit_errors=1"),
+            ("returned=100 keys=1 errors=0", "returned=100 keys=1 errors=1"),
+        ]:
+            self.assertFalse(
+                probe.analyze(log.replace(before, after), BUILD, "192.0.2.1", 30, "on")[
+                    "passed"
+                ]
+            )
+
     def test_negotiation_failure_boundaries(self):
         log = version3("on")
         for before, after in [

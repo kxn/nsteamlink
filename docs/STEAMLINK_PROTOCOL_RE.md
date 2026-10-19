@@ -12514,3 +12514,52 @@ python3 tools/live-media-probe.py --steam 10.10.10.166 --switch 10.10.10.25 \
 
 最后一条仅准备自包含NRO及机器采集命令，不连接Switch；只有`--run`才执行nxlink，
 需要该次明确准备好的netloader。无需复制SD素材，不用TCP探测28280，不自动重试启动。
+
+## 159. 主动停止时的晚提交：平台取消与解码器错误
+
+### 159.1 实机会话事实与本地复现边界
+
+`9f0bed6`/SDK `e32bcc4`的一次实际Steam会话（run `1792425616074`）记录了消息4
+显式FEC=true的输入/成功发送头部，video channel4收到6908个type11、1801个完整组，
+30s内1800次解码、1590次呈现、3051个音频帧；输入parity index计数1801。
+这些观察证明这次会话采用type11并交付完整视频组，不能证明缺失data shard的RS重建。
+保存调用计数为0；不把它扩大为SD全部写入的观测。
+
+同一捕获最终有1次提交错误，日志在主动退出命令、stop/join HID之后出现平台资源/
+所有权错误和SDK不可恢复错误。原探针仅按持续播放判断FINAL=PASS，但严格PC解析器
+因提交错误拒绝，原报告保留`passed=false`。不能以NRO自报PASS或nxlink exit0改写
+这次整体验收，也不能由此推断屏幕已回hbmenu。
+
+`video_reset_runtime.c`通过真实IHS视频worker、生产runtime回调和软件AVCodec，
+在有效submit之前显式freeze，或在真实receive_frame返回后freeze。旧生产pipeline
+两种路径均让session interrupted并设置media错误；用同一测试对象重链旧pipeline
+archive单元可复现。真实packet分配失败作为独立对照，保持错误/断开语义。
+这些是平台取消输入的确定复现，与设备退出阶段观察一致；捕获没有给出设备内部
+错误分支的直接见证，不将本地复现说成已证明该设备错误的唯一根因。
+
+### 159.2 平台停止准入与保留的错误语义
+
+§40的官方Client Disconnect先停止音视频消费者再Close连接；§102的原AVCodec
+取消可自然产生send/receive错误、reset/DataLost和占位Put。§104明确区分Native
+freeze后的晚Put准入与Source完整交付路径。由此不能推导“停止时忽略全部SDK错误”。
+
+Switch本地freeze用于主线程/actor关闭视频准入，再停止/join IHS owner。这个间隙
+仍可能有借用中的有效回调；它不是一次新的decoder资源故障。pipeline在同一
+mailbox快照读取`accepting`、active key和`frozen`，只把**匹配active key的显式freeze**
+标为本地取消，按已有停止清队列语义完成`DroppedReset`并返回非致命OK。
+身份/指针/尺寸/ticket检查仍先执行；非freeze的失配、资源分配和容量错误仍保留失败。
+
+SDK调用期间发生freeze时，晚queue admission区分成功、显式取消和真实失败；
+取消释放临时引用并完成Reset，不能把FIFO满、Retain失败等真实问题一并忽略。
+FrameTicket的单次Claim/Publish保证SDK对untaken输入的后续corrupt fallback不能
+覆盖已经完成的Reset。回归同时检查无新增DataLost、无不可恢复断开和这一最终统计。
+没有增加线程、改变stop/join/destroy顺序、延长协议期限或修改FEC开关/恢复策略。
+
+探针在开始本地close/exit前增加`STOPPING`计数快照；它是主线程观察，不是跨线程
+一致快照或错误因果分类。存在该记录时解析器核对字段和最终累计边界；旧捕获仍可读。
+最终严格条件继续要求submit errors=0；NRO也检查它，避免自报PASS与PC验收矛盾。
+
+```sh
+ctest --test-dir build/diagnostics --output-on-failure \
+  -R '^(video_reset_runtime|video_stop_.*|nsl-video-pipeline)$'
+```
