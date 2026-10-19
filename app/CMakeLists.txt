@@ -78,13 +78,14 @@ target_compile_options(nsl_updater PRIVATE -Wall -Wextra)
 target_link_libraries(nsl_updater PUBLIC nsl_ui PkgConfig::CURL ${MBEDCRYPTO_LIBRARY} Threads::Threads)
 add_library(nsl_ui STATIC src/ui/ui_model.c src/ui/ui_layout.c src/ui/ui_events.c src/input/input_router.c
     src/services/host_registry.c src/services/auth_store.c src/services/host_key_store.c src/services/i18n.c
-    src/services/update_config.c)
+    src/services/update_config.c src/services/video_settings.c)
 target_include_directories(nsl_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(nsl_ui PRIVATE -Wall -Wextra)
 target_link_libraries(nsl_ui PUBLIC m)
 add_dependencies(nsl_ui nsl_identity nsl_i18n)
 target_include_directories(nsl_ui PUBLIC ${NSL_IDENTITY_DIR} ${NSL_I18N_DIR})
 target_compile_definitions(nsl_ui PUBLIC NSL_DIAGNOSTICS=$<BOOL:${NSL_DIAGNOSTICS}> NSL_ADAPTIVE_PACING=$<BOOL:${NSL_ADAPTIVE_PACING}>)
+target_compile_definitions(nsl_ui PUBLIC NSL_TEST_FORCE_1080=$<BOOL:${NSL_TEST_FORCE_1080}>)
 add_library(nsl_stream_settings STATIC platforms/common/stream_settings.c
     platforms/common/network_stats_file.c)
 set_source_files_properties(platforms/common/network_stats_file.c PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
@@ -134,16 +135,41 @@ if(NSL_PLATFORM STREQUAL "switch")
             "${CMAKE_SOURCE_DIR}/packaging/switch/application.json"
             "${CMAKE_SOURCE_DIR}/assets/branding/icon.jpg" VERBATIM)
     target_sources(nsl_platform PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/shortcut_template.c")
+    set(NSL_NACP_NAME "NSteamLink")
+    if(NSL_TEST_FORCE_1080)
+        set(NSL_NACP_NAME "NSteamLink 1080p Test")
+    endif()
     add_custom_command(OUTPUT "${NSL_NACP}"
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/switch-metadata.py"
             --identity "${NSL_IDENTITY_DIR}/build_identity.json" --nacptool "${NX_NACPTOOL_EXE}"
-            --output "${NSL_NACP}"
+            --output "${NSL_NACP}" --name "${NSL_NACP_NAME}"
         DEPENDS nsl_identity "${NSL_IDENTITY_DIR}/build_identity.json"
             "${CMAKE_SOURCE_DIR}/scripts/switch-metadata.py" VERBATIM)
     nx_create_nro(nsteamlink OUTPUT nsteamlink.nro NACP "${NSL_NACP}"
         ICON "${CMAKE_SOURCE_DIR}/assets/branding/icon.jpg")
 endif()
 if(NSL_PLATFORM STREQUAL "desktop")
+    add_executable(nsl-video-settings-tests tests/test_video_settings.c)
+    target_link_libraries(nsl-video-settings-tests PRIVATE nsl_ui)
+    target_compile_options(nsl-video-settings-tests PRIVATE -Wall -Wextra -UNDEBUG)
+    target_link_options(nsl-video-settings-tests PRIVATE -Wl,--wrap=rename)
+    add_test(NAME nsl-video-settings COMMAND nsl-video-settings-tests)
+    add_executable(nsl-resolution-runtime tests/resolution_runtime.c)
+    target_include_directories(nsl-resolution-runtime PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf ${CMAKE_SOURCE_DIR}/third_party/ihslib/tests/common)
+    target_compile_options(nsl-resolution-runtime PRIVATE -Wall -Wextra -Wno-unknown-pragmas -UNDEBUG)
+    target_link_libraries(nsl-resolution-runtime PRIVATE nsl_platform ihs-test-session)
+    target_link_options(nsl-resolution-runtime PRIVATE -Wl,--wrap=sl_system_docked -Wl,--wrap=IHS_ClientStreamingRequest)
+    add_test(NAME nsl-resolution-runtime COMMAND nsl-resolution-runtime)
+    set_tests_properties(nsl-resolution-runtime PROPERTIES TIMEOUT 30)
+    add_executable(nsl-resolution-render tests/test_resolution_render.c)
+    target_include_directories(nsl-resolution-render PRIVATE platforms/common ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+    target_link_libraries(nsl-resolution-render PRIVATE nsl_gfx)
+    target_compile_options(nsl-resolution-render PRIVATE -Wall -Wextra -Wno-unknown-pragmas -UNDEBUG)
+    add_test(NAME nsl-resolution-render COMMAND nsl-resolution-render
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video/padding1080.h264)
+    set_tests_properties(nsl-resolution-render PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software" TIMEOUT 30)
     add_executable(nsl-video-contract-tests tests/test_video_contracts.c)
     target_link_libraries(nsl-video-contract-tests PRIVATE nsl_video_contracts Threads::Threads)
     target_compile_options(nsl-video-contract-tests PRIVATE -Wall -Wextra -UNDEBUG)

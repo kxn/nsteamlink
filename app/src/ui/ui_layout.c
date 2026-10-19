@@ -3,6 +3,11 @@
 #include "ui_model.h"
 #include <stdio.h>
 #include <string.h>
+#if NSL_TEST_FORCE_1080
+#define UI_APP_VERSION NSL_APP_VERSION " [1080p TEST]"
+#else
+#define UI_APP_VERSION NSL_APP_VERSION
+#endif
 static void text(sl_layout *l, int x, int y, int size, const char *s) {
     if (l->label_count == 16)
         return;
@@ -39,7 +44,7 @@ void sl_ui_layout(sl_ui_model *m) {
                       (m->page == SL_PAIRING && !sl_ui_pair_prompt_visible(m));
     l->dialog = m->page != SL_HOME && m->page != SL_STREAM && !connecting;
     if (m->page == SL_HOME) {
-        snprintf(l->title, sizeof(l->title), sl_tr(SL_T_APP_TITLE), NSL_APP_VERSION);
+        snprintf(l->title, sizeof(l->title), sl_tr(SL_T_APP_TITLE), UI_APP_VERSION);
         if (h) {
             int begin = r->selected / 3 * 3, end = begin + 3;
             if (end > r->count)
@@ -92,7 +97,7 @@ void sl_ui_layout(sl_ui_model *m) {
     } else if (m->page == SL_STREAM) {
         /* Full video, no persistent local touch target. */
     } else if (connecting) {
-        snprintf(l->title, sizeof(l->title), sl_tr(SL_T_APP_TITLE), NSL_APP_VERSION);
+        snprintf(l->title, sizeof(l->title), sl_tr(SL_T_APP_TITLE), UI_APP_VERSION);
         center(l, 276, 44, sl_tr(m->page == SL_NETWORK_TEST ? SL_T_NETWORK_TEST : SL_T_CONNECTING));
         center(l, 354, 30, m->intent.host.name[0] ? m->intent.host.name : m->intent.text);
         if (m->page == SL_NETWORK_TEST) {
@@ -187,14 +192,13 @@ void sl_ui_layout(sl_ui_model *m) {
         case SL_SETTINGS:
             strcpy(l->title, sl_tr(SL_T_SETTINGS));
             row(l, 0, sl_tr(SL_T_QUALITY), SL_OPEN_QUALITY, 0);
-            row(l, 1, sl_tr(SL_T_BANDWIDTH), SL_OPEN_BANDWIDTH, 0);
-            row(l, 2, m->store.sound ? sl_tr(SL_T_SOUND_ON) : sl_tr(SL_T_SOUND_OFF), SL_SOUND, 0);
-            row(l, 3, sl_tr(SL_T_LANGUAGE), SL_OPEN_LANGUAGE, 0);
-            row(l, 4, sl_tr(SL_T_ERROR_CORRECTION), SL_FEC, 0);
+            row(l, 1, sl_tr(SL_T_RESOLUTION), SL_OPEN_RESOLUTION, 0);
+            row(l, 2, sl_tr(SL_T_BANDWIDTH), SL_OPEN_BANDWIDTH, 0);
+            row(l, 3, sl_tr(SL_T_ERROR_CORRECTION), SL_FEC, 0);
+            row(l, 4, m->store.sound ? sl_tr(SL_T_SOUND_ON) : sl_tr(SL_T_SOUND_OFF), SL_SOUND, 0);
+            row(l, 5, sl_tr(SL_T_LANGUAGE), SL_OPEN_LANGUAGE, 0);
             if (!m->streaming)
-                row(l, 5, sl_tr(SL_T_MANUAL), SL_OPEN_MANUAL, 0);
-            else
-                text(l, 784, 560, 24, sl_tr(SL_T_ERROR_CORRECTION_NEXT));
+                row(l, 6, sl_tr(SL_T_MANUAL), SL_OPEN_MANUAL, 0);
             break;
         case SL_LANGUAGE:
             strcpy(l->title, sl_tr(SL_T_LANGUAGE));
@@ -221,16 +225,18 @@ void sl_ui_layout(sl_ui_model *m) {
             row(l, 3, "20 Mbps", SL_SET_BANDWIDTH, 20000);
             row(l, 4, sl_tr(SL_T_BANDWIDTH_AUTO), SL_SET_BANDWIDTH, -1);
             row(l, 5, sl_tr(SL_T_BANDWIDTH_UNLIMITED), SL_SET_BANDWIDTH, 0);
-            if (m->streaming)
-                text(l, 320, 580, 26, sl_tr(SL_T_NEXT_CONNECTION));
             break;
         case SL_QUALITY:
             strcpy(l->title, sl_tr(SL_T_QUALITY));
             row(l, 0, sl_tr(SL_T_BALANCED), SL_SET_QUALITY, 0);
             row(l, 1, sl_tr(SL_T_FAST), SL_SET_QUALITY, 1);
             row(l, 2, sl_tr(SL_T_SHARP), SL_SET_QUALITY, 2);
-            if (m->streaming)
-                text(l, 320, 500, 26, sl_tr(SL_T_NEXT_CONNECTION));
+            break;
+        case SL_RESOLUTION:
+            strcpy(l->title, sl_tr(SL_T_RESOLUTION));
+            row(l, 0, sl_tr(SL_T_RESOLUTION_AUTO), SL_SET_RESOLUTION, SL_RESOLUTION_AUTO);
+            row(l, 1, "720p", SL_SET_RESOLUTION, SL_RESOLUTION_720);
+            row(l, 2, "1080p", SL_SET_RESOLUTION, SL_RESOLUTION_1080);
             break;
         case SL_PAIRING:
         case SL_SAVING:
@@ -317,7 +323,8 @@ void sl_ui_layout(sl_ui_model *m) {
     }
     if (l->dialog) {
         l->drawer = m->page == SL_MENU || m->page == SL_OPTIONS || m->page == SL_SETTINGS ||
-                    m->page == SL_QUALITY || m->page == SL_BANDWIDTH || m->page == SL_LANGUAGE;
+                    m->page == SL_QUALITY || m->page == SL_RESOLUTION || m->page == SL_BANDWIDTH ||
+                    m->page == SL_LANGUAGE;
         l->compact = m->page == SL_END_GAME || m->page == SL_DISCONNECT || m->page == SL_FORGET ||
                      m->page == SL_EXIT || m->page == SL_ERROR || m->page == SL_STOPPING ||
                      m->page == SL_INSTALLING || m->page == SL_UPDATING;
@@ -334,8 +341,9 @@ void sl_ui_layout(sl_ui_model *m) {
                 sl_control *c = &l->controls[i];
                 c->x = 776;
                 c->w = 472;
-                int step = m->page == SL_SETTINGS ? 72 : 88;
-                c->y = c->id == 9 ? 624 : 172 + (c->id - 100) * step;
+                int step = m->page == SL_SETTINGS ? 68 : 88;
+                int top = m->page == SL_SETTINGS ? 144 : 172;
+                c->y = c->id == 9 ? 624 : top + (c->id - 100) * step;
                 c->h = m->page == SL_SETTINGS && c->id != 9 ? 64 : 72;
                 if (m->page == SL_BANDWIDTH && c->id != 9) {
                     c->y = 156 + (c->id - 100) * 68;

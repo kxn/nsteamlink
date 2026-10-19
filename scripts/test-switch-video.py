@@ -20,6 +20,10 @@ def result_from_log(text):
         return result
     run = begins[-1].group(1)
     result.update(run=run, build=begins[-1].group(2))
+    output = re.search(r'^\[' + run + r' startup\] PROBE_BEGIN .*\boutput_height=(720|1080)\b', text, re.M)
+    result['output_height'] = int(output.group(1)) if output else None
+    result['resolution_oracles'] = re.findall(
+        r'^\[' + run + r' resolution-pixels\] RESOLUTION_ORACLE output=(\d+)x(\d+) native_detail=(PASS|FAIL)$', text, re.M)
     result['sdk_errors'] = re.findall(
         r'^\[' + run + r' [^\]]+\] deko result=([1-9]\d*) where=(\S+) message=(.*)$', text, re.M)
     final = re.search(r'^\[' + run + r' complete\] PROBE_FINAL result=(PASS|FAIL) failed_stage=(\S+)', text, re.M)
@@ -41,6 +45,11 @@ def successful(result):
     fixtures = ['padding720', 'padding1080', 'sequential', 'reordered']
     suite = result.get('fixture') == 'suite'
     expected = 12 if suite else 1
+    height = result.get('requested_output_height', result.get('output_height'))
+    if height not in (720, 1080) or result.get('output_height') != height:
+        return False
+    if result.get('resolution_oracles') != [(str(height * 16 // 9), str(height), 'PASS')] * expected:
+        return False
     cases = [re.fullmatch(r'fixture=(\S+) iteration=(\d+) result=PASS failed_stage=none', case)
              for case in result.get('cases', [])]
     if len(cases) != expected or not all(cases):
@@ -57,12 +66,21 @@ def successful(result):
             and result.get('cases_expected') == expected)
 
 
+def deployment_command(nxlink, address, nro, fixture, output_height):
+    # nxlink appends positional arguments before the string from --args.
+    # Keep both probe arguments together to preserve their order on-device.
+    return [nxlink, '-a', address, '-r', '3', '-s', str(nro),
+            '--args', f'{fixture} {output_height}']
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--build', type=Path, default=Path('build/switch-deko'))
     p.add_argument('--address', default='10.10.10.17')
     p.add_argument('--fixture', choices=['padding720', 'padding1080', 'sequential', 'reordered', 'suite'], default='padding720')
     p.add_argument('--timeout', type=float, default=900)
+    p.add_argument('--output-height', type=int, choices=[720, 1080], default=720,
+                   help='Force native output dimensions; 1080 works without a dock')
     a = p.parse_args()
     nro = a.build / 'app/nsl-video-probe.nro'
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
@@ -71,7 +89,7 @@ def main():
     archived_nro = directory / nro.name
     shutil.copyfile(nro, archived_nro)
     nxlink = shutil.which('nxlink') or '/opt/devkitpro/tools/bin/nxlink'
-    command = [nxlink, '-a', a.address, '-r', '3', '-s', str(archived_nro), '--args', a.fixture]
+    command = deployment_command(nxlink, a.address, archived_nro, a.fixture, a.output_height)
     if shutil.which('stdbuf'):
         command = ['stdbuf', '-oL', '-eL', *command]
     nro_sha256 = hashlib.sha256(archived_nro.read_bytes()).hexdigest()
@@ -112,6 +130,7 @@ def main():
         process.stdout.close()
     result = result_from_log(b''.join(chunks).decode('utf-8', errors='replace'))
     result.update(timed_out=timed_out, nxlink_exit=process.returncode, fixture=a.fixture,
+                  requested_output_height=a.output_height,
                   nro_sha256=nro_sha256, address=a.address)
     (directory / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
     print('\nResult: ' + json.dumps(result, ensure_ascii=False))

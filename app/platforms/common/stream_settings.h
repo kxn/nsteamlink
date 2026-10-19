@@ -49,6 +49,7 @@ void sl_stream_settings_ack_ui(sl_stream_settings *, const sl_stream_preferences
 typedef struct sl_stream_request_limits {
     uint32_t width, height, fps;
     bool hevc;
+    bool force_resolution; /* Application selection, independent of saved host caps. */
 } sl_stream_request_limits;
 bool sl_stream_settings_apply_limited(const sl_stream_settings *, IHS_Session *,
                                       const sl_stream_request_limits *);

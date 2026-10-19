@@ -15,13 +15,19 @@ assert 'NSL_DIAGNOSTICS:BOOL=OFF' in cache, 'configure with -DNSL_DIAGNOSTICS=OF
 commands = json.loads((build / 'compile_commands.json').read_text())
 names = {'application.c', 'media.c', 'runtime.c', 'video_pipeline.c', 'gfx.c', 'frame_pacer.c', 'video_scheduler.c'}
 checked = 0
+product_commands = []
 for entry in commands:
     source = Path(entry['file'])
     if '/app/platforms/' not in str(source) or source.name not in names:
         continue
     argv = entry.get('arguments') or shlex.split(entry['command'])
-    assert '-DNSL_DIAGNOSTICS=0' in argv, f'diagnostic macro missing: {source}'
     obj = Path(entry['directory']) / argv[argv.index('-o') + 1]
+    # Desktop also compiles these sources into deliberate diagnostic test
+    # executables. Check the seven product units, not those separate fixtures.
+    if not {'nsl_platform.dir', 'nsl_gfx.dir', 'nsl_video_pipeline.dir'}.intersection(obj.parts):
+        continue
+    assert '-DNSL_DIAGNOSTICS=0' in argv, f'diagnostic macro missing: {source}'
+    product_commands.append(entry)
     data = obj.read_bytes()
     for marker in (b'render-rate-test', b'--adaptive-pacing', b'--no-adaptive-pacing', b'vq1 ', b'vq7 ', b'vq8 ', b'vq9 '):
         assert marker not in data, f'diagnostic string {marker!r} in {obj}'
@@ -52,9 +58,9 @@ for entry in commands:
     checked += 1
 assert checked == 7, f'expected seven relevant translation units, got {checked}'
 manifest = json.loads((build / 'generated/graphics_manifest.json').read_text())
-if any('/platforms/switch/' in e['file'] for e in commands):
+if any('/platforms/switch/' in e['file'] for e in product_commands):
     assert manifest['backend'] == 'deko', 'Switch must use deko'
-    gfx_sources = [Path(e['file']) for e in commands if Path(e['file']).name == 'gfx.c']
+    gfx_sources = [Path(e['file']) for e in product_commands if Path(e['file']).name == 'gfx.c']
     assert gfx_sources and all(p.parent.name == 'switch' for p in gfx_sources), 'SDL renderer in Switch build'
     link = (build / 'app/CMakeFiles/nsteamlink.dir/link.txt').read_text()
     assert 'libdeko3dd.a' not in link and 'libdeko3d.a' in link, 'wrong deko library'

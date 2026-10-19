@@ -23,7 +23,8 @@ zero-copy 只指解码 surface 到视频采样输入不复制；解码写入、�
 不以“FPS 仍是 60”判定无收益，也不承诺固定的输入到屏幕延迟降幅。
 
 首版范围：H.264、8-bit 4:2:0、默认 720p60；保留完整 UI、音频、输入、截图诊断与软件解码兜底。
-对 1080p 的尺寸/裁剪设计不写死 720，但不借本迁移改变协商分辨率；正式 1080p 产品支持属于 #12。
+分辨率选择与输出策略由 D-061 定义：自动为掌机 720p / 底座 1080p，允许掌机强制 1080p；
+UI 与触摸仍使用 1280×720 逻辑坐标。尺寸/裁剪、解码 surface 和视频采样支持完整 1920×1080。
 不改 Steam 协议、认证/PIN 语义、网络重传、音频后端或 HID 报告协议；自动重连策略仍属于 #11。
 不增加 FSR、锐化、HDR、10-bit、第二条图形 queue 或新的 UI 框架。
 
@@ -446,7 +447,13 @@ runtime 可继续读取带 session_id/video_epoch 的呈现快照供既有 launc
 不能用跨代累计计数变化推断新会话首帧。诊断开关不改变首帧事件或健康判断。
 
 swapchain 初始 2 张 RGBA8、无 MSAA/深度缓冲；swap interval=1。命令在途最多2；待选FIFO与20个envelope共享容量，只有已到期帧参与选择。
-不引入积满再播的软件 FIFO。输出固定 1280×720，dock 不自动启用 1080p。
+不引入积满再播的软件 FIFO。两张 present image 固定分配到 1920×1080 上限，实际分配遵循
+`DkImageLayoutGetSize/Alignment`；掌机只渲染/呈现左上 1280×720 crop，底座使用完整 1920×1080。
+模式变化通过 `dkSwapchainSetCrop` 更新后续 queued buffer 的 crop，不替换 swapchain，不重建
+decoder，不增加稳态 queue-idle。主线程只读 libnx operation-mode 缓存，不在热路径增加 IPC。
+最终 viewport/scissor 按输出尺寸缩放，视频直接采样到最终目标，不经过 720p 离屏视频纹理。
+离屏 UI target 保持自身像素坐标，输入与 UI 布局保持原逻辑尺寸；原生截图记录各提交的实际尺寸，
+现有截图接口仍返回规范化 720p。诊断可强制任一种本地输出，在掌机运行 1080p native readback。
 正常状态每个显示节拍重画 current+UI；不将 UI 动画绑在新视频上，不同时实现 idle 按需渲染。
 busy/suspend 用有界短等待避免忙转；不在正常显示节拍上额外照搬 SDL_Delay(1)。
 
@@ -613,7 +620,9 @@ Exiting 持续推进上述 session stop；同时对 artwork 等 app-owned produc
 导入的唯一 backing 总量 ≤128 MiB，不能把同一 backing 的多个 GPU 地址映射重复计成实体内存。
 预算不是整个进程内存上限：另列 FFmpeg 内部 DPB/bitstream、SDL/audio/IHS、字体、artwork CPU cache。
 启动/布局变化记录各资源高水位和上限；超过预算明确报错，不在热路径无限扩容。
-2 张 720p RGBA8 输出的未对齐数据量约 7.03 MiB，实际使用 DkImageLayout size；1080p 按真实布局重新算。
+2 张 1080p RGBA8 输出的未对齐数据量约 15.82 MiB，实际使用 DkImageLayout size。
+命令/数据批次、swapchain、shader 与可选原生 readback 的保留预算为 64 MiB；UI/image 上限另计
+64 MiB，导入 decoder backing 上限仍为 128 MiB。readback 仅在显式请求后分配，普通串流不下载硬件帧。
 
 计时使用同一 monotonic clock，定义互不混淆的指标：
 

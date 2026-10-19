@@ -1,71 +1,75 @@
-# NSteamLink v0.3.0
+# NSteamLink v0.4.0
 
 ## 简体中文
 
-## [0.3.0] - 2026-10-15
+## [0.4.0] - 2026-10-19
 
-上一正式版：**v0.2.1**。本版：**v0.3.0**。目标分支：`main`；对应源码：[`v0.3.0`](https://github.com/kxn/nsteamlink/tree/v0.3.0)。
+上一正式版：**v0.3.0**。本版：**v0.4.0**。目标分支：`main`；对应源码：[`v0.4.0`](https://github.com/kxn/nsteamlink/tree/v0.4.0)。运行代码沿用已试玩的 `d05abab`，IHSlib 固定为 `afed70e`；发版提交仅更新版本和中英说明。
 
 ### 主要变化
 
-- **应用内更新**：Switch 启动后在后台检查最新正式版，有更新时在首页询问是否安装；每次启动最多提示一次。X 选项中的“检查更新”默认开启，关闭后下次启动生效。网络查询失败时静默跳过。
-- **下载与校验**：仅通过校验证书的 HTTPS 获取本仓库正式 Release，下载大小及 SHA-256 校验通过后才替换 NRO；文件替换失败时尝试恢复该文件的旧副本。同步更新启动文件与已存在的 HOME 入口目标，完成后提示退出并重新启动。
-- **简化发布**：移除从未实际发布过的独立 NSP 构建与密钥配置，只发布 NRO。NRO 内的“添加到 HOME 菜单”功能继续保留，无需用户提供打包密钥。
+- **媒体恢复与传输**：按已核实的官方客户端路径调整视频丢包反馈、关键帧恢复、解码重置与帧呈现时序，以及可靠传输的确认、重发和接收窗口处理；接入 FEC 接收与保存的 FEC 设置。
+- **音频播放**：调整 Opus 丢包恢复、抖动缓冲、原始音频播放及播放器启停，改善音视频数据与设备的生命周期管理。
+- **连接测网与设置**：接入首次及手动测网、结果保存和推荐预设，保留完整客户端配置；连接等待区分传输、认证和媒体阶段，移除固定视频停顿自动断开。
+- **Switch 能力**：按实际后端声明 720p60 / H.264，省略未经确认的最大解码码率。相册 applet 模式可通过确认界面安装 HOME 入口，并显示安装活动与用时；串流仍需全内存模式。
+- **协议参考**：补充 Steam Link Anywhere / SDR 客户端策略、协议 schema 及可复现离线审计；这部分研究本身不提供可直接使用的完整公网串流后端。
 
 ### 按类型分组的提交
 
-- **功能**：`0a93607`，启动检查、更新设置、下载校验及更新界面（[PR #41](https://github.com/kxn/nsteamlink/pull/41)）。
-- **构建与清理**：`6df4b21`、`8b45610`，移除独立 NSP 打包及仅服务于该路径的代码（[PR #42](https://github.com/kxn/nsteamlink/pull/42)）。
-- **文档**：`4c0e8c0`、`68fd88d`，记录 NRO 发布与应用内更新的设计及证据边界。
-
-### 致谢
-
-感谢 **Simone Caronni（[@scaronni](https://github.com/scaronni)）** 贡献 PR #41 / #42，实现应用内更新、简化打包流程，并补充自动测试和验证记录。感谢 **Sven** 提供初代 Nintendo Switch，支持开发与实机测试；感谢 IHSlib、FFmpeg、SDL、libnx、devkitPro、deko3d 与 nx-hbloader 等开源项目的作者和维护者。
+- **功能**：`1a49cca`，applet 模式安装 HOME 入口（[Issue #44](https://github.com/kxn/nsteamlink/issues/44)）；`c4de796`、`2512fb1`、`d6fab25`，FEC 接收、连接生命周期与完整配置持久化。
+- **修复与集成**：`7c3b220`、`a3fe641`、`d095563`，关键帧、内容模式与加密分片；`1e8e542`、`87e6c4f`，音频恢复及缓冲；`59eebda`、`697f9b9`、`40dd5b3`，测网、连接等待与已退休会话处理。完整集成见 [PR #53](https://github.com/kxn/nsteamlink/pull/53)。
+- **研究与文档**：[PR #50](https://github.com/kxn/nsteamlink/pull/50)，Anywhere / SDR 策略与 schema；[PR #53](https://github.com/kxn/nsteamlink/pull/53)，官方媒体、传输、设置和测网路径对照。
 
 ### 验证与证据范围
 
-已审阅上述两个 PR 的更新器、UI、线程清理和打包改动。诊断 ON/OFF 两套桌面测试各 56 项及发布工具测试通过；合并后上游 CI 的桌面与 Switch 构建通过。标签工作流还会核对版本、正式包诊断排除、NRO 结构、构建来源及附件校验和，全部通过后才公开发布。
+维护者已对 `d05abab` 主线试玩包进行真机试玩并反馈使用良好；主线 CI 的桌面诊断 ON/OFF 各 170 项测试、Switch 普通及诊断构建通过。标签工作流会再次执行这些检查，并核验版本、正式包诊断排除、NRO 结构、构建来源和附件校验和后发布。
 
-贡献者记录了主机端连接 GitHub、下载并校验 v0.2.1 的测试。Switch 上完整的查询、下载、替换、重新启动，以及断网、SD 卡空间不足和 hbmenu 返回生命周期仍待真机验证；桌面测试与交叉构建不证明这些设备行为。
+离线原指令回放与受控 peer 测试仅证明对应输入和边界。真实 Steam 的 FEC 启用、不同网络和主机的长期表现、硬件错误及 hbmenu 返回生命周期仍需进一步验证，不能据此断言此前偶发卡顿或 Steam 大屏闪烁已根治。后续逆向开发分支的未合并改动不包含在本版中；其余协议差异由 [Issue #52](https://github.com/kxn/nsteamlink/issues/52) 跟踪。
+
+### 致谢
+
+感谢提供试玩反馈和问题线索的用户、提供初代 Nintendo Switch 的 **Sven**，以及 **Simone Caronni（[@scaronni](https://github.com/scaronni)）**、IHSlib、FFmpeg、Opus、SDL、libnx、devkitPro、deko3d 与 nx-hbloader 的作者和维护者。
 
 ### 下载与更新
 
-v0.2.1 及更早版本没有应用内更新，请从[本版 Release](https://github.com/kxn/nsteamlink/releases/tag/v0.3.0) 下载 `.nro` 完成本次升级。已添加 HOME 入口时，替换其固定目标 `sdmc:/switch/nsteamlink/nsteamlink.nro`。从 v0.3.0 起，从 SD 卡启动时可使用应用内更新；netloader 启动不检查更新。正式包关闭高级诊断，附带 `SHA256SUMS`、`build_identity.json` 和 SDK 包清单。
+从[本版 Release](https://github.com/kxn/nsteamlink/releases/tag/v0.4.0) 下载 `.nro`；v0.3.0 起从 SD 卡启动时可使用应用内更新，netloader 启动不检查更新。已添加 HOME 入口时，其固定目标为 `sdmc:/switch/nsteamlink/nsteamlink.nro`。正式包关闭高级诊断，附件包含 `SHA256SUMS`、`build_identity.json` 和 SDK 包清单；仅发布 NRO，不发布独立 NSP 或测试工具。
 
-[完整变更：v0.2.1 → v0.3.0](https://github.com/kxn/nsteamlink/compare/v0.2.1...v0.3.0)
+[完整变更：v0.3.0 → v0.4.0](https://github.com/kxn/nsteamlink/compare/v0.3.0...v0.4.0)
 
 ---
 
 ## English
 
-## [0.3.0] - 2026-10-15
+## [0.4.0] - 2026-10-19
 
-Previous stable release: **v0.2.1**. This release: **v0.3.0**. Target branch: `main`; tagged source: [`v0.3.0`](https://github.com/kxn/nsteamlink/tree/v0.3.0).
+Previous stable release: **v0.3.0**. This release: **v0.4.0**. Target branch: `main`; tagged source: [`v0.4.0`](https://github.com/kxn/nsteamlink/tree/v0.4.0). Runtime code is unchanged from the tested `d05abab` candidate, with IHSlib pinned to `afed70e`; the release commit only updates the version and bilingual notes.
 
 ### Highlights
 
-- **In-app updates**: Switch checks for the latest stable release in the background at startup and offers installation on the home page, at most once per launch. “Update check” in X Options defaults to On; disabling it takes effect on the next launch. Failed checks are silently skipped.
-- **Download verification**: only use certificate-verified HTTPS for this repository's stable releases. Check the download size and SHA-256 before replacing an NRO; if replacing a file fails, attempt to restore its old copy. Update the launched file and any existing HOME shortcut target, then ask the user to exit and relaunch.
-- **Simpler releases**: remove the standalone NSP build and its key configuration, which never produced a published release asset. Releases contain the NRO; its “Add to HOME Menu” feature remains available without user-supplied packaging keys.
+- **Media recovery and transport**: adjust video loss feedback, keyframe recovery, decoder resets, frame presentation timing, and reliable transport acknowledgements, retransmission, and receive windows against verified official-client paths. Integrate FEC reception and the saved FEC setting.
+- **Audio playback**: adjust Opus loss recovery, jitter buffering, raw audio playback, and player startup/shutdown, with revised ownership of media data and playback devices.
+- **Connection tests and settings**: integrate first-time and manual network tests, saved results, recommended presets, and complete client configuration persistence. Distinguish transport, authentication, and media connection waits; remove automatic disconnects based on a fixed video-stall timeout.
+- **Switch capabilities**: report the actual backend's 720p60 / H.264 support and omit unverified maximum decode bitrates. Album applet mode can install the HOME shortcut through a confirmation screen with activity and elapsed-time feedback; streaming still requires full application mode.
+- **Protocol references**: add Steam Link Anywhere / SDR client policies, protocol schemas, and reproducible offline audits. This research does not itself provide a complete, usable Internet streaming backend.
 
 ### Commits by type
 
-- **Feature**: `0a93607`, startup checks, update settings, verified downloads, and update UI ([PR #41](https://github.com/kxn/nsteamlink/pull/41)).
-- **Build and cleanup**: `6df4b21`, `8b45610`, remove standalone NSP packaging and code used only by that path ([PR #42](https://github.com/kxn/nsteamlink/pull/42)).
-- **Documentation**: `4c0e8c0`, `68fd88d`, record NRO release and in-app update decisions and evidence limits.
-
-### Thanks
-
-Thank you to **Simone Caronni ([@scaronni](https://github.com/scaronni))** for PRs #41 / #42: implementing in-app updates, simplifying packaging, and adding automated tests and validation records. Thank you to **Sven** for providing an original-model Nintendo Switch for development and device testing, and to the authors and maintainers of IHSlib, FFmpeg, SDL, libnx, devkitPro, deko3d, and nx-hbloader.
+- **Features**: `1a49cca`, HOME shortcut installation in applet mode ([Issue #44](https://github.com/kxn/nsteamlink/issues/44)); `c4de796`, `2512fb1`, `d6fab25`, FEC reception, connection lifecycle, and complete configuration persistence.
+- **Fixes and integration**: `7c3b220`, `a3fe641`, `d095563`, keyframes, content modes, and encrypted fragments; `1e8e542`, `87e6c4f`, audio recovery and buffering; `59eebda`, `697f9b9`, `40dd5b3`, network tests, connection waits, and retired sessions. See [PR #53](https://github.com/kxn/nsteamlink/pull/53) for the full integration.
+- **Research and documentation**: [PR #50](https://github.com/kxn/nsteamlink/pull/50), Anywhere / SDR policies and schemas; [PR #53](https://github.com/kxn/nsteamlink/pull/53), official media, transport, settings, and network-test comparisons.
 
 ### Validation and evidence scope
 
-Reviewed both PRs' updater, UI, thread cleanup, and packaging changes. Desktop suites with diagnostics ON/OFF passed all 56 tests each, along with release tooling tests; upstream desktop and Switch CI passed after the merges. The tag workflow also verifies the version, release diagnostic exclusion, NRO structure, build provenance, and attachment checksums before publication.
+The maintainer tested the `d05abab` main-branch candidate on a real Switch and reported that it worked well. Main-branch CI passed 170 desktop tests each with diagnostics ON/OFF, plus ordinary and diagnostic Switch builds. The tag workflow repeats these checks and verifies the version, release diagnostic exclusion, NRO structure, build provenance, and attachment checksums before publishing.
 
-The contributor recorded a host-side test that connected to GitHub, downloaded v0.2.1, and verified its checksum. The full check/download/replace/relaunch flow on Switch, network interruption, insufficient SD space, and the hbmenu return lifecycle still require device validation. Desktop tests and cross builds do not prove those device behaviors.
+Offline original-instruction replays and controlled-peer tests prove only the corresponding inputs and boundaries. FEC activation with real Steam, long-term behavior across networks and hosts, hardware errors, and the hbmenu return lifecycle need further validation. This does not establish that the previously reported intermittent stalls or Steam Big Picture flickering are fully resolved. Unmerged changes on the continuing reverse-engineering branch are excluded; remaining protocol differences are tracked in [Issue #52](https://github.com/kxn/nsteamlink/issues/52).
+
+### Thanks
+
+Thank you to users who provided playtest feedback and issue reports, **Sven** for the original-model Nintendo Switch, **Simone Caronni ([@scaronni](https://github.com/scaronni))**, and the authors and maintainers of IHSlib, FFmpeg, Opus, SDL, libnx, devkitPro, deko3d, and nx-hbloader.
 
 ### Download and update
 
-v0.2.1 and earlier have no in-app updater: download the `.nro` from [this release](https://github.com/kxn/nsteamlink/releases/tag/v0.3.0) for this upgrade. If a HOME shortcut is installed, replace its fixed target at `sdmc:/switch/nsteamlink/nsteamlink.nro`. Starting with v0.3.0, in-app updates are available when launched from the SD card; netloader launches skip update checks. Release builds exclude advanced diagnostics and include `SHA256SUMS`, `build_identity.json`, and the SDK package list.
+Download the `.nro` from [this release](https://github.com/kxn/nsteamlink/releases/tag/v0.4.0). Starting with v0.3.0, SD-card launches support in-app updates; netloader launches skip update checks. An installed HOME shortcut targets `sdmc:/switch/nsteamlink/nsteamlink.nro`. Release builds exclude advanced diagnostics and include `SHA256SUMS`, `build_identity.json`, and the SDK package list. Only the NRO is published, with no standalone NSP or test tools.
 
-[Full changelog: v0.2.1 → v0.3.0](https://github.com/kxn/nsteamlink/compare/v0.2.1...v0.3.0)
+[Full changelog: v0.3.0 → v0.4.0](https://github.com/kxn/nsteamlink/compare/v0.3.0...v0.4.0)

@@ -16,6 +16,9 @@ bool sl_system_init(void) {
 bool sl_system_running(void) {
     return true;
 }
+bool sl_system_docked(void) {
+    return false;
+}
 void sl_system_shutdown(void) {
 }
 bool sl_system_random(void *data, size_t size) {

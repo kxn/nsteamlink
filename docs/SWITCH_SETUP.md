@@ -225,3 +225,30 @@ probe 先验证 UI alpha/atlas/方向，再比较软件 YUV 与硬件导入输�
 `PROBE_FINAL result=PASS` 仅表示这些像素和引用检查通过；是否回到 hbmenu、HOME/睡眠恢复、连续启动以及
 整机功耗和帧时间收益需要分别记录。已经故障的 GPU queue 会进入系统 fatal，避免把仍被使用的
 内存释放后返回 loader。正式启用 deko 的验收契约见 [渲染设计](VIDEO_RENDERING_DESIGN.md)。
+
+
+## 分辨率与无底座管线验证
+
+设置→分辨率提供自动、720p、1080p。自动在连接时按掌机/底座选择；手动 1080p
+不会要求连接底座。内屏仍是 720p，底座输出使用原生 1080p 渲染。串流中修改设置或插拔底座后，
+重新连接可重新选择视频尺寸；当前视频不会被隐式重启。配置文件 `video.conf` 独立于配对身份。
+
+内置 fixture 的自动验证不依赖 Steam 配对，不需复制 SD 资源。以诊断构建和 hbmenu netloader
+运行以下命令，脚本自动推送 NRO、记录解码/像素/资源阶段，保存独立的机器可读结果：
+
+```bash
+cmake --build build/switch-diagnostic --target nsl-video-probe_nro
+python3 scripts/test-switch-video.py --build build/switch-diagnostic --fixture suite --output-height 1080
+```
+
+默认设备地址为 `10.10.10.17`。`--output-height 720` 验证常规内屏输出；1080 选项在掌机中
+强制完整 1920×1080 的输出/读回，使用一像素黑白细节检查没有中间降为 720p，再由系统缩放
+到物理内屏。suite 对四组内置素材运行软件、硬件及重开 decoder 路径，并核对清理计数。
+脚本不会将 nxlink 正常退出当作返回 hbmenu 的证据。HDMI 实际显示和真实插拔行为只能由
+对应硬件确认；这些边界不会由离线测试或掌机 native readback 冒充。
+
+实际 Steam 串流的独立手测包使用 `-DNSL_TEST_FORCE_1080=ON` 构建。该开关默认关闭，
+不是用户设置项；启用后开流固定请求 1920×1080，最终渲染缓冲也固定 1080p，内屏由系统缩放。
+界面版本后有 `[1080p TEST]`，NACP 名称为 `NSteamLink 1080p Test`。测试包不把强制值写进
+`video.conf`，也不自更新；netloader 部署使用独立路径 `nsteamlink/nsteamlink-1080p-test.nro`。
+普通包仍保留自动/720p/1080p 选择，自动按每次连接时的 operation mode 判断。

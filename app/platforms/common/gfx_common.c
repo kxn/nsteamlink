@@ -1,6 +1,24 @@
 #include "gfx_backend.h"
 #include <SDL.h>
 #include <stdlib.h>
+#include <string.h>
+bool sl_gfx_readback_copy(const void *source, unsigned width, unsigned height, const sl_gfx_rect *r,
+                          void *pixels, size_t bytes, int pitch) {
+    sl_gfx_rect box = r ? *r : (sl_gfx_rect){0, 0, 1280, 720};
+    if (!source || !pixels || !width || !height || box.x < 0 || box.y < 0 || box.w <= 0 ||
+        box.h <= 0 || box.w > 1280 - box.x || box.h > 720 - box.y || pitch < box.w * 4 ||
+        bytes < (size_t)pitch * (box.h - 1) + (size_t)box.w * 4)
+        return false;
+    for (int y = 0; y < box.h; ++y) {
+        unsigned sy = ((unsigned)(box.y + y) * 2 + 1) * height / (720 * 2);
+        for (int x = 0; x < box.w; ++x) {
+            unsigned sx = ((unsigned)(box.x + x) * 2 + 1) * width / (1280 * 2);
+            memcpy((unsigned char *)pixels + (size_t)y * pitch + x * 4,
+                   (const unsigned char *)source + ((size_t)sy * width + sx) * 4, 4);
+        }
+    }
+    return true;
+}
 bool sl_gfx_intersect(const sl_gfx_rect *a, const sl_gfx_rect *b, sl_gfx_rect *out) {
     int left = a->x > b->x ? a->x : b->x, top = a->y > b->y ? a->y : b->y;
     int right = a->x + a->w < b->x + b->w ? a->x + a->w : b->x + b->w;

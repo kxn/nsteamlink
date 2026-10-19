@@ -101,6 +101,7 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
             m->command.quality = m->store.quality;
             m->command.bitrate_kbps = m->store.bitrate_kbps;
             m->command.unreliable_fec = m->store.unreliable_fec;
+            m->command.resolution = m->resolution;
         } else
             sl_ui_error(m, sl_tr(SL_T_HOST_REMOVED));
         break;
@@ -131,6 +132,7 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
             m->command = (sl_command){.type = SL_CMD_SAVE,
                                       .generation = m->generation,
                                       .language = sl_i18n_language(),
+                                      .resolution = m->resolution,
                                       .update_check = m->update_check};
         break;
     }

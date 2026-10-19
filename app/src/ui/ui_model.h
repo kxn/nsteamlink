@@ -3,6 +3,7 @@
 #include "services/auth_store.h"
 #include "services/i18n.h"
 #include "services/network_test.h"
+#include "services/video_settings.h"
 
 typedef enum sl_page {
     SL_HOME,
@@ -24,6 +25,7 @@ typedef enum sl_page {
     SL_SETTINGS,
     SL_MANUAL,
     SL_QUALITY,
+    SL_RESOLUTION,
     SL_BANDWIDTH,
     SL_LANGUAGE,
     SL_FORGET,
@@ -55,6 +57,7 @@ typedef enum sl_action {
     SL_CONFIRM_SHORTCUT,
     SL_OPEN_MANUAL,
     SL_OPEN_QUALITY,
+    SL_OPEN_RESOLUTION,
     SL_OPEN_BANDWIDTH,
     SL_OPEN_LANGUAGE,
     SL_SET_LANGUAGE,
@@ -69,6 +72,7 @@ typedef enum sl_action {
     SL_ERASE,
     SL_SUBMIT,
     SL_SET_QUALITY,
+    SL_SET_RESOLUTION,
     SL_SET_BANDWIDTH,
     SL_SOUND,
     SL_FEC,
@@ -101,6 +105,7 @@ typedef struct sl_command {
     uint32_t quality;
     uint32_t bitrate_kbps;
     bool unreliable_fec;
+    sl_resolution resolution;
     bool test_only, accept_recommendation, security_pin_retry;
     sl_language language;
     bool update_check;
@@ -144,6 +149,7 @@ typedef enum sl_ui_cue {
     SL_CUE_COUNT
 } sl_ui_cue;
 typedef struct sl_ui_model {
+    sl_resolution resolution;
     sl_network_test_view network_test;
     uint64_t settings_revision;
     sl_ui_cue cue;
