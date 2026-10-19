@@ -25,7 +25,7 @@ static atomic_uint hits, receives, delivered;
 static atomic_int live_mutex, live_cond, live_queue, live_rx, live_timer, live_socket, live_send;
 static atomic_int owned_fd = -1;
 static _Thread_local bool creating, in_timer, in_socket, in_discovery;
-static IHS_Thread *rx_thread, *timer_thread, *send_thread;
+static _Atomic(IHS_Thread *) rx_thread, timer_thread, send_thread;
 static IHS_Cond *associated_cond;
 static bool app_mode, session_mode;
 static int baseline_mutex, baseline_cond, baseline_queue;
