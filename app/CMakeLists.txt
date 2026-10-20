@@ -465,6 +465,16 @@ if(NSL_PLATFORM STREQUAL "desktop")
             ${NSL_GNS_SOURCE}/src/public)
         target_link_libraries(nsl-sns-crypto-tests PRIVATE GameNetworkingSockets::GameNetworkingSockets_s)
         add_test(NAME nsl-sns-crypto COMMAND nsl-sns-crypto-tests)
+        add_executable(nsl-local-certificate-oracle tests/local_certificate_oracle.cpp)
+        target_compile_features(nsl-local-certificate-oracle PRIVATE cxx_std_17)
+        target_compile_options(nsl-local-certificate-oracle PRIVATE -Wall -Wextra -UNDEBUG)
+        target_include_directories(nsl-local-certificate-oracle PRIVATE
+            ${CMAKE_BINARY_DIR}/third_party/GameNetworkingSockets/src)
+        target_link_libraries(nsl-local-certificate-oracle PRIVATE GameNetworkingSockets::GameNetworkingSockets_s)
+        add_test(NAME local_certificate_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-local-certificate.py"
+            --receiver $<TARGET_FILE:nsl-local-certificate-oracle>)
+        set_tests_properties(local_certificate_official_vectors PROPERTIES TIMEOUT 20)
         if(NSL_BUILD_TOOLS)
             add_executable(nsl-sdr-topology-tests tests/test_sdr_topology.cpp)
             target_include_directories(nsl-sdr-topology-tests PRIVATE platforms/common)

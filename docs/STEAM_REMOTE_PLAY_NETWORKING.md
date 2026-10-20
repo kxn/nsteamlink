@@ -1442,10 +1442,13 @@ CStreamTransportClient；该 buffer 也用于 StartAuthentication 的 HMAC（`0x
 **Conclusion**：不能把“有非零 UDP port”作为 SDR 材料的成功条件。AppID 必须与证书及
 网络配置一致；本项目 Steam Link SDK 实例使用 353380，不能沿用开源库的默认 0。
 
-**版本差异证据**：开源固定 `d534c19` 的 `CertStore_CheckCert` 先验证 CA 签名，成功后才
-解析 outMsgCert；CA 未加载时，`InternalSetCertificate` 的后续公钥检查因此得到空证书。
-这与 APK 的继续导入分支不能直接等同。本项目先获取 353380 的 SDR 网络配置并导入
-certs/revoked_keys，再调用 SetCertificate，保留原有公私钥匹配、AppID 和远端证书检查。
+**证据修订**：撤回此前把“CA 未知时继续导入”称为 APK 与开源 SDK 差异的结论。
+官方 `CertStore_CheckCert @0x8ade88` 在 `0x8adec4–0x8adec8` 同样先检查 CA 签名；
+返回空时直接返回，不执行 `0x8aded8` 的正文解析。开源固定 `d534c19` 的顺序与此一致。
+调用者虽继续执行后续检查，但此时正文仍为空，不能把诊断中的“Continuing anyway”
+解释为最终安装成功。若 CA 检查成功后因有效期或公钥撤销等原因返回空，正文才可能已填充；
+这些分支必须分别核对。本项目先获取 353380 的 SDR 网络配置并导入 certs/revoked_keys
+仍是现有端口策略，其下载/重试与官方的配置提供链尚需单独对照。
 
 `InternalSetCertificate @0x804958` 解析 signed cert，检查身份、公钥类型/长度、私钥一致性、
 公私钥匹配和 AppID 范围（`0x804b14–0x804d4c`），然后安装身份/证书。
@@ -1455,8 +1458,28 @@ certs/revoked_keys，再调用 SetCertificate，保留原有公私钥匹配、Ap
 
 **本机导入与远端验签的区别**：本样本在 CertStore_CheckCert 返回空 scope 时输出
 “not currently able to verify our own cert / Continuing anyway”，随后仍执行身份、公钥、私钥和
-AppID 等检查（`0x8049dc–0x804a10`、`0x804d38–0x804d4c`）。因此“本机暂不能验证自己的 CA”
-不是这里无条件失败的充分条件，也不能据此删除 peer handshake 验证。移植方应保留这两层职责。
+AppID 等检查（`0x8049dc–0x804a10`、`0x804d38–0x804d4c`）。空 scope 自身不是直接 return false
+的条件，但不同失败时点会改变 outMsgCert 是否有内容，仍可能在后续检查失败；
+不能据此取消 CA 前置检查、声称未知 CA 可成功安装，或删除 peer handshake 验证。
+
+**组合执行证据**：`audit-steam-local-certificate.py` 连续执行原
+InternalSetCertificate→CertStore_CheckCert→CheckCertAppID，冻结 14 组程序。
+CA 结果、protobuf 构造/解析/存储、密钥派生及撤销查找、时钟/配置、最终安装与调度为
+明确 provider；不是原签名算法、protobuf parser 或网络的互操作验证。
+CA provider 返回空时，实际 `0x8adec8` 跳过正文解析，caller 后续拒绝，安装次数为 0。
+CA 通过后若正文已解析，有效期/撤销失败也返回空 scope，但 caller 仍可能通过本机身份、
+公私钥和 AppID 检查；过期组还经过一个明确的 expiry 断言 sink，不能称无断言成功。
+这不表示 peer 会接受过期或撤销凭据，也不是删除 peer 检查的依据。
+仅把 `0x8adec8` 的 CA 失败跳转改为 NOP 的独立反例实际命中一次，使相同输入转为
+“已解析并通过本机安装”；两段均到达返回边界，说明此前忽略该跳转的推断会改变结果。
+固定 core SHA、两个 helper SHA 及 gzip fixture SHA256
+`1bf72bc20d906c8829293e9faa091cbf15f7dd25c7c5721c5fcce8272f048948` 一并校验。
+
+`local_certificate_oracle.cpp` 用合成 Ed25519 测试密钥构造结构完整的证书，实际调用固定
+SDK 的 protobuf parser、CertStore_CheckCert 和 SetCertificate；未知 CA、缺少 CA ID、
+缺少签名三组都不解析 outMsgCert、不安装身份，与原 CA 失败路径的投影一致。
+该本地测试不打补丁、不替代 SDK 验签函数，不请求网络或使用真实主机凭据；只比较这三组
+失败路径，不声称另外 13 个原程序已与真实 SDK 或远端握手逐一比较。
 
 ### 12.2 初始化的调用顺序
 
@@ -1535,8 +1558,8 @@ HTTP 完成/信任导入和 bridge 的网络推进是 provider；成功组直接
 比较器以明确差异拒绝，不以编译失败或崩溃计作反例检出。
 这些证据只覆盖初始化与 bridge 准入，不验证真实 CM/TLS、成功证书、SDK 选路或 Switch；
 只对照 BInit→bridge 的后置门槛，不证明把配置 HTTP/信任导入失败映射为 BInit=false
-与官方的前置策略相同。§12.1 的“本机暂不能验证自己的 CA 仍继续导入”与开源 SDK 的差异
-仍需单独处理；不能用本项门槛测试宣称该差异已消除。现有配置获取的三次重试仍为端口策略，
+与官方的前置策略相同。§12.1 已撤回“未知 CA 的本机导入是 SDK 差异”的推断；
+不能用本项门槛测试替代完整证书校验组合。现有配置获取的三次重试仍为端口策略，
 不能从 BConnect 的门槛推导为官方 HTTP 重试策略。
 
 ### 12.3 transport 状态、收发与 MTU
