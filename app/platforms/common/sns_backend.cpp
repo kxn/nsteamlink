@@ -11,6 +11,7 @@ extern "C" {
 #include "sns_start_diagnostics.h"
 #endif
 #include "sns_message_queue.h"
+#include "sns_connection_policy.h"
 #include <mbedtls/base64.h>
 #include <curl/curl.h>
 #include <atomic>
@@ -103,8 +104,8 @@ struct sl_sns {
     ISteamNetworkingSockets *sockets = nullptr;
     HSteamNetConnection connection = k_HSteamNetConnection_Invalid;
     sl_stream_bridge *bridge = nullptr;
-    uint64_t last_check = 0;
-    bool initialized = false;
+    SteamNetworkingMicroseconds last_check = 0;
+    bool initialized = false, connection_attempted = false;
     bool share_ip = true, config_ready = false;
     CURLM *http = nullptr;
     CURL *request = nullptr;
@@ -120,6 +121,34 @@ struct sl_sns {
     bool observe_loss = false, terminal_loss_valid = false;
 #endif
 };
+static nsl::SnsConnectionView connection_view(sl_sns *b) {
+    return {b->connection, b->q->state, b->last_check};
+}
+static void record_terminal(sl_sns *b, sl_sns_terminal_source source, int detail,
+                             const SteamNetConnectionInfo_t *info) {
+    if (b->stats.terminal_source != SL_SNS_TERMINAL_NONE || source == SL_SNS_TERMINAL_NONE)
+        return;
+    b->stats.terminal_source = source;
+    b->stats.terminal_detail = detail;
+    b->stats.terminal_sdk_state = info ? int(info->m_eState) : 0;
+    b->stats.terminal_end_reason = b->end_reason;
+#if NSL_SNS_PROBES && NSL_ENABLE_SDR
+    if (b->observe_loss && b->connection)
+        b->terminal_loss_valid = sl_gns_sdr_loss_snapshot(b->connection, &b->terminal_loss);
+#endif
+}
+static void unlink_signaling(sl_sns *b) {
+    std::lock_guard<std::mutex> lock(b->q->mutex);
+    b->q->owner = false;
+}
+static void clear_datagrams(sl_sns *b) {
+    {
+        std::lock_guard<std::mutex> lock(b->q->mutex);
+        b->q->tx.clear();
+        b->q->rx.clear();
+    }
+    b->q->wake.notify_all();
+}
 static void close_backend(sl_sns *b, sl_sns_state state,
     sl_sns_terminal_source source = SL_SNS_TERMINAL_NONE, int detail = 0) {
     SteamNetConnectionInfo_t info{};
@@ -129,31 +158,13 @@ static void close_backend(sl_sns *b, sl_sns_state state,
         b->stats.sdk_state = int(info.m_eState);
         if (info.m_eEndReason) b->end_reason = info.m_eEndReason;
     }
-    if (b->stats.terminal_source == SL_SNS_TERMINAL_NONE && source != SL_SNS_TERMINAL_NONE) {
-        b->stats.terminal_source = source;
-        b->stats.terminal_detail = detail;
-        b->stats.terminal_sdk_state = have_info ? int(info.m_eState) : 0;
-        b->stats.terminal_end_reason = b->end_reason;
-#if NSL_SNS_PROBES && NSL_ENABLE_SDR
-        if (b->observe_loss && b->connection)
-            b->terminal_loss_valid = sl_gns_sdr_loss_snapshot(b->connection, &b->terminal_loss);
-#endif
-    }
-    {
-        std::lock_guard<std::mutex> lock(b->q->mutex);
-        if (b->q->state == SL_SNS_FAILED)
-            state = SL_SNS_FAILED;
-        b->q->state = state;
-        b->q->tx.clear();
-        b->q->rx.clear();
-    }
-    b->q->wake.notify_all();
-    if (b->connection != k_HSteamNetConnection_Invalid) {
-        // A send/receive can observe a terminal SDK state before the periodic
-        // status poll. Preserve its reason before invalidating the handle.
-        b->sockets->CloseConnection(b->connection, 2001, "stream transport closed", false);
-        b->connection = k_HSteamNetConnection_Invalid;
-    }
+    record_terminal(b, source, detail, have_info ? &info : nullptr);
+    if (b->q->state != SL_SNS_FAILED) b->q->state = state;
+    // This entry covers port resource/signaling errors and explicit teardown;
+    // source-driven CheckConnection uses its own observed reason below.
+    nsl::CloseSnsConnection(b->sockets, connection_view(b), [b] { unlink_signaling(b); },
+                            2001, "stream transport closed");
+    clear_datagrams(b);
 }
 static bool receive_signal(const uint8_t *p, size_t n, void *ctx) {
     sl_sns *b = static_cast<sl_sns *>(ctx);
@@ -216,6 +227,7 @@ static bool begin_config(sl_sns *b) {
     return curl_multi_add_handle(b->http, b->request) == CURLM_OK;
 }
 static bool begin_connection(sl_sns *b) {
+    b->connection_attempted = true;
     /* NETWORKING section 9.5. Keep explicit official rate, encryption
      * preference, timeout and message flags. The built-in GNS ICE provider is
      * a documented implementation difference from the APK's WebRTC factory. */
@@ -360,44 +372,39 @@ fail:
         sdk_owned = false;
     return nullptr;
 }
-static bool check_connection(sl_sns *b, uint64_t now) {
-    if (!b->connection)
-        return false;
-    if (b->q->state == SL_SNS_CONNECTED && now - b->last_check < 1000)
-        return true;
-    b->last_check = now;
-    SteamNetConnectionInfo_t info;
-    if (!b->sockets->GetConnectionInfo(b->connection, &info)) {
-        close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_CONNECTION_INFO);
-        return false;
-    }
-    b->end_reason = info.m_eEndReason;
-    b->stats.sdk_state = int(info.m_eState);
-    b->stats.authenticated = !(info.m_nFlags & k_nSteamNetworkConnectionInfoFlags_Unauthenticated);
-    b->stats.relayed = (info.m_nFlags & k_nSteamNetworkConnectionInfoFlags_Relayed) != 0;
-    switch (info.m_eState) {
-    case k_ESteamNetworkingConnectionState_Connecting:
-    case k_ESteamNetworkingConnectionState_FindingRoute:
-        b->q->state = SL_SNS_CONNECTING;
-        return false;
-    case k_ESteamNetworkingConnectionState_Connected: {
-        SteamNetConnectionRealTimeStatus_t status;
-        EResult ret = b->sockets->GetConnectionRealTimeStatus(b->connection, &status, 0, nullptr);
-        if (ret != k_EResultOK) {
-            close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_STATUS, ret);
-            return false;
+static bool check_connection(sl_sns *b) {
+    /* The official synchronous BInit precedes BConnect/CheckConnection. Our
+     * asynchronous config/certificate HTTP stage has no SDK handle yet and
+     * must not be mistaken for an already-invalidated connection. */
+    if (!b->connection_attempted) return false;
+    nsl::SnsConnectionObservation observed;
+    auto source = [&] {
+        switch (observed.failure) {
+        case nsl::SnsCheckFailure::Info: return SL_SNS_TERMINAL_CONNECTION_INFO;
+        case nsl::SnsCheckFailure::Status: return SL_SNS_TERMINAL_STATUS;
+        case nsl::SnsCheckFailure::None: return SL_SNS_TERMINAL_NONE;
+        default: return SL_SNS_TERMINAL_CONNECTION;
         }
-        b->q->state = SL_SNS_CONNECTED;
-        return true;
-    }
-    case k_ESteamNetworkingConnectionState_ProblemDetectedLocally:
-        close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_CONNECTION, info.m_eState);
-        break;
-    default:
-        close_backend(b, SL_SNS_CLOSED, SL_SNS_TERMINAL_CONNECTION, info.m_eState);
-        break;
-    }
-    return false;
+    };
+    auto update_info = [&] {
+        if (!observed.infoValid) return;
+        const auto &info = observed.info;
+        b->end_reason = info.m_eEndReason;
+        b->stats.sdk_state = int(info.m_eState);
+        b->stats.authenticated = !(info.m_nFlags & k_nSteamNetworkConnectionInfoFlags_Unauthenticated);
+        b->stats.relayed = (info.m_nFlags & k_nSteamNetworkConnectionInfoFlags_Relayed) != 0;
+    };
+    bool valid = nsl::CheckSnsConnection(b->sockets, SteamNetworkingUtils(), connection_view(b),
+        observed, [&] {
+            update_info();
+            record_terminal(b, source(), observed.detail, &observed.info);
+            unlink_signaling(b);
+        });
+    update_info();
+    record_terminal(b, source(), observed.detail, observed.infoValid ? &observed.info : nullptr);
+    if (b->q->state == SL_SNS_FAILED || b->q->state == SL_SNS_CLOSED)
+        clear_datagrams(b);
+    return valid;
 }
 static void update_backend(sl_sns *b, uint64_t now) {
     if (!b || !b->initialized)
@@ -412,7 +419,7 @@ static void update_backend(sl_sns *b, uint64_t now) {
     if (b->connection)
         sl_gns_sdr_transport_stats(b->connection, b->sdr_debug);
 #endif
-    bool connected = check_connection(b, now);
+    bool connected = check_connection(b);
     {
         /* SDK callbacks only enqueue. Never hold this mutex across an SDK call
          * that might call SendSignal again. */

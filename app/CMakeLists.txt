@@ -392,6 +392,28 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_link_libraries(nsl-sdr-policy-tests PRIVATE nsl_sdr_core)
     add_test(NAME nsl-sdr-policy COMMAND nsl-sdr-policy-tests)
     if(NSL_BUILD_SNS)
+        add_executable(nsl-sns-owner-state-tests tests/test_sns_owner_state.cpp)
+        target_compile_features(nsl-sns-owner-state-tests PRIVATE cxx_std_17)
+        target_compile_definitions(nsl-sns-owner-state-tests PRIVATE NSL_SNS_PROBES=0 NSL_DIAGNOSTICS=0)
+        target_include_directories(nsl-sns-owner-state-tests PRIVATE platforms/common)
+        target_compile_options(nsl-sns-owner-state-tests PRIVATE -Wall -Wextra -UNDEBUG)
+        target_link_libraries(nsl-sns-owner-state-tests PRIVATE nsl_remote
+            GameNetworkingSockets::GameNetworkingSockets_s Threads::Threads)
+        add_test(NAME nsl-sns-owner-state COMMAND nsl-sns-owner-state-tests)
+        set_tests_properties(nsl-sns-owner-state PROPERTIES TIMEOUT 15)
+        add_executable(nsl-sns-state-oracle tests/sns_state_oracle.cpp)
+        target_compile_features(nsl-sns-state-oracle PRIVATE cxx_std_17)
+        target_include_directories(nsl-sns-state-oracle PRIVATE platforms/common)
+        target_compile_options(nsl-sns-state-oracle PRIVATE -Wall -Wextra -UNDEBUG)
+        target_link_libraries(nsl-sns-state-oracle PRIVATE nsl_sns)
+        add_test(NAME sns_state_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-sns-state.py"
+            --receiver $<TARGET_FILE:nsl-sns-state-oracle>)
+        set_tests_properties(sns_state_official_vectors PROPERTIES TIMEOUT 25)
+        add_test(NAME sns_state_mutation_counterexamples COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/test-steam-sns-state-mutations.py"
+            --compiler "${CMAKE_CXX_COMPILER}")
+        set_tests_properties(sns_state_mutation_counterexamples PROPERTIES TIMEOUT 90)
         add_executable(nsl-sns-queue-tests tests/test_sns_queue.cpp)
         target_compile_features(nsl-sns-queue-tests PRIVATE cxx_std_17)
         target_include_directories(nsl-sns-queue-tests PRIVATE platforms/common)

@@ -1019,6 +1019,36 @@ CloseConnection。SNS 未识别状态则以 reason=2001 调 CloseConnection；�
 其余变 Closed，不能自行改成所有未知状态都设 Failed。已 Connected 时仅在
 `now >= last_check+1000000μs` 查询 SDK，否则直接返回 true（`0x80039c–0x8003b4`）。
 
+**原始状态函数执行对照**：`scripts/audit-steam-sns-state.py` 直接执行以上 CheckConnection
+和 SDR CloseConnection，SDK 的时钟、info、quick status、Close 方法与诊断字符串/断言端点为
+受控 provider。279 组连续程序、293 次调用记录实际返回值、transport 状态、handle、查询时钟、
+SDK 调用次序及信令对象双向归属；含不一致的合成状态，不以此声称都能由线上输入产生。
+生产 `sns_connection_policy.h` 共用函数由 `check-steam-sns-state.py` 与冻结原始输出逐项比较。
+
+本地真实 SDK 无效句柄测试还执行生产 owner 的异步初始化守卫、info 失败后的队列释放/唤醒及
+显式销毁：查询失败保留信令归属到销毁，无待连接时的配置获取不被误关。该测试不创建连接、
+不向 Steam 请求授权或媒体。7 份独立编译反例覆盖关闭 reason、一秒等号、单位错误、Failed
+保留、跳过节流、遗留无效 handle 和 Connecting 返回值；要求反例正常执行，再由原始输出
+比较器拒绝，编译错误或 receiver 崩溃不计检出。冻结输出的 gzip SHA256 为
+`5994b3c20950009aa21903473addaa3c62eff26decd7ac93a2dd970e298f997d`。
+
+SDK 1/2（Connecting/FindingRoute）时本函数返回 true，调用者仍须另查 transport 是否为 2；
+返回 true 本身不能证明可发送媒体。SDK 4/5 的原 SDR Close 实参为 `reason=0, text=null,
+linger=false`；未知状态才用 2001。0 是 SDK 方法实参，不宣称它等于最终线上 end reason。
+原 SDR Close 会在 SDK Close 前解除信令对象的两个归属指针；无 handle 或查询失败分支不走
+该 Close，因此不在这里解除归属。拥有者销毁时仍必须解除归属并释放其余本地资源。
+
+时间读取来自 SDK GetLocalTimestamp，单位微秒。只有既有 Connected 才可跳过未到期的查询；
+恰好 1000000 微秒须查询。原函数把 last-check 加 1000000 的64位结果按有符号数比较；测试
+还覆盖倒退时刻和加法回绕，不把毫秒级近似比较当作原始边界已对齐。
+公开 GNS 的 GetConnectionRealTimeStatus 以 EResultOK 映射原 quick-status 的 true，其他结果
+映射 false；这是明确的 SDK ABI 适配，不修改原分支的句柄/状态/关闭行为。
+
+端口的配置/证书 HTTP 是异步的，和官方先完成同步 BInit 再 BConnect 的调用边界不同。
+在尚未发起 SDK 连接时不执行 CheckConnection，避免把“正在取得配置、尚无句柄”误当作
+“连接句柄已失效”。状态失败后队列的本地释放/唤醒发生在 policy 之后；项目资源错误的关闭
+理由和完整传输 Send/Recv 结果处理不属于本项 CheckConnection 比较范围。
+
 **证据修订**：撤回此前 BWait 固定 Poll(0)、不按等待参数阻塞的表述。
 `BWait(wait_ms) @0x80010c` 把传入的 `wait_ms` 保留在 w1，直接交给 Utils::Poll(int)，
 `0x800138–0x800144` 没有清零它。虚表目标 `0x82244c` 将 w1 转给 SteamNetworkingSockets_Poll

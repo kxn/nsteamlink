@@ -31,7 +31,8 @@ typedef struct sl_sns_stats {
     sl_sns_terminal_source terminal_source;
     int terminal_detail;
     /* SDK connection state is independent of the adapter's Failed/Closed.
-     * Terminal values are captured before CloseConnection invalidates it. */
+     * Capture terminal observations at their SDK boundary; a failed status
+     * query invalidates the handle without an extra SDK CloseConnection. */
     int sdk_state, terminal_sdk_state, terminal_end_reason;
 } sl_sns_stats;
 void sl_sns_get_stats(const sl_sns *, sl_sns_stats *);

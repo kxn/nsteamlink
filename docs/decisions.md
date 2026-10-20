@@ -2784,3 +2784,24 @@ FAILURE显示的SL_ERROR，与用户观察的连接状态直接消失一致。
 回调内不做I/O，调用后恢复None，再由现有有界日志记录结果。保留证书剩余秒数和认证状态。
 SDR socket创建失败向该路径传递原OpenRawUDPSocket错误，避免被泛化消息覆盖。
 这不改变Steam认证、传输选择、SDK配置项、重试或超时；未知格式保留unknown，不猜原因。
+
+## D-A077：SNS 状态查询、信令归属与关闭采用独立的源码契约
+
+Evidence：固定 Android 1.3.32 arm64 的 CheckConnection `0x800348`、SDR CloseConnection
+`0x800f94`（样本 SHA 与复现命令见公网协议参考 §12.3）。查询失败清句柄并置 Failed，
+不调用 SDK Close；SDK ClosedByPeer/ProblemDetectedLocally 的 close reason 为0，未知状态为2001。
+SDR Close 在调用 SDK 前解除信令双向归属，保留已有 Failed；已连接查询使用 SDK 微秒时钟及
+1000000 微秒边界。固定原函数输出与生产策略共用函数的核对、SDK ABI 适配及桩范围见该节。
+
+Conclusion：将该状态/关闭分支放在 `sns_connection_policy.h`，生产 owner 与离线执行器共用。
+SDK 查询错误、SDK 状态终止、本地资源失败和主动 teardown 是不同原因；诊断不能通过再查询
+或统一 Close 改写源码分支。查询失败仍保持信令归属，显式销毁时解除；任意退出均先停/join
+IHS 使用者，再销毁 SDK。共享队列的本地清理和等待者唤醒不代替 SDK 状态迁移。
+
+异步配置与证书获取先于 `connection_attempted`；该阶段无 SDK handle 是正常的。只有发起
+SDK 连接之后才进入查询契约，保留官方同步 BInit→BConnect 的阶段边界。查询使用 SDK 时钟，
+不拿 UI/bridge 的毫秒时钟近似。连接中的 true 返回不授予媒体发送资格，owner 仍检查 Connected。
+
+本地资源/信令错误和主动销毁仍由独立入口处理；它们的 caller reason、完整 Send/Recv、MTU、
+地址选择及服务器策略不包含在本项状态分支对照中。原始状态和原函数调用范围对齐不作为
+整个 SNS SDK、真实网络互操作或 Switch loader 生命周期的替代证明。
