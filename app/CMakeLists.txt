@@ -807,7 +807,8 @@ if(NSL_PLATFORM STREQUAL "desktop")
         -Wl,--wrap=IHS_ClientSend -Wl,--wrap=IHS_ClientBroadcast
         -Wl,--wrap=sl_auth_save -Wl,--wrap=sl_system_random
         -Wl,--wrap=IHS_ClientStreamingRequest -Wl,--wrap=IHS_CryptoRandomBytes
-        -Wl,--wrap=sl_network_stats_load -Wl,--wrap=sl_host_key_save)
+        -Wl,--wrap=sl_network_stats_load -Wl,--wrap=sl_host_key_save
+        -Wl,--wrap=sl_remote_connection_update)
     add_test(NAME pairing_runtime COMMAND nsl-pairing-runtime)
     set_tests_properties(pairing_runtime PROPERTIES TIMEOUT 60)
     add_executable(nsl-network-test-runtime tests/network_test_runtime.c)

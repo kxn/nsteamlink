@@ -9,6 +9,7 @@
 #include "network_test_discovery_peer.h"
 #include "platform/runtime.h"
 #include "platform/system.h"
+#include "remote_connection.h"
 #include "services/host_key_store.h"
 #include "ui/ui_events.h"
 #include <arpa/inet.h>
@@ -35,6 +36,13 @@ static sl_runtime *runtime;
 static sl_auth_store initial;
 static sl_host host;
 static uint8_t peer_secret[32];
+/* This fixture verifies LAN authorization entropy and actual UDP ownership.
+ * Keep the real cloud object/cleanup, but do not contact production directory
+ * services: a background WebSocket mask must not consume scripted PIN entropy. */
+void __wrap_sl_remote_connection_update(sl_remote_connection *connection, uint64_t now) {
+    (void)connection;
+    (void)now;
+}
 bool __wrap_sl_system_random(void *data, size_t size) {
     assert(size == 4);
     unsigned n = atomic_fetch_add(&random_calls, 1);
