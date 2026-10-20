@@ -38,6 +38,14 @@
 #include <time.h>
 #include <unistd.h>
 
+typedef struct sl_control_frame {
+    struct sl_control_frame *next;
+    uint64_t epoch, account;
+    size_t size;
+    uint8_t wire[];
+} sl_control_frame;
+static void accepted_connection(IHS_Client *, const IHS_HostInfo *, const IHS_StreamingConnection *,
+                                void *);
 struct sl_runtime {
     pthread_t worker;
     atomic_bool exit_requested, worker_finished;
@@ -64,6 +72,14 @@ struct sl_runtime {
     int count;
     IHS_Client *client;
     sl_remote_connection *remote;
+    bool control_cloud_ready; /* Protected by lock; never read CM state on a timer. */
+    uint64_t control_epoch;
+    sl_control_frame *control_head, *control_tail;
+    size_t control_count, control_bytes;
+    struct {
+        uint64_t client, account;
+    } control_peers[SL_REMOTE_PEERS];
+    size_t control_peer_count;
 #if NSL_HAVE_SNS
     sl_sns *sns;
     bool sns_waiting;
@@ -432,22 +448,26 @@ static void auth_failed(IHS_Client *c, const IHS_HostInfo *h, IHS_AuthorizationR
             : result == IHS_AuthorizationNotLoggedIn ? sl_tr(SL_T_LOGIN_STEAM)
                                                      : sl_tr(SL_T_PAIR_FAILED));
 }
-static void accepted(IHS_Client *c, const IHS_HostInfo *h, const IHS_SocketAddress *address,
-                     const uint8_t *key, size_t len, void *ctx) {
-    (void)c;
-    (void)h;
-    sl_runtime *r = ctx;
+static void accept_session(sl_runtime *r, const IHS_SocketAddress *address, const uint8_t *key,
+                           size_t len, uint64_t account) {
     diagnostic_phase("stream_request_accepted", address->port);
     if (len > 32) {
         fail(r, sl_tr(SL_T_INVALID_RESPONSE));
         return;
     }
     pthread_mutex_lock(&r->lock);
-    r->session_info = (IHS_SessionInfo){
-        .address = *address, .sessionKeyLen = len, .steamId = r->active.host.account};
+    r->session_info =
+        (IHS_SessionInfo){.address = *address, .sessionKeyLen = len, .steamId = account};
     memcpy(r->session_info.sessionKey, key, len);
     r->session_ready = true;
     pthread_mutex_unlock(&r->lock);
+}
+static void accepted(IHS_Client *c, const IHS_HostInfo *h, const IHS_SocketAddress *address,
+                     const uint8_t *key, size_t len, void *ctx) {
+    (void)c;
+    (void)h;
+    sl_runtime *r = ctx;
+    accept_session(r, address, key, len, r->active.host.account);
 }
 static void rejected(IHS_Client *c, const IHS_HostInfo *h, IHS_StreamingResult result, void *ctx) {
     (void)c;
@@ -574,7 +594,8 @@ static const IHS_ClientStreamingCallbacks stream_cb = {.success = accepted,
                                                        .failed = rejected,
                                                        .authorization = stream_authorization,
                                                        .authorizationFailed = auth_failed,
-                                                       .persistProof = persist_proof};
+                                                       .persistProof = persist_proof,
+                                                       .connection = accepted_connection};
 static void client_config_saved(IHS_Session *session, const uint8_t *wire, size_t size, void *ctx) {
     sl_runtime *r = ctx;
     sl_stream_settings_receive(session, wire, size, &r->settings);
@@ -760,6 +781,13 @@ static void cloud_watch(sl_runtime *r) {
         memcpy(peers[count++].secret, h->has_secret ? h->secret : r->store.secret, 32);
     }
     bool watching = sl_remote_watch(sl_remote_connection_protocol(r->remote), peers, count);
+    pthread_mutex_lock(&r->lock);
+    r->control_peer_count = count;
+    for (size_t i = 0; i < count; ++i) {
+        r->control_peers[i].client = peers[i].client_id;
+        r->control_peers[i].account = peers[i].steam_id;
+    }
+    pthread_mutex_unlock(&r->lock);
 #if NSL_DIAGNOSTICS
     char line[128];
     snprintf(line, sizeof(line), "cloud_watch saved=%d eligible=%zu accepted=%d",
@@ -776,20 +804,120 @@ static bool local_host(sl_runtime *r, uint64_t id, IHS_HostInfo *out) {
     pthread_mutex_unlock(&r->lock);
     return found;
 }
-static bool host_cloud_online(sl_runtime *r, uint64_t id) {
+static bool control_host(IHS_Client *client, uint64_t id, IHS_HostInfo *out, void *ctx) {
+    (void)client;
+    sl_runtime *r = ctx;
     pthread_mutex_lock(&r->lock);
     const sl_directory_host *host = sl_directory_find(r->directory, id);
-    bool online = host && host->cloud;
+    bool visible = host && host->visible && !sl_directory_expired(host, (int64_t)time(NULL));
+    if (visible)
+        *out = host->info;
     pthread_mutex_unlock(&r->lock);
-    return online;
+    return visible;
 }
+static void control_resolve(IHS_Client *client, uint64_t id, IHS_SocketAddress *out, void *ctx) {
+    (void)client;
+    IHS_HostInfo host;
+    *out = (IHS_SocketAddress){0};
+    if (local_host(ctx, id, &host))
+        *out = host.address;
+}
+static size_t control_addresses(IHS_Client *client, uint64_t id, IHS_IPAddress **out, void *ctx) {
+    (void)client;
+    sl_runtime *r = ctx;
+    *out = NULL;
+    pthread_mutex_lock(&r->lock);
+    const sl_directory_host *host = sl_directory_find(r->directory, id);
+    size_t count = host ? host->addresses.count : 0;
+    IHS_IPAddress *ips = count ? malloc(count * sizeof(*ips)) : NULL;
+    if (ips)
+        for (size_t i = 0; i < count; ++i)
+            ips[i] = host->addresses.entries[i].address.ip;
+    pthread_mutex_unlock(&r->lock);
+    *out = ips;
+    return ips ? count : 0;
+}
+static void clear_control_locked(sl_runtime *r) {
+    while (r->control_head) {
+        sl_control_frame *frame = r->control_head;
+        r->control_head = frame->next;
+        memset(frame->wire, 0, frame->size);
+        free(frame);
+    }
+    r->control_tail = NULL;
+    r->control_count = r->control_bytes = 0;
+}
+static bool control_remote_send(IHS_Client *client, uint64_t id, const uint8_t *wire, size_t size,
+                                void *ctx) {
+    (void)client;
+    sl_runtime *r = ctx;
+    /* Local copied-frame budget, not a Steam message/retry limit. Producers
+     * retain the transaction and can retry; existing frames are never replaced. */
+    if (size > 65536)
+        return false;
+    pthread_mutex_lock(&r->lock);
+    uint64_t account = 0;
+    for (size_t i = 0; i < r->control_peer_count; ++i)
+        if (r->control_peers[i].client == id) {
+            account = r->control_peers[i].account;
+            break;
+        }
+    sl_control_frame *frame = r->control_cloud_ready && account && r->control_count < 64 &&
+                                      size <= 256 * 1024 - r->control_bytes
+                                  ? malloc(sizeof(*frame) + size)
+                                  : NULL;
+    if (frame) {
+        *frame = (sl_control_frame){.epoch = r->control_epoch, .account = account, .size = size};
+        memcpy(frame->wire, wire, size);
+        if (r->control_tail)
+            r->control_tail->next = frame;
+        else
+            r->control_head = frame;
+        r->control_tail = frame;
+        ++r->control_count;
+        r->control_bytes += size;
+        pthread_cond_signal(&r->wake);
+    }
+    bool accepted = frame != NULL;
+    pthread_mutex_unlock(&r->lock);
+    return accepted;
+}
+static void flush_control(sl_runtime *r) {
+    for (;;) {
+        pthread_mutex_lock(&r->lock);
+        sl_control_frame *frame = r->control_head;
+        bool send = frame && r->control_cloud_ready && frame->epoch == r->control_epoch;
+        if (frame) {
+            r->control_head = frame->next;
+            if (!r->control_head)
+                r->control_tail = NULL;
+            --r->control_count;
+            r->control_bytes -= frame->size;
+        }
+        pthread_mutex_unlock(&r->lock);
+        if (!frame)
+            return;
+        if (send && r->remote)
+            sl_remote_packet(sl_remote_connection_protocol(r->remote), frame->account, frame->wire,
+                             frame->size);
+        memset(frame->wire, 0, frame->size);
+        free(frame);
+    }
+}
+static const IHS_ClientRoutingCallbacks control_cb = {.host = control_host,
+                                                      .resolve = control_resolve,
+                                                      .addresses = control_addresses,
+                                                      .sendRemote = control_remote_send};
 static void cloud_connected(bool connected, void *ctx) {
     sl_runtime *r = ctx;
+    pthread_mutex_lock(&r->lock);
+    ++r->control_epoch;
+    r->control_cloud_ready = connected;
+    clear_control_locked(r);
     if (!connected) {
-        pthread_mutex_lock(&r->lock);
         sl_directory_disconnect(r->directory);
-        pthread_mutex_unlock(&r->lock);
     }
+    pthread_mutex_unlock(&r->lock);
     sl_log(connected ? "cloud: anonymous session connected" : "cloud: disconnected");
 }
 static void cloud_diagnostic(const char *message, void *ctx) {
@@ -888,15 +1016,15 @@ static void refresh_presence(sl_runtime *r, uint64_t now, int64_t wall) {
 }
 static void cloud_stream_result(IHS_StreamingResult result, const sl_remote_material *m,
                                 void *ctx) {
+    (void)m; /* The SDL/native-only build has no SNS transport constructor. */
     sl_runtime *r = ctx;
     if (r->active.type != SL_CMD_STREAM)
         return;
-    diagnostic_phase("cloud_stream_result", result);
+    diagnostic_phase("stream_transport_result", result);
     if (result != IHS_StreamingSuccess) {
         rejected(NULL, NULL, result, ctx);
         return;
     }
-    IHS_HostInfo local;
 #if NSL_HAVE_SNS
     if (m->transport == k_EStreamTransportSDR) {
         if (r->sns || m->key_size > sizeof(r->session_info.sessionKey)) {
@@ -919,12 +1047,43 @@ static void cloud_stream_result(IHS_StreamingResult result, const sl_remote_mate
         return;
     }
 #endif
-    if (m->transport != k_EStreamTransportUDP || !local_host(r, m->client_id, &local)) {
-        rejected(NULL, NULL, IHS_StreamingTransportUnavailable, ctx);
+    rejected(NULL, NULL, IHS_StreamingTransportUnavailable, ctx);
+}
+static void accepted_connection(IHS_Client *client, const IHS_HostInfo *host,
+                                const IHS_StreamingConnection *connection, void *ctx) {
+    sl_runtime *r = ctx;
+    const sl_host *peer = saved_host(r, connection->clientId);
+    uint64_t account = peer ? peer->account : 0;
+    if (connection->transport == k_EStreamTransportUDP &&
+        IHS_ClientAddressHasIP(&connection->address.ip) && connection->address.port) {
+        accept_session(r, &connection->address, connection->sessionKey, connection->sessionKeyLen,
+                       account);
         return;
     }
-    local.address.port = m->port;
-    accepted(NULL, NULL, &local.address, m->key, m->key_size, ctx);
+    sl_remote_material material = {.client_id = connection->clientId,
+                                   .steam_id = account,
+                                   .transport = connection->transport,
+                                   .port = (uint16_t)connection->port,
+                                   .key_size = connection->sessionKeyLen,
+                                   .cert = connection->certificate,
+                                   .stun_servers = connection->relayServer};
+    if (material.key_size > sizeof(material.key)) {
+        rejected(client, host, IHS_StreamingFailed, ctx);
+        return;
+    }
+    memcpy(material.key, connection->sessionKey, material.key_size);
+    cloud_stream_result(IHS_StreamingSuccess, &material, ctx);
+    memset(&material, 0, sizeof(material));
+}
+static bool cloud_control_packet(const uint8_t *wire, size_t size, void *ctx) {
+    sl_runtime *r = ctx;
+    /* The unknown-host service pairing slot still owns its authorization.
+     * All known-host handshake traffic, including late replies after stop,
+     * belongs to the same IHS manager that receives UDP. */
+    if (!r->client || r->active.type == SL_CMD_REMOTE_PAIR)
+        return false;
+    IHS_ClientReceiveRemotePacket(r->client, wire, size);
+    return true;
 }
 static void start_cloud(sl_runtime *r) {
     const sl_remote_callbacks cb = {.diagnostic = cloud_diagnostic,
@@ -935,7 +1094,7 @@ static void start_cloud(sl_runtime *r) {
                                     .save_key = cloud_save_key,
                                     .paired = cloud_paired,
                                     .pair_failed = cloud_pair_failed,
-                                    .stream_result = cloud_stream_result};
+                                    .control_packet = cloud_control_packet};
     r->remote = sl_remote_connection_create(&r->config, &cb, r);
     cloud_watch(r);
 }
@@ -965,6 +1124,7 @@ static bool start_client(sl_runtime *r) {
     IHS_ClientSetDiscoveryCallbacks(r->client, &discovery_cb, r);
     IHS_ClientSetAuthorizationCallbacks(r->client, &auth_cb, r);
     IHS_ClientSetStreamingCallbacks(r->client, &stream_cb, r);
+    IHS_ClientSetRoutingCallbacks(r->client, &control_cb, r);
     sl_log("discovery: client created; registering periodic broadcast");
     bool started = sync_discovery_targets(r) && start_discovery(r);
     sl_log(started ? "discovery: periodic broadcast registered" : "discovery: registration failed");
@@ -1111,18 +1271,8 @@ static bool host_info(sl_runtime *r, const sl_host *h, IHS_HostInfo *out) {
 static bool request_stream(sl_runtime *r, bool network_test) {
     IHS_HostInfo host;
     if (!r->client) return false;
-    bool have_address = host_info(r, &r->active.host, &host);
-    bool cloud_online = host_cloud_online(r, r->active.host.client_id);
-    IHS_HostInfo direct;
-    bool direct_ready = local_host(r, r->active.host.client_id, &direct);
-    if (direct_ready) {
-        host.address = direct.address; /* Actual selected IP AND observed port. */
-        have_address = true;
-    }
-    /* The saved UI address is a discovery seed, not an implicit direct
-     * destination. Known-host selection requires a verified cache entry or
-     * cloud-online status; explicit IP entry discovers before reaching here. */
-    if ((!have_address && !cloud_online) || (!direct_ready && !cloud_online)) return false;
+    if (!control_host(r->client, r->active.host.client_id, &host, r))
+        return false;
     if (!pause_discovery(r)) return false;
     const sl_host *paired = sl_host_find(&r->store.registry, r->active.host.id);
     uint8_t selected[32];
@@ -1150,6 +1300,7 @@ static bool request_stream(sl_runtime *r, bool network_test) {
     IHS_StreamingRequest req = {
         .networkTest = network_test,
         .keySteamId = r->active.host.account,
+        .allowSDR = NSL_HAVE_SNS,
         .streamingEnable = {config->enable_video_streaming, config->enable_audio_streaming,
                             config->enable_input_streaming},
         .maxResolution = {network_test ? 1280 : r->stream_limits.width,
@@ -1174,13 +1325,7 @@ static bool request_stream(sl_runtime *r, bool network_test) {
             sl_media_allow_video();
         pthread_mutex_unlock(&r->lock);
     }
-    if (cloud_online && !direct_ready) {
-        diagnostic_phase("selected_cloud_sns", 0);
-        sl_remote_stream_options options = {.sns = NSL_HAVE_SNS, .network_test = network_test};
-        return sl_remote_stream_ex(sl_remote_connection_protocol(r->remote),
-                                    r->active.host.client_id, &req, &options);
-    }
-    diagnostic_phase("selected_lan_udp", 0);
+    diagnostic_phase("selected_control_owner", 0);
     return IHS_ClientStreamingRequest(r->client, &host, &req);
 }
 static bool launch_network_test(sl_runtime *r, IHS_SessionInfo info) {
@@ -1410,15 +1555,11 @@ static void execute(sl_runtime *r, sl_command cmd) {
             fail(r, sl_tr(SL_T_CLOUD_UNAVAILABLE));
         return;
     }
-    bool cloud_online = host_cloud_online(r, cmd.host.client_id);
     IHS_HostInfo h;
     bool have_address = host_info(r, &cmd.host, &h);
-    IHS_HostInfo direct;
-    if (cmd.type == SL_CMD_STREAM && local_host(r, cmd.host.client_id, &direct)) {
-        h.address = direct.address;
-        have_address = true;
-    }
-    if (!have_address && !(cmd.type == SL_CMD_STREAM && cloud_online)) {
+    if (cmd.type == SL_CMD_STREAM)
+        have_address = control_host(r->client, cmd.host.client_id, &h, r);
+    if (!have_address) {
         fail(r, sl_tr(SL_T_ADDRESS_UNAVAILABLE));
         return;
     }
@@ -1841,6 +1982,7 @@ static void *worker_main(void *ctx) {
 #if NSL_DIAGNOSTICS
         uint64_t cloud_began = sl_system_now();
 #endif
+        flush_control(r);
         sl_remote_connection_update(r->remote, now);
 #if NSL_DIAGNOSTICS
         uint64_t cloud_ended = sl_system_now();
@@ -1943,10 +2085,11 @@ static void *worker_main(void *ctx) {
     pthread_mutex_lock(&r->lock);
     r->facts.video_clean = true;
     pthread_mutex_unlock(&r->lock);
+    stop_client(r);
+    flush_control(r); /* Producers joined; no later frame can outlive CM. */
     sl_log("cleanup: cloud connection close");
     sl_remote_connection_destroy(r->remote);
     r->remote = NULL;
-    stop_client(r);
     if (r->provider) {
         stream_media_destroy_hid_provider(r->provider);
         r->provider = NULL;
@@ -2097,6 +2240,7 @@ void sl_runtime_destroy(sl_runtime *r) {
     if (r->udp >= 0)
         close(r->udp);
     sl_log("cleanup: runtime worker joined");
+    clear_control_locked(r); /* Worker/producers have been joined. */
     sl_directory_destroy(&r->directory);
     free(r->discovery_targets);
     sl_stream_settings_destroy(&r->settings);

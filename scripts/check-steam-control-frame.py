@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Compare production cloud control/signal framing with complete original sends.
 
-The other original manager route cases are retained as evidence, not claimed as
-native coverage. Native manager sending has no complete explicit endpoint; shared
-UDP/cloud transaction routing and caller key selection require separate tests.
+Other original manager startup/socket/session cases are retained as evidence,
+not claimed as native coverage. The actual IHS sender covers address-less cloud,
+explicit UDP, current verified cache and incomplete explicit source resolution.
+Shared transaction/key behavior is exercised separately by control_route_runtime;
+neither harness establishes real NAT traversal or SDK network behavior.
 """
 import argparse
 import gzip
@@ -36,6 +38,9 @@ def main():
         observed = subprocess.run([str(args.receiver), 'manager', str(case['input'].get('type', 0))],
                                   capture_output=True, text=True, check=True).stdout.strip()
         assert observed == case['output']['cloud'][0]['wire'], (case['name'], observed)
+        routed = subprocess.run([str(args.receiver), 'ihs', str(case['input'].get('type', 0))],
+                                capture_output=True, text=True, check=True).stdout.strip()
+        assert routed == observed, ('IHS '+case['name'], routed)
         checked += 1
     signal = subprocess.run([str(args.receiver), 'signal'], capture_output=True,
                             text=True, check=True).stdout.strip()
@@ -46,7 +51,13 @@ def main():
         assert received.stdout.strip() == ''.join(case['output']['delivered']), (case['name'], received.stdout)
         assert int(received.stderr.strip()) == case['output']['result'], (case['name'], received.stderr)
     assert checked == 9
-    print(f'PASS {checked} manager frames + separate transport send + {len(reference["receives"])} receives')
+    cases = {c['name']:c for c in reference['cases']}
+    for mode, name in [('ihs-direct','explicit'),('ihs-cache','cache'),
+                       ('ihs-incomplete-source','partial_explicit_port')]:
+        observed = subprocess.run([str(args.receiver), mode, '0'], capture_output=True,
+                                  text=True, check=True).stdout.strip()
+        assert observed == cases[name]['output']['udp'][0]['wire'], (name, observed)
+    print(f'PASS {checked} manager + {checked} IHS frames, 3 IHS UDP routes, bridge send + {len(reference["receives"])} receives')
 
 
 if __name__ == '__main__':

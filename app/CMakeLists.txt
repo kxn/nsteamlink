@@ -390,7 +390,8 @@ if(NSL_PLATFORM STREQUAL "desktop")
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client)
     target_compile_options(nsl-control-frame-oracle PRIVATE -Wall -Wextra -UNDEBUG)
     target_link_libraries(nsl-control-frame-oracle PRIVATE nsl_remote)
-    target_link_options(nsl-control-frame-oracle PRIVATE -Wl,--wrap=IHS_CryptoSymmetricEncrypt)
+    target_link_options(nsl-control-frame-oracle PRIVATE -Wl,--wrap=IHS_CryptoSymmetricEncrypt
+        -Wl,--wrap=IHS_BaseSend)
     add_test(NAME control_frame_official_vectors COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-control-frame.py"
         --receiver $<TARGET_FILE:nsl-control-frame-oracle>)
@@ -529,6 +530,19 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_link_options(nsl-host-directory-runtime PRIVATE -Wl,--wrap=recvfrom -Wl,--wrap=sendto -Wl,--wrap=time)
     add_test(NAME host_directory_runtime COMMAND nsl-host-directory-runtime)
     set_tests_properties(host_directory_runtime PROPERTIES TIMEOUT 15)
+    add_executable(nsl-control-route-runtime tests/control_route_runtime.c)
+    target_include_directories(nsl-control-route-runtime PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf)
+    target_compile_definitions(nsl-control-route-runtime PRIVATE NSL_HAVE_SNS=$<BOOL:${NSL_BUILD_SNS}>)
+    target_compile_options(nsl-control-route-runtime PRIVATE -Wall -Wextra -Wno-unknown-pragmas -UNDEBUG)
+    target_link_libraries(nsl-control-route-runtime PRIVATE nsl_platform)
+    target_link_options(nsl-control-route-runtime PRIVATE -Wl,--wrap=recvfrom -Wl,--wrap=sendto
+        -Wl,--wrap=time -Wl,--wrap=sl_remote_connection_create
+        -Wl,--wrap=sl_remote_connection_protocol -Wl,--wrap=sl_remote_connection_destroy
+        -Wl,--wrap=sl_sns_create)
+    add_test(NAME control_route_runtime COMMAND nsl-control-route-runtime)
+    set_tests_properties(control_route_runtime PROPERTIES TIMEOUT 20)
     add_executable(nsl-resolution-render tests/test_resolution_render.c)
     target_include_directories(nsl-resolution-render PRIVATE platforms/common ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
     target_link_libraries(nsl-resolution-render PRIVATE nsl_gfx)
@@ -866,7 +880,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_compile_options(nsl-pairing-runtime PRIVATE -UNDEBUG -Wall -Wextra)
     target_link_libraries(nsl-pairing-runtime PRIVATE nsl_platform)
     target_link_options(nsl-pairing-runtime PRIVATE -Wl,--wrap=IHS_ClientAuthorizationRequest
-        -Wl,--wrap=IHS_ClientSend -Wl,--wrap=IHS_ClientBroadcast
+        -Wl,--wrap=IHS_ClientSend -Wl,--wrap=IHS_ClientSendControl -Wl,--wrap=IHS_ClientBroadcast
         -Wl,--wrap=sl_auth_save -Wl,--wrap=sl_system_random
         -Wl,--wrap=IHS_ClientStreamingRequest -Wl,--wrap=IHS_CryptoRandomBytes
         -Wl,--wrap=sl_network_stats_load -Wl,--wrap=sl_host_key_save

@@ -43,6 +43,9 @@ typedef struct sl_remote_callbacks {
     /* Framing and header have been parsed; body is borrowed for this callback.
      * Stream signal integrity/inner parsing belongs to the per-stream bridge. */
     void (*transport_signal)(uint64_t client_id, const uint8_t *body, size_t, void *);
+    /* Optional manager owner for non-status, non-transport control frames.
+     * true consumes the frame; copy/parse before return if deferring it. */
+    bool (*control_packet)(const uint8_t *wire, size_t, void *);
 } sl_remote_callbacks;
 
 /* All methods and callbacks run on one owner thread. No sockets or threads are

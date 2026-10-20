@@ -694,6 +694,42 @@ Stop 的可见/cloud 容器为空，桥接 HMAC 使用独立 Python 标准库提
 桥接器在状态 0/4 且仍有需求时会直接 BConnect，覆盖 session 自己等待 deadline 的机会；
 完整调度规则、队列及销毁路径见 §13。新增本地资源上限必须标明本项目策略。
 
+#### 控制 owner 的地址与承载边界
+
+**Evidence（同一固定 core）**：开流 `0x799798`、重新授权 `0x79a588`、授权取消
+`0x799a70` 和开流取消 `0x799b84` 都以空 CIPAndPort、当前目标 client ID 调用
+SendMessage。取消函数先检查可见记录或显式主机 hint，不能仅凭一个持久 ID 无条件发送。
+相对地，授权确认 `0x79dff0`、Proof 回复 `0x79e34c/0x79e574` 复制本次收包来源地址。
+开流响应的成功分支 `0x79eaa0–0x79eacc` 同样保存本次来源，仅在来源 IP/端口完整时
+将端口替换为响应中的流端口；不读取启动时的地址快照。
+
+**Evidence（响应身份与迟到取消）**：`BProcess` 只拒绝零 header client ID，随后直接分派
+开流响应；`0x79e884–0x79e88c` 匹配非零 request_id，不比较目标 client ID、instance 或
+来源地址。成功时使用回复身份的持久 SteamID，并保存本次来源。迟到/零 request_id 的
+InProgress 分支内联构造取消，以收到的 client ID 和来源直接调用 SendMessage；它不是
+上面的隐式 `SendCancelStreamingRequest`，因此不受可见记录/hint 的前置门控。
+这不改变 Proof 必须匹配当前目标身份的单独规则，也不能推广到授权响应的处理顺序。
+
+**接线约束**：已知主机的 LAN 与 cloud 控制消息应进入同一事务、同一当前 secret 和
+同一接收/重试 owner。每次隐式发送查询目录；完整显式回复地址绕过目录。流传输能力与
+控制报文采用 UDP/CM 是不同选择，具备 SNS 后端时可同时公布 UDP/SDR，最终按响应材料
+创建传输。认证 PIN、connect PIN 密文快照和 Proof 更新规则保持 §11 的独立语义。
+传输信令仍由独立桥接连接处理，不将 type12 混入 manager 的设备 token 规则。
+
+发现发送也读取该时刻的地址目录，关注 ID 的操作顺序仍由发现 owner 管理。
+不能在当次 Update 已发送后才发布刚接收的 status 地址，也不能绕过旧的待处理关注操作，
+用一个新快照反向覆盖它们。跨线程的云端发送必须交给连接 owner；断开后清除旧会话
+队列，不能把旧帧重新封装进新 session。停止/join 所有生产者后才能释放队列和目录。
+
+`control_frame_oracle.c` 将实际 IHS sender 的地址空缺、完整显式来源、首个已验证缓存、
+不完整显式来源与上述原指令输出比较；保留 UDP send 返回失败而不追加 cloud 的观察。
+`control_route_runtime.c` 串起生产 runtime、IHS 接收/定时器/授权队列和 CM framing，
+核对同编号跨承载重试、实时发现地址、Proof 轮换与 PIN 快照、CM 会话替换、回复身份及
+来源、显式迟到取消和最终 SDR 材料；独立授权计时器另验证跨线程发送交付。
+UDP 系统调用、CM 连接工厂/服务边界、墙钟和最终 SDK 构造器均为显式 provider；
+清空地址目录是受控输入，不是新增的 NAT/TTL 失效策略。该测试没有真实 Steam、TLS、
+NAT、SDK 网络或 Switch，不覆盖 BStart/socket 创建失败、全部授权入站身份规则和持久文件。
+
 ### 9.5 SDR 初始化参数与网络库职责
 
 **Evidence：arm64 `UpdateState 0x801330–0x801448`，x86_64 shell `0xd28829–0xd28945` 交叉对应。**
@@ -958,8 +994,14 @@ arm64 的结果比较分支位于 `0x79d92c`、`0x79d998` 起的指令中，并�
 过期回复分支对带 auth_key 的消息发送 AuthorizationConfirmed(result=8, Canceled)，无 auth_key
 则忽略（`0x79d9c0–0x79da44`）。**函数级观察**：在外部密钥交换桩返回成功的离线输入中，
 状态 4 收到非目标来源的 Success+auth_key，会先交换并确认 Success，再因来源不匹配确认 Canceled。
-这证明检查顺序，不能据此宣称真实网络可绕过授权；上游分派能否到达该输入、真实密码校验是否
-接受，均未作该实测。
+**补充证据修订**：撤回“上游分派能否到达、真实密码校验是否接受均未作该实测”的过宽
+表述。固定 shell 的 `steam-authorization-lifetime-reference` 中 `routing/foreign` 输入
+执行完整 BProcess、原 header/body 解析和原密码交换，非目标 ID=456 的有效密钥材料得到
+返回 1、derived=1、对 456 的保存调用、Success 后 Canceled 两次确认，manager 仍为 4。
+原指令重放与该固定向量一致。网络入站、身份/熵及最终文件/发送端点是显式 provider；
+它证明该受控有效材料可经原分派到达，不等于真实网络可绕过授权。
+原生已知主机授权入口当前仍提前过滤目标身份，不能将匹配目标的交换对照当成这条完整
+入站顺序已对齐；实现须区分选中事务目标、回复来源身份及持久保存的命名空间。
 
 密钥交换算法仍按认证参考：
 

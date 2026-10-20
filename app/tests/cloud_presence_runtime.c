@@ -4,6 +4,13 @@
 #include "../platforms/common/runtime.c"
 #include "ui/ui_events.h"
 #include <assert.h>
+static bool test_cloud_online(sl_runtime *r, uint64_t id) {
+    pthread_mutex_lock(&r->lock);
+    const sl_directory_host *h = sl_directory_find(r->directory, id);
+    bool cloud = h && h->cloud;
+    pthread_mutex_unlock(&r->lock);
+    return cloud;
+}
 
 static void drain(sl_runtime *r, sl_ui_model *ui) {
     sl_runtime_event event;
@@ -47,10 +54,10 @@ int main(void) {
     sl_host *h = sl_host_find(&ui.store.registry, stored->id);
     assert(h && sl_host_online(h, ui.now));
     assert(sl_ui_host_source(&ui, h) == SL_DISCOVERY_LAN);
-    assert(host_cloud_online(&r, 123));
+    assert(test_cloud_online(&r, 123));
 
     cloud_offline(123, &r);
-    assert(!host_cloud_online(&r, 123));
+    assert(!test_cloud_online(&r, 123));
     IHS_HostInfo retained;
     assert(local_host(&r, 123, &retained)); /* Offline does not erase the address cache. */
     drain(&r, &ui);
@@ -74,7 +81,7 @@ int main(void) {
     drain(&r, &ui);
     assert(sl_host_online(h, ui.now));
     assert(sl_ui_host_source(&ui, h) == SL_DISCOVERY_LAN && h->paired);
-    assert(!host_cloud_online(&r, 123));
+    assert(!test_cloud_online(&r, 123));
     for (int i = 0; i < ui.layout.count; ++i)
         if (ui.layout.controls[i].action == SL_RECENT)
             assert(!ui.layout.controls[i].disabled);

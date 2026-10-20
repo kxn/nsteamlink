@@ -3,14 +3,48 @@
  * the production TU exposes its internal manager sender without adding a public
  * testing API or compiling a second copy of the algorithm. */
 #include "../platforms/common/remote_protocol.c"
-#include "stream_bridge.h"
+#include "client_pri.h"
 #include "protobuf/remoteplay.pb-c.h"
+#include "stream_bridge.h"
 #include <assert.h>
 
 static unsigned packets, token_calls;
 static uint8_t delivered[128];
 static size_t delivered_size;
 static int incoming_result = 1; /* Other valid message types are ignored. */
+static const char *ihs_mode;
+static unsigned resolves, direct_sends;
+static void resolve_address(IHS_Client *client, uint64_t peer, IHS_SocketAddress *out, void *ctx) {
+    (void)client;
+    (void)ctx;
+    assert(peer == 123);
+    ++resolves;
+    *out = (IHS_SocketAddress){0};
+    if (strcmp(ihs_mode, "ihs")) {
+        assert(IHS_IPAddressFromString(&out->ip, "10.0.0.8"));
+        out->port = 31000;
+    }
+}
+bool __wrap_IHS_BaseSend(IHS_Base *base, IHS_SocketAddress address, const IHS_Buffer *wire) {
+    (void)base;
+    IHS_IPAddress expected;
+    bool explicit_source = !strcmp(ihs_mode, "ihs-direct");
+    assert(IHS_IPAddressFromString(&expected, explicit_source ? "192.0.2.4" : "10.0.0.8"));
+    assert(!IHS_IPAddressCompare(&address.ip, &expected) &&
+           address.port == (explicit_source ? 27036 : 31000));
+    for (size_t i = 0; i < wire->size; ++i)
+        printf("%02x", wire->data[i]);
+    putchar('\n');
+    ++packets;
+    ++direct_sends;
+    return false; /* An attempted UDP failure must not append a cloud fallback. */
+}
+static bool send_remote(IHS_Client *client, uint64_t peer, const uint8_t *wire, size_t size,
+                        void *ctx) {
+    (void)client;
+    assert(peer == 123);
+    return sl_remote_packet(ctx, 88, wire, size);
+}
 int __wrap_IHS_CryptoSymmetricEncrypt(const uint8_t *in, size_t size,
         const uint8_t *key, size_t key_size, uint8_t *out, size_t *out_size) {
     uint8_t id[8];
@@ -68,6 +102,39 @@ int main(int argc, char **argv) {
     sl_remote *r = sl_remote_create(&config, &cb, NULL);
     assert(r);
     r->session = 1001; /* Session boundary, no service interaction. */
+    if (!strncmp(argv[1], "ihs", 3)) {
+        assert(argc == 3);
+        ihs_mode = argv[1];
+        assert(!strcmp(ihs_mode, "ihs") || !strcmp(ihs_mode, "ihs-direct") ||
+               !strcmp(ihs_mode, "ihs-cache") || !strcmp(ihs_mode, "ihs-incomplete-source"));
+        IHS_Init();
+        IHS_Client client = {0};
+        IHS_BaseInit(&client.base, &config, NULL, true);
+        IHS_ClientRoutingCallbacks routing = {.resolve = resolve_address,
+                                              .sendRemote = send_remote};
+        IHS_ClientSetRoutingCallbacks(&client, &routing, r);
+        IHS_HostInfo host = {.clientId = 123};
+        assert(IHS_IPAddressFromString(&host.address.ip, "203.0.113.99"));
+        host.address.port = 27036;
+        IHS_SocketAddress explicit_source = {.port = 27036};
+        assert(IHS_IPAddressFromString(&explicit_source.ip, "192.0.2.4"));
+        if (!strcmp(ihs_mode, "ihs-incomplete-source"))
+            explicit_source.port = 0;
+        bool supplied =
+            !strcmp(ihs_mode, "ihs-direct") || !strcmp(ihs_mode, "ihs-incomplete-source");
+        CMsgRemoteClientBroadcastDiscovery msg = CMSG_REMOTE_CLIENT_BROADCAST_DISCOVERY__INIT;
+        msg.has_seq_num = true;
+        msg.seq_num = 17;
+        assert(IHS_ClientSendControl(&client, &host, supplied ? &explicit_source : NULL,
+                                     (ERemoteClientBroadcastMsg)atoi(argv[2]), &msg.base));
+        bool cloud = !strcmp(ihs_mode, "ihs");
+        assert(packets == 1 && token_calls == (unsigned)cloud && direct_sends == (unsigned)!cloud);
+        assert(resolves == (unsigned)(strcmp(ihs_mode, "ihs-direct") != 0));
+        IHS_BaseDestroy(&client.base);
+        IHS_Quit();
+        sl_remote_destroy(r);
+        return 0;
+    }
     if (!strcmp(argv[1], "receive")) {
         assert(argc == 3 && strlen(argv[2]) % 2 == 0 && strlen(argv[2]) < 512);
         uint8_t wire[256];

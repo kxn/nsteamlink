@@ -531,6 +531,20 @@ static bool discovery(sl_remote *r, const uint8_t *data, size_t size) {
     if (!h)
         return false;
     const uint8_t *body = data + 16 + hs;
+    bool control = h->msg_type == k_ERemoteDeviceAuthorizationRequest ||
+                   h->msg_type == k_ERemoteDeviceAuthorizationResponse ||
+                   h->msg_type == k_ERemoteDeviceAuthorizationConfirmed ||
+                   h->msg_type == k_ERemoteDeviceAuthorizationCancelRequest ||
+                   h->msg_type == k_ERemoteDeviceStreamingRequest ||
+                   h->msg_type == k_ERemoteDeviceStreamingResponse ||
+                   h->msg_type == k_ERemoteDeviceStreamingProgress ||
+                   h->msg_type == k_ERemoteDeviceStreamingCancelRequest ||
+                   h->msg_type == k_ERemoteDeviceProofRequest ||
+                   h->msg_type == k_ERemoteDeviceProofResponse;
+    if (control && r->cb.control_packet && r->cb.control_packet(data, size, r->ctx)) {
+        cmsg_remote_client_broadcast_header__free_unpacked(h, NULL);
+        return true;
+    }
     if (h->msg_type == k_ERemoteClientBroadcastMsgStatus)
         status(r, h, body, ms);
     else if (h->msg_type == k_ERemoteDeviceStreamTransportSignal) {

@@ -7,6 +7,13 @@
 #include "client/discovery_pri.h"
 #include "ui/ui_events.h"
 #include <assert.h>
+static bool test_cloud_online(sl_runtime *r, uint64_t id) {
+    pthread_mutex_lock(&r->lock);
+    const sl_directory_host *h = sl_directory_find(r->directory, id);
+    bool cloud = h && h->cloud;
+    pthread_mutex_unlock(&r->lock);
+    return cloud;
+}
 
 static uint8_t packet[2048];
 static size_t packet_size;
@@ -209,7 +216,7 @@ int main(void) {
     cloud_observed(&cloud, &r);
     pthread_mutex_lock(&r.lock); int64_t seen = h->last_status; pthread_mutex_unlock(&r.lock);
     refresh_presence(&r, 15000, seen+300);
-    assert(host_cloud_online(&r, 123));
+    assert(test_cloud_online(&r, 123));
     pthread_mutex_lock(&r.lock); assert(h->visible); pthread_mutex_unlock(&r.lock);
     cloud_connected(false, &r);
     refresh_presence(&r, 20000, seen+29);
@@ -223,7 +230,7 @@ int main(void) {
     while (sl_runtime_poll(&r, &event)) {}
     send_status(true);
     wait_event(&r, SL_EVENT_HOST_OFFLINE);
-    assert(!host_cloud_online(&r, 123) && local_host(&r, 123, &direct));
+    assert(!test_cloud_online(&r, 123) && local_host(&r, 123, &direct));
     source_port = 32000;
     send_status(false);
     wait_event(&r, SL_EVENT_HOST);

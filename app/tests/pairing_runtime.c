@@ -40,9 +40,9 @@ void __real_IHS_ClientSetDiscoveryCallbacks(IHS_Client *, const IHS_ClientDiscov
 void __wrap_IHS_ClientSetDiscoveryCallbacks(IHS_Client *c,
     const IHS_ClientDiscoveryCallbacks *callbacks, void *context) {
     __real_IHS_ClientSetDiscoveryCallbacks(c, callbacks, context);
-    /* Known-host authorization fixtures supply prior discovery explicitly.
+    /* LAN authorization fixtures supply prior discovery explicitly.
      * The Beta-universe case still waits for its actual UDP status below. */
-    if (automatic && !discover_universe)
+    if (!discover_universe)
         test_discovery_observed(c, callbacks, context, peer_port);
 }
 /* This fixture verifies LAN authorization entropy and actual UDP ownership.
@@ -132,12 +132,8 @@ bool __wrap_IHS_ClientBroadcast(IHS_Client *c, ERemoteClientBroadcastMsg type,
     }
     return __real_IHS_ClientBroadcast(c, type, m);
 }
-bool __wrap_IHS_ClientSend(IHS_Client *c, IHS_SocketAddress a, ERemoteClientBroadcastMsg type,
-                           ProtobufCMessage *m) {
-    if (discover_universe && type == k_ERemoteClientBroadcastMsgDiscovery) {
-        a.port = peer_port;
-        assert(IHS_IPAddressFromString(&a.ip, "127.0.0.1"));
-    }
+static void observe_control_send(IHS_Client *c, ERemoteClientBroadcastMsg type,
+                                 ProtobufCMessage *m) {
     if (type == k_ERemoteDeviceAuthorizationConfirmed &&
         ((CMsgRemoteDeviceAuthorizationConfirmed *)m)->result == 0) {
         assert(atomic_load_explicit(&peer_secret_ready, memory_order_acquire));
@@ -175,7 +171,23 @@ bool __wrap_IHS_ClientSend(IHS_Client *c, IHS_SocketAddress a, ERemoteClientBroa
         assert(!memcmp(saved->secret, mirror && !proof_file_fail ? rotated : peer_secret, 32));
         atomic_fetch_add(&proof_sent, 1);
     }
+}
+bool __wrap_IHS_ClientSend(IHS_Client *c, IHS_SocketAddress a, ERemoteClientBroadcastMsg type,
+                           ProtobufCMessage *m) {
+    if (discover_universe && type == k_ERemoteClientBroadcastMsgDiscovery) {
+        a.port = peer_port;
+        assert(IHS_IPAddressFromString(&a.ip, "127.0.0.1"));
+    }
+    observe_control_send(c, type, m);
     return __real_IHS_ClientSend(c, a, type, m);
+}
+bool __real_IHS_ClientSendControl(IHS_Client *, const IHS_HostInfo *, const IHS_SocketAddress *,
+                                  ERemoteClientBroadcastMsg, ProtobufCMessage *);
+bool __wrap_IHS_ClientSendControl(IHS_Client *c, const IHS_HostInfo *host,
+                                  const IHS_SocketAddress *source, ERemoteClientBroadcastMsg type,
+                                  ProtobufCMessage *m) {
+    observe_control_send(c, type, m);
+    return __real_IHS_ClientSendControl(c, host, source, type, m);
 }
 static void response(int fd, const struct sockaddr_in *to, const uint8_t *masked, const char *pin) {
     uint8_t hash[32], public[32], private[32], ours[32], auth[32], id[8], token[64];
