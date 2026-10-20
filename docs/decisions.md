@@ -2188,7 +2188,63 @@ Decision：
 待验证：Switch 真机上的完整查询、下载、替换与重新启动；hbmenu 与 HOME 入口两种启动方式下
 argv[0] 的实际取值；下载中途断网、SD 卡空间不足时的提示与回滚结果。
 
-## D-061：免登录云端配对入口与控制通道的所有权（2026-10-16）
+
+## D-061：区分串流分辨率、输出缓冲与物理显示（2026-10-19）
+
+Evidence：`runtime.c` 的开流请求、Session 配置副本与 configuring callback 原本均限制
+1280×720；`switch/gfx.c` 的 swapchain 也固定 1280×720。因此只修改请求不能得到原生
+1080p 输出。`video_pipeline.c`、`switch/video_surface.c` 已接纳最高 1920×1080，NV12
+backing 的 pitch/storage-height 单独校验；`padding1080.h264` 与 framemd5 是已有合成 fixture。
+`ihslib/src/client/streaming.c:StreamingRequestTimer` 序列化 maximum_resolution_x/y，
+`ch_control_negotiation.c:OnNegotiationInit` 从完整 client config 构造 SetConfig，
+这两处是分辨率策略的接入点，不改变授权或连接 PIN 的语义。
+
+Evidence：libnx `AppletOperationMode_Console` 表示 dock/TV，不能用 APM 性能档位代替。
+[deko3d Swapchain::initialize/presentImage/setCrop](https://github.com/devkitPro/deko3d/blob/master/source/dk_swapchain.cpp)
+根据 image 配置 NWindow 尺寸，提供 crop 更新；
+[libnx nwindowQueueBuffer](https://github.com/switchbrew/libnx/blob/master/nx/source/display/native_window.c)
+将当前 crop 拷入每个 queued buffer 的输入。模式改变不要求销毁已有 buffer。
+`appletGetOperationMode` 读取由 applet 消息循环更新的缓存，不增加每帧 IPC。
+
+Conclusion：内屏物理尺寸不限制编码/解码尺寸；可以在掌机接收/解码 1080p 再缩放显示。
+撤回 D-005 背景与 kickoff 中把“1080p 必须超频”当作普遍硬限制的断言；现有源码/离线像素
+证据不能证明真机 1080p60 性能，也不能证明所有码率都需要超频。掌机和底座的频率、负载不同，
+掌机管线测试不能替代底座帧率、功耗、HDMI 物理输出或热插拔验收。
+
+Decision：
+
+1. 用户可选自动、720p、1080p。自动在每次普通开流时按 operation mode 选择掌机 720p / 底座
+   1080p，H264、最高 60 fps，不超频。手动 1080p 在掌机也可用。选项位于设置→分辨率。
+2. 选择写入独立 `video.conf`（resolution=0/720/1080），与 profile.bin 身份布局、host 写回的
+   完整 streaming_settings.bin 分离。保留完整 host 配置与未知字段；有效请求尺寸覆盖此前会话
+   保存的 desired_resolution_x/y，避免自动被上一次 720p 限制锁住。
+3. 从普通 ticket 到 SetConfig 使用同一份尺寸快照；编辑在下次连接生效。插拔底座只改变当前
+   本地输出，视频保持原协商尺寸，重连后再选择。测网继续使用原有专用 Session 和请求上限。
+4. 两张最大 1080p present image 只分配一次；每次提交以掌机 720p / 底座 1080p 的 crop 与
+   viewport/scissor 渲染，保持原 1280×720 逻辑 UI/输入。视频直接采样原始解码面，没有中间
+   720p 视频 target。不因模式变化等待 GPU idle、替换 swapchain 或停止/重建 decoder。
+5. 普通截图仍为逻辑 720p；native readback 记录完成提交的真实尺寸，不读取后来变化的模式。
+   Switch probe 可强制 1080p 输出，内置软件/硬件 fixture、逐像素高频细节 oracle、清理与资源
+   统计；由脚本自动部署和收集结果，物理显示/loader 返回保持独立证据边界。
+6. 正式构建保留自动/720p/1080p 三个选择，默认自动。单独的 `NSL_TEST_FORCE_1080=ON`
+   手测构建固定请求/渲染 1080p，界面及 NACP 标明测试版；强制值不写入 video.conf。
+   测试构建不运行自更新器，使用独立 NRO 文件名，避免替换正式 HOME 入口目标。
+
+## D-062：按功能分类的设置与精简串流菜单
+
+日期：2026-10-19。
+
+Decision：按用户确认的菜单结构，首页 X 直接进入设置，顶层为画面与声音、网络、主机管理、应用。
+不设置常用项或重复快捷入口；D-060 的更新开关移到应用，D-061 的分辨率入口移到画面与声音。
+声音、网络纠错、自动检查更新使用图形开关；画面偏好、分辨率、带宽、语言入口显示已保存值。
+只有进入分类、选择或输入页面的入口带箭头，直接操作和确认动作不带箭头。
+串流内移除所有设置入口，标题使用“串流”，仅保留继续游玩、结束游戏并断开、断开连接。
+
+Evidence：`app/platforms/common/runtime.c` 的 `SL_CMD_END_GAME` 分支发送 StopGame，并在主机确认停止后
+执行 `stop_session()` 与 `SL_EVENT_STOPPED`；“结束游戏并断开”沿用该流程，仅明确现有动作含义。
+`SL_CMD_STOP` 继续只断开本地串流，不改变主机游戏。菜单重组不修改认证、网络测试或会话协议。
+
+## D-A061：免登录云端配对入口与控制通道的所有权（2026-10-16）
 
 Evidence：官方云端 CreateSession/StartPairing/SetPairingInfo 不要求 Steam 登录；
 授权使用主机端输入的四位配对码和设备 X25519 密钥交换。固定样本的调用链、独立服务探针、
@@ -2223,7 +2279,7 @@ Decision：
 
 ---
 
-## D-062 IHS 数据报适配与 SNS 的实例、信令和信任边界
+## D-A062 IHS 数据报适配与 SNS 的实例、信令和信任边界
 
 日期：2026-10-16
 
@@ -2250,7 +2306,7 @@ Decision：
    独立云端连接和配置请求、Kill SDK，最后关闭 manual mode。禁止遗留服务线程。
 5. AppID=353380。网络配置 HTTPS 保持 TLS 校验，先导入 CA 与十进制 revoked key ID，
    再安装包含私钥的主机返回证书。不得记录证书、身份、密钥，或关闭 peer 证书检查。
-   SDR 不要求 UDP port 非零；连接和 security PIN 仍遵守 D-061/认证参考。
+   SDR 不要求 UDP port 非零；连接和 security PIN 仍遵守 D-A061/认证参考。
 6. 64 项/256KiB 外层信令队列、60000 字节单信令、4096 项 datagram 队列及 1MiB
    配置 JSON/32768 tokens 是本地资源限制，不是 Valve 协议常量。耗尽显式拒绝/失败，
    不按候选或哈希静默覆盖。异步配置请求的 10s connect/25s 总预算也属于本地策略。
@@ -2259,7 +2315,7 @@ Decision：
 
 ---
 
-## D-063 私有 SDR transport、Switch crypto 与 SDK 构建副本
+## D-A063 私有 SDR transport、Switch crypto 与 SDK 构建副本
 
 日期：2026-10-16
 
@@ -2283,7 +2339,7 @@ Decision：
    原有 Donna/reference 实现。libnx 使用 POSIX poll、连接的 UDP loopback wake pair
    和 nifm 地址查询，不引入专有 Nintendo SDK。固定 protobuf C++ v21.12 在工作区
    prefix 交叉编译；host protoc 必须版本匹配且可在构建机执行。
-4. 取代 D-062 第 7 项的阶段性能力声明：SNS 构建时，只有云端可达的主机可请求
+4. 取代 D-A062 第 7 项的阶段性能力声明：SNS 构建时，只有云端可达的主机可请求
    transport=4；正常 runtime 通过同一 backend 透明选择 ICE/SDR。已验证的 LAN
    保留 IHS 原生 UDP。没有实际 UDP 目标的 SNS session 使用稳定的逻辑 endpoint，
    不能将它误作物理发包地址，也不能将未验证的公布地址升格为 LAN 直连。
@@ -2306,7 +2362,7 @@ PC=`0x1e5930`；按首版源码重建的 ELF 在此处为从空设备函数表�
 
 ---
 
-## D-064 Switch SNS 私有身份 fixture 的交付和加密回读
+## D-A064 Switch SNS 私有身份 fixture 的交付和加密回读
 
 日期：2026-10-16
 
@@ -2351,7 +2407,7 @@ Evidence correction：首个完整网络 fixture 在 `embedded_profile` 阶段�
 NRO 的 RomFS 文件表核对完整 profile/key 字节，而非仅核对输入目录或文件时间。
 这个错误属于测试交付路径，不能当作 TLS、证书或 SDR 失败证据。
 
-## D-065：SDR 路由快照与故障恢复的证据边界（2026-10-17）
+## D-A065：SDR 路由快照与故障恢复的证据边界（2026-10-17）
 
 问题：原适配器公布已建立 session 的全部路线，每次 ping 变化都可能重发快照。
 固定客户端的四轮排序、rank 并集、最终发送顺序与旧消息迟滞可以独立验证；候选图来源、
@@ -2379,7 +2435,7 @@ Switch 同类旧记录保留其角色/状态证据范围，不自动升级为 E2
 1. global good-enough 后才导入 peer routes 到 selector 并构造公布快照；原始 peer 消息仍缓存。
    本地 front 候选保留用于初始 pursue，不把此门槛变成停止维护已有路径。
 2. front 测量可作为 RelayCluster 提示。原适配器仅从已有本地 session 生成 Route；此受限
-   模型由 D-070 撤回，改接 nearest、对端 token 和显式 Route 的实际候选生产链。
+   模型由 D-A070 撤回，改接 nearest、对端 token 和显式 Route 的实际候选生产链。
 3. 候选执行四轮 rank 并集、cluster 必要项提升、完整 rank/分数/索引排序与旧消息迟滞。
    仅 controlling primary 强制公布，并检查旧首项。token、penalty、近期 ping 区间与
    interior score 校验和必要项覆盖共同决定复用；迟滞不改变 active 切路阈值。
@@ -2394,19 +2450,19 @@ Switch 同类旧记录保留其角色/状态证据范围，不自动升级为 E2
 本决定不声称候选图和官方全等，也不宣称通过媒体或 NAT 变化下的恢复。nearest-three
 实际入口、同 POP 多 relay 及迁移的完整行为契约见 NETWORKING §21.19；验收状态只记 Issues。
 
-D-065 的所有者校正：SetSessionSelectQualityMetrics 的 `0x81c49c` 从 RelayServer+256 取
+D-A065 的所有者校正：SetSessionSelectQualityMetrics 的 `0x81c49c` 从 RelayServer+256 取
 失败计数；RelaySession LinkStats+4136 是另一组状态。撤回此前用 session timeout 推动
 base gap/100 分惩罚的适配。使用 root ping failure 及 root lastReceived，不能因两者通常
 同涨同落就合并。原始完整 base 函数用相反计数和 500000/1750000 微秒边界执行核对；
 这项修正不是端到端恢复完成的声明。
 
-D-065 的单包校正：官方受控样例的第二次复核捕捉到经新 primary 的一个有效 E2E 包，
+D-A065 的单包校正：官方受控样例的第二次复核捕捉到经新 primary 的一个有效 E2E 包，
 随后 IHS 业务仍因 inactivity 结束。因此撤回将“一包有效 E2E + Connected 保持”当作
 持续恢复证明的判断。fixture 改为暴露有效 E2E 观察计数，并在五秒保持的末尾检查新计数
 是否仍在一秒内增长；第一次见包只报告 OBSERVED，达到全部条件才报告 RECOVERED。
 这仍是控制通路的证据，不替代故障中的编码帧/业务流验收。
 
-## D-066：将 session ACK 请求接回 RelayServer 探测与 front RTT
+## D-A066：将 session ACK 请求接回 RelayServer 探测与 front RTT
 
 依据 NETWORKING §21.29 的原始调用链，relay ACK 请求同时登记 session 与 root 的回复
 期限；已有 root pending 不延长。有效 packed ACK RTT 同时刷新 front、session 测量并清 root
@@ -2419,20 +2475,20 @@ pending。两个失败计数仍独立，不能恢复为“用 session 失败直�
 同一个原因。传输恢复与媒体恢复分别验收；媒体模式显式请求桌面且单独打包，不能由纯网络
 模式意外触发。验收结果和剩余任务只记对应 GitHub Issues。
 
-D-066 的发送端接线还包括 §21.18 通用生产器：每次正常构造数据/stats 时，独立读取两组
+D-A066 的发送端接线还包括 §21.18 通用生产器：每次正常构造数据/stats 时，独立读取两组
 tracker 时钟来生成机会探测、到期探测和 aggressive 回复请求。只实现外层 thinker 的显式
 request 不等价。原始生产器与 C 函数对照覆盖该边界，SDK 活动级别通过公开 accessor 读取。
 
-## D-067：保留 primary 历史并按原始门槛发送切换报告
+## D-A067：保留 primary 历史并按原始门槛发送切换报告
 
 NETWORKING §21.30 定义 type 16 的旧 primary 数据包计数、101 门槛、新 relay 发送目标和
 current/previous quality。主路生效时保存快照；同一 relay 对象改地址也属于新的 primary。
 跨 POP 只重置并补连接 RTT 的最近样本，不借此清空 transport 确认状态或会话 ACK。
-报告的服务端效果不由客户端代码推断；多地址排序接线见 D-070，不能以消息的 telemetry
+报告的服务端效果不由客户端代码推断；多地址排序接线见 D-A070，不能以消息的 telemetry
 名称豁免实现或夸大恢复证据。原先遗漏的被移除主路原因与断流时刻按
 NETWORKING §21.32 在移除事件发生时保存，下一条主路生效时消费；token 剪枝不伪造销毁。
 
-## D-068：按原始外层契约交付 routes/ACK 并决定 CM 回退
+## D-A068：按原始外层契约交付 routes/ACK 并决定 CM 回退
 
 依据 NETWORKING §21.21、§21.31，primary 的 forward target 准备、probeWanted、ACK-only、
 stats 成功后的 root/E2E 健康门槛与 CM 回退属于独立交付策略。不能仅以 routes/ACK 在发送
@@ -2440,7 +2496,11 @@ stats 成功后的 root/E2E 健康门槛与 CM 回退属于独立交付策略。
 必要时 stats→signal→stats 的调用顺序。发送函数返回承载结果，网络恢复另由真实输入验收；
 该静态修正不构成断流根因或恢复成功的声明。
 
-## D-069：IHS 连接活动与客户端 Pause/Resume 使用独立所有者
+## D-A069：IHS 连接活动与客户端 Pause/Resume 使用独立所有者
+
+证据修订：以下保留旧实现决策的历史。主线原始指令复核（协议参考 §60、§65、§66、§157）
+已替代逐包 update、SetPaused 和旧断开重试 timer：当前外部承载共用 SessionReceiveCycle 的
+批末更新、SetForeground 事件顺序及单次 goodbye，再 stop/join；不沿用旧函数描述作为现行契约。
 
 STEAMLINK_PROTOCOL_RE 的“连接收包的无活动期限”由原始初始化、Update 和 Pause/Resume
 指令及 33 个输入确认。IHS 接收 worker 在现有循环的可选 update callback 检查连接级
@@ -2459,7 +2519,7 @@ Runtime 仅将应用 foreground 变化接入 whole-client pause，显式 StopVid
 事件，不增加网络模式选项。测试 fixture 的 pause 模式属于单独 media NRO，先收 30 帧、
 请求暂停两秒、恢复后要求再收到 30 个新编码帧；请求日志不冒充 owner 或主机已执行的确认。
 
-## D-070：分开 POP、relay 地址与 session，按官方事件维护迁移和 alternate
+## D-A070：分开 POP、relay 地址与 session，按官方事件维护迁移和 alternate
 
 依据 NETWORKING §21.33，保留共享 POP front/interior/failure/last-good 和每地址独立的
 own RTT、challenge、pending、ACK/序号/token；地址切换创建另一对象，不覆盖旧地址。
@@ -2477,7 +2537,7 @@ alternate 临时探测与正式 session 分开：完成只释放 probe，失败�
 先建立指定目标，再在进程中退役旧 endpoint，验收新 E2E 和新编码帧的持续窗口；故障注入
 与这些 API 不进入 release，也不据此升级直接断主路的恢复结论。正式 UI 不增加网络模式。
 
-## D-071 以独立 fixture 验证正式 runtime 的云端媒体和 UI 生命周期
+## D-A071 以独立 fixture 验证正式 runtime 的云端媒体和 UI 生命周期
 
 背景：独立 SNS/IHS 工具接收编码帧，只证明承载、鉴权和收流；它绕过正式应用的
 UI、解码器、呈现、音频队列和输入门控，不能替代这些集成行为的证据。
@@ -2508,7 +2568,7 @@ UI、解码器、呈现、音频队列和输入门控，不能替代这些集成
    不访问 SDK/session 所有权。`stream_media_get_snapshot()` 的原始 reliability
    成员并未填充，不能直接把它的零值当成没有 ACK；应使用 runtime owner 调用
    `IHS_SessionGetReliabilityStats()` 得到的采样。视频/音频仍读取正式媒体快照。
-5. Switch 复用 D-064 的私有 RomFS、独立 profile、AES-GCM 回读和 ACK 后清理。
+5. Switch 复用 D-A064 的私有 RomFS、独立 profile、AES-GCM 回读和 ACK 后清理。
    正式应用完整销毁 runtime、媒体、SDL 后，fixture 暂留同一次 platform/socket
    生命周期，完成身份和至多 8 KiB 私有诊断回读，再释放 platform 服务和 sockets。
    不重复初始化 socket，不借用普通客户端的 profile。清理仅遍历生成目录内的
@@ -2521,7 +2581,7 @@ UI、解码器、呈现、音频队列和输入门控，不能替代这些集成
 运行结果和剩余验收仅记录于 #46、#49；本文描述 fixture 契约，不维护任务状态。
 
 
-D-071 补充：桌面 runner 的 `--cloud-reconnect` 保持首页，不请求媒体。在已建立的
+D-A071 补充：桌面 runner 的 `--cloud-reconnect` 保持首页，不请求媒体。在已建立的
 CM WebSocket `curl_easy_recv` 调用点仅注入一次 CURLE_RECV_ERROR，交由正式 provider
 关闭旧 session；随后 fixture 暂停该 provider 的 update 20 秒，主线程和 runtime
 仍继续工作。要求 UI 的旧主机在线状态实际失效，再恢复更新，经真实服务新建匿名
@@ -2530,7 +2590,7 @@ session/重订阅，直到同一已配对主机在 UI 恢复在线，最后从�
 这覆盖连接读错误和真实重建，不把本地 TTL 到期称为收到服务端 Offline 消息，
 亦不将重建自动等同于取消 PIN 或退订验收。
 
-D-071 补充：桌面 `--cloud-initial-failure` 让正式 discovery provider 请求真实 CM
+D-A071 补充：桌面 `--cloud-initial-failure` 让正式 discovery provider 请求真实 CM
 目录，并将首轮各候选的 libcurl TLS 完成结果统一替换为 CURLE_COULDNT_CONNECT。
 轮换、耗尽、清理和随机退避仍由正式 provider 执行；第二轮恢复真实结果，直到匿名
 连接和 UI 主机在线，再正常退出。验收要求至少两个不同候选、首轮无重复、至少一次
@@ -2541,7 +2601,7 @@ D-071 补充：桌面 `--cloud-initial-failure` 让正式 discovery provider 请
 这项测试验证 provider 配置分支，不冒充完整媒体 bridge 重连或真实服务端故障。
 新增包装仅链接桌面 runner，不进入 Switch fixture 或正式产品；共享观测经原子发布。
 
-D-071 补充：`--sdr-loss-soak` 是独立桌面压力条件。强制 SDR 并完成上述输入内容/ACK
+D-A071 补充：`--sdr-loss-soak` 是独立桌面压力条件。强制 SDR 并完成上述输入内容/ACK
 验收后，开启固定种子的伪随机双向 IPv4 UDP 丢包，概率阈值为 100/10000；仅作用于
 测试进程的非内网地址，主机 IPv4/广播隔离仍独立计数。发送丢弃返回成功，接收丢弃先
 消费一个 datagram 再返回 EAGAIN；不新增线程、延迟队列、socket 或全局防火墙规则。
@@ -2555,14 +2615,14 @@ D-071 补充：`--sdr-loss-soak` 是独立桌面压力条件。强制 SDR 并完
 报输入不可用并走正常清理。device 创建/关闭、StartInputReports 和合成事件的数字 ID
 仅作有界诊断。重投不改变正式输入策略，不将报告计数或重投次数用作成功证据。
 
-D-071 补充：桌面 `--sdr-abrupt` 在同一正式 UI/解码/音频/HID 路径验收后，由主线程
+D-A071 补充：桌面 `--sdr-abrupt` 在同一正式 UI/解码/音频/HID 路径验收后，由主线程
 原子请求 SNS owner 调用既有单 endpoint 故障 API；SDK 与诊断仍只由 owner 访问。
 恢复要求不同 POP、新 E2E、至少 30 个新显示帧、五秒保持和窗口末新鲜度，不能用角色
 变化或一次统计包通过。owner 在终态保存/输出 SDK 原因与缓存的关闭快照，主线程只读
 原子计数；35 秒无恢复或正式 UI 报错时沿原有清理路径结束，不自动改变正式重试策略。
 
 
-## D-072 调试日志按运行分卷，由应用直接提供只读下载
+## D-A072 调试日志按运行分卷，由应用直接提供只读下载
 
 依据：用户反复遇到切换 Wi-Fi 后发现/串流失败，要求玩完直接从调试版获取历史日志。
 旧 `runtime.c` 日志实现启动时覆盖三份轮转文件，且累计写入 4 MiB 后停止记录；
@@ -2598,7 +2658,7 @@ D-071 补充：桌面 `--sdr-abrupt` 在同一正式 UI/解码/音频/HID 路径
 若期间分卷，旧卷已经关闭 writer，才切换为独立只读句柄；不借用跨分卷失效的 FILE。
 桌面测试以文件锁模拟拒绝重开 writer，核对活跃文件的索引、正文、范围读取和后续追加。
 
-## D-073 云端失败分阶段留证与调试主应用收包观察
+## D-A073 云端失败分阶段留证与调试主应用收包观察
 
 依据：`remote_connection.c` 原先将目录请求、TLS、Upgrade、创建会话等失败统一记录为
 initialization failed。该日志能定位到开流/打洞之前，不能区分 DNS、连接、证书或服务响应。
@@ -2618,7 +2678,7 @@ IPv4 对端统计 native UDP、按 channel 统计原始媒体报文头/校验后
 私有 fixture 保留其独立观察器；不将它与产品观察器重复包装。release 不编译这些观察器，
 对象/静态库检查排除新增诊断字符串及符号。
 
-### D-073 连接尚未建立时的地址证据
+### D-A073 连接尚未建立时的地址证据
 
 热点冷启动日志 `session-00000000001792247845-083927948-00000.log` 的五次目录请求
 均为 curl=28，DNS 完成时间 0–5ms、TCP/TLS 完成时间为0，且没有 cloud_addr。
@@ -2632,12 +2692,12 @@ IPv4 对端统计 native UDP、按 channel 统计原始媒体报文头/校验后
 inet_pton 校验的 IP 和数字端口，每个 easy 请求最多16条；不转发原始 trace，忽略其他
 TEXT、headers、payload 和 TLS 数据。连接方法、DNS、超时与重试策略保持不变。
 
-## D-074 Switch 目录连接失败时向当前 DNS 重新解析
+## D-A074 Switch 目录连接失败时向当前 DNS 重新解析
 
-**范围修订：仅目录的补丁已由D-075统一策略替代。** 4e810d5真机热点日志证实目录DNS恢复、
+**范围修订：仅目录的补丁已由D-A075统一策略替代。** 4e810d5真机热点日志证实目录DNS恢复、
 HTTP200、CM和主机在线通知成功，但随后的3次开流保持SDK state=0。源码另有独立
 GetSDRConfig easy/multi访问同一api域名；目录multi的RESOLVE规则不能覆盖该请求。
-撤回将D-074视为完整跨网络DNS恢复方案的定位；它只验证了直接查询当前DNS的机制。
+撤回将D-A074视为完整跨网络DNS恢复方案的定位；它只验证了直接查询当前DNS的机制。
 
 证据：`session-00000000001792248673-084334796-00000.log` 在用户切热点、杀应用后
 冷启动的运行中，6次目录连接目标均为11.171.50.44:443，全部约10秒后curl=28。
@@ -2672,9 +2732,9 @@ URL重试，原Host/SNI、CA链及域名校验不变。不硬编码公共DNS、V
 DNS socket由既有remote owner拥有；完成、失败、取消、挂起或destroy都会关闭，
 先于socketExit。诊断仅记录当前网络的数字地址、查询结果和尝试数；不记录DNS原始报文。
 
-## D-075 Switch 所有实际解析入口使用当前网络 DNS
+## D-A075 Switch 所有实际解析入口使用当前网络 DNS
 
-依据：D-074的限定范围；`sns_backend.cpp:begin_config` 的独立GetSDRConfig请求；固定
+依据：D-A074的限定范围；`sns_backend.cpp:begin_config` 的独立GetSDRConfig请求；固定
 Switch libcurl.a的未定义符号仅使用getaddrinfo/freeaddrinfo；GNS ResolveHostname在
 字面IP预解析后调用getaddrinfo。SDR POP记录本身使用数字IP，不另外猜测中继域名。
 
@@ -2704,7 +2764,7 @@ HTTP结果、信任导入、证书安装与P2P创建阶段，不输出身份/证
 除夹具测试外，check-switch-dns-policy.py检查最终ELF反汇编：curl与GNS实际调用都必须
 进入统一适配器，原getaddrinfo和curl工厂只允许从适配器调用；出现其他未审计入口则失败。
 
-## D-076 失败连接的清理确认不关闭错误页；SDK创建失败保留数字原因
+## D-A076 失败连接的清理确认不关闭错误页；SDK创建失败保留数字原因
 
 依据：10a9ca9热点运行 `session-00000000001792253094-085069920-00000.log` 的四次请求均为
 开流信令成功、SDR配置HTTP200、信任/证书安装成功、随后P2P创建失败且无IHS会话。

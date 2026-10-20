@@ -14,8 +14,9 @@ typedef struct sl_host {
     bool paired, observed, legacy, games_running;
     int focus;
     sl_game games[SL_RECENT_LIMIT];
-    /* Key negotiated with this computer by the pairing key exchange. Hosts
-     * paired before it (has_secret false) keep using the installation secret. */
+    /* Selected-account mirror of the long-term key (authorization or Proof).
+     * A missing identity key file may fall back to this legacy profile key;
+     * has_secret false then selects the installation secret. */
     bool has_secret;
     uint8_t secret[32];
 } sl_host;

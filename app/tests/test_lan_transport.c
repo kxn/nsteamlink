@@ -62,15 +62,19 @@ static void run(void) {
     struct sockaddr_in client;
     size = sizeof(client);
     ssize_t n = recvfrom(peer, bytes, sizeof(bytes), 0, (struct sockaddr *)&client, &size);
-    /* CRC flag, Connect=1, channel 0, fragment/packet 0, "Connect" CRC body. */
-    assert(n == 21 && bytes[0] == 0x81 && bytes[1] == 0 && bytes[3] == 0 && bytes[4] == 0);
+    /* Official initial Connect has no CRC; only the four-byte cookie. */
+    assert(n == 17 && bytes[0] == 1 && bytes[1] == 0 && bytes[3] == 0 && bytes[4] == 0);
     assert(!memcmp(bytes + 5, "\0\0\0\0", 4));
     assert(!memcmp(bytes + 13, "\xc7\x3d\x8f\x3c", 4));
-    check_crc(bytes, n);
     uint8_t local = bytes[2];
-    /* Deliberately independent serialization: ConnectACK=2, no CRC, host ID 23. */
-    uint8_t ack[13] = {2, 0, 23};
+    /* Independent serialization: CRC-bearing ConnectACK=2, host ID23,
+     * exactly four bytes of echoed time before the negotiated CRC suffix. */
+    uint8_t ack[21] = {0x82, 0, 23};
     ack[3] = local;
+    memcpy(ack + 9, bytes + 9, 4);
+    memcpy(ack + 13, bytes + 9, 4);
+    uint32_t ack_crc = wire_crc(ack, 17);
+    for (unsigned i = 0; i < 4; ++i) ack[17 + i] = ack_crc >> (8 * i);
     assert(sendto(peer, ack, sizeof(ack), 0, (struct sockaddr *)&client, size) == sizeof(ack));
     bool handshake = false;
     for (unsigned i = 0; i < 20 && !handshake; ++i) {

@@ -151,8 +151,8 @@ static void add_computer_navigation(void) {
     strcpy(found.host.name, "Manual target");
     strcpy(found.host.address, "10.10.10.166");
     sl_ui_runtime_event(&m, &found);
-    assert(!sl_ui_adding_host(&m) && m.page == SL_PAIRING);
-    assert(sl_ui_take_command(&m, &command) && command.type == SL_CMD_PAIR &&
+    assert(!sl_ui_adding_host(&m) && m.page == SL_CONNECTING);
+    assert(sl_ui_take_command(&m, &command) && command.type == SL_CMD_STREAM &&
            command.host.client_id == 903 && !command.game_id);
 
     m = model();
@@ -228,7 +228,7 @@ static void cached_history_availability(void) {
     sl_ui_action(&m, SL_RECENT, 0); /* A cached card cannot bypass authorization. */
     assert(!sl_ui_take_command(&m, &command));
     sl_ui_action(&m, SL_ACCEPT, 0); /* The current page's A shortcut pairs directly. */
-    assert(sl_ui_take_command(&m, &command) && command.type == SL_CMD_PAIR &&
+    assert(sl_ui_take_command(&m, &command) && command.type == SL_CMD_STREAM &&
            command.host.client_id == 1 && !command.game_id);
 }
 static void selected_host_status(void) {
@@ -441,6 +441,7 @@ static void overlay_interaction(void) {
     assert(sl_ui_hit(&m.layout, c->x + m.layout.offset_x + 8, c->y + 8) == c->id);
     assert(sl_ui_hit(&m.layout, c->x + 1, c->y + 8) == 0);
     sl_ui_tick(&m, 320);
+    sl_ui_action(&m, SL_OPEN_HOST_SETTINGS, 0);
     sl_ui_action(&m, SL_OPEN_FORGET, 0);
     assert(m.focus == 102); /* A executes the named action; B cancels. */
     sl_ui_tick(&m, 540);
@@ -452,7 +453,7 @@ static void overlay_interaction(void) {
     sl_ui_tick(&m, 699);
     assert(m.page == SL_FORGET);
     sl_ui_tick(&m, 700);
-    assert(m.page == SL_SETTINGS && !m.leaving && m.focus == 100);
+    assert(m.page == SL_HOST_SETTINGS && !m.leaving && m.focus == 100);
 
     sl_ui_connected(&m);
     sl_ui_action(&m, SL_OPEN_MENU, 0);
@@ -498,7 +499,7 @@ static void wait_screen_cancel_shortcut(void) {
 }
 static void confirmation_shortcuts(void) {
     const sl_page pages[] = {SL_FORGET, SL_DISCONNECT, SL_EXIT, SL_ERROR, SL_END_GAME};
-    const sl_command_type expected[] = {SL_CMD_SAVE, SL_CMD_STOP, SL_CMD_EXIT, SL_CMD_PAIR,
+    const sl_command_type expected[] = {SL_CMD_SAVE, SL_CMD_STOP, SL_CMD_EXIT, SL_CMD_STREAM,
                                         SL_CMD_END_GAME};
     for (int p = 0; p < 5; ++p) {
         for (int path = 0; path < 4; ++path) {
@@ -606,6 +607,8 @@ static void update_flow(void) {
     assert(m.page == SL_HOME && !sl_ui_take_command(&m, &cmd));
 
     /* The toggle is saved with every save command, activity ones too. */
+    sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
+    sl_ui_action(&m, SL_OPEN_APP_SETTINGS, 0);
     sl_ui_action(&m, SL_UPDATE_CHECK, 0);
     assert(!m.update_check && sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_SAVE &&
            !cmd.update_check);
@@ -616,54 +619,104 @@ static void update_flow(void) {
     sl_ui_runtime_event(&m, &activity);
     assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_SAVE && !cmd.update_check);
 }
+static void settings_category(sl_ui_model *m, sl_action category) {
+    while (m->page != SL_SETTINGS) {
+        assert(m->depth > 0);
+        sl_ui_action(m, SL_BACK, 0);
+        sl_ui_tick(m, m->now + 220);
+    }
+    sl_ui_action(m, category, 0);
+}
 static void actionable_settings(void) {
     sl_ui_model m = model();
     sl_command command;
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
-    assert(m.layout.count == 5 && m.page == SL_SETTINGS);
+    assert(m.page == SL_SETTINGS && m.depth == 1 && m.layout.count == 5);
     const sl_action categories[] = {SL_OPEN_AV_SETTINGS, SL_OPEN_NETWORK_SETTINGS,
                                     SL_OPEN_HOST_SETTINGS, SL_OPEN_APP_SETTINGS};
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < 4; ++i) {
         assert(m.layout.controls[i].action == categories[i]);
-    sl_ui_action(&m, SL_OPEN_HOST_SETTINGS, 0);
-    assert(m.layout.controls[0].action == SL_OPEN_ADD && m.layout.controls[1].disabled);
-    layout_check(&m);
-    sl_ui_activate(&m, 100);
-    assert(m.page == SL_HOME && sl_ui_adding_host(&m));
+        assert(m.layout.controls[i].kind == SL_CONTROL_SUBMENU);
+    }
+    settings_category(&m, SL_OPEN_HOST_SETTINGS);
+    assert(m.layout.controls[0].kind == SL_CONTROL_SUBMENU);
+    assert(m.layout.controls[1].disabled && m.layout.controls[1].kind == SL_CONTROL_ACTION);
+    sl_ui_activate(&m, m.layout.controls[1].id);
+    assert(m.page == SL_HOST_SETTINGS && !m.command.type);
+    sl_ui_action(&m, SL_DOWN, 0);
+    assert(m.focus == 9); /* Disabled removal is skipped by the controller. */
+    sl_ui_action(&m, SL_UP, 0);
+    assert(m.focus == 100);
+    sl_ui_action(&m, SL_OPEN_ADD, 0);
     sl_ui_action(&m, SL_OPEN_MANUAL, 0);
     assert(m.page == SL_MANUAL);
     sl_ui_action(&m, SL_BACK, 0);
-    sl_ui_tick(&m, m.now + 160);
+    sl_ui_tick(&m, m.now + 220);
     assert(m.page == SL_HOME && sl_ui_adding_host(&m));
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
-    sl_ui_action(&m, SL_OPEN_AV_SETTINGS, 0);
+    settings_category(&m, SL_OPEN_AV_SETTINGS);
+    assert(m.layout.count == 4 && !strcmp(m.layout.controls[0].value, "均衡"));
+    assert(m.layout.controls[2].kind == SL_CONTROL_TOGGLE);
     sl_ui_action(&m, SL_SOUND, 0);
     assert(!m.store.sound && sl_ui_take_command(&m, &command) && command.type == SL_CMD_SAVE);
     sl_ui_action(&m, SL_OPEN_QUALITY, 0);
+    assert(m.layout.count == 4);
     assert(!strcmp(m.layout.controls[0].label, "均衡"));
     assert(!strcmp(m.layout.controls[1].label, "流畅"));
     assert(!strcmp(m.layout.controls[2].label, "清晰"));
     sl_ui_action(&m, SL_DOWN, 0);
     assert(m.store.quality == 0);
     sl_ui_action(&m, SL_SET_QUALITY, 2);
-    assert(m.store.quality == 2 && sl_ui_take_command(&m, &command) && command.type == SL_CMD_SAVE);
-    sl_ui_tick(&m, m.now + 160);
-    sl_ui_action(&m, SL_BACK, 0);
-    sl_ui_tick(&m, m.now + 160);
-    assert(m.page == SL_SETTINGS);
-    sl_ui_action(&m, SL_OPEN_NETWORK_SETTINGS, 0);
+    assert(m.store.quality == 2 && sl_ui_take_command(&m, &command));
+    sl_ui_tick(&m, m.now + 220);
+    assert(!strcmp(m.layout.controls[0].value, "清晰"));
+    settings_category(&m, SL_OPEN_NETWORK_SETTINGS);
+    assert(m.layout.controls[1].kind == SL_CONTROL_TOGGLE);
+    assert(m.layout.controls[2].kind == SL_CONTROL_ACTION && m.layout.controls[2].disabled);
+    sl_ui_activate(&m, m.layout.controls[2].id);
+    assert(m.page == SL_NETWORK_SETTINGS && !m.command.type);
+    sl_ui_action(&m, SL_FEC, 0);
+    assert(m.store.unreliable_fec && sl_ui_take_command(&m, &command));
+    assert(command.type == SL_CMD_SAVE && command.unreliable_fec && m.cue == SL_CUE_TOGGLE);
     sl_ui_action(&m, SL_OPEN_BANDWIDTH, 0);
     sl_ui_action(&m, SL_SET_BANDWIDTH, 20000);
-    assert(m.store.bitrate_kbps == 20000 && m.store.quality == 2);
-    assert(sl_ui_take_command(&m, &command) && command.type == SL_CMD_SAVE &&
-           command.bitrate_kbps == 20000 && command.quality == 2);
+    assert(sl_ui_take_command(&m, &command) && command.type == SL_CMD_SAVE);
+    assert(command.bitrate_kbps == 20000 && command.quality == 2);
+    sl_ui_tick(&m, m.now + 220);
+    assert(!strcmp(m.layout.controls[0].value, "20 Mbps"));
+    settings_category(&m, SL_OPEN_APP_SETTINGS);
+    assert(m.layout.controls[1].kind == SL_CONTROL_TOGGLE);
+    assert(m.layout.controls[2].kind == SL_CONTROL_ACTION);
+    sl_ui_action(&m, SL_UPDATE_CHECK, 0);
+    assert(!m.update_check && sl_ui_take_command(&m, &command) && m.cue == SL_CUE_TOGGLE);
     sl_ui_connected(&m);
     sl_ui_action(&m, SL_OPEN_MENU, 0);
-    assert(m.layout.count == 4); /* Resume, end, disconnect, back. */
-    sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
-    assert(m.page == SL_MENU); /* Mainline session menu does not change preferences. */
-    sl_ui_action(&m, SL_OPEN_MANUAL, 0);
-    assert(m.page == SL_MENU);
+    assert(m.layout.count == 4 && !strcmp(m.layout.title, "串流"));
+    const sl_action session_actions[] = {SL_BACK, SL_OPEN_END_GAME, SL_OPEN_DISCONNECT};
+    for (int i = 0; i < 3; ++i) {
+        assert(m.layout.controls[i].action == session_actions[i]);
+        assert(m.layout.controls[i].kind == SL_CONTROL_ACTION);
+    }
+    const sl_action blocked[] = {SL_OPEN_SETTINGS,
+                                 SL_OPEN_AV_SETTINGS,
+                                 SL_OPEN_NETWORK_SETTINGS,
+                                 SL_OPEN_HOST_SETTINGS,
+                                 SL_OPEN_APP_SETTINGS,
+                                 SL_OPEN_QUALITY,
+                                 SL_OPEN_RESOLUTION,
+                                 SL_OPEN_BANDWIDTH,
+                                 SL_OPEN_LANGUAGE,
+                                 SL_OPEN_MANUAL,
+                                 SL_OPEN_FORGET,
+                                 SL_OPEN_SHORTCUT,
+                                 SL_SOUND,
+                                 SL_FEC,
+                                 SL_UPDATE_CHECK,
+                                 SL_RUN_NETWORK_TEST};
+    for (unsigned i = 0; i < sizeof(blocked) / sizeof(blocked[0]); ++i) {
+        sl_ui_action(&m, blocked[i], 0);
+        assert(m.page == SL_MENU && m.streaming && !m.command.type);
+    }
 }
 
 static void explicit_cloud_pairing(void) {
@@ -860,7 +913,7 @@ static void profile_v3_migration(void) {
     assert(s.registry.hosts[1].client_id == 222 && !s.registry.hosts[1].paired);
     assert(!strcmp(s.registry.hosts[1].address, "192.168.1.14"));
 
-    /* Saved again as v4, a negotiated key survives the round trip. */
+    /* Saved again as v5, a negotiated key survives the round trip. */
     s.registry.hosts[1].paired = true;
     s.registry.hosts[1].has_secret = true;
     memset(s.registry.hosts[1].secret, 0xa5, sizeof(s.registry.hosts[1].secret));
@@ -870,7 +923,50 @@ static void profile_v3_migration(void) {
     f = fopen(path, "rb");
     char magic[8];
     assert(f && fread(magic, 1, sizeof(magic), f) == sizeof(magic) && fclose(f) == 0);
-    assert(!memcmp(magic, "NSLUI04", 8));
+    assert(!memcmp(magic, "NSLUI05", 8));
+    unlink(path);
+    rmdir(dir);
+}
+
+static void profile_v4_migration(void) {
+    disk_store_v4 old = {0};
+    char dir[] = "/tmp/nsl-profile-v4-XXXXXX", path[512];
+    assert(mkdtemp(dir));
+    snprintf(path, sizeof(path), "%s/profile.bin", dir);
+    memcpy(old.magic, "NSLUI04", 8);
+    old.version = 4;
+    old.size = sizeof(old);
+    old.data.device_id = 12345;
+    memset(old.data.secret, 0x5a, sizeof(old.data.secret));
+    strcpy(old.data.device_name, "v4 paired device");
+    old.data.registry.count = 1;
+    old.data.registry.hosts[0].id = 1;
+    old.data.registry.hosts[0].client_id = 98765;
+    old.data.registry.hosts[0].paired = true;
+    old.data.registry.hosts[0].has_secret = true;
+    memset(old.data.registry.hosts[0].secret, 0xa5, 32);
+    old.data.bitrate_kbps = 20000;
+    old.data.quality = 2;
+    old.data.sound = true;
+    old.checksum = 2166136261u;
+    const uint8_t *bytes = (const void *)&old.data;
+    for (size_t i = 0; i < sizeof(old.data); ++i)
+        old.checksum = (old.checksum ^ bytes[i]) * 16777619u;
+    FILE *f = fopen(path, "wb");
+    assert(f && fwrite(&old, 1, sizeof(old), f) == sizeof(old) && fclose(f) == 0);
+    sl_auth_store store, loaded;
+    assert(sl_auth_load(&store, dir) == 0 && !store.unreliable_fec);
+    for (int enabled = 1; enabled >= 0; --enabled) {
+        store.unreliable_fec = enabled;
+        assert(sl_auth_save(&store, dir) && sl_auth_load(&loaded, dir) == 0);
+        assert(loaded.unreliable_fec == (bool)enabled);
+        assert(loaded.device_id == old.data.device_id && loaded.quality == 2 &&
+               loaded.bitrate_kbps == 20000 && loaded.sound);
+        assert(!memcmp(loaded.secret, old.data.secret, 32));
+        assert(loaded.registry.hosts[0].paired && loaded.registry.hosts[0].has_secret &&
+               loaded.registry.hosts[0].client_id == 98765);
+        assert(!memcmp(loaded.registry.hosts[0].secret, old.data.registry.hosts[0].secret, 32));
+    }
     unlink(path);
     rmdir(dir);
 }
@@ -907,14 +1003,164 @@ static void host_secrets(void) {
     sl_host_registry_keep_secrets(&snapshot, &known);
     assert(!snapshot.hosts[0].has_secret);
 }
+static void network_test_flow(void) {
+    for (unsigned accept = 0; accept < 2; ++accept) {
+        sl_ui_model m = model();
+        add(&m, 1, "HOST");
+        m.store.registry.hosts[0].paired = true;
+        sl_ui_action(&m, SL_START, 0);
+        sl_command cmd;
+        assert(sl_ui_take_command(&m, &cmd));
+        uint64_t generation = cmd.generation;
+        sl_network_test_view failed = {
+            .generation = generation, .revision = 1, .phase = SL_TEST_FAILED};
+        strcpy(failed.error, "Couldn't connect to HOST on port 61024.");
+        sl_ui_network_test(&m, &failed);
+        assert(m.page == SL_ERROR && m.cancel_only_error && !strcmp(m.error, failed.error));
+        assert(!strcmp(m.layout.title, sl_tr(SL_T_TEST_FAILED)));
+        sl_ui_error(&m, "unrelated queued error");
+        assert(m.cancel_only_error && !strcmp(m.error, failed.error));
+        layout_check(&m);
+        for (int i = 0; i < m.layout.count; ++i)
+            assert(m.layout.controls[i].action != SL_RETRY);
+        sl_ui_action(&m, SL_RETRY, 0);
+        assert(!sl_ui_take_command(&m, &cmd));
+        failed.revision++;
+        failed.phase = SL_TEST_RUNNING;
+        sl_ui_network_test(&m, &failed);
+        assert(m.page == SL_ERROR && m.cancel_only_error);
+        sl_ui_action(&m, accept ? SL_ACCEPT : SL_BACK, 0);
+        assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_CANCEL &&
+               cmd.generation > generation && m.page == SL_STOPPING);
+        sl_ui_stopped(&m, false);
+        assert(m.page == SL_HOME && !m.cancel_only_error);
+    }
+    for (unsigned manual = 0; manual < 2; ++manual) {
+        for (unsigned accept = 0; accept < 2; ++accept) {
+            sl_ui_model m = model();
+            add(&m, 1, "HOST");
+            m.store.registry.hosts[0].paired = true;
+            if (manual) {
+                sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
+                sl_ui_action(&m, SL_OPEN_NETWORK_SETTINGS, 0);
+            }
+            sl_ui_action(&m, manual ? SL_RUN_NETWORK_TEST : SL_START, 0);
+            sl_command cmd;
+            assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_STREAM &&
+                   cmd.test_only == (bool)manual);
+            uint64_t generation = cmd.generation;
+            sl_network_test_view view = {.generation = generation,
+                                         .revision = 1,
+                                         .phase = SL_TEST_REQUESTING,
+                                         .test_only = manual};
+            sl_ui_network_test(&m, &view);
+            assert(m.page == SL_NETWORK_TEST && !m.streaming);
+            layout_check(&m);
+            sl_ui_action(&m, SL_ACCEPT, 0);
+            sl_ui_action(&m, SL_DOWN, 0);
+            assert(!sl_ui_take_command(&m, &cmd));
+            view.revision++;
+            view.phase = SL_TEST_RUNNING;
+            view.progress = 50;
+            sl_ui_network_test(&m, &view);
+            view.revision++;
+            view.phase = SL_TEST_RESULT;
+            view.recommendation = 1;
+            view.mean_ms = 2.5f;
+            sl_ui_network_test(&m, &view);
+            assert(m.page == SL_NETWORK_RESULT && m.focus == 103);
+            layout_check(&m);
+            sl_ui_action(&m, accept ? SL_ACCEPT : SL_BACK, 0);
+            assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_TEST_CONFIRM &&
+                   cmd.generation == generation && cmd.accept_recommendation == (bool)accept);
+            assert(m.page == (manual ? SL_STOPPING : SL_CONNECTING));
+            /* An unchanged persistent result cannot reopen the acknowledged dialog. */
+            sl_ui_network_test(&m, &view);
+            assert(m.page == (manual ? SL_STOPPING : SL_CONNECTING));
+            if (manual) {
+                sl_runtime_event done = {.type = SL_EVENT_STOPPED, .generation = generation};
+                sl_ui_runtime_event(&m, &done);
+                assert(m.page == SL_NETWORK_SETTINGS && m.depth == 2 && m.stack[0] == SL_HOME &&
+                       m.stack[1] == SL_SETTINGS);
+            } else {
+                view.revision++;
+                view.phase = SL_TEST_CONTINUING;
+                sl_ui_network_test(&m, &view);
+                assert(m.page == SL_CONNECTING);
+                sl_runtime_event video = {.type = SL_EVENT_FIRST_FRAME, .generation = generation};
+                sl_ui_runtime_event(&m, &video);
+                assert(m.page == SL_STREAM);
+            }
+        }
+    }
+    sl_ui_model m = model();
+    add(&m, 1, "HOST");
+    m.store.registry.hosts[0].paired = true;
+    sl_ui_action(&m, SL_START, 0);
+    sl_command cmd;
+    assert(sl_ui_take_command(&m, &cmd));
+    sl_network_test_view view = {
+        .generation = cmd.generation, .revision = 1, .phase = SL_TEST_RUNNING};
+    sl_ui_network_test(&m, &view);
+    sl_runtime_event pin = {.type = SL_EVENT_PIN, .generation = cmd.generation};
+    sl_ui_runtime_event(&m, &pin);
+    assert(m.page == SL_PIN);
+    view.revision++;
+    sl_ui_network_test(&m, &view);
+    assert(m.page == SL_PIN); /* Progress cannot obscure a security PIN or failure. */
+    sl_ui_action(&m, SL_DIGIT, '7');
+    sl_ui_action(&m, SL_SUBMIT, 0);
+    assert(sl_ui_take_command(&m, &cmd) && cmd.security_pin_retry &&
+           cmd.generation == view.generation && !strcmp(cmd.text, "7"));
+    view.revision++;
+    sl_ui_network_test(&m, &view);
+    sl_ui_action(&m, SL_BACK, 0);
+    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_CANCEL &&
+           cmd.generation > view.generation);
+    view.revision++;
+    view.phase = SL_TEST_RESULT;
+    sl_ui_network_test(&m, &view);
+    assert(m.page == SL_STOPPING);
+
+    m = model();
+    add(&m, 1, "HOST");
+    sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
+    sl_ui_action(&m, SL_OPEN_NETWORK_SETTINGS, 0);
+    sl_ui_action(&m, SL_RUN_NETWORK_TEST, 0);
+    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_STREAM && cmd.test_only);
+    sl_runtime_event prompt = {.type = SL_EVENT_STREAM_AUTHORIZATION, .generation = cmd.generation};
+    strcpy(prompt.text, "0042");
+    sl_ui_runtime_event(&m, &prompt);
+    sl_runtime_event paired = {.type = SL_EVENT_STREAM_RESUMED,
+                               .generation = cmd.generation,
+                               .account = 1,
+                               .host = cmd.host};
+    paired.host.paired = true;
+    paired.host.account = 12;
+    sl_ui_runtime_event(&m, &paired);
+    assert(!sl_ui_take_command(&m, &cmd) && m.page == SL_NETWORK_TEST && m.intent.test_only);
+
+    for (unsigned automatic = 0; automatic < 2; ++automatic) {
+        m = model();
+        sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
+        sl_ui_action(&m, SL_OPEN_NETWORK_SETTINGS, 0);
+        sl_ui_action(&m, SL_OPEN_BANDWIDTH, 0);
+        layout_check(&m);
+        sl_ui_action(&m, SL_SET_BANDWIDTH, automatic ? -1 : 0);
+        assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_SAVE &&
+               m.store.bitrate_kbps == (automatic ? UINT32_MAX : 0));
+    }
+}
 int main(void) {
     discovery_source_evidence();
     add_computer_navigation();
     cached_history_availability();
     selected_host_status();
+    network_test_flow();
     update_flow();
     profile_v2_migration();
     profile_v3_migration();
+    profile_v4_migration();
     host_secrets();
     end_game_failure();
     carousel();
@@ -949,8 +1195,8 @@ int main(void) {
     assert(m.store.registry.selected == 1);
     assert(!sl_ui_take_command(&m, &cmd));
     sl_ui_action(&m, SL_START, 0);
-    assert(m.page == SL_PAIRING);
-    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_PAIR && cmd.host.client_id == 2);
+    assert(m.page == SL_CONNECTING);
+    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_STREAM && cmd.host.client_id == 2);
     uint64_t generation = m.generation;
     sl_ui_action(&m, SL_BACK, 0);
     sl_ui_tick(&m, m.now + 160);
@@ -1078,10 +1324,10 @@ int main(void) {
     add(&m, 3, "HOST");
     sl_ui_action(&m, SL_START, 0);
     sl_ui_take_command(&m, &cmd);
-    sl_runtime_event late = {.type = SL_EVENT_AUTHORIZED,
-                             .generation = m.generation,
-                             .account = 88,
-                             .host = m.intent.host};
+    sl_runtime_event late = {
+        .type = SL_EVENT_STREAM_RESUMED, .generation = m.generation, .host = m.intent.host};
+    late.host.account = 88;
+    late.host.paired = true;
     sl_ui_action(&m, SL_BACK, 0);
     sl_ui_tick(&m, m.now + 160);
     sl_ui_take_command(&m, &cmd);
@@ -1092,12 +1338,13 @@ int main(void) {
     sl_ui_take_command(&m, &cmd);
     sl_ui_error(&m, "无法保存配对");
     sl_ui_action(&m, SL_RETRY, 0);
-    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_PAIR);
+    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_STREAM);
     late.generation = m.generation;
     late.host = m.intent.host;
+    late.host.account = 88;
+    late.host.paired = true;
     sl_ui_runtime_event(&m, &late);
-    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_STREAM &&
-           cmd.generation == m.generation && cmd.host.account == 88);
+    assert(!sl_ui_take_command(&m, &cmd) && m.intent.host.account == 88);
     sl_runtime_event pin = {.type = SL_EVENT_PIN, .generation = m.generation};
     sl_ui_runtime_event(&m, &pin);
     assert(m.page == SL_PIN);
@@ -1115,9 +1362,8 @@ int main(void) {
     sl_ui_model flow = model();
     add(&flow, 4, "PAIR-HOST");
     sl_ui_action(&flow, SL_START, 0);
-    assert(flow.repair_attempted);
-    assert(sl_ui_take_command(&flow, &cmd) && cmd.type == SL_CMD_PAIR);
-    sl_runtime_event code = {.type = SL_EVENT_CODE, .generation = flow.generation};
+    assert(sl_ui_take_command(&flow, &cmd) && cmd.type == SL_CMD_STREAM);
+    sl_runtime_event code = {.type = SL_EVENT_STREAM_AUTHORIZATION, .generation = flow.generation};
     strcpy(code.text, "1234");
     sl_ui_runtime_event(&flow, &code);
     strcpy(code.text, "5678");
@@ -1128,18 +1374,18 @@ int main(void) {
     assert(!sl_ui_pair_prompt_visible(&flow));
     sl_ui_tick(&flow, flow.pair_code_at + 1800);
     assert(sl_ui_pair_prompt_visible(&flow) && flow.layout.dialog);
-    sl_runtime_event success = {.type = SL_EVENT_AUTHORIZED,
-                                .generation = flow.generation,
-                                .host = flow.intent.host,
-                                .account = 88};
+    sl_runtime_event success = {
+        .type = SL_EVENT_STREAM_RESUMED, .generation = flow.generation, .host = flow.intent.host};
+    success.host.paired = true;
+    success.host.account = 88;
     success.host.has_secret = true;
     memset(success.host.secret, 0x17, sizeof(success.host.secret));
     sl_ui_runtime_event(&flow, &success);
-    assert(sl_ui_take_command(&flow, &cmd) && cmd.type == SL_CMD_STREAM);
+    assert(!sl_ui_take_command(&flow, &cmd));
     /* The UI's copy keeps the negotiated key, so its later saves carry it. */
     const sl_host *stored = sl_host_find(&flow.store.registry, flow.intent.host.id);
     assert(stored && stored->has_secret && stored->secret[0] == 0x17);
-    assert(cmd.host.has_secret && cmd.host.secret[31] == 0x17);
+    assert(flow.intent.host.has_secret && flow.intent.host.secret[31] == 0x17);
     sl_ui_runtime_event(&flow, &success);
     assert(!sl_ui_take_command(&flow, &cmd));
     sl_runtime_event refusal = {
@@ -1150,8 +1396,8 @@ int main(void) {
     sl_ui_runtime_event(&flow, &success);
     assert(flow.page == SL_ERROR && !sl_ui_take_command(&flow, &cmd));
     sl_ui_action(&flow, SL_RETRY, 0);
-    assert(flow.page == SL_PAIRING && !flow.pairing_code[0]);
-    assert(sl_ui_take_command(&flow, &cmd) && cmd.type == SL_CMD_PAIR);
+    assert(flow.page == SL_CONNECTING && !flow.pairing_code[0]);
+    assert(sl_ui_take_command(&flow, &cmd) && cmd.type == SL_CMD_STREAM);
     /* A centered axis works immediately after opening a stream. Held axes
      * remain neutral across the menu until returning through the deadzone. */
     sl_input_init(&r, &m, send_event, reset_remote, NULL);
@@ -1199,13 +1445,15 @@ int main(void) {
     assert(mkdtemp(dir));
     sl_auth_store s, t;
     assert(sl_auth_load(&s, dir) == 1);
-    assert(s.device_id && s.bitrate_kbps == 6000);
+    assert(s.device_id && s.bitrate_kbps == 6000 && !s.unreliable_fec);
     assert(sl_auth_load(&t, dir) == 0);
     assert(s.device_id == t.device_id && !memcmp(s.secret, t.secret, 32));
     s.quality = 2;
     s.bitrate_kbps = 20000;
+    s.unreliable_fec = true;
     assert(sl_auth_save(&s, dir));
-    assert(sl_auth_load(&t, dir) == 0 && t.quality == 2 && t.bitrate_kbps == 20000);
+    assert(sl_auth_load(&t, dir) == 0 && t.quality == 2 && t.bitrate_kbps == 20000 &&
+           t.unreliable_fec);
     no_replace = true;
     s.quality = 1;
     assert(sl_auth_save(&s, dir));
@@ -1221,7 +1469,8 @@ int main(void) {
     snprintf(primary, sizeof(primary), "%s/profile.bin", dir);
     snprintf(backup, sizeof(backup), "%s/profile.bak", dir);
     assert(rename(primary, backup) == 0); /* interrupted before publication */
-    assert(sl_auth_load(&t, dir) == 0 && t.quality == 2 && t.bitrate_kbps == 20000);
+    assert(sl_auth_load(&t, dir) == 0 && t.quality == 2 && t.bitrate_kbps == 20000 &&
+           t.unreliable_fec);
     assert(access(primary, F_OK) == 0);
     /* A failed temporary write must preserve the previous valid profile. */
     char tmp[512];
@@ -1229,7 +1478,8 @@ int main(void) {
     assert(mkdir(tmp, 0700) == 0);
     s.quality = 1;
     assert(!sl_auth_save(&s, dir));
-    assert(sl_auth_load(&t, dir) == 0 && t.quality == 2 && t.bitrate_kbps == 20000);
+    assert(sl_auth_load(&t, dir) == 0 && t.quality == 2 && t.bitrate_kbps == 20000 &&
+           t.unreliable_fec);
     assert(rmdir(tmp) == 0);
     char path[512];
     snprintf(path, sizeof(path), "%s/profile.bin", dir);

@@ -15,5 +15,5 @@ cc -g -UNDEBUG \
     "$audit_build/tests/common/libihs-test-session.a" \
     "$audit_build/src/protobuf/libihs-protobuf.a" \
     "$audit_build/src/platforms/libihs-platforms.a" \
-    -Wl,--end-group -lprotobuf-c -lm -lmbedcrypto -lpthread
+    -Wl,--end-group -Wl,--wrap=IHS_BaseSend -Wl,--wrap=IHS_SessionPacketTimestamp -lprotobuf-c -lm -lmbedcrypto -lpthread
 "$audit_build/audit-control"

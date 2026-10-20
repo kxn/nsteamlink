@@ -1,0 +1,202 @@
+{
+  "binary_sha256": "50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e",
+  "helpers": {
+    "scripts/audit-steam-video-recovery.py": "b08713bad09c3e7984aaa792171717d89a36f9a1620aeb6fbc9135dea56f5892",
+    "scripts/audit-steam-fec.py": "1089e134fdf7d09020fbe9e6cda5ab45a2549f260b089232303a8fa716aa9d42"
+  },
+  "controlled_mtu": 1472,
+  "scope": "Record fixed official FEC receive/allocation instructions, not a device peak.\n\nPacket/container/allocator/refcount/libc terminals and initial queue state are\nexplicit adapters. Coding runs original RS instructions. Only the new[] and\ncalloc terminals are recorded, excluding packet/CUtl scratch and other malloc\nsites; these requests never establish live/RSS/GPU memory or a device peak.\nNo artificial new[] NULL return is used to infer an official OOM policy.\n",
+  "sender_probe": {
+    "controlled_mtu": 1472,
+    "injected_percentage": 5,
+    "length": 2097172,
+    "data_shards": 1457,
+    "parity": 0,
+    "shard": 1440,
+    "rs_calls": [],
+    "source_body_sha256": "3f56d89a30756e1948118a36ab5e0d648cb1ecf4c03a74be24db01b7481f6c4f",
+    "source_received_sha256": "3f56d89a30756e1948118a36ab5e0d648cb1ecf4c03a74be24db01b7481f6c4f",
+    "wire_bank_sha256": "790ccd110979df56a65716cae5755012da401816d0ccf3da313be2db1839a36e",
+    "scope": "Original generic client encoder/receiver with adapters; not Steam video producer, host default, real socket or codec"
+  },
+  "cases": [
+    {
+      "input": {
+        "name": "small_systematic",
+        "length": 80,
+        "shard": 32,
+        "parity": 2
+      },
+      "observed": {
+        "bytes": 80,
+        "sha256": "8afeccf31bf9f73cd8af1a4c0288ad4f0bb8e1d0774d48632c4ef1b5df82e779",
+        "packet_capacity_including_header": 2200,
+        "coding_calls": [],
+        "allocation_requests": [],
+        "last_delivered": 1,
+        "wire_count": 3
+      }
+    },
+    {
+      "input": {
+        "name": "small_two_erasures",
+        "length": 80,
+        "shard": 32,
+        "parity": 2,
+        "fixed_wires": [
+          "0b000c22030200010040e2010050000000200002004b7095badf04294e7398bde2072c517600000000000000000000000000000000",
+          "0b000c22030300010040e201005000000020000200c2bf95602ab43b0bf8a9d3d9f3f2ba3101ab144377662e8e256c38fce8a14aaa",
+          "0b000c22030400010040e2010050000000200002003e311d508e23c9b04b35797559476ec5319bcf736756f5be15b708ecd87a5a9a"
+        ]
+      },
+      "observed": {
+        "bytes": 80,
+        "sha256": "8afeccf31bf9f73cd8af1a4c0288ad4f0bb8e1d0774d48632c4ef1b5df82e779",
+        "packet_capacity_including_header": 2200,
+        "coding_calls": [
+          "decode"
+        ],
+        "allocation_requests": [
+          {
+            "kind": "calloc",
+            "bytes": 28
+          }
+        ],
+        "last_delivered": 1,
+        "wire_count": 3
+      }
+    },
+    {
+      "input": {
+        "name": "padded_within_mtu",
+        "length": 1,
+        "shard": 1440,
+        "parity": 254
+      },
+      "observed": {
+        "bytes": 1,
+        "sha256": "e7cf46a078fed4fafd0b5e3aff144802b853f8ae459a4f0c14add3314b7cc3a6",
+        "packet_capacity_including_header": 367213,
+        "coding_calls": [],
+        "allocation_requests": [
+          {
+            "kind": "array_new",
+            "bytes": 367213
+          }
+        ],
+        "last_delivered": 1,
+        "wire_count": 1
+      }
+    },
+    {
+      "input": {
+        "name": "padded_post_admission",
+        "length": 1,
+        "shard": 17000,
+        "parity": 254
+      },
+      "observed": {
+        "bytes": 1,
+        "sha256": "e7cf46a078fed4fafd0b5e3aff144802b853f8ae459a4f0c14add3314b7cc3a6",
+        "packet_capacity_including_header": 4335013,
+        "coding_calls": [],
+        "allocation_requests": [
+          {
+            "kind": "array_new",
+            "bytes": 4335013
+          }
+        ],
+        "last_delivered": 1,
+        "wire_count": 1
+      }
+    },
+    {
+      "input": {
+        "name": "zero_parity_2097151",
+        "length": 2097151,
+        "shard": 1440,
+        "parity": 0
+      },
+      "observed": {
+        "bytes": 2097151,
+        "sha256": "cc4db3612cef1e90b4cc2428b65c4d88f1b636ff6ddd00ef43ad3b34b93db12c",
+        "packet_capacity_including_header": 2098093,
+        "coding_calls": [],
+        "allocation_requests": [
+          {
+            "kind": "array_new",
+            "bytes": 2098093
+          }
+        ],
+        "last_delivered": 1,
+        "wire_count": 1457
+      }
+    },
+    {
+      "input": {
+        "name": "zero_parity_2097152",
+        "length": 2097152,
+        "shard": 1440,
+        "parity": 0
+      },
+      "observed": {
+        "bytes": 2097152,
+        "sha256": "a095cb3ec83a81ee83e4f38668eb366aefef7e5f70160a044994cec435295f4c",
+        "packet_capacity_including_header": 2098093,
+        "coding_calls": [],
+        "allocation_requests": [
+          {
+            "kind": "array_new",
+            "bytes": 2098093
+          }
+        ],
+        "last_delivered": 1,
+        "wire_count": 1457
+      }
+    },
+    {
+      "input": {
+        "name": "zero_parity_2097153",
+        "length": 2097153,
+        "shard": 1440,
+        "parity": 0
+      },
+      "observed": {
+        "bytes": 2097153,
+        "sha256": "c8e45f758e1d3672508c86f78513579f62a4ad63ed1b35a95bb8f58e433325a1",
+        "packet_capacity_including_header": 2098093,
+        "coding_calls": [],
+        "allocation_requests": [
+          {
+            "kind": "array_new",
+            "bytes": 2098093
+          }
+        ],
+        "last_delivered": 1,
+        "wire_count": 1457
+      }
+    },
+    {
+      "input": {
+        "name": "zero_parity_2097172",
+        "length": 2097172,
+        "shard": 1440,
+        "parity": 0
+      },
+      "observed": {
+        "bytes": 2097172,
+        "sha256": "3f56d89a30756e1948118a36ab5e0d648cb1ecf4c03a74be24db01b7481f6c4f",
+        "packet_capacity_including_header": 2098093,
+        "coding_calls": [],
+        "allocation_requests": [
+          {
+            "kind": "array_new",
+            "bytes": 2098093
+          }
+        ],
+        "last_delivered": 1,
+        "wire_count": 1457
+      }
+    }
+  ]
+}

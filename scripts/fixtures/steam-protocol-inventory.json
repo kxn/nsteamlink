@@ -1,0 +1,387 @@
+{
+  "constants": {
+    "connect_retry": 6553,
+    "normal_timeout": 983040,
+    "paused_timeout": 11796480,
+    "rto_min": 65,
+    "rto_max": 3276
+  },
+  "mtu_cases": [
+    {
+      "mtu_field_present": true,
+      "input": -1,
+      "output": 512
+    },
+    {
+      "mtu_field_present": true,
+      "input": 0,
+      "output": 512
+    },
+    {
+      "mtu_field_present": true,
+      "input": 511,
+      "output": 512
+    },
+    {
+      "mtu_field_present": true,
+      "input": 512,
+      "output": 512
+    },
+    {
+      "mtu_field_present": true,
+      "input": 1024,
+      "output": 1024
+    },
+    {
+      "mtu_field_present": true,
+      "input": 1472,
+      "output": 1472
+    },
+    {
+      "mtu_field_present": true,
+      "input": 1473,
+      "output": 1472
+    },
+    {
+      "mtu_field_present": true,
+      "input": 1500,
+      "output": 1472
+    },
+    {
+      "mtu_field_present": true,
+      "input": 9000,
+      "output": 1472
+    },
+    {
+      "mtu_field_present": false,
+      "input": 0,
+      "output": 512
+    }
+  ],
+  "shaper_defaults": {
+    "unreliable_limit": 12500000,
+    "reliable_limit": 625000
+  },
+  "packet_names": {
+    "0": "Unconnected",
+    "1": "Connect",
+    "2": "Connected",
+    "3": "UnreliableMessage",
+    "4": "UnreliableMessageFragment",
+    "5": "ReliableMessage",
+    "6": "ReliableMessageFragment",
+    "7": "ReliableAck",
+    "8": "ReliableNack",
+    "9": "Disconnected",
+    "10": "UnreliableNack",
+    "11": "UnreliableFEC",
+    "12": "UNKNOWN"
+  },
+  "scheduling_cases": [
+    {
+      "rotation": 0,
+      "first_phase": [
+        1,
+        3,
+        2
+      ],
+      "retry_phase": [
+        1,
+        3,
+        2
+      ]
+    },
+    {
+      "rotation": 1,
+      "first_phase": [
+        1,
+        3,
+        2
+      ],
+      "retry_phase": [
+        3,
+        2,
+        1
+      ]
+    },
+    {
+      "rotation": 2,
+      "first_phase": [
+        1,
+        3,
+        2
+      ],
+      "retry_phase": [
+        2,
+        1,
+        3
+      ]
+    }
+  ],
+  "routes": [
+    {
+      "state": 2,
+      "message": 7,
+      "name": "k_EStreamControlServerHandshake",
+      "target": "CServerHandshakeMsg::CServerHandshakeMsg()"
+    },
+    {
+      "state": 3,
+      "message": 2,
+      "name": "k_EStreamControlAuthenticationResponse",
+      "target": "CStreamClient::OnAuthenticationResponse(CStreamFrame&)"
+    },
+    {
+      "state": 4,
+      "message": 3,
+      "name": "k_EStreamControlNegotiationInit",
+      "target": "CStreamClient::OnNegotiationInit(CStreamFrame&)"
+    },
+    {
+      "state": 4,
+      "message": 4,
+      "name": "k_EStreamControlNegotiationSetConfig",
+      "target": "CStreamClient::OnNegotiationSetConfig(CStreamFrame&)"
+    },
+    {
+      "state": 6,
+      "message": 50,
+      "name": "k_EStreamControlStartAudioData",
+      "target": "CStreamClient::OnStartAudioData(CStreamFrame&)"
+    },
+    {
+      "state": 6,
+      "message": 51,
+      "name": "k_EStreamControlStopAudioData",
+      "target": "CStreamClient::OnStopAudioData(CStreamFrame&)"
+    },
+    {
+      "state": 6,
+      "message": 52,
+      "name": "k_EStreamControlStartVideoData",
+      "target": "CStreamClient::OnStartVideoData(CStreamFrame&)"
+    },
+    {
+      "state": 6,
+      "message": 53,
+      "name": "k_EStreamControlStopVideoData",
+      "target": "CStreamClient::OnStopVideoData(CStreamFrame&)"
+    },
+    {
+      "state": 6,
+      "message": 63,
+      "name": "k_EStreamControlShowCursor",
+      "target": "CShowCursorMsg::CShowCursorMsg()"
+    },
+    {
+      "state": 6,
+      "message": 64,
+      "name": "k_EStreamControlHideCursor",
+      "target": "CHideCursorMsg::CHideCursorMsg()"
+    },
+    {
+      "state": 6,
+      "message": 65,
+      "name": "k_EStreamControlSetCursor",
+      "target": "CSetCursorMsg::CSetCursorMsg()"
+    },
+    {
+      "state": 6,
+      "message": 67,
+      "name": "k_EStreamControlSetCursorImage",
+      "target": "CStreamClient::OnSetCursorImage(CStreamFrame&)"
+    },
+    {
+      "state": 6,
+      "message": 68,
+      "name": "k_EStreamControlDeleteCursor",
+      "target": "CDeleteCursorMsg::CDeleteCursorMsg()"
+    },
+    {
+      "state": 6,
+      "message": 69,
+      "name": "k_EStreamControlSetTargetFramerate",
+      "target": "CStreamClient::OnSetTargetFramerate(CStreamFrame&)"
+    },
+    {
+      "state": 6,
+      "message": 74,
+      "name": "k_EStreamControlOverlayEnabled",
+      "target": "COverlayEnabledMsg::COverlayEnabledMsg()"
+    },
+    {
+      "state": 6,
+      "message": 81,
+      "name": "k_EStreamControlSetTitle",
+      "target": "CSetTitleMsg::CSetTitleMsg()"
+    },
+    {
+      "state": 6,
+      "message": 82,
+      "name": "k_EStreamControlSetIcon",
+      "target": "CStreamClient::OnSetIcon(CStreamFrame&)"
+    },
+    {
+      "state": 6,
+      "message": 87,
+      "name": "k_EStreamControlSetQoS",
+      "target": "CSetQoSMsg::CSetQoSMsg()"
+    },
+    {
+      "state": 6,
+      "message": 89,
+      "name": "k_EStreamControlSetGammaRamp",
+      "target": "CStreamClient::OnSetGammaRamp(CStreamFrame&)"
+    },
+    {
+      "state": 6,
+      "message": 90,
+      "name": "k_EStreamControlVideoEncoderInfo",
+      "target": "CVideoEncoderInfoMsg::CVideoEncoderInfoMsg()"
+    },
+    {
+      "state": 6,
+      "message": 94,
+      "name": "k_EStreamControlSetTargetBitrate",
+      "target": "CStreamClient::OnSetTargetBitrate(CStreamFrame&)"
+    },
+    {
+      "state": 6,
+      "message": 98,
+      "name": "k_EStreamControlSetActivity",
+      "target": "CStreamClient::OnSetActivity(CStreamFrame&)"
+    },
+    {
+      "state": 6,
+      "message": 99,
+      "name": "k_EStreamControlSetStreamingClientConfig",
+      "target": "CStreamClient::OnSetStreamingClientConfig(CStreamFrame&)"
+    },
+    {
+      "state": 6,
+      "message": 100,
+      "name": "k_EStreamControlSystemSuspend",
+      "target": "CSystemSuspendMsg::CSystemSuspendMsg()"
+    },
+    {
+      "state": 6,
+      "message": 103,
+      "name": "k_EStreamControlVirtualHereReady",
+      "target": "CVirtualHereReadyMsg::CVirtualHereReadyMsg()"
+    },
+    {
+      "state": 6,
+      "message": 105,
+      "name": "k_EStreamControlSetSpectatorMode",
+      "target": "CSetSpectatorModeMsg::CSetSpectatorModeMsg()"
+    },
+    {
+      "state": 6,
+      "message": 110,
+      "name": "k_EStreamControlTouchConfigActive",
+      "target": "CTouchConfigActiveMsg::CTouchConfigActiveMsg()"
+    },
+    {
+      "state": 6,
+      "message": 112,
+      "name": "k_EStreamControlSetTouchConfigData",
+      "target": "CStreamClient::OnSetTouchConfigData(CStreamFrame&)"
+    },
+    {
+      "state": 6,
+      "message": 116,
+      "name": "k_EStreamControlSetTouchIconData",
+      "target": "CStreamClient::OnSetTouchIconData(CStreamFrame&)"
+    },
+    {
+      "state": 6,
+      "message": 120,
+      "name": "k_EStreamControlSetCaptureSize",
+      "target": "CSetCaptureSizeMsg::CSetCaptureSizeMsg()"
+    },
+    {
+      "state": 6,
+      "message": 121,
+      "name": "k_EStreamControlSetFlashState",
+      "target": "CSetFlashStateMsg::CSetFlashStateMsg()"
+    },
+    {
+      "state": 6,
+      "message": 126,
+      "name": "k_EStreamControlToggleMagnification",
+      "target": "CToggleMagnificationMsg::CToggleMagnificationMsg()"
+    },
+    {
+      "state": 6,
+      "message": 127,
+      "name": "k_EStreamControlSetCapslock",
+      "target": "CSetCapslockMsg::CSetCapslockMsg()"
+    },
+    {
+      "state": 6,
+      "message": 128,
+      "name": "k_EStreamControlSetKeymap",
+      "target": "CSetKeymapMsg::CSetKeymapMsg()"
+    },
+    {
+      "state": 6,
+      "message": 132,
+      "name": "k_EStreamControlRemotePlayTogetherGroupUpdate",
+      "target": "CRemotePlayTogetherGroupUpdateMsg::CRemotePlayTogetherGroupUpdateMsg()"
+    },
+    {
+      "state": 6,
+      "message": 133,
+      "name": "k_EStreamControlSetInputTemporarilyDisabled",
+      "target": "CSetInputTemporarilyDisabledMsg::CSetInputTemporarilyDisabledMsg()"
+    },
+    {
+      "state": 6,
+      "message": 134,
+      "name": "k_EStreamControlSetQualityOverride",
+      "target": "CSetQualityOverrideMsg::CSetQualityOverrideMsg()"
+    },
+    {
+      "state": 6,
+      "message": 135,
+      "name": "k_EStreamControlSetBitrateOverride",
+      "target": "CSetBitrateOverrideMsg::CSetBitrateOverrideMsg()"
+    },
+    {
+      "state": 6,
+      "message": 136,
+      "name": "k_EStreamControlShowOnScreenKeyboard",
+      "target": "CShowOnScreenKeyboardMsg::CShowOnScreenKeyboardMsg()"
+    },
+    {
+      "state": 6,
+      "message": 137,
+      "name": "k_EStreamControlControllerConfigMsg",
+      "target": "CControllerConfigMsg::CControllerConfigMsg()"
+    },
+    {
+      "state": 6,
+      "message": 138,
+      "name": "k_EStreamControlControllerPersonalizationUpdate",
+      "target": "CControllerPersonalizationUpdateMsg::CControllerPersonalizationUpdateMsg()"
+    },
+    {
+      "state": 6,
+      "message": 145,
+      "name": "k_EStreamControlVRConnectionReady",
+      "target": "CStreamClient::OnVRConnectionReady(CStreamFrame&)"
+    },
+    {
+      "state": 6,
+      "message": 146,
+      "name": "k_EStreamControlSetCursorScale",
+      "target": "CSetCursorScaleMsg::CSetCursorScaleMsg()"
+    },
+    {
+      "state": 6,
+      "message": 147,
+      "name": "k_EStreamControlCaptureFailed",
+      "target": "CCaptureFailedMsg::CCaptureFailedMsg()"
+    }
+  ]
+}

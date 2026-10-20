@@ -2,6 +2,105 @@
 
 [English](CHANGELOG.en.md)
 
+## [0.5.1] - 2026-10-20
+
+上一正式版：**v0.5.0**。本版：**v0.5.1**。目标分支：`main`；对应源码：[`v0.5.1`](https://github.com/kxn/nsteamlink/tree/v0.5.1)。
+
+### 主要变化
+
+- **串流恢复与退出**：改进视频丢失反馈、关键帧恢复、解码队列和帧所有权处理；停止串流时保留应处理的最后一批数据，正常关闭不再误报为提交失败。
+- **发现与重试**：发现广播全部发送失败时执行有界 socket 重建；修正接收批次、发现发送和开流重试的先后顺序，保留当前主机身份和请求。发现完整轮与快速重试沿用已核验的官方期限和序号规则。
+- **授权续接与凭据**：改进同一开流请求的自动授权续接、确认前的凭据保存，以及按所选 Steam 身份保存密钥；连接安全码与配对授权码仍分别处理。
+- **正式包精简**：明确关闭应用与 SDK 诊断。正式 NRO 排除调试 UDP 入口、nxlink/文件日志、HID 历史采样、高级诊断浮屏、故障注入和测试探针。发布流程校验实际对象、ELF/NRO 对应关系和附件允许列表；标签流程保留诊断排除测试，但不上传诊断包。
+
+### 按类型分组的提交
+
+- **恢复与生命周期修复**：`3be848b`，UDP 接收边界；`07ed493`，正常停止时取消提交；`a94d163`、`c5a7cfb`，解码停止批次与最后一帧组装。
+- **发现修复**：`8fad3ca`、`9f193c8`，接收恢复和启动失败清理；`6c7a02d`、`e1274b5`，广播重建及发现轮次；`fe5bc32`、`e46cf75`、`9de506c`，操作、回调和联合重试顺序（[PR #87](https://github.com/kxn/nsteamlink/pull/87)）。
+- **授权与发布检查**：`a3000a4`、`eeeb684`、`b51680d`、`03bf16e`，授权和凭据生命周期；`55fcf98`，SDK 诊断排除与产物门禁。
+- **验证与参考**：补充官方原指令对照、音频断序/停止、跨组和跨通道 FEC、容量边界及独立 Switch 探针。研究和测试素材不进入正式 NRO。
+
+### 验证与证据范围
+
+已验证的 `9de506c` / IHSlib `bfb7100` 通过桌面普通构建 239 项、诊断构建 245 项、相关 ASan/UBSan/leak 9 项，以及两轮完整 CI。Switch 正式构建的 45 个产品翻译单元、SDK 对象和最终 NRO 已检查诊断排除，15 类污染及 9 类探针产物/调用错误均被门禁拒绝。标签工作流会对正式发版提交重新构建并运行这些检查。
+
+真实 Steam→Switch 会话已验证单个丢失分片的 FEC 重建，以及超过修复能力的整组丢失恢复：客户端实际发送恢复请求，随后接受并提交关键帧，继续播放 30 秒。本次受控局域网测试从丢失到关键帧提交约 40 毫秒，提交错误为 0（[实机记录](https://github.com/kxn/nsteamlink/issues/69#issuecomment-6281073775)）。这不是所有网络环境的延迟保证，也不代表原有偶发卡顿或 Steam 大屏闪烁的根因已经确定。网络切换、会话完全断开和公网连接保留为独立课题。
+
+### 下载与更新
+
+从[本版 Release](https://github.com/kxn/nsteamlink/releases/tag/v0.5.1) 下载正式 `.nro`，或使用应用内更新。已有 HOME 入口继续使用 `sdmc:/switch/nsteamlink/nsteamlink.nro`。附件仅包含正式 NRO、源码身份、诊断排除报告、SDK 包清单、许可证及 `SHA256SUMS`。
+
+感谢提供试玩与实机测试反馈的用户、提供初代 Switch 的 **Sven**，以及 **Simone Caronni（[@scaronni](https://github.com/scaronni)）**、IHSlib、FFmpeg、Opus、SDL、libnx、devkitPro、deko3d 和 nx-hbloader 的作者与维护者。
+
+[完整变更：v0.5.0 → v0.5.1](https://github.com/kxn/nsteamlink/compare/v0.5.0...v0.5.1)
+
+## [0.5.0] - 2026-10-19
+
+上一正式版：**v0.4.0**。本版：**v0.5.0**。目标分支：`main`；对应源码：[`v0.5.0`](https://github.com/kxn/nsteamlink/tree/v0.5.0)。
+
+### 主要变化
+
+- **1080p 串流**：新增自动、720p、1080p 三种分辨率选择。自动在连接时按掌机选择 720p、底座选择 1080p；掌机也可手动选择 1080p，解码后缩放至内屏。底座呈现保留原生 1080p 细节。
+- **设置分类**：首页 X 直接打开设置，分为画面与声音、网络、主机管理、应用。画面偏好、分辨率、带宽和语言入口显示当前值；声音、网络纠错和自动检查更新统一使用图形开关。只有进入子页的项目显示箭头。
+- **精简串流菜单**：标题改为“串流”，只保留继续游玩、结束游戏并断开、断开连接。串流期间不再提供设置入口；确认框明确区分关闭主机游戏与保留游戏运行。
+- **界面整理**：统一“主机”称呼，移除菜单内重复的生效时机说明，调整中英文排版、返回焦点及禁用项的手柄和触摸交互。
+
+### 按类型分组的提交
+
+- **功能**：`3560194`，可选分辨率、自动底座协商和原生 1080p 呈现（[PR #60](https://github.com/kxn/nsteamlink/pull/60)，[Issue #12](https://github.com/kxn/nsteamlink/issues/12)）；`719deef`，设置分类与串流菜单重组。
+- **修复**：`be19b8a`，分辨率入口和侧栏布局；`1e74f71`，真机探针的 nxlink 参数顺序。
+- **开发测试**：`1e4e13c`，独立的强制 1080p 测试构建；正式发布包使用自动分辨率默认值。
+
+### 验证与证据范围
+
+本地 173 项回归最终通过，Switch 正式构建及诊断排除检查通过，中英文菜单经过实际渲染检查。Switch 的 12 组硬件解码与原生 1080p 像素检查通过，测试资源清理无堆增长；维护者对掌机强制 1080p 串流进行了试玩并反馈正常。
+
+目前没有底座，HDMI 输出与真实底座插拔尚未实测；上述结果也不代表持续 1080p60 性能或完整延迟基准已验证。标签工作流会重新执行桌面诊断 ON/OFF 测试、Switch 正式及诊断构建，并校验版本、NRO 结构、源码身份和附件校验和后发布。
+
+### 下载与更新
+
+从[本版 Release](https://github.com/kxn/nsteamlink/releases/tag/v0.5.0) 下载正式 `.nro`，或通过现有应用内更新升级。已添加 HOME 入口时，固定目标为 `sdmc:/switch/nsteamlink/nsteamlink.nro`。分辨率位于 **设置 → 画面与声音 → 分辨率**，自动检查更新位于 **设置 → 应用**。netloader 启动不检查更新。
+
+附件包含正式 NRO、`SHA256SUMS`、`build_identity.json`、SDK 包清单及许可证；不发布强制 1080p 测试包或独立 NSP。
+
+感谢用户提出 1080p 需求和菜单反馈、Sven 提供初代 Switch，以及 IHSlib、FFmpeg、Opus、SDL、libnx、devkitPro、deko3d 与 nx-hbloader 的作者和维护者。
+
+[完整变更：v0.4.0 → v0.5.0](https://github.com/kxn/nsteamlink/compare/v0.4.0...v0.5.0)
+
+## [0.4.0] - 2026-10-19
+
+上一正式版：**v0.3.0**。本版：**v0.4.0**。目标分支：`main`；对应源码：[`v0.4.0`](https://github.com/kxn/nsteamlink/tree/v0.4.0)。运行代码沿用已试玩的 `d05abab`，IHSlib 固定为 `afed70e`；发版提交仅更新版本和中英说明。
+
+### 主要变化
+
+- **媒体恢复与传输**：按已核实的官方客户端路径调整视频丢包反馈、关键帧恢复、解码重置与帧呈现时序，以及可靠传输的确认、重发和接收窗口处理；接入 FEC 接收与保存的 FEC 设置。
+- **音频播放**：调整 Opus 丢包恢复、抖动缓冲、原始音频播放及播放器启停，改善音视频数据与设备的生命周期管理。
+- **连接测网与设置**：接入首次及手动测网、结果保存和推荐预设，保留完整客户端配置；连接等待区分传输、认证和媒体阶段，移除固定视频停顿自动断开。
+- **Switch 能力**：按实际后端声明 720p60 / H.264，省略未经确认的最大解码码率。相册 applet 模式可通过确认界面安装 HOME 入口，并显示安装活动与用时；串流仍需全内存模式。
+- **协议参考**：补充 Steam Link Anywhere / SDR 客户端策略、协议 schema 及可复现离线审计；这部分研究本身不提供可直接使用的完整公网串流后端。
+
+### 按类型分组的提交
+
+- **功能**：`1a49cca`，applet 模式安装 HOME 入口（[Issue #44](https://github.com/kxn/nsteamlink/issues/44)）；`c4de796`、`2512fb1`、`d6fab25`，FEC 接收、连接生命周期与完整配置持久化。
+- **修复与集成**：`7c3b220`、`a3fe641`、`d095563`，关键帧、内容模式与加密分片；`1e8e542`、`87e6c4f`，音频恢复及缓冲；`59eebda`、`697f9b9`、`40dd5b3`，测网、连接等待与已退休会话处理。完整集成见 [PR #53](https://github.com/kxn/nsteamlink/pull/53)。
+- **研究与文档**：[PR #50](https://github.com/kxn/nsteamlink/pull/50)，Anywhere / SDR 策略与 schema；[PR #53](https://github.com/kxn/nsteamlink/pull/53)，官方媒体、传输、设置和测网路径对照。
+
+### 验证与证据范围
+
+维护者已对 `d05abab` 主线试玩包进行真机试玩并反馈使用良好；主线 CI 的桌面诊断 ON/OFF 各 170 项测试、Switch 普通及诊断构建通过。标签工作流会再次执行这些检查，并核验版本、正式包诊断排除、NRO 结构、构建来源和附件校验和后发布。
+
+离线原指令回放与受控 peer 测试仅证明对应输入和边界。真实 Steam 的 FEC 启用、不同网络和主机的长期表现、硬件错误及 hbmenu 返回生命周期仍需进一步验证，不能据此断言此前偶发卡顿或 Steam 大屏闪烁已根治。后续逆向开发分支的未合并改动不包含在本版中；其余协议差异由 [Issue #52](https://github.com/kxn/nsteamlink/issues/52) 跟踪。
+
+### 致谢
+
+感谢提供试玩反馈和问题线索的用户、提供初代 Nintendo Switch 的 **Sven**，以及 **Simone Caronni（[@scaronni](https://github.com/scaronni)）**、IHSlib、FFmpeg、Opus、SDL、libnx、devkitPro、deko3d 与 nx-hbloader 的作者和维护者。
+
+### 下载与更新
+
+从[本版 Release](https://github.com/kxn/nsteamlink/releases/tag/v0.4.0) 下载 `.nro`；v0.3.0 起从 SD 卡启动时可使用应用内更新，netloader 启动不检查更新。已添加 HOME 入口时，其固定目标为 `sdmc:/switch/nsteamlink/nsteamlink.nro`。正式包关闭高级诊断，附件包含 `SHA256SUMS`、`build_identity.json` 和 SDK 包清单；仅发布 NRO，不发布独立 NSP 或测试工具。
+
+[完整变更：v0.3.0 → v0.4.0](https://github.com/kxn/nsteamlink/compare/v0.3.0...v0.4.0)
+
 ## [0.3.0] - 2026-10-15
 
 上一正式版：**v0.2.1**。本版：**v0.3.0**。目标分支：`main`；对应源码：[`v0.3.0`](https://github.com/kxn/nsteamlink/tree/v0.3.0)。

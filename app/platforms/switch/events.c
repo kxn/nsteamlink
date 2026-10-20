@@ -31,6 +31,11 @@ void sl_events_init(void) {
 bool sl_events_foreground(void) {
     return appletGetFocusState() == AppletFocusState_InFocus;
 }
+bool sl_events_keyboard_focus(void) {
+    /* deko owns no SDL window; libnx application input focus is this backend's
+     * equivalent fact, separate from Remote Play's pause state. */
+    return appletGetFocusState() == AppletFocusState_InFocus;
+}
 bool sl_events_exit_requested(void) {
     return quit;
 }

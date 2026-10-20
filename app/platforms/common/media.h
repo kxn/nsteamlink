@@ -24,7 +24,8 @@ typedef struct sl_render_metrics {
     uint64_t draws, redraws, begin_us, ui_us, present_us;
     uint64_t uploads, upload_bytes, downloads;
     sl_gfx_counters resources;
-    uint64_t available_frames, submitted_frames, cohort_frames, cohort_presented, deferred, unobserved;
+    uint64_t available_frames, submitted_frames, cohort_frames, cohort_presented, deferred,
+        unobserved;
     uint32_t input_period_us, output_period_us;
     bool adaptive_active;
     uint64_t adaptive_ready_us, adaptive_wait_us, adaptive_start_us, adaptive_holdovers;
@@ -98,8 +99,8 @@ typedef struct stream_media_snapshot {
     uint32_t audio_frames;
     uint64_t audio_bytes;
     uint64_t audio_decoded_samples;
-    uint32_t audio_queued_bytes;
-    uint32_t audio_queue_drops;
+    uint32_t audio_queued_bytes; /* Jitter occupancy expressed in device S16 bytes. */
+    uint32_t audio_queue_drops;  /* Rejected input sample frames (per-channel frames). */
     uint32_t audio_decode_errors;
     int audio_codec;
     int audio_channels;
@@ -191,18 +192,29 @@ IHS_StreamVideoSubmitResult stream_media_video_submit(IHS_Session *session, uint
                                                       IHS_StreamVideoFrameFlag flags);
 void stream_media_video_stop(IHS_Session *session);
 
+const IHS_StreamAudioCallbacks *sl_media_audio_callbacks(void);
+void sl_media_end_stream_player(bool input_focus, bool hard, bool background);
+int stream_media_audio_prepare(IHS_Session *, const IHS_StreamAudioConfig *);
+int stream_media_audio_start_decoder(IHS_Session *, const IHS_StreamAudioConfig *);
 int stream_media_audio_start(IHS_Session *session, const IHS_StreamAudioConfig *config);
 int stream_media_audio_submit(IHS_Session *session, IHS_Buffer *data);
-void stream_media_audio_stop(IHS_Session *session);
+int stream_media_audio_submit_frame(IHS_Session *, const IHS_StreamAudioFrameInfo *, IHS_Buffer *);
+void stream_media_audio_stop(IHS_Session *session);  /* decoder only; preserve player tail */
+void stream_media_audio_close(IHS_Session *session); /* join device, free player jitter */
 
 void sl_media_submitted(const IHS_HIDSDLLastSubmitted *value);
 
+int sl_media_video_prepare(IHS_Session *, const IHS_StreamVideoConfig *);
 int sl_media_video_start_tracked(IHS_Session *, const IHS_VideoEpochInfo *,
                                  const IHS_StreamVideoConfig *);
 IHS_StreamVideoSubmitResult sl_media_video_submit_tracked(IHS_Session *, const IHS_VideoEpochInfo *,
                                                           uint16_t, IHS_FrameTicket *, IHS_Buffer *,
                                                           IHS_StreamVideoFrameFlag, bool *);
 void sl_media_video_stop_tracked(IHS_Session *, const IHS_VideoEpochInfo *);
+void sl_media_video_interrupt_tracked(IHS_Session *, const IHS_VideoEpochInfo *, bool restarting);
+void sl_media_video_think_tracked(IHS_Session *, const IHS_VideoEpochInfo *);
+void sl_media_video_flush_tracked(IHS_Session *, const IHS_VideoEpochInfo *,
+                                   IHS_StreamVideoFlushPhase);
 void sl_media_close_video(void);
 bool sl_media_video_clean(void);
 

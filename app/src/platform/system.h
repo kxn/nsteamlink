@@ -6,6 +6,8 @@
 bool sl_system_preflight(int argc, char **argv);
 bool sl_system_init(void);
 bool sl_system_running(void);
+/* Cached operation mode, safe to read on the runtime worker; no IPC. */
+bool sl_system_docked(void);
 void sl_system_shutdown(void);
 bool sl_system_random(void *data, size_t size);
 const char *sl_system_data_dir(void);
@@ -24,6 +26,9 @@ void sl_system_dns_cancel_all(void);
 bool sl_system_dns_finish(void); /* After resolving workers joined, before logs close. */
 
 const char *sl_system_locale(void);
+/* CPU input for the official AVCodec thread-selection gates. Linux preserves
+ * its /proc byte count; Switch uses its SDK's logical-CPU detector (§100). */
+uint8_t sl_system_video_cpu_count(void);
 
 /* Platform facts and application policy, copied into IHS before session start.
  * Unknown values stay zero; no guessed hardware or OS identities. */

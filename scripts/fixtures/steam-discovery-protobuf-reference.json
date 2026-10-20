@@ -1,0 +1,61 @@
+{
+  "binary_sha256": "50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e",
+  "scope": "Independently execute official discovery C++ protobuf and Frame instructions.\n\nOnPingRequest, generated constructors/parser/ByteSize/serializer, Frame Get/Put,\npadding and destructors execute original ARM64. Input Frame/packet storage is\nseeded. Allocation/libc storage and final SendUnconnected are adapters. Captured\nbytes exclude the message byte/header/CRC normally written by that final call.\nNo actual socket, network, host or decoder is exercised.\n",
+  "cases": [
+    {
+      "input": {
+        "protobuf": "08071000",
+        "requested": 0,
+        "presence": 3
+      },
+      "observed": {
+        "object_sp_offset": 88,
+        "frame_body": "0400000008071000"
+      }
+    },
+    {
+      "input": {
+        "protobuf": "08071040",
+        "requested": 64,
+        "presence": 3
+      },
+      "observed": {
+        "object_sp_offset": 88,
+        "frame_body": "0400000008071040fefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+      }
+    },
+    {
+      "input": {
+        "protobuf": "",
+        "requested": 0,
+        "presence": 0
+      },
+      "observed": {
+        "object_sp_offset": 88,
+        "frame_body": "00000000"
+      }
+    },
+    {
+      "input": {
+        "protobuf": "0807",
+        "requested": 0,
+        "presence": 1
+      },
+      "observed": {
+        "object_sp_offset": 88,
+        "frame_body": "020000000807"
+      }
+    },
+    {
+      "input": {
+        "protobuf": "1040",
+        "requested": 64,
+        "presence": 2
+      },
+      "observed": {
+        "object_sp_offset": 88,
+        "frame_body": "020000001040fefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+      }
+    }
+  ]
+}

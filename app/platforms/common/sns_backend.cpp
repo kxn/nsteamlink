@@ -10,6 +10,7 @@ extern "C" {
 #if NSL_DIAGNOSTICS
 #include "sns_start_diagnostics.h"
 #endif
+#include "sns_message_queue.h"
 #include <mbedtls/base64.h>
 #include <curl/curl.h>
 #include <atomic>
@@ -32,12 +33,15 @@ extern "C" bool sl_gns_import_trust(const char *, size_t);
 extern "C" int sl_gns_certificate_seconds();
 
 namespace {
-enum { DATAGRAM_MAX = 2048, DATAGRAM_COUNT = 4096, SIGNAL_COUNT = 64 };
+/* Fixed public SDK's default RecvMaxMessageSize, not the UDP buffer limit.
+ * Official SNS packet attachment preserves the entire SDK message (§12.3). */
+enum { DATAGRAM_MAX = k_cbMaxSteamNetworkingSocketsMessageSizeSend, SIGNAL_COUNT = 64 };
 using Message = std::vector<uint8_t>;
 struct Queues {
     std::mutex mutex;
     std::condition_variable wake;
-    std::deque<Message> tx, rx, signals;
+    nsl::SnsMessageQueue tx, rx;
+    std::deque<Message> signals;
     std::atomic<sl_sns_state> state{SL_SNS_CONNECTING};
     bool owner = true;
 };
@@ -433,19 +437,22 @@ static void update_backend(sl_sns *b, uint64_t now) {
             std::lock_guard<std::mutex> lock(b->q->mutex);
             if (b->q->tx.empty())
                 break;
-            outgoing = std::move(b->q->tx.front());
-            b->q->tx.pop_front();
+            outgoing = b->q->tx.take();
         }
         EResult ret = b->sockets->SendMessageToConnection(b->connection, outgoing.data(),
             static_cast<uint32_t>(outgoing.size()), 0x15, nullptr);
         if (ret == k_EResultLimitExceeded || ret == k_EResultIgnored) {
             std::lock_guard<std::mutex> lock(b->q->mutex);
-            b->q->tx.emplace_front(std::move(outgoing));
+            b->q->tx.retry(std::move(outgoing));
             break;
         }
         if (ret != k_EResultOK) {
             close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_SEND, ret);
             return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(b->q->mutex);
+            b->q->tx.finish(outgoing.size());
         }
         ++b->stats.datagrams_sent;
     }
@@ -462,14 +469,10 @@ static void update_backend(sl_sns *b, uint64_t now) {
             for (int i = 0; i < count; ++i) {
                 SteamNetworkingMessage_t *m = messages[i];
                 ++b->stats.datagrams_received;
-                if (m->m_cbSize <= 0 || m->m_cbSize > DATAGRAM_MAX || b->q->rx.size() == DATAGRAM_COUNT)
+                if (!overflow && (m->m_cbSize < 0 || !b->q->rx.push(
+                        static_cast<const uint8_t *>(m->m_pData),
+                        static_cast<size_t>(m->m_cbSize), DATAGRAM_MAX)))
                     overflow = true;
-                else if (!overflow) {
-                    const auto *p = static_cast<const uint8_t *>(m->m_pData);
-                    try {
-                        b->q->rx.emplace_back(p, p + m->m_cbSize);
-                    } catch (const std::bad_alloc &) { overflow = true; }
-                }
                 m->Release();
             }
         }
@@ -571,38 +574,49 @@ extern "C" int sl_sns_set_mtu(sl_sns *b, int mtu) {
 }
 static bool send_datagram(void *ctx, const uint8_t *p, size_t n) {
     sl_sns *b = static_cast<sl_sns *>(ctx);
-    if (!b || !p || !n || n > DATAGRAM_MAX)
+    if (!b)
         return false;
     std::lock_guard<std::mutex> lock(b->q->mutex);
-    if (b->q->state != SL_SNS_CONNECTED || b->q->tx.size() == DATAGRAM_COUNT)
-        return false;
-    try {
-        b->q->tx.emplace_back(p, p + n);
-        return true;
-    } catch (const std::bad_alloc &) { return false; }
+    return b->q->state == SL_SNS_CONNECTED && b->q->tx.push(p, n, DATAGRAM_MAX);
 }
-static int receive_datagram(void *ctx, uint8_t *p, size_t capacity, uint32_t wait_us) {
+static int wait_datagram(void *ctx, uint32_t wait_us) {
     sl_sns *b = static_cast<sl_sns *>(ctx);
-    if (!b || !p)
-        return -1;
+    if (!b) return -1;
     std::unique_lock<std::mutex> lock(b->q->mutex);
     b->q->wake.wait_for(lock, std::chrono::microseconds(wait_us), [&] {
         return !b->q->rx.empty() || b->q->state != SL_SNS_CONNECTED;
     });
-    if (b->q->state != SL_SNS_CONNECTED)
-        return -1;
-    if (b->q->rx.empty())
-        return 0;
+    if (b->q->state != SL_SNS_CONNECTED) return -1;
+    return b->q->rx.empty() ? 0 : 1;
+}
+static int receive_datagram(void *ctx, uint8_t *p, size_t capacity,
+                            size_t *received, uint32_t wait_us) {
+    sl_sns *b = static_cast<sl_sns *>(ctx);
+    if (!b || !p || !received) return -1;
+    std::unique_lock<std::mutex> lock(b->q->mutex);
+    if (wait_us)
+        b->q->wake.wait_for(lock, std::chrono::microseconds(wait_us), [&] {
+            return !b->q->rx.empty() || b->q->state != SL_SNS_CONNECTED;
+        });
+    /* Like official Recv, terminal handle state takes priority over old data. */
+    if (b->q->state != SL_SNS_CONNECTED) return -1;
+    if (b->q->rx.empty()) return 0;
     const Message &m = b->q->rx.front();
-    if (m.size() > capacity)
-        return -1;
-    size_t n = m.size();
-    memcpy(p, m.data(), n);
-    b->q->rx.pop_front();
-    return static_cast<int>(n);
+    if (m.size() > capacity) return -1;
+    *received = m.size();
+    if (*received) memcpy(p, m.data(), *received);
+    b->q->rx.pop();
+    return 1;
+}
+static size_t next_datagram_size(void *ctx) {
+    sl_sns *b = static_cast<sl_sns *>(ctx);
+    if (!b) return 0;
+    std::lock_guard<std::mutex> lock(b->q->mutex);
+    return b->q->rx.empty() ? 0 : b->q->rx.front().size();
 }
 extern "C" const IHS_DatagramTransport *sl_sns_datagram_transport(void) {
-    static const IHS_DatagramTransport callbacks = {send_datagram, receive_datagram};
+    static const IHS_DatagramTransport callbacks = {
+        send_datagram, receive_datagram, wait_datagram, DATAGRAM_MAX, next_datagram_size};
     return &callbacks;
 }
 extern "C" void sl_sns_destroy(sl_sns *b) {

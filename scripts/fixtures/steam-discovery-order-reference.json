@@ -1,0 +1,310 @@
+{
+  "binary_sha256": "15b2d79881eef0c47ed2f96c17d1d60a5f42d3285abcf9f512cfffdac5b238a2",
+  "scope": "Original Update receives a pending ticket before checking due retries.\n\nOriginal Start/request producer, Update, generated response parser/handler/AES\nexecute. BReceive and BProcess dispatch are explicit adapters; BProcess jumps\nto the actual parsed response handler, then returns to the original Update.\nNo claim of original wire-envelope admission, Qt scheduling or physical network.\nAll other terminals inherit the transaction audit's documented boundaries.\n",
+  "cases": [
+    {
+      "reply": false,
+      "response": "0811100018e0dc032240a00f1ede67c6f803526f2e3c4ea929bcf34744ebcd337f209c19e3ac13d82decc9c358c98b58409c50a0d190143aaefe25ae07f1486149d856b1d88b12fc2077",
+      "request_id": 17,
+      "steps": [
+        {
+          "label": "initial",
+          "state": 5,
+          "request_id": 17,
+          "target": 123,
+          "messages": [
+            {
+              "tag": 5,
+              "body": "08111000180020002a003a08544f4b454e31323342004800500058006000687b700170047800800100880100980100a00100a80100b00100b80100",
+              "target": 123,
+              "request_id": 17,
+              "network_test": false
+            }
+          ],
+          "actions": [],
+          "test_status": 0
+        },
+        {
+          "label": "idle_without_update",
+          "state": 5,
+          "request_id": 17,
+          "target": 123,
+          "messages": [
+            {
+              "tag": 5,
+              "body": "08111000180020002a003a08544f4b454e31323342004800500058006000687b700170047800800100880100980100a00100a80100b00100b80100",
+              "target": 123,
+              "request_id": 17,
+              "network_test": false
+            }
+          ],
+          "actions": [],
+          "test_status": 0
+        },
+        {
+          "label": "due_update",
+          "state": 5,
+          "request_id": 17,
+          "target": 123,
+          "messages": [
+            {
+              "tag": 5,
+              "body": "08111000180020002a003a08544f4b454e31323342004800500058006000687b700170047800800100880100980100a00100a80100b00100b80100",
+              "target": 123,
+              "request_id": 17,
+              "network_test": false
+            },
+            {
+              "tag": 5,
+              "body": "08111000180020002a003a08544f4b454e31323342004800500058006000687b700170047800800100880100980100a00100a80100b00100b80100",
+              "target": 123,
+              "request_id": 17,
+              "network_test": false
+            }
+          ],
+          "actions": [],
+          "test_status": 0
+        },
+        {
+          "label": "same_wall_next_update",
+          "state": 5,
+          "request_id": 17,
+          "target": 123,
+          "messages": [
+            {
+              "tag": 5,
+              "body": "08111000180020002a003a08544f4b454e31323342004800500058006000687b700170047800800100880100980100a00100a80100b00100b80100",
+              "target": 123,
+              "request_id": 17,
+              "network_test": false
+            },
+            {
+              "tag": 5,
+              "body": "08111000180020002a003a08544f4b454e31323342004800500058006000687b700170047800800100880100980100a00100a80100b00100b80100",
+              "target": 123,
+              "request_id": 17,
+              "network_test": false
+            }
+          ],
+          "actions": [],
+          "test_status": 0
+        }
+      ],
+      "request_counts": [
+        1,
+        1,
+        2,
+        2
+      ],
+      "order": [
+        [
+          "send_request",
+          1000
+        ],
+        [
+          "read",
+          1001,
+          0
+        ],
+        [
+          "send_request",
+          1001
+        ],
+        [
+          "read",
+          1001,
+          0
+        ]
+      ],
+      "executed": [
+        "_ZN10CUtlBufferC1Ev",
+        "_ZN10CUtlBufferC2Ev",
+        "_ZN14CServerManager14StartStreamingEyPKc",
+        "_ZN14CServerManager16BSetStreamingPINEPKc",
+        "_ZN14CServerManager25SendStartStreamingRequestEv",
+        "_ZN14CServerManager6UpdateEv"
+      ]
+    },
+    {
+      "reply": true,
+      "response": "0811100018e0dc032240a00f1ede67c6f803526f2e3c4ea929bcf34744ebcd337f209c19e3ac13d82decc9c358c98b58409c50a0d190143aaefe25ae07f1486149d856b1d88b12fc2077",
+      "request_id": 17,
+      "steps": [
+        {
+          "label": "initial",
+          "state": 5,
+          "request_id": 17,
+          "target": 123,
+          "messages": [
+            {
+              "tag": 5,
+              "body": "08111000180020002a003a08544f4b454e31323342004800500058006000687b700170047800800100880100980100a00100a80100b00100b80100",
+              "target": 123,
+              "request_id": 17,
+              "network_test": false
+            }
+          ],
+          "actions": [],
+          "test_status": 0
+        },
+        {
+          "label": "idle_without_update",
+          "state": 5,
+          "request_id": 17,
+          "target": 123,
+          "messages": [
+            {
+              "tag": 5,
+              "body": "08111000180020002a003a08544f4b454e31323342004800500058006000687b700170047800800100880100980100a00100a80100b00100b80100",
+              "target": 123,
+              "request_id": 17,
+              "network_test": false
+            }
+          ],
+          "actions": [],
+          "test_status": 0
+        },
+        {
+          "label": "due_update",
+          "state": 6,
+          "request_id": 17,
+          "target": 123,
+          "messages": [
+            {
+              "tag": 5,
+              "body": "08111000180020002a003a08544f4b454e31323342004800500058006000687b700170047800800100880100980100a00100a80100b00100b80100",
+              "target": 123,
+              "request_id": 17,
+              "network_test": false
+            }
+          ],
+          "actions": [],
+          "test_status": 0
+        },
+        {
+          "label": "same_wall_next_update",
+          "state": 6,
+          "request_id": 17,
+          "target": 123,
+          "messages": [
+            {
+              "tag": 5,
+              "body": "08111000180020002a003a08544f4b454e31323342004800500058006000687b700170047800800100880100980100a00100a80100b00100b80100",
+              "target": 123,
+              "request_id": 17,
+              "network_test": false
+            }
+          ],
+          "actions": [],
+          "test_status": 0
+        }
+      ],
+      "request_counts": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "order": [
+        [
+          "send_request",
+          1000
+        ],
+        [
+          "read",
+          1001,
+          1
+        ],
+        [
+          "response_handler",
+          1001
+        ],
+        [
+          "read",
+          1001,
+          0
+        ],
+        [
+          "read",
+          1001,
+          0
+        ]
+      ],
+      "executed": [
+        "_ZN10CUtlBufferC1Ev",
+        "_ZN10CUtlBufferC2Ev",
+        "_ZN14CServerManager14StartStreamingEyPKc",
+        "_ZN14CServerManager16BSetStreamingPINEPKc",
+        "_ZN14CServerManager24BSaveEncryptedSessionKeyEPKhj",
+        "_ZN14CServerManager25SendStartStreamingRequestEv",
+        "_ZN14CServerManager28HandleStartStreamingResponseERK10CIPAndPortyPK33CMsgRemoteDeviceStreamingResponse",
+        "_ZN14CServerManager6UpdateEv",
+        "_ZN7CCrypto16SymmetricDecryptEPKhjPhPjS1_j",
+        "_ZN7CCrypto25SymmetricDecryptRecoverIVEPKhjPhPjS2_jS1_jb"
+      ]
+    }
+  ],
+  "functions": [
+    {
+      "name": "_ZN10CUtlBufferC1Ev",
+      "address": 14424488,
+      "size": 36,
+      "sha256": "1f64d300de8d5a04c44dde289c4984c3e273b2e0b67b078ef3fec676d578ab2f"
+    },
+    {
+      "name": "_ZN10CUtlBufferC2Ev",
+      "address": 14424488,
+      "size": 36,
+      "sha256": "1f64d300de8d5a04c44dde289c4984c3e273b2e0b67b078ef3fec676d578ab2f"
+    },
+    {
+      "name": "_ZN14CServerManager14StartStreamingEyPKc",
+      "address": 13304484,
+      "size": 456,
+      "sha256": "a454e923e8d07f2d390b3b4d25c0faf2e1ec7c6585fe455e2bcec7ee22a1a53f"
+    },
+    {
+      "name": "_ZN14CServerManager16BSetStreamingPINEPKc",
+      "address": 13305848,
+      "size": 236,
+      "sha256": "851cee1bd3b4e7e60e17436da1a072b27690f39e12f9fcce52de98726a595fd7"
+    },
+    {
+      "name": "_ZN14CServerManager24BSaveEncryptedSessionKeyEPKhj",
+      "address": 13319480,
+      "size": 200,
+      "sha256": "5bc22b82477512418ae8fef2cc07996bc78de3c21c9f962b382c8a04f4ce482a"
+    },
+    {
+      "name": "_ZN14CServerManager25SendStartStreamingRequestEv",
+      "address": 13306240,
+      "size": 1400,
+      "sha256": "1aa6658aa566388b896313969a37f1d0375b74b167a41a52c026858e3d06320f"
+    },
+    {
+      "name": "_ZN14CServerManager28HandleStartStreamingResponseERK10CIPAndPortyPK33CMsgRemoteDeviceStreamingResponse",
+      "address": 13325380,
+      "size": 792,
+      "sha256": "b7595153454ffa16f0961cc48bdf441eb6f98478e2ead47cc1275a24160926b7"
+    },
+    {
+      "name": "_ZN14CServerManager6UpdateEv",
+      "address": 13303388,
+      "size": 1028,
+      "sha256": "f51af8ea2b1270f0941caeb09ee81ca76444b4327619ee6e0cfa7e6b904a343c"
+    },
+    {
+      "name": "_ZN7CCrypto16SymmetricDecryptEPKhjPhPjS1_j",
+      "address": 13484668,
+      "size": 56,
+      "sha256": "3e7be14f895afd12862043fa659807268bda40098a8ff86595aeb6229b28f0e9"
+    },
+    {
+      "name": "_ZN7CCrypto25SymmetricDecryptRecoverIVEPKhjPhPjS2_jS1_jb",
+      "address": 13484724,
+      "size": 676,
+      "sha256": "b3d1a0213034a01a8f12d3015c7aa4f615f7fcea558c128b01d9bbb54c106622"
+    }
+  ],
+  "helper_sha256": "122d2d21b815c1bdb979b3355804bded65e162b685397acaa0aa58028388efe2"
+}

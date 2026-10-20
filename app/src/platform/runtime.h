@@ -1,4 +1,6 @@
 #pragma once
+#include "services/network_test.h"
+#include "services/stream_preferences.h"
 #include "ui/ui_model.h"
 typedef struct sl_runtime sl_runtime;
 typedef enum sl_event_type {
@@ -6,6 +8,9 @@ typedef enum sl_event_type {
     SL_EVENT_HOST_OFFLINE,
     SL_EVENT_KEY_UPDATED,
     SL_EVENT_CODE,
+    SL_EVENT_STREAM_AUTHORIZATION,
+    SL_EVENT_STREAM_RESUMED, /* host: accepted facts, account: network-test owner */
+    SL_EVENT_HOST_KEY, /* accepted key facts; no new transaction or page change */
     SL_EVENT_SAVING,
     SL_EVENT_AUTHORIZED,
     SL_EVENT_PIN,
@@ -45,12 +50,21 @@ void sl_runtime_request_exit(sl_runtime *);
 bool sl_runtime_finished(sl_runtime *);
 
 void sl_runtime_foreground(sl_runtime *, bool);
+void sl_runtime_player_focus(sl_runtime *, bool);
 
 /* Persistent ownership facts, independent of the bounded UI notification queue.
  * request_id is the original STREAM command, never a STOP/END_GAME reply id. */
 typedef struct sl_runtime_facts {
     uint64_t request_id, session_id, epoch, video_transition;
     bool connected, paused, presented, failed;
+    bool test_failure_pending; /* Failed test awaits user acknowledgement/cancel. */
     bool requests_closed, protocol_closed, video_clean;
 } sl_runtime_facts;
 bool sl_runtime_read_facts(sl_runtime *, sl_runtime_facts *);
+
+/* Persistent global settings view, independent of the bounded notification queue. */
+bool sl_runtime_stream_settings(sl_runtime *, sl_stream_preferences *, uint64_t *revision);
+uint64_t sl_runtime_settings_revision(sl_runtime *);
+
+void sl_runtime_ack_stream_settings(sl_runtime *, const sl_stream_preferences *, uint64_t revision);
+bool sl_runtime_network_test(sl_runtime *, sl_network_test_view *);

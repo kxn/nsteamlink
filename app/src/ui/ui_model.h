@@ -2,12 +2,16 @@
 #include "build_identity.h"
 #include "services/auth_store.h"
 #include "services/i18n.h"
+#include "services/network_test.h"
+#include "services/video_settings.h"
 
 typedef enum sl_page {
     SL_HOME,
     SL_PAIRING,
     SL_SAVING,
     SL_CONNECTING,
+    SL_NETWORK_TEST,
+    SL_NETWORK_RESULT,
     SL_PIN,
     SL_STREAM,
     SL_MENU,
@@ -24,6 +28,7 @@ typedef enum sl_page {
     SL_APP_SETTINGS,
     SL_MANUAL,
     SL_QUALITY,
+    SL_RESOLUTION,
     SL_BANDWIDTH,
     SL_LANGUAGE,
     SL_FORGET,
@@ -60,6 +65,7 @@ typedef enum sl_action {
     SL_CONFIRM_SHORTCUT,
     SL_OPEN_MANUAL,
     SL_OPEN_QUALITY,
+    SL_OPEN_RESOLUTION,
     SL_OPEN_BANDWIDTH,
     SL_OPEN_LANGUAGE,
     SL_SET_LANGUAGE,
@@ -74,12 +80,16 @@ typedef enum sl_action {
     SL_ERASE,
     SL_SUBMIT,
     SL_SET_QUALITY,
+    SL_SET_RESOLUTION,
     SL_SET_BANDWIDTH,
     SL_SOUND,
+    SL_FEC,
     SL_RETRY,
     SL_UPDATE_CHECK,
     SL_CONFIRM_UPDATE,
-    SL_FINISH_UPDATE
+    SL_FINISH_UPDATE,
+    SL_RUN_NETWORK_TEST,
+    SL_TEST_DECIDE
 } sl_action;
 typedef enum sl_command_type {
     SL_CMD_NONE,
@@ -93,7 +103,8 @@ typedef enum sl_command_type {
     SL_CMD_SHORTCUT,
     SL_CMD_MANUAL,
     SL_CMD_UPDATE,
-    SL_CMD_REMOTE_PAIR
+    SL_CMD_REMOTE_PAIR,
+    SL_CMD_TEST_CONFIRM
 } sl_command_type;
 typedef struct sl_command {
     sl_command_type type;
@@ -102,16 +113,25 @@ typedef struct sl_command {
     uint64_t game_id;
     uint32_t quality;
     uint32_t bitrate_kbps;
+    bool unreliable_fec;
+    sl_resolution resolution;
+    bool test_only, accept_recommendation, security_pin_retry;
     sl_language language;
     bool update_check;
     char text[64];
 } sl_command;
+typedef enum sl_control_kind {
+    SL_CONTROL_ACTION,
+    SL_CONTROL_SUBMENU,
+    SL_CONTROL_TOGGLE,
+    SL_CONTROL_RADIO
+} sl_control_kind;
 typedef struct sl_control {
     int id, x, y, w, h;
     sl_action action;
     int arg;
-    bool primary;
-    bool disabled; /* Cached history can be browsed but cannot launch while unavailable. */
+    bool primary, disabled;
+    sl_control_kind kind;
     char value[80];
     char label[160];
 } sl_control;
@@ -159,13 +179,15 @@ typedef struct sl_host_discovery {
     sl_discovery_source source;
 } sl_host_discovery;
 typedef struct sl_ui_model {
+    sl_resolution resolution;
+    sl_network_test_view network_test;
+    uint64_t settings_revision;
     sl_ui_cue cue;
     uint64_t cue_serial, move_sound_at;
     sl_auth_store store;
     sl_host_discovery discoveries[SL_HOST_LIMIT];
     sl_page page, stack[8];
     int focus_stack[8];
-    bool repair_attempted;
     int depth;
     bool streaming, debug, network_ok, closing, leaving, ending_game;
     bool adding_host; /* UI-only final tab; never a registry entry or persisted selection. */
@@ -173,7 +195,7 @@ typedef struct sl_ui_model {
     uint64_t leave_at;
     float leave_opacity;
     int focus;
-    bool had_stream;
+    bool had_stream, cancel_only_error;
     uint64_t launch_at;
     sl_control launch_card; /* Captured before the HOME layout is replaced. */
     float games_scroll, games_target;

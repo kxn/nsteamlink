@@ -376,11 +376,11 @@ int NSL_REMOTE_LIVE_ENTRY(int argc, char **argv) {
                 if (now_ms()-migration_at>30000 && !migration_success) { puts("SDR_MIGRATION_TIMEOUT=1"); l.failed=true; }
             }
             if (pause_test && ihs_connected && frames>=30 && !pause_at) {
-                IHS_SessionSetPaused(l.session,true); pause_at=now_ms();
+                IHS_SessionSetForeground(l.session,false); pause_at=now_ms();
                 puts("IHS_PAUSE_REQUESTED=1"); fflush(stdout);
             }
             if (pause_at && !resume_at && now_ms()-pause_at>=2000) {
-                IHS_SessionSetPaused(l.session,false); resume_at=now_ms(); resume_frames=frames;
+                IHS_SessionSetForeground(l.session,true); resume_at=now_ms(); resume_frames=frames;
                 puts("IHS_RESUME_REQUESTED=1"); fflush(stdout);
             }
             if (fault_test && sns_connected_at && now_ms()-sns_connected_at >= (warm_fault ? 15000u : 3000u) &&

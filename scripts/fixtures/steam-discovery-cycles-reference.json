@@ -1,0 +1,639 @@
+{
+  "scope": "Original discovery meta-dispatch/Update across repeated read failures.\n\nThe original constructor requests a 100ms Qt timer. Fixture ticks invoke the\noriginal meta-dispatch at that declared interval; no real Qt scheduler runs.\nSocket/Qt/storage/remote APIs and BProcess inherit the prior explicit terminals.\nThis is receive-batch/state evidence, not natural OS timing, protocol parsing,\nSteam, Switch, DNS, CPU cost or loader lifecycle evidence.\n",
+  "binary_sha256": "15b2d79881eef0c47ed2f96c17d1d60a5f42d3285abcf9f512cfffdac5b238a2",
+  "helpers": {
+    "audit-steam-discovery-cycles.py": "d522d629c0fabb637e344862ff6355fc5db7fffc70a0887c75aac9cc491220c9",
+    "audit-steam-network-discovery.py": "45c6421cd97cc695c2d43b6ab5a1c6fecc35e9dc8f6ddfe11e6456a1611fb87b",
+    "audit-steam-client-fec-policy.py": "c54fb9487517fd4145712827065e3cae9298d8f5f7235c8694ae9c3025765d4e"
+  },
+  "cases": [
+    {
+      "name": "negative_then_recovery",
+      "timer_interval_ms": 100,
+      "cycles": [
+        {
+          "tick_ms": 0,
+          "input_reads": [
+            -1
+          ],
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              -1
+            ]
+          ],
+          "state": 1,
+          "socket": 537920656,
+          "updating": 0
+        },
+        {
+          "tick_ms": 100,
+          "input_reads": [
+            -1
+          ],
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              -1
+            ]
+          ],
+          "state": 1,
+          "socket": 537920656,
+          "updating": 0
+        },
+        {
+          "tick_ms": 200,
+          "input_reads": [
+            -1
+          ],
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              -1
+            ]
+          ],
+          "state": 1,
+          "socket": 537920656,
+          "updating": 0
+        },
+        {
+          "tick_ms": 300,
+          "input_reads": [
+            -1
+          ],
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              -1
+            ]
+          ],
+          "state": 1,
+          "socket": 537920656,
+          "updating": 0
+        },
+        {
+          "tick_ms": 400,
+          "input_reads": [
+            -1
+          ],
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              -1
+            ]
+          ],
+          "state": 1,
+          "socket": 537920656,
+          "updating": 0
+        },
+        {
+          "tick_ms": 500,
+          "input_reads": [
+            9,
+            -1
+          ],
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              9
+            ],
+            [
+              "address_terminal",
+              "_ZN10CIPAddress14SetFromSockadrEPKvmPt"
+            ],
+            [
+              "opaque_datagram",
+              9
+            ],
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              -1
+            ]
+          ],
+          "state": 1,
+          "socket": 537920656,
+          "updating": 0
+        },
+        {
+          "tick_ms": 600,
+          "input_reads": [
+            7,
+            0
+          ],
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              7
+            ],
+            [
+              "address_terminal",
+              "_ZN10CIPAddress14SetFromSockadrEPKvmPt"
+            ],
+            [
+              "opaque_datagram",
+              7
+            ],
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              0
+            ]
+          ],
+          "state": 1,
+          "socket": 537920656,
+          "updating": 0
+        }
+      ],
+      "calls": {
+        "meta_dispatch": 7,
+        "socket_receive": 9,
+        "timer_slot": 7,
+        "update": 7,
+        "watcher_ctor": 1
+      }
+    },
+    {
+      "name": "zero_then_recovery",
+      "timer_interval_ms": 100,
+      "cycles": [
+        {
+          "tick_ms": 0,
+          "input_reads": [
+            0
+          ],
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              0
+            ]
+          ],
+          "state": 1,
+          "socket": 537920656,
+          "updating": 0
+        },
+        {
+          "tick_ms": 100,
+          "input_reads": [
+            0
+          ],
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              0
+            ]
+          ],
+          "state": 1,
+          "socket": 537920656,
+          "updating": 0
+        },
+        {
+          "tick_ms": 200,
+          "input_reads": [
+            0
+          ],
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              0
+            ]
+          ],
+          "state": 1,
+          "socket": 537920656,
+          "updating": 0
+        },
+        {
+          "tick_ms": 300,
+          "input_reads": [
+            0
+          ],
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              0
+            ]
+          ],
+          "state": 1,
+          "socket": 537920656,
+          "updating": 0
+        },
+        {
+          "tick_ms": 400,
+          "input_reads": [
+            0
+          ],
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              0
+            ]
+          ],
+          "state": 1,
+          "socket": 537920656,
+          "updating": 0
+        },
+        {
+          "tick_ms": 500,
+          "input_reads": [
+            9,
+            -1
+          ],
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              9
+            ],
+            [
+              "address_terminal",
+              "_ZN10CIPAddress14SetFromSockadrEPKvmPt"
+            ],
+            [
+              "opaque_datagram",
+              9
+            ],
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              -1
+            ]
+          ],
+          "state": 1,
+          "socket": 537920656,
+          "updating": 0
+        },
+        {
+          "tick_ms": 600,
+          "input_reads": [
+            7,
+            0
+          ],
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              7
+            ],
+            [
+              "address_terminal",
+              "_ZN10CIPAddress14SetFromSockadrEPKvmPt"
+            ],
+            [
+              "opaque_datagram",
+              7
+            ],
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              0
+            ]
+          ],
+          "state": 1,
+          "socket": 537920656,
+          "updating": 0
+        }
+      ],
+      "calls": {
+        "meta_dispatch": 7,
+        "socket_receive": 9,
+        "timer_slot": 7,
+        "update": 7,
+        "watcher_ctor": 1
+      }
+    },
+    {
+      "name": "positive_before_error",
+      "timer_interval_ms": 100,
+      "cycles": [
+        {
+          "tick_ms": 0,
+          "input_reads": [
+            9,
+            7,
+            -1
+          ],
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              9
+            ],
+            [
+              "address_terminal",
+              "_ZN10CIPAddress14SetFromSockadrEPKvmPt"
+            ],
+            [
+              "opaque_datagram",
+              9
+            ],
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              7
+            ],
+            [
+              "address_terminal",
+              "_ZN10CIPAddress14SetFromSockadrEPKvmPt"
+            ],
+            [
+              "opaque_datagram",
+              7
+            ],
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              -1
+            ]
+          ],
+          "state": 1,
+          "socket": 537920656,
+          "updating": 0
+        },
+        {
+          "tick_ms": 100,
+          "input_reads": [
+            -1
+          ],
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              -1
+            ]
+          ],
+          "state": 1,
+          "socket": 537920656,
+          "updating": 0
+        },
+        {
+          "tick_ms": 200,
+          "input_reads": [
+            0
+          ],
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              0
+            ]
+          ],
+          "state": 1,
+          "socket": 537920656,
+          "updating": 0
+        },
+        {
+          "tick_ms": 300,
+          "input_reads": [
+            -1
+          ],
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              -1
+            ]
+          ],
+          "state": 1,
+          "socket": 537920656,
+          "updating": 0
+        },
+        {
+          "tick_ms": 400,
+          "input_reads": [
+            9,
+            -1
+          ],
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              9
+            ],
+            [
+              "address_terminal",
+              "_ZN10CIPAddress14SetFromSockadrEPKvmPt"
+            ],
+            [
+              "opaque_datagram",
+              9
+            ],
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              -1
+            ]
+          ],
+          "state": 1,
+          "socket": 537920656,
+          "updating": 0
+        }
+      ],
+      "calls": {
+        "meta_dispatch": 5,
+        "socket_receive": 8,
+        "timer_slot": 5,
+        "update": 5,
+        "watcher_ctor": 1
+      }
+    },
+    {
+      "name": "alternating",
+      "timer_interval_ms": 100,
+      "cycles": [
+        {
+          "tick_ms": 0,
+          "input_reads": [
+            -1
+          ],
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              -1
+            ]
+          ],
+          "state": 1,
+          "socket": 537920656,
+          "updating": 0
+        },
+        {
+          "tick_ms": 100,
+          "input_reads": [
+            0
+          ],
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              0
+            ]
+          ],
+          "state": 1,
+          "socket": 537920656,
+          "updating": 0
+        },
+        {
+          "tick_ms": 200,
+          "input_reads": [
+            9,
+            0
+          ],
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              9
+            ],
+            [
+              "address_terminal",
+              "_ZN10CIPAddress14SetFromSockadrEPKvmPt"
+            ],
+            [
+              "opaque_datagram",
+              9
+            ],
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              0
+            ]
+          ],
+          "state": 1,
+          "socket": 537920656,
+          "updating": 0
+        },
+        {
+          "tick_ms": 300,
+          "input_reads": [
+            -1
+          ],
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              -1
+            ]
+          ],
+          "state": 1,
+          "socket": 537920656,
+          "updating": 0
+        },
+        {
+          "tick_ms": 400,
+          "input_reads": [
+            7,
+            -1
+          ],
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              7
+            ],
+            [
+              "address_terminal",
+              "_ZN10CIPAddress14SetFromSockadrEPKvmPt"
+            ],
+            [
+              "opaque_datagram",
+              7
+            ],
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              -1
+            ]
+          ],
+          "state": 1,
+          "socket": 537920656,
+          "updating": 0
+        }
+      ],
+      "calls": {
+        "meta_dispatch": 5,
+        "socket_receive": 7,
+        "timer_slot": 5,
+        "update": 5,
+        "watcher_ctor": 1
+      }
+    }
+  ]
+}

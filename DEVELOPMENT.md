@@ -42,11 +42,14 @@ UI 替换的目标模块边界见 `docs/UI_UX_DESIGN.md` §5：`app/src/ui/` 负
 `app/src/diagnostics/` 负责有界统计快照，平台 runtime 与 renderer 仍经 HAL 接口约束。
 `app/platforms/common/` 提供双目标共用的 SDL2/FFmpeg/IHS runtime adapter，平台初始化与字体来源
 位于 `app/platforms/<plat>/system.c`。`app/tests/` 包含业务状态与原生事件／媒体测试。UI 替换任务在 Issue #9 维护。
+`app/tests/fixtures/video/vcl/` 保存可重建的压缩大 VCL 能力刺激；
+`scripts/generate-vcl-fixtures.py` 定义样本，`prepare-vcl-probe.py` 生成独立诊断副本，
+`tools/switch-vcl-probe.py` 封装单次部署和机器日志校验，作用域见协议参考 §156。
 
 `app/platforms/common/remote_{wire,protocol,connection}.*` 分别负责有界 wire/RFC6455 编码、
 免登录 Remote Client 状态机与 curl TLS provider。协议状态由 runtime worker 单线程持有；
 UI 只接收主机、配对和连接事件，不包含 WebSocket、证书或 transport 类型。
-云端控制与媒体的边界、设备身份持久化见 D-061 和 `STEAM_REMOTE_PLAY_NETWORKING.md` §16。
+云端控制与媒体的边界、设备身份持久化见 D-A061 和 `STEAM_REMOTE_PLAY_NETWORKING.md` §16。
 `stream_bridge.*` 持有单次流的信令 HMAC key、跨云端重连 FIFO 和独立 Remote Client
 连接；`sns_backend.*` 管理 SDK manual poll、证书/信任链、custom signaling 和跨 IHS
 线程的数据报队列。`gns_hooks.cpp` 在固定 SDK 的构建配置内编译，访问 AppID、证书库
@@ -55,7 +58,7 @@ UI 只接收主机、配对和连接事件，不包含 WebSocket、证书或 tra
 `sdr_probe.cpp` 实现 relay session、routes、stats 和 SNP datagram 适配。
 `gns_mbedtls.cpp` 与 `platforms/switch/gns_libnx.cpp` 分别提供 crypto 和 libnx socket 接入。
 IHS 的 `IHS_SessionSetDatagramTransport` 在 Connect 前选择消息传输；上层认证、媒体和
-ACK/NACK 继续归 IHS。生命周期和依赖边界见 D-062/D-063。
+ACK/NACK 继续归 IHS。生命周期和依赖边界见 D-A062/D-A063。
 
 Switch 图形后端迁移的目标边界见 [VIDEO_RENDERING_DESIGN](docs/VIDEO_RENDERING_DESIGN.md) 与 D-051：
 `platform/gfx.h` / `platform/events.h` 定义图形与事件 HAL；`platforms/common/video_pipeline.*`
@@ -130,7 +133,7 @@ runtime 执行协议 stop/join 并在外部使用归零后回收关闭的 decode
 | SDL2 | 系统 2.32.4 / `switch-sdl2` | zlib | 桌面渲染 / 音频 / 输入（Switch 图形使用 deko） | M3 起 |
 | SDL2_ttf | 系统 2.24.0 / devkitPro `switch-sdl2_ttf` | zlib | 中文与平台共享字体、字形缓存 | M5 |
 | mbedTLS | 系统 2.28 / `switch-mbedtls` | Apache-2.0 | IHSlib 与 Switch SNS 加密后端 | M2 |
-| libopus | 系统 1.5.2 / `switch-libopus` | BSD-3 | 音频解码 | M4 |
+| libopus | 官方1.5.2归档，SHA256固定，fixed-point构建 | BSD-3 | multistream float解码及按帧ID恢复，见协议参考§72 | M4 |
 | libcurl | 系统 / devkitPro switch-curl 7.69.1-5（libnx SSL） | curl | 封面 HTTPS | M5 |
 | libjpeg-turbo | 系统 / devkitPro 2.1.2-2 | BSD/IJG | 后台 JPEG 解码 | M5 |
 | jsmn | vendored 25647e6 | MIT | 有界商店 JSON 解析 | M5 |
@@ -166,7 +169,7 @@ runtime 执行协议 stop/join 并在外部使用归零后回收关闭的 decode
 
 ## 9. 性能与内存纪律
 
-- 性能基准：默认目标 **720p60**（decisions D-005）；优化以实测帧时间/端到端延迟数据为准，
+- 性能基准：掌机默认目标 **720p60**、底座 **1080p60**（decisions D-061）；优化以实测帧时间/端到端延迟数据为准，
   不做无数据驱动的优化。
 - 视频帧路径：优先零拷贝 / 原地操作；禁止每帧堆分配、每帧格式化日志、每帧系统调用探测。
 - Switch 内存按 Title Redirection 全内存模式设计；行为异常时先确认不是误从 applet 模式启动
@@ -276,7 +279,8 @@ D-051 硬件帧直显的资源依赖补充：session stop 不等待主线程 GPU
 | devkitPro pacman | 6.0.2 | 经官方 apt 仓库安装 |
 | devkitA64 gcc | 16.1.0 | `/opt/devkitpro/devkitA64` |
 | libnx / switch-dev | 当前最新 | `dkp-pacman -S switch-dev` |
-| switch-portlibs | 含 SDL2/ttf/mbedtls 2.28/opus 1.3 | `dkp-pacman -S switch-portlibs` |
+| switch-portlibs | 含 SDL2/ttf/mbedtls 2.28 | `dkp-pacman -S switch-portlibs` |
+| Opus | 1.5.2，fixed-point，multistream float API | `cmake/Opus.cmake`核验官方归档SHA256后源码构建，见协议参考§72 |
 | SDL2 (desktop) | 2.32.4 | apt |
 | FFmpeg (desktop) | libavcodec 61.19 | apt |
 | libcurl | 系统 / devkitPro switch-curl 7.69.1-5（libnx SSL） | curl | 封面 HTTPS | M5 |

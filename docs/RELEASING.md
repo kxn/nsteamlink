@@ -44,15 +44,37 @@ Release NRO。仅上传明确列出的用户产物与构建元数据。工作流
 要重跑已存在标签的发布流程，在 Actions 中重跑该标签运行。上传失败留下的草稿需先检查
 并删除后重跑，避免覆盖用户已经下载的正式版本。
 
-附件：带版本和 short hash 的 `.nro`、完整哈希 JSON、SDK 包版本清单、SHA256SUMS。
+附件：带版本和 short hash 的 `.nro`、完整哈希 JSON、诊断排除报告、SDK 包版本清单、SHA256SUMS。
 发版默认关闭诊断，不发布测试工具。源码由对应标签与 submodule 固定提交追溯。
+标签工作流仍构建诊断版本来执行排除反例检查，但不上传诊断包附件；分支工作流保留诊断制品。
 
 ## 诊断构建
 
 `-DNSL_DIAGNOSTICS=ON` 编译高级浮屏、UDP 28772 调试入口、nxlink/文件日志、HID 历史采样
 及桌面截图/限帧参数。`NSL_BUILD_TOOLS=ON` 额外构建独立诊断工具。
 默认两项关闭；CMake 缓存会记住旧选项，切换用途时明确指定，或使用不同构建目录。
-关闭诊断不移除串流首帧、超时、音视频状态、输入发送线程和错误对话框。
+`CMAKE_BUILD_TYPE=Release` 只选择优化级别，不代表关闭诊断。普通包同时要求
+`NSL_DIAGNOSTICS=OFF`、`NSL_BUILD_TOOLS=OFF`、`NSL_TEST_FORCE_1080=OFF`；
+父项目强制让 `IHSLIB_DIAGNOSTICS` 跟随 `NSL_DIAGNOSTICS`。关闭诊断时，SDK 也不采集原始
+HID 历史，不创建对应环形缓冲/互斥锁，不向 stderr 直写 UDP 接收缓冲诊断。
+正常 Steam 协议 socket、串流首帧、超时、音视频状态、输入发送线程和错误对话框仍保留。
+
+普通产物只能从干净源码收集，输出目录必须为空：
+
+```sh
+python3 scripts/check-release-diagnostics.py build/switch
+python3 scripts/collect-release.py --build build/switch --output build/release
+python3 scripts/check-release-bundle.py build/release
+```
+
+收集入口会重新执行排除门禁，核对实际链接的产品库翻译单元、SDK 诊断对象、最终 ELF 的
+诊断符号/特征和 NRO 的三个可加载段。NRO 段必须逐字节对应受审 ELF（除了 elf2nro 生成的头部）。
+`diagnostic_exclusion.json` 固定通过检查的 NRO 哈希，上传及发布前再次核对该哈希和文件允许列表。
+不能用诊断包改名或把旧输出目录中的测试工具混进普通附件。
+
+CI 使用真实 ON/OFF 构建运行 `test-release-exclusion.py`，验证诊断配置、替换的诊断 ELF/NRO、
+对象污染、NRO 修改和残留工具都会被拒绝；检查在 `python -O` 下也必须生效。
+这些检查证明指定诊断能力从普通制品排除，不构成对所有网络协议或第三方库的全面安全证明。
 
 ## 格式与运行验证的边界
 

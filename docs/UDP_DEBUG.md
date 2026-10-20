@@ -30,6 +30,80 @@ tools/switch-debugctl.py 10.10.10.17 diag prev
 独立 `switch-discover` 工具的 `hosts/select/pair/code/exit` 等命令属于其工具接口，
 不适用于正式应用。
 
+## 自包含真实主机会话测试
+
+诊断构建单独生成 `nsl-live-media-probe.nro`；普通发布构建不包含此测试入口。
+测试包直接读取 Switch 现有 `profile.bin`、按主机密钥和串流设置，不需复制 SD 文件。
+它只选择与指定地址的实际发现回复匹配、且已保存为配对的主机；身份缺失、损坏、
+需要授权码/安全码或连接失败时记录失败并退出，不猜测 PIN，也不新建测试身份。
+正常串流过程中的密钥轮换、配置和测网统计保存仍由生产 runtime 执行。
+
+测试执行一次被动播放，不发送用户控制输入。若普通开流先进入正式测网，工具使用
+生产结果确认命令执行“继续但不接受推荐”，保留已有设置，再进入播放。
+测网 session 的流量不纳入普通媒体计数。此自动确认只属于独立测试程序；
+正式应用的推荐确认、FEC 保存/初始请求策略仍见协议参考 §32、§116。
+
+```sh
+# 先完成 clean 提交及对应诊断构建；默认仅归档，不启动设备。
+python3 tools/live-media-probe.py --steam 10.10.10.166 --switch 10.10.10.25 \
+  --seconds 30 --output build/live-media-ready
+# 用户准备好 netloader 后，另选一个新归档目录，明确 --run，只部署一次。
+python3 tools/live-media-probe.py --steam 10.10.10.166 --switch 10.10.10.25 \
+  --seconds 30 --output build/live-media-run --run
+```
+
+工具归档实际 NRO/SHA256、提交身份、graphics manifest、命令、nxlink 原始日志与
+机器结果；不探测 netloader TCP，也不自动重复启动。示例地址只是明确的测试参数，
+设备或主机变化时应使用实际确认地址。离线复核可用 `--analyze-log`、
+`--expected-build`、相同 `--steam/--seconds` 和一个输出 JSON 路径。
+
+`LIVE_WIRE` 是通过连接入口的普通 type3/4、type11 包数；`parity_enabled` 仅表示
+包头声明 m>0，`parity_shards` 表示到达的校验片，`fec_complete` 是生产 FEC 接收器
+实际交付次数。收到 type11（可为 m=0）或 FEC 交付，都不单独证明发生了 RS 修复。
+`LIVE_FLOW` 的 complete 是完整媒体回调次数，recovery 是 DataLost 入口调用次数；
+feedback_sent/failed 是普通会话实际 Socket 发送 type10 的结果，不把每份反馈都当作
+请求缺片，更不等于主机收到/执行了请求。计数覆盖普通会话的所有媒体 channel，
+不是只覆盖视频。观察器原样转发生产调用，只做有界原子记账，不逐包输出或等待。
+读取元数据前先检查数据指针和长度；空/短 FEC 包仍交给原接收器拒绝，
+不会为诊断提前请求空缓冲的指针。空/短出站缓冲也保留原发送结果，不读取其包头。
+
+观察器格式 2 在 `LIVE_BEGIN` 中声明 `observer=2`，另按实际 Video channel 类型识别
+视频角色，不预设 channel ID=4。每个计数周期与最终计数组还包含：
+
+| 记录 | 直接观察的边界 |
+|---|---|
+| `VCHANNEL` | 当前视频 channel 的普通/type11 入站计数；retry 仅计普通包重发字节非零，不等于唯一丢片或主机已处理反馈 |
+| `VRECV` | 送往视频完整媒体回调的次数；key/finish 是其中明文视频头的原始标志，在 FIFO 准入/退休之前 |
+| `VWORK` | decoder worker 取得完整媒体的次数；key/finish 在消费者偏移缓冲之前读取，不表示关键帧已完成组装/解码 |
+| `VSUBMIT` | 应用视频提交入口、返回、关键帧参数、致命返回计数；不把入口/返回当作产生图像 |
+| `VDECODE` | 解码反馈调用与实际布尔返回；reset/lost/disable 是提供的有效标志，accepted 不证明异步重建已完成 |
+| `VREQUEST` | 实际 Video 类型 endpoint 的 DataLost 入口，以及普通会话同 channel 的 DataLost datagram Socket 成功/失败；不证明主机收到或响应 |
+
+`VRECV/VWORK.last` 是一次原始头观察的打包值：bit40 为存在位、低16位为媒体
+frame ID、bit16–31 为视频片段 sequence、bit32–39 为原始 flags；工具在 JSON 中展开。
+`VSUBMIT.last` 的 bit48 为存在位、低16位为提交 frame ID、bit16–47 为应用提交 flags。
+这些 ID/flags 与原子计数不是跨字段事务快照，也不是完整帧像素身份；关键帧标志依据
+协议参考 §24/59，不能直接当作成功恢复。入站在角色确定前也按 channel 记账，未保留
+跨线程的 channel 指针；不同视频 epoch/channel 的计数不能误作同一连续帧序列。
+网络/decoder 观察器只做固定上限的原子操作，不逐包输出；主线程每秒采样，单行保持
+在平台 240B 日志上限内。丢失/截断记录按原规则拒绝通过。
+
+格式 2 的最终六组视频计数均为验收必需项，并要求提交已返回；播放失败原因与
+清理结果分别保留，不能因为 `result=FAIL` 就把已记录的 join/destroy 称作失败。
+旧格式归档仍保留其原提交工具生成的报告，不补造缺失的视频计数；新工具拒绝把
+旧格式当作本版本验收。
+
+`LIVE_RESULT` 保留实际解码/首次呈现/音频解码计数、硬解事实、首帧后的播放时间、
+主循环观察的最大呈现计数推进间隔 gap_ms 和结束前无推进时间 tail_ms。它不是逐帧
+GPU 时间戳；epoch 内计数在两次采样间多次增加时，只能观察到最后一次主循环采样。
+测试至少要求两次实际呈现，且结束前两秒仍有推进，拒绝“首帧后冻结仍通过”；
+两秒仅是 smoke 验收阈值，不进入生产重发、丢帧或重连决策。历史 gap_ms 仍单独保留。
+PASS 只表示已有配对身份完成真实主机视频播放 smoke 与应用资源清理；音频计数
+需单独判断，未注入丢包，不证明异常网络恢复、长期同步或全部线程交错。
+GPU/显示 API 的呈现计数也不证明物理扫描完成；FINAL 在关闭日志 socket 之前输出，
+不证明 socketExit、返回 hbmenu 或第二次启动。缺少当前 BEGIN/完整终态、
+计数或清理记录、播放时间不足、超时及 nxlink 非零退出均不能通过。
+
 ## 屏幕诊断
 
 串流中同时长按 **− 和 + 0.8 秒**打开本地游玩菜单；菜单内单独长按 **X 一秒**切换只读 Debug 浮层，
@@ -85,7 +159,7 @@ ACK/NACK/重试/失败、待确认数量与最老项年龄。退出前及 IHS jo
 当前Switch统一解析策略用`dns_query event=begin`记录主机名和当前本机/DNS数字地址，
 `event=ready|failed|cancelled`记录有界查询结果与耗时。ready只代表取得DNS地址，不代表
 HTTPS成功。旧4e810d5的cloud_dns仅覆盖目录，不能据此判断SDR配置或SDK解析已恢复；
-该单点补丁已被D-075统一策略替代。`sns_config`另外记录GetSDRConfig HTTP/curl结果、
+该单点补丁已被D-A075统一策略替代。`sns_config`另外记录GetSDRConfig HTTP/curl结果、
 信任导入、证书安装与P2P创建。须继续对应后续SDK状态、IHS和媒体进度，不把发现成功当作
 传输成功。清理时DNS scope/socket结果在日志关闭前保存。
 `sns_start failed_stage=... detail=...` 在SDK尚未返回有效连接句柄时记录拒绝类别：
@@ -225,7 +299,7 @@ python3 tools/switch-sns-runtime-probe.py --address 10.10.10.25 \
 目录的 `runtime-result.json`，日志含阶段、错误、身份回读 ACK 与临时文件清理结果。
 按下/释放均要求新的报告序号和按钮位、发送/ACK 进展以及空待确认队列；初始化全量
 报告不能代替输入验收。合成事件不证明物理按键，音频队列不证明实际扬声器声音，
-`nxlink` 正常退出也不证明 LCD 已返回 hbmenu。契约见 D-071。
+`nxlink` 正常退出也不证明 LCD 已返回 hbmenu。契约见 D-A071。
 
 桌面 runner 另有 `--cloud-reconnect`（替代 `--sdr-only`）：保留首页并注入一次 CM
 读取错误，将该 provider 保持停止更新 20 秒，核对 UI 离线、新匿名连接和重订阅后
@@ -266,7 +340,7 @@ Steam，再重新打开；要求真实服务 Offline、匹配目标的回调和�
 IPv4 UDP 双向注入约 1% 固定种子伪随机丢包，持续 180 秒，核对显示帧进展和新鲜度，
 再经菜单正常断开/退出；总期限为 240 秒。此模式会启动桌面串流。每五秒记录收发/丢弃
 计数与媒体计数，不输出地址或 payload，不改全局网络。它不覆盖突发断路、jitter、
-跨 NAT 回切或数小时稳定性。详细验收门槛见 D-071。
+跨 NAT 回切或数小时稳定性。详细验收门槛见 D-A071。
 
 `--sdr-abrupt` 在正式客户端完成显示与输入内容/ACK 验收后，仅在进程内双向屏蔽当时
 primary 的一个 UDP endpoint，保留其他地址；不追随新 primary 改写屏蔽目标。要求不同

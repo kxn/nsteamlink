@@ -1,92 +1,342 @@
 #!/usr/bin/env python3
-"""Check diagnostic exclusion in a configured and built release tree."""
+"""Fail closed if an ordinary application build contains private diagnostics.
+
+This audits configuration, application/SDK objects and the linked executable.
+On Switch it also checks that the NRO's loadable segments came from that ELF.
+It is an exclusion gate, not a general proof of network or memory safety.
+"""
 import argparse
+import hashlib
 import json
 from pathlib import Path
-import shlex
-import subprocess
 import re
+import shlex
+import struct
+import subprocess
 
-p = argparse.ArgumentParser(description=__doc__)
-p.add_argument('build', type=Path)
-a = p.parse_args()
-build = a.build.resolve()
-cache = (build / 'CMakeCache.txt').read_text()
-assert 'NSL_DIAGNOSTICS:BOOL=OFF' in cache, 'configure with -DNSL_DIAGNOSTICS=OFF'
-commands = json.loads((build / 'compile_commands.json').read_text())
-names = {'application.c', 'media.c', 'runtime.c', 'diagnostic_log.c', 'video_pipeline.c', 'gfx.c', 'frame_pacer.c', 'video_scheduler.c'}
-checked = 0
-for entry in commands:
-    source = Path(entry['file'])
-    if '/app/platforms/' not in str(source) or source.name not in names:
-        continue
-    argv = entry.get('arguments') or shlex.split(entry['command'])
-    obj = Path(entry['directory']) / argv[argv.index('-o') + 1]
-    # Some release-tree unit tests intentionally compile a diagnostic variant
-    # of the same source. Inspect the product objects, not these test fixtures.
-    if not re.search(r'CMakeFiles/nsl_(?:platform|ui|video_pipeline|gfx)\.dir/', str(obj)):
-        continue
-    assert '-DNSL_DIAGNOSTICS=0' in argv, f'diagnostic macro missing: {source}'
-    data = obj.read_bytes()
-    if source.name == 'diagnostic_log.c':
-        for marker in (b'HTTP/1.1', b'storage_errno', b'GET required', b'session-%020'):
-            assert marker not in data, f'diagnostic log service remains in release: {marker!r}'
-    for marker in (b'render-rate-test', b'--adaptive-pacing', b'--no-adaptive-pacing', b'RUNTIME_FIXTURE_', b'CLOUD_FIXTURE_', b'vq1 ', b'vq7 ', b'vq8 ', b'vq9 ', b'cloud_watch saved=', b'cloud_update stall_ms', b'media_rx ch=', b'udp_rx observer='):
-        assert marker not in data, f'diagnostic string {marker!r} in {obj}'
-    if source.name == 'gfx.c' and source.parent.name == 'switch':
-        nm = Path(argv[0]).with_name('aarch64-none-elf-nm')
-        symbols = subprocess.check_output([str(nm), '-u', str(obj)], text=True)
-        assert 'dkCmdBufReportCounter' not in symbols, 'GPU diagnostic reports remain'
-        assert 'dkTimestampToNs' not in symbols, 'GPU diagnostic conversion remains'
-    if source.name == 'frame_pacer.c':
-        # Check preprocessed source too: disabled counters must not merely rely
-        # on the optimizer dropping unused updates or storage.
-        pre = argv[:]
-        del pre[pre.index('-o'):pre.index('-o') + 2]
-        pre[pre.index('-c')] = '-E'
-        expanded = subprocess.check_output(pre, cwd=entry['directory'], text=True)
-        for field in ('diag_ready_us', 'diag_wait_us', 'diag_start_us',
-                      'settled_presented', 'deferred', 'unobserved', 'holdovers'):
-            assert field not in expanded, f'diagnostic field remains: {field}'
-        for required in ('sl_pacer_wait', 'sl_pacer_publish', 'sl_pacer_submit'):
-            assert required.encode() in data, f'product scheduler missing: {required}'
-    checked += 1
-assert checked == 8, f'expected eight relevant translation units, got {checked}'
-for entry in commands:
-    if not entry['file'].endswith('/sns_backend.cpp'):
-        continue
-    argv = entry.get('arguments') or shlex.split(entry['command'])
-    assert '-DNSL_SNS_PROBES=0' in argv, 'SNS probe API enabled in release product'
-for entry in commands:
-    if not entry['file'].endswith('/sdr_probe.cpp'):
-        continue
-    argv = entry.get('arguments') or shlex.split(entry['command'])
-    assert '-DNSL_SNS_PROBES=0' in argv, 'relay fixture enabled in release product'
-    compiler = Path(argv[0])
-    nm = compiler.with_name(re.sub(r'(?:clang\+\+|g\+\+|c\+\+)$', 'nm', compiler.name))
-    archive = build / 'third_party/GameNetworkingSockets/src/libGameNetworkingSockets_s.a'
-    symbols = subprocess.check_output([str(nm), '--defined-only', str(archive)], text=True)
-    for name in ('sl_gns_sdr_test_loss', 'sl_gns_sdr_test_terminal', 'sl_gns_sdr_test_migration', 'sl_gns_sdr_topology_fixture',
-                 'sl_gns_sdr_transport_stats', 'sl_gns_sdr_probe_create'):
-        assert name not in symbols, f'relay diagnostic API remains: {name}'
-link = (build / 'app/CMakeFiles/nsteamlink.dir/link.txt').read_text()
-assert 'runtime_fixture' not in link and 'runtime_probe' not in link, 'runtime fixture linked into product'
-archive = build / 'app/libnsl_platform.a'
-assert b'RUNTIME_FIXTURE_' not in archive.read_bytes(), 'runtime driver included in product platform'
-assert b'sl_packet_diagnostics_' not in archive.read_bytes(), 'packet observers remain in release'
-remote_archive = build / 'app/libnsl_remote.a'
-for marker in (b'cloud_net event=', b'cloud_time total_ms=', b'cloud_subscription', b'cloud_addr local=',
-               b'cloud_try stage=', b'cloud_dns event=', b'dns_query event='):
-    assert marker not in remote_archive.read_bytes(), f'cloud diagnostics remain in release: {marker!r}'
-sns_archive = build / 'app/libnsl_sns.a'
-if sns_archive.exists():
-    assert b'sns_config event=' not in sns_archive.read_bytes(), 'SNS HTTP diagnostics remain in release'
-    assert b'sns_start failed_stage=' not in sns_archive.read_bytes(), 'SDK startup diagnostics remain in release'
-manifest = json.loads((build / 'generated/graphics_manifest.json').read_text())
-if any(e['file'].endswith('/platforms/switch/gfx.c') for e in commands):
-    assert manifest['backend'] == 'deko', 'Switch must use deko'
-    gfx_sources = [Path(e['file']) for e in commands if Path(e['file']).name == 'gfx.c']
-    assert gfx_sources and all(p.parent.name == 'switch' for p in gfx_sources), 'SDL renderer in Switch build'
-    link = (build / 'app/CMakeFiles/nsteamlink.dir/link.txt').read_text()
-    assert 'libdeko3dd.a' not in link and 'libdeko3d.a' in link, 'wrong deko library'
-print(f'PASS: {checked} units; diagnostic macros/strings and GPU reports excluded')
+MARKERS = (
+    b"ERR supported: ping state stats perf cloud audio hid hidlog diag",
+    b"GET required", b"storage_errno", b"session-%020",
+    b"cloud_watch saved=", b"cloud_update stall_ms", b"media_rx ch=", b"udp_rx observer=",
+    b"cloud_net event=", b"cloud_time total_ms=", b"cloud_subscription", b"cloud_addr local=",
+    b"cloud_try stage=", b"cloud_dns event=", b"dns_query event=",
+    b"sns_config event=", b"sns_start failed_stage=",
+    b"RUNTIME_FIXTURE_", b"CLOUD_FIXTURE_",
+    b"render-rate-test",
+    b"--adaptive-pacing",
+    b"--no-adaptive-pacing",
+    b"stream_diag.log",
+    b"stream_diag_prev.log",
+    b"stream_diag_older.log",
+    b"ERR supported: ping state stats perf audio hid hidlog diag",
+    b"runtime: debug UDP fd=",
+    b"ERR diagnostic log unavailable",
+    b"vq1 ",
+    b"vq7 ",
+    b"vq8 ",
+    b"vq9 ",
+    b"hidrep ms=",
+    b"IHS_UDPSocketOpen: SO_RCVBUF capped",
+    b"IHS_UDPSocketReceive:",
+    b"Platform initialization failed",
+    b"Media initialization failed",
+    b"Font initialization failed:",
+)
+FORBIDDEN_SYMBOLS = {
+    "sl_gns_sdr_test_loss", "sl_gns_sdr_test_terminal", "sl_gns_sdr_test_migration",
+    "sl_gns_sdr_topology_fixture", "sl_gns_sdr_transport_stats", "sl_gns_sdr_probe_create",
+    "sl_packet_diagnostics_begin", "sl_packet_diagnostics_read", "sl_packet_diagnostics_received",
+    "udp_poll",
+    "log_main",
+    "log_queue",
+    "log_tail_text",
+    "log_previous_text",
+    "nxlinkConnectToHost",
+    "nxlinkStdio",
+    "nxlinkConnectToHostRaw",
+    "dkCmdBufReportCounter",
+    "dkTimestampToNs",
+    "IHS_ControlDiagnosticsInit",
+    "IHS_ControlDiagnosticsQuit",
+    "IHS_SessionChannelControlDrainPendingHIDReports",
+    "IHS_SessionChannelControlGetRecentHIDReports",
+    "HIDPendingPush",
+    "hidPending",
+    "hidReportRing",
+    "hidDiagnostics",
+    "hidReportLock",
+    "hidPendingLock",
+    "hidPendingDropped",
+    "hidPendingCount",
+    "hidPendingHead",
+    "hidPendingTail",
+    "hidReportRingHead",
+    "hidReportRingCount",
+}
+CORE_UNITS = {
+    "application.c",
+    "media.c",
+    "runtime.c",
+    "video_pipeline.c",
+    "gfx.c",
+    "frame_pacer.c",
+    "video_scheduler.c",
+    "system.c",
+    "ui_renderer.c",
+    "ui_model.c",
+    "input_router.c",
+}
+
+
+def require(ok, message):
+    if not ok:
+        raise ValueError(message)
+
+
+def digest(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def cache_values(path):
+    return dict(
+        re.findall(r"^([A-Za-z_][A-Za-z_0-9]*):[^=\n]*=(.*)$", path.read_text(), re.M)
+    )
+
+
+def no_markers(data, label):
+    for marker in MARKERS:
+        require(marker not in data, f"diagnostic marker {marker!r} in {label}")
+
+
+def symbols(nm, path):
+    output = subprocess.check_output([str(nm), "-a", str(path)], text=True)
+    return {line.split()[-1] for line in output.splitlines() if line.split()}
+
+
+def no_symbols(names, label):
+    forbidden = {n for n in names if n.split(".")[0] in FORBIDDEN_SYMBOLS}
+    require(not forbidden, f"diagnostic symbols {sorted(forbidden)} in {label}")
+
+
+def check_nro_elf(elf, nro):
+    """Compare all PT_LOAD bytes, except the header elf2nro fills at 0x10..0x7f."""
+    data, image = elf.read_bytes(), nro.read_bytes()
+    require(data[:6] == b"\x7fELF\x02\x01", "expected little-endian ELF64")
+    require(image[0x10:0x14] == b"NRO0", "expected NRO")
+    phoff = struct.unpack_from("<Q", data, 32)[0]
+    size, count = struct.unpack_from("<HH", data, 54)
+    loads = []
+    for i in range(count):
+        kind, flags, offset, address, _, filesz, memsz, align = struct.unpack_from(
+            "<IIQQQQQQ", data, phoff + i * size
+        )
+        if kind == 1:
+            loads.append((offset, address, filesz, memsz))
+    require(len(loads) == 3, "expected three loadable Switch ELF segments")
+    for i, (offset, address, filesz, _) in enumerate(loads):
+        start, padded = struct.unpack_from("<II", image, 0x20 + i * 8)
+        require(
+            start == address and padded == (filesz + 0xFFF) & ~0xFFF,
+            f"NRO/ELF segment {i} layout mismatch",
+        )
+        require(start + padded <= len(image), "truncated NRO segment")
+        expected = data[offset : offset + filesz] + bytes(padded - filesz)
+        actual = image[start : start + padded]
+        if i == 0:
+            require(
+                actual[:0x10] == expected[:0x10] and actual[0x80:] == expected[0x80:],
+                "NRO/ELF executable segment mismatch",
+            )
+        else:
+            require(actual == expected, f"NRO/ELF segment {i} mismatch")
+    no_markers(image[: struct.unpack_from("<I", image, 0x18)[0]], nro)
+
+
+def macro_off(argv, name, source):
+    definitions = [
+        arg
+        for arg in argv
+        if arg == "-U" + name or arg == "-D" + name or arg.startswith("-D" + name + "=")
+    ]
+    require(
+        definitions == ["-D" + name + "=0"],
+        f"{name} must be defined once as 0: {source}",
+    )
+
+
+def check(build):
+    build = build.resolve()
+    config = cache_values(build / "CMakeCache.txt")
+    for option in (
+        "NSL_DIAGNOSTICS",
+        "NSL_BUILD_TOOLS",
+        "NSL_TEST_FORCE_1080",
+        "IHSLIB_DIAGNOSTICS",
+    ):
+        require(
+            config.get(option) == "OFF", f"{option} must be OFF for ordinary artifacts"
+        )
+    require(
+        config.get("CMAKE_BUILD_TYPE") == "Release",
+        "ordinary artifacts require Release optimization",
+    )
+    commands = json.loads((build / "compile_commands.json").read_text())
+    link_path = build / "app/CMakeFiles/nsteamlink.dir/link.txt"
+    link = shlex.split(link_path.read_text())
+    targets = {"nsteamlink"} | {
+        re.search(r"lib(nsl_[^/]+)\.a$", item).group(1)
+        for item in link
+        if re.search(r"lib(nsl_[^/]+)\.a$", item)
+    }
+    require(
+        {"nsl_platform", "nsl_ui", "nsl_gfx", "nsl_video_pipeline"} <= targets,
+        "application product libraries missing from actual link",
+    )
+    nm = Path(config["CMAKE_NM"])
+    product = []
+    core = set()
+    sdk = []
+    for entry in commands:
+        source = Path(entry["file"])
+        argv = entry.get("arguments") or shlex.split(entry["command"])
+        obj = Path(entry["directory"]) / argv[argv.index("-o") + 1]
+        is_product = bool({t + ".dir" for t in targets}.intersection(obj.parts))
+        is_sdk = (
+            source.name in {"base.c", "ch_control.c", "ihs_udp_posix.c"}
+            and "third_party" in source.parts
+        )
+        if source.name in {"sns_backend.cpp", "sdr_probe.cpp"}:
+            macro_off(argv, "NSL_SNS_PROBES", source)
+        if not is_product and not is_sdk:
+            continue
+        data = obj.read_bytes()
+        if is_sdk:
+            macro_off(argv, "IHSLIB_DIAGNOSTICS", source)
+            no_markers(data, obj)
+            no_symbols(symbols(nm, obj), obj)
+            if source.name == "ihs_udp_posix.c":
+                require(
+                    not {"fprintf", "getsockopt"} & symbols(nm, obj),
+                    "platform stderr/buffer diagnostics remain in UDP object",
+                )
+            sdk.append(
+                {
+                    "source": str(source),
+                    "source_sha256": digest(source),
+                    "object": str(obj),
+                    "object_sha256": digest(obj),
+                }
+            )
+        if not is_product:
+            continue
+        text = source.read_text()
+        if "NSL_DIAGNOSTICS" in text:
+            macro_off(argv, "NSL_DIAGNOSTICS", source)
+        if any(arg.startswith("-DNSL_TEST_FORCE_1080") for arg in argv):
+            macro_off(argv, "NSL_TEST_FORCE_1080", source)
+        no_markers(data, obj)
+        names = symbols(nm, obj)
+        no_symbols(names, obj)
+        if source.name == "application.c":
+            require("fprintf" not in names, "application stderr diagnostics remain")
+        if source.name == "runtime.c":
+            require(
+                not {"bind", "recvfrom", "sendto"} & names,
+                "debug UDP transport remains in runtime object",
+            )
+        if source.name == "video_scheduler.c":
+            require("sl_video_wait" in names, "official video timing gate missing")
+            require(
+                "sl_pacer_wait" not in names,
+                "legacy publication wait still drives video",
+            )
+        if source.name == "frame_pacer.c":
+            pre = argv[:]
+            del pre[pre.index("-o") : pre.index("-o") + 2]
+            pre[pre.index("-c")] = "-E"
+            expanded = subprocess.check_output(pre, cwd=entry["directory"], text=True)
+            for field in (
+                "diag_ready_us",
+                "diag_wait_us",
+                "diag_start_us",
+                "settled_presented",
+                "deferred",
+                "unobserved",
+                "holdovers",
+            ):
+                require(field not in expanded, f"diagnostic field remains: {field}")
+            for required in ("sl_pacer_wait", "sl_pacer_publish", "sl_pacer_submit"):
+                require(required in names, f"product scheduler missing: {required}")
+        if source.name in CORE_UNITS:
+            core.add(source.name)
+        product.append(
+            {
+                "source": str(source),
+                "source_sha256": digest(source),
+                "object": str(obj),
+                "object_sha256": digest(obj),
+            }
+        )
+    require(
+        CORE_UNITS <= core,
+        f"product audit coverage missing: {sorted(CORE_UNITS - core)}",
+    )
+    require(
+        {"base.c", "ch_control.c", "ihs_udp_posix.c"}
+        <= {Path(e["source"]).name for e in sdk},
+        "SDK audit coverage missing",
+    )
+    switch = any("/platforms/switch/" in e["source"] for e in product)
+    executable = build / ("app/nsteamlink.elf" if switch else "app/nsteamlink")
+    no_symbols(symbols(nm, executable), executable)
+    no_markers(executable.read_bytes(), executable)
+    manifest = json.loads((build / "generated/graphics_manifest.json").read_text())
+    result = {
+        "schema": 1,
+        "status": "passed",
+        "scope": "diagnostic exclusion; not general network safety",
+        "configuration": {
+            k: config[k]
+            for k in (
+                "CMAKE_BUILD_TYPE",
+                "NSL_DIAGNOSTICS",
+                "NSL_BUILD_TOOLS",
+                "NSL_TEST_FORCE_1080",
+                "IHSLIB_DIAGNOSTICS",
+            )
+        },
+        "product_units": product,
+        "sdk_units": sdk,
+        "executable_sha256": digest(executable),
+    }
+    if switch:
+        require(manifest["backend"] == "deko", "Switch must use deko")
+        require(
+            "libdeko3dd.a" not in " ".join(link) and "libdeko3d.a" in " ".join(link),
+            "wrong deko library",
+        )
+        nro = build / "app/nsteamlink.nro"
+        check_nro_elf(executable, nro)
+        result["nro_sha256"] = digest(nro)
+    source_root = Path(config["CMAKE_HOME_DIRECTORY"])
+    for unit in result["product_units"] + result["sdk_units"]:
+        unit["source"] = str(Path(unit["source"]).relative_to(source_root))
+        unit["object"] = str(Path(unit["object"]).relative_to(build))
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("build", type=Path)
+    parser.add_argument("--output", type=Path)
+    args = parser.parse_args()
+    result = check(args.build)
+    if args.output:
+        args.output.write_text(json.dumps(result, indent=2) + "\n")
+    print(
+        f'PASS: {len(result["product_units"])} product units, SDK objects and final executable; diagnostics excluded'
+    )
+
+
+if __name__ == "__main__":
+    main()

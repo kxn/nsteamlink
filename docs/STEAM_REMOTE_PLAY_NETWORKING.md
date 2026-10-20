@@ -1047,6 +1047,23 @@ packet 的已存长度加 4，否则不加；这不是 SNS 自动添加的字节
 （`0x8002c0–0x800324`），传空输出指针也会消费一条包。SDK 25/41 的名称以对应结果枚举为准，
 不把两者写成“对端已断开”。
 
+**SNS 消息长度和所有权（原始指令复核）**：`CStreamPacket::SetSteamNetworkingMessage
+@0x7f6f30` 先释放旧 SDK message（或旧的非内嵌堆缓冲区），随后把 message+0 的数据指针
+存入 packet+40/+56，把 message+8 的 32 位长度同时存入 packet+48/+52，并在 packet+2336
+保存 owner。这里没有 2048 或普通 UDP 的 2272 字节截断。`ResetData @0x7f6dd0` 释放 owner
+一次，恢复内嵌缓冲区、容量 2272 和初始长度 13；构造函数 `0x7f6d90` 同样初始化长度为 13。
+`scripts/audit-steam-sns-message.py` 对固定 Android arm64 样本执行上述三个原始函数，覆盖
+inline/heap/SDK owner 以及长度 0、1、2048、2049、2272、2273、3000、65536、524288 的组合。
+只替代 heap delete 和 SDK Release 两个外部调用，不替代被验证的指针/长度/所有权分支。
+
+**结论与边界**：SNS 的消息边界由 SDK 提供，不能把 UDP 缓冲容量当作 SNS 的协议上限；
+零字节 SDK 消息也应消费并交给上层长度校验，不能因此关闭连接。上述执行没有覆盖 SDK 的
+线上消息准入或发送方 MTU 选择，不证明这些长度都能由真实远端发送。固定公开 GNS 的默认
+`RecvMaxMessageSize` 为 512 KiB（`csteamnetworkingsockets.cpp`），这是当前替代 SDK 的限制，
+不是从官方 packet 函数推出的协议常量。项目跨线程队列分别限制为 4096 条、8 MiB（含 TX 待 SDK
+返回的消息预留），这些是本地资源策略。IHS 适配器以不消费消息的长度查询按需分配，避免为
+每个常见小包预留 512 KiB；空消息与空队列分别表达，再走公共批量接收/更新循环。
+
 `SetMaximumMTU @0x801084` 设置连接级 MTU_PacketSize(32)，再查询 MTU_DataSize(33)，
 返回后者，查询失败返回 -1。应按此结果确定交给 SNS 的应用包预算，不能把普通 UDP 的 MTU
 不经扣除地用于 SNS。消息边界、上层包序号/加密/ACK/NACK 保留，见 §8.9。

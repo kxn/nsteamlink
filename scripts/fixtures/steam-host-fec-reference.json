@@ -1,0 +1,2714 @@
+{
+  "binary_sha256": "0cad7c69ace13e802be17beb06df299f7f733f01b4450a74bc68709494b21ddb",
+  "schema_sha256": "eee83a5c4445e8fb1e394c600c0371ef99ac69062422002c74c7768c154c6bd8",
+  "original_nodes": {
+    "server_dispatch": "0x3a16a4a0",
+    "initial_config_handler": "0x3a16c870",
+    "runtime_config_handler": "0x3a16a882",
+    "protobuf_parse": "0x3a5718e0",
+    "client_config_wire_parser": "0x3a371990",
+    "client_config_copy_from": "0x3a388a60",
+    "apply_config": "0x3a171e40",
+    "assign_outgoing_fec": "0x3a172298",
+    "server_config_api": "0x3a171470",
+    "start_audio": "0x3a1715d0",
+    "start_video": "0x3a171880",
+    "set_channel_fec_percentage": "0x3a167200",
+    "send_unreliable": "0x3a166b70",
+    "fec_add_packet": "0x3a163a30",
+    "rs_create": "0x3a1686b0",
+    "fec_drain": "0x3a1668f0"
+  },
+  "case_count": 52,
+  "cases": [
+    {
+      "name": "initial_None",
+      "input": {
+        "state": 6,
+        "message": 4,
+        "protobuf": "0a001200"
+      },
+      "observed": {
+        "outgoing_fec": 0,
+        "config_fec": 0,
+        "config_fec_present": false,
+        "server_state": 6,
+        "controls": [
+          4
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "initial_config_handler",
+          "protobuf_parse",
+          "server_dispatch"
+        ]
+      }
+    },
+    {
+      "name": "initial_False",
+      "input": {
+        "state": 6,
+        "message": 4,
+        "protobuf": "0a001203c80100"
+      },
+      "observed": {
+        "outgoing_fec": 0,
+        "config_fec": 0,
+        "config_fec_present": true,
+        "server_state": 6,
+        "controls": [
+          4
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "initial_config_handler",
+          "protobuf_parse",
+          "server_dispatch"
+        ]
+      }
+    },
+    {
+      "name": "initial_True",
+      "input": {
+        "state": 6,
+        "message": 4,
+        "protobuf": "0a001203c80101"
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 6,
+        "controls": [
+          4
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "initial_config_handler",
+          "protobuf_parse",
+          "server_dispatch"
+        ]
+      }
+    },
+    {
+      "name": "runtime_1_False",
+      "input": {
+        "state": 1,
+        "message": 99,
+        "protobuf": "0a03c80100"
+      },
+      "observed": {
+        "outgoing_fec": 0,
+        "config_fec": 0,
+        "config_fec_present": false,
+        "server_state": 1,
+        "controls": [],
+        "visited": [
+          "server_dispatch"
+        ]
+      }
+    },
+    {
+      "name": "runtime_1_True",
+      "input": {
+        "state": 1,
+        "message": 99,
+        "protobuf": "0a03c80101"
+      },
+      "observed": {
+        "outgoing_fec": 0,
+        "config_fec": 0,
+        "config_fec_present": false,
+        "server_state": 1,
+        "controls": [],
+        "visited": [
+          "server_dispatch"
+        ]
+      }
+    },
+    {
+      "name": "runtime_3_False",
+      "input": {
+        "state": 3,
+        "message": 99,
+        "protobuf": "0a03c80100"
+      },
+      "observed": {
+        "outgoing_fec": 0,
+        "config_fec": 0,
+        "config_fec_present": false,
+        "server_state": 3,
+        "controls": [],
+        "visited": [
+          "server_dispatch"
+        ]
+      }
+    },
+    {
+      "name": "runtime_3_True",
+      "input": {
+        "state": 3,
+        "message": 99,
+        "protobuf": "0a03c80101"
+      },
+      "observed": {
+        "outgoing_fec": 0,
+        "config_fec": 0,
+        "config_fec_present": false,
+        "server_state": 3,
+        "controls": [],
+        "visited": [
+          "server_dispatch"
+        ]
+      }
+    },
+    {
+      "name": "runtime_5_False",
+      "input": {
+        "state": 5,
+        "message": 99,
+        "protobuf": "0a03c80100"
+      },
+      "observed": {
+        "outgoing_fec": 0,
+        "config_fec": 0,
+        "config_fec_present": false,
+        "server_state": 5,
+        "controls": [],
+        "visited": [
+          "server_dispatch"
+        ]
+      }
+    },
+    {
+      "name": "runtime_5_True",
+      "input": {
+        "state": 5,
+        "message": 99,
+        "protobuf": "0a03c80101"
+      },
+      "observed": {
+        "outgoing_fec": 0,
+        "config_fec": 0,
+        "config_fec_present": false,
+        "server_state": 5,
+        "controls": [],
+        "visited": [
+          "server_dispatch"
+        ]
+      }
+    },
+    {
+      "name": "runtime_6_False",
+      "input": {
+        "state": 6,
+        "message": 99,
+        "protobuf": "0a03c80100"
+      },
+      "observed": {
+        "outgoing_fec": 0,
+        "config_fec": 0,
+        "config_fec_present": false,
+        "server_state": 6,
+        "controls": [],
+        "visited": [
+          "server_dispatch"
+        ]
+      }
+    },
+    {
+      "name": "runtime_6_True",
+      "input": {
+        "state": 6,
+        "message": 99,
+        "protobuf": "0a03c80101"
+      },
+      "observed": {
+        "outgoing_fec": 0,
+        "config_fec": 0,
+        "config_fec_present": false,
+        "server_state": 6,
+        "controls": [],
+        "visited": [
+          "server_dispatch"
+        ]
+      }
+    },
+    {
+      "name": "runtime_7_False",
+      "input": {
+        "state": 7,
+        "message": 99,
+        "protobuf": "0a03c80100"
+      },
+      "observed": {
+        "outgoing_fec": 0,
+        "config_fec": 0,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "protobuf_parse",
+          "runtime_config_handler",
+          "server_dispatch"
+        ]
+      }
+    },
+    {
+      "name": "runtime_7_True",
+      "input": {
+        "state": 7,
+        "message": 99,
+        "protobuf": "0a03c80101"
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "protobuf_parse",
+          "runtime_config_handler",
+          "server_dispatch"
+        ]
+      }
+    },
+    {
+      "name": "runtime_8_False",
+      "input": {
+        "state": 8,
+        "message": 99,
+        "protobuf": "0a03c80100"
+      },
+      "observed": {
+        "outgoing_fec": 0,
+        "config_fec": 0,
+        "config_fec_present": true,
+        "server_state": 8,
+        "controls": [],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "protobuf_parse",
+          "runtime_config_handler",
+          "server_dispatch"
+        ]
+      }
+    },
+    {
+      "name": "runtime_8_True",
+      "input": {
+        "state": 8,
+        "message": 99,
+        "protobuf": "0a03c80101"
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 8,
+        "controls": [],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "protobuf_parse",
+          "runtime_config_handler",
+          "server_dispatch"
+        ]
+      }
+    },
+    {
+      "name": "runtime_9_False",
+      "input": {
+        "state": 9,
+        "message": 99,
+        "protobuf": "0a03c80100"
+      },
+      "observed": {
+        "outgoing_fec": 0,
+        "config_fec": 0,
+        "config_fec_present": false,
+        "server_state": 9,
+        "controls": [],
+        "visited": [
+          "server_dispatch"
+        ]
+      }
+    },
+    {
+      "name": "runtime_9_True",
+      "input": {
+        "state": 9,
+        "message": 99,
+        "protobuf": "0a03c80101"
+      },
+      "observed": {
+        "outgoing_fec": 0,
+        "config_fec": 0,
+        "config_fec_present": false,
+        "server_state": 9,
+        "controls": [],
+        "visited": [
+          "server_dispatch"
+        ]
+      }
+    },
+    {
+      "name": "runtime_disable_False",
+      "input": {
+        "updates": [
+          "0a03c80101",
+          "0a03c80100"
+        ]
+      },
+      "observed": {
+        "outgoing_fec": 0,
+        "config_fec": 0,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "protobuf_parse",
+          "runtime_config_handler",
+          "server_dispatch"
+        ]
+      }
+    },
+    {
+      "name": "runtime_disable_None",
+      "input": {
+        "updates": [
+          "0a03c80101",
+          "0a00"
+        ]
+      },
+      "observed": {
+        "outgoing_fec": 0,
+        "config_fec": 0,
+        "config_fec_present": false,
+        "server_state": 7,
+        "controls": [],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "protobuf_parse",
+          "runtime_config_handler",
+          "server_dispatch"
+        ]
+      }
+    },
+    {
+      "name": "malformed_keeps_previous_0a03c801",
+      "input": {
+        "initial_fec": true,
+        "protobuf": "0a03c801"
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [],
+        "visited": [
+          "client_config_wire_parser",
+          "protobuf_parse",
+          "runtime_config_handler",
+          "server_dispatch"
+        ]
+      }
+    },
+    {
+      "name": "malformed_keeps_previous_0a0180",
+      "input": {
+        "initial_fec": true,
+        "protobuf": "0a0180"
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [],
+        "visited": [
+          "client_config_wire_parser",
+          "protobuf_parse",
+          "runtime_config_handler",
+          "server_dispatch"
+        ]
+      }
+    },
+    {
+      "name": "audio_codec_1",
+      "input": {
+        "codec": 1,
+        "frequency": 48000,
+        "channels": 2
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [
+          50
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "protobuf_parse",
+          "runtime_config_handler",
+          "server_dispatch",
+          "set_channel_fec_percentage",
+          "start_audio"
+        ],
+        "channel": 3,
+        "fec_percentage": 5
+      }
+    },
+    {
+      "name": "audio_wire_codec_1",
+      "input": {
+        "codec": 1,
+        "fec": true,
+        "payload_recipe": "bytes(range(100))"
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [
+          50
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "fec_add_packet",
+          "fec_drain",
+          "protobuf_parse",
+          "rs_create",
+          "runtime_config_handler",
+          "send_unreliable",
+          "server_dispatch",
+          "set_channel_fec_percentage",
+          "start_audio"
+        ],
+        "wires": [
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 133,
+            "header": "0b000c22030000010000000000",
+            "sha256": "6d2f65b40b46de821808dba04cc43325240ac7ca305723823bf8abdb18c85ab0",
+            "length": 100,
+            "shard_size": 112,
+            "redundancy": 1,
+            "shard_index": 0,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 133,
+            "header": "0b000c22030100010000000000",
+            "sha256": "c93ec0873368424608d2233192336b07c9a088a61cee9197a20bdbc95bde9ea7",
+            "length": 100,
+            "shard_size": 112,
+            "redundancy": 1,
+            "shard_index": 1,
+            "group": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "audio_codec_2",
+      "input": {
+        "codec": 2,
+        "frequency": 48000,
+        "channels": 2
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [
+          50
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "protobuf_parse",
+          "runtime_config_handler",
+          "server_dispatch",
+          "set_channel_fec_percentage",
+          "start_audio"
+        ],
+        "channel": 3,
+        "fec_percentage": 5
+      }
+    },
+    {
+      "name": "audio_wire_codec_2",
+      "input": {
+        "codec": 2,
+        "fec": true,
+        "payload_recipe": "bytes(range(100))"
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [
+          50
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "fec_add_packet",
+          "fec_drain",
+          "protobuf_parse",
+          "rs_create",
+          "runtime_config_handler",
+          "send_unreliable",
+          "server_dispatch",
+          "set_channel_fec_percentage",
+          "start_audio"
+        ],
+        "wires": [
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 133,
+            "header": "0b000c22030000010000000000",
+            "sha256": "6d2f65b40b46de821808dba04cc43325240ac7ca305723823bf8abdb18c85ab0",
+            "length": 100,
+            "shard_size": 112,
+            "redundancy": 1,
+            "shard_index": 0,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 133,
+            "header": "0b000c22030100010000000000",
+            "sha256": "c93ec0873368424608d2233192336b07c9a088a61cee9197a20bdbc95bde9ea7",
+            "length": 100,
+            "shard_size": 112,
+            "redundancy": 1,
+            "shard_index": 1,
+            "group": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "audio_codec_3",
+      "input": {
+        "codec": 3,
+        "frequency": 48000,
+        "channels": 2
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [
+          50
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "protobuf_parse",
+          "runtime_config_handler",
+          "server_dispatch",
+          "set_channel_fec_percentage",
+          "start_audio"
+        ],
+        "channel": 3,
+        "fec_percentage": 0
+      }
+    },
+    {
+      "name": "audio_wire_codec_3",
+      "input": {
+        "codec": 3,
+        "fec": true,
+        "payload_recipe": "bytes(range(100))"
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [
+          50
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "fec_add_packet",
+          "fec_drain",
+          "protobuf_parse",
+          "runtime_config_handler",
+          "send_unreliable",
+          "server_dispatch",
+          "set_channel_fec_percentage",
+          "start_audio"
+        ],
+        "wires": [
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 133,
+            "header": "0b000c22030000010000000000",
+            "sha256": "e4171804014c7aa4b4901cd534708b5923cd01baed18c487dfe32cb585e4099f",
+            "length": 100,
+            "shard_size": 112,
+            "redundancy": 0,
+            "shard_index": 0,
+            "group": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "audio_codec_4",
+      "input": {
+        "codec": 4,
+        "frequency": 48000,
+        "channels": 2
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [
+          50
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "protobuf_parse",
+          "runtime_config_handler",
+          "server_dispatch",
+          "set_channel_fec_percentage",
+          "start_audio"
+        ],
+        "channel": 3,
+        "fec_percentage": 5
+      }
+    },
+    {
+      "name": "audio_wire_codec_4",
+      "input": {
+        "codec": 4,
+        "fec": true,
+        "payload_recipe": "bytes(range(100))"
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [
+          50
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "fec_add_packet",
+          "fec_drain",
+          "protobuf_parse",
+          "rs_create",
+          "runtime_config_handler",
+          "send_unreliable",
+          "server_dispatch",
+          "set_channel_fec_percentage",
+          "start_audio"
+        ],
+        "wires": [
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 133,
+            "header": "0b000c22030000010000000000",
+            "sha256": "6d2f65b40b46de821808dba04cc43325240ac7ca305723823bf8abdb18c85ab0",
+            "length": 100,
+            "shard_size": 112,
+            "redundancy": 1,
+            "shard_index": 0,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 133,
+            "header": "0b000c22030100010000000000",
+            "sha256": "c93ec0873368424608d2233192336b07c9a088a61cee9197a20bdbc95bde9ea7",
+            "length": 100,
+            "shard_size": 112,
+            "redundancy": 1,
+            "shard_index": 1,
+            "group": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "audio_codec_5",
+      "input": {
+        "codec": 5,
+        "frequency": 48000,
+        "channels": 2
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [
+          50
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "protobuf_parse",
+          "runtime_config_handler",
+          "server_dispatch",
+          "set_channel_fec_percentage",
+          "start_audio"
+        ],
+        "channel": 3,
+        "fec_percentage": 5
+      }
+    },
+    {
+      "name": "audio_wire_codec_5",
+      "input": {
+        "codec": 5,
+        "fec": true,
+        "payload_recipe": "bytes(range(100))"
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [
+          50
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "fec_add_packet",
+          "fec_drain",
+          "protobuf_parse",
+          "rs_create",
+          "runtime_config_handler",
+          "send_unreliable",
+          "server_dispatch",
+          "set_channel_fec_percentage",
+          "start_audio"
+        ],
+        "wires": [
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 133,
+            "header": "0b000c22030000010000000000",
+            "sha256": "6d2f65b40b46de821808dba04cc43325240ac7ca305723823bf8abdb18c85ab0",
+            "length": 100,
+            "shard_size": 112,
+            "redundancy": 1,
+            "shard_index": 0,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 133,
+            "header": "0b000c22030100010000000000",
+            "sha256": "c93ec0873368424608d2233192336b07c9a088a61cee9197a20bdbc95bde9ea7",
+            "length": 100,
+            "shard_size": 112,
+            "redundancy": 1,
+            "shard_index": 1,
+            "group": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "host_config_api_6_False",
+      "input": {
+        "state": 6,
+        "suppress_notification": false,
+        "config_protobuf": "c80101"
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 6,
+        "controls": [],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "protobuf_parse",
+          "server_config_api"
+        ]
+      }
+    },
+    {
+      "name": "host_config_api_6_True",
+      "input": {
+        "state": 6,
+        "suppress_notification": true,
+        "config_protobuf": "c80101"
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 6,
+        "controls": [],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "protobuf_parse",
+          "server_config_api"
+        ]
+      }
+    },
+    {
+      "name": "host_config_api_7_False",
+      "input": {
+        "state": 7,
+        "suppress_notification": false,
+        "config_protobuf": "c80101"
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [
+          99
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "protobuf_parse",
+          "server_config_api"
+        ]
+      }
+    },
+    {
+      "name": "host_config_api_7_True",
+      "input": {
+        "state": 7,
+        "suppress_notification": true,
+        "config_protobuf": "c80101"
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "protobuf_parse",
+          "server_config_api"
+        ]
+      }
+    },
+    {
+      "name": "host_config_api_8_False",
+      "input": {
+        "state": 8,
+        "suppress_notification": false,
+        "config_protobuf": "c80101"
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 8,
+        "controls": [
+          99
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "protobuf_parse",
+          "server_config_api"
+        ]
+      }
+    },
+    {
+      "name": "host_config_api_8_True",
+      "input": {
+        "state": 8,
+        "suppress_notification": true,
+        "config_protobuf": "c80101"
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 8,
+        "controls": [],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "protobuf_parse",
+          "server_config_api"
+        ]
+      }
+    },
+    {
+      "name": "video_False_1",
+      "input": {
+        "fec": false,
+        "payload_bytes": 1,
+        "payload_recipe": "byte[i] = (i * 19) & 255",
+        "mtu": 1500,
+        "video_codec": 4
+      },
+      "observed": {
+        "outgoing_fec": 0,
+        "config_fec": 0,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [
+          52
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "protobuf_parse",
+          "runtime_config_handler",
+          "send_unreliable",
+          "server_dispatch",
+          "set_channel_fec_percentage",
+          "start_video"
+        ],
+        "result": 0,
+        "packet_type": 3,
+        "wires": [
+          {
+            "type": 3,
+            "channel": 3,
+            "bytes": 14,
+            "header": "03000c220300000000a0bb0d00",
+            "sha256": "abde7d06c3f6c03af788cc7a3fe3875b725dea75fa3c03eb9318b06035e174d8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "video_False_1472",
+      "input": {
+        "fec": false,
+        "payload_bytes": 1472,
+        "payload_recipe": "byte[i] = (i * 19) & 255",
+        "mtu": 1500,
+        "video_codec": 4
+      },
+      "observed": {
+        "outgoing_fec": 0,
+        "config_fec": 0,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [
+          52
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "protobuf_parse",
+          "runtime_config_handler",
+          "send_unreliable",
+          "server_dispatch",
+          "set_channel_fec_percentage",
+          "start_video"
+        ],
+        "result": 0,
+        "packet_type": 3,
+        "wires": [
+          {
+            "type": 3,
+            "channel": 3,
+            "bytes": 1485,
+            "header": "03000c220300000000a0bb0d00",
+            "sha256": "0befb7ea2daa7a5eaade0cfac4bcb5a36cc640ceb0f9416d477ff084e5df61af"
+          }
+        ]
+      }
+    },
+    {
+      "name": "video_False_1473",
+      "input": {
+        "fec": false,
+        "payload_bytes": 1473,
+        "payload_recipe": "byte[i] = (i * 19) & 255",
+        "mtu": 1500,
+        "video_codec": 4
+      },
+      "observed": {
+        "outgoing_fec": 0,
+        "config_fec": 0,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [
+          52
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "protobuf_parse",
+          "runtime_config_handler",
+          "send_unreliable",
+          "server_dispatch",
+          "set_channel_fec_percentage",
+          "start_video"
+        ],
+        "result": 0,
+        "packet_type": 3,
+        "wires": [
+          {
+            "type": 3,
+            "channel": 3,
+            "bytes": 1486,
+            "header": "03000c220300000000a0bb0d00",
+            "sha256": "09bca10f4a04e9f15ff9dcf5cd0faed6d759c7e4eebc1f84cf9c91a7ca58211d"
+          }
+        ]
+      }
+    },
+    {
+      "name": "video_False_3000",
+      "input": {
+        "fec": false,
+        "payload_bytes": 3000,
+        "payload_recipe": "byte[i] = (i * 19) & 255",
+        "mtu": 1500,
+        "video_codec": 4
+      },
+      "observed": {
+        "outgoing_fec": 0,
+        "config_fec": 0,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [
+          52
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "protobuf_parse",
+          "runtime_config_handler",
+          "send_unreliable",
+          "server_dispatch",
+          "set_channel_fec_percentage",
+          "start_video"
+        ],
+        "result": 0,
+        "packet_type": 3,
+        "wires": [
+          {
+            "type": 3,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "03000c220302000000a0bb0d00",
+            "sha256": "a4f57f541a115e82204d46c7a81a978dc95767a8ac7f966f75ceeab7a73dde27"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c220300000100a0bb0d00",
+            "sha256": "6c12415f3f12e3542cd8c86d22cbc3b47c953e22a0def3539b5c8f226bc77618"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 47,
+            "header": "04000c220301000200a0bb0d00",
+            "sha256": "4bbc0e35a5bf9c501e99c5b49d78a7abb522b278db54024c0ec7e2c8ac22bc4e"
+          }
+        ]
+      }
+    },
+    {
+      "name": "video_False_29440",
+      "input": {
+        "fec": false,
+        "payload_bytes": 29440,
+        "payload_recipe": "byte[i] = (i * 19) & 255",
+        "mtu": 1500,
+        "video_codec": 4
+      },
+      "observed": {
+        "outgoing_fec": 0,
+        "config_fec": 0,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [
+          52
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "protobuf_parse",
+          "runtime_config_handler",
+          "send_unreliable",
+          "server_dispatch",
+          "set_channel_fec_percentage",
+          "start_video"
+        ],
+        "result": 0,
+        "packet_type": 3,
+        "wires": [
+          {
+            "type": 3,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "03000c220313000000a0bb0d00",
+            "sha256": "137b7965803a53d1f19118c3055ed4897b9bab536319349bf25dcac09f6be4e8"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c220300000100a0bb0d00",
+            "sha256": "6c12415f3f12e3542cd8c86d22cbc3b47c953e22a0def3539b5c8f226bc77618"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c220301000200a0bb0d00",
+            "sha256": "3dab97694f50c697139e030d6caa25571a137f0cab7be07d51e1265903a5ddd1"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c220302000300a0bb0d00",
+            "sha256": "887dd0a7887c472eff4a36bea8d90e106e9603086fc0781c609ffb8162ecfbaf"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c220303000400a0bb0d00",
+            "sha256": "71bf2121baf6c414b34ed711e37d07cb725938898b76cb72ad9cdc8b275add84"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c220304000500a0bb0d00",
+            "sha256": "e3f5f2036409a6d4695e55aa66ee6c80c8f6dddcce2c48b799d4d735be2cd390"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c220305000600a0bb0d00",
+            "sha256": "cb0cd15a5dd826ef64d291f235c67822bb52e11d84880543faa17ebb823c4cc8"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c220306000700a0bb0d00",
+            "sha256": "0817a165fea2f94ad35cc08f48f4aa6d5121409609e92d2eaa4d1c29cec460eb"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c220307000800a0bb0d00",
+            "sha256": "974493244467709e623a2de11a815af2294de3838e6756b61fb6b0bc8e2afe1b"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c220308000900a0bb0d00",
+            "sha256": "0784be121881def5acd5b1f99ac91cf89fd53b59202b9202ed3f93836bb507fa"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c220309000a00a0bb0d00",
+            "sha256": "ce54e7603635c932e1b6cfb2b73137a583a311611c66c063d65db210a5b176c1"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c22030a000b00a0bb0d00",
+            "sha256": "c53e6b0ab991538d0326e64bcb691344bf0f11982163da99fd18a6b5d36aa2be"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c22030b000c00a0bb0d00",
+            "sha256": "67422d936342b40e7ba561e0382f95ebc05362e2bcff8dff4991cb85bed5abb9"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c22030c000d00a0bb0d00",
+            "sha256": "435f90e76aed5a302e494b19daa0b305205580a2066daf25ed1dad9c0be946ef"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c22030d000e00a0bb0d00",
+            "sha256": "6e3dc315dc3e3dc26872e9dd95f9c672c467042a9c5e0a37982bb62dd3a3f0f6"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c22030e000f00a0bb0d00",
+            "sha256": "cf52c50358b7d5e9123934a4d7386d1e8941bdae14b3334529aa91c4023c6dd7"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c22030f001000a0bb0d00",
+            "sha256": "c5e03f048fadc9ad008806ee668bbe553814927ff8703a6253bc7545b303b94f"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c220310001100a0bb0d00",
+            "sha256": "cab5badfe484febf6f966fc032e1e7ed1b5779a521112f8375440d5c3e208d34"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c220311001200a0bb0d00",
+            "sha256": "b06e499a6d3eb1f2d8960609adf8a8c3826b15c7191d0c11ee08b06ae645cf22"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1276,
+            "header": "04000c220312001300a0bb0d00",
+            "sha256": "2ab1265f0b5ffe969630ab2f3a1513bcd9af0a4801b6e946e3d0d2151401d0d7"
+          }
+        ]
+      }
+    },
+    {
+      "name": "video_False_29441",
+      "input": {
+        "fec": false,
+        "payload_bytes": 29441,
+        "payload_recipe": "byte[i] = (i * 19) & 255",
+        "mtu": 1500,
+        "video_codec": 4
+      },
+      "observed": {
+        "outgoing_fec": 0,
+        "config_fec": 0,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [
+          52
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "protobuf_parse",
+          "runtime_config_handler",
+          "send_unreliable",
+          "server_dispatch",
+          "set_channel_fec_percentage",
+          "start_video"
+        ],
+        "result": 0,
+        "packet_type": 3,
+        "wires": [
+          {
+            "type": 3,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "03000c220313000000a0bb0d00",
+            "sha256": "137b7965803a53d1f19118c3055ed4897b9bab536319349bf25dcac09f6be4e8"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c220300000100a0bb0d00",
+            "sha256": "6c12415f3f12e3542cd8c86d22cbc3b47c953e22a0def3539b5c8f226bc77618"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c220301000200a0bb0d00",
+            "sha256": "3dab97694f50c697139e030d6caa25571a137f0cab7be07d51e1265903a5ddd1"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c220302000300a0bb0d00",
+            "sha256": "887dd0a7887c472eff4a36bea8d90e106e9603086fc0781c609ffb8162ecfbaf"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c220303000400a0bb0d00",
+            "sha256": "71bf2121baf6c414b34ed711e37d07cb725938898b76cb72ad9cdc8b275add84"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c220304000500a0bb0d00",
+            "sha256": "e3f5f2036409a6d4695e55aa66ee6c80c8f6dddcce2c48b799d4d735be2cd390"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c220305000600a0bb0d00",
+            "sha256": "cb0cd15a5dd826ef64d291f235c67822bb52e11d84880543faa17ebb823c4cc8"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c220306000700a0bb0d00",
+            "sha256": "0817a165fea2f94ad35cc08f48f4aa6d5121409609e92d2eaa4d1c29cec460eb"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c220307000800a0bb0d00",
+            "sha256": "974493244467709e623a2de11a815af2294de3838e6756b61fb6b0bc8e2afe1b"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c220308000900a0bb0d00",
+            "sha256": "0784be121881def5acd5b1f99ac91cf89fd53b59202b9202ed3f93836bb507fa"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c220309000a00a0bb0d00",
+            "sha256": "ce54e7603635c932e1b6cfb2b73137a583a311611c66c063d65db210a5b176c1"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c22030a000b00a0bb0d00",
+            "sha256": "c53e6b0ab991538d0326e64bcb691344bf0f11982163da99fd18a6b5d36aa2be"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c22030b000c00a0bb0d00",
+            "sha256": "67422d936342b40e7ba561e0382f95ebc05362e2bcff8dff4991cb85bed5abb9"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c22030c000d00a0bb0d00",
+            "sha256": "435f90e76aed5a302e494b19daa0b305205580a2066daf25ed1dad9c0be946ef"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c22030d000e00a0bb0d00",
+            "sha256": "6e3dc315dc3e3dc26872e9dd95f9c672c467042a9c5e0a37982bb62dd3a3f0f6"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c22030e000f00a0bb0d00",
+            "sha256": "cf52c50358b7d5e9123934a4d7386d1e8941bdae14b3334529aa91c4023c6dd7"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c22030f001000a0bb0d00",
+            "sha256": "c5e03f048fadc9ad008806ee668bbe553814927ff8703a6253bc7545b303b94f"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c220310001100a0bb0d00",
+            "sha256": "cab5badfe484febf6f966fc032e1e7ed1b5779a521112f8375440d5c3e208d34"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1496,
+            "header": "04000c220311001200a0bb0d00",
+            "sha256": "b06e499a6d3eb1f2d8960609adf8a8c3826b15c7191d0c11ee08b06ae645cf22"
+          },
+          {
+            "type": 4,
+            "channel": 3,
+            "bytes": 1277,
+            "header": "04000c220312001300a0bb0d00",
+            "sha256": "8e2b720de9c4ad5cfc5e7b5b570a1415fe6ec56d175882a59b20d8cd8e8bf12b"
+          }
+        ]
+      }
+    },
+    {
+      "name": "video_True_1",
+      "input": {
+        "fec": true,
+        "payload_bytes": 1,
+        "payload_recipe": "byte[i] = (i * 19) & 255",
+        "mtu": 1500,
+        "video_codec": 4
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [
+          52
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "fec_add_packet",
+          "fec_drain",
+          "protobuf_parse",
+          "rs_create",
+          "runtime_config_handler",
+          "send_unreliable",
+          "server_dispatch",
+          "set_channel_fec_percentage",
+          "start_video"
+        ],
+        "result": 0,
+        "packet_type": 11,
+        "wires": [
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 37,
+            "header": "0b000c22030000010000000000",
+            "sha256": "6f1fa4a2e822db7602c5923f462f0a40cda0df93d85d86d43cfd9297d9fe4a09",
+            "length": 1,
+            "shard_size": 16,
+            "redundancy": 1,
+            "shard_index": 0,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 37,
+            "header": "0b000c22030100010000000000",
+            "sha256": "f8254f66590a7b52dec54a0b61de48f11c19e02d8a637ee456fe54db5ad418b7",
+            "length": 1,
+            "shard_size": 16,
+            "redundancy": 1,
+            "shard_index": 1,
+            "group": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "video_True_1472",
+      "input": {
+        "fec": true,
+        "payload_bytes": 1472,
+        "payload_recipe": "byte[i] = (i * 19) & 255",
+        "mtu": 1500,
+        "video_codec": 4
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [
+          52
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "fec_add_packet",
+          "fec_drain",
+          "protobuf_parse",
+          "rs_create",
+          "runtime_config_handler",
+          "send_unreliable",
+          "server_dispatch",
+          "set_channel_fec_percentage",
+          "start_video"
+        ],
+        "result": 0,
+        "packet_type": 11,
+        "wires": [
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030000010000000000",
+            "sha256": "21a51dc183fc2c026d2d796c19eca32c54eb0536bffeee5d3aea0c02a178dfa2",
+            "length": 1472,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 0,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030100010000000000",
+            "sha256": "41b7d5bc6e29a802b2286b23945104333dc1093c5cdb4293152be2c5d7830de4",
+            "length": 1472,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 1,
+            "group": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "video_True_1473",
+      "input": {
+        "fec": true,
+        "payload_bytes": 1473,
+        "payload_recipe": "byte[i] = (i * 19) & 255",
+        "mtu": 1500,
+        "video_codec": 4
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [
+          52
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "fec_add_packet",
+          "fec_drain",
+          "protobuf_parse",
+          "rs_create",
+          "runtime_config_handler",
+          "send_unreliable",
+          "server_dispatch",
+          "set_channel_fec_percentage",
+          "start_video"
+        ],
+        "result": 0,
+        "packet_type": 11,
+        "wires": [
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030000010000000000",
+            "sha256": "29b2787f4e4c2056fad5e935cc2952df72bd02592a96d45e05828866864efb1f",
+            "length": 1473,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 0,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030100010000000000",
+            "sha256": "7e10d33e366cc2b978b8d00dba135d03c5443e70cc7a366fe434086b15e26b5d",
+            "length": 1473,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 1,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030200010000000000",
+            "sha256": "fd1f34d3ef2edb4843af4a4b39ae4497389f111fbebd1e78bfafa6f8679dff53",
+            "length": 1473,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 2,
+            "group": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "video_True_3000",
+      "input": {
+        "fec": true,
+        "payload_bytes": 3000,
+        "payload_recipe": "byte[i] = (i * 19) & 255",
+        "mtu": 1500,
+        "video_codec": 4
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [
+          52
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "fec_add_packet",
+          "fec_drain",
+          "protobuf_parse",
+          "rs_create",
+          "runtime_config_handler",
+          "send_unreliable",
+          "server_dispatch",
+          "set_channel_fec_percentage",
+          "start_video"
+        ],
+        "result": 0,
+        "packet_type": 11,
+        "wires": [
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030000010000000000",
+            "sha256": "1f06897173369b05530d9f89d93e82b05754921220830b20d49ca49d907bb0c1",
+            "length": 3000,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 0,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030100010000000000",
+            "sha256": "604956e88b26d3667d3da9e0b43d6af8de7b442057bd3d05f864d657bdc11bdd",
+            "length": 3000,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 1,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030200010000000000",
+            "sha256": "cbdb01cdcf99c2ca0ba893c0cb76f654da449c0035ab258acd12c9485c27088c",
+            "length": 3000,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 2,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030300010000000000",
+            "sha256": "4b69c14a4f7ef137836bd42c411283b63b855b1289c4adf666637d647f0b6134",
+            "length": 3000,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 3,
+            "group": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "video_True_29440",
+      "input": {
+        "fec": true,
+        "payload_bytes": 29440,
+        "payload_recipe": "byte[i] = (i * 19) & 255",
+        "mtu": 1500,
+        "video_codec": 4
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [
+          52
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "fec_add_packet",
+          "fec_drain",
+          "protobuf_parse",
+          "rs_create",
+          "runtime_config_handler",
+          "send_unreliable",
+          "server_dispatch",
+          "set_channel_fec_percentage",
+          "start_video"
+        ],
+        "result": 0,
+        "packet_type": 11,
+        "wires": [
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030000010000000000",
+            "sha256": "a65a3512b80dae587d21230830cf23413f0d2617f7170c8fe6fd0c982b7836c8",
+            "length": 29440,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 0,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030100010000000000",
+            "sha256": "97b035f021d170c99d2bb052aca08091566da82f698a448b9a2018c6d3ed9baf",
+            "length": 29440,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 1,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030200010000000000",
+            "sha256": "94818517d240984283630124293ae092c6e503e377bfc6e7fe6b0793d685d715",
+            "length": 29440,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 2,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030300010000000000",
+            "sha256": "05051e3671f8e969a53c2717f2b0f7c5f2ed2c05f0b4f4185428d4f7c46350a6",
+            "length": 29440,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 3,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030400010000000000",
+            "sha256": "a360a62c110e445618735b2afd15bc47e7b04bbdfbdea3af7d5c150eeaafb993",
+            "length": 29440,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 4,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030500010000000000",
+            "sha256": "7dda5790cfaa28d295a398794ba3fe1dbb48026d3602d91d0a55cc3d06c6c9d1",
+            "length": 29440,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 5,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030600010000000000",
+            "sha256": "80f737d3bfaf8173be896206cfdc5ecdda5e2ce7ef40d53f9ba40ae99e6b6bb4",
+            "length": 29440,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 6,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030700010000000000",
+            "sha256": "0c3384afc990eec6e2a6e9f345ea62d1f28c04c7efdd4c74b2b52707d3d25dea",
+            "length": 29440,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 7,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030800010000000000",
+            "sha256": "39ef9243836b4f5a491653a84026e3b8c98e8680747ede250eddeec5f1adda40",
+            "length": 29440,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 8,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030900010000000000",
+            "sha256": "dc008fe183d0868d48c2c7bc40fd9deb423d739ed67817d639f888366187c499",
+            "length": 29440,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 9,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030a00010000000000",
+            "sha256": "efe8fa8e8d89c246a383946e4d39b79e91e8b378ab9e83a50159746ee61cfc46",
+            "length": 29440,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 10,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030b00010000000000",
+            "sha256": "e54a453750efa9db5521e6e0cdaf30ec9fe2652a937410385526aaed1e46ef6e",
+            "length": 29440,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 11,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030c00010000000000",
+            "sha256": "749a6494c42df687052d721724de7fe569d0941a9571be9446278066e3e015b3",
+            "length": 29440,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 12,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030d00010000000000",
+            "sha256": "365f74884190b7a36d2a0a3ea7545f774619a683ca50fb3df616584b9ba4ce30",
+            "length": 29440,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 13,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030e00010000000000",
+            "sha256": "f4f0becb969bee08f4d81ece3b5c57f281be3bcacc0307b27fc00d70e68c2b81",
+            "length": 29440,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 14,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030f00010000000000",
+            "sha256": "1e586b2d3ddd799c5eaec907b02a9e387301d3738ff533d69434627c6138e97f",
+            "length": 29440,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 15,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22031000010000000000",
+            "sha256": "82ffcaf27e1fd164dab08122a0b9f99dac8606b5ac1ec14340f67ed4cbbd7573",
+            "length": 29440,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 16,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22031100010000000000",
+            "sha256": "e79bcded40cde2f630696d8d2622ede40c8f5a52d070a54bc23dfbabd1959524",
+            "length": 29440,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 17,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22031200010000000000",
+            "sha256": "06840aa20b1ce2ec01cd05e212386e0d4263069397cb6e06bfa9530ce55b84be",
+            "length": 29440,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 18,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22031300010000000000",
+            "sha256": "b8b3f1d45f519c6b71de3cf5667977bf49f71969e15dd7aba46518e18d239f25",
+            "length": 29440,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 19,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22031400010000000000",
+            "sha256": "6b56ae9917ce6c053c7b87ea0b489559ca44a5442af95958e254d9577916b68d",
+            "length": 29440,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 20,
+            "group": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "video_True_29441",
+      "input": {
+        "fec": true,
+        "payload_bytes": 29441,
+        "payload_recipe": "byte[i] = (i * 19) & 255",
+        "mtu": 1500,
+        "video_codec": 4
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [
+          52
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "fec_add_packet",
+          "fec_drain",
+          "protobuf_parse",
+          "rs_create",
+          "runtime_config_handler",
+          "send_unreliable",
+          "server_dispatch",
+          "set_channel_fec_percentage",
+          "start_video"
+        ],
+        "result": 0,
+        "packet_type": 11,
+        "wires": [
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030000010000000000",
+            "sha256": "3c68c1306fe8b61d4edf13b438ce98c0ab7f6fc67c545c7290396faa09572139",
+            "length": 29441,
+            "shard_size": 1472,
+            "redundancy": 2,
+            "shard_index": 0,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030100010000000000",
+            "sha256": "ab2a760e4335ad59799f8d7114e5cfd544cd0e7701424981ee7c16c236a4c479",
+            "length": 29441,
+            "shard_size": 1472,
+            "redundancy": 2,
+            "shard_index": 1,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030200010000000000",
+            "sha256": "c28e1ff5e24097aec579224fd8d223bbbce02cbec70d42b94cd496e942aefd36",
+            "length": 29441,
+            "shard_size": 1472,
+            "redundancy": 2,
+            "shard_index": 2,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030300010000000000",
+            "sha256": "e2bdf85f0bf07ef090a3589cf8f1f9ba6ddc8757a2e849e66739497c6899e9a5",
+            "length": 29441,
+            "shard_size": 1472,
+            "redundancy": 2,
+            "shard_index": 3,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030400010000000000",
+            "sha256": "2afba68caa89bb0cc377e78928f97bf9ef0fc2809351cee4128a945651ef4992",
+            "length": 29441,
+            "shard_size": 1472,
+            "redundancy": 2,
+            "shard_index": 4,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030500010000000000",
+            "sha256": "5408b9df4a185a636a439244b19c76efb9e5504cc446143527ccafe5be22212d",
+            "length": 29441,
+            "shard_size": 1472,
+            "redundancy": 2,
+            "shard_index": 5,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030600010000000000",
+            "sha256": "303cee4eb90e8bb7a9a7cb104011fbc73e6e564ff74382a9908c216accfefecc",
+            "length": 29441,
+            "shard_size": 1472,
+            "redundancy": 2,
+            "shard_index": 6,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030700010000000000",
+            "sha256": "90c9b036f2fb8437e08d166f561f5887e3669f725189d9c151806d3764ed457f",
+            "length": 29441,
+            "shard_size": 1472,
+            "redundancy": 2,
+            "shard_index": 7,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030800010000000000",
+            "sha256": "f0e680266cb7a1c54c35ae15a33bedc0ed5cb97bfb1a00d5869b30f73ba735fd",
+            "length": 29441,
+            "shard_size": 1472,
+            "redundancy": 2,
+            "shard_index": 8,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030900010000000000",
+            "sha256": "73e1c60255fee3563bbc316de53093ebfbcfbd80ccc634ac8678352f85b3a876",
+            "length": 29441,
+            "shard_size": 1472,
+            "redundancy": 2,
+            "shard_index": 9,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030a00010000000000",
+            "sha256": "880d9f39e617ea45896c59f2ed9f6137c0dcd3823726fcee1f9be96c9b24f199",
+            "length": 29441,
+            "shard_size": 1472,
+            "redundancy": 2,
+            "shard_index": 10,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030b00010000000000",
+            "sha256": "b835ab610d12b04a5d79039fb2ea11d4cc4daacc0d82cb8a445bbb22943a6235",
+            "length": 29441,
+            "shard_size": 1472,
+            "redundancy": 2,
+            "shard_index": 11,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030c00010000000000",
+            "sha256": "abd3ba60628ad4cf3e6c0c6e494f65721bbf425a9eb5c7c0c1956d88bc782279",
+            "length": 29441,
+            "shard_size": 1472,
+            "redundancy": 2,
+            "shard_index": 12,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030d00010000000000",
+            "sha256": "b0fddffa61be54c2cda3c556cced2e37539e1831095801fe9bb32ea898b528bb",
+            "length": 29441,
+            "shard_size": 1472,
+            "redundancy": 2,
+            "shard_index": 13,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030e00010000000000",
+            "sha256": "bf82bfa2771801032dff83012840593500b7990db55c64eab067fb8de3faabed",
+            "length": 29441,
+            "shard_size": 1472,
+            "redundancy": 2,
+            "shard_index": 14,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030f00010000000000",
+            "sha256": "f984c3fe1951998096731ae9448ac074c6f7e06ea90721dc9a569fb93ed3e425",
+            "length": 29441,
+            "shard_size": 1472,
+            "redundancy": 2,
+            "shard_index": 15,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22031000010000000000",
+            "sha256": "1d3b0511e461f837ea7f811e46b38fc13d90c958b28a4f7709c582f03013a8ea",
+            "length": 29441,
+            "shard_size": 1472,
+            "redundancy": 2,
+            "shard_index": 16,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22031100010000000000",
+            "sha256": "6062fd4e80b0837c2696637e230be71d819c9ae3e520fb38b69fb04f10fe05d6",
+            "length": 29441,
+            "shard_size": 1472,
+            "redundancy": 2,
+            "shard_index": 17,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22031200010000000000",
+            "sha256": "7d230a2628b4041c0b0e57ed53ec5fa33c59a9723071facf9d9b0dd6eba33eea",
+            "length": 29441,
+            "shard_size": 1472,
+            "redundancy": 2,
+            "shard_index": 18,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22031300010000000000",
+            "sha256": "3f86d112a6c7890800a7da2334bdaa8db5190f81e9db3619aee4e86710f5897d",
+            "length": 29441,
+            "shard_size": 1472,
+            "redundancy": 2,
+            "shard_index": 19,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22031400010000000000",
+            "sha256": "fbb49c33f99ddf8e56909a349abf50ae2ca60da5d9978e87f4f3e9b029acee55",
+            "length": 29441,
+            "shard_size": 1472,
+            "redundancy": 2,
+            "shard_index": 20,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22031500010000000000",
+            "sha256": "f40dd79165a9b66110a7d53c43fa4e568677fdfeb2a81b1e0067496a4b9a4074",
+            "length": 29441,
+            "shard_size": 1472,
+            "redundancy": 2,
+            "shard_index": 21,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22031600010000000000",
+            "sha256": "56a58558eacce3de65579e7a53f812e54f8f4a2816b6b2fd843df2f4fa2b2d40",
+            "length": 29441,
+            "shard_size": 1472,
+            "redundancy": 2,
+            "shard_index": 22,
+            "group": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "disable_preserves_pending_fec",
+      "input": {
+        "message_updates": [
+          true,
+          false
+        ],
+        "payload_bytes": 3000,
+        "first_socket_result": 1,
+        "drain_socket_result": 0
+      },
+      "observed": {
+        "outgoing_fec": 0,
+        "config_fec": 0,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [
+          52
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "fec_add_packet",
+          "fec_drain",
+          "protobuf_parse",
+          "rs_create",
+          "runtime_config_handler",
+          "send_unreliable",
+          "server_dispatch",
+          "set_channel_fec_percentage",
+          "start_video"
+        ],
+        "fec_queue_unchanged": true,
+        "subsequent_packet_type": 3,
+        "wires": [
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030000010000000000",
+            "sha256": "1f06897173369b05530d9f89d93e82b05754921220830b20d49ca49d907bb0c1",
+            "length": 3000,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 0,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030100010000000000",
+            "sha256": "604956e88b26d3667d3da9e0b43d6af8de7b442057bd3d05f864d657bdc11bdd",
+            "length": 3000,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 1,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030200010000000000",
+            "sha256": "cbdb01cdcf99c2ca0ba893c0cb76f654da449c0035ab258acd12c9485c27088c",
+            "length": 3000,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 2,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 1493,
+            "header": "0b000c22030300010000000000",
+            "sha256": "4b69c14a4f7ef137836bd42c411283b63b855b1289c4adf666637d647f0b6134",
+            "length": 3000,
+            "shard_size": 1472,
+            "redundancy": 1,
+            "shard_index": 3,
+            "group": 1
+          },
+          {
+            "type": 3,
+            "channel": 3,
+            "bytes": 113,
+            "header": "03000c220300000000a0bb0d00",
+            "sha256": "90477ce9b535aa0d0048970e316071a312722f39b635e3b85167e22808153016"
+          }
+        ]
+      }
+    },
+    {
+      "name": "enable_preserves_pending_ordinary",
+      "input": {
+        "message_updates": [
+          false,
+          true
+        ],
+        "first_socket_result": 1,
+        "drain_socket_result": 0
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [
+          52
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "fec_add_packet",
+          "fec_drain",
+          "protobuf_parse",
+          "rs_create",
+          "runtime_config_handler",
+          "send_unreliable",
+          "server_dispatch",
+          "set_channel_fec_percentage",
+          "start_video"
+        ],
+        "ordinary_window_unchanged": true,
+        "wires": [
+          {
+            "type": 3,
+            "channel": 3,
+            "bytes": 113,
+            "header": "03000c220300000000a0bb0d00",
+            "sha256": "90477ce9b535aa0d0048970e316071a312722f39b635e3b85167e22808153016"
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 133,
+            "header": "0b000c22030000010000000000",
+            "sha256": "6d2f65b40b46de821808dba04cc43325240ac7ca305723823bf8abdb18c85ab0",
+            "length": 100,
+            "shard_size": 112,
+            "redundancy": 1,
+            "shard_index": 0,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 133,
+            "header": "0b000c22030100010000000000",
+            "sha256": "c93ec0873368424608d2233192336b07c9a088a61cee9197a20bdbc95bde9ea7",
+            "length": 100,
+            "shard_size": 112,
+            "redundancy": 1,
+            "shard_index": 1,
+            "group": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "toggle_does_not_reset_fec_group",
+      "input": {
+        "updates": [
+          true,
+          false,
+          true
+        ],
+        "payload_recipe": "bytes(range(100))"
+      },
+      "observed": {
+        "outgoing_fec": 1,
+        "config_fec": 1,
+        "config_fec_present": true,
+        "server_state": 7,
+        "controls": [
+          52
+        ],
+        "visited": [
+          "apply_config",
+          "assign_outgoing_fec",
+          "client_config_copy_from",
+          "client_config_wire_parser",
+          "fec_add_packet",
+          "fec_drain",
+          "protobuf_parse",
+          "rs_create",
+          "runtime_config_handler",
+          "send_unreliable",
+          "server_dispatch",
+          "set_channel_fec_percentage",
+          "start_video"
+        ],
+        "wires": [
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 133,
+            "header": "0b000c22030000010000000000",
+            "sha256": "6d2f65b40b46de821808dba04cc43325240ac7ca305723823bf8abdb18c85ab0",
+            "length": 100,
+            "shard_size": 112,
+            "redundancy": 1,
+            "shard_index": 0,
+            "group": 1
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 133,
+            "header": "0b000c22030100010000000000",
+            "sha256": "c93ec0873368424608d2233192336b07c9a088a61cee9197a20bdbc95bde9ea7",
+            "length": 100,
+            "shard_size": 112,
+            "redundancy": 1,
+            "shard_index": 1,
+            "group": 1
+          },
+          {
+            "type": 3,
+            "channel": 3,
+            "bytes": 113,
+            "header": "03000c220300000000a0bb0d00",
+            "sha256": "90477ce9b535aa0d0048970e316071a312722f39b635e3b85167e22808153016"
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 133,
+            "header": "0b000c22030000020000000000",
+            "sha256": "a1bcfbd345a9fb8a4ac74b8147a5473139e62de727df52655c4b50fb0e9c7ff6",
+            "length": 100,
+            "shard_size": 112,
+            "redundancy": 1,
+            "shard_index": 0,
+            "group": 2
+          },
+          {
+            "type": 11,
+            "channel": 3,
+            "bytes": 133,
+            "header": "0b000c22030100020000000000",
+            "sha256": "6c710c3baa88e968223ac0812df953a8f89aeac7a8325921c2f05b98a41cd473",
+            "length": 100,
+            "shard_size": 112,
+            "redundancy": 1,
+            "shard_index": 1,
+            "group": 2
+          }
+        ]
+      }
+    }
+  ]
+}

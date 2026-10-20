@@ -5,6 +5,7 @@
 #include "platform/ui_renderer.h"
 #include "sdl_input.h"
 #include "ui/ui_events.h"
+#include "stream_settings.h"
 #include <SDL.h>
 #include <assert.h>
 #include <libavcodec/avcodec.h>
@@ -150,8 +151,25 @@ static void decode(const char *path) {
     stream_media_present();
     save_image("stream");
     sl_ui_action(&ui, SL_OPEN_MENU, 0);
-    stream_media_present();
-    save_image("stream-menu");
+    for (int lang = SL_LANG_ZH_CN; lang <= SL_LANG_EN; ++lang) {
+        sl_i18n_set(lang);
+        sl_ui_tick(&ui, ui.now + 220);
+        stream_media_present();
+        save_image(lang == SL_LANG_EN ? "menu-en-stream" : "menu-zh-stream");
+        sl_ui_action(&ui, SL_OPEN_END_GAME, 0);
+        sl_ui_tick(&ui, ui.now + 220);
+        stream_media_present();
+        save_image(lang == SL_LANG_EN ? "menu-en-end-game" : "menu-zh-end-game");
+        sl_ui_action(&ui, SL_BACK, 0);
+        sl_ui_tick(&ui, ui.now + 220);
+        sl_ui_action(&ui, SL_OPEN_DISCONNECT, 0);
+        sl_ui_tick(&ui, ui.now + 220);
+        stream_media_present();
+        save_image(lang == SL_LANG_EN ? "menu-en-disconnect" : "menu-zh-disconnect");
+        sl_ui_action(&ui, SL_BACK, 0);
+        sl_ui_tick(&ui, ui.now + 220);
+    }
+    sl_i18n_set(SL_LANG_ZH_CN);
     stream_media_get_snapshot(&s);
     assert(s.displayed_frames == shown);
     stream_media_video_stop(NULL);
@@ -358,8 +376,9 @@ int main(int argc, char **argv) {
         stream_media_present();
         save_image("known-computer-unpaired");
         sl_ui_action(&ui, SL_START, 0);
-        assert(ui.command.type == SL_CMD_PAIR &&
+        assert(ui.command.type == SL_CMD_STREAM &&
                ui.command.host.client_id == source.host.client_id + 1);
+        pair_code.type = SL_EVENT_STREAM_AUTHORIZATION;
         pair_code.generation = ui.generation;
         sl_ui_runtime_event(&ui, &pair_code);
         sl_ui_tick(&ui, ui.now + 2000);
@@ -487,6 +506,7 @@ int main(int argc, char **argv) {
     ui.depth = 0;
     ui.leaving = false;
     sl_ui_action(&ui, SL_OPEN_SETTINGS, 0);
+    sl_ui_action(&ui, SL_OPEN_AV_SETTINGS, 0);
     sl_ui_action(&ui, SL_OPEN_QUALITY, 0);
     sl_ui_tick(&ui, ui.now + 220);
     sl_ui_action(&ui, SL_DOWN, 0);
@@ -517,13 +537,21 @@ int main(int argc, char **argv) {
     for (int lang = SL_LANG_ZH_CN; lang <= SL_LANG_EN; ++lang) {
         sl_i18n_set(lang);
         for (int p = SL_HOME; p <= SL_CLOSING; ++p) {
+            ui.cancel_only_error = false;
             ui.page = p;
             ui.depth = 0;
             ui.leaving = false;
-            ui.streaming = p == SL_STREAM || p == SL_MENU || p == SL_BANDWIDTH;
+            ui.streaming = p == SL_STREAM || p == SL_MENU;
             ui.ending_game = p == SL_STOPPING;
             ui.debug = p == SL_STREAM;
             ui.stream_started_at = ui.now;
+            ui.network_test = (sl_network_test_view){.phase = SL_TEST_RUNNING,
+                                                     .target_kbps = 15000,
+                                                     .previous_target_kbps = 99999,
+                                                     .bandwidth_test = true,
+                                                     .mean_ms = 2.5f,
+                                                     .deviation_ms = 0.75f,
+                                                     .recommendation = 1};
             ui.entered_at = ui.now > 500 ? ui.now - 500 : 0;
             strcpy(ui.error,
                    sl_tr(p == SL_INSTALL_RESULT ? SL_T_SHORTCUT_ADDED : SL_T_PROFILE_CORRUPT));
@@ -534,6 +562,42 @@ int main(int argc, char **argv) {
                      p);
             save_image(image);
         }
+        ui.page = SL_HOME;
+        ui.streaming = false;
+        ui.depth = 0;
+        ui.leaving = false;
+        ui.store.quality = 0;
+        ui.store.bitrate_kbps = UINT32_MAX;
+        ui.store.sound = ui.update_check = true;
+        ui.resolution = SL_RESOLUTION_AUTO;
+        /* Keep the fixture host present while navigating all category screenshots. */
+        sl_host observation = ui.store.registry.hosts[ui.store.registry.selected];
+        sl_host_observe(&ui.store.registry, &observation, ui.now);
+        sl_ui_action(&ui, SL_OPEN_SETTINGS, 0);
+        sl_ui_tick(&ui, ui.now + 220);
+        stream_media_present();
+        char menu_image[64];
+        const char *code = lang == SL_LANG_EN ? "en" : "zh";
+        snprintf(menu_image, sizeof(menu_image), "menu-%s-settings", code);
+        save_image(menu_image);
+        const char *categories[] = {"video-audio", "network", "hosts", "application"};
+        for (int i = 0; i < 4; ++i) {
+            sl_ui_activate(&ui, 100 + i);
+            sl_ui_tick(&ui, ui.now + 220);
+            stream_media_present();
+            snprintf(menu_image, sizeof(menu_image), "menu-%s-%s", code, categories[i]);
+            save_image(menu_image);
+            sl_ui_action(&ui, SL_BACK, 0);
+            sl_ui_tick(&ui, ui.now + 220);
+        }
+        ui.page = SL_ERROR;
+        ui.cancel_only_error = true;
+        snprintf(ui.error, sizeof(ui.error), sl_tr(SL_T_TEST_FAILED_DETAIL), "CONTROLLED-PC",
+                 61024u);
+        sl_ui_layout(&ui);
+        stream_media_present();
+        save_image(lang == SL_LANG_EN ? "i18n-en-network-failed" : "i18n-zh-network-failed");
+        ui.cancel_only_error = false;
     }
     sl_i18n_set(SL_LANG_ZH_CN);
     ui.page = SL_HOME;
@@ -563,6 +627,14 @@ int main(int argc, char **argv) {
     const char *dir = sl_system_data_dir();
     sl_auth_store auth;
     assert(sl_auth_load(&auth, dir) >= 0);
+    /* Full settings must win over a stale legacy UI snapshot on both launches. */
+    const uint8_t saved_settings[] = {0x08, 0x03, 0x30, 0xe0, 0x5d, 0xc8,
+                                      0x01, 0x01, 0xb0, 0x09, 0x07};
+    sl_stream_settings full;
+    assert(sl_stream_settings_init(&full, &auth));
+    sl_stream_settings_receive(NULL, saved_settings, sizeof(saved_settings), &full);
+    assert(sl_stream_settings_drain(&full) && sl_stream_settings_save(&full, dir));
+    sl_stream_settings_destroy(&full);
     char blocked_temp[512];
     snprintf(blocked_temp, sizeof(blocked_temp), "%s/profile.tmp", dir);
     assert(mkdir(blocked_temp, 0700) == 0);
@@ -571,29 +643,90 @@ int main(int argc, char **argv) {
         assert(rt);
         sl_command cancel = {.type = SL_CMD_CANCEL, .generation = 100 + launch};
         assert(sl_runtime_submit(rt, &cancel, &auth));
-        bool stopped = false;
+        bool stopped = false, settings_ready = false;
         uint64_t deadline = sl_system_now() + 5000;
-        while (sl_system_now() < deadline && !stopped) {
+        while (sl_system_now() < deadline && (!stopped || !settings_ready)) {
             sl_runtime_event e;
             while (sl_runtime_poll(rt, &e)) {
                 assert(e.type != SL_EVENT_FAILURE);
                 if (e.type == SL_EVENT_STOPPED && e.generation == cancel.generation)
                     stopped = true;
             }
+            sl_stream_preferences prefs;
+            uint64_t revision;
+            if (sl_runtime_stream_settings(rt, &prefs, &revision)) {
+                assert(prefs.quality == 2 && prefs.bitrate_kbps == 12000 && prefs.unreliable_fec);
+                settings_ready = true;
+            }
             stream_media_present();
             SDL_Delay(5);
         }
-        assert(stopped);
+        assert(stopped && settings_ready);
         sl_runtime_destroy(rt);
     }
+    assert(rmdir(blocked_temp) == 0);
+    /* Save a real UI edit through the worker, then read its complete file back. */
+    sl_runtime *settings_runtime = sl_runtime_create(&auth);
+    assert(settings_runtime);
+    sl_stream_preferences prefs = {0};
+    uint64_t revision = 0;
+    uint64_t settings_deadline = sl_system_now() + 5000;
+    bool ready = false;
+    while (sl_system_now() < settings_deadline && !ready) {
+        ready = sl_runtime_stream_settings(settings_runtime, &prefs, &revision);
+        stream_media_present();
+        SDL_Delay(5);
+    }
+    assert(ready && prefs.unreliable_fec);
+    sl_runtime_ack_stream_settings(settings_runtime, &prefs, revision);
+    sl_auth_store edited = auth;
+    edited.quality = 1;
+    edited.bitrate_kbps = 20000;
+    edited.unreliable_fec = false;
+    sl_command edit = {.type = SL_CMD_SAVE,
+                       .language = SL_LANG_SYSTEM,
+                       .update_check = true,
+                       .resolution = SL_RESOLUTION_1080};
+    assert(sl_runtime_submit(settings_runtime, &edit, &edited));
+    uint64_t submitted = sl_runtime_settings_revision(settings_runtime);
+    ready = false;
+    settings_deadline = sl_system_now() + 5000;
+    while (sl_system_now() < settings_deadline && !ready) {
+        ready = sl_runtime_stream_settings(settings_runtime, &prefs, &revision) &&
+                revision >= submitted;
+        stream_media_present();
+        SDL_Delay(5);
+    }
+    assert(ready && !prefs.unreliable_fec && prefs.quality == 1 && prefs.bitrate_kbps == 20000);
+    sl_runtime_destroy(settings_runtime);
+    assert(sl_video_settings_load(dir) == SL_RESOLUTION_1080);
+    sl_auth_store reloaded = auth;
+    sl_stream_settings_preview(&reloaded, dir);
+    assert(!reloaded.unreliable_fec && reloaded.quality == 1 && reloaded.bitrate_kbps == 20000);
+    assert(reloaded.device_id == auth.device_id && !memcmp(reloaded.secret, auth.secret, 32));
+    char settings_path[512];
+    snprintf(settings_path, sizeof(settings_path), "%s/streaming_settings.bin", dir);
+    FILE *settings_file = fopen(settings_path, "rb");
+    assert(settings_file);
+    uint8_t persisted[64];
+    size_t persisted_size = fread(persisted, 1, sizeof(persisted), settings_file);
+    assert(!fclose(settings_file));
+    bool unknown_retained = false;
+    for (size_t i = 0; i + 2 < persisted_size; ++i)
+        if (persisted[i] == 0xb0 && persisted[i + 1] == 0x09 && persisted[i + 2] == 0x07)
+            unknown_retained = true;
+    assert(unknown_retained);
     sl_media_hooks(NULL, NULL, NULL);
     sl_artwork_destroy(artwork);
     artwork = NULL;
     sl_ui_renderer_destroy(renderer);
     stream_media_shutdown();
-    assert(rmdir(blocked_temp) == 0);
-    snprintf(blocked_temp, sizeof(blocked_temp), "%s/profile.bin", dir);
-    assert(unlink(blocked_temp) == 0);
+    const char *settings_files[] = {"profile.bin", "streaming_settings.bin", "language.conf",
+                                    "update.conf", "video.conf"};
+    for (size_t i = 0; i < sizeof(settings_files) / sizeof(settings_files[0]); ++i) {
+        snprintf(blocked_temp, sizeof(blocked_temp), "%s/%s", dir, settings_files[i]);
+        assert(!unlink(blocked_temp));
+    }
     assert(rmdir(dir) == 0);
     /* Reinitialize SDL/fonts in this process to catch stale static ownership. */
     assert(stream_media_init(sl_log));

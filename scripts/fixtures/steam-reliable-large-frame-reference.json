@@ -1,0 +1,562 @@
+{
+  "binary_sha256": "50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e",
+  "scope": "Execute official reliable ring fill/growth and assembled frame digests.\n\nReal ctor, BInsert, EnsureCapacity, PopHead, Channel Update and feedback Socket/CRC\nrun from the pinned Android ELF. Allocation,\nmutex/refcounts/destruction, terminal raw-frame digest, stats/final UDP are adapters.\nNo host, decryption or decoder runs. Bodies are deterministic controlled inputs.\n",
+  "cases": [
+    {
+      "input": {
+        "crc": 0,
+        "count": 15,
+        "chunk_bytes": 1024
+      },
+      "before": {
+        "span": 15,
+        "capacity": 64
+      },
+      "observed": {
+        "wire": [
+          "07000c220100000e0008430f0004bc0d00"
+        ],
+        "delivered": [
+          {
+            "bytes": 15360,
+            "sha256": "8af64eb4744ab77082521dbc052d04cc2fda16bb0c35ab81d0604860feaee6e5"
+          }
+        ],
+        "dirty": false,
+        "pending_ack": false,
+        "confirmed": 14,
+        "peer_time": 900000,
+        "peer_received": 1000100,
+        "deadline": 1000265,
+        "head": 15,
+        "tail": 15,
+        "asserts": []
+      }
+    },
+    {
+      "input": {
+        "crc": 0,
+        "count": 16,
+        "chunk_bytes": 1024
+      },
+      "before": {
+        "span": 16,
+        "capacity": 64
+      },
+      "observed": {
+        "wire": [
+          "07000c220100000f0008430f0004bc0d00"
+        ],
+        "delivered": [
+          {
+            "bytes": 16384,
+            "sha256": "808a07349335f865c163340ffb2872216b80bee0562ad4a22e8e6e2c7de106b6"
+          }
+        ],
+        "dirty": false,
+        "pending_ack": false,
+        "confirmed": 15,
+        "peer_time": 900000,
+        "peer_received": 1000100,
+        "deadline": 1000265,
+        "head": 16,
+        "tail": 16,
+        "asserts": []
+      }
+    },
+    {
+      "input": {
+        "crc": 0,
+        "count": 17,
+        "chunk_bytes": 1024
+      },
+      "before": {
+        "span": 17,
+        "capacity": 64
+      },
+      "observed": {
+        "wire": [
+          "07000c22010000100008430f0004bc0d00"
+        ],
+        "delivered": [
+          {
+            "bytes": 17408,
+            "sha256": "23e330790bef6d9cf690e8cdad0df7674fd2dce74076f0f75472fbecf320da44"
+          }
+        ],
+        "dirty": false,
+        "pending_ack": false,
+        "confirmed": 16,
+        "peer_time": 900000,
+        "peer_received": 1000100,
+        "deadline": 1000265,
+        "head": 17,
+        "tail": 17,
+        "asserts": []
+      }
+    },
+    {
+      "input": {
+        "crc": 0,
+        "count": 19,
+        "chunk_bytes": 1024
+      },
+      "before": {
+        "span": 19,
+        "capacity": 64
+      },
+      "observed": {
+        "wire": [
+          "07000c22010000120008430f0004bc0d00"
+        ],
+        "delivered": [
+          {
+            "bytes": 19456,
+            "sha256": "a5125b8e9e3bc527de2724c0d7cc09f4ad5d9870d27f62c77e2bb9a2067c453e"
+          }
+        ],
+        "dirty": false,
+        "pending_ack": false,
+        "confirmed": 18,
+        "peer_time": 900000,
+        "peer_received": 1000100,
+        "deadline": 1000265,
+        "head": 19,
+        "tail": 19,
+        "asserts": []
+      }
+    },
+    {
+      "input": {
+        "crc": 0,
+        "count": 63,
+        "chunk_bytes": 1024
+      },
+      "before": {
+        "span": 63,
+        "capacity": 64
+      },
+      "observed": {
+        "wire": [
+          "07000c220100003e0008430f0004bc0d00"
+        ],
+        "delivered": [
+          {
+            "bytes": 64512,
+            "sha256": "9bfe510a39f4fedea876cc3651d2f03391095511c1422ceab840e3e3d47c558e"
+          }
+        ],
+        "dirty": false,
+        "pending_ack": false,
+        "confirmed": 62,
+        "peer_time": 900000,
+        "peer_received": 1000100,
+        "deadline": 1000265,
+        "head": 63,
+        "tail": 63,
+        "asserts": []
+      }
+    },
+    {
+      "input": {
+        "crc": 0,
+        "count": 64,
+        "chunk_bytes": 1024
+      },
+      "before": {
+        "span": 64,
+        "capacity": 64
+      },
+      "observed": {
+        "wire": [
+          "07000c220100003f0008430f0004bc0d00"
+        ],
+        "delivered": [
+          {
+            "bytes": 65536,
+            "sha256": "f26bca1c38a52443024cf007f57dc101ce8484bdfbba0915c68b66bfe0dbf60b"
+          }
+        ],
+        "dirty": false,
+        "pending_ack": false,
+        "confirmed": 63,
+        "peer_time": 900000,
+        "peer_received": 1000100,
+        "deadline": 1000265,
+        "head": 64,
+        "tail": 64,
+        "asserts": []
+      }
+    },
+    {
+      "input": {
+        "crc": 0,
+        "count": 65,
+        "chunk_bytes": 1024
+      },
+      "before": {
+        "span": 65,
+        "capacity": 128
+      },
+      "observed": {
+        "wire": [
+          "07000c22010000400008430f0004bc0d00"
+        ],
+        "delivered": [
+          {
+            "bytes": 66560,
+            "sha256": "d51b980ea6fe4ae2817d66bfeb8264c32706f5b72654e10d744e85eb4c57d0a0"
+          }
+        ],
+        "dirty": false,
+        "pending_ack": false,
+        "confirmed": 64,
+        "peer_time": 900000,
+        "peer_received": 1000100,
+        "deadline": 1000265,
+        "head": 65,
+        "tail": 65,
+        "asserts": []
+      }
+    },
+    {
+      "input": {
+        "crc": 0,
+        "count": 1100,
+        "chunk_bytes": 1024
+      },
+      "before": {
+        "span": 1100,
+        "capacity": 2048
+      },
+      "observed": {
+        "wire": [
+          "07000c220100004b0408430f0004bc0d00"
+        ],
+        "delivered": [
+          {
+            "bytes": 1126400,
+            "sha256": "d3f03c2cbf29e36b5b5f85aa78bc9025eff19f5bb6f7abb3c3296da1647118fa"
+          }
+        ],
+        "dirty": false,
+        "pending_ack": false,
+        "confirmed": 1099,
+        "peer_time": 900000,
+        "peer_received": 1000100,
+        "deadline": 1000265,
+        "head": 1100,
+        "tail": 1100,
+        "asserts": []
+      }
+    },
+    {
+      "input": {
+        "crc": 1,
+        "count": 15,
+        "chunk_bytes": 1024
+      },
+      "before": {
+        "span": 15,
+        "capacity": 64
+      },
+      "observed": {
+        "wire": [
+          "87000c220100000e0008430f0004bc0d004dbac13b"
+        ],
+        "delivered": [
+          {
+            "bytes": 15360,
+            "sha256": "8af64eb4744ab77082521dbc052d04cc2fda16bb0c35ab81d0604860feaee6e5"
+          }
+        ],
+        "dirty": false,
+        "pending_ack": false,
+        "confirmed": 14,
+        "peer_time": 900000,
+        "peer_received": 1000100,
+        "deadline": 1000265,
+        "head": 15,
+        "tail": 15,
+        "asserts": []
+      }
+    },
+    {
+      "input": {
+        "crc": 1,
+        "count": 16,
+        "chunk_bytes": 1024
+      },
+      "before": {
+        "span": 16,
+        "capacity": 64
+      },
+      "observed": {
+        "wire": [
+          "87000c220100000f0008430f0004bc0d00e8c197f0"
+        ],
+        "delivered": [
+          {
+            "bytes": 16384,
+            "sha256": "808a07349335f865c163340ffb2872216b80bee0562ad4a22e8e6e2c7de106b6"
+          }
+        ],
+        "dirty": false,
+        "pending_ack": false,
+        "confirmed": 15,
+        "peer_time": 900000,
+        "peer_received": 1000100,
+        "deadline": 1000265,
+        "head": 16,
+        "tail": 16,
+        "asserts": []
+      }
+    },
+    {
+      "input": {
+        "crc": 1,
+        "count": 17,
+        "chunk_bytes": 1024
+      },
+      "before": {
+        "span": 17,
+        "capacity": 64
+      },
+      "observed": {
+        "wire": [
+          "87000c22010000100008430f0004bc0d0063738340"
+        ],
+        "delivered": [
+          {
+            "bytes": 17408,
+            "sha256": "23e330790bef6d9cf690e8cdad0df7674fd2dce74076f0f75472fbecf320da44"
+          }
+        ],
+        "dirty": false,
+        "pending_ack": false,
+        "confirmed": 16,
+        "peer_time": 900000,
+        "peer_received": 1000100,
+        "deadline": 1000265,
+        "head": 17,
+        "tail": 17,
+        "asserts": []
+      }
+    },
+    {
+      "input": {
+        "crc": 1,
+        "count": 19,
+        "chunk_bytes": 1024
+      },
+      "before": {
+        "span": 19,
+        "capacity": 64
+      },
+      "observed": {
+        "wire": [
+          "87000c22010000120008430f0004bc0d00d8f2c3d3"
+        ],
+        "delivered": [
+          {
+            "bytes": 19456,
+            "sha256": "a5125b8e9e3bc527de2724c0d7cc09f4ad5d9870d27f62c77e2bb9a2067c453e"
+          }
+        ],
+        "dirty": false,
+        "pending_ack": false,
+        "confirmed": 18,
+        "peer_time": 900000,
+        "peer_received": 1000100,
+        "deadline": 1000265,
+        "head": 19,
+        "tail": 19,
+        "asserts": []
+      }
+    },
+    {
+      "input": {
+        "crc": 1,
+        "count": 63,
+        "chunk_bytes": 1024
+      },
+      "before": {
+        "span": 63,
+        "capacity": 64
+      },
+      "observed": {
+        "wire": [
+          "87000c220100003e0008430f0004bc0d0098b6f3a8"
+        ],
+        "delivered": [
+          {
+            "bytes": 64512,
+            "sha256": "9bfe510a39f4fedea876cc3651d2f03391095511c1422ceab840e3e3d47c558e"
+          }
+        ],
+        "dirty": false,
+        "pending_ack": false,
+        "confirmed": 62,
+        "peer_time": 900000,
+        "peer_received": 1000100,
+        "deadline": 1000265,
+        "head": 63,
+        "tail": 63,
+        "asserts": []
+      }
+    },
+    {
+      "input": {
+        "crc": 1,
+        "count": 64,
+        "chunk_bytes": 1024
+      },
+      "before": {
+        "span": 64,
+        "capacity": 64
+      },
+      "observed": {
+        "wire": [
+          "87000c220100003f0008430f0004bc0d003dcda563"
+        ],
+        "delivered": [
+          {
+            "bytes": 65536,
+            "sha256": "f26bca1c38a52443024cf007f57dc101ce8484bdfbba0915c68b66bfe0dbf60b"
+          }
+        ],
+        "dirty": false,
+        "pending_ack": false,
+        "confirmed": 63,
+        "peer_time": 900000,
+        "peer_received": 1000100,
+        "deadline": 1000265,
+        "head": 64,
+        "tail": 64,
+        "asserts": []
+      }
+    },
+    {
+      "input": {
+        "crc": 1,
+        "count": 65,
+        "chunk_bytes": 1024
+      },
+      "before": {
+        "span": 65,
+        "capacity": 128
+      },
+      "observed": {
+        "wire": [
+          "87000c22010000400008430f0004bc0d00ed1039f0"
+        ],
+        "delivered": [
+          {
+            "bytes": 66560,
+            "sha256": "d51b980ea6fe4ae2817d66bfeb8264c32706f5b72654e10d744e85eb4c57d0a0"
+          }
+        ],
+        "dirty": false,
+        "pending_ack": false,
+        "confirmed": 64,
+        "peer_time": 900000,
+        "peer_received": 1000100,
+        "deadline": 1000265,
+        "head": 65,
+        "tail": 65,
+        "asserts": []
+      }
+    },
+    {
+      "input": {
+        "crc": 1,
+        "count": 1100,
+        "chunk_bytes": 1024
+      },
+      "before": {
+        "span": 1100,
+        "capacity": 2048
+      },
+      "observed": {
+        "wire": [
+          "87000c220100004b0408430f0004bc0d00cec33a30"
+        ],
+        "delivered": [
+          {
+            "bytes": 1126400,
+            "sha256": "d3f03c2cbf29e36b5b5f85aa78bc9025eff19f5bb6f7abb3c3296da1647118fa"
+          }
+        ],
+        "dirty": false,
+        "pending_ack": false,
+        "confirmed": 1099,
+        "peer_time": 900000,
+        "peer_received": 1000100,
+        "deadline": 1000265,
+        "head": 1100,
+        "tail": 1100,
+        "asserts": []
+      }
+    },
+    {
+      "input": {
+        "crc": 0,
+        "count": 64,
+        "chunk_bytes": 1024,
+        "missing_first": true
+      },
+      "before": {
+        "span": 64,
+        "capacity": 64
+      },
+      "observed": {
+        "wire": [
+          "07000c22010000ffff08430f0004bc0d00",
+          "08000c22010000010008430f00a0bb0d00ffffffffffffffffff7f"
+        ],
+        "delivered": [],
+        "dirty": false,
+        "pending_ack": false,
+        "confirmed": 65535,
+        "peer_time": 900000,
+        "peer_received": 1000100,
+        "deadline": 1000265,
+        "head": 0,
+        "tail": 64,
+        "asserts": [
+          "STREAM_OLDER_PACKET_ID( m_ReliableState.m_nPendingAckID, nPendingAckID )"
+        ]
+      }
+    },
+    {
+      "input": {
+        "crc": 1,
+        "count": 64,
+        "chunk_bytes": 1024,
+        "missing_first": true
+      },
+      "before": {
+        "span": 64,
+        "capacity": 64
+      },
+      "observed": {
+        "wire": [
+          "87000c22010000ffff08430f0004bc0d0001a710b3",
+          "88000c22010000010008430f00a0bb0d00ffffffffffffffffff7fe8896fb3"
+        ],
+        "delivered": [],
+        "dirty": false,
+        "pending_ack": false,
+        "confirmed": 65535,
+        "peer_time": 900000,
+        "peer_received": 1000100,
+        "deadline": 1000265,
+        "head": 0,
+        "tail": 64,
+        "asserts": [
+          "STREAM_OLDER_PACKET_ID( m_ReliableState.m_nPendingAckID, nPendingAckID )"
+        ]
+      }
+    }
+  ]
+}

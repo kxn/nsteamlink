@@ -1,0 +1,1050 @@
+{
+  "binary_sha256": "15b2d79881eef0c47ed2f96c17d1d60a5f42d3285abcf9f512cfffdac5b238a2",
+  "scope": "Original failed BStart remains stopped until an explicit startup trigger.\n\nOriginal watcher construction/meta dispatch/BStart/BInit/Update execute; inherited\nQt/socket/storage/remote/initial-empty Stop terminals remain explicit. Timer\ndispatches are supplied, not natural Qt/network events. No native OS/device proof.\n",
+  "helpers": {
+    "audit-steam-discovery-startup.py": "5a2ae0391b76ca9330abe6c168bb98fda763fadffe0e0b9757e329aad5083c6e",
+    "audit-steam-network-discovery.py": "45c6421cd97cc695c2d43b6ab5a1c6fecc35e9dc8f6ddfe11e6456a1611fb87b",
+    "audit-steam-client-fec-policy.py": "c54fb9487517fd4145712827065e3cae9298d8f5f7235c8694ae9c3025765d4e"
+  },
+  "cases": [
+    {
+      "event": -1,
+      "failed": {
+        "state": 0,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 0,
+        "calls": {
+          "socket_ctor": 1,
+          "socket_destroy": 1,
+          "socket_init": 1,
+          "start": 1,
+          "watcher_ctor": 1
+        },
+        "trace": [
+          [
+            "connect",
+            "2networkAccessibleChanged( QNetworkAccessManager::NetworkAccessibility )",
+            "1OnNetworkStateChanged( QNetworkAccessManager::NetworkAccessibility )",
+            0
+          ],
+          [
+            "network_accessible",
+            1
+          ],
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "socket",
+            10,
+            2,
+            17,
+            -1
+          ],
+          [
+            "socket",
+            2,
+            2,
+            17,
+            -1
+          ],
+          [
+            "log",
+            "Couldn't create discovery network socket\n"
+          ],
+          [
+            "log",
+            "ERROR: Unable to create discovery socket\n"
+          ],
+          [
+            "connect",
+            "2timeout()",
+            "1OnUpdate()",
+            0
+          ],
+          [
+            "timer_start_ms",
+            100
+          ]
+        ]
+      },
+      "idle": {
+        "state": 0,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 0,
+        "calls": {
+          "meta_dispatch": 3,
+          "socket_ctor": 1,
+          "socket_destroy": 1,
+          "socket_init": 1,
+          "start": 1,
+          "timer_slot": 3,
+          "update": 3,
+          "watcher_ctor": 1
+        },
+        "trace": [
+          [
+            "connect",
+            "2networkAccessibleChanged( QNetworkAccessManager::NetworkAccessibility )",
+            "1OnNetworkStateChanged( QNetworkAccessManager::NetworkAccessibility )",
+            0
+          ],
+          [
+            "network_accessible",
+            1
+          ],
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "socket",
+            10,
+            2,
+            17,
+            -1
+          ],
+          [
+            "socket",
+            2,
+            2,
+            17,
+            -1
+          ],
+          [
+            "log",
+            "Couldn't create discovery network socket\n"
+          ],
+          [
+            "log",
+            "ERROR: Unable to create discovery socket\n"
+          ],
+          [
+            "connect",
+            "2timeout()",
+            "1OnUpdate()",
+            0
+          ],
+          [
+            "timer_start_ms",
+            100
+          ]
+        ]
+      },
+      "restarted": {
+        "state": 1,
+        "socket": 537920704,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 1013,
+        "calls": {
+          "meta_dispatch": 4,
+          "network_slot": 1,
+          "socket_ctor": 2,
+          "socket_destroy": 1,
+          "socket_init": 2,
+          "socket_receive": 1,
+          "start": 2,
+          "timer_slot": 3,
+          "update": 4,
+          "watcher_ctor": 1
+        },
+        "trace": [
+          [
+            "connect",
+            "2networkAccessibleChanged( QNetworkAccessManager::NetworkAccessibility )",
+            "1OnNetworkStateChanged( QNetworkAccessManager::NetworkAccessibility )",
+            0
+          ],
+          [
+            "network_accessible",
+            1
+          ],
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "socket",
+            10,
+            2,
+            17,
+            -1
+          ],
+          [
+            "socket",
+            2,
+            2,
+            17,
+            -1
+          ],
+          [
+            "log",
+            "Couldn't create discovery network socket\n"
+          ],
+          [
+            "log",
+            "ERROR: Unable to create discovery socket\n"
+          ],
+          [
+            "connect",
+            "2timeout()",
+            "1OnUpdate()",
+            0
+          ],
+          [
+            "timer_start_ms",
+            100
+          ],
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "socket",
+            10,
+            2,
+            17,
+            37
+          ],
+          [
+            "setsockopt",
+            37,
+            1,
+            6
+          ],
+          [
+            "setsockopt",
+            37,
+            41,
+            26
+          ],
+          [
+            "setsockopt",
+            37,
+            41,
+            20
+          ],
+          [
+            "bind",
+            37,
+            806350592,
+            0
+          ],
+          [
+            "fcntl",
+            37,
+            3,
+            28
+          ],
+          [
+            "fcntl",
+            37,
+            4,
+            2048
+          ],
+          [
+            "recvfrom",
+            37,
+            1500,
+            0,
+            -1
+          ],
+          [
+            "random_range",
+            1,
+            5
+          ],
+          [
+            "random_range",
+            1,
+            3
+          ],
+          [
+            "request_status_terminal"
+          ]
+        ]
+      }
+    },
+    {
+      "event": 0,
+      "failed": {
+        "state": 0,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 0,
+        "calls": {
+          "socket_ctor": 1,
+          "socket_destroy": 1,
+          "socket_init": 1,
+          "start": 1,
+          "watcher_ctor": 1
+        },
+        "trace": [
+          [
+            "connect",
+            "2networkAccessibleChanged( QNetworkAccessManager::NetworkAccessibility )",
+            "1OnNetworkStateChanged( QNetworkAccessManager::NetworkAccessibility )",
+            0
+          ],
+          [
+            "network_accessible",
+            1
+          ],
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "socket",
+            10,
+            2,
+            17,
+            -1
+          ],
+          [
+            "socket",
+            2,
+            2,
+            17,
+            -1
+          ],
+          [
+            "log",
+            "Couldn't create discovery network socket\n"
+          ],
+          [
+            "log",
+            "ERROR: Unable to create discovery socket\n"
+          ],
+          [
+            "connect",
+            "2timeout()",
+            "1OnUpdate()",
+            0
+          ],
+          [
+            "timer_start_ms",
+            100
+          ]
+        ]
+      },
+      "idle": {
+        "state": 0,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 0,
+        "calls": {
+          "meta_dispatch": 3,
+          "socket_ctor": 1,
+          "socket_destroy": 1,
+          "socket_init": 1,
+          "start": 1,
+          "timer_slot": 3,
+          "update": 3,
+          "watcher_ctor": 1
+        },
+        "trace": [
+          [
+            "connect",
+            "2networkAccessibleChanged( QNetworkAccessManager::NetworkAccessibility )",
+            "1OnNetworkStateChanged( QNetworkAccessManager::NetworkAccessibility )",
+            0
+          ],
+          [
+            "network_accessible",
+            1
+          ],
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "socket",
+            10,
+            2,
+            17,
+            -1
+          ],
+          [
+            "socket",
+            2,
+            2,
+            17,
+            -1
+          ],
+          [
+            "log",
+            "Couldn't create discovery network socket\n"
+          ],
+          [
+            "log",
+            "ERROR: Unable to create discovery socket\n"
+          ],
+          [
+            "connect",
+            "2timeout()",
+            "1OnUpdate()",
+            0
+          ],
+          [
+            "timer_start_ms",
+            100
+          ]
+        ]
+      },
+      "restarted": {
+        "state": 1,
+        "socket": 537920704,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 1013,
+        "calls": {
+          "meta_dispatch": 4,
+          "network_slot": 1,
+          "socket_ctor": 2,
+          "socket_destroy": 1,
+          "socket_init": 2,
+          "socket_receive": 1,
+          "start": 2,
+          "timer_slot": 3,
+          "update": 4,
+          "watcher_ctor": 1
+        },
+        "trace": [
+          [
+            "connect",
+            "2networkAccessibleChanged( QNetworkAccessManager::NetworkAccessibility )",
+            "1OnNetworkStateChanged( QNetworkAccessManager::NetworkAccessibility )",
+            0
+          ],
+          [
+            "network_accessible",
+            1
+          ],
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "socket",
+            10,
+            2,
+            17,
+            -1
+          ],
+          [
+            "socket",
+            2,
+            2,
+            17,
+            -1
+          ],
+          [
+            "log",
+            "Couldn't create discovery network socket\n"
+          ],
+          [
+            "log",
+            "ERROR: Unable to create discovery socket\n"
+          ],
+          [
+            "connect",
+            "2timeout()",
+            "1OnUpdate()",
+            0
+          ],
+          [
+            "timer_start_ms",
+            100
+          ],
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "socket",
+            10,
+            2,
+            17,
+            37
+          ],
+          [
+            "setsockopt",
+            37,
+            1,
+            6
+          ],
+          [
+            "setsockopt",
+            37,
+            41,
+            26
+          ],
+          [
+            "setsockopt",
+            37,
+            41,
+            20
+          ],
+          [
+            "bind",
+            37,
+            806350592,
+            0
+          ],
+          [
+            "fcntl",
+            37,
+            3,
+            28
+          ],
+          [
+            "fcntl",
+            37,
+            4,
+            2048
+          ],
+          [
+            "recvfrom",
+            37,
+            1500,
+            0,
+            -1
+          ],
+          [
+            "random_range",
+            1,
+            5
+          ],
+          [
+            "random_range",
+            1,
+            3
+          ],
+          [
+            "request_status_terminal"
+          ]
+        ]
+      }
+    },
+    {
+      "event": 1,
+      "failed": {
+        "state": 0,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 0,
+        "calls": {
+          "socket_ctor": 1,
+          "socket_destroy": 1,
+          "socket_init": 1,
+          "start": 1,
+          "watcher_ctor": 1
+        },
+        "trace": [
+          [
+            "connect",
+            "2networkAccessibleChanged( QNetworkAccessManager::NetworkAccessibility )",
+            "1OnNetworkStateChanged( QNetworkAccessManager::NetworkAccessibility )",
+            0
+          ],
+          [
+            "network_accessible",
+            1
+          ],
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "socket",
+            10,
+            2,
+            17,
+            -1
+          ],
+          [
+            "socket",
+            2,
+            2,
+            17,
+            -1
+          ],
+          [
+            "log",
+            "Couldn't create discovery network socket\n"
+          ],
+          [
+            "log",
+            "ERROR: Unable to create discovery socket\n"
+          ],
+          [
+            "connect",
+            "2timeout()",
+            "1OnUpdate()",
+            0
+          ],
+          [
+            "timer_start_ms",
+            100
+          ]
+        ]
+      },
+      "idle": {
+        "state": 0,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 0,
+        "calls": {
+          "meta_dispatch": 3,
+          "socket_ctor": 1,
+          "socket_destroy": 1,
+          "socket_init": 1,
+          "start": 1,
+          "timer_slot": 3,
+          "update": 3,
+          "watcher_ctor": 1
+        },
+        "trace": [
+          [
+            "connect",
+            "2networkAccessibleChanged( QNetworkAccessManager::NetworkAccessibility )",
+            "1OnNetworkStateChanged( QNetworkAccessManager::NetworkAccessibility )",
+            0
+          ],
+          [
+            "network_accessible",
+            1
+          ],
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "socket",
+            10,
+            2,
+            17,
+            -1
+          ],
+          [
+            "socket",
+            2,
+            2,
+            17,
+            -1
+          ],
+          [
+            "log",
+            "Couldn't create discovery network socket\n"
+          ],
+          [
+            "log",
+            "ERROR: Unable to create discovery socket\n"
+          ],
+          [
+            "connect",
+            "2timeout()",
+            "1OnUpdate()",
+            0
+          ],
+          [
+            "timer_start_ms",
+            100
+          ]
+        ]
+      },
+      "restarted": {
+        "state": 1,
+        "socket": 537920704,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 1013,
+        "calls": {
+          "meta_dispatch": 4,
+          "network_slot": 1,
+          "socket_ctor": 2,
+          "socket_destroy": 1,
+          "socket_init": 2,
+          "socket_receive": 1,
+          "start": 2,
+          "timer_slot": 3,
+          "update": 4,
+          "watcher_ctor": 1
+        },
+        "trace": [
+          [
+            "connect",
+            "2networkAccessibleChanged( QNetworkAccessManager::NetworkAccessibility )",
+            "1OnNetworkStateChanged( QNetworkAccessManager::NetworkAccessibility )",
+            0
+          ],
+          [
+            "network_accessible",
+            1
+          ],
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "socket",
+            10,
+            2,
+            17,
+            -1
+          ],
+          [
+            "socket",
+            2,
+            2,
+            17,
+            -1
+          ],
+          [
+            "log",
+            "Couldn't create discovery network socket\n"
+          ],
+          [
+            "log",
+            "ERROR: Unable to create discovery socket\n"
+          ],
+          [
+            "connect",
+            "2timeout()",
+            "1OnUpdate()",
+            0
+          ],
+          [
+            "timer_start_ms",
+            100
+          ],
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "socket",
+            10,
+            2,
+            17,
+            37
+          ],
+          [
+            "setsockopt",
+            37,
+            1,
+            6
+          ],
+          [
+            "setsockopt",
+            37,
+            41,
+            26
+          ],
+          [
+            "setsockopt",
+            37,
+            41,
+            20
+          ],
+          [
+            "bind",
+            37,
+            806350592,
+            0
+          ],
+          [
+            "fcntl",
+            37,
+            3,
+            28
+          ],
+          [
+            "fcntl",
+            37,
+            4,
+            2048
+          ],
+          [
+            "recvfrom",
+            37,
+            1500,
+            0,
+            -1
+          ],
+          [
+            "random_range",
+            1,
+            5
+          ],
+          [
+            "random_range",
+            1,
+            3
+          ],
+          [
+            "request_status_terminal"
+          ]
+        ]
+      }
+    },
+    {
+      "event": "explicit_start",
+      "failed": {
+        "state": 0,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 0,
+        "calls": {
+          "socket_ctor": 1,
+          "socket_destroy": 1,
+          "socket_init": 1,
+          "start": 1,
+          "watcher_ctor": 1
+        },
+        "trace": [
+          [
+            "connect",
+            "2networkAccessibleChanged( QNetworkAccessManager::NetworkAccessibility )",
+            "1OnNetworkStateChanged( QNetworkAccessManager::NetworkAccessibility )",
+            0
+          ],
+          [
+            "network_accessible",
+            1
+          ],
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "socket",
+            10,
+            2,
+            17,
+            -1
+          ],
+          [
+            "socket",
+            2,
+            2,
+            17,
+            -1
+          ],
+          [
+            "log",
+            "Couldn't create discovery network socket\n"
+          ],
+          [
+            "log",
+            "ERROR: Unable to create discovery socket\n"
+          ],
+          [
+            "connect",
+            "2timeout()",
+            "1OnUpdate()",
+            0
+          ],
+          [
+            "timer_start_ms",
+            100
+          ]
+        ]
+      },
+      "idle": {
+        "state": 0,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 0,
+        "calls": {
+          "meta_dispatch": 3,
+          "socket_ctor": 1,
+          "socket_destroy": 1,
+          "socket_init": 1,
+          "start": 1,
+          "timer_slot": 3,
+          "update": 3,
+          "watcher_ctor": 1
+        },
+        "trace": [
+          [
+            "connect",
+            "2networkAccessibleChanged( QNetworkAccessManager::NetworkAccessibility )",
+            "1OnNetworkStateChanged( QNetworkAccessManager::NetworkAccessibility )",
+            0
+          ],
+          [
+            "network_accessible",
+            1
+          ],
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "socket",
+            10,
+            2,
+            17,
+            -1
+          ],
+          [
+            "socket",
+            2,
+            2,
+            17,
+            -1
+          ],
+          [
+            "log",
+            "Couldn't create discovery network socket\n"
+          ],
+          [
+            "log",
+            "ERROR: Unable to create discovery socket\n"
+          ],
+          [
+            "connect",
+            "2timeout()",
+            "1OnUpdate()",
+            0
+          ],
+          [
+            "timer_start_ms",
+            100
+          ]
+        ]
+      },
+      "restarted": {
+        "state": 1,
+        "socket": 537920688,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 1013,
+        "calls": {
+          "meta_dispatch": 3,
+          "socket_ctor": 2,
+          "socket_destroy": 1,
+          "socket_init": 2,
+          "socket_receive": 1,
+          "start": 2,
+          "timer_slot": 3,
+          "update": 4,
+          "watcher_ctor": 1
+        },
+        "trace": [
+          [
+            "connect",
+            "2networkAccessibleChanged( QNetworkAccessManager::NetworkAccessibility )",
+            "1OnNetworkStateChanged( QNetworkAccessManager::NetworkAccessibility )",
+            0
+          ],
+          [
+            "network_accessible",
+            1
+          ],
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "socket",
+            10,
+            2,
+            17,
+            -1
+          ],
+          [
+            "socket",
+            2,
+            2,
+            17,
+            -1
+          ],
+          [
+            "log",
+            "Couldn't create discovery network socket\n"
+          ],
+          [
+            "log",
+            "ERROR: Unable to create discovery socket\n"
+          ],
+          [
+            "connect",
+            "2timeout()",
+            "1OnUpdate()",
+            0
+          ],
+          [
+            "timer_start_ms",
+            100
+          ],
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "socket",
+            10,
+            2,
+            17,
+            37
+          ],
+          [
+            "setsockopt",
+            37,
+            1,
+            6
+          ],
+          [
+            "setsockopt",
+            37,
+            41,
+            26
+          ],
+          [
+            "setsockopt",
+            37,
+            41,
+            20
+          ],
+          [
+            "bind",
+            37,
+            806350640,
+            0
+          ],
+          [
+            "fcntl",
+            37,
+            3,
+            28
+          ],
+          [
+            "fcntl",
+            37,
+            4,
+            2048
+          ],
+          [
+            "recvfrom",
+            37,
+            1500,
+            0,
+            -1
+          ],
+          [
+            "random_range",
+            1,
+            5
+          ],
+          [
+            "random_range",
+            1,
+            3
+          ],
+          [
+            "request_status_terminal"
+          ]
+        ]
+      }
+    }
+  ]
+}

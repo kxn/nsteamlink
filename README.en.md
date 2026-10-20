@@ -49,14 +49,19 @@ Use **Y to open Steam** on your first visit. Games played during streaming appea
 | Switch PCs | L / R, with hints shown when multiple PCs are available |
 | Launch the selected game / confirm | A |
 | Open Steam | Y |
-| Options | X |
+| Settings | X |
 | Back / exit | B |
 | Open the streaming menu | Hold **− and + together for 0.8 seconds** |
 
 The home screen and menus also support touch. **Disconnect** leaves the PC game running.
-**End game** asks the PC to quit the game and end the session.
+**End game and disconnect** asks the host to quit the game, then disconnects. The streaming menu only offers Resume, End game and disconnect, and Disconnect; settings are available from the home screen.
 
-![The in-game menu: resume, settings, end game and disconnect](docs/images/streaming-menu.jpg)
+Open **Settings → Video & audio → Resolution** to choose Auto, 720p or 1080p.
+Auto selects 720p in handheld mode and 1080p when docked at each connection, targeting up to 60 fps.
+Changes apply on the next connection. Forced 1080p also works in handheld mode: the full video is
+received and decoded at 1080p, then scaled to the 720p panel. Docking changes local output dimensions;
+reconnect to select a new stream resolution. Host encoding settings and network conditions can limit
+the actual video dimensions and frame rate.
 
 ## Add a HOME Menu shortcut
 

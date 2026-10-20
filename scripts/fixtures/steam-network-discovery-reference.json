@@ -1,0 +1,2384 @@
+{
+  "binary_sha256": "15b2d79881eef0c47ed2f96c17d1d60a5f42d3285abcf9f512cfffdac5b238a2",
+  "scope": "Execute official Android shell discovery scheduling/error branches.\n\nOriginal watcher constructor/slots, BStart, discovery ctor/BInit/BReceive and\nmanager Update/HandleNetworkChanged execute. Qt/OS/socket calls, empty CUtlBuffer\nstorage and remote-session APIs are declared terminals. Stop is a terminal on\ninitially empty managers only. BProcess is a terminal: the successful datagram is\nopaque, not a valid protocol/host-discovery proof. No Qt event loop, natural\nnetwork-change producer, DNS, Steam connection, physical network or device proof.\n",
+  "functions": [
+    {
+      "label": "watcher_ctor",
+      "name": "_ZN28CServerManagerNetworkWatcherC1EP14CServerManager",
+      "address": 13198396,
+      "size": 332,
+      "sha256": "aaf4f1544a46b1860fc5216cb43f51b7df04254cedd012630fa799210ef0d28f"
+    },
+    {
+      "label": "network_slot",
+      "name": "_ZN28CServerManagerNetworkWatcher21OnNetworkStateChangedEN21QNetworkAccessManager20NetworkAccessibilityE",
+      "address": 13198728,
+      "size": 20,
+      "sha256": "421c57568831db507712f13284b5a0b15c2e1911fe0cc1bed484c2de7ac61cd4"
+    },
+    {
+      "label": "timer_slot",
+      "name": "_ZN28CServerManagerNetworkWatcher8OnUpdateEv",
+      "address": 13198748,
+      "size": 8,
+      "sha256": "8659b11579259a56592775c2ecef178b87da692d861b89a8cbc13444393b3226"
+    },
+    {
+      "label": "meta_dispatch",
+      "name": "_ZN28CServerManagerNetworkWatcher11qt_metacallEN11QMetaObject4CallEiPPv",
+      "address": 16380292,
+      "size": 140,
+      "sha256": "2b7f2f6a804e3911a9a7196f0276a563dbb249437849bbbdac35b2a23a6d3c23"
+    },
+    {
+      "label": "start",
+      "name": "_ZN14CServerManager6BStartEv",
+      "address": 13303184,
+      "size": 204,
+      "sha256": "86ae375a7c6ca1f0817d5e9b4f88fa1e6be33e78412150b5d03333c4659c3a8e"
+    },
+    {
+      "label": "update",
+      "name": "_ZN14CServerManager6UpdateEv",
+      "address": 13303388,
+      "size": 1028,
+      "sha256": "f51af8ea2b1270f0941caeb09ee81ca76444b4327619ee6e0cfa7e6b904a343c"
+    },
+    {
+      "label": "network_api",
+      "name": "_ZN14CServerManager20HandleNetworkChangedEv",
+      "address": 13311308,
+      "size": 84,
+      "sha256": "a8b8a5dd062a4a766f4022af00221404eff70e7d3921b9ba5a6fbf3118c278d3"
+    },
+    {
+      "label": "socket_ctor",
+      "name": "_ZN16CDiscoverySocketC1Ev",
+      "address": 13294924,
+      "size": 12,
+      "sha256": "32df2b345f9a5d35c8b953b99f0e9724f333cb1737c1f1bde414909d9c6134a2"
+    },
+    {
+      "label": "socket_init",
+      "name": "_ZN16CDiscoverySocket5BInitEv",
+      "address": 13295036,
+      "size": 440,
+      "sha256": "ade65414c15a52a6cfdf7093033453770de66795764661d489ae0f58d9496d42"
+    },
+    {
+      "label": "socket_receive",
+      "name": "_ZN16CDiscoverySocket8BReceiveEP10CIPAndPortP10CUtlBuffer",
+      "address": 13296320,
+      "size": 236,
+      "sha256": "9f2551d69c0b1de9ade5a75840ba6e66ba508c80cf76ee4b25692d6b412a836b"
+    },
+    {
+      "label": "socket_destroy",
+      "name": "_ZN16CDiscoverySocketD1Ev",
+      "address": 13294936,
+      "size": 52,
+      "sha256": "f8b9e3ca3e31cc27058c3fa4f3887d28c422d398cf1ad0a5731f259596296795"
+    }
+  ],
+  "helpers": {
+    "audit-steam-network-discovery.py": "45c6421cd97cc695c2d43b6ab5a1c6fecc35e9dc8f6ddfe11e6456a1611fb87b",
+    "audit-steam-client-fec-policy.py": "c54fb9487517fd4145712827065e3cae9298d8f5f7235c8694ae9c3025765d4e"
+  },
+  "cases": [
+    {
+      "input": {
+        "kind": "constructor",
+        "state": 0,
+        "access": -1
+      },
+      "observed": {
+        "state": 1,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 1013,
+        "calls": {
+          "start": 1,
+          "update": 1,
+          "watcher_ctor": 1
+        },
+        "trace": [
+          [
+            "connect",
+            "2networkAccessibleChanged( QNetworkAccessManager::NetworkAccessibility )",
+            "1OnNetworkStateChanged( QNetworkAccessManager::NetworkAccessibility )",
+            0
+          ],
+          [
+            "network_accessible",
+            -1
+          ],
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "random_range",
+            1,
+            5
+          ],
+          [
+            "random_range",
+            1,
+            3
+          ],
+          [
+            "request_status_terminal"
+          ],
+          [
+            "connect",
+            "2timeout()",
+            "1OnUpdate()",
+            0
+          ],
+          [
+            "timer_start_ms",
+            100
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "network_slot",
+        "state": 0,
+        "access": -1
+      },
+      "observed": {
+        "state": 1,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 1013,
+        "calls": {
+          "network_slot": 1,
+          "start": 1,
+          "update": 1
+        },
+        "trace": [
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "random_range",
+            1,
+            5
+          ],
+          [
+            "random_range",
+            1,
+            3
+          ],
+          [
+            "request_status_terminal"
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "meta_network_slot",
+        "state": 0,
+        "access": -1
+      },
+      "observed": {
+        "state": 1,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 1013,
+        "calls": {
+          "meta_dispatch": 1,
+          "network_slot": 1,
+          "start": 1,
+          "update": 1
+        },
+        "trace": [
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "random_range",
+            1,
+            5
+          ],
+          [
+            "random_range",
+            1,
+            3
+          ],
+          [
+            "request_status_terminal"
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "constructor",
+        "state": 0,
+        "access": 0
+      },
+      "observed": {
+        "state": 1,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 1013,
+        "calls": {
+          "start": 1,
+          "update": 1,
+          "watcher_ctor": 1
+        },
+        "trace": [
+          [
+            "connect",
+            "2networkAccessibleChanged( QNetworkAccessManager::NetworkAccessibility )",
+            "1OnNetworkStateChanged( QNetworkAccessManager::NetworkAccessibility )",
+            0
+          ],
+          [
+            "network_accessible",
+            0
+          ],
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "random_range",
+            1,
+            5
+          ],
+          [
+            "random_range",
+            1,
+            3
+          ],
+          [
+            "request_status_terminal"
+          ],
+          [
+            "connect",
+            "2timeout()",
+            "1OnUpdate()",
+            0
+          ],
+          [
+            "timer_start_ms",
+            100
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "network_slot",
+        "state": 0,
+        "access": 0
+      },
+      "observed": {
+        "state": 1,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 1013,
+        "calls": {
+          "network_slot": 1,
+          "start": 1,
+          "update": 1
+        },
+        "trace": [
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "random_range",
+            1,
+            5
+          ],
+          [
+            "random_range",
+            1,
+            3
+          ],
+          [
+            "request_status_terminal"
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "meta_network_slot",
+        "state": 0,
+        "access": 0
+      },
+      "observed": {
+        "state": 1,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 1013,
+        "calls": {
+          "meta_dispatch": 1,
+          "network_slot": 1,
+          "start": 1,
+          "update": 1
+        },
+        "trace": [
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "random_range",
+            1,
+            5
+          ],
+          [
+            "random_range",
+            1,
+            3
+          ],
+          [
+            "request_status_terminal"
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "constructor",
+        "state": 0,
+        "access": 1
+      },
+      "observed": {
+        "state": 1,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 1013,
+        "calls": {
+          "start": 1,
+          "update": 1,
+          "watcher_ctor": 1
+        },
+        "trace": [
+          [
+            "connect",
+            "2networkAccessibleChanged( QNetworkAccessManager::NetworkAccessibility )",
+            "1OnNetworkStateChanged( QNetworkAccessManager::NetworkAccessibility )",
+            0
+          ],
+          [
+            "network_accessible",
+            1
+          ],
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "random_range",
+            1,
+            5
+          ],
+          [
+            "random_range",
+            1,
+            3
+          ],
+          [
+            "request_status_terminal"
+          ],
+          [
+            "connect",
+            "2timeout()",
+            "1OnUpdate()",
+            0
+          ],
+          [
+            "timer_start_ms",
+            100
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "network_slot",
+        "state": 0,
+        "access": 1
+      },
+      "observed": {
+        "state": 1,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 1013,
+        "calls": {
+          "network_slot": 1,
+          "start": 1,
+          "update": 1
+        },
+        "trace": [
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "random_range",
+            1,
+            5
+          ],
+          [
+            "random_range",
+            1,
+            3
+          ],
+          [
+            "request_status_terminal"
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "meta_network_slot",
+        "state": 0,
+        "access": 1
+      },
+      "observed": {
+        "state": 1,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 1013,
+        "calls": {
+          "meta_dispatch": 1,
+          "network_slot": 1,
+          "start": 1,
+          "update": 1
+        },
+        "trace": [
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "random_range",
+            1,
+            5
+          ],
+          [
+            "random_range",
+            1,
+            3
+          ],
+          [
+            "request_status_terminal"
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "constructor",
+        "state": 1,
+        "access": -1
+      },
+      "observed": {
+        "state": 1,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "watcher_ctor": 1
+        },
+        "trace": [
+          [
+            "connect",
+            "2networkAccessibleChanged( QNetworkAccessManager::NetworkAccessibility )",
+            "1OnNetworkStateChanged( QNetworkAccessManager::NetworkAccessibility )",
+            0
+          ],
+          [
+            "network_accessible",
+            -1
+          ],
+          [
+            "connect",
+            "2timeout()",
+            "1OnUpdate()",
+            0
+          ],
+          [
+            "timer_start_ms",
+            100
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "network_slot",
+        "state": 1,
+        "access": -1
+      },
+      "observed": {
+        "state": 1,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "network_slot": 1
+        },
+        "trace": []
+      }
+    },
+    {
+      "input": {
+        "kind": "meta_network_slot",
+        "state": 1,
+        "access": -1
+      },
+      "observed": {
+        "state": 1,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "meta_dispatch": 1,
+          "network_slot": 1
+        },
+        "trace": []
+      }
+    },
+    {
+      "input": {
+        "kind": "constructor",
+        "state": 1,
+        "access": 0
+      },
+      "observed": {
+        "state": 1,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "watcher_ctor": 1
+        },
+        "trace": [
+          [
+            "connect",
+            "2networkAccessibleChanged( QNetworkAccessManager::NetworkAccessibility )",
+            "1OnNetworkStateChanged( QNetworkAccessManager::NetworkAccessibility )",
+            0
+          ],
+          [
+            "network_accessible",
+            0
+          ],
+          [
+            "connect",
+            "2timeout()",
+            "1OnUpdate()",
+            0
+          ],
+          [
+            "timer_start_ms",
+            100
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "network_slot",
+        "state": 1,
+        "access": 0
+      },
+      "observed": {
+        "state": 1,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "network_slot": 1
+        },
+        "trace": []
+      }
+    },
+    {
+      "input": {
+        "kind": "meta_network_slot",
+        "state": 1,
+        "access": 0
+      },
+      "observed": {
+        "state": 1,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "meta_dispatch": 1,
+          "network_slot": 1
+        },
+        "trace": []
+      }
+    },
+    {
+      "input": {
+        "kind": "constructor",
+        "state": 1,
+        "access": 1
+      },
+      "observed": {
+        "state": 1,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "watcher_ctor": 1
+        },
+        "trace": [
+          [
+            "connect",
+            "2networkAccessibleChanged( QNetworkAccessManager::NetworkAccessibility )",
+            "1OnNetworkStateChanged( QNetworkAccessManager::NetworkAccessibility )",
+            0
+          ],
+          [
+            "network_accessible",
+            1
+          ],
+          [
+            "connect",
+            "2timeout()",
+            "1OnUpdate()",
+            0
+          ],
+          [
+            "timer_start_ms",
+            100
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "network_slot",
+        "state": 1,
+        "access": 1
+      },
+      "observed": {
+        "state": 1,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "network_slot": 1
+        },
+        "trace": []
+      }
+    },
+    {
+      "input": {
+        "kind": "meta_network_slot",
+        "state": 1,
+        "access": 1
+      },
+      "observed": {
+        "state": 1,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "meta_dispatch": 1,
+          "network_slot": 1
+        },
+        "trace": []
+      }
+    },
+    {
+      "input": {
+        "kind": "constructor",
+        "state": 4,
+        "access": -1
+      },
+      "observed": {
+        "state": 4,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "watcher_ctor": 1
+        },
+        "trace": [
+          [
+            "connect",
+            "2networkAccessibleChanged( QNetworkAccessManager::NetworkAccessibility )",
+            "1OnNetworkStateChanged( QNetworkAccessManager::NetworkAccessibility )",
+            0
+          ],
+          [
+            "network_accessible",
+            -1
+          ],
+          [
+            "connect",
+            "2timeout()",
+            "1OnUpdate()",
+            0
+          ],
+          [
+            "timer_start_ms",
+            100
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "network_slot",
+        "state": 4,
+        "access": -1
+      },
+      "observed": {
+        "state": 4,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "network_slot": 1
+        },
+        "trace": []
+      }
+    },
+    {
+      "input": {
+        "kind": "meta_network_slot",
+        "state": 4,
+        "access": -1
+      },
+      "observed": {
+        "state": 4,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "meta_dispatch": 1,
+          "network_slot": 1
+        },
+        "trace": []
+      }
+    },
+    {
+      "input": {
+        "kind": "constructor",
+        "state": 4,
+        "access": 0
+      },
+      "observed": {
+        "state": 4,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "watcher_ctor": 1
+        },
+        "trace": [
+          [
+            "connect",
+            "2networkAccessibleChanged( QNetworkAccessManager::NetworkAccessibility )",
+            "1OnNetworkStateChanged( QNetworkAccessManager::NetworkAccessibility )",
+            0
+          ],
+          [
+            "network_accessible",
+            0
+          ],
+          [
+            "connect",
+            "2timeout()",
+            "1OnUpdate()",
+            0
+          ],
+          [
+            "timer_start_ms",
+            100
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "network_slot",
+        "state": 4,
+        "access": 0
+      },
+      "observed": {
+        "state": 4,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "network_slot": 1
+        },
+        "trace": []
+      }
+    },
+    {
+      "input": {
+        "kind": "meta_network_slot",
+        "state": 4,
+        "access": 0
+      },
+      "observed": {
+        "state": 4,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "meta_dispatch": 1,
+          "network_slot": 1
+        },
+        "trace": []
+      }
+    },
+    {
+      "input": {
+        "kind": "constructor",
+        "state": 4,
+        "access": 1
+      },
+      "observed": {
+        "state": 4,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "watcher_ctor": 1
+        },
+        "trace": [
+          [
+            "connect",
+            "2networkAccessibleChanged( QNetworkAccessManager::NetworkAccessibility )",
+            "1OnNetworkStateChanged( QNetworkAccessManager::NetworkAccessibility )",
+            0
+          ],
+          [
+            "network_accessible",
+            1
+          ],
+          [
+            "connect",
+            "2timeout()",
+            "1OnUpdate()",
+            0
+          ],
+          [
+            "timer_start_ms",
+            100
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "network_slot",
+        "state": 4,
+        "access": 1
+      },
+      "observed": {
+        "state": 4,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "network_slot": 1
+        },
+        "trace": []
+      }
+    },
+    {
+      "input": {
+        "kind": "meta_network_slot",
+        "state": 4,
+        "access": 1
+      },
+      "observed": {
+        "state": 4,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "meta_dispatch": 1,
+          "network_slot": 1
+        },
+        "trace": []
+      }
+    },
+    {
+      "input": {
+        "kind": "constructor",
+        "state": 5,
+        "access": -1
+      },
+      "observed": {
+        "state": 5,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "watcher_ctor": 1
+        },
+        "trace": [
+          [
+            "connect",
+            "2networkAccessibleChanged( QNetworkAccessManager::NetworkAccessibility )",
+            "1OnNetworkStateChanged( QNetworkAccessManager::NetworkAccessibility )",
+            0
+          ],
+          [
+            "network_accessible",
+            -1
+          ],
+          [
+            "connect",
+            "2timeout()",
+            "1OnUpdate()",
+            0
+          ],
+          [
+            "timer_start_ms",
+            100
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "network_slot",
+        "state": 5,
+        "access": -1
+      },
+      "observed": {
+        "state": 5,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "network_slot": 1
+        },
+        "trace": []
+      }
+    },
+    {
+      "input": {
+        "kind": "meta_network_slot",
+        "state": 5,
+        "access": -1
+      },
+      "observed": {
+        "state": 5,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "meta_dispatch": 1,
+          "network_slot": 1
+        },
+        "trace": []
+      }
+    },
+    {
+      "input": {
+        "kind": "constructor",
+        "state": 5,
+        "access": 0
+      },
+      "observed": {
+        "state": 5,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "watcher_ctor": 1
+        },
+        "trace": [
+          [
+            "connect",
+            "2networkAccessibleChanged( QNetworkAccessManager::NetworkAccessibility )",
+            "1OnNetworkStateChanged( QNetworkAccessManager::NetworkAccessibility )",
+            0
+          ],
+          [
+            "network_accessible",
+            0
+          ],
+          [
+            "connect",
+            "2timeout()",
+            "1OnUpdate()",
+            0
+          ],
+          [
+            "timer_start_ms",
+            100
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "network_slot",
+        "state": 5,
+        "access": 0
+      },
+      "observed": {
+        "state": 5,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "network_slot": 1
+        },
+        "trace": []
+      }
+    },
+    {
+      "input": {
+        "kind": "meta_network_slot",
+        "state": 5,
+        "access": 0
+      },
+      "observed": {
+        "state": 5,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "meta_dispatch": 1,
+          "network_slot": 1
+        },
+        "trace": []
+      }
+    },
+    {
+      "input": {
+        "kind": "constructor",
+        "state": 5,
+        "access": 1
+      },
+      "observed": {
+        "state": 5,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "watcher_ctor": 1
+        },
+        "trace": [
+          [
+            "connect",
+            "2networkAccessibleChanged( QNetworkAccessManager::NetworkAccessibility )",
+            "1OnNetworkStateChanged( QNetworkAccessManager::NetworkAccessibility )",
+            0
+          ],
+          [
+            "network_accessible",
+            1
+          ],
+          [
+            "connect",
+            "2timeout()",
+            "1OnUpdate()",
+            0
+          ],
+          [
+            "timer_start_ms",
+            100
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "network_slot",
+        "state": 5,
+        "access": 1
+      },
+      "observed": {
+        "state": 5,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "network_slot": 1
+        },
+        "trace": []
+      }
+    },
+    {
+      "input": {
+        "kind": "meta_network_slot",
+        "state": 5,
+        "access": 1
+      },
+      "observed": {
+        "state": 5,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "meta_dispatch": 1,
+          "network_slot": 1
+        },
+        "trace": []
+      }
+    },
+    {
+      "input": {
+        "kind": "start",
+        "local": 1,
+        "remote": 0,
+        "socket_result": 37,
+        "remote_result": 1
+      },
+      "result": 1,
+      "observed": {
+        "state": 1,
+        "socket": 537920608,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 1013,
+        "calls": {
+          "socket_ctor": 1,
+          "socket_init": 1,
+          "socket_receive": 1,
+          "start": 1,
+          "update": 1
+        },
+        "trace": [
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "socket",
+            10,
+            2,
+            17,
+            37
+          ],
+          [
+            "setsockopt",
+            37,
+            1,
+            6
+          ],
+          [
+            "setsockopt",
+            37,
+            41,
+            26
+          ],
+          [
+            "setsockopt",
+            37,
+            41,
+            20
+          ],
+          [
+            "bind",
+            37,
+            806350640,
+            0
+          ],
+          [
+            "fcntl",
+            37,
+            3,
+            28
+          ],
+          [
+            "fcntl",
+            37,
+            4,
+            2048
+          ],
+          [
+            "recvfrom",
+            37,
+            1500,
+            0,
+            -1
+          ],
+          [
+            "random_range",
+            1,
+            5
+          ],
+          [
+            "random_range",
+            1,
+            3
+          ],
+          [
+            "request_status_terminal"
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "start",
+        "local": 1,
+        "remote": 1,
+        "socket_result": -1,
+        "remote_result": 1
+      },
+      "result": 0,
+      "observed": {
+        "state": 0,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 0,
+        "calls": {
+          "socket_ctor": 1,
+          "socket_destroy": 1,
+          "socket_init": 1,
+          "start": 1
+        },
+        "trace": [
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "socket",
+            10,
+            2,
+            17,
+            -1
+          ],
+          [
+            "socket",
+            2,
+            2,
+            17,
+            -1
+          ],
+          [
+            "log",
+            "Couldn't create discovery network socket\n"
+          ],
+          [
+            "log",
+            "ERROR: Unable to create discovery socket\n"
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "start",
+        "local": 0,
+        "remote": 1,
+        "socket_result": 37,
+        "remote_result": 0
+      },
+      "result": 1,
+      "observed": {
+        "state": 1,
+        "socket": 0,
+        "remote": 537920608,
+        "updating": 0,
+        "next_status": 1013,
+        "calls": {
+          "start": 1,
+          "update": 1
+        },
+        "trace": [
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "remote_ctor",
+            1,
+            0
+          ],
+          [
+            "remote_connect",
+            0
+          ],
+          [
+            "remote_update"
+          ],
+          [
+            "random_range",
+            1,
+            5
+          ],
+          [
+            "random_range",
+            1,
+            3
+          ],
+          [
+            "request_status_terminal"
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "start",
+        "local": 0,
+        "remote": 1,
+        "socket_result": 37,
+        "remote_result": 1
+      },
+      "result": 1,
+      "observed": {
+        "state": 1,
+        "socket": 0,
+        "remote": 537920608,
+        "updating": 0,
+        "next_status": 1013,
+        "calls": {
+          "start": 1,
+          "update": 1
+        },
+        "trace": [
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "remote_ctor",
+            1,
+            0
+          ],
+          [
+            "remote_connect",
+            1
+          ],
+          [
+            "remote_update"
+          ],
+          [
+            "random_range",
+            1,
+            5
+          ],
+          [
+            "random_range",
+            1,
+            3
+          ],
+          [
+            "request_status_terminal"
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "start",
+        "local": 1,
+        "remote": 1,
+        "socket_result": 37,
+        "remote_result": 0
+      },
+      "result": 1,
+      "observed": {
+        "state": 1,
+        "socket": 537920608,
+        "remote": 537920624,
+        "updating": 0,
+        "next_status": 1013,
+        "calls": {
+          "socket_ctor": 1,
+          "socket_init": 1,
+          "socket_receive": 1,
+          "start": 1,
+          "update": 1
+        },
+        "trace": [
+          [
+            "initial_empty_stop"
+          ],
+          [
+            "socket",
+            10,
+            2,
+            17,
+            37
+          ],
+          [
+            "setsockopt",
+            37,
+            1,
+            6
+          ],
+          [
+            "setsockopt",
+            37,
+            41,
+            26
+          ],
+          [
+            "setsockopt",
+            37,
+            41,
+            20
+          ],
+          [
+            "bind",
+            37,
+            806350640,
+            0
+          ],
+          [
+            "fcntl",
+            37,
+            3,
+            28
+          ],
+          [
+            "fcntl",
+            37,
+            4,
+            2048
+          ],
+          [
+            "remote_ctor",
+            1,
+            0
+          ],
+          [
+            "remote_connect",
+            0
+          ],
+          [
+            "remote_update"
+          ],
+          [
+            "recvfrom",
+            37,
+            1500,
+            0,
+            -1
+          ],
+          [
+            "random_range",
+            1,
+            5
+          ],
+          [
+            "random_range",
+            1,
+            3
+          ],
+          [
+            "request_status_terminal"
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "receive_cycles",
+        "prefix": [],
+        "ending": -1
+      },
+      "observed": [
+        {
+          "state": 1,
+          "socket": 537920608,
+          "remote": 0,
+          "updating": 0,
+          "next_status": 2000,
+          "calls": {
+            "meta_dispatch": 1,
+            "socket_receive": 1,
+            "timer_slot": 1,
+            "update": 1
+          },
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              -1
+            ]
+          ]
+        },
+        {
+          "state": 1,
+          "socket": 537920608,
+          "remote": 0,
+          "updating": 0,
+          "next_status": 2000,
+          "calls": {
+            "meta_dispatch": 2,
+            "socket_receive": 3,
+            "timer_slot": 2,
+            "update": 2
+          },
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              -1
+            ],
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              9
+            ],
+            [
+              "address_terminal",
+              "_ZN10CIPAddress14SetFromSockadrEPKvmPt"
+            ],
+            [
+              "opaque_datagram",
+              9
+            ],
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              -1
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "input": {
+        "kind": "receive_cycles",
+        "prefix": [
+          7
+        ],
+        "ending": -1
+      },
+      "observed": [
+        {
+          "state": 1,
+          "socket": 537920608,
+          "remote": 0,
+          "updating": 0,
+          "next_status": 2000,
+          "calls": {
+            "meta_dispatch": 1,
+            "socket_receive": 2,
+            "timer_slot": 1,
+            "update": 1
+          },
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              7
+            ],
+            [
+              "address_terminal",
+              "_ZN10CIPAddress14SetFromSockadrEPKvmPt"
+            ],
+            [
+              "opaque_datagram",
+              7
+            ],
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              -1
+            ]
+          ]
+        },
+        {
+          "state": 1,
+          "socket": 537920608,
+          "remote": 0,
+          "updating": 0,
+          "next_status": 2000,
+          "calls": {
+            "meta_dispatch": 2,
+            "socket_receive": 4,
+            "timer_slot": 2,
+            "update": 2
+          },
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              7
+            ],
+            [
+              "address_terminal",
+              "_ZN10CIPAddress14SetFromSockadrEPKvmPt"
+            ],
+            [
+              "opaque_datagram",
+              7
+            ],
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              -1
+            ],
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              9
+            ],
+            [
+              "address_terminal",
+              "_ZN10CIPAddress14SetFromSockadrEPKvmPt"
+            ],
+            [
+              "opaque_datagram",
+              9
+            ],
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              -1
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "input": {
+        "kind": "receive_cycles",
+        "prefix": [],
+        "ending": 0
+      },
+      "observed": [
+        {
+          "state": 1,
+          "socket": 537920608,
+          "remote": 0,
+          "updating": 0,
+          "next_status": 2000,
+          "calls": {
+            "meta_dispatch": 1,
+            "socket_receive": 1,
+            "timer_slot": 1,
+            "update": 1
+          },
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              0
+            ]
+          ]
+        },
+        {
+          "state": 1,
+          "socket": 537920608,
+          "remote": 0,
+          "updating": 0,
+          "next_status": 2000,
+          "calls": {
+            "meta_dispatch": 2,
+            "socket_receive": 3,
+            "timer_slot": 2,
+            "update": 2
+          },
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              0
+            ],
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              9
+            ],
+            [
+              "address_terminal",
+              "_ZN10CIPAddress14SetFromSockadrEPKvmPt"
+            ],
+            [
+              "opaque_datagram",
+              9
+            ],
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              -1
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "input": {
+        "kind": "receive_cycles",
+        "prefix": [
+          7
+        ],
+        "ending": 0
+      },
+      "observed": [
+        {
+          "state": 1,
+          "socket": 537920608,
+          "remote": 0,
+          "updating": 0,
+          "next_status": 2000,
+          "calls": {
+            "meta_dispatch": 1,
+            "socket_receive": 2,
+            "timer_slot": 1,
+            "update": 1
+          },
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              7
+            ],
+            [
+              "address_terminal",
+              "_ZN10CIPAddress14SetFromSockadrEPKvmPt"
+            ],
+            [
+              "opaque_datagram",
+              7
+            ],
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              0
+            ]
+          ]
+        },
+        {
+          "state": 1,
+          "socket": 537920608,
+          "remote": 0,
+          "updating": 0,
+          "next_status": 2000,
+          "calls": {
+            "meta_dispatch": 2,
+            "socket_receive": 4,
+            "timer_slot": 2,
+            "update": 2
+          },
+          "trace": [
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              7
+            ],
+            [
+              "address_terminal",
+              "_ZN10CIPAddress14SetFromSockadrEPKvmPt"
+            ],
+            [
+              "opaque_datagram",
+              7
+            ],
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              0
+            ],
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              9
+            ],
+            [
+              "address_terminal",
+              "_ZN10CIPAddress14SetFromSockadrEPKvmPt"
+            ],
+            [
+              "opaque_datagram",
+              9
+            ],
+            [
+              "recvfrom",
+              37,
+              1500,
+              0,
+              -1
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "input": {
+        "kind": "socket_init",
+        "socket_plan": [
+          37
+        ],
+        "bind": 0,
+        "option": 0,
+        "fcntl": 0
+      },
+      "result": 1,
+      "observed": {
+        "state": 0,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "socket_ctor": 1,
+          "socket_init": 1
+        },
+        "trace": [
+          [
+            "socket",
+            10,
+            2,
+            17,
+            37
+          ],
+          [
+            "setsockopt",
+            37,
+            1,
+            6
+          ],
+          [
+            "setsockopt",
+            37,
+            41,
+            26
+          ],
+          [
+            "setsockopt",
+            37,
+            41,
+            20
+          ],
+          [
+            "bind",
+            37,
+            806350672,
+            0
+          ],
+          [
+            "fcntl",
+            37,
+            3,
+            28
+          ],
+          [
+            "fcntl",
+            37,
+            4,
+            2048
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "socket_init",
+        "socket_plan": [
+          -1,
+          37
+        ],
+        "bind": 0,
+        "option": 0,
+        "fcntl": 0
+      },
+      "result": 1,
+      "observed": {
+        "state": 0,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "socket_ctor": 1,
+          "socket_init": 1
+        },
+        "trace": [
+          [
+            "socket",
+            10,
+            2,
+            17,
+            -1
+          ],
+          [
+            "socket",
+            2,
+            2,
+            17,
+            37
+          ],
+          [
+            "setsockopt",
+            37,
+            1,
+            6
+          ],
+          [
+            "bind",
+            37,
+            806350672,
+            0
+          ],
+          [
+            "fcntl",
+            37,
+            3,
+            16
+          ],
+          [
+            "fcntl",
+            37,
+            4,
+            2048
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "socket_init",
+        "socket_plan": [
+          -1,
+          -1
+        ],
+        "bind": 0,
+        "option": 0,
+        "fcntl": 0
+      },
+      "result": 0,
+      "observed": {
+        "state": 0,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "socket_ctor": 1,
+          "socket_init": 1
+        },
+        "trace": [
+          [
+            "socket",
+            10,
+            2,
+            17,
+            -1
+          ],
+          [
+            "socket",
+            2,
+            2,
+            17,
+            -1
+          ],
+          [
+            "log",
+            "Couldn't create discovery network socket\n"
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "socket_init",
+        "socket_plan": [
+          37
+        ],
+        "bind": -1,
+        "option": 0,
+        "fcntl": 0
+      },
+      "result": 1,
+      "observed": {
+        "state": 0,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "socket_ctor": 1,
+          "socket_init": 1
+        },
+        "trace": [
+          [
+            "socket",
+            10,
+            2,
+            17,
+            37
+          ],
+          [
+            "setsockopt",
+            37,
+            1,
+            6
+          ],
+          [
+            "setsockopt",
+            37,
+            41,
+            26
+          ],
+          [
+            "setsockopt",
+            37,
+            41,
+            20
+          ],
+          [
+            "bind",
+            37,
+            806350672,
+            0
+          ],
+          [
+            "log",
+            "Warning: Couldn't bind discovery port %d\n"
+          ],
+          [
+            "fcntl",
+            37,
+            3,
+            28
+          ],
+          [
+            "fcntl",
+            37,
+            4,
+            2048
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "socket_init",
+        "socket_plan": [
+          37
+        ],
+        "bind": 0,
+        "option": -1,
+        "fcntl": 0
+      },
+      "result": 1,
+      "observed": {
+        "state": 0,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "socket_ctor": 1,
+          "socket_init": 1
+        },
+        "trace": [
+          [
+            "socket",
+            10,
+            2,
+            17,
+            37
+          ],
+          [
+            "setsockopt",
+            37,
+            1,
+            6
+          ],
+          [
+            "log",
+            "Warning: Couldn't set SO_BROADCAST on discovery network socket\n"
+          ],
+          [
+            "setsockopt",
+            37,
+            41,
+            26
+          ],
+          [
+            "log",
+            "Warning: Couldn't clear IPV6_V6ONLY on discovery network socket\n"
+          ],
+          [
+            "setsockopt",
+            37,
+            41,
+            20
+          ],
+          [
+            "log",
+            "Warning: Couldn't set IPV6_ADD_MEMBERSHIP on discovery network socket\n"
+          ],
+          [
+            "bind",
+            37,
+            806350672,
+            0
+          ],
+          [
+            "fcntl",
+            37,
+            3,
+            28
+          ],
+          [
+            "fcntl",
+            37,
+            4,
+            2048
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "socket_init",
+        "socket_plan": [
+          37
+        ],
+        "bind": 0,
+        "option": 0,
+        "fcntl": -1
+      },
+      "result": 1,
+      "observed": {
+        "state": 0,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "socket_ctor": 1,
+          "socket_init": 1
+        },
+        "trace": [
+          [
+            "socket",
+            10,
+            2,
+            17,
+            37
+          ],
+          [
+            "setsockopt",
+            37,
+            1,
+            6
+          ],
+          [
+            "setsockopt",
+            37,
+            41,
+            26
+          ],
+          [
+            "setsockopt",
+            37,
+            41,
+            20
+          ],
+          [
+            "bind",
+            37,
+            806350672,
+            0
+          ],
+          [
+            "fcntl",
+            37,
+            3,
+            28
+          ],
+          [
+            "fcntl",
+            37,
+            4,
+            18446744073709551615
+          ]
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "explicit_network_api",
+        "state": 0
+      },
+      "observed": {
+        "state": 0,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "network_api": 1
+        },
+        "trace": []
+      },
+      "row_field_40": [
+        900,
+        901,
+        902,
+        903
+      ]
+    },
+    {
+      "input": {
+        "kind": "explicit_network_api",
+        "state": 1
+      },
+      "observed": {
+        "state": 1,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 1013,
+        "calls": {
+          "network_api": 1,
+          "update": 1
+        },
+        "trace": [
+          [
+            "random_range",
+            1,
+            5
+          ],
+          [
+            "random_range",
+            1,
+            3
+          ],
+          [
+            "request_status_terminal"
+          ]
+        ]
+      },
+      "row_field_40": [
+        900,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "input": {
+        "kind": "explicit_network_api",
+        "state": 4
+      },
+      "observed": {
+        "state": 4,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "network_api": 1
+        },
+        "trace": []
+      },
+      "row_field_40": [
+        900,
+        901,
+        902,
+        903
+      ]
+    },
+    {
+      "input": {
+        "kind": "explicit_network_api",
+        "state": 5
+      },
+      "observed": {
+        "state": 5,
+        "socket": 0,
+        "remote": 0,
+        "updating": 0,
+        "next_status": 2000,
+        "calls": {
+          "network_api": 1
+        },
+        "trace": []
+      },
+      "row_field_40": [
+        900,
+        901,
+        902,
+        903
+      ]
+    }
+  ]
+}

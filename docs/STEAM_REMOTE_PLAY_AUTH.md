@@ -87,7 +87,7 @@ Steam host 的 Remote Play 配对窗口。
 - encrypted ticket 里有 `password`、`identifier`、`payload`、`usage`、`device_name`。
 - 外层有 `device_token`、`device_name`、`encrypted_request`，以及可选 `auth_key`、`request_id`。
 
-本仓 `third_party/ihslib/src/client/authorization.c:139-168` 每 1 秒发送一次
+本仓 `third_party/ihslib/src/client/authorization.c` 按 §128 已核验的 3 秒期限发送
 `k_ERemoteDeviceAuthorizationRequest`。
 
 本仓 `third_party/ihslib/src/client/authorization.c:171-188` 配置 encrypted ticket：
@@ -98,7 +98,8 @@ Steam host 的 Remote Play 配对窗口。
 - `usage = k_EKeyEscrowUsageStreamingDevice`
 - `device_name = client->base.deviceName`
 
-本仓 `third_party/ihslib/src/base.c:59-68` 说明 `deviceToken` 由 `deviceId` 和 `secretKey` 派生。
+本仓 `third_party/ihslib/src/client/client.c` 的 `IHS_ClientCreateDeviceToken` 按§131在每次请求时，
+以当前secret快照加密小端deviceId；BaseInit/SetSecretKey不再提前生成token。
 
 因此可以确定：`IHS_ClientAuthorizationRequest(..., pin)` 的 `pin` 进入 pairing authorization ticket
 的 `password` 字段，并和客户端身份材料一起发给 host。
@@ -124,7 +125,8 @@ Steam host 的 Remote Play 配对窗口。
 - 不带 auth_key 的普通结果分支：`InProgress` 调 progress 回调并继续等待；`Success` 调 success
   回调并停止任务；其他结果调 failed 回调并停止任务。
 - 当前代码会把 response 中的 `result`、`steamid`、`auth_key` 长度和 `device_token` 长度写入日志。
-- 当前 IHSlib 对带 `auth_key` 的 response 不看 `result`，直接按密钥交换处理。此前依据的 Linux
+- 历史 IHSlib 对带 `auth_key` 的 response 不看 `result`，直接按密钥交换处理；§128已修正为
+  先要求Success，再进入交换。此前依据的 Linux
   局部指令是在 @0x18c8c9 检查 `auth_key` 存在后，
   于 @0x18c992 调用 @0x18b110：`主机公钥 = auth_key XOR SHA256(配对码)`；
   `secret = SHA256(X25519(本机私钥, 主机公钥))`（@0x1ad110，X25519 后在 @0x1ad25a 调用 SHA256）；
@@ -284,3 +286,140 @@ D-017 日志中继续验证。
   https://github.com/ValveSoftware/steam-for-linux/issues/11495
 - Steam community discussion, only as UI terminology corroboration：
   https://steamcommunity.com/groups/homestream/discussions/0/3827541651930464867/
+
+
+## 串流会话AuthenticationResponse与授权配对的分界
+
+Evidence：固定官方Linux Steam Link 1.3.32.316完整OnAuthenticationResponse
+@0x3207d0与真实UDP原进程，详见[协议参考§108](STEAMLINK_PROTOCOL_RE.md#108-真实udp认证响应的版本默认值与关闭策略)。
+此handler解析响应并要求显式version=1；result缺失按默认成功处理。明确失败或版本
+不符会关闭该连接，坏protobuf保留认证阶段；它不在此派生会话密钥。
+
+原AuthenticationRequest在此前使用已由SetAuthToken提供的fixture key，实际wire的
+HMAC-SHA256正文为`Steam In-Home Streaming`；固定实验独立核对该HMAC及显式
+version1/steamid0。该实验身份是明确的loopback fixture，不能称Steam主机已经认证。
+本地`src/client/streaming.c`先解密streaming response的encrypted_session_key，再将
+sessionKey输入会话；这与pairing授权码、connect/security PIN、配对X25519与持久密钥
+均是分立层次。撤回将会话AuthenticationResponse本身称为密钥派生/交换步骤的推断。
+
+## Android 自动授权 producer 的补充证据
+
+固定SHA Android shell的原指令回放见`STEAMLINK_PROTOCOL_RE.md` §127及
+`audit-steam-authorization-producer.py`。普通/测网串流请求收到匹配Unauthorized后
+自动进入授权state4，沿用原请求编号发送AuthorizationRequest；成功发送后由
+墙钟time()+3和Update到期比较控制重发。§127时Native仍为1秒timer；§128已将
+LAN授权改为墙钟整秒next=time()+3，到期后只发送一次；单调timer只提供轮询，
+不再把固定3000ms当作该条件的等价实现。
+
+受控pairing PIN0042进入ticket.password和SHA256/XOR，独立connect PIN9876加密
+进入StreamingRequest.field8。无auth_key的兼容success响应使原state4→5并立即
+重发同编号串流请求；InProgress继续等待。RSA输出、身份与公钥输入、Qt界面和
+持久化是明确边界，完整密钥交换响应未由这组输入证明；这份证据不单独改变本地
+配对/安全码流程，也不声称自动授权全部对齐。
+
+
+## LAN 授权响应与最近key缓存
+
+§128原shell完整keypair/X25519/SHA256/AES/token链及结果/缓存向量支持以下实现：
+只有Success+auth_key进入交换；密码校验失败先确认Denied，继续等待，不立即回调
+整个授权失败。同一最近auth_key复用缓存结果，不重算；A→B→A重新计算，最多三次，
+第四个不同key终止并取消。终态收到带key响应确认Canceled；非Success不做交换。
+证据修订（§130）：撤回“初始present空key确认缓存Success”的结论。原构造函数
+@cae3ac在@cae53c/cae544写cached_result=Failed(7)；旧夹具清零内存遗漏该写入。
+现从A5填充的独立对象执行完整原构造函数，只有身份文件加载/迁移为provider，
+再取得其真实默认值。首次空key命中空cache时确认Failed，仍不完成授权。private在任务
+结束时清除。证据修订（§130）：此前`cache与任务同寿命`只描述Native实现，撤回将其
+理解为官方生命周期已对齐的判断。原manager在取消、重新创建请求/keypair后仍保留
+最近auth_key及结果，只重置三次计算计数；同key只重确认、不重算、不推进新事务。
+该结论来自固定shell的Start/Stop/Unauthorized/完整密码计算与实际保存调用，触发和
+边界见协议参考§130。producer的非法universe或RSA失败停止且不发无效
+请求。本地分配失败处理为明确资源失败守卫，不冒称原C++OOM语义。
+
+比较器使用真实loopback RX/timer worker、discovery parser、原Native密码实现与
+发送字节；只将LAN显式授权API的确认/取消、secret、计算次数和完成事实与官方
+state4部分对照。自动Unauthorized保留开流事务及成功cache后再次授权的续接、
+来源校验顺序和云端state3仍是独立契约，不能用这组分量对照宣称全部完成。
+证据修订（§129）：此前产品在runtime消费成功事件后才保存；新key路径现已改成
+由runtime worker泵送授权消息，在确认前尝试保存。保存失败仍继续，不宣称fsync耐久性。
+
+## UI/保存调用与连接安全码的完整输入链
+
+§129执行原UI连接入口、未授权提示、响应密码计算、原密钥/paired-ID保存调用及
+文件helper分支，再到同编号请求和16/32-byte凭据consumer。目录/打开/零写/短写/
+关闭失败均未使原调用者停止授权：应区分“先尝试保存再确认”和“必须保存成功”。
+SDL文件端点与普通launcher仍为provider边界，不声称自然文件耐久性或整条OS线程。
+
+连接安全码是请求创建时以当时secret加密的field8字节，重发及授权换secret后的
+同一事务重用它；Native旧明文字段已修正。pairing码仍走ticket.password和masked
+key路径，且随机mod10000为0时重取。当前PIN组件的Native secret替换是受控输入，
+不据此称自动Unauthorized同编号续接已经完成。显式LAN配对的保存时点另以
+实际runtime/UDP/文件读回核验：新key选择→保存尝试→14确认→成功事件；保存失败
+仍确认和成功。RX仅排入有界owned消息，runtime worker消费后释放；退出先停/join
+RX，再销毁队列/定时器，未新增后台线程。32个槽位是本地内存预算，不是协议限制。
+旧UI保存快照不得覆盖同host刚接受的配对事实，显式删除仍生效。
+
+应用HostInfo曾遗漏universe（默认为0），而§128的公钥校验拒绝0；§129的产品测试
+发现并修正该集成错误。发现消息euniverse现按clientId/instanceId保存在运行期元数据
+并传入请求；旧profile不含此字段，未发现时使用公开版Steam的Public默认值。
+这一默认是应用兼容策略，不是官方对缺失元数据的行为证明；已发现的非法值仍保留，
+不能悄悄改成Public。profile结构和磁盘ABI不变。
+
+## 每次发送重新构造设备 token
+
+§131补充固定shell的BGetDeviceToken@cb3c34和GetDeviceID@cb2c68非零身份分支：
+每次构造3/5正文时，用当前manager secret加密本机小端8-byte device_id，并取得
+新的16-byte IV。授权换secret后的原请求续接使用新secret生成token；安全PIN的
+field8仍保留旧密文。这两个字段的生命周期不同，不能据PIN缓存冻结整个正文。
+§129整包相同是TOKEN123身份adapter约束，不是实际token策略的证据。
+
+本地此前在BaseInit/SetSecretKey时生成并缓存deviceToken，发送时直接复用；这一
+策略与原逐次生成不相同。Native按请求生成token，并用同一secret快照构造授权
+ticket和token；秘密选择不再提前消耗一次token IV。SDK加密返回错误时，不能发
+未完成的3/5；原caller的helper失败输入分别走9/10取消及内部通用错误。Source
+失败输入是明确的BGetDeviceToken bool provider，不冒称已触发真实CSPRNG故障。
+
+## 原请求续接与Proof的事务边界
+
+官方shell的同编号自动授权42组完整分支见协议参考§132：重复Unauthorized立即
+重发3并以本次time()+3重置期限；成功后同编号5；最近同key只重确认、不能推进；
+state4直接收到有效串流凭据仍可接受。pairing私钥、attempts、连接安全PIN密文
+属于同一原请求，UI另起PAIR/STREAM不能保持该契约。
+
+§133补原Proof的真实SHA256/AES和保存调用链56组：第一次true更新
+SHA256(old_secret\|\|challenge)，先尝试保存再加密；重复true不再派生，false不
+回滚secret。保存失败继续，加密失败保留已经更新的secret/标志且不发回复。
+此标志贯穿同编号自动授权和凭据成功后的state6，新事务才重置；timer停止与
+事务owner退休必须区分。来源及present编号检查、空回复、16/32-byte凭据consumer
+和反例边界见该节，空challenge的原断言不作为正常处理证据。
+
+这些是原客户端契约；显式LAN组件比较不证明自动续接或Proof轮换已实现，真实
+Steam/Switch互操作仍须独立验证。两类PIN的语义不因自动授权或Proof改变。
+
+
+## 同一串流请求的自动授权实现契约
+
+协议参考§135以§132的42组及新增2组state4坏凭据分支，核对实际Native自动事务。
+普通/测网连接（包括未配对host）统一建立STREAM；收到Unauthorized才进入同一
+owner的授权阶段，保存原编号、私钥、attempts和安全PIN密文。新key选择→worker
+保存尝试→14确认→同编号5；文件失败继续。最近同key只确认缓存、不推进；再次
+Unauthorized不重新生成码/私钥。stream重发按整秒time()+1，授权按time()+3。
+UI提示和恢复不提交新PAIR/STREAM；显式LAN授权API单独保留。
+
+握手消息按owned FIFO交给runtime actor，排空后再处理streaming期限，避免成功包
+尚未消费就发送旧授权重试。成功凭据停止重发但保留握手owner至Cancel/替换/销毁；
+不把该生命周期修正当作Proof轮换已实现。Proof更新secret、完整入口/foreign顺序、
+自然账户选择和真实Steam/Switch验证仍是独立契约。比较器投影字段和provider边界
+见§135，不能把44组匹配目标的事务对照推广到全部协议或硬件验收。
+
+## Proof更新的实现与身份命名空间
+
+协议参考§136将§133的Proof轮换接到实际同请求owner：第一次true按原始challenge
+派生，先选择secret/尝试保存、后加密；重复true不再派生，false不回滚。8的
+updated_secret回显请求bool，optional请求编号缺失仍回复当前编号。加密失败不
+退休owner，下一份请求沿用已更新secret。此状态贯穿自动授权与凭据后的state6。
+
+持久key身份在创建请求时从所选server record取得，不随授权回复steamid变化。
+SDK的keySteamId承载该输入；应用按(remote clientId, SteamID)保存独立key文件，
+原profile仅镜像当前账号。Proof属于A、自动授权回应B时不能用A的新key覆盖B。
+真实record选择与key加载仍是Source provider边界；完整入口的零clientId/无效Proof
+拒绝及空正文原断言边界见§136，不将Proof验收推广成所有LAN授权入口都已等价。

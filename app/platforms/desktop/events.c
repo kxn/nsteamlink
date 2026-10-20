@@ -1,4 +1,5 @@
 #include "events_backend.h"
+#include "player_owner.h"
 static bool foreground = true, quit;
 void sl_events_init(void) {
     foreground = true;
@@ -6,6 +7,10 @@ void sl_events_init(void) {
 }
 bool sl_events_foreground(void) {
     return foreground;
+}
+bool sl_events_keyboard_focus(void) {
+    SDL_Window *window = SDL_GetKeyboardFocus();
+    return window && sl_player_input_focus(SDL_GetWindowFlags(window));
 }
 bool sl_events_exit_requested(void) {
     return quit;

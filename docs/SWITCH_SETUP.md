@@ -96,6 +96,9 @@ tools/switch-debugctl.py 10.10.10.17 diag current
 - 仅诊断构建：游玩菜单内单独长按 X 一秒切换 Debug 浮层。完整诊断接口见 [UDP_DEBUG](UDP_DEBUG.md)。
 - 设备身份、逐电脑授权和设置保存在 `sdmc:/switch/nsteamlink/profile.bin`。
   旧 `auth.bin` 迁移保留设备身份；旧格式无法证明主机唯一身份，因此首次连接需重新配对。
+- **设置 → 网络 → 网络纠错**默认关闭。开启后，下次连接会向 Steam 请求 FEC，使用额外
+  数据帮助恢复部分丢片；超出纠错能力的丢包仍会影响串流。请在首页修改设置，
+  下次连接生效。升级已有 profile 会保留配对和密钥。
 - `switch-stream-selftest.nro` 使用同一 runtime，默认 600 个渲染帧后清理退出，无自动串流。
 - 本机 Switch 调试地址为 `10.10.10.17`，netloader 端口为 `28280`；直接使用 nxlink，不发空 TCP 探测。
 - 涉及生命周期的验证要区分日志清理完成和屏幕返回 hbmenu；后一项必须由实机观察确认。
@@ -129,17 +132,24 @@ tools/switch-debugctl.py 10.10.10.17 diag current
 非 Steam 快捷方式、接口不可用或图片缺失时保留游戏名称和占位，仍可正常启动游戏。
 封面缓存最多 32 张；删除 artwork 目录可让应用重新获取，不会清除配对和设置。
 
+### 串流设置
+
+首页设置分为画面与声音、网络、主机管理、应用。画面偏好与分辨率位于画面与声音，带宽限制与网络纠错位于网络；修改自动保存。串流期间不提供设置入口，串流菜单只有继续游玩、结束游戏并断开、断开连接。
+网络纠错默认关闭，不会根据丢包率自行开关或重连。Steam 同步完整配置后，设置页会反映收到的值；
+带宽若为自动、无限制或菜单外的数值，会保留并显示，不会因保存语言或声音而改回固定码率。
+配置自动保存到应用数据目录，配对身份与逐主机密钥不受影响。
+
 ### 界面语言
 
 在 **设置 → 应用 → 语言** 中选择 **跟随系统 / 简体中文 / English**，立即生效并记住选择。
-串流中打开菜单也可进入此设置。首次运行默认跟随 Switch 系统语言，中文系统使用简体中文，
+请从首页进入设置。首次运行默认跟随 Switch 系统语言，中文系统使用简体中文，
 其他系统语言使用英文；游戏卡片名称会在后台获取对应语言的商店名称，已缓存名称可离线使用。查询失败或非商店游戏
 继续显示主机提供的原名，电脑名保持原文。中英文界面资源已包含在 NRO 中。
 
 ### 操作音效
 
 菜单确认、返回、设置变化和卡片焦点移动带有轻量提示音，按键与触摸反馈一致。
-连续拖动和无效操作不发声。**设置 → 声音**统一开关串流声音与界面提示音。
+连续拖动和无效操作不发声。**设置 → 画面与声音 → 声音**统一开关串流声音与界面提示音。
 
 ## 导出系统截图
 
@@ -220,3 +230,70 @@ probe 先验证 UI alpha/atlas/方向，再比较软件 YUV 与硬件导入输�
 `PROBE_FINAL result=PASS` 仅表示这些像素和引用检查通过；是否回到 hbmenu、HOME/睡眠恢复、连续启动以及
 整机功耗和帧时间收益需要分别记录。已经故障的 GPU queue 会进入系统 fatal，避免把仍被使用的
 内存释放后返回 loader。正式启用 deko 的验收契约见 [渲染设计](VIDEO_RENDERING_DESIGN.md)。
+
+
+## 解码边界的关键帧恢复验证
+
+诊断 probe 的 `recovery` 模式嵌入独立的 1280×720 H.264 素材。输入为初始关键帧100、
+跳过101…105后的关键帧106及其后五份P帧107…111。素材由已有小尺寸视频放大生成，
+属于合成解码输入；不模拟Steam收包、FEC、协议组帧或主机补片，也不将其当作自然游戏负载。
+每种输入大小分别执行软件参考、硬解和停止后重开硬解，共六轮；第二种大小使用有效的
+Annex B filler NAL把每个访问单元补至64KiB。
+
+在干净、已提交的研究分支上构建诊断包，然后先生成部署清单：
+
+```sh
+NSL_BUILD_DIR=build/switch-deko scripts/build-switch.sh -DNSL_DIAGNOSTICS=ON -DNSL_BUILD_TOOLS=OFF
+python3 tools/switch-recovery-probe.py --prepare --output build/recovery-prepare
+```
+
+清单保存NRO哈希、完整提交、嵌入素材哈希、图形SDK/shader manifest及部署命令。
+准备好 `10.10.10.17` 的hbmenu netloader后，以下命令只部署一次并自动保存日志与结果：
+
+```sh
+python3 tools/switch-recovery-probe.py --run --output build/recovery-device-001
+```
+
+不需手动复制SD文件或抄写日志。每次采集使用新的输出目录；脚本不会自动重试启动。
+`--timeout`默认180秒，超时只结束电脑上的nxlink进程，设备完成状态仍标为未验证。
+离线检查已保存的日志可用 `--analyze-log PATH --expected-build FULL_COMMIT --output DIR`。
+
+测试走实际的 `sl_video_submit`、`sl_video_select`、任务完成/释放及GPU读回。
+软件YUV逐行MD5必须与独立ffmpeg参考一致，硬解读回按实际像素所属输入与软件参考比较。
+任务身份与像素身份分别记录，允许硬解输出属于更早输入；空输出不能伪装成恢复图像。
+必须观察到关键帧106和P帧107的正确像素。请求硬解时，硬件context及零上传/下载检查
+均须通过，软件回退不能计为硬解成功。每轮停止后才重开；最后先销毁图形资源，再回收
+解码域，与既有probe的映射引用清理顺序一致。
+
+机器记录包含42条输入/任务观察、六轮结果、打开/解码后及清理后的资源快照。
+`submit_us`和`select_us`只测对应调用；`render_verify_us`含渲染、GPU等待、读回及校验。
+`key_to_readback_us`从关键帧提交前到其GPU读回完成，包含诊断开销，不等于正式串流延迟。
+资源查询失败会单独标记；这些局部快照不能证明整客户端峰值或4MiB媒体队列预算合理。
+完整PASS仅证明本模式的解码和读回检查通过；真实Steam网络、物理屏幕扫描输出、
+`socketExit`完成及返回hbmenu均不由nxlink退出或这些记录证明。
+
+## 分辨率与无底座管线验证
+
+设置→画面与声音→分辨率提供自动、720p、1080p。自动在连接时按掌机/底座选择；手动 1080p
+不会要求连接底座。内屏仍是 720p，底座输出使用原生 1080p 渲染。在首页修改设置或插拔底座后，
+重新连接可重新选择视频尺寸；当前视频不会被隐式重启。配置文件 `video.conf` 独立于配对身份。
+
+内置 fixture 的自动验证不依赖 Steam 配对，不需复制 SD 资源。以诊断构建和 hbmenu netloader
+运行以下命令，脚本自动推送 NRO、记录解码/像素/资源阶段，保存独立的机器可读结果：
+
+```bash
+cmake --build build/switch-diagnostic --target nsl-video-probe_nro
+python3 scripts/test-switch-video.py --build build/switch-diagnostic --fixture suite --output-height 1080
+```
+
+默认设备地址为 `10.10.10.17`。`--output-height 720` 验证常规内屏输出；1080 选项在掌机中
+强制完整 1920×1080 的输出/读回，使用一像素黑白细节检查没有中间降为 720p，再由系统缩放
+到物理内屏。suite 对四组内置素材运行软件、硬件及重开 decoder 路径，并核对清理计数。
+脚本不会将 nxlink 正常退出当作返回 hbmenu 的证据。HDMI 实际显示和真实插拔行为只能由
+对应硬件确认；这些边界不会由离线测试或掌机 native readback 冒充。
+
+实际 Steam 串流的独立手测包使用 `-DNSL_TEST_FORCE_1080=ON` 构建。该开关默认关闭，
+不是用户设置项；启用后开流固定请求 1920×1080，最终渲染缓冲也固定 1080p，内屏由系统缩放。
+界面版本后有 `[1080p TEST]`，NACP 名称为 `NSteamLink 1080p Test`。测试包不把强制值写进
+`video.conf`，也不自更新；netloader 部署使用独立路径 `nsteamlink/nsteamlink-1080p-test.nro`。
+普通包仍保留自动/720p/1080p 选择，自动按每次连接时的 operation mode 判断。

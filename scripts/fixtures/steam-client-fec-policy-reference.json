@@ -1,0 +1,1068 @@
+[
+  {
+    "case": "preset",
+    "before": false,
+    "preset": 0,
+    "after": {
+      "fec": false,
+      "fec_present": true,
+      "quality": 2,
+      "hevc": false,
+      "resolution": null
+    }
+  },
+  {
+    "case": "preset",
+    "before": false,
+    "preset": 1,
+    "after": {
+      "fec": false,
+      "fec_present": false,
+      "quality": 2,
+      "hevc": false,
+      "resolution": null
+    }
+  },
+  {
+    "case": "preset",
+    "before": false,
+    "preset": 2,
+    "after": {
+      "fec": true,
+      "fec_present": true,
+      "quality": 3,
+      "hevc": true,
+      "resolution": [
+        1920,
+        1080
+      ]
+    }
+  },
+  {
+    "case": "preset",
+    "before": false,
+    "preset": 3,
+    "after": {
+      "fec": true,
+      "fec_present": true,
+      "quality": 3,
+      "hevc": true,
+      "resolution": [
+        3840,
+        2160
+      ]
+    }
+  },
+  {
+    "case": "preset",
+    "before": false,
+    "preset": "fast",
+    "after": {
+      "fec": true,
+      "fec_present": true,
+      "quality": 1,
+      "hevc": true,
+      "resolution": null
+    }
+  },
+  {
+    "case": "preset",
+    "before": true,
+    "preset": 0,
+    "after": {
+      "fec": true,
+      "fec_present": true,
+      "quality": 2,
+      "hevc": false,
+      "resolution": null
+    }
+  },
+  {
+    "case": "preset",
+    "before": true,
+    "preset": 1,
+    "after": {
+      "fec": false,
+      "fec_present": false,
+      "quality": 2,
+      "hevc": false,
+      "resolution": null
+    }
+  },
+  {
+    "case": "preset",
+    "before": true,
+    "preset": 2,
+    "after": {
+      "fec": true,
+      "fec_present": true,
+      "quality": 3,
+      "hevc": true,
+      "resolution": [
+        1920,
+        1080
+      ]
+    }
+  },
+  {
+    "case": "preset",
+    "before": true,
+    "preset": 3,
+    "after": {
+      "fec": true,
+      "fec_present": true,
+      "quality": 3,
+      "hevc": true,
+      "resolution": [
+        3840,
+        2160
+      ]
+    }
+  },
+  {
+    "case": "preset",
+    "before": true,
+    "preset": "fast",
+    "after": {
+      "fec": true,
+      "fec_present": true,
+      "quality": 1,
+      "hevc": true,
+      "resolution": null
+    }
+  },
+  {
+    "case": "fec-ui-change",
+    "value": 0,
+    "saved": {
+      "fec": false,
+      "fec_present": true,
+      "quality": 2,
+      "hevc": false,
+      "resolution": null
+    },
+    "events": [
+      "save-settings"
+    ]
+  },
+  {
+    "case": "fec-ui-change",
+    "value": 1,
+    "saved": {
+      "fec": true,
+      "fec_present": true,
+      "quality": 2,
+      "hevc": false,
+      "resolution": null
+    },
+    "events": [
+      "save-settings"
+    ]
+  },
+  {
+    "case": "fec-ui-change",
+    "value": 2,
+    "saved": {
+      "fec": true,
+      "fec_present": true,
+      "quality": 2,
+      "hevc": false,
+      "resolution": null
+    },
+    "events": [
+      "save-settings"
+    ]
+  },
+  {
+    "case": "network-test-mode",
+    "bitrate_kbps": -1,
+    "quality": 1,
+    "mode": 2,
+    "target_kbps": 10000,
+    "events": [
+      "load-settings",
+      {
+        "start-network-test-mode": 2
+      }
+    ]
+  },
+  {
+    "case": "network-test-mode",
+    "bitrate_kbps": -1,
+    "quality": 2,
+    "mode": 2,
+    "target_kbps": 15000,
+    "events": [
+      "load-settings",
+      {
+        "start-network-test-mode": 2
+      }
+    ]
+  },
+  {
+    "case": "network-test-mode",
+    "bitrate_kbps": -1,
+    "quality": 3,
+    "mode": 2,
+    "target_kbps": 30000,
+    "events": [
+      "load-settings",
+      {
+        "start-network-test-mode": 2
+      }
+    ]
+  },
+  {
+    "case": "network-test-mode",
+    "bitrate_kbps": 0,
+    "quality": 1,
+    "mode": 2,
+    "target_kbps": 250000,
+    "events": [
+      "load-settings",
+      {
+        "start-network-test-mode": 2
+      }
+    ]
+  },
+  {
+    "case": "network-test-mode",
+    "bitrate_kbps": 0,
+    "quality": 2,
+    "mode": 2,
+    "target_kbps": 250000,
+    "events": [
+      "load-settings",
+      {
+        "start-network-test-mode": 2
+      }
+    ]
+  },
+  {
+    "case": "network-test-mode",
+    "bitrate_kbps": 0,
+    "quality": 3,
+    "mode": 2,
+    "target_kbps": 250000,
+    "events": [
+      "load-settings",
+      {
+        "start-network-test-mode": 2
+      }
+    ]
+  },
+  {
+    "case": "network-test-mode",
+    "bitrate_kbps": 20000,
+    "quality": 1,
+    "mode": 1,
+    "target_kbps": 20000,
+    "events": [
+      "load-settings",
+      {
+        "start-network-test-mode": 1
+      }
+    ]
+  },
+  {
+    "case": "network-test-mode",
+    "bitrate_kbps": 20000,
+    "quality": 2,
+    "mode": 1,
+    "target_kbps": 20000,
+    "events": [
+      "load-settings",
+      {
+        "start-network-test-mode": 1
+      }
+    ]
+  },
+  {
+    "case": "network-test-mode",
+    "bitrate_kbps": 20000,
+    "quality": 3,
+    "mode": 1,
+    "target_kbps": 20000,
+    "events": [
+      "load-settings",
+      {
+        "start-network-test-mode": 1
+      }
+    ]
+  },
+  {
+    "case": "bandwidth-result",
+    "kbps": 99999,
+    "quality": 1,
+    "recommendation": 0,
+    "prompts": [
+      "Network Test Complete",
+      "Streaming bandwidth test successful up to %1 Mb/s",
+      "OK"
+    ],
+    "saved": null
+  },
+  {
+    "case": "bandwidth-result",
+    "kbps": 99999,
+    "quality": 2,
+    "recommendation": 1,
+    "prompts": [
+      "Network Test Complete",
+      "Your network may have trouble streaming. Would you like to optimize your streaming settings for low bandwidth?\n\nYou can customize your settings anytime.",
+      "OK",
+      "Cancel"
+    ],
+    "saved": null
+  },
+  {
+    "case": "bandwidth-result",
+    "kbps": 99999,
+    "quality": 3,
+    "recommendation": 1,
+    "prompts": [
+      "Network Test Complete",
+      "Your network may have trouble streaming. Would you like to optimize your streaming settings for low bandwidth?\n\nYou can customize your settings anytime.",
+      "OK",
+      "Cancel"
+    ],
+    "saved": null
+  },
+  {
+    "case": "bandwidth-result",
+    "kbps": 100000,
+    "quality": 1,
+    "recommendation": 2,
+    "prompts": [
+      "Network Test Complete",
+      "Your network is great for streaming. Would you like to optimize your streaming settings for high quality?\n\nYou can customize your settings anytime.",
+      "OK",
+      "Cancel"
+    ],
+    "saved": null
+  },
+  {
+    "case": "bandwidth-result",
+    "kbps": 100000,
+    "quality": 2,
+    "recommendation": 2,
+    "prompts": [
+      "Network Test Complete",
+      "Your network is great for streaming. Would you like to optimize your streaming settings for high quality?\n\nYou can customize your settings anytime.",
+      "OK",
+      "Cancel"
+    ],
+    "saved": null
+  },
+  {
+    "case": "bandwidth-result",
+    "kbps": 100000,
+    "quality": 3,
+    "recommendation": 0,
+    "prompts": [
+      "Network Test Complete",
+      "Streaming bandwidth test successful up to %1 Mb/s",
+      "OK"
+    ],
+    "saved": null
+  },
+  {
+    "case": "bandwidth-result",
+    "kbps": 100001,
+    "quality": 1,
+    "recommendation": 2,
+    "prompts": [
+      "Network Test Complete",
+      "Your network is great for streaming. Would you like to optimize your streaming settings for high quality?\n\nYou can customize your settings anytime.",
+      "OK",
+      "Cancel"
+    ],
+    "saved": null
+  },
+  {
+    "case": "bandwidth-result",
+    "kbps": 100001,
+    "quality": 2,
+    "recommendation": 2,
+    "prompts": [
+      "Network Test Complete",
+      "Your network is great for streaming. Would you like to optimize your streaming settings for high quality?\n\nYou can customize your settings anytime.",
+      "OK",
+      "Cancel"
+    ],
+    "saved": null
+  },
+  {
+    "case": "bandwidth-result",
+    "kbps": 100001,
+    "quality": 3,
+    "recommendation": 0,
+    "prompts": [
+      "Network Test Complete",
+      "Streaming bandwidth test successful up to %1 Mb/s",
+      "OK"
+    ],
+    "saved": null
+  },
+  {
+    "case": "fixed-rate-result",
+    "received": 1000,
+    "expected": 1000,
+    "variance_ms": 0.0,
+    "recommendation": 0,
+    "prompts": [
+      "Network Test Complete",
+      "Awesome!",
+      "Your network looks like it will work well with Steam Link.",
+      "OK"
+    ],
+    "saved": null
+  },
+  {
+    "case": "fixed-rate-result",
+    "received": 999,
+    "expected": 1000,
+    "variance_ms": 8.0,
+    "recommendation": 0,
+    "prompts": [
+      "Network Test Complete",
+      "Hmm...",
+      "Your network may have some quality issues but looks like it will work streaming casual games.",
+      "(%1% frame loss, %2ms network variance)",
+      "OK"
+    ],
+    "saved": null
+  },
+  {
+    "case": "fixed-rate-result",
+    "received": 900,
+    "expected": 1000,
+    "variance_ms": 16.0,
+    "recommendation": 0,
+    "prompts": [
+      "Network Test Complete",
+      "Oh snap!",
+      "Your network may not work well with Steam Link, please make sure you're using a 5 GHz network and are close to the wireless router.",
+      "(%1% frame loss, %2ms network variance)",
+      "OK"
+    ],
+    "saved": null
+  },
+  {
+    "case": "fixed-rate-result",
+    "received": 0,
+    "expected": 1000,
+    "variance_ms": 0.0,
+    "recommendation": 0,
+    "prompts": [
+      "Network Test Complete",
+      "Oh snap!",
+      "Your network may not work well with Steam Link, please make sure you're using a 5 GHz network and are close to the wireless router.",
+      "(%1% frame loss, %2ms network variance)",
+      "OK"
+    ],
+    "saved": null
+  },
+  {
+    "case": "preset-click",
+    "before": false,
+    "preset": 1,
+    "already_active": false,
+    "saved": {
+      "fec": false,
+      "fec_present": false,
+      "quality": 2,
+      "hevc": false,
+      "resolution": null
+    },
+    "events": [
+      "save-settings",
+      "_ZN15CPanelStreaming17UpdatePresetStateEv"
+    ]
+  },
+  {
+    "case": "preset-click",
+    "before": false,
+    "preset": 1,
+    "already_active": true,
+    "saved": null,
+    "events": []
+  },
+  {
+    "case": "preset-click",
+    "before": false,
+    "preset": 2,
+    "already_active": false,
+    "saved": {
+      "fec": true,
+      "fec_present": true,
+      "quality": 3,
+      "hevc": true,
+      "resolution": [
+        1920,
+        1080
+      ]
+    },
+    "events": [
+      "save-settings",
+      "_ZN15CPanelStreaming17UpdatePresetStateEv"
+    ]
+  },
+  {
+    "case": "preset-click",
+    "before": false,
+    "preset": 2,
+    "already_active": true,
+    "saved": null,
+    "events": []
+  },
+  {
+    "case": "preset-click",
+    "before": false,
+    "preset": 3,
+    "already_active": false,
+    "saved": {
+      "fec": true,
+      "fec_present": true,
+      "quality": 3,
+      "hevc": true,
+      "resolution": [
+        3840,
+        2160
+      ]
+    },
+    "events": [
+      "save-settings",
+      "_ZN15CPanelStreaming17UpdatePresetStateEv"
+    ]
+  },
+  {
+    "case": "preset-click",
+    "before": false,
+    "preset": 3,
+    "already_active": true,
+    "saved": null,
+    "events": []
+  },
+  {
+    "case": "preset-click",
+    "before": true,
+    "preset": 1,
+    "already_active": false,
+    "saved": {
+      "fec": false,
+      "fec_present": false,
+      "quality": 2,
+      "hevc": false,
+      "resolution": null
+    },
+    "events": [
+      "save-settings",
+      "_ZN15CPanelStreaming17UpdatePresetStateEv"
+    ]
+  },
+  {
+    "case": "preset-click",
+    "before": true,
+    "preset": 1,
+    "already_active": true,
+    "saved": null,
+    "events": []
+  },
+  {
+    "case": "preset-click",
+    "before": true,
+    "preset": 2,
+    "already_active": false,
+    "saved": {
+      "fec": true,
+      "fec_present": true,
+      "quality": 3,
+      "hevc": true,
+      "resolution": [
+        1920,
+        1080
+      ]
+    },
+    "events": [
+      "save-settings",
+      "_ZN15CPanelStreaming17UpdatePresetStateEv"
+    ]
+  },
+  {
+    "case": "preset-click",
+    "before": true,
+    "preset": 2,
+    "already_active": true,
+    "saved": null,
+    "events": []
+  },
+  {
+    "case": "preset-click",
+    "before": true,
+    "preset": 3,
+    "already_active": false,
+    "saved": {
+      "fec": true,
+      "fec_present": true,
+      "quality": 3,
+      "hevc": true,
+      "resolution": [
+        3840,
+        2160
+      ]
+    },
+    "events": [
+      "save-settings",
+      "_ZN15CPanelStreaming17UpdatePresetStateEv"
+    ]
+  },
+  {
+    "case": "preset-click",
+    "before": true,
+    "preset": 3,
+    "already_active": true,
+    "saved": null,
+    "events": []
+  },
+  {
+    "case": "missing-settings-file",
+    "after": {
+      "fec": false,
+      "fec_present": false,
+      "quality": 2,
+      "hevc": false,
+      "resolution": null
+    },
+    "events": [
+      {
+        "load-file": "streaming_settings.bin"
+      }
+    ]
+  },
+  {
+    "case": "reset-settings",
+    "saved": {
+      "fec": false,
+      "fec_present": false,
+      "quality": 2,
+      "hevc": false,
+      "resolution": null
+    },
+    "events": [
+      "save-settings"
+    ]
+  },
+  {
+    "case": "result-dialog-callback",
+    "accepted": 0,
+    "recommendation": 0,
+    "can4k": false,
+    "before": false,
+    "saved": null,
+    "events": [
+      "_ZN10CPanelBase10HideDialogEv",
+      "_ZN17CShellApplication16SaveNetworkStatsEPK13CNetworkStats",
+      "_ZN13CPanelConnect23SetPanelStateConnectingEv"
+    ],
+    "test_again": 0
+  },
+  {
+    "case": "result-dialog-callback",
+    "accepted": 0,
+    "recommendation": 0,
+    "can4k": false,
+    "before": true,
+    "saved": null,
+    "events": [
+      "_ZN10CPanelBase10HideDialogEv",
+      "_ZN17CShellApplication16SaveNetworkStatsEPK13CNetworkStats",
+      "_ZN13CPanelConnect23SetPanelStateConnectingEv"
+    ],
+    "test_again": 0
+  },
+  {
+    "case": "result-dialog-callback",
+    "accepted": 0,
+    "recommendation": 0,
+    "can4k": true,
+    "before": false,
+    "saved": null,
+    "events": [
+      "_ZN10CPanelBase10HideDialogEv",
+      "_ZN17CShellApplication16SaveNetworkStatsEPK13CNetworkStats",
+      "_ZN13CPanelConnect23SetPanelStateConnectingEv"
+    ],
+    "test_again": 0
+  },
+  {
+    "case": "result-dialog-callback",
+    "accepted": 0,
+    "recommendation": 0,
+    "can4k": true,
+    "before": true,
+    "saved": null,
+    "events": [
+      "_ZN10CPanelBase10HideDialogEv",
+      "_ZN17CShellApplication16SaveNetworkStatsEPK13CNetworkStats",
+      "_ZN13CPanelConnect23SetPanelStateConnectingEv"
+    ],
+    "test_again": 0
+  },
+  {
+    "case": "result-dialog-callback",
+    "accepted": 0,
+    "recommendation": 1,
+    "can4k": false,
+    "before": false,
+    "saved": null,
+    "events": [
+      "_ZN10CPanelBase10HideDialogEv",
+      "_ZN17CShellApplication16SaveNetworkStatsEPK13CNetworkStats",
+      "_ZN13CPanelConnect23SetPanelStateConnectingEv"
+    ],
+    "test_again": 0
+  },
+  {
+    "case": "result-dialog-callback",
+    "accepted": 0,
+    "recommendation": 1,
+    "can4k": false,
+    "before": true,
+    "saved": null,
+    "events": [
+      "_ZN10CPanelBase10HideDialogEv",
+      "_ZN17CShellApplication16SaveNetworkStatsEPK13CNetworkStats",
+      "_ZN13CPanelConnect23SetPanelStateConnectingEv"
+    ],
+    "test_again": 0
+  },
+  {
+    "case": "result-dialog-callback",
+    "accepted": 0,
+    "recommendation": 1,
+    "can4k": true,
+    "before": false,
+    "saved": null,
+    "events": [
+      "_ZN10CPanelBase10HideDialogEv",
+      "_ZN17CShellApplication16SaveNetworkStatsEPK13CNetworkStats",
+      "_ZN13CPanelConnect23SetPanelStateConnectingEv"
+    ],
+    "test_again": 0
+  },
+  {
+    "case": "result-dialog-callback",
+    "accepted": 0,
+    "recommendation": 1,
+    "can4k": true,
+    "before": true,
+    "saved": null,
+    "events": [
+      "_ZN10CPanelBase10HideDialogEv",
+      "_ZN17CShellApplication16SaveNetworkStatsEPK13CNetworkStats",
+      "_ZN13CPanelConnect23SetPanelStateConnectingEv"
+    ],
+    "test_again": 0
+  },
+  {
+    "case": "result-dialog-callback",
+    "accepted": 0,
+    "recommendation": 2,
+    "can4k": false,
+    "before": false,
+    "saved": null,
+    "events": [
+      "_ZN10CPanelBase10HideDialogEv",
+      "_ZN17CShellApplication16SaveNetworkStatsEPK13CNetworkStats",
+      "_ZN13CPanelConnect23SetPanelStateConnectingEv"
+    ],
+    "test_again": 0
+  },
+  {
+    "case": "result-dialog-callback",
+    "accepted": 0,
+    "recommendation": 2,
+    "can4k": false,
+    "before": true,
+    "saved": null,
+    "events": [
+      "_ZN10CPanelBase10HideDialogEv",
+      "_ZN17CShellApplication16SaveNetworkStatsEPK13CNetworkStats",
+      "_ZN13CPanelConnect23SetPanelStateConnectingEv"
+    ],
+    "test_again": 0
+  },
+  {
+    "case": "result-dialog-callback",
+    "accepted": 0,
+    "recommendation": 2,
+    "can4k": true,
+    "before": false,
+    "saved": null,
+    "events": [
+      "_ZN10CPanelBase10HideDialogEv",
+      "_ZN17CShellApplication16SaveNetworkStatsEPK13CNetworkStats",
+      "_ZN13CPanelConnect23SetPanelStateConnectingEv"
+    ],
+    "test_again": 0
+  },
+  {
+    "case": "result-dialog-callback",
+    "accepted": 0,
+    "recommendation": 2,
+    "can4k": true,
+    "before": true,
+    "saved": null,
+    "events": [
+      "_ZN10CPanelBase10HideDialogEv",
+      "_ZN17CShellApplication16SaveNetworkStatsEPK13CNetworkStats",
+      "_ZN13CPanelConnect23SetPanelStateConnectingEv"
+    ],
+    "test_again": 0
+  },
+  {
+    "case": "result-dialog-callback",
+    "accepted": 1,
+    "recommendation": 0,
+    "can4k": false,
+    "before": false,
+    "saved": null,
+    "events": [
+      "_ZN10CPanelBase10HideDialogEv",
+      "_ZN17CShellApplication16SaveNetworkStatsEPK13CNetworkStats",
+      "_ZN13CPanelConnect23SetPanelStateConnectingEv"
+    ],
+    "test_again": 0
+  },
+  {
+    "case": "result-dialog-callback",
+    "accepted": 1,
+    "recommendation": 0,
+    "can4k": false,
+    "before": true,
+    "saved": null,
+    "events": [
+      "_ZN10CPanelBase10HideDialogEv",
+      "_ZN17CShellApplication16SaveNetworkStatsEPK13CNetworkStats",
+      "_ZN13CPanelConnect23SetPanelStateConnectingEv"
+    ],
+    "test_again": 0
+  },
+  {
+    "case": "result-dialog-callback",
+    "accepted": 1,
+    "recommendation": 0,
+    "can4k": true,
+    "before": false,
+    "saved": null,
+    "events": [
+      "_ZN10CPanelBase10HideDialogEv",
+      "_ZN17CShellApplication16SaveNetworkStatsEPK13CNetworkStats",
+      "_ZN13CPanelConnect23SetPanelStateConnectingEv"
+    ],
+    "test_again": 0
+  },
+  {
+    "case": "result-dialog-callback",
+    "accepted": 1,
+    "recommendation": 0,
+    "can4k": true,
+    "before": true,
+    "saved": null,
+    "events": [
+      "_ZN10CPanelBase10HideDialogEv",
+      "_ZN17CShellApplication16SaveNetworkStatsEPK13CNetworkStats",
+      "_ZN13CPanelConnect23SetPanelStateConnectingEv"
+    ],
+    "test_again": 0
+  },
+  {
+    "case": "result-dialog-callback",
+    "accepted": 1,
+    "recommendation": 1,
+    "can4k": false,
+    "before": false,
+    "saved": {
+      "fec": true,
+      "fec_present": true,
+      "quality": 1,
+      "hevc": true,
+      "resolution": null
+    },
+    "events": [
+      "load-settings",
+      "save-settings",
+      "_ZN10CPanelBase10HideDialogEv",
+      "_ZN17CShellApplication16SaveNetworkStatsEPK13CNetworkStats",
+      "_ZN13CPanelConnect23SetPanelStateConnectingEv"
+    ],
+    "test_again": 0
+  },
+  {
+    "case": "result-dialog-callback",
+    "accepted": 1,
+    "recommendation": 1,
+    "can4k": false,
+    "before": true,
+    "saved": {
+      "fec": true,
+      "fec_present": true,
+      "quality": 1,
+      "hevc": true,
+      "resolution": null
+    },
+    "events": [
+      "load-settings",
+      "save-settings",
+      "_ZN10CPanelBase10HideDialogEv",
+      "_ZN17CShellApplication16SaveNetworkStatsEPK13CNetworkStats",
+      "_ZN13CPanelConnect23SetPanelStateConnectingEv"
+    ],
+    "test_again": 0
+  },
+  {
+    "case": "result-dialog-callback",
+    "accepted": 1,
+    "recommendation": 1,
+    "can4k": true,
+    "before": false,
+    "saved": {
+      "fec": true,
+      "fec_present": true,
+      "quality": 1,
+      "hevc": true,
+      "resolution": null
+    },
+    "events": [
+      "load-settings",
+      "save-settings",
+      "_ZN10CPanelBase10HideDialogEv",
+      "_ZN17CShellApplication16SaveNetworkStatsEPK13CNetworkStats",
+      "_ZN13CPanelConnect23SetPanelStateConnectingEv"
+    ],
+    "test_again": 0
+  },
+  {
+    "case": "result-dialog-callback",
+    "accepted": 1,
+    "recommendation": 1,
+    "can4k": true,
+    "before": true,
+    "saved": {
+      "fec": true,
+      "fec_present": true,
+      "quality": 1,
+      "hevc": true,
+      "resolution": null
+    },
+    "events": [
+      "load-settings",
+      "save-settings",
+      "_ZN10CPanelBase10HideDialogEv",
+      "_ZN17CShellApplication16SaveNetworkStatsEPK13CNetworkStats",
+      "_ZN13CPanelConnect23SetPanelStateConnectingEv"
+    ],
+    "test_again": 0
+  },
+  {
+    "case": "result-dialog-callback",
+    "accepted": 1,
+    "recommendation": 2,
+    "can4k": false,
+    "before": false,
+    "saved": {
+      "fec": true,
+      "fec_present": true,
+      "quality": 3,
+      "hevc": true,
+      "resolution": [
+        1920,
+        1080
+      ]
+    },
+    "events": [
+      "load-settings",
+      "save-settings",
+      "_ZN10CPanelBase10HideDialogEv",
+      "_ZN17CShellApplication16SaveNetworkStatsEPK13CNetworkStats",
+      "_ZN13CPanelConnect23SetPanelStateConnectingEv"
+    ],
+    "test_again": 0
+  },
+  {
+    "case": "result-dialog-callback",
+    "accepted": 1,
+    "recommendation": 2,
+    "can4k": false,
+    "before": true,
+    "saved": {
+      "fec": true,
+      "fec_present": true,
+      "quality": 3,
+      "hevc": true,
+      "resolution": [
+        1920,
+        1080
+      ]
+    },
+    "events": [
+      "load-settings",
+      "save-settings",
+      "_ZN10CPanelBase10HideDialogEv",
+      "_ZN17CShellApplication16SaveNetworkStatsEPK13CNetworkStats",
+      "_ZN13CPanelConnect23SetPanelStateConnectingEv"
+    ],
+    "test_again": 0
+  },
+  {
+    "case": "result-dialog-callback",
+    "accepted": 1,
+    "recommendation": 2,
+    "can4k": true,
+    "before": false,
+    "saved": {
+      "fec": true,
+      "fec_present": true,
+      "quality": 3,
+      "hevc": true,
+      "resolution": [
+        3840,
+        2160
+      ]
+    },
+    "events": [
+      "load-settings",
+      "save-settings",
+      "_ZN10CPanelBase10HideDialogEv",
+      "_ZN17CShellApplication16SaveNetworkStatsEPK13CNetworkStats",
+      "_ZN13CPanelConnect23SetPanelStateConnectingEv"
+    ],
+    "test_again": 0
+  },
+  {
+    "case": "result-dialog-callback",
+    "accepted": 1,
+    "recommendation": 2,
+    "can4k": true,
+    "before": true,
+    "saved": {
+      "fec": true,
+      "fec_present": true,
+      "quality": 3,
+      "hevc": true,
+      "resolution": [
+        3840,
+        2160
+      ]
+    },
+    "events": [
+      "load-settings",
+      "save-settings",
+      "_ZN10CPanelBase10HideDialogEv",
+      "_ZN17CShellApplication16SaveNetworkStatsEPK13CNetworkStats",
+      "_ZN13CPanelConnect23SetPanelStateConnectingEv"
+    ],
+    "test_again": 0
+  }
+]

@@ -1,0 +1,762 @@
+{
+  "binary_sha256": "50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e",
+  "boundary": "Execute the official auto-reset event constructor and Wait deadline arithmetic.\n\nOriginal CThreadEvent/anonymous initialization/Set/Wait execute. pthread attribute,\nmutex/condition and clock_gettime are explicit OS terminals; controlled clock\nvalues are not a real system time change. Spurious/EINTR returns do not alter the\nevent. No decoder, kernel latency, physical Switch or Steam host claim is made.\n",
+  "functions": [
+    {
+      "name": "EventConstructor",
+      "address": 9491344,
+      "size": 80,
+      "sha256": "20c7ff7fda3fecbcdd56a057ff90083dab3492e79f9fa70d57c6fe4197eb39f3"
+    },
+    {
+      "name": "AnonymousEvent",
+      "address": 9491424,
+      "size": 300,
+      "sha256": "2d0df5df5e7467a237fca1ffac89b2cebe4eaab7900385ec557ae51ee8f7fd98"
+    },
+    {
+      "name": "EventSet",
+      "address": 9492972,
+      "size": 180,
+      "sha256": "98c24400f78a387f3a8818d02248f6e0204f3d5f07dd934ac96d2eeb48d4bd7c"
+    },
+    {
+      "name": "SyncWait",
+      "address": 9490724,
+      "size": 400,
+      "sha256": "a262769dca038d0b57cc105caa474ddb62316fed935d9a57194bcec8fd75341d"
+    }
+  ],
+  "cases": [
+    {
+      "name": "zero",
+      "timeout": 0,
+      "now": [
+        15,
+        999500000
+      ],
+      "returns": [],
+      "signaled": false,
+      "result": 0,
+      "trace": [
+        [
+          "pthread_mutexattr_init"
+        ],
+        [
+          "pthread_condattr_init"
+        ],
+        [
+          "pthread_condattr_setclock",
+          1
+        ],
+        [
+          "pthread_mutex_init"
+        ],
+        [
+          "pthread_mutexattr_destroy"
+        ],
+        [
+          "pthread_cond_init"
+        ],
+        [
+          "pthread_condattr_destroy"
+        ],
+        [
+          "pthread_mutex_lock"
+        ],
+        [
+          "pthread_mutex_unlock"
+        ]
+      ],
+      "signaled_after": 0
+    },
+    {
+      "name": "one_ms_carry",
+      "timeout": 1,
+      "now": [
+        15,
+        999500000
+      ],
+      "returns": [
+        110
+      ],
+      "signaled": false,
+      "result": 0,
+      "trace": [
+        [
+          "pthread_mutexattr_init"
+        ],
+        [
+          "pthread_condattr_init"
+        ],
+        [
+          "pthread_condattr_setclock",
+          1
+        ],
+        [
+          "pthread_mutex_init"
+        ],
+        [
+          "pthread_mutexattr_destroy"
+        ],
+        [
+          "pthread_cond_init"
+        ],
+        [
+          "pthread_condattr_destroy"
+        ],
+        [
+          "pthread_mutex_lock"
+        ],
+        [
+          "clock_gettime",
+          1,
+          15,
+          999500000
+        ],
+        [
+          "pthread_cond_timedwait",
+          [
+            16,
+            500000
+          ],
+          110
+        ],
+        [
+          "pthread_mutex_unlock"
+        ]
+      ],
+      "signaled_after": 0
+    },
+    {
+      "name": "sixteen_ms",
+      "timeout": 16,
+      "now": [
+        15,
+        999500000
+      ],
+      "returns": [
+        110
+      ],
+      "signaled": false,
+      "result": 0,
+      "trace": [
+        [
+          "pthread_mutexattr_init"
+        ],
+        [
+          "pthread_condattr_init"
+        ],
+        [
+          "pthread_condattr_setclock",
+          1
+        ],
+        [
+          "pthread_mutex_init"
+        ],
+        [
+          "pthread_mutexattr_destroy"
+        ],
+        [
+          "pthread_cond_init"
+        ],
+        [
+          "pthread_condattr_destroy"
+        ],
+        [
+          "pthread_mutex_lock"
+        ],
+        [
+          "clock_gettime",
+          1,
+          15,
+          999500000
+        ],
+        [
+          "pthread_cond_timedwait",
+          [
+            16,
+            15500000
+          ],
+          110
+        ],
+        [
+          "pthread_mutex_unlock"
+        ]
+      ],
+      "signaled_after": 0
+    },
+    {
+      "name": "whole_second",
+      "timeout": 1000,
+      "now": [
+        15,
+        999500000
+      ],
+      "returns": [
+        110
+      ],
+      "signaled": false,
+      "result": 0,
+      "trace": [
+        [
+          "pthread_mutexattr_init"
+        ],
+        [
+          "pthread_condattr_init"
+        ],
+        [
+          "pthread_condattr_setclock",
+          1
+        ],
+        [
+          "pthread_mutex_init"
+        ],
+        [
+          "pthread_mutexattr_destroy"
+        ],
+        [
+          "pthread_cond_init"
+        ],
+        [
+          "pthread_condattr_destroy"
+        ],
+        [
+          "pthread_mutex_lock"
+        ],
+        [
+          "clock_gettime",
+          1,
+          15,
+          999500000
+        ],
+        [
+          "pthread_cond_timedwait",
+          [
+            16,
+            999500000
+          ],
+          110
+        ],
+        [
+          "pthread_mutex_unlock"
+        ]
+      ],
+      "signaled_after": 0
+    },
+    {
+      "name": "large_unsigned",
+      "timeout": 4294967294,
+      "now": [
+        15,
+        999500000
+      ],
+      "returns": [
+        110
+      ],
+      "signaled": false,
+      "result": 0,
+      "trace": [
+        [
+          "pthread_mutexattr_init"
+        ],
+        [
+          "pthread_condattr_init"
+        ],
+        [
+          "pthread_condattr_setclock",
+          1
+        ],
+        [
+          "pthread_mutex_init"
+        ],
+        [
+          "pthread_mutexattr_destroy"
+        ],
+        [
+          "pthread_cond_init"
+        ],
+        [
+          "pthread_condattr_destroy"
+        ],
+        [
+          "pthread_mutex_lock"
+        ],
+        [
+          "clock_gettime",
+          1,
+          15,
+          999500000
+        ],
+        [
+          "pthread_cond_timedwait",
+          [
+            4294983,
+            293500000
+          ],
+          110
+        ],
+        [
+          "pthread_mutex_unlock"
+        ]
+      ],
+      "signaled_after": 0
+    },
+    {
+      "name": "spurious",
+      "timeout": 1,
+      "now": [
+        15,
+        999500000
+      ],
+      "returns": [
+        0,
+        0,
+        110
+      ],
+      "signaled": false,
+      "result": 0,
+      "trace": [
+        [
+          "pthread_mutexattr_init"
+        ],
+        [
+          "pthread_condattr_init"
+        ],
+        [
+          "pthread_condattr_setclock",
+          1
+        ],
+        [
+          "pthread_mutex_init"
+        ],
+        [
+          "pthread_mutexattr_destroy"
+        ],
+        [
+          "pthread_cond_init"
+        ],
+        [
+          "pthread_condattr_destroy"
+        ],
+        [
+          "pthread_mutex_lock"
+        ],
+        [
+          "clock_gettime",
+          1,
+          15,
+          999500000
+        ],
+        [
+          "pthread_cond_timedwait",
+          [
+            16,
+            500000
+          ],
+          0
+        ],
+        [
+          "pthread_cond_timedwait",
+          [
+            16,
+            500000
+          ],
+          0
+        ],
+        [
+          "pthread_cond_timedwait",
+          [
+            16,
+            500000
+          ],
+          110
+        ],
+        [
+          "pthread_mutex_unlock"
+        ]
+      ],
+      "signaled_after": 0
+    },
+    {
+      "name": "eintr",
+      "timeout": 1,
+      "now": [
+        15,
+        999500000
+      ],
+      "returns": [
+        4,
+        110
+      ],
+      "signaled": false,
+      "result": 0,
+      "trace": [
+        [
+          "pthread_mutexattr_init"
+        ],
+        [
+          "pthread_condattr_init"
+        ],
+        [
+          "pthread_condattr_setclock",
+          1
+        ],
+        [
+          "pthread_mutex_init"
+        ],
+        [
+          "pthread_mutexattr_destroy"
+        ],
+        [
+          "pthread_cond_init"
+        ],
+        [
+          "pthread_condattr_destroy"
+        ],
+        [
+          "pthread_mutex_lock"
+        ],
+        [
+          "clock_gettime",
+          1,
+          15,
+          999500000
+        ],
+        [
+          "pthread_cond_timedwait",
+          [
+            16,
+            500000
+          ],
+          4
+        ],
+        [
+          "pthread_cond_timedwait",
+          [
+            16,
+            500000
+          ],
+          110
+        ],
+        [
+          "pthread_mutex_unlock"
+        ]
+      ],
+      "signaled_after": 0
+    },
+    {
+      "name": "ordinary_error",
+      "timeout": 1,
+      "now": [
+        15,
+        999500000
+      ],
+      "returns": [
+        22
+      ],
+      "signaled": false,
+      "result": 0,
+      "trace": [
+        [
+          "pthread_mutexattr_init"
+        ],
+        [
+          "pthread_condattr_init"
+        ],
+        [
+          "pthread_condattr_setclock",
+          1
+        ],
+        [
+          "pthread_mutex_init"
+        ],
+        [
+          "pthread_mutexattr_destroy"
+        ],
+        [
+          "pthread_cond_init"
+        ],
+        [
+          "pthread_condattr_destroy"
+        ],
+        [
+          "pthread_mutex_lock"
+        ],
+        [
+          "clock_gettime",
+          1,
+          15,
+          999500000
+        ],
+        [
+          "pthread_cond_timedwait",
+          [
+            16,
+            500000
+          ],
+          22
+        ],
+        [
+          "pthread_mutex_unlock"
+        ]
+      ],
+      "signaled_after": 0
+    },
+    {
+      "name": "infinite_error",
+      "timeout": 4294967295,
+      "now": [
+        15,
+        999500000
+      ],
+      "returns": [
+        22
+      ],
+      "signaled": false,
+      "result": 0,
+      "trace": [
+        [
+          "pthread_mutexattr_init"
+        ],
+        [
+          "pthread_condattr_init"
+        ],
+        [
+          "pthread_condattr_setclock",
+          1
+        ],
+        [
+          "pthread_mutex_init"
+        ],
+        [
+          "pthread_mutexattr_destroy"
+        ],
+        [
+          "pthread_cond_init"
+        ],
+        [
+          "pthread_condattr_destroy"
+        ],
+        [
+          "pthread_mutex_lock"
+        ],
+        [
+          "pthread_cond_wait",
+          null,
+          22
+        ],
+        [
+          "pthread_mutex_unlock"
+        ]
+      ],
+      "signaled_after": 0
+    },
+    {
+      "name": "early_signal",
+      "timeout": 1,
+      "now": [
+        15,
+        999500000
+      ],
+      "returns": [],
+      "signaled": true,
+      "result": 1,
+      "trace": [
+        [
+          "pthread_mutexattr_init"
+        ],
+        [
+          "pthread_condattr_init"
+        ],
+        [
+          "pthread_condattr_setclock",
+          1
+        ],
+        [
+          "pthread_mutex_init"
+        ],
+        [
+          "pthread_mutexattr_destroy"
+        ],
+        [
+          "pthread_cond_init"
+        ],
+        [
+          "pthread_condattr_destroy"
+        ],
+        [
+          "pthread_mutex_lock"
+        ],
+        [
+          "pthread_cond_signal"
+        ],
+        [
+          "pthread_mutex_unlock"
+        ],
+        [
+          "pthread_mutex_lock"
+        ],
+        [
+          "pthread_mutex_unlock"
+        ]
+      ],
+      "signaled_after": 0
+    },
+    {
+      "name": "early_signal_infinite",
+      "timeout": 4294967295,
+      "now": [
+        15,
+        999500000
+      ],
+      "returns": [],
+      "signaled": true,
+      "result": 1,
+      "trace": [
+        [
+          "pthread_mutexattr_init"
+        ],
+        [
+          "pthread_condattr_init"
+        ],
+        [
+          "pthread_condattr_setclock",
+          1
+        ],
+        [
+          "pthread_mutex_init"
+        ],
+        [
+          "pthread_mutexattr_destroy"
+        ],
+        [
+          "pthread_cond_init"
+        ],
+        [
+          "pthread_condattr_destroy"
+        ],
+        [
+          "pthread_mutex_lock"
+        ],
+        [
+          "pthread_cond_signal"
+        ],
+        [
+          "pthread_mutex_unlock"
+        ],
+        [
+          "pthread_mutex_lock"
+        ],
+        [
+          "pthread_mutex_unlock"
+        ]
+      ],
+      "signaled_after": 0
+    }
+  ],
+  "failures": [
+    {
+      "failure": "pthread_mutexattr_init",
+      "initialized": 0,
+      "trace": [
+        [
+          "pthread_mutexattr_init"
+        ]
+      ]
+    },
+    {
+      "failure": "pthread_condattr_init",
+      "initialized": 0,
+      "trace": [
+        [
+          "pthread_mutexattr_init"
+        ],
+        [
+          "pthread_condattr_init"
+        ],
+        [
+          "pthread_mutexattr_destroy"
+        ]
+      ]
+    },
+    {
+      "failure": "pthread_condattr_setclock",
+      "initialized": 0,
+      "trace": [
+        [
+          "pthread_mutexattr_init"
+        ],
+        [
+          "pthread_condattr_init"
+        ],
+        [
+          "pthread_condattr_setclock",
+          1
+        ],
+        [
+          "pthread_mutexattr_destroy"
+        ],
+        [
+          "pthread_condattr_destroy"
+        ]
+      ]
+    },
+    {
+      "failure": "pthread_mutex_init",
+      "initialized": 0,
+      "trace": [
+        [
+          "pthread_mutexattr_init"
+        ],
+        [
+          "pthread_condattr_init"
+        ],
+        [
+          "pthread_condattr_setclock",
+          1
+        ],
+        [
+          "pthread_mutex_init"
+        ],
+        [
+          "pthread_mutexattr_destroy"
+        ],
+        [
+          "pthread_condattr_destroy"
+        ]
+      ]
+    },
+    {
+      "failure": "pthread_cond_init",
+      "initialized": 0,
+      "trace": [
+        [
+          "pthread_mutexattr_init"
+        ],
+        [
+          "pthread_condattr_init"
+        ],
+        [
+          "pthread_condattr_setclock",
+          1
+        ],
+        [
+          "pthread_mutex_init"
+        ],
+        [
+          "pthread_mutexattr_destroy"
+        ],
+        [
+          "pthread_cond_init"
+        ],
+        [
+          "pthread_condattr_destroy"
+        ],
+        [
+          "pthread_mutex_destroy"
+        ]
+      ]
+    }
+  ]
+}

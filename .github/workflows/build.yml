@@ -45,7 +45,7 @@ jobs:
           apt-get install -y cmake python3 python3-cryptography build-essential git
           scripts/setup-switch-deps.sh
       - name: Build NRO (diagnostics excluded)
-        run: scripts/build-switch.sh -DNSL_DIAGNOSTICS=OFF -DNSL_BUILD_TOOLS=OFF -DHACBREWPACK="$GITHUB_WORKSPACE/build/deps/hacBrewPack/hacbrewpack"
+        run: scripts/build-switch.sh -DNSL_DIAGNOSTICS=OFF -DNSL_BUILD_TOOLS=OFF -DNSL_TEST_FORCE_1080=OFF -DHACBREWPACK="$GITHUB_WORKSPACE/build/deps/hacBrewPack/hacbrewpack"
       - name: Verify release graphics and diagnostic exclusion
         run: python3 scripts/check-release-diagnostics.py build/switch
       - name: Validate and collect artifacts
@@ -57,8 +57,8 @@ jobs:
           python3 scripts/validate-artifacts.py "${args[@]}"
           python3 scripts/collect-release.py --build build/switch --output build/release
           cp build/deps/devkitpro-packages.txt build/release/
-          cd build/release
-          sha256sum *.nro *.json *.txt > SHA256SUMS
+          (cd build/release && sha256sum *.nro *.json *.txt > SHA256SUMS)
+          python3 scripts/check-release-bundle.py build/release
       - uses: actions/upload-artifact@v4
         with:
           name: switch-release
@@ -67,7 +67,15 @@ jobs:
       - name: Build Switch diagnostics and video correctness probe
         run: |
           NSL_BUILD_DIR="$GITHUB_WORKSPACE/build/switch-deko" scripts/build-switch.sh -DNSL_DIAGNOSTICS=ON -DNSL_BUILD_TOOLS=OFF -DHACBREWPACK="$GITHUB_WORKSPACE/build/deps/hacBrewPack/hacbrewpack"
+      - name: Verify release exclusion counterexamples
+        run: python3 scripts/test-release-exclusion.py --build build/switch --diagnostic-build build/switch-deko
+      - name: Verify actual live FEC observer paths and ordinary exclusion
+        run: python3 -O scripts/test-live-media-probe-build.py --build build/switch-deko --ordinary-build build/switch --output build/switch-deko/generated/live-probe-build.json
+      - name: Verify isolated large VCL capability probe
+        run: |
+          python3 scripts/check-vcl-probe-build.py --build build/switch-deko --ordinary build/switch/app/nsteamlink.nro --output build/switch-deko/generated/vcl-probe-build.json
       - uses: actions/upload-artifact@v4
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         with:
           name: switch-deko-diagnostic
           path: |
@@ -99,6 +107,7 @@ jobs:
           set -euo pipefail
           compgen -G 'release/*.nro' >/dev/null
           (cd release && sha256sum -c SHA256SUMS)
+          python3 scripts/check-release-bundle.py release
           test "$(head -n 1 .github/RELEASE_NOTES.md)" = "# NSteamLink $RELEASE_TAG"
           # Create a draft first so an upload failure never leaves a half release visible.
           gh release create "$RELEASE_TAG" release/* --verify-tag --draft --notes-file .github/RELEASE_NOTES.md --title "NSteamLink $RELEASE_TAG"

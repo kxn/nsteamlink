@@ -10,6 +10,7 @@
 #include "sdl_input.h"
 #include "services/i18n.h"
 #include "services/update_config.h"
+#include "stream_settings.h"
 #include "ui/ui_events.h"
 #include "ui_audio.h"
 #include "updater.h"
@@ -40,6 +41,19 @@ typedef struct application {
     sl_command replacement;
     sl_auth_store replacement_store;
 } application;
+static bool submit_runtime(application *a, const sl_command *cmd, const sl_auth_store *store) {
+    bool ok = sl_runtime_submit(a->runtime, cmd, store);
+    if (ok)
+        a->ui.settings_revision = sl_runtime_settings_revision(a->runtime);
+    return ok;
+}
+static void stream_preferences(application *a) {
+    sl_stream_preferences view;
+    uint64_t revision;
+    if (sl_runtime_stream_settings(a->runtime, &view, &revision) &&
+        sl_ui_stream_preferences(&a->ui, &view, revision))
+        sl_runtime_ack_stream_settings(a->runtime, &view, revision);
+}
 static void draw(void *native, void *ctx) {
     (void)native;
     application *a = ctx;
@@ -47,6 +61,27 @@ static void draw(void *native, void *ctx) {
 }
 static void event(const void *native, void *ctx) {
     application *a = ctx;
+    const SDL_Event *e = native;
+    /* Official BHandleEvent uses these two lifecycle events specifically.
+     * Publish each edge while draining SDL, including a quick pause/resume. */
+    if (e->type == SDL_APP_WILLENTERBACKGROUND)
+        sl_runtime_foreground(a->runtime, false);
+    else if (e->type == SDL_APP_DIDENTERFOREGROUND)
+        sl_runtime_foreground(a->runtime, true);
+    if (e->type == SDL_WINDOWEVENT) {
+        if (e->window.event == SDL_WINDOWEVENT_FOCUS_GAINED)
+            sl_runtime_player_focus(a->runtime, true);
+        else if (e->window.event == SDL_WINDOWEVENT_FOCUS_LOST)
+            sl_runtime_player_focus(a->runtime, false);
+    }
+#if __SWITCH__
+    /* Native deko has no SDL window; the platform emits these edges from
+     * libnx application input focus, so publish that owner fact explicitly. */
+    if (e->type == SDL_APP_WILLENTERBACKGROUND)
+        sl_runtime_player_focus(a->runtime, false);
+    else if (e->type == SDL_APP_DIDENTERFOREGROUND)
+        sl_runtime_player_focus(a->runtime, true);
+#endif
     sl_sdl_input(native, &a->input);
     if (!sl_app_allow_remote(&a->lifecycle, sl_ui_remote(&a->ui)))
         sl_media_gate(false);
@@ -60,11 +95,19 @@ static void runtime_events(application *a) {
     sl_runtime_event e;
     while (sl_runtime_poll(a->runtime, &e))
         sl_ui_runtime_event(&a->ui, &e);
+    sl_network_test_view test;
+    if (sl_runtime_network_test(a->runtime, &test))
+        sl_ui_network_test(&a->ui, &test);
 }
 /* D-060: the NRO that was launched is replaced, and the HOME shortcut's copy
  * with it. Without a launched NRO on the SD card there is nothing to check. */
 static sl_updater *start_updater(int argc, char **argv) {
-#ifdef __SWITCH__
+#if NSL_TEST_FORCE_1080
+    /* Keep the private manual-test binary intact while testing. */
+    (void)argc;
+    (void)argv;
+    return NULL;
+#elif defined(__SWITCH__)
     size_t n = argc > 0 && argv && argv[0] ? strlen(argv[0]) : 0;
     if (n <= 4 || strncmp(argv[0], "sdmc:/", 6) || strcmp(argv[0] + n - 4, ".nro"))
         return NULL;
@@ -114,13 +157,13 @@ static void lifecycle_facts(application *a) {
         return;
     if (f.session_id && !a->lifecycle.session_id)
         sl_app_session_created(&a->lifecycle, f.request_id, f.session_id);
-    if (f.failed &&
+    if (f.failed && !f.test_failure_pending &&
         (a->lifecycle.phase == SL_APP_STARTING || a->lifecycle.phase == SL_APP_STREAMING)) {
         sl_app_request_stop(&a->lifecycle);
         sl_media_gate(false);
         sl_media_close_video();
         sl_command stop = {.type = SL_CMD_STOP, .generation = f.request_id};
-        sl_runtime_submit(a->runtime, &stop, &a->ui.store);
+        submit_runtime(a, &stop, &a->ui.store);
     }
     if (f.connected)
         sl_app_connected(&a->lifecycle, f.session_id);
@@ -128,13 +171,13 @@ static void lifecycle_facts(application *a) {
         sl_app_video_state(&a->lifecycle, f.session_id, f.video_transition, f.epoch, f.paused);
     if (f.presented)
         sl_app_presented(&a->lifecycle, f.session_id, f.epoch);
-    if (f.requests_closed &&
+    if (f.requests_closed && !f.test_failure_pending &&
         (a->lifecycle.phase == SL_APP_STARTING || a->lifecycle.phase == SL_APP_STREAMING))
         sl_app_request_stop(&a->lifecycle);
     uint64_t next = sl_app_cleanup(&a->lifecycle, f.request_id, f.session_id, f.requests_closed,
                                    f.protocol_closed, f.video_clean);
     if (next && a->replacement.generation == next &&
-        !sl_runtime_submit(a->runtime, &a->replacement, &a->replacement_store))
+        !submit_runtime(a, &a->replacement, &a->replacement_store))
         sl_ui_error(&a->ui, sl_tr(SL_T_BUSY));
 }
 static bool command(application *a, const sl_command *cmd) {
@@ -145,6 +188,11 @@ static bool command(application *a, const sl_command *cmd) {
         return true;
     }
     if (cmd->type == SL_CMD_STREAM) {
+        if (cmd->security_pin_retry) {
+            if (a->lifecycle.phase != SL_APP_STARTING || a->lifecycle.request_id != cmd->generation)
+                return false;
+            return submit_runtime(a, cmd, &a->ui.store);
+        }
         if (!sl_app_request_start(&a->lifecycle, cmd->generation))
             return false;
         if (a->lifecycle.phase != SL_APP_STARTING) {
@@ -153,7 +201,7 @@ static bool command(application *a, const sl_command *cmd) {
             sl_media_gate(false);
             sl_media_close_video();
             sl_command stop = {.type = SL_CMD_STOP, .generation = cmd->generation};
-            return sl_runtime_submit(a->runtime, &stop, &a->ui.store);
+            return submit_runtime(a, &stop, &a->ui.store);
         }
     } else if (cmd->type == SL_CMD_STOP || cmd->type == SL_CMD_CANCEL || cmd->type == SL_CMD_EXIT) {
         if (cmd->type == SL_CMD_EXIT)
@@ -163,7 +211,7 @@ static bool command(application *a, const sl_command *cmd) {
         sl_media_gate(false);
         sl_media_close_video();
     }
-    return sl_runtime_submit(a->runtime, cmd, &a->ui.store);
+    return submit_runtime(a, cmd, &a->ui.store);
 }
 int sl_application_run(int argc, char **argv) {
     sl_shortcut_source(argc, argv);
@@ -187,7 +235,9 @@ int sl_application_run(int argc, char **argv) {
     (void)argv;
 #endif
     if (!sl_system_init()) {
+#if NSL_DIAGNOSTICS
         fprintf(stderr, "Platform initialization failed\n");
+#endif
         return 1;
     }
     application *a = calloc(1, sizeof(*a));
@@ -200,7 +250,10 @@ int sl_application_run(int argc, char **argv) {
     sl_i18n_load(sl_system_data_dir(), sl_system_locale());
     sl_auth_store store;
     int auth = sl_auth_load(&store, sl_system_data_dir());
+    if (auth >= 0)
+        sl_stream_settings_preview(&store, sl_system_data_dir());
     sl_ui_init(&a->ui, &store);
+    a->ui.resolution = sl_video_settings_load(sl_system_data_dir());
     a->ui.update_check = sl_update_config_load(sl_system_data_dir());
     sl_log_start();
     if (!offline)
@@ -209,7 +262,9 @@ int sl_application_run(int argc, char **argv) {
         a->updater = start_updater(argc, argv);
     a->ui.now = a->ui.entered_at = sl_system_now();
     if (!stream_media_init(sl_log)) {
+#if NSL_DIAGNOSTICS
         fprintf(stderr, "Media initialization failed\n");
+#endif
         sl_updater_destroy(a->updater);
         sl_artwork_destroy(a->artwork);
         free(a);
@@ -219,7 +274,9 @@ int sl_application_run(int argc, char **argv) {
     }
     a->renderer = sl_ui_renderer_create(sl_media_gfx());
     if (!a->renderer) {
+#if NSL_DIAGNOSTICS
         fprintf(stderr, "Font initialization failed: %s\n", SDL_GetError());
+#endif
         sl_updater_destroy(a->updater);
         sl_artwork_destroy(a->artwork);
         stream_media_shutdown();
@@ -237,6 +294,8 @@ int sl_application_run(int argc, char **argv) {
         a->runtime = sl_runtime_create(&store);
         if (!a->runtime)
             sl_ui_error(&a->ui, sl_tr(SL_T_NETWORK_START_FAILED));
+        else
+            sl_runtime_player_focus(a->runtime, sl_events_keyboard_focus());
     }
     if (screenshot)
         sl_gfx_request_readback(sl_media_gfx());
@@ -257,13 +316,13 @@ int sl_application_run(int argc, char **argv) {
         update_events(a);
         if (a->runtime) {
             runtime_events(a);
+            stream_preferences(a);
             lifecycle_facts(a);
 #if NSL_DIAGNOSTICS
             sl_runtime_debug(a->runtime, &a->debug);
 #endif
         }
         sl_app_foreground(&a->lifecycle, sl_events_foreground());
-        sl_runtime_foreground(a->runtime, sl_events_foreground());
         sl_artwork_pause(a->artwork, a->ui.streaming || a->ui.page != SL_HOME);
         sl_input_tick(&a->input, a->ui.now);
         sl_media_gate(sl_app_allow_remote(&a->lifecycle, sl_ui_remote(&a->ui)) &&
@@ -276,7 +335,8 @@ int sl_application_run(int argc, char **argv) {
                     sl_ui_error(&a->ui, sl_tr(SL_T_BUSY));
             } else if (cmd.type == SL_CMD_SAVE) {
                 if (!sl_i18n_save(sl_system_data_dir(), cmd.language) ||
-                    !sl_update_config_save(sl_system_data_dir(), cmd.update_check))
+                    !sl_update_config_save(sl_system_data_dir(), cmd.update_check) ||
+                    !sl_video_settings_save(sl_system_data_dir(), cmd.resolution))
                     sl_ui_error(&a->ui, sl_tr(SL_T_SAVE_SETTINGS_FAILED));
             } else if (cmd.type == SL_CMD_CANCEL || cmd.type == SL_CMD_STOP ||
                        cmd.type == SL_CMD_END_GAME)
@@ -315,9 +375,11 @@ int sl_application_run(int argc, char **argv) {
         if (loop_end - loop_reported >= 1000000) {
 #if defined(__SWITCH__)
             u64 ticks = 0;
-            loop_metrics.cpu_result = svcGetInfo(&ticks,
-                hosversionAtLeast(13, 0, 0) ? InfoType_ThreadTickCount : InfoType_ThreadTickCountDeprecated,
-                CUR_THREAD_HANDLE, TickCountInfo_Total);
+            loop_metrics.cpu_result =
+                svcGetInfo(&ticks,
+                           hosversionAtLeast(13, 0, 0) ? InfoType_ThreadTickCount
+                                                       : InfoType_ThreadTickCountDeprecated,
+                           CUR_THREAD_HANDLE, TickCountInfo_Total);
             loop_metrics.cpu_ticks = ticks;
             loop_metrics.cpu_wall_ticks = armGetSystemTick();
 #else
