@@ -470,20 +470,9 @@ static void status(sl_remote *r, const CMsgRemoteClientBroadcastHeader *h, const
                                .timestamp = s->timestamp};
     snprintf(host.info.hostname, sizeof(host.info.hostname), "%s",
              s->hostname ? s->hostname : "Steam");
-    for (size_t i = 0; i < s->n_ip_addresses && host.address_count < SL_REMOTE_ADDRESSES; ++i) {
-        IHS_IPAddress ip;
-        if (strlen(s->ip_addresses[i]) < 64 && IHS_IPAddressFromString(&ip, s->ip_addresses[i]))
-            snprintf(host.addresses[host.address_count++], 64, "%s", s->ip_addresses[i]);
-    }
-    if (s->public_ip_address && host.address_count < SL_REMOTE_ADDRESSES) {
-        IHS_IPAddress ip;
-        bool duplicate = false;
-        for (size_t i = 0; i < host.address_count; ++i)
-            duplicate |= !strcmp(host.addresses[i], s->public_ip_address);
-        if (!duplicate && strlen(s->public_ip_address) < 64 &&
-            IHS_IPAddressFromString(&ip, s->public_ip_address))
-            snprintf(host.addresses[host.address_count++], 64, "%s", s->public_ip_address);
-    }
+    host.addresses = (const char *const *)s->ip_addresses;
+    host.address_count = s->n_ip_addresses;
+    host.public_address = s->public_ip_address;
     if (r->cb.host)
         r->cb.host(&host, r->ctx);
 done:

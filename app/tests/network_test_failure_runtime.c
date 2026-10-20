@@ -14,6 +14,12 @@
 #include <poll.h>
 #include <unistd.h>
 static uint16_t peer_port;
+void __real_IHS_ClientSetDiscoveryCallbacks(IHS_Client *, const IHS_ClientDiscoveryCallbacks *, void *);
+void __wrap_IHS_ClientSetDiscoveryCallbacks(IHS_Client *c,
+    const IHS_ClientDiscoveryCallbacks *callbacks, void *context) {
+    __real_IHS_ClientSetDiscoveryCallbacks(c, callbacks, context);
+    test_discovery_observed(c, callbacks, context, peer_port);
+}
 /* Main/test thread only: make the documented try-lock miss deterministic. */
 static bool inject_facts_busy;
 static unsigned facts_busy_calls;

@@ -3,7 +3,7 @@
 
 Persistent-record lookup, preallocated vector storage, wall clock, strcmp and
 bounded string-copy/printf are providers. Original IP equality, IPv4 extraction,
-IPv6 formatting and all sort instructions execute. No wire parser, filesystem,
+IPv6 formatting, HasIP and all sort instructions execute. No wire parser, filesystem,
 Qt scheduling or physical reachability is exercised. Offline executes the
 original parsed type-2 branch with visible/cloud map and delegate providers;
 it does not exercise the wire admission/parser or full manager Update.
@@ -18,6 +18,9 @@ import json
 from pathlib import Path
 import random
 import struct
+
+if not __debug__:
+    raise SystemExit('Original-instruction audit requires assertions; do not use Python -O')
 
 from unicorn import arm64_const as arm
 
@@ -110,7 +113,7 @@ class Run(base.Machine):
             return ret(len(s))
         assert (0x79be58 <= pc < 0x79c308 or 0x7a24d8 <= pc < 0x7a38c4 or
                 0x8e78b8 <= pc < 0x8e7954 or 0x8e5aec <= pc < 0x8e5ca8 or
-                0x8e4cf8 <= pc < 0x8e4f5c or
+                0x8e4cf8 <= pc < 0x8e4f5c or 0x8e5e7c <= pc < 0x8e5eb8 or
                 (self.offline and 0x79a03c <= pc < 0x79a0a8)), f'unmodeled instruction/provider {pc:#x}'
 
     def invoke(self, pc, *args):
@@ -221,6 +224,21 @@ def programs():
         add('2001:db8::1', 100, verified=True, port=1234),
         add('2001:db8::1', 200, port=4321),
         add('2001:db8::1', 201, remote=True), dict(kind='clear')])
+    yield dict(name='updates-reorder-and-retain-public-marker', initial=[], actions=[
+        add('10.0.0.2', 100, verified=True, port=32000),
+        add('10.0.0.1', 101, verified=True, port=31000),
+        add('10.0.0.2', 110, verified=True, port=33000),
+        add('10.0.0.1', 120, remote=True, port=1),
+        add('10.0.0.2', 121, remote=True),
+        add('10.0.0.1', 122, verified=True, port=34000)])
+    yield dict(name='ipv4-octet-order', initial=[entry(ip, verified=True, time=100)
+        for ip in ['192.0.2.1', '10.0.1.0', '10.0.0.255', '1.0.0.2', '255.0.0.1',
+                   '10.1.0.0', '127.0.0.1', '1.2.3.4']], actions=[dict(kind='sort')])
+    for count in (8, 24, 40):
+        yield dict(name=f'incremental-{count}', initial=[], actions=[
+            add(f'10.0.{n//16}.{n%16}', 100+n//3,
+                verified=n % 3 != 0, remote=n % 5 == 0, port=30000+n)
+            for n in range(count-1, -1, -1)])
     # All input permutations of the known nontransitive triple: observe complete
     # original sort results, not just pairwise-comparator truth values.
     triple=[entry(f'0.0.0.{ip}', verified=True, time=t) for ip, t in [(3,104),(2,102),(1,100)]]
@@ -269,14 +287,18 @@ def main():
         program['results'] = [m.step(a) for a in program['actions']]
         cases.append(program)
     offline=[m.offline_case(visible, cloud) for visible in (False, True) for cloud in (False, True)]
-    report=dict(schema=1, sample_sha256=base.SHA, scope=__doc__, cases=cases, offline=offline)
+    has_ip = []
+    for ip in ['0.0.0.0', '0.0.0.1', '255.255.255.255', '::', '::1', '2001:db8::', '::ffff:0.0.0.0']:
+        m.set_ip(INPUT, entry(ip, port=0))
+        has_ip.append(dict(ip=ip, result=bool(m.invoke(0x8e5e7c, INPUT))))
+    report=dict(schema=2, sample_sha256=base.SHA, scope=__doc__, cases=cases, offline=offline, has_ip=has_ip)
     raw=(json.dumps(report, sort_keys=True, separators=(',', ':'))+'\n').encode()
     if args.reference:
         stored = args.reference.read_bytes()
         assert raw == (gzip.decompress(stored) if args.reference.suffix == '.gz' else stored), 'reference changed'
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(gzip.compress(raw, mtime=0) if args.output.suffix == '.gz' else raw)
-    print(f'PASS: {len(cases)} original address-cache programs; {sum(len(c["actions"]) for c in cases)} steps; {len(offline)} Offline branches')
+    print(f'PASS: {len(cases)} original address-cache programs; {sum(len(c["actions"]) for c in cases)} steps; {len(offline)} Offline branches; {len(has_ip)} HasIP inputs')
 
 
 if __name__ == '__main__':

@@ -706,6 +706,11 @@ client_id 索引状态/持久信息，保存 steamid 列表，并以列表首项
 每条地址记录含：是否实际收到该地址回复、是否为 status 中的 public_ip_address、地址时间字段、
 IP/类型/端口。这里给字段取的中文名来自写入调用点，不是恢复出的原始 C++ 成员名。
 
+`BProcess` 在加入公布地址和实际源地址前还检查 `CIPAddress::HasIP @0x8e5e7c`：
+IPv4 的数值0、IPv6 的16字节全0均为 false。能被数字解析器接受并不意味着可加入候选；
+`0.0.0.0`/`::` 不应产生探测目标。下面实验执行该原始 helper 的7组输入；不据此声称覆盖了
+StringView 构造器对 IPv4-mapped、scope、非数字名字等文本的全部规范化行为。
+
 | 地址来源 | 实际回复标志 | remote_ip 标志 | 用途 |
 |---|---|---|---|
 | 收到 UDP status 的源地址 | true，并更新 `time()` 和端口 | 不新增此标志 | 可以被选作控制消息直连地址 |
@@ -727,8 +732,8 @@ verified=true 时更新时间和端口（`0x79c21c–0x79c23c`）。因此重复
 **比较器的适用边界**：上述时间容差按每一对地址比较，不是能直接展开成全局 tuple 的排序键。
 合成输入 A=(time=104, IPv4=3)、B=(102,2)、C=(100,1)，其余标志相同时，原始比较器返回
 `A<C`、`C<B`、`B<A` 均为 true：前一对由时间决定，后两对由 IP 决定。这里存在不传递的
-两两比较，不能声称所有地址集合都有唯一的规范顺序；测试只证明比较器结果，不证明某种
-标准库 sort 对这组输入的最终排列。实现若改用确定的全局顺序，须注明本项目差异。
+两两比较，不能声称所有地址集合都有唯一的规范顺序。早期两两测试只证明比较器结果，
+不能证明任意标准库 sort 的最终排列；完整原函数输出见下方向量。实现若改用确定的全局顺序，须注明本项目差异。
 
 完整排序函数为 `std::__ndk1::__introsort<...AddressInfo_t...,false> @0x7a24d8`，
 元素为40字节；不是调用系统 qsort。可复现实验执行该函数及其插入、分区、ninther、堆排序
@@ -750,6 +755,8 @@ uv run --with unicorn --with pyelftools python scripts/audit-steam-address-cache
 记录查找、预分配容器存储、时钟、strcmp、限长文本复制/printf 为显式 provider；地址添加、
 去重更新、清理、排序、GetAddress 由原指令运行。该实验不执行持久文件读写、status protobuf
 解析、完整可见表 Update、真实网络或本项目的完整地址目录，不能替代其实现与互操作验证。
+`ClearInactiveAddresses` 还处理持久记录 `+56` 的字符串向量；此处将它设为空，没有验证
+非空字符串析构/存储，也不把地址列表比较扩展成整个持久记录对象的完整行为证明。
 
 `GetAddress` 和 `SendMessage` 的隐式选址只取排序后第一条且要求实际回复标志为 true。
 `SendMessage @0x79ae04–0x79ae9c` 仅在调用方没有提供完整 IP+port 且 client_id 非零时查缓存。
@@ -807,6 +814,40 @@ else if sends_in_round <= 2 and now >= next_extra_send:
 
 `HandleNetworkChanged @0x79a614` 只在 manager Idle 时清零可见记录时间并立即触发发现；
 它不是任何流状态下都重启 ICE 的通用网络变化处理器。
+
+### 10.3 应用接线与可复现边界
+
+`host_addresses.cpp` 管理进程内地址值，按上述三秒容差比较器及独立的 libc++19 非 bitset
+排序器执行添加/更新、清理和 GetAddress。不能用平台 std::sort、稳定过滤或全局时间 tuple
+替换这些步骤。`address_cache_oracle.c` 直接调用该生产模块，
+`check-steam-address-cache.py` 与固定原指令输出比较136组程序/217步，包含逐次添加和
+多地址更新、跨 IPv4 字节顺序、三元组排列、显式 depth=0 等输入。八份能正常运行的错误
+实现分别被原输出拒绝；编译失败、崩溃、执行器断言不作为策略反例通过。
+
+`host_directory.c` 分开管理实际 status 墙钟时间、可见记录、cloud-online 与地址缓存。
+runtime 在一个 mutex 临界区内更新目录并发布 UI 事件；IHS 与云端消费者停止/join 后才释放
+目录。公布地址在 borrowed 回调结束前解析成拥有的 IP/port/标志；不保留 protobuf 指针。
+前端心跳不更新实际 status 时间，因此即使 UI 有自己的短期快照失效保护，协议可见性仍由
+目录的30秒边界、云端豁免和 Offline 决定。进程重启的保存地址只作为时间0/未验证 seed；
+本模块的进程内目录不等同于完整持久文件、SteamID 列表或长期密钥存储。
+
+发现地址列表与关注 client_id 列表不是同一种变化。原 `BAddNetworkAddress`/
+`ClearInactiveAddresses` 没有写入下一发现轮次；`AddClientDiscovery` 才清零轮次时间
+（§10.2）。IHS 的 `SetDiscoveryDirectory` 以原操作队列更新地址快照，关注 ID 列表相同
+时保留 full/fast 截止时间和轮次；列表改变才触发新轮次。原 `SetDiscoveryTargets` 仍保留
+显式刷新契约。新接口单独携带唯一非零关注 ID 列表，不从有地址的候选反推关注身份；
+无已知地址的主机也可出现在禁用广域广播订阅后的 directed-client 广播中。runtime 关注
+列表来自保存的 UI 主机，地址目录本身不隐式增加关注。不能让收到每个新地址或排序变化
+都等价于重新关注主机，从而额外加发发现。
+
+`host_directory_runtime.c` 经过真实 IHS 线程/报文解析/回调/应用目录和最终请求序列化，
+验证22条公布文本中的20个非零候选未截断、零 IP 被拒绝、public/private 重复标志、仅源地址可达、首次 seed 清理、30秒等号、
+云端豁免/断开、UDP Offline、源端口更新及已验证地址覆盖过时 UI 地址。用固定墙钟额外检查
+同关注 ID 的地址更新保留轮次/截止时间，新 ID 触发轮次，以及无地址 ID 实际进入最终
+directed-client 广播。网络收发、墙钟和云端 status
+入口是受控 provider，不是实际 Steam、路由器、DNS、互联网可达性、Qt 或 Switch 实机证据。
+这些组件用例也不代替原 manager 的 status→地址发布→当次 Update 发包的联合调用链对照，
+或控制消息重试时调用者如何提供显式/隐式地址的对照。
 
 ## 11. 配对、开流与 Proof 的完整事务规则
 

@@ -10,6 +10,7 @@
 #include "platform/shortcut.h"
 #include "platform/system.h"
 #include "remote_connection.h"
+#include "host_directory.h"
 #if NSL_HAVE_SNS
 #include "sns_backend.h"
 #endif
@@ -68,15 +69,14 @@ struct sl_runtime {
     bool sns_waiting;
     atomic_bool session_finalized;
 #endif
-    sl_remote_host cloud_hosts[SL_REMOTE_PEERS];
-    size_t cloud_count;
-    IHS_HostInfo local_hosts[SL_REMOTE_PEERS];
-    uint64_t local_seen[SL_REMOTE_PEERS], cloud_refresh;
-    size_t local_count;
+    sl_directory_host *directory; /* Both producers serialize under lock. */
+    uint64_t cloud_refresh; /* UI heartbeat; never updates last_status. */
     bool discovery_subscription;
     char discovery_hint[64];
-    IHS_DiscoveryTarget discovery_targets[SL_HOST_LIMIT + 1 + SL_REMOTE_PEERS * SL_REMOTE_ADDRESSES];
+    IHS_DiscoveryTarget *discovery_targets;
     size_t discovery_target_count;
+    uint64_t discovery_ids[SL_HOST_LIMIT];
+    size_t discovery_id_count;
     /* Discovery metadata is transient; keep it out of the profile ABI. */
     IHS_HostInfo discovered_hosts[SL_HOST_LIMIT];
     unsigned discovered_count, discovered_next;
@@ -198,8 +198,7 @@ static void diagnostic_phase(const char *phase, int value) {
 #define diagnostic_state(r, phase)     ((void)0)
 #define diagnostic_phase(phase, value) ((void)0)
 #endif
-static void post(sl_runtime *r, sl_runtime_event e) {
-    pthread_mutex_lock(&r->lock);
+static void post_locked(sl_runtime *r, sl_runtime_event e) {
     if (e.type != SL_EVENT_HOST && e.type != SL_EVENT_NETWORK)
         e.generation = r->active.generation;
     /* Discovery is coalesced and capped below the reserved terminal capacity. */
@@ -215,12 +214,10 @@ static void post(sl_runtime *r, sl_runtime_event e) {
                 r->events[i].host.client_id == e.host.client_id &&
                 r->events[i].host.instance_id == e.host.instance_id) {
                 r->events[i] = e;
-                pthread_mutex_unlock(&r->lock);
                 return;
             }
         }
         if (r->count >= 32) {
-            pthread_mutex_unlock(&r->lock);
             return;
         }
     }
@@ -231,6 +228,10 @@ static void post(sl_runtime *r, sl_runtime_event e) {
             (sl_runtime_event){.type = SL_EVENT_FAILURE, .generation = r->active.generation};
         snprintf(r->events[47].text, 192, "%s", sl_tr(SL_T_ERROR_QUEUE));
     }
+}
+static void post(sl_runtime *r, sl_runtime_event e) {
+    pthread_mutex_lock(&r->lock);
+    post_locked(r, e);
     pthread_mutex_unlock(&r->lock);
 }
 static void fail(sl_runtime *r, const char *s) {
@@ -258,18 +259,23 @@ static sl_host host_from(const IHS_HostInfo *info) {
     snprintf(h.system, sizeof(h.system), "%s", os);
     return h;
 }
-static void discovered(IHS_Client *client, const IHS_HostInfo *h, void *ctx) {
+static void publish_host_locked(sl_runtime *r, const sl_directory_host *host) {
+    IHS_HostInfo direct;
+    bool verified = sl_directory_direct(host, &direct);
+    sl_host h = host_from(verified ? &direct : &host->info);
+    post_locked(r, (sl_runtime_event){.type = SL_EVENT_HOST, .host = h,
+        .discovery_source = verified ? SL_DISCOVERY_LAN
+                            : host->cloud ? SL_DISCOVERY_INTERNET : SL_DISCOVERY_UNKNOWN});
+}
+static void discovery_offline(IHS_Client *, uint64_t, void *);
+static void discovered_status(IHS_Client *client, const IHS_HostInfo *h,
+                              const IHS_DiscoveryAddressHints *hints, void *ctx) {
     (void)client;
     sl_runtime *r = ctx;
     pthread_mutex_lock(&r->lock);
-    size_t local = 0;
-    while (local < r->local_count && r->local_hosts[local].clientId != h->clientId)
-        ++local;
-    if (local < SL_REMOTE_PEERS) {
-        if (local == r->local_count)
-            ++r->local_count;
-        r->local_hosts[local] = *h;
-        r->local_seen[local] = sl_system_now();
+    if (!sl_directory_status(&r->directory, h, hints, false, &h->address, (int64_t)time(NULL))) {
+        pthread_mutex_unlock(&r->lock);
+        return;
     }
     unsigned index;
     for (index = 0; index < r->discovered_count; ++index)
@@ -296,14 +302,16 @@ static void discovered(IHS_Client *client, const IHS_HostInfo *h, void *ctx) {
         }
         free(ip);
     }
+    publish_host_locked(r, sl_directory_find(r->directory, h->clientId));
     pthread_mutex_unlock(&r->lock);
     sl_host observed = host_from(h);
     char line[192];
     snprintf(line, sizeof(line), "discovery: response %.63s %.63s", observed.name,
              observed.address);
     sl_log(line);
-    post(r, (sl_runtime_event){
-                .type = SL_EVENT_HOST, .host = observed, .discovery_source = SL_DISCOVERY_LAN});
+}
+static void discovered(IHS_Client *client, const IHS_HostInfo *h, void *ctx) {
+    discovered_status(client, h, NULL, ctx);
 }
 /* Deferred authorization dispatch runs on this runtime worker, which owns
  * store. Attempt persistence before the library emits Confirmed; source ignores
@@ -558,7 +566,8 @@ static void activity(IHS_Session *s, int kind, uint64_t id, const char *name, vo
     snprintf(e.game.name, sizeof(e.game.name), "%s", name);
     post(r, e);
 }
-static const IHS_ClientDiscoveryCallbacks discovery_cb = {.discovered = discovered};
+static const IHS_ClientDiscoveryCallbacks discovery_cb = {
+    .discovered = discovered, .status = discovered_status, .offline = discovery_offline};
 static const IHS_ClientAuthorizationCallbacks auth_cb = {
     .persist = persist_authorization, .success = authorized, .failed = auth_failed};
 static const IHS_ClientStreamingCallbacks stream_cb = {.success = accepted,
@@ -668,35 +677,57 @@ static void stop_network_test(sl_runtime *r) {
 /* Runtime actor publishes a complete saved-address snapshot; the IHS timer
  * owns all scheduled discovery sends and their shared round sequence. */
 static bool sync_discovery_targets(sl_runtime *r) {
-    IHS_DiscoveryTarget targets[SL_HOST_LIMIT + 1 + SL_REMOTE_PEERS * SL_REMOTE_ADDRESSES] = {0};
-    size_t count = 0;
-    for (int i = -1; i < r->store.registry.count; ++i) {
-        const char *ip = i < 0 ? r->discovery_hint : r->store.registry.hosts[i].address;
-        IHS_DiscoveryTarget target = {0};
-        if (!ip[0] || !IHS_IPAddressFromString(&target.ip, ip)) continue;
-        target.clientId = i < 0 ? 0 : r->store.registry.hosts[i].client_id;
-        targets[count++] = target;
+    pthread_mutex_lock(&r->lock);
+    uint64_t ids[SL_HOST_LIMIT];
+    size_t idCount = 0;
+    for (int i = 0; i < r->store.registry.count; ++i) {
+        uint64_t id = r->store.registry.hosts[i].client_id;
+        bool duplicate = !id;
+        for (size_t j = 0; j < idCount; ++j) duplicate |= ids[j] == id;
+        if (!duplicate) ids[idCount++] = id;
     }
-    /* Cloud-announced addresses are unverified hints in this same manager;
-     * they do not create an independent send loop or a proven LAN route. */
-    for (size_t i = 0; i < r->cloud_count; ++i)
-        for (size_t a = 0; a < r->cloud_hosts[i].address_count; ++a) {
-            IHS_DiscoveryTarget target = {.clientId = r->cloud_hosts[i].info.clientId};
-            if (!IHS_IPAddressFromString(&target.ip, r->cloud_hosts[i].addresses[a])) continue;
-            bool duplicate = false;
-            for (size_t n = 0; n < count; ++n)
-                duplicate |= targets[n].clientId == target.clientId &&
-                             IHS_IPAddressCompare(&targets[n].ip, &target.ip) == 0;
-            if (!duplicate) targets[count++] = target;
-        }
-    bool same = count == r->discovery_target_count;
+    bool seeded = sl_directory_seed(&r->directory, 0, r->discovery_hint);
+    for (int i = 0; seeded && i < r->store.registry.count; ++i)
+        seeded = sl_directory_seed(&r->directory, r->store.registry.hosts[i].client_id,
+                                    r->store.registry.hosts[i].address);
+    size_t count = 0;
+    for (size_t i = 0; seeded && i <= idCount; ++i) {
+        sl_directory_host *h = sl_directory_find(r->directory, i ? ids[i-1] : 0);
+        if (!h) continue;
+        if (h->addresses.count > SIZE_MAX/sizeof(IHS_DiscoveryTarget)-count) seeded = false;
+        else count += h->addresses.count;
+    }
+    IHS_DiscoveryTarget *targets = seeded && count ? calloc(count, sizeof(*targets)) : NULL;
+    if (!seeded || (count && !targets)) {
+        pthread_mutex_unlock(&r->lock);
+        return false;
+    }
+    size_t n = 0;
+    for (size_t watched = 0; watched <= idCount; ++watched) {
+        sl_directory_host *h = sl_directory_find(r->directory, watched ? ids[watched-1] : 0);
+        if (!h) continue;
+        for (size_t i = 0; i < h->addresses.count; ++i)
+            targets[n++] = (IHS_DiscoveryTarget){.clientId = h->client_id,
+                                                 .ip = h->addresses.entries[i].address.ip};
+    }
+    pthread_mutex_unlock(&r->lock);
+    bool same = count == r->discovery_target_count && idCount == r->discovery_id_count &&
+                (!idCount || !memcmp(ids, r->discovery_ids, idCount*sizeof(*ids)));
     for (size_t i = 0; same && i < count; ++i)
         same = targets[i].clientId == r->discovery_targets[i].clientId &&
                IHS_IPAddressCompare(&targets[i].ip, &r->discovery_targets[i].ip) == 0;
-    if (same) return true;
-    if (!IHS_ClientSetDiscoveryTargets(r->client, targets, count)) return false;
-    memcpy(r->discovery_targets, targets, count * sizeof(*targets));
+    /* Do not hold the app mutex while entering the IHS operation queue. A
+     * concurrent receive can publish a newer directory for the next update. */
+    if (same) { free(targets); return true; }
+    if (!IHS_ClientSetDiscoveryDirectory(r->client, targets, count, ids, idCount)) {
+        free(targets);
+        return false;
+    }
+    free(r->discovery_targets);
+    r->discovery_targets = targets;
     r->discovery_target_count = count;
+    memcpy(r->discovery_ids, ids, idCount*sizeof(*ids));
+    r->discovery_id_count = idCount;
     return true;
 }
 static bool start_discovery(sl_runtime *r) {
@@ -740,23 +771,25 @@ static void cloud_watch(sl_runtime *r) {
     memset(peers, 0, sizeof(peers));
 }
 static bool local_host(sl_runtime *r, uint64_t id, IHS_HostInfo *out) {
-    uint64_t now = sl_system_now();
-    bool found = false;
     pthread_mutex_lock(&r->lock);
-    for (size_t i = 0; i < r->local_count; ++i)
-        if (r->local_hosts[i].clientId == id && now >= r->local_seen[i] &&
-            now - r->local_seen[i] < 30000) {
-            *out = r->local_hosts[i];
-            found = true;
-            break;
-        }
+    bool found = sl_directory_direct(sl_directory_find(r->directory, id), out);
     pthread_mutex_unlock(&r->lock);
     return found;
 }
+static bool host_cloud_online(sl_runtime *r, uint64_t id) {
+    pthread_mutex_lock(&r->lock);
+    const sl_directory_host *host = sl_directory_find(r->directory, id);
+    bool online = host && host->cloud;
+    pthread_mutex_unlock(&r->lock);
+    return online;
+}
 static void cloud_connected(bool connected, void *ctx) {
     sl_runtime *r = ctx;
-    if (!connected)
-        r->cloud_count = 0;
+    if (!connected) {
+        pthread_mutex_lock(&r->lock);
+        sl_directory_disconnect(r->directory);
+        pthread_mutex_unlock(&r->lock);
+    }
     sl_log(connected ? "cloud: anonymous session connected" : "cloud: disconnected");
 }
 static void cloud_diagnostic(const char *message, void *ctx) {
@@ -813,49 +846,45 @@ static void cloud_pair_failed(IHS_AuthorizationResult result, void *ctx) {
 }
 static void cloud_observed(const sl_remote_host *host, void *ctx) {
     sl_runtime *r = ctx;
-    size_t index = 0;
-    while (index < r->cloud_count && r->cloud_hosts[index].info.clientId != host->info.clientId)
-        ++index;
+    IHS_DiscoveryAddressHints hints = {.publicAddress = host->public_address,
+        .addresses = host->addresses, .addressCount = host->address_count};
+    pthread_mutex_lock(&r->lock);
+    bool accepted = sl_directory_status(&r->directory, &host->info, &hints, true, NULL,
+                                         (int64_t)time(NULL));
+    if (accepted) publish_host_locked(r, sl_directory_find(r->directory, host->info.clientId));
+    pthread_mutex_unlock(&r->lock);
 #if NSL_DIAGNOSTICS
-    if (index == r->cloud_count) {
-        char line[128];
-        snprintf(line, sizeof(line), "cloud_host event=online addresses=%zu known=%d",
-                 host->address_count, saved_host(r, host->info.clientId) != NULL);
-        sl_log(line);
-    }
+    char line[128];
+    snprintf(line, sizeof(line), "cloud_host event=online addresses=%zu accepted=%d",
+             host->address_count, accepted);
+    sl_log(line);
 #endif
-    if (index < SL_REMOTE_PEERS) {
-        if (index == r->cloud_count)
-            ++r->cloud_count;
-        r->cloud_hosts[index] = *host;
-    }
-    /* Advertised addresses are only hints. The UDP discovery callback alone
-     * records a verified direct route; receiving cloud status never does. */
-    sl_host h = host_from(&host->info);
-    sl_host *known = saved_host(r, host->info.clientId);
-    if (known)
-        snprintf(h.address, sizeof(h.address), "%s", known->address);
-    IHS_HostInfo direct;
-    post(r, (sl_runtime_event){.type = SL_EVENT_HOST,
-                               .host = h,
-                               .discovery_source = local_host(r, host->info.clientId, &direct)
-                                                       ? SL_DISCOVERY_LAN
-                                                       : SL_DISCOVERY_INTERNET});
 }
 static void cloud_offline(uint64_t id, void *ctx) {
     sl_runtime *r = ctx;
+    pthread_mutex_lock(&r->lock);
+    bool removed = sl_directory_offline(r->directory, id);
+    if (removed)
+        post_locked(r, (sl_runtime_event){.type = SL_EVENT_HOST_OFFLINE, .host = {.client_id = id}});
+    pthread_mutex_unlock(&r->lock);
     sl_log("cloud_host event=offline");
-    for (size_t i = 0; i < r->cloud_count; ++i)
-        if (r->cloud_hosts[i].info.clientId == id) {
-            memmove(r->cloud_hosts + i, r->cloud_hosts + i + 1,
-                    (--r->cloud_count - i) * sizeof(*r->cloud_hosts));
-            break;
-        }
-    /* Original BProcess(type 2) removes visible status and cloud-online
-     * membership even when a previous UDP status exists (0x79a03c–0x79a0a4).
-     * Keep pairing/address records; only a subsequent status can republish
-     * presence. Replaying an old LAN reply here would cancel the Offline. */
-    post(r, (sl_runtime_event){.type = SL_EVENT_HOST_OFFLINE, .host = {.client_id = id}});
+}
+static void discovery_offline(IHS_Client *client, uint64_t id, void *ctx) {
+    (void)client;
+    cloud_offline(id, ctx); /* Same parsed type2 presence semantics; no key/address deletion. */
+}
+static void refresh_presence(sl_runtime *r, uint64_t now, int64_t wall) {
+    bool publish = now-r->cloud_refresh >= 5000;
+    if (publish) r->cloud_refresh = now;
+    pthread_mutex_lock(&r->lock);
+    for (sl_directory_host *h = r->directory; h; h = h->next) {
+        if (sl_directory_expired(h, wall)) {
+            h->visible = false;
+            post_locked(r, (sl_runtime_event){.type = SL_EVENT_HOST_OFFLINE,
+                                              .host = {.client_id = h->client_id}});
+        } else if (h->visible && publish) publish_host_locked(r, h);
+    }
+    pthread_mutex_unlock(&r->lock);
 }
 static void cloud_stream_result(IHS_StreamingResult result, const sl_remote_material *m,
                                 void *ctx) {
@@ -922,6 +951,9 @@ static void stop_client(sl_runtime *r) {
     r->client = NULL;
     r->discovery_subscription = false;
     r->discovery_target_count = 0;
+    r->discovery_id_count = 0;
+    free(r->discovery_targets);
+    r->discovery_targets = NULL;
 }
 static bool start_client(sl_runtime *r) {
     sl_log("discovery: creating IHS client");
@@ -1080,12 +1112,17 @@ static bool request_stream(sl_runtime *r, bool network_test) {
     IHS_HostInfo host;
     if (!r->client) return false;
     bool have_address = host_info(r, &r->active.host, &host);
-    bool cloud_online = false;
-    for (size_t i = 0; i < r->cloud_count; ++i)
-        cloud_online |= r->cloud_hosts[i].info.clientId == r->active.host.client_id;
+    bool cloud_online = host_cloud_online(r, r->active.host.client_id);
     IHS_HostInfo direct;
     bool direct_ready = local_host(r, r->active.host.client_id, &direct);
-    if (!have_address && !cloud_online) return false;
+    if (direct_ready) {
+        host.address = direct.address; /* Actual selected IP AND observed port. */
+        have_address = true;
+    }
+    /* The saved UI address is a discovery seed, not an implicit direct
+     * destination. Known-host selection requires a verified cache entry or
+     * cloud-online status; explicit IP entry discovers before reaching here. */
+    if ((!have_address && !cloud_online) || (!direct_ready && !cloud_online)) return false;
     if (!pause_discovery(r)) return false;
     const sl_host *paired = sl_host_find(&r->store.registry, r->active.host.id);
     uint8_t selected[32];
@@ -1373,11 +1410,15 @@ static void execute(sl_runtime *r, sl_command cmd) {
             fail(r, sl_tr(SL_T_CLOUD_UNAVAILABLE));
         return;
     }
-    bool cloud_online = false;
-    for (size_t i = 0; i < r->cloud_count; ++i)
-        cloud_online |= r->cloud_hosts[i].info.clientId == cmd.host.client_id;
+    bool cloud_online = host_cloud_online(r, cmd.host.client_id);
     IHS_HostInfo h;
-    if (!host_info(r, &cmd.host, &h) && !(cmd.type == SL_CMD_STREAM && cloud_online)) {
+    bool have_address = host_info(r, &cmd.host, &h);
+    IHS_HostInfo direct;
+    if (cmd.type == SL_CMD_STREAM && local_host(r, cmd.host.client_id, &direct)) {
+        h.address = direct.address;
+        have_address = true;
+    }
+    if (!have_address && !(cmd.type == SL_CMD_STREAM && cloud_online)) {
         fail(r, sl_tr(SL_T_ADDRESS_UNAVAILABLE));
         return;
     }
@@ -1591,8 +1632,12 @@ static void udp_poll(sl_runtime *r) {
             sl_host *h = &r->store.registry.hosts[i];
             eligible += h->paired && h->account && h->client_id;
         }
+        size_t online = 0;
+        pthread_mutex_lock(&r->lock);
+        for (sl_directory_host *h = r->directory; h; h = h->next) online += h->cloud;
+        pthread_mutex_unlock(&r->lock);
         snprintf(reply, sizeof(reply), "OK %s saved=%d eligible=%u online=%zu", connection,
-                 r->store.registry.count, eligible, r->cloud_count);
+                 r->store.registry.count, eligible, online);
     } else if (!strcmp(cmd, "audio")) {
         stream_media_snapshot *s = &r->previous;
         snprintf(
@@ -1807,21 +1852,7 @@ static void *worker_main(void *ctx) {
             sl_log(line);
         }
 #endif
-        if (now - r->cloud_refresh >= 5000) {
-            r->cloud_refresh = now;
-            for (size_t i = 0; i < r->cloud_count; ++i) {
-                sl_host h = host_from(&r->cloud_hosts[i].info);
-                sl_host *known = saved_host(r, h.client_id);
-                if (known)
-                    snprintf(h.address, sizeof(h.address), "%s", known->address);
-                IHS_HostInfo direct;
-                post(r, (sl_runtime_event){.type = SL_EVENT_HOST,
-                                           .host = h,
-                                           .discovery_source = local_host(r, h.client_id, &direct)
-                                                                   ? SL_DISCOVERY_LAN
-                                                                   : SL_DISCOVERY_INTERNET});
-            }
-        }
+        refresh_presence(r, now, (int64_t)time(NULL));
         sample_network_test(r, now);
         if (now - r->last_diag >= 1000)
             sample(r, now);
@@ -2066,6 +2097,8 @@ void sl_runtime_destroy(sl_runtime *r) {
     if (r->udp >= 0)
         close(r->udp);
     sl_log("cleanup: runtime worker joined");
+    sl_directory_destroy(&r->directory);
+    free(r->discovery_targets);
     sl_stream_settings_destroy(&r->settings);
     pthread_cond_destroy(&r->wake);
     pthread_mutex_destroy(&r->lock);

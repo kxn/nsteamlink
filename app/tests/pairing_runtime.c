@@ -36,6 +36,15 @@ static sl_runtime *runtime;
 static sl_auth_store initial;
 static sl_host host;
 static uint8_t peer_secret[32];
+void __real_IHS_ClientSetDiscoveryCallbacks(IHS_Client *, const IHS_ClientDiscoveryCallbacks *, void *);
+void __wrap_IHS_ClientSetDiscoveryCallbacks(IHS_Client *c,
+    const IHS_ClientDiscoveryCallbacks *callbacks, void *context) {
+    __real_IHS_ClientSetDiscoveryCallbacks(c, callbacks, context);
+    /* Known-host authorization fixtures supply prior discovery explicitly.
+     * The Beta-universe case still waits for its actual UDP status below. */
+    if (automatic && !discover_universe)
+        test_discovery_observed(c, callbacks, context, peer_port);
+}
 /* This fixture verifies LAN authorization entropy and actual UDP ownership.
  * Keep the real cloud object/cleanup, but do not contact production directory
  * services: a background WebSocket mask must not consume scripted PIN entropy. */

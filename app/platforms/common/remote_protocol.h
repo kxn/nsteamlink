@@ -2,7 +2,6 @@
 #include <ihslib/client.h>
 
 #define SL_REMOTE_PEERS     16
-#define SL_REMOTE_ADDRESSES 8
 typedef struct sl_remote sl_remote;
 typedef struct sl_remote_peer {
     uint64_t client_id, steam_id;
@@ -11,7 +10,11 @@ typedef struct sl_remote_peer {
 typedef struct sl_remote_host {
     IHS_HostInfo info;
     uint64_t steam_id;
-    char addresses[SL_REMOTE_ADDRESSES][64];
+    /* Borrowed protobuf strings during host(), never a reachability proof.
+     * No eight-address truncation or public-address de-duplication here: the
+     * directory must observe original source flags and insertion order. */
+    const char *const *addresses;
+    const char *public_address;
     size_t address_count;
 } sl_remote_host;
 typedef struct sl_remote_material {

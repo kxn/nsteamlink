@@ -47,10 +47,10 @@ int main(void) {
     sl_host *h = sl_host_find(&ui.store.registry, stored->id);
     assert(h && sl_host_online(h, ui.now));
     assert(sl_ui_host_source(&ui, h) == SL_DISCOVERY_LAN);
-    assert(r.cloud_count == 1 && r.local_count == 1);
+    assert(host_cloud_online(&r, 123));
 
     cloud_offline(123, &r);
-    assert(!r.cloud_count);
+    assert(!host_cloud_online(&r, 123));
     IHS_HostInfo retained;
     assert(local_host(&r, 123, &retained)); /* Offline does not erase the address cache. */
     drain(&r, &ui);
@@ -74,7 +74,7 @@ int main(void) {
     drain(&r, &ui);
     assert(sl_host_online(h, ui.now));
     assert(sl_ui_host_source(&ui, h) == SL_DISCOVERY_LAN && h->paired);
-    assert(!r.cloud_count && r.local_count == 1);
+    assert(!host_cloud_online(&r, 123));
     for (int i = 0; i < ui.layout.count; ++i)
         if (ui.layout.controls[i].action == SL_RECENT)
             assert(!ui.layout.controls[i].disabled);
@@ -92,6 +92,7 @@ int main(void) {
     drain(&r, &ui);
     assert(!sl_host_online(h, ui.now));
     /* All fixtures are synchronous: no socket/worker/stream was created. */
+    sl_directory_destroy(&r.directory);
     pthread_mutex_destroy(&r.lock);
     IHS_Quit();
     puts("PASS cloud Offline with cached LAN status: hidden presence, retained keys/history, fresh UDP revival");

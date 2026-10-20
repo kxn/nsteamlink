@@ -120,3 +120,9 @@ IHSlib 的 `src/session/outgoing_sort.c` 参考
 实现至多32个通道的排序，单文件使用 Apache-2.0 WITH LLVM-exception；完整许可位于
 `third_party/ihslib/src/session/LLVM-LICENSE.txt`。排序策略与同优先级结果以固定官方
 Steam Link 客户端原指令对照为准，开源实现只用于算法实现参考。
+
+应用的 `app/platforms/common/steam_address_sort.h` 同样采用 LLVM libc++19（19.1.7）
+的非 bitset introsort 及插入、分区、ninther、堆排序辅助函数，使用 Apache-2.0 WITH
+LLVM-exception，许可位于 `app/platforms/common/LLVM-LICENSE.txt`。此处没有32元素上限；
+用途是保留官方主机地址比较器存在三秒时间容差时的实际排列，而不是依赖平台 std::sort。
+`host_addresses.cpp` 的生产策略与固定官方原始指令向量逐项比较，参见公网协议参考 §10.1。

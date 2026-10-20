@@ -18,9 +18,10 @@ add_library(nsl_sdr_core STATIC platforms/common/sdr_wire.c platforms/common/sdr
     platforms/common/sdr_policy.c)
 target_include_directories(nsl_sdr_core PUBLIC platforms/common PRIVATE ${CMAKE_SOURCE_DIR}/third_party/jsmn)
 target_compile_options(nsl_sdr_core PRIVATE -Wall -Wextra)
-add_library(nsl_remote STATIC platforms/common/remote_wire.c platforms/common/remote_protocol.c
+add_library(nsl_remote STATIC platforms/common/host_addresses.cpp platforms/common/host_directory.c platforms/common/remote_wire.c platforms/common/remote_protocol.c
     platforms/common/remote_connection.c platforms/common/stream_bridge.c
     platforms/common/dns_refresh.c platforms/common/dns_config.c platforms/common/dns_policy.c)
+target_compile_features(nsl_remote PRIVATE cxx_std_17)
 target_include_directories(nsl_remote PUBLIC platforms/common PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/jsmn ${CMAKE_SOURCE_DIR}/third_party/ihslib/src
     ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client)
@@ -497,6 +498,26 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_link_libraries(nsl-cloud-presence-runtime PRIVATE nsl_platform)
     add_test(NAME cloud_presence_runtime COMMAND nsl-cloud-presence-runtime)
     set_tests_properties(cloud_presence_runtime PROPERTIES TIMEOUT 15)
+    add_executable(nsl-address-cache-oracle tests/address_cache_oracle.c)
+    target_link_libraries(nsl-address-cache-oracle PRIVATE nsl_remote)
+    target_compile_options(nsl-address-cache-oracle PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+    add_test(NAME address_cache_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-address-cache.py"
+        --receiver $<TARGET_FILE:nsl-address-cache-oracle>)
+    set_tests_properties(address_cache_official_vectors PROPERTIES TIMEOUT 30)
+    add_test(NAME address_cache_mutation_counterexamples COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/test-steam-address-cache-mutations.py"
+        --compiler "${CMAKE_CXX_COMPILER}" --c-compiler "${CMAKE_C_COMPILER}")
+    set_tests_properties(address_cache_mutation_counterexamples PROPERTIES TIMEOUT 120)
+    add_executable(nsl-host-directory-runtime tests/host_directory_runtime.c)
+    target_include_directories(nsl-host-directory-runtime PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf)
+    target_compile_options(nsl-host-directory-runtime PRIVATE -Wall -Wextra -Wno-unknown-pragmas -UNDEBUG)
+    target_link_libraries(nsl-host-directory-runtime PRIVATE nsl_platform)
+    target_link_options(nsl-host-directory-runtime PRIVATE -Wl,--wrap=recvfrom -Wl,--wrap=sendto -Wl,--wrap=time)
+    add_test(NAME host_directory_runtime COMMAND nsl-host-directory-runtime)
+    set_tests_properties(host_directory_runtime PROPERTIES TIMEOUT 15)
     add_executable(nsl-resolution-render tests/test_resolution_render.c)
     target_include_directories(nsl-resolution-render PRIVATE platforms/common ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
     target_link_libraries(nsl-resolution-render PRIVATE nsl_gfx)
@@ -820,7 +841,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_compile_options(nsl-network-test-failure-runtime PRIVATE -UNDEBUG -Wall -Wextra)
     target_link_libraries(nsl-network-test-failure-runtime PRIVATE nsl_platform)
     target_link_options(nsl-network-test-failure-runtime PRIVATE -Wl,--wrap=IHS_ClientStreamingRequest
-        -Wl,--wrap=sl_runtime_read_facts)
+        -Wl,--wrap=sl_runtime_read_facts -Wl,--wrap=IHS_ClientSetDiscoveryCallbacks)
     add_test(NAME network_test_failure_runtime COMMAND nsl-network-test-failure-runtime)
     set_tests_properties(network_test_failure_runtime PROPERTIES TIMEOUT 40)
     add_executable(nsl-host-key-store tests/host_key_store.c src/services/host_key_store.c)
@@ -838,6 +859,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
         -Wl,--wrap=sl_auth_save -Wl,--wrap=sl_system_random
         -Wl,--wrap=IHS_ClientStreamingRequest -Wl,--wrap=IHS_CryptoRandomBytes
         -Wl,--wrap=sl_network_stats_load -Wl,--wrap=sl_host_key_save
+        -Wl,--wrap=IHS_ClientSetDiscoveryCallbacks
         -Wl,--wrap=sl_remote_connection_update)
     add_test(NAME pairing_runtime COMMAND nsl-pairing-runtime)
     set_tests_properties(pairing_runtime PROPERTIES TIMEOUT 60)
@@ -853,6 +875,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_compile_options(nsl-network-test-runtime PRIVATE -UNDEBUG -Wall -Wextra)
     target_link_libraries(nsl-network-test-runtime PRIVATE nsl_platform)
     target_link_options(nsl-network-test-runtime PRIVATE -Wl,--wrap=IHS_ClientStreamingRequest
+        -Wl,--wrap=IHS_ClientSetDiscoveryCallbacks
         -Wl,--wrap=sl_network_stats_save_session -Wl,--wrap=sl_system_now
         -Wl,--wrap=stream_media_get_snapshot)
     add_test(NAME network_test_runtime COMMAND nsl-network-test-runtime)

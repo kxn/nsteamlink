@@ -42,6 +42,12 @@ void __wrap_stream_media_get_snapshot(stream_media_snapshot *out) {
     }
 }
 static uint16_t peer_port;
+void __real_IHS_ClientSetDiscoveryCallbacks(IHS_Client *, const IHS_ClientDiscoveryCallbacks *, void *);
+void __wrap_IHS_ClientSetDiscoveryCallbacks(IHS_Client *c,
+    const IHS_ClientDiscoveryCallbacks *callbacks, void *context) {
+    __real_IHS_ClientSetDiscoveryCallbacks(c, callbacks, context);
+    test_discovery_observed(c, callbacks, context, peer_port);
+}
 static sl_runtime *runtime;
 static sl_auth_store store;
 static bool cancel_on_save, fail_save;

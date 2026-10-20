@@ -77,7 +77,10 @@ static void failed(IHS_AuthorizationResult result, void *ctx) {
 static void host(const sl_remote_host *h, void *ctx) {
     fixture *f = ctx;
     assert(h->info.clientId == 77 && h->steam_id == 88);
-    assert(h->address_count == 1 && !strcmp(h->addresses[0], "192.0.2.1"));
+    assert(h->address_count == 10 && !strcmp(h->addresses[0], "192.0.2.1"));
+    assert(!strcmp(h->addresses[1], "not an address") &&
+           !strcmp(h->addresses[9], "192.0.2.9"));
+    assert(!strcmp(h->public_address, "192.0.2.1")); /* Keep duplicate's source marker. */
     /* A cloud address has NOT become a verified UDP route. */
     assert(h->info.address.port == 0);
     ++f->hosts;
@@ -221,10 +224,12 @@ static void lifecycle(void) {
     b = sent(f, f->count - 1, 5);
     assert(field(b.bytes, b.size, 1).value == 2002 && f->disconnected == 1);
     CMsgRemoteClientBroadcastStatus status = CMSG_REMOTE_CLIENT_BROADCAST_STATUS__INIT;
-    char *addresses[] = {"192.0.2.1", "not an address"};
+    char *addresses[] = {"192.0.2.1", "not an address", "192.0.2.2", "192.0.2.3",
+        "192.0.2.4", "192.0.2.5", "192.0.2.6", "192.0.2.7", "192.0.2.8", "192.0.2.9"};
     status.hostname = "Synthetic host";
-    status.n_ip_addresses = 2;
+    status.n_ip_addresses = 10;
     status.ip_addresses = addresses;
+    status.public_ip_address = "192.0.2.1";
     reply(f, 1, &status.base);
     assert(f->hosts == 1);
     uint8_t off[64];

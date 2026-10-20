@@ -2828,3 +2828,37 @@ UI 队列可以合并同一主机的连续 status，但不能跨过该主机的 
 同一份地址实验更正了协议参考 §10.1 中“时间仅为最后回复时间”的定义，保留新增未验证
 地址也写当前时间、已有未验证地址不刷新时间/端口、逆序 FastRemove 和非传递比较器的
 完整排序结果。可见记录寿命、地址可达标志和配对存储是独立状态，不能再用一个超时统一表示。
+
+## D-A079：同一主机目录接收 UDP 与云端状态，地址资格独立于可见性
+
+Evidence：公网协议参考 §10.1/§10.2 的 BProcess、BAddNetworkAddress、ClearInactiveAddresses、
+GetAddress、Update 及 Offline 原始指令。`audit-steam-address-cache.py` 的完整排序/更新
+输出用于比较生产实现；不是只比较两两 comparator，也不让系统 sort 自行决定非传递输入结果。
+
+Conclusion：`host_addresses.cpp` 保存按 IP 去重的端口、已验证/remote 标志和墙钟时间，使用
+独立的 libc++19 非 bitset 排序实现。`host_directory.c` 分别保存首次 status、实际 status
+时间、可见与 cloud-online 标志。首次 status 清理未验证 seed，依次加入 public、普通公布
+地址和实际源地址；公布地址可携带端口，但只有实际来源授予已验证资格。同 IP 的 remote
+标志不会被普通公告清除，公告不会更新已有端口或时间。
+
+重载的保存地址为未验证、时间0；模块不把上一进程的可达标志写回配对资料。地址目录是
+进程内状态，其存储契约不等同于设备身份/长期密钥。可见记录在非云端在线且墙钟差>=30秒
+时删除，地址保留；云端断开仅清在线集合。两个来源的 Offline 共用可见删除路径，新 status
+可重新上线。UI 心跳只重发目录的可见快照，不刷新实际 status 时间，前端不再决定协议寿命。
+
+IHS 新 status 回调保留 borrowed 公布地址、public 标志与输入顺序，优先于旧 discovered
+回调；type2 新增独立 offline 回调。云端回调也借用原 protobuf 字符串，不截断成8个，不在
+进入目录前去掉 public/private 重复。目录在回调返回前只保存解析后的值，不持有 protobuf 指针。
+
+runtime 两个输入源在同一 mutex 下更新目录并入队事件，Offline 是合并边界。调用 IHS
+操作队列时不持有该 mutex；发现目标使用动态拥有的完整快照，仍由 IHS 唯一调度器按原
+操作顺序发送。更新同一关注主机列表的地址/排序不重置轮次或截止时间；只有关注 ID 列表
+改变才相当于 AddClientDiscovery 触发新轮次。原有 SetDiscoveryTargets API 保留显式刷新
+契约，runtime 使用 SetDiscoveryDirectory 区分这两种操作。关注 ID 独立于地址列表；即使
+某个已关注主机没有地址，禁用广域广播订阅后的 directed-client 广播仍须包含其 ID。
+已忘记/尚未纳入 UI 保存主机的地址缓存不会自行增加关注列表。开流从目录选择已验证的 IP和端口，保存的 UI 地址仅为发现 seed。清理为
+停止/join IHS 和云端使用者，再释放目录与目标快照；不新增后台线程或 detached owner。
+发送地址快照按关注 ID 的顺序展开各自已排序的地址，而不是按目录记录的创建/接收顺序。
+
+原始指令比较的 provider 范围、运行时受控报文/端点范围须分别记录；它们不证明持久文件
+与完整 manager/Qt 网络变化调用链、实际 DNS/Steam/ICE/SDR/媒体或 Switch loader 行为。
