@@ -12,6 +12,7 @@ extern "C" {
 #endif
 #include "sns_message_queue.h"
 #include "sns_connection_policy.h"
+#include "sns_config_fetch_policy.h"
 #include <mbedtls/base64.h>
 #include <curl/curl.h>
 #include <atomic>
@@ -138,7 +139,8 @@ struct sl_sns {
     CURLM *http = nullptr;
     CURL *request = nullptr;
     unsigned config_attempt = 0;
-    std::vector<char> config;
+    nsl::SnsConfigFetchPolicy config_fetch;
+    std::vector<char> config, config_download;
     Message certificate;
     int end_reason = 0;
     sl_sns_stats stats{};
@@ -212,10 +214,10 @@ static size_t receive_config(char *p, size_t size, size_t count, void *ctx) {
     if (size && count > SIZE_MAX / size)
         return 0;
     size_t bytes = size * count;
-    if (bytes > 1024 * 1024 - b->config.size())
+    if (bytes > 1024 * 1024 - b->config_download.size())
         return 0;
     try {
-        b->config.insert(b->config.end(), p, p + bytes);
+        b->config_download.insert(b->config_download.end(), p, p + bytes);
         return bytes;
     } catch (const std::bad_alloc &) { return 0; }
 }
@@ -236,14 +238,21 @@ static void config_event(sl_sns *b, const char *event, int result) {
     (void)b; (void)event; (void)result;
 #endif
 }
-static bool begin_config(sl_sns *b) {
-    b->config.clear();
+static bool begin_config(sl_sns *b, bool force = false) {
+    if (!b->config_fetch.begin(force)) return true;
+    b->config_download.clear();
     ++b->config_attempt;
     b->request = curl_easy_init();
-    if (!b->request)
+    if (!b->request) {
+        b->config_fetch.cannot_start();
         return false;
-    curl_easy_setopt(b->request, CURLOPT_URL,
-        "https://api.steampowered.com/ISteamApps/GetSDRConfig/v1?appid=353380");
+    }
+    /* Retail Public/Global, without the China hint. Counts 2,4,... use the
+     * China WebAPI base while retaining Global configuration via the suffix. */
+    const char *url = b->config_fetch.alternate_realm()
+        ? "https://api.steamchina.com/ISteamApps/GetSDRConfig/v1?appid=353380&realm=steamglobal"
+        : "https://api.steampowered.com/ISteamApps/GetSDRConfig/v1?appid=353380";
+    curl_easy_setopt(b->request, CURLOPT_URL, url);
     curl_easy_setopt(b->request, CURLOPT_WRITEFUNCTION, receive_config);
     curl_easy_setopt(b->request, CURLOPT_WRITEDATA, b);
     curl_easy_setopt(b->request, CURLOPT_SSL_VERIFYPEER, 1L);
@@ -253,7 +262,10 @@ static bool begin_config(sl_sns *b) {
     curl_easy_setopt(b->request, CURLOPT_CONNECTTIMEOUT_MS, 10000L);
     curl_easy_setopt(b->request, CURLOPT_TIMEOUT_MS, 25000L);
     config_event(b, "begin", -1);
-    return curl_multi_add_handle(b->http, b->request) == CURLM_OK;
+    if (curl_multi_add_handle(b->http, b->request) == CURLM_OK) return true;
+    curl_easy_cleanup(b->request); b->request = nullptr;
+    b->config_fetch.cannot_start();
+    return false;
 }
 static bool begin_connection(sl_sns *b) {
     b->connection_attempted = true;
@@ -319,7 +331,7 @@ static void pump_config(sl_sns *b) {
         curl_easy_getinfo(b->request, CURLINFO_RESPONSE_CODE, &status);
         config_event(b, "complete", int(message->data.result));
         success = message->data.result == CURLE_OK && status == 200 &&
-            sl_gns_import_trust(b->config.data(), b->config.size());
+            sl_gns_import_trust(b->config_download.data(), b->config_download.size());
         if (message->data.result == CURLE_OK && status == 200)
             config_event(b, success ? "trust_imported" : "trust_failed", -1);
     }
@@ -328,24 +340,35 @@ static void pump_config(sl_sns *b) {
     curl_multi_remove_handle(b->http, b->request);
     curl_easy_cleanup(b->request);
     b->request = nullptr;
+    auto action = b->config_fetch.complete(success);
     if (success) {
-        SteamNetworkingErrMsg error;
-        /* Public GNS returns from CertStore_CheckCert before decoding the
-         * certificate if its CA is unknown. Install the network CA chain first
-         * rather than treating this as an invalid host public key. */
-        bool installed = b->sockets->SetCertificate(b->certificate.data(),
-            static_cast<int>(b->certificate.size()), error);
-        config_event(b, installed ? "certificate_installed" : "certificate_failed", -1);
-        wipe(b->certificate.data(), b->certificate.size());
-        b->certificate.clear();
-        if (!installed) {
-            b->end_reason = -2;
-            close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_CERTIFICATE);
-            return;
+        b->config.swap(b->config_download);
+        b->config_download.clear();
+        if (!b->config_ready) {
+            SteamNetworkingErrMsg error;
+            /* Public GNS returns from CertStore_CheckCert before decoding the
+             * certificate if its CA is unknown. Install the network CA chain first
+             * rather than treating this as an invalid host public key. */
+            bool installed = b->sockets->SetCertificate(b->certificate.data(),
+                static_cast<int>(b->certificate.size()), error);
+            config_event(b, installed ? "certificate_installed" : "certificate_failed", -1);
+            wipe(b->certificate.data(), b->certificate.size());
+            b->certificate.clear();
+            if (!installed) {
+                b->end_reason = -2;
+                close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_CERTIFICATE);
+                return;
+            }
+            b->sockets->InitAuthentication();
+            if (!complete_initialization(b)) return;
         }
-        b->sockets->InitAuthentication();
-        complete_initialization(b);
-    } else if (b->config_attempt >= 3 || !begin_config(b)) {
+    }
+    bool started = true;
+    if (action == nsl::SnsConfigFetchPolicy::Refresh)
+        started = begin_config(b, true);
+    else if (action == nsl::SnsConfigFetchPolicy::Retry)
+        started = begin_config(b);
+    if ((!started || action == nsl::SnsConfigFetchPolicy::None) && !b->config_fetch.available) {
         b->end_reason = -1;
         close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_CONFIG);
     }

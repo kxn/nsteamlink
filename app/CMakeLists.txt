@@ -475,6 +475,28 @@ if(NSL_PLATFORM STREQUAL "desktop")
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-local-certificate.py"
             --receiver $<TARGET_FILE:nsl-local-certificate-oracle>)
         set_tests_properties(local_certificate_official_vectors PROPERTIES TIMEOUT 20)
+        add_executable(nsl-config-fetch-oracle tests/config_fetch_oracle.cpp)
+        target_include_directories(nsl-config-fetch-oracle PRIVATE platforms/common)
+        target_compile_options(nsl-config-fetch-oracle PRIVATE -Wall -Wextra -UNDEBUG)
+        add_test(NAME config_fetch_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-config-fetch.py"
+            --receiver $<TARGET_FILE:nsl-config-fetch-oracle>
+            --owner $<TARGET_FILE:nsl-sns-config-refresh-tests>)
+        set_tests_properties(config_fetch_official_vectors PROPERTIES TIMEOUT 30)
+        add_executable(nsl-sns-config-refresh-tests tests/test_sns_config_refresh.cpp)
+        target_compile_features(nsl-sns-config-refresh-tests PRIVATE cxx_std_17)
+        target_compile_definitions(nsl-sns-config-refresh-tests PRIVATE NSL_SNS_PROBES=0 NSL_DIAGNOSTICS=0)
+        target_include_directories(nsl-sns-config-refresh-tests PRIVATE platforms/common)
+        target_compile_options(nsl-sns-config-refresh-tests PRIVATE -Wall -Wextra -UNDEBUG)
+        target_link_libraries(nsl-sns-config-refresh-tests PRIVATE nsl_remote
+            GameNetworkingSockets::GameNetworkingSockets_s Threads::Threads)
+        foreach(symbol curl_easy_init curl_easy_setopt curl_easy_getinfo curl_multi_perform
+            curl_multi_info_read sl_gns_import_trust)
+            target_link_options(nsl-sns-config-refresh-tests PRIVATE "-Wl,--wrap=${symbol}")
+        endforeach()
+        add_test(NAME sns_config_refresh_failed COMMAND nsl-sns-config-refresh-tests failure)
+        add_test(NAME sns_config_refresh_success_then_failed COMMAND nsl-sns-config-refresh-tests success-then-failure)
+        set_tests_properties(sns_config_refresh_failed sns_config_refresh_success_then_failed PROPERTIES TIMEOUT 15)
         if(NSL_BUILD_TOOLS)
             add_executable(nsl-sdr-topology-tests tests/test_sdr_topology.cpp)
             target_include_directories(nsl-sdr-topology-tests PRIVATE platforms/common)

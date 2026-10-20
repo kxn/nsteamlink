@@ -1447,8 +1447,8 @@ CStreamTransportClient；该 buffer 也用于 StartAuthentication 的 HMAC（`0x
 返回空时直接返回，不执行 `0x8aded8` 的正文解析。开源固定 `d534c19` 的顺序与此一致。
 调用者虽继续执行后续检查，但此时正文仍为空，不能把诊断中的“Continuing anyway”
 解释为最终安装成功。若 CA 检查成功后因有效期或公钥撤销等原因返回空，正文才可能已填充；
-这些分支必须分别核对。本项目先获取 353380 的 SDR 网络配置并导入 certs/revoked_keys
-仍是现有端口策略，其下载/重试与官方的配置提供链尚需单独对照。
+这些分支必须分别核对。本项目先获取 353380 的 SDR 网络配置并导入 certs/revoked_keys；
+库级重发门槛已由 §15 的组合执行对照约束，完整的应用启动缓存/预取及平台期限仍是另一层。
 
 `InternalSetCertificate @0x804958` 解析 signed cert，检查身份、公钥类型/长度、私钥一致性、
 公私钥匹配和 AppID 范围（`0x804b14–0x804d4c`），然后安装身份/证书。
@@ -1559,8 +1559,8 @@ HTTP 完成/信任导入和 bridge 的网络推进是 provider；成功组直接
 这些证据只覆盖初始化与 bridge 准入，不验证真实 CM/TLS、成功证书、SDK 选路或 Switch；
 只对照 BInit→bridge 的后置门槛，不证明把配置 HTTP/信任导入失败映射为 BInit=false
 与官方的前置策略相同。§12.1 已撤回“未知 CA 的本机导入是 SDK 差异”的推断；
-不能用本项门槛测试替代完整证书校验组合。现有配置获取的三次重试仍为端口策略，
-不能从 BConnect 的门槛推导为官方 HTTP 重试策略。
+不能用本项门槛测试替代完整证书校验组合。库级配置重试与刷新见 §15；
+不能从 BConnect 的门槛推导官方应用启动预取/缓存或平台 HTTP 期限。
 
 ### 12.3 transport 状态、收发与 MTU
 
@@ -1848,6 +1848,44 @@ TURN 的服务器、用户名、密码使用各自列表。列表为空时清除
 `OnNetworkConfigFetchCompleted @0x821b14` 增加 attempt，交 SetNetworkConfig 解析配置，
 首轮成功后还会请求刷新。失败在前三次完成以内继续尝试；第三次以后已有可用配置则保留，
 无配置则置 Failed（`0x821938–0x821b10`）。这是库级配置获取，不是主机配对 RPC 重试。
+
+**组合门槛修订**：不能将“完成数小于 3 时调用 BeginFetch”直接解释为都会发起重试。
+BeginFetch 在已有可用配置、且 force-refresh=false 时直接返回；所以首轮成功触发一次
+强制刷新后，该刷新失败会保留配置并停止请求，不会像无配置时那样继续自动重试三次。
+第一次成功若发生在第二/第三次请求，也不触发“首轮缓存成功后的刷新”。同一时刻已有请求
+时重复 BeginFetch 不创建第二个；耗尽后的显式 BeginFetch 仍可重试，不清零完成计数。
+计数按 32 位回绕，原比较使用 signed CMP/B.GT，不能替换成无符号 <=2。
+
+`audit-steam-config-fetch.py` 保留同一对象/全局状态，执行 BeginFetch、Completed、Failed、
+GetNetworkConfigURL 及实际 `CURLHelper::GetWebAPIURLForUniverse @0x75a8ac`，冻结 19 组
+程序。JSON/import、HTTP factory/提交/抽象 header、callback 存储、格式化与日志/通知是
+provider；不是网络、JSON parser、缓存文件或自然线程的互操作验证。fixture gzip SHA256 为
+`cca79911fed13baf62b69405932c2a9054e663149b596580b0dc56e3e3dc7160`，core 及两个 helper
+SHA 同时固定。Public/Global 且 probably-in-China=false 的输入中，完成数 2、4…的请求
+使用 `https://api.steamchina.com` 并附 `realm=steamglobal`，其余使用
+`https://api.steampowered.com`；这里是在另一 WebAPI 基址取得同一 Global 配置，
+不是只在原域名后追加参数。其他 universe/realm/China-hint 的组合不由本组输入覆盖。
+
+本端口的 `sns_config_fetch_policy.h` 与这些原始状态逐步比较，实际 curl callback 还检查
+三次冷启动失败时设置的完整 URL。下载中和刷新失败时保留上一份已导入配置；新下载通过
+导入后才替换它。首轮成功后的刷新不再次安装已清空的证书、不创建第二个 bridge，刷新
+失败也不结束既有媒体状态。实际 callback 测试从“已有配置/已初始化”的明确输入开始，
+HTTP 完成及 trust/import 是 provider，没有创建媒体连接或证明冷启动成功证书已安装。
+退出时尚有自动刷新请求的情况另验证实际 HTTP handle 清理。移除首轮刷新、允许已有
+配置的失败刷新自动重试、改用无符号计数的三个独立 C++ 反例均正常执行全部 19 组输入，
+再被正式比较器以正常 exit1 拒绝；不把编译失败或进程崩溃计作检出。
+不补发抽象层但 StreamingClient 适配层未转交的 Cache-Control header；真实 HTTP 状态
+到 IWebRequest 状态的完整映射仍需单独核对，不能用抽象 Completed 的 2xx 分支替代它。
+
+**Shell 的另一条预取/缓存链（静态证据）**：`CShellApplication::BInit` 在
+`0xc98a44` 调 BLoadCacheFile 读取 storage 下的 `sdr_config.txt`，成功后在
+`0xc98a88–0xc98a94` 写入 s_sNetworkConfigData；随后仍创建 WebRequest 发起下载。
+回调 `0xc9eaa4` 只在 IWebRequest 状态为 4 时保存响应（`0xc9ebe8`），追加 NUL、更新
+该字符串并置 s_bSDRConfigDownloadComplete=true；失败分支不替换旧内容。
+这些指令与上述 SDK 内部 Fetch 是不同层，不能将 SDK 的前三次重试套到 Shell。
+BDownloadingSDRConfig 只在 request 存在且状态为 1 时为 true。此静态证据没有证明
+BLoad/BSave 的文件格式、时效规则、两份 ELF 同名静态量的实际加载绑定或完整 UI 调度；
+当前按流创建的端口配置 owner 也不能被表述为已经复刻了这条应用启动预取/磁盘缓存链。
 
 **调用链限制**：样本的 CSDRHTTPRequest_StreamingClient::SubmitRequest `0x75ddc0`
 只把 URL 交给 IWebRequest::BStart；本函数未遍历抽象请求的 header map。
