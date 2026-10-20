@@ -68,9 +68,8 @@ int main(void) {
     sl_ui_action(&m, SL_OPEN_MENU, 0);
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
     sl_ui_action(&m, SL_OPEN_LANGUAGE, 0);
-    sl_ui_activate(&m, 102);
-    assert(m.streaming && m.page == SL_LANGUAGE);
-    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_SAVE);
+    assert(m.streaming && m.page == SL_MENU);
+    assert(!sl_ui_take_command(&m, &cmd));
     sl_ui_stopped(&m, true);
     assert(!strcmp(m.layout.title, "Stream interrupted"));
     assert(!strcmp(m.error, "Connection lost"));

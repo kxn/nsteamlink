@@ -133,14 +133,13 @@ static void add_computer_navigation(void) {
     sl_ui_action(&m, SL_NEXT_HOST, 0);
     assert(!sl_ui_adding_host(&m) && m.store.registry.selected == 0);
 
-    sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
-    sl_ui_activate(&m, 104); /* Existing "Manual add computer" menu entry. */
+    sl_ui_action(&m, SL_OPEN_HOST_SETTINGS, 0);
+    sl_ui_activate(&m, 100); /* Existing manual entry goes to the final Add tab. */
     assert(m.page == SL_HOME && sl_ui_adding_host(&m) && !m.depth &&
            !sl_ui_take_command(&m, &command));
     layout_check(&m);
-    sl_ui_action(&m, SL_RIGHT, 0);
-    assert(m.focus == 31);
+    assert(m.focus == 31); /* Manual address is the first row. */
     sl_ui_action(&m, SL_ACCEPT, 0);
     assert(m.page == SL_MANUAL && !sl_ui_take_command(&m, &command));
     strcpy(m.input, "10.10.10.166");
@@ -157,7 +156,8 @@ static void add_computer_navigation(void) {
            command.host.client_id == 903 && !command.game_id);
 
     m = model();
-    sl_ui_action(&m, SL_ACCEPT, 0); /* First Add action: cloud code, no target host. */
+    sl_ui_action(&m, SL_DOWN, 0);
+    sl_ui_action(&m, SL_ACCEPT, 0); /* Second Add action: cloud code, no target host. */
     assert(m.page == SL_PAIRING && sl_ui_take_command(&m, &command) &&
            command.type == SL_CMD_REMOTE_PAIR && !command.host.id);
     m = model();
@@ -184,8 +184,9 @@ static void cached_history_availability(void) {
     for (int i = 0; i < m.layout.label_count; ++i)
         if (strstr(m.layout.labels[i].text, sl_tr(SL_T_HOST_UNAVAILABLE_SEARCHING))) {
             unavailable_caption = true;
-            assert(strstr(m.layout.labels[i].text, sl_tr(SL_T_RECENT)) &&
-                   m.layout.labels[i].y == 236 && m.layout.labels[i].size == 36);
+            assert(m.layout.labels[i].after_previous && m.layout.labels[i].size == 24);
+            assert(i && !strcmp(m.layout.labels[i - 1].text, sl_tr(SL_T_RECENT)) &&
+                   m.layout.labels[i - 1].y == 236 && m.layout.labels[i - 1].size == 36);
         }
     assert(unavailable_caption);
     const sl_control *card = NULL;
@@ -221,11 +222,70 @@ static void cached_history_availability(void) {
     m.page = SL_HOME;
     h->paired = false;
     sl_ui_layout(&m);
+    assert(!sl_ui_game_count(&m) && !has_label(&m, sl_tr(SL_T_RECENT)));
+    for (int i = 0; i < m.layout.count; ++i)
+        assert(m.layout.controls[i].action != SL_RECENT);
     sl_ui_action(&m, SL_RECENT, 0); /* A cached card cannot bypass authorization. */
     assert(!sl_ui_take_command(&m, &command));
     sl_ui_action(&m, SL_ACCEPT, 0); /* The current page's A shortcut pairs directly. */
     assert(sl_ui_take_command(&m, &command) && command.type == SL_CMD_PAIR &&
            command.host.client_id == 1 && !command.game_id);
+}
+static void selected_host_status(void) {
+    sl_ui_model m = model();
+    add(&m, 1, "LAN PC");
+    add(&m, 2, "Offline PC");
+    add(&m, 3, "Internet PC");
+    for (int i = 0; i < 3; ++i) {
+        sl_host *h = &m.store.registry.hosts[i];
+        h->paired = true;
+        h->games[0].id = 100 + i;
+        snprintf(h->games[0].name, sizeof(h->games[0].name), "Game %d", i);
+        sl_runtime_event found = {.type = SL_EVENT_HOST,
+                                  .host = *h,
+                                  .discovery_source =
+                                      i == 2 ? SL_DISCOVERY_INTERNET : SL_DISCOVERY_LAN};
+        sl_ui_runtime_event(&m, &found);
+    }
+    m.store.registry.hosts[1].observed = false;
+    sl_label recent = {0};
+    for (int selected = 0; selected < 3; ++selected) {
+        sl_ui_action(&m, SL_SELECT_HOST, selected);
+        int statuses = 0;
+        for (int i = 0; i < m.layout.label_count; ++i) {
+            const sl_label *label = &m.layout.labels[i];
+            if (label->center_x) {
+                ++statuses;
+                const sl_control *tab = NULL;
+                for (int j = 0; j < m.layout.count; ++j)
+                    if (m.layout.controls[j].action == SL_SELECT_HOST &&
+                        m.layout.controls[j].arg == selected)
+                        tab = &m.layout.controls[j];
+                assert(tab && label->center_x == tab->x + tab->w / 2);
+                assert(label->muted == (selected == 1));
+                assert(!!strstr(label->text, sl_tr(SL_T_INTERNET_CONNECTION)) == (selected == 2));
+                if (selected != 2)
+                    assert(strstr(label->text, m.store.registry.hosts[selected].address));
+            }
+            if (!strcmp(label->text, sl_tr(SL_T_RECENT))) {
+                if (!selected)
+                    recent = *label;
+                else
+                    assert(label->x == recent.x && label->y == recent.y &&
+                           label->size == recent.size);
+            }
+        }
+        assert(statuses == 1);
+        assert(sl_ui_host_source(&m, &m.store.registry.hosts[0]) == SL_DISCOVERY_LAN);
+        assert(sl_ui_host_source(&m, &m.store.registry.hosts[2]) == SL_DISCOVERY_INTERNET);
+        sl_host *h = &m.store.registry.hosts[selected];
+        assert(h->games[0].id == (uint64_t)(100 + selected));
+    }
+    sl_ui_action(&m, SL_SELECT_HOST, 3);
+    for (int i = 0; i < m.layout.label_count; ++i)
+        assert(!m.layout.labels[i].center_x);
+    sl_ui_action(&m, SL_BACK, 0);
+    assert(m.page == SL_HOME && !sl_ui_adding_host(&m) && m.store.registry.selected == 2);
 }
 static void session_end_events(void) {
     sl_ui_model m = model();
@@ -374,7 +434,7 @@ static void carousel(void) {
 static void overlay_interaction(void) {
     sl_ui_model m = model();
     add(&m, 7, "HOST");
-    sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
+    sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
     sl_ui_tick(&m, 160);
     const sl_control *c = &m.layout.controls[0];
     assert(m.layout.drawer && m.layout.offset_x > 0);
@@ -392,7 +452,7 @@ static void overlay_interaction(void) {
     sl_ui_tick(&m, 699);
     assert(m.page == SL_FORGET);
     sl_ui_tick(&m, 700);
-    assert(m.page == SL_OPTIONS && !m.leaving && m.focus == 100);
+    assert(m.page == SL_SETTINGS && !m.leaving && m.focus == 100);
 
     sl_ui_connected(&m);
     sl_ui_action(&m, SL_OPEN_MENU, 0);
@@ -502,11 +562,11 @@ static void update_flow(void) {
     assert(m.update_check);
 
     /* Found while another page is open: offered once back on HOME. */
-    sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
+    sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
     sl_runtime_event found = update_event(&m, SL_EVENT_UPDATE, true, "0.2.2");
     sl_ui_runtime_event(&m, &found);
     sl_ui_tick(&m, m.now + 16);
-    assert(m.page == SL_OPTIONS);
+    assert(m.page == SL_SETTINGS);
     sl_ui_action(&m, SL_BACK, 0);
     sl_ui_tick(&m, m.now + 160);
     sl_ui_tick(&m, m.now + 16);
@@ -558,49 +618,52 @@ static void update_flow(void) {
 }
 static void actionable_settings(void) {
     sl_ui_model m = model();
-    sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
-    assert(m.layout.count == 4); /* Settings, HOME shortcut, update check and back. */
-    assert(m.layout.controls[2].action == SL_UPDATE_CHECK);
+    sl_command command;
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
-    assert(m.layout.count == 6); /* Preferences, one shared Add Computer entry and back. */
-    assert(m.layout.controls[4].action == SL_OPEN_ADD);
+    assert(m.layout.count == 5 && m.page == SL_SETTINGS);
+    const sl_action categories[] = {SL_OPEN_AV_SETTINGS, SL_OPEN_NETWORK_SETTINGS,
+                                    SL_OPEN_HOST_SETTINGS, SL_OPEN_APP_SETTINGS};
+    for (int i = 0; i < 4; ++i)
+        assert(m.layout.controls[i].action == categories[i]);
+    sl_ui_action(&m, SL_OPEN_HOST_SETTINGS, 0);
+    assert(m.layout.controls[0].action == SL_OPEN_ADD && m.layout.controls[1].disabled);
     layout_check(&m);
-    sl_ui_action(&m, SL_OPEN_ADD, 0);
+    sl_ui_activate(&m, 100);
     assert(m.page == SL_HOME && sl_ui_adding_host(&m));
     sl_ui_action(&m, SL_OPEN_MANUAL, 0);
     assert(m.page == SL_MANUAL);
     sl_ui_action(&m, SL_BACK, 0);
     sl_ui_tick(&m, m.now + 160);
     assert(m.page == SL_HOME && sl_ui_adding_host(&m));
-    sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
+    sl_ui_action(&m, SL_OPEN_AV_SETTINGS, 0);
     sl_ui_action(&m, SL_SOUND, 0);
-    sl_command command;
     assert(!m.store.sound && sl_ui_take_command(&m, &command) && command.type == SL_CMD_SAVE);
-    sl_ui_action(&m, SL_OPEN_BANDWIDTH, 0);
-    sl_ui_action(&m, SL_SET_BANDWIDTH, 20000);
-    assert(m.store.bitrate_kbps == 20000 && m.store.quality == 0);
-    assert(sl_ui_take_command(&m, &command) && command.type == SL_CMD_SAVE);
-    assert(command.bitrate_kbps == 20000 && command.quality == 0);
-    sl_ui_tick(&m, m.now + 160);
     sl_ui_action(&m, SL_OPEN_QUALITY, 0);
     assert(!strcmp(m.layout.controls[0].label, "均衡"));
     assert(!strcmp(m.layout.controls[1].label, "流畅"));
     assert(!strcmp(m.layout.controls[2].label, "清晰"));
     sl_ui_action(&m, SL_DOWN, 0);
-    assert(m.store.quality == 0); /* Focus movement does not change the radio selection. */
+    assert(m.store.quality == 0);
     sl_ui_action(&m, SL_SET_QUALITY, 2);
     assert(m.store.quality == 2 && sl_ui_take_command(&m, &command) && command.type == SL_CMD_SAVE);
-    assert(m.store.bitrate_kbps == 20000 && command.bitrate_kbps == 20000);
+    sl_ui_tick(&m, m.now + 160);
+    sl_ui_action(&m, SL_BACK, 0);
+    sl_ui_tick(&m, m.now + 160);
+    assert(m.page == SL_SETTINGS);
+    sl_ui_action(&m, SL_OPEN_NETWORK_SETTINGS, 0);
+    sl_ui_action(&m, SL_OPEN_BANDWIDTH, 0);
+    sl_ui_action(&m, SL_SET_BANDWIDTH, 20000);
+    assert(m.store.bitrate_kbps == 20000 && m.store.quality == 2);
+    assert(sl_ui_take_command(&m, &command) && command.type == SL_CMD_SAVE &&
+           command.bitrate_kbps == 20000 && command.quality == 2);
     sl_ui_connected(&m);
     sl_ui_action(&m, SL_OPEN_MENU, 0);
+    assert(m.layout.count == 4); /* Resume, end, disconnect, back. */
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
-    assert(m.layout.count == 5); /* Sound, quality, bandwidth, language and back. */
-    for (int i = 0; i < m.layout.count; ++i)
-        assert(m.layout.controls[i].action != SL_OPEN_MANUAL &&
-               m.layout.controls[i].action != SL_OPEN_REMOTE_PAIR);
+    assert(m.page == SL_MENU); /* Mainline session menu does not change preferences. */
     sl_ui_action(&m, SL_OPEN_MANUAL, 0);
-    assert(m.page == SL_SETTINGS); /* No empty advanced page or stream-time host entry. */
+    assert(m.page == SL_MENU);
 }
 
 static void explicit_cloud_pairing(void) {
@@ -608,7 +671,6 @@ static void explicit_cloud_pairing(void) {
     sl_command cmd;
     sl_ui_action(&m, SL_START, 0);
     assert(m.page == SL_HOME && !sl_ui_take_command(&m, &cmd));
-    sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
     sl_ui_action(&m, SL_OPEN_REMOTE_PAIR, 0);
     assert(m.page == SL_SETTINGS && !sl_ui_take_command(&m, &cmd));
@@ -630,7 +692,6 @@ static void explicit_cloud_pairing(void) {
     assert(m.page == SL_HOME && m.store.registry.count == 1 && m.store.registry.hosts[0].paired &&
            !m.store.registry.hosts[0].observed &&
            !sl_ui_take_command(&m, &cmd)); /* Pairing does not auto-start streaming. */
-    sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
     sl_ui_action(&m, SL_OPEN_ADD, 0);
     sl_ui_action(&m, SL_OPEN_REMOTE_PAIR, 0);
@@ -850,6 +911,7 @@ int main(void) {
     discovery_source_evidence();
     add_computer_navigation();
     cached_history_availability();
+    selected_host_status();
     update_flow();
     profile_v2_migration();
     profile_v3_migration();
@@ -879,7 +941,7 @@ int main(void) {
     assert(!sl_ui_take_command(&m, &cmd));
     sl_ui_tick(&m, m.now + 160);
     tap(&r, 1140, 660);
-    assert(m.page == SL_OPTIONS);
+    assert(m.page == SL_SETTINGS);
     assert(!sl_ui_take_command(&m, &cmd));
     sl_ui_action(&m, SL_BACK, 0);
     sl_ui_tick(&m, m.now + 160);
@@ -1111,7 +1173,7 @@ int main(void) {
     assert(n == 3);
     /* Alternating X/Y events must not turn one held direction into a burst. */
     m = model();
-    sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
+    sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
     sl_input_init(&r, &m, send_event, reset_remote, NULL);
     axis = (sl_input_event){.type = SL_AXIS, .code = 1, .value = 25000};
     sl_input_event_handle(&r, &axis, 14000);
@@ -1224,7 +1286,8 @@ int main(void) {
     /* HOME install has fixed A/B actions and cannot be cancelled halfway through. */
     sl_ui_init(&m, &s);
     m.now = 5000;
-    sl_ui_action(&m, SL_OPEN_OPTIONS, 0);
+    sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
+    sl_ui_action(&m, SL_OPEN_APP_SETTINGS, 0);
     sl_ui_action(&m, SL_OPEN_SHORTCUT, 0);
     assert(m.page == SL_SHORTCUT);
     m.focus = 9;
@@ -1244,7 +1307,7 @@ int main(void) {
     assert(m.page == SL_INSTALL_RESULT);
     sl_ui_action(&m, SL_BACK, 0);
     sl_ui_tick(&m, m.now + 200);
-    assert(m.page == SL_OPTIONS);
+    assert(m.page == SL_APP_SETTINGS);
     puts("PASS model, touch ownership, controller commands, hotkey timing, debug, host/account "
          "isolation, expiry, layouts and atomic storage");
     return 0;

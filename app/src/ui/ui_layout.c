@@ -24,6 +24,10 @@ static void button(sl_layout *l, int id, int x, int y, int w, int h, const char 
 static void row(sl_layout *l, int n, const char *s, sl_action a, int arg) {
     button(l, 100 + n, 320, 205 + n * 88, 640, 72, s, a, arg, false);
 }
+static void value_row(sl_layout *l, int n, const char *s, sl_action a, const char *value) {
+    row(l, n, s, a, 0);
+    snprintf(l->controls[l->count - 1].value, sizeof(l->controls[0].value), "%s", value);
+}
 static void center(sl_layout *l, int y, int size, const char *s) {
     text(l, 64, y, size, s);
     l->labels[l->label_count - 1].center = true;
@@ -48,40 +52,53 @@ void sl_ui_layout(sl_ui_model *m) {
             if (end > total)
                 end = total;
             if (total > 1)
-                button(l, 1, 40, 96, 64, 120, "LB", SL_PREV_HOST, 0, false);
+                button(l, 1, 40, 86, 64, 72, "LB", SL_PREV_HOST, 0, false);
             int width = 326;
             int step = width + 16;
             int origin = (1280 - (end - begin) * step + 16) / 2;
             for (int i = begin; i < end; ++i)
-                button(l, 10 + i, origin + (i - begin) * step, 96, width, 120,
+                button(l, 10 + i, origin + (i - begin) * step, 86, width, 72,
                        i == r->count         ? sl_tr(SL_T_ADD_PC)
                        : r->hosts[i].name[0] ? r->hosts[i].name
                                              : r->hosts[i].address,
                        SL_SELECT_HOST, i, i == selected);
             if (total > 1)
-                button(l, 2, 1176, 96, 64, 120, "RB", SL_NEXT_HOST, 0, false);
+                button(l, 2, 1176, 86, 64, 72, "RB", SL_NEXT_HOST, 0, false);
+            if (h) {
+                char status[192];
+                bool online = sl_host_online(h, m->now);
+                if (online && h->paired && sl_ui_host_source(m, h) == SL_DISCOVERY_INTERNET)
+                    snprintf(status, sizeof(status), "%s · %s", sl_tr(SL_T_INTERNET_CONNECTION),
+                             sl_tr(SL_T_PAIRED));
+                else
+                    snprintf(status, sizeof(status), "%s%s · %s",
+                             online ? "" : sl_tr(SL_T_LAST_ADDRESS), h->address,
+                             sl_tr(h->paired ? SL_T_PAIRED : SL_T_UNPAIRED));
+                center(l, 170, 24, status);
+                sl_label *label = &l->labels[l->label_count - 1];
+                label->center_x = origin + (selected - begin) * step + width / 2;
+                label->muted = !online;
+                label->pairing = online && !h->paired;
+            }
         }
         bool online = sl_host_online(h, m->now);
         bool ready = h && h->paired && online;
         int games = sl_ui_game_count(m);
         if (adding) {
-            text(l, 52, 258, 36, sl_tr(SL_T_ADD_PC));
             if (!r->count)
-                text(l, 52, 302, 24, sl_tr(SL_T_SEARCHING));
-            button(l, 30, 52, 350, 576, 220, sl_tr(SL_T_SHOW_PAIR_CODE), SL_OPEN_REMOTE_PAIR, 0,
+                center(l, 248, 30, sl_tr(SL_T_SEARCHING));
+            button(l, 31, 320, 320, 640, 72, sl_tr(SL_T_ENTER_IP), SL_OPEN_MANUAL, 0, false);
+            button(l, 30, 320, 408, 640, 72, sl_tr(SL_T_SHOW_PAIR_CODE), SL_OPEN_REMOTE_PAIR, 0,
                    false);
-            button(l, 31, 652, 350, 576, 220, sl_tr(SL_T_ENTER_IP), SL_OPEN_MANUAL, 0, false);
         } else if (h) {
             if (games) {
-                char recent[sizeof(l->labels[0].text)];
-                snprintf(recent, sizeof(recent), "%s", sl_tr(SL_T_RECENT));
+                text(l, 52, 236, 36, sl_tr(SL_T_RECENT));
                 if (!ready) {
-                    snprintf(recent, sizeof(recent), "%s  ·  %s", sl_tr(SL_T_RECENT),
-                             sl_tr(!m->network_ok ? SL_T_NO_NETWORK
-                                   : !online      ? SL_T_HOST_UNAVAILABLE_SEARCHING
-                                                  : SL_T_UNPAIRED));
+                    text(l, 52, 248, 24,
+                         sl_tr(!m->network_ok ? SL_T_NO_NETWORK : SL_T_HOST_UNAVAILABLE_SEARCHING));
+                    l->labels[l->label_count - 1].after_previous = true;
+                    l->labels[l->label_count - 1].muted = true;
                 }
-                text(l, 52, 236, 36, recent);
                 if (online)
                     button(l, 30, 956, 220, 272, 72,
                            h->paired ? sl_tr(SL_T_OPEN_STEAM) : sl_tr(SL_T_PAIR_CONNECT), SL_START,
@@ -93,21 +110,24 @@ void sl_ui_layout(sl_ui_model *m) {
                     l->controls[l->count - 1].disabled = !ready;
                 }
             } else {
-                if (!ready)
-                    center(l, 410, 30,
-                           sl_tr(!m->network_ok ? SL_T_NO_NETWORK
-                                 : !online      ? SL_T_HOST_OFFLINE
-                                                : SL_T_UNPAIRED));
+                center(l, 360, 44,
+                       sl_tr(!m->network_ok ? SL_T_NO_NETWORK
+                             : !online      ? SL_T_HOST_OFFLINE
+                             : h->paired    ? SL_T_READY
+                                            : SL_T_CONNECT_PC));
+                l->labels[l->label_count - 1].pairing = online && !h->paired;
+                l->labels[l->label_count - 1].muted = !online;
                 if (!online && m->network_ok)
-                    center(l, 456, 24, sl_tr(SL_T_SEARCHING_AUTO));
+                    center(l, 432, 24, sl_tr(SL_T_SEARCHING_AUTO));
                 if (online)
-                    button(l, 30, 448, 504, 384, 72,
+                    button(l, 30, 448, 472, 384, 80,
                            h->paired ? sl_tr(SL_T_OPEN_STEAM) : sl_tr(SL_T_PAIR_CONNECT), SL_START,
                            0, true);
             }
         }
-        button(l, 3, 1060, 632, 180, 64, sl_tr(SL_T_OPTIONS_KEY), SL_OPEN_OPTIONS, 0, false);
-        button(l, 5, 40, 632, 180, 64, sl_tr(SL_T_EXIT_KEY), SL_BACK, 0, false);
+        button(l, 3, 1060, 632, 180, 64, sl_tr(SL_T_SETTINGS_KEY), SL_OPEN_SETTINGS, 0, false);
+        button(l, 5, 40, 632, 180, 64, sl_tr(adding && r->count ? SL_T_BACK_KEY : SL_T_EXIT_KEY),
+               SL_BACK, 0, false);
         if (adding)
             text(l, 260, 648, 24, sl_tr(SL_T_CONFIRM_KEY));
         else if (online)
@@ -127,19 +147,8 @@ void sl_ui_layout(sl_ui_model *m) {
         case SL_MENU:
             strcpy(l->title, sl_tr(SL_T_PLAY_MENU));
             row(l, 0, sl_tr(SL_T_RESUME), SL_BACK, 0);
-            row(l, 1, sl_tr(SL_T_SETTINGS), SL_OPEN_SETTINGS, 0);
-            row(l, 2, sl_tr(SL_T_END_GAME), SL_OPEN_END_GAME, 0);
-            row(l, 3, sl_tr(SL_T_DISCONNECT), SL_OPEN_DISCONNECT, 0);
-            break;
-        case SL_OPTIONS:
-            strcpy(l->title, sl_tr(SL_T_OPTIONS));
-            row(l, 0, sl_tr(SL_T_SETTINGS), SL_OPEN_SETTINGS, 0);
-            if (h)
-                row(l, 1, sl_tr(SL_T_REMOVE_PC), SL_OPEN_FORGET, 0);
-            row(l, h ? 2 : 1, sl_tr(SL_T_SHORTCUT), SL_OPEN_SHORTCUT, 0);
-            row(l, h ? 3 : 2,
-                m->update_check ? sl_tr(SL_T_UPDATE_CHECK_ON) : sl_tr(SL_T_UPDATE_CHECK_OFF),
-                SL_UPDATE_CHECK, 0);
+            row(l, 1, sl_tr(SL_T_END_GAME), SL_OPEN_END_GAME, 0);
+            row(l, 2, sl_tr(SL_T_DISCONNECT), SL_OPEN_DISCONNECT, 0);
             break;
         case SL_SHORTCUT:
             strcpy(l->title, sl_tr(SL_T_SHORTCUT_QUESTION));
@@ -177,13 +186,40 @@ void sl_ui_layout(sl_ui_model *m) {
             break;
         case SL_SETTINGS:
             strcpy(l->title, sl_tr(SL_T_SETTINGS));
-            row(l, 0, sl_tr(SL_T_QUALITY), SL_OPEN_QUALITY, 0);
-            row(l, 1, sl_tr(SL_T_BANDWIDTH), SL_OPEN_BANDWIDTH, 0);
-            row(l, 2, m->store.sound ? sl_tr(SL_T_SOUND_ON) : sl_tr(SL_T_SOUND_OFF), SL_SOUND, 0);
-            row(l, 3, sl_tr(SL_T_LANGUAGE), SL_OPEN_LANGUAGE, 0);
-            if (!m->streaming) {
-                row(l, 4, sl_tr(SL_T_MANUAL), SL_OPEN_ADD, 0);
-            }
+            row(l, 0, sl_tr(SL_T_AV_SETTINGS), SL_OPEN_AV_SETTINGS, 0);
+            row(l, 1, sl_tr(SL_T_NETWORK_SETTINGS), SL_OPEN_NETWORK_SETTINGS, 0);
+            row(l, 2, sl_tr(SL_T_HOST_SETTINGS), SL_OPEN_HOST_SETTINGS, 0);
+            row(l, 3, sl_tr(SL_T_APP_SETTINGS), SL_OPEN_APP_SETTINGS, 0);
+            break;
+        case SL_AV_SETTINGS: {
+            strcpy(l->title, sl_tr(SL_T_AV_SETTINGS));
+            const sl_text_id qualities[] = {SL_T_BALANCED, SL_T_FAST, SL_T_SHARP};
+            value_row(l, 0, sl_tr(SL_T_QUALITY), SL_OPEN_QUALITY,
+                      sl_tr(qualities[m->store.quality <= 2 ? m->store.quality : 0]));
+            row(l, 1, sl_tr(SL_T_SOUND), SL_SOUND, 0);
+            break;
+        }
+        case SL_NETWORK_SETTINGS: {
+            strcpy(l->title, sl_tr(SL_T_NETWORK_SETTINGS));
+            char rate[32];
+            snprintf(rate, sizeof(rate), "%g Mbps", m->store.bitrate_kbps / 1000.0);
+            value_row(l, 0, sl_tr(SL_T_BANDWIDTH), SL_OPEN_BANDWIDTH, rate);
+            break;
+        }
+        case SL_HOST_SETTINGS:
+            strcpy(l->title, sl_tr(SL_T_HOST_SETTINGS));
+            row(l, 0, sl_tr(SL_T_MANUAL), SL_OPEN_ADD, 0);
+            row(l, 1, sl_tr(SL_T_REMOVE_PC), SL_OPEN_FORGET, 0);
+            l->controls[l->count - 1].disabled = !h;
+            break;
+        case SL_APP_SETTINGS:
+            strcpy(l->title, sl_tr(SL_T_APP_SETTINGS));
+            value_row(l, 0, sl_tr(SL_T_LANGUAGE), SL_OPEN_LANGUAGE,
+                      sl_tr(sl_i18n_language() == SL_LANG_ZH_CN ? SL_T_CHINESE
+                            : sl_i18n_language() == SL_LANG_EN  ? SL_T_ENGLISH
+                                                                : SL_T_SYSTEM_LANGUAGE));
+            row(l, 1, sl_tr(SL_T_UPDATE_CHECK), SL_UPDATE_CHECK, 0);
+            row(l, 2, sl_tr(SL_T_SHORTCUT), SL_OPEN_SHORTCUT, 0);
             break;
         case SL_LANGUAGE:
             strcpy(l->title, sl_tr(SL_T_LANGUAGE));
@@ -288,8 +324,10 @@ void sl_ui_layout(sl_ui_model *m) {
                    SL_BACK, 0, false);
     }
     if (l->dialog) {
-        l->drawer = m->page == SL_MENU || m->page == SL_OPTIONS || m->page == SL_SETTINGS ||
-                    m->page == SL_QUALITY || m->page == SL_BANDWIDTH || m->page == SL_LANGUAGE;
+        l->drawer = m->page == SL_MENU || m->page == SL_SETTINGS || m->page == SL_AV_SETTINGS ||
+                    m->page == SL_NETWORK_SETTINGS || m->page == SL_HOST_SETTINGS ||
+                    m->page == SL_APP_SETTINGS || m->page == SL_QUALITY ||
+                    m->page == SL_BANDWIDTH || m->page == SL_LANGUAGE;
         l->compact = m->page == SL_END_GAME || m->page == SL_DISCONNECT || m->page == SL_FORGET ||
                      m->page == SL_EXIT || m->page == SL_ERROR || m->page == SL_STOPPING ||
                      m->page == SL_INSTALLING || m->page == SL_UPDATING;
@@ -306,9 +344,9 @@ void sl_ui_layout(sl_ui_model *m) {
                 sl_control *c = &l->controls[i];
                 c->x = 776;
                 c->w = 472;
-                int step = m->page == SL_SETTINGS && !m->streaming ? 72 : 88;
+                int step = m->page == SL_MENU ? 104 : 88;
                 c->y = c->id == 9 ? 624 : 172 + (c->id - 100) * step;
-                c->h = step == 72 ? 64 : 72;
+                c->h = m->page == SL_MENU && c->id != 9 ? 88 : 72;
             }
             for (int i = 0; i < l->label_count; ++i)
                 l->labels[i].x = 784;
@@ -421,7 +459,7 @@ void sl_ui_layout(sl_ui_model *m) {
         int count = sl_ui_game_count(m);
         if (adding) {
             if (m->focus != 30 && m->focus != 31)
-                m->focus = m->add_focus == 31 ? 31 : 30;
+                m->focus = m->add_focus == 30 ? 30 : 31;
             m->add_focus = m->focus;
         } else if (m->focus < 40 || m->focus >= 40 + count)
             m->focus = count ? (h->focus >= 40 && h->focus < 40 + count ? h->focus : 40) : 0;
@@ -457,7 +495,7 @@ void sl_ui_layout(sl_ui_model *m) {
     }
     bool found = false;
     for (int i = 0; i < l->count; ++i)
-        if (l->controls[i].id == m->focus)
+        if (l->controls[i].id == m->focus && !l->controls[i].disabled)
             found = true;
     if (!found) {
         m->focus = l->count ? l->controls[0].id : 0;

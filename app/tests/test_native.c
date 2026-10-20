@@ -197,7 +197,7 @@ int main(int argc, char **argv) {
     stream_media_present();
     save_image("empty");
     tap(1140, 660);
-    assert(ui.page == SL_OPTIONS);
+    assert(ui.page == SL_SETTINGS);
     assert(ui.command.type == SL_CMD_NONE);
     key(SDLK_ESCAPE);
     assert(ui.page == SL_HOME);
@@ -219,7 +219,7 @@ int main(int argc, char **argv) {
     touch.type = SDL_FINGERUP;
     SDL_PushEvent(&touch);
     stream_media_present();
-    assert(ui.page == SL_OPTIONS && ui.command.type == SL_CMD_NONE);
+    assert(ui.page == SL_SETTINGS && ui.command.type == SL_CMD_NONE);
     key(SDLK_ESCAPE);
     ui.store.registry.hosts[0].paired = true;
     ui.store.registry.hosts[0].account = 1;
@@ -241,7 +241,7 @@ int main(int argc, char **argv) {
         for (int i = 0; i < ui.layout.count; ++i)
             if (ui.layout.controls[i].action == SL_SELECT_HOST && !ui.layout.controls[i].arg) {
                 const sl_control *tab = &ui.layout.controls[i];
-                icon = (SDL_Rect){tab->x + tab->w / 2 - 58, tab->y + 50, 44, 44};
+                icon = (SDL_Rect){tab->x - 40, 166, tab->w + 80, 48};
                 break;
             }
         assert(icon.w);
@@ -324,9 +324,10 @@ int main(int argc, char **argv) {
         sl_ui_layout(&ui);
         stream_media_present();
         save_image("internet-paired");
-        sl_ui_action(&ui, SL_OPEN_OPTIONS, 0);
         sl_ui_action(&ui, SL_OPEN_SETTINGS, 0);
-        sl_ui_activate(&ui, 104);
+        sl_ui_action(&ui, SL_OPEN_SETTINGS, 0);
+        sl_ui_action(&ui, SL_OPEN_HOST_SETTINGS, 0);
+        sl_ui_activate(&ui, 100);
         assert(ui.page == SL_HOME && sl_ui_adding_host(&ui));
         stream_media_present();
         save_image("add-computer");
@@ -390,6 +391,8 @@ int main(int argc, char **argv) {
         stream_media_present();
         save_image("paired-artwork-focused");
         sl_ui_model available = ui;
+        SDL_Rect recent_title_box = {52, 224, 160, 60};
+        uint64_t recent_title = region_hash(recent_title_box);
         SDL_Rect artwork_box = {82, SL_CARD_Y + 40, 360, 130};
         uint64_t color = region_hash(artwork_box);
         unsigned chromatic = chromatic_pixels(artwork_box);
@@ -399,6 +402,7 @@ int main(int argc, char **argv) {
         sl_ui_layout(&ui);
         stream_media_present();
         save_image("paired-artwork-offline");
+        assert(region_hash(recent_title_box) == recent_title);
         assert(!chromatic_pixels(artwork_box));
         if (chromatic)
             assert(region_hash(artwork_box) != color);
@@ -482,7 +486,6 @@ int main(int argc, char **argv) {
     ui.page = SL_HOME;
     ui.depth = 0;
     ui.leaving = false;
-    sl_ui_action(&ui, SL_OPEN_OPTIONS, 0);
     sl_ui_action(&ui, SL_OPEN_SETTINGS, 0);
     sl_ui_action(&ui, SL_OPEN_QUALITY, 0);
     sl_ui_tick(&ui, ui.now + 220);
@@ -496,7 +499,7 @@ int main(int argc, char **argv) {
         sl_ui_layout(&ui);
         for (int frame = 0; frame < 120; ++frame) {
             if (frame == 9)
-                sl_ui_action(&ui, SL_OPEN_OPTIONS, 0);
+                sl_ui_action(&ui, SL_OPEN_SETTINGS, 0);
             if (frame == 28)
                 sl_ui_action(&ui, SL_ACCEPT, 0);
             if (frame == 45 || frame == 80 || frame == 100)

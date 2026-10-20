@@ -71,6 +71,8 @@ int sl_ui_game_count(const sl_ui_model *m) {
     if (sl_ui_adding_host(m) || selected < 0 || selected >= m->store.registry.count)
         return 0;
     const sl_host *h = &m->store.registry.hosts[selected];
+    if (!h->paired)
+        return 0;
     int n = 0;
     while (n < SL_RECENT_LIMIT && h->games[n].id)
         ++n;
@@ -234,6 +236,8 @@ static void move(sl_ui_model *m, sl_action direction) {
     int best = 0, score = 2147483647, fx = from->x + from->w / 2, fy = from->y + from->h / 2;
     for (int i = 0; i < m->layout.count; ++i) {
         const sl_control *c = &m->layout.controls[i];
+        if (c->disabled)
+            continue;
         int dx = c->x + c->w / 2 - fx, dy = c->y + c->h / 2 - fy;
         int along = (direction == SL_LEFT    ? -dx
                      : direction == SL_RIGHT ? dx
@@ -329,12 +333,8 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
             arg < sl_ui_game_count(m))
             start(m, arg);
         break;
-    case SL_OPEN_OPTIONS:
-        if (m->page == SL_HOME)
-            push(m, SL_OPTIONS);
-        break;
     case SL_OPEN_SHORTCUT:
-        if (m->page == SL_OPTIONS && !m->streaming)
+        if (m->page == SL_APP_SETTINGS && !m->streaming)
             push(m, SL_SHORTCUT);
         break;
     case SL_CONFIRM_SHORTCUT:
@@ -345,10 +345,22 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
         }
         break;
     case SL_OPEN_SETTINGS:
-        push(m, SL_SETTINGS);
+        if (!m->streaming && m->page == SL_HOME)
+            push(m, SL_SETTINGS);
+        break;
+    case SL_OPEN_AV_SETTINGS:
+    case SL_OPEN_NETWORK_SETTINGS:
+    case SL_OPEN_HOST_SETTINGS:
+    case SL_OPEN_APP_SETTINGS:
+        if (!m->streaming && m->page == SL_SETTINGS)
+            push(m, a == SL_OPEN_AV_SETTINGS        ? SL_AV_SETTINGS
+                    : a == SL_OPEN_NETWORK_SETTINGS ? SL_NETWORK_SETTINGS
+                    : a == SL_OPEN_HOST_SETTINGS    ? SL_HOST_SETTINGS
+                                                    : SL_APP_SETTINGS);
         break;
     case SL_OPEN_ADD:
-        if (!m->streaming && (m->page == SL_SETTINGS || m->page == SL_HOME)) {
+        if (!m->streaming &&
+            (m->page == SL_SETTINGS || m->page == SL_HOST_SETTINGS || m->page == SL_HOME)) {
             m->adding_host = true;
             m->depth = 0;
             page(m, SL_HOME);
@@ -373,7 +385,7 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
         }
         break;
     case SL_OPEN_LANGUAGE:
-        if (m->page == SL_SETTINGS) {
+        if (m->page == SL_SETTINGS || m->page == SL_APP_SETTINGS) {
             push(m, SL_LANGUAGE);
             m->focus = 100 + sl_i18n_language();
         }
@@ -468,11 +480,15 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
         }
         break;
     case SL_BACK:
-        if (m->page == SL_HOME)
-            push(m, SL_EXIT);
-        else if (m->page == SL_PAIRING || m->page == SL_SAVING || m->page == SL_CONNECTING ||
-                 m->page == SL_PIN || m->page == SL_ERROR ||
-                 (m->page == SL_STOPPING && m->ending_game)) {
+        if (m->page == SL_HOME) {
+            if (sl_ui_adding_host(m) && m->store.registry.count) {
+                m->adding_host = false;
+                m->focus = selected(m)->focus;
+            } else
+                push(m, SL_EXIT);
+        } else if (m->page == SL_PAIRING || m->page == SL_SAVING || m->page == SL_CONNECTING ||
+                   m->page == SL_PIN || m->page == SL_ERROR ||
+                   (m->page == SL_STOPPING && m->ending_game)) {
             ++m->generation;
             emit(m, SL_CMD_CANCEL);
             m->depth = 0;

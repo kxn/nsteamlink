@@ -11,7 +11,6 @@ typedef enum sl_page {
     SL_PIN,
     SL_STREAM,
     SL_MENU,
-    SL_OPTIONS,
     SL_SHORTCUT,
     SL_INSTALLING,
     SL_INSTALL_RESULT,
@@ -19,6 +18,10 @@ typedef enum sl_page {
     SL_UPDATING,
     SL_UPDATE_RESULT,
     SL_SETTINGS,
+    SL_AV_SETTINGS,
+    SL_NETWORK_SETTINGS,
+    SL_HOST_SETTINGS,
+    SL_APP_SETTINGS,
     SL_MANUAL,
     SL_QUALITY,
     SL_BANDWIDTH,
@@ -46,8 +49,11 @@ typedef enum sl_action {
     SL_RECENT,
     SL_OPEN_MENU,
     SL_DEBUG,
-    SL_OPEN_OPTIONS,
     SL_OPEN_SETTINGS,
+    SL_OPEN_AV_SETTINGS,
+    SL_OPEN_NETWORK_SETTINGS,
+    SL_OPEN_HOST_SETTINGS,
+    SL_OPEN_APP_SETTINGS,
     SL_OPEN_ADD,
     SL_OPEN_REMOTE_PAIR,
     SL_OPEN_SHORTCUT,
@@ -106,11 +112,14 @@ typedef struct sl_control {
     int arg;
     bool primary;
     bool disabled; /* Cached history can be browsed but cannot launch while unavailable. */
+    char value[80];
     char label[160];
 } sl_control;
 typedef struct sl_label {
     int x, y, size;
     bool center;
+    int center_x; /* Zero means the canvas centre; host status uses its tab centre. */
+    bool muted, pairing, after_previous;
     char text[192];
 } sl_label;
 typedef struct sl_layout {

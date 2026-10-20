@@ -21,7 +21,7 @@ struct sl_ui_renderer {
     TTF_Font *fonts[3][9];
     glyph cache[512];
     uint64_t tick;
-    sl_gfx_texture *backdrop, *outline, *overlay, *connection_icons;
+    sl_gfx_texture *backdrop, *outline, *overlay;
     sl_ui_model *base_ui;
     sl_artwork *artwork;
     struct {
@@ -98,60 +98,6 @@ static void monitor(sl_gfx *r, int x, int y, int size, sl_gfx_color color) {
             (sl_gfx_color){26, 40, 55, 255});
     line(r, x + size / 2, y + size * 2 / 3, x + size / 2, y + size * 2 / 3 + 7, color);
     line(r, x + size / 2 - 9, y + size * 2 / 3 + 8, x + size / 2 + 9, y + size * 2 / 3 + 8, color);
-}
-extern const unsigned char nsl_connection_icons[];
-extern const size_t nsl_connection_icons_size;
-/* Authored SVG masks are rasterized ahead of time. One owned atlas, no per-frame allocation. */
-static sl_gfx_texture *make_connection_icons(sl_gfx *gfx) {
-    if (nsl_connection_icons_size != 128 * 768)
-        return NULL;
-    unsigned char *pixels = malloc(nsl_connection_icons_size * 4);
-    if (!pixels)
-        return NULL;
-    for (size_t i = 0; i < nsl_connection_icons_size; ++i) {
-        pixels[i * 4] = pixels[i * 4 + 1] = pixels[i * 4 + 2] = 255;
-        pixels[i * 4 + 3] = nsl_connection_icons[i];
-    }
-    sl_gfx_texture *texture = sl_gfx_create_texture(gfx, SL_GFX_RGBA8, SL_GFX_STATIC, 128, 768);
-    if (texture && sl_gfx_upload(texture, NULL, pixels, 128 * 4)) {
-        sl_gfx_destroy_texture(texture);
-        texture = NULL;
-    }
-    free(pixels);
-    if (texture) {
-        sl_gfx_texture_blend(texture, SL_GFX_BLEND_ALPHA);
-        sl_gfx_texture_linear(texture, 1);
-    }
-    return texture;
-}
-static void connection_icon(sl_ui_renderer *r, int x, int y, int size, unsigned index,
-                            sl_gfx_color color) {
-    if (!r->connection_icons)
-        return;
-    sl_gfx_rect src = {0, (int)index * 128, 128, 128}, dst = {x, y, size, size};
-    sl_gfx_texture_color(r->connection_icons, color.r, color.g, color.b);
-    sl_gfx_texture_alpha(r->connection_icons, color.a);
-    sl_gfx_copy(r->renderer, r->connection_icons, &src, &dst);
-}
-static void host_icon(sl_ui_renderer *r, const sl_ui_model *m, const sl_host *host, int x, int y,
-                      int size) {
-    bool online = sl_host_online(host, m->now);
-    sl_discovery_source source = sl_ui_host_source(m, host);
-    sl_gfx_color color = !online ? muted : host->paired ? green : amber;
-    connection_icon(r, x, y, size, 0, color);
-    if (online && host->paired)
-        play_icon(r->renderer, x + size * 24 / 100, y + size * 44 / 100, size / 8, color);
-    else if (!online)
-        connection_icon(r, x + size / 5, y + size / 3, size / 4, 3, color);
-    /* Source is live evidence only. A cloud-discovered record is already paired. */
-    if (online &&
-        (source == SL_DISCOVERY_LAN || (source == SL_DISCOVERY_INTERNET && host->paired))) {
-        rounded(r->renderer, (sl_gfx_rect){x - 5, y + size - 27, 32, 32}, 16, bg);
-        connection_icon(r, x - 3, y + size - 25, 28, source == SL_DISCOVERY_LAN ? 1 : 2,
-                        source == SL_DISCOVERY_INTERNET ? accent : color);
-    }
-    rounded(r->renderer, (sl_gfx_rect){x + size - 12, y - 6, 38, 38}, 19, bg);
-    connection_icon(r, x + size - 10, y - 4, 34, host && host->paired ? 4 : 5, color);
 }
 extern const unsigned char nsl_background[];
 extern const size_t nsl_background_size;
@@ -538,6 +484,8 @@ static sl_gfx_color action_color(sl_action a) {
     case SL_BACK:
         return green;
     case SL_OPEN_SETTINGS:
+    case SL_OPEN_AV_SETTINGS:
+    case SL_OPEN_APP_SETTINGS:
     case SL_OPEN_BANDWIDTH:
     case SL_SET_BANDWIDTH:
     case SL_OPEN_QUALITY:
@@ -559,7 +507,8 @@ static sl_gfx_color action_color(sl_action a) {
 static void action_icon(sl_gfx *r, sl_action a, int x, int y, sl_gfx_color c) {
     if (a == SL_BACK || a == SL_START || a == SL_RECENT) {
         play_icon(r, x + 7, y + 14, 19, c);
-    } else if (a == SL_OPEN_SETTINGS || a == SL_OPEN_BANDWIDTH || a == SL_SET_QUALITY) {
+    } else if (a == SL_OPEN_SETTINGS || a == SL_OPEN_APP_SETTINGS || a == SL_OPEN_BANDWIDTH ||
+               a == SL_SET_QUALITY) {
         for (int i = 0; i < 3; ++i) {
             int yy = y + 6 + i * 8, xx = x + (i == 1 ? 17 : 9);
             line(r, x + 3, yy, x + 27, yy, c);
@@ -589,7 +538,7 @@ static void action_icon(sl_gfx *r, sl_action a, int x, int y, sl_gfx_color c) {
         line(r, x + 16, y + 4, x + 16, y + 24, c);
         line(r, x + 23, y + 8, x + 27, y + 14, c);
         line(r, x + 27, y + 14, x + 23, y + 20, c);
-    } else if (a == SL_OPEN_LANGUAGE) {
+    } else if (a == SL_OPEN_LANGUAGE || a == SL_OPEN_NETWORK_SETTINGS) {
         for (int i = 0; i < 32; ++i) {
             float u = i * 6.2831853f / 32, v = (i + 1) * 6.2831853f / 32;
             line(r, x + 14 + 12 * cosf(u), y + 14 + 12 * sinf(u), x + 14 + 12 * cosf(v),
@@ -598,7 +547,8 @@ static void action_icon(sl_gfx *r, sl_action a, int x, int y, sl_gfx_color c) {
                  y + 14 + 12 * sinf(v), c);
         }
         line(r, x + 2, y + 14, x + 26, y + 14, c);
-    } else if (a == SL_OPEN_QUALITY || a == SL_OPEN_MANUAL) {
+    } else if (a == SL_OPEN_QUALITY || a == SL_OPEN_AV_SETTINGS || a == SL_OPEN_HOST_SETTINGS ||
+               a == SL_OPEN_MANUAL) {
         monitor(r, x + 1, y + 3, 28, c);
     } else {
         rounded(r, (sl_gfx_rect){x + 2, y + 2, 26, 26}, 13, c);
@@ -617,7 +567,6 @@ sl_ui_renderer *sl_ui_renderer_create(sl_gfx *native) {
     r->renderer = native;
     r->backdrop = make_backdrop(r->renderer);
     r->outline = make_outline(r->renderer);
-    r->connection_icons = make_connection_icons(r->renderer);
     r->text_alpha = 1.f;
     r->base_ui = calloc(1, sizeof(*r->base_ui));
     r->overlay = sl_gfx_create_texture(r->renderer, SL_GFX_RGBA8, SL_GFX_TARGET, 1280, 720);
@@ -634,7 +583,7 @@ sl_ui_renderer *sl_ui_renderer_create(sl_gfx *native) {
                 r->fonts[f][s] = TTF_OpenFont(path, sizes[s]);
         }
     }
-    if (!r->base_ui || !r->fonts[0][0] || !r->fonts[1][0] || !r->connection_icons) {
+    if (!r->base_ui || !r->fonts[0][0] || !r->fonts[1][0]) {
         sl_ui_renderer_destroy(r);
         return NULL;
     }
@@ -868,8 +817,13 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
         const sl_host *host = hosts->selected >= 0 && hosts->selected < hosts->count
                                   ? &hosts->hosts[hosts->selected]
                                   : NULL;
-        if (!sl_ui_adding_host(m) && host && !host->games[0].id)
-            host_icon(r, m, host, 570, 270, 112);
+        if (!sl_ui_adding_host(m) && host && !sl_ui_game_count(m)) {
+            sl_gfx_color state = !sl_host_online(host, m->now) ? muted
+                                 : host->paired                ? green
+                                                               : amber;
+            rounded(r->renderer, (sl_gfx_rect){588, 270, 104, 78}, 22, mix(bg, state, .13f));
+            monitor(r->renderer, 615, 288, 50, state);
+        }
         rect(r->renderer, (sl_gfx_rect){52, 612, 1176, 1}, (sl_gfx_color){78, 103, 124, 45});
     }
     if (m->page == SL_STOPPING || m->page == SL_INSTALLING || m->page == SL_UPDATING ||
@@ -886,10 +840,19 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
     for (int i = 0; i < l->label_count; ++i) {
         const sl_label *t = &l->labels[i];
         int x = t->x, width = l->dialog ? l->panel_x + l->panel_w - 40 - x : 1216 - x;
+        if (t->after_previous && i > 0) {
+            const sl_label *previous = &l->labels[i - 1];
+            x = previous->x + text_width(r, previous->text, previous->size) + 16;
+            width = 1216 - x;
+        }
         if (t->center) {
             int measured = text_width(r, t->text, t->size);
             if (measured < 1152) {
-                x = (1280 - measured) / 2;
+                x = (t->center_x ? t->center_x : 640) - measured / 2;
+                if (x < 52)
+                    x = 52;
+                if (x + measured > 1228)
+                    x = 1228 - measured;
                 width = measured + 2;
             }
         }
@@ -907,7 +870,11 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
                       centered_y(r, sl_tr(SL_T_CONFIRM), 26, 632, 64, width - 48), width - 48, 70,
                       26, fg);
         } else
-            draw_text(r, t->text, x, t->y, width, t->size * 2 + 22, t->size, fg);
+            draw_text(r, t->text, x, t->y, width,
+                      t->after_previous ? t->size + 10 : t->size * 2 + 22, t->size,
+                      t->muted     ? muted
+                      : t->pairing ? amber
+                                   : fg);
     }
     for (int i = 0; i < l->count; ++i) {
         const sl_control *c = &l->controls[i];
@@ -928,39 +895,31 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
         bool menu_row = l->drawer && !footer;
         sl_gfx_color role = action_color(c->action);
         if (tab) {
-            const sl_host *host =
-                c->arg < m->store.registry.count ? &m->store.registry.hosts[c->arg] : NULL;
+            const sl_host *host = c->arg >= 0 && c->arg < m->store.registry.count
+                                      ? &m->store.registry.hosts[c->arg]
+                                      : NULL;
             bool online = sl_host_online(host, m->now);
-            if (host)
-                host_icon(r, m, host, box.x + box.w / 2 - 52, box.y + 2, 80);
-            else {
-                int cx = box.x + box.w / 2, cy = box.y + 36;
-                line(r->renderer, cx - 18, cy, cx + 18, cy, c->primary ? fg : muted);
-                line(r->renderer, cx, cy - 18, cx, cy + 18, c->primary ? fg : muted);
-            }
-            if (c->primary)
-                rounded(r->renderer,
-                        (sl_gfx_rect){box.x + box.w / 5, box.y + box.h - 3, box.w * 3 / 5, 3}, 1,
-                        accent);
-            int name_width = text_width(r, c->label, 26);
-            if (name_width > box.w - 40)
-                name_width = box.w - 40;
+            sl_gfx_color status = !host ? accent : !online ? muted : host->paired ? green : amber;
+            sl_gfx_color ink = !host                      ? (c->primary ? accent : fg)
+                               : !online || !host->paired ? status
+                               : c->primary               ? accent
+                                                          : fg;
+            char name[192];
+            snprintf(name, sizeof(name), "%s%s", host ? "" : "+  ", c->label);
+            int name_width = text_width(r, name, 30);
+            if (name_width > box.w - 60)
+                name_width = box.w - 60;
             int name_x = box.x + (box.w - name_width) / 2;
-            int name_y = centered_y(r, c->label, 26, box.y + 80, 28, name_width);
+            if (host)
+                rounded(r->renderer, (sl_gfx_rect){name_x - 24, box.y + (box.h - 12) / 2, 12, 12},
+                        6, status);
+            if (c->primary)
+                rounded(r->renderer, (sl_gfx_rect){box.x + 28, box.y + box.h - 4, box.w - 56, 4}, 2,
+                        ink);
             sl_gfx_clip(r->renderer, &box);
-            draw_text(r, c->label, name_x, name_y, name_width, 38, 26,
-                      online || (!host && c->primary) ? fg : muted);
+            draw_text(r, name, name_x, centered_y(r, name, 30, box.y, box.h, name_width),
+                      name_width + 2, box.h, 30, ink);
             sl_gfx_clip(r->renderer, NULL);
-            continue;
-        }
-        if (m->page == SL_HOME && sl_ui_adding_host(m) &&
-            (c->action == SL_OPEN_REMOTE_PAIR || c->action == SL_OPEN_MANUAL)) {
-            rounded(r->renderer, box, 10, focused ? accent : (sl_gfx_color){62, 69, 81, 255});
-            rounded(r->renderer, (sl_gfx_rect){box.x + 1, box.y + 1, box.w - 2, box.h - 2}, 9,
-                    panel);
-            connection_icon(r, box.x + 28, box.y + 24, 44, c->action == SL_OPEN_MANUAL ? 0 : 4,
-                            accent);
-            draw_text(r, c->label, box.x + 28, box.y + 118, box.w - 56, 48, 32, fg);
             continue;
         }
         if (c->action == SL_START &&
@@ -995,8 +954,9 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
                             focused ? bg : green);
             } else {
                 sl_gfx_color tile = mix(panel, role, .16f);
-                rounded(r->renderer, (sl_gfx_rect){box.x + 14, box.y + 14, 44, 44}, 10, tile);
-                action_icon(r->renderer, c->action, box.x + 21, box.y + 21, role);
+                int tile_y = box.y + (box.h - 44) / 2;
+                rounded(r->renderer, (sl_gfx_rect){box.x + 14, tile_y, 44, 44}, 10, tile);
+                action_icon(r->renderer, c->action, box.x + 21, tile_y + 7, role);
             }
         } else if (!plain || focused) {
             sl_gfx_color fill = focused              ? fg
@@ -1014,6 +974,9 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
         bool centered = l->compact || tab || c->action == SL_START || c->action == SL_DIGIT ||
                         c->action == SL_SUBMIT || c->action == SL_ERASE || shoulder || footer;
         int measured = text_width(r, label, size);
+        int value_width = c->value[0] ? text_width(r, c->value, 24) : 0;
+        if (value_width && menu_row)
+            width -= value_width + 16;
         if (footer) {
             int group = measured + 48;
             x = c->x + (c->w - group) / 2;
@@ -1032,6 +995,10 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
             width = measured + 2;
         }
         int y = centered_y(r, label, size, c->y, c->h, width);
+        if (value_width)
+            draw_text(r, c->value, box.x + box.w - 52 - value_width,
+                      centered_y(r, c->value, 24, box.y, box.h, value_width + 2), value_width + 2,
+                      box.h, 24, focused ? bg : muted);
         if (c->action == SL_RECENT) {
             sl_gfx_color game_color = c->disabled ? muted : c->arg % 2 ? amber : violet;
             sl_gfx_rect art = {box.x + 8, box.y + 8, box.w - 16, box.h - 72};
@@ -1056,12 +1023,12 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
             continue;
         } else if (!centered && !footer) {
             width -= 28;
-            if (c->action == SL_SOUND) {
-                sl_gfx_color track = m->store.sound ? green : muted;
+            if (c->action == SL_SOUND || c->action == SL_UPDATE_CHECK) {
+                bool on = c->action == SL_SOUND ? m->store.sound : m->update_check;
+                sl_gfx_color track = on ? green : muted;
                 int tx = box.x + box.w - 74, ty = box.y + (box.h - 28) / 2;
                 rounded(r->renderer, (sl_gfx_rect){tx, ty, 50, 28}, 14, track);
-                rounded(r->renderer, (sl_gfx_rect){tx + (m->store.sound ? 25 : 3), ty + 3, 22, 22},
-                        11, bg);
+                rounded(r->renderer, (sl_gfx_rect){tx + (on ? 25 : 3), ty + 3, 22, 22}, 11, bg);
             } else if (c->action != SL_BACK && c->action != SL_SET_QUALITY &&
                        c->action != SL_SET_BANDWIDTH && c->action != SL_SET_LANGUAGE)
                 chevron(r->renderer, box.x + box.w - 35, box.y + box.h / 2, focused ? bg : muted);
@@ -1175,7 +1142,6 @@ void sl_ui_renderer_destroy(sl_ui_renderer *r) {
     free(r->base_ui);
     sl_gfx_destroy_texture(r->backdrop);
     sl_gfx_destroy_texture(r->outline);
-    sl_gfx_destroy_texture(r->connection_icons);
     for (int i = 0; i < 512; ++i)
         sl_gfx_destroy_texture(r->cache[i].texture);
     for (int f = 0; f < 3; ++f)

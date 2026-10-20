@@ -60,12 +60,12 @@ The home screen and menus also support touch. **Disconnect** leaves the PC game 
 
 ## Add a HOME Menu shortcut
 
-Open **X Options → Add to HOME Menu** and confirm. No key file needs to be supplied manually.
+Open **X Settings → Application → Add to HOME Menu** and confirm. No key file needs to be supplied manually.
 Your CFW must support homebrew application installation and launch.
 
 The shortcut opens `switch/nsteamlink/nsteamlink.nro` on your SD card. Keep that file in place.
 To update, accept the update offered on start, or replace the file with the new NRO;
-you do not need to install the shortcut again. Turn the check off in **X Options**.
+you do not need to install the shortcut again. Turn the check off in **X Settings → Application**.
 
 ![NSteamLink shortcut on the Switch HOME Menu](docs/images/home-menu-shortcut.jpg)
 
