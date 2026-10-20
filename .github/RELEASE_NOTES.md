@@ -1,73 +1,71 @@
-# NSteamLink v0.5.0
+# NSteamLink v0.5.1
 
 ## 简体中文
 
-## [0.5.0] - 2026-10-19
+## [0.5.1] - 2026-10-20
 
-上一正式版：**v0.4.0**。本版：**v0.5.0**。目标分支：`main`；对应源码：[`v0.5.0`](https://github.com/kxn/nsteamlink/tree/v0.5.0)。
+上一正式版：**v0.5.0**。本版：**v0.5.1**。目标分支：`main`；对应源码：[`v0.5.1`](https://github.com/kxn/nsteamlink/tree/v0.5.1)。
 
 ### 主要变化
 
-- **1080p 串流**：新增自动、720p、1080p 三种分辨率选择。自动在连接时按掌机选择 720p、底座选择 1080p；掌机也可手动选择 1080p，解码后缩放至内屏。底座呈现保留原生 1080p 细节。
-- **设置分类**：首页 X 直接打开设置，分为画面与声音、网络、主机管理、应用。画面偏好、分辨率、带宽和语言入口显示当前值；声音、网络纠错和自动检查更新统一使用图形开关。只有进入子页的项目显示箭头。
-- **精简串流菜单**：标题改为“串流”，只保留继续游玩、结束游戏并断开、断开连接。串流期间不再提供设置入口；确认框明确区分关闭主机游戏与保留游戏运行。
-- **界面整理**：统一“主机”称呼，移除菜单内重复的生效时机说明，调整中英文排版、返回焦点及禁用项的手柄和触摸交互。
+- **串流恢复与退出**：改进视频丢失反馈、关键帧恢复、解码队列和帧所有权处理；停止串流时保留应处理的最后一批数据，正常关闭不再误报为提交失败。
+- **发现与重试**：发现广播全部发送失败时执行有界 socket 重建；修正接收批次、发现发送和开流重试的先后顺序，保留当前主机身份和请求。发现完整轮与快速重试沿用已核验的官方期限和序号规则。
+- **授权续接与凭据**：改进同一开流请求的自动授权续接、确认前的凭据保存，以及按所选 Steam 身份保存密钥；连接安全码与配对授权码仍分别处理。
+- **正式包精简**：明确关闭应用与 SDK 诊断。正式 NRO 排除调试 UDP 入口、nxlink/文件日志、HID 历史采样、高级诊断浮屏、故障注入和测试探针。发布流程校验实际对象、ELF/NRO 对应关系和附件允许列表；标签流程保留诊断排除测试，但不上传诊断包。
 
 ### 按类型分组的提交
 
-- **功能**：`3560194`，可选分辨率、自动底座协商和原生 1080p 呈现（[PR #60](https://github.com/kxn/nsteamlink/pull/60)，[Issue #12](https://github.com/kxn/nsteamlink/issues/12)）；`719deef`，设置分类与串流菜单重组。
-- **修复**：`be19b8a`，分辨率入口和侧栏布局；`1e74f71`，真机探针的 nxlink 参数顺序。
-- **开发测试**：`1e4e13c`，独立的强制 1080p 测试构建；正式发布包使用自动分辨率默认值。
+- **恢复与生命周期修复**：`3be848b`，UDP 接收边界；`07ed493`，正常停止时取消提交；`a94d163`、`c5a7cfb`，解码停止批次与最后一帧组装。
+- **发现修复**：`8fad3ca`、`9f193c8`，接收恢复和启动失败清理；`6c7a02d`、`e1274b5`，广播重建及发现轮次；`fe5bc32`、`e46cf75`、`9de506c`，操作、回调和联合重试顺序（[PR #87](https://github.com/kxn/nsteamlink/pull/87)）。
+- **授权与发布检查**：`a3000a4`、`eeeb684`、`b51680d`、`03bf16e`，授权和凭据生命周期；`55fcf98`，SDK 诊断排除与产物门禁。
+- **验证与参考**：补充官方原指令对照、音频断序/停止、跨组和跨通道 FEC、容量边界及独立 Switch 探针。研究和测试素材不进入正式 NRO。
 
 ### 验证与证据范围
 
-本地 173 项回归最终通过，Switch 正式构建及诊断排除检查通过，中英文菜单经过实际渲染检查。Switch 的 12 组硬件解码与原生 1080p 像素检查通过，测试资源清理无堆增长；维护者对掌机强制 1080p 串流进行了试玩并反馈正常。
+已验证的 `9de506c` / IHSlib `bfb7100` 通过桌面普通构建 239 项、诊断构建 245 项、相关 ASan/UBSan/leak 9 项，以及两轮完整 CI。Switch 正式构建的 45 个产品翻译单元、SDK 对象和最终 NRO 已检查诊断排除，15 类污染及 9 类探针产物/调用错误均被门禁拒绝。标签工作流会对正式发版提交重新构建并运行这些检查。
 
-目前没有底座，HDMI 输出与真实底座插拔尚未实测；上述结果也不代表持续 1080p60 性能或完整延迟基准已验证。标签工作流会重新执行桌面诊断 ON/OFF 测试、Switch 正式及诊断构建，并校验版本、NRO 结构、源码身份和附件校验和后发布。
+真实 Steam→Switch 会话已验证单个丢失分片的 FEC 重建，以及超过修复能力的整组丢失恢复：客户端实际发送恢复请求，随后接受并提交关键帧，继续播放 30 秒。本次受控局域网测试从丢失到关键帧提交约 40 毫秒，提交错误为 0（[实机记录](https://github.com/kxn/nsteamlink/issues/69#issuecomment-6281073775)）。这不是所有网络环境的延迟保证，也不代表原有偶发卡顿或 Steam 大屏闪烁的根因已经确定。网络切换、会话完全断开和公网连接保留为独立课题。
 
 ### 下载与更新
 
-从[本版 Release](https://github.com/kxn/nsteamlink/releases/tag/v0.5.0) 下载正式 `.nro`，或通过现有应用内更新升级。已添加 HOME 入口时，固定目标为 `sdmc:/switch/nsteamlink/nsteamlink.nro`。分辨率位于 **设置 → 画面与声音 → 分辨率**，自动检查更新位于 **设置 → 应用**。netloader 启动不检查更新。
+从[本版 Release](https://github.com/kxn/nsteamlink/releases/tag/v0.5.1) 下载正式 `.nro`，或使用应用内更新。已有 HOME 入口继续使用 `sdmc:/switch/nsteamlink/nsteamlink.nro`。附件仅包含正式 NRO、源码身份、诊断排除报告、SDK 包清单、许可证及 `SHA256SUMS`。
 
-附件包含正式 NRO、`SHA256SUMS`、`build_identity.json`、SDK 包清单及许可证；不发布强制 1080p 测试包或独立 NSP。
+感谢提供试玩与实机测试反馈的用户、提供初代 Switch 的 **Sven**，以及 **Simone Caronni（[@scaronni](https://github.com/scaronni)）**、IHSlib、FFmpeg、Opus、SDL、libnx、devkitPro、deko3d 和 nx-hbloader 的作者与维护者。
 
-感谢用户提出 1080p 需求和菜单反馈、Sven 提供初代 Switch，以及 IHSlib、FFmpeg、Opus、SDL、libnx、devkitPro、deko3d 与 nx-hbloader 的作者和维护者。
-
-[完整变更：v0.4.0 → v0.5.0](https://github.com/kxn/nsteamlink/compare/v0.4.0...v0.5.0)
+[完整变更：v0.5.0 → v0.5.1](https://github.com/kxn/nsteamlink/compare/v0.5.0...v0.5.1)
 
 ---
 
 ## English
 
-## [0.5.0] - 2026-10-19
+## [0.5.1] - 2026-10-20
 
-Previous stable release: **v0.4.0**. This release: **v0.5.0**. Target branch: `main`; tagged source: [`v0.5.0`](https://github.com/kxn/nsteamlink/tree/v0.5.0).
+Previous stable release: **v0.5.0**. This release: **v0.5.1**. Target branch: `main`; tagged source: [`v0.5.1`](https://github.com/kxn/nsteamlink/tree/v0.5.1).
 
 ### Highlights
 
-- **1080p streaming**: choose Auto, 720p, or 1080p. Auto requests 720p in handheld mode and 1080p when docked at connection time. Handheld mode also supports manually selected 1080p, decoded at full resolution and scaled to the internal screen. Docked presentation preserves native 1080p detail.
-- **Settings categories**: X on the home screen opens Settings directly, with Video & audio, Network, Host management, and Application. Quality, resolution, bitrate, and language entries show the saved value. Sound, error correction, and update checks use consistent graphical switches. Only entries that navigate to another page show arrows.
-- **Simpler streaming menu**: Streaming offers only Resume game, End game and disconnect, and Disconnect. Settings are available from the home screen. Confirmations distinguish closing the host game from disconnecting while leaving it running.
-- **Interface cleanup**: consolidate host terminology, remove repeated timing explanations, and revise Chinese/English layouts, return focus, and controller/touch behavior for disabled actions.
+- **Streaming recovery and shutdown**: improve video-loss feedback, keyframe recovery, decoder queues, and frame ownership. Preserve the final eligible receive batch during shutdown and treat normal close-time cancellation separately from submission failures.
+- **Discovery and retries**: use bounded socket recreation when every discovery broadcast destination fails. Correct the order of receive batches, discovery sends, and launch retries while preserving host identity and the current request. Full discovery rounds and fast retries follow the verified official deadlines and sequence rules.
+- **Authorization and credentials**: improve automatic authorization within the original launch request, credential-save attempts before confirmation, and key storage under the selected Steam identity. Pairing authorization codes and connection security codes remain separate.
+- **Ordinary release build**: explicitly disable application and SDK diagnostics. The published NRO excludes the debug UDP endpoint, nxlink/file logging, HID history capture, advanced diagnostic overlays, fault injection, and test probes. Publication gates inspect actual objects, ELF/NRO consistency, and the attachment allowlist. Tag workflows retain diagnostic exclusion tests without uploading diagnostic packages.
 
 ### Commits by type
 
-- **Features**: `3560194`, selectable resolution, automatic docked negotiation, and native 1080p presentation ([PR #60](https://github.com/kxn/nsteamlink/pull/60), [Issue #12](https://github.com/kxn/nsteamlink/issues/12)); `719deef`, settings categories and streaming menu reorganization.
-- **Fixes**: `be19b8a`, resolution navigation and drawer layout; `1e74f71`, nxlink argument ordering for device probes.
-- **Development tests**: `1e4e13c`, an isolated forced-1080p test build. The published application defaults to automatic resolution.
+- **Recovery and lifecycle fixes**: `3be848b`, UDP receive boundaries; `07ed493`, close-time submission cancellation; `a94d163` and `c5a7cfb`, decoder stop batches and final frame assembly.
+- **Discovery fixes**: `8fad3ca` and `9f193c8`, receive recovery and failed-startup cleanup; `6c7a02d` and `e1274b5`, broadcast recreation and discovery rounds; `fe5bc32`, `e46cf75`, and `9de506c`, operation, callback, and joint retry ordering ([PR #87](https://github.com/kxn/nsteamlink/pull/87)).
+- **Authorization and release checks**: `a3000a4`, `eeeb684`, `b51680d`, and `03bf16e`, authorization and credential lifetimes; `55fcf98`, SDK diagnostic exclusion and artifact gates.
+- **Validation and references**: original-instruction comparisons, audio gap/stop cases, cross-group and cross-channel FEC, capacity boundaries, and isolated Switch probes. Research and test fixtures are excluded from the ordinary NRO.
 
 ### Validation and evidence scope
 
-All 173 local regression tests ultimately passed, along with the ordinary Switch build and release diagnostic exclusion check. Chinese and English menus were inspected using actual rendering. All 12 Switch hardware-decode/native-1080p pixel cases passed, with clean test resources and no heap growth; the maintainer reported successful handheld playtesting of forced-1080p streaming.
+The verified `9de506c` / IHSlib `bfb7100` passed 239 ordinary desktop tests, 245 diagnostic tests, nine related ASan/UBSan/leak checks, and two full CI runs. Switch checks covered diagnostic exclusion in 45 product translation units, SDK objects, and the final NRO, with 15 contamination cases and nine probe artifact/call-path faults rejected. The tag workflow rebuilds the final release commit and repeats these checks.
 
-A physical dock was unavailable, so HDMI output and physical dock hotplug remain untested. These results do not establish sustained 1080p60 performance or a complete latency baseline. The tag workflow repeats desktop diagnostics ON/OFF tests, ordinary and diagnostic Switch builds, and checks the version, NRO structure, source identity, and attachment checksums before publishing.
+Real Steam→Switch sessions verified FEC reconstruction after one missing data shard and recovery after an entire group was erased beyond its repair capacity: an actual recovery request was sent, a later keyframe was received and submitted, and playback continued for 30 seconds. Loss-to-keyframe-submission was about 40 milliseconds in this controlled LAN run, with zero submission errors ([device evidence](https://github.com/kxn/nsteamlink/issues/69#issuecomment-6281073775)). This is not a latency guarantee for other networks or proof of the original intermittent-stall/Steam Big Picture flicker cause. Network switching, complete session disconnection, and Internet connectivity remain separate work.
 
 ### Download and update
 
-Download the ordinary `.nro` from [this release](https://github.com/kxn/nsteamlink/releases/tag/v0.5.0), or use the existing in-app updater. An installed HOME shortcut targets `sdmc:/switch/nsteamlink/nsteamlink.nro`. Resolution is under **Settings → Video & audio → Resolution**; automatic update checks are under **Settings → Application**. Netloader launches skip update checks.
+Download the ordinary `.nro` from [this release](https://github.com/kxn/nsteamlink/releases/tag/v0.5.1), or use the in-app updater. Existing HOME shortcuts continue to target `sdmc:/switch/nsteamlink/nsteamlink.nro`. Attachments contain only the ordinary NRO, source identity, diagnostic exclusion report, SDK package list, license text, and `SHA256SUMS`.
 
-Attachments contain the ordinary NRO, `SHA256SUMS`, `build_identity.json`, the SDK package list, and license text. Forced-1080p test packages and standalone NSPs are not published.
+Thanks to users providing playtesting and device-test feedback, **Sven** for the original-model Switch, **Simone Caronni ([@scaronni](https://github.com/scaronni))**, and the authors and maintainers of IHSlib, FFmpeg, Opus, SDL, libnx, devkitPro, deko3d, and nx-hbloader.
 
-Thanks to users for the 1080p request and menu feedback, Sven for the original-model Switch, and the authors and maintainers of IHSlib, FFmpeg, Opus, SDL, libnx, devkitPro, deko3d, and nx-hbloader.
-
-[Full changelog: v0.4.0 → v0.5.0](https://github.com/kxn/nsteamlink/compare/v0.4.0...v0.5.0)
+[Full changelog: v0.5.0 → v0.5.1](https://github.com/kxn/nsteamlink/compare/v0.5.0...v0.5.1)
