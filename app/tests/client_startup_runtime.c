@@ -15,11 +15,12 @@
 enum Fault { CLIENT_ALLOC, BASE_MUTEX, RECEIVE_COND, TIMER_NODE, TIMER_QUEUE,
              TIMER_MUTEX, TIMER_THREAD, SOCKET_ALLOC, SOCKET_FD, SOCKET_MUTEX,
              RX_THREAD, DISCOVERY_CONTEXT, DISCOVERY_TASK, SESSION_SEND_MUTEX,
-             SESSION_RELIABLE_MUTEX, SESSION_SEND_QUEUE, SESSION_PENDING_QUEUE, NO_FAULT };
+             SESSION_RELIABLE_MUTEX, SESSION_SEND_QUEUE, SESSION_PENDING_QUEUE,
+             POLL_BUFFER, POLL_NONBLOCK, NO_FAULT };
 static const char *names[] = {"client_alloc", "base_mutex", "receive_cond", "timer_node",
     "timer_queue", "timer_mutex", "timer_thread", "socket_alloc", "socket_fd",
     "socket_mutex", "rx_thread", "discovery_context", "discovery_task",
-    "send_mutex", "reliable_mutex", "send_queue", "pending_queue"};
+    "send_mutex", "reliable_mutex", "send_queue", "pending_queue", "poll_buffer", "poll_nonblock"};
 static enum Fault fault = NO_FAULT;
 static atomic_uint hits, receives, delivered;
 static atomic_int live_mutex, live_cond, live_queue, live_rx, live_timer, live_socket, live_send;
@@ -43,6 +44,7 @@ static bool inject(enum Fault mode) {
 void *__real_malloc(size_t);
 void *__wrap_malloc(size_t size) {
     if ((creating && size == sizeof(IHS_Client) && inject(CLIENT_ALLOC)) ||
+        (creating && size == 2048 && inject(POLL_BUFFER)) ||
         (in_discovery && inject(DISCOVERY_CONTEXT))) return NULL;
     return __real_malloc(size);
 }
@@ -121,6 +123,11 @@ IHS_UDPSocket *__wrap_IHS_UDPSocketOpen(bool broadcast) {
     in_socket = false;
     return s;
 }
+bool __real_IHS_UDPSocketSetBlocking(IHS_UDPSocket *, bool);
+bool __wrap_IHS_UDPSocketSetBlocking(IHS_UDPSocket *s, bool blocking) {
+    if (creating && !blocking && inject(POLL_NONBLOCK)) return false;
+    return __real_IHS_UDPSocketSetBlocking(s, blocking);
+}
 int __real_socket(int, int, int);
 int __wrap_socket(int family, int type, int protocol) {
     if (in_socket && inject(SOCKET_FD)) { errno = EMFILE; return -1; }
@@ -163,6 +170,14 @@ IHS_Client *__real_IHS_ClientCreate(const IHS_ClientConfig *);
 IHS_Client *__wrap_IHS_ClientCreate(const IHS_ClientConfig *cfg) {
     creating = true;
     IHS_Client *c = __real_IHS_ClientCreate(cfg);
+    creating = false;
+    if (c) associated_cond = c->receiveWake;
+    return c;
+}
+IHS_Client *__real_IHS_ClientCreatePolled(const IHS_ClientConfig *);
+IHS_Client *__wrap_IHS_ClientCreatePolled(const IHS_ClientConfig *cfg) {
+    creating = true;
+    IHS_Client *c = __real_IHS_ClientCreatePolled(cfg);
     creating = false;
     if (c) associated_cond = c->receiveWake;
     return c;
@@ -240,9 +255,8 @@ static void exercise(IHS_Client *c) {
     IHS_BufferAppendMessage(&b, (void *)&status);
     require(__real_sendto(peer, wire, b.size, 0, (void *)&sender, size) == (ssize_t)b.size, "actual Status reply");
     for (unsigned i = 0; i < 2000 && !atomic_load(&delivered); ++i) {
-        /* start_client selects deferred ownership; mirror the actual runtime
-         * worker's pump rather than leaving its first Update unfinished. */
-        if (app_mode) IHS_ClientPumpAuthorization(c, 32);
+        /* The product actor owns the polled socket and complete Update. */
+        if (app_mode) IHS_ClientUpdate(c, NULL, NULL, NULL);
         usleep(1000);
     }
     require(atomic_load(&delivered) == 1, "healthy retry actually receives Status");
@@ -337,12 +351,16 @@ static void exercise_session(unsigned mode, const IHS_ClientConfig *config) {
 int main(int argc, char **argv) {
     require(argc == 2, "one resource-failure mode");
     bool pause_mode = !strcmp(argv[1], "pause_rejection");
+    bool polled_mode = !strncmp(argv[1], "polled_", 7);
     unsigned mode;
     session_mode = !strncmp(argv[1], "session_", 8);
-    const char *mode_name = argv[1] + (session_mode ? 8 : 0);
+    const char *mode_name = argv[1] + (session_mode ? 8 : polled_mode ? 7 : 0);
     for (mode = 0; mode < NO_FAULT && strcmp(mode_name, names[mode]); ++mode) {}
     require(mode < NO_FAULT || pause_mode, "known resource mode");
-    require(pause_mode || (session_mode ? (mode <= RX_THREAD || mode >= SESSION_SEND_MUTEX) : mode <= DISCOVERY_TASK), "owner resource mode");
+    require(pause_mode || (polled_mode ? mode != RX_THREAD &&
+                (mode <= DISCOVERY_TASK || mode == POLL_BUFFER || mode == POLL_NONBLOCK)
+            : session_mode ? (mode <= RX_THREAD || (mode >= SESSION_SEND_MUTEX && mode <= SESSION_PENDING_QUEUE))
+                           : mode <= DISCOVERY_TASK), "owner resource mode");
     alarm(8);
     IHS_Init();
     baseline_mutex = atomic_load(&live_mutex);
@@ -383,7 +401,7 @@ int main(int argc, char **argv) {
     sl_runtime r = {0};
     require(!pthread_mutex_init(&r.lock, NULL), "runtime mutex");
     r.config = config;
-    app_mode = mode == DISCOVERY_CONTEXT || mode == DISCOVERY_TASK;
+    app_mode = polled_mode || mode == DISCOVERY_CONTEXT || mode == DISCOVERY_TASK;
     if (app_mode) {
         require(!start_client(&r) && !r.client, "registration failure cleans actual runtime client");
     } else {
@@ -401,6 +419,7 @@ int main(int argc, char **argv) {
     if (app_mode) { require(start_client(&r) && r.client, "explicit runtime retry"); c = r.client; }
     else { c = IHS_ClientCreate(&config); require(c != NULL, "explicit healthy retry"); }
     exercise(c);
+    if (app_mode) require(!atomic_load(&live_rx), "polled actor has no background RX thread");
     if (app_mode) stop_client(&r);
     else { IHS_ClientStop(c); IHS_ClientThreadedJoin(c); IHS_ClientDestroy(c); }
     balanced(true);

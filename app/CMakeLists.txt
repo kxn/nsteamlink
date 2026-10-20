@@ -587,6 +587,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_link_libraries(nsl-pairing-rpc-oracle PRIVATE nsl_platform)
     target_link_options(nsl-pairing-rpc-oracle PRIVATE
         -Wl,--wrap=sl_remote_connection_create -Wl,--wrap=sl_remote_connection_protocol
+        -Wl,--wrap=sl_remote_connection_update -Wl,--wrap=recvfrom
         -Wl,--wrap=sl_remote_connection_destroy -Wl,--wrap=sendto -Wl,--wrap=time
         -Wl,--wrap=IHS_CryptoRandomUInt32 -Wl,--wrap=IHS_CryptoRandomBytes
         -Wl,--wrap=IHS_CryptoRSAEncrypt -Wl,--wrap=IHS_ClientSendControl
@@ -599,6 +600,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-request-failure.py"
         --receiver $<TARGET_FILE:nsl-pairing-rpc-oracle>)
     set_tests_properties(request_failure_official_vectors PROPERTIES TIMEOUT 30)
+    add_test(NAME control_update_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-control-update.py"
+        --receiver $<TARGET_FILE:nsl-pairing-rpc-oracle>)
+    set_tests_properties(control_update_official_vectors PROPERTIES TIMEOUT 45)
     add_executable(nsl-resolution-render tests/test_resolution_render.c)
     target_include_directories(nsl-resolution-render PRIVATE platforms/common ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
     target_link_libraries(nsl-resolution-render PRIVATE nsl_gfx)
@@ -872,15 +877,22 @@ if(NSL_PLATFORM STREQUAL "desktop")
         -Wl,--wrap=IHS_CondCreate -Wl,--wrap=IHS_CondDestroy
         -Wl,--wrap=IHS_QueueCreate -Wl,--wrap=IHS_QueueDestroy -Wl,--wrap=IHS_QueueItemObtain
         -Wl,--wrap=IHS_TimerCreate -Wl,--wrap=IHS_UDPSocketOpen
+        -Wl,--wrap=IHS_UDPSocketSetBlocking
         -Wl,--wrap=socket -Wl,--wrap=close -Wl,--wrap=sendto
         -Wl,--wrap=IHS_ThreadCreate -Wl,--wrap=IHS_ThreadJoin
-        -Wl,--wrap=IHS_ClientCreate -Wl,--wrap=IHS_ClientEnableDiscovery -Wl,--wrap=IHS_ClientDisableDiscovery -Wl,--wrap=IHS_UDPSocketReceive)
+        -Wl,--wrap=IHS_ClientCreate -Wl,--wrap=IHS_ClientCreatePolled
+        -Wl,--wrap=IHS_ClientEnableDiscovery -Wl,--wrap=IHS_ClientDisableDiscovery -Wl,--wrap=IHS_UDPSocketReceive)
     add_test(NAME discovery_startup_official_vectors COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-discovery-startup.py"
         --receiver $<TARGET_FILE:nsl-client-startup-runtime>)
     set_tests_properties(discovery_startup_official_vectors PROPERTIES TIMEOUT 45)
     add_test(NAME discovery_pause_rejection COMMAND nsl-client-startup-runtime pause_rejection)
     set_tests_properties(discovery_pause_rejection PROPERTIES TIMEOUT 10)
+    foreach(fault client_alloc base_mutex receive_cond timer_node timer_queue timer_mutex timer_thread
+                  socket_alloc socket_fd socket_mutex discovery_context discovery_task poll_buffer poll_nonblock)
+        add_test(NAME polled_startup_${fault} COMMAND nsl-client-startup-runtime polled_${fault})
+        set_tests_properties(polled_startup_${fault} PROPERTIES TIMEOUT 10)
+    endforeach()
     target_include_directories(nsl-discovery-error-runtime PRIVATE
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
     target_compile_options(nsl-discovery-error-runtime PRIVATE -Wall -Wextra -Werror -Wno-unknown-pragmas)

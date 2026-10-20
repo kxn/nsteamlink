@@ -38,6 +38,7 @@ def command(event):
         return 'r '+raw.hex()
     if op=='raw':return 'r '+event[1]
     if op=='batch':return 'b '+' '.join(event[1])
+    if op=='mixed':return 'm '+(';'.join(event[1]) or '-')+' '+(';'.join(event[2]) or '-')
     if op=='fail-token':return 'f'
     if op=='fail-send':return f'e {event[1]}'
     if op=='due':return f'd {event[1]}'

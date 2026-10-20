@@ -235,7 +235,7 @@ static void udp(unsigned kind, const ProtobufCMessage *message, const char *ip, 
     atomic_store_explicit(&pending, true, memory_order_release);
 }
 static void pump(sl_runtime *r) {
-    IHS_ClientPumpAuthorization(r->client, 32);
+    IHS_ClientUpdate(r->client, NULL, NULL, NULL);
     flush_accounts(r);
     flush_control(r);
 }
@@ -515,7 +515,7 @@ int main(void) {
     assert(retry.cloud && request(&retry, rotated, pin_cipher) == id);
     atomic_store(&wall, 1009);
     for (unsigned n = 0; n < 4000 && !queued_control(&r); ++n) {
-        IHS_ClientPumpAuthorization(r.client, 32);
+        IHS_ClientUpdate(r.client, NULL, NULL, NULL);
         usleep(1000);
     }
     assert(queued_control(&r) == 1);
@@ -594,9 +594,8 @@ int main(void) {
     b = body(&late, &h);
     assert(field(b.bytes, b.size, 1).value == 0);
     incoming_peer = 123;
-    /* Standalone authorization really produces from the timer thread. Do not
-     * pump the actor until its copied frame exists; send_rpc still asserts that
-     * only this actor touches the actual CM/service boundary. */
+    /* Polled control must not send from the timer thread. A complete actor
+     * update produces the frame; the CM/service boundary still waits for flush. */
     cloud(1, &s.base);
     pthread_mutex_lock(&r.lock);
     sl_addresses_destroy(&sl_directory_find(r.directory, 123)->addresses);
@@ -605,8 +604,9 @@ int main(void) {
     assert(control_host(r.client, 123, &authorization_host, &r));
     before = count(3);
     assert(IHS_ClientAuthorizationRequest(r.client, &authorization_host, "1234"));
-    for (unsigned n = 0; n < 4000 && !queued_control(&r); ++n)
-        usleep(1000);
+    usleep(50000);
+    assert(!queued_control(&r) && count(3) == before);
+    IHS_ClientUpdate(r.client, NULL, NULL, NULL);
     assert(queued_control(&r) == 1 && count(3) == before);
     auth = wait_send(&r, 3, before);
     assert(auth.cloud);

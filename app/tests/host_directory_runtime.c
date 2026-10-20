@@ -1,4 +1,4 @@
-/* Actual IHS receive/protobuf dispatch/thread lifecycle -> production directory
+/* Actual IHS polled receive/protobuf dispatch/lifecycle -> production directory
  * -> UI events. recvfrom is the packet/source provider; no Steam or physical
  * reachability is proved. Cloud status enters through the production callback. */
 #include "../platforms/common/runtime.c"
@@ -39,7 +39,7 @@ static void read_round(IHS_TimerTask *task, void *context) {
 }
 static round_clock settled(sl_runtime *r) {
     for (unsigned n = 0; n < 3000; ++n) {
-        IHS_ClientPumpAuthorization(r->client, 32);
+        update_control(r, sl_system_now());
         round_clock snapshot = {0};
         IHS_TimerTaskVisitOwned(r->client->timers, &r->client->discoveryTimer, read_round, &snapshot);
         if (snapshot.quiet) return snapshot;
@@ -136,9 +136,8 @@ static void send_status(bool offline) {
 }
 static void wait_event(sl_runtime *r, sl_event_type type) {
     for (unsigned n = 0; n < 3000; ++n) {
-        /* Same deferred update owner as the real runtime loop: draining the
-         * authorization queue also completes the current discovery cycle. */
-        IHS_ClientPumpAuthorization(r->client, 32);
+        /* Same CM/UDP/discovery/expiry/retry owner as the product worker. */
+        update_control(r, sl_system_now());
         sl_runtime_event event;
         while (sl_runtime_poll(r, &event)) if (event.type == type) return;
         usleep(1000);
@@ -263,7 +262,7 @@ int main(void) {
     assert(sl_stream_settings_init(&r.settings, &r.store));
     assert(request_stream(&r, true));
     for (unsigned n = 0; n < 3000 && !atomic_load_explicit(&stream_sent, memory_order_acquire); ++n) {
-        IHS_ClientPumpAuthorization(r.client, 32);
+        update_control(&r, sl_system_now());
         usleep(1000);
     }
     assert(atomic_load_explicit(&stream_sent, memory_order_acquire));

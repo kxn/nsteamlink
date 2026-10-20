@@ -31,6 +31,38 @@ static sl_runtime runtime;
 static sl_remote *protocol;
 static char connection;
 static IHS_HostInfo target;
+static uint8_t update_cm[8][4096], update_udp[8][4096];
+static size_t update_cm_sizes[8], update_udp_sizes[8];
+static unsigned update_cm_count, update_udp_count, update_udp_index;
+static bool update_receiving;
+static uint64_t update_tick;
+ssize_t __wrap_recvfrom(int fd, void *data, size_t capacity, int flags,
+                        struct sockaddr *address, socklen_t *length) {
+    (void)fd;
+    (void)flags;
+    if (update_udp_index == update_udp_count) {
+        errno = EAGAIN;
+        return -1;
+    }
+    assert(update_receiving && update_cm_count == 0);
+    size_t size = update_udp_sizes[update_udp_index];
+    assert(size <= capacity && *length >= sizeof(struct sockaddr_in));
+    memcpy(data, update_udp[update_udp_index++], size);
+    struct sockaddr_in peer = {.sin_family = AF_INET, .sin_port = htons(27036),
+                               .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
+    memcpy(address, &peer, sizeof(peer));
+    *length = sizeof(peer);
+    return (ssize_t)size;
+}
+void __wrap_sl_remote_connection_update(sl_remote_connection *c, uint64_t now) {
+    assert(c == (sl_remote_connection *)&connection && update_receiving);
+    cloud_error = true;
+    for (unsigned n = 0; n < update_cm_count; ++n)
+        assert(sl_remote_receive(protocol, update_cm[n], update_cm_sizes[n]));
+    update_cm_count = 0;
+    sl_remote_update(protocol, now);
+    cloud_error = false;
+}
 static void state(record *r) {
     r->state = IHS_ClientHandshakePhase(runtime.client);
     IHS_BaseLock(&runtime.client->base);
@@ -234,6 +266,17 @@ static size_t unhex(const char *text, uint8_t *raw) {
     }
     return size;
 }
+static unsigned update_inputs(char *text, uint8_t packets[8][4096], size_t sizes[8]) {
+    if (!strcmp(text, "-")) return 0;
+    char *save;
+    unsigned count = 0;
+    for (char *part = strtok_r(text, ";", &save); part; part = strtok_r(NULL, ";", &save)) {
+        assert(count < 8);
+        sizes[count] = unhex(part, packets[count]);
+        ++count;
+    }
+    return count;
+}
 static void open_session(uint64_t id) {
     assert(sl_remote_open(protocol));
     uint8_t body[32], wire[64];
@@ -394,7 +437,17 @@ int main(int argc, char **argv) {
     snapshot();
     char command[8192];
     while (fgets(command, sizeof(command), stdin)) {
-        if (command[0] == 'f')
+        if (command[0] == 'm') {
+            char cm[4096], udp[4096];
+            assert(sscanf(command, "m %4095s %4095s", cm, udp) == 2);
+            update_cm_count = update_inputs(cm, update_cm, update_cm_sizes);
+            update_udp_count = update_inputs(udp, update_udp, update_udp_sizes);
+            update_udp_index = 0;
+            update_receiving = true;
+            update_control(&runtime, update_tick += 100);
+            update_receiving = false;
+            assert(!update_cm_count && update_udp_index == update_udp_count);
+        } else if (command[0] == 'f')
             fail_next_token = true;
         else if (command[0] == 'e')
             assert(sscanf(command, "e %u", &fail_send_tag) == 1);
@@ -405,6 +458,7 @@ int main(int argc, char **argv) {
             IHS_BaseLock(&runtime.client->base);
             ++runtime.client->receiveGeneration;
             IHS_BaseUnlock(&runtime.client->base);
+            IHS_ClientUpdate(runtime.client, NULL, NULL, NULL);
         } else if (command[0] == 's')
             start();
         else if (command[0] == 'c')

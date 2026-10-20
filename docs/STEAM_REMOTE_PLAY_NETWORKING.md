@@ -1012,9 +1012,10 @@ arm64 的结果比较分支位于 `0x79d92c`、`0x79d998` 起的指令中，并�
 **实现修订**：撤回旧的“未知主机服务配对槽的缓存/状态仍与已知主机分开”边界。
 正式 runtime 的 SetPairingInfo 现在委托同一 IHS manager 准备授权正文；云端和 UDP 的
 回复共用同一授权 owner、current secret 和 manager 生命周期的 key/result 缓存。
-UDP 由 RX 排队后在 actor 处理；CM 已在 actor 上，必须同步完成当前帧，不能再次延迟。
+正式 runtime 由同一 actor 轮询 UDP，并同步完成 CM 当前帧；不再让后台 RX 排队改变
+两条入站路径的顺序。独立 threaded/deferred API 保留其拥有消息的队列契约。
 服务 RPC 的分派、状态 2 和断线行为另由下文的完整接收队列审计约束；不能用
-单条授权成功轨迹推导它们。CM 与 UDP/deferred owner 之间的完整跨生产者全序仍须单独证明。
+单条授权成功轨迹推导它们。下文完整 manager 混合输入审计限定了联合顺序的证据范围。
 
 **Evidence（入站身份的细分）**：同一 core `0x79d6c8–0x79d6cc` 的非 Success 分支
 直接到 `0x79d8f4`；状态 4 的零/非目标来源在 `0x79d954–0x79d968` 转入过期分支，
@@ -1134,7 +1135,8 @@ notification 的 client_id（包括缺失字段的零默认值），不按 Steam
 UI profile 只作为单账号镜像，旧资料仅在对应新文件缺失时迁移，不能覆盖已保存的首项。
 IHS 的 identity 回调在密码校验之前同步更新并尝试保存 metadata，subscribe 回调位于
 确认之后、目标检查之前；当前发送、请求 key 的查找及成功响应的账号采用目录首项。
-RX status 只在锁内更新拥有的列表，actor 在锁外保存快照；磁盘错误不变更协议授权结果。
+status 回调只在锁内更新拥有的列表，actor 在锁外保存快照；正式轮询模式的回调也在 actor
+上执行，独立 threaded 模式仍可能由 RX 调用。磁盘错误不变更协议授权结果。
 key 写入失败后的 paired-ID 保存、非目标的有效 key、零首项、旧 UI 镜像、实际重启文件
 加载和紧随其后的发送由 `control_route_runtime.c` 联合覆盖。
 这些是受控组件/actor 证据，不证明真实 Steam、网络/SDK 或 Switch。
@@ -1233,8 +1235,9 @@ OnPairingFailed 的 Stop 不再报告错误。生产代码若只把第一帧加�
 此差异由相同完整帧在原 FIFO 与生产 runtime/IHS 中复现，不是历史热点故障根因的证明。
 因此 CM 已在应用 actor 上交付的控制帧必须在回调返回前完成处理；不能通过逐帧调用整个
 Pump 来修补，因为 Pump 还可能执行发现/授权重试，改变同批入站与到期发送的顺序。
-UDP RX 仍需把拥有的消息交给 actor；CM 同步入口不应临时关闭全局 deferred 标记，
-否则会同时改变另一个接收线程的行为。这条规则不推导 CM 与 UDP 的完整跨线程全序。
+此前“UDP RX 仍排队交给 actor”的正式产品方案已撤回：只让 CM 同步并不能保证跨承载
+顺序。保留 threaded API 的独立调用者不能临时关闭全局 deferred 标记，以免同时改变
+另一接收线程的行为；正式产品改用下文的同一 actor 轮询方案。
 跨承载排序另有静态调用者证据：core `CServerManager::Update @0x79890c` 先在
 `0x79898c` 调用 session Update，再在 `0x7989c0–0x7989d8` 循环接收并处理 UDP，
 随后才做发现发送（`0x798ab0`）、可见记录到期删除（`0x798c18`）和开流／授权重试
@@ -1244,6 +1247,34 @@ UDP RX 仍需把拥有的消息交给 actor；CM 同步入口不应临时关闭�
 显式步骤。host_directory_runtime 使用实际接收/目录及 cloud disconnect 回调，将墙钟
 推进到记录的 300 秒之后：断开云端后、到期清理前查询仍成功，清理后查询失败，地址缓存
 仍独立保留。它约束读取与删除的阶段差异，不证明整个 CM/UDP/发现/重试循环已经联合对齐。
+
+**混合输入 Evidence / 证据修订**：同一固定 shell 的完整 manager Update→session Update→
+WebSocket FIFO→UDP BProcess 收到“CM SetPairingInfo 失败，UDP 有效授权”时，先通知
+失败并 Stop，再将 UDP 授权确认为 Canceled，paired 列表不增加。生产旧循环先 Pump UDP，
+随后才处理 CM，结果为先完成配对、paired 增加、再忽略 Idle 的失败。UDP 原 BProcess
+返回 1，原 parser/crypto/Stop 执行；BReceive 字节、初始对象/队列、持久查找和最终发送
+是 provider，发现期限在未来且 visible map 为空，不据此声称非空目录到期的完整联合证明。
+因此仅统一授权队列或交换两次 Pump 不能证明全序一致。正式 manager 应由同一工作线程
+轮询控制 socket：CM→完整 UDP 批次→发现→到期→重试；媒体的接收线程属于另一套 owner。
+旧 threaded/deferred IHS API 可保留给独立调用者，但不能作为正式产品排序的证明。
+
+`audit-steam-control-update.py` 固定相同 shell，实际执行完整 manager Update、session
+Update、WebSocket FIFO 和 UDP BProcess。五个初始阶段（2/3/4/5/6）、当前记录/hint
+可用或不可用，各投入失败/PIN/有效 key/Denied/重复 key 的六类组合，共 60 组。
+`check-steam-control-update.py` 从正式 runtime 的 update_control 进入 IHS_ClientUpdate，
+只在 CM 传输交付、recvfrom 和继承的最终发送等 provider 边界替换数据，比较每步
+阶段/ID/目标、secret、保存/paired 结果、RPC/控制帧和通知时的状态。原 UDP BProcess
+逐帧返回 1；该证据不覆盖非空 visible map 的到期或实际网络互通。
+正式控制 socket 由工作线程非阻塞读取，无独立 RX thread；100ms 轮询周期沿用原
+watcher 构造器（`audit-steam-discovery-cycles.py` 验证 timer interval=100）。发现和请求
+timer 对轮询客户端不自行发送，初次 StartStreaming 仍立即发请求；所有后续阶段在同一
+Update 里完成。到期回调重新读取墙钟，发现/重试使用 UDP 批次结束后的共同墙钟快照。
+
+**额外差异的撤回与修正**：状态 4 在 CM 收到本目标 Denied 后，同一轮又收到 UDP 有效
+key；原 Stop 无可用记录/hint 时不发 type9，并清除目标，迟到 key 在 Idle 确认 Canceled。
+旧原生 StopAuthorization 无条件发 type9、仅清 ID 而保留目标。撤回该分支已等价的假定；
+路由模式改走统一 StreamingCancel，仍先通知旧状态，再查询取消目标并清除 ID/目标。
+独立非路由 API 保留原有取消契约。此差异不证明历史热点或卡帧的根因。
 
 正式 runtime 通过 begin/prepare/abort 回调接入这些规则：IHS 同时持有状态 2/3，公开
 HandshakePhase 与 HandshakeFail 供服务回调使用；错误先经原来的 UI 事件入口通知，

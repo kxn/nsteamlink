@@ -82,6 +82,7 @@ struct sl_runtime {
     uint64_t control_epoch;
     sl_control_frame *control_head, *control_tail;
     size_t control_count, control_bytes;
+    uint64_t control_next_update;
     sl_account_list paired_accounts; /* Actor-owned, separate from UI profiles. */
     bool accounts_initialized;
 #if NSL_HAVE_SNS
@@ -1260,6 +1261,39 @@ static void refresh_presence(sl_runtime *r, uint64_t now, int64_t wall) {
     }
     pthread_mutex_unlock(&r->lock);
 }
+typedef struct {
+    sl_runtime *runtime;
+    uint64_t now;
+} control_update;
+static void update_control_session(void *ctx) {
+    control_update *update = ctx;
+    sl_remote_connection_update(update->runtime->remote, update->now);
+}
+static void update_control_expiry(void *ctx) {
+    control_update *update = ctx;
+    refresh_presence(update->runtime, update->now, (int64_t)time(NULL));
+}
+static void update_control(sl_runtime *r, uint64_t now) {
+    if (!r->client) return;
+    flush_control(r);
+    if (now < r->control_next_update) return;
+    r->control_next_update = now + 100;
+    control_update update = {.runtime = r, .now = now};
+#if NSL_DIAGNOSTICS
+    uint64_t began = sl_system_now();
+#endif
+    IHS_ClientUpdate(r->client, update_control_session, update_control_expiry, &update);
+    flush_control(r);
+#if NSL_DIAGNOSTICS
+    uint64_t ended = sl_system_now();
+    if (ended-began >= 250 && ended-r->cloud_stall_at >= 1000) {
+        r->cloud_stall_at = ended;
+        char line[96];
+        snprintf(line, sizeof(line), "cloud_update stall_ms=%llu", (unsigned long long)(ended-began));
+        sl_log(line);
+    }
+#endif
+}
 static void cloud_stream_result(IHS_StreamingResult result, const sl_remote_material *m,
                                 void *ctx) {
     (void)m; /* The SDL/native-only build has no SNS transport constructor. */
@@ -1367,7 +1401,7 @@ static void stop_client(sl_runtime *r) {
 static bool start_client(sl_runtime *r) {
     initialize_accounts(r);
     sl_log("discovery: creating IHS client");
-    r->client = IHS_ClientCreate(&r->config);
+    r->client = IHS_ClientCreatePolled(&r->config);
     if (!r->client)
         return false;
     IHS_ClientSetAuthorizationDeferred(r->client, true);
@@ -1380,6 +1414,7 @@ static bool start_client(sl_runtime *r) {
     bool started = sync_discovery_targets(r) && start_discovery(r);
     sl_log(started ? "discovery: periodic broadcast registered" : "discovery: registration failed");
     if (!started) stop_client(r);
+    r->control_next_update = 0;
     return started;
 }
 /* Return completion observed before/during join, before destroying its owner. */
@@ -2075,6 +2110,7 @@ static void *worker_main(void *ctx) {
     while (!r->quit) {
         if (r->waiting_video) {
             if (!sl_media_video_clean()) {
+                update_control(r, sl_system_now());
                 struct timespec pause = {0, 1000000};
                 nanosleep(&pause, NULL);
                 continue;
@@ -2088,8 +2124,7 @@ static void *worker_main(void *ctx) {
             execute(r, (sl_command){.type = SL_CMD_EXIT});
             continue;
         }
-        if (r->client)
-            IHS_ClientPumpAuthorization(r->client, 32);
+        update_control(r, sl_system_now());
         flush_accounts(r);
         sl_command cmd = {0};
         sl_auth_store save;
@@ -2242,22 +2277,6 @@ static void *worker_main(void *ctx) {
             }
         }
 #endif
-#if NSL_DIAGNOSTICS
-        uint64_t cloud_began = sl_system_now();
-#endif
-        flush_control(r);
-        sl_remote_connection_update(r->remote, now);
-#if NSL_DIAGNOSTICS
-        uint64_t cloud_ended = sl_system_now();
-        if (cloud_ended - cloud_began >= 250 && cloud_ended - r->cloud_stall_at >= 1000) {
-            r->cloud_stall_at = cloud_ended;
-            char line[96];
-            snprintf(line, sizeof(line), "cloud_update stall_ms=%llu",
-                     (unsigned long long)(cloud_ended - cloud_began));
-            sl_log(line);
-        }
-#endif
-        refresh_presence(r, now, (int64_t)time(NULL));
         sample_network_test(r, now);
         if (now - r->last_diag >= 1000)
             sample(r, now);
