@@ -15,8 +15,10 @@ Git submodule与vendored源码放在这里；Opus的未修改归档由CMake核�
 
 ## SNS 构建边界
 
-`NSL_BUILD_SNS` 在桌面和 Switch 默认开启。runtime 对只有云端可达的主机声明 SNS，
-后端自动选择 ICE/SDR；已验证的 LAN 继续使用 IHS 原生 UDP。用户界面不增加路径选择。
+`NSL_BUILD_SNS` 在桌面和 Switch 默认开启。已知主机的控制事务共用 IHS owner，
+每次发送按当前已验证地址选择 UDP 或云端；同时公布 UDP/SDR 媒体能力，按主机回复
+创建原生 UDP 或 SNS 传输。SNS 后端再选择 ICE/SDR。发现来源、控制承载和媒体承载
+分别处理，不能从“局域网发现”推断最终媒体路径。用户界面不增加路径选择，见 D-A081。
 `NSL_ENABLE_SDR` 控制本项目重建的 Valve relay extension；它不属于公开 GNS 上游。
 互操作工具由 `NSL_BUILD_TOOLS` 单独控制。
 

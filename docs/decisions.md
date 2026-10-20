@@ -2889,3 +2889,34 @@ HMAC 和内层 protobuf 解析，不能用“没有 SDR 元素”代替认证失
 这些是发送入口及信令接收分支的证据，不是所有 caller 的完整 UDP/cloud 事务切换、
 token 失败后的 manager 错误回调或真实服务端接受证明。完整地址但走云端的原版头不带 token，
 因此不能把本云端无地址入口的规则泛化为未来共用选路函数的全部行为。
+
+## D-A081：已知主机控制事务共用 owner，发送时读取当前地址
+
+日期：2026-10-21
+
+Evidence：公网协议参考 §9.4 的完整 SendMessage 与显式/隐式 caller，§11 的独立
+授权、开流和 Proof 规则；`control_frame_oracle.c` 与 `control_route_runtime.c` 的范围
+及外部 provider 在同节列出。
+
+取代 D-A063 第 4 项“只有云端可达时声明 SDR”的限制。SNS 可用时已知主机请求同时公布
+UDP/SDR；控制消息走 UDP/CM 与最终媒体 transport 分开。响应选择原生 UDP 时采用本次
+回复来源，来源完整才替换流端口；选择 SDR 时将本次密钥、证书及 relay 材料交给 SNS。
+不从 UI 地址快照推导物理端点，也不从发现来源推断媒体实际路径。
+
+已知主机使用同一 IHS 事务、当前 secret、接收队列及重试 owner；CM 控制报文进入与 UDP
+相同的 parser/延迟队列。每次隐式请求/取消查询当前目录；完整的显式回复来源绕过目录。
+迟到 InProgress 的内联取消是显式回复，不套用隐式取消的可见主机前置条件。开流响应
+按 request_id 归属，Proof 则单独校验当前目标身份，不将两个规则合并。
+
+补充 D-A079 的地址快照边界：关注 ID 的提交/操作顺序仍归发现 owner，实际地址值在
+RequestStatus 时读取当前目录。不通过额外的 before-Update 回调反向覆盖较早的关注操作。
+目录锁与 IHS 操作队列保持分离，不在持有应用锁时等待 IHS owner。
+
+授权计时器可在独立线程产生报文；真实 CM 操作只在 runtime owner 执行。报文先深拷贝进
+有界 FIFO，64 项/256KiB、单帧 64KiB 是本项目资源预算，不是线上协议常量。断开/替换
+连接时清除旧 epoch 队列，不把旧帧重封装进新 session。清理先停止/join IHS 生产者，
+再处理剩余复制帧并销毁 CM，最后释放目录；不新增 detached 线程。
+
+未知主机的服务配对仍由 cloud pairing slot 处理。该改动不证明两个 owner 的授权缓存、
+所有入站身份顺序、持久文件或 socket 启动失败策略已完全统一；源指令/受控输入测试也
+不代替真实 Steam、NAT、SDK 网络和 Switch loader 验证。
