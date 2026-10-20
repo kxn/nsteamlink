@@ -703,13 +703,13 @@ client_id 索引状态/持久信息，保存 steamid 列表，并以列表首项
 
 **Evidence：** `BProcess @0x799e48–0x79a178`、`BAddNetworkAddress @0x79c040`、
 `GetAddress @0x79c25c`、比较器 `AddressInfo_t::operator< @0x7a3140–0x7a3258`。
-每条地址记录含：是否实际收到该地址回复、是否为 status 中的 remote_ip、最后实际回复时间、
+每条地址记录含：是否实际收到该地址回复、是否为 status 中的 public_ip_address、地址时间字段、
 IP/类型/端口。这里给字段取的中文名来自写入调用点，不是恢复出的原始 C++ 成员名。
 
 | 地址来源 | 实际回复标志 | remote_ip 标志 | 用途 |
 |---|---|---|---|
 | 收到 UDP status 的源地址 | true，并更新 `time()` 和端口 | 不新增此标志 | 可以被选作控制消息直连地址 |
-| status.remote_ip | false | true | 加入候选，供后续 discovery 单播探测 |
+| status.public_ip_address（本文原称 remote_ip） | false | true | 加入候选，供后续 discovery 单播探测 |
 | status.ip_addresses | false | false | 同上 |
 | 持久化地址文件重新加载 | false，时间 0 | false | 重新探测，不直接继承上次运行的可达性 |
 
@@ -718,11 +718,38 @@ IP/类型/端口。这里给字段取的中文名来自写入调用点，不是�
 更新时间差不超过 3 秒时不会单靠时间决定排序。匹配已有 IP 时不重复插入；实际回复会更新
 可达标志、时间、端口；已有 remote_ip 标志只置位不清零。排序是地址管理规则，不是 ICE 候选排序。
 
+**时间字段更正**：撤回“最后实际回复时间”作为全部记录的定义。新增地址不论可达标志
+是否为 true，均调用 `time(NULL)` 写入时间（`0x79c0f4–0x79c124`）；已有地址仅在本次
+verified=true 时更新时间和端口（`0x79c21c–0x79c23c`）。因此重复的未验证公布地址既不刷新
+时间，也不替换已有端口；新增未验证地址的时间并非 0。持久文件重载的 0 是另一个来源的规则。
+`BAddNetworkAddress` 返回值仅表示新增了条目；更新可达标志、时间、端口或 remote 标志仍可返回 false。
+
 **比较器的适用边界**：上述时间容差按每一对地址比较，不是能直接展开成全局 tuple 的排序键。
 合成输入 A=(time=104, IPv4=3)、B=(102,2)、C=(100,1)，其余标志相同时，原始比较器返回
 `A<C`、`C<B`、`B<A` 均为 true：前一对由时间决定，后两对由 IP 决定。这里存在不传递的
 两两比较，不能声称所有地址集合都有唯一的规范顺序；测试只证明比较器结果，不证明某种
 标准库 sort 对这组输入的最终排列。实现若改用确定的全局顺序，须注明本项目差异。
+
+完整排序函数为 `std::__ndk1::__introsort<...AddressInfo_t...,false> @0x7a24d8`，
+元素为40字节；不是调用系统 qsort。可复现实验执行该函数及其插入、分区、ninther、堆排序
+辅助函数（`0x7a24d8–0x7a38c4`），覆盖0–256条地址、非传递三元组全部排列、IPv4/IPv6、
+混合标志和显式 depth=0 的堆退路。depth=0 为直接调用排序器的合成输入，不证明常规地址添加
+一定能触发这条退路。IP 比较、GetIPv4 和 IPv6 文本格式化也执行样本原始函数，避免用桩的
+字节序或系统 inet_ntop 偷换排序键。
+
+复现命令（固定 Android 1.3.32 arm64，SHA256
+`50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e`）：
+
+```sh
+uv run --with unicorn --with pyelftools python scripts/audit-steam-address-cache.py \
+  --binary /path/to/libmain-arm64.so \
+  --reference scripts/fixtures/steam-address-cache-reference.json.gz \
+  --output /tmp/steam-address-cache-replay.json.gz
+```
+
+记录查找、预分配容器存储、时钟、strcmp、限长文本复制/printf 为显式 provider；地址添加、
+去重更新、清理、排序、GetAddress 由原指令运行。该实验不执行持久文件读写、status protobuf
+解析、完整可见表 Update、真实网络或本项目的完整地址目录，不能替代其实现与互操作验证。
 
 `GetAddress` 和 `SendMessage` 的隐式选址只取排序后第一条且要求实际回复标志为 true。
 `SendMessage @0x79ae04–0x79ae9c` 仅在调用方没有提供完整 IP+port 且 client_id 非零时查缓存。
@@ -730,7 +757,12 @@ IP/类型/端口。这里给字段取的中文名来自写入调用点，不是�
 **Conclusion**：云端发现成功后，可以在后台探测公布地址；公布地址本身不等于验证了直连。
 
 `ClearInactiveAddresses @0x79be58–0x79c03c` 删除标志为 false 的地址，而非按固定秒数删除。
-首次处理主机 status 会先执行该清理，再加入本次公布地址。可见主机表的 30 秒过期与地址记录
+首次处理主机 status 会先执行该清理，再加入本次公布地址。清理从后向前扫描，以尾部元素
+覆盖被删位置后缩短数组，不保序、不在该函数里重排；例如 verified 标志为 T,F,T,F,T 的
+IP列表1,2,3,4,5清理后为1,5,3。这是合成的交错标志输入，不声称正常排序后的调用者会产生
+这种排列；但该清理函数对任意输入并不等价于稳定过滤。随后每次 BAddNetworkAddress 才排序。
+status 的加入顺序为 public_ip_address → ip_addresses 的原始顺序 → 实际 UDP 源地址，
+这些插入中间都会排序（`0x799f14–0x799fcc`、`0x79a0f8–0x79a11c`）。可见主机表的 30 秒过期与地址记录
 的可达标志是两件事；在上述地址函数中没有“UDP 发送 N 次无回应后清除标志”的计数器。
 不得将主机表过期自动解释成按秒失效的地址缓存或已实现的 UDP→云端故障回退。
 
@@ -766,6 +798,12 @@ else if sends_in_round <= 2 and now >= next_extra_send:
 删除（`0x798b2c–0x798b50`）。Offline（云端通知或 discovery type 2）清除可见记录和云端在线集合，
 通知删除；不会删除长期配对密钥或触发重新配对（`0x79a03c–0x79a0a4`、`0x79f240–0x79f2f0`）。
 云端断开清空云端在线集合，随后普通过期规则重新生效（`0x79eef0–0x79ef54`）。
+
+上面的复现实验还单独执行解析后的 type2 分支 `0x79a03c–0x79a0a4`：可见表存在时先删除、
+调用 removed delegate，再删除云端集合；不存在时不发 removed，仍尝试删除云端集合。
+四组可见/云端集合存在组合均不改配对/地址记录。该分支没有“用此前局域网 status 立即恢复
+在线”的路径；新的 status 可以重新建立可见记录。实验的 map/delegate 是受控 provider，
+不声称验证了报文准入、无记录时 UI 的幂等通知实现或云端/UDP 多线程事件调度。
 
 `HandleNetworkChanged @0x79a614` 只在 manager Idle 时清零可见记录时间并立即触发发现；
 它不是任何流状态下都重启 ICE 的通用网络变化处理器。

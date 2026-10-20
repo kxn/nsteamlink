@@ -204,7 +204,13 @@ static void post(sl_runtime *r, sl_runtime_event e) {
         e.generation = r->active.generation;
     /* Discovery is coalesced and capped below the reserved terminal capacity. */
     if (e.type == SL_EVENT_HOST) {
-        for (int i = 0; i < r->count; ++i)
+        for (int i = r->count - 1; i >= 0; --i) {
+            /* An Offline between two statuses is an ordering boundary. Do
+             * not overwrite a pre-Offline HOST with a later status: the UI
+             * would consume the new status first, then the older Offline. */
+            if (r->events[i].type == SL_EVENT_HOST_OFFLINE &&
+                r->events[i].host.client_id == e.host.client_id)
+                break;
             if (r->events[i].type == SL_EVENT_HOST &&
                 r->events[i].host.client_id == e.host.client_id &&
                 r->events[i].host.instance_id == e.host.instance_id) {
@@ -212,6 +218,7 @@ static void post(sl_runtime *r, sl_runtime_event e) {
                 pthread_mutex_unlock(&r->lock);
                 return;
             }
+        }
         if (r->count >= 32) {
             pthread_mutex_unlock(&r->lock);
             return;
@@ -844,13 +851,11 @@ static void cloud_offline(uint64_t id, void *ctx) {
                     (--r->cloud_count - i) * sizeof(*r->cloud_hosts));
             break;
         }
-    IHS_HostInfo local;
-    if (!local_host(r, id, &local))
-        post(r, (sl_runtime_event){.type = SL_EVENT_HOST_OFFLINE, .host = {.client_id = id}});
-    else
-        post(r, (sl_runtime_event){.type = SL_EVENT_HOST,
-                                   .host = host_from(&local),
-                                   .discovery_source = SL_DISCOVERY_LAN});
+    /* Original BProcess(type 2) removes visible status and cloud-online
+     * membership even when a previous UDP status exists (0x79a03c–0x79a0a4).
+     * Keep pairing/address records; only a subsequent status can republish
+     * presence. Replaying an old LAN reply here would cancel the Offline. */
+    post(r, (sl_runtime_event){.type = SL_EVENT_HOST_OFFLINE, .host = {.client_id = id}});
 }
 static void cloud_stream_result(IHS_StreamingResult result, const sl_remote_material *m,
                                 void *ctx) {

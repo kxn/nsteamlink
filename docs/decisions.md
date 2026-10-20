@@ -2807,3 +2807,24 @@ SDK 连接之后才进入查询契约，保留官方同步 BInit→BConnect 的�
 本地资源/信令错误和主动销毁仍由独立入口处理；它们的 caller reason、完整 Send/Recv、MTU、
 地址选择及服务器策略不包含在本项状态分支对照中。原始状态和原函数调用范围对齐不作为
 整个 SNS SDK、真实网络互操作或 Switch loader 生命周期的替代证明。
+
+## D-A078：Offline 清除可见状态，不用旧的局域网回复抵消通知
+
+Evidence：固定 Android 1.3.32 arm64 的 `BProcess(type2) @0x79a03c–0x79a0a4`
+先删除可见主机、通知 removed，再移除云端在线集合；该分支不读取、删除或重放持久地址。
+`scripts/audit-steam-address-cache.py` 在受控 map/delegate 边界上执行四组原始分支，
+以合成持久区哨兵和地址字节验证这些记录保持；哨兵不是恢复出的真实密钥字段。
+该分支不经过持久记录查找，实验不验证 wire parser、实际远端通知或 Qt/线程调度。
+
+Conclusion：runtime 云端 Offline 必须发布不可用事件并清除云端在线记录；不能用此前
+local_host 的回复立刻发一个 HOST/LAN 事件抵消它。保留配对、游戏历史和地址记录；后续
+真实 discovery status 可以重新上线。无可见记录时，上层不可用事件为幂等操作；不据此宣称
+上层事件个数、回调时序和官方 delegate 完全相同。
+
+UI 队列可以合并同一主机的连续 status，但不能跨过该主机的 Offline 去覆盖旧 status；
+否则 status→Offline→新 status 会被重排成新 status→Offline，最终错误离线。以 Offline
+为合并边界，保持同一电脑的可见状态迁移顺序；其他电脑不受该边界影响。
+
+同一份地址实验更正了协议参考 §10.1 中“时间仅为最后回复时间”的定义，保留新增未验证
+地址也写当前时间、已有未验证地址不刷新时间/端口、逆序 FastRemove 和非传递比较器的
+完整排序结果。可见记录寿命、地址可达标志和配对存储是独立状态，不能再用一个超时统一表示。
