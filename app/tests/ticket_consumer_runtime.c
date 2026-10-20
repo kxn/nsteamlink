@@ -21,6 +21,17 @@ static size_t cm_sizes[8], udp_sizes[8];
 static unsigned cm_count, udp_count, udp_index, after_injection;
 static bool backend_live;
 static unsigned final_phase;
+static unsigned test_mode; /* 0 constructor terminal, 1 SDK connecting, 2 init failure. */
+static uint64_t real_begin;
+static atomic_bool clock_frozen;
+static atomic_uint_fast64_t frozen_ms;
+static atomic_uint frozen_updates, pending_sends, session_joins, backend_attempts;
+uint64_t __real_sl_system_now(void);
+uint64_t __wrap_sl_system_now(void) {
+    if (test_mode != 1) return __real_sl_system_now();
+    return atomic_load(&clock_frozen) ? atomic_load(&frozen_ms)
+                                    : 1000+__real_sl_system_now()-real_begin;
+}
 
 static bool send_rpc(const uint8_t *raw, size_t size, void *ctx) {
     (void)raw; (void)size; (void)ctx;
@@ -110,12 +121,19 @@ ssize_t __wrap_sendto(int fd, const void *data, size_t size, int flags,
     (void)fd; (void)data; (void)flags; (void)address; (void)length;
     return (ssize_t)size;
 }
+IHS_Session *__real_IHS_SessionCreate(const IHS_ClientConfig *, const IHS_SessionInfo *);
 IHS_Session *__wrap_IHS_SessionCreate(const IHS_ClientConfig *config, const IHS_SessionInfo *info) {
     (void)config;
     assert(pthread_equal(owner, pthread_self()) && info->sessionKeyLen == 32);
     for (unsigned n = 0; n < 32; ++n) assert(info->sessionKey[n] == n);
     atomic_fetch_add(&session_creates, 1);
-    return NULL; /* Observe consumption, without creating a media/socket worker. */
+    return test_mode == 1 ? __real_IHS_SessionCreate(config, info) : NULL;
+}
+void __real_IHS_SessionThreadedJoin(IHS_Session *);
+void __wrap_IHS_SessionThreadedJoin(IHS_Session *s) {
+    assert(!test_mode || backend_live);
+    __real_IHS_SessionThreadedJoin(s);
+    atomic_fetch_add(&session_joins, 1);
 }
 #if NSL_HAVE_SNS
 sl_sns *__wrap_sl_sns_create(const IHS_ClientConfig *config, const sl_remote_material *m,
@@ -126,16 +144,23 @@ sl_sns *__wrap_sl_sns_create(const IHS_ClientConfig *config, const sl_remote_mat
     assert(!strcmp(m->cert, "fixture-certificate") &&
            !strcmp(m->stun_servers, "stun:fixture.invalid:3478"));
     for (unsigned n = 0; n < 32; ++n) assert(m->key[n] == n);
+    atomic_fetch_add(&backend_attempts, 1);
+    if (test_mode == 2) return NULL;
     atomic_fetch_add(&backend_creates, 1); backend_live = true;
     return (sl_sns *)&backend;
 }
 void __wrap_sl_sns_update(sl_sns *s, uint64_t now) {
     (void)now;
     assert(s == (sl_sns *)&backend && backend_live && pthread_equal(owner, pthread_self()));
+    if (atomic_load(&clock_frozen)) atomic_fetch_add(&frozen_updates, 1);
+}
+bool __wrap_sl_sns_session_ready(const sl_sns *s) {
+    assert(s == (sl_sns *)&backend && backend_live);
+    return true; /* Config/certificate complete, even while SDK finds a route. */
 }
 sl_sns_state __wrap_sl_sns_get_state(const sl_sns *s) {
     assert(s == (sl_sns *)&backend && backend_live);
-    return SL_SNS_CONNECTED;
+    return test_mode == 1 ? SL_SNS_CONNECTING : SL_SNS_CONNECTED;
 }
 void __wrap_sl_sns_get_stats(const sl_sns *s, sl_sns_stats *out) {
     assert(s == (sl_sns *)&backend && backend_live); memset(out, 0, sizeof(*out));
@@ -144,7 +169,28 @@ int __wrap_sl_sns_end_reason(const sl_sns *s) { (void)s; return 0; }
 void __wrap_sl_sns_destroy(sl_sns *s) {
     if (!s) return;
     assert(s == (sl_sns *)&backend && backend_live && pthread_equal(owner, pthread_self()));
+    assert(test_mode != 1 || atomic_load(&session_joins) == atomic_load(&session_creates));
     backend_live = false; atomic_fetch_add(&backend_destroys, 1);
+}
+static bool pending_send(void *ctx, const uint8_t *data, size_t size) {
+    (void)ctx; (void)data; (void)size;
+    atomic_fetch_add(&pending_sends, 1);
+    return false; /* SDK Connecting returns retry; never queue stale Connects. */
+}
+static int pending_wait(void *ctx, uint32_t us) {
+    (void)ctx;
+    struct timespec pause = {0, (long)(us > 1000 ? 1000 : us)*1000};
+    nanosleep(&pause, NULL);
+    return 0;
+}
+static int pending_receive(void *ctx, uint8_t *data, size_t capacity, size_t *received, uint32_t us) {
+    (void)ctx; (void)data; (void)capacity; (void)received; (void)us;
+    return 0;
+}
+const IHS_DatagramTransport *__wrap_sl_sns_datagram_transport(void) {
+    static const IHS_DatagramTransport callbacks = {
+        pending_send, pending_receive, pending_wait, 2048, NULL};
+    return &callbacks;
 }
 #endif
 static unsigned packets(char *text, uint8_t output[8][4096], size_t sizes[8]) {
@@ -163,7 +209,9 @@ static unsigned packets(char *text, uint8_t output[8][4096], size_t sizes[8]) {
     return count;
 }
 int main(int argc, char **argv) {
-    assert(argc == 2);
+    assert(argc == 2 || argc == 4);
+    if (argc == 4) test_mode = (unsigned)atoi(argv[2]);
+    real_begin = __real_sl_system_now();
     char cm[8192], udp[8192];
     assert(scanf("%8191s %8191s", cm, udp) == 2);
     cm_count = packets(cm, cm_packets, cm_sizes); udp_count = packets(udp, udp_packets, udp_sizes);
@@ -176,17 +224,29 @@ int main(int argc, char **argv) {
     sl_host *saved = sl_host_observe(&store.registry, &h, 0);
     assert(saved); saved->paired = true; saved->account = UINT64_C(76561198000000001);
     sl_runtime *r = sl_runtime_create(&store); assert(r);
-    uint64_t deadline = sl_system_now()+6000;
-    while (!atomic_load(&ready)) { assert(sl_system_now() < deadline); poll(NULL, 0, 1); }
+    uint64_t deadline = __real_sl_system_now()+6000;
+    while (!atomic_load(&ready)) { assert(__real_sl_system_now() < deadline); poll(NULL, 0, 1); }
     sl_command cmd = {.type = SL_CMD_STREAM, .host = *saved, .generation = 1,
                       .test_only = atoi(argv[1]) != 0};
     assert(sl_runtime_submit(r, &cmd, &store));
-    while (!atomic_load(&settled)) { assert(sl_system_now() < deadline); poll(NULL, 0, 1); }
+    while (!atomic_load(&settled)) { assert(__real_sl_system_now() < deadline); poll(NULL, 0, 1); }
     assert(udp_index == udp_count);
+    if (test_mode == 1) {
+        uint32_t begin = r->connect_wait_tick;
+        uint64_t begin_ms = (begin/65536u)*1000u+((uint64_t)(begin%65536u)*1000u+65535u)/65536u;
+        atomic_store(&frozen_ms, begin_ms+(unsigned)atoi(argv[3]));
+        atomic_store(&clock_frozen, true);
+        while (!atomic_load(&backend_destroys) && atomic_load(&frozen_updates) < 3) {
+            assert(__real_sl_system_now() < deadline); poll(NULL, 0, 1);
+        }
+    }
+    unsigned early_close = atomic_load(&backend_destroys) != 0;
     unsigned sessions = atomic_load(&session_creates), backends = atomic_load(&backend_creates);
     sl_runtime_destroy(r);
     assert(!backend_live && atomic_load(&backend_creates) == atomic_load(&backend_destroys));
     sl_fixture_remove_tree(directory);
-    printf("{\"state\":%u,\"sessions\":%u,\"backends\":%u,\"clean\":true}\n", final_phase, sessions, backends);
+    printf("{\"state\":%u,\"sessions\":%u,\"backends\":%u,\"attempts\":%u,\"early_close\":%u,"
+           "\"pending_sends\":%u,\"joins\":%u,\"clean\":true}\n", final_phase, sessions, backends,
+           atomic_load(&backend_attempts), early_close, atomic_load(&pending_sends), atomic_load(&session_joins));
     return 0;
 }

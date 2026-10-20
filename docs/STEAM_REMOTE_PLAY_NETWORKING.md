@@ -1483,6 +1483,38 @@ ClientSetNetworkConfig `0x75dc84`。+56 的重定位 `0xc408c0` 指向 CheckPing
 remote identity 参数为空、virtual port=0，初始参数和连接配置见 §9.5。
 “声明 supported_transport=[1,4]”与“返回 4 后立即连接某个固定 relay_server”不是同一算法。
 
+**初始化与播放器等待的边界**：`CStreamClient::BConnect @0x7a7808` 在
+`0x7a7920–0x7a792c` 调用 backend 的 BInit。失败时在 `0x7a7a00–0x7a7a10` Release
+并返回 false，不创建 bridge 或 Connection；成功后先创建 bridge、Connection，Release
+调用者的 backend 引用，再在 `0x7a79f4` 调用 Connection::Connect 并返回 true。
+Release 是引用计数操作，不能把这次 Release 解释为销毁仍由 bridge/Connection 持有的 backend。
+SDR 的实际虚表将 BInit 指向 `0x7ffd30`，UpdateState 指向 `0x8011f0`；BInit 的成功尾部
+`0x800030–0x8000b8` 完成 authentication/ping/config 后返回，尚未创建 SDK 连接句柄。
+后续 UpdateState 才在 `0x801380–0x801398` 调用 Sockets +288 并进入 Connecting。
+
+因此不能等待 SDK Connected 才创建上层 IHS 连接并启动初始等待。SDL 初始 Connecting
+期限（`STEAMLINK_PROTOCOL_RE.md` §126 的初始连接等待执行对照：16.16 tick 判断，
+恰好 10 秒时到期）包含后续 SDK 创建/寻路阶段，
+与 SDK 自己配置的 TimeoutInitial=20000ms 是不同层的期限。
+**证据修订**：撤回本端口此前“SDK Connected 后才创建 IHS”的调用策略；该策略把整个寻路
+阶段排除在播放器初始等待之外。端口保留异步配置获取，但仅在证书安装与 authentication
+初始化完成后开放 session-ready；调用者先创建 IHS，下一次 owner update 才发起 SDK 连接。
+配置获取本身仍位于该 IHS 等待之前，不据此宣称异步 HTTP 的耗时与原同步 BInit 完全相同。
+
+`audit-steam-sns-client-call.py` 执行固定 arm64 core 的 BConnect、SetAuthToken 调用者与
+选定 SDL 等待路径，冻结 4 组程序：BInit 成功后的 9999/10000/11000ms，及 BInit 失败。
+13 个递归 helper、core SHA 与既有 ticket fixture SHA 一并校验；新 gzip fixture SHA256 为
+`ba7d0f4c76a119142a0728c1488bacdf0384f4b1291a2d2d59112488a25d6792`。
+backend 构造/BInit/Release、auth buffer 存储、bridge/Connection 存储及 Connect 是显式
+provider，不能把这 4 组执行表述为真实 SDK 初始化或网络成功；上面的 BInit/UpdateState
+内部边界另由原函数及实际虚表静态复核支撑；审计工具同时解析原 ELF relocation，
+冻结 SDR 的 Release/BInit/UpdateState 三个槽位目标及对应函数字节 SHA。
+`check-steam-sns-client-call.py` 将原始结果与生产 runtime worker 比较：采用冻结源程序的
+SDR 成功响应，经真实控制解析创建真实 IHS worker；仅 SDK/config/datagram IO 与时钟为
+provider，检查期限前仍等待、到期开始清理，以及 IHS join 在 backend 销毁之前完成。
+本地真实 SDK owner 用例另验证配置完成但尚无句柄时 IHS 能等待、无效句柄失败能唤醒 worker，
+两者均不验证真实 Steam、NAT/SDR 网络或 Switch loader 生命周期。
+
 ### 12.3 transport 状态、收发与 MTU
 
 transport 的 `this+20`：0=初始化后尚未开始连接，1=Connecting/FindingRoute，2=Connected，
@@ -1533,7 +1565,10 @@ handle查找/锁与SNP统计端点仍是明确provider；不是只按函数名�
 
 端口的配置/证书 HTTP 是异步的，和官方先完成同步 BInit 再 BConnect 的调用边界不同。
 在尚未发起 SDK 连接时不执行 CheckConnection，避免把“正在取得配置、尚无句柄”误当作
-“连接句柄已失效”。状态失败后队列的本地释放/唤醒发生在 policy 之后；项目资源错误的关闭
+“连接句柄已失效”。配置初始化成功后，即使尚无 SDK handle 或仍在寻路，datagram wait/receive
+也只返回空队列；发送未被接受时沿用 IHS 的既有重试，不积压旧 Connect 包。
+只有 Failed/Closed 才向接收 worker 返回终止，清理时先中断/join IHS，再销毁 backend。
+状态失败后队列的本地释放/唤醒发生在 policy 之后；项目资源错误的关闭
 理由和完整传输 Send/Recv 结果处理不属于本项 CheckConnection 比较范围。
 
 **证据修订**：撤回此前 BWait 固定 Poll(0)、不按等待参数阻塞的表述。

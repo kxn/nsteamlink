@@ -288,7 +288,6 @@ static void pump_config(sl_sns *b) {
     curl_easy_cleanup(b->request);
     b->request = nullptr;
     if (success) {
-        b->config_ready = true;
         SteamNetworkingErrMsg error;
         /* Public GNS returns from CertStore_CheckCert before decoding the
          * certificate if its CA is unknown. Install the network CA chain first
@@ -304,10 +303,7 @@ static void pump_config(sl_sns *b) {
             return;
         }
         b->sockets->InitAuthentication();
-        bool started = begin_connection(b);
-        config_event(b, started ? "p2p_started" : "p2p_start_failed", -1);
-        if (!started)
-            close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_START);
+        b->config_ready = true;
     } else if (b->config_attempt >= 3 || !begin_config(b)) {
         b->end_reason = -1;
         close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_CONFIG);
@@ -409,12 +405,22 @@ static bool check_connection(sl_sns *b) {
 static void update_backend(sl_sns *b, uint64_t now) {
     if (!b || !b->initialized)
         return;
+    /* Official BInit returns before SDR UpdateState creates the SDK handle.
+     * Let the caller create IHS/start its deadline after config completion;
+     * the next owner pass may then start SDK route finding. */
+    bool connect_now = b->config_ready && !b->connection_attempted;
     SteamNetworkingSockets_Poll(0);
 #if NSL_SNS_PROBES
     sl_gns_sdr_probe_update(b->relay_probe);
 #endif
     b->sockets->RunCallbacks();
     pump_config(b);
+    if (connect_now && b->q->state == SL_SNS_CONNECTING) {
+        bool started = begin_connection(b);
+        config_event(b, started ? "p2p_started" : "p2p_start_failed", -1);
+        if (!started)
+            close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_START);
+    }
 #if NSL_ENABLE_SDR && NSL_SNS_PROBES
     if (b->connection)
         sl_gns_sdr_transport_stats(b->connection, b->sdr_debug);
@@ -501,6 +507,11 @@ extern "C" void sl_sns_update(sl_sns *b, uint64_t now) {
 }
 extern "C" sl_sns_state sl_sns_get_state(const sl_sns *b) {
     return b ? b->q->state.load() : SL_SNS_CLOSED;
+}
+extern "C" bool sl_sns_session_ready(const sl_sns *b) {
+    if (!b || !b->config_ready) return false;
+    sl_sns_state state = b->q->state.load();
+    return state == SL_SNS_CONNECTING || state == SL_SNS_CONNECTED;
 }
 extern "C" int sl_sns_end_reason(const sl_sns *b) { return b ? b->end_reason : 0; }
 extern "C" void sl_sns_get_stats(const sl_sns *b, sl_sns_stats *out) {
@@ -591,9 +602,9 @@ static int wait_datagram(void *ctx, uint32_t wait_us) {
     if (!b) return -1;
     std::unique_lock<std::mutex> lock(b->q->mutex);
     b->q->wake.wait_for(lock, std::chrono::microseconds(wait_us), [&] {
-        return !b->q->rx.empty() || b->q->state != SL_SNS_CONNECTED;
+        return !b->q->rx.empty() || b->q->state == SL_SNS_FAILED || b->q->state == SL_SNS_CLOSED;
     });
-    if (b->q->state != SL_SNS_CONNECTED) return -1;
+    if (b->q->state == SL_SNS_FAILED || b->q->state == SL_SNS_CLOSED) return -1;
     return b->q->rx.empty() ? 0 : 1;
 }
 static int receive_datagram(void *ctx, uint8_t *p, size_t capacity,
@@ -603,10 +614,10 @@ static int receive_datagram(void *ctx, uint8_t *p, size_t capacity,
     std::unique_lock<std::mutex> lock(b->q->mutex);
     if (wait_us)
         b->q->wake.wait_for(lock, std::chrono::microseconds(wait_us), [&] {
-            return !b->q->rx.empty() || b->q->state != SL_SNS_CONNECTED;
+            return !b->q->rx.empty() || b->q->state == SL_SNS_FAILED || b->q->state == SL_SNS_CLOSED;
         });
     /* Like official Recv, terminal handle state takes priority over old data. */
-    if (b->q->state != SL_SNS_CONNECTED) return -1;
+    if (b->q->state == SL_SNS_FAILED || b->q->state == SL_SNS_CLOSED) return -1;
     if (b->q->rx.empty()) return 0;
     const Message &m = b->q->rx.front();
     if (m.size() > capacity) return -1;

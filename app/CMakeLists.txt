@@ -616,8 +616,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
         -Wl,--wrap=sl_remote_connection_update -Wl,--wrap=sl_remote_connection_describe
         -Wl,--wrap=sl_remote_connection_destroy -Wl,--wrap=sendto -Wl,--wrap=recvfrom
         -Wl,--wrap=IHS_ClientSendControl -Wl,--wrap=IHS_SessionCreate
+        -Wl,--wrap=IHS_SessionThreadedJoin -Wl,--wrap=sl_system_now
         -Wl,--wrap=IHS_CryptoRandomUInt32 -Wl,--wrap=sl_network_stats_load
         -Wl,--wrap=sl_sns_create -Wl,--wrap=sl_sns_update -Wl,--wrap=sl_sns_get_state
+        -Wl,--wrap=sl_sns_session_ready -Wl,--wrap=sl_sns_datagram_transport
         -Wl,--wrap=sl_sns_get_stats -Wl,--wrap=sl_sns_end_reason -Wl,--wrap=sl_sns_destroy)
     set(NSL_TICKET_CONSUMER_ARGS)
     if(NOT NSL_BUILD_SNS)
@@ -627,6 +629,12 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-ticket-consumer.py"
         --receiver $<TARGET_FILE:nsl-ticket-consumer-runtime> ${NSL_TICKET_CONSUMER_ARGS})
     set_tests_properties(ticket_consumer_official_vectors PROPERTIES TIMEOUT 90)
+    if(NSL_BUILD_SNS)
+        add_test(NAME sns_client_call_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-sns-client-call.py"
+            --receiver $<TARGET_FILE:nsl-ticket-consumer-runtime>)
+        set_tests_properties(sns_client_call_official_vectors PROPERTIES TIMEOUT 45)
+    endif()
     add_executable(nsl-resolution-render tests/test_resolution_render.c)
     target_include_directories(nsl-resolution-render PRIVATE platforms/common ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
     target_link_libraries(nsl-resolution-render PRIVATE nsl_gfx)

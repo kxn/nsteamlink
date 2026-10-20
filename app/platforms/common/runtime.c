@@ -2314,7 +2314,7 @@ static void *worker_main(void *ctx) {
         if (r->sns) {
             sl_sns_update(r->sns, now);
             sl_sns_state state = sl_sns_get_state(r->sns);
-            if (state == SL_SNS_CONNECTED && r->sns_waiting) {
+            if (r->sns_waiting && sl_sns_session_ready(r->sns)) {
                 r->sns_waiting = false;
                 if (!(r->test_active ? launch_network_test(r, r->session_info)
                                       : launch_session(r, r->session_info))) {

@@ -15,6 +15,10 @@ sl_sns *sl_sns_create(const IHS_ClientConfig *, const sl_remote_material *,
                        bool share_ip, char *error, size_t error_size);
 void sl_sns_update(sl_sns *, uint64_t monotonic_ms);
 sl_sns_state sl_sns_get_state(const sl_sns *);
+/* Config/certificate initialization succeeded (the official BInit boundary).
+ * SDK handle creation/route finding may still be pending. Start IHS and its
+ * connection deadline here, before the next owner's connection attempt. */
+bool sl_sns_session_ready(const sl_sns *);
 /* Numeric diagnostics only; SDK text may embed a peer identity. */
 int sl_sns_end_reason(const sl_sns *);
 /* Numeric terminal origin; SDK end_reason remains a separate value. */
