@@ -1,4 +1,4 @@
-/* Production runtime directory + IHS threads/parser/transaction + CM framing.
+/* Production runtime directory + IHS polled parser/transaction + CM framing.
  * UDP syscalls, CM connection/service and the final SNS constructor are explicit
  * providers. No real Steam, NAT, TLS, SDK connection or physical Switch runs. */
 #include "../platforms/common/runtime.c"
@@ -574,6 +574,9 @@ int main(void) {
     a.relay_server = "stun:fixture.invalid:3478";
     cloud(6, &a.base);
     pump(&r);
+    assert(!sns_calls && r.session_ready && r.session_material);
+    r.session_ready = false;
+    assert(consume_session_material(&r)); /* Same consumer as the actual worker. */
     assert(sns_calls == (NSL_HAVE_SNS ? 1u : 0u) && !r.session_ready);
 #if NSL_HAVE_SNS
     assert(!r.sns_waiting);

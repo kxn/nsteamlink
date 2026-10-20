@@ -604,6 +604,29 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-control-update.py"
         --receiver $<TARGET_FILE:nsl-pairing-rpc-oracle>)
     set_tests_properties(control_update_official_vectors PROPERTIES TIMEOUT 45)
+    add_executable(nsl-ticket-consumer-runtime tests/ticket_consumer_runtime.c)
+    target_include_directories(nsl-ticket-consumer-runtime PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf)
+    target_compile_definitions(nsl-ticket-consumer-runtime PRIVATE NSL_HAVE_SNS=$<BOOL:${NSL_BUILD_SNS}>)
+    target_compile_options(nsl-ticket-consumer-runtime PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas)
+    target_link_libraries(nsl-ticket-consumer-runtime PRIVATE nsl_platform)
+    target_link_options(nsl-ticket-consumer-runtime PRIVATE
+        -Wl,--wrap=sl_remote_connection_create -Wl,--wrap=sl_remote_connection_protocol
+        -Wl,--wrap=sl_remote_connection_update -Wl,--wrap=sl_remote_connection_describe
+        -Wl,--wrap=sl_remote_connection_destroy -Wl,--wrap=sendto -Wl,--wrap=recvfrom
+        -Wl,--wrap=IHS_ClientSendControl -Wl,--wrap=IHS_SessionCreate
+        -Wl,--wrap=IHS_CryptoRandomUInt32 -Wl,--wrap=sl_network_stats_load
+        -Wl,--wrap=sl_sns_create -Wl,--wrap=sl_sns_update -Wl,--wrap=sl_sns_get_state
+        -Wl,--wrap=sl_sns_get_stats -Wl,--wrap=sl_sns_end_reason -Wl,--wrap=sl_sns_destroy)
+    set(NSL_TICKET_CONSUMER_ARGS)
+    if(NOT NSL_BUILD_SNS)
+        list(APPEND NSL_TICKET_CONSUMER_ARGS --without-sns)
+    endif()
+    add_test(NAME ticket_consumer_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-ticket-consumer.py"
+        --receiver $<TARGET_FILE:nsl-ticket-consumer-runtime> ${NSL_TICKET_CONSUMER_ARGS})
+    set_tests_properties(ticket_consumer_official_vectors PROPERTIES TIMEOUT 90)
     add_executable(nsl-resolution-render tests/test_resolution_render.c)
     target_include_directories(nsl-resolution-render PRIVATE platforms/common ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
     target_link_libraries(nsl-resolution-render PRIVATE nsl_gfx)

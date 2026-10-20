@@ -1350,6 +1350,39 @@ StopStreaming 在非 Idle 状态通知非零错误；状态 4 发 AuthorizationC
 仍有目标主机的事务发 StreamingCancel(type 10，携当前 ID)，然后清空目标和 request_id 并回 Idle
 （`0x79987c–0x79998c`）。服务 CancelPairing、type 9、type 10 和 SNS CloseConnection 不能合并。
 
+#### 票据消费与同批迟到失败
+
+**Evidence / 证据修订**：撤回“已取得 ticket 后可以忽略所有匹配 ID 的开流响应”和
+“收到成功响应即可立即创建 SDK 后端”的实现假定。固定 arm64 shell 的
+HandleStartStreamingResponse `0xcb5444` 只按非零 request_id 过滤，没有状态 6 的早退；
+同一轮先收到 Success、再收到匹配 ID 的 Failed，仍以内部 error=16 停止状态 6。
+OnServerError `0xc6f864` 经真实 delegate 调用，在显示错误后于 `0xc6fcb4` 把连接页置为 1；
+OnUpdate `0xc727bc–0xc727d0` 对该状态直接返回，不再根据旧票据启动串流。仅仍在连接页
+且 manager 为 6 时，`0xc72934–0xc72980` 才选择网络测试入口或普通 StartStreaming。
+这里是启动交付边界；不能把较晚的 SDK Connected 当成首次消费票据的时刻。
+
+`audit-steam-ticket-consumer.py` 执行完整 manager/session/WS FIFO/UDP BProcess、原回应
+解析/AES/Stop、真实 OnServerError 和 Panel OnUpdate。20 组覆盖普通/网络测试、UDP/SDR、
+成功、重复成功、Busy、CM 失败先/后于票据、UDP 失败后于票据。UDP 使用真实可解析的
+IPv4/端口，HasIP 执行原函数；普通 launcher 为观察终点，网络测试执行到 token 交付，
+Qt 展示/对象存储和测试线程启动是 provider。未使用未知传输值代替 UDP（proto UDP=1）。
+manager 的 observer 指向提供的 Panel+192 对象；错误通过原次级 vtable 的 +0x30 项及
+`_ZThn192_...OnServerError` 调整 this 后进入原函数，不用伪造错误回调的状态写入。
+旧原生实际 worker 在 SDR 成功→CM 失败时仍创建后端及 IHS Session；成功→UDP Failed
+还会因 ticket 提前返回而保持 6。原版的相同输入均进入错误状态且不交付启动。
+
+正式 runtime 只在响应回调中保存已接受材料，完整入站 Update 结束后才消费。借用的
+cert/relay 字符串复制到 actor 拥有的票据；同轮重复成功替换未消费材料，不多开后端。
+终止错误撤销未消费票据，并清理尚未交给媒体 Session 的后端；stop/退出释放拥有的
+字符串与 key 副本。已存在媒体/后端 owner 时，不从重复成功再创建第二份 owner。
+路由模式的开流失败先通知旧阶段/ID/目标，再复用条件取消和统一清理。响应中的 wire
+result 与内部 manager error 仍是不同枚举域，不把名称相似当成数值等价。
+
+`ticket_consumer_runtime.c` 运行真实产品 worker、RPC/IHS parser 和解密；仅替换 CM/UDP
+传输交付、最终发送、既有统计文件可读性与构造终点。与原版比较 manager 阶段和启动
+交付次数；错误票据不得调用 SDK 或 IHS Session constructor，所有临时 owner 必须清理。
+构造返回值是受控 provider，该用例不验证 SDK/媒体启动成功、Qt 事件循环调度或实际网络。
+
 ### 11.4 ProofRequest 可更新长期 secret
 
 **Evidence：** `HandleStreamingProofRequest @0x79e1c0–0x79e594`，proto 的 challenge=1:bytes、

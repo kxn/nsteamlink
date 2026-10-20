@@ -109,6 +109,7 @@ struct sl_runtime {
     IHS_HIDProvider *provider;
     IHS_ClientConfig config;
     IHS_SessionInfo session_info;
+    sl_remote_material *session_material; /* Owned until the actor consumes/discards the ticket. */
     bool player_hardware_decoding; /* Player cache, distinct from silent EIO config changes. */
     sl_launch_watch launch;
     uint64_t launch_probe_at;
@@ -652,6 +653,13 @@ static void auth_failed(IHS_Client *c, const IHS_HostInfo *h, IHS_AuthorizationR
             : result == IHS_AuthorizationNotLoggedIn ? sl_tr(SL_T_LOGIN_STEAM)
                                                      : sl_tr(SL_T_PAIR_FAILED));
 }
+static void free_session_material(sl_remote_material *material) {
+    if (!material) return;
+    free((void *)material->cert);
+    free((void *)material->stun_servers);
+    memset(material, 0, sizeof(*material));
+    free(material);
+}
 static void accept_session(sl_runtime *r, const IHS_SocketAddress *address, const uint8_t *key,
                            size_t len, uint64_t account) {
     diagnostic_phase("stream_request_accepted", address->port);
@@ -660,6 +668,8 @@ static void accept_session(sl_runtime *r, const IHS_SocketAddress *address, cons
         return;
     }
     pthread_mutex_lock(&r->lock);
+    free_session_material(r->session_material);
+    r->session_material = NULL;
     r->session_info =
         (IHS_SessionInfo){.address = *address, .sessionKeyLen = len, .steamId = account};
     memcpy(r->session_info.sessionKey, key, len);
@@ -1332,6 +1342,14 @@ static void cloud_stream_result(IHS_StreamingResult result, const sl_remote_mate
 static void accepted_connection(IHS_Client *client, const IHS_HostInfo *host,
                                 const IHS_StreamingConnection *connection, void *ctx) {
     sl_runtime *r = ctx;
+    /* Once the ticket has been consumed, replies may update manager state but
+     * must not create a second media/backend owner. Before consumption, later
+     * successful replies in this same Update replace the pending material. */
+    if (r->session || r->test_session
+#if NSL_HAVE_SNS
+        || r->sns
+#endif
+    ) return;
     uint64_t account = 0;
     current_account(r, connection->clientId, &account);
     if (connection->transport == k_EStreamTransportUDP &&
@@ -1352,8 +1370,33 @@ static void accepted_connection(IHS_Client *client, const IHS_HostInfo *host,
         return;
     }
     memcpy(material.key, connection->sessionKey, material.key_size);
-    cloud_stream_result(IHS_StreamingSuccess, &material, ctx);
+    sl_remote_material *owned = malloc(sizeof(*owned));
+    if (owned) {
+        *owned = material;
+        owned->cert = material.cert ? strdup(material.cert) : NULL;
+        owned->stun_servers = material.stun_servers ? strdup(material.stun_servers) : NULL;
+        if ((material.cert && !owned->cert) || (material.stun_servers && !owned->stun_servers)) {
+            free_session_material(owned);
+            owned = NULL;
+        }
+    }
+    if (owned) {
+        pthread_mutex_lock(&r->lock);
+        free_session_material(r->session_material);
+        r->session_material = owned;
+        r->session_ready = true;
+        pthread_mutex_unlock(&r->lock);
+    } else
+        rejected(client, host, IHS_StreamingFailed, ctx); /* Local allocation guard. */
     memset(&material, 0, sizeof(material));
+}
+static bool consume_session_material(sl_runtime *r) {
+    sl_remote_material *material = r->session_material;
+    if (!material) return false;
+    r->session_material = NULL;
+    cloud_stream_result(IHS_StreamingSuccess, material, r);
+    free_session_material(material);
+    return true;
 }
 static bool cloud_control_packet(const uint8_t *wire, size_t size, void *ctx) {
     sl_runtime *r = ctx;
@@ -1456,6 +1499,8 @@ static bool stop_session(sl_runtime *r) {
     host_completed = host_completed || (r->end_game.at && r->end_game.empty >= 2);
     r->end_game = (sl_end_game_watch){0};
     r->connected = r->finished = r->host_stopped = r->session_ready = false;
+    free_session_material(r->session_material);
+    r->session_material = NULL;
     r->facts.connected = false;
     r->facts.test_failure_pending = false;
     r->facts.requests_closed = true;
@@ -2149,11 +2194,12 @@ static void *worker_main(void *ctx) {
             r->snapshot_pending = false;
         }
         r->save_pending = false;
-        if (r->request_terminal) {
+        bool terminal = r->request_terminal;
+        if (terminal) {
             r->request_at = 0;
             r->request_terminal = false;
         }
-        bool ready = r->session_ready;
+        bool ready = !terminal && r->session_ready;
         r->session_ready = false;
         IHS_SessionInfo info = r->session_info;
         bool conn = r->connected;
@@ -2167,6 +2213,8 @@ static void *worker_main(void *ctx) {
         memcpy(auth_secret, r->auth_secret, sizeof(auth_secret));
         memset(r->auth_secret, 0, sizeof(r->auth_secret));
         pthread_mutex_unlock(&r->lock);
+        if (terminal && !r->session && !r->test_session)
+            stop_session(r); /* Error wins over unconsumed/pending backend work. */
         if (snapshot_pending) {
             /* A UI snapshot queued before authorization completed must not
              * undo the just-accepted host facts. An explicitly removed host
@@ -2239,13 +2287,15 @@ static void *worker_main(void *ctx) {
         }
         memset(auth_secret, 0, sizeof(auth_secret));
         if (ready && !r->session && !r->test_session) {
-            bool testing = r->test_active;
-            if (!(testing ? launch_network_test(r, info) : launch_session(r, info))) {
-                if (testing)
-                    fail_network_test(r);
-                else {
-                    stop_session(r);
-                    fail(r, sl_tr(SL_T_SESSION_FAILED));
+            if (!consume_session_material(r)) {
+                bool testing = r->test_active;
+                if (!(testing ? launch_network_test(r, info) : launch_session(r, info))) {
+                    if (testing)
+                        fail_network_test(r);
+                    else {
+                        stop_session(r);
+                        fail(r, sl_tr(SL_T_SESSION_FAILED));
+                    }
                 }
             }
         }
