@@ -98,12 +98,40 @@ static bool decode_cert(const char *text, Message &out) {
     out.resize(decoded);
     return true;
 }
+/* BInit is asynchronous in this port. Retain the bridge's inputs until it
+ * succeeds; callers may release response/config storage after sl_sns_create.
+ * Copy strings before keys so a throwing string allocation cannot leave an
+ * unwiped key in a partially constructed object. */
+struct BridgeInit {
+    IHS_ClientConfig config{};
+    sl_remote_material material{};
+    std::string name, model, serial;
+    uint8_t secret[32]{};
+    BridgeInit(const IHS_ClientConfig &c, const sl_remote_material &m) {
+        if (c.deviceName) name = c.deviceName;
+        if (c.deviceModel) model = c.deviceModel;
+        if (c.deviceSerial) serial = c.deviceSerial;
+        config = c;
+        config.deviceName = c.deviceName ? name.c_str() : nullptr;
+        config.deviceModel = c.deviceModel ? model.c_str() : nullptr;
+        config.deviceSerial = c.deviceSerial ? serial.c_str() : nullptr;
+        memcpy(secret, c.secretKey, sizeof(secret));
+        config.secretKey = secret;
+        material = m;
+        material.cert = material.stun_servers = nullptr;
+    }
+    ~BridgeInit() {
+        wipe(secret, sizeof(secret));
+        wipe(material.key, sizeof(material.key));
+    }
+};
 }
 struct sl_sns {
     std::shared_ptr<Queues> q = std::make_shared<Queues>();
     ISteamNetworkingSockets *sockets = nullptr;
     HSteamNetConnection connection = k_HSteamNetConnection_Invalid;
     sl_stream_bridge *bridge = nullptr;
+    std::unique_ptr<BridgeInit> bridge_init;
     SteamNetworkingMicroseconds last_check = 0;
     bool initialized = false, connection_attempted = false;
     bool share_ip = true, config_ready = false;
@@ -151,6 +179,7 @@ static void clear_datagrams(sl_sns *b) {
 }
 static void close_backend(sl_sns *b, sl_sns_state state,
     sl_sns_terminal_source source = SL_SNS_TERMINAL_NONE, int detail = 0) {
+    b->bridge_init.reset();
     SteamNetConnectionInfo_t info{};
     bool have_info = b->connection != k_HSteamNetConnection_Invalid &&
         b->sockets->GetConnectionInfo(b->connection, &info);
@@ -262,6 +291,18 @@ static bool begin_connection(sl_sns *b) {
 #endif
     return b->connection != k_HSteamNetConnection_Invalid;
 }
+static bool complete_initialization(sl_sns *b) {
+    sl_signal_callbacks callbacks = {receive_signal, signal_failed};
+    b->bridge = sl_stream_bridge_create(&b->bridge_init->config,
+        &b->bridge_init->material, &callbacks, b);
+    b->bridge_init.reset(); // The bridge copied its identity and stream HMAC key.
+    if (!b->bridge) {
+        close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_BRIDGE);
+        return false;
+    }
+    b->config_ready = true;
+    return true;
+}
 static void pump_config(sl_sns *b) {
     if (!b->request)
         return;
@@ -303,7 +344,7 @@ static void pump_config(sl_sns *b) {
             return;
         }
         b->sockets->InitAuthentication();
-        b->config_ready = true;
+        complete_initialization(b);
     } else if (b->config_attempt >= 3 || !begin_config(b)) {
         b->end_reason = -1;
         close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_CONFIG);
@@ -311,7 +352,9 @@ static void pump_config(sl_sns *b) {
 }
 extern "C" sl_sns *sl_sns_create(const IHS_ClientConfig *config, const sl_remote_material *m,
                                   bool share_ip, char *error, size_t error_size) {
-    if (!config || !m || !m->cert || !m->key_size || m->transport != 4) {
+    if (!config || !config->deviceId || !config->secretKey || !m || !m->client_id ||
+        !m->steam_id || !m->cert || !m->key_size || m->key_size > sizeof(m->key) ||
+        m->transport != 4) {
         copy_error(error, error_size, "invalid SNS connection material");
         return nullptr;
     }
@@ -324,6 +367,7 @@ extern "C" sl_sns *sl_sns_create(const IHS_ClientConfig *config, const sl_remote
     SteamNetworkingErrMsg err = {};
     try {
         b = new sl_sns;
+        b->bridge_init.reset(new BridgeInit(*config, *m));
         /* Manual mode precedes SDK initialization, preventing a service worker
          * from racing the caller's pump or teardown. */
         SteamNetworkingSockets_SetManualPollMode(true);
@@ -343,14 +387,6 @@ extern "C" sl_sns *sl_sns_create(const IHS_ClientConfig *config, const sl_remote
             !SteamNetworkingUtils()->SetGlobalConfigValueString(
                 k_ESteamNetworkingConfig_P2P_STUN_ServerList, m->stun_servers)) {
             copy_error(err, sizeof(err), "cannot set SNS STUN servers");
-            goto fail;
-        }
-        sl_signal_callbacks callbacks;
-        callbacks.receive = receive_signal;
-        callbacks.failed = signal_failed;
-        b->bridge = sl_stream_bridge_create(config, m, &callbacks, b);
-        if (!b->bridge) {
-            copy_error(err, sizeof(err), "cannot allocate SNS signaling bridge");
             goto fail;
         }
         b->http = curl_multi_init();

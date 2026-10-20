@@ -414,6 +414,21 @@ if(NSL_PLATFORM STREQUAL "desktop")
             GameNetworkingSockets::GameNetworkingSockets_s Threads::Threads)
         add_test(NAME nsl-sns-owner-state COMMAND nsl-sns-owner-state-tests)
         set_tests_properties(nsl-sns-owner-state PROPERTIES TIMEOUT 15)
+        add_executable(nsl-sns-initialization-tests tests/test_sns_initialization.cpp)
+        target_compile_features(nsl-sns-initialization-tests PRIVATE cxx_std_17)
+        target_compile_definitions(nsl-sns-initialization-tests PRIVATE NSL_SNS_PROBES=0 NSL_DIAGNOSTICS=0)
+        target_include_directories(nsl-sns-initialization-tests PRIVATE platforms/common)
+        target_compile_options(nsl-sns-initialization-tests PRIVATE -Wall -Wextra -UNDEBUG)
+        target_link_libraries(nsl-sns-initialization-tests PRIVATE nsl_remote
+            GameNetworkingSockets::GameNetworkingSockets_s Threads::Threads)
+        foreach(symbol curl_easy_init curl_easy_getinfo curl_multi_perform curl_multi_info_read
+            sl_gns_import_trust sl_stream_bridge_create sl_stream_bridge_update sl_stream_bridge_destroy)
+            target_link_options(nsl-sns-initialization-tests PRIVATE "-Wl,--wrap=${symbol}")
+        endforeach()
+        add_test(NAME sns_initialization_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-sns-initialization.py"
+            --receiver $<TARGET_FILE:nsl-sns-initialization-tests>)
+        set_tests_properties(sns_initialization_official_vectors PROPERTIES TIMEOUT 60)
         add_executable(nsl-sns-state-oracle tests/sns_state_oracle.cpp)
         target_compile_features(nsl-sns-state-oracle PRIVATE cxx_std_17)
         target_include_directories(nsl-sns-state-oracle PRIVATE platforms/common)

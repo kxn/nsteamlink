@@ -1515,6 +1515,30 @@ provider，检查期限前仍等待、到期开始清理，以及 IHS join 在 b
 本地真实 SDK owner 用例另验证配置完成但尚无句柄时 IHS 能等待、无效句柄失败能唤醒 worker，
 两者均不验证真实 Steam、NAT/SDR 网络或 Switch loader 生命周期。
 
+**异步初始化期间的信令桥门槛**：上述 BConnect 的失败分支不创建 bridge，成功分支才在
+`0x7a7950` 创建。撤回本端口此前“配置尚未完成时先创建并更新 bridge”的顺序：
+仅凭外层 `SL_SNS_CONNECTING` 不能推断 BInit 已成功；该状态还包含异步配置获取。
+端口现在将 bridge 输入单独复制持有，证书安装和 authentication 初始化完成后才创建
+实际 bridge，成功后才开放 session-ready。所有配置/证书失败、取消和 bridge 创建失败
+都释放临时身份/密钥；bridge 复制完成后也立即清理这份临时材料，不借用响应字符串。
+bridge 创建失败是本地初始化错误，诊断来源单列为 BRIDGE，不伪装成 SDK P2P 拒绝。
+
+`check-steam-sns-initialization.py` 将同一原 BConnect fixture 的 BInit→bridge 门槛与
+生产 SNS owner 比较，覆盖配置等待后销毁、HTTP 失败、信任导入失败、真实本地 SDK 拒绝
+无效证书、显式成功边界后的 bridge 创建和 bridge 创建资源失败；每组连续创建/销毁两次。
+HTTP 完成/信任导入和 bridge 的网络推进是 provider；成功组直接提供“配置/证书/authentication
+阶段已通过”的边界，再执行生产 complete_initialization 和真实 bridge factory。
+因此不把该组称为实际有效证书安装或完整 SDK 初始化成功。
+调用方在 create 返回后即覆写/释放原身份、名称、描述和证书存储，后续 bridge factory
+检查复制材料及自己的清理；原 SDK 的无效证书拒绝、HTTP handle 释放和 owner 销毁实际执行。
+旧生产 owner 的配置等待、HTTP 失败、信任失败、证书失败均正常执行并创建一次 bridge；
+比较器以明确差异拒绝，不以编译失败或崩溃计作反例检出。
+这些证据只覆盖初始化与 bridge 准入，不验证真实 CM/TLS、成功证书、SDK 选路或 Switch；
+只对照 BInit→bridge 的后置门槛，不证明把配置 HTTP/信任导入失败映射为 BInit=false
+与官方的前置策略相同。§12.1 的“本机暂不能验证自己的 CA 仍继续导入”与开源 SDK 的差异
+仍需单独处理；不能用本项门槛测试宣称该差异已消除。现有配置获取的三次重试仍为端口策略，
+不能从 BConnect 的门槛推导为官方 HTTP 重试策略。
+
 ### 12.3 transport 状态、收发与 MTU
 
 transport 的 `this+20`：0=初始化后尚未开始连接，1=Connecting/FindingRoute，2=Connected，
