@@ -163,6 +163,8 @@ void sl_remote_close(sl_remote *r) {
     }
     if (connected && r->cb.connected)
         r->cb.connected(false, r->ctx);
+    if (pairing && r->cb.abort_pairing)
+        r->cb.abort_pairing(r->ctx);
     if (pairing && r->cb.pair_failed)
         r->cb.pair_failed(IHS_AuthorizationOffline, r->ctx);
     /* An in-flight stream request is retained by the owner; envelopes from the
@@ -307,10 +309,14 @@ static void cancel_pair_slot(sl_remote *r) {
     }
 }
 void sl_remote_cancel(sl_remote *r) {
+    if (r->cb.prepare_pairing && !sl_remote_ready(r))
+        return;
     bool known = r->pairing == PAIR_KNOWN;
     if (r->pairing) {
         if (!known)
             cancel_pair_slot(r);
+        if (r->pairing == PAIR_AUTH && r->cb.abort_pairing)
+            r->cb.abort_pairing(r->ctx);
         /* Outstanding StartPairing cannot be identified by a wire request ID.
          * Retire it before admitting another attempt, and cancel a late PIN. */
         r->pairing = r->pairing == PAIR_PIN ? PAIR_CANCEL : PAIR_NONE;
@@ -335,6 +341,8 @@ void sl_remote_cancel(sl_remote *r) {
     }
 }
 static void pairing_failed(sl_remote *r, IHS_AuthorizationResult result) {
+    if (r->pairing == PAIR_AUTH && r->cb.abort_pairing)
+        r->cb.abort_pairing(r->ctx);
     bool known = r->pairing == PAIR_KNOWN;
     r->pairing = PAIR_NONE;
     IHS_AuthorizationKeyExchangeClear(&r->kx);
@@ -348,6 +356,35 @@ static void pairing_failed(sl_remote *r, IHS_AuthorizationResult result) {
                                 NULL, r->ctx);
     } else if (r->cb.pair_failed)
         r->cb.pair_failed(result, r->ctx);
+}
+void sl_remote_pairing_finished(sl_remote *r) {
+    r->pairing = PAIR_NONE;
+    IHS_AuthorizationKeyExchangeClear(&r->kx);
+    erase(r->pair_secret, sizeof(r->pair_secret));
+    erase(r->pin, sizeof(r->pin));
+}
+static bool publish_body(sl_remote *r, const uint8_t *raw, size_t size) {
+    if (size > SL_REMOTE_FRAME_MAX - 64)
+        return false;
+    uint8_t *body = malloc(size + 64);
+    if (!body)
+        return false;
+    sl_proto_writer w = {body, 0, size + 64, false};
+    sl_proto_fixed64(&w, 1, r->session);
+    sl_proto_fixed64(&w, 2, r->config.deviceId);
+    sl_proto_bytes(&w, 3, raw, size); /* Body only, never discovery framing. */
+    bool ok = !w.invalid && envelope(r, 3, body, w.size);
+    erase(body, w.size);
+    free(body);
+    if (ok) {
+        if (!r->pending_start && !r->pending_set && !r->pending_cancel)
+            r->rpc_deadline = r->wall_time + 20;
+        r->pending_set = true;
+        r->pairing = PAIR_AUTH;
+        if (r->cb.pair_code)
+            r->cb.pair_code(r->pin, r->ctx);
+    }
+    return ok;
 }
 static bool send_authorization(sl_remote *r, bool publish) {
     uint8_t token[32], id[8], pubkey[384], ticket_bytes[2048], encrypted[2048], auth[32];
@@ -382,30 +419,30 @@ static bool send_authorization(sl_remote *r, bool publish) {
     if (!publish)
         return send_message(r, r->stream.peer.steam_id, k_ERemoteDeviceAuthorizationRequest,
                             &request.base);
-    uint8_t raw[4096], body[4200];
+    uint8_t raw[4096];
     size_t size = protobuf_c_message_pack(&request.base, raw);
-    sl_proto_writer w = {body, 0, sizeof(body), false};
-    sl_proto_fixed64(&w, 1, r->session);
-    sl_proto_fixed64(&w, 2, r->config.deviceId);
-    /* SetPairingInfo carries ONLY the authorization body, no discovery header. */
-    sl_proto_bytes(&w, 3, raw, size);
-    bool ok = !w.invalid && envelope(r, 3, body, w.size);
+    bool ok = publish_body(r, raw, size);
     erase(raw, sizeof(raw));
-    erase(body, sizeof(body));
-    if (ok) {
-        if (!r->pending_start && !r->pending_set && !r->pending_cancel)
-            r->rpc_deadline = r->wall_time + 20;
-        r->pending_set = true;
-        r->pairing = PAIR_AUTH;
-        if (r->cb.pair_code)
-            r->cb.pair_code(r->pin, r->ctx);
-    }
     return ok;
 }
 static bool publish_pairing(sl_remote *r, uint32_t pin) {
     if (pin > 9999)
         return false;
     snprintf(r->pin, sizeof(r->pin), "%04u", pin);
+    if (r->cb.prepare_pairing) {
+        uint8_t *body = NULL;
+        size_t size = 0;
+        bool ok = r->cb.prepare_pairing(r->universe, r->pin, &body, &size, r->ctx);
+        if (ok)
+            ok = publish_body(r, body, size);
+        if (body) {
+            erase(body, size);
+            free(body);
+        }
+        if (!ok && r->cb.abort_pairing)
+            r->cb.abort_pairing(r->ctx);
+        return ok;
+    }
     if (!IHS_AuthorizationKeyExchangeInit(&r->kx, r->pin) ||
         IHS_CryptoRandomBytes(r->pair_secret, 32))
         return false;

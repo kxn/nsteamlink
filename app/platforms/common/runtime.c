@@ -48,6 +48,8 @@ typedef struct sl_control_frame {
 } sl_control_frame;
 static void accepted_connection(IHS_Client *, const IHS_HostInfo *, const IHS_StreamingConnection *,
                                 void *);
+static bool cloud_save_key(const sl_remote_peer *, void *);
+static void cloud_paired(const sl_remote_peer *, void *);
 struct sl_runtime {
     pthread_t worker;
     atomic_bool exit_requested, worker_finished;
@@ -66,6 +68,7 @@ struct sl_runtime {
     sl_stream_request_limits stream_limits; /* Frozen from ticket through negotiation. */
     sl_command pending, active;
     sl_auth_store store, save;
+    uint64_t credential_revision, save_credential_revision; /* UI snapshot fence, not wire state. */
     sl_stream_settings settings;
     sl_stream_preferences settings_view;
     uint64_t settings_view_revision;
@@ -491,6 +494,13 @@ static void persist_authorization(IHS_Client *client, const IHS_HostInfo *host, 
                                   const uint8_t secret[32], void *ctx) {
     (void)client;
     sl_runtime *r = ctx;
+    if (r->active.type == SL_CMD_REMOTE_PAIR) {
+        sl_remote_peer peer = {.client_id = host->clientId, .steam_id = account};
+        memcpy(peer.secret, secret, sizeof(peer.secret));
+        cloud_save_key(&peer, r); /* Storage failure never changes the crypto result. */
+        memset(&peer, 0, sizeof(peer));
+        return;
+    }
     if (r->active.type != SL_CMD_PAIR && r->active.type != SL_CMD_STREAM)
         return;
     if (!sl_host_key_save(sl_system_data_dir(), host->clientId, account, secret))
@@ -603,6 +613,15 @@ static void stream_authorization(IHS_Client *client, const IHS_HostInfo *host, c
 static void authorized(IHS_Client *client, const IHS_HostInfo *h, uint64_t account, void *ctx) {
     (void)h;
     sl_runtime *r = ctx;
+    if (r->active.type == SL_CMD_REMOTE_PAIR) {
+        sl_remote_peer peer = {.client_id = h->clientId, .steam_id = account};
+        IHS_ClientGetSecretKey(client, peer.secret);
+        if (r->remote)
+            sl_remote_pairing_finished(sl_remote_connection_protocol(r->remote));
+        cloud_paired(&peer, r);
+        memset(&peer, 0, sizeof(peer));
+        return;
+    }
     pthread_mutex_lock(&r->lock);
     if (r->active.type == SL_CMD_PAIR && !r->auth_consumed) {
         r->auth_account = account;
@@ -620,6 +639,8 @@ static void auth_failed(IHS_Client *c, const IHS_HostInfo *h, IHS_AuthorizationR
     (void)c;
     (void)h;
     sl_runtime *r = ctx;
+    if (r->active.type == SL_CMD_REMOTE_PAIR && r->remote)
+        sl_remote_pairing_finished(sl_remote_connection_protocol(r->remote));
     pthread_mutex_lock(&r->lock);
     r->request_terminal = true;
     pthread_mutex_unlock(&r->lock);
@@ -1110,10 +1131,13 @@ static void cloud_code(const char *pin, void *ctx) {
 }
 static bool cloud_save_key(const sl_remote_peer *peer, void *ctx) {
     sl_runtime *r = ctx;
-    /* Unknown-host pairing still has its own transaction owner. Its successful
-     * persistence participates in the shared identity namespace/reconnect set. */
-    authorization_identity(NULL, peer->client_id, peer->steam_id, r);
-    sl_host_registry before = r->store.registry;
+    /* The shared IHS owner already admitted metadata before crypto. Do not
+     * perform this operation again here: absent steamid must remain absent. */
+    bool key_saved =
+        sl_host_key_save(sl_system_data_dir(), peer->client_id, peer->steam_id, peer->secret);
+    save_paired_account(r, peer->steam_id);
+    if (!key_saved)
+        sl_log("pair: service identity key save failed; authorization continues");
     sl_host *h = saved_host(r, peer->client_id);
     if (!h) {
         if (r->store.registry.count == SL_HOST_LIMIT)
@@ -1129,13 +1153,13 @@ static bool cloud_save_key(const sl_remote_peer *peer, void *ctx) {
     h->account = peer->steam_id;
     h->paired = h->has_secret = true;
     memcpy(h->secret, peer->secret, 32);
-    bool key_saved = sl_host_key_save(sl_system_data_dir(), peer->client_id, peer->steam_id, peer->secret);
-    save_paired_account(r, peer->steam_id);
-    if (!key_saved ||
-        !sl_auth_save(&r->store, sl_system_data_dir())) {
-        r->store.registry = before;
-        return false;
-    }
+    if (!sl_auth_save(&r->store, sl_system_data_dir()))
+        sl_log("pair: service profile save failed; authorization continues");
+    pthread_mutex_lock(&r->lock);
+    ++r->credential_revision;
+    r->active.host = *h;
+    r->auth_persist_attempted = true;
+    pthread_mutex_unlock(&r->lock);
     post(r, (sl_runtime_event){.type = SL_EVENT_KEY_UPDATED, .host = *h});
     return true;
 }
@@ -1144,6 +1168,8 @@ static void cloud_paired(const sl_remote_peer *peer, void *ctx) {
     sl_host *h = saved_host(r, peer->client_id);
     if (h && r->active.type == SL_CMD_REMOTE_PAIR)
         post(r, (sl_runtime_event){.type = SL_EVENT_AUTHORIZED, .host = *h, .account = h->account});
+    else if (r->active.type == SL_CMD_REMOTE_PAIR)
+        fail(r, sl_tr(SL_T_SAVE_SETTINGS_FAILED));
     r->request_at = 0;
 }
 static void cloud_pair_failed(IHS_AuthorizationResult result, void *ctx) {
@@ -1152,6 +1178,17 @@ static void cloud_pair_failed(IHS_AuthorizationResult result, void *ctx) {
         r->request_at = 0;
         auth_failed(NULL, NULL, result, ctx);
     }
+}
+static bool cloud_prepare_pairing(IHS_SteamUniverse universe, const char *pin, uint8_t **body,
+                                  size_t *size, void *ctx) {
+    sl_runtime *r = ctx;
+    return r->client && r->active.type == SL_CMD_REMOTE_PAIR &&
+           IHS_ClientAuthorizationPrepareService(r->client, universe, pin, body, size);
+}
+static void cloud_abort_pairing(void *ctx) {
+    sl_runtime *r = ctx;
+    if (r->client && IHS_ClientAuthorizationServiceActive(r->client))
+        IHS_ClientAuthorizationCancel(r->client);
 }
 static void cloud_observed(const sl_remote_host *host, void *ctx) {
     sl_runtime *r = ctx;
@@ -1259,10 +1296,9 @@ static void accepted_connection(IHS_Client *client, const IHS_HostInfo *host,
 }
 static bool cloud_control_packet(const uint8_t *wire, size_t size, void *ctx) {
     sl_runtime *r = ctx;
-    /* The unknown-host service pairing slot still owns its authorization.
-     * All known-host handshake traffic, including late replies after stop,
-     * belongs to the same IHS manager that receives UDP. */
-    if (!r->client || r->active.type == SL_CMD_REMOTE_PAIR)
+    /* All authorization, including unknown-host service pairing, enters the
+     * shared manager cache/current secret and the same deferred receive owner. */
+    if (!r->client)
         return false;
     IHS_ClientReceiveRemotePacket(r->client, wire, size);
     return true;
@@ -1273,6 +1309,8 @@ static void start_cloud(sl_runtime *r) {
                                     .host = cloud_observed,
                                     .offline = cloud_offline,
                                     .pair_code = cloud_code,
+                                    .prepare_pairing = cloud_prepare_pairing,
+                                    .abort_pairing = cloud_abort_pairing,
                                     .save_key = cloud_save_key,
                                     .paired = cloud_paired,
                                     .pair_failed = cloud_pair_failed,
@@ -1676,12 +1714,12 @@ static void execute(sl_runtime *r, sl_command cmd) {
     }
     /* Cancel/join each request before changing its callback generation. Keep the
      * client socket alive so canceled launch IDs can reject late host responses. */
+    if (r->remote)
+        sl_remote_cancel(sl_remote_connection_protocol(r->remote));
     if (r->client) {
         IHS_ClientStreamingCancel(r->client);
         IHS_ClientAuthorizationCancel(r->client);
     }
-    if (r->remote)
-        sl_remote_cancel(sl_remote_connection_protocol(r->remote));
     stop_session(r);
     if (!sl_media_video_clean()) {
         pthread_mutex_lock(&r->lock);
@@ -2026,6 +2064,7 @@ static void *worker_main(void *ctx) {
         sl_command cmd = {0};
         sl_auth_store save;
         bool save_pending, snapshot_pending;
+        uint64_t snapshot_credentials = 0;
         sl_language save_language;
         bool save_update_check;
         sl_resolution save_resolution;
@@ -2041,6 +2080,7 @@ static void *worker_main(void *ctx) {
         snapshot_pending = r->snapshot_pending;
         if (snapshot_pending) {
             save = r->save;
+            snapshot_credentials = r->save_credential_revision;
             r->snapshot_pending = false;
         }
         r->save_pending = false;
@@ -2069,6 +2109,14 @@ static void *worker_main(void *ctx) {
             if (r->auth_persist_attempted) {
                 const sl_host *known = sl_host_find(&r->store.registry, r->active.host.id);
                 sl_host *incoming = sl_host_find(&save.registry, r->active.host.id);
+                if (!incoming && known && r->active.type == SL_CMD_REMOTE_PAIR &&
+                    snapshot_credentials < r->credential_revision &&
+                    save.registry.count < SL_HOST_LIMIT) {
+                    incoming = &save.registry.hosts[save.registry.count++];
+                    *incoming = *known;
+                    if (save.registry.next_id <= known->id)
+                        save.registry.next_id = known->id + 1;
+                }
                 if (known && incoming && known->client_id == incoming->client_id) {
                     incoming->paired = known->paired;
                     incoming->account = known->account;
@@ -2318,7 +2366,13 @@ sl_runtime *sl_runtime_create(const sl_auth_store *store) {
     }
     r->config = (IHS_ClientConfig){.deviceId = r->store.device_id,
                                    .secretKey = r->store.secret,
-                                   .deviceName = r->store.device_name};
+                                   .deviceName = r->store.device_name,
+#ifdef __SWITCH__
+                                   .deviceModel = "Nintendo Switch"
+#else
+                                   .deviceModel = "NSteamLink"
+#endif
+    };
     r->provider = stream_media_create_hid_provider();
 #if NSL_DIAGNOSTICS
     r->udp = socket(AF_INET, SOCK_DGRAM, 0);
@@ -2351,6 +2405,7 @@ bool sl_runtime_submit(sl_runtime *r, const sl_command *cmd, const sl_auth_store
         sl_media_close_video();
     if (cmd->type == SL_CMD_SAVE) {
         r->save = *store;
+        r->save_credential_revision = r->credential_revision;
         r->snapshot_pending = true;
         r->save_pending = true;
         r->save_language = cmd->language;
@@ -2366,6 +2421,7 @@ bool sl_runtime_submit(sl_runtime *r, const sl_command *cmd, const sl_auth_store
         r->request_pending = true;
         /* A command needs a snapshot, not an unrelated pre-command disk write. */
         r->save = *store;
+        r->save_credential_revision = r->credential_revision;
         r->snapshot_pending = true;
     }
     sl_stream_settings_note_ui(&r->settings, store);

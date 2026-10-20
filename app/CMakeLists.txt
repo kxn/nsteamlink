@@ -519,6 +519,11 @@ if(NSL_PLATFORM STREQUAL "desktop")
         --receiver $<TARGET_FILE:nsl-account-metadata-oracle>
         --authorization $<TARGET_FILE:ihs-auto-authorization-oracle>)
     set_tests_properties(account_metadata_official_vectors PROPERTIES TIMEOUT 60)
+    add_test(NAME service_pairing_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-service-pairing.py"
+        --receiver $<TARGET_FILE:ihs-auto-authorization-oracle>
+        --accounts $<TARGET_FILE:nsl-account-metadata-oracle>)
+    set_tests_properties(service_pairing_official_vectors PROPERTIES TIMEOUT 60)
     add_test(NAME account_metadata_storage COMMAND nsl-account-metadata-oracle storage)
     set_tests_properties(account_metadata_storage PROPERTIES TIMEOUT 10)
     add_test(NAME account_metadata_mutation_counterexamples COMMAND "${Python3_EXECUTABLE}"
@@ -558,6 +563,21 @@ if(NSL_PLATFORM STREQUAL "desktop")
         -Wl,--wrap=sl_sns_create)
     add_test(NAME control_route_runtime COMMAND nsl-control-route-runtime)
     set_tests_properties(control_route_runtime PROPERTIES TIMEOUT 20)
+    add_executable(nsl-service-pairing-runtime tests/service_pairing_runtime.c)
+    target_include_directories(nsl-service-pairing-runtime PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf)
+    target_compile_definitions(nsl-service-pairing-runtime PRIVATE NSL_HAVE_SNS=$<BOOL:${NSL_BUILD_SNS}>)
+    target_compile_options(nsl-service-pairing-runtime PRIVATE -UNDEBUG -Wall -Wextra -Werror
+        -Wno-unknown-pragmas)
+    target_link_libraries(nsl-service-pairing-runtime PRIVATE nsl_platform)
+    target_link_options(nsl-service-pairing-runtime PRIVATE
+        -Wl,--wrap=sl_remote_connection_create -Wl,--wrap=sl_remote_connection_protocol
+        -Wl,--wrap=sl_remote_connection_update -Wl,--wrap=sl_remote_connection_describe
+        -Wl,--wrap=sl_remote_connection_destroy -Wl,--wrap=sendto -Wl,--wrap=sl_auth_save
+        -Wl,--wrap=IHS_ClientSendControl)
+    add_test(NAME service_pairing_runtime COMMAND nsl-service-pairing-runtime)
+    set_tests_properties(service_pairing_runtime PROPERTIES TIMEOUT 20)
     add_executable(nsl-resolution-render tests/test_resolution_render.c)
     target_include_directories(nsl-resolution-render PRIVATE platforms/common ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
     target_link_libraries(nsl-resolution-render PRIVATE nsl_gfx)

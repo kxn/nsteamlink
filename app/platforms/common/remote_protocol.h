@@ -36,6 +36,11 @@ typedef struct sl_remote_callbacks {
     void (*host)(const sl_remote_host *, void *);
     void (*offline)(uint64_t client_id, void *);
     void (*pair_code)(const char *four_digits, void *);
+    /* Optional real manager owner. It prepares a service authorization BODY
+     * and retains its private flow/current secret/cache; this RPC layer only
+     * publishes and frees the returned allocation. Same owner thread. */
+    bool (*prepare_pairing)(IHS_SteamUniverse, const char *pin, uint8_t **body, size_t *, void *);
+    void (*abort_pairing)(void *);
     /* Must persist atomically before returning true. Used both after pairing
      * and BEFORE replying to a ProofRequest that rotates the long-lived key. */
     bool (*save_key)(const sl_remote_peer *, void *);
@@ -68,6 +73,9 @@ bool sl_remote_set_paired_accounts(sl_remote *, const uint64_t *, size_t);
 bool sl_remote_register_status(sl_remote *, uint64_t);
 bool sl_remote_receive(sl_remote *, const uint8_t *, size_t);
 bool sl_remote_pair(sl_remote *);
+/* The external manager completed/failed state3. No service cancellation or
+ * success/failure callback is manufactured by this bookkeeping operation. */
+void sl_remote_pairing_finished(sl_remote *);
 void sl_remote_cancel(sl_remote *);
 bool sl_remote_stream(sl_remote *, uint64_t client_id, const IHS_StreamingRequest *);
 typedef struct sl_remote_stream_options {

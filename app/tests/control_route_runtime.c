@@ -40,6 +40,11 @@ static uint64_t verify_peer, verify_account;
 static uint8_t verify_secret[32];
 static bool verify_file_failure;
 static uint64_t expected_cloud_account = 789;
+static sl_runtime *manager_runtime;
+static uint8_t publication[2048];
+static size_t publication_size;
+static unsigned publication_count, service_cancels;
+static bool verify_service_profile;
 time_t __wrap_time(time_t *out) {
     time_t now = atomic_load(&wall);
     if (out)
@@ -67,7 +72,15 @@ static void capture(const uint8_t *wire, size_t size, const struct sockaddr_in *
         assert(pthread_equal(owner, pthread_self()));
         int loaded = sl_host_key_load(sl_system_data_dir(), verify_peer, verify_account, saved);
         assert(verify_file_failure ? loaded == 1 : !loaded && !memcmp(saved, verify_secret, 32));
-        assert(!memcmp(&verify_runtime->active.host, &verify_selected, sizeof(verify_selected)));
+        if (verify_service_profile) {
+            const sl_host *accepted = saved_host(verify_runtime, verify_peer);
+            assert(accepted && accepted->paired && accepted->has_secret &&
+                   accepted->account == verify_account &&
+                   !memcmp(accepted->secret, verify_secret, 32));
+            assert(!memcmp(&verify_runtime->active.host, accepted, sizeof(*accepted)));
+        } else
+            assert(
+                !memcmp(&verify_runtime->active.host, &verify_selected, sizeof(verify_selected)));
         char path[512];
         sl_account_list accounts = {0}, paired = {0};
         assert(account_path(verify_peer, false, path, false) && !sl_accounts_load(&accounts, path));
@@ -123,6 +136,19 @@ static bool send_rpc(const uint8_t *wire, size_t size, void *ctx) {
     (void)ctx;
     assert(pthread_equal(owner, pthread_self())); /* CM is touched only by its owner. */
     sl_proto_field request = field(wire, size, 7);
+    sl_proto_field publish = field(wire, size, 3);
+    if (publish.number) {
+        sl_proto_field raw = field(publish.bytes, publish.size, 3);
+        assert(manager_runtime && IHS_ClientAuthorizationServiceActive(manager_runtime->client));
+        assert(raw.size && raw.size <= sizeof(publication));
+        memcpy(publication, raw.bytes, raw.size);
+        publication_size = raw.size;
+        ++publication_count;
+    }
+    if (field(wire, size, 4).number) {
+        assert(manager_runtime && IHS_ClientAuthorizationServiceActive(manager_runtime->client));
+        ++service_cancels; /* CancelPairing RPC precedes local manager Stop. */
+    }
     if (request.number) {
         assert(field(request.bytes, request.size, 2).value == expected_cloud_account);
         sl_proto_field packet = field(request.bytes, request.size, 4);
@@ -334,13 +360,12 @@ static void remove_fixture(const char *dir) {
         }
     assert(!closedir(d) && !rmdir(dir));
 }
-static void authorization_reply(const recorded *request, unsigned seed, uint64_t account,
-                                uint8_t secret[32]) {
-    sl_proto_field header, b = body(request, &header);
+static void authorization_reply_body(sl_proto_field b, unsigned seed, const char *pin,
+                                     uint64_t account, uint8_t secret[32], bool through_cloud) {
     sl_proto_field masked = field(b.bytes, b.size, 4);
     assert(masked.size == 32);
     uint8_t hash[32], client_public[32], private[32], public[32], key[32], token[64], id[8];
-    assert(!IHS_CryptoSHA256((const uint8_t *)"1234", 4, hash));
+    assert(!IHS_CryptoSHA256((const uint8_t *)pin, 4, hash));
     for (unsigned i = 0; i < 32; ++i) {
         private[i] = (uint8_t)(seed + i);
         client_public[i] = masked.bytes[i] ^ hash[i];
@@ -358,7 +383,15 @@ static void authorization_reply(const recorded *request, unsigned seed, uint64_t
     reply.steamid = account;
     reply.auth_key = (ProtobufCBinaryData){sizeof(key), key};
     reply.device_token = (ProtobufCBinaryData){size, token};
-    udp(4, &reply.base, "10.0.0.99", 35100);
+    if (through_cloud)
+        cloud(4, &reply.base);
+    else
+        udp(4, &reply.base, "10.0.0.99", 35100);
+}
+static void authorization_reply(const recorded *request, unsigned seed, uint64_t account,
+                                uint8_t secret[32]) {
+    sl_proto_field header, b = body(request, &header);
+    authorization_reply_body(b, seed, "1234", account, secret, false);
 }
 int main(void) {
     owner = pthread_self();
@@ -366,6 +399,7 @@ int main(void) {
     assert(mkdtemp(dir) && !setenv("NSL_DATA_DIR", dir, 1));
     IHS_Init();
     sl_runtime r = {0};
+    manager_runtime = &r;
     assert(!pthread_mutex_init(&r.lock, NULL) && !pthread_cond_init(&r.wake, NULL));
     sl_host_registry_init(&r.store.registry);
     r.store.device_id = 42;
@@ -664,6 +698,82 @@ int main(void) {
     assert(request_stream(&r, false));
     recorded canonical = wait_send(&r, 5, before);
     assert(canonical.cloud && request(&canonical, account_key, NULL));
+    IHS_ClientStreamingCancel(r.client);
+    pump(&r);
+    r.active = (sl_command){.type = SL_CMD_REMOTE_PAIR, .generation = 2};
+    assert(sl_remote_pair(protocol));
+    uint8_t pin_body[16];
+    sl_proto_writer pin_out = {pin_body, 0, sizeof(pin_body), false};
+    sl_proto_uint(&pin_out, 1, 1234);
+    assert(response(3, pin_body, pin_out.size) && publication_count == 1);
+    assert(response(4, NULL, 0));
+    assert(IHS_ClientAuthorizationServiceActive(r.client));
+    sl_proto_field service_body = {.bytes = publication, .size = publication_size};
+    assert(field(publication, publication_size, 5).number &&
+           field(publication, publication_size, 5).value == 0);
+    uint8_t temporary[32];
+    IHS_ClientGetSecretKey(r.client, temporary);
+    assert(temporary[0] && memcmp(temporary, account_key, 32));
+    decrypt_id(field(publication, publication_size, 1), temporary);
+    incoming_peer = verify_peer = 555;
+    verify_account = UINT64_C(76561198000000001);
+    IHS_WriteUInt64LE(identity, verify_peer);
+    IHS_WriteUInt64LE(identity + 8, verify_account);
+    for (unsigned i = 0; i < sizeof(identity); ++i)
+        snprintf(hex + i * 2, 3, "%02x", identity[i]);
+    snprintf(failure_path, sizeof(failure_path), "%s/key-%s.txt.tmp", dir, hex);
+    assert(!mkdir(failure_path, 0700));
+    verify_runtime = &r;
+    verify_service_profile = verify_file_failure = true;
+    before = count(14);
+    authorization_reply_body(service_body, 160, "1234", verify_account, verify_secret, false);
+    confirmation = wait_send(&r, 14, before);
+    destination(&confirmation, "10.0.0.99", 35100);
+    b = body(&confirmation, &h);
+    assert(field(b.bytes, b.size, 1).value == k_ERemoteDeviceAuthorizationSuccess);
+    assert(!IHS_ClientAuthorizationServiceActive(r.client));
+    assert(sl_host_key_load(dir, verify_peer, verify_account, saved) == 1);
+    assert(!rmdir(failure_path));
+    assert(current_account(&r, 555, &current) && current == verify_account);
+    assert(r.credential_revision == 1 && r.auth_persist_attempted &&
+           r.active.host.client_id == 555);
+    bool paired_event = false;
+    sl_runtime_event event;
+    while (sl_runtime_poll(&r, &event))
+        paired_event |= event.type == SL_EVENT_AUTHORIZED && event.host.client_id == 555;
+    assert(paired_event); /* Key-file failure cannot turn valid crypto into refusal. */
+    verify_runtime = NULL;
+    verify_service_profile = verify_file_failure = false;
+    uint8_t first_publication[2048], accepted_secret[32];
+    size_t first_publication_size = publication_size;
+    memcpy(first_publication, publication, publication_size);
+    memcpy(accepted_secret, verify_secret, 32);
+    assert(sl_remote_pair(protocol));
+    pin_out.size = 0;
+    sl_proto_uint(&pin_out, 1, 4321);
+    assert(response(3, pin_body, pin_out.size) && publication_count == 2 && response(4, NULL, 0));
+    IHS_ClientGetSecretKey(r.client, temporary);
+    assert(temporary[0] && memcmp(temporary, accepted_secret, 32));
+    service_body = (sl_proto_field){.bytes = first_publication, .size = first_publication_size};
+    before = count(14);
+    expected_cloud_account = verify_account;
+    authorization_reply_body(service_body, 160, "1234", verify_account, verify_secret, true);
+    confirmation = wait_send(&r, 14, before);
+    assert(confirmation.cloud);
+    b = body(&confirmation, &h);
+    assert(field(b.bytes, b.size, 1).value == k_ERemoteDeviceAuthorizationSuccess);
+    decrypt_id(field(h.bytes, h.size, 5), temporary);
+    IHS_ClientGetSecretKey(r.client, saved);
+    assert(!memcmp(saved, temporary, 32) && IHS_ClientAuthorizationServiceActive(r.client));
+    assert(r.credential_revision == 1); /* Cached success confirms, never completes twice. */
+    while (sl_runtime_poll(&r, &event))
+        assert(event.type != SL_EVENT_AUTHORIZED);
+    before = count(9);
+    sl_remote_cancel(protocol);
+    assert(service_cancels == 1 && !IHS_ClientAuthorizationServiceActive(r.client));
+    assert(response(5, NULL, 0));
+    pump(&r);
+    assert(count(9) == before); /* Unknown service pairing never emits host cancel9. */
     incoming_peer = 123;
     stop_client(&r);
     flush_control(&r);
@@ -682,8 +792,9 @@ int main(void) {
     assert(current_account(&cold, 123, &current) && current == 987);
     assert(current_account(&cold, 321, &current) && current == 0);
     assert(current_account(&cold, 999, &current) && current == 1111);
-    const uint64_t expected_paired[] = {789, 987, 654, 1111};
-    assert(cold.paired_accounts.count == 4 &&
+    assert(current_account(&cold, 555, &current) && current == verify_account);
+    const uint64_t expected_paired[] = {789, 987, 654, 1111, UINT64_C(76561198000000001)};
+    assert(cold.paired_accounts.count == 5 &&
            !memcmp(cold.paired_accounts.ids, expected_paired, sizeof(expected_paired)));
     sl_directory_destroy(&cold.directory);
     sl_accounts_destroy(&cold.paired_accounts);
@@ -693,6 +804,7 @@ int main(void) {
     IHS_Quit();
     remove_fixture(dir);
     puts("PASS one control owner: CM/UDP retries, reauthorization, live discovery/source, proof "
-         "key/PIN, CM epoch, reply identity, explicit late cancel and SDR material");
+         "key/PIN, CM epoch, reply identity, service publication/cache/cancel, failed-file "
+         "pair completion, cold subscription replay and SDR material");
     return 0;
 }

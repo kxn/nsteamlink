@@ -948,8 +948,12 @@ directed-client 广播。网络收发、墙钟和云端 status
 `StartPairing @0x79c514` 只在云端 session 已 Connected 时发 StartPairing；否则失败，
 不会自动保留一笔“联网后再执行”的配对。`OnPairingStarted @0x79efb0` 仅接受 manager 状态 2；
 若用户已取消/切换状态，则发送 CancelPairing 清理迟到的配对槽位。
-有效 PIN 以 `%4.4u` 格式化，创建新的 X25519 密钥对和临时 32 字节 secret，再调用
-BCreateAuthorizationRequest；SetPairingInfo 成功仅表示发布完成，授权成功仍等待主机的
+有效 PIN 以 `%4.4u` 格式化，创建新的 X25519 密钥对、清零本事务的交换次数，再生成临时
+32 字节 secret。`0x79f054–0x79f068` 重取整个随机块，直到 secret 的首字节非零；这不是
+只排除全零块。随后调用 BCreateAuthorizationRequest，沿用 manager 当前的 request_id，
+没有调用新的随机 request ID：初始值 0 仍以 present 的 field 5 发布，替换事务留下的非零
+ID 也可保留。public auth_key/result 缓存不会随新 PIN、临时 secret 或新私钥重置。
+SetPairingInfo 成功仅表示发布完成，授权成功仍等待主机的
 AuthorizationResponse。session 的 SetPairingInfo/CancelPairing 成功 callback 自身无附加动作
 （`0x791ac4`、`0x791b00`）。
 
@@ -1004,8 +1008,12 @@ arm64 的结果比较分支位于 `0x79d92c`、`0x79d998` 起的指令中，并�
 它证明该受控有效材料可经原分派到达，不等于真实网络可绕过授权。
 **原生边界**：路由模式的已知主机授权先交换/保存/确认，再检查当前目标；明确区分选中
 事务目标、回复来源身份和密钥保存命名空间。未启用路由回调的旧 IHS API 保留原有入口
-过滤契约。账号首项、文件及订阅的独立证据和实现边界见下文；这些已知主机规则不代表
-未知主机服务配对槽的缓存/状态已与已知主机共用。
+过滤契约。账号首项、文件及订阅的独立证据和实现边界见下文。
+**实现修订**：撤回旧的“未知主机服务配对槽的缓存/状态仍与已知主机分开”边界。
+正式 runtime 的 SetPairingInfo 现在委托同一 IHS manager 准备授权正文；云端和 UDP 的
+回复都进入同一延迟授权 owner，共用 current secret 和 manager 生命周期的 key/result
+缓存。服务 RPC 的 pending/deadline 仍由 remote_protocol 持有，不能据此宣称该层全部
+状态 2、断线和超时策略已复刻原版。
 
 **Evidence（入站身份的细分）**：同一 core `0x79d6c8–0x79d6cc` 的非 Success 分支
 直接到 `0x79d8f4`；状态 4 的零/非目标来源在 `0x79d954–0x79d968` 转入过期分支，
@@ -1109,8 +1117,55 @@ key 写入失败后的 paired-ID 保存、非目标的有效 key、零首项、�
 
 本地文件发布使用 tmp/bak 恢复；畸形文本整体拒绝并保留旧内存值，未宣称复刻官方
 GetLine/V_hextobinary 的全部宽松解析。该账号链也不替代完整地址/MAC 持久化、显式
-forget/退订操作、未知主机配对槽的共同授权缓存，或 UDP status 与延迟授权的完整跨生产者
+forget/退订操作，或 UDP status 与延迟授权的完整跨生产者
 入站顺序对齐；这些边界不能从上述列表或密码向量推断。
+
+#### 未知主机配对与共同授权 owner
+
+`audit-steam-service-pairing.py` 以同一固定 shell 执行完整 OnPairingStarted、请求/ticket
+序列化、BProcess/header/body parser、真实 X25519/SHA256/AES、key/result 缓存、持久化
+调用者、StopStreaming 及 delegate 调用。48 条轨迹分别提供可用或不可用的目标 hint，
+覆盖无 auth_key、缺失/零账号、零 client_id、失败后成功、重复 key、更换 PIN、四次新 key
+额度耗尽、取消后迟到回复、残留 request ID、已知主机与云端配对互相替换及 result 1..8。
+身份、时间、熵、持久记录查找、低层文件调用、Qt/delegate 端点、请求 RSA 和最终
+SendMessage/SetPairingInfo 发送端点为显式 provider；原版 RSA 输出是边界标记。
+因此它证明原始调用者和原密码校验的行为，不是原版最终路由、CM 网络或 Steam 互通证明。
+
+生产 `IHS_ClientAuthorizationPrepareService` 返回需由调用者释放的 authorization BODY，
+本身不发 discovery envelope，不生成新 request ID，也不发已知主机的周期授权请求。
+RPC 层把这个 BODY 放到 SetPairingInfo.request 字段；PIN 提示在 manager 已进入状态 3
+后产生。ticket 与原版逐字节核对 password、identifier、payload、timestamp、usage、
+device_name/model/serial 和 device_provisioning_id 的值及 presence，后者默认 0 仍存在。
+正式设备的 model 由平台提供；该字符串不是媒体能力或授权证明。
+
+无 auth_key 的 Success 在状态 3 保存当前临时 secret、保存 paired ID、注册状态订阅，
+随后通知配对完成；状态 4 的同类回复不保存 secret。新有效 key 的顺序为身份 metadata、
+交换并替换 current secret、尝试保存 key 和 paired ID、Confirm Success、注册订阅、
+配对完成通知、Stop。文件失败不把有效密码校验改为 Denied。相同 auth_key 的缓存命中
+只重发缓存结果，不再次派生、保存或推进事务；即使新 PIN 不同，也会继续等在状态 3。
+
+状态 3 的 Stop 并非一概不发主机消息：GetServerInfo 或命名 hint 可用时，仍尝试发送
+StreamingCancelRequest(type 10)，使用停止前的目标与 request ID，ID=0 也不例外；没有
+可用记录则不调用发送。通知发生在状态/ID 清除之前，额度耗尽后的 ConfirmDenied 发生
+在清除之后。显式用户取消的服务 CancelPairing RPC 先于本地 Stop；成功完成配对不会
+凭空增加一次 CancelPairing RPC。
+
+`check-steam-service-pairing.py` 对实际 IHS UDP/RX/延迟 owner 投入相同完整帧，比较逐步
+状态/ID、current secret、key/result 缓存、私钥/派生调用次数、保存身份/密钥、metadata
+副作用、所有通知及发送/保存调用时的状态。RSA 明文 ticket 完全比较；实际 RSA 密文只
+验证生产加密调用，不能与原版桩字节相等。调用者 provider 省掉的外层 IV 消耗不能被
+当成差异，设备 token 和安全 PIN 另用对应 secret 验证 AES 明文。账号列表/文件使用生产
+account receiver 比较原版副作用结果。固定 ELF 与全部审计 helper 的 hash 必须匹配。
+
+`control_route_runtime.c` 另覆盖正式 runtime + RPC publication + 真实 IHS parser/crypto +
+实际文件的联动：先产生已知主机缓存，再发未知主机配对正文，故意使真实 key 临时文件
+写入失败，核对 Confirm 前的身份/paired 文件、完成事件、重复 key 经 CM 确认后仍等待、
+服务取消先于本地清理，以及冷启动账号加载。UDP syscalls、CM 连接/服务及最终 SNS
+constructor 为显式 provider，不联系 Steam、不创建真实 SDK 媒体连接。
+`service_pairing_runtime.c` 使用实际产品 worker、UI 事件处理和文件保存，另在第一次 profile
+保存过程中插入尚无新主机的旧 UI 快照，验证完成前排队的保存不会删掉新授权记录，随后
+显式删除仍生效；正常文件与故意阻塞 key 临时文件两种输入均执行。确认调用早于第二次
+快照保存，实际 CM FIFO 则允许在该保存后再刷出，不能混淆这两个观察边界。
 
 ### 11.3 开流响应的分支表
 
