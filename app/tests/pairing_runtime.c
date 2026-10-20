@@ -24,6 +24,8 @@
 #include <unistd.h>
 static uint16_t peer_port;
 static atomic_uint random_calls, save_calls, confirmations;
+static atomic_uint save_completed;
+static atomic_bool allow_queued_save;
 static atomic_bool peer_secret_ready;
 static bool fail_save, stale_snapshot, proof_mode, proof_file_fail;
 static atomic_bool proof_stage;
@@ -99,6 +101,15 @@ bool __wrap_IHS_ClientAuthorizationRequest(IHS_Client *c, const IHS_HostInfo *h,
 }
 bool __real_sl_auth_save(const sl_auth_store *, const char *);
 bool __wrap_sl_auth_save(const sl_auth_store *s, const char *dir) {
+    if (automatic && stale_snapshot && atomic_load(&save_calls) == 1) {
+        /* A queued UI snapshot can be saved after Resume. Hold this second
+         * actor operation until the peer/UI observes resumption, then wait for
+         * the completed real write instead of treating the event as its ACK. */
+        unsigned n;
+        for (n = 0; n < 5000 && !atomic_load(&allow_queued_save); ++n)
+            poll(NULL, 0, 1);
+        assert(n < 5000);
+    }
     unsigned n = atomic_fetch_add(&save_calls, 1) + 1;
     save_thread = pthread_self();
     bool ok = !fail_save && !(atomic_load(&proof_stage) && proof_file_fail) &&
@@ -107,6 +118,7 @@ bool __wrap_sl_auth_save(const sl_auth_store *s, const char *dir) {
         sl_command cmd = {.type = SL_CMD_SAVE, .generation = 1};
         assert(sl_runtime_submit(runtime, &cmd, &initial));
     }
+    atomic_store_explicit(&save_completed, n, memory_order_release);
     return ok;
 }
 bool __real_sl_host_key_save(const char *, uint64_t, uint64_t, const uint8_t[32]);
@@ -287,6 +299,8 @@ static void one(unsigned mode) {
     atomic_store(&proof_sent, 0);
     stream_calls = 0;
     atomic_store(&save_calls, 0);
+    atomic_store(&save_completed, 0);
+    atomic_store(&allow_queued_save, false);
     atomic_store(&confirmations, 0);
     atomic_store(&random_calls, 0);
     atomic_store(&peer_secret_ready, false);
@@ -438,6 +452,12 @@ static void one(unsigned mode) {
             response(fd, &to, key, pin);
             replied = true;
         }
+    }
+    atomic_store(&allow_queued_save, true);
+    unsigned expected_saves = compatibility ? 0u : stale_snapshot ? 2u : 1u;
+    while (atomic_load_explicit(&save_completed, memory_order_acquire) < expected_saves) {
+        assert(sl_system_now() < deadline);
+        poll(NULL, 0, 1);
     }
     assert(atomic_load(&random_calls) == 3 && atomic_load(&save_calls) == (compatibility    ? 0u
                                                                            : stale_snapshot ? 2u

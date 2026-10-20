@@ -2920,3 +2920,29 @@ RequestStatus 时读取当前目录。不通过额外的 before-Update 回调反
 未知主机的服务配对仍由 cloud pairing slot 处理。该改动不证明两个 owner 的授权缓存、
 所有入站身份顺序、持久文件或 socket 启动失败策略已完全统一；源指令/受控输入测试也
 不代替真实 Steam、NAT、SDK 网络和 Switch loader 验证。
+
+## D-A082：授权回复身份与当前连接目标分离，保留副作用顺序
+
+日期：2026-10-21
+
+Evidence：公网协议参考 §11.2；固定 shell 的完整 BProcess、原密码与调用者执行，
+72 组/160 步普通及网络测试输入；core `HandleDeviceAuthorizationResponse` 与
+`StopStreaming 0x79987c` 分支交叉核对。保存及发送边界额外观察状态、编号、缓存和
+已通知错误数，不能只从最终状态判断副作用顺序。
+
+已知主机路由模式不在授权入口提前过滤非目标来源。只有 Success 进入密钥交换；
+缓存命中或新 key 校验失败在第一次确认后返回，不推进事务。新的有效 key 先成为当前
+secret，按实际回复 client ID/steamid 保存，再更新公共 key/result 缓存并确认；此后才
+校验当前目标。非目标的新成功 key 会确认 Success 后再确认 Canceled，原事务继续等待。
+非 Success 的非目标回复按 auth_key presence 决定是否确认 Canceled，不做交换。
+
+额度耗尽停止当前选中的事务，错误通知先于取消，清除目标/编号后才替换公共缓存并向
+回复来源确认 Denied。交换函数通过同步 stop 回调让当前 owner 执行该段动作，保留当前
+secret；回调不得销毁正在访问的 task/client。普通取消也在清除编号前发送，整个操作
+由同一个 timer owner 串行化，任务延迟到 visitor 返回后回收，不在 visitor 内释放它。
+
+长期 key 保存接口采用回复身份。应用的 host profile 只是其当前账号的密钥镜像；非目标
+材料不能覆盖 active.host，也不能给不同账号写入错误镜像。已保存的同身份镜像可更新，
+其他身份仍有独立 key 文件。保存失败不转为密码校验失败或阻止原有确认/当前密钥更新。
+key 保存本身不伪造一次发现事件。完整身份首项更新、持久 metadata 与订阅是独立契约，
+不能由 key 文件存在推断冷启动发现已覆盖；未知主机服务配对槽也不由此变成同一状态域。

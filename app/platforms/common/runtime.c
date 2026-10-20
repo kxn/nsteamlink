@@ -340,9 +340,33 @@ static void persist_authorization(IHS_Client *client, const IHS_HostInfo *host, 
         return;
     if (!sl_host_key_save(sl_system_data_dir(), host->clientId, account, secret))
         sl_log("pair: identity key save failed; authorization continues");
+    if (host->clientId != r->active.host.client_id) {
+        /* Successful key validation precedes the manager's target check. Its
+         * key belongs to the reply identity, never to active.host. A profile
+         * is only a selected-account mirror; other accounts remain namespaced
+         * key files until their own metadata/subscription path selects them. */
+        bool mirrored = false;
+        for (int i = 0; i < r->store.registry.count; ++i) {
+            sl_host *peer = &r->store.registry.hosts[i];
+            if (!peer->paired || peer->client_id != host->clientId || peer->account != account)
+                continue;
+            peer->has_secret = memcmp(secret, r->store.secret, 32) != 0;
+            if (peer->has_secret)
+                memcpy(peer->secret, secret, 32);
+            else
+                memset(peer->secret, 0, 32);
+            mirrored = true;
+            post(r, (sl_runtime_event){.type = SL_EVENT_KEY_UPDATED, .host = *peer});
+        }
+        if (mirrored && !sl_auth_save(&r->store, sl_system_data_dir()))
+            sl_log("pair: reply identity profile save failed; authorization continues");
+        return;
+    }
     if (r->active.type == SL_CMD_PAIR)
         post(r, (sl_runtime_event){.type = SL_EVENT_SAVING});
     sl_host *h = sl_host_find(&r->store.registry, r->active.host.id);
+    if (h && h->client_id != host->clientId)
+        return;
     if (!h && r->store.registry.count < SL_HOST_LIMIT) {
         h = &r->store.registry.hosts[r->store.registry.count++];
         *h = r->active.host;

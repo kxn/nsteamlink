@@ -1000,8 +1000,36 @@ arm64 的结果比较分支位于 `0x79d92c`、`0x79d998` 起的指令中，并�
 返回 1、derived=1、对 456 的保存调用、Success 后 Canceled 两次确认，manager 仍为 4。
 原指令重放与该固定向量一致。网络入站、身份/熵及最终文件/发送端点是显式 provider；
 它证明该受控有效材料可经原分派到达，不等于真实网络可绕过授权。
-原生已知主机授权入口当前仍提前过滤目标身份，不能将匹配目标的交换对照当成这条完整
-入站顺序已对齐；实现须区分选中事务目标、回复来源身份及持久保存的命名空间。
+**原生边界**：路由模式的已知主机授权先交换/保存/确认，再检查当前目标；明确区分选中
+事务目标、回复来源身份和密钥保存命名空间。未启用路由回调的旧 IHS API 保留原有入口
+过滤契约。此项处理不等于原版 Success 时的 SteamID 首项更新、持久文件及订阅副作用
+全部完成，也不等于未知主机服务配对槽的缓存/状态已与已知主机共用。
+
+**Evidence（入站身份的细分）**：同一 core `0x79d6c8–0x79d6cc` 的非 Success 分支
+直接到 `0x79d8f4`；状态 4 的零/非目标来源在 `0x79d954–0x79d968` 转入过期分支，
+该分支 `0x79d9f0–0x79da38` 只按 auth_key presence 决定是否向本次来源确认 Canceled。
+因此不能将“非 Success 不交换”理解成“非目标的所有失败回复均静默丢弃”。新 key 验证
+失败、缓存命中都在第一次确认后因交换 bool=false 返回；只有新的有效 key 才继续到
+目标身份检查。额度耗尽由交换函数停止当前事务，取消针对当前目标，确认仍针对回复来源。
+`0x79d708–0x79d7f0` 还会在 Success 且 steamid present 时先调整回复主机的身份首项并
+保存 client info，早于密码交换；这项身份列表更新与成功保存 secret 是不同副作用。
+
+`audit-steam-authorization-admission.py` 在固定 shell 执行完整 BProcess、原 protobuf
+parser、原 token/PIN/交换密码运算和调用者；72 组普通/网络测试输入固定为
+`steam-authorization-admission-reference.json.gz`。`check-steam-authorization-admission.py`
+把同一完整入站帧交给真实 IHS UDP/RX/延迟 owner，比较 160 步状态、编号、当前 secret、
+最近 key/result、派生次数、保存身份、确认/取消及请求中的密码字段；另比较保存回调和
+每次发送发生时的 manager 状态、编号、缓存及已通知错误数，而非仅比较最终结果。
+成功保存使用本次回复的 client ID/steamid；额度耗尽先通知当前目标错误、发取消并清除
+事务，再更新公共 key/result 缓存和确认回复。普通取消同样先发取消再清除编号；原生
+取消持有同一个 timer owner，任务在 visitor 返回后回收，避免中途插入重试/回复。
+
+原版的 Qt、身份/熵、请求 RSA、时间、持久 metadata、文件系统调用及最终发送仍有显式
+provider；原生端点/metadata 查找、身份/熵及保存回调也由 fixture 提供。runtime 联合
+场景另以真实 X25519/AES 产生三份有效非目标材料，验证确认前的实际密钥落盘、当前目标
+不变、不同账号的 profile mirror 不被覆盖，以及 key 临时文件写入失败后仍确认并更新
+当前 secret。原生 profile 仅镜像其当前账号，其他身份的 key 文件与全身份列表是不同
+数据；该场景不证明冷启动的全身份订阅、真实 Steam/网络、SDK 或 Switch。
 
 密钥交换算法仍按认证参考：
 

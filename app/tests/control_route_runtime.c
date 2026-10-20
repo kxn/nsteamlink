@@ -34,6 +34,11 @@ static unsigned sns_calls;
 static pthread_t owner;
 static uint8_t media_key[16] = {7, 8, 9};
 static uint64_t incoming_peer = 123;
+static sl_runtime *verify_runtime;
+static sl_host verify_selected;
+static uint64_t verify_peer, verify_account;
+static uint8_t verify_secret[32];
+static bool verify_file_failure;
 time_t __wrap_time(time_t *out) {
     time_t now = atomic_load(&wall);
     if (out)
@@ -56,6 +61,13 @@ static void capture(const uint8_t *wire, size_t size, const struct sockaddr_in *
     IHS_ReadUInt32LE(wire + 8, &hs);
     assert(hs <= size - 16);
     unsigned kind = (unsigned)field(wire + 12, hs, 2).value;
+    if (kind == 14 && verify_runtime) {
+        uint8_t saved[32];
+        assert(pthread_equal(owner, pthread_self()));
+        int loaded = sl_host_key_load(sl_system_data_dir(), verify_peer, verify_account, saved);
+        assert(verify_file_failure ? loaded == 1 : !loaded && !memcmp(saved, verify_secret, 32));
+        assert(!memcmp(&verify_runtime->active.host, &verify_selected, sizeof(verify_selected)));
+    }
     if (!kind) {
         struct in_addr expected;
         assert(inet_pton(AF_INET, "10.0.0.8", &expected) == 1);
@@ -310,6 +322,32 @@ static void remove_fixture(const char *dir) {
         }
     assert(!closedir(d) && !rmdir(dir));
 }
+static void authorization_reply(const recorded *request, unsigned seed, uint64_t account,
+                                uint8_t secret[32]) {
+    sl_proto_field header, b = body(request, &header);
+    sl_proto_field masked = field(b.bytes, b.size, 4);
+    assert(masked.size == 32);
+    uint8_t hash[32], client_public[32], private[32], public[32], key[32], token[64], id[8];
+    assert(!IHS_CryptoSHA256((const uint8_t *)"1234", 4, hash));
+    for (unsigned i = 0; i < 32; ++i) {
+        private[i] = (uint8_t)(seed + i);
+        client_public[i] = masked.bytes[i] ^ hash[i];
+    }
+    assert(!IHS_CryptoX25519PublicKey(private, public));
+    assert(!IHS_CryptoKeyExchange(private, client_public, secret));
+    for (unsigned i = 0; i < 32; ++i)
+        key[i] = public[i] ^ hash[i];
+    IHS_WriteUInt64LE(id, 42);
+    size_t size = sizeof(token);
+    assert(!IHS_CryptoSymmetricEncrypt(id, sizeof(id), secret, 32, token, &size));
+    CMsgRemoteDeviceAuthorizationResponse reply = CMSG_REMOTE_DEVICE_AUTHORIZATION_RESPONSE__INIT;
+    reply.result = k_ERemoteDeviceAuthorizationSuccess;
+    reply.has_steamid = reply.has_auth_key = reply.has_device_token = true;
+    reply.steamid = account;
+    reply.auth_key = (ProtobufCBinaryData){sizeof(key), key};
+    reply.device_token = (ProtobufCBinaryData){size, token};
+    udp(4, &reply.base, "10.0.0.99", 35100);
+}
 int main(void) {
     owner = pthread_self();
     char dir[] = "/tmp/nsl-control-route-XXXXXX";
@@ -525,10 +563,68 @@ int main(void) {
     assert(auth.cloud);
     b = body(&auth, &h);
     decrypt_id(field(h.bytes, h.size, 5), rotated);
+    verify_runtime = &r;
+    verify_selected = r.active.host;
+    sl_host *foreign = saved_host(&r, 321);
+    assert(foreign && foreign->account == 987);
+    foreign->paired = foreign->has_secret = true;
+    memset(foreign->secret, 0xA5, 32);
+    incoming_peer = verify_peer = 321;
+    verify_account = 987;
+    before = count(14);
+    authorization_reply(&auth, 32, verify_account, verify_secret);
+    recorded confirmation = wait_send(&r, 14, before + 1);
+    destination(&confirmation, "10.0.0.99", 35100);
+    b = body(&confirmation, &h);
+    assert(field(b.bytes, b.size, 1).value == k_ERemoteDeviceAuthorizationCanceled);
+    assert(!memcmp(foreign->secret, verify_secret, 32));
+    uint8_t first_foreign[32];
+    memcpy(first_foreign, verify_secret, 32);
+    verify_account = 654; /* A second namespace must not replace its account-987 mirror. */
+    /* Controlled failure of this account's atomic temporary file, not a
+     * simulated crypto failure. Confirmation/current secret must continue. */
+    uint8_t identity[16];
+    char hex[33], failure_path[1024];
+    IHS_WriteUInt64LE(identity, verify_peer);
+    IHS_WriteUInt64LE(identity + 8, verify_account);
+    for (unsigned i = 0; i < sizeof(identity); ++i)
+        snprintf(hex + i * 2, 3, "%02x", identity[i]);
+    snprintf(failure_path, sizeof(failure_path), "%s/key-%s.txt.tmp", dir, hex);
+    assert(!mkdir(failure_path, 0700));
+    verify_file_failure = true;
+    before = count(14);
+    authorization_reply(&auth, 64, verify_account, verify_secret);
+    wait_send(&r, 14, before + 1);
+    assert(sl_host_key_load(dir, verify_peer, verify_account, saved) == 1);
+    verify_file_failure = false;
+    assert(!rmdir(failure_path));
+    assert(foreign->account == 987 && !memcmp(foreign->secret, first_foreign, 32));
+    assert(!sl_host_key_load(dir, 321, 987, saved) && !memcmp(saved, first_foreign, 32));
+    incoming_peer = verify_peer = 999;
+    verify_account = 1111;
+    before = count(14);
+    authorization_reply(&auth, 96, verify_account, verify_secret);
+    wait_send(&r, 14, before + 1);
+    assert(!saved_host(&r, 999)); /* A key save is not a fabricated discovery record. */
+    sl_auth_store disk;
+    assert(!sl_auth_load(&disk, dir));
+    const sl_host *selected_disk = sl_host_find(&disk.registry, r.active.host.id);
+    assert(selected_disk && selected_disk->account == 789 &&
+           !memcmp(selected_disk->secret, rotated, 32));
     before = count(9);
-    assert(IHS_ClientAuthorizationCancel(r.client));
+    size_t confirmed = count(14);
+    uint8_t rejected_key[32];
+    authorization_reply(&auth, 128, verify_account,
+                        rejected_key); /* Fourth new key exhausts the selected owner. */
     recorded canceled_authorization = wait_send(&r, 9, before);
     assert(canceled_authorization.cloud);
+    confirmation = wait_send(&r, 14, confirmed);
+    b = body(&confirmation, &h);
+    assert(field(b.bytes, b.size, 1).value == k_ERemoteDeviceAuthorizationDenied);
+    b = body(&canceled_authorization, &h);
+    decrypt_id(field(h.bytes, h.size, 5), verify_secret); /* Stop retains the current secret. */
+    verify_runtime = NULL;
+    incoming_peer = 123;
     stop_client(&r);
     flush_control(&r);
     __wrap_sl_remote_connection_destroy(r.remote);
