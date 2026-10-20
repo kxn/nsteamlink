@@ -1137,6 +1137,10 @@ RPC 层把这个 BODY 放到 SetPairingInfo.request 字段；PIN 提示在 manag
 后产生。ticket 与原版逐字节核对 password、identifier、payload、timestamp、usage、
 device_name/model/serial 和 device_provisioning_id 的值及 presence，后者默认 0 仍存在。
 正式设备的 model 由平台提供；该字符串不是媒体能力或授权证明。
+**证据修正**：共用请求构造器不能先生成正文设备 token 再做 RSA。原 core 的
+`BCreateAuthorizationRequest @0x79c848` 先调用 RSA，`0x79c860` 才调用 BGetDeviceToken；
+因此后者失败时仍已执行一次票据 RSA 调用。撤回把两者颠倒视为等价重构的实现假定。
+既有 `device_token_official_vectors` 的失败用例保留了该原版副作用，并用于约束共用构造器。
 
 无 auth_key 的 Success 在状态 3 保存当前临时 secret、保存 paired ID、注册状态订阅，
 随后通知配对完成；状态 4 的同类回复不保存 secret。新有效 key 的顺序为身份 metadata、
