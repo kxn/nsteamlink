@@ -14,6 +14,7 @@ def main():
     args = p.parse_args()
     source = (ROOT/'app/platforms/common/sns_connection_policy.h').read_text()
     edits = {
+        'only-ok-is-success': ('static_cast<int>(result) == 0', 'result != k_EResultOK'),
         'peer-close-reason': ('out.failure == SnsCheckFailure::Unknown ? 2001 : 0', '2001'),
         'one-second-boundary': ('now < deadline', 'now <= deadline'),
         'millisecond-budget': ('+ 1000000u', '+ 1000u'),

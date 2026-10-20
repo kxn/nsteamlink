@@ -63,7 +63,9 @@ bool CheckSnsConnection(Sockets *sockets, Utils *utils, SnsConnectionView v,
     case k_ESteamNetworkingConnectionState_Connected: {
         SteamNetConnectionRealTimeStatus_t status{};
         EResult result = sockets->GetConnectionRealTimeStatus(v.handle, &status, 0, nullptr);
-        if (result != k_EResultOK) {
+        /* Original slot is GetConnectionRealTimeStatus (EResult), but the
+         * client tests zero, not equality to OK. Preserve nonzero returns. */
+        if (static_cast<int>(result) == 0) {
             v.handle = k_HSteamNetConnection_Invalid;
             v.state = SL_SNS_FAILED;
             out.failure = SnsCheckFailure::Status;

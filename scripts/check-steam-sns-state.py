@@ -19,7 +19,8 @@ def main():
     opener = gzip.open if args.reference.suffix == '.gz' else open
     with opener(args.reference, 'rt') as f:
         reference = json.load(f)
-    assert reference['schema'] == 1 and reference['sample_sha256'] == SHA
+    assert reference['schema'] == 2 and reference['sample_sha256'] == SHA
+    assert [r['result'] for r in reference['sdk_returns']] == [3, 8, 1]
     programs = reference['cases']
     wire = [str(len(programs))]
     expected = []
@@ -28,7 +29,7 @@ def main():
         wire.append(f"{v['state']} {v['handle']} {v['last_check']} {len(c['actions'])}")
         assert len(c['actions']) == len(c['results'])
         for index, (a, want) in enumerate(zip(c['actions'], c['results'])):
-            wire.append(f"{a['now']} {int(a['info_ok'])} {a['sdk_state']} {int(a['quick_ok'])}")
+            wire.append(f"{a['now']} {int(a['info_ok'])} {a['sdk_state']} {int(a['status_result'])}")
             expected.append((c['name'], index, want))
     result = subprocess.run([str(args.receiver.resolve())], input='\n'.join(wire)+'\n',
         text=True, capture_output=True, timeout=20)

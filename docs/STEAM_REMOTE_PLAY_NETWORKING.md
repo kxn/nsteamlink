@@ -1013,24 +1013,24 @@ transport 的 `this+20`：0=初始化后尚未开始连接，1=Connecting/Findin
 SNS 3 映射为 2；SNS 4（ClosedByPeer）关闭本地句柄并进入 Closed；SNS 5（ProblemDetectedLocally）
 先设 Failed 再关闭，保留 Failed。**证据修订**：撤回“句柄失效/查询失败都进入 Failed”。
 没有句柄时保留既有 Failed，其余状态变 Closed，返回 false（`0x800374–0x800378`、
-`0x80044c–0x80045c`）；GetConnectionInfo 失败或 Connected 后 GetQuickConnectionStatus 失败
+`0x80044c–0x80045c`）；GetConnectionInfo 失败或 Connected 后 GetConnectionRealTimeStatus 返回0
 才清空句柄并置 Failed（`0x800460–0x8004b8`、`0x800724–0x800780`），这两条分支不调用
 CloseConnection。SNS 未识别状态则以 reason=2001 调 CloseConnection；其规则是保留既有 Failed，
 其余变 Closed，不能自行改成所有未知状态都设 Failed。已 Connected 时仅在
 `now >= last_check+1000000μs` 查询 SDK，否则直接返回 true（`0x80039c–0x8003b4`）。
 
 **原始状态函数执行对照**：`scripts/audit-steam-sns-state.py` 直接执行以上 CheckConnection
-和 SDR CloseConnection，SDK 的时钟、info、quick status、Close 方法与诊断字符串/断言端点为
-受控 provider。279 组连续程序、293 次调用记录实际返回值、transport 状态、handle、查询时钟、
+和 SDR CloseConnection，SDK 的时钟、info、real-time status、Close 方法与诊断字符串/断言端点为
+受控 provider。729 组连续程序、743 次调用记录实际返回值、transport 状态、handle、查询时钟、
 SDK 调用次序及信令对象双向归属；含不一致的合成状态，不以此声称都能由线上输入产生。
 生产 `sns_connection_policy.h` 共用函数由 `check-steam-sns-state.py` 与冻结原始输出逐项比较。
 
 本地真实 SDK 无效句柄测试还执行生产 owner 的异步初始化守卫、info 失败后的队列释放/唤醒及
 显式销毁：查询失败保留信令归属到销毁，无待连接时的配置获取不被误关。该测试不创建连接、
-不向 Steam 请求授权或媒体。7 份独立编译反例覆盖关闭 reason、一秒等号、单位错误、Failed
-保留、跳过节流、遗留无效 handle 和 Connecting 返回值；要求反例正常执行，再由原始输出
+不向 Steam 请求授权或媒体。8 份独立编译反例覆盖关闭 reason、一秒等号、单位错误、Failed
+保留、跳过节流、遗留无效 handle 和 Connecting 返回值及错误地只允许 OK 的分支；要求反例正常执行，再由原始输出
 比较器拒绝，编译错误或 receiver 崩溃不计检出。冻结输出的 gzip SHA256 为
-`5994b3c20950009aa21903473addaa3c62eff26decd7ac93a2dd970e298f997d`。
+`d3ad810cead593063b131ba74c06b3eec525a80d1374361729044a8165267a93`。
 
 SDK 1/2（Connecting/FindingRoute）时本函数返回 true，调用者仍须另查 transport 是否为 2；
 返回 true 本身不能证明可发送媒体。SDK 4/5 的原 SDR Close 实参为 `reason=0, text=null,
@@ -1041,8 +1041,18 @@ linger=false`；未知状态才用 2001。0 是 SDK 方法实参，不宣称它�
 时间读取来自 SDK GetLocalTimestamp，单位微秒。只有既有 Connected 才可跳过未到期的查询；
 恰好 1000000 微秒须查询。原函数把 last-check 加 1000000 的64位结果按有符号数比较；测试
 还覆盖倒退时刻和加法回绕，不把毫秒级近似比较当作原始边界已对齐。
-公开 GNS 的 GetConnectionRealTimeStatus 以 EResultOK 映射原 quick-status 的 true，其他结果
-映射 false；这是明确的 SDK ABI 适配，不修改原分支的句柄/状态/关闭行为。
+**证据修订**：撤回把+128槽位称为 GetQuickConnectionStatus／bool，以及“只把 EResultOK
+映射为true”的适配。该槽位 `0xc46b70` 的重定位目标实际为 GetConnectionRealTimeStatus
+`0x806884`，它返回 EResult；原调用者 `0x800514–0x80051c` 却只以零为失败。SDK原函数对
+不存在的handle返回3（NoConnection），原APIGetRealTimeStatus `0x8582ac` 对错误lanes返回8
+（InvalidParam），有效/null-output在统计端点后返回1。源函数执行额外验证了3/8/1返回值，
+handle查找/锁与SNP统计端点仍是明确provider；不是只按函数名称猜测返回类型。
+相邻 GetConnectionInfo `0x8067c0` 则在 `0x806834` 用 cset 产生0/1，其bool输入域另有指令依据。
+
+因此这里保留原调用者的原始非零判断：不能把3、8等非零结果改成 transport Failed。0分支
+作为原调用者中存在的合成输入保留，不宣称固定SDK的正常API路径会返回0。新增用例和反例
+显式覆盖原来的“只认OK”错误，避免0/1桩掩盖真实SDK边界。这仅核对状态分支，不把失败SDK
+调用后的统计内容或诊断字符串解释为有效；生产端口将临时统计输出初始化为零。
 
 端口的配置/证书 HTTP 是异步的，和官方先完成同步 BInit 再 BConnect 的调用边界不同。
 在尚未发起 SDK 连接时不执行 CheckConnection，避免把“正在取得配置、尚无句柄”误当作

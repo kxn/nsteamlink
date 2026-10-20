@@ -10,7 +10,8 @@
 struct Sdk {
     nsl::SnsConnectionView view;
     bool &owner;
-    bool infoOK, quickOK;
+    bool infoOK;
+    int statusResult;
     int sdkState;
     SteamNetworkingMicroseconds now;
     std::vector<std::string> events;
@@ -27,8 +28,8 @@ struct Sdk {
     EResult GetConnectionRealTimeStatus(HSteamNetConnection h,
         SteamNetConnectionRealTimeStatus_t *, int lanes, void *p) {
         assert(h == 1 && lanes == 0 && p == nullptr);
-        events.emplace_back("\"quick\"");
-        return quickOK ? k_EResultOK : k_EResultNoConnection;
+        events.emplace_back("\"status\"");
+        return static_cast<EResult>(statusResult);
     }
     bool CloseConnection(HSteamNetConnection h, int reason, const char *p, bool linger) {
         assert(!owner && h == 1 && p == nullptr && !linger);
@@ -48,9 +49,9 @@ int main() {
         std::atomic<sl_sns_state> s{static_cast<sl_sns_state>(state)};
         bool owner = true;
         nsl::SnsConnectionView v{h, s, last};
-        Sdk sdk{v, owner, true, true, 3, 0, {}};
+        Sdk sdk{v, owner, true, 1, 3, 0, {}};
         for (unsigned a = 0; a < steps; ++a) {
-            assert(bool(std::cin >> sdk.now >> sdk.infoOK >> sdk.sdkState >> sdk.quickOK));
+            assert(bool(std::cin >> sdk.now >> sdk.infoOK >> sdk.sdkState >> sdk.statusResult));
             sdk.events.clear();
             nsl::SnsConnectionObservation observation;
             bool result = nsl::CheckSnsConnection(&sdk, &sdk, v, observation, [&] { owner = false; });

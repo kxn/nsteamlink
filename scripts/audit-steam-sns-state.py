@@ -27,6 +27,7 @@ class Run(base.Machine):
     def __init__(self, binary):
         self.events = []
         self.action = {}
+        self.sdk_lookup = 0
         super().__init__(binary)
 
     def hook(self, uc, pc, size, unused):
@@ -54,13 +55,21 @@ class Run(base.Machine):
             return ret(int(self.action['info_ok']))
         if pc == QUICK:
             assert (reg(0), reg(1), reg(3), reg(4)) == (SDK, 1, 0, 0)
-            self.events.append('quick')
+            self.events.append('status')
             p = reg(2)
             uc.mem_write(p, bytes(128))
             self.wi(p + 4, 0xffffffff)
             for offset in (16, 20, 24, 28):
                 uc.mem_write(p + offset, struct.pack('<f', -1.0))
-            return ret(int(self.action['quick_ok']))
+            return ret(self.action['status_result'])
+        if pc == 0x80303c:
+            return ret(self.sdk_lookup)  # SDK handle lookup/lock boundary.
+        if pc == 0xc11b80:
+            return uc.reg_write(UC_ARM64_REG_PC, 0x8582ac)
+        if pc == 0xc119d0:
+            return ret(100000000)
+        if pc in (0xc13290, 0xc118a0):
+            return ret()  # SNP stats population / diagnostic output only.
         if pc == CLOSE:
             assert (reg(0), reg(1), reg(4)) == (SDK, 1, 0)
             # Execute original SDR close's unlink order before the SDK boundary.
@@ -71,7 +80,8 @@ class Run(base.Machine):
             return ret()  # Only diagnostic string/log operations.
         if pc in (0xc09b00, 0xc097e0):
             return ret(1)  # Assertion sink declines a debugger trap.
-        assert 0x800348 <= pc < 0x800960 or 0x800f94 <= pc < 0x801084, hex(pc)
+        assert (0x800348 <= pc < 0x800960 or 0x800f94 <= pc < 0x801084 or
+                0x806884 <= pc < 0x80695c or 0x8582ac <= pc < 0x858514), hex(pc)
 
     def start(self, initial):
         for p in (T, SDK, UTILS, VT, UVT, TVT, SIGNAL):
@@ -106,16 +116,16 @@ class Run(base.Machine):
 
 
 def programs():
-    action = dict(now=100000000, info_ok=True, quick_ok=True, sdk_state=3)
+    action = dict(now=100000000, info_ok=True, status_result=1, sdk_state=3)
     # Includes impossible/inconsistent input states deliberately; proves local
     # branch behavior, not that every combination is reachable on the wire.
     for state in range(5):
         for handle in (0, 1):
             for sdk in (-1, 0, 1, 2, 3, 4, 5, 6, 2147483647):
-                for info_ok, quick_ok in ((True, True), (False, True), (True, False)):
-                    yield dict(name=f'matrix-{state}-{handle}-{sdk}-{int(info_ok)}-{int(quick_ok)}',
+                for info_ok, status_result in ((True, 1), (False, 1), (True, 0), (True, 2), (True, 3), (True, 8), (True, 25), (True, 41)):
+                    yield dict(name=f'matrix-{state}-{handle}-{sdk}-{int(info_ok)}-{status_result}',
                         initial=dict(state=state, handle=handle, last_check=90000000),
-                        actions=[dict(action, sdk_state=sdk, info_ok=info_ok, quick_ok=quick_ok)])
+                        actions=[dict(action, sdk_state=sdk, info_ok=info_ok, status_result=status_result)])
     for elapsed in (-1000, 0, 999999, 1000000, 1000001):
         yield dict(name=f'throttle-{elapsed}',
             initial=dict(state=2, handle=1, last_check=action['now']-elapsed),
@@ -123,10 +133,10 @@ def programs():
     # Original adds in 64 bits then compares a signed timestamp.
     yield dict(name='deadline-wrap',
         initial=dict(state=2, handle=1, last_check=(1 << 63)-500000), actions=[dict(action)])
-    for failure in ('info_ok', 'quick_ok'):
+    for failure in ('info_ok', 'status_result'):
         yield dict(name='detach-'+failure,
             initial=dict(state=1, handle=1, last_check=0),
-            actions=[dict(action), dict(action, now=101000000, **{failure: False}),
+            actions=[dict(action), dict(action, now=101000000, **{failure: False if failure == "info_ok" else 0}),
                      dict(action, now=102000000)])
     yield dict(name='connecting-finding-connected-peer-close',
         initial=dict(state=0, handle=1, last_check=0),
@@ -146,9 +156,27 @@ def main():
         m.start(program['initial'])
         program['results'] = [m.step(a) for a in program['actions']]
         cases.append(program)
-    result = dict(schema=1, sample_sha256=base.SHA,
+    # Confirm the slot is not a bool adapter: the actual SDK wrapper returns
+    # 3 for a missing handle, and its real API body returns 8 for bad lanes.
+    # Valid/null-output API still reaches the stats endpoint then returns 1.
+    from unicorn import arm64_const as arm
+    sdk_returns = []
+    connection, level = 0x20090000, 0x20093000
+    m.wq(0xc80888, level)
+    m.wi(level, 0)
+    for name, found, lanes, expected in (
+            ('no-connection', False, 0, 3), ('invalid-lanes', True, 1, 8),
+            ('ok-null-output', True, 0, 1)):
+        m.sdk_lookup = connection if found else 0
+        for n, value in ((2, 0), (3, lanes), (4, 0)):
+            m.u.reg_write(getattr(arm, 'UC_ARM64_REG_X'+str(n)), value)
+        m.call(0x806884, SDK, 1)
+        returned = m.u.reg_read(UC_ARM64_REG_X0)
+        assert returned == expected, (name, returned)
+        sdk_returns.append(dict(name=name, result=returned))
+    result = dict(schema=2, sample_sha256=base.SHA,
         scope='Original CheckConnection/SDR Close; SDK results, clock and diagnostics are controlled',
-        cases=cases)
+        sdk_returns=sdk_returns, cases=cases)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     data = (json.dumps(result, indent=2) + '\n').encode()
     if args.output.suffix == '.gz':
