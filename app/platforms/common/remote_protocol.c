@@ -492,8 +492,8 @@ static bool publish_pairing(sl_remote *r, uint32_t pin) {
             erase(body, size);
             free(body);
         }
-        if (!ok && r->cb.abort_pairing)
-            r->cb.abort_pairing(r->ctx);
+        /* The caller reports failure before aborting the manager. An early
+         * abort here would make its subsequent Stop(error) an idle no-op. */
         return ok;
     }
     if (!IHS_AuthorizationKeyExchangeInit(&r->kx, r->pin) ||

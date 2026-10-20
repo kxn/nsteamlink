@@ -1066,6 +1066,26 @@ decrypt(response.device_token, paired_secret) 必须为 8 字节且等于本机 
 这次重发仍经过 `SendStartStreamingRequest` 的当前记录／命名 hint 门槛；两者都不可用时，
 `0x7993ac–0x7993b4` 调用 StopStreaming(error=18)，先通知，再按停止规则清除 ID 和目标。
 不能把查询失败等同于发送成功，也不能只清请求编号却保留旧目标或省略终止通知。
+重新授权的定时发送也有同一门槛：`SendAuthorizeDeviceRequest @0x79a490` 在
+`0x79a508–0x79a510` 因记录/hint 不可用而 Stop(error=18)，正文构造失败则在
+`0x79a5a0–0x79a5a8` Stop(error=1)。这些是本地 manager 错误，均不能作为
+AuthorizationResponse.result 或 StreamingResponse.result 发到网络。
+**证据修订**：生产流请求在发送失败后并非完全没有错误通知。它曾在清除 request ID 后，
+由 timer cleanup 报告通用 StreamingFailed=3，并保留旧目标；撤回根据发送函数内没有
+Notify 就推导“没有任何失败回调”的结论。实际差异是错误分类、通知时的阶段/ID 和
+目标清理。正式路由的本地发送失败应通过独立错误回调先通知，再按当前阶段取消、清目标；
+同一次失败不得又从 timer cleanup 通知一次。旧独立 IHS API 的兼容回调不是该正式路径的证明。
+云端正文发布也不能提前清理：`OnPairingStarted @0x79f084–0x79f088` 先构造正文，
+成功才在 `0x79f090–0x79f094` 从状态 2 进入 3 并发布 SetPairingInfo。构造失败的 Stop(1)
+因此通知的是状态 2。PrepareService 返回失败时应保留该阶段、ID/目标供调用者报告并停止；
+若先自行 Clear，后续错误会被 Idle 的 Stop 屏蔽。临时 secret 的更新不因此回滚。
+私有 task 已退休并不等于 manager 已 Idle：该失败路径的状态 2 Stop 仍必须取消/清理，
+不能因 task slot 为空而直接返回，也不应借此再次发送远端 CancelPairing RPC。
+RPC 正文 helper 也不能在返回 false 前自行 abort；其调用者必须先报告失败，再统一停止。
+正文构造失败与最终发送失败另须分开。上述两个 producer 调用 SendMessage 后直接设置
+重试期限（`0x799798` 后、`0x79a588–0x79a598`），不按发送返回值 Stop。SendMessage
+是 void 边界；最终 UDP/CM/外层 header 未能发送不等于正文构造失败，不能将 IHS 本地
+SendControl 的 false 反向解释成原版 producer 的 error=1，更不能立即追加另一个承载发送。
 
 **持久化界面**：安装 device_id、主机 client_id、steamid 列表、每主机/身份的 secret 和已配对
 steamid 列表是不同记录。`SavePairedSteamID @0x79b5e8` 去重后保存列表；
@@ -1231,10 +1251,12 @@ HandshakePhase 与 HandshakeFail 供服务回调使用；错误先经原来的 U
 
 `audit-steam-pairing-rpc.py` 在固定 shell 上执行完整响应 FIFO、原 protobuf parser、
 session 分派/Update/Disconnect/Cleanup、manager Start/Cancel/OnPairingStarted/Failed/
-Disconnected、原授权请求 producer、密码材料及 Stop。174 组程序覆盖 Idle、等待 PIN、
+Disconnected、原授权请求 producer、密码材料及 Stop。202 组程序覆盖 Idle、等待 PIN、
 云端授权、已知授权、开流等待、已取得 ticket 六个阶段，成功／失败、重复／迟到、取消
-后新事务、缺省 PIN、百万秒 session 时钟跃迁、断线/恢复和旧授权回复；其中 48 组在
+后新事务、缺省 PIN、百万秒 session 时钟跃迁、断线/恢复和旧授权回复；其中 72 组在
 同一原 FIFO 中预置两至三条帧，仅调用一次 HandleWebSocketPackets，没有帧间 Update。
+这些批次包括 48 组服务配对与 24 组已知主机重授权/迟到 RPC；另有 4 组单帧重授权，
+分别保留或移除当前记录/hint，约束重授权恢复时的 error=18 和清理顺序。
 对象/队列初值、WebRequest 状态与释放、恢复入口、时钟、熵、身份、请求 RSA、最终发送、
 低层文件及持久查找是显式 provider；固定 ELF 和 18 个审计 helper 的 hash 必须匹配。
 
@@ -1247,6 +1269,16 @@ ID/目标、current secret、生成密钥对次数、ticket 明文、服务 enve
 不同生产者之间的完整排序。GetServerInfo/hint 可用性为 provider；真实目录在
 到期、断线和批量输入之间的更新时机，不能从该布尔输入推导。畸形 protobuf 的全部宽松
 解析也不在这组输入范围。
+
+`audit-steam-request-failure.py` 另执行 18 组本地发送边界程序。显式让一次
+BGetDeviceToken bool 为 false，以区分记录不可用时的 error=18 和正文构造失败的
+error=1；这不是自然 RNG/crypto 失败的动态观察。已知主机的授权/开流定时 producer
+是直接调用，不冒充完整 manager Update。云端发布覆盖状态 2 的正文失败；原最终
+SendMessage provider 在 void 边界返回零，生产 sender 的 false 输入不能让 caller
+新增 Stop。固定 ELF 和 19 个 helper hash 受校验，原通知/取消/清理调用者均执行。
+实际 runtime/IHS oracle 比较通知发生时的阶段/ID/目标、控制消息、当前 secret 和
+失败实际触发次数，并在 stop/join 后检查没有从 cleanup 再报告一次。
+产品的 requestFailed 传递独立的本地 manager 错误，不转换成主机回复的 wire result。
 
 ### 11.3 开流响应的分支表
 

@@ -194,6 +194,18 @@ def cases():
                 ('duplicate-success-failure', [auth, auth, failure]),
             ):
                 rows.append((f'batch-{int(keyed)}-{kind}-{label}', 'auth', [('batch', frames)]))
+    for keyed in (False, True):
+        event = dict(client=123, key=keyed, key_pin='0042')
+        auth = reply(event)[1]
+        rows.append((f'known-resume-{int(keyed)}', 'known', [('raw', auth)]))
+        for kind in (3, 4, 5):
+            failure = wire(kind, 2).hex()
+            for reverse in (False, True):
+                frames = [auth, failure]
+                if reverse:
+                    frames.reverse()
+                rows.append((f'known-resume-{int(keyed)}-{kind}-{int(reverse)}',
+                             'known', [('batch', frames)]))
     return [(name,hint,phase,ops) for hint in (False,True) for name,phase,ops in rows]
 
 

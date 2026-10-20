@@ -589,11 +589,16 @@ if(NSL_PLATFORM STREQUAL "desktop")
         -Wl,--wrap=sl_remote_connection_create -Wl,--wrap=sl_remote_connection_protocol
         -Wl,--wrap=sl_remote_connection_destroy -Wl,--wrap=sendto -Wl,--wrap=time
         -Wl,--wrap=IHS_CryptoRandomUInt32 -Wl,--wrap=IHS_CryptoRandomBytes
-        -Wl,--wrap=IHS_CryptoRSAEncrypt -Wl,--wrap=IHS_ClientSendControl)
+        -Wl,--wrap=IHS_CryptoRSAEncrypt -Wl,--wrap=IHS_ClientSendControl
+        -Wl,--wrap=IHS_ClientCreateDeviceToken)
     add_test(NAME pairing_rpc_official_vectors COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-pairing-rpc.py"
         --receiver $<TARGET_FILE:nsl-pairing-rpc-oracle>)
     set_tests_properties(pairing_rpc_official_vectors PROPERTIES TIMEOUT 90)
+    add_test(NAME request_failure_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-request-failure.py"
+        --receiver $<TARGET_FILE:nsl-pairing-rpc-oracle>)
+    set_tests_properties(request_failure_official_vectors PROPERTIES TIMEOUT 30)
     add_executable(nsl-resolution-render tests/test_resolution_render.c)
     target_include_directories(nsl-resolution-render PRIVATE platforms/common ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
     target_link_libraries(nsl-resolution-render PRIVATE nsl_gfx)

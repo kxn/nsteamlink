@@ -23,6 +23,10 @@ static uint8_t tickets[32][1024];
 static size_t ticket_sizes[32];
 static unsigned ticket_count, service_random;
 static bool preparing, usable_hint, cloud_error;
+static bool fail_next_token;
+static unsigned token_failures;
+static unsigned fail_send_tag, send_failures;
+static time_t owner_wall_time = 1000;
 static sl_runtime runtime;
 static sl_remote *protocol;
 static char connection;
@@ -45,8 +49,19 @@ static void event(const char *kind, unsigned error) {
 }
 time_t __wrap_time(time_t *out) {
     if (out)
-        *out = 1000;
-    return 1000; /* Session-only clock steps must not tick the stream owner. */
+        *out = owner_wall_time;
+    return owner_wall_time; /* Session-only clock steps do not tick this owner. */
+}
+bool __real_IHS_ClientCreateDeviceToken(IHS_Client *, const uint8_t[32], uint8_t[32]);
+bool __wrap_IHS_ClientCreateDeviceToken(IHS_Client *client, const uint8_t secret[32],
+                                       uint8_t token[32]) {
+    if (fail_next_token) {
+        fail_next_token = false;
+        ++token_failures;
+        memset(token, 0, 32);
+        return false; /* Explicit bool boundary, as in the original caller audit. */
+    }
+    return __real_IHS_ClientCreateDeviceToken(client, secret, token);
 }
 uint32_t __wrap_IHS_CryptoRandomUInt32(void) {
     static const uint32_t ids[] = {17, 19, 23, 29};
@@ -92,6 +107,11 @@ bool __wrap_IHS_ClientSendControl(IHS_Client *c, const IHS_HostInfo *host,
     assert(r->size < sizeof(r->wire));
     if (message)
         protobuf_c_message_pack(message, r->wire);
+    if (fail_send_tag && fail_send_tag == (unsigned)tag) {
+        fail_send_tag = 0;
+        ++send_failures;
+        return false;
+    }
     return true; /* Original audit also stops at final SendMessage caller. */
 }
 ssize_t __wrap_sendto(int fd, const void *data, size_t size, int flags,
@@ -118,7 +138,13 @@ static void resolve(IHS_Client *c, uint64_t id, IHS_SocketAddress *out, void *ct
     (void)ctx;
     *out = (IHS_SocketAddress){0};
 }
-static const IHS_ClientRoutingCallbacks route = {.host = visible, .resolve = resolve};
+static void request_failed(IHS_Client *client, IHS_ClientRequestFailure error, void *ctx) {
+    (void)ctx;
+    event("failed", error);
+    control_request_failed(client, error, &runtime);
+}
+static const IHS_ClientRoutingCallbacks route = {
+    .host = visible, .resolve = resolve, .requestFailed = request_failed};
 static bool send_rpc(const uint8_t *raw, size_t size, void *ctx) {
     (void)ctx;
     assert(rpc_count < 64 && size < sizeof(rpc[0].wire));
@@ -157,6 +183,11 @@ static void rpc_failed(IHS_AuthorizationResult result, void *ctx) {
     cloud_error = true;
     cloud_pair_failed(result, ctx);
     cloud_error = false;
+}
+static void stream_failed(IHS_Client *client, const IHS_HostInfo *host,
+                           IHS_StreamingResult error, void *ctx) {
+    event("stream-failed", error);
+    rejected(client, host, error, ctx);
 }
 static void pairing_complete(IHS_Client *c, const IHS_HostInfo *host, uint64_t account, void *ctx) {
     event("paired", 0);
@@ -278,6 +309,7 @@ static void snapshot(void) {
     record current = {0};
     state(&current);
     print_state(&current);
+    printf(",\"token_failures\":%u,\"send_failures\":%u", token_failures, send_failures);
     const sl_directory_host *reply = sl_directory_find(runtime.directory, 456);
     printf(",\"keypairs\":%u,\"reply_metadata\":%s,\"paired_count\":%zu,\"rpc\":[", keypairs,
            reply && reply->accounts.count ? "true" : "false", runtime.paired_accounts.count);
@@ -338,6 +370,10 @@ int main(int argc, char **argv) {
     auth.failed = failed;
     auth.success = pairing_complete;
     IHS_ClientSetAuthorizationCallbacks(runtime.client, &auth, &runtime);
+    IHS_ClientStreamingCallbacks streaming = stream_cb;
+    streaming.failed = stream_failed;
+    streaming.authorizationFailed = failed;
+    IHS_ClientSetStreamingCallbacks(runtime.client, &streaming, &runtime);
     IHS_ClientSetRoutingCallbacks(runtime.client, &route, NULL);
     target =
         (IHS_HostInfo){.clientId = 123, .universe = IHS_SteamUniversePublic, .address.port = 27036};
@@ -358,7 +394,18 @@ int main(int argc, char **argv) {
     snapshot();
     char command[8192];
     while (fgets(command, sizeof(command), stdin)) {
-        if (command[0] == 's')
+        if (command[0] == 'f')
+            fail_next_token = true;
+        else if (command[0] == 'e')
+            assert(sscanf(command, "e %u", &fail_send_tag) == 1);
+        else if (command[0] == 'd') {
+            long long now;
+            assert(sscanf(command, "d %lld", &now) == 1);
+            owner_wall_time = now;
+            IHS_BaseLock(&runtime.client->base);
+            ++runtime.client->receiveGeneration;
+            IHS_BaseUnlock(&runtime.client->base);
+        } else if (command[0] == 's')
             start();
         else if (command[0] == 'c')
             sl_remote_cancel(protocol);
@@ -409,7 +456,9 @@ int main(int argc, char **argv) {
         IHS_ClientPumpAuthorization(runtime.client, 32);
         snapshot();
     }
+    unsigned events_before_stop = event_count;
     stop_client(&runtime);
+    assert(event_count == events_before_stop); /* Cleanup cannot repeat sender failure. */
     __wrap_sl_remote_connection_destroy(runtime.remote);
     runtime.remote = NULL;
     clear_control_locked(&runtime);

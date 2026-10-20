@@ -38,6 +38,9 @@ def command(event):
         return 'r '+raw.hex()
     if op=='raw':return 'r '+event[1]
     if op=='batch':return 'b '+' '.join(event[1])
+    if op=='fail-token':return 'f'
+    if op=='fail-send':return f'e {event[1]}'
+    if op=='due':return f'd {event[1]}'
     if op=='update':return f'u {event[1]} {event[2]}'
     return {'start':'s','cancel':'c','known':'k','stream':'t','reconnect':'o'}[op]
 
@@ -93,6 +96,7 @@ def check(receiver,case):
                 service.device_token(ap[1 if a['tag']==3 else 7],a['secret'])
                 service.device_token(ep[1 if a['tag']==3 else 7],a['secret'])
             else:assert a['body']==e['body'],(label,a,e)
+    return rows
 
 
 def verify_source(case):
@@ -119,6 +123,16 @@ def verify_source(case):
         assert not final['failures']
         assert final['messages'][0] == dict(tag=14, body='0800')
         assert len(final['messages']) == (2 if case['hint'] else 1)
+    if case['name'] in ('known-resume-0', 'known-resume-1'):
+        final = case['steps'][-1]
+        if case['hint']:
+            assert final['state'] == 5 and final['rid'] == 17 and final['target'] == 123
+            assert not final['events']
+        else:
+            assert final['state'] == 1 and final['rid'] == 0 and final['target'] == 0
+            failure = final['events'][-1]
+            assert (failure['kind'], failure['error'], failure['state'], failure['rid'],
+                    failure['target']) == ('failed', 18, 5, 17, 123)
 
 
 def main():
@@ -128,11 +142,11 @@ def main():
     args=p.parse_args();r=json.loads(gzip.decompress(args.reference.read_bytes()))
     assert r['schema']==1 and r['binary_sha256']=='15b2d79881eef0c47ed2f96c17d1d60a5f42d3285abcf9f512cfffdac5b238a2'
     for name,sha in r['helpers'].items():assert hashlib.sha256((ROOT/'scripts'/name).read_bytes()).hexdigest()==sha,name
-    assert len(r['cases'])==174
+    assert len(r['cases'])==202
     for case in r['cases']:
         verify_source(case)
         check(args.receiver,case)
-    print('PASS 174 whole original response-queue/RPC/manager programs: late/duplicate PIN, failure/cancel, phase2/3 disconnect, expired authorization, replacement order and 48 real FIFO batches without an inter-frame pump')
+    print('PASS 202 whole original response-queue/RPC/manager programs: late/duplicate PIN, failure/cancel, phase2/3 disconnect, replacement, 48 service batches and 28 known-host resume/late-RPC programs')
 
 
 if __name__=='__main__':main()

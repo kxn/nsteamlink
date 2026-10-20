@@ -1103,10 +1103,21 @@ static void flush_control(sl_runtime *r) {
         free(frame);
     }
 }
+static void control_request_failed(IHS_Client *client, IHS_ClientRequestFailure error, void *ctx) {
+    (void)client;
+    sl_runtime *r = ctx;
+    diagnostic_phase("request_local_failure", error);
+    pthread_mutex_lock(&r->lock);
+    r->request_terminal = true;
+    pthread_mutex_unlock(&r->lock);
+    fail(r, sl_tr(error == IHS_ClientRequestFailureUnavailable ? SL_T_HOST_OFFLINE
+                                                              : SL_T_CANNOT_CONNECT));
+}
 static const IHS_ClientRoutingCallbacks control_cb = {.host = control_host,
                                                       .resolve = control_resolve,
                                                       .addresses = control_addresses,
-                                                      .sendRemote = control_remote_send};
+                                                      .sendRemote = control_remote_send,
+                                                      .requestFailed = control_request_failed};
 static void cloud_disconnecting(void *ctx) {
     sl_runtime *r = ctx;
     pthread_mutex_lock(&r->lock);
