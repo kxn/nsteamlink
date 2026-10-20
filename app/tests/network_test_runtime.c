@@ -1,3 +1,4 @@
+#include "fixture_cleanup.h"
 /* Production runtime + real discovery/session UDP. Only the discovery endpoint
  * is redirected to an ephemeral loopback peer. Identity, replies, media and
  * timing are controlled fixtures, not a real Steam or Switch observation. */
@@ -483,18 +484,7 @@ static void one(Scenario scenario, bool crc, size_t key_length, WaitMode waiting
     sl_runtime_destroy(runtime);
     runtime = NULL;
     close(fd);
-    DIR *dir = opendir(directory);
-    assert(dir);
-    struct dirent *entry;
-    while ((entry = readdir(dir))) {
-        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
-            continue;
-        char path[512];
-        snprintf(path, sizeof(path), "%s/%s", directory, entry->d_name);
-        assert(!unlink(path));
-    }
-    closedir(dir);
-    assert(!rmdir(directory));
+    sl_fixture_remove_tree(directory);
     printf("runtime scenario=%d crc=%d key_length=%zu wait=%d tickets=%u stats_saves=%u passed\n",
            scenario, crc, key_length, waiting, ticket_count, saves);
 }

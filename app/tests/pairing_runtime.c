@@ -1,3 +1,4 @@
+#include "fixture_cleanup.h"
 /* Product pairing actor, actual RX/timer UDP, real profile writes/readback.
  * Peer/entropy and a storage failure are controlled inputs, not Steam/SDL pixels. */
 #include "crypto.h"
@@ -554,18 +555,7 @@ static void one(unsigned mode) {
     sl_runtime_destroy(runtime);
     runtime = NULL;
     close(fd);
-    DIR *dir = opendir(directory);
-    assert(dir);
-    struct dirent *entry;
-    while ((entry = readdir(dir))) {
-        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
-            continue;
-        char path[512];
-        snprintf(path, sizeof(path), "%s/%s", directory, entry->d_name);
-        assert(!unlink(path));
-    }
-    closedir(dir);
-    assert(!rmdir(directory));
+    sl_fixture_remove_tree(directory);
     printf("Pair runtime mode=%u: nonzero PIN, actor persistence before ACK, file "
            "readback/failure, stale-snapshot handling and joined teardown passed\n",
            mode);

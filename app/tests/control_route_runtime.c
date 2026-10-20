@@ -39,6 +39,7 @@ static sl_host verify_selected;
 static uint64_t verify_peer, verify_account;
 static uint8_t verify_secret[32];
 static bool verify_file_failure;
+static uint64_t expected_cloud_account = 789;
 time_t __wrap_time(time_t *out) {
     time_t now = atomic_load(&wall);
     if (out)
@@ -67,6 +68,16 @@ static void capture(const uint8_t *wire, size_t size, const struct sockaddr_in *
         int loaded = sl_host_key_load(sl_system_data_dir(), verify_peer, verify_account, saved);
         assert(verify_file_failure ? loaded == 1 : !loaded && !memcmp(saved, verify_secret, 32));
         assert(!memcmp(&verify_runtime->active.host, &verify_selected, sizeof(verify_selected)));
+        char path[512];
+        sl_account_list accounts = {0}, paired = {0};
+        assert(account_path(verify_peer, false, path, false) && !sl_accounts_load(&accounts, path));
+        assert(accounts.count && accounts.ids[0] == verify_account);
+        assert(account_path(0, true, path, false) && !sl_accounts_load(&paired, path));
+        bool found = false;
+        for (size_t i = 0; i < paired.count; ++i) found |= paired.ids[i] == verify_account;
+        assert(found); /* Even the actual key-file failure still saves paired ID. */
+        sl_accounts_destroy(&accounts);
+        sl_accounts_destroy(&paired);
     }
     if (!kind) {
         struct in_addr expected;
@@ -113,7 +124,7 @@ static bool send_rpc(const uint8_t *wire, size_t size, void *ctx) {
     assert(pthread_equal(owner, pthread_self())); /* CM is touched only by its owner. */
     sl_proto_field request = field(wire, size, 7);
     if (request.number) {
-        assert(field(request.bytes, request.size, 2).value == 789);
+        assert(field(request.bytes, request.size, 2).value == expected_cloud_account);
         sl_proto_field packet = field(request.bytes, request.size, 4);
         capture(packet.bytes, packet.size, NULL, field(request.bytes, request.size, 1).value);
     }
@@ -199,6 +210,7 @@ static void udp(unsigned kind, const ProtobufCMessage *message, const char *ip, 
 }
 static void pump(sl_runtime *r) {
     IHS_ClientPumpAuthorization(r->client, 32);
+    flush_accounts(r);
     flush_control(r);
 }
 static size_t count(unsigned kind) {
@@ -381,7 +393,7 @@ int main(void) {
         .deviceId = 42, .secretKey = r.store.secret, .deviceName = "route fixture"};
     assert(sl_stream_settings_init(&r.settings, &r.store) && start_client(&r));
     start_cloud(&r);
-    assert(r.control_peer_count == 1);
+    assert(r.paired_accounts.count == 1 && r.paired_accounts.ids[0] == 789);
     open_cm(1001);
     CMsgRemoteClientBroadcastStatus s;
     status(&s);
@@ -496,6 +508,9 @@ int main(void) {
     stored = sl_host_observe(&r.store.registry, &reply_peer, 0);
     assert(stored);
     stored->account = 987;
+    uint64_t reply_account = 0;
+    assert(!current_account(&r, 321, &reply_account)); /* UI metadata alone cannot set routing. */
+    authorization_identity(r.client, 321, 987, &r);
     incoming_peer = 321;
     udp(6, &a.base, "10.0.0.9", 35001);
     for (unsigned n = 0; n < 4000 && !r.session_ready; ++n) {
@@ -624,6 +639,31 @@ int main(void) {
     b = body(&canceled_authorization, &h);
     decrypt_id(field(h.bytes, h.size, 5), verify_secret); /* Stop retains the current secret. */
     verify_runtime = NULL;
+    /* The next cloud send uses protocol metadata immediately, without a UI
+     * snapshot/watch refresh. A queued frame keeps its chosen destination. */
+    uint64_t current = 0;
+    assert(current_account(&r, 321, &current) && current == 654);
+    assert(control_remote_send(r.client, 321, auth.wire, auth.size, &r));
+    authorization_identity(r.client, 321, 0, &r);
+    expected_cloud_account = 654;
+    flush_control(&r);
+    assert(control_remote_send(r.client, 321, auth.wire, auth.size, &r));
+    expected_cloud_account = 0;
+    flush_control(&r); /* Present zero account differs from an empty list. */
+    assert(sl_directory_ensure(&r.directory, 888));
+    assert(!control_remote_send(r.client, 888, auth.wire, auth.size, &r));
+    /* A fresh selected-host request loads the canonical first account's key,
+     * rather than the still-789 profile mirror or the last foreign secret. */
+    uint8_t account_key[32];
+    memset(account_key, 0xB6, sizeof(account_key));
+    assert(sl_host_key_save(dir, 123, 987, account_key));
+    authorization_identity(r.client, 123, 987, &r);
+    assert(r.active.host.account == 789);
+    expected_cloud_account = 987;
+    before = count(5);
+    assert(request_stream(&r, false));
+    recorded canonical = wait_send(&r, 5, before);
+    assert(canonical.cloud && request(&canonical, account_key, NULL));
     incoming_peer = 123;
     stop_client(&r);
     flush_control(&r);
@@ -632,6 +672,22 @@ int main(void) {
     clear_control_locked(&r);
     sl_stream_settings_destroy(&r.settings);
     sl_directory_destroy(&r.directory);
+    sl_accounts_destroy(&r.paired_accounts);
+    /* Cold boot scans all canonical records, including an unknown valid peer,
+     * and does not replace a zero first ID with a stale UI account mirror. */
+    sl_runtime cold = {0};
+    assert(!pthread_mutex_init(&cold.lock, NULL));
+    cold.store = r.store;
+    initialize_accounts(&cold);
+    assert(current_account(&cold, 123, &current) && current == 987);
+    assert(current_account(&cold, 321, &current) && current == 0);
+    assert(current_account(&cold, 999, &current) && current == 1111);
+    const uint64_t expected_paired[] = {789, 987, 654, 1111};
+    assert(cold.paired_accounts.count == 4 &&
+           !memcmp(cold.paired_accounts.ids, expected_paired, sizeof(expected_paired)));
+    sl_directory_destroy(&cold.directory);
+    sl_accounts_destroy(&cold.paired_accounts);
+    pthread_mutex_destroy(&cold.lock);
     pthread_cond_destroy(&r.wake);
     pthread_mutex_destroy(&r.lock);
     IHS_Quit();

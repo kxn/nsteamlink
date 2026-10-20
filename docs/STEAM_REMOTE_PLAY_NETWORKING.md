@@ -770,7 +770,9 @@ NAT、SDK 网络或 Switch，不覆盖 BStart/socket 创建失败、全部授权
 本节的 `client_id` 是 discovery header 的主机设备标识，`steamid` 是云端路由使用的 Steam
 身份；同一个主机记录可以有多个 steamid。二者不能共用一个键。`CServerManager` 使用
 client_id 索引状态/持久信息，保存 steamid 列表，并以列表首项发送云端 RemotePacket。
-`BAddSteamID @0x79bd74` 把新身份插到首位；已存在的非首项与首项交换。
+`BAddSteamID @0x79bd74` 忽略零值、把新身份插到首位；已存在的非首项与首项交换，
+但返回 false。status 的 `users` 在 `BProcess @0x799ee8–0x799f10` 中从后向前遍历；
+不能把该方法的返回值解释为“列表没有发生变化”。授权回复采用另一种操作，见 §11.2。
 
 ### 10.1 地址记录不是“所有公布 IP 均可直连”
 
@@ -901,8 +903,8 @@ else if sends_in_round <= 2 and now >= next_extra_send:
 runtime 在一个 mutex 临界区内更新目录并发布 UI 事件；IHS 与云端消费者停止/join 后才释放
 目录。公布地址在 borrowed 回调结束前解析成拥有的 IP/port/标志；不保留 protobuf 指针。
 前端心跳不更新实际 status 时间，因此即使 UI 有自己的短期快照失效保护，协议可见性仍由
-目录的30秒边界、云端豁免和 Offline 决定。进程重启的保存地址只作为时间0/未验证 seed；
-本模块的进程内目录不等同于完整持久文件、SteamID 列表或长期密钥存储。
+目录的30秒边界、云端豁免和 Offline 决定。进程重启的保存地址只作为时间0/未验证 seed。
+账号列表由同一目录独立持有、按 §11.2 保存；地址与 MAC 的完整持久文件不能由该账号文件替代。
 
 发现地址列表与关注 client_id 列表不是同一种变化。原 `BAddNetworkAddress`/
 `ClearInactiveAddresses` 没有写入下一发现轮次；`AddClientDiscovery` 才清零轮次时间
@@ -1002,8 +1004,8 @@ arm64 的结果比较分支位于 `0x79d92c`、`0x79d998` 起的指令中，并�
 它证明该受控有效材料可经原分派到达，不等于真实网络可绕过授权。
 **原生边界**：路由模式的已知主机授权先交换/保存/确认，再检查当前目标；明确区分选中
 事务目标、回复来源身份和密钥保存命名空间。未启用路由回调的旧 IHS API 保留原有入口
-过滤契约。此项处理不等于原版 Success 时的 SteamID 首项更新、持久文件及订阅副作用
-全部完成，也不等于未知主机服务配对槽的缓存/状态已与已知主机共用。
+过滤契约。账号首项、文件及订阅的独立证据和实现边界见下文；这些已知主机规则不代表
+未知主机服务配对槽的缓存/状态已与已知主机共用。
 
 **Evidence（入站身份的细分）**：同一 core `0x79d6c8–0x79d6cc` 的非 Success 分支
 直接到 `0x79d8f4`；状态 4 的零/非目标来源在 `0x79d954–0x79d968` 转入过期分支，
@@ -1029,7 +1031,8 @@ provider；原生端点/metadata 查找、身份/熵及保存回调也由 fixtur
 场景另以真实 X25519/AES 产生三份有效非目标材料，验证确认前的实际密钥落盘、当前目标
 不变、不同账号的 profile mirror 不被覆盖，以及 key 临时文件写入失败后仍确认并更新
 当前 secret。原生 profile 仅镜像其当前账号，其他身份的 key 文件与全身份列表是不同
-数据；该场景不证明冷启动的全身份订阅、真实 Steam/网络、SDK 或 Switch。
+数据；其旧版场景未覆盖冷启动。下述账号链补入真实文件重载，仍不证明真实 Steam/网络、
+SDK 或 Switch。
 
 密钥交换算法仍按认证参考：
 
@@ -1056,6 +1059,58 @@ decrypt(response.device_token, paired_secret) 必须为 8 字节且等于本机 
 steamid 列表是不同记录。`SavePairedSteamID @0x79b5e8` 去重后保存列表；
 `OnConnected` 据此重建订阅。只保存 secret 而不保存用于重订阅的主机身份，会丢失冷启动云端发现。
 不要持久化 pairing PIN、临时 cloud session_id 或正在等待的 request_id 为长期授权材料。
+
+**Evidence（账号顺序与订阅的完整调用者）**：固定 core 的
+`HandleDeviceAuthorizationResponse @0x79d708–0x79d7f0` 在 Success 且 steamid present 时，
+先读取回复主机的持久记录。如果首项不是收到的 ID，找出第一个匹配项，用末项覆盖其槽位并
+缩短列表（fast-remove），然后把收到的 ID 插到首位并调用 `SavePersistentClientInfo`。
+这里包括显式零值；省略 steamid 则没有此列表操作。比如 `[A,B,C,D]` 提升 B 的结果是
+`[B,A,D,C]`，既不同于 status 的首项交换，也不同于稳定的 move-to-front。
+该动作早于 auth_key 的缓存比较、密码校验、额度检查和当前目标检查；无效 key 或缓存命中
+仍可能改变后续云端发送使用的账号，但不因此保存密钥或完成配对。
+
+新的有效 key 依次设置当前 secret、尝试按回复 client_id/steamid 保存 key、调用
+`SavePairedSteamID`、确认 Success；key 文件写入失败不会跳过保存 paired ID。
+全局 paired 列表只去重追加，不随 per-client 列表首项变化重排，也不能从 UI 卡片反推。
+随后 `0x79d8d0–0x79d8f0` 调用 Register，最后才检查当前事务的目标身份。
+无 auth_key 的 Success 同样走 Register；缓存命中、无效新 key、额度耗尽都在其之前返回。
+
+`OnConnected @0x79ee30` 在 session 存在且状态为 5 时，按保存的全局列表顺序逐个调用
+`RegisterForStatusUpdates @0x79206c`。后者再次要求状态 5，并要求 SteamID 高 8 位 universe
+等于当前 session universe；不在方法内去重。显式零值因此可以存在于文件和路由列表，却
+不会在 retail universe 的 session 上产生 Register。不要把这个 universe 门槛误加到
+`CRemoteClientSession::SendMessage @0x79229c–0x792414`：后者只检查 session 状态，
+原指令既不拒绝账号零值，也不检查其 universe。空账号列表和首项为零是不同状态。
+
+持久文件名由同一 core 的字符串和写入指令确认：
+`<client_id 的 8 字节小端十六进制>/steamid.txt`，以及根目录 `paired_steamid.txt`。
+每项写为 8 字节小端十六进制、随后换行，保留列表顺序。全局文件不是多个 UI 主机账号的
+即时去重视图；重新连接时恢复其所有项，更新该内存快照本身不在在线 session 上发起订阅。
+
+`audit-steam-account-metadata.py` 对固定 core/shell 运行 10 组列表程序（70 步）、48 组
+session 状态/universe/Register/OnConnected 输入和 26 组完整授权帧。授权部分执行原
+BProcess、protobuf、密码校验、metadata/key 保存调用者、client-info 文本构造和确认；
+低层文件操作、Qt、身份/熵、请求 RSA、最终发送及持久记录查找为显式 provider。
+独立的 `check-steam-account-metadata.py` 将同一完整帧送入实际 IHS UDP/RX/延迟 owner，
+比较 identity、key-save、Confirm/Cancel、Register 和重发的事件顺序；生产列表/实际文件
+读写另逐项比较原列表结果及有效文本字节，session 的原生成 protobuf 与生产 envelope
+逐字节比较。固定样本和所有审计 helper 的 hash 都必须匹配。
+云端 Offline 另按 `CRemoteClientSession::OnServerOffline @0x791bc8–0x791bd8` 直接转发
+notification 的 client_id（包括缺失字段的零默认值），不按 SteamID 查找并批量移除 UI 主机。
+
+**实现边界**：runtime 的目录持有 per-client 列表，独立文件持有全局 paired 列表；
+UI profile 只作为单账号镜像，旧资料仅在对应新文件缺失时迁移，不能覆盖已保存的首项。
+IHS 的 identity 回调在密码校验之前同步更新并尝试保存 metadata，subscribe 回调位于
+确认之后、目标检查之前；当前发送、请求 key 的查找及成功响应的账号采用目录首项。
+RX status 只在锁内更新拥有的列表，actor 在锁外保存快照；磁盘错误不变更协议授权结果。
+key 写入失败后的 paired-ID 保存、非目标的有效 key、零首项、旧 UI 镜像、实际重启文件
+加载和紧随其后的发送由 `control_route_runtime.c` 联合覆盖。
+这些是受控组件/actor 证据，不证明真实 Steam、网络/SDK 或 Switch。
+
+本地文件发布使用 tmp/bak 恢复；畸形文本整体拒绝并保留旧内存值，未宣称复刻官方
+GetLine/V_hextobinary 的全部宽松解析。该账号链也不替代完整地址/MAC 持久化、显式
+forget/退订操作、未知主机配对槽的共同授权缓存，或 UDP status 与延迟授权的完整跨生产者
+入站顺序对齐；这些边界不能从上述列表或密码向量推断。
 
 ### 11.3 开流响应的分支表
 

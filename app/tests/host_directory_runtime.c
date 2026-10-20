@@ -115,6 +115,17 @@ static void send_status(bool offline) {
     status.hostname = "directory fixture";
     status.n_ip_addresses = 22; status.ip_addresses = ips;
     status.public_ip_address = texts[0]; /* Same IP still gets the public marker. */
+    CMsgRemoteClientBroadcastStatus__User users[4];
+    CMsgRemoteClientBroadcastStatus__User *pointers[4];
+    const uint64_t accounts[] = {111, 0, 222, 111};
+    for (unsigned i = 0; i < 4; ++i) {
+        cmsg_remote_client_broadcast_status__user__init(&users[i]);
+        users[i].has_steamid = true;
+        users[i].steamid = accounts[i];
+        pointers[i] = &users[i];
+    }
+    status.n_users = 4;
+    status.users = pointers;
     size = offline ? 0 : cmsg_remote_client_broadcast_status__get_packed_size(&status);
     IHS_BufferAppendUInt32LE(&buffer, size);
     if (!offline) buffer.size += cmsg_remote_client_broadcast_status__pack(&status, packet+buffer.size);
@@ -158,6 +169,7 @@ int main(void) {
     pthread_mutex_lock(&r.lock);
     sl_directory_host *h = sl_directory_find(r.directory, 123);
     assert(h && h->visible && !h->cloud && h->addresses.count == 21);
+    assert(h->accounts.count == 2 && h->accounts.ids[0] == 111 && h->accounts.ids[1] == 222);
     /* First status removed the stale saved-only seed. All 20 announcements
      * survived, a duplicate public/private address retained its marker, and
      * only the actual source is verified. */

@@ -26,6 +26,9 @@ struct sl_remote {
     int64_t wall_time, rpc_deadline;
     sl_remote_peer peers[SL_REMOTE_PEERS];
     size_t count;
+    uint64_t *paired_accounts;
+    size_t paired_count;
+    bool manager_accounts;
     int pairing;
     char pin[5];
     uint8_t pair_secret[32], last_auth[32];
@@ -88,6 +91,22 @@ static bool subscription(sl_remote *r, const sl_remote_peer *peer, bool enable) 
         r->failed = true; /* Recreate the complete subscription set, not a partial one. */
     return ok;
 }
+bool sl_remote_register_status(sl_remote *r, uint64_t account) {
+    if (!sl_remote_ready(r) || account >> 56 != (uint64_t)r->universe) return true;
+    sl_remote_peer peer = {.steam_id = account};
+    return subscription(r, &peer, true);
+}
+bool sl_remote_set_paired_accounts(sl_remote *r, const uint64_t *accounts, size_t count) {
+    if ((count && !accounts) || count > SIZE_MAX / sizeof(*accounts)) return false;
+    uint64_t *copy = count ? malloc(count * sizeof(*copy)) : NULL;
+    if (count && !copy) return false;
+    if (count) memcpy(copy, accounts, count * sizeof(*copy));
+    free(r->paired_accounts);
+    r->paired_accounts = copy;
+    r->paired_count = count;
+    r->manager_accounts = true;
+    return true;
+}
 sl_remote *sl_remote_create(const IHS_ClientConfig *config, const sl_remote_callbacks *cb,
                             void *ctx) {
     if (!config || !config->deviceId || !config->secretKey || !cb || !cb->send)
@@ -108,6 +127,7 @@ sl_remote *sl_remote_create(const IHS_ClientConfig *config, const sl_remote_call
 }
 void sl_remote_destroy(sl_remote *r) {
     if (r) {
+        free(r->paired_accounts);
         erase(r, sizeof(*r));
         free(r);
     }
@@ -159,7 +179,7 @@ bool sl_remote_watch(sl_remote *r, const sl_remote_peer *peers, size_t count) {
                 return false;
     }
     bool ok = true;
-    if (r->session) {
+    if (r->session && !r->manager_accounts) {
         for (size_t i = 0; i < r->count; ++i) {
             bool found = false;
             for (size_t j = 0; j < i; ++j)
@@ -186,7 +206,9 @@ bool sl_remote_watch(sl_remote *r, const sl_remote_peer *peers, size_t count) {
     return ok;
 }
 bool sl_remote_packet(sl_remote *r, uint64_t account, const uint8_t *data, size_t size) {
-    if (!sl_remote_ready(r) || !account || size > SL_REMOTE_FRAME_MAX - 64)
+    /* Original SendMessage checks session state, but unlike Register has no
+     * account-zero or universe guard (Core @79229c). */
+    if (!sl_remote_ready(r) || size > SL_REMOTE_FRAME_MAX - 64)
         return false;
     uint8_t *body = malloc(size + 64);
     if (!body)
@@ -454,8 +476,10 @@ static void authorization(sl_remote *r, uint64_t client_id, const uint8_t *data,
             confirm.result = k_ERemoteDeviceAuthorizationSuccess;
             send_message(r, account, k_ERemoteDeviceAuthorizationConfirmed, &confirm.base);
         }
-        if (!known)
-            subscription(r, &peer, true);
+        if (!known) {
+            if (r->manager_accounts) sl_remote_register_status(r, peer.steam_id);
+            else subscription(r, &peer, true);
+        }
         size_t index = 0;
         while (index < r->count && r->peers[index].client_id != peer.client_id)
             ++index;
@@ -492,8 +516,14 @@ static void status(sl_remote *r, const CMsgRemoteClientBroadcastHeader *h, const
     for (size_t i = 0; i < r->count; ++i)
         if (r->peers[i].client_id == h->client_id)
             host.steam_id = r->peers[i].steam_id;
-    if (!host.steam_id)
+    if (!host.steam_id && !r->manager_accounts)
         goto done;
+    if (s->n_users > SIZE_MAX / sizeof(uint64_t)) goto done;
+    uint64_t *accounts = s->n_users ? malloc(s->n_users * sizeof(*accounts)) : NULL;
+    if (s->n_users && !accounts) goto done;
+    for (size_t i = 0; i < s->n_users; ++i) accounts[i] = s->users[i]->steamid;
+    host.steam_ids = accounts;
+    host.steam_id_count = s->n_users;
     host.info = (IHS_HostInfo){.clientId = h->client_id,
                                .instanceId = h->instance_id,
                                .ostype = s->ostype,
@@ -509,6 +539,7 @@ static void status(sl_remote *r, const CMsgRemoteClientBroadcastHeader *h, const
     host.public_address = s->public_ip_address;
     if (r->cb.host)
         r->cb.host(&host, r->ctx);
+    free(accounts);
 done:
     if (s)
         cmsg_remote_client_broadcast_status__free_unpacked(s, NULL);
@@ -656,7 +687,9 @@ bool sl_remote_receive(sl_remote *r, const uint8_t *data, size_t size) {
         r->opening = false;
         r->session = session;
         r->universe = (IHS_SteamUniverse)universe;
-        for (size_t i = 0; i < r->count; ++i) {
+        for (size_t i = 0; r->manager_accounts && i < r->paired_count; ++i)
+            if (!sl_remote_register_status(r, r->paired_accounts[i])) return false;
+        for (size_t i = 0; !r->manager_accounts && i < r->count; ++i) {
             bool duplicate = false;
             for (size_t j = 0; j < i; ++j)
                 duplicate |= r->peers[i].steam_id == r->peers[j].steam_id;
@@ -681,6 +714,12 @@ bool sl_remote_receive(sl_remote *r, const uint8_t *data, size_t size) {
             if (f.number == 1)
                 discovery(r, f.bytes, f.size);
     } else if (body.number == 7 && (!session || session == r->session) && r->cb.offline) {
+        /* Original session OnServerOffline @791bc8 forwards the notification's
+         * client_id (including its zero default), never an account->UI lookup. */
+        if (r->manager_accounts) {
+            r->cb.offline(client_id, r->ctx);
+            return true;
+        }
         for (size_t i = 0; i < r->count; ++i)
             if ((client_id && r->peers[i].client_id == client_id) ||
                 (!client_id && account && r->peers[i].steam_id == account))

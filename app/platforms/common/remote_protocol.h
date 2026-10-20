@@ -16,6 +16,8 @@ typedef struct sl_remote_host {
     const char *const *addresses;
     const char *public_address;
     size_t address_count;
+    const uint64_t *steam_ids; /* Borrowed status.users order, including zero defaults. */
+    size_t steam_id_count;
 } sl_remote_host;
 typedef struct sl_remote_material {
     uint64_t client_id, steam_id;
@@ -57,6 +59,13 @@ void sl_remote_close(sl_remote *);
 bool sl_remote_ready(const sl_remote *);
 bool sl_remote_failed(const sl_remote *);
 bool sl_remote_watch(sl_remote *, const sl_remote_peer *, size_t);
+/* Runtime manager mode: a separately persisted account list drives reconnect
+ * registration. Updating it does not subscribe/unsubscribe on a live session.
+ * Legacy diagnostic owners may keep using watch-derived subscriptions. */
+bool sl_remote_set_paired_accounts(sl_remote *, const uint64_t *, size_t);
+/* Original session guard: connected and account universe matches this session.
+ * No per-call de-duplication; absence/universe mismatch is a silent no-op. */
+bool sl_remote_register_status(sl_remote *, uint64_t);
 bool sl_remote_receive(sl_remote *, const uint8_t *, size_t);
 bool sl_remote_pair(sl_remote *);
 void sl_remote_cancel(sl_remote *);

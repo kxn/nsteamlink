@@ -26,6 +26,8 @@ typedef struct fixture {
     int stream_transport;
     const char *profile;
     unsigned crash_stage;
+    bool canonical;
+    uint64_t offline_id;
 } fixture;
 static unsigned sent_control_kind(fixture *, size_t, uint32_t *);
 static bool send_frame(const uint8_t *p, size_t size, void *ctx) {
@@ -76,6 +78,14 @@ static void failed(IHS_AuthorizationResult result, void *ctx) {
 }
 static void host(const sl_remote_host *h, void *ctx) {
     fixture *f = ctx;
+    if (f->canonical) {
+        assert(h->info.clientId == 999 && !h->steam_id && h->steam_id_count == 3);
+        assert(h->steam_ids[0] == 76561198000000001ULL && !h->steam_ids[1] &&
+               h->steam_ids[2] == ((UINT64_C(2) << 56) + 42));
+        assert(!h->info.address.port);
+        ++f->hosts;
+        return;
+    }
     assert(h->info.clientId == 77 && h->steam_id == 88);
     assert(h->address_count == 10 && !strcmp(h->addresses[0], "192.0.2.1"));
     assert(!strcmp(h->addresses[1], "not an address") &&
@@ -86,8 +96,10 @@ static void host(const sl_remote_host *h, void *ctx) {
     ++f->hosts;
 }
 static void offline(uint64_t id, void *ctx) {
-    assert(id == 77);
-    ++((fixture *)ctx)->offline;
+    fixture *f = ctx;
+    if (!f->canonical) assert(id == 77);
+    f->offline_id = id;
+    ++f->offline;
 }
 static void stream_result(IHS_StreamingResult result, const sl_remote_material *m, void *ctx) {
     fixture *f = ctx;
@@ -169,10 +181,10 @@ static void open_session(fixture *f, uint64_t id) {
     assert(response(f, 2, 1, data, w.size));
     assert(sl_remote_ready(f->remote));
 }
-static void reply(fixture *f, unsigned kind, const ProtobufCMessage *msg) {
+static void reply_from(fixture *f, uint64_t client, unsigned kind, const ProtobufCMessage *msg) {
     CMsgRemoteClientBroadcastHeader header = CMSG_REMOTE_CLIENT_BROADCAST_HEADER__INIT;
     header.has_client_id = header.has_msg_type = true;
-    header.client_id = 77;
+    header.client_id = client;
     header.msg_type = (ERemoteClientBroadcastMsg)kind;
     uint8_t packet[8192], body[8400];
     static const uint8_t magic[] = {255, 255, 255, 255, 33, 76, 95, 160};
@@ -184,6 +196,50 @@ static void reply(fixture *f, unsigned kind, const ProtobufCMessage *msg) {
     sl_proto_writer w = {body, 0, sizeof(body), false};
     sl_proto_bytes(&w, 1, packet, 16 + hs + ms);
     assert(response(f, 6, 1, body, w.size));
+}
+static void reply(fixture *f, unsigned kind, const ProtobufCMessage *msg) {
+    reply_from(f, 77, kind, msg);
+}
+static void canonical_accounts(void) {
+    fixture *f = create();
+    f->canonical = true;
+    const uint64_t accounts[] = {76561198000000001ULL, (UINT64_C(2) << 56) + 42,
+                                  76561198000000001ULL};
+    assert(sl_remote_set_paired_accounts(f->remote, accounts, 3));
+    open_session(f, 10);
+    assert(f->count == 3); /* CreateSession plus two original, non-deduped registers. */
+    sl_remote_peer peer = {.client_id = 77, .steam_id = 88};
+    assert(sl_remote_watch(f->remote, &peer, 1) && f->count == 3);
+    CMsgRemoteClientBroadcastStatus status = CMSG_REMOTE_CLIENT_BROADCAST_STATUS__INIT;
+    CMsgRemoteClientBroadcastStatus__User users[3];
+    CMsgRemoteClientBroadcastStatus__User *pointers[3];
+    for (unsigned i = 0; i < 3; ++i) {
+        cmsg_remote_client_broadcast_status__user__init(&users[i]);
+        users[i].has_steamid = true;
+        users[i].steamid = i == 1 ? 0 : accounts[i == 2 ? 1 : 0];
+        pointers[i] = &users[i];
+    }
+    status.n_users = 3;
+    status.users = pointers;
+    reply_from(f, 999, 1, &status.base); /* No UI card/watch for this client. */
+    assert(f->hosts == 1);
+    uint8_t off[64];
+    sl_proto_writer w = {off, 0, sizeof(off), false};
+    sl_proto_fixed64(&w, 1, 10);
+    sl_proto_fixed64(&w, 2, 88);
+    size_t without_client = w.size;
+    sl_proto_fixed64(&w, 3, 999);
+    assert(response(f, 7, 1, off, w.size) && f->offline == 1 && f->offline_id == 999);
+    assert(response(f, 7, 1, off, without_client) && f->offline == 2 && !f->offline_id);
+    assert(sl_remote_watch(f->remote, NULL, 0) && f->count == 3);
+    assert(sl_remote_register_status(f->remote, accounts[0]) && f->count == 4);
+    assert(sl_remote_register_status(f->remote, accounts[0]) && f->count == 5);
+    assert(sl_remote_register_status(f->remote, accounts[1]) && f->count == 5);
+    sl_remote_close(f->remote);
+    open_session(f, 11);
+    assert(f->count == 8 && f->connected == 2 && f->disconnected == 1);
+    sl_remote_destroy(f->remote);
+    free(f);
 }
 static void start_pair(fixture *f) {
     assert(sl_remote_pair(f->remote));
@@ -757,6 +813,7 @@ static void wire(void) {
     assert(!sl_proto_next(&r, &p) && !sl_proto_done(&r));
 }
 int main(void) {
+    canonical_accounts();
     rotation_restart();
     reordered_pairing_rpcs();
     retry_after_cancel_and_rotation();

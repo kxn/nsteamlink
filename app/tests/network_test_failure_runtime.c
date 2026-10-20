@@ -1,3 +1,4 @@
+#include "fixture_cleanup.h"
 /* Production application admission/facts/event consumer + runtime + actual
  * client/session UDP. Endpoint, authorized identity and peer responses are
  * controlled fixtures; no real Steam, Qt or Switch is exercised. */
@@ -213,18 +214,7 @@ static void one(bool manual, bool press_a) {
     assert(access(stats, F_OK) != 0);
     sl_runtime_destroy(a.runtime);
     close(fd);
-    DIR *dir = opendir(directory);
-    assert(dir);
-    struct dirent *entry;
-    while ((entry = readdir(dir))) {
-        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
-            continue;
-        char path[512];
-        snprintf(path, sizeof(path), "%s/%s", directory, entry->d_name);
-        assert(!unlink(path));
-    }
-    closedir(dir);
-    assert(!rmdir(directory));
+    sl_fixture_remove_tree(directory);
     printf("failure manual=%d acknowledge=%s: real application held ID through prompt/matching "
            "InProgress, one matching cancel10 after ack, no save/retry/ordinary ticket, joined "
            "cleanup and one injected facts-busy retry passed\n",

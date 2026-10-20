@@ -18,7 +18,7 @@ add_library(nsl_sdr_core STATIC platforms/common/sdr_wire.c platforms/common/sdr
     platforms/common/sdr_policy.c)
 target_include_directories(nsl_sdr_core PUBLIC platforms/common PRIVATE ${CMAKE_SOURCE_DIR}/third_party/jsmn)
 target_compile_options(nsl_sdr_core PRIVATE -Wall -Wextra)
-add_library(nsl_remote STATIC platforms/common/host_addresses.cpp platforms/common/host_directory.c platforms/common/remote_wire.c platforms/common/remote_protocol.c
+add_library(nsl_remote STATIC platforms/common/host_addresses.cpp platforms/common/host_accounts.c platforms/common/host_directory.c platforms/common/remote_wire.c platforms/common/remote_protocol.c
     platforms/common/remote_connection.c platforms/common/stream_bridge.c
     platforms/common/dns_refresh.c platforms/common/dns_config.c platforms/common/dns_policy.c)
 target_compile_features(nsl_remote PRIVATE cxx_std_17)
@@ -510,6 +510,21 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_link_libraries(nsl-cloud-presence-runtime PRIVATE nsl_platform)
     add_test(NAME cloud_presence_runtime COMMAND nsl-cloud-presence-runtime)
     set_tests_properties(cloud_presence_runtime PROPERTIES TIMEOUT 15)
+    add_executable(nsl-account-metadata-oracle tests/account_metadata_oracle.c)
+    target_link_libraries(nsl-account-metadata-oracle PRIVATE nsl_remote)
+    target_link_options(nsl-account-metadata-oracle PRIVATE -Wl,--wrap=rename)
+    target_compile_options(nsl-account-metadata-oracle PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+    add_test(NAME account_metadata_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-account-metadata.py"
+        --receiver $<TARGET_FILE:nsl-account-metadata-oracle>
+        --authorization $<TARGET_FILE:ihs-auto-authorization-oracle>)
+    set_tests_properties(account_metadata_official_vectors PROPERTIES TIMEOUT 60)
+    add_test(NAME account_metadata_storage COMMAND nsl-account-metadata-oracle storage)
+    set_tests_properties(account_metadata_storage PROPERTIES TIMEOUT 10)
+    add_test(NAME account_metadata_mutation_counterexamples COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/test-steam-account-metadata-mutations.py"
+        --compiler "${CMAKE_C_COMPILER}")
+    set_tests_properties(account_metadata_mutation_counterexamples PROPERTIES TIMEOUT 30)
     add_executable(nsl-address-cache-oracle tests/address_cache_oracle.c)
     target_link_libraries(nsl-address-cache-oracle PRIVATE nsl_remote)
     target_compile_options(nsl-address-cache-oracle PRIVATE -Wall -Wextra -Werror -UNDEBUG)

@@ -23,6 +23,7 @@ void sl_directory_destroy(sl_directory_host **list) {
         sl_directory_host *host = *list;
         *list = host->next;
         sl_addresses_destroy(&host->addresses);
+        sl_accounts_destroy(&host->accounts);
         free(host);
     }
 }
@@ -49,20 +50,40 @@ bool sl_directory_status(sl_directory_host **list, const IHS_HostInfo *info,
     size_t extra = (hints ? hints->addressCount : 0);
     if (extra > SIZE_MAX-2 || host->addresses.count > SIZE_MAX-extra-2 ||
         !sl_addresses_reserve(&host->addresses, host->addresses.count+extra+2)) return false;
+    size_t users = hints ? hints->steamIdCount : 0;
+    if (users > SIZE_MAX - host->accounts.count ||
+        !sl_accounts_reserve(&host->accounts, host->accounts.count + users)) return false;
+    bool first_status = !host->status_received;
     if (!host->status_received) {
         sl_addresses_clear_inactive(&host->addresses);
         host->status_received = true;
     }
+    /* Original status traverses users from the back, preserving first priority
+     * from the wire. An existing-account reorder alone does not trigger save. */
+    bool accounts_added = false;
+    for (size_t i = users; i; --i) {
+        bool added;
+        sl_accounts_status(&host->accounts, hints->steamIds[i-1], &added);
+        accounts_added |= added;
+    }
+    bool metadata_added = accounts_added;
     bool added;
     IHS_SocketAddress ip;
-    if (hints && hints->publicAddress && sl_address_parse(&ip, hints->publicAddress) && sl_address_has_ip(&ip.ip))
+    if (hints && hints->publicAddress && sl_address_parse(&ip, hints->publicAddress) && sl_address_has_ip(&ip.ip)) {
         sl_addresses_add(&host->addresses, &ip, false, true, now, &added);
+        metadata_added |= added;
+    }
     if (hints)
         for (size_t i = 0; i < hints->addressCount; ++i)
-            if (sl_address_parse(&ip, hints->addresses[i]) && sl_address_has_ip(&ip.ip))
+            if (sl_address_parse(&ip, hints->addresses[i]) && sl_address_has_ip(&ip.ip)) {
                 sl_addresses_add(&host->addresses, &ip, false, false, now, &added);
-    if (source && sl_address_has_ip(&source->ip))
+                metadata_added |= added;
+            }
+    if (source && sl_address_has_ip(&source->ip)) {
         sl_addresses_add(&host->addresses, source, true, false, now, &added);
+        metadata_added |= added;
+    }
+    if (first_status || metadata_added) host->accounts_dirty = true;
     IHS_SocketAddress display = host->info.address;
     host->info = *info;
     if (sl_addresses_get(&host->addresses, &ip)) host->info.address = ip;

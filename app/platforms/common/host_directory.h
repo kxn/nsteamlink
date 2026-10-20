@@ -1,11 +1,14 @@
 #pragma once
 #include "host_addresses.h"
+#include "host_accounts.h"
 #include <ihslib/client.h>
 typedef struct sl_directory_host {
     struct sl_directory_host *next;
     uint64_t client_id;
     IHS_HostInfo info;
     sl_address_list addresses;
+    sl_account_list accounts;
+    bool accounts_loaded, accounts_absent, accounts_dirty;
     bool status_received, seeded, visible, cloud;
     int64_t last_status;
 } sl_directory_host;

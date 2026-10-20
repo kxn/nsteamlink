@@ -23,6 +23,7 @@
 #include "services/update_config.h"
 #include "stream_settings.h"
 #include <arpa/inet.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <ihslib/client.h>
@@ -35,6 +36,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -76,10 +78,8 @@ struct sl_runtime {
     uint64_t control_epoch;
     sl_control_frame *control_head, *control_tail;
     size_t control_count, control_bytes;
-    struct {
-        uint64_t client, account;
-    } control_peers[SL_REMOTE_PEERS];
-    size_t control_peer_count;
+    sl_account_list paired_accounts; /* Actor-owned, separate from UI profiles. */
+    bool accounts_initialized;
 #if NSL_HAVE_SNS
     sl_sns *sns;
     bool sns_waiting;
@@ -250,6 +250,161 @@ static void post(sl_runtime *r, sl_runtime_event e) {
     post_locked(r, e);
     pthread_mutex_unlock(&r->lock);
 }
+static bool account_path(uint64_t client, bool paired, char path[512], bool create) {
+    const char *root = sl_system_data_dir();
+    if (create && mkdir(root, 0700) && errno != EEXIST) return false;
+    if (paired)
+        return snprintf(path, 512, "%s/paired_steamid.txt", root) < 512;
+    char hex[17], dir[512];
+    sl_account_hex(client, hex);
+    if (snprintf(dir, sizeof(dir), "%s/%s", root, hex) >= (int)sizeof(dir)) return false;
+    if (create && mkdir(dir, 0700) && errno != EEXIST) return false;
+    return snprintf(path, 512, "%s/steamid.txt", dir) < 512;
+}
+/* Actor-only disk access, before RX starts. The directory is still serialized
+ * because fixtures and later request initialization share these helpers. */
+static bool load_client_accounts(sl_runtime *r, uint64_t client, uint64_t seed, bool migrate) {
+    pthread_mutex_lock(&r->lock);
+    sl_directory_host *h = sl_directory_ensure(&r->directory, client);
+    bool loaded = h && h->accounts_loaded;
+    if (loaded && h->accounts_absent && migrate) {
+        bool added = false;
+        bool ok = sl_accounts_pair(&h->accounts, seed, &added);
+        h->accounts_dirty |= added;
+        h->accounts_absent = !ok;
+        pthread_mutex_unlock(&r->lock);
+        return ok;
+    }
+    pthread_mutex_unlock(&r->lock);
+    if (loaded) return true;
+    if (!h) return false;
+    char path[512];
+    sl_account_list list = {0};
+    int result = account_path(client, false, path, false) ? sl_accounts_load(&list, path) : -1;
+    bool added = false;
+    if (result == 1 && migrate && !sl_accounts_pair(&list, seed, &added)) result = -1;
+    pthread_mutex_lock(&r->lock);
+    sl_accounts_destroy(&h->accounts);
+    h->accounts = list;
+    h->accounts_loaded = true;
+    h->accounts_absent = result == 1 && !migrate;
+    h->accounts_dirty = added;
+    pthread_mutex_unlock(&r->lock);
+    if (result < 0) sl_log("identity: client accounts could not be loaded; UI mirror not substituted");
+    return result >= 0;
+}
+static void initialize_accounts(sl_runtime *r) {
+    if (r->accounts_initialized) return;
+    char path[512];
+    int paired = account_path(0, true, path, false) ? sl_accounts_load(&r->paired_accounts, path) : -1;
+    /* Include metadata for valid peers that are not represented by a UI card. */
+    DIR *dir = opendir(sl_system_data_dir());
+    struct dirent *entry;
+    while (dir && (entry = readdir(dir))) {
+        if (strlen(entry->d_name) != 16) continue;
+        uint64_t client = 0;
+        bool valid = true;
+        for (unsigned i = 0; i < 8; ++i) {
+            unsigned byte = 0;
+            for (unsigned j = 0; j < 2; ++j) {
+                char c = entry->d_name[i*2+j];
+                int nibble = c >= '0' && c <= '9' ? c-'0' : c >= 'a' && c <= 'f' ? c-'a'+10 : -1;
+                if (nibble < 0) { valid = false; break; }
+                byte = byte*16 + (unsigned)nibble;
+            }
+            client |= (uint64_t)byte << (8*i);
+        }
+        if (valid && client) load_client_accounts(r, client, 0, false);
+    }
+    if (dir) closedir(dir);
+    bool paired_added = false;
+    for (int i = 0; i < r->store.registry.count; ++i) {
+        const sl_host *h = &r->store.registry.hosts[i];
+        if (!h->client_id) continue;
+        load_client_accounts(r, h->client_id, h->account, h->paired);
+        if (paired == 1 && h->paired) {
+            bool added;
+            if (sl_accounts_pair(&r->paired_accounts, h->account, &added)) paired_added |= added;
+        }
+    }
+    if (paired < 0) sl_log("identity: paired accounts could not be loaded; UI subscriptions not substituted");
+    if (paired_added && (!account_path(0, true, path, true) ||
+                         !sl_accounts_save(&r->paired_accounts, path)))
+        sl_log("identity: migrated paired accounts save failed");
+    r->accounts_initialized = true;
+}
+/* Snapshot under lock, write outside it. RX never waits for disk publication.
+ * Original save failure is nonfatal and is not a new retry timer policy. */
+static void save_client_accounts(sl_runtime *r, uint64_t client) {
+    sl_account_list copy = {0};
+    pthread_mutex_lock(&r->lock);
+    sl_directory_host *h = sl_directory_find(r->directory, client);
+    bool dirty = h && h->accounts_dirty;
+    bool copied = dirty && sl_accounts_reserve(&copy, h->accounts.count);
+    if (copied) {
+        copy.count = h->accounts.count;
+        if (copy.count) memcpy(copy.ids, h->accounts.ids, copy.count * sizeof(*copy.ids));
+        h->accounts_dirty = false;
+    }
+    pthread_mutex_unlock(&r->lock);
+    char path[512];
+    if (dirty && (!copied || !account_path(client, false, path, true) ||
+                   !sl_accounts_save(&copy, path)))
+        sl_log("identity: client accounts save failed; protocol continues");
+    sl_accounts_destroy(&copy);
+}
+static void flush_accounts(sl_runtime *r) {
+    pthread_mutex_lock(&r->lock);
+    sl_directory_host *h = r->directory;
+    while (h) {
+        uint64_t client = h->client_id;
+        pthread_mutex_unlock(&r->lock);
+        save_client_accounts(r, client);
+        pthread_mutex_lock(&r->lock);
+        h = h->next; /* Records are destroyed only after all producers join. */
+    }
+    pthread_mutex_unlock(&r->lock);
+}
+static bool current_account(sl_runtime *r, uint64_t client, uint64_t *account) {
+    pthread_mutex_lock(&r->lock);
+    const sl_directory_host *h = sl_directory_find(r->directory, client);
+    bool found = h && h->accounts.count;
+    if (found) *account = h->accounts.ids[0];
+    pthread_mutex_unlock(&r->lock);
+    return found;
+}
+static void authorization_identity(IHS_Client *client, uint64_t peer, uint64_t account, void *ctx) {
+    (void)client;
+    sl_runtime *r = ctx;
+    pthread_mutex_lock(&r->lock);
+    sl_directory_host *h = sl_directory_ensure(&r->directory, peer);
+    bool changed = false;
+    bool ok = h && sl_accounts_authorize(&h->accounts, account, &changed);
+    if (ok && changed) h->accounts_dirty = true;
+    pthread_mutex_unlock(&r->lock);
+    if (!ok) sl_log("identity: authorization account allocation failed");
+    if (changed) save_client_accounts(r, peer); /* Before key validation/cache/confirm. */
+}
+static void authorization_subscribe(IHS_Client *client, uint64_t account, void *ctx) {
+    (void)client;
+    sl_runtime *r = ctx;
+    if (r->remote) sl_remote_register_status(sl_remote_connection_protocol(r->remote), account);
+}
+static void save_paired_account(sl_runtime *r, uint64_t account) {
+    bool added;
+    if (!sl_accounts_pair(&r->paired_accounts, account, &added)) {
+        sl_log("identity: paired account allocation failed");
+        return;
+    }
+    char path[512];
+    if (added && (!account_path(0, true, path, true) ||
+                  !sl_accounts_save(&r->paired_accounts, path)))
+        sl_log("identity: paired accounts save failed; protocol continues");
+    if (added && r->remote &&
+        !sl_remote_set_paired_accounts(sl_remote_connection_protocol(r->remote),
+                                       r->paired_accounts.ids, r->paired_accounts.count))
+        sl_log("identity: reconnect account snapshot allocation failed");
+}
 static void fail(sl_runtime *r, const char *s) {
     pthread_mutex_lock(&r->lock);
     if (r->active.type == SL_CMD_STREAM)
@@ -340,6 +495,7 @@ static void persist_authorization(IHS_Client *client, const IHS_HostInfo *host, 
         return;
     if (!sl_host_key_save(sl_system_data_dir(), host->clientId, account, secret))
         sl_log("pair: identity key save failed; authorization continues");
+    save_paired_account(r, account); /* Original runs even if key-file save failed. */
     if (host->clientId != r->active.host.client_id) {
         /* Successful key validation precedes the manager's target check. Its
          * key belongs to the reply identity, never to active.host. A profile
@@ -613,7 +769,8 @@ static void activity(IHS_Session *s, int kind, uint64_t id, const char *name, vo
 static const IHS_ClientDiscoveryCallbacks discovery_cb = {
     .discovered = discovered, .status = discovered_status, .offline = discovery_offline};
 static const IHS_ClientAuthorizationCallbacks auth_cb = {
-    .persist = persist_authorization, .success = authorized, .failed = auth_failed};
+    .persist = persist_authorization, .success = authorized, .failed = auth_failed,
+    .identity = authorization_identity, .subscribe = authorization_subscribe};
 static const IHS_ClientStreamingCallbacks stream_cb = {.success = accepted,
                                                        .failed = rejected,
                                                        .authorization = stream_authorization,
@@ -795,6 +952,7 @@ static sl_host *saved_host(sl_runtime *r, uint64_t id) {
 static void cloud_watch(sl_runtime *r) {
     if (!r->remote)
         return;
+    initialize_accounts(r);
     sl_remote_peer peers[SL_REMOTE_PEERS];
     size_t count = 0;
     for (int i = 0; i < r->store.registry.count; ++i) {
@@ -804,14 +962,10 @@ static void cloud_watch(sl_runtime *r) {
         peers[count] = (sl_remote_peer){.client_id = h->client_id, .steam_id = h->account};
         memcpy(peers[count++].secret, h->has_secret ? h->secret : r->store.secret, 32);
     }
-    bool watching = sl_remote_watch(sl_remote_connection_protocol(r->remote), peers, count);
-    pthread_mutex_lock(&r->lock);
-    r->control_peer_count = count;
-    for (size_t i = 0; i < count; ++i) {
-        r->control_peers[i].client = peers[i].client_id;
-        r->control_peers[i].account = peers[i].steam_id;
-    }
-    pthread_mutex_unlock(&r->lock);
+    sl_remote *protocol = sl_remote_connection_protocol(r->remote);
+    bool watching = sl_remote_set_paired_accounts(protocol, r->paired_accounts.ids,
+                                                  r->paired_accounts.count) &&
+                    sl_remote_watch(protocol, peers, count);
 #if NSL_DIAGNOSTICS
     char line[128];
     snprintf(line, sizeof(line), "cloud_watch saved=%d eligible=%zu accepted=%d",
@@ -881,12 +1035,10 @@ static bool control_remote_send(IHS_Client *client, uint64_t id, const uint8_t *
         return false;
     pthread_mutex_lock(&r->lock);
     uint64_t account = 0;
-    for (size_t i = 0; i < r->control_peer_count; ++i)
-        if (r->control_peers[i].client == id) {
-            account = r->control_peers[i].account;
-            break;
-        }
-    sl_control_frame *frame = r->control_cloud_ready && account && r->control_count < 64 &&
+    const sl_directory_host *peer = sl_directory_find(r->directory, id);
+    bool have_account = peer && peer->accounts.count;
+    if (have_account) account = peer->accounts.ids[0];
+    sl_control_frame *frame = r->control_cloud_ready && have_account && r->control_count < 64 &&
                                       size <= 256 * 1024 - r->control_bytes
                                   ? malloc(sizeof(*frame) + size)
                                   : NULL;
@@ -958,6 +1110,9 @@ static void cloud_code(const char *pin, void *ctx) {
 }
 static bool cloud_save_key(const sl_remote_peer *peer, void *ctx) {
     sl_runtime *r = ctx;
+    /* Unknown-host pairing still has its own transaction owner. Its successful
+     * persistence participates in the shared identity namespace/reconnect set. */
+    authorization_identity(NULL, peer->client_id, peer->steam_id, r);
     sl_host_registry before = r->store.registry;
     sl_host *h = saved_host(r, peer->client_id);
     if (!h) {
@@ -974,7 +1129,9 @@ static bool cloud_save_key(const sl_remote_peer *peer, void *ctx) {
     h->account = peer->steam_id;
     h->paired = h->has_secret = true;
     memcpy(h->secret, peer->secret, 32);
-    if (!sl_host_key_save(sl_system_data_dir(), peer->client_id, peer->steam_id, peer->secret) ||
+    bool key_saved = sl_host_key_save(sl_system_data_dir(), peer->client_id, peer->steam_id, peer->secret);
+    save_paired_account(r, peer->steam_id);
+    if (!key_saved ||
         !sl_auth_save(&r->store, sl_system_data_dir())) {
         r->store.registry = before;
         return false;
@@ -999,7 +1156,8 @@ static void cloud_pair_failed(IHS_AuthorizationResult result, void *ctx) {
 static void cloud_observed(const sl_remote_host *host, void *ctx) {
     sl_runtime *r = ctx;
     IHS_DiscoveryAddressHints hints = {.publicAddress = host->public_address,
-        .addresses = host->addresses, .addressCount = host->address_count};
+        .addresses = host->addresses, .addressCount = host->address_count,
+        .steamIds = host->steam_ids, .steamIdCount = host->steam_id_count};
     pthread_mutex_lock(&r->lock);
     bool accepted = sl_directory_status(&r->directory, &host->info, &hints, true, NULL,
                                          (int64_t)time(NULL));
@@ -1076,8 +1234,8 @@ static void cloud_stream_result(IHS_StreamingResult result, const sl_remote_mate
 static void accepted_connection(IHS_Client *client, const IHS_HostInfo *host,
                                 const IHS_StreamingConnection *connection, void *ctx) {
     sl_runtime *r = ctx;
-    const sl_host *peer = saved_host(r, connection->clientId);
-    uint64_t account = peer ? peer->account : 0;
+    uint64_t account = 0;
+    current_account(r, connection->clientId, &account);
     if (connection->transport == k_EStreamTransportUDP &&
         IHS_ClientAddressHasIP(&connection->address.ip) && connection->address.port) {
         accept_session(r, &connection->address, connection->sessionKey, connection->sessionKeyLen,
@@ -1139,6 +1297,7 @@ static void stop_client(sl_runtime *r) {
     r->discovery_targets = NULL;
 }
 static bool start_client(sl_runtime *r) {
+    initialize_accounts(r);
     sl_log("discovery: creating IHS client");
     r->client = IHS_ClientCreate(&r->config);
     if (!r->client)
@@ -1300,12 +1459,13 @@ static bool request_stream(sl_runtime *r, bool network_test) {
     if (!pause_discovery(r)) return false;
     const sl_host *paired = sl_host_find(&r->store.registry, r->active.host.id);
     uint8_t selected[32];
-    int loaded = sl_host_key_load(sl_system_data_dir(), host.clientId, r->active.host.account,
-                                  selected);
+    uint64_t key_account = 0;
+    current_account(r, host.clientId, &key_account);
+    int loaded = sl_host_key_load(sl_system_data_dir(), host.clientId, key_account, selected);
     if (loaded < 0)
         return false;
     if (loaded > 0)
-        memcpy(selected, paired && paired->account == r->active.host.account && paired->has_secret
+        memcpy(selected, paired && paired->account == key_account && paired->has_secret
                              ? paired->secret : r->store.secret, sizeof(selected));
     IHS_ClientSetSecretKey(r->client, selected);
     memset(selected, 0, sizeof(selected));
@@ -1323,7 +1483,7 @@ static bool request_stream(sl_runtime *r, bool network_test) {
     }
     IHS_StreamingRequest req = {
         .networkTest = network_test,
-        .keySteamId = r->active.host.account,
+        .keySteamId = key_account,
         .allowSDR = NSL_HAVE_SNS,
         .streamingEnable = {config->enable_video_streaming, config->enable_audio_streaming,
                             config->enable_input_streaming},
@@ -1862,6 +2022,7 @@ static void *worker_main(void *ctx) {
         }
         if (r->client)
             IHS_ClientPumpAuthorization(r->client, 32);
+        flush_accounts(r);
         sl_command cmd = {0};
         sl_auth_store save;
         bool save_pending, snapshot_pending;
@@ -2266,6 +2427,7 @@ void sl_runtime_destroy(sl_runtime *r) {
     sl_log("cleanup: runtime worker joined");
     clear_control_locked(r); /* Worker/producers have been joined. */
     sl_directory_destroy(&r->directory);
+    sl_accounts_destroy(&r->paired_accounts);
     free(r->discovery_targets);
     sl_stream_settings_destroy(&r->settings);
     pthread_cond_destroy(&r->wake);
