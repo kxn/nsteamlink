@@ -636,6 +636,43 @@ request_id 相同，相邻采集时刻差 0.299 秒、1.000 秒；body 的变化
 
 ### 9.4 控制消息承载与传输信令队列
 
+**完整发送函数的补充 Evidence**：固定 core 样本
+`50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e` 的
+`SendMessage 0x79ad64–0x79b260` 不只是末尾的 UDP/cloud 二选一。
+`0x79adf0–0x79ae9c` 在非零目标 client ID、显式 IP/端口不完整时加载持久目录，
+只读取首个且已验证的地址，不在此函数中搜索后面的已验证项，也不检查 cloud-online 集合。
+`0x79aea0–0x79afe0` 在选出的 IP/端口仍不完整时，重新生成外层 header 的
+`device_token`（字段 5）；失败调用 `StopStreaming(error=1)`，不发送报文。
+已有完整地址但本地发送关闭时，走云端的 header 仍不带这个字段；不能简单用
+“云端报文都加 token”取代地址资格判断。`BGetDeviceToken 0x79c348–0x79c3fc`
+读取当前 manager secret（+536/+556），加密本机小端 device ID，独立于 body 中的 token。
+云端发送读取该 client 的第一个持久 Steam ID，不按“最后在线账号”另选。
+
+`BStart 0x798840` 先调用 `Stop`，后者 `0x797bf8–0x797c18` 销毁并清空旧 cloud session。
+因此 socket 缺失时，不能仅根据 SendMessage 尾部分支推断“BStart 失败后仍可通过旧 session
+立即转发”。受控输入中，完整地址、无 socket、既有 Connected session、socket 创建失败，
+实际原始调用链没有发送 UDP 或 cloud；成功创建 socket 则发送 UDP。
+
+传输桥接器是独立 producer：`SendTransportSignal 0x7d46a4–0x7d46c4` 的外层 header
+只设 `msg_type=12`，没有 client ID 或 manager device token；身份绑定仍由会话目的账号、
+内层信令及用**解密后的流密钥**计算的 HMAC 提供。`0x7d47c0–0x7d493c`
+序列化内层 `CTransportSignalMsg`、生成 HMAC、封装 body 后调用 cloud SendMessage。
+不能复用 manager header 并擅自添加 client ID，也不能把长期配对密钥当作该 HMAC 密钥。
+收发头不对称：`BProcessReplyPacket 0x7d4c7c–0x7d4c8c` 要求收到的 header 有非零
+client ID，再检查 type12；此后没有将该 ID 与所选电脑比较。
+`0x7d4cbc–0x7d4d80` 先验证当前流密钥的 32 字节 HMAC，再解析内层并交给 backend。
+原始输入明确覆盖无 ID、零 ID、相同/不同非零 ID、错误 type、坏 HMAC、坏外层 body、
+无/空 payload、缺失/短 token、HMAC 正确但内层损坏及重复 SDR 元素。
+token 长度仍须为 32；未提供 payload 时取 protobuf 的空串默认值，有效空串 HMAC 和可解析
+的空内层可以接受，不额外要求 payload presence bit。
+因此不能将客户端自己发出的无 ID 信令包直接当作 Steam host 的回复做回环验收。
+
+`audit-steam-control-route.py` 执行上述完整发送/序列化和桥接器指令。
+持久查找、token 字节、会话状态/析构、系统调用及最终 cloud send 是显式提供者；
+Stop 的可见/cloud 容器为空，桥接 HMAC 使用独立 Python 标准库提供者。
+接收的最终 backend 是记录解析后消息的提供者；不是 SDK 内层信令状态机验证。
+该对照不证明持久文件读写、真实密钥选取、服务端接受、所有 caller 的选路或线程时序。
+
 **Evidence：** manager SendMessage 在 `0x79b118–0x79b154` 按 HasIP、port、
 本地发送开关和 discovery socket 是否可创建选择 UDP；否则走 `0x79b15c–0x79b19c` 的云端分支。
 `BSend` 返回后直接结束该分支（`0x79b158`），此处没有按发送返回值追加一次云端转发。

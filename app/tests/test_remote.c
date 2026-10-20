@@ -134,6 +134,23 @@ static sl_proto_field sent(fixture *f, size_t index, unsigned number) {
     assert(body.number == number && body.wire == 2);
     return body;
 }
+static void control_key(fixture *f, size_t index, const uint8_t secret[32]) {
+    sl_proto_field cloud = sent(f, index, 7);
+    sl_proto_field packet = field(cloud.bytes, cloud.size, 4);
+    uint32_t hs;
+    assert(packet.size >= 16);
+    IHS_ReadUInt32LE(packet.bytes+8, &hs);
+    assert(hs <= packet.size-16);
+    sl_proto_field token = field(packet.bytes+12, hs, 5);
+    assert(token.number == 5 && token.wire == 2 && token.size == 32);
+    assert(field(packet.bytes+12, hs, 1).value == 0x123456789abcdefULL);
+    uint8_t plain[64];
+    size_t size = sizeof(plain);
+    assert(!IHS_CryptoSymmetricDecrypt(token.bytes, token.size, secret, 32, plain, &size) && size == 8);
+    uint64_t device;
+    IHS_ReadUInt64LE(plain, &device);
+    assert(device == 0x123456789abcdefULL);
+}
 static bool response(fixture *f, unsigned kind, int result, const void *body, size_t size) {
     uint8_t packet[16384];
     sl_proto_writer w = {packet, 0, sizeof(packet), false};
@@ -200,8 +217,11 @@ static void pair_host(fixture *f) {
     a.steamid = 88;
     a.auth_key = (ProtobufCBinaryData){32, auth};
     a.device_token = (ProtobufCBinaryData){token_size, token};
+    size_t confirmed = f->count;
     reply(f, 4, &a.base);
     assert(f->paired == 1 && f->saves == 1 && !memcmp(secret, f->saved.secret, 32));
+    assert(sent_control_kind(f, confirmed, NULL) == k_ERemoteDeviceAuthorizationConfirmed);
+    control_key(f, confirmed, secret); /* New key is installed BEFORE Confirmed. */
     /* A late success must not re-authorize or save the key a second time. */
     reply(f, 4, &a.base);
     assert(f->paired == 1 && f->saves == 1);
@@ -294,6 +314,9 @@ static uint32_t stream_request_id(fixture *f) {
         cmsg_remote_device_streaming_request__unpack(NULL, ms, packet.bytes + 16 + hs);
     assert(request && request->request_id && request->n_supported_transport == 1 &&
            request->supported_transport[0] == k_EStreamTransportUDP);
+    sl_proto_field outer_token = field(packet.bytes+12, hs, 5);
+    assert(outer_token.size == 32 && request->device_token.len == 32 &&
+           memcmp(outer_token.bytes, request->device_token.data, 32));
     if (request->has_pin) {
         uint8_t plaintext[64];
         size_t length = sizeof(plaintext);
@@ -323,9 +346,11 @@ static void retired_stream_requests(void) {
     assert(sl_remote_stream(f->remote, 77, &request));
     sl_remote_update(f->remote, 100);
     uint32_t id = stream_request_id(f);
+    control_key(f, f->count-1, peer.secret);
     sl_remote_cancel(f->remote);
     uint32_t canceled_id;
     assert(sent_control_kind(f, f->count - 1, &canceled_id) == 10 && canceled_id == id);
+    control_key(f, f->count-1, peer.secret);
     size_t before = f->count;
     CMsgRemoteDeviceStreamingResponse late = CMSG_REMOTE_DEVICE_STREAMING_RESPONSE__INIT;
     late.request_id = id;
@@ -407,6 +432,7 @@ static void retry_after_cancel_and_rotation(void) {
     open_session(f, 61);
     sl_remote_update(f->remote, 102);
     assert(stream_request_id(f) == id);
+    control_key(f, f->count-1, key); /* Retained through a new CM session. */
     /* The same transaction survives CM replacement. Duplicate proof must not
      * rotate again, and the response must decrypt with the persisted key. */
     reply(f, 7, &proof.base);
@@ -466,6 +492,7 @@ static void known_host_reauthorization(void) {
     CMsgRemoteDeviceAuthorizationRequest *request =
         cmsg_remote_device_authorization_request__unpack(NULL, ms, packet.bytes + 16 + hs);
     assert(request && request->request_id == id && request->auth_key.len == 32);
+    control_key(f, f->count-1, peers[0].secret);
     uint8_t decrypted[64], masked_key[32];
     size_t decrypted_size = sizeof(decrypted);
     assert(!IHS_CryptoSymmetricDecrypt(request->device_token.data, request->device_token.len,
@@ -522,6 +549,7 @@ static void pairing_and_rotation(void) {
     reply(f, 6, &a.base);
     sl_remote_update(f->remote, 101);
     assert(stream_request_id(f) == id && !f->streams);
+    control_key(f, f->count-1, f->saved.secret);
     CMsgRemoteDeviceProofRequest proof = CMSG_REMOTE_DEVICE_PROOF_REQUEST__INIT;
     uint8_t challenge[] = {0, 1, 2, 3, 4, 5};
     proof.challenge = (ProtobufCBinaryData){sizeof(challenge), challenge};
@@ -537,6 +565,7 @@ static void pairing_and_rotation(void) {
     assert(!IHS_CryptoSHA256(source, sizeof(source), expected));
     reply(f, 7, &proof.base);
     assert(f->saves == 2 && !memcmp(expected, f->saved.secret, 32));
+    control_key(f, f->count-1, expected);
     reply(f, 7, &proof.base);
     assert(f->saves == 2);
     uint8_t key[16] = {7, 8, 9}, encrypted[64];

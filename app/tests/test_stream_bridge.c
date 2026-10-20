@@ -71,7 +71,8 @@ static sl_proto_field outgoing(fixture *f, uint64_t session) {
     assert(hs <= packet.size - 16);
     IHS_ReadUInt32LE(packet.bytes + 12 + hs, &ms);
     assert(ms == packet.size - hs - 16);
-    assert(field(packet.bytes + 12, hs, 1).value == 77);
+    assert(!field(packet.bytes + 12, hs, 1).number);
+    assert(!field(packet.bytes + 12, hs, 5).number);
     assert(field(packet.bytes + 12, hs, 2).value == 12);
     return (sl_proto_field){.bytes = packet.bytes + 16 + hs, .size = ms};
 }
@@ -80,7 +81,16 @@ static void relay_back(fixture *f) {
     sl_proto_field packet = field(remote.bytes, remote.size, 4);
     uint8_t body[65536], envelope[65536];
     sl_proto_writer b = {body, 0, sizeof(body), false};
-    sl_proto_bytes(&b, 1, packet.bytes, packet.size);
+    /* Steam host replies have a nonzero client ID; original client bridge
+     * sends have only msg_type. Do not model both directions as identical. */
+    uint32_t hs;
+    IHS_ReadUInt32LE(packet.bytes + 8, &hs);
+    uint8_t incoming[65536];
+    memcpy(incoming, packet.bytes, 8);
+    IHS_WriteUInt32LE(incoming+8, 4);
+    memcpy(incoming+12, "\x08\x4d\x10\x0c", 4);
+    memcpy(incoming+16, packet.bytes+12+hs, packet.size-12-hs);
+    sl_proto_bytes(&b, 1, incoming, packet.size+4-hs);
     sl_proto_writer w = {envelope, 0, sizeof(envelope), false};
     sl_proto_uint(&w, 1, 1);
     sl_proto_bytes(&w, 6, body, b.size);
@@ -120,7 +130,7 @@ int main(void) {
         0x00,0x03,0xfc,0x2c,0x06,0xc6,0x30,0xd8,0xcf,0x57,0x6e,0x68,0x93,0xb6,0xc0,0x4a,
         0x81,0xe9,0xe1,0xf7,0xed,0x2a,0xde,0xe7,0x64,0x1e,0xec,0x9b,0xf1,0xdf,0xc4,0x67};
     assert(token.size == 32 && !memcmp(token.bytes, expected, 32));
-    assert(sl_signal_channel_receive(f->channel, 76, body.bytes, body.size) == 0);
+    assert(sl_signal_channel_receive(f->channel, 0, body.bytes, body.size) == 0);
     relay_back(f);
     assert(f->receives == 1 && f->received_size == 3 && !memcmp(f->received, "abc", 3));
     /* Identical authenticated signals must still reach the inner reliable

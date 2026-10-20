@@ -120,13 +120,18 @@ int sl_signal_channel_receive(sl_signal_channel *c, uint64_t peer,
                               const uint8_t *body, size_t size) {
     if (!c || c->failed)
         return -1;
-    if (peer != c->client_id || !body || size > SL_REMOTE_FRAME_MAX)
+    /* Original BProcessReplyPacket requires a nonzero header client ID, then
+     * authenticates against this bridge's stream key. It does not compare that
+     * ID with the selected computer (NETWORKING §9.4). */
+    if (!peer || !body || size > SL_REMOTE_FRAME_MAX)
         return 0;
     CMsgRemoteDeviceStreamTransportSignal *message =
         cmsg_remote_device_stream_transport_signal__unpack(NULL, size, body);
     CTransportSignalMsg *inner = NULL;
     int result = 0;
-    if (!message || !message->has_token || message->token.len != 32 || !message->has_payload)
+    /* Original accepts absent payload as the protobuf default empty string,
+     * provided its HMAC verifies and the empty inner protobuf parses. */
+    if (!message || !message->has_token || message->token.len != 32)
         goto done;
     uint8_t expected[32];
     if (!mac(c, message->payload.data, message->payload.len, expected))

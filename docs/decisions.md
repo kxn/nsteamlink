@@ -2862,3 +2862,30 @@ runtime 两个输入源在同一 mutex 下更新目录并入队事件，Offline 
 
 原始指令比较的 provider 范围、运行时受控报文/端点范围须分别记录；它们不证明持久文件
 与完整 manager/Qt 网络变化调用链、实际 DNS/Steam/ICE/SDR/媒体或 Switch loader 行为。
+
+## D-A080：区分 manager 控制头与传输信令头，保留收发方向差异
+
+Evidence：公网协议参考 §9.4、`audit-steam-control-route.py` 执行固定 core 样本的
+完整 `SendMessage`、`BStart`、空可见/cloud 容器的 `Stop`、`SendTransportSignal` 和
+`BProcessReplyPacket`；不是只执行最后的 UDP/cloud 分支。token 字节、会话状态/析构、
+持久查找、系统调用、最终 cloud/SDK backend 及桥接 HMAC 是显式提供者。
+
+Conclusion：云端 manager 当前无完整目标地址的发送入口必须生成独立的外层 device token，
+使用该 owner 当前选中的 secret，不从 body 复制 token，也不总是使用安装 secret。
+新主机授权临时 secret、选中主机的持久 secret、成功交换/Proof 派生的新 secret 分别更新
+当前值；事务取消和云端 session 替换不擦除该当前值，owner 销毁时统一擦除。
+外层头的 token 与 body token 分别调用加密器，已保存的 connect PIN 密文仍保持事务快照。
+
+撤回此前生产传输发送器和回环 fixture 所用的“信令必须带本机 client ID”假设。
+客户端传输桥接器发送头只有 type12，不附 manager ID/token；接收 Steam host 报文却要求
+非零 client ID，随后以当前流密钥验证 HMAC，不比较该 ID 是否等于所选电脑。
+`stream_bridge` 保留非零门槛、HMAC 先于内层解析及重复/FIFO 语义。fixture 明确构造
+host 回复方向的头，不再把客户端发包当作相同方向的 host 回复。
+撤回接收器额外要求 payload presence bit 的假设；默认空串仍必须通过完整的 32 字节
+HMAC 和内层 protobuf 解析，不能用“没有 SDR 元素”代替认证失败。
+
+固定输出与生产 cloud framing/信令队列逐字节比较，接收比较交给 backend 的解析后消息；
+实际授权、重试和 Proof fixture 另解密外层 token，验证当前主机/轮换后的密钥。
+这些是发送入口及信令接收分支的证据，不是所有 caller 的完整 UDP/cloud 事务切换、
+token 失败后的 manager 错误回调或真实服务端接受证明。完整地址但走云端的原版头不带 token，
+因此不能把本云端无地址入口的规则泛化为未来共用选路函数的全部行为。

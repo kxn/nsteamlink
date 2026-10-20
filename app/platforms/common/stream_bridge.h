@@ -17,7 +17,9 @@ sl_signal_channel *sl_signal_channel_create(uint64_t peer_client, uint64_t peer_
     const uint8_t *key, size_t key_size, const sl_signal_callbacks *, void *);
 bool sl_signal_channel_queue(sl_signal_channel *, const uint8_t *, size_t);
 void sl_signal_channel_flush(sl_signal_channel *, sl_remote *cloud);
-/* 1 accepted, 0 rejected input, -1 terminal SDK failure. */
+/* 1 accepted, 0 rejected input, -1 terminal SDK failure. Requires a nonzero
+ * inbound header client_id and this channel's HMAC; the header ID itself is
+ * not compared to the selected computer by the original transport bridge. */
 int sl_signal_channel_receive(sl_signal_channel *, uint64_t client_id,
                               const uint8_t *body, size_t);
 bool sl_signal_channel_pending(const sl_signal_channel *);

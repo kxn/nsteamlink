@@ -70,6 +70,7 @@ bool sl_remote_stream_ex(sl_remote *, uint64_t client_id, const IHS_StreamingReq
 void sl_remote_update(sl_remote *, int64_t wall_seconds);
 /* Forward an already-framed discovery/control/signal to a known Steam account. */
 bool sl_remote_packet(sl_remote *, uint64_t steam_id, const uint8_t *, size_t);
-/* Wrap a type-12 body with this session's local client identity. The bridge
- * retains inner messages, never an envelope containing an old cloud ID. */
+/* Transport bridge header contains only msg_type=12, without manager identity
+ * or device token. The bridge retains inner messages, never an envelope
+ * containing an old cloud session ID. */
 bool sl_remote_send_signal(sl_remote *, uint64_t steam_id, const uint8_t *, size_t);

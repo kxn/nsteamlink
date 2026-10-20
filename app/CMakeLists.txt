@@ -384,6 +384,17 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_compile_options(nsl-stream-bridge-tests PRIVATE -Wall -Wextra -UNDEBUG)
     target_link_libraries(nsl-stream-bridge-tests PRIVATE nsl_remote)
     add_test(NAME nsl-stream-bridge COMMAND nsl-stream-bridge-tests)
+    add_executable(nsl-control-frame-oracle tests/control_frame_oracle.c)
+    target_include_directories(nsl-control-frame-oracle PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client)
+    target_compile_options(nsl-control-frame-oracle PRIVATE -Wall -Wextra -UNDEBUG)
+    target_link_libraries(nsl-control-frame-oracle PRIVATE nsl_remote)
+    target_link_options(nsl-control-frame-oracle PRIVATE -Wl,--wrap=IHS_CryptoSymmetricEncrypt)
+    add_test(NAME control_frame_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-control-frame.py"
+        --receiver $<TARGET_FILE:nsl-control-frame-oracle>)
+    set_tests_properties(control_frame_official_vectors PROPERTIES TIMEOUT 20)
     add_executable(nsl-sdr-wire-tests tests/test_sdr_wire.c)
     target_compile_options(nsl-sdr-wire-tests PRIVATE -Wall -Wextra -UNDEBUG)
     target_link_libraries(nsl-sdr-wire-tests PRIVATE nsl_remote)

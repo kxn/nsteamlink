@@ -12,6 +12,9 @@ enum { PAIR_NONE, PAIR_PIN, PAIR_AUTH, PAIR_CANCEL, PAIR_KNOWN };
 struct sl_remote {
     IHS_ClientConfig config;
     uint8_t installation_secret[32];
+    /* Manager's currently selected secret survives transaction cancellation.
+     * It is separate from a pair slot and the transport bridge's stream HMAC. */
+    uint8_t control_secret[32];
     char device_name[64];
     sl_remote_callbacks cb;
     void *ctx;
@@ -94,6 +97,7 @@ sl_remote *sl_remote_create(const IHS_ClientConfig *config, const sl_remote_call
         return NULL;
     r->config = *config;
     memcpy(r->installation_secret, config->secretKey, 32);
+    memcpy(r->control_secret, config->secretKey, 32);
     r->config.secretKey = r->installation_secret;
     snprintf(r->device_name, sizeof(r->device_name), "%s",
              config->deviceName ? config->deviceName : "NSteamLink");
@@ -196,13 +200,10 @@ bool sl_remote_packet(sl_remote *r, uint64_t account, const uint8_t *data, size_
     free(body);
     return ok;
 }
-static bool send_message(sl_remote *r, uint64_t account, ERemoteClientBroadcastMsg type,
-                         const ProtobufCMessage *message) {
-    CMsgRemoteClientBroadcastHeader header = CMSG_REMOTE_CLIENT_BROADCAST_HEADER__INIT;
-    header.has_client_id = header.has_msg_type = true;
-    header.client_id = r->config.deviceId;
-    header.msg_type = type;
-    size_t hs = protobuf_c_message_get_packed_size(&header.base);
+static bool send_discovery(sl_remote *r, uint64_t account,
+                            const CMsgRemoteClientBroadcastHeader *header,
+                            const ProtobufCMessage *message) {
+    size_t hs = protobuf_c_message_get_packed_size(&header->base);
     size_t ms = protobuf_c_message_get_packed_size(message);
     if (hs + ms > SL_REMOTE_FRAME_MAX - 80)
         return false;
@@ -212,12 +213,36 @@ static bool send_message(sl_remote *r, uint64_t account, ERemoteClientBroadcastM
     static const uint8_t magic[] = {255, 255, 255, 255, 33, 76, 95, 160};
     memcpy(packet, magic, 8);
     IHS_WriteUInt32LE(packet + 8, (uint32_t)hs);
-    protobuf_c_message_pack(&header.base, packet + 12);
+    protobuf_c_message_pack(&header->base, packet + 12);
     IHS_WriteUInt32LE(packet + 12 + hs, (uint32_t)ms);
     protobuf_c_message_pack(message, packet + 16 + hs);
     bool ok = sl_remote_packet(r, account, packet, hs + ms + 16);
     erase(packet, hs + ms + 16);
     free(packet);
+    return ok;
+}
+static bool send_message(sl_remote *r, uint64_t account, ERemoteClientBroadcastMsg type,
+                         const ProtobufCMessage *message) {
+    /* This owner currently represents the manager's address-less cloud branch.
+     * Original SendMessage adds a fresh OUTER token independently of any body
+     * token (NETWORKING §9.4). A future common UDP/cloud router must decide its
+     * presence from the selected endpoint before serializing, not from the
+     * eventual transport used to send the frame. */
+    uint8_t id[8], token[32];
+    size_t token_size = sizeof(token);
+    IHS_WriteUInt64LE(id, r->config.deviceId);
+    if (IHS_CryptoSymmetricEncrypt(id, sizeof(id), r->control_secret, 32, token, &token_size) ||
+        token_size != sizeof(token)) {
+        erase(token, sizeof(token));
+        return false;
+    }
+    CMsgRemoteClientBroadcastHeader header = CMSG_REMOTE_CLIENT_BROADCAST_HEADER__INIT;
+    header.has_client_id = header.has_msg_type = header.has_device_token = true;
+    header.client_id = r->config.deviceId;
+    header.msg_type = type;
+    header.device_token = (ProtobufCBinaryData){sizeof(token), token};
+    bool ok = send_discovery(r, account, &header, message);
+    erase(token, sizeof(token));
     return ok;
 }
 bool sl_remote_send_signal(sl_remote *r, uint64_t account, const uint8_t *body, size_t size) {
@@ -227,7 +252,12 @@ bool sl_remote_send_signal(sl_remote *r, uint64_t account, const uint8_t *body, 
         cmsg_remote_device_stream_transport_signal__unpack(NULL, size, body);
     if (!message)
         return false;
-    bool ok = send_message(r, account, k_ERemoteDeviceStreamTransportSignal, &message->base);
+    /* Original transport bridge sets only msg_type. Its body was already
+     * authenticated with the negotiated stream key by the signal channel. */
+    CMsgRemoteClientBroadcastHeader header = CMSG_REMOTE_CLIENT_BROADCAST_HEADER__INIT;
+    header.has_msg_type = true;
+    header.msg_type = k_ERemoteDeviceStreamTransportSignal;
+    bool ok = send_discovery(r, account, &header, &message->base);
     cmsg_remote_device_stream_transport_signal__free_unpacked(message, NULL);
     return ok;
 }
@@ -357,6 +387,7 @@ static bool publish_pairing(sl_remote *r, uint32_t pin) {
     if (!IHS_AuthorizationKeyExchangeInit(&r->kx, r->pin) ||
         IHS_CryptoRandomBytes(r->pair_secret, 32))
         return false;
+    memcpy(r->control_secret, r->pair_secret, 32);
     r->pair_request = IHS_CryptoRandomUInt32();
     return send_authorization(r, true);
 }
@@ -408,6 +439,9 @@ static void authorization(sl_remote *r, uint64_t client_id, const uint8_t *data,
         progress = ok;
     }
     if (progress) {
+        /* Original exchange installs the new current secret before persistence
+         * and AuthorizationConfirmed, even when persistence later fails. */
+        memcpy(r->control_secret, peer.secret, 32);
         if (!r->cb.save_key || !r->cb.save_key(&peer, r->ctx)) {
             if (a->has_auth_key) {
                 confirm.result = k_ERemoteDeviceAuthorizationSuccess;
@@ -656,6 +690,7 @@ bool sl_remote_stream_ex(sl_remote *r, uint64_t id, const IHS_StreamingRequest *
         return false;
     memset(&r->stream, 0, sizeof(r->stream));
     r->stream.peer = *peer;
+    memcpy(r->control_secret, peer->secret, 32);
     r->stream.request = *request;
     if (options)
         r->stream.options = *options;
@@ -820,6 +855,7 @@ static void streaming_reply(sl_remote *r, const CMsgRemoteClientBroadcastHeader 
                 goto proof_done;
             }
             r->stream.peer = replacement;
+            memcpy(r->control_secret, replacement.secret, 32);
             for (size_t i = 0; i < r->count; ++i)
                 if (r->peers[i].client_id == replacement.client_id)
                     r->peers[i] = replacement;
