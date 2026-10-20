@@ -21,10 +21,12 @@ static atomic_bool pending;
 static uint16_t source_port;
 static atomic_bool stream_sent;
 static atomic_bool directed_ids_sent;
+static atomic_llong wall_time = 1000;
 static struct sockaddr_in stream_destination;
 time_t __wrap_time(time_t *out) {
-    if (out) *out = 1000;
-    return 1000; /* Controlled wall clock, independent of receive-worker pacing. */
+    time_t now = atomic_load_explicit(&wall_time, memory_order_relaxed);
+    if (out) *out = now;
+    return now; /* Controlled wall clock, independent of receive-worker pacing. */
 }
 typedef struct { bool quiet; int64_t full, fast; uint32_t seq; } round_clock;
 static void read_round(IHS_TimerTask *task, void *context) {
@@ -230,11 +232,17 @@ int main(void) {
     refresh_presence(&r, 15000, seen+300);
     assert(test_cloud_online(&r, 123));
     pthread_mutex_lock(&r.lock); assert(h->visible); pthread_mutex_unlock(&r.lock);
+    atomic_store(&wall_time, seen+300);
     cloud_connected(false, &r);
-    refresh_presence(&r, 20000, seen+29);
+    /* Original Update runs session/CM callbacks before visible-map expiry.
+     * An old cloud record remains usable until that explicit cleanup stage. */
+    assert(!test_cloud_online(&r, 123));
     pthread_mutex_lock(&r.lock); assert(h->visible); pthread_mutex_unlock(&r.lock);
-    refresh_presence(&r, 25000, seen+30);
+    assert(control_host(r.client, 123, &direct, &r));
+    refresh_presence(&r, 20000, seen+300);
     pthread_mutex_lock(&r.lock); assert(!h->visible); pthread_mutex_unlock(&r.lock);
+    assert(!control_host(r.client, 123, &direct, &r));
+    atomic_store(&wall_time, 1000);
 
     cloud_observed(&cloud, &r);
     /* Discard earlier UI events, then exercise the actual parsed type2 path. */

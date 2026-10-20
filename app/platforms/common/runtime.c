@@ -1010,7 +1010,9 @@ static bool control_host(IHS_Client *client, uint64_t id, IHS_HostInfo *out, voi
     sl_runtime *r = ctx;
     pthread_mutex_lock(&r->lock);
     const sl_directory_host *host = sl_directory_find(r->directory, id);
-    bool visible = host && host->visible && !sl_directory_expired(host, (int64_t)time(NULL));
+    /* Original GetServerInfo reads the committed visible map. Expiry belongs
+     * to Update after CM/UDP dispatch, not to a lookup inside those callbacks. */
+    bool visible = host && host->visible;
     if (visible)
         *out = host->info;
     pthread_mutex_unlock(&r->lock);

@@ -1240,6 +1240,10 @@ UDP RX 仍需把拥有的消息交给 actor；CM 同步入口不应临时关闭�
 随后才做发现发送（`0x798ab0`）、可见记录到期删除（`0x798c18`）和开流／授权重试
 （`0x798c74/0x798c90`）。这不支持在处理 CM 前独立推进一次 UDP 重试，也不支持在
 任意当前目录查询中提前执行本轮末尾的到期删除。完整联合重放仍需核对这些调用边界。
+正式 control_host 因此只读取已提交的 visible 标记；refresh_presence 是可见记录到期的
+显式步骤。host_directory_runtime 使用实际接收/目录及 cloud disconnect 回调，将墙钟
+推进到记录的 300 秒之后：断开云端后、到期清理前查询仍成功，清理后查询失败，地址缓存
+仍独立保留。它约束读取与删除的阶段差异，不证明整个 CM/UDP/发现/重试循环已经联合对齐。
 
 正式 runtime 通过 begin/prepare/abort 回调接入这些规则：IHS 同时持有状态 2/3，公开
 HandshakePhase 与 HandshakeFail 供服务回调使用；错误先经原来的 UI 事件入口通知，
