@@ -9,6 +9,7 @@
 #include <string.h>
 
 enum { PAIR_NONE, PAIR_PIN, PAIR_AUTH, PAIR_CANCEL, PAIR_KNOWN };
+static void pairing_failed(sl_remote *, IHS_AuthorizationResult);
 struct sl_remote {
     IHS_ClientConfig config;
     uint8_t installation_secret[32];
@@ -147,6 +148,22 @@ bool sl_remote_failed(const sl_remote *r) {
 }
 void sl_remote_close(sl_remote *r) {
     bool connected = r->session != 0;
+    if (r->cb.prepare_pairing) {
+        /* Original connected-session Update calls OnDisconnected while the
+         * session is still state5. Only manager state3 fails; state2 survives.
+         * The owner then drops all queued envelopes from the dead session. */
+        if (connected && r->cb.disconnecting)
+            r->cb.disconnecting(r->ctx);
+        if (connected && r->pairing == PAIR_AUTH)
+            pairing_failed(r, IHS_AuthorizationOffline);
+        r->opening = r->failed = false;
+        r->pending_start = r->pending_set = false;
+        r->pending_cancel = 0;
+        if (connected && r->cb.connected)
+            r->cb.connected(false, r->ctx);
+        r->session = 0;
+        return;
+    }
     bool pairing = r->pairing == PAIR_PIN || r->pairing == PAIR_AUTH;
     r->session = 0;
     r->opening = false;
@@ -286,6 +303,24 @@ bool sl_remote_send_signal(sl_remote *r, uint64_t account, const uint8_t *body, 
     return ok;
 }
 bool sl_remote_pair(sl_remote *r) {
+    if (r->cb.prepare_pairing) {
+        /* Manager StartPairing overrides the phase before its session guard;
+         * there is no pending-RPC correlation or one-attempt-at-a-time gate. */
+        r->pairing = PAIR_PIN;
+        if (r->cb.begin_pairing && !r->cb.begin_pairing(r->ctx)) {
+            r->pairing = PAIR_NONE;
+            return false;
+        }
+        if (!sl_remote_ready(r)) {
+            pairing_failed(r, IHS_AuthorizationOffline);
+            return true; /* Command handled; failure was delivered exactly once. */
+        }
+        if (!session_request(r, 2)) {
+            pairing_failed(r, IHS_AuthorizationFailed);
+            return true; /* Local queue/allocation failure, not a wire response. */
+        }
+        return true;
+    }
     if (!sl_remote_ready(r) || r->pairing || r->stream.active || r->pending_start ||
         r->pending_set || r->pending_cancel)
         return false;
@@ -309,8 +344,15 @@ static void cancel_pair_slot(sl_remote *r) {
     }
 }
 void sl_remote_cancel(sl_remote *r) {
-    if (r->cb.prepare_pairing && !sl_remote_ready(r))
+    if (r->cb.prepare_pairing) {
+        if (!sl_remote_ready(r) || (r->pairing != PAIR_PIN && r->pairing != PAIR_AUTH))
+            return;
+        cancel_pair_slot(r);
+        if (r->cb.abort_pairing)
+            r->cb.abort_pairing(r->ctx);
+        sl_remote_pairing_finished(r);
         return;
+    }
     bool known = r->pairing == PAIR_KNOWN;
     if (r->pairing) {
         if (!known)
@@ -341,6 +383,17 @@ void sl_remote_cancel(sl_remote *r) {
     }
 }
 static void pairing_failed(sl_remote *r, IHS_AuthorizationResult result) {
+    if (r->cb.prepare_pairing) {
+        /* Session responses dispatch failures without a pending/phase gate.
+         * The real manager's Stop(error) is itself an idle no-op and notifies
+         * before clearing any active pairing/stream transaction. */
+        if (r->cb.pair_failed)
+            r->cb.pair_failed(result, r->ctx);
+        if (r->cb.abort_pairing)
+            r->cb.abort_pairing(r->ctx);
+        sl_remote_pairing_finished(r);
+        return;
+    }
     if (r->pairing == PAIR_AUTH && r->cb.abort_pairing)
         r->cb.abort_pairing(r->ctx);
     bool known = r->pairing == PAIR_KNOWN;
@@ -711,8 +764,10 @@ bool sl_remote_receive(sl_remote *r, const uint8_t *data, size_t size) {
             r->failed = true;
             return true;
         }
-        if (pairing_rpc && body.number >= 3 && body.number <= 5 &&
-            (r->pairing == PAIR_PIN || r->pairing == PAIR_AUTH))
+        if (r->cb.prepare_pairing && body.number >= 3 && body.number <= 5)
+            pairing_failed(r, IHS_AuthorizationFailed);
+        else if (pairing_rpc && body.number >= 3 && body.number <= 5 &&
+                 (r->pairing == PAIR_PIN || r->pairing == PAIR_AUTH))
             pairing_failed(r, IHS_AuthorizationFailed);
         else if (body.number == 3 && r->pairing == PAIR_CANCEL)
             r->pairing = PAIR_NONE;
@@ -738,12 +793,13 @@ bool sl_remote_receive(sl_remote *r, const uint8_t *data, size_t size) {
     } else if (!r->session)
         return false;
     else if (body.number == 3) {
-        if (!pairing_rpc)
+        if (!r->cb.prepare_pairing && !pairing_rpc)
             return true;
         if (r->pairing != PAIR_PIN) {
             cancel_pair_slot(r);
-            r->pairing = PAIR_NONE;
-        } else if (pin == UINT32_MAX || !publish_pairing(r, pin))
+            if (!r->cb.prepare_pairing)
+                r->pairing = PAIR_NONE;
+        } else if (!publish_pairing(r, pin == UINT32_MAX && r->cb.prepare_pairing ? 0 : pin))
             pairing_failed(r, IHS_AuthorizationFailed);
     } else if (body.number == 6) {
         reader = (sl_proto_reader){body.bytes, body.size, 0, false};
@@ -810,8 +866,8 @@ bool sl_remote_stream_ex(sl_remote *r, uint64_t id, const IHS_StreamingRequest *
 }
 void sl_remote_update(sl_remote *r, int64_t now) {
     r->wall_time = now;
-    if (r->session && (r->pending_start || r->pending_set || r->pending_cancel) &&
-        now >= r->rpc_deadline) {
+    if (!r->cb.prepare_pairing && r->session &&
+        (r->pending_start || r->pending_set || r->pending_cancel) && now >= r->rpc_deadline) {
         if (r->cb.diagnostic)
             r->cb.diagnostic("cloud: pairing service response deadline expired", r->ctx);
         if (r->pairing == PAIR_PIN || r->pairing == PAIR_AUTH)

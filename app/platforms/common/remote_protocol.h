@@ -33,9 +33,15 @@ typedef struct sl_remote_callbacks {
      * The provider must discard its FIFO on disconnect; never replay envelopes. */
     bool (*send)(const uint8_t *, size_t, void *);
     void (*connected)(bool, void *);
+    /* Manager OnDisconnected first clears cloud membership, before stopping
+     * state3 and before the final disconnected notification/epoch retirement. */
+    void (*disconnecting)(void *);
     void (*host)(const sl_remote_host *, void *);
     void (*offline)(uint64_t client_id, void *);
     void (*pair_code)(const char *four_digits, void *);
+    /* Enter manager state2 before StartPairing, retaining current identity,
+     * secret and cache. Failure is a local resource failure. */
+    bool (*begin_pairing)(void *);
     /* Optional real manager owner. It prepares a service authorization BODY
      * and retains its private flow/current secret/cache; this RPC layer only
      * publishes and frees the returned allocation. Same owner thread. */

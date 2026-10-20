@@ -62,6 +62,7 @@ struct sl_runtime {
     pthread_mutex_t lock;
     pthread_cond_t wake;
     bool started, quit, request_pending, save_pending, snapshot_pending;
+    bool service_unavailable; /* Owner-only callback context, not an auth wire result. */
     sl_language save_language;
     bool save_update_check;
     sl_resolution resolution, save_resolution;
@@ -644,7 +645,8 @@ static void auth_failed(IHS_Client *c, const IHS_HostInfo *h, IHS_AuthorizationR
     pthread_mutex_lock(&r->lock);
     r->request_terminal = true;
     pthread_mutex_unlock(&r->lock);
-    fail(r, result == IHS_AuthorizationDenied        ? sl_tr(SL_T_PAIR_DENIED)
+    fail(r, r->service_unavailable                   ? sl_tr(SL_T_CLOUD_UNAVAILABLE)
+            : result == IHS_AuthorizationDenied      ? sl_tr(SL_T_PAIR_DENIED)
             : result == IHS_AuthorizationTimedOut    ? sl_tr(SL_T_PAIR_TIMEOUT)
             : result == IHS_AuthorizationNotLoggedIn ? sl_tr(SL_T_LOGIN_STEAM)
                                                      : sl_tr(SL_T_PAIR_FAILED));
@@ -1105,6 +1107,12 @@ static const IHS_ClientRoutingCallbacks control_cb = {.host = control_host,
                                                       .resolve = control_resolve,
                                                       .addresses = control_addresses,
                                                       .sendRemote = control_remote_send};
+static void cloud_disconnecting(void *ctx) {
+    sl_runtime *r = ctx;
+    pthread_mutex_lock(&r->lock);
+    sl_directory_disconnect(r->directory);
+    pthread_mutex_unlock(&r->lock);
+}
 static void cloud_connected(bool connected, void *ctx) {
     sl_runtime *r = ctx;
     pthread_mutex_lock(&r->lock);
@@ -1174,10 +1182,16 @@ static void cloud_paired(const sl_remote_peer *peer, void *ctx) {
 }
 static void cloud_pair_failed(IHS_AuthorizationResult result, void *ctx) {
     sl_runtime *r = ctx;
-    if (r->active.type == SL_CMD_REMOTE_PAIR) {
+    if (r->client) {
         r->request_at = 0;
-        auth_failed(NULL, NULL, result, ctx);
+        r->service_unavailable = result == IHS_AuthorizationOffline;
+        IHS_ClientHandshakeFail(r->client, result);
+        r->service_unavailable = false;
     }
+}
+static bool cloud_begin_pairing(void *ctx) {
+    sl_runtime *r = ctx;
+    return r->client && IHS_ClientAuthorizationAwaitService(r->client);
 }
 static bool cloud_prepare_pairing(IHS_SteamUniverse universe, const char *pin, uint8_t **body,
                                   size_t *size, void *ctx) {
@@ -1306,9 +1320,11 @@ static bool cloud_control_packet(const uint8_t *wire, size_t size, void *ctx) {
 static void start_cloud(sl_runtime *r) {
     const sl_remote_callbacks cb = {.diagnostic = cloud_diagnostic,
                                     .connected = cloud_connected,
+                                    .disconnecting = cloud_disconnecting,
                                     .host = cloud_observed,
                                     .offline = cloud_offline,
                                     .pair_code = cloud_code,
+                                    .begin_pairing = cloud_begin_pairing,
                                     .prepare_pairing = cloud_prepare_pairing,
                                     .abort_pairing = cloud_abort_pairing,
                                     .save_key = cloud_save_key,

@@ -1012,8 +1012,8 @@ arm64 的结果比较分支位于 `0x79d92c`、`0x79d998` 起的指令中，并�
 **实现修订**：撤回旧的“未知主机服务配对槽的缓存/状态仍与已知主机分开”边界。
 正式 runtime 的 SetPairingInfo 现在委托同一 IHS manager 准备授权正文；云端和 UDP 的
 回复都进入同一延迟授权 owner，共用 current secret 和 manager 生命周期的 key/result
-缓存。服务 RPC 的 pending/deadline 仍由 remote_protocol 持有，不能据此宣称该层全部
-状态 2、断线和超时策略已复刻原版。
+缓存。服务 RPC 的分派、状态 2 和断线行为另由下文的完整接收队列审计约束；不能用
+单条授权成功轨迹推导它们。批量 CM 消息与 UDP/deferred owner 之间的全序仍须单独证明。
 
 **Evidence（入站身份的细分）**：同一 core `0x79d6c8–0x79d6cc` 的非 Success 分支
 直接到 `0x79d8f4`；状态 4 的零/非目标来源在 `0x79d954–0x79d968` 转入过期分支，
@@ -1170,6 +1170,61 @@ constructor 为显式 provider，不联系 Steam、不创建真实 SDK 媒体连
 保存过程中插入尚无新主机的旧 UI 快照，验证完成前排队的保存不会删掉新授权记录，随后
 显式删除仍生效；正常文件与故意阻塞 key 临时文件两种输入均执行。确认调用早于第二次
 快照保存，实际 CM FIFO 则允许在该保存后再刷出，不能混淆这两个观察边界。
+
+#### 服务响应、取消和断线顺序
+
+**证据修订**：撤回正式客户端用本地 pending 标记屏蔽迟到配对响应，以及“配对 RPC
+20 秒没有回复便使云端 session 失败并重连”的策略。core
+`HandleWebSocketPackets @0x7916a0–0x791990` 从接收 FIFO 取完整 protobuf，直接按
+ServerMessage 的 oneof 类型分派，没有查找 pending Start/Set/Cancel 或 RPC job ID。
+`UpdateWebSocket @0x791bdc–0x791d20` 的 Connected 分支只检查 WebRequest 状态并处理
+接收队列，没有配对 RPC deadline；失败退避中的 `10 + 20*WeakRandomFloat` 是连接恢复
+间隔，不是某个 RPC 的等待上限。正文中的 authorization_result 与 RPC 的 EResult、
+内部 EServerError 是不同枚举域。
+
+- StartPairing 成功回复总会调用 manager OnPairingStarted。manager 状态 2 且 session
+  Connected 时生成并发布授权正文；其他 manager 状态收到迟到／重复 PIN，只发送
+  CancelPairing 清理远端槽位，不清除当前事务。缺失 PIN 使用 protobuf 默认值 0，格式化
+  为 `0000`；不能把字段缺失当成一个新的失败结果。
+- Start/Set/Cancel 的非 Success 回复均调用 OnPairingFailed→StopStreaming(error=1)，
+  不以 pending 或“当前是否在配对”过滤。Stop 在 Idle=1 时直接返回；在状态 2..6 时先
+  通知错误，再按停止前阶段选择 type9/type10 并清除 ID/目标。因此取消后若已开始另一笔
+  已知主机授权或开流，迟到的 CancelPairing 失败仍会停止该活动事务，不能只检查旧槽位。
+  Set/Cancel 的成功回复没有附加动作；这些规则由完整接收分派证明，不只依赖 bool callback 桩。
+- StartPairing 先写 manager 状态 2，再检查 session；未 Connected 时以 error=18 停止。
+  在活动事务上再次调用时保留当前目标/ID/current secret/cache，不预先发送主机取消。
+  等待新 PIN 的状态 2 不接受 AuthorizationResponse；有 auth_key 的旧回复确认 Canceled，
+  无 auth_key 则忽略，不能因旧私钥仍有效而推进授权。
+- Connected session 发现 WebRequest 已断开时，先调用 manager OnDisconnected，再销毁
+  WebRequest、清空队列/session ID，并进入恢复入口。manager 仅显式中止状态 3，以
+  error=18 通知后停止，随后通知 disconnected；状态 2 保留。取消在未 Connected 时为
+  no-op，不发 RPC、不主动清理状态 2。重连只恢复账号订阅，不重发 Start/Set；后续若实际
+  收到 PIN，仍按当时的 manager 状态处理。
+
+正式 runtime 通过 begin/prepare/abort 回调接入这些规则：IHS 同时持有状态 2/3，公开
+HandshakePhase 与 HandshakeFail 供服务回调使用；错误先经原来的 UI 事件入口通知，
+再停止真实 IHS owner，Idle 不重复通知。普通串流取消也在停止前查询当前可用记录，
+没有记录便不调用取消发送；取消后的目标清空，迟到处理所需的旧目标单独保留在 canceled
+记录中。RPC Offline 的本地分类表示服务连接不可用，对照内部 error=18，不应解释为
+收到 authorization_result=3。旧独立工具的 legacy RPC/private-crypto 兼容 API 不作为
+这条正式 manager 路径的证据。内存/有界队列失败是本地保护，不伪装为服务回复。
+
+`audit-steam-pairing-rpc.py` 在固定 shell 上执行完整响应 FIFO、原 protobuf parser、
+session 分派/Update/Disconnect/Cleanup、manager Start/Cancel/OnPairingStarted/Failed/
+Disconnected、原授权请求 producer、密码材料及 Stop。126 组程序覆盖 Idle、等待 PIN、
+云端授权、已知授权、开流等待、已取得 ticket 六个阶段，成功／失败、重复／迟到、取消
+后新事务、缺省 PIN、百万秒 session 时钟跃迁、断线/恢复和旧授权回复。
+对象/队列初值、WebRequest 状态与释放、恢复入口、时钟、熵、身份、请求 RSA、最终发送、
+低层文件及持久查找是显式 provider；固定 ELF 和 18 个审计 helper 的 hash 必须匹配。
+
+`pairing_rpc_oracle.c` 调用生产 RPC、runtime 回调和真实 IHS owners，比较每步阶段、
+ID/目标、current secret、生成密钥对次数、ticket 明文、服务 envelope、控制消息/收件人，
+以及通知和每次发送发生时的状态。服务正文的 RSA 密文与原版桩不同，设备 token 以 AES
+明文验证。它证明上述受控逐事件程序，不证明 WebSocket/TLS、真实服务、NAT、最新
+Switch 生命周期或批量 CM/UDP 入站在不同生产者之间的完整排序；后者不能由每条命令后
+主动排空 IHS owner 的测试程序替代。GetServerInfo/hint 可用性为 provider；真实目录在
+到期、断线和批量输入之间的更新时机，不能从该布尔输入推导。畸形 protobuf 的全部宽松
+解析也不在这组输入范围。
 
 ### 11.3 开流响应的分支表
 

@@ -578,6 +578,22 @@ if(NSL_PLATFORM STREQUAL "desktop")
         -Wl,--wrap=IHS_ClientSendControl)
     add_test(NAME service_pairing_runtime COMMAND nsl-service-pairing-runtime)
     set_tests_properties(service_pairing_runtime PROPERTIES TIMEOUT 20)
+    add_executable(nsl-pairing-rpc-oracle tests/pairing_rpc_oracle.c)
+    target_include_directories(nsl-pairing-rpc-oracle PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf)
+    target_compile_definitions(nsl-pairing-rpc-oracle PRIVATE NSL_HAVE_SNS=$<BOOL:${NSL_BUILD_SNS}>)
+    target_compile_options(nsl-pairing-rpc-oracle PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas)
+    target_link_libraries(nsl-pairing-rpc-oracle PRIVATE nsl_platform)
+    target_link_options(nsl-pairing-rpc-oracle PRIVATE
+        -Wl,--wrap=sl_remote_connection_create -Wl,--wrap=sl_remote_connection_protocol
+        -Wl,--wrap=sl_remote_connection_destroy -Wl,--wrap=sendto -Wl,--wrap=time
+        -Wl,--wrap=IHS_CryptoRandomUInt32 -Wl,--wrap=IHS_CryptoRandomBytes
+        -Wl,--wrap=IHS_CryptoRSAEncrypt -Wl,--wrap=IHS_ClientSendControl)
+    add_test(NAME pairing_rpc_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-pairing-rpc.py"
+        --receiver $<TARGET_FILE:nsl-pairing-rpc-oracle>)
+    set_tests_properties(pairing_rpc_official_vectors PROPERTIES TIMEOUT 90)
     add_executable(nsl-resolution-render tests/test_resolution_render.c)
     target_include_directories(nsl-resolution-render PRIVATE platforms/common ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
     target_link_libraries(nsl-resolution-render PRIVATE nsl_gfx)
