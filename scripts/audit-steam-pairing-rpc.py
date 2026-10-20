@@ -92,6 +92,12 @@ class PairRPC(service.Service):
             self.wq(top + 24, self.freeze(self.q(top + 24), 128))
             self.rpc.append((top, self.boundary()))
             return self.ret()
+        if name == service.m.REGISTER:
+            # The parent audit deliberately stops at this boundary. A completed
+            # CM batch needs the real session guard/notification too, so it can
+            # compare all WebSocket sends before the following RPC reply.
+            self.metadata_events.append(service.m.event('subscribe', steam=self.r(1)))
+            return self.jump(self.symbols[name])
         if name == 'Plat_FloatTime':
             u.reg_write(UC_ARM64_REG_D0, struct.unpack('<Q', struct.pack('<d', float(self.wall_time)))[0])
             return self.ret()
@@ -107,16 +113,22 @@ class PairRPC(service.Service):
         return super().hook(u, pc, size, data)
 
     def wire(self, wire):
+        self.wires([wire])
+
+    def wires(self, wires):
         assert self.i(self.session + 132) == 0xffffffff
-        packet, raw, slots = self.alloc(128), self.alloc(len(wire)), self.alloc(32)
-        self.u.mem_write(raw, wire)
-        self.wq(packet, raw)
-        self.wi(packet + 8, len(wire))
-        self.wi(packet + 20, len(wire))
-        self.wq(slots, packet)
-        self.wi(self.session + 128, 3)
+        assert 0 < len(wires) <= 8
+        slots = self.alloc(64)
+        for index, wire in enumerate(wires):
+            packet, raw = self.alloc(128), self.alloc(len(wire))
+            self.u.mem_write(raw, wire)
+            self.wq(packet, raw)
+            self.wi(packet + 8, len(wire))
+            self.wi(packet + 20, len(wire))
+            self.wq(slots + index * 8, packet)
+        self.wi(self.session + 128, 7)
         self.wi(self.session + 132, 0)
-        self.wi(self.session + 136, 0)
+        self.wi(self.session + 136, len(wires) - 1)
         self.wq(self.session + 144, slots)
         self.call(self.symbols[PACKETS], self.session)
         self.preparing = False
@@ -168,6 +180,20 @@ def cases():
         ('waiting-no-key-authorization','waiting',[reply(dict())]),
         ('auth-restart-late-authorization','auth',[('start',),reply(dict(key=True))]),
     ]
+    # All frames are present in the original FIFO before one invocation of
+    # HandleWebSocketPackets. There is no synthetic manager pump between them.
+    for keyed in (False, True):
+        auth = reply(dict(key=keyed) if keyed else dict())[1]
+        for kind in (3, 4, 5):
+            failure = wire(kind, 2).hex()
+            success = wire(kind, 1, 4321).hex()
+            for label, frames in (
+                ('success-failure', [auth, failure]),
+                ('failure-success', [failure, auth]),
+                ('success-rpc-success-failure', [auth, success, failure]),
+                ('duplicate-success-failure', [auth, auth, failure]),
+            ):
+                rows.append((f'batch-{int(keyed)}-{kind}-{label}', 'auth', [('batch', frames)]))
     return [(name,hint,phase,ops) for hint in (False,True) for name,phase,ops in rows]
 
 
@@ -213,6 +239,8 @@ def run(binary, name, hint, phase, commands):
             r.call(r.symbols['_ZN14CServerManager11OnConnectedEv'],r.manager)
         elif command[0]=='raw':
             r.wire(bytes.fromhex(command[1]))
+        elif command[0]=='batch':
+            r.wires([bytes.fromhex(raw) for raw in command[1]])
         else:
             raise AssertionError(command)
         inputs.append(command)

@@ -37,6 +37,7 @@ def command(event):
         raw=b'\x08'+varint(result)+varint(kind*8+2)+varint(len(body))+body
         return 'r '+raw.hex()
     if op=='raw':return 'r '+event[1]
+    if op=='batch':return 'b '+' '.join(event[1])
     if op=='update':return f'u {event[1]} {event[2]}'
     return {'start':'s','cancel':'c','known':'k','stream':'t','reconnect':'o'}[op]
 
@@ -112,6 +113,12 @@ def verify_source(case):
     if case['name']=='cancel-then-known-failure':
         assert case['steps'][-1]['state']==1 and case['steps'][-1]['failures']==1
         assert case['steps'][-1]['events'][-1]['state']==4
+    if case['name'].startswith('batch-1-4-success-failure'):
+        final = case['steps'][-1]
+        assert final['state'] == 1 and final['paired'] == [76561198000000001]
+        assert not final['failures']
+        assert final['messages'][0] == dict(tag=14, body='0800')
+        assert len(final['messages']) == (2 if case['hint'] else 1)
 
 
 def main():
@@ -121,11 +128,11 @@ def main():
     args=p.parse_args();r=json.loads(gzip.decompress(args.reference.read_bytes()))
     assert r['schema']==1 and r['binary_sha256']=='15b2d79881eef0c47ed2f96c17d1d60a5f42d3285abcf9f512cfffdac5b238a2'
     for name,sha in r['helpers'].items():assert hashlib.sha256((ROOT/'scripts'/name).read_bytes()).hexdigest()==sha,name
-    assert len(r['cases'])==126
+    assert len(r['cases'])==174
     for case in r['cases']:
         verify_source(case)
         check(args.receiver,case)
-    print('PASS 126 whole original response-queue/RPC/manager programs: late/duplicate PIN, failure/cancel, no invented RPC deadline, phase2/3 disconnect, expired authorization and replacement order')
+    print('PASS 174 whole original response-queue/RPC/manager programs: late/duplicate PIN, failure/cancel, phase2/3 disconnect, expired authorization, replacement order and 48 real FIFO batches without an inter-frame pump')
 
 
 if __name__=='__main__':main()

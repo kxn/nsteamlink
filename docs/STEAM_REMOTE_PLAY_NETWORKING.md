@@ -1011,9 +1011,10 @@ arm64 的结果比较分支位于 `0x79d92c`、`0x79d998` 起的指令中，并�
 过滤契约。账号首项、文件及订阅的独立证据和实现边界见下文。
 **实现修订**：撤回旧的“未知主机服务配对槽的缓存/状态仍与已知主机分开”边界。
 正式 runtime 的 SetPairingInfo 现在委托同一 IHS manager 准备授权正文；云端和 UDP 的
-回复都进入同一延迟授权 owner，共用 current secret 和 manager 生命周期的 key/result
-缓存。服务 RPC 的分派、状态 2 和断线行为另由下文的完整接收队列审计约束；不能用
-单条授权成功轨迹推导它们。批量 CM 消息与 UDP/deferred owner 之间的全序仍须单独证明。
+回复共用同一授权 owner、current secret 和 manager 生命周期的 key/result 缓存。
+UDP 由 RX 排队后在 actor 处理；CM 已在 actor 上，必须同步完成当前帧，不能再次延迟。
+服务 RPC 的分派、状态 2 和断线行为另由下文的完整接收队列审计约束；不能用
+单条授权成功轨迹推导它们。CM 与 UDP/deferred owner 之间的完整跨生产者全序仍须单独证明。
 
 **Evidence（入站身份的细分）**：同一 core `0x79d6c8–0x79d6cc` 的非 Success 分支
 直接到 `0x79d8f4`；状态 4 的零/非目标来源在 `0x79d954–0x79d968` 转入过期分支，
@@ -1062,6 +1063,9 @@ decrypt(response.device_token, paired_secret) 必须为 8 字节且等于本机 
 才按主机 client_id 和 steamid 保存新 secret。不能按收到数据包总数限制三包，也不能重复派生新 secret。
 云端配对成功后注册 status，通知授权成功 delegate，再结束当前事务；状态 4 的授权成功则回到
 状态 5，保持当前开流事务并再次发送 StreamingRequest（`0x79db80–0x79db90`）。
+这次重发仍经过 `SendStartStreamingRequest` 的当前记录／命名 hint 门槛；两者都不可用时，
+`0x7993ac–0x7993b4` 调用 StopStreaming(error=18)，先通知，再按停止规则清除 ID 和目标。
+不能把查询失败等同于发送成功，也不能只清请求编号却保留旧目标或省略终止通知。
 
 **持久化界面**：安装 device_id、主机 client_id、steamid 列表、每主机/身份的 secret 和已配对
 steamid 列表是不同记录。`SavePairedSteamID @0x79b5e8` 去重后保存列表；
@@ -1201,6 +1205,22 @@ ServerMessage 的 oneof 类型分派，没有查找 pending Start/Set/Cancel 或
   no-op，不发 RPC、不主动清理状态 2。重连只恢复账号订阅，不重发 Start/Set；后续若实际
   收到 PIN，仍按当时的 manager 状态处理。
 
+**批量响应 Evidence**：相同的 `HandleWebSocketPackets` FIFO 可以在一次调用中依次包含
+有效 AuthorizationResponse 和失败的 SetPairingInfo 回复。原指令在处理第一帧时同步完成
+真实密钥交换、key/paired-ID 保存调用、Success 确认和 Stop；处理第二帧时已为 Idle，
+OnPairingFailed 的 Stop 不再报告错误。生产代码若只把第一帧加入另一个延迟队列，而立刻
+处理第二帧，就会先停止授权，之后把第一帧确认为 Canceled，且不保存 paired ID。
+此差异由相同完整帧在原 FIFO 与生产 runtime/IHS 中复现，不是历史热点故障根因的证明。
+因此 CM 已在应用 actor 上交付的控制帧必须在回调返回前完成处理；不能通过逐帧调用整个
+Pump 来修补，因为 Pump 还可能执行发现/授权重试，改变同批入站与到期发送的顺序。
+UDP RX 仍需把拥有的消息交给 actor；CM 同步入口不应临时关闭全局 deferred 标记，
+否则会同时改变另一个接收线程的行为。这条规则不推导 CM 与 UDP 的完整跨线程全序。
+跨承载排序另有静态调用者证据：core `CServerManager::Update @0x79890c` 先在
+`0x79898c` 调用 session Update，再在 `0x7989c0–0x7989d8` 循环接收并处理 UDP，
+随后才做发现发送（`0x798ab0`）、可见记录到期删除（`0x798c18`）和开流／授权重试
+（`0x798c74/0x798c90`）。这不支持在处理 CM 前独立推进一次 UDP 重试，也不支持在
+任意当前目录查询中提前执行本轮末尾的到期删除。完整联合重放仍需核对这些调用边界。
+
 正式 runtime 通过 begin/prepare/abort 回调接入这些规则：IHS 同时持有状态 2/3，公开
 HandshakePhase 与 HandshakeFail 供服务回调使用；错误先经原来的 UI 事件入口通知，
 再停止真实 IHS owner，Idle 不重复通知。普通串流取消也在停止前查询当前可用记录，
@@ -1211,18 +1231,20 @@ HandshakePhase 与 HandshakeFail 供服务回调使用；错误先经原来的 U
 
 `audit-steam-pairing-rpc.py` 在固定 shell 上执行完整响应 FIFO、原 protobuf parser、
 session 分派/Update/Disconnect/Cleanup、manager Start/Cancel/OnPairingStarted/Failed/
-Disconnected、原授权请求 producer、密码材料及 Stop。126 组程序覆盖 Idle、等待 PIN、
+Disconnected、原授权请求 producer、密码材料及 Stop。174 组程序覆盖 Idle、等待 PIN、
 云端授权、已知授权、开流等待、已取得 ticket 六个阶段，成功／失败、重复／迟到、取消
-后新事务、缺省 PIN、百万秒 session 时钟跃迁、断线/恢复和旧授权回复。
+后新事务、缺省 PIN、百万秒 session 时钟跃迁、断线/恢复和旧授权回复；其中 48 组在
+同一原 FIFO 中预置两至三条帧，仅调用一次 HandleWebSocketPackets，没有帧间 Update。
 对象/队列初值、WebRequest 状态与释放、恢复入口、时钟、熵、身份、请求 RSA、最终发送、
 低层文件及持久查找是显式 provider；固定 ELF 和 18 个审计 helper 的 hash 必须匹配。
 
 `pairing_rpc_oracle.c` 调用生产 RPC、runtime 回调和真实 IHS owners，比较每步阶段、
 ID/目标、current secret、生成密钥对次数、ticket 明文、服务 envelope、控制消息/收件人，
 以及通知和每次发送发生时的状态。服务正文的 RSA 密文与原版桩不同，设备 token 以 AES
-明文验证。它证明上述受控逐事件程序，不证明 WebSocket/TLS、真实服务、NAT、最新
-Switch 生命周期或批量 CM/UDP 入站在不同生产者之间的完整排序；后者不能由每条命令后
-主动排空 IHS owner 的测试程序替代。GetServerInfo/hint 可用性为 provider；真实目录在
+明文验证。批量输入对应生产 remote_connection 连续交付完整帧的行为：只调用真实 RPC
+及 runtime/IHS 回调，帧之间不排空 IHS，不推进计时器。它证明这些受控逐事件和 CM 批次
+程序，不证明 WebSocket/TLS、真实服务、NAT、最新 Switch 生命周期或 CM/UDP 入站在
+不同生产者之间的完整排序。GetServerInfo/hint 可用性为 provider；真实目录在
 到期、断线和批量输入之间的更新时机，不能从该布尔输入推导。畸形 protobuf 的全部宽松
 解析也不在这组输入范围。
 

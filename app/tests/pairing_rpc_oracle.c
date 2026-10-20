@@ -158,6 +158,10 @@ static void rpc_failed(IHS_AuthorizationResult result, void *ctx) {
     cloud_pair_failed(result, ctx);
     cloud_error = false;
 }
+static void pairing_complete(IHS_Client *c, const IHS_HostInfo *host, uint64_t account, void *ctx) {
+    event("paired", 0);
+    authorized(c, host, account, ctx);
+}
 static bool prepare(IHS_SteamUniverse universe, const char *pin, uint8_t **raw, size_t *size,
                     void *ctx) {
     preparing = true;
@@ -332,6 +336,7 @@ int main(int argc, char **argv) {
     assert(sl_stream_settings_init(&runtime.settings, &runtime.store) && start_client(&runtime));
     IHS_ClientAuthorizationCallbacks auth = auth_cb;
     auth.failed = failed;
+    auth.success = pairing_complete;
     IHS_ClientSetAuthorizationCallbacks(runtime.client, &auth, &runtime);
     IHS_ClientSetRoutingCallbacks(runtime.client, &route, NULL);
     target =
@@ -364,6 +369,22 @@ int main(int argc, char **argv) {
             cloud_error = true;
             size_t size = unhex(text, raw);
             assert(sl_remote_receive(protocol, raw, size));
+            cloud_error = false;
+        } else if (command[0] == 'b') {
+            /* remote_connection's WS decoder dispatches every complete service
+             * frame before the worker gets another IHS pump. Exercise that
+             * exact absence of an inter-frame pump, using production callbacks. */
+            unsigned frames = 0;
+            cloud_error = true;
+            char *save;
+            for (char *text = strtok_r(command + 1, " \r\n", &save); text;
+                 text = strtok_r(NULL, " \r\n", &save)) {
+                uint8_t raw[4096];
+                size_t size = unhex(text, raw);
+                assert(sl_remote_receive(protocol, raw, size));
+                ++frames;
+            }
+            assert(frames > 1);
             cloud_error = false;
         } else if (command[0] == 'u') {
             unsigned ws;

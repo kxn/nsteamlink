@@ -1311,7 +1311,8 @@ static void accepted_connection(IHS_Client *client, const IHS_HostInfo *host,
 static bool cloud_control_packet(const uint8_t *wire, size_t size, void *ctx) {
     sl_runtime *r = ctx;
     /* All authorization, including unknown-host service pairing, enters the
-     * shared manager cache/current secret and the same deferred receive owner. */
+     * shared manager cache/current secret. CM is already on this actor: finish
+     * the control frame before the next RPC response can observe its state. */
     if (!r->client)
         return false;
     IHS_ClientReceiveRemotePacket(r->client, wire, size);
