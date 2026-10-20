@@ -26,6 +26,17 @@ static _Thread_local bool target_alloc_fault;
 static unsigned allocation_failures;
 static bool nested_case, external_case, deferred_case, initial_receive;
 static const char *mode;
+static bool joint_case, joint_deferred, joint_late_done;
+static unsigned joint_generations, joint_poison_generation;
+static IHS_Client *joint_client;
+static atomic_bool release_timer;
+static IHS_ThreadFunction *timer_function;
+static void *timer_context;
+static void held_timer(void *unused) {
+    (void)unused;
+    while (!atomic_load(&release_timer)) usleep(1000);
+    timer_function(timer_context);
+}
 static atomic_int client_fd = -1;
 static atomic_bool received_status;
 static atomic_bool callback_entered, release_callback;
@@ -47,6 +58,11 @@ static void held_watcher(void *unused) {
     watcher_function(watcher_context);
 }
 IHS_Thread *__wrap_IHS_ThreadCreate(IHS_ThreadFunction *function, const char *name, void *context) {
+    if (joint_case && !strcmp(name, "IHS.Timer")) {
+        timer_function = function;
+        timer_context = context;
+        return __real_IHS_ThreadCreate(held_timer, name, NULL);
+    }
     if (order_case && !strcmp(name, "IHSClient")) {
         watcher_function = function;
         watcher_context = context;
@@ -59,6 +75,8 @@ IHS_Thread *__wrap_IHS_ThreadCreate(IHS_ThreadFunction *function, const char *na
 int __real_socket(int, int, int);
 int __wrap_socket(int family, int type, int protocol) {
     int fd = __real_socket(family, type, protocol);
+    if (joint_case && fd >= 0 && family == AF_INET && type == SOCK_DGRAM)
+        ++joint_generations;
     if (initial_receive && atomic_load(&client_fd) < 0 && family == AF_INET && type == SOCK_DGRAM) {
         struct sockaddr_in local = {.sin_family=AF_INET, .sin_addr.s_addr=htonl(INADDR_LOOPBACK)};
         if (fd < 0 || bind(fd, (void *)&local, sizeof(local))) abort();
@@ -67,6 +85,7 @@ int __wrap_socket(int family, int type, int protocol) {
     return fd;
 }
 static unsigned sends;
+static unsigned types[128];
 static char wires[128][4096];
 static uint32_t destinations[128];
 static void require(bool value, const char *why) {
@@ -107,10 +126,40 @@ ssize_t __wrap_sendto(int fd, const void *data, size_t size, int flags,
                 ntohs(address->sin_port) == 27036 && (flags & MSG_DONTWAIT),
             "bounded discovery send to official port");
     require(sends < 128 && size * 2 + 1 <= sizeof(wires[0]), "bounded wire capture");
+    const unsigned char *raw = data;
+    require(size >= 12, "actual header prefix");
+    uint32_t hs = raw[8] | ((uint32_t)raw[9]<<8) | ((uint32_t)raw[10]<<16) | ((uint32_t)raw[11]<<24);
+    require(size >= 12+hs, "actual header size");
+    CMsgRemoteClientBroadcastHeader *header = cmsg_remote_client_broadcast_header__unpack(NULL, hs, raw+12);
+    require(header && header->has_msg_type, "actual serialized message type");
+    unsigned type = types[sends] = header->msg_type;
+    cmsg_remote_client_broadcast_header__free_unpacked(header, NULL);
     for (size_t i = 0; i < size; ++i)
         snprintf(wires[sends] + 2 * i, 3, "%02x", ((const unsigned char *)data)[i]);
     destinations[sends++] = ntohl(address->sin_addr.s_addr);
-    if (failure) { errno = EIO; return -1; }
+    /* Declared late-producer terminal: actual launch serialization/send still
+     * runs; only nested API actions and syscall outcomes are controlled. */
+    if (joint_case && type == k_ERemoteDeviceStreamingRequest &&
+            atomic_load(&wall) == 1001 && !joint_late_done) {
+        joint_late_done = true;
+        if (!strncmp(mode, "joint_late_trigger", 18))
+            require(IHS_ClientTriggerDiscovery(joint_client) && IHS_ClientTriggerDiscovery(joint_client),
+                    "late nested refreshes accepted");
+        else if (!strncmp(mode, "joint_late_enable", 17))
+            require(IHS_ClientEnableDiscovery(joint_client), "late Enable accepted");
+        else if (!strncmp(mode, "joint_late_disable", 18))
+            require(IHS_ClientDisableDiscovery(joint_client), "late Disable accepted");
+        else if (!strncmp(mode, "joint_late_targets", 18)) {
+            IHS_DiscoveryTarget targets[2] = {{.clientId=123}, {.clientId=123}};
+            require(IHS_IPAddressFromString(&targets[0].ip, "127.0.0.1") &&
+                    IHS_IPAddressFromString(&targets[1].ip, "127.0.0.2"), "late target input");
+            require(IHS_ClientSetDiscoveryTargets(joint_client, targets, 2), "late target snapshot accepted");
+        }
+    }
+    if (failure || (joint_case && joint_poison_generation && joint_generations == joint_poison_generation)) {
+        errno = EIO;
+        return -1;
+    }
     return (ssize_t)size;
 }
 
@@ -121,6 +170,8 @@ typedef struct Snapshot {
     int64_t full, fast;
     bool pending;
 } Snapshot;
+static Snapshot joint_first;
+static bool joint_first_recorded;
 static void inspect(IHS_TimerTask *task, void *opaque) {
     Snapshot *snapshot = opaque;
     const IHS_DiscoveryContext *context = IHS_TimerTaskGetContext(task);
@@ -132,8 +183,21 @@ static void inspect(IHS_TimerTask *task, void *opaque) {
     snapshot->sequence = snapshot->client->discoverySeq;
     snapshot->sends = sends;
     snapshot->pending = context->commandCount || context->cycleActive ||
-                        snapshot->client->discoveryTargetsChanged;
+                        snapshot->client->discoveryTargetsChanged ||
+                        (joint_case && joint_late_done && !context->full);
     IHS_BaseUnlock(&snapshot->client->base);
+}
+void __real_IHS_ClientDiscoveryEndCycle(IHS_Client *);
+void __wrap_IHS_ClientDiscoveryEndCycle(IHS_Client *client) {
+    __real_IHS_ClientDiscoveryEndCycle(client);
+    /* This boundary is still inside the common timer visitor. Inspect the
+     * actual owned task before another Update can consume a late refresh. */
+    if (joint_case && joint_late_done && atomic_load(&wall) == 1001 && !joint_first_recorded) {
+        joint_first.client = client;
+        require(IHS_TimerTaskVisitOwned(client->timers, &client->discoveryTimer, inspect, &joint_first),
+                "first joint Update retains an inspectable task");
+        joint_first_recorded = true;
+    }
 }
 /* Native-only backlog/resource contracts; not claimed as official queue size. */
 static void inspect_full_backlog(IHS_TimerTask *task, void *opaque) {
@@ -352,6 +416,8 @@ int main(int argc, char **argv) {
     if (!strcmp(argv[1], "random")) { rng(); return 0; }
     alarm(20);
     mode = argv[1];
+    joint_case = !strncmp(mode, "joint_", 6);
+    joint_deferred = joint_case && strstr(mode, "_deferred");
     initial_receive = !strncmp(mode, "first_receive_", 14);
     order_case = initial_receive || !strcmp(mode, "backlog_cancel") || !strcmp(argv[1], "enable_disable_before_watch") ||
                  !strcmp(argv[1], "owner_flip_before_watch") ||
@@ -363,11 +429,29 @@ int main(int argc, char **argv) {
     require(client != NULL, "actual client and workers");
     printf("{\"stages\":[");
     external_case = !strcmp(mode, "external_trigger_during_receive");
-    deferred_case = !strcmp(mode, "nested_deferred_trigger");
+    deferred_case = joint_deferred || !strcmp(mode, "nested_deferred_trigger");
     nested_case = initial_receive || external_case || deferred_case || !strcmp(mode, "nested_receive_trigger");
     const IHS_ClientDiscoveryCallbacks callbacks = {.discovered = nested_status};
     if (nested_case) IHS_ClientSetDiscoveryCallbacks(client, &callbacks, NULL);
-    if (!strcmp(mode, "backlog_cancel")) {
+    if (joint_case) {
+        joint_client = client;
+        if (joint_deferred) IHS_ClientSetAuthorizationDeferred(client, true);
+        enable(client);
+        IHS_HostInfo host = {.clientId=123, .instanceId=456, .address.port=27036};
+        require(IHS_IPAddressFromString(&host.address.ip, "127.0.0.1"), "joint host input");
+        IHS_StreamingRequest request = {.maxResolution={1280,720}, .audioChannelCount=2,
+            .streamingInterface=IHS_StreamInterfaceBigPicture, .streamingEnable={true,true,true}};
+        require(IHS_ClientStreamingRequest(client, &host, &request), "real launch request accepted");
+        for (unsigned i=0; i<3000; ++i) {
+            if (joint_deferred) IHS_ClientPumpAuthorization(client, 1);
+            IHS_BaseLock(&client->base); bool sent = sends >= 2; IHS_BaseUnlock(&client->base);
+            if (sent) break;
+            usleep(1000);
+        }
+        require(sends == 2 && types[0] == 0 && types[1] == 5, "actual initial discovery/request warmup");
+        if (!strncmp(mode, "joint_reopen_before_retry", 25)) joint_poison_generation = joint_generations;
+        update(client, 1001);
+    } else if (!strcmp(mode, "backlog_cancel")) {
         fill_backlog(client);
     } else if (!strcmp(mode, "backlog_wrap")) {
         enable(client);
@@ -477,9 +561,20 @@ int main(int argc, char **argv) {
     IHS_ClientThreadedJoin(client);
     require(!IHS_ClientTriggerDiscovery(client) && !IHS_ClientEnableDiscovery(client),
             "stopped client cannot publish new manager tasks");
+    atomic_store(&release_timer, true);
     IHS_ClientDestroy(client);
     IHS_Quit();
-    printf("],\"cleanup\":true}\n");
+    printf("],\"cleanup\":true,\"types\":[");
+    for (unsigned i=0; i<sends; ++i) printf("%s%u", i ? "," : "", types[i]);
+    printf("]");
+    if (joint_case) {
+        require(joint_first_recorded && joint_first.sends >= 2, "first joint Update observed");
+        printf(",\"joint_first\":{\"sequence\":%u,\"next_status\":%lld,\"fast_status\":%lld,"
+               "\"status_tries\":%u,\"broadcast_owners\":%u,\"sends\":%u}",
+               joint_first.sequence, (long long)joint_first.full, (long long)joint_first.fast,
+               joint_first.tries, joint_first.owners, joint_first.sends);
+    }
+    printf("}\n");
     alarm(0);
     return 0;
 }

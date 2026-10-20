@@ -455,11 +455,16 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_link_libraries(nsl-discovery-rounds-runtime PRIVATE ihslib ihs-platforms ihslib)
     target_link_options(nsl-discovery-rounds-runtime PRIVATE -Wl,--wrap=malloc -Wl,--wrap=time -Wl,--wrap=getpid
         -Wl,--wrap=IHS_DiscoveryRandomInt -Wl,--wrap=IHS_UDPBroadcastAddresses -Wl,--wrap=sendto
-        -Wl,--wrap=IHS_ClientStreamingCallback -Wl,--wrap=IHS_ThreadCreate -Wl,--wrap=socket)
+        -Wl,--wrap=IHS_ClientStreamingCallback -Wl,--wrap=IHS_ThreadCreate -Wl,--wrap=socket
+        -Wl,--wrap=IHS_ClientDiscoveryEndCycle)
     add_test(NAME discovery_rounds_official_vectors COMMAND "${Python3_EXECUTABLE}" -O
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-discovery-rounds.py"
         --receiver $<TARGET_FILE:nsl-discovery-rounds-runtime>)
     set_tests_properties(discovery_rounds_official_vectors PROPERTIES TIMEOUT 45)
+    add_test(NAME discovery_joint_official_vectors COMMAND "${Python3_EXECUTABLE}" -O
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-discovery-joint.py"
+        --receiver $<TARGET_FILE:nsl-discovery-rounds-runtime>)
+    set_tests_properties(discovery_joint_official_vectors PROPERTIES TIMEOUT 60)
     add_test(NAME discovery_backlog_cancel COMMAND nsl-discovery-rounds-runtime backlog_cancel)
     add_test(NAME discovery_backlog_wrap COMMAND nsl-discovery-rounds-runtime backlog_wrap)
     set_tests_properties(discovery_backlog_cancel discovery_backlog_wrap PROPERTIES TIMEOUT 25)

@@ -239,7 +239,12 @@ static void exercise(IHS_Client *c) {
     IHS_BufferAppendUInt32LE(&b, cmsg_remote_client_broadcast_status__get_packed_size(&status));
     IHS_BufferAppendMessage(&b, (void *)&status);
     require(__real_sendto(peer, wire, b.size, 0, (void *)&sender, size) == (ssize_t)b.size, "actual Status reply");
-    for (unsigned i = 0; i < 2000 && !atomic_load(&delivered); ++i) usleep(1000);
+    for (unsigned i = 0; i < 2000 && !atomic_load(&delivered); ++i) {
+        /* start_client selects deferred ownership; mirror the actual runtime
+         * worker's pump rather than leaving its first Update unfinished. */
+        if (app_mode) IHS_ClientPumpAuthorization(c, 32);
+        usleep(1000);
+    }
     require(atomic_load(&delivered) == 1, "healthy retry actually receives Status");
     __real_close(peer);
 }

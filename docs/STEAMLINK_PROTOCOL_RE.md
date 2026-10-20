@@ -13497,3 +13497,41 @@ timer slot的发布、访问、销毁均在递归timer锁下串行，顺序为ti
 不改变引用及任何快照；Stop销毁任务并释放未应用的目标块。成功只表示接受，不证明
 同步完成或报文送达。此映射不增加线程、不把广播fd恢复扩展到媒体Session，也
 不把PC stop/join/destroy证明扩大为Switch loader ABI或真实弱网验证。
+
+## 176. 同轮到期的发现、开流重试与后段重入
+
+Evidence：`audit-steam-discovery-joint.py` 对§172的固定Core/Shell原二进制分别执行
+六种联合Update程序。Core Update@79890c在接收处理后调用RequestStatus@798ab0，
+随后才在开流state5及期限满足时调用SendStartStreamingRequest@798c74。state5、
+manager+520期限和wall秒为输入；保存地址记录/查找及开流producer为明确终点。
+发现序列化、sendto及广播全失败后的关闭/BInit/重试运行原指令。IPv4能力在首次
+初始化及重建时均为受控输入，不能将此程序扩展为IPv6验证。
+
+发现和开流同轮到期时，原顺序为type0后type5。发现首发EIO时，原关闭/重建/重发
+仍先于开流producer，即0失败、0重发、5。此前Native把StreamingUpdate置于发现
+EndCycle之前，实际报文为5、0；这组反例否定“两个组件分别通过即可证明联合顺序
+相同”。发送返回不能被推广成Steam接收证明；Native开流构造器本身不根据UDP发送
+返回退休事务，也不能据此声称此差异就是玩家卡顿的根因。
+
+在开流producer终点内调用两次原Trigger、Enable、Disable或AddClientDiscovery，
+修改发生在本轮RequestStatus之后。嵌套Update仍被reentry guard拒绝：Trigger与
+Enable清full后等待下一Update，不能在当前Update追加发现包；Disable当轮已发送
+的包不受追溯影响；新增地址也只影响下一Update。两次同秒Update分别记录发送顺序、
+目标及sequence/full/fast/tries/owner，不能仅比较合并后的最终状态。开流终点将
+其输入期限推进一秒，只用于隔离后段重入，不证明原开流正文、票据或全部重试策略。
+
+线程端口在timer→Base锁序下，由一个receive-update执行者依次完成发现发送选择、
+开流更新、周期结束。fresh receive generation只能认领一次；deferred队列及已出队
+回调完成后由应用worker的Pump推进，RX不提前结束其周期。独立timer不再抢先运行
+常规发现发送，显式interval/one-shot API仍保留单独策略。当前client的dispatch
+标记覆盖两个发送阶段，使后段重入只修改下一轮期限；周期结束重新解析owner slot，
+不在可能Stop/替换后的旧context上操作。无新receive时保留原deferred初发路径，
+不把该路径当作新的manager重入范围。
+
+`check-steam-discovery-joint.py` 使用真实Native RX/请求序列化/UDP/任务清理，并在
+实际EndCycle边界捕获第一轮，再比较下一轮及合并结果；普通与deferred各六组。
+定时器worker仅由测试屏障暂扣，随后释放并join。反序、遗漏重入标记和后段重跑
+发现三类实际模块反例都须被拒绝；后者即使最终合并结果相同，也必须在第一轮被
+发现。启动资源故障测试同样须泵送start_client选择的deferred owner，符合实际
+runtime worker，而非依赖Status碰巧在首轮读到。这些受控比较不证明自然Qt完整
+事件次序、整个manager等价、真实Steam互操作或Switch loader ABI。
