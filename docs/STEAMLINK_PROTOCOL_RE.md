@@ -13409,7 +13409,7 @@ SDL后端更换主UDP socket时保留interrupt socket/packet/set及等待模式�
 ## 174. 发现轮次、弱随机流及已保存地址的统一 RequestStatus
 
 Evidence：`audit-steam-discovery-rounds.py` 在§172固定的两份官方二进制上分别执行
-12组连续调度程序、7组显式seed流和4个受控随机拒绝边界。原Update、Enable、Trigger、
+18组连续调度程序、7组显式seed流和4个受控随机拒绝边界。原Update、Enable、Trigger、
 Disable、RequestStatus、CUtlBuffer及生成protobuf运行；time/RNG端点与OS返回是受控
 边界。保存地址程序用显式预载记录/ID查找终点代替文件加载和hash查找，只证明其后
 原RequestStatus的循环、端口覆盖、身份列表和完整wire，不证明持久化缓存生产过程。
@@ -13453,15 +13453,47 @@ full。嵌套程序使用独立仿真栈、保存/恢复外层CPU，在严格核
 情况都合并的策略不能保留：b2caba7受控burst仅增加一包，原码增加两包，这一差异
 已经由实际执行证明，不能以线程适配笼统忽略。
 
-线程端口用有界pending计数保留独立刷新，每个新的完整RX/回调周期处理一个；
-同一client的接收/已出队处理内仅设置一次nested标记。线程局部的dispatch owner
-区分“本回调重入”和“另一线程在接收期间提交”，不能用全局receiveBatchActive
-代替这个判断。Native另用真实UDP Status callback、回调暂扣时的外部调用及已解析/
-出队的StreamingProgress处理核对这三种边界；deferred投影仍以原BProcess内的
-重入行为为Source契约，不冒称原客户端也有同一个Native队列。
+仅用有界pending计数保留独立刷新并不足以保留原操作顺序，见§175的确定反例；
+该旧映射不再作为完整契约。线程局部dispatch owner仍用于区分“本回调重入”和
+“另一线程在接收期间提交”，不能用全局receiveBatchActive代替。Native另用真实
+UDP Status callback、回调暂扣时的外部调用及已解析/出队的StreamingProgress处理
+核对这些边界；deferred投影仍以原BProcess内重入行为为Source契约，不冒称原客户端
+也有同一个Native队列。
 
-执行边界仍需保留：Native API接受后由完成RX/回调的100ms任务执行，原方法同步
-调用Update。上述程序不证明API同步返回、Enable/Disable快速交错、目标替换与
-刷新并发或自然Qt事件的全部时序等价。手工地址查询、应用启动监测的一秒探针是
-其他producer，不属于本节常规定时RequestStatus的覆盖；不能把局部比较通过扩大
-成全部发现流程已对齐。
+执行边界仍需保留：Native API成功表示接受，原方法则同步调用Update。手工地址
+查询、应用启动监测的一秒探针是其他producer，不属于本节常规定时RequestStatus
+覆盖；不能把局部比较通过扩大成全部发现流程已对齐。
+
+## 175. 发现操作的应用、接收回调与发送边界
+
+Evidence：§174固定两份官方二进制，追加三种顺序和三种首轮BProcess程序。
+原Enable先加引用、清full，并调用Update；Disable只减引用、不调用Update；
+原AddClientDiscovery添加唯一ID、清full，但不调用Update。Update先完成接收与
+回调，再选full/fast并发送；嵌套Update被manager reentry guard拒绝，但嵌套方法
+对引用、ID及full的修改仍在当前外层发送前生效。BProcess为显式opaque终点，
+嵌套方法执行原指令，用独立栈及严格返回PC续跑；不是有效Source wire准入证明。
+
+确定反例推翻“只保留待刷新次数即可”的充分性：首轮watch前Enable→Disable，
+官方仍先发seq2广播再减引用；提前应用Disable会少这一包。
+Enable→Disable→Trigger→Enable，原码只发seq2/4；把所有刷新放到最终引用状态下
+执行会多发seq3。Enable后Add两条保存地址，原Enable先发seq2广播，Add只置full，
+下一Update再发seq3的两条单播和一条广播；提前发布目标会改变首轮内容及序号。
+
+首轮接收回调中的原Disable使当轮引用归零，因此seq2不发广播；原Add使当轮
+seq2发两条单播及一条广播；两个原Trigger只影响这一轮，不额外推进序号。
+若另有独立Disable排在Enable之后，它不能先影响Enable内回调的seq2广播。
+这些程序证明操作边界，不能由此推出自然Qt事件的全部生产次序。
+
+线程端口使用64项本地操作队列（内存预算，不是Steam协议限额）：外部Enable/
+Disable/Trigger和已复制的目标快照按接受顺序保留。每轮在收包前，先应用此前的
+Disable/Targets，遇到第一个Enable/Trigger则应用并停下；完成其RX/deferred回调
+和发送选择后才进入后续操作。当前client的真实dispatch内操作就地生效，刷新合并
+到当前外层周期。接受引用数与当轮已应用引用数分开，防止未来Disable提前影响发送；
+本地API拒绝引用溢出或不平衡调用，不模拟官方断言后的非法引用状态。
+
+timer slot的发布、访问、销毁均在递归timer锁下串行，顺序为timer→Base；包括
+空slot首次发布和无manager的目标替换。已提交快照由client持有，排队快照由对应
+命令持有；最后接受的目标用于幂等比较，不能提前成为发送目标。队列满或分配失败
+不改变引用及任何快照；Stop销毁任务并释放未应用的目标块。成功只表示接受，不证明
+同步完成或报文送达。此映射不增加线程、不把广播fd恢复扩展到媒体Session，也
+不把PC stop/join/destroy证明扩大为Switch loader ABI或真实弱网验证。

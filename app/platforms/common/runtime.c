@@ -663,9 +663,10 @@ static bool start_discovery(sl_runtime *r) {
     r->discovery_subscription = IHS_ClientEnableDiscovery(r->client);
     return r->discovery_subscription;
 }
-static void pause_discovery(sl_runtime *r) {
-    if (r->discovery_subscription) IHS_ClientDisableDiscovery(r->client);
+static bool pause_discovery(sl_runtime *r) {
+    if (r->discovery_subscription && !IHS_ClientDisableDiscovery(r->client)) return false;
     r->discovery_subscription = false;
+    return true;
 }
 static void stop_client(sl_runtime *r) {
     if (!r->client)
@@ -817,7 +818,7 @@ static bool request_stream(sl_runtime *r, bool network_test) {
     IHS_HostInfo host;
     if (!r->client || !host_info(r, &r->active.host, &host))
         return false;
-    pause_discovery(r);
+    if (!pause_discovery(r)) return false;
     const sl_host *paired = sl_host_find(&r->store.registry, r->active.host.id);
     uint8_t selected[32];
     int loaded = sl_host_key_load(sl_system_data_dir(), host.clientId, r->active.host.account,

@@ -20,10 +20,12 @@
  * No fixture datagram can leave for a LAN. */
 static atomic_llong wall = 1000;
 static atomic_uint time_reads;
+static unsigned minimum_reads;
 static bool upper, failure;
 static _Thread_local bool target_alloc_fault;
 static unsigned allocation_failures;
-static bool nested_case, external_case, deferred_case;
+static bool nested_case, external_case, deferred_case, initial_receive;
+static const char *mode;
 static atomic_int client_fd = -1;
 static atomic_bool received_status;
 static atomic_bool callback_entered, release_callback;
@@ -31,6 +33,38 @@ void *__real_malloc(size_t size);
 void *__wrap_malloc(size_t size) {
     if (target_alloc_fault) { ++allocation_failures; return NULL; }
     return __real_malloc(size);
+}
+/* Test-only barrier holds the real receive worker before its first Update.
+ * No substitute timer/receiver is used, and the owned thread is still joined. */
+static bool order_case;
+static atomic_bool release_watcher;
+static IHS_ThreadFunction *watcher_function;
+static void *watcher_context;
+IHS_Thread *__real_IHS_ThreadCreate(IHS_ThreadFunction *, const char *, void *);
+static void held_watcher(void *unused) {
+    (void)unused;
+    while (!atomic_load(&release_watcher)) usleep(1000);
+    watcher_function(watcher_context);
+}
+IHS_Thread *__wrap_IHS_ThreadCreate(IHS_ThreadFunction *function, const char *name, void *context) {
+    if (order_case && !strcmp(name, "IHSClient")) {
+        watcher_function = function;
+        watcher_context = context;
+        return __real_IHS_ThreadCreate(held_watcher, name, NULL);
+    }
+    return __real_IHS_ThreadCreate(function, name, context);
+}
+/* Bind the real first UDP socket before the held worker starts; this lets a
+ * real Status already be queued when Enable's first read begins. */
+int __real_socket(int, int, int);
+int __wrap_socket(int family, int type, int protocol) {
+    int fd = __real_socket(family, type, protocol);
+    if (initial_receive && atomic_load(&client_fd) < 0 && family == AF_INET && type == SOCK_DGRAM) {
+        struct sockaddr_in local = {.sin_family=AF_INET, .sin_addr.s_addr=htonl(INADDR_LOOPBACK)};
+        if (fd < 0 || bind(fd, (void *)&local, sizeof(local))) abort();
+        atomic_store(&client_fd, fd);
+    }
+    return fd;
 }
 static unsigned sends;
 static char wires[128][4096];
@@ -97,22 +131,77 @@ static void inspect(IHS_TimerTask *task, void *opaque) {
     snapshot->owners = context->broadcastOwners;
     snapshot->sequence = snapshot->client->discoverySeq;
     snapshot->sends = sends;
-    snapshot->pending = context->pendingFull || context->nestedFull;
+    snapshot->pending = context->commandCount || context->cycleActive ||
+                        snapshot->client->discoveryTargetsChanged;
     IHS_BaseUnlock(&snapshot->client->base);
+}
+/* Native-only backlog/resource contracts; not claimed as official queue size. */
+static void inspect_full_backlog(IHS_TimerTask *task, void *opaque) {
+    IHS_Client *client = opaque;
+    const IHS_DiscoveryContext *context = IHS_TimerTaskGetContext(task);
+    IHS_BaseLock(&client->base);
+    require(context->commandCount == IHS_DISCOVERY_COMMAND_CAPACITY &&
+            context->acceptedOwners == 1 && !context->broadcastOwners &&
+            context->queuedTargets == IHS_DISCOVERY_COMMAND_CAPACITY / 2 &&
+            !client->discoveryTargets && !client->discoveryTargetCount &&
+            !client->discoveryTargetsChanged && !context->cycleActive,
+            "full backlog rejection preserves accepted refs and committed targets");
+    unsigned targets = 0;
+    for (unsigned i=0; i<context->commandCount; ++i) {
+        const IHS_DiscoveryCommand *command = &context->commands[
+            (context->commandHead+i) % IHS_DISCOVERY_COMMAND_CAPACITY];
+        if (command->operation != IHS_DiscoveryTargets) continue;
+        ++targets;
+        require(command->count == 1 && command->idCount == 1 &&
+                command->targets[0].clientId == targets,
+                "queued target bytes owned independently from caller");
+    }
+    require(context->desiredCount == 1 && context->desiredTargets[0].clientId == targets,
+            "desired snapshot aliases last owned queue entry");
+    IHS_BaseUnlock(&client->base);
+}
+static void inspect_wrapped_backlog(IHS_TimerTask *task, void *opaque) {
+    IHS_Client *client = opaque;
+    const IHS_DiscoveryContext *context = IHS_TimerTaskGetContext(task);
+    IHS_BaseLock(&client->base);
+    require(!context->commandCount && !context->queuedTargets &&
+            context->acceptedOwners == 1 && context->broadcastOwners == 1 &&
+            client->discoverySeq == IHS_DISCOVERY_COMMAND_CAPACITY+10,
+            "wrapped ring preserves command identity and owner count");
+    IHS_BaseUnlock(&client->base);
+}
+static void fill_backlog(IHS_Client *client) {
+    require(IHS_ClientEnableDiscovery(client), "initial queued Enable");
+    IHS_DiscoveryTarget target = {.clientId=1};
+    require(IHS_IPAddressFromString(&target.ip, "127.0.0.1"), "backlog target");
+    target_alloc_fault = true;
+    require(!IHS_ClientSetDiscoveryTargets(client, &target, 1), "queued snapshot allocation failure");
+    target_alloc_fault = false;
+    require(allocation_failures == 1, "queued target allocator actually failed");
+    for (unsigned n=1; n<=IHS_DISCOVERY_COMMAND_CAPACITY/2; ++n) {
+        target.clientId = n;
+        require(IHS_ClientSetDiscoveryTargets(client, &target, 1), "owned queued target accepted");
+        if (n<IHS_DISCOVERY_COMMAND_CAPACITY/2)
+            require(IHS_ClientTriggerDiscovery(client), "independent queued Trigger accepted");
+    }
+    require(IHS_ClientSetDiscoveryTargets(client, &target, 1), "identical desired snapshot needs no queue slot");
+    ++target.clientId;
+    require(!IHS_ClientSetDiscoveryTargets(client, &target, 1) &&
+            !IHS_ClientEnableDiscovery(client) && !IHS_ClientDisableDiscovery(client) &&
+            !IHS_ClientTriggerDiscovery(client), "all full-backlog mutations rejected atomically");
+    require(IHS_TimerTaskVisitOwned(client->timers, &client->discoveryTimer,
+            inspect_full_backlog, client), "inspect live backlog before cancellation");
 }
 static bool first = true;
 static void snapshot(IHS_Client *client, bool wait) {
     Snapshot row = {.client = client};
-    for (unsigned cycle = 0;; ++cycle) {
-        require(cycle < 8, "bounded accepted refresh drain");
-        if (wait) {
-            unsigned before = atomic_load(&time_reads);
-            for (unsigned i = 0; i < 3000 && atomic_load(&time_reads) == before; ++i) usleep(1000);
-            require(atomic_load(&time_reads) > before, "actual timer sampled controlled wall time");
-        }
+    for (unsigned poll = 0;; ++poll) {
+        require(poll < 5000, "bounded accepted operation drain");
+        if (deferred_case) IHS_ClientPumpAuthorization(client, 1);
         require(IHS_TimerTaskVisitOwned(client->timers, &client->discoveryTimer, inspect, &row),
                 "live task snapshot after actual callback completion");
-        if (!wait || !row.pending) break;
+        if (!row.pending && (!wait || atomic_load(&time_reads) >= minimum_reads)) break;
+        usleep(1000);
     }
     printf("%s{\"sequence\":%u,\"next_status\":%lld,\"fast_status\":%lld,"
            "\"status_tries\":%u,\"broadcast_owners\":%u,\"wires\":[",
@@ -125,14 +214,17 @@ static void snapshot(IHS_Client *client, bool wait) {
     first = false;
 }
 static void update(IHS_Client *client, int64_t now) {
+    minimum_reads = atomic_load(&time_reads) + 1;
     atomic_store(&wall, now);
     snapshot(client, true);
 }
 static void enable(IHS_Client *client) {
+    minimum_reads = atomic_load(&time_reads) + 1;
     require(IHS_ClientEnableDiscovery(client), "Enable owned manager");
     snapshot(client, true);
 }
 static void trigger(IHS_Client *client) {
+    minimum_reads = atomic_load(&time_reads) + 1;
     require(IHS_ClientTriggerDiscovery(client), "Trigger existing manager");
     snapshot(client, true);
 }
@@ -144,7 +236,14 @@ static void nested_status(IHS_Client *client, const IHS_HostInfo *host, void *un
     (void)unused;
     require(host->clientId == 123 && host->instanceId == 456 &&
             host->hasGamesRunning && !host->gamesRunning, "actual parsed loopback Status");
-    if (external_case) {
+    if (initial_receive && !strcmp(mode, "first_receive_disables_owner")) {
+        require(IHS_ClientDisableDiscovery(client), "nested Disable sees current applied Enable");
+    } else if (initial_receive && !strcmp(mode, "first_receive_adds_targets")) {
+        IHS_DiscoveryTarget targets[2] = {{.clientId=123}, {.clientId=123}};
+        require(IHS_IPAddressFromString(&targets[0].ip, "127.0.0.1") &&
+                IHS_IPAddressFromString(&targets[1].ip, "127.0.0.2"), "nested targets");
+        require(IHS_ClientSetDiscoveryTargets(client, targets, 2), "nested targets applied in current Update");
+    } else if (external_case) {
         atomic_store(&callback_entered, true);
         while (!atomic_load(&release_callback)) usleep(1000);
     } else {
@@ -169,6 +268,7 @@ void __wrap_IHS_ClientStreamingCallback(IHS_Client *client, const IHS_SocketAddr
 }
 ssize_t __real_sendto(int, const void *, size_t, int, const struct sockaddr *, socklen_t);
 static void deliver_status(IHS_Client *client) {
+    minimum_reads = atomic_load(&time_reads) + 1;
     int peer = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     require(peer >= 0, "actual status peer");
     struct sockaddr_in destination;
@@ -199,7 +299,7 @@ static void deliver_status(IHS_Client *client) {
     IHS_BufferAppendMessage(&packet, payload);
     require(__real_sendto(peer, bytes, packet.size, 0, (void *)&destination, sizeof(destination)) ==
             (ssize_t)packet.size, "actual loopback Status sent");
-    bool ready = false;
+    bool ready = initial_receive;
     for (unsigned i = 0; i < 3000 && !ready; ++i) {
         if (deferred_case) {
             IHS_BaseLock(&client->base);
@@ -251,19 +351,55 @@ int main(int argc, char **argv) {
     require(argc == 2, "named program");
     if (!strcmp(argv[1], "random")) { rng(); return 0; }
     alarm(20);
+    mode = argv[1];
+    initial_receive = !strncmp(mode, "first_receive_", 14);
+    order_case = initial_receive || !strcmp(mode, "backlog_cancel") || !strcmp(argv[1], "enable_disable_before_watch") ||
+                 !strcmp(argv[1], "owner_flip_before_watch") ||
+                 !strcmp(argv[1], "enable_targets_before_watch");
     IHS_Init();
     unsigned char secret[32] = {0};
     IHS_ClientConfig config = {.deviceId = 42, .deviceName = "round fixture", .secretKey = secret};
     IHS_Client *client = IHS_ClientCreate(&config);
     require(client != NULL, "actual client and workers");
     printf("{\"stages\":[");
-    const char *mode = argv[1];
     external_case = !strcmp(mode, "external_trigger_during_receive");
     deferred_case = !strcmp(mode, "nested_deferred_trigger");
-    nested_case = external_case || deferred_case || !strcmp(mode, "nested_receive_trigger");
+    nested_case = initial_receive || external_case || deferred_case || !strcmp(mode, "nested_receive_trigger");
     const IHS_ClientDiscoveryCallbacks callbacks = {.discovered = nested_status};
     if (nested_case) IHS_ClientSetDiscoveryCallbacks(client, &callbacks, NULL);
-    if (!strcmp(mode, "wall_backwards_same_tick_and_fast_cap")) {
+    if (!strcmp(mode, "backlog_cancel")) {
+        fill_backlog(client);
+    } else if (!strcmp(mode, "backlog_wrap")) {
+        enable(client);
+        for (unsigned i=0; i<IHS_DISCOVERY_COMMAND_CAPACITY+8; ++i) trigger(client);
+        require(sends == IHS_DISCOVERY_COMMAND_CAPACITY+9, "ring wrap preserves every full round");
+        require(IHS_TimerTaskVisitOwned(client->timers, &client->discoveryTimer,
+                inspect_wrapped_backlog, client), "inspect wrapped live ring");
+    } else if (order_case) {
+        minimum_reads = atomic_load(&time_reads) + 1;
+        require(IHS_ClientEnableDiscovery(client), "accepted Enable before watcher");
+        if (initial_receive) {
+            if (!strcmp(mode, "first_receive_triggers_before_queued_disable"))
+                require(IHS_ClientDisableDiscovery(client), "future Disable queued after first Enable");
+            deliver_status(client);
+        } else if (!strcmp(mode, "enable_targets_before_watch")) {
+            IHS_DiscoveryTarget targets[2] = {{.clientId=123}, {.clientId=123}};
+            require(IHS_IPAddressFromString(&targets[0].ip, "127.0.0.1") &&
+                    IHS_IPAddressFromString(&targets[1].ip, "127.0.0.2"), "ordered target input");
+            require(IHS_ClientSetDiscoveryTargets(client, targets, 2), "accepted target update after Enable");
+        } else {
+            require(IHS_ClientDisableDiscovery(client), "accepted Disable after Enable");
+            if (!strcmp(mode, "owner_flip_before_watch"))
+                require(IHS_ClientTriggerDiscovery(client) && IHS_ClientEnableDiscovery(client),
+                        "accepted Trigger then re-Enable");
+        }
+        atomic_store(&release_watcher, true);
+        if (initial_receive) {
+            for (unsigned i=0; i<3000 && !atomic_load(&received_status); ++i) usleep(1000);
+            require(atomic_load(&received_status), "actual first receive callback completed");
+        }
+        snapshot(client, true);
+    } else if (!strcmp(mode, "wall_backwards_same_tick_and_fast_cap")) {
         enable(client); update(client,999); update(client,1000); update(client,1001);
         update(client,1001); update(client,1005); update(client,1012); update(client,1013);
     } else if (!strcmp(mode, "late_fast_is_single_and_reschedules_from_now")) {
@@ -336,6 +472,7 @@ int main(int argc, char **argv) {
     } else require(false, "known mode");
     require(IHS_ClientStopDiscovery(client), "retire owned manager");
     require(!IHS_ClientDisableDiscovery(client), "no dangling task after StopDiscovery");
+    atomic_store(&release_watcher, true);
     IHS_ClientStop(client);
     IHS_ClientThreadedJoin(client);
     require(!IHS_ClientTriggerDiscovery(client) && !IHS_ClientEnableDiscovery(client),

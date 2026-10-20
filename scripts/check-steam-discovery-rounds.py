@@ -50,7 +50,7 @@ def policies():
     result = []
     for identity, digest in IDENTITIES.items():
         binary = source['binaries'][identity]
-        require(binary['sha256'] == digest and len(binary['schedules']) == 12 and
+        require(binary['sha256'] == digest and len(binary['schedules']) == 18 and
                 len(binary['random']['cases']) == 7, 'pinned Source schedules/streams')
         wanted = {case['name']: [projection(row) for row in case['stages']]
                   for case in binary['schedules']}

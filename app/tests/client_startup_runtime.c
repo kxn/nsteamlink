@@ -27,7 +27,8 @@ static atomic_int owned_fd = -1;
 static _Thread_local bool creating, in_timer, in_socket, in_discovery;
 static _Atomic(IHS_Thread *) rx_thread, timer_thread, send_thread;
 static IHS_Cond *associated_cond;
-static bool app_mode, session_mode;
+static bool app_mode, session_mode, reject_disable;
+static unsigned pause_rejections;
 static int baseline_mutex, baseline_cond, baseline_queue;
 static unsigned session_mutex_calls, session_queue_calls;
 
@@ -172,6 +173,11 @@ bool __wrap_IHS_ClientEnableDiscovery(IHS_Client *c) {
     bool result = __real_IHS_ClientEnableDiscovery(c);
     in_discovery = false;
     return result;
+}
+bool __real_IHS_ClientDisableDiscovery(IHS_Client *);
+bool __wrap_IHS_ClientDisableDiscovery(IHS_Client *c) {
+    if (reject_disable) { ++pause_rejections; return false; }
+    return __real_IHS_ClientDisableDiscovery(c);
 }
 int __real_IHS_UDPSocketReceive(IHS_UDPSocket *, IHS_UDPPacket *);
 int __wrap_IHS_UDPSocketReceive(IHS_UDPSocket *s, IHS_UDPPacket *p) {
@@ -325,12 +331,13 @@ static void exercise_session(unsigned mode, const IHS_ClientConfig *config) {
 }
 int main(int argc, char **argv) {
     require(argc == 2, "one resource-failure mode");
+    bool pause_mode = !strcmp(argv[1], "pause_rejection");
     unsigned mode;
     session_mode = !strncmp(argv[1], "session_", 8);
     const char *mode_name = argv[1] + (session_mode ? 8 : 0);
     for (mode = 0; mode < NO_FAULT && strcmp(mode_name, names[mode]); ++mode) {}
-    require(mode < NO_FAULT, "known resource mode");
-    require(session_mode ? (mode <= RX_THREAD || mode >= SESSION_SEND_MUTEX) : mode <= DISCOVERY_TASK, "owner resource mode");
+    require(mode < NO_FAULT || pause_mode, "known resource mode");
+    require(pause_mode || (session_mode ? (mode <= RX_THREAD || mode >= SESSION_SEND_MUTEX) : mode <= DISCOVERY_TASK), "owner resource mode");
     alarm(8);
     IHS_Init();
     baseline_mutex = atomic_load(&live_mutex);
@@ -340,6 +347,26 @@ int main(int argc, char **argv) {
     fault = (enum Fault)mode;
     uint8_t secret[32] = {0};
     IHS_ClientConfig config = {.deviceId = 42, .secretKey = secret, .deviceName = "startup fixture"};
+    if (pause_mode) {
+        sl_runtime r = {0};
+        require(!pthread_mutex_init(&r.lock, NULL), "runtime mutex");
+        r.config = config;
+        require(start_client(&r) && r.discovery_subscription, "real runtime discovery subscription");
+        reject_disable = true;
+        require(!pause_discovery(&r) && r.discovery_subscription && pause_rejections == 1,
+                "rejected Disable preserves runtime subscription for explicit retry");
+        reject_disable = false;
+        require(pause_discovery(&r) && !r.discovery_subscription, "explicit pause retry accepted");
+        require(pause_discovery(&r) && !r.discovery_subscription, "already paused is idempotent");
+        require(start_discovery(&r) && r.discovery_subscription, "resume adds fresh balanced reference");
+        stop_client(&r);
+        balanced(true);
+        IHS_Quit(); balanced(false);
+        pthread_mutex_destroy(&r.lock);
+        alarm(0);
+        printf("{\"pause_rejections\":%u,\"retry_balanced\":true,\"final_clean\":true}\n", pause_rejections);
+        return 0;
+    }
     if (session_mode) {
         exercise_session(mode, &config);
         IHS_Quit(); balanced(false);

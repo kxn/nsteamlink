@@ -455,11 +455,14 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_link_libraries(nsl-discovery-rounds-runtime PRIVATE ihslib ihs-platforms ihslib)
     target_link_options(nsl-discovery-rounds-runtime PRIVATE -Wl,--wrap=malloc -Wl,--wrap=time -Wl,--wrap=getpid
         -Wl,--wrap=IHS_DiscoveryRandomInt -Wl,--wrap=IHS_UDPBroadcastAddresses -Wl,--wrap=sendto
-        -Wl,--wrap=IHS_ClientStreamingCallback)
+        -Wl,--wrap=IHS_ClientStreamingCallback -Wl,--wrap=IHS_ThreadCreate -Wl,--wrap=socket)
     add_test(NAME discovery_rounds_official_vectors COMMAND "${Python3_EXECUTABLE}" -O
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-discovery-rounds.py"
         --receiver $<TARGET_FILE:nsl-discovery-rounds-runtime>)
     set_tests_properties(discovery_rounds_official_vectors PROPERTIES TIMEOUT 45)
+    add_test(NAME discovery_backlog_cancel COMMAND nsl-discovery-rounds-runtime backlog_cancel)
+    add_test(NAME discovery_backlog_wrap COMMAND nsl-discovery-rounds-runtime backlog_wrap)
+    set_tests_properties(discovery_backlog_cancel discovery_backlog_wrap PROPERTIES TIMEOUT 25)
     add_executable(nsl-client-startup-runtime tests/client_startup_runtime.c)
     target_include_directories(nsl-client-startup-runtime PRIVATE platforms/common
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
@@ -473,11 +476,13 @@ if(NSL_PLATFORM STREQUAL "desktop")
         -Wl,--wrap=IHS_TimerCreate -Wl,--wrap=IHS_UDPSocketOpen
         -Wl,--wrap=socket -Wl,--wrap=close -Wl,--wrap=sendto
         -Wl,--wrap=IHS_ThreadCreate -Wl,--wrap=IHS_ThreadJoin
-        -Wl,--wrap=IHS_ClientCreate -Wl,--wrap=IHS_ClientEnableDiscovery -Wl,--wrap=IHS_UDPSocketReceive)
+        -Wl,--wrap=IHS_ClientCreate -Wl,--wrap=IHS_ClientEnableDiscovery -Wl,--wrap=IHS_ClientDisableDiscovery -Wl,--wrap=IHS_UDPSocketReceive)
     add_test(NAME discovery_startup_official_vectors COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-discovery-startup.py"
         --receiver $<TARGET_FILE:nsl-client-startup-runtime>)
     set_tests_properties(discovery_startup_official_vectors PROPERTIES TIMEOUT 45)
+    add_test(NAME discovery_pause_rejection COMMAND nsl-client-startup-runtime pause_rejection)
+    set_tests_properties(discovery_pause_rejection PROPERTIES TIMEOUT 10)
     target_include_directories(nsl-discovery-error-runtime PRIVATE
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
     target_compile_options(nsl-discovery-error-runtime PRIVATE -Wall -Wextra -Werror -Wno-unknown-pragmas)

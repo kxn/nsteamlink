@@ -16,7 +16,7 @@ import importlib.util
 import json
 from pathlib import Path
 from collections import Counter
-from unicorn.arm64_const import UC_ARM64_REG_SP, UC_ARM64_REG_X0, UC_ARM64_REG_X30, UC_ARM64_REG_PC
+from unicorn.arm64_const import UC_ARM64_REG_SP, UC_ARM64_REG_X0, UC_ARM64_REG_X1, UC_ARM64_REG_X30, UC_ARM64_REG_PC
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('sender', ROOT / 'scripts/audit-steam-discovery-send.py')
 sender = importlib.util.module_from_spec(spec)
@@ -34,13 +34,14 @@ class Random(sender.Sender):
         return super().hook(u, pc, size, data)
 
 class Nested(sender.Sender):
-    """Opaque receive callback calls two original Triggers during real Update.
+    """Opaque receive callback calls declared original operations during real Update.
 
     Nested Unicorn stop returns control at the exact original BProcess return
     PC. Resume that original outer instruction stream; no Source code patch.
     The nested call uses a separate mapped stack, then restores outer CPU state.
     """
     resume_pc = None
+    actions = (('trigger', None), ('trigger', None))
 
     def call(self, entry, *params):
         try:
@@ -60,16 +61,20 @@ class Nested(sender.Sender):
                 '_ZN14CServerManager8BProcessEP10CIPAndPortP10CUtlBufferb'):
             saved = u.context_save()
             self.resume_pc = u.reg_read(UC_ARM64_REG_X30)
-            self.trace.append(['nested_trigger_terminal_begin'])
-            for _ in range(2):
+            tag = 'nested_trigger' if self.actions == Nested.actions else 'nested_operation'
+            self.trace.append([tag + '_terminal_begin'])
+            for operation, argument in self.actions:
                 u.reg_write(UC_ARM64_REG_SP, 0x30080000)
                 u.reg_write(UC_ARM64_REG_X0, self.manager)
                 u.reg_write(UC_ARM64_REG_X30, sender.config.STOP)
-                u.emu_start(self.symbols[sender.FUNCTIONS['trigger']],
+                if argument is not None:
+                    u.reg_write(UC_ARM64_REG_X1, argument)
+                symbol = sender.FUNCTIONS.get(operation, operation)
+                u.emu_start(self.symbols[symbol],
                             sender.config.STOP + 4, count=300000)
                 assert u.reg_read(UC_ARM64_REG_PC) == sender.config.STOP
             u.context_restore(saved)
-            self.trace.append(['nested_trigger_terminal_end'])
+            self.trace.append([tag + '_terminal_end'])
             return self.ret(1)
         return super().hook(u, pc, size, data)
 
@@ -108,6 +113,9 @@ class Targets(sender.Sender):
             self.trace.append(['controlled_persistent_lookup', identity])
             return self.ret(0 if identity == 123 else 1)
         return super().hook(u, pc, size, data)
+
+class NestedTargets(Nested, Targets):
+    pass
 
 def schedule(binary):
     cases = []
@@ -234,6 +242,54 @@ def schedule(binary):
     assert [r['sequence'] for r in rows] == [2, 4]
     cases.append(dict(name='external_trigger_during_receive', stages=rows,
         boundary='Source completes one opaque receive Update before the independent UI calls; Native queues external actor calls during the callback and sends after RX, not reentry'))
+    m = sender.started(binary, False)
+    m.run('enable')
+    m.call(m.symbols['_ZN14CServerManager25DisableBroadcastDiscoveryEv'], m.manager)
+    final = row(m)
+    assert final['sequence'] == 2 and final['broadcast_owners'] == 0 and len(final['sends']) == 1
+    cases.append(dict(name='enable_disable_before_watch', stages=[final]))
+    m = sender.started(binary, False)
+    m.run('enable')
+    m.call(m.symbols['_ZN14CServerManager25DisableBroadcastDiscoveryEv'], m.manager)
+    m.run('trigger')
+    m.run('enable')
+    final = row(m)
+    assert final['sequence'] == 4 and final['broadcast_owners'] == 1
+    assert [x['wire'][-4:] for x in final['sends']] == ['0802', '0804']
+    cases.append(dict(name='owner_flip_before_watch', stages=[final]))
+    m = Targets(binary)
+    m.socket_result, m.socket_plan = 37, [-1, 37]
+    m.run('start')
+    m.run('enable')
+    m.call(m.symbols['_ZN14CServerManager18AddClientDiscoveryEy'], m.manager, 123)
+    added = row(m)
+    assert added['sequence'] == 2 and len(added['sends']) == 1 and added['next_status'] == 0
+    m.run('update')
+    final = row(m)
+    assert final['sequence'] == 3 and len(final['sends']) == 4
+    assert [x['wire'][-4:] for x in final['sends']] == ['0802', '0803', '0803', '0803']
+    cases.append(dict(name='enable_targets_before_watch', stages=[final], after_add=added,
+        boundary='original AddClientDiscovery appends ID and only clears full; actual next Update uses declared preloaded persistent lookup records'))
+    for name, actions, disable_after in (
+        ('first_receive_disables_owner', (('_ZN14CServerManager25DisableBroadcastDiscoveryEv', None),), False),
+        ('first_receive_adds_targets', (('_ZN14CServerManager18AddClientDiscoveryEy', 123),), False),
+        ('first_receive_triggers_before_queued_disable', (('trigger', None), ('trigger', None)), True),
+    ):
+        m = NestedTargets(binary)
+        m.actions = actions
+        m.socket_result, m.socket_plan = 37, [-1, 37]
+        m.run('start')
+        m.receive_plan = [9, -1]
+        m.run('enable')
+        if disable_after:
+            m.call(m.symbols['_ZN14CServerManager25DisableBroadcastDiscoveryEv'], m.manager)
+        final = row(m)
+        assert final['sequence'] == 2
+        assert final['broadcast_owners'] == (1 if name == 'first_receive_adds_targets' else 0)
+        assert len(final['sends']) == (0 if name == 'first_receive_disables_owner' else
+                                      3 if name == 'first_receive_adds_targets' else 1)
+        cases.append(dict(name=name, stages=[final],
+            boundary='opaque first BProcess invokes declared original operations during Enable Update; separate nested stack and strict outer continuation; target records/lookup explicit adapters'))
     return cases
 
 def forced_random(binary):
@@ -306,6 +362,6 @@ def main():
     else:
         assert result == json.loads(gzip.decompress(ref.read_bytes()))
     args.output.write_bytes(data)
-    print('Original discovery rounds: 12 schedules, 7 seeded streams and 4 rejection boundaries per binary passed')
+    print('Original discovery rounds: 18 schedules, 7 seeded streams and 4 rejection boundaries per binary passed')
 if __name__ == '__main__':
     main()
