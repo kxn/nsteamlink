@@ -3080,3 +3080,22 @@ Decision：
 
 原始worker阶段/Qt/线程端点与native的peer/service callback均有显式provider，实际UDP/
 Test线程验证不能代替真实Steam/SDR或Switch loader验收。没有新增线程或计时重试策略。
+
+## D-A089：测网 SDK 媒体失败独立于普通播放器自动停止
+
+Evidence：公网协议参考§11.3的原始SDR Test BConnect/Run/Panel action2/3及§124
+测试失败确认；原lifecycle的断开分支进入Failed4并关闭媒体。BInit=false时backend
+先释放，manager6/编号仍保留到错误框确认。
+
+Decision：
+
+- 测网SDK创建失败或Failed/Closed进入测网失败路径，保留失败快照/待确认标记，确认前
+  不发开流取消或自动转成普通重试。普通播放器的SDK失败处理保持原有生命周期。
+- stop_network_test按Test归属清理backend；异步初始化失败时即使没有IHS Session也释放。
+  有IHS时先Disconnect/Join/Destroy，再发送最后已排队的goodbye并释放backend。
+  不在取消尚无IHS的初始化时额外轮询backend；不提前销毁普通播放器的backend。
+- 已在等待控制错误确认或安全码输入时，SDK终态不夺取页面、不启动新Session或自动销毁
+  仍由Test持有的对象。确认/安全码重试按原owner清理顺序退出。
+
+这是产品异步SDK初始化与原同步BInit/独立Test线程之间的生命周期映射；不证明HTTP错误
+起因、自然SDK故障/线程时序或真实SDR媒体恢复。多个错误的交替顺序仍需单独对照。

@@ -1471,6 +1471,35 @@ native callback 测试称为真实 CM/SDR 联通。生产 SDK 在错误框期间
 但不据其状态自动关闭测试或创建新 Session；确认后按 IHS Join→backend destroy 清理。
 
 
+#### 测网的 SDR 初始化失败与媒体失败
+
+**Evidence**：`audit-steam-network-test-sdk-failure.py` 从真实 SDR ticket/Panel 开始，
+继续执行原 `CNetworkTest::RunNetworkTest→BConnect`。action2/3 的虚拟 BInit=false
+均立即 Release backend、清 transport/connection，Run 返回 Failed4；PanelOnUpdate
+显示 style0 的 finished→OnActionCancel 错误框，manager6/id17 保留到确认才发送10。
+这次执行没有创建 bridge/Connection，BInit bool 与 backend 存储/Release 是 provider；
+不宣称执行过真实 SDK 初始化失败或证明配置 HTTP 的前置重试策略。
+原 lifecycle fixture 的 X_phase2/3/4 另确认 OnStreamDisconnected→Run Failed4/phase0。
+
+**证据修订**：撤回测网可以复用普通媒体的 SDK Failed/Closed→stop_session→generic
+failure 分支的假设。测网媒体失败先停止/Join 媒体并释放 backend，再保留测试失败快照
+及等待确认；不能清掉 test_failure_pending、静默离开测试或变成直接重试。错误的
+backend 在 IHS Session 创建前就可能存在，清理不能只放在 test_session 非空分支里。
+这不改变上一节控制错误保留 Test owner 到确认的不同路径，也不改变普通播放器清理。
+
+原始 fixture gzip SHA256：`5bd445fff735c3a5fd93cc55d2419564499f1b8ce9d4b81a0c4e08c0e3c9b0fe`。
+native 使用真实产品 actor、CM/IHS parser 与 Test worker，SDK/config/route 结果是
+显式输入；核对同步创建失败、异步初始化失败、Session 创建后的 Failed/Closed，不能
+把这些 owner-policy 测试称为真实 SDR 故障恢复或 Switch 验收。
+
+`check-steam-network-test-sdk-failure.py` 比较12次native生命周期，区分手动/连接前测网、
+创建失败、IHS之前的异步失败、IHS之后的Failed/Closed，以及明确先交付控制错误/PIN、
+再注入SDK Closed。后两组用上一节原始Panel分支约束页面/owner，SDK终态为provider；
+不能声称执行了官方真实SDK的同一自然组合。反向顺序和多次错误对话交替未由此覆盖。
+旧产品逻辑配同一基础driver的8组程序全部正常结束，比较器逐组检出失败快照/确认语义
+差异；未将编译错误、进程崩溃或不支持的新组合模式计为反例。
+
+
 ### 11.4 ProofRequest 可更新长期 secret
 
 **Evidence：** `HandleStreamingProofRequest @0x79e1c0–0x79e594`，proto 的 challenge=1:bytes、

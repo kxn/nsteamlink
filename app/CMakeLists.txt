@@ -1112,6 +1112,12 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-network-test-late-control.py"
         --receiver $<TARGET_FILE:nsl-network-test-failure-runtime>)
     set_tests_properties(network_test_late_control PROPERTIES TIMEOUT 90)
+    if(NSL_BUILD_SNS)
+        add_test(NAME network_test_sdk_failure COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-network-test-sdk-failure.py"
+            --receiver $<TARGET_FILE:nsl-ticket-consumer-runtime>)
+        set_tests_properties(network_test_sdk_failure PROPERTIES TIMEOUT 90)
+    endif()
     add_executable(nsl-host-key-store tests/host_key_store.c src/services/host_key_store.c)
     target_include_directories(nsl-host-key-store PRIVATE src)
     target_compile_options(nsl-host-key-store PRIVATE -UNDEBUG -Wall -Wextra)

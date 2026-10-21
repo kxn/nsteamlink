@@ -41,7 +41,12 @@ static unsigned cm_count, udp_count, udp_index, after_injection;
 static unsigned final_phase;
 static unsigned admission_phase, handoffs;
 static unsigned handshake_sends, handoff_controls, late_controls;
-static unsigned test_mode; /* 0 constructor terminal, 1 SDK connecting, 2 init failure, 3 late ingress. */
+static unsigned test_mode; /* 0 constructor terminal, 1 SDK connecting, 2 init failure, 3 late ingress;
+                            * 4 Test SDK create fail, 5 async init fail, 6 Failed, 7 Closed,
+                            * 8 control error then Closed, 9 connect PIN then Closed. */
+static atomic_bool sdk_failure_requested, sdk_sample_requested;
+static atomic_uint sdk_owner_checks, cancel10;
+static bool late_sdk_control_delivered;
 static uint8_t late_cm_packets[8][4096], late_udp_packets[8][4096];
 static size_t late_cm_sizes[8], late_udp_sizes[8];
 static unsigned late_cm_count, late_udp_count;
@@ -117,7 +122,17 @@ void __wrap_sl_remote_connection_update(sl_remote_connection *c, uint64_t now) {
         pthread_mutex_unlock(&actor->lock);
         atomic_store(&settled, true); /* Both CM and subsequent UDP have run. */
     }
+    if (test_mode >= 8 && atomic_load(&sdk_sample_requested) && !late_sdk_control_delivered) {
+        late_sdk_control_delivered = true;
+        for (unsigned n = 0; n < late_cm_count; ++n)
+            assert(sl_remote_receive(protocol, late_cm_packets[n], late_cm_sizes[n]));
+        assert(udp_index == udp_count);
+        memcpy(udp_packets, late_udp_packets, sizeof(udp_packets));
+        memcpy(udp_sizes, late_udp_sizes, sizeof(udp_sizes));
+        udp_count = late_udp_count; udp_index = 0;
+    }
     sl_remote_update(protocol, now);
+    if (atomic_load(&sdk_sample_requested)) atomic_fetch_add(&sdk_owner_checks, 1);
 }
 void __wrap_sl_remote_connection_describe(const sl_remote_connection *c, uint64_t now,
                                           char *out, size_t capacity) {
@@ -131,7 +146,7 @@ void __wrap_sl_remote_connection_destroy(sl_remote_connection *c) {
 uint32_t __wrap_IHS_CryptoRandomUInt32(void) { return 17; }
 bool __wrap_sl_network_stats_load(const char *dir, sl_network_stats_average *average) {
     (void)dir; (void)average;
-    return true; /* Existing stats file input; explicit tests still run. */
+    return test_mode < 4; /* Missing stats input runs the connection-before-Test path too. */
 }
 bool __wrap_IHS_ClientSendControl(IHS_Client *client, const IHS_HostInfo *host,
                                   const IHS_SocketAddress *source, ERemoteClientBroadcastMsg tag,
@@ -142,6 +157,7 @@ bool __wrap_IHS_ClientSendControl(IHS_Client *client, const IHS_HostInfo *host,
         ++handshake_sends;
         if (handoffs) ++late_controls;
     }
+    if (tag == k_ERemoteDeviceStreamingCancelRequest) atomic_fetch_add(&cancel10, 1);
     if (tag == k_ERemoteDeviceStreamingRequest) {
         assert(((CMsgRemoteDeviceStreamingRequest *)message)->request_id == 17);
         atomic_store(&request_seen, true);
@@ -172,7 +188,8 @@ IHS_Session *__wrap_IHS_SessionCreate(const IHS_ClientConfig *config, const IHS_
     assert(pthread_equal(owner, pthread_self()) && info->sessionKeyLen == 32);
     for (unsigned n = 0; n < 32; ++n) assert(info->sessionKey[n] == n);
     atomic_fetch_add(&session_creates, 1);
-    return test_mode == 1 || test_mode == 3 ? __real_IHS_SessionCreate(config, info) : NULL;
+    return test_mode == 1 || test_mode == 3 || test_mode >= 5
+               ? __real_IHS_SessionCreate(config, info) : NULL;
 }
 bool __real_IHS_ClientStreamingHandoff(IHS_Client *);
 bool __wrap_IHS_ClientStreamingHandoff(IHS_Client *client) {
@@ -201,7 +218,7 @@ sl_sns *__wrap_sl_sns_create_configured(const IHS_ClientConfig *config, const sl
            !strcmp(m->stun_servers, "stun:fixture.invalid:3478"));
     for (unsigned n = 0; n < 32; ++n) assert(m->key[n] == n);
     atomic_fetch_add(&backend_attempts, 1);
-    if (test_mode == 2) return NULL;
+    if (test_mode == 2 || test_mode == 4) return NULL;
     atomic_fetch_add(&backend_creates, 1); backend_live = true;
     return (sl_sns *)&backend;
 }
@@ -213,11 +230,16 @@ void __wrap_sl_sns_update(sl_sns *s, uint64_t now) {
 }
 bool __wrap_sl_sns_session_ready(const sl_sns *s) {
     assert(s == (sl_sns *)&backend && backend_live);
-    return true; /* Config/certificate complete, even while SDK finds a route. */
+    return test_mode != 5; /* Stage5 remains before asynchronous BInit completion. */
 }
 sl_sns_state __wrap_sl_sns_get_state(const sl_sns *s) {
     assert(s == (sl_sns *)&backend && backend_live);
-    return test_mode == 1 ? SL_SNS_CONNECTING : SL_SNS_CONNECTED;
+    /* In combined cases the control ingress must precede the SDK terminal,
+     * even if the main thread requests it between two actor update phases. */
+    if (atomic_load(&sdk_failure_requested) &&
+        (test_mode < 8 || late_sdk_control_delivered))
+        return test_mode >= 7 ? SL_SNS_CLOSED : SL_SNS_FAILED;
+    return test_mode == 1 || test_mode == 5 ? SL_SNS_CONNECTING : SL_SNS_CONNECTED;
 }
 void __wrap_sl_sns_get_stats(const sl_sns *s, sl_sns_stats *out) {
     assert(s == (sl_sns *)&backend && backend_live); memset(out, 0, sizeof(*out));
@@ -226,7 +248,8 @@ int __wrap_sl_sns_end_reason(const sl_sns *s) { (void)s; return 0; }
 void __wrap_sl_sns_destroy(sl_sns *s) {
     if (!s) return;
     assert(s == (sl_sns *)&backend && backend_live && pthread_equal(owner, pthread_self()));
-    assert((test_mode != 1 && test_mode != 3) || atomic_load(&session_joins) == atomic_load(&session_creates));
+    assert((test_mode != 1 && test_mode != 3 && test_mode < 5) ||
+           atomic_load(&session_joins) == atomic_load(&session_creates));
     backend_live = false; atomic_fetch_add(&backend_destroys, 1);
 }
 static bool pending_send(void *ctx, const uint8_t *data, size_t size) {
@@ -265,6 +288,56 @@ static unsigned packets(char *text, uint8_t output[8][4096], size_t sizes[8]) {
     }
     return count;
 }
+/* Observe before acknowledgement instead of aborting on the expected policy.
+ * This lets the checker reject a normally completed old/compiled-mutant run.
+ * SDK state/config are providers; actual IHS workers, owner and cleanup run. */
+static int observe_sdk_failure(sl_runtime *r, const sl_auth_store *store, const char *directory) {
+    uint64_t deadline = __real_sl_system_now()+4000;
+    if (test_mode >= 6)
+        while (!atomic_load(&session_creates)) {
+            assert(__real_sl_system_now() < deadline); poll(NULL, 0, 1);
+        }
+    atomic_store(&sdk_failure_requested, true);
+    atomic_store(&sdk_sample_requested, true);
+    while (atomic_load(&sdk_owner_checks) < 4) {
+        assert(__real_sl_system_now() < deadline); poll(NULL, 0, 1);
+    }
+    sl_runtime_facts facts;
+    while (!sl_runtime_read_facts(r, &facts)) {
+        assert(__real_sl_system_now() < deadline); poll(NULL, 0, 1);
+    }
+    sl_network_test_view view = {0};
+    bool have_view = sl_runtime_network_test(r, &view);
+    bool failed = facts.failed, pending = facts.test_failure_pending;
+    bool failed_view = have_view && view.phase == SL_TEST_FAILED;
+    bool detailed = failed_view && strstr(view.error, "Fixture Host");
+    unsigned pin_events = 0;
+    sl_runtime_event event;
+    while (sl_runtime_poll(r, &event)) pin_events += event.type == SL_EVENT_PIN;
+    unsigned before_cancel = atomic_load(&cancel10);
+    unsigned early_close = atomic_load(&backend_destroys);
+    sl_command cancel = {.type = SL_CMD_CANCEL, .generation = 1};
+    assert(sl_runtime_submit(r, &cancel, store));
+    do {
+        assert(__real_sl_system_now() < deadline); poll(NULL, 0, 1);
+    } while (!sl_runtime_read_facts(r, &facts) || !facts.requests_closed ||
+             atomic_load(&cancel10) != 1);
+    sl_runtime_destroy(r);
+    assert(!backend_live && atomic_load(&backend_creates) == atomic_load(&backend_destroys));
+#if NSL_HAVE_SNS
+    assert(cache_creates == 1 && cache_destroys == 1);
+#endif
+    sl_fixture_remove_tree(directory);
+    if (test_mode >= 8) printf("late_sdk_pin_events=%u\n", pin_events);
+    printf("{\"mode\":%u,\"failed\":%s,\"pending\":%s,\"failed_view\":%s,"
+           "\"detailed_error\":%s,\"cancel_before\":%u,\"cancel_after\":%u,"
+           "\"early_close\":%u,\"sessions\":%u,\"joins\":%u,\"backends\":%u,\"clean\":true}\n",
+           test_mode, failed ? "true":"false", pending ? "true":"false",
+           failed_view ? "true":"false", detailed ? "true":"false", before_cancel,
+           atomic_load(&cancel10), early_close, atomic_load(&session_creates),
+           atomic_load(&session_joins), atomic_load(&backend_creates));
+    return 0;
+}
 int main(int argc, char **argv) {
     assert(argc == 2 || argc == 4);
     if (argc == 4) test_mode = (unsigned)atoi(argv[2]);
@@ -272,7 +345,7 @@ int main(int argc, char **argv) {
     char cm[8192], udp[8192];
     assert(scanf("%8191s %8191s", cm, udp) == 2);
     cm_count = packets(cm, cm_packets, cm_sizes); udp_count = packets(udp, udp_packets, udp_sizes);
-    if (test_mode == 3) {
+    if (test_mode == 3 || test_mode >= 8) {
         assert(scanf("%8191s %8191s", cm, udp) == 2);
         late_cm_count = packets(cm, late_cm_packets, late_cm_sizes);
         late_udp_count = packets(udp, late_udp_packets, late_udp_sizes);
@@ -299,6 +372,7 @@ int main(int argc, char **argv) {
     assert(sl_runtime_submit(r, &cmd, &store));
     while (!atomic_load(&settled)) { assert(__real_sl_system_now() < deadline); poll(NULL, 0, 1); }
     assert(udp_index == udp_count);
+    if (test_mode >= 4) return observe_sdk_failure(r, &store, directory);
     if (test_mode == 1) {
         uint32_t begin = r->connect_wait_tick;
         uint64_t begin_ms = (begin/65536u)*1000u+((uint64_t)(begin%65536u)*1000u+65535u)/65536u;

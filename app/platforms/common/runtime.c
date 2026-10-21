@@ -424,6 +424,7 @@ static void fail(sl_runtime *r, const char *s) {
     post(r, e);
 }
 static void publish_test(sl_runtime *, sl_network_test_view);
+static void fail_network_test(sl_runtime *);
 static bool test_error_pending(sl_runtime *r) {
     pthread_mutex_lock(&r->lock);
     bool pending = r->facts.test_failure_pending;
@@ -935,22 +936,30 @@ static void publish_test(sl_runtime *r, sl_network_test_view view) {
     pthread_mutex_unlock(&r->lock);
 }
 static void stop_network_test(sl_runtime *r) {
+#if NSL_HAVE_SNS
+    bool owns_backend = r->test_active || r->test_session;
+    bool had_session = r->test_session != NULL;
+#endif
     if (r->test_session) {
         IHS_SessionDisconnect(r->test_session);
         if (!r->test_joined)
             IHS_SessionThreadedJoin(r->test_session);
         IHS_SessionDestroy(r->test_session);
         r->test_session = NULL;
-#if NSL_HAVE_SNS
-        if (r->sns) {
-            sl_sns_update(r->sns, sl_system_now());
-            sl_sns_destroy(r->sns);
-            r->sns = NULL;
-            r->sns_waiting = false;
-        }
-#endif
         sl_log("network test: workers joined, session destroyed");
     }
+#if NSL_HAVE_SNS
+    /* An asynchronous BInit can fail before IHS exists. Release that Test
+     * backend too, without polling a canceled initialization into a new route.
+     * Ordinary player backends remain alive until their own IHS join. */
+    if (owns_backend && r->sns) {
+        if (had_session)
+            sl_sns_update(r->sns, sl_system_now());
+        sl_sns_destroy(r->sns);
+        r->sns = NULL;
+        r->sns_waiting = false;
+    }
+#endif
     r->test_active = r->test_joined = r->test_waiting_pin = false;
     r->test_sample_at = 0;
     publish_test(r, (sl_network_test_view){.phase = SL_TEST_IDLE});
@@ -1372,6 +1381,10 @@ static void cloud_stream_result(IHS_StreamingResult result, const sl_remote_mate
         r->sns = sl_sns_create_configured(&r->config, m, true, error, sizeof(error), config, config_size);
         memset(error, 0, sizeof(error)); /* SDK text may include an identity. */
         if (!r->sns) {
+            if (r->test_active) {
+                fail_network_test(r);
+                return;
+            }
             rejected(NULL, NULL, IHS_StreamingTransportUnavailable, ctx);
             return;
         }
@@ -2383,7 +2396,7 @@ static void *worker_main(void *ctx) {
             if (pending_test_error || !r->sns_waiting || !sl_sns_session_ready(r->sns))
                 sl_sns_update(r->sns, now);
             sl_sns_state state = sl_sns_get_state(r->sns);
-            if (pending_test_error) {
+            if (pending_test_error || r->test_waiting_pin) {
                 /* Keep polling the existing backend/worker, but do not launch
                  * or dismiss the Test owner behind the error panel. */
             } else if (r->sns_waiting && sl_sns_session_ready(r->sns)) {
@@ -2398,8 +2411,12 @@ static void *worker_main(void *ctx) {
                     }
                 }
             } else if (state == SL_SNS_FAILED || state == SL_SNS_CLOSED) {
-                stop_session(r);
-                fail(r, sl_tr(SL_T_CANNOT_CONNECT));
+                if (r->test_active)
+                    fail_network_test(r);
+                else {
+                    stop_session(r);
+                    fail(r, sl_tr(SL_T_CANNOT_CONNECT));
+                }
             }
         }
 #endif
