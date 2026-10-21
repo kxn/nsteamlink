@@ -727,6 +727,8 @@ int main(int argc, char **argv) {
         snprintf(blocked_temp, sizeof(blocked_temp), "%s/%s", dir, settings_files[i]);
         assert(!unlink(blocked_temp));
     }
+    snprintf(blocked_temp, sizeof(blocked_temp), "%s/sdr_config.txt", dir);
+    if (access(blocked_temp, F_OK) == 0) assert(!unlink(blocked_temp));
     assert(rmdir(dir) == 0);
     /* Reinitialize SDL/fonts in this process to catch stale static ownership. */
     assert(stream_media_init(sl_log));

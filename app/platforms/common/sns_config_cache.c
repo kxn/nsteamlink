@@ -1,0 +1,151 @@
+#include "sns_config_cache.h"
+#include "sns_config_http.h"
+#include "dns_policy.h"
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+enum { CONFIG_LIMIT = 1024 * 1024 };
+struct sl_sns_config_cache {
+    CURLM *http;
+    CURL *request;
+    char *data, *download;
+    size_t size, downloaded;
+    bool global;
+    char path[1024];
+};
+static void event(const char *name) {
+#if NSL_DIAGNOSTICS
+    char line[96];
+    snprintf(line, sizeof(line), "sns_config_cache event=%s", name);
+    sl_dns_policy_report(line);
+#else
+    (void)name;
+#endif
+}
+/* Shell's CUtlString::SetValue consumes a C string. Disk bytes are raw; only
+ * the in-memory view stops at an embedded NUL. No JSON/import or TTL here. */
+static void publish(sl_sns_config_cache *c, char *data, size_t size) {
+    free(c->data);
+    c->data = data;
+    const char *end = size ? memchr(data, 0, size) : NULL;
+    c->size = end ? (size_t)(end - data) : size;
+}
+static void load(sl_sns_config_cache *c) {
+    FILE *f = c->path[0] ? fopen(c->path, "rb") : NULL;
+    if (!f) return;
+    char *data = NULL;
+    long size = -1;
+    bool ok = !fseek(f, 0, SEEK_END) && (size = ftell(f)) > 0 && size <= CONFIG_LIMIT &&
+              !fseek(f, 0, SEEK_SET) && (data = malloc((size_t)size + 1)) &&
+              fread(data, 1, (size_t)size, f) == (size_t)size;
+    if (fclose(f)) ok = false;
+    if (!ok) { free(data); event("cache_ignored"); return; }
+    data[size] = 0;
+    publish(c, data, (size_t)size);
+    event("cache_loaded");
+}
+static void save(sl_sns_config_cache *c) {
+    /* Local publication discipline: retain the previous disk file on a failed
+     * write/close. Retail writes directly; its callback ignores save failure. */
+    char temporary[1040];
+    if (!c->path[0]) return;
+    snprintf(temporary, sizeof(temporary), "%s.tmp", c->path);
+    FILE *f = fopen(temporary, "wb");
+    if (!f) { event("save_failed"); return; }
+    bool ok = fwrite(c->download ? c->download : "", 1, c->downloaded, f) == c->downloaded;
+    if (fclose(f)) ok = false;
+    if (!ok || rename(temporary, c->path)) {
+        remove(temporary);
+        event("save_failed");
+    } else event("saved");
+}
+static size_t receive(char *p, size_t size, size_t count, void *context) {
+    sl_sns_config_cache *c = context;
+    if (size && count > SIZE_MAX / size) return 0;
+    size_t bytes = size * count;
+    if (bytes > CONFIG_LIMIT - c->downloaded) return 0;
+    char *data = realloc(c->download, c->downloaded + bytes + 1);
+    if (!data) return 0;
+    if (bytes) memcpy(data + c->downloaded, p, bytes);
+    c->download = data;
+    c->downloaded += bytes;
+    data[c->downloaded] = 0;
+    return bytes;
+}
+static void stop_request(sl_sns_config_cache *c) {
+    if (!c->request) return;
+    curl_multi_remove_handle(c->http, c->request);
+    curl_easy_cleanup(c->request);
+    c->request = NULL;
+}
+sl_sns_config_cache *sl_sns_config_cache_create(const char *directory) {
+    sl_sns_config_cache *c = calloc(1, sizeof(*c));
+    if (!c) return NULL;
+    if (directory && *directory) {
+        int n = snprintf(c->path, sizeof(c->path), "%s/sdr_config.txt", directory);
+        if (n < 0 || n >= (int)sizeof(c->path)) c->path[0] = 0;
+    }
+    load(c);
+    c->global = curl_global_init(CURL_GLOBAL_DEFAULT) == CURLE_OK;
+    c->http = c->global ? curl_multi_init() : NULL;
+    c->request = c->http ? curl_easy_init() : NULL;
+    if (c->request) {
+        curl_easy_setopt(c->request, CURLOPT_URL,
+            "https://api.steampowered.com/ISteamApps/GetSDRConfig/v1?appid=353380");
+        curl_easy_setopt(c->request, CURLOPT_WRITEFUNCTION, receive);
+        curl_easy_setopt(c->request, CURLOPT_WRITEDATA, c);
+        sl_sns_config_http_options(c->request);
+        if (curl_multi_add_handle(c->http, c->request) == CURLM_OK) event("begin");
+        else { curl_easy_cleanup(c->request); c->request = NULL; }
+    }
+    return c;
+}
+void sl_sns_config_cache_update(sl_sns_config_cache *c) {
+    if (!c || !c->request) return;
+    int running = 0, remaining = 0;
+    CURLMcode result = curl_multi_perform(c->http, &running);
+    bool done = result != CURLM_OK, success = false;
+    CURLMsg *message;
+    while ((message = curl_multi_info_read(c->http, &remaining))) {
+        if (message->msg != CURLMSG_DONE || message->easy_handle != c->request) continue;
+        done = true;
+        success = message->data.result == CURLE_OK;
+#if NSL_DIAGNOSTICS
+        long status = 0, verified = 0;
+        char *remote = NULL, line[224];
+        curl_easy_getinfo(c->request, CURLINFO_RESPONSE_CODE, &status);
+        curl_easy_getinfo(c->request, CURLINFO_SSL_VERIFYRESULT, &verified);
+        curl_easy_getinfo(c->request, CURLINFO_PRIMARY_IP, &remote);
+        snprintf(line, sizeof(line), "sns_config_cache curl=%d http=%ld verify=%ld ip=%.64s",
+            (int)message->data.result, status, verified, remote ? remote : "");
+        sl_dns_policy_report(line);
+#endif
+    }
+    if (!done) return;
+    stop_request(c);
+    if (success) {
+        save(c); /* Save failure must not prevent use of the response. */
+        publish(c, c->download, c->downloaded);
+        c->download = NULL;
+        event("complete");
+    } else event("download_failed");
+    free(c->download);
+    c->download = NULL;
+    c->downloaded = 0;
+}
+const char *sl_sns_config_cache_data(const sl_sns_config_cache *c, size_t *size) {
+    *size = c ? c->size : 0;
+    return c ? c->data : NULL;
+}
+void sl_sns_config_cache_destroy(sl_sns_config_cache *c) {
+    if (!c) return;
+    stop_request(c);
+    if (c->http) curl_multi_cleanup(c->http);
+    if (c->global) curl_global_cleanup();
+    free(c->data);
+    free(c->download);
+    free(c);
+}

@@ -54,7 +54,7 @@ if(NSL_BUILD_SNS)
         ${NSL_GNS_SOURCE}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/platforms/common ${NSL_SDR_PROTO_DIR})
     target_link_libraries(GameNetworkingSockets_s PRIVATE "$<BUILD_INTERFACE:nsl_sdr_core>")
-    add_library(nsl_sns STATIC platforms/common/sns_backend.cpp)
+    add_library(nsl_sns STATIC platforms/common/sns_backend.cpp platforms/common/sns_config_cache.c)
     target_compile_features(nsl_sns PRIVATE cxx_std_17)
     target_compile_definitions(nsl_sns PRIVATE NSL_ENABLE_SDR=$<BOOL:${NSL_ENABLE_SDR}>
         NSL_DIAGNOSTICS=$<BOOL:${NSL_DIAGNOSTICS}>)
@@ -290,7 +290,7 @@ if(NSL_PLATFORM STREQUAL "switch")
                 target_include_directories(${fixture} PRIVATE platforms/common
                     ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
                 foreach(symbol sl_system_init sl_system_shutdown sl_system_data_dir sl_system_running
-                        sl_update_config_load sl_ui_tick sl_runtime_create sl_sns_create sl_sns_update IHS_SessionGetReliabilityStats IHS_HIDSDLGetLastSubmittedReport IHS_HIDDeviceStartInputReports IHS_HIDDeviceSDLCreate IHS_HIDManagedDeviceClose
+                        sl_update_config_load sl_ui_tick sl_runtime_create sl_sns_create sl_sns_create_configured sl_sns_update IHS_SessionGetReliabilityStats IHS_HIDSDLGetLastSubmittedReport IHS_HIDDeviceStartInputReports IHS_HIDDeviceSDLCreate IHS_HIDManagedDeviceClose
                         IHS_HIDFlushSDLGameControllers IHS_HIDHandleSDLEvent sl_media_gate
                         IHS_SessionConnect IHS_UDPSocketReceive IHS_SessionChannelDataReceived
                         IHS_SessionChannelQueuePacket sl_remote_connection_update
@@ -344,7 +344,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
             ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
         target_compile_options(nsl-runtime-probe PRIVATE -Wall -Wextra -Wno-unknown-pragmas)
         foreach(symbol sl_system_data_dir sl_system_running sl_update_config_load sl_ui_tick
-                sl_runtime_create sl_sns_create sl_sns_update IHS_SessionGetReliabilityStats IHS_HIDSDLGetLastSubmittedReport IHS_HIDDeviceStartInputReports IHS_HIDDeviceSDLCreate IHS_HIDManagedDeviceClose
+                sl_runtime_create sl_sns_create sl_sns_create_configured sl_sns_update IHS_SessionGetReliabilityStats IHS_HIDSDLGetLastSubmittedReport IHS_HIDDeviceStartInputReports IHS_HIDDeviceSDLCreate IHS_HIDManagedDeviceClose
                         IHS_HIDFlushSDLGameControllers IHS_HIDHandleSDLEvent sl_media_gate
                         IHS_SessionConnect IHS_UDPSocketReceive IHS_SessionChannelDataReceived
                         IHS_SessionChannelQueuePacket sl_remote_connection_update curl_easy_recv
@@ -494,6 +494,26 @@ if(NSL_PLATFORM STREQUAL "desktop")
             curl_multi_info_read sl_gns_import_trust)
             target_link_options(nsl-sns-config-refresh-tests PRIVATE "-Wl,--wrap=${symbol}")
         endforeach()
+        add_executable(nsl-config-cache-owner tests/config_cache_owner.c)
+        target_compile_definitions(nsl-config-cache-owner PRIVATE NSL_DIAGNOSTICS=0)
+        target_compile_options(nsl-config-cache-owner PRIVATE -Wall -Wextra -UNDEBUG)
+        target_link_libraries(nsl-config-cache-owner PRIVATE PkgConfig::CURL)
+        target_link_options(nsl-config-cache-owner PRIVATE -Wl,--wrap=curl_easy_setopt
+            -Wl,--wrap=fwrite -Wl,--wrap=rename)
+        add_test(NAME config_cache_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-config-cache.py"
+            --receiver $<TARGET_FILE:nsl-config-cache-owner>)
+        set_tests_properties(config_cache_official_vectors PROPERTIES TIMEOUT 40)
+        add_executable(nsl-sns-cached-initialization-tests tests/test_sns_cached_initialization.cpp)
+        target_compile_features(nsl-sns-cached-initialization-tests PRIVATE cxx_std_17)
+        target_compile_definitions(nsl-sns-cached-initialization-tests PRIVATE NSL_SNS_PROBES=0 NSL_DIAGNOSTICS=0)
+        target_compile_options(nsl-sns-cached-initialization-tests PRIVATE -Wall -Wextra -UNDEBUG)
+        target_link_libraries(nsl-sns-cached-initialization-tests PRIVATE nsl_remote
+            GameNetworkingSockets::GameNetworkingSockets_s Threads::Threads)
+        target_link_options(nsl-sns-cached-initialization-tests PRIVATE -Wl,--wrap=curl_easy_init
+            -Wl,--wrap=sl_gns_import_trust)
+        add_test(NAME sns_cached_initialization COMMAND nsl-sns-cached-initialization-tests)
+        set_tests_properties(sns_cached_initialization PROPERTIES TIMEOUT 15)
         add_test(NAME sns_config_refresh_failed COMMAND nsl-sns-config-refresh-tests failure)
         add_test(NAME sns_config_refresh_success_then_failed COMMAND nsl-sns-config-refresh-tests success-then-failure)
         set_tests_properties(sns_config_refresh_failed sns_config_refresh_success_then_failed PROPERTIES TIMEOUT 15)
@@ -607,7 +627,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_link_options(nsl-control-route-runtime PRIVATE -Wl,--wrap=recvfrom -Wl,--wrap=sendto
         -Wl,--wrap=time -Wl,--wrap=sl_remote_connection_create
         -Wl,--wrap=sl_remote_connection_protocol -Wl,--wrap=sl_remote_connection_destroy
-        -Wl,--wrap=sl_sns_create)
+        -Wl,--wrap=sl_sns_create_configured)
     add_test(NAME control_route_runtime COMMAND nsl-control-route-runtime)
     set_tests_properties(control_route_runtime PROPERTIES TIMEOUT 20)
     add_executable(nsl-service-pairing-runtime tests/service_pairing_runtime.c)
@@ -665,9 +685,11 @@ if(NSL_PLATFORM STREQUAL "desktop")
         -Wl,--wrap=IHS_ClientSendControl -Wl,--wrap=IHS_SessionCreate
         -Wl,--wrap=IHS_SessionThreadedJoin -Wl,--wrap=sl_system_now
         -Wl,--wrap=IHS_CryptoRandomUInt32 -Wl,--wrap=sl_network_stats_load
-        -Wl,--wrap=sl_sns_create -Wl,--wrap=sl_sns_update -Wl,--wrap=sl_sns_get_state
+        -Wl,--wrap=sl_sns_create_configured -Wl,--wrap=sl_sns_update -Wl,--wrap=sl_sns_get_state
         -Wl,--wrap=sl_sns_session_ready -Wl,--wrap=sl_sns_datagram_transport
-        -Wl,--wrap=sl_sns_get_stats -Wl,--wrap=sl_sns_end_reason -Wl,--wrap=sl_sns_destroy)
+        -Wl,--wrap=sl_sns_get_stats -Wl,--wrap=sl_sns_end_reason -Wl,--wrap=sl_sns_destroy
+        -Wl,--wrap=sl_sns_config_cache_create -Wl,--wrap=sl_sns_config_cache_update
+        -Wl,--wrap=sl_sns_config_cache_destroy)
     set(NSL_TICKET_CONSUMER_ARGS)
     if(NOT NSL_BUILD_SNS)
         list(APPEND NSL_TICKET_CONSUMER_ARGS --without-sns)

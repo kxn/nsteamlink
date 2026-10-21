@@ -177,8 +177,9 @@ void __wrap_sl_remote_connection_destroy(sl_remote_connection *connection) {
     protocol = NULL;
 }
 #if NSL_HAVE_SNS
-sl_sns *__wrap_sl_sns_create(const IHS_ClientConfig *config, const sl_remote_material *m,
-                             bool allow_ice, char *error, size_t size) {
+sl_sns *__wrap_sl_sns_create_configured(const IHS_ClientConfig *config, const sl_remote_material *m,
+                             bool allow_ice, char *error, size_t size, const char *cache, size_t cache_size) {
+    (void)cache; (void)cache_size;
     (void)error;
     (void)size;
     assert(pthread_equal(owner, pthread_self()) && config->deviceId == 42 && allow_ice);

@@ -13,6 +13,7 @@ extern "C" {
 #include "sns_message_queue.h"
 #include "sns_connection_policy.h"
 #include "sns_config_fetch_policy.h"
+#include "sns_config_http.h"
 #include <mbedtls/base64.h>
 #include <curl/curl.h>
 #include <atomic>
@@ -255,12 +256,7 @@ static bool begin_config(sl_sns *b, bool force = false) {
     curl_easy_setopt(b->request, CURLOPT_URL, url);
     curl_easy_setopt(b->request, CURLOPT_WRITEFUNCTION, receive_config);
     curl_easy_setopt(b->request, CURLOPT_WRITEDATA, b);
-    curl_easy_setopt(b->request, CURLOPT_SSL_VERIFYPEER, 1L);
-    curl_easy_setopt(b->request, CURLOPT_SSL_VERIFYHOST, 2L);
-    curl_easy_setopt(b->request, CURLOPT_FOLLOWLOCATION, 0L);
-    curl_easy_setopt(b->request, CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(b->request, CURLOPT_CONNECTTIMEOUT_MS, 10000L);
-    curl_easy_setopt(b->request, CURLOPT_TIMEOUT_MS, 25000L);
+    sl_sns_config_http_options(b->request);
     config_event(b, "begin", -1);
     if (curl_multi_add_handle(b->http, b->request) == CURLM_OK) return true;
     curl_easy_cleanup(b->request); b->request = nullptr;
@@ -315,6 +311,22 @@ static bool complete_initialization(sl_sns *b) {
     b->config_ready = true;
     return true;
 }
+static bool install_certificate(sl_sns *b) {
+    SteamNetworkingErrMsg error;
+    /* CA trust from the explicit configuration must precede the local cert. */
+    bool installed = b->sockets->SetCertificate(b->certificate.data(),
+        static_cast<int>(b->certificate.size()), error);
+    config_event(b, installed ? "certificate_installed" : "certificate_failed", -1);
+    wipe(b->certificate.data(), b->certificate.size());
+    b->certificate.clear();
+    if (!installed) {
+        b->end_reason = -2;
+        close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_CERTIFICATE);
+        return false;
+    }
+    b->sockets->InitAuthentication();
+    return complete_initialization(b);
+}
 static void pump_config(sl_sns *b) {
     if (!b->request)
         return;
@@ -327,12 +339,10 @@ static void pump_config(sl_sns *b) {
         if (message->msg != CURLMSG_DONE || message->easy_handle != b->request)
             continue;
         done = true;
-        long status = 0;
-        curl_easy_getinfo(b->request, CURLINFO_RESPONSE_CODE, &status);
         config_event(b, "complete", int(message->data.result));
-        success = message->data.result == CURLE_OK && status == 200 &&
+        success = message->data.result == CURLE_OK &&
             sl_gns_import_trust(b->config_download.data(), b->config_download.size());
-        if (message->data.result == CURLE_OK && status == 200)
+        if (message->data.result == CURLE_OK)
             config_event(b, success ? "trust_imported" : "trust_failed", -1);
     }
     if (!done)
@@ -344,24 +354,7 @@ static void pump_config(sl_sns *b) {
     if (success) {
         b->config.swap(b->config_download);
         b->config_download.clear();
-        if (!b->config_ready) {
-            SteamNetworkingErrMsg error;
-            /* Public GNS returns from CertStore_CheckCert before decoding the
-             * certificate if its CA is unknown. Install the network CA chain first
-             * rather than treating this as an invalid host public key. */
-            bool installed = b->sockets->SetCertificate(b->certificate.data(),
-                static_cast<int>(b->certificate.size()), error);
-            config_event(b, installed ? "certificate_installed" : "certificate_failed", -1);
-            wipe(b->certificate.data(), b->certificate.size());
-            b->certificate.clear();
-            if (!installed) {
-                b->end_reason = -2;
-                close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_CERTIFICATE);
-                return;
-            }
-            b->sockets->InitAuthentication();
-            if (!complete_initialization(b)) return;
-        }
+        if (!b->config_ready && !install_certificate(b)) return;
     }
     bool started = true;
     if (action == nsl::SnsConfigFetchPolicy::Refresh)
@@ -375,9 +368,14 @@ static void pump_config(sl_sns *b) {
 }
 extern "C" sl_sns *sl_sns_create(const IHS_ClientConfig *config, const sl_remote_material *m,
                                   bool share_ip, char *error, size_t error_size) {
+    return sl_sns_create_configured(config, m, share_ip, error, error_size, nullptr, 0);
+}
+extern "C" sl_sns *sl_sns_create_configured(const IHS_ClientConfig *config, const sl_remote_material *m,
+    bool share_ip, char *error, size_t error_size, const char *network_config, size_t network_config_size) {
     if (!config || !config->deviceId || !config->secretKey || !m || !m->client_id ||
         !m->steam_id || !m->cert || !m->key_size || m->key_size > sizeof(m->key) ||
-        m->transport != 4) {
+        m->transport != 4 || network_config_size > 1024 * 1024 ||
+        (network_config_size && !network_config)) {
         copy_error(error, error_size, "invalid SNS connection material");
         return nullptr;
     }
@@ -411,6 +409,22 @@ extern "C" sl_sns *sl_sns_create(const IHS_ClientConfig *config, const sl_remote
                 k_ESteamNetworkingConfig_P2P_STUN_ServerList, m->stun_servers)) {
             copy_error(err, sizeof(err), "cannot set SNS STUN servers");
             goto fail;
+        }
+        if (network_config_size) {
+            b->config.assign(network_config, network_config + network_config_size);
+            if (!sl_gns_import_trust(b->config.data(), b->config.size())) {
+                config_event(b, "startup_trust_failed", -1);
+                copy_error(err, sizeof(err), "invalid startup SNS network configuration");
+                goto fail;
+            }
+            b->config_fetch.available = true;
+            b->config_fetch.state = 100;
+            if (!install_certificate(b)) {
+                copy_error(err, sizeof(err), "SNS certificate or bridge initialization failed");
+                goto fail;
+            }
+            config_event(b, "startup_imported", -1);
+            return b;
         }
         b->http = curl_multi_init();
         if (!b->http || !begin_config(b)) {

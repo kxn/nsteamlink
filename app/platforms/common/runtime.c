@@ -13,6 +13,7 @@
 #include "host_directory.h"
 #if NSL_HAVE_SNS
 #include "sns_backend.h"
+#include "sns_config_cache.h"
 #endif
 #include "connection_wait.h"
 #include "network_stats_file.h"
@@ -87,6 +88,7 @@ struct sl_runtime {
     bool accounts_initialized;
 #if NSL_HAVE_SNS
     sl_sns *sns;
+    sl_sns_config_cache *sns_config; /* Worker-owned, survives individual streams. */
     bool sns_waiting;
     atomic_bool session_finalized;
 #endif
@@ -1322,7 +1324,9 @@ static void cloud_stream_result(IHS_StreamingResult result, const sl_remote_mate
             return;
         }
         char error[1024];
-        r->sns = sl_sns_create(&r->config, m, true, error, sizeof(error));
+        size_t config_size = 0;
+        const char *config = sl_sns_config_cache_data(r->sns_config, &config_size);
+        r->sns = sl_sns_create_configured(&r->config, m, true, error, sizeof(error), config, config_size);
         memset(error, 0, sizeof(error)); /* SDK text may include an identity. */
         if (!r->sns) {
             rejected(NULL, NULL, IHS_StreamingTransportUnavailable, ctx);
@@ -2152,6 +2156,9 @@ static void *worker_main(void *ctx) {
     if (!start_client(r))
         fail(r, sl_tr(SL_T_NETWORK_UNAVAILABLE));
     start_cloud(r);
+#if NSL_HAVE_SNS
+    r->sns_config = sl_sns_config_cache_create(sl_system_data_dir());
+#endif
     while (!r->quit) {
         if (r->waiting_video) {
             if (!sl_media_video_clean()) {
@@ -2311,8 +2318,13 @@ static void *worker_main(void *ctx) {
         }
         uint64_t now = sl_system_now();
 #if NSL_HAVE_SNS
+        sl_sns_config_cache_update(r->sns_config);
         if (r->sns) {
-            sl_sns_update(r->sns, now);
+            /* An explicit startup config may make BInit ready synchronously.
+             * Start IHS/its deadline before the first SDK Update in that case,
+             * just as for config completed asynchronously during this pass. */
+            if (!r->sns_waiting || !sl_sns_session_ready(r->sns))
+                sl_sns_update(r->sns, now);
             sl_sns_state state = sl_sns_get_state(r->sns);
             if (r->sns_waiting && sl_sns_session_ready(r->sns)) {
                 r->sns_waiting = false;
@@ -2422,6 +2434,10 @@ static void *worker_main(void *ctx) {
     sl_log("cleanup: cloud connection close");
     sl_remote_connection_destroy(r->remote);
     r->remote = NULL;
+#if NSL_HAVE_SNS
+    sl_sns_config_cache_destroy(r->sns_config);
+    r->sns_config = NULL;
+#endif
     if (r->provider) {
         stream_media_destroy_hid_provider(r->provider);
         r->provider = NULL;

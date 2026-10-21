@@ -10,16 +10,34 @@
 static sl_runtime *actor;
 static sl_remote *protocol;
 static char connection;
+static pthread_t owner;
+static bool backend_live;
 #if NSL_HAVE_SNS
 static char backend;
+static unsigned cache_creates, cache_destroys;
+sl_sns_config_cache *__real_sl_sns_config_cache_create(const char *);
+sl_sns_config_cache *__wrap_sl_sns_config_cache_create(const char *dir) {
+    assert(pthread_equal(owner, pthread_self()));
+    ++cache_creates;
+    return __real_sl_sns_config_cache_create(dir);
+}
+void __wrap_sl_sns_config_cache_update(sl_sns_config_cache *c) {
+    assert(c && pthread_equal(owner, pthread_self()));
+    /* This component supplies a pending HTTP result. Real startup/cache load
+     * runs, but no external download is needed for ticket/worker ordering. */
+}
+void __real_sl_sns_config_cache_destroy(sl_sns_config_cache *);
+void __wrap_sl_sns_config_cache_destroy(sl_sns_config_cache *c) {
+    assert(!backend_live && pthread_equal(owner, pthread_self()));
+    ++cache_destroys;
+    __real_sl_sns_config_cache_destroy(c);
+}
 #endif
-static pthread_t owner;
 static atomic_bool ready, request_seen, injected, settled;
 static atomic_uint session_creates, backend_creates, backend_destroys;
 static uint8_t cm_packets[8][4096], udp_packets[8][4096];
 static size_t cm_sizes[8], udp_sizes[8];
 static unsigned cm_count, udp_count, udp_index, after_injection;
-static bool backend_live;
 static unsigned final_phase;
 static unsigned test_mode; /* 0 constructor terminal, 1 SDK connecting, 2 init failure. */
 static uint64_t real_begin;
@@ -136,8 +154,9 @@ void __wrap_IHS_SessionThreadedJoin(IHS_Session *s) {
     atomic_fetch_add(&session_joins, 1);
 }
 #if NSL_HAVE_SNS
-sl_sns *__wrap_sl_sns_create(const IHS_ClientConfig *config, const sl_remote_material *m,
-                             bool share, char *error, size_t capacity) {
+sl_sns *__wrap_sl_sns_create_configured(const IHS_ClientConfig *config, const sl_remote_material *m,
+                             bool share, char *error, size_t capacity, const char *cache, size_t cache_size) {
+    assert(cache_size == 22 && !memcmp(cache, "fixture startup config", cache_size));
     (void)config; (void)error; (void)capacity;
     assert(pthread_equal(owner, pthread_self()) && share && !backend_live);
     assert(m->transport == 4 && m->client_id == 123 && m->key_size == 32);
@@ -152,6 +171,7 @@ sl_sns *__wrap_sl_sns_create(const IHS_ClientConfig *config, const sl_remote_mat
 void __wrap_sl_sns_update(sl_sns *s, uint64_t now) {
     (void)now;
     assert(s == (sl_sns *)&backend && backend_live && pthread_equal(owner, pthread_self()));
+    if (test_mode == 1) assert(atomic_load(&session_creates) == 1);
     if (atomic_load(&clock_frozen)) atomic_fetch_add(&frozen_updates, 1);
 }
 bool __wrap_sl_sns_session_ready(const sl_sns *s) {
@@ -217,6 +237,12 @@ int main(int argc, char **argv) {
     cm_count = packets(cm, cm_packets, cm_sizes); udp_count = packets(udp, udp_packets, udp_sizes);
     char directory[] = "/tmp/nsl-ticket-consumer-XXXXXX";
     assert(mkdtemp(directory) && !setenv("NSL_DATA_DIR", directory, 1));
+#if NSL_HAVE_SNS
+    char config_path[512];
+    snprintf(config_path, sizeof(config_path), "%s/sdr_config.txt", directory);
+    FILE *config_file = fopen(config_path, "wb");
+    assert(config_file && fwrite("fixture startup config", 1, 22, config_file) == 22 && !fclose(config_file));
+#endif
     sl_auth_store store = {.device_id = UINT64_C(0x1122334455667788), .sound = true};
     for (unsigned n = 0; n < 32; ++n) store.secret[n] = 32+n;
     strcpy(store.device_name, "ticket fixture"); sl_host_registry_init(&store.registry);
@@ -244,6 +270,9 @@ int main(int argc, char **argv) {
     unsigned sessions = atomic_load(&session_creates), backends = atomic_load(&backend_creates);
     sl_runtime_destroy(r);
     assert(!backend_live && atomic_load(&backend_creates) == atomic_load(&backend_destroys));
+#if NSL_HAVE_SNS
+    assert(cache_creates == 1 && cache_destroys == 1);
+#endif
     sl_fixture_remove_tree(directory);
     printf("{\"state\":%u,\"sessions\":%u,\"backends\":%u,\"attempts\":%u,\"early_close\":%u,"
            "\"pending_sends\":%u,\"joins\":%u,\"clean\":true}\n", final_phase, sessions, backends,

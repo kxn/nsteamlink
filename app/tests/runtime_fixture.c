@@ -389,6 +389,13 @@ sl_sns *__wrap_sl_sns_create(const IHS_ClientConfig *config, const sl_remote_mat
      * retains its automatic ICE/SDR configuration. */
     return __real_sl_sns_create(config, material, force_sdr ? false : share_ip, error, size);
 }
+sl_sns *__real_sl_sns_create_configured(const IHS_ClientConfig *, const sl_remote_material *, bool,
+    char *, size_t, const char *, size_t);
+sl_sns *__wrap_sl_sns_create_configured(const IHS_ClientConfig *config, const sl_remote_material *m,
+    bool share_ip, char *error, size_t size, const char *cache, size_t cache_size) {
+    return __real_sl_sns_create_configured(config, m, force_sdr ? false : share_ip,
+        error, size, cache, cache_size);
+}
 void __real_sl_sns_update(sl_sns *, uint64_t);
 void __wrap_sl_sns_update(sl_sns *sns, uint64_t now) {
     __real_sl_sns_update(sns, now);

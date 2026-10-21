@@ -25,7 +25,7 @@ extern "C" CURLcode __wrap_curl_easy_setopt(CURL *e, CURLoption op, ...) {
 }
 extern "C" CURLMcode __wrap_curl_multi_perform(CURLM *, int *running) {
     *running = 0; pending = true;
-    message = CURLMsg{}; message.msg = CURLMSG_DONE; message.easy_handle = easy; message.data.result = CURLE_OK;
+    message = CURLMsg{}; message.msg = CURLMSG_DONE; message.easy_handle = easy; message.data.result = status >= 400 ? CURLE_HTTP_RETURNED_ERROR : CURLE_OK;
     char data[] = "new-config"; assert(receive_config(data, 1, sizeof(data)-1, fixture) == sizeof(data)-1);
     return CURLM_OK;
 }

@@ -1874,8 +1874,8 @@ HTTP 完成及 trust/import 是 provider，没有创建媒体连接或证明冷�
 退出时尚有自动刷新请求的情况另验证实际 HTTP handle 清理。移除首轮刷新、允许已有
 配置的失败刷新自动重试、改用无符号计数的三个独立 C++ 反例均正常执行全部 19 组输入，
 再被正式比较器以正常 exit1 拒绝；不把编译失败或进程崩溃计作检出。
-不补发抽象层但 StreamingClient 适配层未转交的 Cache-Control header；真实 HTTP 状态
-到 IWebRequest 状态的完整映射仍需单独核对，不能用抽象 Completed 的 2xx 分支替代它。
+不补发抽象层但 StreamingClient 适配层未转交的 Cache-Control header。Shell 的原始
+HTTP 适配映射见下文，不能用抽象 Completed 的 2xx 分支代替真实 curl 完成分类。
 
 **Shell 的另一条预取/缓存链（静态证据）**：`CShellApplication::BInit` 在
 `0xc98a44` 调 BLoadCacheFile 读取 storage 下的 `sdr_config.txt`，成功后在
@@ -1883,9 +1883,56 @@ HTTP 完成及 trust/import 是 provider，没有创建媒体连接或证明冷�
 回调 `0xc9eaa4` 只在 IWebRequest 状态为 4 时保存响应（`0xc9ebe8`），追加 NUL、更新
 该字符串并置 s_bSDRConfigDownloadComplete=true；失败分支不替换旧内容。
 这些指令与上述 SDK 内部 Fetch 是不同层，不能将 SDK 的前三次重试套到 Shell。
-BDownloadingSDRConfig 只在 request 存在且状态为 1 时为 true。此静态证据没有证明
-BLoad/BSave 的文件格式、时效规则、两份 ELF 同名静态量的实际加载绑定或完整 UI 调度；
-当前按流创建的端口配置 owner 也不能被表述为已经复刻了这条应用启动预取/磁盘缓存链。
+BDownloadingSDRConfig 只在 request 存在且状态为 1 时为 true。
+
+**原始文件及 HTTP 适配复核**：固定 shell SHA256
+`15b2d79881eef0c47ed2f96c17d1d60a5f42d3285abcf9f512cfffdac5b238a2` 的
+`BLoadCacheFile @0xca75f4–0xca76b8` 用 `rb` 打开、获取文件长度、直接读入 CUtlBuffer，
+另加 NUL；没有封装头、mtime/TTL 或 JSON 解析。`BSaveCacheFile @0xca7998–0xca7a24`
+创建目录、以 `wb` 打开、写 buffer 的 put-length 字节。Shell 回调先保存这些原始字节，
+然后才追加 NUL/设置字符串；保存失败不会阻止内存配置更新。文件 helper 对非零短读/
+短写仍可报告成功，零字节读写失败时还可能跳过 close；这些不是需要复制的资源安全行为。
+
+`CWebRequest::BStart @0xcc2078` 在 `0xcc2198–0xcc21b4` 设置
+`CURLOPT_FOLLOWLOCATION=1`、`CURLOPT_FAILONERROR=1`。`OnRequestComplete
+@0xcc1a78–0xcc1b50` 先 cleanup，再将 `CURLE_OK` 映射为状态 4，其余为 5；它不另检查
+传入的 HTTP status。streaming/websocket 标志置位时另接受 CURL code 56，普通 HTTPS
+配置请求不命中此例外。未释放的 callback 在成功/失败时均会调用，已释放则跳过。
+因此配置请求的 HTTP >=400 由 curl 的 fail-on-error 分类，正常 201/204 也可以到达状态 4；
+是否能用仍由之后的 JSON/trust 解析决定。撤回端口将 HTTP 完成限定为 200、不跟随重定向的
+接法；这两项不是原版策略。
+
+`audit-steam-config-cache.py` 执行原始文件 helper、BStart 和 OnRequestComplete，
+冻结 47 组输入。SDL 文件/IO、CUtlBuffer 分配/终止/seek、curl、mutex、字符串/function
+存储、日志及最终 callback 是显式 provider；不是原始文件系统、curl 网络、Qt 事件循环、
+Shell BInit 整体或 SDK 互通。fixture gzip SHA256 为
+`f296851f2db129dcd863bda0b63a8c4521d0456043233c10f9400e8071881253`；比较器同时核验固定 shell
+和两个 helper hash。`check-steam-config-cache.py` 将原始 option/状态观察与实际缓存 owner
+的 loopback curl/磁盘读写组合核对：两轮 owner、无 TTL、即使有旧缓存也刷新、503 保留、
+302→201、204 空响应、保存失败仍更新内存、NUL 字符串边界、原始非 JSON 响应、待完成取消。
+三个独立编译的 C 反例（有缓存便跳过刷新、下载失败清旧数据、只接受 HTTP 200）
+都由接收器正常退出后被正式比较器拒绝；不以编译失败或崩溃计作检出。
+原始异常短读/短写和释放回调的全部分支没有被外推为生产网络已逐项等价。
+
+**端口接线及本地边界**：worker 启动发现/CM 后创建独立 `sns_config_cache`，读取
+`<data_dir>/sdr_config.txt` 并发起一次后台预取；每次 tick 推进，停止单次串流不销毁它。
+worker 退出时，先停止/join IHS/session，再销毁 SNS/缓存 HTTP owner，最后 IHS_Quit；
+缓存独立持有 curl global 引用，保证其他 curl owner 销毁时其请求仍有依赖存活。
+没有额外线程，也没有渲染/输入路径上的文件操作。缓存限制 1 MiB、完整读写、关闭所有
+文件、tmp+rename 发布、TLS 校验及 10 秒连接/25 秒总期限是本地资源纪律，不宣称原版规则。
+
+创建 SNS 时同步复制/导入非空快照，成功后才装本机证书、认证并建立 bridge；不再为这种
+显式配置另发 SDK Fetch 或首轮成功刷新。非空配置导入失败和证书拒绝都终止 BInit，不悄悄
+降级为另一条下载策略；无配置时才用上面的 SDK-style fetch policy。Shell 缓存下载完成只
+更新该缓存，不从后台任务直接变更活跃 SDK/连接。同步 BInit 与异步下载完成的两种情况都
+要先启动 IHS 的连接期限，再在后续 owner pass 调 SDK 寻路。
+
+生产配置 owner 的真实文件/loopback curl 测试不包含信任解析；cached BInit 组件另以明确
+trust provider 和实际 SDK 的坏证书拒绝，验证顺序、无 HTTP fallback、空缓存及重复 SDK
+owner 清理。成功证书分支仍不由这些坏证书测试证明。真实 actor/ticket 组合在启动时读取
+预置文件（HTTP pump 是明确 pending provider），核对快照交给 SNS、IHS 先于首次 SDK
+update、session join 在 backend/cache 销毁之前；不能把它等同真实 Steam 或 Switch。
+两份 ELF 同名静态量的加载绑定与完整 Qt/UI 等待门槛仍未由这些指令/本地接线证明。
 
 **调用链限制**：样本的 CSDRHTTPRequest_StreamingClient::SubmitRequest `0x75ddc0`
 只把 URL 交给 IWebRequest::BStart；本函数未遍历抽象请求的 header map。
