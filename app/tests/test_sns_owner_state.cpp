@@ -15,6 +15,7 @@ static void finalized(IHS_Session *, void *) { ++ihs_finalized; }
 static void production_io() {
     // Entirely in-process SDK pipe. No UDP, CM, Steam host or authorization.
     for (unsigned launch = 0; launch < 2; ++launch) {
+        SteamNetworkingSockets_SetManualPollMode(true);
         HSteamNetConnection local, peer;
         auto sockets = SteamNetworkingSockets();
         assert(sockets->CreateSocketPair(&local, &peer, false, nullptr, nullptr));
@@ -55,13 +56,24 @@ static void production_io() {
         }
         // Closing serializes with send, including SDK signaling callbacks;
         // context destruction still follows the producer join.
-        close_backend(b, SL_SNS_CLOSED, SL_SNS_TERMINAL_NONE, 0,
-            nsl::SnsDestroyedReason, nsl::SnsDestroyedDebug);
+        if (!launch)
+            close_backend(b, SL_SNS_CLOSED, SL_SNS_TERMINAL_NONE, 0,
+                nsl::SnsDestroyedReason, nsl::SnsDestroyedDebug);
         stop = true;
         sender.join();
-        assert(!b->connection && !b->q->owner && b->q->state == SL_SNS_CLOSED);
-        errno = EMSGSIZE;
-        assert(!send_datagram(b, data, sizeof(data)) && errno == EBADF);
+        if (!launch) {
+            assert(!b->connection && !b->q->owner && b->q->state == SL_SNS_CLOSED);
+            errno = EMSGSIZE;
+            assert(!send_datagram(b, data, sizeof(data)) && errno == EBADF);
+        } else {
+            // Execute the actual public destroy with a live handle. The test
+            // externally owns SDK initialization, leaving the peer inspectable;
+            // SDK Kill/identity lifetime is covered by sns_lifetime_owner.
+            auto q = b->q;
+            sl_sns_destroy(b);
+            b = nullptr;
+            assert(!q->owner && q->state == SL_SNS_CLOSED);
+        }
         SteamNetConnectionInfo_t info{};
         assert(sockets->GetConnectionInfo(peer, &info));
         assert(info.m_eState == k_ESteamNetworkingConnectionState_ClosedByPeer);
