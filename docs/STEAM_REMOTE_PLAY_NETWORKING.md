@@ -1574,6 +1574,28 @@ Join provider没有执行旧worker收尾或新Run，故Start后的残留phase不
 native替换分支核对旧Running worker未提前Disconnect、等待期间后续manager
 Update暂缓，以及最终Join/Destroy/backend释放次序。
 
+#### 已完成测试的安全码重试与结果框
+
+**Evidence**：`audit-steam-network-test-finished-pin.py` 继续使用同一固定shell与完整
+manager/Panel/Test调用。完成status2、phase0、统计和IsAlive=false是显式输入；
+结果框显示前/后、UDP/SDR和上述8种结果共32组。显示后原Panel进入state1，框连接
+finished(int)→OnNetworkTestComplete(int)；PINRequired调用实际ShowDialog，先hide
+旧结果框再show安全码框，旧Test仍保留status2。OnPINEntered进入state4重新申请。
+
+原Start在IsAlive=false时不Join旧线程，直接启动新worker；仅Success/重复Success
+将status改回1并使用新key。其余回复保留旧完成状态，最终取消9/10仍按新事务类别。
+所以“保留旧Test”不等于“旧线程始终存活”，也不能要求每次PIN替换都重新Join一次。
+端口的已完成IHS worker在展示结果前已Join，重试继续保留其对象，新票据替换时只
+释放旧对象，不重复Join，不保存用户未确认的旧统计，也不自动提交旧推荐。
+
+gzip SHA256：`59ec6bfdf35e608fefe5f4f72bd8383037a4128252bc3722480e53c76241cd13`。
+结果框的格式/存储和widget hide/show端点仍为provider；没有执行自然Qt信号投递，
+不能由“隐藏旧结果框”推断此前已经排队的finished信号会被撤销。原完成状态/线程
+终态在这32组中是输入，不把它称为实际Run线程收尾；实际Complete另由§118–119约束。
+native的独立16次生命周期则等待真实IHS测试自然完成、Join并进入结果页后，才由
+受控loopback主机交付PIN及新票据；核对结果页→安全码→重试、取消/替换与单次Join/Destroy，
+并核对未生成旧统计文件。它不证明真实Steam、SDR媒体或Switch界面已验收。
+
 ### 11.4 ProofRequest 可更新长期 secret
 
 **Evidence：** `HandleStreamingProofRequest @0x79e1c0–0x79e594`，proto 的 challenge=1:bytes、

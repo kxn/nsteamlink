@@ -1121,6 +1121,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-network-test-pin-retry.py"
         --receiver $<TARGET_FILE:nsl-network-test-pin-retry-runtime> --cancel-join)
     set_tests_properties(network_test_pin_retry_cancel_join PROPERTIES TIMEOUT 20)
+    add_test(NAME network_test_pin_retry_completed COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-network-test-pin-retry.py"
+        --receiver $<TARGET_FILE:nsl-network-test-pin-retry-runtime> --completed)
+    set_tests_properties(network_test_pin_retry_completed PROPERTIES TIMEOUT 130)
     if(NSL_BUILD_SNS)
         add_test(NAME network_test_pin_retry_sdk COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-network-test-pin-retry.py"

@@ -3128,7 +3128,9 @@ Test调用。OnPINEntered重新请求但不清理Test；有效票据消费时Sta
 没有Cancel。Busy、Unauthorized、错误及再次PIN的页面和最终取消分别保留。
 
 Decision：同generation/主机的有效security PIN重试保留测试意图与旧媒体。新票据
-等待旧worker自然结束后才Join并替换，不保存旧结果；本地取消仍可主动结束旧worker。
+在旧worker仍存活时等待其自然结束后才Join并替换，不保存旧结果；本地取消仍可主动
+结束旧worker。若旧worker已结束，原Start的IsAlive=false分支不Join；端口此前已Join
+的完成IHS只释放对象，不重复Join。结果框可被新的安全码框替换，不能因此提交旧结果。
 异步actor等待期间继续旧SDK bridge及本地退出，暂缓后续manager Update以保持原同步
 Join前后的消费顺序。旧SDK的会话材料与新票据分开，旧启动不确认新请求Established。
 持有旧worker不等于旧测试页仍在显示；重试等待时Unauthorized可进入授权页。

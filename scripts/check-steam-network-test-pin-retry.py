@@ -59,6 +59,47 @@ def source():
     assert seen == {(t, p, o) for t in (1, 4) for p in (0, 4) for o in OUTCOMES}
 
 
+def finished_source():
+    raw = (ROOT / 'scripts/fixtures/steam-network-test-finished-pin-reference.json.gz').read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == '59ec6bfdf35e608fefe5f4f72bd8383037a4128252bc3722480e53c76241cd13'
+    report = json.loads(gzip.decompress(raw))
+    assert report['schema'] == 1
+    assert report['sample_sha256'] == '15b2d79881eef0c47ed2f96c17d1d60a5f42d3285abcf9f512cfffdac5b238a2'
+    for name, sha in report['helper_sha256'].items():
+        assert hashlib.sha256((ROOT / 'scripts' / name).read_bytes()).hexdigest() == sha, name
+    assert len(report['cases']) == 32
+    seen = set()
+    for c in report['cases']:
+        outcome = c['outcome']; replacement = outcome in ('success', 'duplicate_success')
+        seen.add((c['transport'], c['shown'], outcome))
+        assert not c['source_assertions']
+        before, pin, wait, after, ack, destroyed = (c[k] for k in
+            ('before', 'pin', 'waiting', 'after', 'ack', 'destroyed'))
+        assert before['test_status'] == pin['test_status'] == wait['test_status'] == 2
+        assert pin['panel'] == 6 and wait['panel'] == 4 and wait['manager'] == 5
+        assert pin['joins'] == wait['joins'] == after['joins'] == 0
+        assert after['test_status'] == (1 if replacement else 2)
+        assert after['starts'] == 1 + replacement
+        assert after['panel'] == (5 if replacement else 6 if outcome == 'pin' else
+                                 3 if outcome == 'unauthorized' else
+                                 4 if outcome in ('busy', 'cancel_wait') else 1)
+        assert after['manager'] == (6 if replacement else 4 if outcome == 'unauthorized' else
+                                   5 if outcome in ('busy', 'cancel_wait') else 1)
+        if c['shown']:
+            assert before['panel'] == 1 and before['dialog_owner']
+            assert pin['widgets'][-2:] == [dict(op='hide', pointer=before['dialog_owner']),
+                                          dict(op='show', pointer=pin['dialog_owner'])]
+            assert {'signal': '2finished( int )', 'slot': '1OnNetworkTestComplete( int )'} in before['ui']
+        if replacement:
+            assert after['tokens'][-1] == bytes(range(128, 160)).hex()
+            assert [e['op'] for e in after['thread_events'] if e['stage'] == 'consume'] == ['start']
+        assert destroyed['joins'] == int(replacement) and not destroyed['thread_alive']
+        assert ack['manager'] == 1 and ack['request_id'] == 0
+        assert [m['tag'] for m in ack['messages'] if m['tag'] in (9, 10)] == [
+            10, 9 if outcome == 'unauthorized' else 10]
+    assert seen == {(t, shown, o) for t in (1, 4) for shown in (False, True) for o in OUTCOMES}
+
+
 def main():
     if not __debug__:
         raise RuntimeError('comparison requires assertions')
@@ -71,14 +112,17 @@ def main():
     variants.add_argument('--cancel-join', action='store_true', help='cancel locally while waiting for old worker')
     variants.add_argument('--sdk-fail', action='store_true', help='old SDK BInit fails after the replacement ticket')
     variants.add_argument('--sdk-session-fail', action='store_true', help='old IHS setup fails after the replacement ticket')
+    variants.add_argument('--completed', action='store_true', help='finish and show the old result before requesting PIN')
     args = p.parse_args()
     source()
+    if args.completed:
+        finished_source()
     if args.receiver:
-        variant = next((flag for flag in ('sdk', 'cancel_join', 'sdk_fail', 'sdk_session_fail')
+        variant = next((flag for flag in ('sdk', 'cancel_join', 'sdk_fail', 'sdk_session_fail', 'completed')
                         if getattr(args, flag)), None)
         run = subprocess.run([str(args.receiver.resolve())] +
                              (['--'+variant.replace('_', '-')] if variant else []),
-                             capture_output=True, text=True, timeout=75)
+                             capture_output=True, text=True, timeout=120 if args.completed else 75)
         assert run.returncode == 0, (run.returncode, run.stderr[-4000:])
         output = run.stdout
     else:
@@ -105,13 +149,14 @@ def main():
         if args.receiver:
             sdk = args.sdk or args.sdk_fail or args.sdk_session_fail
             assert row['preinit'] == sdk and row['backends'] == int(sdk)
+            assert row['completed'] == args.completed
             # Replacing a live old test must wait naturally; a final local
             # cancellation may disconnect an old test that is still running.
-            assert row['early_disconnects'] == (0 if replacement or args.sdk_fail else 1), row
-            if replacement or args.cancel_join or args.sdk_fail:
+            assert row['early_disconnects'] == (0 if replacement or args.sdk_fail or args.completed else 1), row
+            if (replacement or args.cancel_join or args.sdk_fail) and not args.completed:
                 assert row['control_held'], row
     assert not differences, differences
-    print(f'PASS PIN retry: 32 original manager/Panel/Test programs and {len(rows)} real native '
+    print(f'PASS PIN retry: 32 original {"finished-Test" if args.completed else "manager/Panel/Test"} programs and {len(rows)} real native '
           'application/IHS UDP/Test lifetimes; retain old owner while requesting, '
           'replace once after ticket, preserve PIN/auth/error/cancel ownership')
 

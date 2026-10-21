@@ -15,7 +15,7 @@
 #endif
 
 static uint16_t peer_port;
-static bool preinit, cancel_join;
+static bool preinit, cancel_join, completed;
 static unsigned startup_failure; /* 1 old SDK BInit fails; 2 old IHS setup fails. */
 static atomic_uint creates, joins, destroys, samples, disconnects, backends, backend_destroys;
 static atomic_bool allow_old_init;
@@ -277,9 +277,15 @@ static void one(enum scenario which, bool manual) {
             ticket(fd, &client, initial_id, k_ERemoteDeviceStreamingPINRequired, &store, false);
             initial_pin = initial_started = true;
         }
-        if (a.ui.page == SL_PIN && initial_pin && !retry_submitted) {
-            assert(atomic_load(&creates) == (preinit ? 0 : 1) && !atomic_load(&joins) &&
+        if (completed && !initial_pin && a.ui.page == SL_NETWORK_RESULT) {
+            assert(initial_started && atomic_load(&creates) == 1 && atomic_load(&joins) == 1 &&
                    !atomic_load(&destroys));
+            ticket(fd, &client, initial_id, k_ERemoteDeviceStreamingPINRequired, &store, false);
+            initial_pin = true;
+        }
+        if (a.ui.page == SL_PIN && initial_pin && !retry_submitted) {
+            assert(atomic_load(&creates) == (preinit ? 0 : 1) &&
+                   atomic_load(&joins) == (unsigned)completed && !atomic_load(&destroys));
             strcpy(a.ui.input, "9876");
             sl_ui_action(&a.ui, SL_SUBMIT, 0);
             assert(sl_ui_take_command(&a.ui, &cmd) && cmd.type == SL_CMD_STREAM &&
@@ -296,8 +302,8 @@ static void one(enum scenario which, bool manual) {
             control_held |= atomic_load(&manager_updates) == updates_at_ticket;
         if (second_request_at && !responded && now - second_request_at >= 150) {
             retained =
-                atomic_load(&creates) == (preinit ? 0 : 1) && !atomic_load(&joins) &&
-                !atomic_load(&destroys) &&
+                atomic_load(&creates) == (preinit ? 0 : 1) &&
+                atomic_load(&joins) == (unsigned)completed && !atomic_load(&destroys) &&
                 (!preinit || (atomic_load(&backends) == 1 && !atomic_load(&backend_destroys)));
             sample_held = atomic_load(&samples) == sample_wait;
             responded = true;
@@ -336,8 +342,8 @@ static void one(enum scenario which, bool manual) {
                         ? atomic_load(&creates) == (startup_failure == 1 ? 1 : 2) &&
                               atomic_load(&joins) == (startup_failure == 1 ? 0 : 1) &&
                               atomic_load(&destroys) == (startup_failure == 1 ? 0 : 1)
-                        : atomic_load(&creates) == 1 && !atomic_load(&joins) &&
-                              !atomic_load(&destroys);
+                        : atomic_load(&creates) == 1 &&
+                              atomic_load(&joins) == (unsigned)completed && !atomic_load(&destroys);
             }
             if (now - prompt_at >= 50) {
                 cancels_before_ack = streaming_cancels;
@@ -428,9 +434,11 @@ static void one(enum scenario which, bool manual) {
             } else if (wire[13] == 8) {
                 if (!initial_started) {
                     initial_started = true;
-                    ticket(fd, &client, initial_id, k_ERemoteDeviceStreamingPINRequired, &store,
-                           false);
-                    initial_pin = true;
+                    if (!completed) {
+                        ticket(fd, &client, initial_id, k_ERemoteDeviceStreamingPINRequired, &store,
+                               false);
+                        initial_pin = true;
+                    }
                 } else if (replacement && responded &&
                            atomic_load(&creates) == (startup_failure == 1 ? 1 : 2))
                     new_started = true;
@@ -440,6 +448,11 @@ static void one(enum scenario which, bool manual) {
     assert(done && requests == 2 && retry_submitted && initial_started);
     sl_runtime_destroy(a.runtime);
     close(fd);
+    if (completed) {
+        char path[128];
+        snprintf(path, sizeof(path), "%s/streaming_stats.bin", directory);
+        assert(access(path, F_OK) && errno == ENOENT); /* Unaccepted old result is not saved. */
+    }
     sl_fixture_remove_tree(directory);
     assert(atomic_load(&creates) == atomic_load(&joins) &&
            atomic_load(&joins) == atomic_load(&destroys));
@@ -448,7 +461,7 @@ static void one(enum scenario which, bool manual) {
            "\"held_at_response\":%s,\"unexpected_stop\":%s,\"requests\":%u,\"sessions\":%u,"
            "\"joins\":%u,\"before_ack\":%u,\"cancel10\":%u,\"cancel9\":%u,"
            "\"preinit\":%s,\"early_disconnects\":%u,\"backends\":%u,"
-           "\"control_held\":%s,\"clean\":true}\n",
+           "\"control_held\":%s,\"completed\":%s,\"clean\":true}\n",
            cancel_join            ? "cancel_join"
            : startup_failure == 1 ? "sdk_fail"
            : startup_failure == 2 ? "sdk_session_fail"
@@ -457,7 +470,8 @@ static void one(enum scenario which, bool manual) {
            held_at_response ? "true" : "false", unexpected_stop ? "true" : "false", requests,
            atomic_load(&creates), atomic_load(&joins), cancels_before_ack, streaming_cancels,
            auth_cancels, preinit ? "true" : "false", early_disconnects, atomic_load(&backends),
-           control_held ? "true" : "false");
+           control_held ? "true" : "false", completed ? "true" : "false");
+    fflush(stdout);
 }
 int main(int argc, char **argv) {
     assert(argc == 1 || argc == 2);
@@ -470,14 +484,16 @@ int main(int argc, char **argv) {
                       : argc == 2 && !strcmp(argv[1], "--sdk-session-fail") ? 2
                                                                             : 0;
     cancel_join = argc == 2 && !strcmp(argv[1], "--cancel-join");
+    completed = argc == 2 && !strcmp(argv[1], "--completed");
 #if !NSL_HAVE_SNS
     assert(!preinit);
 #endif
-    unsigned begin = cancel_join || startup_failure ? SUCCESS
-                     : argc == 2 && !preinit        ? (unsigned)atoi(argv[1])
-                                                    : 0;
+    unsigned begin = cancel_join || startup_failure        ? SUCCESS
+                     : argc == 2 && !preinit && !completed ? (unsigned)atoi(argv[1])
+                                                           : 0;
     assert(begin < 8);
-    for (unsigned mode = begin; mode < (argc == 2 && (!preinit || startup_failure) ? begin + 1 : 8);
+    for (unsigned mode = begin;
+         mode < (argc == 2 && ((!preinit && !completed) || startup_failure) ? begin + 1 : 8);
          ++mode)
         for (unsigned manual = 0; manual < 2; ++manual)
             one((enum scenario)mode, manual);
