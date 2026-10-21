@@ -90,6 +90,7 @@ struct sl_runtime {
     sl_sns *sns;
     sl_sns_config_cache *sns_config; /* Worker-owned, survives individual streams. */
     bool sns_waiting;
+    IHS_SessionInfo sns_info; /* Frozen backend material; a PIN retry may replace the ticket. */
     atomic_bool session_finalized;
 #endif
     sl_directory_host *directory; /* Both producers serialize under lock. */
@@ -106,6 +107,7 @@ struct sl_runtime {
     IHS_Session *session;
     IHS_Session *test_session; /* Dedicated protocol owner; never a video player. */
     bool test_active, test_joined, test_waiting_pin;
+    bool test_retry_pending, test_retry_ticket, test_startup_failed;
     uint64_t test_sample_at;
     sl_network_test_view test_view;
     IHS_HIDProvider *provider;
@@ -450,6 +452,10 @@ static void fail_control(sl_runtime *r, const char *message) {
     publish_test(r, view);
 }
 static bool test_owns_display(sl_runtime *r) {
+    /* PIN retry's old worker survives behind Connecting/EnteringPIN. In that
+     * state Unauthorized belongs to the new request's authorization panel. */
+    if (r->test_retry_pending)
+        return test_error_pending(r);
     return r->test_session || test_error_pending(r)
 #if NSL_HAVE_SNS
            || (r->test_active && r->sns)
@@ -934,13 +940,14 @@ static void publish_test(sl_runtime *r, sl_network_test_view view) {
     r->test_view = view;
     pthread_mutex_unlock(&r->lock);
 }
-static void stop_network_test(sl_runtime *r) {
+static void release_network_test(sl_runtime *r, bool cancel) {
 #if NSL_HAVE_SNS
     bool owns_backend = r->test_active || r->test_session;
     bool had_session = r->test_session != NULL;
 #endif
     if (r->test_session) {
-        IHS_SessionDisconnect(r->test_session);
+        if (cancel)
+            IHS_SessionDisconnect(r->test_session);
         if (!r->test_joined)
             IHS_SessionThreadedJoin(r->test_session);
         IHS_SessionDestroy(r->test_session);
@@ -957,11 +964,38 @@ static void stop_network_test(sl_runtime *r) {
         sl_sns_destroy(r->sns);
         r->sns = NULL;
         r->sns_waiting = false;
+        memset(&r->sns_info, 0, sizeof(r->sns_info));
     }
 #endif
     r->test_active = r->test_joined = r->test_waiting_pin = false;
+    r->test_retry_pending = r->test_retry_ticket = r->test_startup_failed = false;
     r->test_sample_at = 0;
-    publish_test(r, (sl_network_test_view){.phase = SL_TEST_IDLE});
+    if (cancel)
+        publish_test(r, (sl_network_test_view){.phase = SL_TEST_IDLE});
+}
+static void stop_network_test(sl_runtime *r) {
+    release_network_test(r, true);
+}
+/* Original Test::Start joins the live old worker without Cancel. Poll its
+ * terminal result here so local cancel/exit and the old SDK bridge stay live.
+ * No old result, statistics or recommendation belongs to the replacement. */
+static bool finish_test_retry(sl_runtime *r) {
+#if NSL_HAVE_SNS
+    if (r->sns_waiting)
+        return false;
+#endif
+    if (r->test_session && !r->test_joined) {
+        IHS_NetworkTestResult result;
+        IHS_SessionGetNetworkTestResult(r->test_session, &result);
+        if (!r->test_startup_failed && (result.status == IHS_NetworkTestRunning ||
+                                       result.status == IHS_NetworkTestIdle))
+            return false;
+        IHS_SessionThreadedJoin(r->test_session);
+        r->test_joined = true;
+    }
+    release_network_test(r, false);
+    r->test_active = true;
+    return true;
 }
 /* Runtime actor publishes a complete saved-address snapshot; the IHS timer
  * owns all scheduled discovery sends and their shared round sequence. */
@@ -1337,7 +1371,9 @@ static void update_control_expiry(void *ctx) {
     refresh_presence(update->runtime, update->now, (int64_t)time(NULL));
 }
 static void update_control(sl_runtime *r, uint64_t now) {
-    if (!r->client) return;
+    /* The original main-thread ticket consumer is inside Test::Start/Join at
+     * this boundary. Resume manager Update only after replacement/cancel. */
+    if (!r->client || r->test_retry_ticket) return;
     flush_control(r);
     if (now < r->control_next_update) return;
     r->control_next_update = now + 100;
@@ -1392,6 +1428,7 @@ static void cloud_stream_result(IHS_StreamingResult result, const sl_remote_mate
         /* Logical endpoint is stable across ICE/SDR route changes. The external
          * provider never uses it as a physical UDP destination. */
         IHS_IPAddressFromString(&r->session_info.address.ip, "127.0.0.1");
+        r->sns_info = r->session_info;
         r->sns_waiting = true;
         return;
     }
@@ -1404,11 +1441,11 @@ static void accepted_connection(IHS_Client *client, const IHS_HostInfo *host,
     /* Once the ticket has been consumed, replies may update manager state but
      * must not create a second media/backend owner. Before consumption, later
      * successful replies in this same Update replace the pending material. */
-    if (r->session || r->test_session
+    if (r->session || (!r->test_retry_pending && (r->test_session
 #if NSL_HAVE_SNS
         || r->sns
 #endif
-    ) return;
+    ))) return;
     uint64_t account = 0;
     current_account(r, connection->clientId, &account);
     if (connection->transport == k_EStreamTransportUDP &&
@@ -1553,6 +1590,7 @@ static bool stop_session(sl_runtime *r) {
     sl_sns_destroy(r->sns);
     r->sns = NULL;
     r->sns_waiting = false;
+    memset(&r->sns_info, 0, sizeof(r->sns_info));
 #endif
     pthread_mutex_lock(&r->lock);
     host_completed = host_completed || (r->end_game.at && r->end_game.empty >= 2);
@@ -1733,11 +1771,13 @@ static bool launch_network_test(sl_runtime *r, IHS_SessionInfo info) {
     IHS_SessionSetLogFunction(r->test_session, ihs_log);
     if (!IHS_SessionConnect(r->test_session))
         return false;
-    IHS_ClientStreamingEstablished(r->client);
-    r->request_at = 0;
-    publish_test(r, (sl_network_test_view){.phase = SL_TEST_RUNNING,
+    if (!r->test_waiting_pin && !r->test_retry_pending) {
+        IHS_ClientStreamingEstablished(r->client);
+        r->request_at = 0;
+        publish_test(r, (sl_network_test_view){.phase = SL_TEST_RUNNING,
                                            .target_kbps = target,
                                            .bandwidth_test = mode == IHS_NetworkTestBandwidth});
+    }
     return true;
 }
 static void fail_network_test(sl_runtime *r) {
@@ -1880,6 +1920,10 @@ static void execute(sl_runtime *r, sl_command cmd) {
         }
         return;
     }
+    bool retry_test = cmd.type == SL_CMD_STREAM && cmd.security_pin_retry &&
+                      r->test_active && r->test_waiting_pin &&
+                      cmd.generation == r->active.generation &&
+                      cmd.host.client_id == r->active.host.client_id;
     /* Cancel/join each request before changing its callback generation. Keep the
      * client socket alive so canceled launch IDs can reject late host responses. */
     if (r->remote)
@@ -1888,7 +1932,13 @@ static void execute(sl_runtime *r, sl_command cmd) {
         IHS_ClientStreamingCancel(r->client);
         IHS_ClientAuthorizationCancel(r->client);
     }
-    stop_session(r);
+    if (retry_test) {
+        r->test_retry_pending = true;
+        r->test_retry_ticket = false;
+        free_session_material(r->session_material);
+        r->session_material = NULL;
+    } else
+        stop_session(r);
     if (!sl_media_video_clean()) {
         pthread_mutex_lock(&r->lock);
         if (!r->request_pending) {
@@ -1971,10 +2021,12 @@ static void execute(sl_runtime *r, sl_command cmd) {
         if (!IHS_ClientAuthorizationRequest(r->client, &h, e.text))
             fail(r, sl_tr(SL_T_REQUEST_PAIR_FAILED));
     } else if (cmd.type == SL_CMD_STREAM) {
-        bool readable = !cmd.test_only && sl_network_stats_load(sl_system_data_dir(), NULL);
-        unsigned action = sl_network_stats_connect_action(
-            cmd.test_only ? 2 : 0, r->settings.config->enable_video_streaming, readable);
-        r->test_active = action != 0;
+        if (!retry_test) {
+            bool readable = !cmd.test_only && sl_network_stats_load(sl_system_data_dir(), NULL);
+            unsigned action = sl_network_stats_connect_action(
+                cmd.test_only ? 2 : 0, r->settings.config->enable_video_streaming, readable);
+            r->test_active = action != 0;
+        }
         if (r->test_active)
             publish_test(r, (sl_network_test_view){.phase = SL_TEST_REQUESTING});
         if (!request_stream(r, r->test_active))
@@ -2274,11 +2326,12 @@ static void *worker_main(void *ctx) {
         memcpy(auth_secret, r->auth_secret, sizeof(auth_secret));
         memset(r->auth_secret, 0, sizeof(r->auth_secret));
         pthread_mutex_unlock(&r->lock);
-        if (terminal && test_error_pending(r)) {
+        if (terminal && (test_error_pending(r) || r->test_waiting_pin || r->test_retry_pending)) {
             /* Revoke unconsumed material without closing the active Test owner
              * or dismissing its error. Confirmation owns the later cleanup. */
             free_session_material(r->session_material);
             r->session_material = NULL;
+            r->test_retry_ticket = false;
         } else if (terminal && !r->session && !r->test_session)
             stop_session(r); /* Error wins over unconsumed/pending backend work. */
         if (snapshot_pending) {
@@ -2352,6 +2405,11 @@ static void *worker_main(void *ctx) {
             r->request_at = 0;
         }
         memset(auth_secret, 0, sizeof(auth_secret));
+        if (ready && r->test_retry_pending)
+            r->test_retry_ticket = true;
+        ready = ready || r->test_retry_ticket;
+        if (ready && r->test_retry_ticket && !finish_test_retry(r))
+            ready = false;
         if (ready && !r->session && !r->test_session) {
             /* Ordinary Qt launch destroys its old manager before player BInit,
              * without a StreamingCancel. Keep our discovery-only use, but
@@ -2396,12 +2454,22 @@ static void *worker_main(void *ctx) {
                 sl_sns_update(r->sns, now);
             sl_sns_state state = sl_sns_get_state(r->sns);
             if (pending_test_error || r->test_waiting_pin) {
-                /* Keep polling the existing backend/worker, but do not launch
-                 * or dismiss the Test owner behind the error panel. */
+                /* The old Test worker may still be inside BInit when PIN is
+                 * requested. Finish its own startup using frozen old material,
+                 * without marking the new request Established or taking UI. */
+                if (r->test_waiting_pin && r->sns_waiting) {
+                    if (sl_sns_session_ready(r->sns)) {
+                        r->sns_waiting = false;
+                        r->test_startup_failed = !launch_network_test(r, r->sns_info);
+                    } else if (state == SL_SNS_FAILED || state == SL_SNS_CLOSED) {
+                        r->sns_waiting = false;
+                        r->test_startup_failed = true;
+                    }
+                }
             } else if (r->sns_waiting && sl_sns_session_ready(r->sns)) {
                 r->sns_waiting = false;
-                if (!(r->test_active ? launch_network_test(r, r->session_info)
-                                     : launch_session(r, r->session_info))) {
+                if (!(r->test_active ? launch_network_test(r, r->sns_info)
+                                     : launch_session(r, r->sns_info))) {
                     if (r->test_active)
                         fail_network_test(r);
                     else {

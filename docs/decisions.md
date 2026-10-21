@@ -3094,8 +3094,10 @@ Decision：
 - stop_network_test按Test归属清理backend；异步初始化失败时即使没有IHS Session也释放。
   有IHS时先Disconnect/Join/Destroy，再发送最后已排队的goodbye并释放backend。
   不在取消尚无IHS的初始化时额外轮询backend；不提前销毁普通播放器的backend。
-- 已在等待控制错误确认或安全码输入时，SDK终态不夺取页面、不启动新Session或自动销毁
-  仍由Test持有的对象。确认/安全码重试按原owner清理顺序退出。
+- 已在等待控制错误确认或安全码输入时，SDK终态不夺取页面、不启动新票据的Session或
+  自动销毁仍由Test持有的对象。安全码期间旧BInit可按D-A091完成自己的IHS启动，不能
+  确认新请求。错误确认按原owner清理顺序退出；安全码重试的旧worker保留与
+  新票据替换见D-A091，撤回其与错误确认一律先清理的泛化。
 
 这是产品异步SDK初始化与原同步BInit/独立Test线程之间的生命周期映射；不证明HTTP错误
 起因、自然SDK故障/线程时序或真实SDR媒体恢复。多个错误的交替顺序仍需单独对照。
@@ -3118,3 +3120,18 @@ Decision：
 两组Unauthorized先于首次失败框的原BIsStreaming诊断单独保留，不当作正常等价输入，
 也不要求端口复制诊断。Qt文字格式化/显示、SDK失败/线程端点与native服务callback等
 provider边界不变；本决定不证明自然Qt或真实网络的全部错误竞态。
+
+## D-A091：测网安全码重试先保留旧 worker，再按新票据替换
+
+Evidence：公网协议参考§11.3“测网安全码重试保留旧worker”的32组原始manager/Panel/
+Test调用。OnPINEntered重新请求但不清理Test；有效票据消费时Start执行Join(-1)，
+没有Cancel。Busy、Unauthorized、错误及再次PIN的页面和最终取消分别保留。
+
+Decision：同generation/主机的有效security PIN重试保留测试意图与旧媒体。新票据
+等待旧worker自然结束后才Join并替换，不保存旧结果；本地取消仍可主动结束旧worker。
+异步actor等待期间继续旧SDK bridge及本地退出，暂缓后续manager Update以保持原同步
+Join前后的消费顺序。旧SDK的会话材料与新票据分开，旧启动不确认新请求Established。
+持有旧worker不等于旧测试页仍在显示；重试等待时Unauthorized可进入授权页。
+
+Qt/线程端点及初始worker阶段均有provider；不从未执行的线程收尾推断自然phase或
+密钥竞争，不将受控native验证称为真实Steam/SDR或Switch验收。

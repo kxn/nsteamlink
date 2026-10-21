@@ -1534,6 +1534,46 @@ native应用用真实IHS认证拒绝产生共用的测网媒体失败框，再�
 正常执行的生产反例。
 
 
+#### 测网安全码重试保留旧 worker
+
+**Evidence**：`audit-steam-network-test-pin-retry.py` 执行固定 arm64 shell 的
+`OnPINEntered @0xc722b0`、SetPanelStateConnecting、StartStreaming、新请求序列化、
+完整 manager 入站、Panel consumer 和 `CNetworkTest::Start @0xca9d28`。UDP/SDR、
+旧 worker phase0/4、等待取消/Success/Failed/PINRequired/Unauthorized/Busy/重复
+Success/同批Success后Failed共32组。安全码9876被独立解密确认为新请求field8；
+它不进入pairing ticket.password。旧编号17被取消10，新请求编号19使用不同会话key。
+
+PIN输入及等待新回复时旧Test仍存在，没有Join。只有新票据被Panel消费时，原Start
+先IsAlive，再于`0xca9d74`执行Join(-1)，然后启动新worker；没有调用Test::Cancel。
+仅Busy保持manager5/panel4；Unauthorized进入manager4/panel3授权页，不能因旧Test
+仍存在就吞掉配对提示。Failed、再次PIN及同批Success后Failed都不启动新Test。
+最终取消对Unauthorized使用9，其余使用10；已经取消的事务不重复取消。
+
+**证据修订**：撤回D-A089末句把安全码重试与错误确认一律视为先清理旧owner的泛化。
+安全码重试保留测试意图和旧媒体；等待新票据时不能Disconnect/Join/Destroy旧worker。
+有效新票据到来后等待旧worker自然结束，再Join、释放旧媒体并创建新测试。旧结果
+不能被当成新请求的测网结果保存或推荐。普通取消/退出仍需明确stop→join→destroy。
+
+异步端口将原同步Join映射为actor等待：仅在已获新票据、等待旧worker时暂停后续
+manager Update；SDK bridge继续推进旧媒体，本地取消/退出继续受理。旧SDK启动所用
+SessionInfo必须独立保存，不能被新票据覆盖；旧启动也不能把新请求标记Established。
+这不增加协议重试期限，不把新密钥写进仍运行的旧Session。
+
+冻结gzip SHA256：`d8a9faa268472af4e1c19e2098d07c1c96b0aeb14c57e1b812d92f961ddb25f1`。
+Qt输入/显示、身份/随机/RSA、线程IsAlive/Join/Start及初始worker phase均为provider。
+Join provider没有执行旧worker收尾或新Run，故Start后的残留phase不能投射成自然线程
+状态；也不据此证明phase0时旧线程读取新token的竞态、真实SDK时序或Switch验收。
+
+`check-steam-network-test-pin-retry.py` 比较16次真实application/IHS UDP/Test线程
+生命周期；另16次提供尚未完成的旧SDK BInit，再交付新UDP票据后才完成旧初始化，
+核对旧Session仍使用旧key、旧启动不确认新请求。SDK/bridge为provider，实际IHS
+指向受控loopback peer，不把这16组称为真实SDR数据传输。另4次分别提供旧SDK
+初始化失败、旧IHS setup失败，核对新票据仍只启动一次；这两个组合的失败时序为
+显式输入，不声称原审计执行了相同的自然SDK组合。2次本地取消测试确认actor等待
+旧worker时仍可退出；这是平台响应性约束，不伪称原Qt阻塞Join可处理相同UI事件。
+native替换分支核对旧Running worker未提前Disconnect、等待期间后续manager
+Update暂缓，以及最终Join/Destroy/backend释放次序。
+
 ### 11.4 ProofRequest 可更新长期 secret
 
 **Evidence：** `HandleStreamingProofRequest @0x79e1c0–0x79e594`，proto 的 challenge=1:bytes、

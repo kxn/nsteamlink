@@ -1096,6 +1096,43 @@ if(NSL_PLATFORM STREQUAL "desktop")
             set_tests_properties(video_stop_queue_${warm}_${freeze} PROPERTIES TIMEOUT 25)
         endforeach()
     endforeach()
+    add_executable(nsl-network-test-pin-retry-runtime tests/network_test_pin_retry_runtime.c)
+    target_include_directories(nsl-network-test-pin-retry-runtime PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf ${CMAKE_SOURCE_DIR}/third_party/ihslib/tests/session)
+    target_compile_options(nsl-network-test-pin-retry-runtime PRIVATE -UNDEBUG -Wall -Wextra)
+    target_compile_definitions(nsl-network-test-pin-retry-runtime PRIVATE NSL_HAVE_SNS=$<BOOL:${NSL_BUILD_SNS}>)
+    target_link_libraries(nsl-network-test-pin-retry-runtime PRIVATE nsl_platform)
+    target_link_options(nsl-network-test-pin-retry-runtime PRIVATE -Wl,--wrap=IHS_ClientStreamingRequest
+        -Wl,--wrap=IHS_ClientSetDiscoveryCallbacks -Wl,--wrap=IHS_SessionCreate
+        -Wl,--wrap=IHS_SessionThreadedJoin -Wl,--wrap=IHS_SessionDestroy
+        -Wl,--wrap=IHS_SessionGetNetworkTestResult -Wl,--wrap=IHS_SessionDisconnect
+        -Wl,--wrap=IHS_ClientStreamingEstablished -Wl,--wrap=IHS_SessionSetDatagramTransport
+        -Wl,--wrap=IHS_ClientUpdate
+        -Wl,--wrap=sl_sns_create_configured -Wl,--wrap=sl_sns_update -Wl,--wrap=sl_sns_get_state
+        -Wl,--wrap=sl_sns_session_ready -Wl,--wrap=sl_sns_datagram_transport
+        -Wl,--wrap=sl_sns_get_stats -Wl,--wrap=sl_sns_end_reason -Wl,--wrap=sl_sns_destroy
+        -Wl,--wrap=sl_sns_config_cache_update)
+    add_test(NAME network_test_pin_retry COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-network-test-pin-retry.py"
+        --receiver $<TARGET_FILE:nsl-network-test-pin-retry-runtime>)
+    set_tests_properties(network_test_pin_retry PROPERTIES TIMEOUT 80)
+    add_test(NAME network_test_pin_retry_cancel_join COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-network-test-pin-retry.py"
+        --receiver $<TARGET_FILE:nsl-network-test-pin-retry-runtime> --cancel-join)
+    set_tests_properties(network_test_pin_retry_cancel_join PROPERTIES TIMEOUT 20)
+    if(NSL_BUILD_SNS)
+        add_test(NAME network_test_pin_retry_sdk COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-network-test-pin-retry.py"
+            --receiver $<TARGET_FILE:nsl-network-test-pin-retry-runtime> --sdk)
+        set_tests_properties(network_test_pin_retry_sdk PROPERTIES TIMEOUT 80)
+        foreach(variant sdk-fail sdk-session-fail)
+            add_test(NAME network_test_pin_retry_${variant} COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_SOURCE_DIR}/scripts/check-steam-network-test-pin-retry.py"
+                --receiver $<TARGET_FILE:nsl-network-test-pin-retry-runtime> --${variant})
+            set_tests_properties(network_test_pin_retry_${variant} PROPERTIES TIMEOUT 20)
+        endforeach()
+    endif()
     add_executable(nsl-network-test-failure-runtime tests/network_test_failure_runtime.c)
     target_include_directories(nsl-network-test-failure-runtime PRIVATE platforms/common
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
