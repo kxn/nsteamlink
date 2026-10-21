@@ -2993,3 +2993,24 @@ Decision：
   本地资源错误保留 2001，CheckConnection 已有的 0/2001 分支不合并。
 - MTU setter 按原 Set/Get 分支实现。正式 IHS 的 MTU 选择调用链属于另外的协议契约，
   不能把 setter 局部对齐视为发送预算已完整对齐，亦不能把这些差异推为历史卡顿根因。
+
+## D-A085：SDK 接收负计数结束批次，内外层 MTU 分别解释
+
+Evidence：固定 core BWait `0x80016c–0x800170` 对 count<1 结束读取，不改状态/关闭；
+Socket Wait `0x7feb90` 与 Update `0x7fecd4` 在收包循环结束后仍推进连接。原队列构造、
+append/free、Recv 及调用者的组合执行见公网协议参考 §12.3。core/shell 对 SetMaximumMTU
+的 .text B/BL、PLT、动态重定位及 SDR vtable 清单没有发现调用/引用；不排除外部 dlsym 等。
+公开固定 SDK 的 MTU_DataSize 是无分片消息预算；原 IHS 握手直接 clamp 到 512..1472。
+
+Evidence correction：撤回从 MTU setter 的存在推导生产会话必须调用它，并用其返回值限制
+内层 IHS 消息的要求。把 SDK 单次负接收计数视为立即断线并清空 FIFO 也不属于原版策略。
+
+Decision：
+
+- SDK 非正接收计数只结束批次，保留旧 FIFO/当前状态，后续检查和显式销毁分别负责其策略。
+  满 128 条继续读取，不额外截为 32 批。RX 本地 4096 条/8MiB 资源界限单独保留；容量失败
+  释放整批 SDK message 后报告资源错误，不把资源限制当成官方协议常量。
+- 不因本端未调用 SetMaximumMTU 而添加推测性接线，保留已对照的 IHS 握手与分片规则。
+  SDK 的 SNP 分片与 IHS 消息/加密/可靠重传是不同层，不能相互替代预算。
+- 无效句柄的真实 SDK update 和 576-byte packet MTU 下的 1472-byte UDP loopback 消息
+  用于核对本机 owner/消息边界，不扩大为官方完整上层、ICE/SDR、热点或 Switch 的验收。

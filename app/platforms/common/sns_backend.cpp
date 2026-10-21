@@ -13,6 +13,7 @@ extern "C" {
 #include "sns_message_queue.h"
 #include "sns_connection_policy.h"
 #include "sns_io_policy.h"
+#include "sns_receive_policy.h"
 #include "sns_config_fetch_policy.h"
 #include "sns_config_http.h"
 #include <mbedtls/base64.h>
@@ -490,6 +491,27 @@ static bool check_connection(sl_sns *b) {
         clear_datagrams(b);
     return valid;
 }
+template<class Sockets>
+static bool receive_messages(sl_sns *b, Sockets *sockets) {
+    return nsl::PumpSnsReceive(sockets, b->connection,
+        [b](SteamNetworkingMessage_t **messages, int count) {
+            bool overflow = false;
+            {
+                std::lock_guard<std::mutex> lock(b->q->mutex);
+                for (int i = 0; i < count; ++i) {
+                    SteamNetworkingMessage_t *m = messages[i];
+                    ++b->stats.datagrams_received;
+                    if (!overflow && (m->m_cbSize < 0 || !b->q->rx.push(
+                            static_cast<const uint8_t *>(m->m_pData),
+                            static_cast<size_t>(m->m_cbSize), DATAGRAM_MAX)))
+                        overflow = true;
+                    m->Release();
+                }
+            }
+            b->q->wake.notify_all();
+            return !overflow;
+        });
+}
 static void update_backend(sl_sns *b, uint64_t now) {
     if (!b || !b->initialized)
         return;
@@ -532,34 +554,8 @@ static void update_backend(sl_sns *b, uint64_t now) {
         b->q->state == SL_SNS_CONNECTING || b->q->state == SL_SNS_CONNECTED);
     if (!connected || b->q->state != SL_SNS_CONNECTED)
         return;
-    SteamNetworkingMessage_t *messages[128];
-    for (unsigned batch = 0; batch < 32; ++batch) {
-        int count = b->sockets->ReceiveMessagesOnConnection(b->connection, messages, 128);
-        if (count < 0) {
-            close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_RECEIVE, count);
-            return;
-        }
-        bool overflow = false;
-        {
-            std::lock_guard<std::mutex> lock(b->q->mutex);
-            for (int i = 0; i < count; ++i) {
-                SteamNetworkingMessage_t *m = messages[i];
-                ++b->stats.datagrams_received;
-                if (!overflow && (m->m_cbSize < 0 || !b->q->rx.push(
-                        static_cast<const uint8_t *>(m->m_pData),
-                        static_cast<size_t>(m->m_cbSize), DATAGRAM_MAX)))
-                    overflow = true;
-                m->Release();
-            }
-        }
-        b->q->wake.notify_all();
-        if (overflow) {
-            close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_DATAGRAM);
-            return;
-        }
-        if (count < 128)
-            break;
-    }
+    if (!receive_messages(b, b->sockets))
+        close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_DATAGRAM);
 }
 extern "C" void sl_sns_update(sl_sns *b, uint64_t now) {
     try { update_backend(b, now); }

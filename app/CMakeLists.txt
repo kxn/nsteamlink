@@ -405,6 +405,20 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_link_libraries(nsl-sdr-policy-tests PRIVATE nsl_sdr_core)
     add_test(NAME nsl-sdr-policy COMMAND nsl-sdr-policy-tests)
     if(NSL_BUILD_SNS)
+        add_executable(nsl-sns-receive-oracle tests/sns_receive_oracle.cpp tests/sns_receive_ihs.c)
+        target_compile_features(nsl-sns-receive-oracle PRIVATE cxx_std_17)
+        target_compile_definitions(nsl-sns-receive-oracle PRIVATE NSL_SNS_PROBES=0 NSL_DIAGNOSTICS=0)
+        target_include_directories(nsl-sns-receive-oracle PRIVATE platforms/common
+            ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+        target_compile_options(nsl-sns-receive-oracle PRIVATE -Wall -Wextra -UNDEBUG)
+        target_link_options(nsl-sns-receive-oracle PRIVATE -Wl,--wrap=IHS_SessionPacketTimestamp
+            -Wl,--wrap=IHS_SessionPacketParse -Wl,--wrap=IHS_SessionTransportPrepareUpdate)
+        target_link_libraries(nsl-sns-receive-oracle PRIVATE nsl_remote
+            GameNetworkingSockets::GameNetworkingSockets_s Threads::Threads)
+        add_test(NAME sns_receive_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-sns-receive.py"
+            --receiver $<TARGET_FILE:nsl-sns-receive-oracle>)
+        set_tests_properties(sns_receive_official_vectors PROPERTIES TIMEOUT 30)
         add_executable(nsl-sns-io-oracle tests/sns_io_oracle.cpp tests/sns_io_ihs.c)
         target_compile_features(nsl-sns-io-oracle PRIVATE cxx_std_17)
         target_include_directories(nsl-sns-io-oracle PRIVATE platforms/common

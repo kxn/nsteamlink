@@ -1637,6 +1637,20 @@ timeout=0；未来 thinker 的剩余时间先四舍五入到毫秒、至少 1 ms
 
 Poll 后以最多 128 条为一批取 ReceiveMessagesOnConnection，
 每条 SNS message 对应一个 CStreamPacket；满批继续取，进入接收 FIFO。
+`0x80016c–0x800170` 对任何 **count<1** 都只结束本批次，包括负值；不改 transport 状态、
+不关闭 SDK、不清除已排队消息。Socket Wait `0x7feb90` 保存 BWait 的可读标志，随后
+Socket Update `0x7fecd4` 从真实 Recv/队列逐包消费；任何非零 Recv 只结束收包循环，
+接着仍执行 Connection Update（`0x7fed60–0x7fedac`）。不能把负接收计数单独变成 Failed。
+`audit-steam-sns-receive.py` 执行原 Socket Wait → BWait → 原队列 ctor/AddToTail/Free →
+Recv → Socket Update，52 组/60 轮覆盖负计数、128 条边界、4096 条后负计数、连续失败后恢复及
+0..524288 字节。`check-steam-sns-receive.py` 与生产 `receive_messages`、真实队列/回调及实际
+IHS receiveCycle 比较包长度/完整字节哈希、FIFO、状态与最终 update 的顺序。
+SDK Poll/Receive、时钟、分配和最终包处理/Connection Update 是明确 provider；原 packet
+构造/消息附着/队列和调用方条件真实执行。native 的最终 parser/update 也是观察者，不据此
+声明包内容有效、完整连接生命周期或并发调度等价。原 SDK message 由 packet 持有，native
+复制后立即释放，所有权机制不同；后者另断言每个 SDK message 释放一次，包括本地容量失败。
+原 BWait 没有固定 32 批次上限；端口保留 RX 的显式资源界限，满批继续读取，直到不足 128 或
+计数非正才结束。SDK 负计数与本地容量耗尽分别处理，不能统一为同一失败。
 BWait 返回值只看本地队列非空；无句柄仍会 Poll，且可能因旧队列非空返回 true，但 Recv
 会先因无句柄返回 2。不能把 BWait=true 当作连接有效或下一次 Recv 必定成功。
 Send **先检查句柄**：无句柄直接返回发送失败(3)，即使状态为
@@ -1691,9 +1705,22 @@ IHS 适配器以不消费消息的长度查询按需分配，避免为
 `SetMaximumMTU @0x801084` 设置连接级 MTU_PacketSize(32)，**不检查设置返回值**，始终再查询
 MTU_DataSize(33)。查询仅在结果 **1** 时返回数据，否则返回 -1；不检查回填长度。原函数不在
 入口过滤零句柄、零/负 MTU。上述脚本覆盖 160 组受控 Utils 结果，证明此局部分支，
-不证明这些参数在实际 SDK 中有效。正式 IHS 会话尚未调用该 setter；不能因 setter 对齐就
-宣称发送方 MTU 选择已对齐。应按此结果确定交给 SNS 的应用包预算，不能把普通 UDP 的 MTU
-不经扣除地用于 SNS。消息边界、上层包序号/加密/ACK/NACK 保留，见 §8.9。
+不证明这些参数在实际 SDK 中有效。
+
+**证据修订**：撤回“应按该返回值限制 SNS 内层 IHS 包预算”的要求。固定 core 与 shell 的
+`.text` B/BL、相关 PLT、`.rela.dyn` 和 SDR 虚表均未发现此函数的调用/引用；它不是 transport
+虚表方法。`audit-steam-sns-receive.py` 冻结两模块的哈希和该静态清单；这不排除外部 dlsym 或
+另行构造间接地址的调用。仅因函数导出就给生产会话新增调用，不是与已观察客户端对齐。
+公开固定 GNS 头文件将 MTU_DataSize 定义为**不会分片的**消息大小，不是 SDK 整条消息上限；
+SNP 的发送/重组另有消息分片。IHS ServerHandshake 的原 clamp `0x7a64cc–0x7a64f0` 则直接
+把主机给出的值限制到 512..1472，未由该 setter 返回值替换。两层不能混为一个预算。
+本端保留上述 IHS clamp 和消息边界、序号/加密/ACK/NACK，不因缺少 setter 调用臆造协议缺口；
+是否存在尚未观察的其他调用者仍需新证据。见 §8.9 与既有 protocol inventory 的握手执行对照。
+`test_sns_owner_state.cpp` 的真实 SDK UDP loopback 将两端 packet MTU 设为 576，查询到的
+无分片消息预算小于 1472，而 1472 字节以 flags0x15 双向完整交付；返回方向运行生产 SDK
+drain/receive 回调。这是本机 UDP/SNP 与消息边界证据，不含 ICE、SDR、Steam 主机或 Switch。
+同一测试以真实无效 SDK handle 在仍受节流的状态检查之后得到负接收计数，确认 owner update
+不提前变为 Failed、不清旧队列；到下一次明确的 CheckConnection 才执行原有失效分支。
 
 ## 13. 信令桥接：生命周期、队列与失联
 
@@ -3560,8 +3587,9 @@ lastImmediateRequest、最近 RTT/请求时刻和 pending 状态分别交给
 生产器在相同输入下比较，包含非对称 relay/E2E 活动及 pending；并不因此扩大到 protobuf
 实际长度、MTU 裁剪及完整 SDK 策略全等的声明。
 
-后端诊断分别保存 SDK state/end reason 和首个本地 terminal source/detail；接收可能早于
-一秒状态轮询发现关闭，销毁 SDK handle 前还要读取并锁存原始 SDK state/end reason。
+后端诊断分别保存 SDK state/end reason 和首个本地 terminal source/detail；销毁 SDK handle
+前还要读取并锁存原始 SDK state/end reason。SDK 接收负计数本身不改变状态或关闭，见 §12.3；
+历史适配器的 receive/Failed 属于原有额外策略，不能据它反推官方会立即关闭。
 **证据修订**：旧版 SDK Send 返回 NoConnection 就由适配器记录 send/Failed 并关闭，是本地
 额外策略，不是官方 Send 行为。§12.3 的调用者复核后，发送失败只返回对应结果给 IHS，
 不在该回调更改连接状态；后续 CheckConnection/接收/显式销毁各自保留其关闭入口。
