@@ -1490,8 +1490,10 @@ SDK 的 protobuf parser、CertStore_CheckCert 和 SetCertificate；未知 CA、�
 3. 参数 relay_server 非空时，设置全局 **P2P_STUN_ServerList(103)**。这是 STUN 配置，
    不可将该字符串直接当作 SDR 媒体 UDP 服务器。
 4. 尝试加载 `libsteamwebrtc.so/CreateWebRTCICESession` 并注册 ICE factory。
-5. 有预置网络配置 JSON 时交给 ClientSetNetworkConfig；解析失败使 BInit 失败。
-6. Base64Decode cert，调用 SetCertificate；有 cert 却无法解码/安装使初始化失败。
+5. 有预置网络配置 JSON 时交给 ClientSetNetworkConfig；失败使 BInit 失败。
+   成功在 `0x7ffee4–0x7ffef0` 清空待消费字符串；后续 Base64/证书失败不会撤销这次消费。
+6. 只有 cert 指针和首字节均非零时才 Base64Decode 并调用 SetCertificate；有内容但
+   无法解码/安装使初始化失败。缺少或空 cert 跳过该步骤，继续申请认证；不代表已经认证。
 7. 调 Sockets::InitAuthentication；再调用 Utils::CheckPingDataUpToDate(10000000000.0f)，
    设置 LogLevel_P2PRendezvous(17)=5。这个很大的浮点实参是 ping 数据允许年龄，不是丢包率。
 
@@ -1732,6 +1734,35 @@ WebRequest manager 引用计数降为零后，从非 worker 线程执行 Join(-1
 （`0x7f18dc–0x7f1938`、`0x7f26c4–0x7f272c`）。SNS 在 BInit 开启 manual polling，最后一个
 transport 析构才关闭该模式（`0x7ffadc–0x7ffb10`）。
 
+**外层退出边界的证据修订**：不能从 Base transport 析构没有调用 Kill，推导出普通
+播放器跨次串流保留 SDK。`CStreamClient::Quit @0x7a5990` 断开/重置 Connection 并释放
+bridge；SDL 退出路径先在 `0x75cfc0` 调 StreamShutdownNetworkProcessing，紧接
+`0x75cfc4` 调 `SteamDatagramClient_Kill @0x80ea14`。Kill 的 `0x80ea34–0x80ea40`
+销毁并清空独立 SDK socket singleton；实际 LibV13 getter `0x80e750–0x80e75c` 直接读取
+同一全局指针。所以仅在 transport 析构边界观察到的“仍有 SDK”是局部状态，不能据以
+设计应用级常驻 SDK。普通播放器的完整退出包含显式 SDK 清理。
+
+`audit-steam-sns-lifetime.py` 冻结 18 组、每组三次的初始化/析构/播放器退出组合，
+执行完整 BInit、Base 析构、Init/Kill/LibV13 getter 与选定 SDL 清理调用窗口。SDK 对象
+构造/销毁、Utils、JSON/CA/证书结果、base64/buffer/string、锁/模块 IO、网络线程停止
+和 transport 存储/序列是 provider；未运行完整 SDL/JNI 或自然引用计数/网络调度。
+fixture gzip SHA256 为 `b132bf362915a1cb800dd42b267606af709e09d66ababaa3e3ca13231d1b473d`，
+同时固定 core 和两个 helper hash。删掉 `0x75cfc4` 调用的原指令反例三次均正常返回，
+但 singleton 不再清空，下一次 BInit 不再初始化；其与原始轨迹的差异由比较器显式核验。
+
+`check-steam-sns-lifetime.py` 将其中 9 组显式配置输入与生产 SNS + 实际 SDK/bridge
+组合比较结果、初始化/销毁次数、配置消费和证书调用边界。连续三次采用不同的合成
+私钥/身份，验证每次 SDK 清理后下一次能建立新本机材料。JSON/import、初次 SDK
+失败及 CertStore 的 parsed-body/null-scope 是明确 provider；原生 SetCertificate 的
+protobuf、私钥/公钥、身份/AppID 检查及 SDK 销毁实际运行，但不计作真实 CA/签名或
+远端验收。此 null-scope provider 不能被解释为真实未知 CA 可在解析前失败后继续；
+§12.1 的实际未知 CA 拒绝证据仍适用。
+
+编译后的“不 Kill SDK”“先解码再消费配置”“缺少证书直接拒绝”三个生产 C++ 反例，
+分别在比较器拒绝前正常跑完所有显式输入；不以编译失败/崩溃作为检出。
+这些退出证据限于 core 的普通播放器，不能外推成 shell 网络测试或其他调用者的
+SDK 驻留策略已经逐项对齐。
+
 **本项目实现规则**：单独管理 SDK 全局实例/轮询、云端 worker、流会话 worker 和回调 owner。
 应用退出须 stop→join→destroy，且在回调失去 owner 前禁止删除依赖对象；不能直接复制 Android
 的全局驻留假设到 Switch NRO。新的 attempt 使用新的本地 generation，取消后的旧回调不进入新事务。
@@ -1921,7 +1952,7 @@ worker 退出时，先停止/join IHS/session，再销毁 SNS/缓存 HTTP owner�
 没有额外线程，也没有渲染/输入路径上的文件操作。缓存限制 1 MiB、完整读写、关闭所有
 文件、tmp+rename 发布、TLS 校验及 10 秒连接/25 秒总期限是本地资源纪律，不宣称原版规则。
 
-创建 SNS 时同步复制/导入非空快照，成功后才装本机证书、认证并建立 bridge；不再为这种
+创建 SNS 时同步复制/导入非空快照，成功后才解码可选证书、装本机证书、申请认证并建立 bridge；不再为这种
 显式配置另发 SDK Fetch 或首轮成功刷新。非空配置导入失败和证书拒绝都终止 BInit，不悄悄
 降级为另一条下载策略；无配置时才用上面的 SDK-style fetch policy。Shell 缓存下载完成只
 更新该缓存，不从后台任务直接变更活跃 SDK/连接。同步 BInit 与异步下载完成的两种情况都

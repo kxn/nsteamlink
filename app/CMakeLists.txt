@@ -514,6 +514,22 @@ if(NSL_PLATFORM STREQUAL "desktop")
             -Wl,--wrap=sl_gns_import_trust)
         add_test(NAME sns_cached_initialization COMMAND nsl-sns-cached-initialization-tests)
         set_tests_properties(sns_cached_initialization PROPERTIES TIMEOUT 15)
+        add_executable(nsl-sns-lifetime-owner tests/sns_lifetime_owner.cpp)
+        target_compile_features(nsl-sns-lifetime-owner PRIVATE cxx_std_17)
+        target_compile_definitions(nsl-sns-lifetime-owner PRIVATE NSL_SNS_PROBES=0 NSL_DIAGNOSTICS=0)
+        target_compile_options(nsl-sns-lifetime-owner PRIVATE -Wall -Wextra -UNDEBUG)
+        target_include_directories(nsl-sns-lifetime-owner PRIVATE
+            ${CMAKE_BINARY_DIR}/third_party/GameNetworkingSockets/src)
+        target_link_libraries(nsl-sns-lifetime-owner PRIVATE nsl_remote
+            GameNetworkingSockets::GameNetworkingSockets_s Threads::Threads)
+        foreach(symbol GameNetworkingSockets_Init GameNetworkingSockets_Kill sl_gns_import_trust
+            _ZN25SteamNetworkingSocketsLib19CertStore_CheckCertERK34CMsgSteamDatagramCertificateSignedR28CMsgSteamDatagramCertificatelRA1024_c)
+            target_link_options(nsl-sns-lifetime-owner PRIVATE "-Wl,--wrap=${symbol}")
+        endforeach()
+        add_test(NAME sns_lifetime_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-sns-lifetime.py"
+            --receiver $<TARGET_FILE:nsl-sns-lifetime-owner>)
+        set_tests_properties(sns_lifetime_official_vectors PROPERTIES TIMEOUT 20)
         add_test(NAME sns_config_refresh_failed COMMAND nsl-sns-config-refresh-tests failure)
         add_test(NAME sns_config_refresh_success_then_failed COMMAND nsl-sns-config-refresh-tests success-then-failure)
         set_tests_properties(sns_config_refresh_failed sns_config_refresh_success_then_failed PROPERTIES TIMEOUT 15)

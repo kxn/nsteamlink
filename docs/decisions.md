@@ -2946,3 +2946,27 @@ secret；回调不得销毁正在访问的 task/client。普通取消也在清�
 其他身份仍有独立 key 文件。保存失败不转为密码校验失败或阻止原有确认/当前密钥更新。
 key 保存本身不伪造一次发现事件。完整身份首项更新、持久 metadata 与订阅是独立契约，
 不能由 key 文件存在推断冷启动发现已覆盖；未知主机服务配对槽也不由此变成同一状态域。
+
+
+## D-A083：普通播放器的 SDK 生命周期以外层退出调用为准
+
+Evidence：固定 arm64 core 的 Base transport 析构 `0x7ffa8c` 只在实例数归零时关闭
+manual polling；外层普通 SDL 播放器却在 `0x75cfc0` 停止网络处理，紧接 `0x75cfc4`
+调用 SteamDatagramClient_Kill。后者 `0x80ea34–0x80ea40` 销毁并清空 socket singleton，
+LibV13 getter `0x80e750` 读取同一指针。BInit 在 SDK 不存在时才重新初始化。
+协议参考 §12.2、§13 的原始组合/指令反例及 native owner 比较给出复现范围与 provider。
+
+Evidence correction：仅凭“transport 析构不 Kill”推导 SDK 应跨普通串流常驻不成立；
+它漏掉了播放器退出调用者。不能把只覆盖该局部函数的绿色测试当作完整生命周期证明。
+
+Decision：
+
+- 保留普通串流 owner 的独立 SDK 清理，关闭/join IHS 使用者后再关 SDK 连接并 Kill。
+  应用级 SDR 配置缓存只保存公开 JSON，不携带上次 SDK 的身份、私钥或连接对象。
+- Switch 仍在创建 SDK 前开启 manual mode，在 Kill 完成后才关闭该模式，防止退出阶段
+  启动一个可能越过 loader 返回边界的 SDK 后台线程；不直接复制 Android 的短暂调度顺序。
+- 显式配置导入先于证书解码；成功消费不因后面的 Base64/证书错误而倒退。缺少/空证书
+  时按原版继续申请认证，不等于认证已成功，也不放宽实际 CA、签名和 peer 校验。
+- 网络测试共享端口资源纪律，但其 shell SDK 的驻留时长是独立核对范围；普通播放器的
+  Kill 调用不能被扩大成所有调用者的退出策略。完整 SDL/JNI、自然引用计数和实机 loader
+  安全也不由函数/组件审计替代。

@@ -314,9 +314,11 @@ static bool complete_initialization(sl_sns *b) {
 static bool install_certificate(sl_sns *b) {
     SteamNetworkingErrMsg error;
     /* CA trust from the explicit configuration must precede the local cert. */
-    bool installed = b->sockets->SetCertificate(b->certificate.data(),
+    bool present = !b->certificate.empty();
+    bool installed = !present || b->sockets->SetCertificate(b->certificate.data(),
         static_cast<int>(b->certificate.size()), error);
-    config_event(b, installed ? "certificate_installed" : "certificate_failed", -1);
+    config_event(b, !present ? "certificate_absent"
+                            : installed ? "certificate_installed" : "certificate_failed", -1);
     wipe(b->certificate.data(), b->certificate.size());
     b->certificate.clear();
     if (!installed) {
@@ -373,7 +375,7 @@ extern "C" sl_sns *sl_sns_create(const IHS_ClientConfig *config, const sl_remote
 extern "C" sl_sns *sl_sns_create_configured(const IHS_ClientConfig *config, const sl_remote_material *m,
     bool share_ip, char *error, size_t error_size, const char *network_config, size_t network_config_size) {
     if (!config || !config->deviceId || !config->secretKey || !m || !m->client_id ||
-        !m->steam_id || !m->cert || !m->key_size || m->key_size > sizeof(m->key) ||
+        !m->steam_id || !m->key_size || m->key_size > sizeof(m->key) ||
         m->transport != 4 || network_config_size > 1024 * 1024 ||
         (network_config_size && !network_config)) {
         copy_error(error, error_size, "invalid SNS connection material");
@@ -400,10 +402,6 @@ extern "C" sl_sns *sl_sns_create_configured(const IHS_ClientConfig *config, cons
         sl_gns_set_steam_link_app_id();
         b->share_ip = share_ip;
         b->sockets->ResetIdentity(nullptr);
-        if (!decode_cert(m->cert, b->certificate)) {
-            copy_error(err, sizeof(err), "invalid base64 SNS certificate");
-            goto fail;
-        }
         if (m->stun_servers && m->stun_servers[0] &&
             !SteamNetworkingUtils()->SetGlobalConfigValueString(
                 k_ESteamNetworkingConfig_P2P_STUN_ServerList, m->stun_servers)) {
@@ -419,6 +417,14 @@ extern "C" sl_sns *sl_sns_create_configured(const IHS_ClientConfig *config, cons
             }
             b->config_fetch.available = true;
             b->config_fetch.state = 100;
+        }
+        /* The original consumes explicit config before even decoding cert.
+         * An absent cert skips SetCertificate and still requests auth. */
+        if (m->cert && m->cert[0] && !decode_cert(m->cert, b->certificate)) {
+            copy_error(err, sizeof(err), "invalid base64 SNS certificate");
+            goto fail;
+        }
+        if (network_config_size) {
             if (!install_certificate(b)) {
                 copy_error(err, sizeof(err), "SNS certificate or bridge initialization failed");
                 goto fail;
