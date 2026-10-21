@@ -3059,3 +3059,24 @@ Decision：
   timer/Base所有权锁，无新线程。普通IHS worker仍先停止/join，再销毁SNS与SDK。
 - 对照分别标记launcher准入、原对象销毁和端口保留发现后的无握手状态；不得用state值
   相同/不同代替生命周期语义，也不得将有限provider范围扩大为完整Qt/JNI或真机验收。
+
+## D-A088：测网控制错误等待确认，授权通知不夺取测试页
+
+Evidence：固定官方 arm64 shell 的完整 manager/Panel 调用及24组可重复输入见
+公网协议参考§11.3“测试页运行后的控制错误与授权通知”。普通控制错误先停止manager
+请求并显示style0错误框，嵌入Test没有提前析构/Join；确认后OnActionCancel→Pop才清理。
+PINRequired进入独立安全码输入，Unauthorized/Busy/重复Success保持原测试页。
+
+Decision：
+
+- 控制错误发布持久失败快照与test_failure_pending，应用不自动STOP、不直接重试；错误
+  等待期间不采样测试结果，保留已有Test与backend至用户确认，再按Join→Destroy清理。
+- PINRequired仅暂停页面采样并进入连接安全码输入，不混入配对授权码。取消仍清理原
+  Test；明确重新提交沿原安全码重试入口发起新的串流请求。
+- Test已取得票据/owner后，授权回调继续更新协议/账号资料，但不再把测试页切到配对页
+  或重置进度；票据前的授权交互保持原入口。Busy和重复Success不创建第二个owner。
+- 现有SDK仍轮询，待确认错误不因backend终态被自动清掉。测试自身的失败继续使用其
+  独立媒体关闭路径，不将两种失败的清理时点合并。不得据此修改普通播放器交接。
+
+原始worker阶段/Qt/线程端点与native的peer/service callback均有显式provider，实际UDP/
+Test线程验证不能代替真实Steam/SDR或Switch loader验收。没有新增线程或计时重试策略。

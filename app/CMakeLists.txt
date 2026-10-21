@@ -1103,9 +1103,15 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_compile_options(nsl-network-test-failure-runtime PRIVATE -UNDEBUG -Wall -Wextra)
     target_link_libraries(nsl-network-test-failure-runtime PRIVATE nsl_platform)
     target_link_options(nsl-network-test-failure-runtime PRIVATE -Wl,--wrap=IHS_ClientStreamingRequest
-        -Wl,--wrap=sl_runtime_read_facts -Wl,--wrap=IHS_ClientSetDiscoveryCallbacks)
+        -Wl,--wrap=sl_runtime_read_facts -Wl,--wrap=IHS_ClientSetDiscoveryCallbacks
+        -Wl,--wrap=IHS_SessionThreadedJoin -Wl,--wrap=IHS_SessionDestroy
+        -Wl,--wrap=IHS_SessionGetNetworkTestResult -Wl,--wrap=IHS_ClientUpdate)
     add_test(NAME network_test_failure_runtime COMMAND nsl-network-test-failure-runtime)
     set_tests_properties(network_test_failure_runtime PROPERTIES TIMEOUT 40)
+    add_test(NAME network_test_late_control COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-network-test-late-control.py"
+        --receiver $<TARGET_FILE:nsl-network-test-failure-runtime>)
+    set_tests_properties(network_test_late_control PROPERTIES TIMEOUT 90)
     add_executable(nsl-host-key-store tests/host_key_store.c src/services/host_key_store.c)
     target_include_directories(nsl-host-key-store PRIVATE src)
     target_compile_options(nsl-host-key-store PRIVATE -UNDEBUG -Wall -Wextra)

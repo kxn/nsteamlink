@@ -105,7 +105,7 @@ struct sl_runtime {
     unsigned discovered_count, discovered_next;
     IHS_Session *session;
     IHS_Session *test_session; /* Dedicated protocol owner; never a video player. */
-    bool test_active, test_joined;
+    bool test_active, test_joined, test_waiting_pin;
     uint64_t test_sample_at;
     sl_network_test_view test_view;
     IHS_HIDProvider *provider;
@@ -423,6 +423,39 @@ static void fail(sl_runtime *r, const char *s) {
     snprintf(e.text, sizeof(e.text), "%s", s);
     post(r, e);
 }
+static void publish_test(sl_runtime *, sl_network_test_view);
+static bool test_error_pending(sl_runtime *r) {
+    pthread_mutex_lock(&r->lock);
+    bool pending = r->facts.test_failure_pending;
+    pthread_mutex_unlock(&r->lock);
+    return pending;
+}
+/* Active Qt Test errors change the panel, not the Test owner. Keep its workers
+ * until finished(int)->OnActionCancel. Do not enqueue a generic retry/STOP
+ * event before the persistent failed snapshot reaches the UI (RE §11.3). */
+static void fail_control(sl_runtime *r, const char *message) {
+    if (!r->test_active && !test_error_pending(r)) {
+        fail(r, message);
+        return;
+    }
+    pthread_mutex_lock(&r->lock);
+    bool already_pending = r->facts.test_failure_pending;
+    r->facts.failed = r->facts.test_failure_pending = true;
+    pthread_mutex_unlock(&r->lock);
+    if (already_pending)
+        return;
+    sl_network_test_view view = {.phase = SL_TEST_FAILED};
+    snprintf(view.error, sizeof(view.error), "%s", message);
+    sl_log(message);
+    publish_test(r, view);
+}
+static bool test_owns_display(sl_runtime *r) {
+    return r->test_session || test_error_pending(r)
+#if NSL_HAVE_SNS
+           || (r->test_active && r->sns)
+#endif
+        ;
+}
 static sl_host host_from(const IHS_HostInfo *info) {
     sl_host h = {.client_id = info->clientId,
                  .instance_id = info->instanceId,
@@ -592,6 +625,8 @@ static void stream_authorization(IHS_Client *client, const IHS_HostInfo *host, c
     if (r->active.type != SL_CMD_STREAM)
         return;
     if (pin) {
+        if (test_owns_display(r))
+            return;
         sl_runtime_event e = {.type = SL_EVENT_STREAM_AUTHORIZATION};
         snprintf(e.text, sizeof(e.text), "%.4s", pin);
         post(r, e);
@@ -609,6 +644,8 @@ static void stream_authorization(IHS_Client *client, const IHS_HostInfo *host, c
             if (account)
                 known->account = account;
         }
+        if (test_owns_display(r))
+            return;
         post(r, (sl_runtime_event){.type = SL_EVENT_STREAM_RESUMED,
                                    .account = r->test_active,
                                    .host = r->active.host});
@@ -649,11 +686,11 @@ static void auth_failed(IHS_Client *c, const IHS_HostInfo *h, IHS_AuthorizationR
     pthread_mutex_lock(&r->lock);
     r->request_terminal = true;
     pthread_mutex_unlock(&r->lock);
-    fail(r, r->service_unavailable                   ? sl_tr(SL_T_CLOUD_UNAVAILABLE)
-            : result == IHS_AuthorizationDenied      ? sl_tr(SL_T_PAIR_DENIED)
-            : result == IHS_AuthorizationTimedOut    ? sl_tr(SL_T_PAIR_TIMEOUT)
-            : result == IHS_AuthorizationNotLoggedIn ? sl_tr(SL_T_LOGIN_STEAM)
-                                                     : sl_tr(SL_T_PAIR_FAILED));
+    fail_control(r, r->service_unavailable                   ? sl_tr(SL_T_CLOUD_UNAVAILABLE)
+                    : result == IHS_AuthorizationDenied      ? sl_tr(SL_T_PAIR_DENIED)
+                    : result == IHS_AuthorizationTimedOut    ? sl_tr(SL_T_PAIR_TIMEOUT)
+                    : result == IHS_AuthorizationNotLoggedIn ? sl_tr(SL_T_LOGIN_STEAM)
+                                                             : sl_tr(SL_T_PAIR_FAILED));
 }
 static void free_session_material(sl_remote_material *material) {
     if (!material) return;
@@ -693,14 +730,15 @@ static void rejected(IHS_Client *c, const IHS_HostInfo *h, IHS_StreamingResult r
     pthread_mutex_lock(&r->lock);
     r->request_terminal = true;
     pthread_mutex_unlock(&r->lock);
-    if (result == IHS_StreamingPINRequired)
+    if (result == IHS_StreamingPINRequired) {
+        r->test_waiting_pin = r->test_active;
         post(r, (sl_runtime_event){.type = SL_EVENT_PIN});
-    else
-        fail(r, result == IHS_StreamingScreenLocked       ? sl_tr(SL_T_UNLOCK_PC)
-                : result == IHS_StreamingBusy             ? sl_tr(SL_T_PC_BUSY)
-                : result == IHS_StreamingGameLaunchFailed ? sl_tr(SL_T_GAME_FAILED)
-                : result == IHS_StreamingDisabled         ? sl_tr(SL_T_ENABLE_REMOTE_PLAY)
-                                                          : sl_tr(SL_T_CANNOT_CONNECT));
+    } else
+        fail_control(r, result == IHS_StreamingScreenLocked       ? sl_tr(SL_T_UNLOCK_PC)
+                        : result == IHS_StreamingBusy             ? sl_tr(SL_T_PC_BUSY)
+                        : result == IHS_StreamingGameLaunchFailed ? sl_tr(SL_T_GAME_FAILED)
+                        : result == IHS_StreamingDisabled         ? sl_tr(SL_T_ENABLE_REMOTE_PLAY)
+                                                                  : sl_tr(SL_T_CANNOT_CONNECT));
 }
 static void configuring(IHS_Session *s, IHS_SessionConfig *c, void *ctx) {
     (void)s;
@@ -885,6 +923,11 @@ static const IHS_StreamVideoCallbacks video_cb = {.startTracked = video_start,
 static const IHS_StreamInputCallbacks input_cb = {.activityState = activity};
 static void publish_test(sl_runtime *r, sl_network_test_view view) {
     pthread_mutex_lock(&r->lock);
+    if (r->facts.test_failure_pending && view.phase != SL_TEST_FAILED &&
+        view.phase != SL_TEST_IDLE) {
+        pthread_mutex_unlock(&r->lock);
+        return;
+    }
     view.generation = r->active.generation;
     view.revision = r->test_view.revision + 1;
     view.test_only = r->active.test_only;
@@ -908,7 +951,7 @@ static void stop_network_test(sl_runtime *r) {
 #endif
         sl_log("network test: workers joined, session destroyed");
     }
-    r->test_active = r->test_joined = false;
+    r->test_active = r->test_joined = r->test_waiting_pin = false;
     r->test_sample_at = 0;
     publish_test(r, (sl_network_test_view){.phase = SL_TEST_IDLE});
 }
@@ -1125,8 +1168,8 @@ static void control_request_failed(IHS_Client *client, IHS_ClientRequestFailure 
     pthread_mutex_lock(&r->lock);
     r->request_terminal = true;
     pthread_mutex_unlock(&r->lock);
-    fail(r, sl_tr(error == IHS_ClientRequestFailureUnavailable ? SL_T_HOST_OFFLINE
-                                                              : SL_T_CANNOT_CONNECT));
+    fail_control(r, sl_tr(error == IHS_ClientRequestFailureUnavailable ? SL_T_HOST_OFFLINE
+                                                                       : SL_T_CANNOT_CONNECT));
 }
 static const IHS_ClientRoutingCallbacks control_cb = {.host = control_host,
                                                       .resolve = control_resolve,
@@ -1701,7 +1744,7 @@ static void fail_network_test(sl_runtime *r) {
     publish_test(r, view);
 }
 static void sample_network_test(sl_runtime *r, uint64_t now) {
-    if (!r->test_session || r->test_joined)
+    if (!r->test_session || r->test_joined || r->test_waiting_pin || test_error_pending(r))
         return;
     IHS_NetworkTestResult result;
     IHS_SessionGetNetworkTestResult(r->test_session, &result);
@@ -2219,7 +2262,12 @@ static void *worker_main(void *ctx) {
         memcpy(auth_secret, r->auth_secret, sizeof(auth_secret));
         memset(r->auth_secret, 0, sizeof(r->auth_secret));
         pthread_mutex_unlock(&r->lock);
-        if (terminal && !r->session && !r->test_session)
+        if (terminal && test_error_pending(r)) {
+            /* Revoke unconsumed material without closing the active Test owner
+             * or dismissing its error. Confirmation owns the later cleanup. */
+            free_session_material(r->session_material);
+            r->session_material = NULL;
+        } else if (terminal && !r->session && !r->test_session)
             stop_session(r); /* Error wins over unconsumed/pending backend work. */
         if (snapshot_pending) {
             /* A UI snapshot queued before authorization completed must not
@@ -2328,18 +2376,26 @@ static void *worker_main(void *ctx) {
 #if NSL_HAVE_SNS
         sl_sns_config_cache_update(r->sns_config);
         if (r->sns) {
+            bool pending_test_error = test_error_pending(r);
             /* An explicit startup config may make BInit ready synchronously.
              * Start IHS/its deadline before the first SDK Update in that case,
              * just as for config completed asynchronously during this pass. */
-            if (!r->sns_waiting || !sl_sns_session_ready(r->sns))
+            if (pending_test_error || !r->sns_waiting || !sl_sns_session_ready(r->sns))
                 sl_sns_update(r->sns, now);
             sl_sns_state state = sl_sns_get_state(r->sns);
-            if (r->sns_waiting && sl_sns_session_ready(r->sns)) {
+            if (pending_test_error) {
+                /* Keep polling the existing backend/worker, but do not launch
+                 * or dismiss the Test owner behind the error panel. */
+            } else if (r->sns_waiting && sl_sns_session_ready(r->sns)) {
                 r->sns_waiting = false;
                 if (!(r->test_active ? launch_network_test(r, r->session_info)
-                                      : launch_session(r, r->session_info))) {
-                    if (r->test_active) fail_network_test(r);
-                    else { stop_session(r); fail(r, sl_tr(SL_T_SESSION_FAILED)); }
+                                     : launch_session(r, r->session_info))) {
+                    if (r->test_active)
+                        fail_network_test(r);
+                    else {
+                        stop_session(r);
+                        fail(r, sl_tr(SL_T_SESSION_FAILED));
+                    }
                 }
             } else if (state == SL_SNS_FAILED || state == SL_SNS_CLOSED) {
                 stop_session(r);

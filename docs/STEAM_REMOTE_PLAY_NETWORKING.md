@@ -1438,6 +1438,39 @@ Qt Run/JNI没有执行；设置、声音、socket/session最终析构与hash-map
 握手、错误地退休 NetworkTest；每份均正常执行37个程序后被正式比较器拒绝，未将编译
 失败或断言崩溃计为检出。source fixture重复生成逐字节一致，错误ELF与优化掉assert的运行被拒绝。
 
+#### 测试页运行后的控制错误与授权通知
+
+**Evidence**：固定 arm64 shell 的 `OnServerError @0xc6f864` 在运行中的测试页收到
+StreamingFailed 或 CM 服务错误后，创建 style=0 错误框，将 `finished(int)` 接到
+`OnActionCancel()`，并在 `0xc6fcb4` 将 panel 置为1。manager 先执行 StopStreaming，
+清 request_id/target；此时不析构嵌入的 NetworkTest，也不 Join。后续 PanelOnUpdate 在
+panel1 不采样测试。用户确认后 OnActionCancel 执行 Stop/Pop，panel 析构的
+`0xc6e56c–0xc6e570` 才清理 PANEL+280 的 NetworkTest（析构 `0xca99f4`）。
+
+PINRequired 走独立的 `SetPanelStateEnteringPIN @0xc6fdb0`，进入 panel6 的连接安全码
+输入；不是配对授权码，也不是普通错误框。迟到 Unauthorized 令 manager 进入4并发出
+授权通知，但 panel 仍为5，继续采样原测试，不跳到配对码页；Busy/重复 Success 也保留
+panel5，且不创建第二个 Test。取消 Unauthorized 发送9，取消 Busy/Success 发送10。
+普通错误/PIN 已清当前编号，确认/取消时不再次发送同一编号的10。
+
+**证据修订**：撤回把所有控制错误统一映射成自动 STOP/可重试错误页，及把运行中 Test 的
+所有授权通知直接映射到配对页的实现假设。控制错误与测试自身失败的清理时点不同：前者
+保留原 Test owner 到用户确认；后者按测试完成/失败路径关闭媒体，仍等待用户确认。
+
+`audit-steam-network-test-late-control.py` 执行24组完整 manager 入站和 Panel 调用：
+UDP/SDR ticket、worker session phase0/4、UDP Failed/PIN/Unauthorized/Busy/Success
+及 CM service error。phase0/4 是受控输入，非真实媒体；Qt 控件、最终发包、thread IsAlive/
+Join 为 provider。Pop 后的析构由 driver 显式执行，不宣称自然 Qt 调度或自然线程终止。
+冻结 gzip SHA256：`cac45896775795badde1a18eb8e09768fd8b65268798780ff65a6b3c0a03bd11`。
+
+`check-steam-network-test-late-control.py` 将其与24次实际应用/runtime/IHS UDP/Test
+生命周期对照，覆盖手动测试与连接前测试、A/B 关闭、错误等待时不重采样/重试、PIN 时
+不采样、Unauthorized/Busy/Success 时继续采样、取消9/10的先后及 Join/Destroy 各一次。
+CM 错误在 native 的 owner callback 边界注入；原始侧执行完整 CM parser，不能据此把
+native callback 测试称为真实 CM/SDR 联通。生产 SDK 在错误框期间仍轮询现有 backend，
+但不据其状态自动关闭测试或创建新 Session；确认后按 IHS Join→backend destroy 清理。
+
+
 ### 11.4 ProofRequest 可更新长期 secret
 
 **Evidence：** `HandleStreamingProofRequest @0x79e1c0–0x79e594`，proto 的 challenge=1:bytes、
