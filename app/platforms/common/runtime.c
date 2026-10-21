@@ -440,12 +440,11 @@ static void fail_control(sl_runtime *r, const char *message) {
         return;
     }
     pthread_mutex_lock(&r->lock);
-    bool already_pending = r->facts.test_failure_pending;
     r->facts.failed = r->facts.test_failure_pending = true;
     pthread_mutex_unlock(&r->lock);
-    if (already_pending)
-        return;
-    sl_network_test_view view = {.phase = SL_TEST_FAILED};
+    /* Original ShowDialog hides/replaces the old Test error, even after its
+     * media has failed. This remains a close-only error for the same owner. */
+    sl_network_test_view view = {.phase = SL_TEST_FAILED, .control_error = true};
     snprintf(view.error, sizeof(view.error), "%s", message);
     sl_log(message);
     publish_test(r, view);

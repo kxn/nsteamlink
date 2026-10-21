@@ -188,10 +188,13 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
 }
 
 void sl_ui_network_test(sl_ui_model *m, const sl_network_test_view *view) {
+    bool replace_error = view->phase == SL_TEST_FAILED && m->page == SL_ERROR &&
+                         m->cancel_only_error;
     if (view->generation != m->generation ||
         (m->network_test.generation == view->generation &&
          view->revision <= m->network_test.revision) ||
-        (m->page != SL_CONNECTING && m->page != SL_NETWORK_TEST && m->page != SL_NETWORK_RESULT))
+        (!replace_error && m->page != SL_CONNECTING && m->page != SL_NETWORK_TEST &&
+         m->page != SL_NETWORK_RESULT))
         return;
     m->network_test = *view;
     sl_page before = m->page;
@@ -203,7 +206,10 @@ void sl_ui_network_test(sl_ui_model *m, const sl_network_test_view *view) {
     } else if (view->phase == SL_TEST_CONTINUING)
         m->page = SL_CONNECTING;
     else if (view->phase == SL_TEST_FAILED) {
-        sl_ui_error(m, view->error);
+        if (replace_error)
+            snprintf(m->error, sizeof(m->error), "%s", view->error);
+        else
+            sl_ui_error(m, view->error);
         m->cancel_only_error = true;
         m->focus = 101;
     } else

@@ -1112,6 +1112,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-network-test-late-control.py"
         --receiver $<TARGET_FILE:nsl-network-test-failure-runtime>)
     set_tests_properties(network_test_late_control PROPERTIES TIMEOUT 90)
+    add_test(NAME network_test_error_overlap COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-network-test-error-overlap.py"
+        --receiver $<TARGET_FILE:nsl-network-test-failure-runtime>)
+    set_tests_properties(network_test_error_overlap PROPERTIES TIMEOUT 45)
     if(NSL_BUILD_SNS)
         add_test(NAME network_test_sdk_failure COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-network-test-sdk-failure.py"

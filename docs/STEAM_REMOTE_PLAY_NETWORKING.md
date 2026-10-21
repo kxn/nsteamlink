@@ -1500,6 +1500,40 @@ native 使用真实产品 actor、CM/IHS parser 与 Test worker，SDK/config/rou
 差异；未将编译错误、进程崩溃或不支持的新组合模式计为反例。
 
 
+#### 测网失败框之后的有效控制错误
+
+**Evidence**：`audit-steam-network-test-error-overlap.py` 接上同一实际 SDR ticket、Test
+Run/BConnect=false，分别在首次失败框显示前/后交付 CM service error 或 UDP 的
+Failed/PINRequired/Unauthorized/Busy/Success；action2/3共24组。22组无原诊断；另两组
+“Unauthorized先于首次失败框”会在原 servermanager.h:208 触发 BIsStreaming() 诊断，
+因为manager已由6转4，失败框格式化仍读取串流资料。这两组保留为诊断分支，不纳入正常
+等价数量，不要求端口复制该断言；在assert provider继续后观察的状态也不是自然Qt运行。
+
+原 `CPanelBase::ShowDialog @0xc67f14` 读取 panel+0xb8 的旧框；非空则于
+`0xc67f44` 调 QWidget::hide，清指针后存入新框并调用show。初始“Network Test Failed”
+之后收到有效控制错误时，真实ShowDialog执行 hide(old)→show(new)，仍接
+finished(int)→OnActionCancel；PINRequired同样替换成独立输入框。Unauthorized、Busy、
+Success没有替换已显示的失败框；前者令manager4，最终取消9，其余保留6、最终取消10。
+控制错误/PIN已在确认前取消10，最终确认不重复。Test不重新创建，最终显式析构Join一次。
+
+**证据修订**：撤回“待确认时始终保留第一个错误内容”的泛化。来自同一owner、有效事务的
+后续控制错误应更新待确认内容，不能被一般queued-error保护吞掉；保留只能关闭的控件。
+测试自身失败与控制错误仍有不同错误来源；不把后者标题继续分类成测网统计失败。
+同一generation的新失败快照可更新错误页，陈旧revision、不同generation、普通队列错误或
+Running/Result快照不得把待确认页改成重试或重新启动。
+
+冻结gzip SHA256：`801cff15cc1cec12f5ea10f18555742a905fd470a902fc54521175d7084a327f`。
+Qt文字格式化（部分记录为display-only）、控件构造、hide/show端点、SDK/线程及最终IO
+仍是provider；执行的是框的所有权/调用顺序，不证明自然Qt动画、信号投递或真实SDR。
+
+native应用用真实IHS认证拒绝产生共用的测网媒体失败框，再在owner callback交付服务错误，
+共4次手动/连接前、A/B确认；核对内容/错误来源更新、关闭控件不变、采样不恢复、单次
+取消及Join/Destroy。初始失败原因与source的BInit=false不同，分别由既有失败路径测试
+约束，不宣称发生了真实SDK/CM同一事件。UI单测还拒绝陈旧/异generation/Running快照
+及普通队列错误；只有同owner的新Failed快照替换错误。旧UI断言复现用于定位，不计作
+正常执行的生产反例。
+
+
 ### 11.4 ProofRequest 可更新长期 secret
 
 **Evidence：** `HandleStreamingProofRequest @0x79e1c0–0x79e594`，proto 的 challenge=1:bytes、

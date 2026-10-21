@@ -15,7 +15,7 @@
 #include <poll.h>
 #include <unistd.h>
 static uint16_t peer_port;
-static atomic_bool service_error_pending;
+static atomic_bool service_error_pending, service_error_delivered;
 static atomic_uint session_joins, session_destroys, result_polls;
 void __real_IHS_SessionThreadedJoin(IHS_Session *);
 void __wrap_IHS_SessionThreadedJoin(IHS_Session *s) {
@@ -41,8 +41,10 @@ static void control_session(void *ctx) {
     control_update_provider *p = ctx;
     if (p->session)
         p->session(p->ctx);
-    if (atomic_exchange(&service_error_pending, false))
+    if (atomic_exchange(&service_error_pending, false)) {
         assert(IHS_ClientHandshakeFail(p->client, IHS_AuthorizationFailed));
+        atomic_store(&service_error_delivered, true);
+    }
 }
 static void control_expiry(void *ctx) {
     control_update_provider *p = ctx;
@@ -96,11 +98,13 @@ static void control(int fd, const struct sockaddr_in *to, unsigned local, unsign
 }
 static void one(bool manual, bool press_a, unsigned mode) {
     /* 0 auth refusal; 1 late UDP failure; 2 owner-delivered service failure;
-     * 3 connect PIN; 4 Unauthorized; 5 Busy; 6 duplicate Success. */
+     * 3 connect PIN; 4 Unauthorized; 5 Busy; 6 duplicate Success;
+     * 7 media failure prompt then owner-delivered service error. */
     atomic_store(&session_joins, 0);
     atomic_store(&session_destroys, 0);
     atomic_store(&result_polls, 0);
     atomic_store(&service_error_pending, false);
+    atomic_store(&service_error_delivered, false);
     char directory[] = "/tmp/nsl-test-failure-XXXXXX";
     assert(mkdtemp(directory));
     assert(!setenv("NSL_DATA_DIR", directory, 1));
@@ -143,7 +147,8 @@ static void one(bool manual, bool press_a, unsigned mode) {
     unsigned id = 0, cancels = 0;
     unsigned auth_cancels = 0, prompt_polls = 0, cancels_before_ack = 0;
     uint64_t late_sent_at = 0;
-    bool fatal = mode <= 2;
+    bool fatal = mode <= 2 || mode == 7;
+    char initial_error[192] = {0};
     uint8_t good_reply[256];
     size_t good_reply_size = 0;
     uint64_t prompt_at = 0, deadline = sl_system_now() + 8000;
@@ -175,7 +180,7 @@ static void one(bool manual, bool press_a, unsigned mode) {
                 assert(facts.failed && facts.test_failure_pending &&
                        a.lifecycle.phase == SL_APP_STARTING);
                 assert(a.ui.page == SL_ERROR && a.ui.cancel_only_error);
-                if (!mode) {
+                if (!mode || (mode == 7 && !late_sent)) {
                     char expected[16];
                     snprintf(expected, sizeof(expected), "%u", peer_port);
                     assert(strstr(a.ui.error, expected));
@@ -185,6 +190,7 @@ static void one(bool manual, bool press_a, unsigned mode) {
                 prompt = true;
                 prompt_at = sl_system_now();
                 prompt_polls = atomic_load(&result_polls);
+                snprintf(initial_error, sizeof(initial_error), "%s", a.ui.error);
             }
             if (!mode && !progress && sl_system_now() - prompt_at >= 30) {
                 CMsgRemoteDeviceStreamingResponse p = CMSG_REMOTE_DEVICE_STREAMING_RESPONSE__INIT;
@@ -195,8 +201,18 @@ static void one(bool manual, bool press_a, unsigned mode) {
                 test_discovery_send(fd, &client_address, body, size);
                 progress = true;
             }
-            if (sl_system_now() - prompt_at >= 120) {
-                assert(cancels == (mode >= 1 && mode <= 3 ? 1u : 0u));
+            if (mode == 7 && !late_sent && sl_system_now() - prompt_at >= 30) {
+                late_sent = true;
+                atomic_store(&service_error_pending, true);
+            }
+            bool replacement_ready =
+                mode != 7 ||
+                (atomic_load(&service_error_delivered) && cancels == 1 && view.control_error &&
+                 strcmp(view.error, initial_error) && !strcmp(a.ui.error, view.error));
+            if (sl_system_now() - prompt_at >= 120 && replacement_ready) {
+                assert(cancels == ((mode >= 1 && mode <= 3) || mode == 7 ? 1u : 0u));
+                if (mode == 7)
+                    assert(!strcmp(a.ui.layout.title, sl_tr(SL_T_CONNECT_FAILED)));
                 assert(mode || progress);
                 if (fatal || mode == 3)
                     assert(atomic_load(&result_polls) == prompt_polls);
@@ -206,7 +222,7 @@ static void one(bool manual, bool press_a, unsigned mode) {
                     sl_ui_action(&a.ui, SL_RETRY, 0);
                     assert(!sl_ui_take_command(&a.ui, &cmd));
                 }
-                assert(atomic_load(&session_destroys) == (!mode ? 1u : 0u));
+                assert(atomic_load(&session_destroys) == (!mode || mode == 7 ? 1u : 0u));
                 cancels_before_ack = cancels;
                 sl_ui_action(&a.ui, fatal && press_a ? SL_ACCEPT : SL_BACK, 0);
                 assert(sl_ui_take_command(&a.ui, &cmd) && cmd.type == SL_CMD_CANCEL);
@@ -260,7 +276,7 @@ static void one(bool manual, bool press_a, unsigned mode) {
                 good_reply_size = size;
                 test_discovery_send(fd, &from, body, size);
             } else if (tag == k_ERemoteDeviceStreamingCancelRequest) {
-                assert(ack || (late_sent && mode >= 1 && mode <= 3));
+                assert(ack || (late_sent && ((mode >= 1 && mode <= 3) || mode == 7)));
                 CMsgRemoteDeviceStreamingCancelRequest *r =
                     cmsg_remote_device_streaming_cancel_request__unpack(NULL, size, wire + 16 + hs);
                 assert(r && r->request_id == id);
@@ -282,7 +298,7 @@ static void one(bool manual, bool press_a, unsigned mode) {
                 control(fd, &from, wire[2], 5, 0, reply, sizeof(reply));
                 handshake = true;
             } else if (wire[13] == 1 && !refused) {
-                if (!mode) {
+                if (!mode || mode == 7) {
                     const uint8_t denied[] = {2, 8, 1, 16, 1};
                     control(fd, &from, wire[2], 5, 1, denied, sizeof(denied));
                 } else {
@@ -290,7 +306,7 @@ static void one(bool manual, bool press_a, unsigned mode) {
                     control(fd, &from, wire[2], 5, 1, accepted, sizeof(accepted));
                 }
                 refused = true;
-            } else if (mode && wire[13] == 8 && !test_started) {
+            } else if (mode && mode < 7 && wire[13] == 8 && !test_started) {
                 test_started = true;
                 late_sent = true;
                 late_sent_at = sl_system_now();
@@ -310,7 +326,7 @@ static void one(bool manual, bool press_a, unsigned mode) {
                     size_t n = cmsg_remote_device_streaming_response__pack(&p, body);
                     test_discovery_send(fd, &client_address, body, n);
                 }
-            } else if (!mode)
+            } else if (!mode || mode == 7)
                 assert(wire[13] != 8); /* Auth refusal must not reach the test producer. */
         }
     }
@@ -339,7 +355,7 @@ int main(int argc, char **argv) {
     assert(!setenv("SDL_RENDER_DRIVER", "software", 1));
     assert(stream_media_init(NULL));
     unsigned mode = argc == 2 ? (unsigned)atoi(argv[1]) : 0;
-    assert(argc <= 2 && mode <= 6);
+    assert(argc <= 2 && mode <= 7);
     for (unsigned manual = 0; manual < 2; ++manual)
         for (unsigned a = 0; a < 2; ++a)
             one(manual, a, mode);

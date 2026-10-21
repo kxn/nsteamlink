@@ -1029,6 +1029,25 @@ static void network_test_flow(void) {
         failed.phase = SL_TEST_RUNNING;
         sl_ui_network_test(&m, &failed);
         assert(m.page == SL_ERROR && m.cancel_only_error);
+        /* A newer failure from this owner replaces the pending dialog; stale
+         * snapshots and unrelated queued errors still cannot dismiss it. */
+        failed.revision++;
+        failed.phase = SL_TEST_FAILED;
+        failed.control_error = true;
+        strcpy(failed.error, "New valid control error");
+        sl_ui_network_test(&m, &failed);
+        assert(m.page == SL_ERROR && m.cancel_only_error && !strcmp(m.error, failed.error));
+        assert(!strcmp(m.layout.title, sl_tr(SL_T_CONNECT_FAILED)));
+        sl_ui_error(&m, "unrelated queued error");
+        assert(!strcmp(m.error, failed.error));
+        sl_network_test_view stale = failed;
+        strcpy(stale.error, "stale error");
+        sl_ui_network_test(&m, &stale);
+        assert(!strcmp(m.error, failed.error));
+        stale.generation++;
+        stale.revision++;
+        sl_ui_network_test(&m, &stale);
+        assert(!strcmp(m.error, failed.error));
         sl_ui_action(&m, accept ? SL_ACCEPT : SL_BACK, 0);
         assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_CANCEL &&
                cmd.generation > generation && m.page == SL_STOPPING);

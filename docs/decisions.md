@@ -3099,3 +3099,22 @@ Decision：
 
 这是产品异步SDK初始化与原同步BInit/独立Test线程之间的生命周期映射；不证明HTTP错误
 起因、自然SDK故障/线程时序或真实SDR媒体恢复。多个错误的交替顺序仍需单独对照。
+
+## D-A090：同一测网 owner 的有效后续错误替换待确认内容
+
+Evidence：公网协议参考§11.3“测网失败框之后的有效控制错误”，固定shell执行完整
+Test失败/manager入站、OnServerError和CPanelBase::ShowDialog。22组正常、2组明确
+原诊断分支；已有框被hide，panel+0xb8改为新框，再show，确认仍走OnActionCancel。
+
+Decision：
+
+- 撤回待确认时一律冻结第一个错误内容的假设。有效控制callback继续发布同generation的
+  Failed快照，标明control_error；即使Test媒体已关闭，仍更新待确认错误，不重新开Test。
+- 错误页仅接受同generation、更高revision的Failed快照替换内容；保持关闭控件，不出现
+  Retry。陈旧、异generation、Running/Result快照及普通队列错误继续不能劫持确认流程。
+- 控制错误与测网媒体/统计失败分开分类；沿用现有错误页和连接失败标题，不新增首页
+  版式、资源或配对流程。PINRequired继续切到独立安全码输入。
+
+两组Unauthorized先于首次失败框的原BIsStreaming诊断单独保留，不当作正常等价输入，
+也不要求端口复制诊断。Qt文字格式化/显示、SDK失败/线程端点与native服务callback等
+provider边界不变；本决定不证明自然Qt或真实网络的全部错误竞态。
