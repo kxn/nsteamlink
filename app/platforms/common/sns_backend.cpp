@@ -12,6 +12,7 @@ extern "C" {
 #endif
 #include "sns_message_queue.h"
 #include "sns_connection_policy.h"
+#include "sns_io_policy.h"
 #include "sns_config_fetch_policy.h"
 #include "sns_config_http.h"
 #include <mbedtls/base64.h>
@@ -43,7 +44,7 @@ using Message = std::vector<uint8_t>;
 struct Queues {
     std::mutex mutex;
     std::condition_variable wake;
-    nsl::SnsMessageQueue tx, rx;
+    nsl::SnsMessageQueue rx;
     std::deque<Message> signals;
     std::atomic<sl_sns_state> state{SL_SNS_CONNECTING};
     bool owner = true;
@@ -130,6 +131,11 @@ struct BridgeInit {
 }
 struct sl_sns {
     std::shared_ptr<Queues> q = std::make_shared<Queues>();
+    /* Serialize the IHS send callback with handle creation/invalidation/close.
+     * Never acquire this mutex while holding q->mutex; SDK send may enqueue
+     * signaling under q->mutex. HTTP/bridge updates do not hold it. */
+    std::mutex connection_mutex;
+    std::atomic<uint64_t> datagrams_sent{0};
     ISteamNetworkingSockets *sockets = nullptr;
     HSteamNetConnection connection = k_HSteamNetConnection_Invalid;
     sl_stream_bridge *bridge = nullptr;
@@ -175,13 +181,14 @@ static void unlink_signaling(sl_sns *b) {
 static void clear_datagrams(sl_sns *b) {
     {
         std::lock_guard<std::mutex> lock(b->q->mutex);
-        b->q->tx.clear();
         b->q->rx.clear();
     }
     b->q->wake.notify_all();
 }
 static void close_backend(sl_sns *b, sl_sns_state state,
-    sl_sns_terminal_source source = SL_SNS_TERMINAL_NONE, int detail = 0) {
+    sl_sns_terminal_source source = SL_SNS_TERMINAL_NONE, int detail = 0,
+    int reason = 2001, const char *debug = "stream transport closed") {
+    std::lock_guard<std::mutex> api_lock(b->connection_mutex);
     b->bridge_init.reset();
     SteamNetConnectionInfo_t info{};
     bool have_info = b->connection != k_HSteamNetConnection_Invalid &&
@@ -191,11 +198,11 @@ static void close_backend(sl_sns *b, sl_sns_state state,
         if (info.m_eEndReason) b->end_reason = info.m_eEndReason;
     }
     record_terminal(b, source, detail, have_info ? &info : nullptr);
-    if (b->q->state != SL_SNS_FAILED) b->q->state = state;
-    // This entry covers port resource/signaling errors and explicit teardown;
-    // source-driven CheckConnection uses its own observed reason below.
+    if (state == SL_SNS_FAILED) b->q->state = SL_SNS_FAILED;
+    // Local resource errors, last Release and CheckConnection have distinct
+    // reasons; callers supply the explicit normal-destruction reason.
     nsl::CloseSnsConnection(b->sockets, connection_view(b), [b] { unlink_signaling(b); },
-                            2001, "stream transport closed");
+                            reason, debug);
     clear_datagrams(b);
 }
 static bool receive_signal(const uint8_t *p, size_t n, void *ctx) {
@@ -264,6 +271,7 @@ static bool begin_config(sl_sns *b, bool force = false) {
     return false;
 }
 static bool begin_connection(sl_sns *b) {
+    std::lock_guard<std::mutex> api_lock(b->connection_mutex);
     b->connection_attempted = true;
     /* NETWORKING section 9.5. Keep explicit official rate, encryption
      * preference, timeout and message flags. The built-in GNS ICE provider is
@@ -448,6 +456,7 @@ fail:
     return nullptr;
 }
 static bool check_connection(sl_sns *b) {
+    std::lock_guard<std::mutex> api_lock(b->connection_mutex);
     /* The official synchronous BInit precedes BConnect/CheckConnection. Our
      * asynchronous config/certificate HTTP stage has no SDK handle yet and
      * must not be mistaken for an already-invalidated connection. */
@@ -523,31 +532,6 @@ static void update_backend(sl_sns *b, uint64_t now) {
         b->q->state == SL_SNS_CONNECTING || b->q->state == SL_SNS_CONNECTED);
     if (!connected || b->q->state != SL_SNS_CONNECTED)
         return;
-    for (unsigned budget = 0; budget < 512; ++budget) {
-        Message outgoing;
-        {
-            std::lock_guard<std::mutex> lock(b->q->mutex);
-            if (b->q->tx.empty())
-                break;
-            outgoing = b->q->tx.take();
-        }
-        EResult ret = b->sockets->SendMessageToConnection(b->connection, outgoing.data(),
-            static_cast<uint32_t>(outgoing.size()), 0x15, nullptr);
-        if (ret == k_EResultLimitExceeded || ret == k_EResultIgnored) {
-            std::lock_guard<std::mutex> lock(b->q->mutex);
-            b->q->tx.retry(std::move(outgoing));
-            break;
-        }
-        if (ret != k_EResultOK) {
-            close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_SEND, ret);
-            return;
-        }
-        {
-            std::lock_guard<std::mutex> lock(b->q->mutex);
-            b->q->tx.finish(outgoing.size());
-        }
-        ++b->stats.datagrams_sent;
-    }
     SteamNetworkingMessage_t *messages[128];
     for (unsigned batch = 0; batch < 32; ++batch) {
         int count = b->sockets->ReceiveMessagesOnConnection(b->connection, messages, 128);
@@ -594,8 +578,10 @@ extern "C" bool sl_sns_session_ready(const sl_sns *b) {
 }
 extern "C" int sl_sns_end_reason(const sl_sns *b) { return b ? b->end_reason : 0; }
 extern "C" void sl_sns_get_stats(const sl_sns *b, sl_sns_stats *out) {
-    if (out)
+    if (out) {
         *out = b ? b->stats : sl_sns_stats{};
+        if (b) out->datagrams_sent = b->datagrams_sent.load();
+    }
 }
 #if NSL_SNS_PROBES
 extern "C" bool sl_sns_start_relay_probe(sl_sns *b) {
@@ -658,23 +644,17 @@ extern "C" bool sl_sns_test_terminal(sl_sns *b, int packet_case) {
 }
 #endif
 extern "C" int sl_sns_set_mtu(sl_sns *b, int mtu) {
-    if (!b || !b->connection || mtu <= 0 ||
-        !SteamNetworkingUtils()->SetConnectionConfigValueInt32(b->connection,
-            k_ESteamNetworkingConfig_MTU_PacketSize, mtu))
-        return -1;
-    int32_t result = 0;
-    size_t size = sizeof(result);
-    ESteamNetworkingGetConfigValueResult ret = SteamNetworkingUtils()->GetConfigValue(
-        k_ESteamNetworkingConfig_MTU_DataSize, k_ESteamNetworkingConfig_Connection,
-        b->connection, nullptr, &result, &size);
-    return ret > 0 && size == sizeof(result) ? result : -1;
+    if (!b) return -1;
+    std::lock_guard<std::mutex> api_lock(b->connection_mutex);
+    return nsl::SetSnsMaximumMTU(SteamNetworkingUtils(), b->connection, mtu);
 }
 static bool send_datagram(void *ctx, const uint8_t *p, size_t n) {
     sl_sns *b = static_cast<sl_sns *>(ctx);
-    if (!b)
-        return false;
-    std::lock_guard<std::mutex> lock(b->q->mutex);
-    return b->q->state == SL_SNS_CONNECTED && b->q->tx.push(p, n, DATAGRAM_MAX);
+    if (!b) return nsl::SnsSendAccepted(3);
+    std::lock_guard<std::mutex> api_lock(b->connection_mutex);
+    int result = nsl::SendSnsDatagram(b->sockets, b->connection, b->q->state.load(), p, n);
+    if (result == 0) ++b->datagrams_sent;
+    return nsl::SnsSendAccepted(result);
 }
 static int wait_datagram(void *ctx, uint32_t wait_us) {
     sl_sns *b = static_cast<sl_sns *>(ctx);
@@ -726,7 +706,8 @@ extern "C" void sl_sns_destroy(sl_sns *b) {
         std::lock_guard<std::mutex> lock(b->q->mutex);
         b->q->owner = false;
     }
-    close_backend(b, SL_SNS_CLOSED);
+    close_backend(b, SL_SNS_CLOSED, SL_SNS_TERMINAL_NONE, 0,
+        nsl::SnsDestroyedReason, nsl::SnsDestroyedDebug);
 #if NSL_SNS_PROBES
     sl_gns_sdr_probe_destroy(b->relay_probe);
 #endif

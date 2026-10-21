@@ -405,6 +405,17 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_link_libraries(nsl-sdr-policy-tests PRIVATE nsl_sdr_core)
     add_test(NAME nsl-sdr-policy COMMAND nsl-sdr-policy-tests)
     if(NSL_BUILD_SNS)
+        add_executable(nsl-sns-io-oracle tests/sns_io_oracle.cpp tests/sns_io_ihs.c)
+        target_compile_features(nsl-sns-io-oracle PRIVATE cxx_std_17)
+        target_include_directories(nsl-sns-io-oracle PRIVATE platforms/common
+            ${CMAKE_SOURCE_DIR}/third_party/ihslib/src)
+        target_compile_options(nsl-sns-io-oracle PRIVATE -Wall -Wextra -UNDEBUG)
+        target_link_options(nsl-sns-io-oracle PRIVATE -Wl,--wrap=IHS_SessionPacketTimestamp)
+        target_link_libraries(nsl-sns-io-oracle PRIVATE nsl_sns)
+        add_test(NAME sns_io_official_vectors COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-sns-io.py"
+            --receiver $<TARGET_FILE:nsl-sns-io-oracle>)
+        set_tests_properties(sns_io_official_vectors PROPERTIES TIMEOUT 30)
         add_executable(nsl-sns-owner-state-tests tests/test_sns_owner_state.cpp)
         target_compile_features(nsl-sns-owner-state-tests PRIVATE cxx_std_17)
         target_compile_definitions(nsl-sns-owner-state-tests PRIVATE NSL_SNS_PROBES=0 NSL_DIAGNOSTICS=0)

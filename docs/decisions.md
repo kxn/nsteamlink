@@ -2970,3 +2970,26 @@ Decision：
 - 网络测试共享端口资源纪律，但其 shell SDK 的驻留时长是独立核对范围；普通播放器的
   Kill 调用不能被扩大成所有调用者的退出策略。完整 SDL/JNI、自然引用计数和实机 loader
   安全也不由函数/组件审计替代。
+
+## D-A084：SNS 同步发送结果交回 IHS，不以排队代替 SDK 接受
+
+Evidence：固定 Android Socket Send `0x7ff300–0x7ff31c` 仅在 transport 返回 0 时记录
+发送并推进 shaper；SNS Send `0x800224–0x8002bc` 将 SDK 25/41 返回为重试，其余非 1
+返回失败，不修改连接状态。最后 Release `0x7ffcd4` 调用实际 SDR Close，理由为
+1001 / "Destroyed"。MTU setter `0x801084` 忽略 Set 返回，随后仅接受 Get 结果 1。
+协议参考 §12.3 的组合原指令及 native IHS caller 给出复现范围与 provider。
+
+Decision：
+
+- IHS 已序列化的整包直接交给 SDK，保留 flags 0x15 和 CRC；成功才报告接受。
+  不保留适配器 TX 副本、不因 SDK Send 的单次错误自动关闭连接。重试仍由既有 IHS
+  调度器持有报文并决定，不能提前增加重传计数或记录网络发送。
+- 现有 bool transport 接口通过明确 errno 保留 Socket 结果：重试为 EAGAIN，发送失败
+  为 EBADF，终止为 EIO。每次失败均覆盖 errno，不能读取别的系统调用留下的值。
+- SDK 句柄创建、检查、关闭与并发 IHS 发送共用短作用域 mutex；不持有接收/信令队列锁
+  调 SDK，不把 HTTP 或 bridge 更新放进该锁。成功发送计数使用原子变量供 owner 快照。
+  仍先停止/join IHS 使用者，再销毁 backend/SDK，不创建额外线程。
+- 显式 owner 销毁以 1001 / "Destroyed" 关闭，保持原状态直到 Close helper 执行；
+  本地资源错误保留 2001，CheckConnection 已有的 0/2001 分支不合并。
+- MTU setter 按原 Set/Get 分支实现。正式 IHS 的 MTU 选择调用链属于另外的协议契约，
+  不能把 setter 局部对齐视为发送预算已完整对齐，亦不能把这些差异推为历史卡顿根因。

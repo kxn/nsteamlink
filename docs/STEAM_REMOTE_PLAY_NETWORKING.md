@@ -1648,6 +1648,28 @@ packet 的已存长度加 4，否则不加；这不是 SNS 自动添加的字节
 （`0x8002c0–0x800324`），传空输出指针也会消费一条包。SDK 25/41 的名称以对应结果枚举为准，
 不把两者写成“对端已断开”。
 
+**调用者复核**：`CStreamSocket::Send @0x7ff1dc` 在 `0x7ff300` 直接调用上述 Send；
+`0x7ff304` 对任何非零结果立即返回。只有成功才记录实际发送字节并推进相应限速期限
+（`0x7ff308–0x7ff3c8`）。SNS Send 本身不因 SDK 返回 25/41 或其他错误关闭连接，也不更改
+transport 状态。因此，先把报文放入适配器 TX 队列就报告成功、稍后再因 SDK 发送错误关闭的
+方式不等价：它会让上层提前记账、增加重传计数。此处撤回把该 TX 队列视为透明搬运的假设。
+该源码差异不单独证明历史热点失败或卡顿的根因。
+
+`scripts/audit-steam-sns-io.py` 串接原 Socket Send 与 SNS Send，SDK 返回值为 provider，
+覆盖状态、句柄、CRC 和连续 busy/success/failure；实际 collector 和 shaper 指令执行。
+同脚本执行 `Release @0x7ffcd4` → SDR Close，引用计数减到零时以 **1001 / "Destroyed"**
+关闭，再进入 deleting destructor；非最后一个引用不关闭。引用初值、原子递减及最终析构为
+provider，不据此声称自然引用生命周期已完整验证。显式 owner 销毁对应最后释放；本地资源错误
+及 CheckConnection 的其他关闭原因属于独立入口，不能一起改成 1001。
+
+`check-steam-sns-io.py` 固定样本、fixture 和 helper hash，以实际 IHS 的 packet serialize、
+BaseSend、errno、发送 collector 与 shaper 调用生产 `sns_io_policy.h`，比较 160 个发送步骤、
+160 组 MTU 与最后释放的 10 组关闭结果。它不以 C++ 重新实现 Socket 调度；SDK 返回值和时间
+是 provider，最终析构仅为观察者。`test_sns_owner_state.cpp` 另执行真实 SDK 无效句柄发送，
+确认它不提前改变状态，再由 CheckConnection 失效；两次进程内 SDK pipe 验证实际回调的完整
+字节、发送计数、并发发送/查询/关闭和对端 1001 / "Destroyed"。pipe 不经过 CM、UDP、ICE 或
+Valve relay，不能替代 Switch/互联网持续收流、丢包恢复和 loader 生命周期的验收。
+
 **SNS 消息长度和所有权（原始指令复核）**：`CStreamPacket::SetSteamNetworkingMessage
 @0x7f6f30` 先释放旧 SDK message（或旧的非内嵌堆缓冲区），随后把 message+0 的数据指针
 存入 packet+40/+56，把 message+8 的 32 位长度同时存入 packet+48/+52，并在 packet+2336
@@ -1661,12 +1683,16 @@ inline/heap/SDK owner 以及长度 0、1、2048、2049、2272、2273、3000、65
 零字节 SDK 消息也应消费并交给上层长度校验，不能因此关闭连接。上述执行没有覆盖 SDK 的
 线上消息准入或发送方 MTU 选择，不证明这些长度都能由真实远端发送。固定公开 GNS 的默认
 `RecvMaxMessageSize` 为 512 KiB（`csteamnetworkingsockets.cpp`），这是当前替代 SDK 的限制，
-不是从官方 packet 函数推出的协议常量。项目跨线程队列分别限制为 4096 条、8 MiB（含 TX 待 SDK
-返回的消息预留），这些是本地资源策略。IHS 适配器以不消费消息的长度查询按需分配，避免为
+不是从官方 packet 函数推出的协议常量。项目跨线程接收 FIFO 限制为 4096 条、8 MiB，
+这些是本地资源策略；发送同步交给 SDK，不再另设报告提前成功的 TX 队列。
+IHS 适配器以不消费消息的长度查询按需分配，避免为
 每个常见小包预留 512 KiB；空消息与空队列分别表达，再走公共批量接收/更新循环。
 
-`SetMaximumMTU @0x801084` 设置连接级 MTU_PacketSize(32)，再查询 MTU_DataSize(33)，
-返回后者，查询失败返回 -1。应按此结果确定交给 SNS 的应用包预算，不能把普通 UDP 的 MTU
+`SetMaximumMTU @0x801084` 设置连接级 MTU_PacketSize(32)，**不检查设置返回值**，始终再查询
+MTU_DataSize(33)。查询仅在结果 **1** 时返回数据，否则返回 -1；不检查回填长度。原函数不在
+入口过滤零句柄、零/负 MTU。上述脚本覆盖 160 组受控 Utils 结果，证明此局部分支，
+不证明这些参数在实际 SDK 中有效。正式 IHS 会话尚未调用该 setter；不能因 setter 对齐就
+宣称发送方 MTU 选择已对齐。应按此结果确定交给 SNS 的应用包预算，不能把普通 UDP 的 MTU
 不经扣除地用于 SNS。消息边界、上层包序号/加密/ACK/NACK 保留，见 §8.9。
 
 ## 13. 信令桥接：生命周期、队列与失联
@@ -3534,10 +3560,13 @@ lastImmediateRequest、最近 RTT/请求时刻和 pending 状态分别交给
 生产器在相同输入下比较，包含非对称 relay/E2E 活动及 pending；并不因此扩大到 protobuf
 实际长度、MTU 裁剪及完整 SDK 策略全等的声明。
 
-后端诊断分别保存 SDK state/end reason 和首个本地 terminal source/detail；发送/接收可能早于
-一秒状态轮询发现关闭，销毁 SDK handle 前还要读取并锁存原始 SDK state/end reason。适配器
-Failed 不等于 SDK ProblemDetectedLocally：SDK 已 ClosedByPeer 时，Send 同样可以先返回
-NoConnection，再由适配器记为 send/Failed。数值来源分别为
+后端诊断分别保存 SDK state/end reason 和首个本地 terminal source/detail；接收可能早于
+一秒状态轮询发现关闭，销毁 SDK handle 前还要读取并锁存原始 SDK state/end reason。
+**证据修订**：旧版 SDK Send 返回 NoConnection 就由适配器记录 send/Failed 并关闭，是本地
+额外策略，不是官方 Send 行为。§12.3 的调用者复核后，发送失败只返回对应结果给 IHS，
+不在该回调更改连接状态；后续 CheckConnection/接收/显式销毁各自保留其关闭入口。
+历史日志的 send/Failed 仍只说明旧适配器先处理了发送错误，不证明 SDK ProblemDetectedLocally。
+数值来源枚举兼容历史记录，分别为
 signal、certificate/start/config、connection info/status/state、signal queue、send/receive、
 datagram bounds/queue、allocation；不把来源枚举当作线上协议错误码，不打印 SDK 调试文本。
 
