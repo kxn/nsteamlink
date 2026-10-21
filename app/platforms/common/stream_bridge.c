@@ -155,6 +155,8 @@ int sl_signal_channel_receive(sl_signal_channel *c, uint64_t peer,
             break;
         }
     }
+    if (c->cb.updated)
+        c->cb.updated(c->ctx);
 done:
     if (inner)
         ctransport_signal_msg__free_unpacked(inner, NULL);

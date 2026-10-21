@@ -33,6 +33,14 @@ void CloseSnsConnection(Sockets *sockets, SnsConnectionView v, BeforeClose befor
     if (v.state.load() != SL_SNS_FAILED) v.state = SL_SNS_CLOSED;
 }
 
+template <class Sockets, class BeforeClose>
+void RejectSnsSignal(Sockets *sockets, SnsConnectionView v, BeforeClose beforeClose) {
+    // Original BHandleTransportSignal closes before assigning Failed. The
+    // SDK close callback observes the previous transport state, not Failed.
+    CloseSnsConnection(sockets, v, beforeClose, 2001, "ReceivedP2PCustomSignal failed");
+    v.state = SL_SNS_FAILED;
+}
+
 template <class Sockets, class Utils, class BeforeClose>
 bool CheckSnsConnection(Sockets *sockets, Utils *utils, SnsConnectionView v,
                         SnsConnectionObservation &out, BeforeClose beforeClose) {

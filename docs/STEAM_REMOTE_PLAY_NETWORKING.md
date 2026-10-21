@@ -1773,6 +1773,35 @@ backend 收到有效 HMAC 的 sdr 后，逐条调用 ReceivedP2PCustomSignal；�
 则终止当前连接并设 transport Failed（`0x8017b0–0x801864`）。外层没有独立的消息序号/重放窗口，
 重复/乱序及对端连接 ID 校验由内层网络协议承担。不得自行按 payload 哈希丢掉所有重复信令。
 
+**信令后的状态推进复核**：固定 core 的 `BHandleTransportSignal @0x801754` 检查
+`this+56` 的 SDK 接口指针，而非 `this+48` 的连接句柄；接口存在时，即使句柄为零，
+仍把有效内层 sdr 交给 SDK。某条 SDK 调用失败时，先调用 CloseConnection
+（reason=2001、text=`ReceivedP2PCustomSignal failed`），再把 transport 设为 Failed；
+不是先设 Failed 再关闭。成功、空 sdr 列表和这条失败分支都继续经 transport 虚表+24
+调用 UpdateState（`0x801868–0x801878`），继而执行 CheckConnection。
+因此 Connecting 阶段的同条信令可以立即使状态变为 Connected/Closed；已有 Connected
+状态仍服从 CheckConnection 的一秒节流，不能在信令回调里绕过该门槛。
+撤回将“下一轮 owner update 会推进”视为与这个同轮调用等价的假设。
+
+`audit-steam-sns-signal-state.py` 直接组合执行上述 signal consumer、真实 UpdateState
+与 CheckConnection/SDR Close：57组/58轮包含空列表、多条成功、中途失败后不调用后续条目、
+无句柄、SDK info/status失败、Connected节流及初次创建分支。SDK返回/状态变化、分配、时钟和
+诊断为provider；不声称执行了rendezvous解析或真实选路。合成的SDK失败未自然释放signaling时，
+原断言也由诊断provider继续，不能将这类不一致输入宣称为正常网络可达状态。
+
+`check-steam-sns-signal-state.py` 对照初始化后的52组/53轮：生产 HMAC/protobuf
+通道调用实际 backend 的 SDK 转交、关闭和状态检查共用函数，比较完整信令 bytes、SDK
+调用/关闭顺序、状态、句柄、归属及精确检查时刻。初始 state=0 创建的4组与 SDK-null 的1组
+仅保留为原始证据，不冒称端口异步初始化的等价路径；该端口的 bridge 仅在 BInit 完成后
+存在，owner 先发起连接再更新 bridge，初始化准入另见 §12.2。冻结 gzip SHA256 为
+`a97074942180da94d5d88b4ca886264a80379b56b8231203260fd0c5e27c423d`。
+五个生产 C/C++ 反例均正常执行53轮后由比较器拒绝，涵盖恢复句柄守卫、Failed 提前、
+省略更新、空列表不更新和逐条更新。无效 framing/HMAC 不触发更新；真实 SDK 无效句柄
+经一条有效空内层消息的正式 completion 回调失效，另由 owner 用例执行。
+这里不比较自然 SDK signaling Release、原消息引用生命周期或同轮 UDP/媒体的完整调度；
+端口的 terminal 队列释放/唤醒与有界资源管理仍是本地纪律。信令后的状态重新读取也用于
+owner 的 SDK 收包准入，不再使用处理信令前缓存的 Connected 布尔值。
+
 ### 13.3 关闭与所有权
 
 **Evidence**：`CStreamClient::ResetConnection @0x7a5294–0x7a52c4` 先关闭 CStreamConnection，

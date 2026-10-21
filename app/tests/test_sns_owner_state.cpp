@@ -35,6 +35,27 @@ static void sdk_receive_error() {
     sl_sns_destroy(b);
 }
 
+static void sdk_signal_state() {
+    // A valid empty inner message must still run the actual production
+    // completion callback. The real SDK invalid handle fails the info query.
+    SteamNetworkingSockets_SetManualPollMode(true);
+    sl_sns *b = new sl_sns;
+    b->sockets = SteamNetworkingSockets(); b->connection = 1;
+    b->connection_attempted = b->config_ready = true;
+    b->q->state = SL_SNS_CONNECTING;
+    uint8_t key[32]{};
+    const uint8_t body[] = {0x0a, 0x20,
+        0xb6,0x13,0x67,0x9a,0x08,0x14,0xd9,0xec,0x77,0x2f,0x95,0xd7,0x78,0xc3,0x5f,0xc5,
+        0xff,0x16,0x97,0xc4,0x93,0x71,0x56,0x53,0xc6,0xc7,0x12,0x14,0x42,0x92,0xc5,0xad};
+    sl_signal_callbacks cb = {receive_signal, signal_failed, signal_updated};
+    auto channel = sl_signal_channel_create(77, 88, key, sizeof(key), &cb, b);
+    assert(channel && sl_signal_channel_receive(channel, 77, body, sizeof(body)) == 1);
+    assert(!b->connection && b->q->state == SL_SNS_FAILED);
+    assert(b->stats.terminal_source == SL_SNS_TERMINAL_CONNECTION_INFO && b->q->owner);
+    sl_signal_channel_destroy(channel);
+    sl_sns_destroy(b);
+}
+
 static void udp_fragmented_message() {
     // Real SDK SNP over kernel UDP loopback; no Steam host or remote network.
     SteamNetworkingSockets_SetManualPollMode(true);
@@ -219,6 +240,7 @@ int main() {
     sl_sns_destroy(b);
     assert(!queues->owner && queues.use_count() == 1);
     sdk_receive_error();
+    sdk_signal_state();
     udp_fragmented_message();
     production_io();
     GameNetworkingSockets_Kill();

@@ -3014,3 +3014,24 @@ Decision：
   SDK 的 SNP 分片与 IHS 消息/加密/可靠重传是不同层，不能相互替代预算。
 - 无效句柄的真实 SDK update 和 576-byte packet MTU 下的 1472-byte UDP loopback 消息
   用于核对本机 owner/消息边界，不扩大为官方完整上层、ICE/SDR、热点或 Switch 的验收。
+
+## D-A086：有效信令整批处理后立即重查传输状态
+
+Evidence：固定 core `BHandleTransportSignal @0x801754` 以 SDK 接口而非连接句柄准入；
+SDK 拒绝一条时停止后续条目，以 2001 / `ReceivedP2PCustomSignal failed` 关闭，再设
+Failed。成功、空列表和拒绝分支均在 `0x801868–0x801878` 调 UpdateState，再进入
+CheckConnection，保留 Connected 的一秒节流。组合执行和 provider 边界见公网协议参考 §13.2。
+
+Evidence correction：撤回“等下一轮 owner update 自然会推进”可视为与原同轮调用等价
+的假设。信令入站的 SDK 接口有效不等于当前连接 handle 非零；不能用 handle 守卫提前拒绝。
+
+Decision：
+
+- 有效 HMAC/内层 protobuf 的整条信令结束时回调一次状态检查，包括空列表和 SDK 拒绝；
+  不逐条检查，不让未通过 framing/HMAC 的输入触发状态推进。
+- SDK 拒绝的专门关闭入口按原关闭后再 Failed 的顺序执行；不借用先 Failed 的本地资源错误
+  helper，不额外查询 SDK info 改变这条路径的调用顺序。
+- 接收完成与初次 owner 检查共用状态策略和短作用域连接锁；不加线程，不在 bridge 更新期间
+  持有此锁。IHS 停止/join、terminal 队列释放/唤醒及最后 SDK 清理仍遵守既有所有权纪律。
+- 原 state=0/SDK-null 的合成入口和真实初始化后的端口通道分开列出；不据有限局部等价宣称
+  Qt/SDL 全调度、自然 signaling 引用生命周期、热点或 Switch 验收已经完成。

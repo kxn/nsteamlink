@@ -8,6 +8,9 @@ typedef struct sl_signal_callbacks {
      * bad framing/HMAC/protobuf never calls this callback. */
     bool (*receive)(const uint8_t *, size_t, void *);
     void (*failed)(void *);
+    /* Once per authenticated/parsed inner message, including an empty sdr
+     * list and SDK rejection. Recheck transport state after the whole list. */
+    void (*updated)(void *);
 } sl_signal_callbacks;
 
 /* Single-owner bridge queue and codec, NETWORKING sections 8.3/8.8/13.

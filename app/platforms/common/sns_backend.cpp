@@ -206,14 +206,32 @@ static void close_backend(sl_sns *b, sl_sns_state state,
                             reason, debug);
     clear_datagrams(b);
 }
-static bool receive_signal(const uint8_t *p, size_t n, void *ctx) {
-    sl_sns *b = static_cast<sl_sns *>(ctx);
-    if (!b->connection || n > INT32_MAX)
+template<class Sockets>
+static bool receive_signal_with(sl_sns *b, Sockets *sockets, const uint8_t *p, size_t n) {
+    // Original checks the SDK interface, not the current connection handle.
+    // Late rendezvous may still be accepted by the SDK after invalidation.
+    if (!sockets || n > INT32_MAX)
         return false;
     ReceiveContext receive;
-    return b->sockets->ReceivedP2PCustomSignal(p, static_cast<int>(n), &receive);
+    (void)b;
+    return sockets->ReceivedP2PCustomSignal(p, static_cast<int>(n), &receive);
 }
-static void signal_failed(void *ctx) { close_backend(static_cast<sl_sns *>(ctx), SL_SNS_FAILED, SL_SNS_TERMINAL_SIGNAL); }
+static bool receive_signal(const uint8_t *p, size_t n, void *ctx) {
+    sl_sns *b = static_cast<sl_sns *>(ctx);
+    return receive_signal_with(b, b->sockets, p, n);
+}
+template<class Sockets>
+static void signal_failed_with(sl_sns *b, Sockets *sockets) {
+    std::lock_guard<std::mutex> api_lock(b->connection_mutex);
+    record_terminal(b, SL_SNS_TERMINAL_SIGNAL, 0, nullptr);
+    nsl::RejectSnsSignal(sockets, connection_view(b), [b] { unlink_signaling(b); });
+    clear_datagrams(b);
+}
+static void signal_failed(void *ctx) {
+    sl_sns *b = static_cast<sl_sns *>(ctx);
+    signal_failed_with(b, b->sockets);
+}
+static void signal_updated(void *ctx);
 static void copy_error(char *error, size_t size, const char *text) {
     if (error && size)
         snprintf(error, size, "%s", text);
@@ -309,7 +327,7 @@ static bool begin_connection(sl_sns *b) {
     return b->connection != k_HSteamNetConnection_Invalid;
 }
 static bool complete_initialization(sl_sns *b) {
-    sl_signal_callbacks callbacks = {receive_signal, signal_failed};
+    sl_signal_callbacks callbacks = {receive_signal, signal_failed, signal_updated};
     b->bridge = sl_stream_bridge_create(&b->bridge_init->config,
         &b->bridge_init->material, &callbacks, b);
     b->bridge_init.reset(); // The bridge copied its identity and stream HMAC key.
@@ -456,7 +474,8 @@ fail:
         sdk_owned = false;
     return nullptr;
 }
-static bool check_connection(sl_sns *b) {
+template<class Sockets, class Utils>
+static bool check_connection_with(sl_sns *b, Sockets *sockets, Utils *utils) {
     std::lock_guard<std::mutex> api_lock(b->connection_mutex);
     /* The official synchronous BInit precedes BConnect/CheckConnection. Our
      * asynchronous config/certificate HTTP stage has no SDK handle yet and
@@ -479,7 +498,7 @@ static bool check_connection(sl_sns *b) {
         b->stats.authenticated = !(info.m_nFlags & k_nSteamNetworkConnectionInfoFlags_Unauthenticated);
         b->stats.relayed = (info.m_nFlags & k_nSteamNetworkConnectionInfoFlags_Relayed) != 0;
     };
-    bool valid = nsl::CheckSnsConnection(b->sockets, SteamNetworkingUtils(), connection_view(b),
+    bool valid = nsl::CheckSnsConnection(sockets, utils, connection_view(b),
         observed, [&] {
             update_info();
             record_terminal(b, source(), observed.detail, &observed.info);
@@ -490,6 +509,15 @@ static bool check_connection(sl_sns *b) {
     if (b->q->state == SL_SNS_FAILED || b->q->state == SL_SNS_CLOSED)
         clear_datagrams(b);
     return valid;
+}
+static bool check_connection(sl_sns *b) {
+    return check_connection_with(b, b->sockets, SteamNetworkingUtils());
+}
+static void signal_updated(void *ctx) {
+    // The bridge runs after the owner's initial connection attempt. Original
+    // BHandleTransportSignal immediately invokes UpdateState/CheckConnection
+    // once, even for an empty inner message or a rejected SDK signal.
+    check_connection(static_cast<sl_sns *>(ctx));
 }
 template<class Sockets>
 static bool receive_messages(sl_sns *b, Sockets *sockets) {
@@ -535,7 +563,7 @@ static void update_backend(sl_sns *b, uint64_t now) {
     if (b->connection)
         sl_gns_sdr_transport_stats(b->connection, b->sdr_debug);
 #endif
-    bool connected = check_connection(b);
+    check_connection(b);
     {
         /* SDK callbacks only enqueue. Never hold this mutex across an SDK call
          * that might call SendSignal again. */
@@ -552,7 +580,7 @@ static void update_backend(sl_sns *b, uint64_t now) {
     }
     sl_stream_bridge_update(b->bridge, now,
         b->q->state == SL_SNS_CONNECTING || b->q->state == SL_SNS_CONNECTED);
-    if (!connected || b->q->state != SL_SNS_CONNECTED)
+    if (b->q->state != SL_SNS_CONNECTED)
         return;
     if (!receive_messages(b, b->sockets))
         close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_DATAGRAM);

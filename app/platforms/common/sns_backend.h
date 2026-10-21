@@ -60,7 +60,8 @@ bool sl_sns_test_migration(sl_sns *, bool start, unsigned out[6]);
 bool sl_sns_test_terminal(sl_sns *, int packet_case);
 bool sl_sns_loss_snapshot(sl_sns *, sl_sdr_loss_snapshot *);
 #endif
-/* Set packet MTU and return the resulting SDK application-message MTU. */
+/* Set packet MTU and return the resulting SDK message size without
+ * fragmentation; larger complete messages may still be accepted by SNP. */
 int sl_sns_set_mtu(sl_sns *, int packet_mtu);
 const IHS_DatagramTransport *sl_sns_datagram_transport(void);
 void sl_sns_destroy(sl_sns *);

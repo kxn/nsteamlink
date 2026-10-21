@@ -12,7 +12,7 @@ typedef struct fixture {
     sl_signal_channel *channel;
     uint8_t envelope[65536], received[65536];
     size_t size, received_size;
-    unsigned sends, receives, failures;
+    unsigned sends, receives, failures, updates;
     bool reject_send, reject_signal;
 } fixture;
 static bool send_frame(const uint8_t *p, size_t n, void *ctx) {
@@ -34,6 +34,7 @@ static bool receive(const uint8_t *p, size_t n, void *ctx) {
     return !f->reject_signal;
 }
 static void failed(void *ctx) { ++((fixture *)ctx)->failures; }
+static void updated(void *ctx) { ++((fixture *)ctx)->updates; }
 static void receive_body(uint64_t id, const uint8_t *p, size_t n, void *ctx) {
     fixture *f = ctx;
     sl_signal_channel_receive(f->channel, id, p, n);
@@ -103,7 +104,7 @@ int main(void) {
     uint8_t key[16];
     for (unsigned i = 0; i < sizeof(key); ++i)
         key[i] = (uint8_t)i;
-    sl_signal_callbacks cb = {.receive = receive, .failed = failed};
+    sl_signal_callbacks cb = {.receive = receive, .failed = failed, .updated = updated};
     f->channel = sl_signal_channel_create(77, 88, key, sizeof(key), &cb, f);
     uint8_t secret[32] = {1};
     IHS_ClientConfig config = {.deviceId = 77, .secretKey = secret, .deviceName = "Bridge test"};
@@ -131,12 +132,14 @@ int main(void) {
         0x81,0xe9,0xe1,0xf7,0xed,0x2a,0xde,0xe7,0x64,0x1e,0xec,0x9b,0xf1,0xdf,0xc4,0x67};
     assert(token.size == 32 && !memcmp(token.bytes, expected, 32));
     assert(sl_signal_channel_receive(f->channel, 0, body.bytes, body.size) == 0);
+    assert(f->updates == 0);
     relay_back(f);
     assert(f->receives == 1 && f->received_size == 3 && !memcmp(f->received, "abc", 3));
     /* Identical authenticated signals must still reach the inner reliable
      * rendezvous protocol. No outer payload-hash deduplication. */
     relay_back(f);
     assert(f->receives == 2);
+    assert(f->updates == 2);
     uint8_t bad[128];
     assert(body.size <= sizeof(bad));
     memcpy(bad, body.bytes, body.size);
@@ -144,6 +147,7 @@ int main(void) {
     assert(sl_signal_channel_receive(f->channel, 77, bad, body.size) == 0);
     assert(!sl_signal_channel_failed(f->channel) && f->receives == 2);
     assert(sl_signal_channel_receive(f->channel, 77, (const uint8_t *)"\x12\xff", 2) == 0);
+    assert(f->updates == 2); /* Invalid framing/HMAC never updates the backend. */
     /* Reconnect retains FIFO order, including duplicates, but reframes with
      * the new session. A batch is decoded completely before SDK delivery. */
     sl_remote_close(f->remote);
@@ -158,12 +162,15 @@ int main(void) {
     unsigned before = f->receives;
     relay_back(f);
     assert(f->receives == before + 64 && f->received_size == 1 && f->received[0] == 31);
+    assert(f->updates == 3); /* Once for the whole list, not once per element. */
     f->reject_signal = true;
     assert(sl_signal_channel_receive(f->channel, 77, body.bytes, body.size) == -1);
     assert(f->failures == 1 && sl_signal_channel_failed(f->channel));
+    assert(f->updates == 4); /* The SDK rejection path still updates once. */
     assert(!sl_signal_channel_queue(f->channel, (const uint8_t *)"late", 4));
     assert(sl_signal_channel_receive(f->channel, 77, body.bytes, body.size) == -1);
     assert(f->failures == 1);
+    assert(f->updates == 4);
     sl_remote_destroy(f->remote);
     sl_signal_channel_destroy(f->channel);
     free(f);
