@@ -735,6 +735,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
         -Wl,--wrap=sl_remote_connection_update -Wl,--wrap=sl_remote_connection_describe
         -Wl,--wrap=sl_remote_connection_destroy -Wl,--wrap=sendto -Wl,--wrap=recvfrom
         -Wl,--wrap=IHS_ClientSendControl -Wl,--wrap=IHS_SessionCreate
+        -Wl,--wrap=IHS_ClientStreamingHandoff
         -Wl,--wrap=IHS_SessionThreadedJoin -Wl,--wrap=sl_system_now
         -Wl,--wrap=IHS_CryptoRandomUInt32 -Wl,--wrap=sl_network_stats_load
         -Wl,--wrap=sl_sns_create_configured -Wl,--wrap=sl_sns_update -Wl,--wrap=sl_sns_get_state
@@ -750,6 +751,22 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-ticket-consumer.py"
         --receiver $<TARGET_FILE:nsl-ticket-consumer-runtime> ${NSL_TICKET_CONSUMER_ARGS})
     set_tests_properties(ticket_consumer_official_vectors PROPERTIES TIMEOUT 90)
+    add_test(NAME shell_handoff_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-shell-handoff.py"
+        --receiver $<TARGET_FILE:nsl-ticket-consumer-runtime> ${NSL_TICKET_CONSUMER_ARGS})
+    set_tests_properties(shell_handoff_official_vectors PROPERTIES TIMEOUT 90)
+    add_executable(nsl-stream-handoff-owner tests/stream_handoff_owner.c)
+    target_include_directories(nsl-stream-handoff-owner PRIVATE
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client)
+    target_compile_options(nsl-stream-handoff-owner PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+    target_link_libraries(nsl-stream-handoff-owner PRIVATE nsl_remote)
+    target_link_options(nsl-stream-handoff-owner PRIVATE -Wl,--wrap=IHS_CryptoRandomUInt32
+        -Wl,--wrap=IHS_ClientSendControl)
+    add_test(NAME stream_handoff_owner COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-shell-handoff.py"
+        --receiver $<TARGET_FILE:nsl-ticket-consumer-runtime>
+        --owner $<TARGET_FILE:nsl-stream-handoff-owner> --owner-only)
+    set_tests_properties(stream_handoff_owner PROPERTIES TIMEOUT 15)
     if(NSL_BUILD_SNS)
         add_test(NAME sns_client_call_official_vectors COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-sns-client-call.py"

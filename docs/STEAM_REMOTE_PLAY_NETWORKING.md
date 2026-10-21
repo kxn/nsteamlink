@@ -1383,6 +1383,61 @@ result 与内部 manager error 仍是不同枚举域，不把名称相似当成�
 交付次数；错误票据不得调用 SDK 或 IHS Session constructor，所有临时 owner 必须清理。
 构造返回值是受控 provider，该用例不验证 SDK/媒体启动成功、Qt 事件循环调度或实际网络。
 
+#### 普通播放器交接与测网页面的不同 owner
+
+**Evidence**：固定 arm64 shell 的普通 StartStreaming(QStringList) 在 `0xc9980c`
+请求 Qt quit。main 的 Run 返回后于 `0xc65814` 调 Shell Quit、`0xc6581c` 析构，
+后续才走 Android JNI 的 Activity 参数交付。BInit 在 `0xc98240` 构造 manager，
+`0xc9824c` 存入 app+24；Quit `0xc97f94–0xc97fa8` 经 manager 虚表+56调用 deleting
+destructor 后清空该指针。实际析构 `0xcaecac` 于 `0xcaeccc` 调 Stop `0xcaeea4`。
+Stop 释放 discovery socket、CM session 并进入未初始化的 state0，**不调用 StopStreaming，
+不发送 StreamingCancel**。旧 request_id/target 的存储在 Stop 末尾尚未清空，但随后对象被
+销毁；不能把这些残留存储当作媒体期间仍然存活的握手事务。
+
+**证据修订**：此前“成功票据的 state6 owner 一直保留到 Cancel/替换/销毁”描述的是
+manager 局部契约，不能推导成普通播放器运行期间仍保留它。完整入站 Update 之前的失败仍
+可撤销票据，专用 NetworkTest 仍在 Qt 内使用原 manager；只有普通播放器越过 launcher
+交付后才结束选机 manager 的生命周期。不得据此在测网启动时退休事务，或在普通交接时
+发送用户取消。
+
+本端口复用同一进程/发现 owner；保留目录查询以支持直启游戏结束的产品策略，与原 Qt
+退出不同。因此普通交接应无取消地退休握手 owner，并在媒体期间停止旧握手入站，而不是
+让旧 Success/Failed/Proof/服务失败继续修改播放器 UI。新的显式授权/串流操作重新开启
+握手；发现与媒体自己的信令桥保持各自生命周期。这是对原交接的端口映射，不宣称整个
+Qt/JNI 调度或存储对象相同。实现入口只适用于完整 Update 之外的 polled owner，不能从
+该边界外推 threaded/deferred 调用者。
+
+**缓存边界补充**：manager 析构对 `this+0x2d8` 的最近 authorization key buffer 执行
+free（`0xcaed5c–0xcaed74`）。原构造函数在污染存储上的执行已给出空 key/默认 result=7
+（`audit-steam-authorization-exchange.py` 的 constructor_defaults），这个 manager-lifetime
+缓存也不能跨普通交接继续使用。种入16-byte缓存的 Quit 组合执行观察到实际 free 调用；
+缓存内容是受控初始状态，不冒称自然授权交换。端口交接同样清空最近 key/result，
+不删除持久配对身份、长期 secret 或已复制给媒体的 session key。
+
+`audit-steam-shell-handoff.py` 复用20组完整 manager/Panel 输入，逐组确认 launcher
+准入结果与既有 consumer fixture 相同；5组普通成功继续执行真实 Quit、deleting/base
+destructor 和 Stop。主线调用点、manager字段/虚表绑定、函数字节及递归helper均冻结。
+Qt Run/JNI没有执行；设置、声音、socket/session最终析构与hash-map销毁为显式provider，
+缓存free端点为记录的分配边界。种入缓存仅验证析构所有权，不能冒充自然授权交换。
+冻结 gzip SHA256 为 `40c9cb69c01858c0c7273d6044aaa2cce6efb651c075e43523161d74d104f890`。
+
+生产 `IHS_ClientStreamingHandoff` 只在完整polled Update之外、普通成功票据的owner上
+执行；拒绝回调内、尚未成功、NetworkTest等入口。退休private与最近缓存，不发9/10；
+后续握手帧不进入授权/开流/Proof分派，发现帧仍处理。新的显式串流或授权/服务配对动作
+重新开启输入。`check-steam-shell-handoff.py` 用实际产品worker和IHS parser/线程验证
+17次普通启动，在交接后注入CM服务失败、UDP失败和InProgress，不误报UI失败、不多开owner
+或发取消；旧consumer20组继续单独比较launcher准入，不能把准入时state6与交接后的state1
+混作同一个观察点。原销毁后的state0映射为端口“发现仍可用、无活跃握手”的state1，
+不声称两个存储对象逐字相等。
+
+独立native owner连续完成3次请求/真实解密/交接，验证重开串流、显式授权、服务配对
+入口，以及45个非Success结果、重复Success、Proof与服务失败在交接后的隔离；缓存种入
+与parser输入为受控，真实private/cache释放、secret保持和3条发现通知实际执行。
+这些测试不请求真实Steam/SDK/媒体，不是Switch loader或真实互联网验收。
+另以五份生产 C 编译反例核对比较器：遗漏交接、交接发送取消、遗留活跃编号、继续分派旧
+握手、错误地退休 NetworkTest；每份均正常执行37个程序后被正式比较器拒绝，未将编译
+失败或断言崩溃计为检出。source fixture重复生成逐字节一致，错误ELF与优化掉assert的运行被拒绝。
+
 ### 11.4 ProofRequest 可更新长期 secret
 
 **Evidence：** `HandleStreamingProofRequest @0x79e1c0–0x79e594`，proto 的 challenge=1:bytes、

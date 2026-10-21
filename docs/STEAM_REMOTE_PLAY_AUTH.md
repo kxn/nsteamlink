@@ -406,10 +406,16 @@ Unauthorized不重新生成码/私钥。stream重发按整秒time()+1，授权�
 UI提示和恢复不提交新PAIR/STREAM；显式LAN授权API单独保留。
 
 握手消息按owned FIFO交给runtime actor，排空后再处理streaming期限，避免成功包
-尚未消费就发送旧授权重试。成功凭据停止重发但保留握手owner至Cancel/替换/销毁；
+尚未消费就发送旧授权重试。成功凭据停止重发但在manager存活期间保留握手owner至Cancel/替换/销毁；
 不把该生命周期修正当作Proof轮换已实现。Proof更新secret、完整入口/foreign顺序、
 自然账户选择和真实Steam/Switch验证仍是独立契约。比较器投影字段和provider边界
 见§135，不能把44组匹配目标的事务对照推广到全部协议或硬件验收。
+
+**外层生命周期修订**：上述state6契约不能解释为普通播放器运行期间仍保留选机manager。
+公网协议参考§11.3的普通交接执行了Shell Quit→manager析构/Stop，不发送取消；同时释放
+最近key/result缓存。NetworkTest仍在Qt内，保留原owner。端口在完整Update后、普通SDK/媒体
+构造之前无取消地退休握手和最近缓存，旧握手输入停止处理；新显式串流/配对重新开启。
+持久key、两类PIN的含义及媒体自己的信令桥不因此改变。
 
 ## Proof更新的实现与身份命名空间
 

@@ -39,7 +39,13 @@ static uint8_t cm_packets[8][4096], udp_packets[8][4096];
 static size_t cm_sizes[8], udp_sizes[8];
 static unsigned cm_count, udp_count, udp_index, after_injection;
 static unsigned final_phase;
-static unsigned test_mode; /* 0 constructor terminal, 1 SDK connecting, 2 init failure. */
+static unsigned admission_phase, handoffs;
+static unsigned handshake_sends, handoff_controls, late_controls;
+static unsigned test_mode; /* 0 constructor terminal, 1 SDK connecting, 2 init failure, 3 late ingress. */
+static uint8_t late_cm_packets[8][4096], late_udp_packets[8][4096];
+static size_t late_cm_sizes[8], late_udp_sizes[8];
+static unsigned late_cm_count, late_udp_count;
+static bool failed_after_late;
 static uint64_t real_begin;
 static atomic_bool clock_frozen;
 static atomic_uint_fast64_t frozen_ms;
@@ -91,8 +97,25 @@ void __wrap_sl_remote_connection_update(sl_remote_connection *c, uint64_t now) {
             assert(sl_remote_receive(protocol, cm_packets[n], cm_sizes[n]));
         atomic_store(&injected, true);
     } else if (atomic_load(&injected) && ++after_injection == 2) {
+        if (test_mode == 3) {
+            assert(atomic_load(&session_creates) == 1);
+            for (unsigned n = 0; n < late_cm_count; ++n)
+                assert(sl_remote_receive(protocol, late_cm_packets[n], late_cm_sizes[n]));
+            assert(udp_index == udp_count);
+            memcpy(udp_packets, late_udp_packets, sizeof(udp_packets));
+            memcpy(udp_sizes, late_udp_sizes, sizeof(udp_sizes));
+            udp_count = late_udp_count; udp_index = 0;
+        }
+        if (test_mode != 3) {
+            final_phase = IHS_ClientHandshakePhase(actor->client);
+            atomic_store(&settled, true); /* Two real actor passes after delivery. */
+        }
+    } else if (test_mode == 3 && atomic_load(&injected) && after_injection == 4) {
         final_phase = IHS_ClientHandshakePhase(actor->client);
-        atomic_store(&settled, true); /* Two real actor passes after delivery. */
+        pthread_mutex_lock(&actor->lock);
+        failed_after_late = actor->facts.failed || actor->request_terminal;
+        pthread_mutex_unlock(&actor->lock);
+        atomic_store(&settled, true); /* Both CM and subsequent UDP have run. */
     }
     sl_remote_update(protocol, now);
 }
@@ -115,6 +138,10 @@ bool __wrap_IHS_ClientSendControl(IHS_Client *client, const IHS_HostInfo *host,
                                   ProtobufCMessage *message) {
     (void)client; (void)host; (void)source;
     assert(pthread_equal(owner, pthread_self()));
+    if ((tag >= 3 && tag <= 10) || tag == 13 || tag == 14) {
+        ++handshake_sends;
+        if (handoffs) ++late_controls;
+    }
     if (tag == k_ERemoteDeviceStreamingRequest) {
         assert(((CMsgRemoteDeviceStreamingRequest *)message)->request_id == 17);
         atomic_store(&request_seen, true);
@@ -145,11 +172,21 @@ IHS_Session *__wrap_IHS_SessionCreate(const IHS_ClientConfig *config, const IHS_
     assert(pthread_equal(owner, pthread_self()) && info->sessionKeyLen == 32);
     for (unsigned n = 0; n < 32; ++n) assert(info->sessionKey[n] == n);
     atomic_fetch_add(&session_creates, 1);
-    return test_mode == 1 ? __real_IHS_SessionCreate(config, info) : NULL;
+    return test_mode == 1 || test_mode == 3 ? __real_IHS_SessionCreate(config, info) : NULL;
+}
+bool __real_IHS_ClientStreamingHandoff(IHS_Client *);
+bool __wrap_IHS_ClientStreamingHandoff(IHS_Client *client) {
+    assert(pthread_equal(owner, pthread_self()));
+    admission_phase = IHS_ClientHandshakePhase(client);
+    unsigned before = handshake_sends;
+    bool result = __real_IHS_ClientStreamingHandoff(client);
+    handoff_controls += handshake_sends-before;
+    if (result) ++handoffs;
+    return result;
 }
 void __real_IHS_SessionThreadedJoin(IHS_Session *);
 void __wrap_IHS_SessionThreadedJoin(IHS_Session *s) {
-    assert(!test_mode || backend_live);
+    assert(test_mode != 1 || backend_live);
     __real_IHS_SessionThreadedJoin(s);
     atomic_fetch_add(&session_joins, 1);
 }
@@ -189,7 +226,7 @@ int __wrap_sl_sns_end_reason(const sl_sns *s) { (void)s; return 0; }
 void __wrap_sl_sns_destroy(sl_sns *s) {
     if (!s) return;
     assert(s == (sl_sns *)&backend && backend_live && pthread_equal(owner, pthread_self()));
-    assert(test_mode != 1 || atomic_load(&session_joins) == atomic_load(&session_creates));
+    assert((test_mode != 1 && test_mode != 3) || atomic_load(&session_joins) == atomic_load(&session_creates));
     backend_live = false; atomic_fetch_add(&backend_destroys, 1);
 }
 static bool pending_send(void *ctx, const uint8_t *data, size_t size) {
@@ -235,6 +272,11 @@ int main(int argc, char **argv) {
     char cm[8192], udp[8192];
     assert(scanf("%8191s %8191s", cm, udp) == 2);
     cm_count = packets(cm, cm_packets, cm_sizes); udp_count = packets(udp, udp_packets, udp_sizes);
+    if (test_mode == 3) {
+        assert(scanf("%8191s %8191s", cm, udp) == 2);
+        late_cm_count = packets(cm, late_cm_packets, late_cm_sizes);
+        late_udp_count = packets(udp, late_udp_packets, late_udp_sizes);
+    }
     char directory[] = "/tmp/nsl-ticket-consumer-XXXXXX";
     assert(mkdtemp(directory) && !setenv("NSL_DATA_DIR", directory, 1));
 #if NSL_HAVE_SNS
@@ -274,8 +316,13 @@ int main(int argc, char **argv) {
     assert(cache_creates == 1 && cache_destroys == 1);
 #endif
     sl_fixture_remove_tree(directory);
-    printf("{\"state\":%u,\"sessions\":%u,\"backends\":%u,\"attempts\":%u,\"early_close\":%u,"
-           "\"pending_sends\":%u,\"joins\":%u,\"clean\":true}\n", final_phase, sessions, backends,
-           atomic_load(&backend_attempts), early_close, atomic_load(&pending_sends), atomic_load(&session_joins));
+    printf("{\"state\":%u,\"admission_state\":%u,\"handoffs\":%u,\"failed_after_late\":%s,"
+           "\"handoff_controls\":%u,\"late_controls\":%u,"
+           "\"sessions\":%u,\"backends\":%u,\"attempts\":%u,\"early_close\":%u,"
+           "\"pending_sends\":%u,\"joins\":%u,\"clean\":true}\n", final_phase,
+           handoffs ? admission_phase : final_phase, handoffs, failed_after_late ? "true":"false",
+           handoff_controls, late_controls,
+           sessions, backends, atomic_load(&backend_attempts), early_close,
+           atomic_load(&pending_sends), atomic_load(&session_joins));
     return 0;
 }

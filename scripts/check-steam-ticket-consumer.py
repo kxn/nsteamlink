@@ -49,7 +49,9 @@ def main():
         label = (case['name'], case['testing'], case['transport'])
         assert run.returncode == 0, (label, run.returncode, run.stderr[-4000:])
         actual = json.loads(run.stdout.splitlines()[-1])
-        assert actual['clean'] and actual['state'] == expected['state'], (label, actual, expected)
+        # The old fixture ends at launch admission, before outer Qt Quit. The
+        # ordinary handoff is compared separately against that outer caller.
+        assert actual['clean'] and actual['admission_state'] == expected['state'], (label, actual, expected)
         assert actual['sessions'] == expected['launches'], (label, actual, expected)
         assert actual['backends'] == (expected['launches'] if case['transport'] == 4 else 0), (label, actual, expected)
         checked += 1

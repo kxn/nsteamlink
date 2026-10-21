@@ -1580,7 +1580,6 @@ static bool launch_session(sl_runtime *r, IHS_SessionInfo info) {
         return false;
     diagnostic_state(r, "ihs_connect_started");
     r->connect_wait_tick = sl_connection_wait_tick(sl_system_now());
-    IHS_ClientStreamingEstablished(r->client);
     return true;
 }
 static bool host_info(sl_runtime *r, const sl_host *h, IHS_HostInfo *out) {
@@ -2294,6 +2293,15 @@ static void *worker_main(void *ctx) {
         }
         memset(auth_secret, 0, sizeof(auth_secret));
         if (ready && !r->session && !r->test_session) {
+            /* Ordinary Qt launch destroys its old manager before player BInit,
+             * without a StreamingCancel. Keep our discovery-only use, but
+             * retire the old handshake before SDK/media construction. The
+             * dedicated NetworkTest retains its state6 owner in the original. */
+            if (!r->test_active && !IHS_ClientStreamingHandoff(r->client)) {
+                stop_session(r);
+                fail(r, sl_tr(SL_T_SESSION_FAILED));
+                continue;
+            }
             if (!consume_session_material(r)) {
                 bool testing = r->test_active;
                 if (!(testing ? launch_network_test(r, info) : launch_session(r, info))) {

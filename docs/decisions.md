@@ -3035,3 +3035,27 @@ Decision：
   持有此锁。IHS 停止/join、terminal 队列释放/唤醒及最后 SDK 清理仍遵守既有所有权纪律。
 - 原 state=0/SDK-null 的合成入口和真实初始化后的端口通道分开列出；不据有限局部等价宣称
   Qt/SDL 全调度、自然 signaling 引用生命周期、热点或 Switch 验收已经完成。
+
+## D-A087：普通播放器交接结束旧握手，不用取消模拟析构
+
+Evidence：固定shell普通StartStreaming请求Qt quit；main在Android Activity参数交付之前
+Quit并析构Shell。app+24的manager经实际虚表+56 deleting dtor进入Stop，释放发现socket、
+CM session和最近authorization key buffer，不调用StopStreaming或发送取消。构造函数
+给出新manager的空最近key、result=7。原20组consumer中5组普通成功的组合执行、其余
+失败/NetworkTest的排除及provider范围见公网协议参考§11.3。
+
+Evidence correction：成功票据保留state6是manager存活期间的规则，不能跨普通播放器
+的外层交接推导为继续接收旧Failed、Unauthorized、InProgress、Proof或服务失败。专用
+NetworkTest不退出Qt，仍保留state6，不能因此顺带退休或自动取消。
+
+Decision：
+
+- 普通票据在完整入站Update后、SDK/媒体构造前，无取消地退休private握手和最近key/result
+  缓存；同批失败仍优先撤销未消费票据。不在响应回调、尚未成功或NetworkTest执行该操作。
+- 本产品为直启结束查询保留发现owner，这是既有产品策略。用独立的握手交接门槛映射原
+  manager的销毁，停止旧握手输入；不关闭媒体自己的信令桥，不把发现或持久配对资料删掉。
+  新显式串流/授权/服务配对重新开启握手。
+- API只支持polled owner完整Update之外的边界，验证无正在分派/遗留握手队列，使用现有
+  timer/Base所有权锁，无新线程。普通IHS worker仍先停止/join，再销毁SNS与SDK。
+- 对照分别标记launcher准入、原对象销毁和端口保留发现后的无握手状态；不得用state值
+  相同/不同代替生命周期语义，也不得将有限provider范围扩大为完整Qt/JNI或真机验收。

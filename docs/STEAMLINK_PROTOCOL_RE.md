@@ -10713,6 +10713,9 @@ attempts及field8继续存活。Success新key、无key兼容success、最近key�
 
 `IHS_ClientStreamingEstablished`不再销毁握手owner：成功凭据只停止重发，保留
 显式取消和迟到授权/普通Proof的归属，新Start或Cancel/Destroy才释放private。
+这里描述选机manager的局部state6；普通launcher随后经Shell Quit销毁该manager，
+所以不能外推为媒体期间仍保留握手。普通交接与NetworkTest的完整外层差异、
+最近key/result缓存的销毁及端口映射见STEAM_REMOTE_PLAY_NETWORKING §11.3。
 返回main前仍由既有stop/join RX→销毁owned消息/定时器路径清理，没有新后台线程
 或detach。此改动没有完成Proof update_secret轮换：其false回显、来源过滤顺序及
 保存接线仍是与§133不同的独立契约，不能据owner存活就认定轮换已对齐。
