@@ -872,16 +872,20 @@ IMU”。这是 2026-10-22/23 多轮真机对照后的收敛结果。
 - `OnSensorEvent` @ `0x1386d30e0`。它从 `SDL_GamepadSensorEvent`
   取 `[event+0x14]` 的 sensor type 和 `[event+0x18/+0x1c/+0x20]` 的三个
   float，写入 state：
-  - gyro s16 @ `state+0x1c`，`flags |= 0x402`；
-  - accel s16 @ `state+0x22`，`flags |= 0x4`；
-  - 另一条分支把 gyro 写 `state+0x38`、accel 写 `state+0x3e`，并置
-    `0xa00`/`0x4`。
+  - 正常分支：gyro s16 @ `state+0x1c`，`flags |= 0x402`；accel s16 @
+    `state+0x22`，`flags |= 0x4`；
+  - 左/备用分支（SDL sensor type 3/4，即 ACCEL_L/GYRO_L）：gyro 写
+    `state+0x38`、accel 写 `state+0x3e`，并置 `0xa00`/`0x4`。
+  - 两个分支的选择来自 `[event+0x14]` 的 SDL sensor type，不是来自
+    wire flags；`0x400` 是 host 内部 state 的标记，不应直接当成
+    “remote gyro valid”位。
 - 因此 host 本地 SDL 路径的 gyro 布局与 ihslib 的 `+0x1c` 一致；差异是
-  **flags 带 `0x400`**，且存在第二套 `+0x38/+0x3e` 布局。
+  host 本地 flags 带 `0x400`，且存在第二套 `+0x38/+0x3e` 布局。
 - 真机试过把客户端 flags 从 `0x6` 改成 `0x406`：**整个手柄输入失效**
-  （按键/摇杆都无输入），不是“gyro 开始工作”。这证明 flags 的 `0x400`
-  是模式选择位，不是可以单独补的 valid 位；它会让 host 进入另一套状态
-  解释，和 Generic V2 的 `+0x16`/`+0x1c` 布局不兼容。
+  （按键/摇杆都无输入），不是“gyro 开始工作”。这说明 `0x400` 是 host
+  内部 state 的语义位，不能安全地直接补到 remote Generic wire flags；
+  它会让 host 进入另一套解释，和 Generic V2 的 `+0x16`/`+0x1c` 布局
+  不兼容。
 
 ### 20.3 host 侧 Generic 抽象
 
