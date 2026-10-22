@@ -1021,3 +1021,41 @@ flags，不是已经证明与 wire flags 一一对应。官方 Linux 客户端
 wire flags 翻译成内部 `0x400/0x800`；如果是这样，直接改 wire flags 不会
 生效。两个构建（`0x400` 与 `+0x38/0x800`）就是用来区分这两种情况的；
 在真机结果出来前，不能把“wire flags 直接等于内部 flags”当成结论。
+
+### 20.7 官方 Windows packer 交叉验证：wire flags 就是内部 flags
+
+为了确认 `0x1386796f0` 读到的 flags 是否就是 wire flags，检查了本机
+`steamclient64.dll` 的官方 packer：
+
+- `CHIDDeviceSDLGamepad` 的 pack 函数 @ `0x1386d35e0`。
+- version（state `+0x1b`）非 0 时走 RAW 分支 `0x1386d37a6`：
+  - `eax = 0x48`（72）；
+  - `rbp = min(requested_len, 72)`；
+  - `memcpy(dest, source_state, rbp)`。
+- 也就是说 **RAW V2 是把内部 state 的 0..0x47 原样拷到 wire**，没有字段
+  重排、没有 flags 翻译。内部 state 的 flags（`+0xc`）就是 wire `+0xc`。
+- 同一 DLL 的 `OnSensorEvent @0x1386d30e0` 正常 gyro 分支写
+  `state+0x1c`、`flags |= 0x402`；accel 写 `state+0x22`、`flags |= 0x4`。
+  因此官方 Windows 客户端在本机带 gyro 的 SDL 手柄上，wire 就是：
+  - `flags = 0x402`（加 accel 后 `0x406`）
+  - gyro @ `+0x1c`
+  - accel @ `+0x22`
+- 这和 `CGenericGamepadControllerAbstraction` slot 1（`0x400`）读取
+  `+0x1c/+0x22` 完全一致，也证明 **wire flags 与内部 flags 一一对应**，
+  20.6 末尾的 `待验证` 前提成立。
+
+**结论：我们应该发送的格式与官方 Windows 客户端完全一致：**
+
+```text
+flags = 0x2 | 0x4 | 0x400 = 0x406
+gyro  = s16[3] @ +0x1c (28)
+accel = s16[3] @ +0x22 (34)
+version = 3 @ +0x1b (27)
+```
+
+`build/switch-gyro400/app/nsteamlink.nro` 就是这一格式：Generic 身份，
+`SetGyro` flags `0x402`，`SetAccel` 保持 `0x4`，wire 偏移不变。
+
+slot 0（`0x800` + `+0x38/+0x3e`）是另一条 sensor 布局（host 的
+ACCEL_L/GYRO_L 分支），不是本机单 Pro/handheld 的主路径；
+`build/switch-alt` 只作为兜底，不应优先使用。
