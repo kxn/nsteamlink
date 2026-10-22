@@ -2283,3 +2283,35 @@ Decision：
    Pro Controller、单 Joy-Con、左右分离符号、Steam host 接受度与 60Hz 媒体
    循环下的平滑度仍为 `待验证`；真机只改 `sensor_math.c` 的轴向后处理，
    不改 wire offsets 或 flags。
+
+## D-064：不为 Switch 陀螺仪发布 caps/身份伪装；Generic 流式路径的 IMU 消费属于 host 侧缺口（2026-10-23）
+
+Evidence：`docs/OFFICIAL_INPUT_RE.md` §20 记录了 Windows `steamclient64.dll`
+11.12.30.07（SHA-256 `e9045710…68eb4e`）的 RTTI/vtable 与反汇编证据。NX 侧日志
+`flags=0x6 wire_gyro=50,0,-60` 证明客户端确实发送了非零 IMU；host 的 VDF
+`controller_switch_pro.vdf` 中 `gyro_to_mouse` group 8 为 active，`controller_caps`
+含 `0x800`，但桌面/游戏均无 gyro 输出。host 本地
+`CHIDDeviceSDLGamepad::OnSensorEvent @0x1386d30e0` 写 gyro 到 `+0x1c`、置
+`0x402`；`CGenericGamepadControllerAbstraction` 的 state-change 比较
+`@0x138678ea0` 只比较 axes/flags（`+0x18..+0x22`、`+0xc..+0x12`），不比较
+`+0x34/+0x3a` 的 gyro/accel；官方 Linux 客户端的
+`BParseGamepadStateSwitch @0x2da140` 也只解析按键/摇杆，不读 IMU。
+
+Conclusion：给 Generic 加 `0x800` 只会让 Gyro UI 出现；改 Switch Pro/DS4 VID/PID
+会让 host 走原生/另一套布局，但 Generic RAW V2 报告里的 IMU 仍不会被应用。把
+客户端 flags 改成 `0x406` 会让整只手柄输入失效，说明 `0x400` 是布局模式位，
+不是可单独补的 valid 位。客户端采样和 wire 打包本身没有丢数据；剩余问题是
+host 的 Generic/Switch 流式路径不消费连续 IMU。Switch 原生报告不是替代方案，
+因为官方客户端的 Switch parser 本身忽略 IMU。
+
+Decision：
+
+1. 不发布 `0x800` motion cap、`0x400` flag、Switch Pro/DS4 身份伪装中的任何
+   一项作为默认行为；这些只保留为一次性诊断记录，不进入 release。
+2. 默认仍是 Generic `0000:0000`、caps `0x8043ff`，保留 libnx 六轴采样和
+   wire IMU 字段；不因为 host UI 出现 Gyro 就宣称支持完成。
+3. 若未来要继续争取 Steam 内陀螺仪，较有 host 既有证据的兼容方向是
+   DS4/DualSense 原生报告（input report + feature report），而不是继续调
+   Generic caps；该方案尚未实现，属于 `待验证` 的设计方向。
+4. 真机结论以用户观察到的输入/指针/游戏内动作为准；校准成功、UI 出现、
+   `SetSensorEnabled` 都不能单独作为“gyro 已被 host 消费”的证据。

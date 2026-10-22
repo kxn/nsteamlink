@@ -838,3 +838,118 @@ display 7xx-10xx (network)(decode)(display)` 中 network/decode/display 三列
   方向/符号；Steam host 是否接受“未先发 `SetSensorEnabled` 即出现 IMU”
   的数据；Steam Input 的 Gyro 正负方向（真机若相反，只需在
   `sensor_math.c` 取反对应分量，wire 格式不变）。
+
+## 20. Steam Windows host 对 Switch Generic IMU 的消费路径（2026-10-23 逆向）
+
+本节只记录可复核的证据、结论和假设，不把“host 显示了 Gyro UI”当成“host 消费了
+IMU”。这是 2026-10-22/23 多轮真机对照后的收敛结果。
+
+### 20.1 材料
+
+- Windows Steam host：`steamclient64.dll`，FileVersion `11.12.30.07`，编译时间
+  `2026-10-14`，SHA-256
+  `e9045710ec7ee47d7b7488d1c5dda2d933dec7e251e965967a5c48f4df68eb4e`。
+- 该 DLL 内嵌的源码路径（`__FILE__` 字符串）：
+  `src/common/hiddevicesdl.cpp`、`src/common/hiddeviceremote.cpp`、
+  `src/clientdll/controllerabstraction.cpp`、
+  `src/clientdll/controller_sources/controller_source_gyro.cpp`、
+  `src/clientdll/controller_gyroprocessing.cpp`。
+- host 侧 VDF：`controller_switch_pro.vdf` 的 group 8 为
+  `gyro_to_mouse`，preset 中 `"8" "gyro active"`，
+  `controller_caps = 0x8B4BFF`（含 `0x800`）。这证明 Gyro 行为是启用状态，
+  不是“没保存”。
+- 真机日志（NX 侧注入点）：
+  `sensor inject motion=0.117 flags=0x6 wire_gyro=50,0,-60`。
+  同一会话 host 反复发 `host sensor enable=1/0`，说明 host 主动请求了
+  sensor，且客户端把非零 gyro 写进了 wire。
+
+### 20.2 host 侧 `CHIDDeviceSDLGamepad` 的状态布局
+
+通过 RTTI/vtable 定位（镜像基址 `0x138000000`）：
+
+- RTTI type descriptor `.?AVCHIDDeviceSDLGamepad@@` @ `0x17ce878`；
+  vtable @ `0x1392fa7a8`。
+- `OnSensorEvent` @ `0x1386d30e0`。它从 `SDL_GamepadSensorEvent`
+  取 `[event+0x14]` 的 sensor type 和 `[event+0x18/+0x1c/+0x20]` 的三个
+  float，写入 state：
+  - gyro s16 @ `state+0x1c`，`flags |= 0x402`；
+  - accel s16 @ `state+0x22`，`flags |= 0x4`；
+  - 另一条分支把 gyro 写 `state+0x38`、accel 写 `state+0x3e`，并置
+    `0xa00`/`0x4`。
+- 因此 host 本地 SDL 路径的 gyro 布局与 ihslib 的 `+0x1c` 一致；差异是
+  **flags 带 `0x400`**，且存在第二套 `+0x38/+0x3e` 布局。
+- 真机试过把客户端 flags 从 `0x6` 改成 `0x406`：**整个手柄输入失效**
+  （按键/摇杆都无输入），不是“gyro 开始工作”。这证明 flags 的 `0x400`
+  是模式选择位，不是可以单独补的 valid 位；它会让 host 进入另一套状态
+  解释，和 Generic V2 的 `+0x16`/`+0x1c` 布局不兼容。
+
+### 20.3 host 侧 Generic 抽象
+
+- `CGenericGamepadControllerAbstraction` RTTI
+  `.?AVCGenericGamepadControllerAbstraction@@` @ `0x17cb5d8`；
+  vtable @ `0x1392ea3d0`。
+- 候选 `ProcessState` @ `0x1386793e0`（vtable slot 13）把 HID state 视为位于对象 `+0x18`：
+  axes 在 `+0x18..+0x22`，version 在 `+0x33`（即 HID state `+0x1b`），
+  RAW 分支从 `+0x18` 起拷贝 `0x48` 字节到局部
+  `HIDDeviceSDLGamepadStateV2_t`，因此 gyro `+0x34`（HID `+0x1c`）和
+  accel `+0x3a`（HID `+0x22`）在拷贝范围内。
+- 候选 state-changed 比较 @ `0x138678ea0` 只读
+  `+0x18..+0x22`（axes）和 `+0xc..+0x12`（flags/其他），**没有比较
+  `+0x34/+0x3a` 的 gyro/accel**；它把 state 缓存到 `+0x108`，长度
+  `0xa0`。
+- 远程 HID report 相关函数 @ `0x1386cf580`（同文件断言在 `0x1386d0031` 引用下方字符串）走的是
+  `hiddeviceremote.cpp` 的 report-type 分发；字符串
+  `CHIDDeviceRemote::ProcessInputReport(): Received unknown report type`
+  @ `0x1392f9b30`。这条路径按 report byte/type 构造
+  `CHIDDeviceInputReport`，不是直接把 Generic V2 的 tail 当作连续 IMU 流。
+
+### 20.4 真机对照结果
+
+| 配置 | host 布局 | Gyro UI | 震动 | 实际 gyro 输出 |
+|---|---|---|---|---|
+| Generic `0000:0000`，caps `0x8043ff` | 4 项 | 无 | 正常 | 无 |
+| Generic + `0x800`，Steam Input 开 | Gyro 出现 | 有 | 正常 | **无** |
+| Switch Pro `057e:2009` + `0x800` | 6 项 | 有，校准成功 | 正常 | **无** |
+| Switch Pro + `0x800` + flags `0x400` | 输入全失效 | — | — | — |
+| DS4 `054c:09cc` + `0x800` | 6 项（含触控板） | 有 | 正常 | **无** |
+
+`controller_switch_pro.vdf` 里 `gyro_to_mouse` active、`gyro_natural_sensitivity=483`，
+但桌面指针、右摇杆、游戏内动作都不响应。校准能成功只说明 host 能拿到
+一部分运动样本（校准可用 accel/初始样本完成），不等于连续 gyro 被送进
+Gyro action group。
+
+### 20.5 结论与假设
+
+**Evidence：**
+
+1. NX 侧 gyro 已进入 canonical state 和 wire：`flags=0x6`，
+   `wire_gyro` 非零；host 主动发 `SetSensorEnabled`。
+2. host 的 VDF Gyro group active，caps 含 `0x800`；host 本地
+   `CHIDDeviceSDLGamepad::OnSensorEvent` 的 gyro 布局也是 `+0x1c`。
+3. host 的 `CGenericGamepadControllerAbstraction` 的 state-change 比较
+   不含 `+0x34/+0x3a`（gyro/accel）字段；`CHIDDeviceRemote::ProcessInputReport`
+   按 report type 分发，不是连续 IMU 流。
+4. 官方 Linux 1.3.9.258 的 `BParseGamepadStateSwitch @0x2da140` 只解析
+   Switch 原生报告的按键/摇杆，不读 IMU；官方唯一 IMU 路径是
+   `CHIDDeviceSDLGamepad::OnSensorEvent`。
+
+**Conclusion：**
+
+- 客户端没有丢 IMU；问题在 host 的 Switch/Generic 流式路径没有把
+  连续 IMU 变化送进 Steam Input 的 Gyro source。
+- 给 Generic 加 `0x800`、改 VID/PID、加 `0x400` 都不能修复；`0x400`
+  会直接让输入失效，`0x800` 只让 UI 出现。
+- “改成 Switch 原生报告”不是更完美的方案：官方客户端的 Switch 原生
+  parser 本身不读 IMU，host 侧也没有证据表明它会消费 Switch 原生 gyro。
+
+**Hypothesis（待验证）：**
+
+- host 的 `CGenericGamepadControllerAbstraction` 只在 axes/flags 变化时
+  推进 state；纯 IMU 变化（不动摇杆/按键）不会触发 Gyro source 更新。
+  这可以解释“校准成功、但转动完全无输出”。
+- 若该假设成立，客户端侧较可行的兼容层是发送 host 已有 gyro 支持的
+  **DS4/DualSense 原生报告**（host 的 PS4/PS5 gyro 路径是既有的），
+  而不是继续改 Generic caps；这需要实现 DS4 的 input report/feature
+  report，成本和风险都高于当前 Generic 路径。
+- 另一条待验证路径是让 host 在收到 IMU 时也标记 state changed；这属于
+  host 内部行为，客户端无法直接控制。
