@@ -542,10 +542,17 @@ Parse 失败的原始报告整条丢弃。
 [16..19] buttons u32，EGamepadButton 位
 [20..26] 0
 [27]     版本字节 = 3（RAW 选择器）
-[28..71] IMU/touch 区（V2 尾部布局未确认，发 0）
+[28..71] IMU/touch 区；gyro s16[3] @28、accel s16[3] @34、touch @40
 ```
 ENCODED 28B 格式只存在于本地 SDL 层与生成器之间，不上 wire。
 host 两种模式都能解析（同一函数），但 RAW+版本 3 是官方实际发送形态。
+
+> **2026-10-22 更正**：上表 [28..71] 不再视为“布局未确认、发 0”。
+> 官方 Linux 1.3.9.258 客户端（SHA-256 `191cc079…c149e4`）的
+> `CHIDDeviceSDLGamepad::OnSensorEvent @0x269740` 明确写入 gyro `+0x1c`
+> 与 accel `+0x22`，并置 flags bit1/bit2；`BInjectGamepadStateGenericGamepad
+> @0x2dac70` 在 byte[27]!=0 时最多拷贝 56B。旧的“发 0”实现会丢弃全部
+> IMU。单位与 Switch 接入见 §19。
 
 ### 17.4 EGamepadButton 枚举值（名表 0x3dabc4 反解，27 项）【已验证】
 
@@ -703,3 +710,115 @@ display 7xx-10xx (network)(decode)(display)` 中 network/decode/display 三列
 真实有效。已修的 16.16 定点秒（packet.c）覆盖了帧事件时间戳，
 但 FrameEvents 的事件差分编码本身不匹配官方（协议参考 §14.4），
 不能继续只按单位解释；统计反馈对输入卡死的影响尚未建立因果证据。
+
+## 19. Switch 六轴（陀螺仪 + 加速度计）接入（2026-10-22）
+
+### 19.1 为什么此前“协议支持但没有打开”【已验证】
+
+1. **SDL 的 Switch 驱动不提供传感器事件。** devkitPro SDL 2.28.5-4 的
+   `SWITCH_JoystickSetSensorsEnabled` 只有 `mov w0,#4; b SDL_Error`
+   （反汇编 `/opt/devkitpro/portlibs/switch/lib/libSDL2.a` 的 `SDL_sysjoystick.o`），
+   即 `SDL_GameControllerSetSensorEnabled()` 在 Switch 上恒失败；`SDL_PollEvent`
+   不会产生 `SDL_CONTROLLERSENSORUPDATE`。所以只修 ihslib 的打包逻辑仍不会
+   在 Switch 上得到任何样本。
+2. **ihslib 的 Generic RAW V2 打包器把 IMU 区清零。** 旧
+   `IHS_HIDReportSDLPackWire` 只写 axes/buttons/version，[28..71] 全 0；
+   即使桌面 SDL 产生传感器事件，`SetGyro/SetAccel` 写入的内部状态也不会
+   进入 wire。历史提交 929767a 曾尝试透传，但 39fcb1d 以“ENCODED 格式
+   不含 IMU”为由撤回；该前提只适用于 byte[27]==0 的 ENCODED 分支，
+   不适用于本项目实际发送的 RAW+version 3。
+3. **host 端协议本来就带 IMU。** 官方 Linux 1.3.9.258 客户端
+   （`steamlink`，SHA-256 `191cc079f795cfdff69a8b51041360a2164b3ec64647e9419af2e2d00fc149e4`）
+   `CHIDDeviceSDLGamepad::OnSensorEvent @0x269740`：
+   - `sensor==2`（GYRO）：把 `event.data[0..2]` 按
+     `(v + 34.90659)/69.81317 * 65535 - 32768` 转成三个 s16，写入 state
+     `+0x1c/+0x1e/+0x20`，并 `flags |= 0x2`；
+   - `sensor==1`（ACCEL）：同样的映射（半量程 19.6133，满量程 39.2266）
+     写入 `+0x22/+0x24/+0x26`，并 `flags |= 0x4`。
+   常量位于 0x9b72e8–0x9b72fc：65535、32768、34.90659、69.81317、
+   19.6133、39.2266。`CHIDDeviceSDLGamepad::Write @0x268e30` 的
+   `COMMAND_SET_SENSOR_ENABLED` 分支在 value!=0 时启用 SDL 的
+   ACCEL/GYRO 并 `flags |= 0x6`，value==0 时清除 0x6。
+   `GetGyroDPSRatingForControllerType @0x161870` 返回 2000，
+   `GetAccelerometerGravityConstant @0x161880` 返回 16383（≈1g），
+   与“gyro ±2000 dps、accel ±2g 的 s16 定点”一致。
+4. **libnx 的底层状态可用。** libnx `HidSixAxisSensorState` 提供
+   `angular_velocity`、`acceleration`、`delta_time`、`sampling_number`，
+   且可用 `hidGetSixAxisSensorHandles` / `hidStartSixAxisSensor` /
+   `hidGetSixAxisSensorStates` 按 `HidNpadStyleTag` 获取。
+
+### 19.2 wire 契约（RAW V2，byte[27]!=0）【已验证】
+
+```
+[0..11]  axes 6×s16
+[12..15] flags u32：bit1 = gyro present，bit2 = accel present
+[16..19] buttons u32（SDL_GamepadButton 位）
+[20..26] 0
+[27]     version（本项目发 3，非零即 RAW）
+[28..33] gyro s16[3]：rad/s × 65535/69.81317，即 ±2000 dps
+[34..39] accel s16[3]：m/s² × 65535/39.2266，即 ±2 g
+[40..43] touch（本项目仍为 0）
+[44..55] 其余 V2 尾部（本项目 0）
+```
+
+`BInjectGamepadStateGenericGamepad @0x2dac70` 在 byte[27]!=0 时最多拷贝
+56B；Android 1.3.32 的旧记录写 72B，本项目保留 `min(host length, 72)`
+的现有上限，但 56B 之后始终为 0。Delta mask 仍按 host 通告长度生成。
+
+### 19.3 单位与轴向对齐【已验证/推断分列】
+
+- **单位（已验证）**：Nintendo 的 `imu_sensor_notes.md` 明确
+  “Internally Switch uses revolutions per second instead of degrees”，
+  加速度以 g 表示；libnx 直接暴露该状态。SDL 的
+  `SDL_SENSOR_GYRO` 是 rad/s、`SDL_SENSOR_ACCEL` 是 m/s²。因此
+  `gyro_rad_s = angular_velocity_rev_s * 2π`，
+  `accel_m_s2 = acceleration_g * 9.80665`。
+- **Switch 共享内存 -> SDL 标准帧（已验证于两个独立模拟器）**：
+  yuzu `src/input_common/drivers/sdl_driver.cpp` 把 SDL 样本写成
+  `switch_gyro=(x, -z, y)/2π`、`switch_accel=(-x, z, -y)/g`；
+  Ryujinx `NpadController.Update` 使用同一轴置换
+  `(x, -z, y)`。取逆得到本项目使用的：
+  ```
+  sdl_gyro  = ( av.x,  av.z, -av.y) * 2π
+  sdl_accel = (-acc.x, -acc.z, acc.y) * g
+  ```
+- **不按 Joy-Con 左右再翻转（推断，待真机确认）**：Switch 的 `hid`
+  服务对 Pro/Joy-Con/handheld 输出同一控制器帧；SDL HIDAPI 的
+  `(-Y, Z, -X)` 和右手柄 `data[0]/data[1]` 翻转针对的是**绕过服务的
+  原始 HID 报告**，不适用于 libnx 已归一化的状态。若真机上左右
+  Joy-Con 方向相反，只需在 `sensor_math.c` 增加按 device type 的
+  后处理，不改协议层。
+
+### 19.4 实现落点【已验证】
+
+- `third_party/ihslib/src/hid/sdl/src/sdl_hid_report.c`：
+  `SetGyro` 置 flags bit1、`SetAccel` 置 bit2；新增
+  `IHS_HIDReportSDLClearSensors`。
+- `third_party/ihslib/src/hid/sdl/src/sdl_hid_common.h`：
+  `IHS_HIDReportSDLPackWire` 复制 flags、gyro、accel、touch 到
+  [12..47]；[48..] 保持 0。
+- `third_party/ihslib/include/ihslib/hid/sdl.h` + `sdl_hid_event.c`：
+  新增 `IHS_HIDSDLInjectSensor(session, joystickId, gyro, accel)`，
+  在设备锁内合并到 canonical state；发送仍由既有 8ms flush 线程完成。
+- `app/platforms/switch/sensors.c`：
+  按 `HidNpadStyleTag` 取 handheld/FullKey/JoyDual/JoyLeft/JoyRight 句柄；
+  JoyDual 优先右手柄；每 4ms 取最新 `sampling_number`，转换后注入；
+  只从 `pump_sdl_events`（SDL/libnx HID 所属媒体线程）调用，
+  会话停止/退出时 `hidStopSixAxisSensor`。
+- `app/platforms/common/sensor_math.c`：单位/轴向纯函数，桌面测试覆盖。
+- `app/platforms/common/media.c`：会话有效且 input gate 打开时
+  `sl_sensors_poll`，否则 `sl_sensors_stop`；shutdown 再 stop 一次。
+- 测试：`ihstest_hid_sdl_report` 校验 flags/gyro/accel 的 wire offsets；
+  `nsl-sensor-math` 校验单位与轴向；desktop 246/246 通过，Switch
+  release NRO 构建通过。
+
+### 19.5 仍需真机验证
+
+- 左右 Joy-Con、Pro Controller、handheld、单 Joy-Con 的**符号/轴向**
+  是否与 Steam Input 的 Gyro 预览一致；
+- host 是否接受未先收到 `SetSensorEnabled` 就出现的 gyro/accel 数据
+  （当前策略是会话开始即采样，host 的 enable 命令仍走原 SDL 路径，
+  在 Switch 上失败但不影响本地采样）；
+- 媒体循环 60Hz 时每 4ms 采样实际只随帧率投递；若需要 125/200Hz
+  的平滑度，应在不违反 libnx 线程所有权的前提下增加采样点，而不是
+  把 libnx 调用移到 flush 线程。

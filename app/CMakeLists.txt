@@ -123,6 +123,7 @@ target_compile_options(nsl_stream_settings PRIVATE -Wall -Wextra)
 set_source_files_properties(platforms/common/audio_jitter.c PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
 add_library(nsl_platform STATIC platforms/common/application.c platforms/common/sdl_input.c platforms/common/media.c
     platforms/common/audio_recovery.c platforms/common/audio_jitter.c
+    platforms/common/sensor_math.c platforms/${NSL_PLATFORM}/sensors.c
     platforms/common/shortcut_package.c platforms/${NSL_PLATFORM}/shortcut.c
     platforms/common/ui_renderer.c platforms/common/ui_audio.c platforms/common/player_owner.c platforms/common/runtime.c platforms/${NSL_PLATFORM}/system.c
     platforms/${NSL_PLATFORM}/events.c)
@@ -730,6 +731,11 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_compile_options(nsl-rumble-tests PRIVATE -Wall -Wextra -UNDEBUG)
     target_link_libraries(nsl-rumble-tests PRIVATE nsl_ui PkgConfig::SDL2)
     add_test(NAME nsl-rumble COMMAND nsl-rumble-tests)
+
+    add_executable(nsl-sensor-math-tests tests/test_sensor_math.c platforms/common/sensor_math.c)
+    target_include_directories(nsl-sensor-math-tests PRIVATE src)
+    target_compile_options(nsl-sensor-math-tests PRIVATE -Wall -Wextra -UNDEBUG)
+    add_test(NAME nsl-sensor-math COMMAND nsl-sensor-math-tests)
 endif()
 
 if(NSL_PLATFORM STREQUAL "desktop")

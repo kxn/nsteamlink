@@ -12,6 +12,7 @@ void sl_media_adaptive_pacing(bool enabled) {
 #include "events_backend.h"
 #include "gfx_backend.h"
 #include "platform/rumble.h"
+#include "platform/sensors.h"
 #include "platform/system.h"
 #include "protobuf/remoteplay.pb-c.h"
 #include "session/frame_tracker.h"
@@ -788,6 +789,24 @@ static void pump_sdl_events(void) {
         hid_last_log_us = now;
     }
 #endif
+    /* Native sensor sources (Switch libnx six-axis) are sampled on this thread,
+     * which also owns SDL/libnx HID. The 8ms flush thread only serializes the
+     * canonical state, so no libnx call crosses threads. */
+    IHS_Session *sensor_session;
+    bool sensor_enabled;
+    int sensor_joystick;
+    pthread_mutex_lock(&state_lock);
+    sensor_session = hid_session;
+    sensor_enabled = hid_session_enabled;
+    sensor_joystick = (int)hid_controller_id;
+    pthread_mutex_unlock(&state_lock);
+    if (sensor_session != NULL && sensor_enabled && sensor_joystick >= 0 &&
+        atomic_load(&input_gate)) {
+        sl_sensors_poll(sensor_session, sensor_joystick);
+    } else {
+        sl_sensors_stop();
+    }
+
     pthread_mutex_lock(&state_lock);
     if (rumble_reset_pending) {
         sl_rumble_tick(false);
@@ -866,6 +885,7 @@ void stream_media_shutdown(void) {
         return;
     media_logf("media shutdown: begin");
     stream_media_set_hid_session(NULL, false);
+    sl_sensors_stop();
     stream_media_video_stop(NULL);
     audio_shutting_down = true;
     stream_media_audio_close(NULL);

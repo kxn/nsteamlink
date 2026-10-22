@@ -2243,3 +2243,40 @@ Decision：按用户确认的菜单结构，首页 X 直接进入设置，顶层
 Evidence：`app/platforms/common/runtime.c` 的 `SL_CMD_END_GAME` 分支发送 StopGame，并在主机确认停止后
 执行 `stop_session()` 与 `SL_EVENT_STOPPED`；“结束游戏并断开”沿用该流程，仅明确现有动作含义。
 `SL_CMD_STOP` 继续只断开本地串流，不改变主机游戏。菜单重组不修改认证、网络测试或会话协议。
+
+## D-063：Switch 六轴传感器由 libnx 采样、经 SDL HID 通道上报（2026-10-22）
+
+Evidence：devkitPro SDL 2.28.5-4 的 `SWITCH_JoystickSetSensorsEnabled` 是返回
+`SDL_Error` 的桩（`libSDL2.a::SDL_sysjoystick.o` 反汇编），所以
+`SDL_GameControllerSetSensorEnabled` 在 Switch 上不能产生
+`SDL_CONTROLLERSENSORUPDATE`。官方 Linux 1.3.9.258 客户端
+（SHA-256 `191cc079…c149e4`）的 `CHIDDeviceSDLGamepad::OnSensorEvent
+@0x269740` 把 SDL 的 rad/s、m/s² 写成 gyro s16 @+0x1c、accel s16 @+0x22，
+并置 flags 0x2/0x4；`BInjectGamepadStateGenericGamepad @0x2dac70` 在
+byte[27]!=0 时最多拷贝 56B。libnx `HidSixAxisSensorState` 暴露同一 Switch
+六轴状态；Nintendo 逆向文档说明其角速度单位是 rev/s、加速度是 g。
+
+Conclusion：SDL 在 Switch 上没有传感器源，但 libnx 有；修复必须同时
+打开“采样”和“wire 透传”。只改 ihslib 打包或只改平台采样都不够。
+官方 wire 的定标为 gyro ±2000 dps、accel ±2 g，和 0x161870/0x161880
+的 2000/16383 一致。
+
+Decision：
+
+1. ihslib SDL provider 增加 `IHS_HIDSDLInjectSensor`，把平台注入的
+   SDL 单位样本（rad/s、m/s²）合并进 canonical state；`SetGyro/SetAccel`
+   置 presence flags，`PackWire` 复制 flags 与 [28..47]；发送仍只走既有
+   8ms flush，不新增每事件发送。
+2. Switch 平台新增 `sensors.c`，按 `HidNpadStyleTag` 获取 handheld/
+   FullKey/JoyDual/JoyLeft/JoyRight 六轴句柄；JoyDual 优先右手柄；
+   只从 `pump_sdl_events` 调用，遵守 libnx HID 的线程所有权；会话结束、
+   input gate 关闭或退出时 `hidStopSixAxisSensor`。
+3. 单位/轴向在 `sensor_math.c` 单点实现：rev/s→rad/s ×2π、g→m/s² ×9.80665；
+   Switch 共享内存到 SDL 标准帧采用 yuzu/Ryujinx 的 SDL→Switch 映射
+   `(x,-z,y)` 的逆 `(x,z,-y)`，不按 Joy-Con 左右再翻转。
+4. 当前不依赖 host 的 `SetSensorEnabled`：会话有效即采样并上报。
+   host 的该命令仍保留原 SDL 路径（Switch 上失败），后续如需省电再
+   加平台回调；协议层不改变。
+5. 左右 Joy-Con/Pro/handheld 的符号、host 接受度与 60Hz 媒体循环下的
+   平滑度仍为 `待验证`；真机只改 `sensor_math.c` 的轴向后处理，不改
+   wire offsets 或 flags。
