@@ -988,15 +988,28 @@ Gyro action group。
   gyro 需要的 `0x800`（slot 0）和 `0x400`（slot 1）都没有，填充循环直接跳过，
   输入 6 个 word 保持 0，`CGyroSource::Update` 提前返回 → Gyro mode 永远收不到
   样本。
-- **为什么之前 `0x400` 会让整个手柄失效**：`0x400` 是 slot 1 的位，不是
-  单 Pro/handheld 的 slot 0；它会走另一条 sensor 分支，和 Generic V2 的
-  默认 slot 布局不一致。正确的主 sensor 位是 **`0x800`**。
+- **slot 与 wire offset 的对应**（由同一段 `0x1386796f0` 的读写位置直接得出）：
+  - slot 0（`flags & 0x800`）读 gyro `+0x38`、accel `+0x3e`；
+  - slot 1（`flags & 0x400`）读 gyro `+0x1c`、accel `+0x22`。
+  ihslib 目前只写 `+0x1c/+0x22`，所以它天然对应 **slot 1（0x400）**；
+  要用 slot 0，必须把同样的 gyro/accel 再写到 `+0x38/+0x3e` 并置 `0x800`。
+  之前 `0x400` 导致整只手柄失效的那次是 **Switch Pro 身份**构建，不能
+  用来否定 Generic + `0x400`；两者混淆了。
 
 这与真机现象完全一致：Gyro UI、校准、震动都正常（accel/flags 0x4 路径通），
 但转动无输出（gyro slot 0 未被填充）。因此 **caps `0x80000` 不是当前首要
 问题；wire gyro flags 缺 `0x800` 才是**。之前 20.5 的 “host 不消费” 假设
 在此被替换。
 
-**待验证**：把 NX 侧 `IHS_HIDReportSDLSetGyro` 的 flags 从 `0x2` 改为
-`0x802`（保留 presence bit，加 slot 0 位），不改变 caps、VID/PID 或
-accel flags；测试构建为 `build/switch-gyro800/app/nsteamlink.nro`。
+**待验证的两个对照构建（均为 Generic 身份，不改 caps/VID/PID）：**
+
+1. `build/switch-gyro400/app/nsteamlink.nro`：flags 改为 `0x402`，wire 仍写
+   `+0x1c/+0x22`，对应 slot 1。这是与当前包文最匹配的组合，应优先测。
+2. `build/switch-alt/app/nsteamlink.nro`：保留 `+0x1c/+0x22`，另把 gyro/accel
+   复制到 `+0x38/+0x3e` 并置 `0x800`（slot 0），用于 `CGyroSource` 索引为 0
+   的情况。`build/switch-gyro800/app/nsteamlink.nro` 只置了 `0x800` 但没有写
+   `+0x38`，不能作为 slot 0 的有效测试，已废弃。
+
+`CGyroSource::Update` 用 `[this+0xc0]` 选输入 slot；该索引由哪个控制器源
+初始化仍是 `待验证`，所以先用 slot 1 的 `0x400` 对照，失败再测 slot 0 的
+`+0x38` 布局。

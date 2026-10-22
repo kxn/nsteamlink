@@ -2320,7 +2320,10 @@ Decision：
    `SetSensorEnabled` 都不能单独作为“gyro 已被 host 消费”的证据。
 5. 2026-10-23 继续逆向补充：host 的实际消费函数是 `CGyroSource::Update
    @0x1386702d0`，输入 gyro 在 `+0x2a/+0x2c/+0x2e`；填充循环
-   `0x1386796f0` 对 slot 0 要求 `flags & 0x800`、slot 1 要求 `flags & 0x400`。
-   NX wire 的 `0x6` 只有 accel 的 `0x4`，没有 gyro 的 `0x800`，所以填充
-   被跳过、`Update` 提前返回。正确的主 sensor 位是 `0x800`，不是 `0x400`；
-   `0x802` 的测试构建已生成，待真机验证。
+   `0x1386796f0` 对 slot 0 要求 `flags & 0x800` 并读 `+0x38/+0x3e`，
+   对 slot 1 要求 `flags & 0x400` 并读 `+0x1c/+0x22`。NX wire 的 `0x6`
+   只有 accel 的 `0x4`，两个 slot 位都没有，所以 gyro 填充被跳过。
+   当前包文对应 slot 1，优先测 Generic + `0x402`（`build/switch-gyro400`）；
+   若 `CGyroSource` 索引为 0，则需把 gyro/accel 复制到 `+0x38/+0x3e` 并置
+   `0x800`（`build/switch-alt`）。先前 0x400 失效是 Switch Pro 身份构建，
+   不能作为 Generic 的结论。

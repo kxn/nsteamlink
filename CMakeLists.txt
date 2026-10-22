@@ -27,6 +27,8 @@ option(NSL_BUILD_TOOLS "Build standalone Switch diagnostic tools" ${NSL_DIAGNOST
 option(NSL_TEST_FORCE_1080 "Build a clearly labelled manual-test app that always requests/renders 1080p" OFF)
 option(NSL_SWITCH_HOST_CAPS "Match the Switch host VDF controller_caps (0x8B4BFF) for a motion test" OFF)
 option(NSL_HID_GYRO_FLAG_800 "Set the host generic-abstraction primary gyro flag 0x800" OFF)
+option(NSL_HID_GYRO_FLAG_400 "Set the host generic-abstraction secondary gyro flag 0x400" OFF)
+option(NSL_HID_ALT_SENSOR_LAYOUT "Also pack gyro/accel at the host slot-0 offsets 0x38/0x3e" OFF)
 set(NSL_IDENTITY_DIR "${CMAKE_BINARY_DIR}/generated")
 execute_process(COMMAND "${CMAKE_COMMAND}" -DSOURCE_DIR=${CMAKE_SOURCE_DIR}
     -DOUTPUT_DIR=${NSL_IDENTITY_DIR} -DAPP_VERSION=${PROJECT_VERSION}
@@ -55,6 +57,20 @@ if(NSL_HID_GYRO_FLAG_800)
     target_compile_definitions(ihslib PRIVATE NSL_HID_GYRO_FLAG_800=1)
     if(TARGET ihslib-hid-sdl)
         target_compile_definitions(ihslib-hid-sdl PRIVATE NSL_HID_GYRO_FLAG_800=1)
+    endif()
+endif()
+
+if(NSL_HID_GYRO_FLAG_400)
+    target_compile_definitions(ihslib PRIVATE NSL_HID_GYRO_FLAG_400=1)
+    if(TARGET ihslib-hid-sdl)
+        target_compile_definitions(ihslib-hid-sdl PRIVATE NSL_HID_GYRO_FLAG_400=1)
+    endif()
+endif()
+
+if(NSL_HID_ALT_SENSOR_LAYOUT)
+    target_compile_definitions(ihslib PRIVATE NSL_HID_ALT_SENSOR_LAYOUT=1)
+    if(TARGET ihslib-hid-sdl)
+        target_compile_definitions(ihslib-hid-sdl PRIVATE NSL_HID_ALT_SENSOR_LAYOUT=1)
     endif()
 endif()
 
