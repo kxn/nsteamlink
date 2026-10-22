@@ -191,7 +191,8 @@ void sl_log_finish(void) {
     pthread_mutex_destroy(&log_lock);
 }
 static void ihs_log(IHS_LogLevel level, const char *tag, const char *message) {
-    if (level > IHS_LogLevelWarn && strcmp(tag, "Activity") && strcmp(tag, "StreamState"))
+    if (level > IHS_LogLevelWarn && strcmp(tag, "Activity") && strcmp(tag, "StreamState") &&
+        strcmp(tag, "HID"))
         return;
     char s[224];
     snprintf(s, sizeof(s), "%.24s: %.190s", tag, message);
