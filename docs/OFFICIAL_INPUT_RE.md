@@ -812,13 +812,29 @@ display 7xx-10xx (network)(decode)(display)` 中 network/decode/display 三列
   `nsl-sensor-math` 校验单位与轴向；desktop 246/246 通过，Switch
   release NRO 构建通过。
 
-### 19.5 仍需真机验证
+### 19.5 真机六轴采集与轴向结果（2026-10-22，Handheld）
 
-- 左右 Joy-Con、Pro Controller、handheld、单 Joy-Con 的**符号/轴向**
-  是否与 Steam Input 的 Gyro 预览一致；
-- host 是否接受未先收到 `SetSensorEnabled` 就出现的 gyro/accel 数据
-  （当前策略是会话开始即采样，host 的 enable 命令仍走原 SDL 路径，
-  在 Switch 上失败但不影响本地采样）；
-- 媒体循环 60Hz 时每 4ms 采样实际只随帧率投递；若需要 125/200Hz
-  的平滑度，应在不违反 libnx 线程所有权的前提下增加采样点，而不是
-  把 libnx 调用移到 flush 线程。
+设备地址 `10.10.10.66`，hbmenu netloader + nxlink 推送，未开 Steam 会话。
+工具：`nsl-sixaxis-probe`（机器可读采样）和 `nsl-sixaxis-view`（屏幕可视化）。
+
+- **采样路径成立**：`handheld_style=0x2`、`no1_style=0`、`handheld_type=12`；
+  `hidGetSixAxisSensorHandles`/`hidStartSixAxisSensor` 均返回 0；只有
+  handheld 句柄有数据，fullkey/joydual/joyleft/joyright 句柄返回 0（当前
+  没有对应控制器连接）。
+- **采样率**：状态 `delta_time=5,000,000 ns`；19.914 秒内 `sampling_number`
+  增加 3871，约 **194 Hz**（标称 200 Hz 附近）。
+- **静止姿态**：accel 约 `(0.02, -0.29, -1.06) g`，主要沿 **-Z**；转换后
+  SDL accel 约 `(-0.2, 10.4, -2.8) m/s²`，主要沿 **+Y**。这符合
+  “屏幕朝上/近似平放时重力在 SDL Y 轴”的预期。
+- **引导动作（3 轮 REST/YAW/PITCH/ROLL）**：
+  - YAW（绕竖直轴左右转）：raw **Z** 范围约 `-0.95..+0.81 rev/s`，
+    X/Y 较小；对应 SDL **Y**。
+  - PITCH（前后倾）：raw **X** 范围约 `-1.10..+1.19 rev/s`；对应 SDL **X**。
+  - ROLL（左右滚）：raw **Y** 范围约 `-0.90..+0.84 rev/s`；对应 SDL **Z**。
+  这三组结果支持 `sensor_math.c` 的 `(x, z, -y)` 映射和“libnx X=pitch、
+  Y=roll、Z=yaw”的轴向假设。第一轮用户未完全按提示动作，第二轮/第三轮
+  的 Z/X/Y 主导关系很清楚。
+- **仍未验证**：Pro Controller、单 Joy-Con、左右 Joy-Con 分离时的
+  方向/符号；Steam host 是否接受“未先发 `SetSensorEnabled` 即出现 IMU”
+  的数据；Steam Input 的 Gyro 正负方向（真机若相反，只需在
+  `sensor_math.c` 取反对应分量，wire 格式不变）。

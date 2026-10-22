@@ -2277,6 +2277,9 @@ Decision：
 4. 当前不依赖 host 的 `SetSensorEnabled`：会话有效即采样并上报。
    host 的该命令仍保留原 SDL 路径（Switch 上失败），后续如需省电再
    加平台回调；协议层不改变。
-5. 左右 Joy-Con/Pro/handheld 的符号、host 接受度与 60Hz 媒体循环下的
-   平滑度仍为 `待验证`；真机只改 `sensor_math.c` 的轴向后处理，不改
-   wire offsets 或 flags。
+5. 2026-10-22 在 `10.10.10.66` 的 handheld 真机上用
+   `nsl-sixaxis-probe`/`nsl-sixaxis-view` 验证：handheld 句柄约 194 Hz 采样，
+   YAW 主导 raw Z、PITCH 主导 raw X、ROLL 主导 raw Y，支持 `(x,z,-y)` 映射。
+   Pro Controller、单 Joy-Con、左右分离符号、Steam host 接受度与 60Hz 媒体
+   循环下的平滑度仍为 `待验证`；真机只改 `sensor_math.c` 的轴向后处理，
+   不改 wire offsets 或 flags。

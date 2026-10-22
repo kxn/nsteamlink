@@ -949,6 +949,26 @@ if(NSL_PLATFORM STREQUAL "switch" AND NSL_DIAGNOSTICS)
     nx_create_nro(nsl-video-probe OUTPUT nsl-video-probe.nro NACP "${CMAKE_CURRENT_BINARY_DIR}/video_probe.nacp")
 endif()
 
+if(NSL_PLATFORM STREQUAL "switch")
+    # Standalone six-axis stimulus: no Steam session, no graphics. It uses the
+    # same sensor_math conversion as the product path and streams raw/mapped
+    # samples over nxlink so hardware axis/sign can be checked from logs.
+    add_executable(nsl-sixaxis-probe tests/switch_sixaxis_probe.c platforms/common/sensor_math.c)
+    target_include_directories(nsl-sixaxis-probe PRIVATE src platforms/common)
+    target_compile_options(nsl-sixaxis-probe PRIVATE -Wall -Wextra)
+    target_link_libraries(nsl-sixaxis-probe PRIVATE nx)
+    nx_generate_nacp(OUTPUT sixaxis_probe.nacp NAME "NSteamLink SixAxis Probe" AUTHOR "NSteamLink" VERSION "1.0.0")
+    nx_create_nro(nsl-sixaxis-probe OUTPUT nsl-sixaxis-probe.nro NACP "${CMAKE_CURRENT_BINARY_DIR}/sixaxis_probe.nacp")
+
+    # On-screen guided visualizer for manual axis/sign checks.
+    add_executable(nsl-sixaxis-view tests/switch_sixaxis_view.c platforms/common/sensor_math.c)
+    target_include_directories(nsl-sixaxis-view PRIVATE src platforms/common)
+    target_compile_options(nsl-sixaxis-view PRIVATE -Wall -Wextra)
+    target_link_libraries(nsl-sixaxis-view PRIVATE nx m)
+    nx_generate_nacp(OUTPUT sixaxis_view.nacp NAME "NSteamLink SixAxis View" AUTHOR "NSteamLink" VERSION "1.0.0")
+    nx_create_nro(nsl-sixaxis-view OUTPUT nsl-sixaxis-view.nro NACP "${CMAKE_CURRENT_BINARY_DIR}/sixaxis_view.nacp")
+endif()
+
 add_custom_target(nsl_graphics_manifest ALL
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/graphics-manifest.py"
         --root "${CMAKE_SOURCE_DIR}" --build "${CMAKE_BINARY_DIR}" --backend "${NSL_GFX_BACKEND}"
