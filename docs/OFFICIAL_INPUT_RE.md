@@ -966,7 +966,7 @@ Gyro action group。
 - 另一条待验证路径是让 host 在收到 IMU 时也标记 state changed；这属于
   host 内部行为，客户端无法直接控制。
 
-### 20.6 精确消费点：`CGyroSource::Update` 与 flags `0x800` 门控（2026-10-23 继续逆向）
+### 20.6 精确消费点：`CGyroSource::Update` 与 flags `0x800/0x400` 门控（2026-10-23 继续逆向）
 
 继续沿 `controller_source_gyro.cpp` 追到实际消费函数，已定位到一条完整、可解释
 “校准成功但 gyro 无输出”的路径：
@@ -997,9 +997,10 @@ Gyro action group。
   用来否定 Generic + `0x400`；两者混淆了。
 
 这与真机现象完全一致：Gyro UI、校准、震动都正常（accel/flags 0x4 路径通），
-但转动无输出（gyro slot 0 未被填充）。因此 **caps `0x80000` 不是当前首要
-问题；wire gyro flags 缺 `0x800` 才是**。之前 20.5 的 “host 不消费” 假设
-在此被替换。
+但转动无输出（gyro slot 位未被填充）。因此 **caps `0x80000` 不是当前首要
+问题；wire gyro flags 缺 `0x400`/`0x800` 才是**。当前包文写的是 `+0x1c/+0x22`，
+所以优先补 **slot 1 的 `0x400`**；只有 `CGyroSource` 索引为 0 时才需要
+slot 0 的 `+0x38/+0x3e`。之前 20.5 的 “host 不消费” 假设在此被替换。
 
 **待验证的两个对照构建（均为 Generic 身份，不改 caps/VID/PID）：**
 
