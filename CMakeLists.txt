@@ -25,6 +25,7 @@ option(NSL_ADAPTIVE_PACING "Enable legacy publication estimator metrics on deko 
 option(NSL_DIAGNOSTICS "Compile advanced diagnostics, UDP console and log collection" OFF)
 option(NSL_BUILD_TOOLS "Build standalone Switch diagnostic tools" ${NSL_DIAGNOSTICS})
 option(NSL_TEST_FORCE_1080 "Build a clearly labelled manual-test app that always requests/renders 1080p" OFF)
+option(NSL_SWITCH_HOST_CAPS "Match the Switch host VDF controller_caps (0x8B4BFF) for a motion test" OFF)
 set(NSL_IDENTITY_DIR "${CMAKE_BINARY_DIR}/generated")
 execute_process(COMMAND "${CMAKE_COMMAND}" -DSOURCE_DIR=${CMAKE_SOURCE_DIR}
     -DOUTPUT_DIR=${NSL_IDENTITY_DIR} -DAPP_VERSION=${PROJECT_VERSION}
@@ -41,6 +42,13 @@ set(IHSLIB_HID_SDL_USE_SDL2 ON CACHE BOOL "Build ihslib SDL HID provider against
 # SDK diagnostics follow the application profile, including cached builds.
 set(IHSLIB_DIAGNOSTICS ${NSL_DIAGNOSTICS} CACHE BOOL "Compile IHS diagnostic collection" FORCE)
 add_subdirectory(third_party/ihslib)
+
+if(NSL_SWITCH_HOST_CAPS)
+    target_compile_definitions(ihslib PRIVATE NSL_SWITCH_HOST_CAPS=1)
+    if(TARGET ihslib-hid-sdl)
+        target_compile_definitions(ihslib-hid-sdl PRIVATE NSL_SWITCH_HOST_CAPS=1)
+    endif()
+endif()
 
 enable_testing()
 add_subdirectory(app)

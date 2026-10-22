@@ -937,14 +937,22 @@ Gyro action group。
    Switch 原生报告的按键/摇杆，不读 IMU；官方唯一 IMU 路径是
    `CHIDDeviceSDLGamepad::OnSensorEvent`。
 
-**Conclusion：**
+**Retraction（2026-10-23）：** 本节初稿把“host 不消费 IMU”写成了结论，这是
+下早了。逐位比对 host VDF 的 `controller_caps = 0x8B4BFF` 与
+`InfoFromHID` 的基线 caps 后，发现基线是 `0x8343FF`（ABXY/DPAD/双摇杆/
+肩键/扳机/Back/Start/Guide/Misc1/XInput/UNK_3/UNK_4），和 host VDF 只差
+**`0x800` + `0x80000`**。真机只补过 `0x800`（Gyro UI 出现、无数据），
+**`0x80000` 从未测过**。因此下面的“host 不支持”不能作为结论，降级为待验证。
 
-- 客户端没有丢 IMU；问题在 host 的 Switch/Generic 流式路径没有把
-  连续 IMU 变化送进 Steam Input 的 Gyro source。
-- 给 Generic 加 `0x800`、改 VID/PID、加 `0x400` 都不能修复；`0x400`
-  会直接让输入失效，`0x800` 只让 UI 出现。
-- “改成 Switch 原生报告”不是更完美的方案：官方客户端的 Switch 原生
-  parser 本身不读 IMU，host 侧也没有证据表明它会消费 Switch 原生 gyro。
+**Conclusion（当前可下的部分）：**
+
+- 客户端没有丢 IMU；host 的 VDF Gyro group active，UI 能出现。
+- 只补 `0x800` 时没有数据输出；`0x400` 直接让输入失效，不能补。
+- host 的 Switch 原生 parser 不读 IMU（官方 Linux 客户端
+  `BParseGamepadStateSwitch @0x2da140`），所以“改成Switch 原生报告”
+  不是显然更优的方向。
+- `0x80000` 是否是 host 的 motion/数据通路位，仍为 `待验证`；在它验证
+  之前，不能判定 host 不支持 Switch Generic gyro。
 
 **Hypothesis（待验证）：**
 

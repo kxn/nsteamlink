@@ -2298,11 +2298,14 @@ Evidence：`docs/OFFICIAL_INPUT_RE.md` §20 记录了 Windows `steamclient64.dll
 `BParseGamepadStateSwitch @0x2da140` 也只解析按键/摇杆，不读 IMU。
 
 Conclusion：给 Generic 加 `0x800` 只会让 Gyro UI 出现；改 Switch Pro/DS4 VID/PID
-会让 host 走原生/另一套布局，但 Generic RAW V2 报告里的 IMU 仍不会被应用。把
-客户端 flags 改成 `0x406` 会让整只手柄输入失效，说明 `0x400` 是布局模式位，
-不是可单独补的 valid 位。客户端采样和 wire 打包本身没有丢数据；剩余问题是
-host 的 Generic/Switch 流式路径不消费连续 IMU。Switch 原生报告不是替代方案，
-因为官方客户端的 Switch parser 本身忽略 IMU。
+会让 host 走原生/另一套布局，但 Generic RAW V2 报告里的 IMU 仍没有被应用。把
+客户端 flags 改成 `0x406` 会让整只手柄输入失效，说明 `0x400` 是 host 内部
+state 语义位，不是可单独补的 valid 位。客户端采样和 wire 打包本身没有丢数据。
+
+2026-10-23 补记并撤回：初稿把“host 不消费 IMU”写成结论，下早了。host VDF
+`controller_caps=0x8B4BFF` 与 `InfoFromHID` 基线 `0x8343FF` 的差异是
+`0x800 + 0x80000`；真机只测过 `0x800`，**`0x80000` 尚未验证**，因此
+“host 不支持”不能成立，降级为待验证。
 
 Decision：
 
