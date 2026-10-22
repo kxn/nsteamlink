@@ -1014,3 +1014,10 @@ slot 0 的 `+0x38/+0x3e`。之前 20.5 的 “host 不消费” 假设在此被�
 `CGyroSource::Update` 用 `[this+0xc0]` 选输入 slot；该索引由哪个控制器源
 初始化仍是 `待验证`，所以先用 slot 1 的 `0x400` 对照，失败再测 slot 0 的
 `+0x38` 布局。
+
+**还有一个未验证前提**：`0x1386796f0` 读的 `edx` 是 host 内部 state 的
+flags，不是已经证明与 wire flags 一一对应。官方 Linux 客户端
+`OnSensorEvent` 只置 `0x2/0x4`，所以 host 的 remote parser 可能自己把
+wire flags 翻译成内部 `0x400/0x800`；如果是这样，直接改 wire flags 不会
+生效。两个构建（`0x400` 与 `+0x38/0x800`）就是用来区分这两种情况的；
+在真机结果出来前，不能把“wire flags 直接等于内部 flags”当成结论。
