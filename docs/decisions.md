@@ -2318,3 +2318,9 @@ Decision：
    Generic caps；该方案尚未实现，属于 `待验证` 的设计方向。
 4. 真机结论以用户观察到的输入/指针/游戏内动作为准；校准成功、UI 出现、
    `SetSensorEnabled` 都不能单独作为“gyro 已被 host 消费”的证据。
+5. 2026-10-23 继续逆向补充：host 的实际消费函数是 `CGyroSource::Update
+   @0x1386702d0`，输入 gyro 在 `+0x2a/+0x2c/+0x2e`；填充循环
+   `0x1386796f0` 对 slot 0 要求 `flags & 0x800`、slot 1 要求 `flags & 0x400`。
+   NX wire 的 `0x6` 只有 accel 的 `0x4`，没有 gyro 的 `0x800`，所以填充
+   被跳过、`Update` 提前返回。正确的主 sensor 位是 `0x800`，不是 `0x400`；
+   `0x802` 的测试构建已生成，待真机验证。

@@ -965,3 +965,38 @@ Gyro action group。
   report，成本和风险都高于当前 Generic 路径。
 - 另一条待验证路径是让 host 在收到 IMU 时也标记 state changed；这属于
   host 内部行为，客户端无法直接控制。
+
+### 20.6 精确消费点：`CGyroSource::Update` 与 flags `0x800` 门控（2026-10-23 继续逆向）
+
+继续沿 `controller_source_gyro.cpp` 追到实际消费函数，已定位到一条完整、可解释
+“校准成功但 gyro 无输出”的路径：
+
+- **消费函数**：`CGyroSource::Update` @ `0x1386702d0`（`CGyroSource` vtable
+  slot 9；vtable @ `0x1392e5218`，RTTI `.?AVCGyroSource@@` @ `0x17cb270`）。
+- **输入结构**：`rdx` 指向的 controller/raw state 里，
+  accel s16 在 `+0x24/+0x26/+0x28`，gyro s16 在 `+0x2a/+0x2c/+0x2e`。
+  `Update` 先检查这 6 个 word；若全为 0，直接跳到 `0x138670788` 返回，
+  不产生四元数、不更新 prediction，也不通知 Gyro mode。
+- **填充函数**：`CGenericGamepadControllerAbstraction` 内
+  `0x1386796f0` 起的循环负责把这 6 个字段写进上述输入：
+  - slot 0（`edi=0`）要求 **`flags & 0x800`**；
+  - slot 1（`edi=1`）要求 **`flags & 0x400`**；
+  - accel 另要求 **`flags & 0x4`**；
+  - 通过后把 gyro 写到输入 `+0x2a/+0x2e/+0x2c`，accel 写到
+    `+0x24/+0x26/+0x28`（并做一次 y/z 交换和 y 取反）。
+- **我们的 wire flags 是 `0x6`**：accel 的 `0x4` 有，所以校准能用 accel 完成；
+  gyro 需要的 `0x800`（slot 0）和 `0x400`（slot 1）都没有，填充循环直接跳过，
+  输入 6 个 word 保持 0，`CGyroSource::Update` 提前返回 → Gyro mode 永远收不到
+  样本。
+- **为什么之前 `0x400` 会让整个手柄失效**：`0x400` 是 slot 1 的位，不是
+  单 Pro/handheld 的 slot 0；它会走另一条 sensor 分支，和 Generic V2 的
+  默认 slot 布局不一致。正确的主 sensor 位是 **`0x800`**。
+
+这与真机现象完全一致：Gyro UI、校准、震动都正常（accel/flags 0x4 路径通），
+但转动无输出（gyro slot 0 未被填充）。因此 **caps `0x80000` 不是当前首要
+问题；wire gyro flags 缺 `0x800` 才是**。之前 20.5 的 “host 不消费” 假设
+在此被替换。
+
+**待验证**：把 NX 侧 `IHS_HIDReportSDLSetGyro` 的 flags 从 `0x2` 改为
+`0x802`（保留 presence bit，加 slot 0 位），不改变 caps、VID/PID 或
+accel flags；测试构建为 `build/switch-gyro800/app/nsteamlink.nro`。
