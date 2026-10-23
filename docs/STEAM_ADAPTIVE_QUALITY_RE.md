@@ -164,11 +164,11 @@ x86 `CGameStreamSession` RTTI vtable `0x3aa19f14` 的 +0x24 指向
 
 ### 时间与限额必须按版本核对
 
-独立执行 `tools/steam-adaptive-host64-audit.py` 的40个受控输入（其中8个为Ping窗口、10个为非空统计缓冲）：
+独立执行 `tools/steam-adaptive-host64-audit.py` 的49个受控输入（其中8个为Ping窗口、10个为非空统计缓冲、9个为发送producer/FPS阈值）：
 原重算、两类反馈处理、source callback门控、重复loss的latch、真实session虚表getter，
-以及编码stage的回调循环和写入均执行原指令。仅提供时钟、日志、可选第二码率回调、单线程临界区、直方图清零原语与
-下游帧交付终点；没有改写这些算法入口。输入对象不含速率采样/历史缓冲时，原函数
-自行走空缓冲分支。这不覆盖有历史缓冲的估计更新，也不是真实Steam进程执行。
+以及编码stage的回调循环和写入均执行原指令。仅提供时钟、日志、可选第二码率回调、单线程临界区、直方图清零原语、
+全局发送guard、帧删除及下游交付终点；没有改写这些算法入口。输入对象不含速率采样/历史缓冲的那组，原函数
+自行走空缓冲分支；后续显式非空组另行核对查询、更新及合并，但都不是真实Steam进程执行。
 
 **版本差异**：x64 loss入口 `0x13a170fc0` 与 overflow入口 `0x13a171a10`
 从 estimator+0x10 起算，严格小于 **5秒** 时忽略；旧x86的3秒不能套到这里。
@@ -276,8 +276,8 @@ IHS当前已有会话Ping应答，见 `ch_discovery.c::OnPingRequest` 与协议�
   原始weight/event、pooled结果分别读取，不能把它们混为同一概率数组。
 - 4个输入执行完整速率更新 `0x13a1710f0` 及真实 `0x13a170e80` 查询：
   显式30槽、cursor29、相邻时间0.1秒，入口数量125000按原计算写成1，时间写为10，
-  cursor回到0。数量转换为×8/1000000；上游实际会话的采样来源/节奏仍需另证，
-  不把此环当真实捕获的帧流或公网吞吐。
+  cursor回到0。数量转换为×8/1000000；该组从consumer进入，下面另核对一个实际发送producer。
+  真实会话节奏仍未执行，不把此环当真实捕获的帧流或公网吞吐。
 - 该受控环中，无recent-event/pressure时link约10→10.012001；recent-event时
   重算受事件后ramp限制；pressure=1、coefficient=0.5时link约10→9.925，
   目标约4.9625。另执行非零hint分支。数值依赖这份显式历史和状态，不能变成
@@ -291,6 +291,48 @@ IHS当前已有会话Ping应答，见 `ch_discovery.c::OnPingRequest` 与协议�
 随后recompute；非空速率更新与pressure状态再参与后续link选择。因此旧x86的乘0.9
 不能代替新样本的整条策略。这里仍未执行历史的时间衰减/置信估计全部条件、真实工作线程
 周期及物理编码输出，不能把10个合成输入扩展为整套稳态/恢复已对齐。
+
+### 速率样本来自发送负载，不是客户端报告的吞吐
+
+追加6组原指令输入，从实际单帧发送入口 `0x13a192b90` 执行到上述rate update，
+随后继续进入原forwarder `0x13a1f1eb0`。帧buffer、两个header flag、offset、模式和
+连接状态是显式对象输入；不把这类fixture写成从真实编码器取到的帧。
+
+这个producer在估计器enabled且允许当前帧时，以
+`buffer_length - 13 - (flag16?1:0) - (flag17?12:0) - offset`
+作为更新数量。剩余正文包含视频帧头，不能当成只含编码图像的数据量。
+原body flags的0x10是key-frame标记：普通模式跳过该帧的速率样本，模式字段
+`session+0x51b0=9` 则不跳过。这里只记录该数值分支，不为9臆测产品模式名称。
+测试保持encrypted位0；原函数内的加密、padding调整并未由这6例执行。
+
+受控正文125000 bytes分别在普通header、额外header/offset输入下，均向真实
+30槽环写入1 Mbit；50000 bytes写入0.4 Mbit。普通key frame和disabled时不更新cursor，
+模式9的key frame则更新。原函数仍分配并写入视频sequence，7→8；随后原forwarder
+在显式 `connection=null` 时自行返回false，已写入的速率样本没有撤销。
+全局发送guard与帧删除是明确终点；尤其 `0x13a1ec710` 是帧虚析构/删除边界，
+不是网络发送结果。没有把替身的零返回值当作真实丢包或超时。
+
+**Conclusion：** 至少这个真实producer提供本地待发送正文的负载样本，而不是远端ACK
+吞吐或客户端测得的可用带宽。不得把该环的值直接显示成“公网已可用带宽”。
+loss、Ping、历史/pressure随后参与容量估计；一个发送producer不穷尽批量/FEC路径，
+也不证明实际公网时序或重传是否会从其他入口重复计入。删除原producer→rate update
+调用的反例在原发送函数返回后，因缺少采样/cursor变化被拒绝。
+
+### Ping增长阈值来自帧周期
+
+原setter `0x13a171e70` 把 `1000.0f / fps` 写到estimator+0x54，
+不是全局固定10ms。构造器 `0x13a17089d` 直接写入float bits `0x41855555`
+（约16.666666ms）；普通0码率分支在 `0x13a18b3a0–0x13a18b4e5`
+查询帧率分子/分母，成功则做除法，失败则读取原60.0f常数，再调用这个setter。
+构造/查询的绑定在此为静态证据，没有虚构实际主机当前帧率。
+
+新增3例执行原setter→原session Ping callback→500槽均值→原recompute。
+显式fps=30/60/120分别产生约33.3333/16.6667/8.33333ms阈值。同一初始10ms窗口，
+新样本1638 ticks（约24.9939ms），在30/60fps输入时系数保持1；120fps输入时约0.204331，
+目标约2.04331 Mbps。不同结果来自原帧周期阈值，不代表我们要在Switch写三个阈值或
+把当前会话设成120fps。移除原除法的反例会得到错误的1000ms并被比较拒绝。
+之前显式10ms阈值的8例仍是受控边界测试，不能当作官方缺省值；本次进一步补齐了
+其上游设置依据。没有把此处帧周期等同于主机真实Ping发送周期。
 
 ### Switch接线比较需要保留平台边界
 
@@ -348,6 +390,8 @@ python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/Stea
 python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation encoder-store
 python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation ping-recovery
 python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation history-pool
+python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation sender-rate
+python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation fps-threshold
 python3 tools/steam-adaptive-client-feedback-audit.py \
   --binary /path/to/pinned/linux/package/bin/steamlink --output /tmp/linux-feedback.json
 # 此反例同样应因反馈缺失而非零退出：

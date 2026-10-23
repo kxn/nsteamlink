@@ -6,7 +6,9 @@ bitrate getter and encoding-stage min/store execute original instructions. Time
 and logging are providers. Fixtures distinguish absent buffers from explicit
 30-slot rate, 190-bin event and 500-slot ping storage. Original lookup, update
 and pooling branches execute, with declared critical-section/memset terminals. The optional independent
-rate callback and downstream frame delivery are explicit endpoints. No Steam
+rate callback, downstream frame delivery and frame deletion are explicit endpoints.
+Unencrypted frame metadata also enters the real sender and FPS enters the real
+frame-period setter before ping feedback. No Steam
 process, packets, decoder/encoder hardware or real thread scheduling is touched.
 Negative controls intentionally change decoder margin or encoder-state store
 and must fail; they are not product code or adaptive strategies for Switch.
@@ -19,6 +21,7 @@ from unicorn.x86_const import (
     UC_X86_REG_RSP,
     UC_X86_REG_RCX,
     UC_X86_REG_XMM0,
+    UC_X86_REG_XMM1,
     UC_X86_REG_XMM2,
     UC_X86_REG_RAX,
     UC_X86_REG_EAX,
@@ -36,6 +39,8 @@ parser.add_argument(
         "encoder-store",
         "ping-recovery",
         "history-pool",
+        "sender-rate",
+        "fps-threshold",
     ],
     default="none",
     help="Negative controls: each mutation must fail the original-output oracle",
@@ -63,6 +68,9 @@ class M:
         self.obj = obj
         self.now = now
         self.calls = []
+        self.rate_inputs = []
+        self.sender_endpoints = []
+        self.sender_results = []
         if args.mutation == "decoder-margin":
             u.mem_write(0x13AC8B6C0, struct.pack("<f", 1.0))
         if args.mutation == "ping-recovery":
@@ -73,6 +81,12 @@ class M:
         if args.mutation == "encoder-store":
             assert bytes(u.mem_read(0x13A1A3038, 6)) == bytes.fromhex("87be68010000")
             u.mem_write(0x13A1A3038, b"\x90" * 6)
+        if args.mutation == "sender-rate":
+            assert bytes(u.mem_read(0x13A192D4E, 5)) == bytes.fromhex("e89de3fdff")
+            u.mem_write(0x13A192D4E, b"\x90" * 5)
+        if args.mutation == "fps-threshold":
+            assert bytes(u.mem_read(0x13A171E78, 4)) == bytes.fromhex("f30f5ec1")
+            u.mem_write(0x13A171E78, b"\x90" * 4)
         self.q(0x13AC4B528, 0x110000)
         u.mem_write(0x110000, b"\xc3")
         u.mem_write(0x13A1A0560, b"\xc3")
@@ -116,7 +130,38 @@ class M:
         self.u.mem_write(0x13AC31740, b"\xc3")
         self.provide_memset = True
 
+    def rate_storage(self):
+        self.critical_sections()
+        self.q(self.obj + 0x18, 0x380000)
+        self.q(self.obj + 0x20, 0x390000)
+        self.u.mem_write(0x380000, struct.pack("<30f", *([1.0] * 30)))
+        self.u.mem_write(
+            0x390000,
+            struct.pack("<30d", *[self.now - (29 - i) * 0.1 for i in range(30)]),
+        )
+        self.u.mem_write(self.obj + 0x28, struct.pack("<I", 29))
+        self.f(self.obj + 0x54, 1000 / 60)
+        self.f(self.obj + 0x9C, 10)
+        self.f(self.obj + 0xA4, 1)
+
     def hook(self, u, pc, size, data):
+        if pc == 0x13A1710F0:
+            self.rate_inputs.append(
+                dict(
+                    bytes=u.reg_read(UC_X86_REG_RDX) & 0xFFFFFFFF,
+                    hint=struct.unpack(
+                        "<f",
+                        (u.reg_read(UC_X86_REG_XMM2) & 0xFFFFFFFF).to_bytes(
+                            4, "little"
+                        ),
+                    )[0],
+                )
+            )
+        if pc in getattr(self, "sender_terminals", ()):
+            self.sender_endpoints.append(hex(pc))
+        if pc == 0x13A1F20BF and hasattr(self, "sender_terminals"):
+            # Original forwarding code has already formed its bool return.
+            self.sender_results.append(u.reg_read(UC_X86_REG_RAX) & 255)
         if pc == 0x13AC31740 and getattr(self, "provide_memset", False):
             address = u.reg_read(UC_X86_REG_RCX)
             value = u.reg_read(UC_X86_REG_RDX) & 255
@@ -389,6 +434,115 @@ for name, last_event, pressure, coefficient, hint, expected_link, expected_targe
         )
     )
 
+# Enter the real single-frame sender, not the rate-update consumer directly.
+# A valid UNENCRYPTED body and buffer metadata are explicit inputs. Only final
+# frame deletion and OS/global send guards are terminals. The actual forwarder
+# runs with an explicitly absent connection and returns false itself; header
+# subtraction, key-frame/mode gates, sequence and rate update run original code.
+for name, enabled, keyframe, mode, header_flag16, header_flag17, offset, quantity in [
+    ("delta-body", 1, 0, 0, 0, 0, 0, 125000),
+    ("delta-body-extra-headers", 1, 0, 0, 1, 1, 5, 125000),
+    ("delta-body-smaller", 1, 0, 0, 0, 0, 0, 50000),
+    ("key-body-excluded", 1, 1, 0, 0, 0, 0, 125000),
+    ("mode9-key-body-included", 1, 1, 9, 0, 0, 0, 125000),
+    ("disabled-sender", 0, 0, 0, 0, 0, 0, 125000),
+]:
+    root, packet, buffer, data = 0x200000, 0x300000, 0x310000, 0x320000
+    m = M(10, obj=root + 0x4928)
+    m.rate_storage()
+    m.u.mem_write(m.obj + 8, bytes([enabled]))
+    m.u.mem_write(root + 0x51B0, struct.pack("<I", mode))
+    m.u.mem_write(root + 0x51D0, struct.pack("<H", 7))
+    # Explicit channel identifiers avoid unrelated retransmission/statistics
+    # bookkeeping in the actual forwarder. They are not inferred defaults.
+    m.u.mem_write(root + 0x2FD, b"\x01\x02")
+    m.q(packet + 8, buffer)
+    m.u.mem_write(packet + 0x10, bytes([header_flag16, header_flag17]))
+    m.u.mem_write(packet + 0x14, struct.pack("<I", offset))
+    m.u.mem_write(packet + 0x18, b"\x03")
+    headers = 13 + header_flag16 + 12 * header_flag17 + offset
+    m.u.mem_write(buffer + 0x34, struct.pack("<I", headers + quantity))
+    m.q(buffer + 0x38, data)
+    m.u.mem_write(data + headers + 2, bytes([0x08 | (0x10 if keyframe else 0)]))
+    m.sender_terminals = (0x13A1F6E60, 0x13A1F6E70, 0x13A1EC710)
+    for terminal in m.sender_terminals:
+        # Single-thread send guards and frame deletion are explicit boundaries;
+        # the original no-connection branch decides the forwarding result.
+        m.u.mem_write(terminal, b"\x31\xc0\xc3")
+    m.call(0x13A192B90, ctx=root, frame=packet)
+    counted = bool(enabled and (not keyframe or mode == 9))
+    assert m.sender_endpoints == [hex(pc) for pc in m.sender_terminals]
+    assert m.sender_results == [0], ("original no-connection send", m.sender_results)
+    assert m.rate_inputs == ([dict(bytes=quantity, hint=0.0)] if counted else []), (
+        name,
+        m.rate_inputs,
+    )
+    cursor = struct.unpack("<I", m.u.mem_read(m.obj + 0x28, 4))[0]
+    inserted = struct.unpack("<f", m.u.mem_read(0x380000 + 29 * 4, 4))[0]
+    assert cursor == (0 if counted else 29)
+    assert math.isclose(
+        inserted, quantity * 8 / 1000000 if counted else 1, rel_tol=1e-6
+    )
+    assert struct.unpack("<H", m.u.mem_read(data + headers, 2))[0] == 7
+    assert struct.unpack("<H", m.u.mem_read(root + 0x51D0, 2))[0] == 8
+    cases.append(
+        dict(
+            name="original-sender-" + name,
+            enabled=bool(enabled),
+            key_frame=bool(keyframe),
+            mode_field=mode,
+            transport_headers_and_offset=headers,
+            body_bytes=quantity,
+            rate_inputs=m.rate_inputs,
+            ring_cursor=cursor,
+            inserted_sample_mbits=inserted,
+            effect_endpoints=m.sender_endpoints,
+            original_forwarder_results=m.sender_results,
+        )
+    )
+
+# The actual host setter derives the ping-growth threshold from frame period.
+# The caller's real FPS lookup/fallback is statically bound separately; these
+# FPS values are consumer-boundary inputs, not measured host frame rates.
+for fps, expected_coefficient in [(30, 1.0), (60, 1.0), (120, 0.2043309211730957)]:
+    parent = 0x200000
+    m = M(2, obj=parent + 0x400)
+    m.critical_sections()
+    m.q(m.obj + 0x58, 0x380000)
+    m.u.mem_write(0x380000, struct.pack("<500f", *([10.0] * 500)))
+    m.u.mem_write(m.obj + 0x0C, struct.pack("<I", 1))
+    m.u.mem_write(parent + 0x408, b"\x01")
+    m.u.reg_write(UC_X86_REG_XMM1, int.from_bytes(struct.pack("<f", fps), "little"))
+    m.call(0x13A171E70)
+    threshold = m.readf(0x54)
+    assert math.isclose(threshold, 1000 / fps, rel_tol=1e-6), (
+        "fps threshold",
+        fps,
+        threshold,
+    )
+    m.u.reg_write(
+        UC_X86_REG_R8, 1638
+    )  # 24.993896ms, same 16.16 quantization as earlier.
+    m.call(0x13A18E8F0, ctx=parent, frame=0)
+    coefficient = m.readf(0xA0)
+    assert math.isclose(coefficient, expected_coefficient, rel_tol=1e-6), (
+        "fps-bound coefficient",
+        fps,
+        coefficient,
+        expected_coefficient,
+    )
+    cases.append(
+        dict(
+            name="original-fps-threshold-to-ping",
+            fps=fps,
+            threshold_ms=threshold,
+            baseline_ms=10.0,
+            new_sample_ticks=1638,
+            coefficient=coefficient,
+            target=m.readf(0xA8),
+        )
+    )
+
 print(
     json.dumps(
         {
@@ -400,8 +554,9 @@ print(
                 "downstream frame delivery",
                 "Enter/LeaveCriticalSection for explicit single-thread fixtures",
                 "memset for event-histogram storage",
+                "single-thread global send guards and frame deletion",
             ],
-            "input_boundary": "Fixtures separately cover empty buffers, nonempty 190-bin event histograms, an explicit 30-slot rate ring and 500-slot ping windows. Storage, clocks, pressure/enable/thread fields are explicit inputs; no full constructor/worker/history lifecycle is claimed. Source gate/latch, ping conversion/window/coefficient, recomputation, actual session RTTI bitrate getter and real stage min/store execute original instructions. No actual host packets/encoder device/runtime evidence.",
+            "input_boundary": "Fixtures separately cover empty buffers, nonempty 190-bin event histograms, an explicit 30-slot rate ring and 500-slot ping windows. A valid unencrypted frame buffer enters the real sender and forwarder. Connection absent and nonmatching channel IDs are explicit inputs; the original forwarder returns false. Global guards and frame deletion are terminals, not remote delivery. Header subtraction, key-frame/mode gates, sequence and rate update run original code. Explicit FPS inputs enter the real frame-period setter and ping feedback. Storage, clocks, pressure/enable/thread fields remain explicit inputs; no full constructor/worker/history lifecycle is claimed. Source gate/latch, ping conversion/window/coefficient, recomputation, actual session RTTI bitrate getter and real stage min/store execute original instructions. No actual host packets/encoder device/runtime evidence.",
             "cases": cases,
             "source_ranges": {
                 hex(a): hashlib.sha256(image[a - base : z - base]).hexdigest()
@@ -409,6 +564,9 @@ print(
                     (0x13A172500, 0x13A1725B9),
                     (0x13A1710F0, 0x13A171811),
                     (0x13A170E80, 0x13A170FA2),
+                    (0x13A192B90, 0x13A192DA6),
+                    (0x13A1F1EB0, 0x13A1F20C7),
+                    (0x13A171E70, 0x13A171E82),
                     (0x13A171FD0, 0x13A172500),
                     (0x13A18E8F0, 0x13A18E93A),
                     (0x13A171820, 0x13A171A04),
