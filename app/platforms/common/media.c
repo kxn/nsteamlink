@@ -877,6 +877,12 @@ static void pump_sdl_events(void) {
     /* Native sensor sources (Switch libnx six-axis) are sampled on this thread,
      * which also owns SDL/libnx HID. The 8ms flush thread only serializes the
      * canonical state, so no libnx call crosses threads. */
+    /* A snapshot under state_lock is not a lifetime lease. Retirement takes
+     * hid_lifecycle_lock before detaching and can destroy the IHS session as
+     * soon as it returns. Keep this outer owner lock through the platform
+     * poll/injection, without holding state_lock over libnx work. The flush
+     * worker never takes the lifecycle lock, so its stop/join order is intact. */
+    pthread_mutex_lock(&hid_lifecycle_lock);
     IHS_Session *sensor_session;
     bool sensor_enabled;
     int sensor_joystick;
@@ -891,6 +897,7 @@ static void pump_sdl_events(void) {
     } else {
         sl_sensors_stop();
     }
+    pthread_mutex_unlock(&hid_lifecycle_lock);
 
     pthread_mutex_lock(&state_lock);
     if (rumble_reset_pending) {

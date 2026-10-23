@@ -1336,6 +1336,23 @@ if(NSL_PLATFORM STREQUAL "desktop")
         -Wl,--wrap=stream_media_get_snapshot)
     add_test(NAME network_test_runtime COMMAND nsl-network-test-runtime)
     set_tests_properties(network_test_runtime PROPERTIES TIMEOUT 120)
+    add_executable(nsl-sensor-lifetime-runtime tests/test_sensor_lifetime.c tests/sensor_lifetime_runtime.c)
+    target_include_directories(nsl-sensor-lifetime-runtime PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf ${CMAKE_SOURCE_DIR}/third_party/ihslib/tests/common)
+    target_compile_definitions(nsl-sensor-lifetime-runtime PRIVATE NSL_DIAGNOSTICS=$<BOOL:${NSL_DIAGNOSTICS}>)
+    target_compile_options(nsl-sensor-lifetime-runtime PRIVATE -UNDEBUG -Wall -Wextra -Wno-unknown-pragmas)
+    target_link_libraries(nsl-sensor-lifetime-runtime PRIVATE nsl_platform ihs-test-session)
+    target_link_options(nsl-sensor-lifetime-runtime PRIVATE -Wl,--wrap=pthread_mutex_lock
+        -Wl,--wrap=sl_sensors_poll -Wl,--wrap=IHS_BaseSend)
+    add_test(NAME media_sensor_lifetime COMMAND "${Python3_EXECUTABLE}" -O
+        "${CMAKE_SOURCE_DIR}/scripts/check-media-sensor-lifetime.py"
+        --receiver $<TARGET_FILE:nsl-sensor-lifetime-runtime>)
+    set_tests_properties(media_sensor_lifetime PROPERTIES TIMEOUT 20)
+    add_test(NAME media_sensor_lifetime_counterexample COMMAND "${Python3_EXECUTABLE}" -O
+        "${CMAKE_SOURCE_DIR}/scripts/check-media-sensor-lifetime-counterexample.py"
+        --build "${CMAKE_BINARY_DIR}" --output "${CMAKE_BINARY_DIR}/sensor-lifetime-counterexample")
+    set_tests_properties(media_sensor_lifetime_counterexample PROPERTIES TIMEOUT 120)
     add_executable(nsl-player-owner-runtime tests/player_owner_runtime.c)
     target_include_directories(nsl-player-owner-runtime PRIVATE platforms/common
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client

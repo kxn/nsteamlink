@@ -14797,3 +14797,70 @@ python3 tools/steam-android-argument-observe.py \
 # 独立目录再运行--case autoconnect-extra --result 0，以及--case url-extra --result 0。
 # 需要全新、拥有的root Frida server；runner只清只读AVD的overlay，不接受物理设备。
 ```
+
+## 191. 持续前端的传感器借用与会话退休边界
+
+本节是本地客户端生命周期核对，不声称从官方二进制得到了某一种mutex实现。
+§186–190证明的Android原完成路径会退出旧进程；保留前端的实现必须自己完成会话
+资源退休，不能把进程退出的效果当作每个本地指针已经安全解绑的证据。
+
+### 源码证据与竞争窗口
+
+Evidence：`app/platforms/common/media.c::pump_sdl_events`原来在`state_lock`下
+复制`hid_session`，释放锁后调用平台`sl_sensors_poll`。Switch实现
+`app/platforms/switch/sensors.c::sl_sensors_poll`先读取libnx六轴，再调用
+`IHS_HIDSDLInjectSensor`。SDK的`src/hid/sdl/src/sdl_hid_event.c`中，该入口立即
+访问`session->hidManager`，设备锁并不能延长外部session的生命周期。
+
+另一方面，`runtime.c::stop_session`执行解绑HID、Disconnect、ThreadedJoin、
+audio stop、SessionDestroy。解绑在`hid_lifecycle_lock`下停止/join flush worker，
+然后在短期`state_lock`下清除指针；解绑返回后允许销毁session。原传感器快照不持有
+前一个锁，故快照存在不等于session还活着。桌面平台的空传感器实现不能覆盖这个窗口。
+
+固定交错如下，两个调用执行在不同线程：
+
+1. media取出session，进入平台传感器调用但暂不返回。
+2. runtime完成真正的`stop_session`，包括销毁SDK session及HID manager。
+3. 平台调用继续，准备将样本注入先前的session。
+
+Conclusion：原实现允许过期session借用；这是源码和确定性交错共同支持的生命周期
+缺陷。它不证明用户之前的卡顿、DNS故障、首次建连失败是由这个窗口引起。
+
+### 所有权约束
+
+修正使media在获取快照前取得现有`hid_lifecycle_lock`，一直持有到平台采样/注入
+返回。短期`state_lock`仍只保护快照，不跨libnx工作。runtime退休使用同一外层锁，
+因此顺序只能是采样结束后解绑/销毁，或先解绑后media看见空session。
+
+锁顺序为lifecycle→短期state→释放state→平台调用/SDK设备锁→释放lifecycle。
+flush worker不获取lifecycle；退休仍先停止/join它，再改变指针，不在持有state
+时join。没有新增线程、handle、协议报文、采样周期或重试时限。
+
+### 可执行回归与边界
+
+`app/tests/test_sensor_lifetime.c`包含实际media实现；独立translation unit
+`sensor_lifetime_runtime.c`包含实际runtime并调用其私有`stop_session`。每轮使用
+真实IHS Session/HID manager、SDL虚拟控制器、真实flush worker和设备报告。
+受控平台边界暂停采样，协调线程等待退休尝试；修正前强制完成销毁再释放样本，
+修正后退休必须等media租约。过期时只记录观察，绝不故意访问已释放内存。
+
+同一个SDL/media根、控制器和unmanaged provider连续运行两轮；验证每轮新的HID
+按钮、轴和传感器标志/时间初始为零，样本进入活session，随后worker join、provider
+解绑、session指针清空，最后根完整关闭。`IHS_BaseSend`替换为无网络成功出口，
+平台样本是受控输入，不把它称作真实Steam ACK、物理IMU、libnx IPC或hbmenu验收。
+
+`scripts/check-media-sensor-lifetime-counterexample.py`只在私有源码副本中移除
+新增的采样范围锁；原绑定锁和完整退休仍保留。反例两轮都正常退出0、根清理成功，
+但都观察到`destroy_before_poll_return=true`、`injected_into_live_session=false`；
+同一个外部检查器必须以`session destroyed during sensor borrow`拒绝。崩溃、
+超时、断言和编译失败不算反例证据。
+
+```sh
+cmake --build build/desktop --target nsl-sensor-lifetime-runtime
+ctest --test-dir build/desktop \
+  -R '^media_sensor_lifetime(_counterexample)?$' --output-on-failure
+```
+
+诊断开/关的Release桌面构建各通过该正例、可运行旧行为反例、两种起始focus的
+player-owner连续会话及Capture Guide HID定向检查。Switch Release交叉编译通过，
+但编译不证明设备上的原生采样时延、退出/再次启动或loader清理行为。

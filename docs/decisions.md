@@ -3550,6 +3550,20 @@ ID本身恢复选择/发现，不等于自动重连；欢迎页/首次选机门�
 Shell的该字符串extra与播放器String[] args分开，不能将完成结果或上一笔媒体参数
 当作下一笔请求的producer。该受控实验只到恢复BInit入口，不替代完整网络/媒体恢复。
 
+## D-A109：原生传感器调用持有会话生命周期租约
+
+Evidence：media原传感器调用只在state锁下复制session，锁外实际Switch采样最终
+调用SDK访问session的HID manager；runtime能同时完成解绑并销毁它。确定性交错
+夹具使旧行为连续两轮出现过期借用，保持正常退出与完整根清理。详见协议参考§191。
+
+Decision：在主线程的原生传感器快照/采样/注入范围持有既有HID lifecycle锁，与
+runtime解绑互斥；不把state锁带进libnx，不改变flush worker的stop→join→解绑。
+它是本地所有权修正，不增加协议策略、后台线程、超时或恢复退避。
+
+验证边界：真实media/runtime/SDK/HID及保留根的两轮桌面生命周期通过；受控样本
+和无网络发送出口不证明物理IMU、真实主机ACK或Switch loader安全。不能把这个竞争
+窗口直接归因于此前用户观察到的卡顿或网络不可达。
+
 ## D-064：Generic gyro 的早期推论（2026-10-23，已撤回，由 D-065 取代）
 
 历史 Evidence：用户观察到实验构建无 gyro 输出；某些加 `0x400` 的构建还出现
