@@ -1059,3 +1059,26 @@ version = 3 @ +0x1b (27)
 slot 0（`0x800` + `+0x38/+0x3e`）是另一条 sensor 布局（host 的
 ACCEL_L/GYRO_L 分支），不是本机单 Pro/handheld 的主路径；
 `build/switch-alt` 只作为兜底，不应优先使用。
+
+### 20.8 真机反证：`0x400` 不能放进 remote Generic wire flags
+
+2026-10-23 早上在 `10.10.10.66` 推送 `build/switch-gyro400`（Generic 身份，
+`SetGyro` flags `0x402`，线上 flags `0x406`）实测：
+
+- **Gyro 选项直接消失**；
+- **按键/摇杆全部失效**。
+
+这不是“只加一个 slot 位”的问题。它说明 host 的 remote Generic parser 把
+wire flags 的 `0x400` 当成另一种报告模式/布局，直接拒绝或切换了解析；
+`0x400` 是 host **内部 state** 的 sensor 位，不是 remote Generic 可安全
+写入的 wire 位。
+
+因此 20.7 的“发送 `0x406`”结论**撤回**：
+
+- 官方 Windows packer 的 `0x402` 是**本地 SDL state** 的内部 flags；
+- 它不能证明 remote Generic wire 也接受 `0x400`；
+- 真机结果证明 remote Generic 不接受。
+
+稳定可用的 wire flags 仍是 `0x6`（gyro presence `0x2` + accel `0x4`）；
+不要再把 `0x400`/`0x800` 加进 wire flags。要设置 host 内部 sensor 位，
+必须找到 remote parser/`DeviceInputReports` 一侧的机制，而不是直接改 flags。

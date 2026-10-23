@@ -2320,10 +2320,11 @@ Decision：
    `SetSensorEnabled` 都不能单独作为“gyro 已被 host 消费”的证据。
 5. 2026-10-23 继续逆向补充：host 的实际消费函数是 `CGyroSource::Update
    @0x1386702d0`，输入 gyro 在 `+0x2a/+0x2c/+0x2e`；填充循环
-   `0x1386796f0` 对 slot 0 要求 `flags & 0x800` 并读 `+0x38/+0x3e`，
-   对 slot 1 要求 `flags & 0x400` 并读 `+0x1c/+0x22`。NX wire 的 `0x6`
-   只有 accel 的 `0x4`，两个 slot 位都没有，所以 gyro 填充被跳过。
-   当前包文对应 slot 1，优先测 Generic + `0x402`（`build/switch-gyro400`）；
-   若 `CGyroSource` 索引为 0，则需把 gyro/accel 复制到 `+0x38/+0x3e` 并置
-   `0x800`（`build/switch-alt`）。先前 0x400 失效是 Switch Pro 身份构建，
-   不能作为 Generic 的结论。
+   `0x1386796f0` 对 slot 0 要求内部 `flags & 0x800`（读 `+0x38/+0x3e`），
+   对 slot 1 要求内部 `flags & 0x400`（读 `+0x1c/+0x22`）。
+6. 2026-10-23 真机反证：Generic 身份、wire flags `0x406` 会让 Gyro 选项
+   消失、按键/摇杆全部失效。**`0x400` 不能直接写进 remote Generic wire
+   flags**；官方 Windows packer 的 `0x402` 是本地 SDL 内部 state，不是
+   remote Generic 可用的 wire 位。20.7 的“发送 0x406”结论撤回。稳定
+   可用仍是 flags `0x6`；要继续必须从 `DeviceInputReports`/remote parser
+   找 host 设置内部 sensor 位的机制，而不是改 wire flags。
