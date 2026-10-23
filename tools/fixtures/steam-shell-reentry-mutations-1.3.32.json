@@ -1,0 +1,76 @@
+{
+  "scope": "All five original-instruction mutants complete the 104 controlled programs, write JSON, and are then rejected by policy checks. VM/provider failures are not accepted.",
+  "tool_sha256": "fcdb7331b9b54b6b31598190ca4d976a33a494ffacfd1489d124f3a63d5759aa",
+  "shell_sha256": "15b2d79881eef0c47ed2f96c17d1d60a5f42d3285abcf9f512cfffdac5b238a2",
+  "cases": [
+    {
+      "mutation": "omit-saved-host-discovery",
+      "normal_case_counts": {
+        "startup": 24,
+        "hardware_guards": 8,
+        "argv": 32,
+        "main_prefix": 8,
+        "server_status": 32
+      },
+      "rejected_reason": "policy difference: saved host resumes discovery only",
+      "observation_sha256": "8151a6de0b667b617c62528491fdf241410c72d9b229010dc57f4fc3df09f7bf",
+      "stderr_sha256": "56a6d738be3d11de270b9c54c21f8cee88f08f917f68ce3d655172db28b5fdc3"
+    },
+    {
+      "mutation": "online-starts-playing",
+      "normal_case_counts": {
+        "startup": 24,
+        "hardware_guards": 8,
+        "argv": 32,
+        "main_prefix": 8,
+        "server_status": 32
+      },
+      "rejected_reason": "policy difference: lifecycle callbacks do not enter connection panel",
+      "observation_sha256": "3022f6ad6a27124e7f73ed908dd5ea32a5b0576409f06b65e4dfeae1b16b3c6b",
+      "stderr_sha256": "0ed6223e3589e91b7e013d2cbd8c64b3c9957a05c9d4995423394496372317d2"
+    },
+    {
+      "mutation": "omit-active-host-set",
+      "normal_case_counts": {
+        "startup": 24,
+        "hardware_guards": 8,
+        "argv": 32,
+        "main_prefix": 8,
+        "server_status": 32
+      },
+      "rejected_reason": "policy difference: activeHostSet migration",
+      "observation_sha256": "a6152c7431e4b85d03d3e71e74027e9d437e5b02139feaeb3a950fc9ac5b07d7",
+      "stderr_sha256": "7c7b16edfeee58df5b2b9e24a408abf3063f012c6dbf764c4d959dda593a15e5"
+    },
+    {
+      "mutation": "retain-old-streaming-flag",
+      "normal_case_counts": {
+        "startup": 24,
+        "hardware_guards": 8,
+        "argv": 32,
+        "main_prefix": 8,
+        "server_status": 32
+      },
+      "rejected_reason": "policy difference: BInit clears old streaming flag",
+      "observation_sha256": "b9d3188cf140ad3a538a41dda2cfcb80f571131378547b6f67c58472242dbd9d",
+      "stderr_sha256": "13ed7a62ce3343d96a0b64ea8bb4e6b95a17a26bda54f5894deff72783ea7c6d"
+    },
+    {
+      "mutation": "ignore-autoconnect-gate",
+      "normal_case_counts": {
+        "startup": 24,
+        "hardware_guards": 8,
+        "argv": 32,
+        "main_prefix": 8,
+        "server_status": 32
+      },
+      "rejected_reason": "policy difference: ready server autoconnect requires explicit launch flag",
+      "observation_sha256": "c28ac4bbc8c3b0a556e5a7acdc6ecb638ebfad7aaa2ac3dad91ddb832b2050b6",
+      "stderr_sha256": "9a2fabf5304ae5efd226ca9df12c581227a5924a8449102710690c57b45cfc4b"
+    }
+  ],
+  "excluded_draft": {
+    "mutation": "setup-starts-playing",
+    "reason": "Directly replacing SetupUI removed required fixture widget initialization and produced an invalid memory read. It is excluded, not counted as a semantic counterexample."
+  }
+}

@@ -14593,3 +14593,115 @@ python3 tools/steam-android-completion-observe.py \
   --result -1 --output /tmp/android-completion-minus1
 # 使用独立输出目录，以--result 0再次执行；runner每次只清除overlay profile。
 ```
+
+## 189. 重建shell的选择门禁、显式autoconnect与URL参数入口
+
+Evidence：`tools/steam-shell-reentry-audit.py`执行固定ARM64 shell
+`15b2d798…b238a2`的原码，包含AdvanceState/SetState/Main构造、完整
+UpdateComputerStatus、相关状态回调与显式OnStartPlaying。另执行原main从入口到
+BInit调用边界，以及BInit的argv扫描块。Qt对象/绘制/销毁、QSettings IO、服务记录
+查找、硬件能力、发现订阅和事件交付是明确provider，不称作完整BInit或自然Qt循环。
+
+**表述修订**：§188只证明Android以新PID恢复了SteamShellActivity，不能仅凭这个
+Activity名称判断当前是主页或选机页。撤回把该观察直接简称为“已回到选机主页”的
+含义；以下原门禁区分Logo、欢迎页、主页和首次选机。没有截图或原widget观察时，
+不能从topResumedActivity替代这些页面的实际证据。
+
+### 保存的主机恢复选择，不直接代表开流
+
+原BInit在`0xc980e4`写应用state0；AdvanceState先建始终启用的Logo（state1），
+随后按QSettings `welcomeShown`选择欢迎页（state2）或跳到Main（state3）。本组从
+AdvanceState边界进入，对欢迎页继续事件作显式交付；并未完整执行BInit的网络与
+设置迁移。以下QSettings视图是给定的当前client ID，不证明此前旧local ID的迁移。
+
+原Main构造`0xc7f500`取得64-bit `activeHostClientID`并保存到panel+0xd8；没有截为
+32-bit。其`activeHostSet`门禁如下：
+
+| activeHostClientID | activeHostSet输入 | 原构造行为 |
+|---|---|---|
+| 非0 | false | 尝试写activeHostSet=true，AddClientDiscovery(ID)，建立主页 |
+| 非0 | true | AddClientDiscovery(ID)，建立主页 |
+| 0 | true | 建立主页，不为0添加主机发现订阅 |
+| 0 | false | PushState(5)进入Computers选择页 |
+
+最后一行发生在Main构造内部：原SetState在构造返回后发现别的panel已经安装，走
+新建Main的虚析构而不覆盖Computers。原控制分支实际运行，最终UI析构为provider；
+这不是Qt真实内存或线程清理验收。非0输入的AddClientDiscovery同样只是订阅边界，
+不能据这个调用说已发现、已配对或已经重新发送StreamingRequest。
+
+主页建立时原代码安排0ms `OnAdvancePanelState()`，用于硬件/控制器检查。
+OnSteamOnline的原体把计算机扫描计数加1，安排10000ms
+`OnScanningComputersComplete()`并调用原UpdateComputerStatus。扫描完成计数减至0
+才再刷新状态；3000ms `OnCheckSystemState()`是控制器检查。它们不是开流重试间隔。
+完整状态刷新另有下述自动启动门禁，不能将它作为未执行的显示helper而漏掉。
+
+### 自动启动的真实producer是显式--autoconnect
+
+原CShellApplication构造`0xc97cd8`在`0xc97d38`将app+0x98清0。原main用strcmp
+识别精确参数`--autoconnect`，`0xc657b8`记w21=1，在构造之后、BInit之前的
+`0xc657f0`写app+0x98。没有该参数时保持0；argv[0]的同名文本以及
+`--autoconnect=true`不命中。此结论来自八组原main入口执行，SDL locale和QObject
+服务是provider，在BInit边界停止，不宣称八组覆盖所有命令行选项。
+
+原UpdateComputerStatus在`0xc82058–0xc8207c`同时检查panel+0x118可用位及
+app+0x98；两者都真才排入0ms `OnStartPlaying()`。本节执行完整原函数，包含
+服务记录选择、状态分支、名字保存、可用位写入及最后的自动启动门禁，Qt绘制为provider。
+原Find的结果和CServerInfo记录布局是给定输入，不是自然发现/认证的产物。
+
+| 输入/状态 | 可用位与自动启动观察 |
+|---|---|
+| 没有选择ID、记录缺失且fallback为空、Unsupported、Disabled、Locked | 不排入自动启动 |
+| 空状态文案、Game in progress、Remote Play active、VR Mode | 都可以置可用位；不是所有非空文案都禁止连接 |
+| 上述可用状态，app+0x98=0 | 保持主页，无OnStartPlaying定时交付 |
+| 上述可用状态，app+0x98=1 | 安排0ms OnStartPlaying；交付后进入state4/Connect(action0) |
+
+表中英文来自原tr字符串观察，不据此重命名全部CServerInfo字段，也不把可用位当作
+配对/凭据校验。32组记录输入的范围是给定+0x31…+0x37字节：非0选中ID、有效记录、
+bit0(+0x31/0x32)=1且+0x34为0时可用；+0x33/0x36/0x37改变提示但不关闭可用位。
+本组没有覆盖所有线上记录组合或非法bool值。
+
+两次上线通知在事件交付前分别排入两个0ms任务，原码未在此处加pending去重。
+夹具只交付第一个OnStartPlaying，然后停止向已替换Main发送回调，不从人为通知批次
+推断自然Qt队列一定重复开流。显式用户OnStartPlaying也走同一入口：有选中ID则
+Connect(action0)，无ID则Computers；桌面清game ID，游戏入口保存给定appid。
+Connect构造在本组为provider，不把进入该页面当作真实5号请求或媒体建立。
+
+旧的main后续循环中w21现可确定为这个命令行标志：只有Java startStreaming正常
+返回并通过其他门禁、且w21=0时，`0xc65cf0`才可能回到新建application。它仍不是
+断线重试定时器；§186/188的普通完成路径实际请求并执行进程退出，不能省略该前提。
+
+### BInit中的另一条入口是参数包含://
+
+原`0xc98744–0xc9881c`先清进程静态`s_bStreaming`，从argv[1]开始逐个strstr
+查找`://`，首次命中就调用原StartStreaming(empty QStringList)入口。不要求匹配
+`steamlink://`前缀；`https://fixture`或中间包含该片段也命中。入口匹配不等于之后
+解析器接受这个scheme，更不等于已经向Steam发送有效开流请求。
+
+随后原processEvents返回，读取当下s_bStreaming决定走早退边界还是继续初始化UI。
+32组扫描输入覆盖无后续参数、argv[0]忽略、普通参数、不同URL-like文本、首个命中
+停止、旧静态标志清除、启动helper是否置位及事件provider置位。这一块的StartStreaming
+与processEvents是明确provider；其完整native交接的真实执行另见§188，不混称完整BInit。
+
+### 对照范围
+
+冻结记录为`tools/fixtures/steam-shell-reentry-1.3.32.json.gz`：24组启动/选择及
+显式桌面/游戏动作、8组硬件门禁继续事件、32组argv块、8组main参数producer、32组
+完整状态刷新，共104组。记录包含原码窗口、工具及provider SHA；原Settings、Qt对象、
+服务记录查找和输入交付的边界保留，不是假装自然Android重建或网络/媒体成功。
+
+五个实际ARM64变异分别省略保存主机的发现订阅、上线刷新换成StartPlaying、
+省略activeHostSet写入、保留旧s_bStreaming，以及省略autoconnect门禁。每个变异
+都正常完成104组受控程序并产出JSON，再被策略比较拒绝；VM故障、缺provider、
+签名不符或指令预算耗尽不计作反例。公开变异摘要保留具体失败原因与产物hash。
+
+Conclusion：默认保存主机选择与显式自动启动必须分开。不能将主页扫描、硬件检查的
+计时器移植成通用断线重试，也不能忽略--autoconnect而宣称官方永不自动开流。
+这组不证明Android重建后的参数生产、已配对主机自然故障恢复、网络准入/真实5号请求，
+或Switch会话结束后全部资源状态已复位；不据此添加无来源的退避/次数或改变认证语义。
+
+```sh
+PYTHONPATH=/path/to/audit-deps python3 tools/steam-shell-reentry-audit.py \
+  --binary /path/to/pinned/libshell-arm64.so --output /tmp/shell-reentry.json \
+  --reference tools/fixtures/steam-shell-reentry-1.3.32.json.gz
+# 同样binary/output参数加--mutation ignore-autoconnect-gate，须因策略差异失败。
+```
