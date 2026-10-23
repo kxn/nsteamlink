@@ -8,7 +8,7 @@
 static CURL *easy;
 static CURLcode failure;
 static CURLMsg done;
-static bool pending;
+static bool pending, added;
 static unsigned performs;
 static char messages[4096];
 static curl_debug_callback trace;
@@ -44,10 +44,24 @@ CURL *__real_curl_easy_init(void);
 CURL *__wrap_curl_easy_init(void) {
     return easy = __real_curl_easy_init();
 }
+CURLMcode __real_curl_multi_add_handle(CURLM *, CURL *);
+CURLMcode __wrap_curl_multi_add_handle(CURLM *multi, CURL *handle) {
+    CURLMcode result = __real_curl_multi_add_handle(multi, handle);
+    if (result == CURLM_OK)
+        added = true;
+    return result;
+}
+CURLMcode __real_curl_multi_remove_handle(CURLM *, CURL *);
+CURLMcode __wrap_curl_multi_remove_handle(CURLM *multi, CURL *handle) {
+    added = false;
+    return __real_curl_multi_remove_handle(multi, handle);
+}
 CURLMcode __wrap_curl_multi_perform(CURLM *multi, int *running) {
     (void)multi;
     ++performs;
     *running = 0;
+    if (!added)
+        return CURLM_OK;
     done = (CURLMsg){.msg = CURLMSG_DONE, .easy_handle = easy};
     done.data.result = failure;
     pending = true;
@@ -81,8 +95,10 @@ int main(void) {
         verbose = 0;
         failure = errors[i];
         performs = 0;
+        added = pending = false;
         sl_remote_connection *connection = sl_remote_connection_create(&config, &callbacks, NULL);
         assert(connection);
+        sl_remote_connection_update(connection, 1000);
         sl_remote_connection_update(connection, 1000);
         assert(trace && trace_context && verbose == 1);
         char expected[96], description[256];
@@ -93,8 +109,9 @@ int main(void) {
         assert(strstr(messages, "cloud_net event=retry established=0"));
         sl_remote_connection_describe(connection, 1000, description, sizeof(description));
         assert(strstr(description, "state=idle ready=0") && strstr(description, "retry_ms="));
+        unsigned before = performs;
         sl_remote_connection_update(connection, 1001);
-        assert(performs == 1); /* Diagnostics must preserve initialization backoff. */
+        assert(performs == before); /* Diagnostics must preserve initialization backoff. */
         /* Callback data is length-delimited, never assumed NUL-terminated.
          * Numeric attempts survive failed TCP; every other trace stays private. */
         messages[0] = 0;

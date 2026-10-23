@@ -1,7 +1,8 @@
 #include "sns_config_cache.h"
-#include "sns_config_http.h"
 #include "dns_policy.h"
+#include "file_replace.h"
 #include "http_route.h"
+#include "sns_config_http.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -37,6 +38,8 @@ static void publish(sl_sns_config_cache *c, char *data, size_t size) {
     c->size = end ? (size_t)(end - data) : size;
 }
 static void load(sl_sns_config_cache *c) {
+    if (c->path[0] && !sl_file_replace_recover(c->path))
+        event("cache_recovery_failed");
     FILE *f = c->path[0] ? fopen(c->path, "rb") : NULL;
     if (!f) return;
     char *data = NULL;
@@ -60,10 +63,11 @@ static void save(sl_sns_config_cache *c) {
     if (!f) { event("save_failed"); return; }
     bool ok = fwrite(c->download ? c->download : "", 1, c->downloaded, f) == c->downloaded;
     if (fclose(f)) ok = false;
-    if (!ok || rename(temporary, c->path)) {
+    if (!ok || !sl_file_replace(temporary, c->path)) {
         remove(temporary);
         event("save_failed");
-    } else event("saved");
+    } else
+        event("saved");
 }
 static size_t receive(char *p, size_t size, size_t count, void *context) {
     sl_sns_config_cache *c = context;
@@ -94,7 +98,7 @@ sl_sns_config_cache *sl_sns_config_cache_create(const char *directory) {
         if (n < 0 || n >= (int)sizeof(c->path)) c->path[0] = 0;
     }
     load(c);
-    c->global = curl_global_init(CURL_GLOBAL_DEFAULT) == CURLE_OK;
+    c->global = sl_http_global_acquire();
     c->http = c->global ? curl_multi_init() : NULL;
     c->request = c->http ? curl_easy_init() : NULL;
     if (c->request) {
@@ -174,7 +178,8 @@ void sl_sns_config_cache_destroy(sl_sns_config_cache *c) {
     if (!c) return;
     stop_request(c);
     if (c->http) curl_multi_cleanup(c->http);
-    if (c->global) curl_global_cleanup();
+    if (c->global)
+        sl_http_global_release();
     free(c->data);
     free(c->download);
     free(c);

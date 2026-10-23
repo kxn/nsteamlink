@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Compare original BInit/connection-wait caller with the product SNS worker.
 
-Backend construction/config completion/state and transport IO are providers.
+Backend construction/config completion, application preparation readiness
+(including its CM gate), state and transport IO are providers. This checks the
+post-admission IHS deadline, not equivalence of the new preparation schedule.
 The product worker creates real IHS threads and retries; clock freezing tests
 the original deadline boundary without a wall-clock sleep or Steam host.
 """

@@ -266,8 +266,13 @@ sl_sns *__wrap_sl_sns_create_configured(const IHS_ClientConfig *config, const sl
 void __wrap_sl_sns_update(sl_sns *s, uint64_t now) {
     (void)now;
     assert(s == (sl_sns *)&backend && backend_live && pthread_equal(owner, pthread_self()));
-    if (test_mode == 1) assert(atomic_load(&session_creates) == 1);
+
     if (atomic_load(&clock_frozen)) atomic_fetch_add(&frozen_updates, 1);
+}
+bool __wrap_sl_sns_start_session(sl_sns *s) {
+    assert(s == (sl_sns *)&backend && backend_live);
+    assert(atomic_load(&session_creates) > 0); /* Admission follows real IHS creation. */
+    return true;
 }
 bool __wrap_sl_sns_session_ready(const sl_sns *s) {
     assert(s == (sl_sns *)&backend && backend_live);

@@ -1792,6 +1792,13 @@ SDK 的 protobuf parser、CertStore_CheckCert 和 SetCertificate；未知 CA、�
 
 ### 12.2 初始化的调用顺序
 
+**应用准入修订（D-A104）**：下文原始指令的 BInit、bridge 与十秒等待证据保持成立。
+端口的应用策略改为先完成独立信令 service 准备，再创建 IHS；显式 start_session 后
+才允许下一轮 SDK 建连。`sl_sns_initialized` 单独表示 BInit 边界，不能与包含 CM 就绪的
+`sl_sns_session_ready` 混用。此前“BInit 后立即启动 IHS”为旧端口策略；新的区别及理由见
+[网络初始化设计](NETWORK_INITIALIZATION.md)，不宣称与官方等待边界完全等价。
+
+
 **Evidence：** `CStreamTransportSteamNetworkingSocketsBase::BInit @0x7ffd30–0x8000bc`：
 
 1. 获取 Utils LibV4，设置诊断输出；全局 `SDRClient_SingleSocket(22)=1`。
@@ -1832,7 +1839,8 @@ SDR 的实际虚表将 BInit 指向 `0x7ffd30`，UpdateState 指向 `0x8011f0`�
 与 SDK 自己配置的 TimeoutInitial=20000ms 是不同层的期限。
 **证据修订**：撤回本端口此前“SDK Connected 后才创建 IHS”的调用策略；该策略把整个寻路
 阶段排除在播放器初始等待之外。端口保留异步配置获取，但仅在证书安装与 authentication
-初始化完成后开放 session-ready；调用者先创建 IHS，下一次 owner update 才发起 SDK 连接。
+初始化完成后开放 BInit-ready（sl_sns_initialized）；应用另经 D-A104 的信令准备门槛才
+开放 session-ready。调用者先创建 IHS，再显式允许下一次 owner update 发起 SDK 连接。
 配置获取本身仍位于该 IHS 等待之前，不据此宣称异步 HTTP 的耗时与原同步 BInit 完全相同。
 
 `audit-steam-sns-client-call.py` 执行固定 arm64 core 的 BConnect、SetAuthToken 调用者与
@@ -1852,8 +1860,8 @@ provider，检查期限前仍等待、到期开始清理，以及 IHS join 在 b
 **异步初始化期间的信令桥门槛**：上述 BConnect 的失败分支不创建 bridge，成功分支才在
 `0x7a7950` 创建。撤回本端口此前“配置尚未完成时先创建并更新 bridge”的顺序：
 仅凭外层 `SL_SNS_CONNECTING` 不能推断 BInit 已成功；该状态还包含异步配置获取。
-端口现在将 bridge 输入单独复制持有，证书安装和 authentication 初始化完成后才创建
-实际 bridge，成功后才开放 session-ready。所有配置/证书失败、取消和 bridge 创建失败
+端口将 bridge 输入单独复制持有，证书安装和 authentication 初始化完成后才创建
+实际 bridge；这是 BInit-ready，D-A104 的 session-ready 还要求首次信令准备。所有配置/证书失败、取消和 bridge 创建失败
 都释放临时身份/密钥；bridge 复制完成后也立即清理这份临时材料，不借用响应字符串。
 bridge 创建失败是本地初始化错误，诊断来源单列为 BRIDGE，不伪装成 SDK P2P 拒绝。
 
@@ -2102,7 +2110,8 @@ backend 收到有效 HMAC 的 sdr 后，逐条调用 ReceivedP2PCustomSignal；�
 通道调用实际 backend 的 SDK 转交、关闭和状态检查共用函数，比较完整信令 bytes、SDK
 调用/关闭顺序、状态、句柄、归属及精确检查时刻。初始 state=0 创建的4组与 SDK-null 的1组
 仅保留为原始证据，不冒称端口异步初始化的等价路径；该端口的 bridge 仅在 BInit 完成后
-存在，owner 先发起连接再更新 bridge，初始化准入另见 §12.2。冻结 gzip SHA256 为
+存在；D-A104 的准备阶段会先推进其云端连接，显式允许 SDK 建连后每轮才先 SDK 再 bridge。
+这些原始局部分支不证明新增准备调度等价，初始化准入另见 §12.2。冻结 gzip SHA256 为
 `a97074942180da94d5d88b4ca886264a80379b56b8231203260fd0c5e27c423d`。
 五个生产 C/C++ 反例均正常执行53轮后由比较器拒绝，涵盖恢复句柄守卫、Failed 提前、
 省略更新、空列表不更新和逐条更新。无效 framing/HMAC 不触发更新；真实 SDK 无效句柄
@@ -2346,14 +2355,14 @@ worker 退出时，先停止/join IHS/session，再销毁 SNS/缓存 HTTP owner�
 创建 SNS 时同步复制/导入非空快照，成功后才解码可选证书、装本机证书、申请认证并建立 bridge；不再为这种
 显式配置另发 SDK Fetch 或首轮成功刷新。非空配置导入失败和证书拒绝都终止 BInit，不悄悄
 降级为另一条下载策略；无配置时才用上面的 SDK-style fetch policy。Shell 缓存下载完成只
-更新该缓存，不从后台任务直接变更活跃 SDK/连接。同步 BInit 与异步下载完成的两种情况都
-要先启动 IHS 的连接期限，再在后续 owner pass 调 SDK 寻路。
+更新该缓存，不从后台任务直接变更活跃 SDK/连接。同步 BInit 与异步下载完成的两种情况都受 D-A104 的应用准备门槛约束；
+准入后先启动 IHS，再显式允许后续 owner pass 调 SDK 寻路。
 
 生产配置 owner 的真实文件/loopback curl 测试不包含信任解析；cached BInit 组件另以明确
 trust provider 和实际 SDK 的坏证书拒绝，验证顺序、无 HTTP fallback、空缓存及重复 SDK
 owner 清理。成功证书分支仍不由这些坏证书测试证明。真实 actor/ticket 组合在启动时读取
-预置文件（HTTP pump 是明确 pending provider），核对快照交给 SNS、IHS 先于首次 SDK
-update、session join 在 backend/cache 销毁之前；不能把它等同真实 Steam 或 Switch。
+预置文件（HTTP pump 是明确 pending provider），核对快照交给 SNS、IHS 创建/Connect 先于显式 SDK 建连准入、
+session join 在 backend/cache 销毁之前；不能把它等同真实 Steam 或 Switch。
 两份 ELF 同名静态量的加载绑定与完整 Qt/UI 等待门槛仍未由这些指令/本地接线证明。
 
 **调用链限制**：样本的 CSDRHTTPRequest_StreamingClient::SubmitRequest `0x75ddc0`

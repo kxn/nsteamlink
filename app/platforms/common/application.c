@@ -1,6 +1,7 @@
 #include "platform/application.h"
 #include "app_lifecycle.h"
 #include "artwork.h"
+#include "http_route.h"
 #include "media.h"
 #include "platform/events.h"
 #include "platform/runtime.h"
@@ -36,6 +37,7 @@ typedef struct application {
     sl_runtime *runtime;
     sl_artwork *artwork;
     sl_updater *updater;
+    bool http_global;
     sl_debug_snapshot debug;
     sl_app_lifecycle lifecycle;
     sl_command replacement;
@@ -251,6 +253,16 @@ int sl_application_run(int argc, char **argv) {
         sl_system_shutdown();
         return 1;
     }
+    /* curl 7.69/libnx TLS global setup runs on main before any app worker.
+     * Per-owner references also support standalone probes and unit fixtures. */
+    if (!offline) {
+        a->http_global = sl_http_global_acquire();
+        if (!a->http_global) {
+            free(a);
+            sl_system_shutdown();
+            return 1;
+        }
+    }
     sl_app_lifecycle_init(&a->lifecycle);
     sl_i18n_load(sl_system_data_dir(), sl_system_locale());
     sl_auth_store store;
@@ -272,6 +284,8 @@ int sl_application_run(int argc, char **argv) {
 #endif
         sl_updater_destroy(a->updater);
         sl_artwork_destroy(a->artwork);
+        if (a->http_global)
+            sl_http_global_release();
         free(a);
         sl_log_finish();
         sl_system_shutdown();
@@ -285,6 +299,8 @@ int sl_application_run(int argc, char **argv) {
         sl_updater_destroy(a->updater);
         sl_artwork_destroy(a->artwork);
         stream_media_shutdown();
+        if (a->http_global)
+            sl_http_global_release();
         free(a);
         sl_log_finish();
         sl_system_shutdown();
@@ -440,6 +456,8 @@ int sl_application_run(int argc, char **argv) {
     sl_media_hooks(NULL, NULL, NULL);
     sl_ui_renderer_destroy(a->renderer);
     stream_media_shutdown();
+    if (a->http_global)
+        sl_http_global_release();
     free(a);
     sl_log_finish();
     sl_system_shutdown();

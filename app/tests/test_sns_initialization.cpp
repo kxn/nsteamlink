@@ -96,7 +96,7 @@ int main(int argc, char **argv) {
         sl_sns *b = start();
         for (unsigned i = 0; i < 4; ++i) sl_sns_update(b, i);
         unsigned before_attempts = attempts, before_activations = activations;
-        bool before_ready = sl_sns_session_ready(b);
+        bool before_ready = sl_sns_initialized(b);
         unsigned config_attempts = b->config_attempt;
         if (success || resource_failure) {
             // Provider boundary: configuration/certificate/authentication succeeded.
@@ -110,7 +110,7 @@ int main(int argc, char **argv) {
 #endif
             sl_stream_bridge_update(b->bridge, 10, true);
         }
-        bool ready = sl_sns_session_ready(b);
+        bool ready = sl_sns_initialized(b);
         unsigned state = sl_sns_get_state(b), terminal = b->stats.terminal_source;
         assert(!b->connection_attempted && !b->connection);
         sl_sns_destroy(b);

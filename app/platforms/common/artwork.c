@@ -1,7 +1,8 @@
 #include "artwork.h"
 #include "build_identity.h"
-#include "platform/system.h"
+#include "file_replace.h"
 #include "http_route.h"
+#include "platform/system.h"
 #include "services/i18n.h"
 #include <curl/curl.h>
 #include <dirent.h>
@@ -176,7 +177,7 @@ static void save_cache(sl_artwork *a, const char *path, const unsigned char *dat
     bool ok = fwrite(data, 1, size, f) == size;
     if (fclose(f))
         ok = false;
-    if (!ok || rename(temporary, path))
+    if (!ok || !sl_file_replace(temporary, path))
         unlink(temporary);
     else
         prune(a);
@@ -378,7 +379,7 @@ sl_artwork *sl_artwork_create(const char *dir, sl_artwork_fetch_fn fetch, void *
         return NULL;
     }
     if (!fetch) {
-        if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
+        if (!sl_http_global_acquire()) {
             pthread_cond_destroy(&a->wake);
             pthread_mutex_destroy(&a->lock);
             free(a);
@@ -390,7 +391,7 @@ sl_artwork *sl_artwork_create(const char *dir, sl_artwork_fetch_fn fetch, void *
     a->context = fetch ? ctx : a;
     if (pthread_create(&a->worker, NULL, worker, a)) {
         if (a->curl_ready)
-            curl_global_cleanup();
+            sl_http_global_release();
         pthread_cond_destroy(&a->wake);
         pthread_mutex_destroy(&a->lock);
         free(a);
@@ -519,7 +520,7 @@ void sl_artwork_destroy(sl_artwork *a) {
     for (int i = 0; i < SLOT_COUNT; ++i)
         free(a->entries[i].image.pixels);
     if (a->curl_ready)
-        curl_global_cleanup();
+        sl_http_global_release();
     pthread_cond_destroy(&a->wake);
     pthread_mutex_destroy(&a->lock);
     free(a);

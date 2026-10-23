@@ -1,7 +1,8 @@
 #include "remote_connection.h"
 #include "crypto.h"
-#include "remote_wire.h"
+#include "http_bootstrap.h"
 #include "http_route.h"
+#include "remote_wire.h"
 #define JSMN_STRICT
 #include "jsmn.h"
 #include <curl/curl.h>
@@ -28,6 +29,7 @@ struct sl_remote_connection {
     CURLM *multi;
     CURL *easy;
     sl_http_route route;
+    sl_http_bootstrap *bootstrap;
     bool easy_added, global;
     bool bridge_mode, suspended;
     int state;
@@ -261,6 +263,8 @@ static void transport_signal(uint64_t id, const uint8_t *p, size_t n, void *ctx)
         c->callbacks.transport_signal(id, p, n, c->ctx);
 }
 static void clear_easy(sl_remote_connection *c) {
+    sl_http_bootstrap_destroy(c->bootstrap);
+    c->bootstrap = NULL;
     if (c->easy) {
         if (c->easy_added)
             curl_multi_remove_handle(c->multi, c->easy);
@@ -305,29 +309,16 @@ static void fail_connection(sl_remote_connection *c, uint64_t now) {
 #endif
     c->endpoint_count = c->endpoint_index = 0;
 }
-static size_t directory_write(char *data, size_t size, size_t count, void *ctx) {
-    sl_remote_connection *c = ctx;
-    if (size && count > SIZE_MAX / size)
-        return 0;
-    size_t n = size * count;
-    if (n > SL_REMOTE_FRAME_MAX - c->received)
-        return 0;
-    memcpy(c->receive + c->received, data, n);
-    c->received += n;
-    return n;
-}
-static bool setup_easy(sl_remote_connection *c, const char *url, bool tls_only) {
-    c->easy = curl_easy_init();
-    if (!c->easy)
-        return false;
+static bool bootstrap_options(CURL *easy, bool tls_only, void *context) {
+    sl_remote_connection *c = context;
+    (void)c;
     /* Local shutdown/resource policy, not constants recovered from Valve.
      * HTTP/1.1 is required for our RFC6455 Upgrade over CONNECT_ONLY TLS. */
 #define SET(option, value)                                                                         \
     do {                                                                                           \
-        if (curl_easy_setopt(c->easy, option, value) != CURLE_OK)                                  \
+        if (curl_easy_setopt(easy, option, value) != CURLE_OK)                                     \
             return false;                                                                          \
     } while (0)
-    SET(CURLOPT_URL, url);
     SET(CURLOPT_NOSIGNAL, 1L);
     SET(CURLOPT_CONNECTTIMEOUT_MS, 10000L);
     SET(CURLOPT_TIMEOUT_MS, 20000L);
@@ -337,25 +328,24 @@ static bool setup_easy(sl_remote_connection *c, const char *url, bool tls_only) 
     SET(CURLOPT_FOLLOWLOCATION, 0L);
     SET(CURLOPT_USERAGENT, "NSteamLink/0.3");
 #if NSL_DIAGNOSTICS
-    c->attempts_logged = 0;
     SET(CURLOPT_DEBUGFUNCTION, network_trace);
     SET(CURLOPT_DEBUGDATA, c);
     SET(CURLOPT_VERBOSE, 1L);
 #endif
     if (tls_only)
         SET(CURLOPT_CONNECT_ONLY, 1L);
-    else {
-        SET(CURLOPT_WRITEFUNCTION, directory_write);
-        SET(CURLOPT_WRITEDATA, c);
-    }
 #undef SET
-    if (!sl_http_route_begin_async(&c->route, c->easy, url, 20000)) return false;
-    if (c->route.deadline) c->deadline += SL_HTTP_ROUTE_BUDGET_MS - 20000;
-    int ready = sl_http_route_poll(&c->route, c->easy);
-    if (!ready) return true;
-    if (ready < 0 || curl_multi_add_handle(c->multi, c->easy) != CURLM_OK)
+    return true;
+}
+static bool setup_easy(sl_remote_connection *c, const char *url, bool tls_only, uint64_t now) {
+#if NSL_DIAGNOSTICS
+    c->attempts_logged = 0;
+#endif
+    c->bootstrap = sl_http_bootstrap_create(c->multi, url, tls_only, SL_REMOTE_FRAME_MAX, now,
+                                            bootstrap_options, c);
+    if (!c->bootstrap)
         return false;
-    c->easy_added = true;
+    c->deadline = sl_http_bootstrap_deadline(c->bootstrap);
     return true;
 }
 static bool parse_directory(sl_remote_connection *c) {
@@ -404,7 +394,7 @@ static bool next_endpoint(sl_remote_connection *c, uint64_t now) {
 #endif
     c->state = NET_TLS;
     c->deadline = now + 20000;
-    return setup_easy(c, url, true);
+    return setup_easy(c, url, true, now);
 }
 static bool start_upgrade(sl_remote_connection *c, uint64_t now) {
     uint8_t nonce[16];
@@ -534,7 +524,7 @@ sl_remote_connection *sl_remote_connection_create(const IHS_ClientConfig *config
     c->ctx = ctx;
     c->receive = calloc(1, SL_REMOTE_FRAME_MAX + 16384);
     c->message = calloc(1, SL_REMOTE_FRAME_MAX);
-    c->global = curl_global_init(CURL_GLOBAL_DEFAULT) == CURLE_OK;
+    c->global = sl_http_global_acquire();
     if (c->global)
         c->multi = curl_multi_init();
     sl_remote_callbacks adapters = {.diagnostic = diagnostic,
@@ -574,65 +564,40 @@ void sl_remote_connection_update(sl_remote_connection *c, uint64_t now) {
         c->state = NET_DIRECTORY;
         c->deadline = now + 20000;
         network_event(c, "directory_begin", -1);
-        if (!setup_easy(c, directory_url, false)) {
+        if (!setup_easy(c, directory_url, false, now)) {
             network_event(c, "setup_failed", CURLE_FAILED_INIT);
             fail_connection(c, now);
             return;
         }
     }
     if (c->state == NET_DIRECTORY || c->state == NET_TLS) {
-        if (!c->easy_added) {
-            int ready = sl_http_route_poll(&c->route, c->easy);
-            if (!ready) return;
-            if (ready < 0 || curl_multi_add_handle(c->multi, c->easy) != CURLM_OK) {
-                network_event(c, "setup_failed", ready < 0 ? c->route.error : CURLE_FAILED_INIT);
-                fail_connection(c, now);
-                return;
-            }
-            c->easy_added = true;
-        }
-        int running = 0;
-        if (curl_multi_perform(c->multi, &running) != CURLM_OK) {
-            network_event(c, "multi_failed", CURLE_FAILED_INIT);
-            fail_connection(c, now);
+        uint8_t *body = NULL;
+        size_t size = 0;
+        CURLcode result = CURLE_FAILED_INIT;
+        int complete =
+            sl_http_bootstrap_poll(c->bootstrap, now, &c->easy, &c->route, &body, &size, &result);
+        if (!complete)
             return;
-        }
-        int remaining;
-        CURLMsg *msg;
-        while ((msg = curl_multi_info_read(c->multi, &remaining))) {
-            if (msg->msg != CURLMSG_DONE || msg->easy_handle != c->easy)
-                continue;
-            CURLcode result = msg->data.result;
-            network_event(c, "transfer_done", result);
-            /* DONE handles must leave the multi before changing RESOLVE and
-             * re-adding. Do not reset the outer deadline on each candidate. */
-            if (result != CURLE_OK) {
-                curl_multi_remove_handle(c->multi, c->easy);
-                c->easy_added = false;
-            }
-            if (sl_http_route_retry(&c->route, c->easy, result)) {
-                int ready = sl_http_route_poll(&c->route, c->easy);
-                if (!ready) break; /* DNS continues; next update polls again. */
-                if (ready > 0 && curl_multi_add_handle(c->multi, c->easy) == CURLM_OK) {
-                    c->easy_added = true;
-                    break;
-                }
-                fail_connection(c, now);
-                break;
-            }
-            if (result == CURLE_OK)
-                sl_http_route_stop_resolving(&c->route);
-            if (c->state == NET_DIRECTORY) {
-                long status_code = 0;
+        c->easy_added = c->easy != NULL;
+        sl_http_bootstrap_destroy(c->bootstrap);
+        c->bootstrap = NULL;
+        if (size)
+            memcpy(c->receive, body, size);
+        c->received = size;
+        free(body);
+        network_event(c, "transfer_done", result);
+        if (result == CURLE_OK)
+            sl_http_route_stop_resolving(&c->route);
+        if (c->state == NET_DIRECTORY) {
+            long status_code = 0;
+            if (c->easy)
                 curl_easy_getinfo(c->easy, CURLINFO_RESPONSE_CODE, &status_code);
-                if (result != CURLE_OK || status_code != 200 || !parse_directory(c) ||
-                    !next_endpoint(c, now))
-                    fail_connection(c, now);
-            } else if (result != CURLE_OK || !start_upgrade(c, now)) {
-                if (!next_endpoint(c, now))
-                    fail_connection(c, now);
-            }
-            break;
+            if (complete < 0 || result != CURLE_OK || status_code != 200 || !parse_directory(c) ||
+                !next_endpoint(c, now))
+                fail_connection(c, now);
+        } else if (complete < 0 || result != CURLE_OK || !start_upgrade(c, now)) {
+            if (!next_endpoint(c, now))
+                fail_connection(c, now);
         }
     }
     if (c->state == NET_UPGRADE || c->state == NET_WEBSOCKET) {
@@ -698,6 +663,6 @@ void sl_remote_connection_destroy(sl_remote_connection *c) {
     erase_free(c->receive, SL_REMOTE_FRAME_MAX + 16384);
     erase_free(c->message, SL_REMOTE_FRAME_MAX);
     if (c->global)
-        curl_global_cleanup();
+        sl_http_global_release();
     free(c);
 }

@@ -20,7 +20,7 @@ target_include_directories(nsl_sdr_core PUBLIC platforms/common PRIVATE ${CMAKE_
 target_compile_options(nsl_sdr_core PRIVATE -Wall -Wextra)
 add_library(nsl_remote STATIC platforms/common/host_addresses.cpp platforms/common/host_accounts.c platforms/common/host_directory.c platforms/common/remote_wire.c platforms/common/remote_protocol.c
     platforms/common/remote_connection.c platforms/common/stream_bridge.c
-    platforms/common/http_route.c platforms/common/dns_refresh.c platforms/common/dns_config.c platforms/common/dns_policy.c)
+    platforms/common/http_route.c platforms/common/http_bootstrap.c platforms/common/file_replace.c platforms/common/dns_refresh.c platforms/common/dns_config.c platforms/common/dns_policy.c)
 target_compile_features(nsl_remote PRIVATE cxx_std_17)
 target_include_directories(nsl_remote PUBLIC platforms/common PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/jsmn ${CMAKE_SOURCE_DIR}/third_party/ihslib/src
@@ -371,13 +371,25 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_compile_options(nsl-dns-refresh-tests PRIVATE -Wall -Wextra -UNDEBUG)
     target_link_libraries(nsl-dns-refresh-tests PRIVATE nsl_remote)
     add_test(NAME nsl-dns-refresh COMMAND nsl-dns-refresh-tests)
+    add_executable(nsl-http-global-tests tests/test_http_global.c)
+    target_compile_options(nsl-http-global-tests PRIVATE -Wall -Wextra -UNDEBUG)
+    target_link_libraries(nsl-http-global-tests PRIVATE nsl_remote)
+    target_link_options(nsl-http-global-tests PRIVATE -Wl,--wrap=curl_global_init -Wl,--wrap=curl_global_cleanup)
+    add_test(NAME nsl-http-global COMMAND nsl-http-global-tests)
     add_executable(nsl-http-route-tests tests/test_http_route.c platforms/common/http_route.c)
     target_compile_definitions(nsl-http-route-tests PRIVATE NSL_HTTP_ROUTE_TEST=1 NSL_DIAGNOSTICS=1)
     target_compile_options(nsl-http-route-tests PRIVATE -Wall -Wextra -UNDEBUG)
     target_link_libraries(nsl-http-route-tests PRIVATE nsl_remote)
     target_link_options(nsl-http-route-tests PRIVATE -Wl,--wrap=sl_dns_current_config)
+    add_executable(nsl-http-bootstrap-tests tests/test_http_bootstrap.c
+        platforms/common/http_route.c platforms/common/http_bootstrap.c)
+    target_compile_definitions(nsl-http-bootstrap-tests PRIVATE NSL_HTTP_ROUTE_TEST=1 NSL_DIAGNOSTICS=1)
+    target_compile_options(nsl-http-bootstrap-tests PRIVATE -Wall -Wextra -UNDEBUG)
+    target_link_libraries(nsl-http-bootstrap-tests PRIVATE nsl_remote)
+    target_link_options(nsl-http-bootstrap-tests PRIVATE -Wl,--wrap=sl_dns_current_config)
     add_test(NAME nsl-http-route COMMAND "${Python3_EXECUTABLE}"
-        "${CMAKE_SOURCE_DIR}/scripts/test-http-route.py" --receiver $<TARGET_FILE:nsl-http-route-tests>)
+        "${CMAKE_SOURCE_DIR}/scripts/test-http-route.py" --receiver $<TARGET_FILE:nsl-http-route-tests>
+        --bootstrap-receiver $<TARGET_FILE:nsl-http-bootstrap-tests>)
     set_tests_properties(nsl-http-route PROPERTIES TIMEOUT 30)
     add_executable(nsl-dns-policy-tests tests/test_dns_policy.c platforms/common/dns_policy_wrap.c)
     target_compile_options(nsl-dns-policy-tests PRIVATE -Wall -Wextra -UNDEBUG)
@@ -395,7 +407,8 @@ if(NSL_PLATFORM STREQUAL "desktop")
         target_compile_definitions(nsl-remote-diagnostics-tests PRIVATE NSL_DIAGNOSTICS=1)
         target_compile_options(nsl-remote-diagnostics-tests PRIVATE -Wall -Wextra -UNDEBUG)
         target_link_libraries(nsl-remote-diagnostics-tests PRIVATE nsl_remote)
-        foreach(symbol curl_easy_init curl_easy_setopt curl_multi_perform curl_multi_info_read)
+        foreach(symbol curl_easy_init curl_easy_setopt curl_multi_perform curl_multi_info_read
+            curl_multi_add_handle curl_multi_remove_handle)
             target_link_options(nsl-remote-diagnostics-tests PRIVATE "-Wl,--wrap=${symbol}")
         endforeach()
         add_test(NAME nsl-remote-diagnostics COMMAND nsl-remote-diagnostics-tests)
@@ -487,6 +500,16 @@ if(NSL_PLATFORM STREQUAL "desktop")
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-sns-initialization.py"
             --receiver $<TARGET_FILE:nsl-sns-initialization-tests>)
         set_tests_properties(sns_initialization_official_vectors PROPERTIES TIMEOUT 60)
+        add_executable(nsl-sns-preparation-tests tests/test_sns_preparation.cpp)
+        target_compile_features(nsl-sns-preparation-tests PRIVATE cxx_std_17)
+        target_compile_definitions(nsl-sns-preparation-tests PRIVATE NSL_SNS_PROBES=0 NSL_DIAGNOSTICS=0)
+        target_compile_options(nsl-sns-preparation-tests PRIVATE -Wall -Wextra -UNDEBUG)
+        target_link_libraries(nsl-sns-preparation-tests PRIVATE nsl_remote
+            GameNetworkingSockets::GameNetworkingSockets_s Threads::Threads)
+        target_link_options(nsl-sns-preparation-tests PRIVATE -Wl,--wrap=sl_stream_bridge_ready
+            -Wl,--wrap=sl_stream_bridge_update)
+        add_test(NAME sns_preparation COMMAND nsl-sns-preparation-tests)
+        set_tests_properties(sns_preparation PROPERTIES TIMEOUT 15)
         add_executable(nsl-sns-state-oracle tests/sns_state_oracle.cpp)
         target_compile_features(nsl-sns-state-oracle PRIVATE cxx_std_17)
         target_include_directories(nsl-sns-state-oracle PRIVATE platforms/common)
@@ -765,7 +788,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
         -Wl,--wrap=IHS_SessionThreadedJoin -Wl,--wrap=sl_system_now
         -Wl,--wrap=IHS_CryptoRandomUInt32 -Wl,--wrap=IHS_CryptoRandomBytes -Wl,--wrap=sl_network_stats_load
         -Wl,--wrap=sl_sns_create_configured -Wl,--wrap=sl_sns_update -Wl,--wrap=sl_sns_get_state
-        -Wl,--wrap=sl_sns_session_ready -Wl,--wrap=sl_sns_datagram_transport
+        -Wl,--wrap=sl_sns_session_ready -Wl,--wrap=sl_sns_start_session -Wl,--wrap=sl_sns_datagram_transport
         -Wl,--wrap=sl_sns_get_stats -Wl,--wrap=sl_sns_end_reason -Wl,--wrap=sl_sns_destroy
         -Wl,--wrap=sl_sns_config_cache_create -Wl,--wrap=sl_sns_config_cache_update
         -Wl,--wrap=sl_sns_config_cache_destroy)
@@ -1146,7 +1169,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
         -Wl,--wrap=IHS_ClientStreamingEstablished -Wl,--wrap=IHS_SessionSetDatagramTransport
         -Wl,--wrap=IHS_ClientUpdate
         -Wl,--wrap=sl_sns_create_configured -Wl,--wrap=sl_sns_update -Wl,--wrap=sl_sns_get_state
-        -Wl,--wrap=sl_sns_session_ready -Wl,--wrap=sl_sns_datagram_transport
+        -Wl,--wrap=sl_sns_session_ready -Wl,--wrap=sl_sns_start_session -Wl,--wrap=sl_sns_datagram_transport
         -Wl,--wrap=sl_sns_get_stats -Wl,--wrap=sl_sns_end_reason -Wl,--wrap=sl_sns_destroy
         -Wl,--wrap=sl_sns_config_cache_update)
     add_test(NAME network_test_pin_retry COMMAND "${Python3_EXECUTABLE}"

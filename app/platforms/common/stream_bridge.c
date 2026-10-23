@@ -1,8 +1,10 @@
 #include "stream_bridge.h"
-#include "remote_wire.h"
+#include "dns_policy.h"
 #include "protobuf/discovery.pb-c.h"
 #include "protobuf/remoteplay.pb-c.h"
+#include "remote_wire.h"
 #include <mbedtls/md.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -36,8 +38,8 @@ static bool mac(const sl_signal_channel *c, const uint8_t *p, size_t n, uint8_t 
     const mbedtls_md_info_t *md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
     return md && !mbedtls_md_hmac(md, c->key, c->key_size, p, n, out);
 }
-sl_signal_channel *sl_signal_channel_create(uint64_t client, uint64_t steam,
-    const uint8_t *key, size_t size, const sl_signal_callbacks *cb, void *ctx) {
+sl_signal_channel *sl_signal_channel_create(uint64_t client, uint64_t steam, const uint8_t *key,
+                                            size_t size, const sl_signal_callbacks *cb, void *ctx) {
     if (!client || !steam || !key || !size || size > 128 || !cb || !cb->receive)
         return NULL;
     sl_signal_channel *c = calloc(1, sizeof(*c));
@@ -52,8 +54,8 @@ sl_signal_channel *sl_signal_channel_create(uint64_t client, uint64_t steam,
     return c;
 }
 bool sl_signal_channel_queue(sl_signal_channel *c, const uint8_t *data, size_t size) {
-    if (!c || c->failed || !data || !size || size > SIGNAL_MAX ||
-        c->count == QUEUE_COUNT || size > QUEUE_BYTES - c->bytes)
+    if (!c || c->failed || !data || !size || size > SIGNAL_MAX || c->count == QUEUE_COUNT ||
+        size > QUEUE_BYTES - c->bytes)
         return false;
     pending_signal *p = malloc(sizeof(*p) + size);
     if (!p)
@@ -116,8 +118,8 @@ done:
         free(outer);
     }
 }
-int sl_signal_channel_receive(sl_signal_channel *c, uint64_t peer,
-                              const uint8_t *body, size_t size) {
+int sl_signal_channel_receive(sl_signal_channel *c, uint64_t peer, const uint8_t *body,
+                              size_t size) {
     if (!c || c->failed)
         return -1;
     /* Original BProcessReplyPacket requires a nonzero header client ID, then
@@ -164,8 +166,12 @@ done:
         cmsg_remote_device_stream_transport_signal__free_unpacked(message, NULL);
     return result;
 }
-bool sl_signal_channel_pending(const sl_signal_channel *c) { return c && c->head; }
-bool sl_signal_channel_failed(const sl_signal_channel *c) { return !c || c->failed; }
+bool sl_signal_channel_pending(const sl_signal_channel *c) {
+    return c && c->head;
+}
+bool sl_signal_channel_failed(const sl_signal_channel *c) {
+    return !c || c->failed;
+}
 void sl_signal_channel_destroy(sl_signal_channel *c) {
     if (!c)
         return;
@@ -178,19 +184,30 @@ void sl_signal_channel_destroy(sl_signal_channel *c) {
     erase(c, sizeof(*c));
     free(c);
 }
+#if NSL_DIAGNOSTICS
+static void bridge_diagnostic(const char *message, void *ctx) {
+    (void)ctx;
+    char line[384];
+    snprintf(line, sizeof(line), "signal_bridge %s", message);
+    sl_dns_policy_report(line);
+}
+#else
+#define bridge_diagnostic NULL
+#endif
 static void received(uint64_t peer, const uint8_t *body, size_t size, void *ctx) {
     sl_stream_bridge *b = ctx;
     sl_signal_channel_receive(b->channel, peer, body, size);
 }
 sl_stream_bridge *sl_stream_bridge_create(const IHS_ClientConfig *config,
-    const sl_remote_material *m, const sl_signal_callbacks *cb, void *ctx) {
+                                          const sl_remote_material *m,
+                                          const sl_signal_callbacks *cb, void *ctx) {
     if (!m)
         return NULL;
     sl_stream_bridge *b = calloc(1, sizeof(*b));
     if (!b)
         return NULL;
     b->channel = sl_signal_channel_create(m->client_id, m->steam_id, m->key, m->key_size, cb, ctx);
-    sl_remote_callbacks remote_cb = {.transport_signal = received};
+    sl_remote_callbacks remote_cb = {.transport_signal = received, .diagnostic = bridge_diagnostic};
     if (b->channel)
         b->connection = sl_remote_connection_create(config, &remote_cb, b);
     if (!b->connection) {
@@ -212,6 +229,9 @@ void sl_stream_bridge_update(sl_stream_bridge *b, uint64_t now, bool wants_cloud
         sl_remote_connection_update(b->connection, now);
         sl_signal_channel_flush(b->channel, sl_remote_connection_protocol(b->connection));
     }
+}
+bool sl_stream_bridge_ready(const sl_stream_bridge *b) {
+    return b && sl_remote_ready(sl_remote_connection_protocol(b->connection));
 }
 bool sl_stream_bridge_failed(const sl_stream_bridge *b) {
     return !b || sl_signal_channel_failed(b->channel);

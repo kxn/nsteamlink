@@ -54,12 +54,16 @@ def main():
   ('nul-response',b'old','/nul','none',b'old',b'new',b'new\0tail'),
   ('no-parser-at-shell',b'old','/invalid','none',b'old',b'not-json',b'not-json'),
   ('oversize-response',b'old','/large','none',b'old',b'old',b'old'),
+  ('switch-overwrite',b'old','/ok','switch-rename',b'old',b'new-config',b'new-config'),
+  ('switch-rollback',b'old','/ok','switch-publish-fails',b'old',b'new-config',b'old'),
+  ('switch-recovery',None,'/ok','switch-recovery',b'old',b'new-config',b'new-config'),
   ('oversize-cache',b'X'*(1024*1024+1),'/bad','none',None,None,b'X'*(1024*1024+1)),
  ]
  try:
   for name,seed,path,fault,before,after,disk in cases:
    with tempfile.TemporaryDirectory(prefix='nsl-config-cache-') as directory:
     file=Path(directory)/'sdr_config.txt'
+    if name=='switch-recovery':Path(str(file)+'.old').write_bytes(b'old')
     if seed is not None:file.write_bytes(seed);os.utime(file,(1,1)) # no invented TTL
     requests.clear()
     run=subprocess.run([str(a.receiver.resolve()),directory,f'http://127.0.0.1:{server.server_port}'+path,fault],capture_output=True,text=True,timeout=10)
@@ -77,8 +81,9 @@ def main():
      assert len(requests)==(4 if path=='/redirect' else 2),(name,requests)
     assert (file.read_bytes() if file.exists() else None)==disk,name
     assert not Path(str(file)+'.tmp').exists(),name
+    assert not Path(str(file)+'.old').exists(),name
     print('PASS',name)
  finally:
   server.shutdown();worker.join();server.server_close()
- print('PASS 47 original cache/HTTP programs and 14 production loopback/file sequences; repeated owners, no TTL, retained failed download, response independent of save, redirects/201/HTTP failures, cancellation and local 1MiB bounds')
+ print('PASS 47 original cache/HTTP programs and 17 production loopback/file sequences; repeated owners, no TTL, retained failed download, response independent of save, redirects/201/HTTP failures, cancellation and local 1MiB bounds')
 if __name__=='__main__':main()

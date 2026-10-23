@@ -1845,6 +1845,10 @@ static bool launch_session(sl_runtime *r, IHS_SessionInfo info) {
 #endif
     if (!IHS_SessionConnect(r->session))
         return false;
+#if NSL_HAVE_SNS
+    if (r->sns && !sl_sns_start_session(r->sns))
+        return false;
+#endif
     diagnostic_state(r, "ihs_connect_started");
     r->connect_wait_tick = sl_connection_wait_tick(sl_system_now());
     return true;
@@ -1953,6 +1957,10 @@ static bool launch_network_test(sl_runtime *r, IHS_SessionInfo info) {
     IHS_SessionSetLogFunction(r->test_session, ihs_log);
     if (!IHS_SessionConnect(r->test_session))
         return false;
+#if NSL_HAVE_SNS
+    if (r->sns && !sl_sns_start_session(r->sns))
+        return false;
+#endif
     if (!r->test_waiting_pin && !r->test_retry_pending) {
         /* A delayed old SDK may start during authorization or while awaiting
          * the replacement ticket. Only the control parser can accept it. */
@@ -2632,11 +2640,9 @@ static void *worker_main(void *ctx) {
         sl_sns_config_cache_update(r->sns_config);
         if (r->sns) {
             bool pending_test_error = test_error_pending(r);
-            /* An explicit startup config may make BInit ready synchronously.
-             * Start IHS/its deadline before the first SDK Update in that case,
-             * just as for config completed asynchronously during this pass. */
-            if (pending_test_error || !r->sns_waiting || !sl_sns_session_ready(r->sns))
-                sl_sns_update(r->sns, now);
+            /* Always pump preparation and established transport. SDK creation
+             * is explicitly admitted after IHS Connect, never by tick ordering. */
+            sl_sns_update(r->sns, now);
             sl_sns_state state = sl_sns_get_state(r->sns);
             if (pending_test_error || r->test_waiting_pin) {
                 /* The old Test worker may still be inside BInit when PIN is

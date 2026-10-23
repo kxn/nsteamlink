@@ -58,7 +58,28 @@ int main(int argc, char **argv) {
     if (connect_only)
         curl_easy_setopt(easy, CURLOPT_CONNECT_ONLY, 1L);
     CURLcode code;
-    if (!strcmp(mode, "dns-cancel") || !strcmp(mode, "dns-fail")) {
+    if (!strcmp(mode, "shared-async")) {
+        sl_http_route routes[3];
+        CURL *others[2] = {curl_easy_init(), curl_easy_init()};
+        assert(others[0] && others[1]);
+        assert(sl_http_route_begin_async(&routes[0], others[0], url, 1000));
+        assert(sl_http_route_begin_async(&routes[1], others[1], url, 1000));
+        assert(sl_http_route_begin_async(&routes[2], easy, url, 1000));
+        usleep(20000);
+        // Cancel two subscribers while DNS is still outstanding. The final
+        // request must receive the delayed answer from the SAME wire query.
+        curl_easy_cleanup(others[0]);
+        sl_http_route_clear(&routes[0]);
+        curl_easy_cleanup(others[1]);
+        sl_http_route_clear(&routes[1]);
+        int ready;
+        while (!(ready = sl_http_route_poll(&routes[2], easy)))
+            usleep(1000);
+        assert(ready == 1);
+        code = curl_easy_perform(easy);
+        curl_easy_setopt(easy, CURLOPT_RESOLVE, NULL);
+        sl_http_route_clear(&routes[2]);
+    } else if (!strcmp(mode, "dns-cancel") || !strcmp(mode, "dns-fail")) {
         sl_http_route route;
         uint64_t began = now_ms();
         assert(sl_http_route_begin_async(&route, easy, url, 1000));

@@ -256,6 +256,9 @@ D-051 硬件帧直显的资源依赖补充：session stop 不等待主线程 GPU
 
 ### 12.5 已踩坑反模式
 
+网络初始化依赖、准备/媒体准入和 HTTP/DNS 资源归属见
+[NETWORK_INITIALIZATION](docs/NETWORK_INITIALIZATION.md)（D-A104/D-A105）。
+
 - 不能把 PC 侧 `nxlink` 退出、debug command 超时、端口状态当成 Switch 屏幕状态的替代证据。
 - 不能因为第二次启动失败就先怀疑 netloader、NRO 大小或 SD 文件，除非有对应错误码、日志或对照
   实验。先检查本程序返回 hbmenu 前是否留下线程、handle、socket、SDL/Mesa 或 IHS 状态。

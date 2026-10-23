@@ -2,7 +2,9 @@
  * and deterministic cancellation are supplied by this fixture. No SDK/media. */
 #include "../platforms/common/sns_config_cache.c"
 #include <assert.h>
+#include <errno.h>
 #include <stdarg.h>
+#include <sys/stat.h>
 #include <time.h>
 
 static const char *target, *fault;
@@ -34,7 +36,19 @@ size_t __wrap_fwrite(const void *p, size_t s, size_t n, FILE *f) {
 }
 int __real_rename(const char *, const char *);
 int __wrap_rename(const char *a, const char *b) {
-    if (!strcmp(fault, "rename")) return -1;
+    if (!strcmp(fault, "rename")) {
+        errno = EIO;
+        return -1;
+    }
+    struct stat st;
+    if (!strncmp(fault, "switch-", 7) && !stat(b, &st)) {
+        errno = EEXIST;
+        return -1;
+    }
+    if (!strcmp(fault, "switch-publish-fails") && strstr(a, ".tmp")) {
+        errno = EIO;
+        return -1;
+    }
     return __real_rename(a, b);
 }
 static void output(const char *stage, sl_sns_config_cache *c) {

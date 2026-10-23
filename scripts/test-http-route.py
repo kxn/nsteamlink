@@ -13,6 +13,7 @@ import time
 
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--receiver', required=True)
+p.add_argument('--bootstrap-receiver')
 a = p.parse_args()
 with tempfile.TemporaryDirectory(prefix='nsl-http-route-') as directory:
     root = Path(directory)
@@ -32,12 +33,17 @@ with tempfile.TemporaryDirectory(prefix='nsl-http-route-') as directory:
     counts = Counter()
     answers = []
     drop_dns = False
+    dns_delay = 0
+    dns_received = 0
     threads, listeners = [], []
     def resolve():
+        global dns_received
         while not stop.is_set():
             try: packet, peer = dns.recvfrom(512)
             except socket.timeout: continue
+            dns_received += 1
             if drop_dns: continue
+            if dns_delay: stop.wait(dns_delay)
             header = packet[:2] + b'\x81\x80' + struct.pack('!HHHH', 1, len(answers), 0, 0)
             response = header + packet[12:]
             for ip in answers:
@@ -87,22 +93,47 @@ with tempfile.TemporaryDirectory(prefix='nsl-http-route-') as directory:
                             if not request: continue  # Client rejected the certificate.
                             assert b'Host: route.test:' in request, request
                             if kind == 'http': tls.sendall(b'HTTP/1.1 503 Busy\r\nContent-Length: 2\r\nConnection: close\r\n\r\nNO')
-                            elif kind == 'partial': tls.sendall(b'HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\nNO')
+                            elif kind in ('partial', 'slow-partial'):
+                                tls.sendall(b'HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\nNO')
+                                if kind == 'slow-partial': stop.wait(1.2)
                             else: tls.sendall(b'HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK')
                     except (ssl.SSLError, OSError): pass
         t = threading.Thread(target=serve); t.start(); threads.append(t)
         return listener.getsockname()[1]
     port = server('127.0.1.1', 'stall')
     server('127.0.2.1', 'bad'); server('127.0.3.1', 'good')
-    server('127.0.4.1', 'http'); server('127.0.5.1', 'partial')
+    server('127.0.4.1', 'http'); server('127.0.5.1', 'partial'); server('127.0.6.1', 'slow-partial')
     def run(mode, expected, ips, progressive=False):
         answers[:] = ips
         before = counts.copy()
         dns_arg = ','.join(str(s.getsockname()[1]) for s in [dns, *extra_dns]) if progressive else str(dns.getsockname()[1])
-        result = subprocess.run([a.receiver, dns_arg, f'https://route.test:{port}/directory', str(root/'ca.pem'), mode, expected], text=True, capture_output=True, timeout=12)
+        result = subprocess.run([a.bootstrap_receiver if mode.startswith('bootstrap') else a.receiver, dns_arg, f'https://route.test:{port}/directory', str(root/'ca.pem'), mode, expected], text=True, capture_output=True, timeout=12)
         assert result.returncode == 0, result.stdout + result.stderr
         return counts - before, result.stdout
     try:
+        if a.bootstrap_receiver:
+            for mode in ['bootstrap-get', 'bootstrap-connect-only']:
+                time.sleep(1.3) # Drain the fixture's previous stalled accept.
+                began = time.monotonic()
+                delta, output = run(mode, 'connected' if 'connect-only' in mode else 'success', ['127.0.1.1', '127.0.2.1', '127.0.3.1'])
+                assert delta == Counter(stall=1, bad=1, good=1) and time.monotonic()-began < .95, (delta, output)
+            for expected, ip in [('http', '127.0.4.1'), ('partial', '127.0.5.1')]:
+                delta, output = run('bootstrap-'+expected, expected, [ip, '127.0.3.1'])
+                assert delta == Counter({expected: 1}), (delta, output)
+            delta, output = run('bootstrap-slow-partial', 'partial', ['127.0.6.1', '127.0.3.1'])
+            assert delta == Counter({'slow-partial': 1}), (delta, output)
+            delta, output = run('bootstrap-bad-cert', 'failure', ['127.0.2.1'])
+            assert delta == Counter(bad=1), (delta, output)
+            delta, output = run('bootstrap-late', 'success', ['127.0.0.2'], True)
+            assert delta == Counter(good=1), (delta, output)
+            time.sleep(1.3)
+            delta, output = run('bootstrap-cancel', 'failure', ['127.0.1.1', '127.0.3.1'])
+            assert delta == Counter(stall=1), (delta, output)
+        dns_delay = .3
+        before = dns_received
+        delta, output = run('shared-async', 'success', ['127.0.3.1'])
+        assert delta == Counter(good=1) and dns_received - before == 1, (delta, output)
+        dns_delay = 0
         for mode in ['early-blocking', 'early-multi', 'early-async', 'early-async-connect-only']:
             began = time.monotonic()
             delta, output = run(mode, 'connected' if 'connect-only' in mode else 'success', ['127.0.3.1'], True)

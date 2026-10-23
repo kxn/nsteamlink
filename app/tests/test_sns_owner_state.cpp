@@ -181,12 +181,12 @@ int main() {
     b->sockets = SteamNetworkingSockets();
     auto queues = b->q;
     assert(!check_connection(b));
-    assert(!sl_sns_session_ready(b));
+    assert(!sl_sns_initialized(b));
     assert(b->q->state == SL_SNS_CONNECTING && b->q->owner);
     assert(b->stats.terminal_source == SL_SNS_TERMINAL_NONE);
     // Config completion admits IHS even before the first SDK handle exists.
     b->config_ready = true;
-    assert(sl_sns_session_ready(b));
+    assert(sl_sns_initialized(b));
     assert(wait_datagram(b, 1000) == 0);
     uint8_t receive[32]; size_t received = 0;
     assert(receive_datagram(b, receive, sizeof(receive), &received, 0) == 0);
@@ -226,7 +226,7 @@ int main() {
     }
     assert(!check_connection(b));
     assert(!b->connection && b->q->state == SL_SNS_FAILED);
-    assert(!sl_sns_session_ready(b));
+    assert(!sl_sns_initialized(b));
     IHS_SessionThreadedJoin(session);
     assert(ihs_finalized == 1 && !IHS_SessionIsConnectionPending(session));
     IHS_SessionDestroy(session);

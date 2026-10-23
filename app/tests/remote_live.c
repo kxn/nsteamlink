@@ -313,6 +313,8 @@ int NSL_REMOTE_LIVE_ENTRY(int argc, char **argv) {
         }
         if (l.sns) {
             sl_sns_update(l.sns, now_ms());
+            if (sl_sns_session_ready(l.sns))
+                sl_sns_start_session(l.sns);
             sl_sns_state state = sl_sns_get_state(l.sns);
             if (state == SL_SNS_CONNECTED && !sns_connected_at) {
                 sns_connected_at = now_ms();

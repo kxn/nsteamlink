@@ -1,30 +1,30 @@
 extern "C" {
 #include "sns_backend.h"
-#include "stream_bridge.h"
-#include "sdr_probe.h"
 #include "dns_policy.h"
 #include "http_route.h"
+#include "sdr_probe.h"
+#include "stream_bridge.h"
 }
-#include <steam/steamnetworkingsockets.h>
-#include <steam/steamnetworkingcustomsignaling.h>
 #include <steam/isteamnetworkingutils.h>
+#include <steam/steamnetworkingcustomsignaling.h>
+#include <steam/steamnetworkingsockets.h>
 #if NSL_DIAGNOSTICS
 #include "sns_start_diagnostics.h"
 #endif
-#include "sns_message_queue.h"
-#include "sns_connection_policy.h"
-#include "sns_io_policy.h"
-#include "sns_receive_policy.h"
 #include "sns_config_fetch_policy.h"
 #include "sns_config_http.h"
-#include <mbedtls/base64.h>
-#include <curl/curl.h>
+#include "sns_connection_policy.h"
+#include "sns_io_policy.h"
+#include "sns_message_queue.h"
+#include "sns_receive_policy.h"
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
 #include <cstring>
+#include <curl/curl.h>
 #include <deque>
+#include <mbedtls/base64.h>
 #include <memory>
 #include <mutex>
 #include <new>
@@ -54,10 +54,12 @@ struct Queues {
 std::atomic<bool> sdk_owned{false};
 class Signaling final : public ISteamNetworkingConnectionSignaling {
     std::shared_ptr<Queues> q;
-public:
-    explicit Signaling(std::shared_ptr<Queues> queues) : q(std::move(queues)) {}
-    bool SendSignal(HSteamNetConnection, const SteamNetConnectionInfo_t &,
-                    const void *data, int size) override {
+
+  public:
+    explicit Signaling(std::shared_ptr<Queues> queues) : q(std::move(queues)) {
+    }
+    bool SendSignal(HSteamNetConnection, const SteamNetConnectionInfo_t &, const void *data,
+                    int size) override {
         if (!data || size <= 0 || size > 60000)
             return false;
         std::lock_guard<std::mutex> lock(q->mutex);
@@ -67,19 +69,27 @@ public:
             const uint8_t *p = static_cast<const uint8_t *>(data);
             q->signals.emplace_back(p, p + size);
             return true;
-        } catch (const std::bad_alloc &) { return false; }
+        } catch (const std::bad_alloc &) {
+            return false;
+        }
     }
-    void Release() override { delete this; }
+    void Release() override {
+        delete this;
+    }
 };
 class ReceiveContext final : public ISteamNetworkingSignalingRecvContext {
-public:
-    ISteamNetworkingConnectionSignaling *OnConnectRequest(HSteamNetConnection,
-        const SteamNetworkingIdentity &, int) override { return nullptr; }
-    void SendRejectionSignal(const SteamNetworkingIdentity &, const void *, int) override {}
+  public:
+    ISteamNetworkingConnectionSignaling *
+    OnConnectRequest(HSteamNetConnection, const SteamNetworkingIdentity &, int) override {
+        return nullptr;
+    }
+    void SendRejectionSignal(const SteamNetworkingIdentity &, const void *, int) override {
+    }
 };
 static void wipe(void *p, size_t n) {
     volatile uint8_t *q = static_cast<volatile uint8_t *>(p);
-    while (n--) *q++ = 0;
+    while (n--)
+        *q++ = 0;
 }
 static bool decode_cert(const char *text, Message &out) {
     if (!text)
@@ -92,8 +102,9 @@ static bool decode_cert(const char *text, Message &out) {
         padded += '=';
     out.resize(padded.size());
     size_t decoded = 0;
-    int ret = mbedtls_base64_decode(out.data(), out.size(), &decoded,
-        reinterpret_cast<const uint8_t *>(padded.data()), padded.size());
+    int ret =
+        mbedtls_base64_decode(out.data(), out.size(), &decoded,
+                              reinterpret_cast<const uint8_t *>(padded.data()), padded.size());
     wipe(&padded[0], padded.size());
     if (ret || !decoded) {
         wipe(out.data(), out.size());
@@ -113,9 +124,12 @@ struct BridgeInit {
     std::string name, model, serial;
     uint8_t secret[32]{};
     BridgeInit(const IHS_ClientConfig &c, const sl_remote_material &m) {
-        if (c.deviceName) name = c.deviceName;
-        if (c.deviceModel) model = c.deviceModel;
-        if (c.deviceSerial) serial = c.deviceSerial;
+        if (c.deviceName)
+            name = c.deviceName;
+        if (c.deviceModel)
+            model = c.deviceModel;
+        if (c.deviceSerial)
+            serial = c.deviceSerial;
         config = c;
         config.deviceName = c.deviceName ? name.c_str() : nullptr;
         config.deviceModel = c.deviceModel ? model.c_str() : nullptr;
@@ -130,7 +144,7 @@ struct BridgeInit {
         wipe(material.key, sizeof(material.key));
     }
 };
-}
+} // namespace
 struct sl_sns {
     std::shared_ptr<Queues> q = std::make_shared<Queues>();
     /* Serialize the IHS send callback with handle creation/invalidation/close.
@@ -143,8 +157,11 @@ struct sl_sns {
     sl_stream_bridge *bridge = nullptr;
     std::unique_ptr<BridgeInit> bridge_init;
     SteamNetworkingMicroseconds last_check = 0;
-    bool initialized = false, connection_attempted = false;
+    bool initialized = false, connection_attempted = false, http_global = false;
     bool share_ip = true, config_ready = false;
+    bool signaling_ready = false, session_started = false, preparation_clock = false;
+    uint64_t preparation_at = 0;
+    unsigned preparation_phase = 0;
     CURLM *http = nullptr;
     CURL *request = nullptr;
     bool request_added = false;
@@ -166,7 +183,7 @@ static nsl::SnsConnectionView connection_view(sl_sns *b) {
     return {b->connection, b->q->state, b->last_check};
 }
 static void record_terminal(sl_sns *b, sl_sns_terminal_source source, int detail,
-                             const SteamNetConnectionInfo_t *info) {
+                            const SteamNetConnectionInfo_t *info) {
     if (b->stats.terminal_source != SL_SNS_TERMINAL_NONE || source == SL_SNS_TERMINAL_NONE)
         return;
     b->stats.terminal_source = source;
@@ -190,26 +207,28 @@ static void clear_datagrams(sl_sns *b) {
     b->q->wake.notify_all();
 }
 static void close_backend(sl_sns *b, sl_sns_state state,
-    sl_sns_terminal_source source = SL_SNS_TERMINAL_NONE, int detail = 0,
-    int reason = 2001, const char *debug = "stream transport closed") {
+                          sl_sns_terminal_source source = SL_SNS_TERMINAL_NONE, int detail = 0,
+                          int reason = 2001, const char *debug = "stream transport closed") {
     std::lock_guard<std::mutex> api_lock(b->connection_mutex);
     b->bridge_init.reset();
     SteamNetConnectionInfo_t info{};
     bool have_info = b->connection != k_HSteamNetConnection_Invalid &&
-        b->sockets->GetConnectionInfo(b->connection, &info);
+                     b->sockets->GetConnectionInfo(b->connection, &info);
     if (have_info) {
         b->stats.sdk_state = int(info.m_eState);
-        if (info.m_eEndReason) b->end_reason = info.m_eEndReason;
+        if (info.m_eEndReason)
+            b->end_reason = info.m_eEndReason;
     }
     record_terminal(b, source, detail, have_info ? &info : nullptr);
-    if (state == SL_SNS_FAILED) b->q->state = SL_SNS_FAILED;
+    if (state == SL_SNS_FAILED)
+        b->q->state = SL_SNS_FAILED;
     // Local resource errors, last Release and CheckConnection have distinct
     // reasons; callers supply the explicit normal-destruction reason.
-    nsl::CloseSnsConnection(b->sockets, connection_view(b), [b] { unlink_signaling(b); },
-                            reason, debug);
+    nsl::CloseSnsConnection(
+        b->sockets, connection_view(b), [b] { unlink_signaling(b); }, reason, debug);
     clear_datagrams(b);
 }
-template<class Sockets>
+template <class Sockets>
 static bool receive_signal_with(sl_sns *b, Sockets *sockets, const uint8_t *p, size_t n) {
     // Original checks the SDK interface, not the current connection handle.
     // Late rendezvous may still be accepted by the SDK after invalidation.
@@ -223,8 +242,7 @@ static bool receive_signal(const uint8_t *p, size_t n, void *ctx) {
     sl_sns *b = static_cast<sl_sns *>(ctx);
     return receive_signal_with(b, b->sockets, p, n);
 }
-template<class Sockets>
-static void signal_failed_with(sl_sns *b, Sockets *sockets) {
+template <class Sockets> static void signal_failed_with(sl_sns *b, Sockets *sockets) {
     std::lock_guard<std::mutex> api_lock(b->connection_mutex);
     record_terminal(b, SL_SNS_TERMINAL_SIGNAL, 0, nullptr);
     nsl::RejectSnsSignal(sockets, connection_view(b), [b] { unlink_signaling(b); });
@@ -249,7 +267,9 @@ static size_t receive_config(char *p, size_t size, size_t count, void *ctx) {
     try {
         b->config_download.insert(b->config_download.end(), p, p + bytes);
         return bytes;
-    } catch (const std::bad_alloc &) { return 0; }
+    } catch (const std::bad_alloc &) {
+        return 0;
+    }
 }
 static void config_event(sl_sns *b, const char *event, int result) {
 #if NSL_DIAGNOSTICS
@@ -261,15 +281,19 @@ static void config_event(sl_sns *b, const char *event, int result) {
         curl_easy_getinfo(b->request, CURLINFO_PRIMARY_IP, &remote);
     }
     char line[224];
-    snprintf(line, sizeof(line), "sns_config event=%s attempt=%u curl=%d http=%ld verify=%ld ip=%.64s",
-        event, b->config_attempt, result, status, verified, remote ? remote : "");
+    snprintf(line, sizeof(line),
+             "sns_config event=%s attempt=%u curl=%d http=%ld verify=%ld ip=%.64s", event,
+             b->config_attempt, result, status, verified, remote ? remote : "");
     sl_dns_policy_report(line);
 #else
-    (void)b; (void)event; (void)result;
+    (void)b;
+    (void)event;
+    (void)result;
 #endif
 }
 static bool begin_config(sl_sns *b, bool force = false) {
-    if (!b->config_fetch.begin(force)) return true;
+    if (!b->config_fetch.begin(force))
+        return true;
     b->config_download.clear();
     ++b->config_attempt;
     b->request = curl_easy_init();
@@ -279,9 +303,10 @@ static bool begin_config(sl_sns *b, bool force = false) {
     }
     /* Retail Public/Global, without the China hint. Counts 2,4,... use the
      * China WebAPI base while retaining Global configuration via the suffix. */
-    const char *url = b->config_fetch.alternate_realm()
-        ? "https://api.steamchina.com/ISteamApps/GetSDRConfig/v1?appid=353380&realm=steamglobal"
-        : "https://api.steampowered.com/ISteamApps/GetSDRConfig/v1?appid=353380";
+    const char *url =
+        b->config_fetch.alternate_realm()
+            ? "https://api.steamchina.com/ISteamApps/GetSDRConfig/v1?appid=353380&realm=steamglobal"
+            : "https://api.steampowered.com/ISteamApps/GetSDRConfig/v1?appid=353380";
     curl_easy_setopt(b->request, CURLOPT_URL, url);
     curl_easy_setopt(b->request, CURLOPT_WRITEFUNCTION, receive_config);
     curl_easy_setopt(b->request, CURLOPT_WRITEDATA, b);
@@ -290,14 +315,17 @@ static bool begin_config(sl_sns *b, bool force = false) {
     /* DNS/route preparation failure belongs to Completed(false), just like a
      * curl resolver failure. Do not turn it into factory cannot_start(), which
      * would skip the original completion count and realm/retry decisions. */
-    if (!sl_http_route_begin_async(&b->route, b->request, url, 25000)) return true;
+    if (!sl_http_route_begin_async(&b->route, b->request, url, 25000))
+        return true;
     int ready = sl_http_route_poll(&b->route, b->request);
-    if (ready <= 0) return true; /* Pending DNS or an HTTP-completion error. */
+    if (ready <= 0)
+        return true; /* Pending DNS or an HTTP-completion error. */
     if (curl_multi_add_handle(b->http, b->request) == CURLM_OK) {
         b->request_added = true;
         return true;
     }
-    curl_easy_cleanup(b->request); b->request = nullptr;
+    curl_easy_cleanup(b->request);
+    b->request = nullptr;
     sl_http_route_clear(&b->route);
     b->config_fetch.cannot_start();
     return false;
@@ -311,7 +339,7 @@ static bool begin_connection(sl_sns *b) {
     SteamNetworkingConfigValue_t options[6];
     options[0].SetInt32(k_ESteamNetworkingConfig_Unencrypted, 2);
     options[1].SetInt32(k_ESteamNetworkingConfig_P2P_Transport_ICE_Enable,
-                      b->share_ip ? 0x7fffffff : 0);
+                        b->share_ip ? 0x7fffffff : 0);
     options[2].SetInt32(k_ESteamNetworkingConfig_SendRateMin, 104857600);
     options[3].SetInt32(k_ESteamNetworkingConfig_SendRateMax, 104857600);
     options[4].SetInt32(k_ESteamNetworkingConfig_TimeoutInitial, 20000);
@@ -324,25 +352,29 @@ static bool begin_connection(sl_sns *b) {
     unsigned errors = 0;
     {
         nsl::StartDiagnostics capture(SteamNetworkingUtils());
-        b->connection = b->sockets->ConnectP2PCustomSignaling(new Signaling(b->q), nullptr, 0, 6, options);
+        b->connection =
+            b->sockets->ConnectP2PCustomSignaling(new Signaling(b->q), nullptr, 0, 6, options);
         failure = capture.failure;
         errors = capture.messages;
     }
     if (b->connection == k_HSteamNetConnection_Invalid) {
         char line[224];
-        snprintf(line, sizeof(line), "sns_start failed_stage=%s detail=%u sdk_errors=%u auth=%d cert_seconds=%d",
-            failure.stage, failure.detail, errors, int(authentication.m_eAvail), certificate_seconds);
+        snprintf(line, sizeof(line),
+                 "sns_start failed_stage=%s detail=%u sdk_errors=%u auth=%d cert_seconds=%d",
+                 failure.stage, failure.detail, errors, int(authentication.m_eAvail),
+                 certificate_seconds);
         sl_dns_policy_report(line);
     }
 #else
-    b->connection = b->sockets->ConnectP2PCustomSignaling(new Signaling(b->q), nullptr, 0, 6, options);
+    b->connection =
+        b->sockets->ConnectP2PCustomSignaling(new Signaling(b->q), nullptr, 0, 6, options);
 #endif
     return b->connection != k_HSteamNetConnection_Invalid;
 }
 static bool complete_initialization(sl_sns *b) {
     sl_signal_callbacks callbacks = {receive_signal, signal_failed, signal_updated};
-    b->bridge = sl_stream_bridge_create(&b->bridge_init->config,
-        &b->bridge_init->material, &callbacks, b);
+    b->bridge =
+        sl_stream_bridge_create(&b->bridge_init->config, &b->bridge_init->material, &callbacks, b);
     b->bridge_init.reset(); // The bridge copied its identity and stream HMAC key.
     if (!b->bridge) {
         close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_BRIDGE);
@@ -355,10 +387,14 @@ static bool install_certificate(sl_sns *b) {
     SteamNetworkingErrMsg error;
     /* CA trust from the explicit configuration must precede the local cert. */
     bool present = !b->certificate.empty();
-    bool installed = !present || b->sockets->SetCertificate(b->certificate.data(),
-        static_cast<int>(b->certificate.size()), error);
-    config_event(b, !present ? "certificate_absent"
-                            : installed ? "certificate_installed" : "certificate_failed", -1);
+    bool installed =
+        !present || b->sockets->SetCertificate(b->certificate.data(),
+                                               static_cast<int>(b->certificate.size()), error);
+    config_event(b,
+                 !present    ? "certificate_absent"
+                 : installed ? "certificate_installed"
+                             : "certificate_failed",
+                 -1);
     wipe(b->certificate.data(), b->certificate.size());
     b->certificate.clear();
     if (!installed) {
@@ -374,13 +410,15 @@ static void pump_config(sl_sns *b) {
         return;
     if (!b->request_added && b->route.error == CURLE_OK) {
         int ready = sl_http_route_poll(&b->route, b->request);
-        if (!ready) return;
+        if (!ready)
+            return;
         if (ready > 0 && curl_multi_add_handle(b->http, b->request) == CURLM_OK)
             b->request_added = true;
         else if (b->route.error == CURLE_OK) {
             /* A delayed HTTP factory/add failure has the same cannot_start
              * semantics as an immediate add failure in begin_config. */
-            curl_easy_cleanup(b->request); b->request = nullptr;
+            curl_easy_cleanup(b->request);
+            b->request = nullptr;
             sl_http_route_clear(&b->route);
             b->config_fetch.cannot_start();
             if (!b->config_fetch.available) {
@@ -396,16 +434,19 @@ static void pump_config(sl_sns *b) {
     CURLMsg *message;
     int remaining;
     bool done = !prepared || ret != CURLM_OK, success = false;
-    if (!prepared) config_event(b, "complete", int(b->route.error));
+    if (!prepared)
+        config_event(b, "complete", int(b->route.error));
     while (prepared && (message = curl_multi_info_read(b->http, &remaining))) {
         if (message->msg != CURLMSG_DONE || message->easy_handle != b->request)
             continue;
         CURLcode code = message->data.result; /* CURLMsg expires on removal. */
-        if (b->request_added) curl_multi_remove_handle(b->http, b->request);
+        if (b->request_added)
+            curl_multi_remove_handle(b->http, b->request);
         b->request_added = false;
         if (sl_http_route_retry(&b->route, b->request, code)) {
             int ready = sl_http_route_poll(&b->route, b->request);
-            if (!ready) return;
+            if (!ready)
+                return;
             if (ready > 0 && curl_multi_add_handle(b->http, b->request) == CURLM_OK) {
                 b->request_added = true;
                 return;
@@ -414,13 +455,14 @@ static void pump_config(sl_sns *b) {
         done = true;
         config_event(b, "complete", int(code));
         success = code == CURLE_OK &&
-            sl_gns_import_trust(b->config_download.data(), b->config_download.size());
+                  sl_gns_import_trust(b->config_download.data(), b->config_download.size());
         if (code == CURLE_OK)
             config_event(b, success ? "trust_imported" : "trust_failed", -1);
     }
     if (!done)
         return;
-    if (b->request_added) curl_multi_remove_handle(b->http, b->request);
+    if (b->request_added)
+        curl_multi_remove_handle(b->http, b->request);
     b->request_added = false;
     curl_easy_cleanup(b->request);
     sl_http_route_clear(&b->route);
@@ -429,7 +471,8 @@ static void pump_config(sl_sns *b) {
     if (success) {
         b->config.swap(b->config_download);
         b->config_download.clear();
-        if (!b->config_ready && !install_certificate(b)) return;
+        if (!b->config_ready && !install_certificate(b))
+            return;
     }
     bool started = true;
     if (action == nsl::SnsConfigFetchPolicy::Refresh)
@@ -442,15 +485,16 @@ static void pump_config(sl_sns *b) {
     }
 }
 extern "C" sl_sns *sl_sns_create(const IHS_ClientConfig *config, const sl_remote_material *m,
-                                  bool share_ip, char *error, size_t error_size) {
+                                 bool share_ip, char *error, size_t error_size) {
     return sl_sns_create_configured(config, m, share_ip, error, error_size, nullptr, 0);
 }
-extern "C" sl_sns *sl_sns_create_configured(const IHS_ClientConfig *config, const sl_remote_material *m,
-    bool share_ip, char *error, size_t error_size, const char *network_config, size_t network_config_size) {
-    if (!config || !config->deviceId || !config->secretKey || !m || !m->client_id ||
-        !m->steam_id || !m->key_size || m->key_size > sizeof(m->key) ||
-        m->transport != 4 || network_config_size > 1024 * 1024 ||
-        (network_config_size && !network_config)) {
+extern "C" sl_sns *sl_sns_create_configured(const IHS_ClientConfig *config,
+                                            const sl_remote_material *m, bool share_ip, char *error,
+                                            size_t error_size, const char *network_config,
+                                            size_t network_config_size) {
+    if (!config || !config->deviceId || !config->secretKey || !m || !m->client_id || !m->steam_id ||
+        !m->key_size || m->key_size > sizeof(m->key) || m->transport != 4 ||
+        network_config_size > 1024 * 1024 || (network_config_size && !network_config)) {
         copy_error(error, error_size, "invalid SNS connection material");
         return nullptr;
     }
@@ -463,6 +507,11 @@ extern "C" sl_sns *sl_sns_create_configured(const IHS_ClientConfig *config, cons
     SteamNetworkingErrMsg err = {};
     try {
         b = new sl_sns;
+        b->http_global = sl_http_global_acquire();
+        if (!b->http_global) {
+            copy_error(err, sizeof(err), "cannot initialize HTTPS resources");
+            goto fail;
+        }
         b->bridge_init.reset(new BridgeInit(*config, *m));
         /* Manual mode precedes SDK initialization, preventing a service worker
          * from racing the caller's pump or teardown. */
@@ -471,7 +520,8 @@ extern "C" sl_sns *sl_sns_create_configured(const IHS_ClientConfig *config, cons
             goto fail;
         b->initialized = true;
         b->sockets = SteamNetworkingSockets();
-        SteamNetworkingUtils()->SetDebugOutputFunction(k_ESteamNetworkingSocketsDebugOutputType_None, nullptr);
+        SteamNetworkingUtils()->SetDebugOutputFunction(
+            k_ESteamNetworkingSocketsDebugOutputType_None, nullptr);
         sl_gns_set_steam_link_app_id();
         b->share_ip = share_ip;
         b->sockets->ResetIdentity(nullptr);
@@ -511,7 +561,9 @@ extern "C" sl_sns *sl_sns_create_configured(const IHS_ClientConfig *config, cons
             goto fail;
         }
         return b;
-    } catch (const std::bad_alloc &) { copy_error(err, sizeof(err), "SNS allocation failed"); }
+    } catch (const std::bad_alloc &) {
+        copy_error(err, sizeof(err), "SNS allocation failed");
+    }
 fail:
     copy_error(error, error_size, err[0] ? err : "SNS initialization failed");
     if (b)
@@ -520,36 +572,42 @@ fail:
         sdk_owned = false;
     return nullptr;
 }
-template<class Sockets, class Utils>
+template <class Sockets, class Utils>
 static bool check_connection_with(sl_sns *b, Sockets *sockets, Utils *utils) {
     std::lock_guard<std::mutex> api_lock(b->connection_mutex);
     /* The official synchronous BInit precedes BConnect/CheckConnection. Our
      * asynchronous config/certificate HTTP stage has no SDK handle yet and
      * must not be mistaken for an already-invalidated connection. */
-    if (!b->connection_attempted) return false;
+    if (!b->connection_attempted)
+        return false;
     nsl::SnsConnectionObservation observed;
     auto source = [&] {
         switch (observed.failure) {
-        case nsl::SnsCheckFailure::Info: return SL_SNS_TERMINAL_CONNECTION_INFO;
-        case nsl::SnsCheckFailure::Status: return SL_SNS_TERMINAL_STATUS;
-        case nsl::SnsCheckFailure::None: return SL_SNS_TERMINAL_NONE;
-        default: return SL_SNS_TERMINAL_CONNECTION;
+        case nsl::SnsCheckFailure::Info:
+            return SL_SNS_TERMINAL_CONNECTION_INFO;
+        case nsl::SnsCheckFailure::Status:
+            return SL_SNS_TERMINAL_STATUS;
+        case nsl::SnsCheckFailure::None:
+            return SL_SNS_TERMINAL_NONE;
+        default:
+            return SL_SNS_TERMINAL_CONNECTION;
         }
     };
     auto update_info = [&] {
-        if (!observed.infoValid) return;
+        if (!observed.infoValid)
+            return;
         const auto &info = observed.info;
         b->end_reason = info.m_eEndReason;
         b->stats.sdk_state = int(info.m_eState);
-        b->stats.authenticated = !(info.m_nFlags & k_nSteamNetworkConnectionInfoFlags_Unauthenticated);
+        b->stats.authenticated =
+            !(info.m_nFlags & k_nSteamNetworkConnectionInfoFlags_Unauthenticated);
         b->stats.relayed = (info.m_nFlags & k_nSteamNetworkConnectionInfoFlags_Relayed) != 0;
     };
-    bool valid = nsl::CheckSnsConnection(sockets, utils, connection_view(b),
-        observed, [&] {
-            update_info();
-            record_terminal(b, source(), observed.detail, &observed.info);
-            unlink_signaling(b);
-        });
+    bool valid = nsl::CheckSnsConnection(sockets, utils, connection_view(b), observed, [&] {
+        update_info();
+        record_terminal(b, source(), observed.detail, &observed.info);
+        unlink_signaling(b);
+    });
     update_info();
     record_terminal(b, source(), observed.detail, observed.infoValid ? &observed.info : nullptr);
     if (b->q->state == SL_SNS_FAILED || b->q->state == SL_SNS_CLOSED)
@@ -565,19 +623,19 @@ static void signal_updated(void *ctx) {
     // once, even for an empty inner message or a rejected SDK signal.
     check_connection(static_cast<sl_sns *>(ctx));
 }
-template<class Sockets>
-static bool receive_messages(sl_sns *b, Sockets *sockets) {
-    return nsl::PumpSnsReceive(sockets, b->connection,
-        [b](SteamNetworkingMessage_t **messages, int count) {
+template <class Sockets> static bool receive_messages(sl_sns *b, Sockets *sockets) {
+    return nsl::PumpSnsReceive(
+        sockets, b->connection, [b](SteamNetworkingMessage_t **messages, int count) {
             bool overflow = false;
             {
                 std::lock_guard<std::mutex> lock(b->q->mutex);
                 for (int i = 0; i < count; ++i) {
                     SteamNetworkingMessage_t *m = messages[i];
                     ++b->stats.datagrams_received;
-                    if (!overflow && (m->m_cbSize < 0 || !b->q->rx.push(
-                            static_cast<const uint8_t *>(m->m_pData),
-                            static_cast<size_t>(m->m_cbSize), DATAGRAM_MAX)))
+                    if (!overflow &&
+                        (m->m_cbSize < 0 ||
+                         !b->q->rx.push(static_cast<const uint8_t *>(m->m_pData),
+                                        static_cast<size_t>(m->m_cbSize), DATAGRAM_MAX)))
                         overflow = true;
                     m->Release();
                 }
@@ -589,17 +647,27 @@ static bool receive_messages(sl_sns *b, Sockets *sockets) {
 static void update_backend(sl_sns *b, uint64_t now) {
     if (!b || !b->initialized)
         return;
-    /* Official BInit returns before SDR UpdateState creates the SDK handle.
-     * Let the caller create IHS/start its deadline after config completion;
-     * the next owner pass may then start SDK route finding. */
-    bool connect_now = b->config_ready && !b->connection_attempted;
+    /* One explicit preparation -> IHS Connect -> SDK start handoff. D-A104:
+     * the port's 90s HTTPS fallback cannot live inside the player's 10s wait.
+     * Unlike the original caller, prepare the independent signaling session
+     * before admitting IHS. Its later loss never restarts this admission gate.
+     * An explicit start replaces the former "skip one Update" timing contract. */
+    if (!b->preparation_clock) {
+        b->preparation_at = now;
+        b->preparation_clock = true;
+    }
+    if (!b->session_started && now - b->preparation_at >= SL_SNS_PREPARATION_BUDGET_MS &&
+        b->q->state == SL_SNS_CONNECTING) {
+        close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_PREPARATION);
+        return;
+    }
     SteamNetworkingSockets_Poll(0);
 #if NSL_SNS_PROBES
     sl_gns_sdr_probe_update(b->relay_probe);
 #endif
     b->sockets->RunCallbacks();
     pump_config(b);
-    if (connect_now && b->q->state == SL_SNS_CONNECTING) {
+    if (b->session_started && !b->connection_attempted && b->q->state == SL_SNS_CONNECTING) {
         bool started = begin_connection(b);
         config_event(b, started ? "p2p_started" : "p2p_start_failed", -1);
         if (!started)
@@ -625,15 +693,32 @@ static void update_backend(sl_sns *b, uint64_t now) {
             }
     }
     sl_stream_bridge_update(b->bridge, now,
-        b->q->state == SL_SNS_CONNECTING || b->q->state == SL_SNS_CONNECTED);
+                            b->q->state == SL_SNS_CONNECTING || b->q->state == SL_SNS_CONNECTED);
+    if (!b->signaling_ready && b->config_ready && sl_stream_bridge_ready(b->bridge))
+        b->signaling_ready = true;
+    unsigned phase = b->session_started ? 4 : b->signaling_ready ? 3 : b->config_ready ? 2 : 1;
+    if (phase != b->preparation_phase) {
+#if NSL_DIAGNOSTICS
+        char line[160];
+        snprintf(line, sizeof(line), "sns_init phase=%s elapsed_ms=%llu",
+                 phase == 1   ? "configuration"
+                 : phase == 2 ? "signaling"
+                 : phase == 3 ? "ready"
+                              : "media",
+                 (unsigned long long)(now - b->preparation_at));
+        sl_dns_policy_report(line);
+#endif
+        b->preparation_phase = phase;
+    }
     if (b->q->state != SL_SNS_CONNECTED)
         return;
     if (!receive_messages(b, b->sockets))
         close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_DATAGRAM);
 }
 extern "C" void sl_sns_update(sl_sns *b, uint64_t now) {
-    try { update_backend(b, now); }
-    catch (const std::bad_alloc &) {
+    try {
+        update_backend(b, now);
+    } catch (const std::bad_alloc &) {
         if (b)
             close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_MEMORY);
     }
@@ -641,16 +726,29 @@ extern "C" void sl_sns_update(sl_sns *b, uint64_t now) {
 extern "C" sl_sns_state sl_sns_get_state(const sl_sns *b) {
     return b ? b->q->state.load() : SL_SNS_CLOSED;
 }
-extern "C" bool sl_sns_session_ready(const sl_sns *b) {
-    if (!b || !b->config_ready) return false;
+extern "C" bool sl_sns_initialized(const sl_sns *b) {
+    if (!b || !b->config_ready)
+        return false;
     sl_sns_state state = b->q->state.load();
     return state == SL_SNS_CONNECTING || state == SL_SNS_CONNECTED;
 }
-extern "C" int sl_sns_end_reason(const sl_sns *b) { return b ? b->end_reason : 0; }
+extern "C" bool sl_sns_session_ready(const sl_sns *b) {
+    return sl_sns_initialized(b) && b->signaling_ready;
+}
+extern "C" bool sl_sns_start_session(sl_sns *b) {
+    if (!sl_sns_session_ready(b))
+        return false;
+    b->session_started = true;
+    return true;
+}
+extern "C" int sl_sns_end_reason(const sl_sns *b) {
+    return b ? b->end_reason : 0;
+}
 extern "C" void sl_sns_get_stats(const sl_sns *b, sl_sns_stats *out) {
     if (out) {
         *out = b ? b->stats : sl_sns_stats{};
-        if (b) out->datagrams_sent = b->datagrams_sent.load();
+        if (b)
+            out->datagrams_sent = b->datagrams_sent.load();
     }
 }
 #if NSL_SNS_PROBES
@@ -678,92 +776,116 @@ extern "C" void sl_sns_sdr_debug(const sl_sns *b, unsigned out[16]) {
 }
 extern "C" bool sl_sns_test_relay_loss(sl_sns *b, int mode, unsigned out[5]) {
 #if NSL_ENABLE_SDR
-    bool result=b && b->connection && sl_gns_sdr_test_loss(b->connection, mode, out);
-    if (result && mode>=0) b->observe_loss=mode!=0;
+    bool result = b && b->connection && sl_gns_sdr_test_loss(b->connection, mode, out);
+    if (result && mode >= 0)
+        b->observe_loss = mode != 0;
     return result;
 #else
-    (void)b; (void)mode; (void)out;
+    (void)b;
+    (void)mode;
+    (void)out;
     return false;
 #endif
 }
 extern "C" bool sl_sns_test_migration(sl_sns *b, bool start, unsigned out[6]) {
 #if NSL_ENABLE_SDR
-    return b && b->connection && sl_gns_sdr_test_migration(b->connection,start,out);
+    return b && b->connection && sl_gns_sdr_test_migration(b->connection, start, out);
 #else
-    (void)b; (void)start; (void)out; return false;
+    (void)b;
+    (void)start;
+    (void)out;
+    return false;
 #endif
 }
 extern "C" bool sl_sns_loss_snapshot(sl_sns *b, sl_sdr_loss_snapshot *out) {
 #if NSL_ENABLE_SDR
-    if (!b || !out) return false;
-    if (b->connection && sl_gns_sdr_loss_snapshot(b->connection,out)) return true;
-    if (!b->terminal_loss_valid) return false;
-    *out=b->terminal_loss;
+    if (!b || !out)
+        return false;
+    if (b->connection && sl_gns_sdr_loss_snapshot(b->connection, out))
+        return true;
+    if (!b->terminal_loss_valid)
+        return false;
+    *out = b->terminal_loss;
     return true;
 #else
-    (void)b; (void)out; return false;
+    (void)b;
+    (void)out;
+    return false;
 #endif
 }
 extern "C" bool sl_sns_test_terminal(sl_sns *b, int packet_case) {
 #if NSL_ENABLE_SDR
     return b && b->connection && sl_gns_sdr_test_terminal(b->connection, packet_case);
 #else
-    (void)b; (void)packet_case;
+    (void)b;
+    (void)packet_case;
     return false;
 #endif
 }
 #endif
 extern "C" int sl_sns_set_mtu(sl_sns *b, int mtu) {
-    if (!b) return -1;
+    if (!b)
+        return -1;
     std::lock_guard<std::mutex> api_lock(b->connection_mutex);
     return nsl::SetSnsMaximumMTU(SteamNetworkingUtils(), b->connection, mtu);
 }
 static bool send_datagram(void *ctx, const uint8_t *p, size_t n) {
     sl_sns *b = static_cast<sl_sns *>(ctx);
-    if (!b) return nsl::SnsSendAccepted(3);
+    if (!b)
+        return nsl::SnsSendAccepted(3);
     std::lock_guard<std::mutex> api_lock(b->connection_mutex);
     int result = nsl::SendSnsDatagram(b->sockets, b->connection, b->q->state.load(), p, n);
-    if (result == 0) ++b->datagrams_sent;
+    if (result == 0)
+        ++b->datagrams_sent;
     return nsl::SnsSendAccepted(result);
 }
 static int wait_datagram(void *ctx, uint32_t wait_us) {
     sl_sns *b = static_cast<sl_sns *>(ctx);
-    if (!b) return -1;
+    if (!b)
+        return -1;
     std::unique_lock<std::mutex> lock(b->q->mutex);
     b->q->wake.wait_for(lock, std::chrono::microseconds(wait_us), [&] {
         return !b->q->rx.empty() || b->q->state == SL_SNS_FAILED || b->q->state == SL_SNS_CLOSED;
     });
-    if (b->q->state == SL_SNS_FAILED || b->q->state == SL_SNS_CLOSED) return -1;
+    if (b->q->state == SL_SNS_FAILED || b->q->state == SL_SNS_CLOSED)
+        return -1;
     return b->q->rx.empty() ? 0 : 1;
 }
-static int receive_datagram(void *ctx, uint8_t *p, size_t capacity,
-                            size_t *received, uint32_t wait_us) {
+static int receive_datagram(void *ctx, uint8_t *p, size_t capacity, size_t *received,
+                            uint32_t wait_us) {
     sl_sns *b = static_cast<sl_sns *>(ctx);
-    if (!b || !p || !received) return -1;
+    if (!b || !p || !received)
+        return -1;
     std::unique_lock<std::mutex> lock(b->q->mutex);
     if (wait_us)
         b->q->wake.wait_for(lock, std::chrono::microseconds(wait_us), [&] {
-            return !b->q->rx.empty() || b->q->state == SL_SNS_FAILED || b->q->state == SL_SNS_CLOSED;
+            return !b->q->rx.empty() || b->q->state == SL_SNS_FAILED ||
+                   b->q->state == SL_SNS_CLOSED;
         });
     /* Like official Recv, terminal handle state takes priority over old data. */
-    if (b->q->state == SL_SNS_FAILED || b->q->state == SL_SNS_CLOSED) return -1;
-    if (b->q->rx.empty()) return 0;
+    if (b->q->state == SL_SNS_FAILED || b->q->state == SL_SNS_CLOSED)
+        return -1;
+    if (b->q->rx.empty())
+        return 0;
     const Message &m = b->q->rx.front();
-    if (m.size() > capacity) return -1;
+    if (m.size() > capacity)
+        return -1;
     *received = m.size();
-    if (*received) memcpy(p, m.data(), *received);
+    if (*received)
+        memcpy(p, m.data(), *received);
     b->q->rx.pop();
     return 1;
 }
 static size_t next_datagram_size(void *ctx) {
     sl_sns *b = static_cast<sl_sns *>(ctx);
-    if (!b) return 0;
+    if (!b)
+        return 0;
     std::lock_guard<std::mutex> lock(b->q->mutex);
     return b->q->rx.empty() ? 0 : b->q->rx.front().size();
 }
 extern "C" const IHS_DatagramTransport *sl_sns_datagram_transport(void) {
-    static const IHS_DatagramTransport callbacks = {
-        send_datagram, receive_datagram, wait_datagram, DATAGRAM_MAX, next_datagram_size};
+    static const IHS_DatagramTransport callbacks = {send_datagram, receive_datagram, wait_datagram,
+                                                    DATAGRAM_MAX, next_datagram_size};
     return &callbacks;
 }
 extern "C" void sl_sns_destroy(sl_sns *b) {
@@ -776,15 +898,16 @@ extern "C" void sl_sns_destroy(sl_sns *b) {
         std::lock_guard<std::mutex> lock(b->q->mutex);
         b->q->owner = false;
     }
-    close_backend(b, SL_SNS_CLOSED, SL_SNS_TERMINAL_NONE, 0,
-        nsl::SnsDestroyedReason, nsl::SnsDestroyedDebug);
+    close_backend(b, SL_SNS_CLOSED, SL_SNS_TERMINAL_NONE, 0, nsl::SnsDestroyedReason,
+                  nsl::SnsDestroyedDebug);
 #if NSL_SNS_PROBES
     sl_gns_sdr_probe_destroy(b->relay_probe);
 #endif
     if (!b->certificate.empty())
         wipe(b->certificate.data(), b->certificate.size());
     if (b->request) {
-        if (b->request_added) curl_multi_remove_handle(b->http, b->request);
+        if (b->request_added)
+            curl_multi_remove_handle(b->http, b->request);
         b->request_added = false;
         curl_easy_cleanup(b->request);
         sl_http_route_clear(&b->route);
@@ -795,6 +918,8 @@ extern "C" void sl_sns_destroy(sl_sns *b) {
     if (b->initialized)
         GameNetworkingSockets_Kill();
     SteamNetworkingSockets_SetManualPollMode(false);
+    if (b->http_global)
+        sl_http_global_release();
     delete b;
     sdk_owned = false;
 }
