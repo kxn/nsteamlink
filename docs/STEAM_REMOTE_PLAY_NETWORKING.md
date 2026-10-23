@@ -918,8 +918,11 @@ else if sends_in_round <= 2 and now >= next_extra_send:
 它不是任何流状态下都重启 ICE 的通用网络变化处理器。
 固定Android包的广播/JNI与Qt可达性通知还存在独立的状态去重：原online slot只在有效
 access变化时通知，显式禁止网络访问也会抑制恢复通知。原watcher的网络slot仅在manager
-尚未启动时尝试BStart，不调用上述API；完整bearer配置扫描和自然事件调度仍未串接。
-因此不能把每次Wi-Fi变化直接当作HandleNetworkChanged或DNS失效，详见协议参考§177。
+尚未启动时尝试BStart，不调用上述API。bearer原initialize订阅activeNetworkChanged，
+原slot thunk到达配置扫描入口；给定配置变化时，Qt按活动集合空性是否改变发online
+边沿。先激活新配置再停用旧配置可没有边沿；相反顺序可产生离线、在线两次。
+完整扫描正文与自然交付仍未执行，且配置变化还有独立signal。因此不能把每次Wi-Fi
+变化直接当作HandleNetworkChanged或DNS失效，详见协议参考§177–178。
 
 ### 10.3 应用接线与可复现边界
 

@@ -13640,3 +13640,79 @@ PYTHONPATH=/path/to/audit-deps python3 tools/steam-network-watchers-audit.py \
   --dexdump /path/to/android-build-tools/dexdump --output /tmp/watchers.json
 # 在相同参数上加 --mutation online-duplicate，必须因通知重复而断言失败。
 ```
+
+## 178. Android bearer订阅与Qt活动配置集合的在线边沿
+
+Evidence：`tools/steam-bearer-config-audit.py` 使用§177相同完整SHA的bearer、Qt及Shell，
+执行原引擎initialize、捕获原connectImpl参数、执行所捕获slot的原member-function thunk；
+另执行原configurationChanged的集合决策及signal wrapper。配置扫描入口、键值存储和
+Qt交付为明确边界，不能把这两段执行描述为一次真实Android切网。
+
+### 引擎初始化及原通知绑定
+
+bearer metadata `0x17270` 的本地方法依次为updateConfigurations、initialize、
+requestUpdate，原static dispatch为`0x119a0`。原initialize `0xc2a4` 首先检查
+engine+0x40：非空立即返回；空则调用backend取得入口`0x10d98`并保存返回指针。
+backend返回空时不扫描、不订阅；工具另一次显式initialize可重试成功，不能据此
+发明后台自动重试或重试期限。backend非空时按原顺序：
+
+1. `0xc2e0`调用updateConfigurations `0xc37c`，记录首次扫描入口。
+2. 原码构造slot object：impl=`0xdeb8`、target=`0xc37c`、this adjustment=0。
+3. `0xc348`调用connectImpl：sender为backend，signal=`0x12384`，receiver为engine，
+   slot为`0xc37c`，connection type=0，sender metadata=`0x175f0`。
+
+原native `0x11660` 经§177的warm singleton发activeNetworkChanged。显式交付适配器
+读取上述原slot object并执行其原thunk `0xdeb8`（operation=1），到达扫描入口，
+没有手写替代updateConfigurations调用。两组backend输入（首次成功、首次失败后
+显式重试成功）各验证两次native通知、重复initialize幂等，以及requestUpdate
+`0xd3d0`转入同一扫描入口。connectImpl只捕获绑定；实际QObject连接存储、跨线程
+排队、singleton冷构造和扫描正文均未执行。type=0不证明此处自然交付必然同步。
+
+### 配置变化与在线状态并非同一种通知
+
+Qt metadata `0x3a5040` 的本地signal ID2是configurationChanged，ID4是
+onlineStateChanged；输入slot为原`0x18fbc4`，不是按相同名称直接投递到signal。
+显式fixture提供owner、配置私有对象及已存在的活动集合。执行观察如下：
+
+- owner+0x5d bit0未置位时，`0x18fce0`先发configurationChanged，随后才修改集合。
+  因而signal激活终点看到修改前的集合；不把这个调用点次序扩大为所有receiver的
+  自然处理次序。原QNetworkConfiguration临时对象构造、析构及引用增减均执行。
+- 原`0x18fd10`对配置state作**精确等于14**判断：相等则调用插入`0x122c84`，
+  其他则调用删除`0x122eb0`。这不同于§177另一分支的`state & 14`判断。
+  两个集合操作由按原实参键执行的存储provider承担；它不决定状态准入或通知。
+- 原码比较集合修改前、后的空／非空状态；只有空性改变，且上述bit0未置位，才在
+  `0x18fd6c`发onlineStateChanged，值为修改后集合非空。重复活动配置变化仍可有
+  configurationChanged，但不重复在线边沿。
+- bit0置位同时抑制这两类signal，集合仍按状态更新。输入flags=2不抑制通知；
+  不能将整个字节任意非零都当作该门禁，也未推断该字段在完整对象生命周期的含义。
+
+两个受控输入程序说明为什么不能把一次网络变化机械转换成离线／在线：
+
+| 初始活动集合 | 顺序输入 | 原集合大小 | onlineStateChanged |
+|---|---|---|---|
+| wifi | mobile变14；wifi变6 | 1→2→1 | 无 |
+| wifi | wifi变6；mobile变14 | 1→0→1 | 0、1 |
+
+这些名称仅标识fixture中的不同键；未执行Android接口枚举，不能据此断定真实Wi-Fi
+切热点必然采用其中一种顺序。共15组程序还覆盖重复活动／非活动、重新激活、多活动
+配置退休、state=0/1/2/6/8/15及bit0门禁。其实际online值经显式适配器进入§177原Qt
+可达性slot，再交付已运行state1的原Shell watcher：这些输入不调用BStart或
+HandleNetworkChanged。没有online边沿也不证明完整Qt不存在其他配置变化处理路径。
+
+Conclusion：原网络通知到扫描入口的绑定、以及给定配置变化输入后的在线边沿条件
+已分别得到原指令支持。尚未执行的扫描正文如何产生配置、完整配置管理器到网络访问
+对象的自然连接、其他配置slot、事件循环和HTTP/session处理仍是明确边界。
+本节不证明切网必然清DNS、重建HTTP或重启Steam发现，不改变Switch运行策略。
+
+工具的六类原指令反例移除首次扫描、订阅、活动状态分支、在线边沿门禁、online signal
+调用、configuration signal调用，均须在执行后因相应行为断言失败。签名字节不符、
+fixture初始化失败或模拟器异常不计入行为反例。报告保留原metadata、范围SHA、
+工具及依赖SHA、绑定参数、逐步集合与通知以及Shell交付结果。
+
+```sh
+PYTHONPATH=/path/to/audit-deps python3 tools/steam-bearer-config-audit.py \
+  --qt /path/to/bundled/libQt5Network_arm64-v8a.so \
+  --bearer /path/to/bundled/libplugins_bearer_qandroidbearer_arm64-v8a.so \
+  --shell /path/to/pinned/libshell-arm64.so --output /tmp/bearer-config.json
+# 相同参数增加 --mutation online-edge，必须因错误的在线通知序列而失败。
+```
