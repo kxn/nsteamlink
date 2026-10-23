@@ -8,10 +8,13 @@ and logging are providers. Fixtures distinguish absent buffers from explicit
 and pooling branches execute, with declared critical-section/memset terminals. The optional independent
 rate callback, downstream frame delivery and frame deletion are explicit endpoints.
 Unencrypted frame metadata also enters the real sender and FPS enters the real
-frame-period setter before ping feedback. No Steam
+frame-period setter before ping feedback. A bounded original probe-worker/request
+loop observes integer protobuf objects at Frame::Put, not serialized packets.
+Original response gates/list lookup consume explicit decoded fields before the
+actual RTTI callback and rate recomputation. No Steam
 process, packets, decoder/encoder hardware or real thread scheduling is touched.
-Negative controls intentionally change decoder margin or encoder-state store
-and must fail; they are not product code or adaptive strategies for Switch.
+Negative controls change original instructions/constants and must fail output
+oracles; they are not product code or adaptive strategies for Switch.
 """
 import pefile, struct, json, hashlib, math, argparse
 from pathlib import Path
@@ -41,6 +44,10 @@ parser.add_argument(
         "history-pool",
         "sender-rate",
         "fps-threshold",
+        "ping-slot-expiry",
+        "ping-auto-sequence",
+        "ping-response-size",
+        "ping-ledger-expiry",
     ],
     default="none",
     help="Negative controls: each mutation must fail the original-output oracle",
@@ -71,6 +78,9 @@ class M:
         self.rate_inputs = []
         self.sender_endpoints = []
         self.sender_results = []
+        self.probe_messages = []
+        self.probe_sleeps = []
+        self.response_callbacks = []
         if args.mutation == "decoder-margin":
             u.mem_write(0x13AC8B6C0, struct.pack("<f", 1.0))
         if args.mutation == "ping-recovery":
@@ -87,6 +97,18 @@ class M:
         if args.mutation == "fps-threshold":
             assert bytes(u.mem_read(0x13A171E78, 4)) == bytes.fromhex("f30f5ec1")
             u.mem_write(0x13A171E78, b"\x90" * 4)
+        if args.mutation == "ping-slot-expiry":
+            assert bytes(u.mem_read(0x13A171D9C, 7)) == bytes.fromhex("c70498000080bf")
+            u.mem_write(0x13A171D9C, b"\x90" * 7)
+        if args.mutation == "ping-auto-sequence":
+            assert bytes(u.mem_read(0x13A1EB03F, 6)) == bytes.fromhex("ff876c020000")
+            u.mem_write(0x13A1EB03F, b"\x90" * 6)
+        if args.mutation == "ping-response-size":
+            assert bytes(u.mem_read(0x13A1F058C, 2)) == bytes.fromhex("7411")
+            u.mem_write(0x13A1F058C, b"\xeb\x11")
+        if args.mutation == "ping-ledger-expiry":
+            assert bytes(u.mem_read(0x13A1EB093, 2)) == bytes.fromhex("786a")
+            u.mem_write(0x13A1EB093, bytes.fromhex("7e6a"))
         self.q(0x13AC4B528, 0x110000)
         u.mem_write(0x110000, b"\xc3")
         u.mem_write(0x13A1A0560, b"\xc3")
@@ -144,7 +166,78 @@ class M:
         self.f(self.obj + 0x9C, 10)
         self.f(self.obj + 0xA4, 1)
 
+    def probe_storage(self, root):
+        self.critical_sections()
+        self.probe_root = root
+        self.q(root + 0x280, 0x330000)
+        self.u.mem_write(root + 0x288, struct.pack("<8i", 16, 0, -1, -1, -1, 0, 0, 0))
+        self.q(root + 0x2A8, 0x330000)
+        self.q(self.obj + 0x58, 0x380000)
+        self.u.mem_write(0x380000, struct.pack("<500f", *([10.0] * 500)))
+        # Packet timestamp, frame storage/serialization/destruction and global
+        # send guards are declared boundaries. Request construction, linked-list
+        # allocation/linking, sequence selection and mode checks stay original.
+        ticks = round(self.now * 65536) & 0xFFFFFFFF
+        self.u.mem_write(0x13A1E9F50, b"\xb8" + struct.pack("<I", ticks) + b"\xc3")
+        for terminal in [
+            0x13A1DFDD0,
+            0x13A1E20C0,
+            0x13A1DFE40,
+            0x13A47AC40,
+            0x13A1F6E60,
+            0x13A1F6E70,
+        ]:
+            self.u.mem_write(terminal, b"\xc3")
+
+    def response_boundary(self, values):
+        self.decoded_response = values
+        self.critical_sections()
+        # Explicit decoded fields and copied frame metadata, not real wire or
+        # a claim to execute the C++ protobuf parser/authentication/socket.
+        for terminal in [0x13A1DFE10, 0x13A1E1420, 0x13A1DFE40, 0x13A47AC80]:
+            self.u.mem_write(terminal, b"\xc3")
+        self.q(0x13AC4B5A0, 0x110350)
+        self.u.mem_write(0x110350, b"\xc3")
+
     def hook(self, u, pc, size, data):
+        if pc == 0x110500 and hasattr(self, "probe_iterations"):
+            self.probe_sleeps.append(u.reg_read(UC_X86_REG_RCX))
+            if len(self.probe_sleeps) == self.probe_iterations:
+                # Bound the original loop at an OS sleep boundary. No actual
+                # thread scheduling or wall-clock 20ms interval is claimed.
+                u.mem_write(self.obj + 0x0C, struct.pack("<I", 0))
+        if pc == 0x13A1E20C0 and hasattr(self, "probe_root"):
+            message = u.reg_read(UC_X86_REG_RDX)
+            self.probe_messages.append(
+                dict(
+                    vtable=hex(struct.unpack("<Q", u.mem_read(message, 8))[0]),
+                    presence=struct.unpack("<I", u.mem_read(message + 0x10, 4))[0],
+                    sequence=struct.unpack("<I", u.mem_read(message + 0x18, 4))[0],
+                    requested=struct.unpack("<I", u.mem_read(message + 0x1C, 4))[0],
+                    length_prefix=bool(u.reg_read(UC_X86_REG_R8) & 255),
+                )
+            )
+        if hasattr(self, "decoded_response"):
+            values = self.decoded_response
+            if pc == 0x13A1DFE10:
+                dest = u.reg_read(UC_X86_REG_RCX)
+                u.mem_write(dest + 0x18, b"\x00\x02")
+                u.mem_write(dest + 0x28, struct.pack("<I", values["received_ticks"]))
+            if pc == 0x13A1E1420:
+                message = u.reg_read(UC_X86_REG_RDX)
+                u.mem_write(message + 0x10, struct.pack("<I", 3))
+                u.mem_write(
+                    message + 0x18,
+                    struct.pack("<II", values["sequence"], values["size"]),
+                )
+                u.reg_write(UC_X86_REG_RAX, int(values.get("parsed", True)))
+            if pc == 0x13A18E8F0:
+                self.response_callbacks.append(
+                    dict(
+                        sequence=u.reg_read(UC_X86_REG_RDX) & 0xFFFFFFFF,
+                        elapsed_ticks=u.reg_read(UC_X86_REG_R8) & 0xFFFFFFFF,
+                    )
+                )
         if pc == 0x13A1710F0:
             self.rate_inputs.append(
                 dict(
@@ -543,6 +636,239 @@ for fps, expected_coefficient in [(30, 1.0), (60, 1.0), (120, 0.2043309211730957
         )
     )
 
+# The thread member and estimator callback vtables are those installed by the
+# actual constructors. The worker's OS sleep is bounded; the original worker,
+# callback, request/list producer and integer protobuf constructor all execute.
+# Frame::Put is the observation boundary, NOT serialized packets or delivery.
+for name, slot, counter, active, iterations, sequences, final_counter in [
+    ("zero-slot-auto-sequence", 0, 0, 1, 1, [1], 1),
+    ("ordinary-slots", 1, 700, 1, 2, [1, 2], 700),
+    ("wrap-slot-zero-auto", 499, 700, 1, 2, [499, 701], 701),
+    ("inactive-no-probe", 0, 700, 0, 0, [], 700),
+]:
+    root = 0x200000
+    m = M(2, obj=root + 0x4928)
+    m.probe_storage(root)
+    thread = m.obj + 0x100
+    m.q(thread, 0x13AC8B458)
+    m.q(thread + 0x48, m.obj)
+    m.q(m.obj, root + 0x4548)
+    m.q(root + 0x4548, 0x13AC8FB38)
+    m.u.mem_write(m.obj + 0x0C, struct.pack("<I", active))
+    m.u.mem_write(m.obj + 0x60, struct.pack("<I", slot))
+    m.u.mem_write(root + 0x26C, struct.pack("<I", counter))
+    m.q(0x13AC4B4E8, 0x110500)
+    m.u.mem_write(0x110500, b"\xc3")
+    m.probe_iterations = iterations
+    worker = struct.unpack("<Q", m.u.mem_read(0x13AC8B468, 8))[0]
+    assert worker == 0x13A171D60
+    m.call(worker, ctx=thread)
+    assert m.probe_sleeps == [20] * iterations
+    assert m.probe_messages == [
+        dict(
+            vtable="0x13ad5c9f0",
+            presence=3,
+            sequence=seq,
+            requested=0,
+            length_prefix=True,
+        )
+        for seq in sequences
+    ], (name, m.probe_messages)
+    window = struct.unpack("<500f", m.u.mem_read(0x380000, 500 * 4))
+    expired = {(slot + i) % 500 for i in range(iterations)}
+    assert window == tuple(-1.0 if i in expired else 10.0 for i in range(500)), (
+        "worker slot expiry",
+        name,
+    )
+    cursor = struct.unpack("<I", m.u.mem_read(m.obj + 0x60, 4))[0]
+    assert cursor == (slot + iterations) % 500
+    assert struct.unpack("<I", m.u.mem_read(root + 0x26C, 4))[0] == final_counter
+    count = struct.unpack("<I", m.u.mem_read(root + 0x29C, 4))[0]
+    nodes = [
+        struct.unpack("<6I", m.u.mem_read(0x330000 + i * 24, 24)) for i in range(count)
+    ]
+    assert count == iterations and [node[0] for node in nodes] == sequences
+    assert all(node[1] == 0 and node[2] == 131072 and node[3] == 0 for node in nodes)
+    cases.append(
+        dict(
+            name="original-probe-worker-" + name,
+            initial_slot=slot,
+            requested_sleeps_ms=m.probe_sleeps,
+            next_slot=cursor,
+            invalidated_slots=sorted(expired),
+            messages_at_put=m.probe_messages,
+            pending_requests=count,
+            initial_auto_counter=counter,
+            final_auto_counter=final_counter,
+            boundary="No wall-clock thread, Frame serialization, socket or client receipt",
+        )
+    )
+
+# Exact original outstanding-request timeout boundaries, with preallocated
+# list storage and one old request. No helper/free-list algorithm is replaced.
+for now, expected_count, expected_used in [
+    (30 - 1 / 65536, 2, 2),
+    (30, 1, 1),
+    (30 + 1 / 65536, 1, 1),
+]:
+    root = 0x200000
+    m = M(now, obj=root + 0x4928)
+    m.probe_storage(root)
+    m.u.mem_write(root + 0x290, struct.pack("<5i", 0, 0, -1, 1, 1))
+    m.u.mem_write(0x330000, struct.pack("<6I", 17, 0, 0, 0, 0xFFFFFFFF, 0xFFFFFFFF))
+    m.u.reg_write(UC_X86_REG_R8, 5)
+    m.call(0x13A1EB010, ctx=root)
+    count = struct.unpack("<I", m.u.mem_read(root + 0x29C, 4))[0]
+    used = struct.unpack("<I", m.u.mem_read(root + 0x2A0, 4))[0]
+    assert (count, used) == (expected_count, expected_used), (
+        "request ledger expiry",
+        now,
+        count,
+        used,
+    )
+    assert m.probe_messages == [
+        dict(
+            vtable="0x13ad5c9f0",
+            presence=3,
+            sequence=5,
+            requested=0,
+            length_prefix=True,
+        )
+    ]
+    tail = struct.unpack("<I", m.u.mem_read(root + 0x294, 4))[0]
+    assert struct.unpack("<I", m.u.mem_read(0x330000 + tail * 24, 4))[0] == 5
+    # Now deliver a decoded reply for the old sequence through the real
+    # receiver. It is eligible just before expiry, absent at/after expiry.
+    m.q(root + 0x38, root + 0x4528)
+    m.q(root + 0x4528, 0x13AC8F8B0)
+    m.u.mem_write(m.obj + 8, b"\x01")
+    m.u.mem_write(m.obj + 0x0C, struct.pack("<I", 1))
+    m.u.reg_write(UC_X86_REG_XMM1, int.from_bytes(struct.pack("<f", 60), "little"))
+    m.call(0x13A171E70)
+    current_ticks = round(now * 65536)
+    m.response_boundary(dict(sequence=17, size=0, received_ticks=current_ticks))
+    m.u.reg_write(UC_X86_REG_R8, 0x300000)
+    m.call(0x13A1F04D0, ctx=root)
+    assert m.response_callbacks == (
+        [dict(sequence=17, elapsed_ticks=current_ticks)] if expected_count == 2 else []
+    )
+    assert m.readf(0xA8) == (1 if expected_count == 2 else 10)
+    cases.append(
+        dict(
+            name="original-outstanding-expiry",
+            old_sent_ticks=0,
+            current_ticks=round(now * 65536),
+            pending_count=count,
+            used_slots=used,
+            tail_slot=tail,
+            messages_at_put=m.probe_messages,
+            old_reply_callbacks=m.response_callbacks,
+            target_after_old_reply=m.readf(0xA8),
+        )
+    )
+
+# Decoded response fields/frame metadata and the outstanding list are inputs.
+# Execute the real receiver's lookup, size check, timestamp clamp and actual
+# session RTTI callback -> ping window -> recomputation. The parser/copy and
+# destructors are explicit terminals, not an authenticated wire experiment.
+for (
+    name,
+    requested,
+    size,
+    sequence,
+    received,
+    parsed,
+    enabled,
+    repeats,
+    nodes_count,
+    admitted,
+) in [
+    ("zero-size", 0, 0, 17, 65536 + 1638, True, 1, 1, 1, True),
+    ("zero-request-ignores-size", 0, 1472, 17, 65536 + 1638, True, 1, 1, 1, True),
+    ("matching-size", 64, 64, 17, 65536 + 1638, True, 1, 1, 1, True),
+    ("size-mismatch", 64, 65, 17, 65536 + 1638, True, 1, 1, 1, False),
+    ("unknown-sequence", 0, 0, 18, 65536 + 1638, True, 1, 1, 1, False),
+    ("negative-time-clamped", 0, 0, 17, 65535, True, 1, 1, 1, True),
+    ("duplicate-response", 0, 0, 17, 65536 + 1638, True, 1, 2, 1, True),
+    ("newest-duplicate-request", 0, 0, 17, 65536 + 1638, True, 1, 1, 2, True),
+    ("disabled-estimator", 0, 0, 17, 65536 + 1638, True, 0, 1, 1, True),
+    ("parse-failure", 0, 0, 17, 65536 + 1638, False, 1, 1, 1, False),
+]:
+    root, requests = 0x200000, 0x330000
+    m = M(2, obj=root + 0x4928)
+    m.response_boundary(
+        dict(sequence=sequence, size=size, received_ticks=received, parsed=parsed)
+    )
+    m.q(root + 0x280, requests)
+    m.u.mem_write(root + 0x294, struct.pack("<I", nodes_count - 1))
+    m.u.mem_write(root + 0x29C, struct.pack("<I", nodes_count))
+    for i in range(nodes_count):
+        m.u.mem_write(
+            requests + i * 24,
+            struct.pack(
+                "<6I",
+                17,
+                requested,
+                65536 if i == nodes_count - 1 else 0,
+                0,
+                i - 1 if i else 0xFFFFFFFF,
+                i + 1 if i + 1 < nodes_count else 0xFFFFFFFF,
+            ),
+        )
+    m.q(root + 0x38, root + 0x4528)
+    m.q(root + 0x4528, 0x13AC8F8B0)
+    m.u.mem_write(m.obj + 8, bytes([enabled]))
+    m.u.mem_write(m.obj + 0x0C, struct.pack("<I", 1))
+    m.q(m.obj + 0x58, 0x380000)
+    m.u.mem_write(0x380000, struct.pack("<500f", *([10.0] * 500)))
+    m.f(m.obj + 0xA0, 0.5)
+    m.u.reg_write(UC_X86_REG_XMM1, int.from_bytes(struct.pack("<f", 60), "little"))
+    m.call(0x13A171E70)
+    for _ in range(repeats):
+        m.u.reg_write(UC_X86_REG_R8, 0x300000)
+        m.call(0x13A1F04D0, ctx=root)
+    expected_callbacks = (
+        [dict(sequence=17, elapsed_ticks=max(received - 65536, 0))] * repeats
+        if admitted
+        else []
+    )
+    assert m.response_callbacks == expected_callbacks, (name, m.response_callbacks)
+    expected_coefficient = 0.5 + repeats * 0.04 if admitted and enabled else 0.5
+    expected_target = expected_coefficient * 10 if admitted and enabled else 10
+    assert math.isclose(m.readf(0xA0), expected_coefficient, rel_tol=1e-6), (
+        name,
+        m.readf(0xA0),
+    )
+    assert math.isclose(m.readf(0xA8), expected_target, rel_tol=1e-6), (
+        name,
+        m.readf(0xA8),
+    )
+    stamps = [
+        struct.unpack("<I", m.u.mem_read(requests + i * 24 + 12, 4))[0]
+        for i in range(nodes_count)
+    ]
+    assert stamps == [0] * (nodes_count - 1) + (
+        [max(received, 65536)] if admitted else [0]
+    )
+    assert struct.unpack("<I", m.u.mem_read(root + 0x29C, 4))[0] == nodes_count
+    cases.append(
+        dict(
+            name="original-response-" + name,
+            outstanding_requested=requested,
+            response_size=size,
+            response_sequence=sequence,
+            parsed=parsed,
+            received_ticks=received,
+            enabled=bool(enabled),
+            repeats=repeats,
+            callbacks=m.response_callbacks,
+            outstanding_count=nodes_count,
+            stored_receive_stamps=stamps,
+            coefficient=m.readf(0xA0),
+            target=m.readf(0xA8),
+        )
+    )
+
 print(
     json.dumps(
         {
@@ -555,8 +881,25 @@ print(
                 "Enter/LeaveCriticalSection for explicit single-thread fixtures",
                 "memset for event-histogram storage",
                 "single-thread global send guards and frame deletion",
+                "bounded worker Sleep with no actual delay or thread scheduling",
+                "packet timestamp; Frame construction/Put/destruction for request-object observation only",
+                "explicit decoded response fields and copied frame metadata; parser and destructors are terminals",
             ],
-            "input_boundary": "Fixtures separately cover empty buffers, nonempty 190-bin event histograms, an explicit 30-slot rate ring and 500-slot ping windows. A valid unencrypted frame buffer enters the real sender and forwarder. Connection absent and nonmatching channel IDs are explicit inputs; the original forwarder returns false. Global guards and frame deletion are terminals, not remote delivery. Header subtraction, key-frame/mode gates, sequence and rate update run original code. Explicit FPS inputs enter the real frame-period setter and ping feedback. Storage, clocks, pressure/enable/thread fields remain explicit inputs; no full constructor/worker/history lifecycle is claimed. Source gate/latch, ping conversion/window/coefficient, recomputation, actual session RTTI bitrate getter and real stage min/store execute original instructions. No actual host packets/encoder device/runtime evidence.",
+            "input_boundary": "Fixtures separately cover empty buffers, nonempty 190-bin event histograms, an explicit 30-slot rate ring and 500-slot ping windows. A valid unencrypted frame buffer enters the real sender and forwarder. Connection absent and nonmatching channel IDs are explicit inputs; the original forwarder returns false. Global guards and frame deletion are terminals, not remote delivery. Header subtraction, key-frame/mode gates, sequence and rate update run original code. Explicit FPS inputs enter the real frame-period setter and ping feedback. A bounded original worker executes callback/request/list/sequence selection and original request construction; Frame::Put is an object observation boundary, not protobuf serialization. The actual response receiver consumes explicit decoded fields/copied frame metadata and executes lookup/size/time gates plus the original RTTI callback/window/recompute. Storage, clocks, pressure/enable/thread fields remain explicit inputs; no complete constructor/concurrent worker/history lifecycle is claimed. No actual host packets/encoder device/runtime evidence.",
+            "probe_bindings": {
+                "session_constructor": "0x13a189cc0",
+                "estimator_member_offset": "0x4928",
+                "request_callback_member_offset": "0x4548",
+                "request_callback_vtable": "0x13ac8fb38",
+                "request_callback_entry": hex(
+                    struct.unpack("<Q", image[0xC8FB40:0xC8FB48])[0]
+                ),
+                "worker_thread_vtable": "0x13ac8b458",
+                "worker_entry": hex(struct.unpack("<Q", image[0xC8B468:0xC8B470])[0]),
+                "outstanding_expiry_ticks": struct.unpack(
+                    "<I", image[0x10BBEE0:0x10BBEE4]
+                )[0],
+            },
             "cases": cases,
             "source_ranges": {
                 hex(a): hashlib.sha256(image[a - base : z - base]).hexdigest()
@@ -567,6 +910,16 @@ print(
                     (0x13A192B90, 0x13A192DA6),
                     (0x13A1F1EB0, 0x13A1F20C7),
                     (0x13A171E70, 0x13A171E82),
+                    (0x13A171D60, 0x13A171DEB),
+                    (0x13A18B320, 0x13A18B331),
+                    (0x13A1EB010, 0x13A1EB335),
+                    (0x13A1EAD10, 0x13A1EAE8C),
+                    (0x13A1F5950, 0x13A1F5A16),
+                    (0x13A4797A0, 0x13A4797BC),
+                    (0x13A4797C0, 0x13A4797DC),
+                    (0x13A1F04D0, 0x13A1F063A),
+                    (0x13A189D53, 0x13A189D62),
+                    (0x13A189F54, 0x13A189FAD),
                     (0x13A171FD0, 0x13A172500),
                     (0x13A18E8F0, 0x13A18E93A),
                     (0x13A171820, 0x13A171A04),

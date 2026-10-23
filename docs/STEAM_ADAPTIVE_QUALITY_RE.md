@@ -164,7 +164,7 @@ x86 `CGameStreamSession` RTTI vtable `0x3aa19f14` 的 +0x24 指向
 
 ### 时间与限额必须按版本核对
 
-独立执行 `tools/steam-adaptive-host64-audit.py` 的49个受控输入（其中8个为Ping窗口、10个为非空统计缓冲、9个为发送producer/FPS阈值）：
+独立执行 `tools/steam-adaptive-host64-audit.py` 的66个受控输入（其中8个为Ping窗口、10个为非空统计缓冲、9个为发送producer/FPS阈值，另17个为Ping producer/请求过期/应答入口）：
 原重算、两类反馈处理、source callback门控、重复loss的latch、真实session虚表getter，
 以及编码stage的回调循环和写入均执行原指令。仅提供时钟、日志、可选第二码率回调、单线程临界区、直方图清零原语、
 全局发送guard、帧删除及下游交付终点；没有改写这些算法入口。输入对象不含速率采样/历史缓冲的那组，原函数
@@ -237,8 +237,8 @@ host `CGameStreamSession` offset=0x4528 的RTTI虚表为 `0x13ac8f8b0`：
 （vtable `0x13ad5cc70`）的对象，解析成功后按sequence找到保存的请求项，
 检查packet-size条件，再以本机保存的发送/接收时间差调用delegate+0x50。
 这是会话通道0的Ping，不是首页主机广播发现、DNS耗时或客户端自行编造的网络状态。
-原控制接收/解析在此为静态绑定证据；8个用例从已验证的callback入口执行，
-不冒充完整加密Socket/认证/主机进程实验。
+这8个用例从已验证的callback入口执行；后面的17例另行进入原请求/应答入口，
+解析仍是显式终点，不冒充完整加密Socket/认证/主机进程实验。
 
 `0x13a171820` 仅在active-thread成员非0且slot<500时处理：写入500槽数组，
 用非负样本计算mean；将新样本与mean的差和阈值(+0x54)比较。在正常有效浮点输入下：
@@ -246,7 +246,7 @@ host `CGameStreamSession` offset=0x4528 的RTTI虚表为 `0x13ac8f8b0`：
 - 差超过阈值时，按超出量/阈值缩小系数(+0xa0)，有0.08下限，且不高于已有系数。
 - 未超过时，正常范围内每次处理可将系数加0.04，最高1，然后执行原recompute。
 - 0.04是每次处理量，不是每秒恢复量；500槽是原数组长度，不代表本次执行了真实
-  工作线程、周期唤醒和完整窗口淘汰。
+  工作线程、周期唤醒和完整窗口淘汰；下面单独执行有界worker原指令。
 
 显式阈值10ms、500槽初始10ms，新样本约25ms（16.16量化后）使系数约0.503609、
 目标约5.036092 Mbps；约40ms触及0.08系数并受1 Mbps下限约束。
@@ -334,6 +334,51 @@ loss、Ping、历史/pressure随后参与容量估计；一个发送producer不�
 之前显式10ms阈值的8例仍是受控边界测试，不能当作官方缺省值；本次进一步补齐了
 其上游设置依据。没有把此处帧周期等同于主机真实Ping发送周期。
 
+### Ping producer、请求账本和实际应答入口
+
+以下17例与此前49例独立列出；49例输出逐项保持不变。固定x64样本、SHA与上文相同。
+构造器 `0x13a189cc0` 把session+0x4548虚表设为 `0x13ac8fb38`，作为observer交给
+session+0x4928的estimator。其worker成员虚表 `0x13ac8b458` 的+0x10指向
+`0x13a171d60`；observer+8指向 `0x13a18b320`，后者尾调用实际请求入口
+`0x13a1eb010`。这些绑定由原构造指令核对；fixture没有运行完整对象构造或真实线程。
+
+4例从原worker开始：active非0时请求Sleep 20ms，在锁内把旧cursor对应的500槽值
+写为−1，cursor模500推进，再以旧cursor通知observer。Sleep是明确的有界调度终点，
+不实际睡眠/开线程；临界区终点不模拟并发。请求protobuf原构造器 `0x13a4797a0`
+执行，观察到vtable `0x13ad5c9f0`、presence=3、sequence和requested-size=0。
+Frame::Put仅记录原对象字段与length-prefix参数，**没有执行请求序列化或实际发送**。
+
+- 非零slot1/2保留为sequence1/2，自动计数器不变；active=0不发请求也不改窗口。
+- slot0在请求入口具有特殊语义：改用session+0x26c自增计数器。初始0产生sequence1；
+  从slot499回绕到0、计数器700时，先产生499，再产生701。不能把worker传入的0
+  无条件当作线上的0，也不能把序列号与500槽索引永远等同。
+- 原请求表使用预分配的16项CUtlLinkedList存储，原插入/链接/删除/复用逻辑执行；
+  这不包含真实分配扩容、完整窗口寿命或实际网络时序。
+
+3例核对请求过期：原全局时限 `0x13b0bbee0=1966080` 个16.16秒tick，即30秒。
+旧sequence17在30秒−1tick仍保留；正好30秒及其后已删除，槽可复用。随后给原应答
+入口同一旧sequence，只有未过期例进入实际RTTI callback、窗口更新和重算。
+这是账本淘汰边界，不是客户端连接/断开超时，不得拿来修改产品等待时间。
+
+另10例从真实应答入口 `0x13a1f04d0` 执行，原response构造器 `0x13a4797c0`
+与vtable `0x13ad5cc70` 保留；Frame复制/解析显式提供已解码字段和接收时间。
+原链表反向查找、尺寸检查、时间处理、delegate+0x50、500槽窗口及recompute均执行：
+
+- 从最新请求向旧请求查找sequence；多个相同sequence时命中新项。
+- 请求size非0时要求应答size相同；请求size=0则不因应答该字段为1472而拒绝。
+  未知sequence、非零size不匹配及解析失败不进入callback。
+- 接收时刻早于发送时刻时，原入口将其钳为发送时刻，RTT为0。
+- 正常应答后原记录仍保留；同一应答再次到来可再次进入callback并调整系数。
+  显式系数0.5的低差样本两次约为0.54、0.58，不能自行加去重改变官方行为。
+- estimator disabled时接收记录仍更新，但callback门禁不改估计目标。
+
+**Evidence / Conclusion：** 这里已跨过“仅从反馈callback调用算法”的边界，核对了
+worker producer和真实请求/应答入口对该callback的使用；socket、加密、protobuf parser、
+真实调度和主机设备仍不在这些执行用例内。slot0替换与回绕带来的真实长期反馈分布
+不能由两次有界迭代推定。四个新增反例分别删除slot失效写入、删除自动sequence自增、
+跳过size拒绝、改变精确过期比较，均在原函数正常执行后的输出比较中失败，
+不是依靠模拟器崩溃、缺少指令支持或patch签名错误制造失败。
+
 ### Switch接线比较需要保留平台边界
 
 IHS `ch_data_video.c::CheckPartialOverflow` 已发送message148，是压缩帧pending
@@ -392,6 +437,10 @@ python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/Stea
 python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation history-pool
 python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation sender-rate
 python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation fps-threshold
+python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation ping-slot-expiry
+python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation ping-auto-sequence
+python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation ping-response-size
+python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation ping-ledger-expiry
 python3 tools/steam-adaptive-client-feedback-audit.py \
   --binary /path/to/pinned/linux/package/bin/steamlink --output /tmp/linux-feedback.json
 # 此反例同样应因反馈缺失而非零退出：
