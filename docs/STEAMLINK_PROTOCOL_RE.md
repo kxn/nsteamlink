@@ -13543,3 +13543,100 @@ Enable清full后等待下一Update，不能在当前Update追加发现包；Disa
 发现。启动资源故障测试同样须泵送start_client选择的deferred owner，符合实际
 runtime worker，而非依赖Status碰巧在首轮读到。这些受控比较不证明自然Qt完整
 事件次序、整个manager等价、真实Steam互操作或Switch loader ABI。
+
+## 177. Android网络通知、Qt可达性去重与发现启动的分层边界
+
+§168的网络slot输入是显式标量，不能据此宣称每次Wi-Fi配置变化都会调用该slot。
+`tools/steam-network-watchers-audit.py` 从同一1.3.32 XAPK的DEX与bearer/Qt库补入
+上游证据，保留Java静态分析、JNI执行、Qt策略与Shell交付之间的区别。
+
+| 固定输入 | SHA256 |
+|---|---|
+| XAPK | `7967bcb832d95890b840da7e65f4617aee40a9ce39233965c28da18119ac4839` |
+| `classes.dex` | `a5c315d683eac7c7f8f73ec096bd414406d80f9ef68180a1ef469f052cd39e44` |
+| `libQt5Network_arm64-v8a.so` | `7db24b7f4443ed0329986ca6e96bbbd0b15a195b949155c667ee8386b4ec6e0a` |
+| `libplugins_bearer_qandroidbearer_arm64-v8a.so` | `b3dc5f7bb6926b289d50d898efa84fa584f05670b3a5b6a3313bad1dbfa7058c` |
+
+Core/Shell仍为§168及前文固定的`50e1d314…8ea38e` / `15b2d798…b238a2`。
+工具先核对各文件完整SHA，再从原Qt metadata读取方法名，验证signal/slot ID及实际
+meta dispatch指针。没有按相似函数名猜测两个模块之间的通知语义。
+
+### Android广播与原JNI注册
+
+重新对固定DEX运行dexdump，静态记录原code item字节与指令：
+
+- `QtNetworkReceiver.registerReceiver(Context)` 为
+  `android.net.conn.CONNECTIVITY_CHANGE` 注册BroadcastReceiver。
+- `BroadcastReceiverPrivate.onReceive(Context,Intent)` 的实际两条指令是无参数调用
+  `access$000()`并返回；它没有在该方法中按Intent内容选择不同的Steam动作。
+- `access$000()` 直接调用私有static native `activeNetworkInfoChanged()`。
+
+bearer原注册函数`0x10c80`经JNI对象/有效性判断后，把原表`0x1bf08`交给JNI
+RegisterNatives，恰好一个方法：`activeNetworkInfoChanged`、`()V`、入口`0x11660`。
+JNI class lookup、GetObjectClass、RegisterNatives与DeleteLocalRef为显式VM终点；
+三个输入覆盖class有效/注册成功、有效/注册失败、class无效。原返回分别1/0/0，
+后两者不能被记为注册成功；有效class的两个分支都释放原local reference。
+
+在“singleton已构造”的显式输入下，原native入口`0x11660`走原signal方法`0x12384`，
+交付Qt metadata`0x175f0`的本地signal ID0。metadata确认为`activeNetworkChanged`，
+不携带可达性标量。未执行singleton冷构造或真实Android广播投递；也未把此signal
+直接等同于下文`networkAccessibleChanged`。bearer引擎扫描配置、配置管理器传播
+online状态及其线程排队仍是这两段执行证据之间的边界。
+
+### Qt在线状态slot实际有自己的通知条件
+
+固定Qt的public meta dispatch`0x11fa1c` → static dispatch`0x11f3a8`，本地方法
+ID17由原metadata确定为`_q_onlineStateChanged`，进入private方法`0x11ed94`。
+`0x1b2a00` 在这个二进制中实际返回0，亦执行原码，不是测试替身。private的输入
+字段为保存的access(+0xcc)、online(+0xd4)、允许网络访问(+0xd7)；对象和初值是
+显式fixture，不声称执行了QNetworkAccessManager完整构造器或证明其默认配置。
+
+原控制流按以下条件设置保存值并决定是否发signal ID7：
+
+| 当前条件 | access更新和通知 |
+|---|---|
+| offline，原access已0 | 保持0，不重复通知 |
+| offline，原access为1或−1 | 改为0，通知0 |
+| online且允许网络访问，原access已1 | 保持1，不重复通知 |
+| online且允许网络访问，原access为0或−1 | 改为1，通知1 |
+| online但显式不允许网络访问 | 保留原access，不发“恢复可达”通知 |
+
+24组原码输入覆盖access=−1/0/1、先前online=0/1、允许位=0/1、输入online=0/1。
+Qt内部配置/session协调、configuration对象和activate实际排队为终点；保存online变化
+时确实可进入协调终点，但不能据此声称完整HTTP连接、缓存或DNS已经清理。
+另外6组给private+0xc8=1及配置state值0/1/2/4/8/14，此分支采用
+`state & 0x0e != 0`选择online；故入参bool也不是所有分支最终可达性的唯一来源。
+这些配置值是显式边界输入，不把每个值命名为真实OS网络状态。
+
+### 到发现owner的交付及其限制
+
+从上述原Qt执行收集实际`[]`、`[0]`、`[1]`三种通知模式，分别向四种Shell manager
+state0/1/4/5交付，共12组。显式activate-delivery adapter将标量送入原watcher
+`qt_metacall`，不是重写OnNetworkStateChanged。只有有通知且manager state0时执行
+原BStart并进入state1；已运行或其他非零state保留状态。所有组均没有调用
+`HandleNetworkChanged`。此处为无本地/远端资源的启动fixture，不冒充真实Steam发现。
+
+因此，网络广播、Qt online输入、有效access变化、Shell启动通知是四个层次。
+不能把原slot“输入−1/0/1都可在state0启动”扩大为“每次切Wi-Fi都必然重试启动”。
+同样，单个online slot不通知也不证明完整Qt应用不存在其他配置变化路径。
+本节不据此增加Switch的DNS失效、自动重配对或重连定时器，不将其定为用户热点故障根因。
+
+对固定Core/Shell另扫描全部可执行PROGBITS中的直接B/BL（含对应PLT别名），以及
+ELF重定位引用：未找到指向各自`HandleNetworkChanged`的这两类引用。该结果只描述
+被扫描的类别；未排除register-indirect、ADRP构造函数地址、dlsym或外部库调用。
+它不是“API永远不会被调用”的证明，不能据此删除显式API语义或给它补造自然producer。
+
+四个原Qt指令反例分别移除允许位检查、online重复门禁、offline重复门禁和实际signal
+调用，均须在正常原调用后因通知序列与规范不符而失败。signature guard、模拟器异常、
+constructor/VM fixture初始化失败均不算行为反例通过。报告保留DEX字节/静态指令、
+JNI三组返回、30组Qt输入、12组Shell交付、原metadata/代码范围和工具SHA。
+
+```sh
+PYTHONPATH=/path/to/audit-deps python3 tools/steam-network-watchers-audit.py \
+  --qt /path/to/bundled/libQt5Network_arm64-v8a.so \
+  --bearer /path/to/bundled/libplugins_bearer_qandroidbearer_arm64-v8a.so \
+  --dex /path/to/bundled/classes.dex \
+  --shell /path/to/pinned/libshell-arm64.so --core /path/to/pinned/libmain-arm64.so \
+  --dexdump /path/to/android-build-tools/dexdump --output /tmp/watchers.json
+# 在相同参数上加 --mutation online-duplicate，必须因通知重复而断言失败。
+```
