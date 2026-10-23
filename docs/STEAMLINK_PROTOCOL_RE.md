@@ -14521,3 +14521,75 @@ python3 -O scripts/check-steam-player-completion.py \
 python3 -O scripts/check-player-completion-native-mutations.py \
   --build build/desktop --output /tmp/player-completion-mutants
 ```
+
+## 188. Android真实任务恢复：普通交接后完成回调退出并重建shell
+
+Evidence：在一次性、`-read-only -no-snapshot-save`的api34_test AVD上执行固定官方
+1.3.32 APK。runner先核对活着的qemu命令、serial/port及userdata基础文件描述符只读，
+随后只在临时overlay清除应用数据，取得无配对身份的profile。base APK与§186相同；
+x86_64 shell、Qt Core/Network、bearer及libmain.so逐个核对SHA。系统fingerprint为
+`google/sdk_gphone64_x86_64/emu64xa:14/UE1A.230829.050/12077443:userdebug/dev-keys`。
+本节没有启动Switch或请求真实Steam主机的桌面、游戏、媒体连接。
+
+### 受控输入和实际执行范围
+
+`tools/steam-android-completion-observe.py`与同名observer调用的是原native
+`CShellApplication::StartStreaming(QStringList const&)`，在原Run所在的Qt线程、
+一次QObject::event返回时传入空QStringList。列表的空数据来自原Qt的
+`QListData::shared_null`，没有伪造或覆盖宿主结构。原函数仍自行构造通用播放器参数；
+观察到Java交接的参数个数为8，不等于夹具填入了八个主机参数。
+
+原Run返回→Quit→CServerManager析构返回→Quit返回，再经原native launcher调用原
+Java startStreaming。后者使shell onPause、创建同任务的SteamLink、进入onResume。
+重复的一次Quit入口来自后续对象收尾，记录中保留，不能把它当第二次断线重试。
+
+唯一被替换的原执行入口为`SDLActivity.nativeRunMain`：它不进入真正SDL_main，
+待800ms后从真实SDL.getContext取得SteamLink对象，分别注入−1或0，调用原
+streamingComplete(int)。800ms只是让Activity初始化的测试等待，不是官方恢复定时。
+原Java完成helper、onStreamingResult和System.exit均实际执行；没有替换其返回值。
+这次不会证明core自然结束或任何传输超时，原ARM64完成结果的producer仍见§186。
+
+两次完整实验均观察到：
+
+| 顺序 | 真实观察 |
+|---|---|
+| 完成回调 | streamingComplete(给定−1或0) |
+| 系统资源helper | setLowLatencyAudio(false)，然后disableWiFiLock() |
+| Java结果 | onStreamingResult收到原给定值 |
+| 退出 | System.exit参数总为0；Frida报告process-terminated且无crash |
+| 系统日志 | AndroidRuntime记录VM exiting result code0；Zygote记录旧PID cleanly(0) |
+| 任务恢复 | ActivityManager为top-activity启动新PID，目标SteamShellActivity |
+| 后续20秒 | 旧任务ID不变，新PID存活，topResumedActivity仍为SteamShellActivity |
+
+恢复观察不靠屏幕截图或“Frida正常退出”推断：任务dump同时给出目标Activity、原task ID、
+新的ProcessRecord/PID；系统logcat另给出旧进程退出与新top-activity启动。新进程还出现
+Qt/SDL初始化与Remote Client service连接日志，但本节没有给新进程注入构造函数hook，
+不把这些日志扩大成其每个owner、UI默认选机或启动请求的逐调用证明。Wi-Fi锁等helper
+实际返回不等于已独立读取系统资源计数，进程结束也不是Switch可泄漏资源的依据。
+
+Conclusion：至少在这个Android14、无已配对主机的普通交接及给定完成输入下，官方不是
+让旧native循环继续重试；它终止旧进程，由Android恢复同任务里的shell Activity。
+这补充§186的OS terminal边界，并支持§187将完整完成映射成持续前端的显式会话资源
+退休、保留UI根。不能照搬System.exit到Switch，也不能据两次给定输入断言已配对主机
+自然断线后没有自动恢复；记忆主机、深链接、后台任务及其他Android版本不是本实验输入。
+
+### 无效夹具与证据边界
+
+最初草稿直接从活动的shell调用Java startStreaming，跳过native Quit/manager退休，
+旧native线程在SDL context清空后触发JNI空对象abort。该草稿未到完成回调，不计作
+官方完成/任务恢复证据，也不能据此给产品增加重试补丁。保留真实native交接后才取得上表。
+另一次在ModuleObserver.onAdded里使用dlopen式导出查找使Android linker重入而abort；
+最终工具改为枚举已映射ELF exports。这是研究工具修正，不是原客户端协议或平台缺陷。
+缺失hook、crash、顺序异常、旧PID未退休或shell未在原task恢复，均使runner失败。
+
+冻结的公开投影见`tools/fixtures/steam-android-completion-runtime-1.3.32.json`，保存
+二进制/工具/Java bridge SHA、两种结果的事件顺序、PID/task和原始私有产物hash；不保存
+原始logcat、应用数据、下载URL或身份。已退出进程不计作待轮询任务；实验后force-stop
+恢复的应用，再关闭该轮Frida server/forward与拥有的只读AVD。此观察不结项完整恢复验收。
+
+```sh
+python3 tools/steam-android-completion-observe.py \
+  --readonly-qemu-pid LIVE_READONLY_QEMU_PID --serial emulator-5580 \
+  --result -1 --output /tmp/android-completion-minus1
+# 使用独立输出目录，以--result 0再次执行；runner每次只清除overlay profile。
+```

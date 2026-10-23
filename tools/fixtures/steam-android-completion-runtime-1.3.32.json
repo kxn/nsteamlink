@@ -1,0 +1,566 @@
+{
+  "schema": 1,
+  "source": "official Android 1.3.32 (5000315)",
+  "scope": "Real native shell handoff and Java/Android completion; player nativeRunMain replaced; fresh unpaired read-only AVD.",
+  "exclusions": [
+    "natural core completion",
+    "paired host recovery",
+    "automatic new StreamingRequest producer",
+    "all Android versions",
+    "Switch loader"
+  ],
+  "tools_sha256": {
+    "tools/steam-android-completion-observe.py": "7f61c7fe7b45825e0bd62ab5ea6c503291d7f9526be935288815a39444bbba02",
+    "tools/steam-android-completion-observer.js": "62648be1d9225935230715e6f989a8e2853e18467133267432e119217c0b274b"
+  },
+  "cases": [
+    {
+      "result": 0,
+      "identity": {
+        "kind": "identity",
+        "guard": {
+          "pid": 786968,
+          "serial": "emulator-5580",
+          "readonly_userdata": [
+            "/data/dl/.android/avd/api34_test.avd/userdata-qemu.img",
+            "/data/dl/.android/avd/api34_test.avd/userdata-qemu.img.qcow2"
+          ]
+        },
+        "apk_sha256": "7114b75e6fdd55e7bdcbad643cd1e7baf8cf5060da820120435adaefc6004dfc",
+        "binaries": {
+          "libQt5Core_x86_64.so": "cd59df801f6ad5586e38bc720454f51d73df0c03dbed0db73bd9b592b25d4041",
+          "libQt5Network_x86_64.so": "1dc3801a783b585393935216bdd17a8313d24b831f7814b4177dd5ffc6214a74",
+          "libplugins_bearer_qandroidbearer_x86_64.so": "6e70b91e29b80eed18f025c3cc2395c89b860e204c2208ba489a91cf5f95ae50",
+          "libshell_x86_64.so": "195025601c2b17194a4d8b3debd674aca3377290fe3851986656c49bc973f907",
+          "libmain.so": "57e625cdecef4683e019109cea5bf26c67ab7d0e84bbe4c247377a0ba9a11a34"
+        },
+        "fresh_unpaired_overlay": true,
+        "bridge_sha256": "02cb922b7fea29a566bd9ae4a190fad24c503076f2497af5706d117033de6a0e",
+        "script_sha256": "62648be1d9225935230715e6f989a8e2853e18467133267432e119217c0b274b",
+        "runner_sha256": "7f61c7fe7b45825e0bd62ab5ea6c503291d7f9526be935288815a39444bbba02",
+        "fingerprint": "google/sdk_gphone64_x86_64/emu64xa:14/UE1A.230829.050/12077443:userdebug/dev-keys",
+        "result": 0,
+        "controlled_boundary": "SDLActivity.nativeRunMain replaced"
+      },
+      "events": [
+        {
+          "kind": "spawn",
+          "pid": 6542
+        },
+        {
+          "kind": "hooks_ready",
+          "pid": 6542,
+          "time_ms": 1792790831933
+        },
+        {
+          "kind": "lifecycle",
+          "pid": 6542,
+          "time_ms": 1792790831952,
+          "activity": "shell",
+          "method": "onCreate",
+          "task": 73
+        },
+        {
+          "kind": "lifecycle",
+          "pid": 6542,
+          "time_ms": 1792790832109,
+          "activity": "shell",
+          "method": "onResume",
+          "task": 73
+        },
+        {
+          "kind": "native_shell_enter",
+          "pid": 6542,
+          "time_ms": 1792790832313,
+          "method": "Run"
+        },
+        {
+          "kind": "task_snapshot",
+          "label": "before",
+          "pids": "6542",
+          "sha256": "dbeeaf8591e72bbdfa0e721f833a4ac53d197b5020053867a160d0bdc6ad54a9",
+          "top_resumed_activity": "com.valvesoftware.steamlink/.SteamShellActivity",
+          "task_id": 73
+        },
+        {
+          "kind": "invoke_original_native_start_streaming",
+          "pid": 6542,
+          "time_ms": 1792790832461
+        },
+        {
+          "kind": "native_shell_leave",
+          "pid": 6542,
+          "time_ms": 1792790832463,
+          "method": "Run"
+        },
+        {
+          "kind": "native_shell_enter",
+          "pid": 6542,
+          "time_ms": 1792790832463,
+          "method": "Quit"
+        },
+        {
+          "kind": "native_shell_enter",
+          "pid": 6542,
+          "time_ms": 1792790832519,
+          "method": "manager-destructor"
+        },
+        {
+          "kind": "native_shell_leave",
+          "pid": 6542,
+          "time_ms": 1792790832519,
+          "method": "manager-destructor"
+        },
+        {
+          "kind": "native_shell_leave",
+          "pid": 6542,
+          "time_ms": 1792790832519,
+          "method": "Quit"
+        },
+        {
+          "kind": "native_shell_enter",
+          "pid": 6542,
+          "time_ms": 1792790832519,
+          "method": "Quit"
+        },
+        {
+          "kind": "native_shell_leave",
+          "pid": 6542,
+          "time_ms": 1792790832519,
+          "method": "Quit"
+        },
+        {
+          "kind": "original_java_start_streaming",
+          "pid": 6542,
+          "time_ms": 1792790832520,
+          "argument_count": 8,
+          "mode": 1
+        },
+        {
+          "kind": "lifecycle",
+          "pid": 6542,
+          "time_ms": 1792790832525,
+          "activity": "shell",
+          "method": "onPause",
+          "task": 73
+        },
+        {
+          "kind": "lifecycle",
+          "pid": 6542,
+          "time_ms": 1792790832531,
+          "activity": "player",
+          "method": "onCreate",
+          "task": 73
+        },
+        {
+          "kind": "lifecycle",
+          "pid": 6542,
+          "time_ms": 1792790833053,
+          "activity": "player",
+          "method": "onResume",
+          "task": 73
+        },
+        {
+          "kind": "completion_call",
+          "pid": 6542,
+          "time_ms": 1792790833053,
+          "method": "setLowLatencyAudio",
+          "arguments": [
+            true
+          ]
+        },
+        {
+          "kind": "controlled_player_boundary",
+          "pid": 6542,
+          "time_ms": 1792790833079,
+          "library": "libmain.so",
+          "method": "SDL_main"
+        },
+        {
+          "kind": "invoke_original_completion",
+          "pid": 6542,
+          "time_ms": 1792790833881,
+          "code": 0
+        },
+        {
+          "kind": "completion_call",
+          "pid": 6542,
+          "time_ms": 1792790833881,
+          "method": "streamingComplete",
+          "arguments": [
+            0
+          ]
+        },
+        {
+          "kind": "completion_call",
+          "pid": 6542,
+          "time_ms": 1792790833881,
+          "method": "setLowLatencyAudio",
+          "arguments": [
+            false
+          ]
+        },
+        {
+          "kind": "completion_call",
+          "pid": 6542,
+          "time_ms": 1792790833882,
+          "method": "disableWiFiLock",
+          "arguments": []
+        },
+        {
+          "kind": "completion_result",
+          "pid": 6542,
+          "time_ms": 1792790833883,
+          "code": 0
+        },
+        {
+          "kind": "system_exit",
+          "pid": 6542,
+          "time_ms": 1792790833883,
+          "code": 0
+        },
+        {
+          "kind": "detached",
+          "reason": "process-terminated",
+          "crash": false
+        },
+        {
+          "kind": "task_snapshot",
+          "label": "after-exit",
+          "pids": "6606",
+          "sha256": "6ae47448ae295cc28c4c1f0b64e0729e8e03c0b2b07cc6a45e9d7e4e1f3b69cc",
+          "top_resumed_activity": "com.valvesoftware.steamlink/.SteamShellActivity",
+          "task_id": 73
+        },
+        {
+          "kind": "task_snapshot",
+          "label": "after-05s",
+          "pids": "6606",
+          "sha256": "ddad7fcded8c75647fcb9077086c91668e901efd7e93e0c13e28cf9b958f37a1",
+          "top_resumed_activity": "com.valvesoftware.steamlink/.SteamShellActivity",
+          "task_id": 73
+        },
+        {
+          "kind": "task_snapshot",
+          "label": "after-10s",
+          "pids": "6606",
+          "sha256": "8ce603da60004785809f2e796eff6519fd5eb76fd282fff6a3f4ce902e61622c",
+          "top_resumed_activity": "com.valvesoftware.steamlink/.SteamShellActivity",
+          "task_id": 73
+        },
+        {
+          "kind": "task_snapshot",
+          "label": "after-15s",
+          "pids": "6606",
+          "sha256": "7372401b6fe863b115d69a8c22afe7a674aacb97fb08490bb259182b4fe5b80b",
+          "top_resumed_activity": "com.valvesoftware.steamlink/.SteamShellActivity",
+          "task_id": 73
+        },
+        {
+          "kind": "task_snapshot",
+          "label": "after-20s",
+          "pids": "6606",
+          "sha256": "b3d10389d64a503c417072faa2598ce5ca3c9c3c6d9af6f7f48ecb2b43d38f55",
+          "top_resumed_activity": "com.valvesoftware.steamlink/.SteamShellActivity",
+          "task_id": 73
+        },
+        {
+          "kind": "validated_observation",
+          "events": 33
+        },
+        {
+          "kind": "cleanup",
+          "force_stopped": true
+        }
+      ],
+      "system_log_evidence": [
+        "10-24 05:27:13.892   362   362 I Zygote  : Process 6542 exited cleanly (0)",
+        "10-24 05:27:13.899   551   579 I ActivityManager: Start proc 6606:com.valvesoftware.steamlink/u0a193 for top-activity {com.valvesoftware.steamlink/com.valvesoftware.steamlink.SteamShellActivity}"
+      ],
+      "private_artifacts_sha256": {
+        "after-05s.tasks.txt": "ddad7fcded8c75647fcb9077086c91668e901efd7e93e0c13e28cf9b958f37a1",
+        "after-10s.tasks.txt": "8ce603da60004785809f2e796eff6519fd5eb76fd282fff6a3f4ce902e61622c",
+        "after-15s.tasks.txt": "7372401b6fe863b115d69a8c22afe7a674aacb97fb08490bb259182b4fe5b80b",
+        "after-20s.tasks.txt": "b3d10389d64a503c417072faa2598ce5ca3c9c3c6d9af6f7f48ecb2b43d38f55",
+        "after-exit.tasks.txt": "6ae47448ae295cc28c4c1f0b64e0729e8e03c0b2b07cc6a45e9d7e4e1f3b69cc",
+        "before.tasks.txt": "dbeeaf8591e72bbdfa0e721f833a4ac53d197b5020053867a160d0bdc6ad54a9",
+        "events.jsonl": "385a7af37df04a12a3e1c7b1d2bdaaf1aa9e946edb5f351338ac73ac59e98935",
+        "logcat.txt": "c20467d9c5d5358d6ed29aa9c353419a27642686de87d215f72b6393abcb0c3d"
+      }
+    },
+    {
+      "result": -1,
+      "identity": {
+        "kind": "identity",
+        "guard": {
+          "pid": 786968,
+          "serial": "emulator-5580",
+          "readonly_userdata": [
+            "/data/dl/.android/avd/api34_test.avd/userdata-qemu.img",
+            "/data/dl/.android/avd/api34_test.avd/userdata-qemu.img.qcow2"
+          ]
+        },
+        "apk_sha256": "7114b75e6fdd55e7bdcbad643cd1e7baf8cf5060da820120435adaefc6004dfc",
+        "binaries": {
+          "libQt5Core_x86_64.so": "cd59df801f6ad5586e38bc720454f51d73df0c03dbed0db73bd9b592b25d4041",
+          "libQt5Network_x86_64.so": "1dc3801a783b585393935216bdd17a8313d24b831f7814b4177dd5ffc6214a74",
+          "libplugins_bearer_qandroidbearer_x86_64.so": "6e70b91e29b80eed18f025c3cc2395c89b860e204c2208ba489a91cf5f95ae50",
+          "libshell_x86_64.so": "195025601c2b17194a4d8b3debd674aca3377290fe3851986656c49bc973f907",
+          "libmain.so": "57e625cdecef4683e019109cea5bf26c67ab7d0e84bbe4c247377a0ba9a11a34"
+        },
+        "fresh_unpaired_overlay": true,
+        "bridge_sha256": "02cb922b7fea29a566bd9ae4a190fad24c503076f2497af5706d117033de6a0e",
+        "script_sha256": "62648be1d9225935230715e6f989a8e2853e18467133267432e119217c0b274b",
+        "runner_sha256": "7f61c7fe7b45825e0bd62ab5ea6c503291d7f9526be935288815a39444bbba02",
+        "fingerprint": "google/sdk_gphone64_x86_64/emu64xa:14/UE1A.230829.050/12077443:userdebug/dev-keys",
+        "result": -1,
+        "controlled_boundary": "SDLActivity.nativeRunMain replaced"
+      },
+      "events": [
+        {
+          "kind": "spawn",
+          "pid": 6757
+        },
+        {
+          "kind": "hooks_ready",
+          "pid": 6757,
+          "time_ms": 1792790859820
+        },
+        {
+          "kind": "lifecycle",
+          "pid": 6757,
+          "time_ms": 1792790859840,
+          "activity": "shell",
+          "method": "onCreate",
+          "task": 74
+        },
+        {
+          "kind": "lifecycle",
+          "pid": 6757,
+          "time_ms": 1792790859999,
+          "activity": "shell",
+          "method": "onResume",
+          "task": 74
+        },
+        {
+          "kind": "native_shell_enter",
+          "pid": 6757,
+          "time_ms": 1792790860225,
+          "method": "Run"
+        },
+        {
+          "kind": "task_snapshot",
+          "label": "before",
+          "pids": "6757",
+          "sha256": "f9b3172fe6b3008a1702fafe65f73cf31ac09a550a1450196a7b2743b2e48b39",
+          "top_resumed_activity": "com.valvesoftware.steamlink/.SteamShellActivity",
+          "task_id": 74
+        },
+        {
+          "kind": "invoke_original_native_start_streaming",
+          "pid": 6757,
+          "time_ms": 1792790860335
+        },
+        {
+          "kind": "native_shell_leave",
+          "pid": 6757,
+          "time_ms": 1792790860338,
+          "method": "Run"
+        },
+        {
+          "kind": "native_shell_enter",
+          "pid": 6757,
+          "time_ms": 1792790860338,
+          "method": "Quit"
+        },
+        {
+          "kind": "native_shell_enter",
+          "pid": 6757,
+          "time_ms": 1792790860395,
+          "method": "manager-destructor"
+        },
+        {
+          "kind": "native_shell_leave",
+          "pid": 6757,
+          "time_ms": 1792790860395,
+          "method": "manager-destructor"
+        },
+        {
+          "kind": "native_shell_leave",
+          "pid": 6757,
+          "time_ms": 1792790860395,
+          "method": "Quit"
+        },
+        {
+          "kind": "native_shell_enter",
+          "pid": 6757,
+          "time_ms": 1792790860395,
+          "method": "Quit"
+        },
+        {
+          "kind": "native_shell_leave",
+          "pid": 6757,
+          "time_ms": 1792790860395,
+          "method": "Quit"
+        },
+        {
+          "kind": "original_java_start_streaming",
+          "pid": 6757,
+          "time_ms": 1792790860396,
+          "argument_count": 8,
+          "mode": 1
+        },
+        {
+          "kind": "lifecycle",
+          "pid": 6757,
+          "time_ms": 1792790860400,
+          "activity": "shell",
+          "method": "onPause",
+          "task": 74
+        },
+        {
+          "kind": "lifecycle",
+          "pid": 6757,
+          "time_ms": 1792790860407,
+          "activity": "player",
+          "method": "onCreate",
+          "task": 74
+        },
+        {
+          "kind": "lifecycle",
+          "pid": 6757,
+          "time_ms": 1792790860928,
+          "activity": "player",
+          "method": "onResume",
+          "task": 74
+        },
+        {
+          "kind": "completion_call",
+          "pid": 6757,
+          "time_ms": 1792790860929,
+          "method": "setLowLatencyAudio",
+          "arguments": [
+            true
+          ]
+        },
+        {
+          "kind": "controlled_player_boundary",
+          "pid": 6757,
+          "time_ms": 1792790860945,
+          "library": "libmain.so",
+          "method": "SDL_main"
+        },
+        {
+          "kind": "invoke_original_completion",
+          "pid": 6757,
+          "time_ms": 1792790861748,
+          "code": -1
+        },
+        {
+          "kind": "completion_call",
+          "pid": 6757,
+          "time_ms": 1792790861748,
+          "method": "streamingComplete",
+          "arguments": [
+            -1
+          ]
+        },
+        {
+          "kind": "completion_call",
+          "pid": 6757,
+          "time_ms": 1792790861748,
+          "method": "setLowLatencyAudio",
+          "arguments": [
+            false
+          ]
+        },
+        {
+          "kind": "completion_call",
+          "pid": 6757,
+          "time_ms": 1792790861748,
+          "method": "disableWiFiLock",
+          "arguments": []
+        },
+        {
+          "kind": "completion_result",
+          "pid": 6757,
+          "time_ms": 1792790861749,
+          "code": -1
+        },
+        {
+          "kind": "system_exit",
+          "pid": 6757,
+          "time_ms": 1792790861749,
+          "code": 0
+        },
+        {
+          "kind": "detached",
+          "reason": "process-terminated",
+          "crash": false
+        },
+        {
+          "kind": "task_snapshot",
+          "label": "after-exit",
+          "pids": "6821",
+          "sha256": "1c6f6b6f57c612b25c8f6f303b6d2c545f135047f56a28e147559eb26c17578f",
+          "top_resumed_activity": "com.valvesoftware.steamlink/.SteamShellActivity",
+          "task_id": 74
+        },
+        {
+          "kind": "task_snapshot",
+          "label": "after-05s",
+          "pids": "6821",
+          "sha256": "9c3c263d8d37176a490cb4735c08a359355c354f82e5f3d2c4189eedd670be5f",
+          "top_resumed_activity": "com.valvesoftware.steamlink/.SteamShellActivity",
+          "task_id": 74
+        },
+        {
+          "kind": "task_snapshot",
+          "label": "after-10s",
+          "pids": "6821",
+          "sha256": "ef8e73ab484262df4ed647488b1540a7670c86f4ce547768764a660db2e0397a",
+          "top_resumed_activity": "com.valvesoftware.steamlink/.SteamShellActivity",
+          "task_id": 74
+        },
+        {
+          "kind": "task_snapshot",
+          "label": "after-15s",
+          "pids": "6821",
+          "sha256": "d00fa8bf4c9ab699421d253969627b0a8d1c5f6972d618765df57a8a814694ae",
+          "top_resumed_activity": "com.valvesoftware.steamlink/.SteamShellActivity",
+          "task_id": 74
+        },
+        {
+          "kind": "task_snapshot",
+          "label": "after-20s",
+          "pids": "6821",
+          "sha256": "3e8f2e2edbc517f1b7cab407ffa77e3d7bf25b08877c08c07c90951a83d2576e",
+          "top_resumed_activity": "com.valvesoftware.steamlink/.SteamShellActivity",
+          "task_id": 74
+        },
+        {
+          "kind": "validated_observation",
+          "events": 33
+        },
+        {
+          "kind": "cleanup",
+          "force_stopped": true
+        }
+      ],
+      "system_log_evidence": [
+        "10-24 05:27:41.758   362   362 I Zygote  : Process 6757 exited cleanly (0)",
+        "10-24 05:27:41.765   551   579 I ActivityManager: Start proc 6821:com.valvesoftware.steamlink/u0a193 for top-activity {com.valvesoftware.steamlink/com.valvesoftware.steamlink.SteamShellActivity}"
+      ],
+      "private_artifacts_sha256": {
+        "after-05s.tasks.txt": "9c3c263d8d37176a490cb4735c08a359355c354f82e5f3d2c4189eedd670be5f",
+        "after-10s.tasks.txt": "ef8e73ab484262df4ed647488b1540a7670c86f4ce547768764a660db2e0397a",
+        "after-15s.tasks.txt": "d00fa8bf4c9ab699421d253969627b0a8d1c5f6972d618765df57a8a814694ae",
+        "after-20s.tasks.txt": "3e8f2e2edbc517f1b7cab407ffa77e3d7bf25b08877c08c07c90951a83d2576e",
+        "after-exit.tasks.txt": "1c6f6b6f57c612b25c8f6f303b6d2c545f135047f56a28e147559eb26c17578f",
+        "before.tasks.txt": "f9b3172fe6b3008a1702fafe65f73cf31ac09a550a1450196a7b2743b2e48b39",
+        "events.jsonl": "d481f0bee4ac7dc5cca28d436289189c04033aa0e09bd3cf336d542f5dfab830",
+        "logcat.txt": "dff1520cb9eecbe5f0550dbd272d1080228428a6cbf76819b46b4d79858d619c"
+      }
+    }
+  ]
+}

@@ -3533,6 +3533,12 @@ Decision：撤回把该prefix直接当完整返回前端的资源策略。保留
 真实网络worker、未暂停的设备回调负载、Android OS进程/Activity恢复、Switch无焦点
 退出/再次开流及hbmenu仍不由这些夹具证明，详见协议参考§186–187。
 
+补充证据（协议参考§188）：固定官方APK在只读Android14 AVD中，实际native普通
+交接Run→Quit→manager析构→Java播放器Activity后，受控替换播放器main并调用原
+完成回调。给定−1、0都真实退出旧进程，Android以新PID恢复原task的SteamShellActivity。
+这支持持续前端保留UI根并显式退休会话资源；不照搬进程退出，不把给定完成输入当作
+自然断线、已配对主机自动恢复或重试producer证据。未给Switch增加新的退出/重试策略。
+
 ## D-064：Generic gyro 的早期推论（2026-10-23，已撤回，由 D-065 取代）
 
 历史 Evidence：用户观察到实验构建无 gyro 输出；某些加 `0x400` 的构建还出现
