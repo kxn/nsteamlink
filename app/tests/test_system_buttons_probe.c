@@ -43,7 +43,7 @@ void hidsysExit(void) {
 }
 Result hidsysActivateHomeButton(void) { assert(active_sys); return operation(); }
 Result hidsysAcquireHomeButtonEventHandle(Event *e, bool autoclear) {
-    assert(active_sys && autoclear);
+    assert(active_sys && !autoclear);
     Result rc = operation();
     if (R_SUCCEEDED(rc)) { e->handle = 1; active_event = true; }
     return rc;
