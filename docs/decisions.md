@@ -3564,6 +3564,21 @@ runtime解绑互斥；不把state锁带进libnx，不改变flush worker的stop�
 和无网络发送出口不证明物理IMU、真实主机ACK或Switch loader安全。不能把这个竞争
 窗口直接归因于此前用户观察到的卡顿或网络不可达。
 
+## D-A110：待切换连接的清理确认属于旧请求
+
+Evidence：实际application主循环中，旧像素引用推迟video clean时，新STREAM进入
+pending replacement。原清理STOP却使用新UI代次，导致STOPPED把新连接页面退回首页；
+随后第二笔媒体仍显示/收音，生命周期为STREAMING但remote gate=false。固定像素
+引用交错及正常退出的旧行为反例支持这个结论，详见协议参考§193。
+
+Decision：仅将pending replacement分支的STOP generation设为旧lifecycle.request_id。
+旧确认经既有UI代次过滤；replacement仍等旧requests/protocol/video全部清理后派发。
+不改变显式用户取消/退出确认，不屏蔽所有STOPPED，不改协议、自动重试或等待常量。
+
+验证边界：真实应用循环、UI动作/动画、输入gate及三笔本机UDP媒体覆盖正例，私有
+application副本重现并拒绝旧行为。接受材料/可见主机给定；软件SDL不代替Switch或
+真实Steam/SDR/NAT验收，也不把历史用户网络故障归因于这个本地竞争。
+
 ## D-064：Generic gyro 的早期推论（2026-10-23，已撤回，由 D-065 取代）
 
 历史 Evidence：用户观察到实验构建无 gyro 输出；某些加 `0x400` 的构建还出现

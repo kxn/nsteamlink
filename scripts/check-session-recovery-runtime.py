@@ -11,16 +11,22 @@ def require(value, reason):
         raise ValueError(reason)
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--receiver", required=True, type=Path)
-    parser.add_argument("--video", required=True, type=Path)
-    args = parser.parse_args()
-    result = subprocess.run([str(args.receiver.resolve()), str(args.video.resolve())],
+def observe(receiver, video):
+    result = subprocess.run([str(receiver.resolve()), str(video.resolve())],
                             capture_output=True, text=True, timeout=80)
     require(result.returncode == 0, "abnormal local recovery fixture: " + result.stderr[-4000:])
-    observed = json.loads(result.stdout)
-    print(json.dumps(observed, sort_keys=True))
+    return json.loads(result.stdout)
+
+
+def verify(observed, application=False):
+    if application:
+        require(observed["application_exit"] == 0, "actual application run failed")
+        require(observed["wrong_cleanup_owner"] is False, "replacement cleanup dismissed new connection")
+        for field in ("overlay_closed_gate", "overlay_restored_gate", "peer_joined"):
+            require(observed[field] is True, "application: " + field)
+        require(observed["deferred_replacement"] is True, "real image pin did not defer replacement")
+        require(observed["cleanup_generation"] == observed["first_generation"] < observed["replacement_generation"],
+                "replacement cleanup must belong to the retiring request")
     rows = observed["rounds"]
     require(len(rows) == 3, "host stop, silent peer, then another playable session")
     for field in ("root_retained", "joins_clean", "final_clean"):
@@ -39,6 +45,17 @@ def main():
             require(row[field] is silent, f"round {index+1}: " + field)
         for field in ("host_stop", "ui_home"):
             require(row[field] is not silent, f"round {index+1}: " + field)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--receiver", required=True, type=Path)
+    parser.add_argument("--video", required=True, type=Path)
+    parser.add_argument("--application", action="store_true")
+    args = parser.parse_args()
+    observed = observe(args.receiver, args.video)
+    print(json.dumps(observed, sort_keys=True))
+    verify(observed, args.application)
     print("Local runtime recovery: real UDP stop/silence/stop, three decoded streams and joined teardown")
 
 

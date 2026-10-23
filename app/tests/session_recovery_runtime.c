@@ -28,6 +28,10 @@ static unsigned admitted;
 static IHS_SocketAddress endpoint;
 static bool joins_clean = true;
 static _Thread_local bool opening_ihs;
+#ifdef NSL_RECOVERY_APPLICATION
+/* Published by the main-thread application submit adapter, before requested. */
+static sl_command admitted_command;
+#endif
 void __wrap_sl_log(const char *line) { fprintf(stderr, "%s\n", line); }
 bool __wrap_IHS_ClientStreamingHandoff(IHS_Client *c) {
     assert(c && admitted == atomic_load(&requested));
@@ -47,7 +51,11 @@ void __wrap_sl_remote_connection_update(sl_remote_connection *c, uint64_t now) {
     assert(!r->session && !r->waiting_video && sl_media_video_clean());
     admitted = next;
     pthread_mutex_lock(&r->lock);
+#ifdef NSL_RECOVERY_APPLICATION
+    r->active = admitted_command;
+#else
     r->active = (sl_command){.type = SL_CMD_STREAM, .generation = next};
+#endif
     r->facts = (sl_runtime_facts){.request_id = next};
     pthread_mutex_unlock(&r->lock);
     r->stream_limits = (sl_stream_request_limits){1280, 720, 60, false, false};
@@ -203,6 +211,7 @@ typedef struct {
     unsigned callbacks, destroys;
     uint64_t session_id;
 } observation;
+#ifndef NSL_RECOVERY_APPLICATION
 static observation round_trip(sl_runtime *r, sl_ui_model *ui, unsigned round,
                                const uint8_t *video, size_t video_size) {
     int fd = __real_socket(AF_INET, SOCK_DGRAM, 0);
@@ -391,3 +400,4 @@ int main(int argc, char **argv) {
            atomic_load(&audio_opens),atomic_load(&audio_closes));
     return 0;
 }
+#endif

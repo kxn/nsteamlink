@@ -14925,3 +14925,84 @@ lifecycle/overlay循环；新请求在已接受材料边界给定。虚拟HID只
 renderer，不证明物理输出、Switch GPU/libnx、Wi-Fi抖动、hbmenu清理或连续启动。
 本机对端的静默不等同真实Steam故障恢复；自动重发StreamingRequest也未由本例
 产生。不能以这组通过代替§186–190的官方producer和完整真机验收。
+
+## 193. 完整应用循环中的待切换请求与旧清理确认
+
+本节补§192未运行的`application.c`主循环，并记录一个本地所有权差异；不是从官方
+二进制推导新的重连协议。§186–190的Android进程退出不能替持续前端隔离旧清理事件。
+
+### 已证差异
+
+Evidence：`application.c::command`接到新的STREAM时，`sl_app_request_start`可能
+留下旧request_id、将新代次放入pending_request_id并进入STOPPING。随后应用提交
+STOP，等待`lifecycle_facts`看到旧请求的requests_closed/protocol_closed/video_clean
+后才派发replacement。原STOP却使用新cmd->generation；runtime执行后以这个代次
+发送STOPPED，`runtime_events`原样交给UI，UI正常按匹配代次调用stopped并回首页。
+
+结果是第二笔的UI已回首页，稍后replacement仍被正确派发，媒体继续运行。
+实际观察为session 2已有画面/音频、application lifecycle为STREAMING且connected，
+但UI page为HOME、remote gate=false。它不是对端停止或“没有收到画面”的等价状态。
+
+固定交错使用真实首帧的额外CPU引用，模拟前端引用稍后释放的已有合法所有权：
+
+1. 真实UDP第一笔媒体显示后，对端发type 9；SessionDestroy完成，UI回首页，但额外
+   pixel引用使video clean尚未成立。
+2. 实际UI START动作产生第二笔请求，实际command只能排入replacement并提交旧清理STOP。
+3. 观察到该STOP提交后才释放额外引用；不修改runtime facts、生产时钟或清理返回值。
+4. 实际主循环收旧清理确认、执行lifecycle_facts、派发第二笔并显示新媒体。
+
+| 观察 | 原行为反例 | 修正后 |
+|---|---|---|
+| 第一笔代次 | 1 | 1 |
+| 第二笔UI代次 | 2 | 2 |
+| 清理STOP代次 | 2 | 1 |
+| 第二笔媒体已显示/收音 | 是 | 是 |
+| 第二笔UI及输入门禁 | 首页，gate=false | 串流页，gate=true |
+
+Conclusion：旧清理确认错误地拿走新UI的所有权。将这个STOP的generation改为
+`a->lifecycle.request_id`，让它仍属于退休中的旧请求。UI已有的代次过滤即可隔离
+旧ACK；不新增“忽略所有STOPPED”的分支，也不改变用户主动STOP/CANCEL/EXIT的确认。
+底层protocol请求编号、传输停止、清理屏障、媒体策略及重试时限均不改变。
+不能据此重新归因此前用户的DNS、SDR、建连或卡顿观察。
+
+### 实际应用执行与检查
+
+`app/tests/application_recovery_runtime.c`复用§192的实际runtime/SDK和loopback
+对端，但运行真实`sl_application_run`。UI由真实tick、HOST事件和START/B/退出
+动作驱动；没有直接改UI page/generation，没有复制application的command、
+runtime_events、lifecycle_facts或gate策略。真实renderer绘制UI/媒体，主循环自行
+收facts、控制输入及视频时钟、派发待切换请求和执行最终stop/join/destroy。
+
+给定可见主机及已接受材料/handoff仍是明确的fixture边界：STREAM提交观察器发布
+接受输入，不执行外部Steam授权/票据生产；普通CANCEL/STOP/EXIT继续进入实际runtime。
+额外引用在实际sl_video_select转移像素时retain，提交旧清理STOP后在主线程release，
+不将像素或GPU资源释放移到网络线程。一个joinable对端线程只处理本机UDP，不调用SDL。
+
+三笔媒体仍覆盖正常type 9、真实15秒静默超时、错误页B返回后第三笔显示/收音。
+第一笔还通过真实菜单开关及160ms关闭动画，验证gate关闭、回串流后重新开放。
+每笔IHS断线callback/销毁恰好一次，三笔session身份互异、音频设备Open/Close=3/3，
+每笔video clean和provider解绑成立；最后真实application退出0、对端join、gfx根关闭。
+
+`scripts/check-application-recovery-counterexample.py`仅在私有application.c
+副本中把这个STOP恢复成cmd->generation。反例复现上表原行为，随后正常执行实际
+退出流程，退出0、两个已打开的stream音频设备均关闭、对端join、根完整关闭。
+它以JSON记录wrong_cleanup_owner=true，由同一检查器以
+`replacement cleanup dismissed new connection`拒绝；超时、崩溃或编译失败不算证据。
+
+诊断ON/OFF的Release桌面构建各通过应用正例、这个可运行旧行为反例、§192原runtime
+三笔检查及既有UI/video-contract取消/替换检查。Switch Release交叉编译通过。
+
+```sh
+cmake --build build/desktop --target nsl-application-recovery-runtime
+ctest --test-dir build/desktop \
+  -R '^application_recovery_(runtime|counterexample)$' -V
+```
+
+夹具草稿最初把菜单B当即时返回，随后按实际fade时序等待；观察器又曾在新UI请求已
+排队而SDK尚未admit时仍用旧接受代次，误记旧ACK，已改为从实际START动作读取新代次。
+这些夹具错误不当作第二个生产差异。固定反例和正例都使用同一修正后的观察器。
+
+本例仍使用dummy audio/video、软件renderer、虚拟手柄和本机对端。HTTPS/artwork/
+云配置为离线provider，debug listener不打开；不证明真实公网、SDR/NAT路径、物理
+输出/输入ACK、Switch GPU/libnx或hbmenu。首次发现、授权、开流材料的真实producer
+及官方断线恢复触发，仍必须由对应独立证据支持，不能由本例替代。

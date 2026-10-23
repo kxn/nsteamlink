@@ -209,7 +209,10 @@ static bool command(application *a, const sl_command *cmd) {
             a->replacement_store = a->ui.store;
             sl_media_gate(false);
             sl_media_close_video();
-            sl_command stop = {.type = SL_CMD_STOP, .generation = cmd->generation};
+            /* This retires the old owner. A STOPPED tagged with the new UI
+             * generation would dismiss its CONNECTING page before the queued
+             * replacement is admitted by lifecycle_facts. */
+            sl_command stop = {.type = SL_CMD_STOP, .generation = a->lifecycle.request_id};
             return submit_runtime(a, &stop, &a->ui.store);
         }
     } else if (cmd->type == SL_CMD_STOP || cmd->type == SL_CMD_CANCEL || cmd->type == SL_CMD_EXIT) {
