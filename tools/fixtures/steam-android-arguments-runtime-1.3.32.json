@@ -1,0 +1,686 @@
+{
+  "scope": "Official Intent/Qt/native argv through restored BInit admission in a fresh unpaired Android14 AVD. Every player nativeRunMain is suppressed; restored BInit is held and killed during cleanup. No natural media failure, paired recovery, or full restored BInit execution.",
+  "source_sha256": {
+    "tools/steam-android-argument-observe.py": "b5c2ead7018ec2a836fced8fa41de03fe0319b1a25e7c2564adeea5bfac71fc8",
+    "tools/steam-android-argument-observer.js": "93f9f41f677f3ac8a2d898f459c4f080da2c7979c3380f96607823552a02afc6",
+    "tools/steam-android-completion-observer.js": "62648be1d9225935230715e6f989a8e2853e18467133267432e119217c0b274b",
+    "tools/steam-android-network-observe.py": "36e27599683a2762f56fb430714dc78082da684d2944b1b22e47efea65d51038"
+  },
+  "base_apk_sha256": "7114b75e6fdd55e7bdcbad643cd1e7baf8cf5060da820120435adaefc6004dfc",
+  "manifest_sha256": "d76220900c3ad423f9335b9cd9c6af1bcff68651de6c1791dfd63cda4a1376ad",
+  "dex_sha256": "a5c315d683eac7c7f8f73ec096bd414406d80f9ef68180a1ef469f052cd39e44",
+  "source_code_items": {
+    "Lcom/valvesoftware/steamlink/SteamLink;::<init>()V": {
+      "code_item_offset": 75748,
+      "instruction_bytes": 8,
+      "sha256": "90f5e5eef2227b39ef5f45a2cce5021130b8ebf6b2206d43d3ec7db43079a6ca"
+    },
+    "Lcom/valvesoftware/steamlink/SteamLink;::getArguments()[Ljava/lang/String;": {
+      "code_item_offset": 75600,
+      "instruction_bytes": 132,
+      "sha256": "d47f89178bfcf61600933c29b49669271ae857978da6e4161415e17d61839c71"
+    },
+    "Lorg/qtproject/qt5/android/bindings/QtActivity;::<init>()V": {
+      "code_item_offset": 184320,
+      "instruction_bytes": 64,
+      "sha256": "3aa9a640b371fd1fd485231855e74163b4e26ba00079a99d75c901260cf47669"
+    },
+    "Lorg/qtproject/qt5/android/bindings/QtActivity;::onCreateHook(Landroid/os/Bundle;)V": {
+      "code_item_offset": 185144,
+      "instruction_bytes": 60,
+      "sha256": "ccdcbf5be4d4329826a0a5d3b8617d64270cfefbbdae48f819ad12a75d841b21"
+    },
+    "Lcom/valvesoftware/steamlink/SteamShellActivity;::<init>()V": {
+      "code_item_offset": 78836,
+      "instruction_bytes": 38,
+      "sha256": "c83fd4f5607ce796a6bd7434088f56969741139db45f5992745eb6e01c89a4b7"
+    },
+    "Lcom/valvesoftware/steamlink/SteamShellActivity;::startStreaming([Ljava/lang/String;I)V": {
+      "code_item_offset": 79368,
+      "instruction_bytes": 186,
+      "sha256": "0caa4ed12d450f76921907616e97bd126e19c7e38faf80405237e0c636864c25"
+    },
+    "Lorg/qtproject/qt5/android/QtActivityDelegate;::<init>()V": {
+      "code_item_offset": 155540,
+      "instruction_bytes": 348,
+      "sha256": "e3462346d05d1ebdca5fe7d562c4a844798ca664e46a90f55bb83d7b5ac6e4b0"
+    },
+    "Lorg/qtproject/qt5/android/QtActivityDelegate;::loadApplication(Landroid/app/Activity;Ljava/lang/ClassLoader;Landroid/os/Bundle;)Z": {
+      "code_item_offset": 152304,
+      "instruction_bytes": 1430,
+      "sha256": "22ae7afd02e30df49fc34d1069b174751a852cace865e0e333c24754e06e9771"
+    },
+    "Lorg/qtproject/qt5/android/QtActivityDelegate;::startApplication()Z": {
+      "code_item_offset": 154496,
+      "instruction_bytes": 306,
+      "sha256": "b2f7d5cb997cbb702a6a2ad6ac09f9b5c78a77d61f1796d7de8fadeb8e8a441b"
+    },
+    "Lorg/qtproject/qt5/android/QtNative;::<init>()V": {
+      "code_item_offset": 172088,
+      "instruction_bytes": 8,
+      "sha256": "f59db770804248b252e647f586a12f1425f79b9dc7e6e9140a56a1d431a7b720"
+    },
+    "Lorg/qtproject/qt5/android/QtNative;::startApplication(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Z": {
+      "code_item_offset": 170012,
+      "instruction_bytes": 176,
+      "sha256": "8c8d13992c0b937303ec9d9010b62277ce31206213e574350e02e7d07651487e"
+    },
+    "Lorg/qtproject/qt5/android/bindings/QtLoader;::<init>(Landroid/content/ContextWrapper;Ljava/lang/Class;)V": {
+      "code_item_offset": 189104,
+      "instruction_bytes": 126,
+      "sha256": "822deb23c1286415319aba512a7b97b1337c917e0a69dd16e0d211265bff6187"
+    },
+    "Lorg/qtproject/qt5/android/bindings/QtLoader;::loadApplication(Landroid/os/Bundle;)V": {
+      "code_item_offset": 189320,
+      "instruction_bytes": 766,
+      "sha256": "3c0b8f371fd7d63470ab45f13b71ca03deb59c02f8102cecdc969149a05c3c18"
+    },
+    "Lorg/qtproject/qt5/android/bindings/QtLoader;::startApp(Z)V": {
+      "code_item_offset": 190308,
+      "instruction_bytes": 1972,
+      "sha256": "6110d7a87a14cbe944759e8e0446aa93c39d8d0090cdbbba83bb1cb61e019f0b"
+    }
+  },
+  "cases": [
+    {
+      "case": "launcher",
+      "input": null,
+      "result": -1,
+      "identity": {
+        "kind": "argument_identity",
+        "guard": {
+          "pid": 805131,
+          "serial": "emulator-5580",
+          "readonly_userdata": [
+            "/data/dl/.android/avd/api34_test.avd/userdata-qemu.img",
+            "/data/dl/.android/avd/api34_test.avd/userdata-qemu.img.qcow2"
+          ]
+        },
+        "frida_forward": "emulator-5580 tcp:27045 tcp:27042",
+        "binaries": {
+          "libQt5Core_x86_64.so": "cd59df801f6ad5586e38bc720454f51d73df0c03dbed0db73bd9b592b25d4041",
+          "libQt5Network_x86_64.so": "1dc3801a783b585393935216bdd17a8313d24b831f7814b4177dd5ffc6214a74",
+          "libplugins_bearer_qandroidbearer_x86_64.so": "6e70b91e29b80eed18f025c3cc2395c89b860e204c2208ba489a91cf5f95ae50",
+          "libshell_x86_64.so": "195025601c2b17194a4d8b3debd674aca3377290fe3851986656c49bc973f907",
+          "libmain.so": "57e625cdecef4683e019109cea5bf26c67ab7d0e84bbe4c247377a0ba9a11a34"
+        },
+        "case": "launcher",
+        "input": null,
+        "result": -1,
+        "fresh_unpaired_overlay": true,
+        "tool_sha256": "b5c2ead7018ec2a836fced8fa41de03fe0319b1a25e7c2564adeea5bfac71fc8",
+        "observer_sha256": "93f9f41f677f3ac8a2d898f459c4f080da2c7979c3380f96607823552a02afc6",
+        "base_observer_sha256": "62648be1d9225935230715e6f989a8e2853e18467133267432e119217c0b274b",
+        "bridge_sha256": "02cb922b7fea29a566bd9ae4a190fad24c503076f2497af5706d117033de6a0e",
+        "fingerprint": "google/sdk_gphone64_x86_64/emu64xa:14/UE1A.230829.050/12077443:userdebug/dev-keys"
+      },
+      "events": [
+        {
+          "kind": "argument_phase",
+          "name": "launch"
+        },
+        {
+          "kind": "shell_argument_intent",
+          "pid": 5180,
+          "time_ms": 1792793743661,
+          "task": 67,
+          "action": "android.intent.action.MAIN",
+          "data": null,
+          "extra_keys": [],
+          "applicationArguments": null,
+          "saved_bundle_present": false
+        },
+        {
+          "kind": "qt_loader_parameters",
+          "pid": 5180,
+          "time_ms": 1792793743668,
+          "parameters": null
+        },
+        {
+          "kind": "qt_native_parameters",
+          "pid": 5180,
+          "time_ms": 1792793743904,
+          "parameters": "",
+          "library": "libshell_x86_64.so"
+        },
+        {
+          "kind": "native_shell_argv",
+          "pid": 5180,
+          "time_ms": 1792793743907,
+          "argc": 1,
+          "argv": [
+            "libshell_x86_64.so"
+          ],
+          "raw_argv_sha256": "40196b9ca1ae6b7c2dd06c34c373bbb97908ebc78e0bee379ca7ab49437c4d19"
+        },
+        {
+          "kind": "native_binit_arguments",
+          "pid": 5180,
+          "time_ms": 1792793743908,
+          "generation": 0,
+          "argc": 1,
+          "autoconnect": 0,
+          "initial_state": 0
+        },
+        {
+          "kind": "argument_phase",
+          "name": "controlled-native-launch"
+        },
+        {
+          "kind": "original_java_start_streaming",
+          "pid": 5180,
+          "time_ms": 1792793744374,
+          "argument_count": 8,
+          "mode": 1
+        },
+        {
+          "kind": "player_argument_array",
+          "pid": 5180,
+          "argument_count": 8,
+          "argument_array_sha256": "be66d7d6bdb371db91d6d3587b518d09495c8d8f80e76633fa328cb1753ab6c5",
+          "input_indices": []
+        },
+        {
+          "kind": "system_exit",
+          "pid": 5180,
+          "time_ms": 1792793745761,
+          "code": 0
+        },
+        {
+          "kind": "shell_argument_intent",
+          "pid": 5254,
+          "time_ms": 1792793746100,
+          "task": 67,
+          "action": "android.intent.action.MAIN",
+          "data": null,
+          "extra_keys": [],
+          "applicationArguments": null,
+          "saved_bundle_present": true
+        },
+        {
+          "kind": "qt_loader_parameters",
+          "pid": 5254,
+          "time_ms": 1792793746104,
+          "parameters": null
+        },
+        {
+          "kind": "argument_detached",
+          "pid": 5180,
+          "reason": "process-terminated",
+          "crash": false
+        },
+        {
+          "kind": "qt_native_parameters",
+          "pid": 5254,
+          "time_ms": 1792793746287,
+          "parameters": "",
+          "library": "libshell_x86_64.so"
+        },
+        {
+          "kind": "native_shell_argv",
+          "pid": 5254,
+          "time_ms": 1792793746290,
+          "argc": 1,
+          "argv": [
+            "libshell_x86_64.so"
+          ],
+          "raw_argv_sha256": "40196b9ca1ae6b7c2dd06c34c373bbb97908ebc78e0bee379ca7ab49437c4d19"
+        },
+        {
+          "kind": "native_binit_arguments",
+          "pid": 5254,
+          "time_ms": 1792793746290,
+          "generation": 1,
+          "argc": 1,
+          "autoconnect": 0,
+          "initial_state": 0
+        },
+        {
+          "kind": "restored_binit_held",
+          "pid": 5254,
+          "time_ms": 1792793746290
+        },
+        {
+          "kind": "argument_phase",
+          "name": "restored-before-admission"
+        },
+        {
+          "kind": "argument_phase",
+          "name": "cleanup-force-stop-held-process"
+        },
+        {
+          "kind": "argument_detached",
+          "pid": 5254,
+          "reason": "process-terminated",
+          "crash": false
+        },
+        {
+          "kind": "argument_cleanup",
+          "gating_disabled": true,
+          "worker_joined": true,
+          "all_sessions_detached": true
+        }
+      ],
+      "system_log_evidence": [
+        "10-24 06:15:45.770   356   356 I Zygote  : Process 5180 exited cleanly (0)",
+        "10-24 06:15:45.777   546   576 I ActivityManager: Start proc 5254:com.valvesoftware.steamlink/u0a193 for top-activity {com.valvesoftware.steamlink/com.valvesoftware.steamlink.SteamShellActivity}"
+      ],
+      "private_artifact_sha256": {
+        "events.jsonl": "45d8bdddf0bb3c38de34cee8df5787716ca39eb92e825ee5f903b0b0d67e3892",
+        "logcat.txt": "346d6799dcdf0610ef18a427f7ce09bf8280643a2a147a1c388c5ba42b8d2205",
+        "tasks.txt": "c20e12c40c905b40c1bc1db442d1582d22efb0f443e37066770868bcba312afb"
+      }
+    },
+    {
+      "case": "autoconnect-extra",
+      "input": "--autoconnect",
+      "result": 0,
+      "identity": {
+        "kind": "argument_identity",
+        "guard": {
+          "pid": 805131,
+          "serial": "emulator-5580",
+          "readonly_userdata": [
+            "/data/dl/.android/avd/api34_test.avd/userdata-qemu.img",
+            "/data/dl/.android/avd/api34_test.avd/userdata-qemu.img.qcow2"
+          ]
+        },
+        "frida_forward": "emulator-5580 tcp:27045 tcp:27042",
+        "binaries": {
+          "libQt5Core_x86_64.so": "cd59df801f6ad5586e38bc720454f51d73df0c03dbed0db73bd9b592b25d4041",
+          "libQt5Network_x86_64.so": "1dc3801a783b585393935216bdd17a8313d24b831f7814b4177dd5ffc6214a74",
+          "libplugins_bearer_qandroidbearer_x86_64.so": "6e70b91e29b80eed18f025c3cc2395c89b860e204c2208ba489a91cf5f95ae50",
+          "libshell_x86_64.so": "195025601c2b17194a4d8b3debd674aca3377290fe3851986656c49bc973f907",
+          "libmain.so": "57e625cdecef4683e019109cea5bf26c67ab7d0e84bbe4c247377a0ba9a11a34"
+        },
+        "case": "autoconnect-extra",
+        "input": "--autoconnect",
+        "result": 0,
+        "fresh_unpaired_overlay": true,
+        "tool_sha256": "b5c2ead7018ec2a836fced8fa41de03fe0319b1a25e7c2564adeea5bfac71fc8",
+        "observer_sha256": "93f9f41f677f3ac8a2d898f459c4f080da2c7979c3380f96607823552a02afc6",
+        "base_observer_sha256": "62648be1d9225935230715e6f989a8e2853e18467133267432e119217c0b274b",
+        "bridge_sha256": "02cb922b7fea29a566bd9ae4a190fad24c503076f2497af5706d117033de6a0e",
+        "fingerprint": "google/sdk_gphone64_x86_64/emu64xa:14/UE1A.230829.050/12077443:userdebug/dev-keys"
+      },
+      "events": [
+        {
+          "kind": "argument_phase",
+          "name": "launch"
+        },
+        {
+          "kind": "shell_argument_intent",
+          "pid": 5398,
+          "time_ms": 1792793773941,
+          "task": 68,
+          "action": "android.intent.action.MAIN",
+          "data": null,
+          "extra_keys": [
+            "applicationArguments"
+          ],
+          "applicationArguments": "--autoconnect",
+          "saved_bundle_present": false
+        },
+        {
+          "kind": "qt_loader_parameters",
+          "pid": 5398,
+          "time_ms": 1792793773945,
+          "parameters": "--autoconnect"
+        },
+        {
+          "kind": "qt_native_parameters",
+          "pid": 5398,
+          "time_ms": 1792793774153,
+          "parameters": "--autoconnect",
+          "library": "libshell_x86_64.so"
+        },
+        {
+          "kind": "native_shell_argv",
+          "pid": 5398,
+          "time_ms": 1792793774156,
+          "argc": 2,
+          "argv": [
+            "libshell_x86_64.so",
+            "--autoconnect"
+          ],
+          "raw_argv_sha256": "f74decc1ae5c5712df321b94ebdcdf69a0076593a6298f5c3478092973d4b7aa"
+        },
+        {
+          "kind": "native_binit_arguments",
+          "pid": 5398,
+          "time_ms": 1792793774156,
+          "generation": 0,
+          "argc": 2,
+          "autoconnect": 1,
+          "initial_state": 0
+        },
+        {
+          "kind": "argument_phase",
+          "name": "controlled-native-launch"
+        },
+        {
+          "kind": "original_java_start_streaming",
+          "pid": 5398,
+          "time_ms": 1792793774440,
+          "argument_count": 9,
+          "mode": 1
+        },
+        {
+          "kind": "player_argument_array",
+          "pid": 5398,
+          "argument_count": 9,
+          "argument_array_sha256": "e7cca8023d8e270744548a5190a48131c7f5a0d2bce02866996fd61e650c7128",
+          "input_indices": [
+            8
+          ]
+        },
+        {
+          "kind": "system_exit",
+          "pid": 5398,
+          "time_ms": 1792793775794,
+          "code": 0
+        },
+        {
+          "kind": "shell_argument_intent",
+          "pid": 5476,
+          "time_ms": 1792793776129,
+          "task": 68,
+          "action": "android.intent.action.MAIN",
+          "data": null,
+          "extra_keys": [
+            "applicationArguments"
+          ],
+          "applicationArguments": "--autoconnect",
+          "saved_bundle_present": true
+        },
+        {
+          "kind": "qt_loader_parameters",
+          "pid": 5476,
+          "time_ms": 1792793776135,
+          "parameters": "--autoconnect"
+        },
+        {
+          "kind": "argument_detached",
+          "pid": 5398,
+          "reason": "process-terminated",
+          "crash": false
+        },
+        {
+          "kind": "qt_native_parameters",
+          "pid": 5476,
+          "time_ms": 1792793776337,
+          "parameters": "--autoconnect",
+          "library": "libshell_x86_64.so"
+        },
+        {
+          "kind": "native_shell_argv",
+          "pid": 5476,
+          "time_ms": 1792793776340,
+          "argc": 2,
+          "argv": [
+            "libshell_x86_64.so",
+            "--autoconnect"
+          ],
+          "raw_argv_sha256": "f74decc1ae5c5712df321b94ebdcdf69a0076593a6298f5c3478092973d4b7aa"
+        },
+        {
+          "kind": "native_binit_arguments",
+          "pid": 5476,
+          "time_ms": 1792793776340,
+          "generation": 1,
+          "argc": 2,
+          "autoconnect": 1,
+          "initial_state": 0
+        },
+        {
+          "kind": "restored_binit_held",
+          "pid": 5476,
+          "time_ms": 1792793776340
+        },
+        {
+          "kind": "argument_phase",
+          "name": "restored-before-admission"
+        },
+        {
+          "kind": "argument_phase",
+          "name": "cleanup-force-stop-held-process"
+        },
+        {
+          "kind": "argument_detached",
+          "pid": 5476,
+          "reason": "process-terminated",
+          "crash": false
+        },
+        {
+          "kind": "argument_cleanup",
+          "gating_disabled": true,
+          "worker_joined": true,
+          "all_sessions_detached": true
+        }
+      ],
+      "system_log_evidence": [
+        "10-24 06:16:15.803   356   356 I Zygote  : Process 5398 exited cleanly (0)",
+        "10-24 06:16:15.809   546   576 I ActivityManager: Start proc 5476:com.valvesoftware.steamlink/u0a193 for top-activity {com.valvesoftware.steamlink/com.valvesoftware.steamlink.SteamShellActivity}"
+      ],
+      "private_artifact_sha256": {
+        "events.jsonl": "234d08b5b1c162e458a99e3f33782394992bdb4ffc680668904e549406c0f563",
+        "logcat.txt": "39d67a15865fcbdcd90ff66ace93b6e52b5a326d175836549f59cab831f61502",
+        "tasks.txt": "2d379de119956d35d04416bdb6689df7dcc772c20ee66066b78af3717a7457e7"
+      }
+    },
+    {
+      "case": "url-extra",
+      "input": "steamlink://fixture.invalid/opaque",
+      "result": 0,
+      "identity": {
+        "kind": "argument_identity",
+        "guard": {
+          "pid": 805131,
+          "serial": "emulator-5580",
+          "readonly_userdata": [
+            "/data/dl/.android/avd/api34_test.avd/userdata-qemu.img",
+            "/data/dl/.android/avd/api34_test.avd/userdata-qemu.img.qcow2"
+          ]
+        },
+        "frida_forward": "emulator-5580 tcp:27045 tcp:27042",
+        "binaries": {
+          "libQt5Core_x86_64.so": "cd59df801f6ad5586e38bc720454f51d73df0c03dbed0db73bd9b592b25d4041",
+          "libQt5Network_x86_64.so": "1dc3801a783b585393935216bdd17a8313d24b831f7814b4177dd5ffc6214a74",
+          "libplugins_bearer_qandroidbearer_x86_64.so": "6e70b91e29b80eed18f025c3cc2395c89b860e204c2208ba489a91cf5f95ae50",
+          "libshell_x86_64.so": "195025601c2b17194a4d8b3debd674aca3377290fe3851986656c49bc973f907",
+          "libmain.so": "57e625cdecef4683e019109cea5bf26c67ab7d0e84bbe4c247377a0ba9a11a34"
+        },
+        "case": "url-extra",
+        "input": "steamlink://fixture.invalid/opaque",
+        "result": 0,
+        "fresh_unpaired_overlay": true,
+        "tool_sha256": "b5c2ead7018ec2a836fced8fa41de03fe0319b1a25e7c2564adeea5bfac71fc8",
+        "observer_sha256": "93f9f41f677f3ac8a2d898f459c4f080da2c7979c3380f96607823552a02afc6",
+        "base_observer_sha256": "62648be1d9225935230715e6f989a8e2853e18467133267432e119217c0b274b",
+        "bridge_sha256": "02cb922b7fea29a566bd9ae4a190fad24c503076f2497af5706d117033de6a0e",
+        "fingerprint": "google/sdk_gphone64_x86_64/emu64xa:14/UE1A.230829.050/12077443:userdebug/dev-keys"
+      },
+      "events": [
+        {
+          "kind": "argument_phase",
+          "name": "launch"
+        },
+        {
+          "kind": "shell_argument_intent",
+          "pid": 5728,
+          "time_ms": 1792793814865,
+          "task": 69,
+          "action": "android.intent.action.MAIN",
+          "data": null,
+          "extra_keys": [
+            "applicationArguments"
+          ],
+          "applicationArguments": "steamlink://fixture.invalid/opaque",
+          "saved_bundle_present": false
+        },
+        {
+          "kind": "qt_loader_parameters",
+          "pid": 5728,
+          "time_ms": 1792793814870,
+          "parameters": "steamlink://fixture.invalid/opaque"
+        },
+        {
+          "kind": "qt_native_parameters",
+          "pid": 5728,
+          "time_ms": 1792793815053,
+          "parameters": "steamlink://fixture.invalid/opaque",
+          "library": "libshell_x86_64.so"
+        },
+        {
+          "kind": "native_shell_argv",
+          "pid": 5728,
+          "time_ms": 1792793815056,
+          "argc": 2,
+          "argv": [
+            "libshell_x86_64.so",
+            "steamlink://fixture.invalid/opaque"
+          ],
+          "raw_argv_sha256": "eaafc62c0af8457cb405092ba6cf8b9b77da8381163e173b8c4c9d2616ba4c20"
+        },
+        {
+          "kind": "native_binit_arguments",
+          "pid": 5728,
+          "time_ms": 1792793815057,
+          "generation": 0,
+          "argc": 2,
+          "autoconnect": 0,
+          "initial_state": 0
+        },
+        {
+          "kind": "original_java_start_streaming",
+          "pid": 5728,
+          "time_ms": 1792793815201,
+          "argument_count": 9,
+          "mode": 1
+        },
+        {
+          "kind": "player_argument_array",
+          "pid": 5728,
+          "argument_count": 9,
+          "argument_array_sha256": "2f942bed976c41c50b06303da7e58ac6b383fc1af0eaa81dc9bb101b62ed4435",
+          "input_indices": [
+            8
+          ]
+        },
+        {
+          "kind": "system_exit",
+          "pid": 5728,
+          "time_ms": 1792793816561,
+          "code": 0
+        },
+        {
+          "kind": "shell_argument_intent",
+          "pid": 5788,
+          "time_ms": 1792793816895,
+          "task": 69,
+          "action": "android.intent.action.MAIN",
+          "data": null,
+          "extra_keys": [
+            "applicationArguments"
+          ],
+          "applicationArguments": "steamlink://fixture.invalid/opaque",
+          "saved_bundle_present": true
+        },
+        {
+          "kind": "qt_loader_parameters",
+          "pid": 5788,
+          "time_ms": 1792793816901,
+          "parameters": "steamlink://fixture.invalid/opaque"
+        },
+        {
+          "kind": "argument_detached",
+          "pid": 5728,
+          "reason": "process-terminated",
+          "crash": false
+        },
+        {
+          "kind": "qt_native_parameters",
+          "pid": 5788,
+          "time_ms": 1792793817104,
+          "parameters": "steamlink://fixture.invalid/opaque",
+          "library": "libshell_x86_64.so"
+        },
+        {
+          "kind": "native_shell_argv",
+          "pid": 5788,
+          "time_ms": 1792793817106,
+          "argc": 2,
+          "argv": [
+            "libshell_x86_64.so",
+            "steamlink://fixture.invalid/opaque"
+          ],
+          "raw_argv_sha256": "eaafc62c0af8457cb405092ba6cf8b9b77da8381163e173b8c4c9d2616ba4c20"
+        },
+        {
+          "kind": "native_binit_arguments",
+          "pid": 5788,
+          "time_ms": 1792793817107,
+          "generation": 1,
+          "argc": 2,
+          "autoconnect": 0,
+          "initial_state": 0
+        },
+        {
+          "kind": "restored_binit_held",
+          "pid": 5788,
+          "time_ms": 1792793817107
+        },
+        {
+          "kind": "argument_phase",
+          "name": "restored-before-admission"
+        },
+        {
+          "kind": "argument_phase",
+          "name": "cleanup-force-stop-held-process"
+        },
+        {
+          "kind": "argument_detached",
+          "pid": 5788,
+          "reason": "process-terminated",
+          "crash": false
+        },
+        {
+          "kind": "argument_cleanup",
+          "gating_disabled": true,
+          "worker_joined": true,
+          "all_sessions_detached": true
+        }
+      ],
+      "system_log_evidence": [
+        "10-24 06:16:56.569   356   356 I Zygote  : Process 5728 exited cleanly (0)",
+        "10-24 06:16:56.575   546   576 I ActivityManager: Start proc 5788:com.valvesoftware.steamlink/u0a193 for top-activity {com.valvesoftware.steamlink/com.valvesoftware.steamlink.SteamShellActivity}"
+      ],
+      "private_artifact_sha256": {
+        "events.jsonl": "0738277619896cb0f018dff4734f05a938fb97cb978e8fc38909d0afc1123163",
+        "logcat.txt": "2829808bf7275036ea7f5f281194039a8ea7d0c21bc36a6fdcd156bd037f6d3a",
+        "tasks.txt": "24e064364c8fa6e1806e32946e89c8b2caa1818cf4e11abf048b4cd71eb6efb9"
+      }
+    }
+  ],
+  "guard_rejection": {
+    "address": "127.0.0.1:27046",
+    "reason": "Frida forward does not belong to guarded AVD",
+    "output_directory_absent": true,
+    "stderr_sha256": "913fef5c7468331ba4cbb580ca2ba811b605bc92ac6abf8a468e25de572d5420"
+  },
+  "excluded_drafts": [
+    {
+      "name": "launcher-draft",
+      "reason": "Synchronous attach/load in Frida dispatcher blocked observation/cleanup. Owned server stopped and runner terminated; no result accepted."
+    },
+    {
+      "name": "launcher-worker",
+      "reason": "Default third callback parameter requested a sender Session and shifted fields. Serialization failed; observation rejected. Final callback factory has exactly two parameters."
+    }
+  ],
+  "owned_environment_shutdown": {
+    "adb_emu_kill_acknowledged": true,
+    "frida_server_session_exit": 0,
+    "emulator_session_exit": 0
+  }
+}

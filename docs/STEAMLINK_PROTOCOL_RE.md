@@ -14705,3 +14705,95 @@ PYTHONPATH=/path/to/audit-deps python3 tools/steam-shell-reentry-audit.py \
   --reference tools/fixtures/steam-shell-reentry-1.3.32.json.gz
 # 同样binary/output参数加--mutation ignore-autoconnect-gate，须因策略差异失败。
 ```
+
+## 190. 真实新进程的Intent→Qt→native参数恢复
+
+Evidence：在与§188相同的固定官方1.3.32 APK、只读Android14 AVD中，对三种给定
+Shell启动输入分别执行原native交接、原Java完成回调和真实System.exit。Frida在新PID
+执行前安装观察器；原Java/Qt启动、native main参数解析与CShellApplication构造运行，
+恢复进程在原BInit入口暂停，随后由测试清理终止。播放器nativeRunMain在所有PID均被
+受控替换，不请求真实Steam主机媒体；本组不是自然断网或完整恢复BInit的测试。
+
+`tools/steam-android-argument-observe.py`每组都先验证活qemu、serial/port和基础
+userdata只读描述符，再清除临时overlay profile；base APK、x86_64 shell/Qt/bearer/
+libmain逐一核对SHA。三个有效运行的旧进程都有原System.exit(0)、无crash的detach和
+Zygote cleanly(0)；系统为原task的SteamShellActivity启动新PID。没有用PC端工具的
+正常退出替代Android进程/Activity证据。
+
+### 两类Intent参数和Qt的拼接
+
+固定DEX的QtActivity构造将APPLICATION_PARAMETERS置null；onCreateHook将它交给
+QtActivityLoader。QtLoader.startApp的原code item为`0x2e764`，其参数块依次读取
+APPLICATION_PARAMETERS、Intent字符串extra `applicationArguments`、manifest
+`android.app.arguments`，有多个来源时用tab拼接，之后把空格换成tab并trim，再放入
+`application.parameters` Bundle。该APK manifest没有android.app.arguments配置。
+
+后续QtActivityDelegate/QtNative把它交给native shell；本节同时观察loader Bundle、
+QtNative.startApplication输入和实际main argc/argv，不用Java字符串推测最终argv。
+这三个给定动态输入不覆盖多个参数来源的组合、含空格/引号字符串或debugger extras；
+相应原DEX方法的完整code item SHA保存在冻结记录中，静态读取与动态覆盖保持区别。
+
+普通原交接创建的是**另一个播放器Intent**，在SteamShellActivity.startStreaming
+`0x13608`中放入String[] extra `args`及lowLatencyVideoMode。SteamLink.getArguments
+`0x12750`优先读取自己的Intent.data，否则读取这组args。本次三组交接都是播放器
+args数组，未通过播放器Intent.data启动；它与Shell的applicationArguments不是一个键。
+
+| 给定Shell输入 | 第一次/恢复后的native shell argv（省略argv[0]） | 两次app+0x98 | 旧播放器args个数 |
+|---|---|---|---|
+| MAIN/LAUNCHER，无参数extra | 都为空；argc都为1 | 0 / 0 | 8 |
+| applicationArguments=`--autoconnect` | 都只有该参数；argc都为2 | 1 / 1 | 9 |
+| applicationArguments=`steamlink://fixture.invalid/opaque` | 都只有该URL；argc都为2 | 0 / 0 | 9 |
+
+每组恢复后的Shell Intent保留相同task及applicationArguments，均没有播放器的args
+extra；第一次saved Bundle为null，恢复时为非null。两次loader/QtNative参数和原始
+native argv分别逐项相等。普通启动的loader参数为null、QtNative输入为空字符串，
+不是把上一次8个播放器参数重新交给shell。URL组的URL也出现在旧播放器数组末项，
+但没有混成--autoconnect标志；旧进程这组没有测试RPC注入的StartStreaming动作，
+其原BInit的URL扫描自行进入原native交接，与§189的入口块一致。
+
+普通组给定完成结果−1，其余两组给定0；原Java都请求退出状态0。该给定结果不被当作
+恢复参数或重试次数；§186的原JNI/DEX结果选择另有独立输入覆盖。
+
+### 所证明的恢复边界
+
+Conclusion：至少在上述普通Shell交接及给定Intent下，新进程重新执行原CLI/构造，
+参数来自恢复的Shell输入，不由播放器args或完成结果拼出。默认launcher的自动启动
+标志仍为0；显式--autoconnect会保留，进入§189的有条件启动规则。URL-like extra也
+会保留，是另一种可重入输入，不能据此发明断线重试间隔。
+
+所有恢复PID都**只运行到BInit入口**，未执行其资源/发现初始化，更未等待主机可用、
+交付新的OnStartPlaying或请求媒体。因此本组不证明URL恢复后会自然重复启动、
+已配对主机遇到网络故障后必定恢复、或整个owner/音视频/HID已经复位。恢复进程在
+清理阶段被force-stop，与旧进程原System.exit产生的正常退出分开记录。
+
+本例URL是人为提供给Shell的applicationArguments，不能称作浏览器深链接验收。
+样本manifest的steamlink与三个HTTPS Remote Play过滤器属于SteamLink播放器Activity，
+Shell Activity只有MAIN入口。隐式Intent解析、直接播放器根任务及其他Android版本，
+不由这三组Shell实验覆盖。
+
+### 工具和复现
+
+公开投影为`tools/fixtures/steam-android-arguments-runtime-1.3.32.json`：保存三组
+源文件/二进制/bridge SHA、14个相关DEX code item、参数链、PID/task和私有产物hash。
+播放器完整配置数组仅保留hash/个数及合成输入位置，不提交原始logcat、应用资料或
+完整配置。旧§188观察器按冻结SHA原样复用，不改写其历史证据。
+
+spawn gating仅作用于拥有的只读AVD和新启动的测试Frida server，其他包直接恢复。
+工具要求127.0.0.1的Frida端口确实由受保护serial转发到guest tcp:27042，避免ADB与
+Frida指向不同设备；未转发端口的反例在查询/清除profile前被拒绝，未创建输出目录。
+attach/load由一个显式join的工作线程执行，不阻塞Frida事件分发器；恢复BInit的暂停
+在杀死其进程前不释放。三组结束都确认gating关闭、工作线程join、观察session detach；
+随后拥有的server/forward和AVD也已关闭，两个进程会话均退出0。
+
+两份工具草稿未计入有效样本：同步在spawn通知中attach/load导致分发器阻塞，停止
+server后另终止runner；另一份detached回调默认第三参数改变Frida的sender参数约定，
+日志序列化失败，整组被拒绝。修正后才取得上表三组完整记录，不能把这些工具问题
+当作Steam、Android网络或Switch生命周期问题。
+
+```sh
+python3 tools/steam-android-argument-observe.py \
+  --readonly-qemu-pid LIVE_READONLY_QEMU_PID --case launcher \
+  --output /tmp/android-launcher-arguments
+# 独立目录再运行--case autoconnect-extra --result 0，以及--case url-extra --result 0。
+# 需要全新、拥有的root Frida server；runner只清只读AVD的overlay，不接受物理设备。
+```
