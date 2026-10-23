@@ -64,7 +64,7 @@ typedef struct {
     int fd;
     pthread_t worker;
     atomic_bool stop, drop;
-    atomic_uint queries;
+    atomic_uint queries, delay_ms;
     unsigned network;
     struct sockaddr_in address;
     char hosts[32][254];
@@ -97,6 +97,9 @@ static void *dns_server(void *context) {
         atomic_fetch_add(&f->queries, 1);
         if (atomic_load(&f->drop))
             continue;
+        unsigned delay = atomic_load(&f->delay_ms);
+        if (delay)
+            usleep(delay * 1000);
         assert((size_t)n + 32 < sizeof(packet));
         packet[2] = 0x81;
         packet[3] = 0x80;
@@ -118,6 +121,7 @@ static void start_fixture(fixture *f, unsigned network) {
     atomic_init(&f->stop, false);
     atomic_init(&f->drop, false);
     atomic_init(&f->queries, 0);
+    atomic_init(&f->delay_ms, 0);
     f->fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     assert(f->fd >= 0);
     f->address =
@@ -179,6 +183,27 @@ static void *parallel_lookup(void *unused) {
     sl_dns_refresh result;
     assert(sl_dns_policy_lookup("parallel.example", &result));
     assert(!strcmp(result.addresses, "198.51.100.27,198.51.100.28"));
+    return NULL;
+}
+typedef struct {
+    const char *host;
+    uint32_t token;
+    bool success;
+    atomic_bool entered, done;
+} batch_lookup;
+static void *lookup_batch(void *context) {
+    batch_lookup *job = context;
+    if (job->token)
+        sl_dns_policy_begin(job->token);
+    atomic_store(&job->entered, true);
+    sl_dns_refresh result;
+    bool success = sl_dns_policy_lookup(job->host, &result);
+    assert(success == job->success);
+    if (success)
+        assert(!strcmp(result.addresses, "198.51.100.27,198.51.100.28"));
+    if (job->token)
+        sl_dns_policy_end(job->token);
+    atomic_store(&job->done, true);
     return NULL;
 }
 int main(void) {
@@ -254,6 +279,49 @@ int main(void) {
     assert(sl_dns_policy_lookup("resource.example", &merged));
     assert(now_ms() - resource_start >= 90 && now_ms() - resource_start < 500);
     assert(atomic_load(&injected_resource_failures) == 0 && open_fds() == fd_baseline);
+    /* Reproduce hotspot startup: all five slots held by a silent first owner.
+     * The next owner must still query ALL providers and accept replies after
+     * the first 3s elapse. A queued cancellation must not remove its neighbour
+     * or retain a stack waiter. These are real UDP queries, not mocked polls. */
+    pthread_mutex_lock(&config_lock);
+    config.count = SL_DNS_SERVERS;
+    for (unsigned i = 0; i < SL_DNS_SERVERS; ++i) config.servers[i] = first.address;
+    pthread_mutex_unlock(&config_lock);
+    unsigned silent_before = atomic_load(&first.queries);
+    batch_lookup blocked = {.host = "blocked.example", .success = false};
+    batch_lookup queued = {.host = "queued.example", .success = true};
+    batch_lookup cancelled = {.host = "queued-cancel.example", .token = 91, .success = false};
+    pthread_t batches[3];
+    assert(!pthread_create(&batches[0], NULL, lookup_batch, &blocked));
+    uint64_t until_full = now_ms() + 1000;
+    while (atomic_load(&first.queries) < silent_before + SL_DNS_SERVERS && now_ms() < until_full)
+        usleep(1000);
+    assert(atomic_load(&first.queries) >= silent_before + SL_DNS_SERVERS);
+    pthread_mutex_lock(&config_lock);
+    for (unsigned i = 0; i < SL_DNS_SERVERS; ++i) config.servers[i] = second.address;
+    pthread_mutex_unlock(&config_lock);
+    atomic_store(&second.delay_ms, 100);
+    unsigned live_before = atomic_load(&second.queries);
+    assert(!pthread_create(&batches[1], NULL, lookup_batch, &queued));
+    assert(!pthread_create(&batches[2], NULL, lookup_batch, &cancelled));
+    uint64_t entered_until = now_ms() + 1000;
+    while ((!atomic_load(&queued.entered) || !atomic_load(&cancelled.entered)) &&
+           now_ms() < entered_until)
+        usleep(1000);
+    assert(atomic_load(&queued.entered) && atomic_load(&cancelled.entered));
+    uint64_t cancel_start = now_ms();
+    sl_dns_policy_cancel(91);
+    assert(!pthread_join(batches[2], NULL) && now_ms() - cancel_start < 500);
+    uint64_t queued_until = now_ms() + 6500;
+    while ((!atomic_load(&blocked.done) || !atomic_load(&queued.done)) && now_ms() < queued_until) {
+        assert(open_fds() <= fd_baseline + SL_DNS_SERVERS);
+        usleep(1000);
+    }
+    assert(atomic_load(&blocked.done) && atomic_load(&queued.done));
+    assert(!pthread_join(batches[0], NULL) && !pthread_join(batches[1], NULL));
+    assert(atomic_load(&second.queries) == live_before + SL_DNS_SERVERS);
+    assert(open_fds() == fd_baseline);
+    atomic_store(&second.delay_ms, 0);
     /* Two actual owners, each requesting five providers, share at most five
      * live DNS sockets. Slow providers must not suppress the other owner. */
     pthread_mutex_lock(&config_lock);
@@ -263,7 +331,7 @@ int main(void) {
     pthread_mutex_unlock(&config_lock);
     pthread_t parallel[2];
     for (unsigned i = 0; i < 2; ++i) assert(!pthread_create(&parallel[i], NULL, parallel_lookup, NULL));
-    uint64_t parallel_until = now_ms() + 3100;
+    uint64_t parallel_until = now_ms() + 6100;
     while (now_ms() < parallel_until) {
         assert(open_fds() <= fd_baseline + SL_DNS_SERVERS);
         usleep(1000);
