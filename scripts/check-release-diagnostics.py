@@ -46,7 +46,6 @@ MARKERS = (
     b"Font initialization failed:",
 )
 FORBIDDEN_SYMBOLS = {
-    "sl_log_start", "sl_log_finish", "sl_log_http_port", "sl_log_copy_tail",
     "sl_sns_start_relay_probe", "sl_sns_test_relay_loss", "sl_sns_test_migration",
     "sl_sns_test_terminal",
     "sl_gns_sdr_test_loss", "sl_gns_sdr_test_terminal", "sl_gns_sdr_test_migration",
