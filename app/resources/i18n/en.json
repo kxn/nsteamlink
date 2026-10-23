@@ -182,6 +182,7 @@
   "APP_SETTINGS": "Application",
   "UPDATE_CHECK": "Check for updates",
   "END_GAME_CONFIRM": "End game",
-  "SPECIAL_SETTINGS": "Special features",
-  "CAPTURE_GUIDE": "Capture button as Steam Guide"
+  "GUIDE_KEY": "Steam Guide button",
+  "GUIDE_KEY_OFF": "Off",
+  "GUIDE_KEY_CAPTURE": "Capture button"
 }

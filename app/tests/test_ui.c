@@ -631,11 +631,10 @@ static void actionable_settings(void) {
     sl_ui_model m = model();
     sl_command command;
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
-    assert(m.page == SL_SETTINGS && m.depth == 1 && m.layout.count == 6);
+    assert(m.page == SL_SETTINGS && m.depth == 1 && m.layout.count == 5);
     const sl_action categories[] = {SL_OPEN_AV_SETTINGS, SL_OPEN_NETWORK_SETTINGS,
-                                    SL_OPEN_HOST_SETTINGS, SL_OPEN_APP_SETTINGS,
-                                    SL_OPEN_SPECIAL_SETTINGS};
-    for (int i = 0; i < 5; ++i) {
+                                    SL_OPEN_HOST_SETTINGS, SL_OPEN_APP_SETTINGS};
+    for (int i = 0; i < 4; ++i) {
         assert(m.layout.controls[i].action == categories[i]);
         assert(m.layout.controls[i].kind == SL_CONTROL_SUBMENU);
     }
@@ -703,8 +702,8 @@ static void actionable_settings(void) {
                                  SL_OPEN_NETWORK_SETTINGS,
                                  SL_OPEN_HOST_SETTINGS,
                                  SL_OPEN_APP_SETTINGS,
-                                 SL_OPEN_SPECIAL_SETTINGS,
-                                 SL_CAPTURE_GUIDE,
+                                 SL_OPEN_GUIDE_KEY,
+                                 SL_SET_GUIDE_KEY,
                                  SL_OPEN_QUALITY,
                                  SL_OPEN_RESOLUTION,
                                  SL_OPEN_BANDWIDTH,

@@ -17,6 +17,9 @@ static jmp_buf fatal;
 static bool expect_fatal;
 static bool selftest_complete;
 extern bool sl_events_capture_selftest_tick(uint64_t);
+extern bool sl_events_capture_probe_begin(void);
+extern unsigned sl_events_capture_probe_messages(void);
+extern bool sl_events_capture_probe_end(void);
 void appletHook(AppletHookCookie *cookie, AppletHookFn fn, void *context) {
     (void)cookie;
     assert(!hook);
@@ -118,5 +121,28 @@ int main(void) {
     assert(sl_events_capture_selftest_tick(1511) && selftest_complete);
     sl_events_shutdown();
     assert(!system_redirected && hooks == unhooks);
+    /* The virtual-HID trial owns the route while the normal offline main loop
+     * keeps its product gate OFF. Its messages must never reach host input. */
+    sl_events_init();
+    assert(sl_events_capture_probe_begin() && system_redirected);
+    assert(!sl_events_capture_probe_begin());
+    assert(sl_events_capture_guide(false) && system_redirected);
+    press();
+    assert(sl_events_capture_probe_messages() == 1 && !sl_events_take_capture_guide());
+    press();
+    assert(sl_events_capture_probe_messages() == 2 && !sl_events_take_capture_guide());
+    press();
+    assert(sl_events_capture_probe_messages() == 3); /* Keep a later trial observable. */
+    assert(sl_events_capture_probe_end() && !system_redirected);
+    assert(!sl_events_take_capture_guide());
+    sl_events_shutdown();
+    assert(hooks == unhooks);
+    fail_enable = true;
+    sl_events_init();
+    assert(!sl_events_capture_probe_begin() && !system_redirected);
+    assert(sl_events_capture_guide(false));
+    sl_events_shutdown();
+    fail_enable = false;
+    assert(hooks == unhooks);
     puts("PASS Capture notification OFF/focus/unsupported/IPC failure and paired cleanup");
 }

@@ -492,6 +492,8 @@ static sl_gfx_color action_color(sl_action a) {
     case SL_SET_QUALITY:
     case SL_OPEN_RESOLUTION:
     case SL_SET_RESOLUTION:
+    case SL_OPEN_GUIDE_KEY:
+    case SL_SET_GUIDE_KEY:
         return violet;
     case SL_OPEN_MANUAL:
         return amber;
@@ -948,6 +950,7 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
                 rounded(r->renderer, (sl_gfx_rect){x + 2, y + 2, 22, 22}, 11, surface);
                 if (c->arg == (c->action == SL_SET_RESOLUTION  ? (int)m->resolution
                                : c->action == SL_SET_LANGUAGE  ? (int)sl_i18n_language()
+                               : c->action == SL_SET_GUIDE_KEY ? (int)m->guide_key
                                : c->action == SL_SET_BANDWIDTH ? (int)m->store.bitrate_kbps
                                                                : (int)m->store.quality))
                     rounded(r->renderer, (sl_gfx_rect){x + 6, y + 6, 14, 14}, 7,
@@ -1030,7 +1033,6 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
             if (c->kind == SL_CONTROL_TOGGLE) {
                 bool enabled = c->action == SL_FEC            ? m->store.unreliable_fec
                                : c->action == SL_UPDATE_CHECK ? m->update_check
-                               : c->action == SL_CAPTURE_GUIDE ? m->capture_guide
                                                               : m->store.sound;
                 sl_gfx_color track = enabled ? green : muted;
                 int tx = box.x + box.w - 74, ty = box.y + (box.h - 28) / 2;
