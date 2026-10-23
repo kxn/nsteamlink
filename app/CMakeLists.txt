@@ -383,7 +383,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_compile_options(nsl-dns-policy-tests PRIVATE -Wall -Wextra -UNDEBUG)
     target_link_libraries(nsl-dns-policy-tests PRIVATE nsl_remote)
     target_link_options(nsl-dns-policy-tests PRIVATE -Wl,--wrap=sl_dns_current_config
-        -Wl,--wrap=curl_easy_setopt)
+        -Wl,--wrap=sl_dns_refresh_begin -Wl,--wrap=curl_easy_setopt)
     add_test(NAME nsl-dns-policy COMMAND nsl-dns-policy-tests)
     if(NSL_DIAGNOSTICS)
         add_executable(nsl-remote-diagnostics-tests tests/test_remote_diagnostics.c)

@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <curl/curl.h>
 #include <fcntl.h>
+#include <errno.h>
 #include <netdb.h>
 #include <pthread.h>
 #include <stdarg.h>
@@ -47,6 +48,17 @@ bool __wrap_sl_dns_current_config(sl_dns_config *out) {
     *out = config;
     pthread_mutex_unlock(&config_lock);
     return out->count != 0;
+}
+static atomic_uint injected_resource_failures;
+bool __real_sl_dns_refresh_begin(sl_dns_refresh *, const sl_dns_config *, const char *, uint64_t);
+bool __wrap_sl_dns_refresh_begin(sl_dns_refresh *d, const sl_dns_config *cfg, const char *host, uint64_t now) {
+    unsigned remaining = atomic_load(&injected_resource_failures);
+    while (remaining)
+        if (atomic_compare_exchange_weak(&injected_resource_failures, &remaining, remaining - 1)) {
+            errno = ENOBUFS;
+            return false;
+        }
+    return __real_sl_dns_refresh_begin(d, cfg, host, now);
 }
 typedef struct {
     int fd;
@@ -162,6 +174,13 @@ static void *cancelled_lookup(void *arg) {
         sl_dns_policy_end(token);
     return NULL;
 }
+static void *parallel_lookup(void *unused) {
+    (void)unused;
+    sl_dns_refresh result;
+    assert(sl_dns_policy_lookup("parallel.example", &result));
+    assert(!strcmp(result.addresses, "198.51.100.27,198.51.100.28"));
+    return NULL;
+}
 int main(void) {
     fixture first, second;
     start_fixture(&first, 7);
@@ -229,6 +248,28 @@ int main(void) {
     assert(sl_dns_policy_lookup("one-dead.example", &merged));
     assert(now_ms() - fanout_start < 3500 && open_fds() == fd_baseline);
     assert(!strcmp(merged.addresses, "198.51.100.27,198.51.100.28"));
+    use_fixture(&second);
+    atomic_store(&injected_resource_failures, 2);
+    uint64_t resource_start = now_ms();
+    assert(sl_dns_policy_lookup("resource.example", &merged));
+    assert(now_ms() - resource_start >= 90 && now_ms() - resource_start < 500);
+    assert(atomic_load(&injected_resource_failures) == 0 && open_fds() == fd_baseline);
+    /* Two actual owners, each requesting five providers, share at most five
+     * live DNS sockets. Slow providers must not suppress the other owner. */
+    pthread_mutex_lock(&config_lock);
+    config.count = SL_DNS_SERVERS;
+    config.servers[0] = first.address; /* drops */
+    for (unsigned i = 1; i < SL_DNS_SERVERS; ++i) config.servers[i] = second.address;
+    pthread_mutex_unlock(&config_lock);
+    pthread_t parallel[2];
+    for (unsigned i = 0; i < 2; ++i) assert(!pthread_create(&parallel[i], NULL, parallel_lookup, NULL));
+    uint64_t parallel_until = now_ms() + 3100;
+    while (now_ms() < parallel_until) {
+        assert(open_fds() <= fd_baseline + SL_DNS_SERVERS);
+        usleep(1000);
+    }
+    for (unsigned i = 0; i < 2; ++i) assert(!pthread_join(parallel[i], NULL));
+    assert(open_fds() == fd_baseline);
     use_fixture(&second);
     atomic_store(&second.drop, true);
     for (unsigned mode = 0; mode < 2; ++mode) {

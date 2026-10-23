@@ -1,5 +1,6 @@
 #include "dns_policy.h"
 #include <arpa/inet.h>
+#include <errno.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -18,6 +19,16 @@ static scope *scopes;
 static unsigned scope_count;
 static _Thread_local scope *current;
 static atomic_bool stopped = true;
+/* Process-wide, not per lookup: updater, artwork, SDK and runtime may resolve
+ * concurrently. Five providers must not become 5 * workers live sockets. */
+static atomic_uint wire_queries;
+static bool reserve_query(void) {
+    unsigned active = atomic_load(&wire_queries);
+    while (active < SL_DNS_SERVERS)
+        if (atomic_compare_exchange_weak(&wire_queries, &active, active + 1))
+            return true;
+    return false;
+}
 static bool initialized;
 #if NSL_DIAGNOSTICS
 static void (*diagnostic)(const char *);
@@ -42,6 +53,7 @@ bool sl_dns_policy_init(void (*report)(const char *)) {
     scopes = NULL;
     scope_count = 0;
     current = NULL;
+    atomic_store(&wire_queries, 0);
     atomic_store(&stopped, false);
 #if NSL_DIAGNOSTICS
     diagnostic = report;
@@ -117,7 +129,7 @@ bool sl_dns_policy_shutdown(void) {
     if (!initialized)
         return true;
     pthread_mutex_lock(&lock);
-    bool empty = scopes == NULL && scope_count == 0;
+    bool empty = scopes == NULL && scope_count == 0 && atomic_load(&wire_queries) == 0;
     scope *remaining = scopes;
     scopes = NULL;
     scope_count = 0;
@@ -217,24 +229,15 @@ bool sl_dns_policy_lookup(const char *host, sl_dns_refresh *result) {
     if (count > SL_DNS_SERVERS)
         count = 0;
     sl_dns_refresh *queries = count ? calloc(count, sizeof(*queries)) : NULL;
-    int states[SL_DNS_SERVERS] = {0};
+    int states[SL_DNS_SERVERS] = {0}, start_errors[SL_DNS_SERVERS] = {0};
+    unsigned starts[SL_DNS_SERVERS] = {0};
+    uint64_t next_start[SL_DNS_SERVERS] = {0};
+    bool held[SL_DNS_SERVERS] = {0};
     if (!queries)
         count = 0;
-    for (unsigned i = 0; i < count; ++i)
-        queries[i].fd = -1;
     for (unsigned i = 0; i < count; ++i) {
-        sl_dns_config single = config;
-        single.count = 1;
-        single.servers[0] = config.servers[i];
-        states[i] = sl_dns_refresh_begin(&queries[i], &single, normalized, start) ? 0 : -1;
-#if NSL_DIAGNOSTICS
-        char line[384], local[INET_ADDRSTRLEN] = "", server[INET_ADDRSTRLEN] = "";
-        inet_ntop(AF_INET, &config.local, local, sizeof(local));
-        inet_ntop(AF_INET, &single.servers[0].sin_addr, server, sizeof(server));
-        snprintf(line, sizeof(line), "dns_query event=begin host=%s local=%s server=%s platform=%u",
-                 normalized, local, server, config.platform_error);
-        sl_dns_policy_report(line);
-#endif
+        queries[i].fd = -1;
+        states[i] = 2; /* queued; 0=active, 1=success, -1=terminal failure */
     }
     while (count && !atomic_load(&s->cancelled) && !atomic_load(&stopped)) {
         uint64_t now = now_ms();
@@ -242,9 +245,46 @@ bool sl_dns_policy_lookup(const char *host, sl_dns_refresh *result) {
             break;
         bool pending = false;
         for (unsigned i = 0; i < count; ++i) {
+            if (states[i] == 2 && now >= next_start[i] && reserve_query()) {
+                held[i] = true;
+                sl_dns_config single = config;
+                single.count = 1;
+                single.servers[0] = config.servers[i];
+                errno = 0;
+                bool begun = sl_dns_refresh_begin(&queries[i], &single, normalized, now);
+                start_errors[i] = begun ? 0 : errno;
+                ++starts[i];
+                states[i] = begun ? 0 : -1;
+                /* A local resource shortage is not a negative DNS answer.
+                 * Wait inside the SAME 3s budget, allowing another owner to
+                 * close its query sockets; never spin/retry on the UI thread. */
+                if (!begun && (errno == ENOBUFS || errno == ENOMEM || errno == EMFILE ||
+                               errno == ENFILE || errno == EAGAIN)) {
+                    states[i] = 2;
+                    next_start[i] = now + 50;
+                }
+#if NSL_DIAGNOSTICS
+                if (starts[i] == 1) {
+                    char line[384], local[INET_ADDRSTRLEN] = "", server[INET_ADDRSTRLEN] = "";
+                    inet_ntop(AF_INET, &config.local, local, sizeof(local));
+                    inet_ntop(AF_INET, &single.servers[0].sin_addr, server, sizeof(server));
+                    snprintf(line, sizeof(line),
+                             "dns_query event=begin host=%s local=%s server=%s platform=%u "
+                             "started=%d os=%d",
+                             normalized, local, server, config.platform_error, begun,
+                             start_errors[i]);
+                    sl_dns_policy_report(line);
+                }
+#endif
+            }
             if (!states[i])
                 states[i] = sl_dns_refresh_poll(&queries[i], now);
-            pending |= states[i] == 0;
+            if (held[i] && states[i]) {
+                sl_dns_refresh_cancel(&queries[i]);
+                atomic_fetch_sub(&wire_queries, 1);
+                held[i] = false;
+            }
+            pending |= states[i] == 0 || states[i] == 2;
         }
         if (!pending)
             break;
@@ -254,14 +294,17 @@ bool sl_dns_policy_lookup(const char *host, sl_dns_refresh *result) {
     bool cancelled = atomic_load(&s->cancelled) || atomic_load(&stopped);
     for (unsigned i = 0; i < count; ++i) {
         sl_dns_refresh_cancel(&queries[i]);
+        if (held[i])
+            atomic_fetch_sub(&wire_queries, 1);
         if (states[i] != 1 || cancelled)
             queries[i].addresses[0] = 0;
 #if NSL_DIAGNOSTICS
         char line[640], server[INET_ADDRSTRLEN] = "";
         inet_ntop(AF_INET, &config.servers[i].sin_addr, server, sizeof(server));
-        snprintf(line, sizeof(line),
-                 "dns_query event=answer host=%s server=%s status=%d addresses=%s", normalized,
-                 server, states[i], queries[i].addresses);
+        snprintf(
+            line, sizeof(line),
+            "dns_query event=answer host=%s server=%s status=%d addresses=%s starts=%u start_os=%d",
+            normalized, server, states[i], queries[i].addresses, starts[i], start_errors[i]);
         sl_dns_policy_report(line);
 #endif
     }

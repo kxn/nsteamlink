@@ -3241,3 +3241,24 @@ MSS、官方配置重试或SDK收包策略。桌面默认不启用；受控测�
 
 验证边界：本地真实DNS/TLS故障可证明排序、换地址、证书检查和资源清理；不能据此
 宣称热点恢复、真实Valve链路稳定、HID有效或Switch loader生命周期通过。
+
+
+## D-A098：跨 owner 限制 DNS 并发及本机资源失败重试
+
+Evidence：6e427e9真机启动`session-00000000001792738058-092389388-00000.log`
+显示更新器先启动5个DNS查询，随后Steam缓存/目录各5个查询在3–4ms内全部返回-1，
+不符合3秒网络查询到期。23秒后原目录重试成功并完成CM/订阅。旧日志未记录begin的
+errno，不能断言ENOBUFS或系统根因。`platforms/switch/system.c`明确设置媒体UDP默认
+接收缓冲1MiB；SDK socket.h说明该值用于socket初始化。每个owner各自开5个会放大
+进程socket/缓冲需求，本机资源竞争是待验证解释；已确认缺少跨owner并发约束。
+
+Decision：进程同时最多5个DNS wire query，现有worker在原3秒总期限内排队，查询
+完成或取消先关闭socket再归还slot。使用原子计数，不新增线程或锁等待；stop/join之后
+shutdown同时检查scope及slot归零。DNS UDP单独best-effort请求8KiB SO_RCVBUF/SO_SNDBUF，
+不修改媒体服务默认值；不将请求大小当作系统已接受的证明。ENOBUFS/ENOMEM/EMFILE/
+ENFILE/EAGAIN启动失败每50ms重试，仍不能延长总期限。记录实际begin的started/os、
+最终启动次数/errno与排队状态，避免把本机启动失败当成DNS服务器否定应答。
+
+受控双owner测试检查进程最多5个额外fd、共享期限和取消后归零；ENOBUFS注入检查
+短暂资源不足恢复后仍发出查询。此类注入与本机fd检查不是Switch服务根因证明；实际
+Switch启动结果独立记录在Issue #58，不宣称已验证热点或HID恢复。
