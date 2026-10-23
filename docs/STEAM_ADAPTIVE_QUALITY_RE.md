@@ -201,8 +201,9 @@ host `CGameStreamSession` offset=0x4528 的RTTI虚表为 `0x13ac8f8b0`：
   和完整收发循环另行核对，不能自行发明固定去抖期限。
 
 4个source callback输入分别覆盖enabled 0/1及两种事件；loss再调用一次验证latch。
-这些用例从已解码的callback入口进入，**没有**把fixture当作完整控制消息148的
-认证/加密/解析实验。解析条件与虚表绑定另由静态指令和RTTI核对。
+上述4个用例从已解码的callback入口进入，仍不包含消息148解析。原先此处只有
+静态解析条件/虚表绑定；下面“控制明文、解析门禁与编码阶段的串接”已补入原解析器的
+执行证据，因此“未执行解析”的边界不再适用于全部研究。认证/加密仍未纳入该执行链。
 
 ### 估计器到编码阶段：已跨过“仅供显示”的边界
 
@@ -227,6 +228,57 @@ host `CGameStreamSession` offset=0x4528 的RTTI虚表为 `0x13ac8f8b0`：
 因此已证明这条估计结果能够进入编码器的生产stage状态，并非仅打印日志。
 仍未执行GPU/NVENC/AMF/x264编码器设备调用或比较真实编码比特流；“写入编码器状态”
 不能扩大为“任意真实会话必然以该码率输出”。
+
+### 控制明文、解析门禁与编码阶段的串接
+
+`tools/steam-adaptive-feedback64-audit.py` 复用配置接线工具和其host64 harness，
+在同一仿真器内执行原控制dispatcher `0x13a1eca00`、148分支
+`0x13a1ed49b`、Frame::Get/C++ protobuf parser、原字段parser `0x13a122410`、
+RTTI callback `0x13a1907f0`、原overflow/recompute，以及前述编码stage/getter/min/store。
+不是将解析结果直接写入callback，也不是把发送字符串当作解析已经成功。
+观察点 `0x13a1ed4c4` 仅在原parser返回后读解析bool、hasbits和两个uint32字段，不改寄存器。
+样本仍为前述固定Win64 SHA；输出另记录执行片段与继承harness的hash。
+
+**Evidence：控制正文和门禁。** 31组34次反馈交付，加3次恢复重算/编码阶段检查通过：
+
+- host state 7/8接纳148并执行原parser；本组state6/9不进入148解析分支。
+  这里是host的state编号，不与Linux客户端Streaming=6混为一个枚举。
+- `08641066` 原解析为first=100/last=102；两个显式0、字段省略、只含一个字段、
+  uint32最大值、重复last字段及未知varint均按原parser执行。截断的varint/未知长度字段
+  解析false，不调用delegate；delegate为空时有效消息同样不进入反馈callback。
+- 固定样本的callback调用没有把first/last传作速率参数。有效的空正文和显式0正文
+  在本组同样触发overflow；这不是让客户端省略官方字段或向所有版本发空消息的依据。
+- requested=0经原config parse/copy/apply和mode/reset/start后enabled；省略请求值、−1、
+  6000均停用该估计器。有效148在后面三组仍解析并到callback，但不进入overflow估计器。
+- 原reset时钟为t=2；t=6.999的有效148进入overflow入口后因尚未满5秒返回，
+  t=7.0则进入原重算。重复有效148再次进入该入口，不套用DataLost的pending-loss latch。
+
+**Evidence：本地producer到原host consumer。** 可选 `--client-receiver` 直接运行生产
+`ihs-video-overflow-oracle`，先逐项匹配固定Linux原客户端的30组36状态（包含phase门禁、
+syncing/span保存和反馈序列），再将它实际输出的control正文（例如 `9408641066`）
+拆出类型148，装入明确的host明文frame输入，送入上述原dispatcher。8组存在控制反馈的
+client case进入原host，包括frame ID回绕及Starting→Streaming后同跨度反馈。
+只转交control channel1；其中video channel3的DataLost未在此转交，不能将该结果扩展为
+全部丢失反馈的host链已经执行。未提供Native参数时使用原客户端保存向量，并在输出区分来源。
+
+**Evidence：编码约束和恢复。** 原mode/reset后的link=15Mbps是初始化状态，并非测得吞吐。
+本组在t=3调用一次原recompute建立15Mbps受控基线，没有运行实际worker。
+有效事件后原重算受2.5Mbps下限保护，随后原编码stage写2500kbps；另一个明确的encoder
+callback限制为2000时，stage继续取2000。事件后0.125/0.25/0.5秒的显式时钟进入原
+recompute，再经原getter/stage写3750/7500/15000kbps。这里证明固定输入下的原运算
+和编码状态接线，不是声称真实网络会在半秒内恢复到15Mbps，也不是在Switch增加这些阈值。
+
+**反例：** 分别删除148的delegate调用、绕过parser false门禁、绕过enabled门禁、
+删除原字段parser的last写入、删除编码stage的xchg。5种修改都在原函数正常返回后，
+分别因callback/enable、解析字段或encoder状态不匹配被oracle拒绝；没有把模拟器
+崩溃、缺失服务或patch签名失败计作有效反例。
+
+**边界：** config交付时delegate明确为空，随后才由fixture绑定原RTTI回调，
+未运行完整会话构造；disabled getter的保存目标同样由fixture提供，未串接
+`0x13a1948f0` 的通知producer。继承分配/释放、锁、日志、OS线程启停、时钟及下一编码
+stage交付终点；缓冲和callback数组是有效显式存储。plaintext frame header/接收状态
+为受控输入，没有认证、加密、socket、ACK、真实工作线程、GPU编码器或当前用户会话证明。
+这补齐了消息148明文到编码stage的执行接线，不能写成完整公网画质自适应已实现或验收。
 
 ### 会话Ping样本参与系数调整
 
@@ -562,6 +614,17 @@ python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/Stea
 python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation mode-cap
 python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation mode-reset
 python3 tools/steam-adaptive-config64-audit.py --binary /path/to/pinned/win64/SteamUI.dll
+# 本地生产consumer的反馈正文进入host原parser/估计器/编码stage：
+python3 tools/steam-adaptive-feedback64-audit.py \
+  --binary /path/to/pinned/win64/SteamUI.dll \
+  --client-receiver build/desktop/third_party/ihslib/tests/session/ihs-video-overflow-oracle \
+  --output /tmp/host-overflow-chain.json
+# 各反例应非零退出，分别因输出不匹配失败；不是模拟器错误：
+python3 tools/steam-adaptive-feedback64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation delegate
+python3 tools/steam-adaptive-feedback64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation parse-gate
+python3 tools/steam-adaptive-feedback64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation enable-gate
+python3 tools/steam-adaptive-feedback64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation parser-last-field
+python3 tools/steam-adaptive-feedback64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation encoder-store
 # 此反例移除apply的请求值写入，应因applied值不匹配而非零退出：
 python3 tools/steam-adaptive-config64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation
 python3 tools/steam-adaptive-client-feedback-audit.py \
@@ -588,5 +651,6 @@ python3 tools/steam-adaptive-client-feedback-audit.py \
 
 完整复刻的验收必须覆盖配置到host模式门槛、实际feedback到各host入口、decoder溢出
 通知、host内部估计到实际编码器设置/输出，以及恢复/稳态分支；只恢复消息99或者
-移植旧x86的乘0.9都不构成完整复刻。本轮已执行到x64编码stage状态，未完成真实wire到设备编码输出的全部producer/consumer闭环，
+移植旧x86的乘0.9都不构成完整复刻。已将本地consumer的148明文交给x64原解析器并写入
+编码stage状态，仍未完成认证/加密wire到设备编码输出的全部producer/consumer闭环，
 也未证明当前用户Steam版本与该快照完全一致。因此不把“机制已经找到”写成“实现已完整”。
