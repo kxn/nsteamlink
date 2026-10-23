@@ -13605,6 +13605,7 @@ ID17由原metadata确定为`_q_onlineStateChanged`，进入private方法`0x11ed9
 24组原码输入覆盖access=−1/0/1、先前online=0/1、允许位=0/1、输入online=0/1。
 Qt内部配置/session协调、configuration对象和activate实际排队为终点；保存online变化
 时确实可进入协调终点，但不能据此声称完整HTTP连接、缓存或DNS已经清理。
+这些helper的另一组受控执行及独立配置消费者见§180；不改变本工具的终点范围。
 另外6组给private+0xc8=1及配置state值0/1/2/4/8/14，此分支采用
 `state & 0x0e != 0`选择online；故入参bool也不是所有分支最终可达性的唯一来源。
 这些配置值是显式边界输入，不把每个值命名为真实OS网络状态。
@@ -13812,7 +13813,8 @@ QHash/QMap存储操作、QList删除、锁及Qt activation是声明的provider/�
 仍执行循环、inline查找、状态和字段决策、记录构造/临时引用操作及发通知次序。
 配置快照经值适配器投递到原Qt Added/Removed/Changed，而非原QObject共享对象和
 自然排队。尚未覆盖Android真实枚举、singleton冷构造、完整manager连接图、其他
-配置slot、事件循环、HTTP/session或DNS处理。不能由此新增“每次切网必然刷新DNS”
+配置slot、事件循环、HTTP/session或DNS处理；NAM侧的订阅/配置消费者另见§180。
+不能由此新增“每次切网必然刷新DNS”
 或认定玩家热点故障的根因，也未改变Switch运行策略。
 
 ```sh
@@ -13822,4 +13824,116 @@ PYTHONPATH=/path/to/audit-deps python3 tools/steam-bearer-scan-audit.py \
   --bearer /path/to/bundled/libplugins_bearer_qandroidbearer_arm64-v8a.so \
   --output /tmp/bearer-scan.json
 # 相同参数增加 --mutation change-dedupe，必须因错误的配置通知序列而失败。
+```
+
+## 180. Qt网络访问管理器的配置消费者与会话选择
+
+§177–179只证明了分层通知、扫描与配置管理器规则，不能从“没有online边沿”推断
+下游完全不处理配置变化。`tools/steam-access-config-audit.py` 补入固定Qt原
+QNetworkAccessManager/private构造器、public meta dispatch、配置slot和会话引用
+处理，Qt5Network/Core身份仍为§177/179的完整SHA。这里的QNetworkSession是Qt的
+网络会话对象，不是Steam串流Session，不能把两者的“重建”混作同一个协议动作。
+
+### 原构造器的两条订阅与初值
+
+在“全局factory/type注册已经完成”的显式输入下，原public构造器`0x119db0`调用
+原private构造器`0x11fba8`。QObject基类接线、QNetworkProxy、配置管理器服务、
+认证/cache值构造及已完成的注册helper为provider；未执行完整进程冷启动或atexit。
+原`0x1b2a00`实际返回0，因此原public构造器在`0x11a2e8`、`0x11a314`向connect提交：
+
+| sender（private+0xb0）signal | receiver（public）slot | 原connection type |
+|---|---|---|
+| `onlineStateChanged(bool)` | `_q_onlineStateChanged(bool)` | 0 |
+| `configurationChanged(QNetworkConfiguration)` | `_q_configurationChanged(QNetworkConfiguration)` | 0 |
+
+原metadata `0x3a0de0`确认public本地slot ID17、15；ID14为
+`_q_networkSessionStateChanged`。type0是绑定参数，不能证明跨线程自然交付必然同步。
+构造器尚未选择QNetworkSession；不是一构造就重建网络连接。原private初值还由
+所提供defaultConfiguration的state决定：
+
+| state输入 | online(+0xd4) | access(+0xcc) |
+|---|---|---|
+| 0、2、6、8 | 0 | 0 |
+| 1 | 0 | −1 |
+| 14、15 | 1 | 1 |
+
+这是原`(state & 14) == 14`及后续bit0判断的执行结果；允许访问位(+0xd7)初值1。
+capabilities=0/64另验证+0xc9取bit6，不把它当作系统实测能力或改变通知表。
+上述构造状态是显式配置输入，不能把它们都命名为真实OS的自然状态。
+
+### 配置slot有自己的条件，不能套用online slot
+
+public meta ID15进入原`0x11eeac`。原码取传入配置的identifier/state，并访问
+private+0x58的配置ID集合。集合存储是声明的键控provider，inline hash查找、
+seed实参及原QtCore qHash/QString比较仍执行原码。这里对state同样要求包含
+全部0x0e位，和§179管理器的精确等于14、§177某分支的任一0x0e位非零有区别。
+
+| 输入条件 | 原配置slot的动作 |
+|---|---|
+| 包含全部0x0e位，ID已在集合 | 不再处理该ID |
+| 包含全部0x0e位，ID未记录，但无可用会话或保存online=0 | 不重新选择 |
+| 包含全部0x0e位，ID未记录、online=1，当前会话配置ID等于默认配置ID | 不重新选择 |
+| 上述条件满足但当前会话配置与默认配置ID不同 | 插入传入ID；释放原会话引用；选择默认配置 |
+| 不包含全部0x0e位，ID不在集合 | 不重新选择 |
+| 不包含全部0x0e位，ID已记录 | 先移出集合；仅剩余集合仍非空时释放并选择传入配置 |
+
+比较的是**当前会话与默认配置**，不是简单地把传入ID与当前会话比较；后一个替代
+规则会在原码不动作的输入上额外重选。state15可进入全部位满足的分支，state6不能。
+非过期weak session可以由原CAS/引用操作临时提升；工具未将weak非空直接当作活对象。
+过期weak、最后owner析构及真实QObject生命周期不在这组执行证明内。
+
+### 释放、选择与排队通知是三个环节
+
+原释放helper `0x11e8c4`保存会话configuration，disconnect四条会话signal连接，
+清除保存的strong/weak引用。工具执行原引用增减，并以外部借用owner为基线验证
+旧control计数回到100/100；这不是最后owner析构、真实socket关闭或线程退出证明。
+
+原选择helper `0x11b110`先判断配置isValid，再调用factory `0x1916a8`。factory
+结果为显式provider，可能为空；不能由“调用选择helper”宣称新建了真实网络会话。
+provider必须拥有配置值副本，不能把原调用栈上的QNetworkConfiguration容器地址
+保留到producer返回后。对返回非空fixture，原码保存strong/weak owner并注册：
+
+| 会话signal | public目标 | 原type |
+|---|---|---|
+| `opened()` | `networkSessionConnected()` signal | 2 |
+| `closed()` | `_q_networkSessionClosed()` | 2 |
+| `stateChanged(QNetworkSession::State)` | `_q_networkSessionStateChanged(...)` | 2 |
+| `error(QNetworkSession::SessionError)` | `_q_networkSessionFailed(...)` | 0 |
+
+若原比较发现会话state与此前值不同，会以type2调用invokeMethod，传入复制的
+`QNetworkSession::State`。测试明确保存该排队参数，待producer返回后才显式交付
+public meta ID14；不在invoke终点同步执行替代slot。本组保存state0、输入3时，交付前
+没有connected/access signal，交付后原state handler `0x11eb24`先发signal6；保存access
+原为0且允许访问时才进一步发signal7=1，禁止位抑制后一通知。选择时前值与结果都为0
+的测试没有排队state变化。没有声称整个state handler的全部输入都已覆盖。
+
+无效配置跳过factory；有效配置但factory返回空也没有真实会话可用。受控输入
+online=1/access=1时，原空会话路径通知signal7=−1，保存access仍为1，不能把通知值
+机械当成该字段已覆盖。也未把“已调用选择”当作连接成功。
+这里的factory成功/失败是输入，不是主机或网络的成功率证据。
+
+### 缓存观察及范围
+
+所有配置消费者程序均未进入public clearConnectionCache `0x11d5d4`、clearAccessCache
+`0x11d564`或受监测的内部清理终点。另显式执行原clearConnectionCache作正向对照，
+确实依次进入`0x12340c`、`0x11e5c4`，避免把未挂上的观测器当成“没有清理”的证据。
+这只限定执行路径；factory、服务和QObject终点没有展开，不能证明整个系统、所有
+Qt/HTTP调用或DNS缓存从不失效，更不能据此给Switch补一条无来源的清缓存策略。
+
+14组构造输入、14组配置/会话程序（另含一次重复ID调用）、5次显式排队状态交付与
+缓存观察正向对照通过。十个原指令反例分别破坏两条初始订阅、active mask、集合
+去重、online门禁、默认配置比较、移出集合后的空性门禁、释放调用、选择调用和
+排队type参数，均须因绑定、动作或排队语义断言失败；字节签名、fixture初始化和
+模拟器失败不算反例成功。报告保存构造绑定、实际参数/通知、引用计数、原范围及
+工具依赖SHA。
+
+本节补入的是原NAM构造连接及配置消费者的受控执行。Android/Qt自然调度、完整
+配置管理器连接图、session factory正文、真实session析构/HTTP/DNS仍未覆盖；
+没有更改Steam开流、Switch DNS或应用恢复策略。
+
+```sh
+PYTHONPATH=/path/to/audit-deps python3 tools/steam-access-config-audit.py \
+  --qt /path/to/bundled/libQt5Network_arm64-v8a.so \
+  --qt-core /path/to/bundled/libQt5Core_arm64-v8a.so --output /tmp/access-config.json
+# 相同参数增加 --mutation queued-type，必须因排队参数变化而断言失败。
 ```
