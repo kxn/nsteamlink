@@ -11,7 +11,9 @@ Unencrypted frame metadata also enters the real sender and FPS enters the real
 frame-period setter before ping feedback. A bounded original probe-worker/request
 loop observes integer protobuf objects at Frame::Put, not serialized packets.
 Original response gates/list lookup consume explicit decoded fields before the
-actual RTTI callback and rate recomputation. No Steam
+actual RTTI callback and rate recomputation. Mode selection, actual configuration
+getters, FPS/bounds setters and estimator reset/start/stop also run original code;
+thread OS start/join are explicit observation terminals. No Steam
 process, packets, decoder/encoder hardware or real thread scheduling is touched.
 Negative controls change original instructions/constants and must fail output
 oracles; they are not product code or adaptive strategies for Switch.
@@ -48,6 +50,9 @@ parser.add_argument(
         "ping-auto-sequence",
         "ping-response-size",
         "ping-ledger-expiry",
+        "mode-request-branch",
+        "mode-cap",
+        "mode-reset",
     ],
     default="none",
     help="Negative controls: each mutation must fail the original-output oracle",
@@ -81,6 +86,7 @@ class M:
         self.probe_messages = []
         self.probe_sleeps = []
         self.response_callbacks = []
+        self.thread_actions = []
         if args.mutation == "decoder-margin":
             u.mem_write(0x13AC8B6C0, struct.pack("<f", 1.0))
         if args.mutation == "ping-recovery":
@@ -109,6 +115,15 @@ class M:
         if args.mutation == "ping-ledger-expiry":
             assert bytes(u.mem_read(0x13A1EB093, 2)) == bytes.fromhex("786a")
             u.mem_write(0x13A1EB093, bytes.fromhex("7e6a"))
+        if args.mutation == "mode-request-branch":
+            assert bytes(u.mem_read(0x13A18B35B, 2)) == bytes.fromhex("7611")
+            u.mem_write(0x13A18B35B, bytes.fromhex("eb11"))
+        if args.mutation == "mode-cap":
+            assert bytes(u.mem_read(0x13A18B48E, 3)) == bytes.fromhex("0f4fe8")
+            u.mem_write(0x13A18B48E, b"\x90" * 3)
+        if args.mutation == "mode-reset":
+            assert bytes(u.mem_read(0x13A171EFF, 5)) == bytes.fromhex("e83cfcffff")
+            u.mem_write(0x13A171EFF, b"\x90" * 5)
         self.q(0x13AC4B528, 0x110000)
         u.mem_write(0x110000, b"\xc3")
         u.mem_write(0x13A1A0560, b"\xc3")
@@ -199,7 +214,30 @@ class M:
         self.q(0x13AC4B5A0, 0x110350)
         self.u.mem_write(0x110350, b"\xc3")
 
+    def mode_storage(self, root):
+        self.histogram_storage()
+        self.rate_storage()
+        self.q(self.obj + 0x58, 0x3B0000)
+        self.u.mem_write(0x3B0000, struct.pack("<500f", *([10.0] * 500)))
+        # Original start/stop/reset execute; only the OS effect of starting a
+        # thread or waiting for it is replaced. Do not run a real worker here.
+        for iat, terminal in [(0x13AC4B450, 0x110700), (0x13AC4B460, 0x110710)]:
+            self.q(iat, terminal)
+            self.u.mem_write(terminal, b"\xb8\x01\x00\x00\x00\xc3")
+        self.mode_root = root
+        self.q(root, 0x13AC8F830)
+        self.q(root + 0x4538, 0x13AC8FA20)
+
     def hook(self, u, pc, size, data):
+        if pc in (0x110700, 0x110710) and hasattr(self, "mode_root"):
+            assert u.reg_read(UC_X86_REG_RCX) == self.obj + 0x100
+            self.thread_actions.append(
+                dict(
+                    action="start" if pc == 0x110700 else "join",
+                    parameter=u.reg_read(UC_X86_REG_RDX) & 0xFFFFFFFF,
+                    active=struct.unpack("<I", u.mem_read(self.obj + 0xC, 4))[0],
+                )
+            )
         if pc == 0x110500 and hasattr(self, "probe_iterations"):
             self.probe_sleeps.append(u.reg_read(UC_X86_REG_RCX))
             if len(self.probe_sleeps) == self.probe_iterations:
@@ -869,6 +907,203 @@ for (
         )
     )
 
+
+# Original mode selection and actual vtable getters, then original bounds/FPS
+# and reset/start/stop code. Configuration/capability/FPS fields are explicit
+# fixture inputs; the OS start/join callbacks never launch real threads.
+mode_inputs = [
+    dict(name="fixed", desired=6000, expected=6000),
+    dict(name="fixed-cap", desired=6000, cap=3000, expected=3000),
+    dict(
+        name="fixed-already-disabled",
+        desired=6000,
+        initial_enabled=False,
+        expected=6000,
+    ),
+]
+for width, height, ceilings in [
+    (1280, 720, (5000, 10000, 15000)),
+    (1920, 1200, (10000, 15000, 30000)),
+    (2560, 1600, (15000, 20000, 30000)),
+    (3840, 2160, (25000, 30000, 50000)),
+]:
+    for quality, ceiling in enumerate(ceilings, 1):
+        mode_inputs.append(
+            dict(
+                name=f"preset-{width}x{height}-q{quality}",
+                desired=-1,
+                quality=quality,
+                width=width,
+                height=height,
+                expected=ceiling,
+            )
+        )
+mode_inputs.extend(
+    [
+        dict(name="preset-unknown-size", desired=-1, width=0, expected=15000),
+        dict(name="preset-unknown-quality", desired=-1, quality=0, expected=15000),
+        dict(name="unlimited", desired=0, expected=250000),
+        dict(name="unlimited-cap", desired=0, cap=6000, expected=6000),
+        dict(
+            name="unlimited-without-worker-permission",
+            desired=0,
+            worker=False,
+            expected=250000,
+        ),
+        dict(name="unlimited-mode9", desired=0, mode=9, expected=1000000),
+        dict(name="preset-mode9", desired=-1, mode=9, expected=1000000),
+        dict(
+            name="unlimited-server-fps",
+            desired=0,
+            server_fps=True,
+            fps=(60000, 1001),
+            expected=250000,
+        ),
+        dict(name="desired-override", desired=0, override=4000, expected=4000),
+        dict(
+            name="server-mode9-ignores-override",
+            desired=0,
+            override=4000,
+            server_mode=9,
+            expected=250000,
+        ),
+        dict(
+            name="quality-override",
+            desired=-1,
+            quality=3,
+            quality_override=1,
+            expected=5000,
+        ),
+    ]
+)
+
+
+def mode_fixture(values):
+    root = 0x200000
+    m = M(2, obj=root + 0x4928)
+    m.mode_storage(root)
+    effective = values.get("override", -1)
+    if effective == -1 or values.get("server_mode", 0) == 9:
+        effective = values["desired"]
+    enabled = values.get("initial_enabled", effective != 0)
+    worker = values.get("worker", True)
+    m.u.mem_write(m.obj + 8, bytes([enabled, worker]))
+    m.u.mem_write(m.obj + 0xC, struct.pack("<I", int(enabled and worker)))
+    m.u.mem_write(m.obj + 0x60, struct.pack("<I", 123))
+    for off, val in [
+        (0x25C, values["desired"]),
+        (0x461C, values.get("override", -1)),
+        (0x22C, values.get("quality", 2)),
+        (0x4618, values.get("quality_override", -1)),
+        (0x248, values.get("server_mode", 0)),
+        (0x260, values.get("cap", 0)),
+        (0x51B0, values.get("mode", 0)),
+        (0x45D0, values.get("width", 1280)),
+        (0x45D4, values.get("height", 720)),
+        (0x45B0, int(values.get("server_fps", False))),
+    ]:
+        m.u.mem_write(root + off, struct.pack("<I", val & 0xFFFFFFFF))
+    numerator, denominator = values.get("fps", (60, 1))
+    for off in [0x254, 0x45E8]:
+        m.u.mem_write(root + off, struct.pack("<II", numerator, denominator))
+    return m, root, effective, enabled, worker
+
+
+for values in mode_inputs:
+    m, root, effective, enabled, worker = mode_fixture(values)
+    m.call(0x13A18B340, ctx=root)
+    selected = m.u.reg_read(UC_X86_REG_EAX)
+    expected_enabled = effective == 0
+    assert selected == values["expected"], ("mode selected ceiling", values, selected)
+    state = bytes(m.u.mem_read(m.obj + 8, 2))
+    active = struct.unpack("<I", m.u.mem_read(m.obj + 0xC, 4))[0]
+    assert state == bytes([expected_enabled, worker]), ("mode enabled", values, state)
+    assert active == int(expected_enabled and worker), ("mode active", values, active)
+    expected_actions = (
+        ([dict(action="start", parameter=0, active=1)] if worker else [])
+        if expected_enabled
+        else (
+            [dict(action="join", parameter=0xFFFFFFFF, active=0)]
+            if enabled and worker
+            else []
+        )
+    )
+    assert m.thread_actions == expected_actions, (
+        "mode thread boundary",
+        values,
+        m.thread_actions,
+    )
+    window = struct.unpack("<500f", m.u.mem_read(0x3B0000, 2000))
+    reset = expected_enabled or (enabled and worker)
+    assert window == tuple([-1.0 if reset else 10.0] * 500), (
+        "mode reset window",
+        values,
+        window[:4],
+    )
+    cursor = struct.unpack("<I", m.u.mem_read(m.obj + 0x60, 4))[0]
+    assert cursor == (0 if reset else 123), ("mode reset cursor", values, cursor)
+    if expected_enabled:
+        assert m.readd(0x10) == 2 and m.readf(0x98) == 15 and m.readf(0x9C) == 15
+        assert bytes(m.u.mem_read(0x380000, 120)) == bytes(120)
+        assert bytes(m.u.mem_read(0x390000, 240)) == bytes(240)
+        assert m.readf(0xAC) == (100 if values.get("mode", 0) == 9 else 2.5)
+        assert math.isclose(m.readf(0xB0), selected / 1000, rel_tol=1e-6)
+        numerator, denominator = values.get("fps", (60, 1))
+        assert math.isclose(m.readf(0x54), 1000 * denominator / numerator, rel_tol=1e-6)
+    else:
+        assert m.readf(0xAC) == 1 and m.readf(0xB0) == 100
+    cases.append(
+        dict(
+            name="original-mode-" + values["name"],
+            inputs=values,
+            effective_request=effective,
+            selected_ceiling_kbps=selected,
+            estimator_enabled=bool(state[0]),
+            worker_permitted=bool(state[1]),
+            active_thread_word=active,
+            thread_actions=m.thread_actions,
+            ping_cursor=cursor,
+            window_reset=reset,
+            lower_mbps=m.readf(0xAC),
+            upper_mbps=m.readf(0xB0),
+            ping_threshold_ms=m.readf(0x54),
+            link_mbps=m.readf(0x98),
+        )
+    )
+
+# Re-entry must not be mistaken for a fresh reset. The original enabled guard
+# preserves samples on 0->0; fixed stops and clears, then 0 starts/resets anew.
+m, root, _, _, _ = mode_fixture(dict(desired=0))
+m.call(0x13A18B340, ctx=root)
+m.f(0x3B0000, 77)
+m.u.mem_write(0x380000, struct.pack("<f", 9))
+m.f(m.obj + 0x98, 7)
+m.now = 3
+m.call(0x13A18B340, ctx=root)
+assert m.readd(0x10) == 2 and m.readf(0x98) == 7
+assert struct.unpack("<f", m.u.mem_read(0x3B0000, 4))[0] == 77
+assert struct.unpack("<f", m.u.mem_read(0x380000, 4))[0] == 9
+assert len(m.thread_actions) == 1
+m.u.mem_write(root + 0x25C, struct.pack("<I", 6000))
+m.call(0x13A18B340, ctx=root)
+assert bytes(m.u.mem_read(m.obj + 8, 1)) == b"\0"
+assert struct.unpack("<f", m.u.mem_read(0x3B0000, 4))[0] == -1
+m.u.mem_write(root + 0x25C, struct.pack("<I", 0))
+m.call(0x13A18B340, ctx=root)
+assert m.readd(0x10) == 3 and m.readf(0x98) == 15
+assert bytes(m.u.mem_read(0x380000, 120)) == bytes(120)
+assert [a["action"] for a in m.thread_actions] == ["start", "join", "start"]
+cases.append(
+    dict(
+        name="original-mode-reentry",
+        same_zero_preserves_samples=True,
+        fixed_stops_then_zero_restarts=True,
+        thread_actions=m.thread_actions,
+        final_start_time=m.readd(0x10),
+        final_link_mbps=m.readf(0x98),
+    )
+)
+
 print(
     json.dumps(
         {
@@ -879,13 +1114,14 @@ print(
                 "optional second bitrate callback",
                 "downstream frame delivery",
                 "Enter/LeaveCriticalSection for explicit single-thread fixtures",
-                "memset for event-histogram storage",
+                "memset for event-histogram and rate-time storage",
                 "single-thread global send guards and frame deletion",
                 "bounded worker Sleep with no actual delay or thread scheduling",
                 "packet timestamp; Frame construction/Put/destruction for request-object observation only",
                 "explicit decoded response fields and copied frame metadata; parser and destructors are terminals",
+                "OS thread start/join observation only; no actual worker is created or waited for",
             ],
-            "input_boundary": "Fixtures separately cover empty buffers, nonempty 190-bin event histograms, an explicit 30-slot rate ring and 500-slot ping windows. A valid unencrypted frame buffer enters the real sender and forwarder. Connection absent and nonmatching channel IDs are explicit inputs; the original forwarder returns false. Global guards and frame deletion are terminals, not remote delivery. Header subtraction, key-frame/mode gates, sequence and rate update run original code. Explicit FPS inputs enter the real frame-period setter and ping feedback. A bounded original worker executes callback/request/list/sequence selection and original request construction; Frame::Put is an object observation boundary, not protobuf serialization. The actual response receiver consumes explicit decoded fields/copied frame metadata and executes lookup/size/time gates plus the original RTTI callback/window/recompute. Storage, clocks, pressure/enable/thread fields remain explicit inputs; no complete constructor/concurrent worker/history lifecycle is claimed. No actual host packets/encoder device/runtime evidence.",
+            "input_boundary": "Fixtures separately cover empty buffers, nonempty 190-bin event histograms, an explicit 30-slot rate ring and 500-slot ping windows. A valid unencrypted frame buffer enters the real sender and forwarder. Connection absent and nonmatching channel IDs are explicit inputs; the original forwarder returns false. Global guards and frame deletion are terminals, not remote delivery. Header subtraction, key-frame/mode gates, sequence and rate update run original code. Explicit FPS inputs enter the real frame-period setter and ping feedback. A bounded original worker executes callback/request/list/sequence selection and original request construction; Frame::Put is an object observation boundary, not protobuf serialization. The actual response receiver consumes explicit decoded fields/copied frame metadata and executes lookup/size/time gates plus the original RTTI callback/window/recompute. Mode fixtures supply configuration/override/capability/FPS fields to actual session vtables, mode selector, bounds/FPS setters and estimator reset/start/stop. Only OS start/join effects are terminals. Storage, clocks, pressure/enable/thread fields remain explicit inputs; no complete constructor/concurrent worker/history lifecycle is claimed. No actual host packets/encoder device/runtime evidence.",
             "probe_bindings": {
                 "session_constructor": "0x13a189cc0",
                 "estimator_member_offset": "0x4928",
@@ -910,6 +1146,17 @@ print(
                     (0x13A192B90, 0x13A192DA6),
                     (0x13A1F1EB0, 0x13A1F20C7),
                     (0x13A171E70, 0x13A171E82),
+                    (0x13A18B340, 0x13A18B516),
+                    (0x13A18C8E0, 0x13A18C8FA),
+                    (0x13A18C920, 0x13A18C932),
+                    (0x13A18B1C0, 0x13A18B1F5),
+                    (0x13A1EC770, 0x13A1EC792),
+                    (0x13A1EC7C0, 0x13A1EC7C7),
+                    (0x13A171DF0, 0x13A171E69),
+                    (0x13A171EF0, 0x13A171F38),
+                    (0x13A171F40, 0x13A171F8A),
+                    (0x13A171B40, 0x13A171D5B),
+                    (0x13A189CFF, 0x13A189D44),
                     (0x13A171D60, 0x13A171DEB),
                     (0x13A18B320, 0x13A18B331),
                     (0x13A1EB010, 0x13A1EB335),

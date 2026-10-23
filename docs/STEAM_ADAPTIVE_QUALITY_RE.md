@@ -147,6 +147,7 @@ x86 `CGameStreamSession` RTTI vtable `0x3aa19f14` 的 +0x24 指向
 选上限并停用；0分支设置 bounds/FPS，并调用 start `0x13a171ef0`。
 普通路径的0分支上限是250000 kbps，**不是旧样本的100000**；特殊编码路径有独立上限，
 不能把旧常量直接移植为客户端默认值。
+后面的27例已进一步执行该原入口、实际配置getter和reset/start/stop；此段不再仅靠静态分支。
 
 新样本还存在两种独立反馈入口：
 
@@ -164,7 +165,7 @@ x86 `CGameStreamSession` RTTI vtable `0x3aa19f14` 的 +0x24 指向
 
 ### 时间与限额必须按版本核对
 
-独立执行 `tools/steam-adaptive-host64-audit.py` 的66个受控输入（其中8个为Ping窗口、10个为非空统计缓冲、9个为发送producer/FPS阈值，另17个为Ping producer/请求过期/应答入口）：
+独立执行 `tools/steam-adaptive-host64-audit.py` 的93个受控输入（其中8个为Ping窗口、10个为非空统计缓冲、9个为发送producer/FPS阈值、17个为Ping producer/请求过期/应答入口、27个为模式选择和估计器重入）：
 原重算、两类反馈处理、source callback门控、重复loss的latch、真实session虚表getter，
 以及编码stage的回调循环和写入均执行原指令。仅提供时钟、日志、可选第二码率回调、单线程临界区、直方图清零原语、
 全局发送guard、帧删除及下游交付终点；没有改写这些算法入口。输入对象不含速率采样/历史缓冲的那组，原函数
@@ -379,6 +380,92 @@ worker producer和真实请求/应答入口对该callback的使用；socket、�
 跳过size拒绝、改变精确过期比较，均在原函数正常执行后的输出比较中失败，
 不是依靠模拟器崩溃、缺少指令支持或patch签名错误制造失败。
 
+### 配置模式和初始化：执行新版原入口，不沿用旧版表格
+
+追加27例进入原 `0x13a18b340`，session根虚表 `0x13ac8f830` 来自构造器
+`0x13a189cff–0x13a189d13`。实际的+0x50 getter `0x13a18c8e0` 选择override
+（root+0x461c）或server有效值（+0x25c）；server codec字段+0x248为9时忽略override。
+质量+0x48 getter `0x13a18c920` 选择override +0x4618或server +0x22c。
+fixture显式提供这些成员，不把它们冒充本轮收到的message99或用户主机实值。
+
+FPS接口仍用原session+0x4538虚表，+0x20为 `0x13a18b1c0`：当前模式字段为0时
+读取实际局部FPS分子/分母，否则调用原server FPS getter `0x13a1ec780`。
+60/1及60000/1001输入均走原分支和除法；能力上限 getter `0x13a1ec7c0`
+读取root+0x260，0表示该次不钳制，正数限制返回上限。没有替换模式入口、虚表getter、
+预设选择、FPS/bounds setter或reset/start/stop来制造结果；只有线程OS start/join为观察终点。
+
+| 普通编码路径的有效请求 | 原入口返回的上限（kbps） | 估计器enabled |
+|---|---:|---|
+| 6000，能力无额外限制 | 6000 | false |
+| 6000，能力上限3000 | 3000 | false |
+| −1，720p，quality 1/2/3 | 5000 / 10000 / 15000 | false |
+| −1，1920×1200边界，quality 1/2/3 | 10000 / 15000 / 30000 | false |
+| −1，2560×1600边界，quality 1/2/3 | 15000 / 20000 / 30000 | false |
+| −1，3840×2160，quality 1/2/3 | 25000 / 30000 / 50000 | false |
+| 0，能力无额外限制 | 250000 | true |
+| 0，能力上限6000 | 6000 | true |
+
+另核对缺尺寸、未知quality的15000回落，两个override来源及server codec=9忽略码率
+override。session编码字段+0x51b0为9时，0与−1均选1000000上限，但只有0启用估计器；
+不能把该特殊分支的数值当普通Switch客户端默认值。
+
+原bounds setter `0x13a171df0` 将普通0分支的2500/上限转为Mbps，例中为2.5/250、
+带cap时2.5/6；编码字段9则为100/1000。原start `0x13a171ef0` 首次启用前调用
+`0x13a171b40`，其原reset清空30槽速率/时间数组，失效500个Ping样本、归零Ping cursor、
+恢复coefficient=1，并把link/+0x9c写成15 Mbps。**15是这份原函数的初始化值，
+不是fixture预置的吞吐，也不是实际编码输出已经15 Mbps。** reset发生在bounds setter之后；
+不要擅自交换顺序或宣称中间link值已受最终能力上限约束。
+
+enabled和worker不是同一状态：显式worker-permission(+9)=false时，0分支仍置enabled，
+不调用线程OS start，active-word保持0；true时原指令先把active-word置1再进start终点。
+切到正数或−1时，原stop `0x13a171f40` 关闭enabled，若worker活动则先清active再join，
+随后原 `0x13a171c40` 重置Ping窗口。join参数0xffffffff是原调用参数；没有真实等待、
+并发或worker退出证据，不能把这条离线轨迹当作主机线程生命周期验收。
+
+独立重入例执行0→0→6000→0：第二次0保留速率/Ping样本和原start时间，不重开worker；
+6000停止并重置Ping；再回0则重新reset并记录新start时间。由此，持续反复应用同一0值
+不等于每次重置估计器。此前66例输出逐项不变，3个新反例分别改变正数分流、移除cap
+钳制、跳过首次reset，均在原函数正常返回后的上限/窗口比较中被拒绝。
+
+**Conclusion：** 在该固定新版主机样本中，UI常称“自动”的−1属于预设选择；
+0才启用这里核对的动态估计器，正数关闭它。不能用“自动”名称反推运行中动态降码率，
+也不能把“无限制”误解为没有估计器或能力上限。这是官方主机算法的输入/初始化证据，
+不排除其他编码器/帧率策略，也不证明当前真实主机版本、完整wire配置接收或物理码流。
+研究没有修改产品默认带宽或在Switch加入自创控制器。
+
+### 从配置明文到原模式选择：同一仿真器内的接线核对
+
+`tools/steam-adaptive-config64-audit.py` 另有13例，不把前述显式成员输入当完整配置链证明。
+复用 `scripts/audit-steam-host64-fec.py` 的平台/分配/交付终点并记录该文件SHA；
+显式提供明文frame、server状态、session虚表/override、尺寸/FPS与预分配估计器存储。
+同一仿真器内执行原dispatcher、C++ protobuf parser `0x13a4627a0`、CopyFrom
+`0x13a47cd90`、ApplyConfig `0x13a1f5c10`，再进实际getter、selector和reset/start/stop。
+没有把Python对象解析结果直接写入server成员来替代原接收链。
+
+固定DLL内嵌的 `steammessages_remoteplay.proto` descriptor确认
+`CStreamingClientConfig.desired_bitrate_kbps` 是字段6、缺省−1。原CopyFrom后
+server+0x230保存该请求；ApplyConfig的 `0x13a1f5f76` 读入r12d，普通codec路径
+在 `0x13a1f6192` 写入+0x25c，随后真实getter使用它。codec9的ApplyConfig另有
+取+0x240的静态分支，这13例仅使用codec4，不以普通编码案例代替它。
+
+四种请求分别经初始消息4（host state6）和更新消息99（state7）进入：
+省略字段、显式−1、0、6000均保留预期值；普通720p/quality2的−1返回10000上限并
+停用估计器，0返回250000并启用，6000返回6000并停用。host state8也接受99；
+state6/9忽略这条更新，不执行copy/apply，也不改变先前6000。
+状态数字属于host枚举，不是客户端phase编号。
+
+0之后再给省略字段的有效配置，原clear/copy/apply恢复−1并停用估计器，观察到
+start→join；它不是保留旧0值的局部patch。截断正文 `0a0230` 则解析失败，不copy/apply，
+保留之前0和已启用状态，再进selector也不重开worker。两种缺字段/坏消息不可混为一谈。
+更新报文明文例：quality2/0为 `0a0408023000`，quality2/6000为 `0a05080230f02e`；
+其中外层字段1包config、内层 `30` 是字段6的varint tag，并非一种新的传输指令。
+
+**Evidence / Conclusion：** 这组补齐了“wire字段6→主机有效请求→模式初始化”的原指令
+组合，且移除原+0x25c写入的反例在正常返回后因applied值不匹配被拒绝。继承的
+platform-ID查询明确返回0，250000是该受控路径的结果，不是当前主机实测能力。
+仍没有执行真实认证/解密网络、host进程或线程调度/编码设备；frame存储、分配/释放、
+锁、日志/时钟和出站交付沿用明确终点。不能把该明文输入检查宣布为完整串流验收。
+
 ### Switch接线比较需要保留平台边界
 
 IHS `ch_data_video.c::CheckPartialOverflow` 已发送message148，是压缩帧pending
@@ -441,6 +528,12 @@ python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/Stea
 python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation ping-auto-sequence
 python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation ping-response-size
 python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation ping-ledger-expiry
+python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation mode-request-branch
+python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation mode-cap
+python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation mode-reset
+python3 tools/steam-adaptive-config64-audit.py --binary /path/to/pinned/win64/SteamUI.dll
+# 此反例移除apply的请求值写入，应因applied值不匹配而非零退出：
+python3 tools/steam-adaptive-config64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation
 python3 tools/steam-adaptive-client-feedback-audit.py \
   --binary /path/to/pinned/linux/package/bin/steamlink --output /tmp/linux-feedback.json
 # 此反例同样应因反馈缺失而非零退出：
