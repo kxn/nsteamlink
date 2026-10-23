@@ -13580,8 +13580,9 @@ JNI class lookup、GetObjectClass、RegisterNatives与DeleteLocalRef为显式VM�
 在“singleton已构造”的显式输入下，原native入口`0x11660`走原signal方法`0x12384`，
 交付Qt metadata`0x175f0`的本地signal ID0。metadata确认为`activeNetworkChanged`，
 不携带可达性标量。未执行singleton冷构造或真实Android广播投递；也未把此signal
-直接等同于下文`networkAccessibleChanged`。bearer引擎扫描配置、配置管理器传播
-online状态及其线程排队仍是这两段执行证据之间的边界。
+直接等同于下文`networkAccessibleChanged`。本节未执行bearer配置扫描和配置管理器
+传播；§178–179另以分层fixture补入其绑定、扫描正文及online条件，自然线程排队
+仍未由这些组件执行证明。
 
 ### Qt在线状态slot实际有自己的通知条件
 
@@ -13700,8 +13701,8 @@ onlineStateChanged；输入slot为原`0x18fbc4`，不是按相同名称直接投
 HandleNetworkChanged。没有online边沿也不证明完整Qt不存在其他配置变化处理路径。
 
 Conclusion：原网络通知到扫描入口的绑定、以及给定配置变化输入后的在线边沿条件
-已分别得到原指令支持。尚未执行的扫描正文如何产生配置、完整配置管理器到网络访问
-对象的自然连接、其他配置slot、事件循环和HTTP/session处理仍是明确边界。
+已分别得到原指令支持。本工具的扫描入口终点由§179另行执行正文；配置管理器到
+网络访问对象的自然连接、其他配置slot、事件循环和HTTP/session处理仍是明确边界。
 本节不证明切网必然清DNS、重建HTTP或重启Steam发现，不改变Switch运行策略。
 
 工具的六类原指令反例移除首次扫描、订阅、活动状态分支、在线边沿门禁、online signal
@@ -13715,4 +13716,110 @@ PYTHONPATH=/path/to/audit-deps python3 tools/steam-bearer-config-audit.py \
   --bearer /path/to/bundled/libplugins_bearer_qandroidbearer_arm64-v8a.so \
   --shell /path/to/pinned/libshell-arm64.so --output /tmp/bearer-config.json
 # 相同参数增加 --mutation online-edge，必须因错误的在线通知序列而失败。
+```
+
+## 179. Android配置扫描正文、配置身份与新增后退休次序
+
+Evidence：`tools/steam-bearer-scan-audit.py` 执行同一bearer的updateConfigurations
+`0xc37c–0xd3d0`正文，并将其实际产生的配置快照显式交付给原Qt配置管理器的
+Added `0x18f814`、Removed `0x18fa24`、Changed `0x18fbc4`。不能继续将“扫描正文
+没有执行”作为全局证据边界；§178的独立工具仍停在扫描入口，这里补入的是另一组
+受控执行，不是真实Android广播或QObject事件循环。
+
+从同一§177 XAPK额外取
+`config.arm64_v8a.apk!lib/arm64-v8a/libQt5Core_arm64-v8a.so`，SHA256为
+`687a385c0f18f8399c2f421846cfdba11d96dce75e9839840d0c169469e550a7`。
+配置ID依赖字符串值，故不能复用旧UI/FEC工具的`display-only`替身。工具通过值拷贝
+适配器执行这份原QtCore的Latin1转换、QString::arg、number、赋值、比较及qHash。
+原函数地址、整库SHA、扫描/管理器范围SHA及工具依赖SHA均记录在报告中。
+
+### 扫描输入、活动条件与配置ID
+
+backend为空时原扫描立即返回，连updateCompleted也不发。backend非空时先锁engine，
+保存旧配置键集合，取得本机接口列表；首次接口列表为空会立即再取一次。这里没有
+延迟或重试预算，不应据此增加轮询线程。随后遍历backend取得的NetworkInfo列表。
+
+原JNI getter wrapper实际选择的方法名为getType、getSubtype、isAvailable、
+isConnected。JNI对象无效或type的原名称表为空则跳过。固定表中非空项为
+0=Mobile、1=WiFi、6=WiMax、7=Bluetooth、9=Ethernet；其他输入不因其仍有接口就
+生成通用名称配置。bearerType数值分别为Mobile按subtype表选择、2、8、7、1。
+测试覆盖Mobile默认subtype=0取2，subtype=1取3、13取10；未将这些数值扩展为
+所有Android版本的类型枚举。
+
+每个有效NetworkInfo先取state=2；只有isAvailable和isConnected都真，才消费接口：
+从剩余接口列表取首项，拒绝无效、flags bit3置位、flags bit1未置位或地址列表为空
+的项，直到找到一个合格接口；此时取其名称并把state改为14。被取出的接口不会再给
+下一个NetworkInfo使用。仅一项合格接口时，WiFi/Mobile的枚举次序反转会改变谁得到
+state14；此路径未按接口名或Android type额外匹配。这个结果不能被移植成Switch的
+接口选择策略，也不证明真实OS一定会返回这些竞争输入。
+
+原模板为`android:%1:%2`，依次代入type名称及所选接口名，再执行seed=0的原qHash，
+转为十进制QString作为配置ID。未取得接口则接口名为空。固定输入示例：
+
+| 原模板展开 | 本二进制原QtCore得到的配置ID |
+|---|---|
+| `android:WiFi:wlan0` | `500259892` |
+| `android:WiFi:` | `2532263610` |
+| `android:Mobile:rmnet0` | `2217405147` |
+
+因此接口名变化可以产生新ID；不是所有“连接状态改变”都在同一对象上发Changed。
+state2/14的这些输入来自上述实际条件，不是工具按预期通知提前选出的结果。
+
+### 保留、变化、新增与退休
+
+每个本轮键先从待退休旧键集合移除，再查已有配置。新键由原码构造私有记录、填入
+名称/ID/state/bearerType/有效位，存储后发Added。已有键由原码比较有效位、名称、
+ID、state及受条件保护的bearerType，发生变化才发Changed；原bearerType为0时的
+赋值门禁保留为原码，不按通用“字段不同就全覆盖”改写。重复扫描相同输入只发
+updateCompleted。地址列表从一项变两项，但接口名称和其余输入相同的程序也不发
+配置变化；本路径只检查地址列表非空，未执行地址内容或DNS的比较。
+
+NetworkInfo全部处理后，才逐个移除待退休键及其接口名映射，发Removed，最后发
+updateCompleted。Added/Changed/Removed及完成回调处原engine锁均已释放；工具
+逐次检查锁深度回零、留存记录的引用平衡。锁实现、存储及分配释放仍是provider，
+这不证明真实Qt多线程或Switch loader的生命周期。
+
+| 同一程序的扫描输入 | 原bearer配置事件（完成通知另计） | 原Qt manager的online通知 |
+|---|---|---|
+| 无配置→WiFi+wlan0，活动 | Added WiFi14 | 1 |
+| 重复上述活动输入 | 无 | 无 |
+| WiFi+wlan0→Mobile+rmnet0，均活动 | Added Mobile14；Removed WiFi14 | 无 |
+| Mobile接口rmnet0→rmnet1，均活动 | Added 新Mobile14；Removed 旧Mobile14 | 无 |
+| 活动配置→本轮列表为空 | Removed 旧活动配置 | 0 |
+| 空列表之后再见活动配置 | Added 新活动配置 | 1 |
+
+这是原扫描产生通知后的受控串接，较§178手工给定两个配置变化事件进一步约束了
+producer顺序；仍不证明OS是否在两次网络之间给出过空列表。另以**显式空接口名**
+输入覆盖同ID的state2→14→2，确实为Changed、Changed及online1、0。不能从新ID
+路径概括成所有同轮切换都绝不出现离线边沿。
+
+Added/Removed的管理器规则也不能机械套用§178 Changed的空性比较。原Added先发
+配置Added signal，再插入state14的活动项；插入后大小为1才发online1。原Removed
+先把私有有效位置0并发Removed signal，再从活动集合删键；删除后集合为空即发
+online0，未比较此前空性。故只存在state2配置时，退休该配置仍可产生online0；
+这不等于下游一定重复发可达性通知，§177原QNetworkAccessManager仍有独立去重。
+
+### 执行范围
+
+31组程序／47次扫描覆盖连续/有空隙的换网、状态2与14、接口改名、相同ID变化、
+subtype变化、接口过滤和耗用次序、首次空列表再取、无效JNI对象、有效及未支持的
+type、backend缺失及inactive配置退休。九类原指令反例移除available/connected、
+接口有效性、flags bit3/bit1、地址非空、变化去重、Removed调用或完成调用，均须
+因实际配置序列/完成信号不符失败；签名失败、初始化失败和仿真异常不计。
+
+NetworkInfo枚举`0x11068`、JNI getter结果及本机接口属性是显式输入；旧键取得、
+QHash/QMap存储操作、QList删除、锁及Qt activation是声明的provider/终点。原扫描
+仍执行循环、inline查找、状态和字段决策、记录构造/临时引用操作及发通知次序。
+配置快照经值适配器投递到原Qt Added/Removed/Changed，而非原QObject共享对象和
+自然排队。尚未覆盖Android真实枚举、singleton冷构造、完整manager连接图、其他
+配置slot、事件循环、HTTP/session或DNS处理。不能由此新增“每次切网必然刷新DNS”
+或认定玩家热点故障的根因，也未改变Switch运行策略。
+
+```sh
+PYTHONPATH=/path/to/audit-deps python3 tools/steam-bearer-scan-audit.py \
+  --qt /path/to/bundled/libQt5Network_arm64-v8a.so \
+  --qt-core /path/to/bundled/libQt5Core_arm64-v8a.so \
+  --bearer /path/to/bundled/libplugins_bearer_qandroidbearer_arm64-v8a.so \
+  --output /tmp/bearer-scan.json
+# 相同参数增加 --mutation change-dedupe，必须因错误的配置通知序列而失败。
 ```

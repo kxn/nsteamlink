@@ -921,8 +921,10 @@ access变化时通知，显式禁止网络访问也会抑制恢复通知。原wa
 尚未启动时尝试BStart，不调用上述API。bearer原initialize订阅activeNetworkChanged，
 原slot thunk到达配置扫描入口；给定配置变化时，Qt按活动集合空性是否改变发online
 边沿。先激活新配置再停用旧配置可没有边沿；相反顺序可产生离线、在线两次。
-完整扫描正文与自然交付仍未执行，且配置变化还有独立signal。因此不能把每次Wi-Fi
-变化直接当作HandleNetworkChanged或DNS失效，详见协议参考§177–178。
+原扫描正文的受控执行还显示：本轮先处理看到的配置，最后退休旧配置；新活动ID
+替换旧活动ID可不发online边沿。接口相同且地址列表保持非空，也不因列表项数变化
+发配置变化。Android自然枚举、完整Qt交付和其他配置路径仍未覆盖，因此不能把
+每次Wi-Fi变化直接当作HandleNetworkChanged或DNS失效，详见协议参考§177–179。
 
 ### 10.3 应用接线与可复现边界
 
