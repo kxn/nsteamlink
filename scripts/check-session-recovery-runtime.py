@@ -18,7 +18,18 @@ def observe(receiver, video):
     return json.loads(result.stdout)
 
 
-def verify(observed, application=False, manager=False):
+def verify(observed, application=False, manager=False, cloud=False):
+    if cloud:
+        require(observed["cm_creates"] == 1 and observed["cm_subscriptions"] > 0, "real CM session/subscription producer")
+        require(observed["cm_packets"] == observed["cm_outer_tokens"] == observed["control_requests"],
+                "cloud control packets must carry paired outer tokens")
+        require(observed["cm_notifications"] >= 4 and observed["cm_destroyed"] is True, "CM notification/close boundary")
+        require(observed["sdk_creates"] == observed["sdk_starts"] == observed["sdk_destroys"] == 3,
+                "three owned external datagram providers")
+        require(observed["sdk_sent"] > 0 and observed["sdk_received"] > 0 and observed["sdk_joins_clean"] is True,
+                "real provider data callbacks and join before destruction")
+        require(observed["cloud_ui_hosts"] > 0 and observed["cloud_lan_hosts"] == observed["cloud_udp_requests"] == 0,
+                "cloud-only host and control path")
     if manager:
         require(observed["control_discoveries"] > 0, "actual manager discovery must run")
         require(observed["control_requests"] >= 3 and observed["control_tokens"] == observed["control_requests"] and
@@ -61,10 +72,11 @@ def main():
     parser.add_argument("--video", required=True, type=Path)
     parser.add_argument("--application", action="store_true")
     parser.add_argument("--manager", action="store_true")
+    parser.add_argument("--cloud", action="store_true")
     args = parser.parse_args()
     observed = observe(args.receiver, args.video)
     print(json.dumps(observed, sort_keys=True))
-    verify(observed, args.application, args.manager)
+    verify(observed, args.application, args.manager, args.cloud)
     print("Local runtime recovery: real UDP stop/silence/stop, three decoded streams and joined teardown")
 
 

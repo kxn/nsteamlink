@@ -108,6 +108,12 @@ void __wrap_sl_media_gate(bool value) {
 }
 void __real_sl_ui_runtime_event(sl_ui_model *, const sl_runtime_event *);
 void __wrap_sl_ui_runtime_event(sl_ui_model *ui, const sl_runtime_event *e) {
+#ifdef NSL_RECOVERY_CLOUD
+    if (e->type == SL_EVENT_HOST) {
+        if (e->discovery_source == SL_DISCOVERY_INTERNET) atomic_fetch_add(&cloud_ui_hosts, 1);
+        if (e->discovery_source == SL_DISCOVERY_LAN) atomic_fetch_add(&cloud_lan_hosts, 1);
+    }
+#endif
     __real_sl_ui_runtime_event(ui, e);
     assert(e->type != SL_EVENT_FAILURE);
     if (ui_round && e->type == SL_EVENT_STOPPED && e->generation == stream_generation) {
@@ -226,11 +232,14 @@ static void control_reply(const struct sockaddr_in *to, ERemoteClientBroadcastMs
     IHS_WriteUInt32LE(wire+8, (uint32_t)hs); protobuf_c_message_pack(&h.base, wire+12);
     IHS_WriteUInt32LE(wire+12+hs, (uint32_t)ms); protobuf_c_message_pack(body, wire+16+hs);
     size_t size = hs+ms+16;
+#ifdef NSL_RECOVERY_CLOUD
+    (void)to;
+    cloud_fixture_notify(wire, size);
+#else
     assert(sendto(fixture_control_fd, wire, size, 0, (const void *)to, sizeof(*to)) == (ssize_t)size);
+#endif
 }
-static void control_receive(void) {
-    uint8_t raw[4096]; struct sockaddr_in from; socklen_t len = sizeof(from);
-    ssize_t size = recvfrom(fixture_control_fd, raw, sizeof(raw), 0, (void *)&from, &len);
+static void control_receive_bytes(const uint8_t *raw, size_t size, const struct sockaddr_in *from) {
     assert(size >= 16 && !memcmp(raw, "\xff\xff\xff\xff\x21\x4c\x5f\xa0", 8));
     uint32_t hs, ms;
     IHS_ReadUInt32LE(raw+8, &hs); assert(hs <= (size_t)size-16);
@@ -246,7 +255,7 @@ static void control_receive(void) {
         user.has_steamid = true; user.steamid = UINT64_C(76561198000000001);
         CMsgRemoteClientBroadcastStatus__User *users[] = {&user};
         status.n_users = 1; status.users = users;
-        control_reply(&from, k_ERemoteClientBroadcastMsgStatus, &status.base);
+        control_reply(from, k_ERemoteClientBroadcastMsgStatus, &status.base);
         ++control_discoveries;
     } else if (h->msg_type == k_ERemoteDeviceStreamingRequest) {
         CMsgRemoteDeviceStreamingRequest *m = cmsg_remote_device_streaming_request__unpack(NULL, ms, raw+16+hs);
@@ -267,12 +276,25 @@ static void control_receive(void) {
         response.request_id = m->request_id; response.result = k_ERemoteDeviceStreamingSuccess;
         response.has_port = response.has_transport = response.has_encrypted_session_key = true;
         response.port = endpoint.port; response.transport = k_EStreamTransportUDP;
+#ifdef NSL_RECOVERY_CLOUD
+        response.transport = k_EStreamTransportSDR;
+        response.cert = "controlled-test-certificate";
+        response.relay_server = "stun:fixture.invalid:3478";
+#endif
         response.encrypted_session_key = (ProtobufCBinaryData){encrypted_size, encrypted_key};
-        control_reply(&from, k_ERemoteDeviceStreamingResponse, &response.base);
+        control_reply(from, k_ERemoteDeviceStreamingResponse, &response.base);
         cmsg_remote_device_streaming_request__free_unpacked(m, NULL);
     } else if (h->msg_type == k_ERemoteDeviceStreamingCancelRequest) ++control_cancels;
     cmsg_remote_client_broadcast_header__free_unpacked(h, NULL);
 }
+#ifndef NSL_RECOVERY_CLOUD
+static void control_receive(void) {
+    uint8_t raw[4096]; struct sockaddr_in from; socklen_t len = sizeof(from);
+    ssize_t size = recvfrom(fixture_control_fd, raw, sizeof(raw), 0, (void *)&from, &len);
+    assert(size >= 0);
+    control_receive_bytes(raw, (size_t)size, &from);
+}
+#endif
 #endif
 static void *peer_thread(void *unused) {
     (void)unused;
@@ -311,12 +333,12 @@ static void *peer_thread(void *unused) {
             }
             struct pollfd p[2] = {{.fd = fd, .events = POLLIN}};
             unsigned count = 1;
-#ifdef NSL_RECOVERY_MANAGER
+#if defined(NSL_RECOVERY_MANAGER) && !defined(NSL_RECOVERY_CLOUD)
             p[1] = (struct pollfd){.fd = fixture_control_fd, .events = POLLIN}; count = 2;
 #endif
             int ready = poll(p, count, 1); assert(ready >= 0);
             if (!ready) continue;
-#ifdef NSL_RECOVERY_MANAGER
+#if defined(NSL_RECOVERY_MANAGER) && !defined(NSL_RECOVERY_CLOUD)
             if (p[1].revents & POLLIN) control_receive();
 #endif
             if (!(p[0].revents & POLLIN)) continue;
@@ -375,6 +397,9 @@ int main(int argc, char **argv) {
     sl_auth_store store = {.device_id = 1, .sound = false};
     strcpy(store.device_name, "application recovery fixture"); sl_host_registry_init(&store.registry);
     sl_host host = {.client_id = 7, .instance_id = 1}; strcpy(host.name, "Loopback host"); strcpy(host.address, "127.0.0.1");
+#ifdef NSL_RECOVERY_CLOUD
+    host.address[0] = 0; /* Cloud membership has no local reachability evidence. */
+#endif
     sl_host *saved = sl_host_observe(&store.registry, &host, 0); assert(saved); saved->paired = true;
 #ifdef NSL_RECOVERY_MANAGER
     saved->account = UINT64_C(76561198000000001);
@@ -385,18 +410,20 @@ int main(int argc, char **argv) {
      * request/handoff, not the separate automatic first-connect test owner. */
     sl_network_stats_average average = {0};
     assert(sl_network_stats_save(directory, &average, NULL, 0));
+#ifndef NSL_RECOVERY_CLOUD
     fixture_control_fd = __real_socket(AF_INET, SOCK_DGRAM, 0); assert(fixture_control_fd >= 0);
     fixture_control_address = (struct sockaddr_in){.sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
     assert(!bind(fixture_control_fd, (void *)&fixture_control_address, sizeof(fixture_control_address)));
     socklen_t length = sizeof(fixture_control_address);
     assert(!getsockname(fixture_control_fd, (void *)&fixture_control_address, &length));
 #endif
+#endif
     app_deadline = now_ms()+75000;
     pthread_t peer; assert(!pthread_create(&peer, NULL, peer_thread, NULL));
     char *args[] = {"nsteamlink", NULL};
     int result = sl_application_run(1, args);
     assert(!pthread_join(peer, NULL));
-#ifdef NSL_RECOVERY_MANAGER
+#if defined(NSL_RECOVERY_MANAGER) && !defined(NSL_RECOVERY_CLOUD)
     close(fixture_control_fd);
 #endif
     atomic_store(&actor, NULL);
@@ -428,6 +455,10 @@ int main(int argc, char **argv) {
            "\"manager_handoffs\":%u,\"manager_ticket_phases\":%u,\"launch_ids\":[%u,%u,%u]",
            control_discoveries, control_requests, control_cancels, control_tokens, atomic_load(&manager_handoffs),
            atomic_load(&manager_ticket_phases),launch_ids[0],launch_ids[1],launch_ids[2]);
+#endif
+#ifdef NSL_RECOVERY_CLOUD
+    void cloud_fixture_projection(void);
+    cloud_fixture_projection();
 #endif
     printf("}\n");
     return 0;

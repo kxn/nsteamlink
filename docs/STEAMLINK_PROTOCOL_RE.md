@@ -15075,3 +15075,80 @@ ctest --test-dir build/desktop -R '^manager_recovery_runtime$' -V
 轮转或Steam账户/服务策略，也未执行外部DNS/TLS、云发现/RPC服务、SDK/SDR或NAT。
 dummy SDL/软件renderer/虚拟手柄不证明Switch物理输入输出、GPU/libnx、Wi-Fi或
 hbmenu。不能据此声称“公网完整恢复已验收”或补出官方自动重连producer。
+
+## 195. 云控制通知、SDR材料与外部数据报入口的应用组合
+
+§194的原生UDP控制回复带有可达源地址；它不能直接代表CM控制回复。源码中
+`accepted_connection`只有在UDP transport且回复地址完整时才直接accept_session；
+地址为空的SDR回复复制成owned material，handoff后交给`cloud_stream_result`，再经
+SNS准备、IHS Connect、SNS start_session和外部数据报vtable启动媒体。
+
+### 执行边界
+
+`app/tests/cloud_recovery_runtime.c`复用实际应用/manager/媒体驱动，明确以
+`NSL_HAVE_SNS=1`编译runtime实现。§192–194的native路径检查不替代这一分支。
+`cloud_recovery_provider.h`只在私有测试receiver中替换两处外部provider：
+
+1. CM连接/服务返回。实际`sl_remote`运行CreateSession、账号状态订阅、SendRemote
+   及Notification协议，但不执行真实HTTPS/WebSocket。替代连接返回受控session1001
+   和Public universe，随后从Notification发布不带IP的Status。保存主机也没有地址，
+   因此没有局域网可达证据。UI HOST仍来自实际remote parser→cloud_observed→directory。
+2. SNS准备及路由。实际SDK/cert/ICE/SNP/SDR被一个本机UDP数据报provider替代；
+   其准备成功是给定输入，不声称验证了假证书字符串。runtime仍实际复制material、
+   创建/配置IHS、设置copied transport vtable、先Connect再start_session，并按原
+   线程/资源依赖执行清理。IHS收发/媒体worker和实际FFmpeg/Opus/SDL不替换。
+
+这两个provider不出现在产品目标中，也未修改生产协议、等待常量或恢复策略。
+本例预配对合成身份、已有可读network stats、主机的Success选择等输入边界与§194
+一致；不覆盖首次配对、自动首次测速或主机授权策略。
+
+### 实际控制与材料路径
+
+实际manager的StreamingRequest没有UDP目的地址，经原路由排队、flush_control、
+`sl_remote_packet`封装SendRemote RPC。替代服务检查真实session/account和原始控制
+packet：外层device token与body device token都用合成配对secret解密为client ID1。
+回复按收到的request_id，携带加密session key、SDR transport、媒体端口和公开的
+测试certificate/relay字符串，经真实Notification→control_packet→IHS队列处理。
+
+provider的send只复制进有界FIFO；到后续manager Update才产生服务回复，避免在
+SendCurrentRequest的timer visitor内递归交付。没有直接调用accept_session、
+accepted_connection、cloud_observed或UI HOST，未手写session_ready/facts结果。
+真实manager观察phase6并执行原handoff后才消费material。构造数据报provider时
+检查client/account/transport/key长度/端口及owned字符串，实际SessionDestroy完成
+后才释放provider，不能用给定准备结果代替它们之间的所有权检查。
+
+IHS外部transport实际运行send/wait/receive；本机provider保留消息边界，receive
+使用MSG_TRUNC检测超大数据而不悄悄截断，回调不访问Session。它只在loopback发包，
+不创建额外收流线程。其stats不设置authenticated/relayed，避免把本机UDP当SDK认证
+或中继证据。没有native控制StreamingRequest发出，也没有LAN来源的UI在线事件。
+
+### 观察与复现
+
+诊断ON/OFF的Release桌面运行均观察到：
+
+- CreateSession和状态订阅各1次；三笔开流都经过真实CM packet封装，外层及body
+  token各验证3次，三个非零原生request ID互异，phase6/handoff各3次，无StreamingCancel。
+- 一个Status和三笔回复共4个Notification进入真实解析，UI只有Internet来源，LAN
+  来源及native UDP开流请求计数为0。重发次数/额外状态重公告不设固定协议规则。
+- 三个外部数据报provider实际创建/start/销毁，均有真实收发。销毁前IHS Session
+  已完成destroy且没有进行中的provider回调，三个FD随后各关闭。
+- 三笔会话都有属于本笔ID的实际画面和音频，覆盖type9停止、真实15秒静默超时、
+  错误页B返回后再次开流。像素引用推迟清理的replacement、菜单/gate、音频3/3
+  关闭、video clean/provider解绑、实际应用退出0、对端join和gfx关闭也保持成立。
+
+```sh
+cmake --build build/desktop --target nsl-cloud-recovery-runtime
+ctest --test-dir build/desktop -R '^cloud_recovery_runtime$' -V
+```
+
+检查器明确验证CM包/外层token/订阅、Internet-only控制路径、真实handoff、provider
+收发/清理和三笔媒体结果；Python -O不移除这些检查。共享native、manager、应用及
+旧generation可运行反例仍分别检查，不能用新增provider的通过覆盖原路径的差异。
+
+### 不能推出的结论
+
+本例证明真实客户端内部的云RPC解析、控制manager、owned材料、SNS入口和IHS外部
+数据报/应用循环可以组合，并补充其生命周期证据；CM网络与SNS准备/路由的成功
+仍由provider给定。它没有执行DNS/TLS、实际CM服务、证书校验、ICE/SNP、真实SDR
+POP或NAT打洞，更未证明公网丢包恢复和官方服务选择策略。软件SDL和虚拟控制器
+不证明Switch物理输出/输入ACK、GPU/libnx、切Wi-Fi或hbmenu，不能据此结项真机验收。

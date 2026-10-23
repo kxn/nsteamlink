@@ -31,9 +31,17 @@ static IHS_SocketAddress endpoint;
 static bool joins_clean = true;
 static _Thread_local bool opening_ihs;
 #ifdef NSL_RECOVERY_MANAGER
+#ifndef NSL_RECOVERY_CLOUD
 static struct sockaddr_in fixture_control_address;
 static int fixture_control_fd;
+#endif
 static atomic_uint manager_handoffs, manager_ticket_phases;
+#endif
+#ifdef NSL_RECOVERY_CLOUD
+static atomic_uint cloud_ui_hosts, cloud_lan_hosts, cloud_udp_requests;
+static sl_remote_connection *cloud_fixture_create(const IHS_ClientConfig *, const sl_remote_callbacks *, void *);
+static void cloud_fixture_update(sl_remote_connection *, uint64_t);
+static void cloud_fixture_notify(const uint8_t *, size_t);
 #endif
 #if defined(NSL_RECOVERY_APPLICATION) && !defined(NSL_RECOVERY_MANAGER)
 /* Published by the main-thread application submit adapter, before requested. */
@@ -55,12 +63,18 @@ bool __wrap_IHS_ClientStreamingHandoff(IHS_Client *c) {
 
 sl_remote_connection *__wrap_sl_remote_connection_create(const IHS_ClientConfig *c,
     const sl_remote_callbacks *cb, void *ctx) {
+#ifdef NSL_RECOVERY_CLOUD
+    return cloud_fixture_create(c, cb, ctx);
+#else
     (void)c; (void)cb; (void)ctx;
     return NULL; /* No external CM/DNS/TLS. */
+#endif
 }
 void __wrap_sl_remote_connection_update(sl_remote_connection *c, uint64_t now) {
     (void)c; (void)now;
-#ifdef NSL_RECOVERY_MANAGER
+#ifdef NSL_RECOVERY_CLOUD
+    cloud_fixture_update(c, now);
+#elif defined(NSL_RECOVERY_MANAGER)
     return; /* Real local manager produces the launch; no CM network. */
 #else
     sl_runtime *r = atomic_load(&actor);
@@ -104,7 +118,17 @@ ssize_t __real_sendto(int, const void *, size_t, int, const struct sockaddr *, s
 ssize_t __wrap_sendto(int fd, const void *data, size_t size, int flags,
                       const struct sockaddr *to, socklen_t length) {
     const struct sockaddr_in *v4 = (const void *)to;
-#ifdef NSL_RECOVERY_MANAGER
+#ifdef NSL_RECOVERY_CLOUD
+    if (size >= 16 && !memcmp(data, "\xff\xff\xff\xff\x21\x4c\x5f\xa0", 8)) {
+        const uint8_t *wire = data; uint32_t hs; IHS_ReadUInt32LE(wire+8, &hs);
+        assert(hs <= size-16);
+        CMsgRemoteClientBroadcastHeader *h = cmsg_remote_client_broadcast_header__unpack(NULL, hs, wire+12);
+        assert(h);
+        if (h->msg_type == k_ERemoteDeviceStreamingRequest) atomic_fetch_add(&cloud_udp_requests, 1);
+        cmsg_remote_client_broadcast_header__free_unpacked(h, NULL);
+    }
+#endif
+#if defined(NSL_RECOVERY_MANAGER) && !defined(NSL_RECOVERY_CLOUD)
     /* Only the initial saved-address discovery port is remapped to the local
      * peer's ephemeral listener. Status then publishes its real source port. */
     if (to && to->sa_family == AF_INET && ntohl(v4->sin_addr.s_addr) == INADDR_LOOPBACK && ntohs(v4->sin_port) == 27036)
