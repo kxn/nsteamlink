@@ -157,7 +157,96 @@ x86 `CGameStreamSession` RTTI vtable `0x3aa19f14` 的 +0x24 指向
 它与旧x86直接乘0.9的处理不同。目标更新入口 `0x13a1948f0` 在新的选择值与保存值
 相差至少1000 kbps时推进目标/突发预算设置。通知目标、动态估计值和编码器实际输出
 仍是不同观测量；不能把任一条目标日志当作整套自适应已通过。
-本轮x64为静态复核，不能把x86执行用例算成x64回归。
+此前x64仅做静态复核；下面追加独立的x64原指令执行证据，不把x86用例算成x64回归。
+
+
+## x64 反馈门槛、重算与编码阶段的原指令组合
+
+### 时间与限额必须按版本核对
+
+独立执行 `tools/steam-adaptive-host64-audit.py` 的22个受控输入：
+原重算、两类反馈处理、source callback门控、重复loss的latch、真实session虚表getter，
+以及编码stage的回调循环和写入均执行原指令。仅提供时钟、日志、可选第二码率回调与
+下游帧交付终点；没有改写这些算法入口。输入对象不含速率采样/历史缓冲时，原函数
+自行走空缓冲分支。这不覆盖有历史缓冲的估计更新，也不是真实Steam进程执行。
+
+**版本差异**：x64 loss入口 `0x13a170fc0` 与 overflow入口 `0x13a171a10`
+从 estimator+0x10 起算，严格小于 **5秒** 时忽略；旧x86的3秒不能套到这里。
+4.999/5.0/6.0边界均执行核对。达到门槛后写last_event(+0x90)，并调用
+原采样函数及重算。没有历史缓冲不等于跳过算法；它仍执行时间、门槛和最后的重算。
+
+`0x13a172500` 中，本次候选值按原浮点操作顺序为
+`link(+0x98) * coefficient(+0xa0) * ramp`，其中
+`ramp=max(0.08f,min(1.0f,float(2*(now-last_event))))`。
+先由正数decoder样本(+0xb4)的 **0.96f** 和正数history cap(+0xb8)
+约束upper(+0xb0)。候选低于lower(+0xac)则直接返回lower，否则返回
+min(受约束upper,候选)。这不是无条件按每次事件乘0.9。
+
+合成link=10、coefficient=1时，事件后0.25秒候选为5，0.5秒为10；
+decoder=5时受约束输出约4.8；另核验upper=6、history=4、lower保护。
+这些数字只说明原函数的受控算术，不代表实际链路会在半秒内恢复到某个吞吐。
+将0.96改成1的反例必须被oracle拒绝。
+
+### 客户端反馈确实到达该门槛
+
+host `CGameStreamSession` offset=0x4528 的RTTI虚表为 `0x13ac8f8b0`：
+
+- +0x48 → `0x13a1907f0`：检查callback+0x408的enabled字节，再将this+0x400
+  交给上述overflow入口。host控制接收 `0x13a1ed49b–0x13a1ed4d7` 构造对象
+  RTTI为 `CStreamVideoOverflowMsg`（vtable `0x13ad5ce50`），解析成功且delegate
+  存在才调用delegate+0x48；没有把first/last当码率值传入。
+- +0xe8 → `0x13a190740`：先检查pending loss(+0xca4)，尚无pending且enabled
+  才调用loss入口，随后设置pending。连续调用不等于连续削减；清pending的producer
+  和完整收发循环另行核对，不能自行发明固定去抖期限。
+
+4个source callback输入分别覆盖enabled 0/1及两种事件；loss再调用一次验证latch。
+这些用例从已解码的callback入口进入，**没有**把fixture当作完整控制消息148的
+认证/加密/解析实验。解析条件与虚表绑定另由静态指令和RTTI核对。
+
+### 估计器到编码阶段：已跨过“仅供显示”的边界
+
+`CGameStreamSession` offset=0x4538 的RTTI虚表 `0x13ac8fa20` 的+0x28为
+`0x13a18c4c0`：
+
+- enabled(+0x3f8)非零，读当前估计(+0x498)，乘1000后向零转为整数kbps。
+- disabled，直接返回保存的目标(+0x110)。
+
+这些相对位置分别落在根对象的estimator+8、estimator+0xa8与目标字段+0x4648，
+并非读取另一份UI统计对象。
+
+`CGameStreamVideoStageUpdateBitRate` RTTI虚表 `0x13ac92060` 的处理函数
+`0x13a1a2fe0` 遍历encoder+0x68的callback数组，对每项调用+0x28，按原循环
+选择限制值，以原子xchg写encoder+0x168，再交给下一级stage。
+
+4个组合用例从原recompute→原session getter→实际RTTI回调→原stage循环/写入：
+动态5 Mbps写入5000 kbps；另一callback限制3000时写3000；disabled则沿保存值6000；
+另一callback8000时仍取6000。第二callback和下一级stage只是明确终点，主回调与
+限制循环不是替身。删除原xchg的反例必须被拒绝。
+
+因此已证明这条估计结果能够进入编码器的生产stage状态，并非仅打印日志。
+仍未执行GPU/NVENC/AMF/x264编码器设备调用或比较真实编码比特流；“写入编码器状态”
+不能扩大为“任意真实会话必然以该码率输出”。
+
+### Switch接线比较需要保留平台边界
+
+IHS `ch_data_video.c::CheckPartialOverflow` 已发送message148，是压缩帧pending
+跨度反馈。官方Android另在解码输出落后时发送first/last均0的message148，见协议§88.2，
+有latch抑制重复且追近后解除。当前Switch应用未见对应的解码输出端148producer；
+它的队列替换/帧ticket完成已有DroppedLate等统计。
+
+这是**候选平台差异**，还不能直接判为bug：官方main的SendVideoOverflow直接caller
+只有压缩帧overflow与Android输出两类；Switch使用FFmpeg路径，不能把任意丢弃旧帧、
+解码错误或一次长RTT都改成Android decoder overflow。需要对照同类型输出积压状态与
+官方FFmpeg consumer，才能决定是否增加独立上报及其latch/恢复边缘。
+
+复查命令（无需连接设备）：
+
+```sh
+python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll
+# 下列反例应非零退出，并明确因输出不匹配失败：
+python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation decoder-margin
+python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation encoder-store
+```
 
 ## 复刻能力的实际边界
 
@@ -167,5 +256,5 @@ x86 `CGameStreamSession` RTTI vtable `0x3aa19f14` 的 +0x24 指向
 
 完整复刻的验收必须覆盖配置到host模式门槛、实际feedback到各host入口、decoder溢出
 通知、host内部估计到实际编码器设置/输出，以及恢复/稳态分支；只恢复消息99或者
-移植旧x86的乘0.9都不构成完整复刻。本轮未完成x64全部producer/consumer闭环，
+移植旧x86的乘0.9都不构成完整复刻。本轮已执行到x64编码stage状态，未完成真实wire到设备编码输出的全部producer/consumer闭环，
 也未证明当前用户Steam版本与该快照完全一致。因此不把“机制已经找到”写成“实现已完整”。
