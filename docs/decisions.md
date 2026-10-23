@@ -3451,3 +3451,80 @@ Decision：抽取网络文件 owner 共用的 `file_replace`，更新器、封�
 恢复备份。不通过删除有效配置换取成功，不声称两次 rename 整体原子；缓存仍无新增TTL。
 夹具模拟目标存在即 EEXIST、第二次发布失败以及中断后从备份恢复，连续两个 owner 核对
 内存/磁盘与临时文件清理；Linux 普通 rename 成功不能覆盖这项平台验证。
+## D-063：Switch 六轴传感器由 libnx 采样、经 SDL HID 通道上报（2026-10-22）
+
+本条的 libnx 采样和轴向决定保留；wire flags、复制长度及 Host 消费条件由
+D-065 的 RAW V3 契约补全，不能把早期 presence-only 实现当作完整协议。
+
+Evidence：devkitPro SDL 2.28.5-4 的 `SWITCH_JoystickSetSensorsEnabled` 是返回
+`SDL_Error` 的桩（`libSDL2.a::SDL_sysjoystick.o` 反汇编），所以
+`SDL_GameControllerSetSensorEnabled` 在 Switch 上不能产生
+`SDL_CONTROLLERSENSORUPDATE`。官方 Linux 1.3.9.258 客户端
+（SHA-256 `191cc079…c149e4`）的 `CHIDDeviceSDLGamepad::OnSensorEvent
+@0x269740` 把 SDL 的 rad/s、m/s² 写成 gyro s16 @+0x1c、accel s16 @+0x22，
+并置 flags 0x2/0x4；`BInjectGamepadStateGenericGamepad @0x2dac70` 在
+byte[27]!=0 时最多拷贝 56B。libnx `HidSixAxisSensorState` 暴露同一 Switch
+六轴状态；Nintendo 逆向文档说明其角速度单位是 rev/s、加速度是 g。
+
+Conclusion：SDL 在 Switch 上没有传感器源，但 libnx 有；修复必须同时
+打开“采样”和“wire 透传”。只改 ihslib 打包或只改平台采样都不够。
+官方 wire 的定标为 gyro ±2000 dps、accel ±2 g，和 0x161870/0x161880
+的 2000/16383 一致。
+
+Decision：
+
+1. ihslib SDL provider 增加 `IHS_HIDSDLInjectSensor`，把平台注入的
+   SDL 单位样本（rad/s、m/s²）合并进 canonical state；`SetGyro/SetAccel`
+   置 presence flags，`PackWire` 复制 flags 与 [28..47]；发送仍只走既有
+   8ms flush，不新增每事件发送。
+2. Switch 平台新增 `sensors.c`，按 `HidNpadStyleTag` 获取 handheld/
+   FullKey/JoyDual/JoyLeft/JoyRight 六轴句柄；JoyDual 优先右手柄；
+   只从 `pump_sdl_events` 调用，遵守 libnx HID 的线程所有权；会话结束、
+   input gate 关闭或退出时 `hidStopSixAxisSensor`。
+3. 单位/轴向在 `sensor_math.c` 单点实现：rev/s→rad/s ×2π、g→m/s² ×9.80665；
+   Switch 共享内存到 SDL 标准帧采用 yuzu/Ryujinx 的 SDL→Switch 映射
+   `(x,-z,y)` 的逆 `(x,z,-y)`，不按 Joy-Con 左右再翻转。
+4. 当前不依赖 host 的 `SetSensorEnabled`：会话有效即采样并上报。
+   host 的该命令仍保留原 SDL 路径（Switch 上失败），后续如需省电再
+   加平台回调；协议层不改变。
+5. 2026-10-22 在 `10.10.10.66` 的 handheld 真机上用
+   `nsl-sixaxis-probe`/`nsl-sixaxis-view` 验证：handheld 句柄约 194 Hz 采样，
+   YAW 主导 raw Z、PITCH 主导 raw X、ROLL 主导 raw Y，支持 `(x,z,-y)` 映射。
+   Pro Controller、单 Joy-Con、左右分离符号、Steam host 接受度与 60Hz 媒体
+   循环下的平滑度仍为 `待验证`；真机只改 `sensor_math.c` 的轴向后处理，
+   不改 wire offsets 或 flags。
+
+## D-064：Generic gyro 的早期推论（2026-10-23，已撤回，由 D-065 取代）
+
+历史 Evidence：用户观察到实验构建无 gyro 输出；某些加 `0x400` 的构建还出现
+Gyro UI 消失、按键/摇杆失效。这些观察保留。
+
+Retraction：撤回据此推导的“remote parser 拒绝 `0x400`”“motion cap 只影响
+UI”“Generic 无法消费 gyro”以及“因此应优先改 DS4 原生模拟”的结论和禁止
+默认使用正常 motion capability/freshness 的决定。固定 DLL 的实际接收函数
+并不检查 RAW flags；姿态处理函数反而明确检查 motion capability。
+旧地址 `0x1386cf580` 不是 `ProcessInputReport` 入口；普通 gyro 用 slot 1，
+不是 slot 0。早期对 `0x80000` capability 的猜测也没有成为实现依据。
+
+该次实机输入失效的根因尚未确定。构建缓存显示 motion cap 开关关闭，不能
+把 UI 消失归因于单独的 wire flag 改动。详见 `OFFICIAL_INPUT_RE.md` §21。
+
+## D-065：按 RAW V3 普通传感器契约传输 Switch 六轴（2026-10-23）
+
+Evidence：固定 `steamclient64.dll` SHA-256 `e9045710…68eb4e` 的原始指令，
+经 `tools/steam-gyro-host-audit.py` 离线执行，接受实际 C packer/report holder
+生成的 full/delta `0x406` 报告，保留按钮/摇杆，填入普通 slot 1。
+version<3 自动补 `0xc00`，V3 则要求发送方提供 freshness。
+姿态处理入口 `0x13867d830` 同时要求 caps `0x800`、sensor enabled、新报告
+和 fresh mask；原始积分器及 source 的角速度复制也有分段执行对照。
+
+Decision：
+
+1. 保持 Generic 身份及 72 字节 RAW V3，普通 gyro presence/freshness 为
+   `0x402`，加 accel 后 `0x406`。删除互相混淆的实验标志和备用布局开关。
+2. Switch 声明真实 libnx motion 能力 `0x800`，不照抄身份相关的 `0x80000`。
+3. 发送 `+0x30` 微秒 event time、`+0x34` 100ns sensor time；时间变化独立于
+   六轴量化数值变化。普通输入不重放已提交的 gyro，同时不清除未提交样本。
+4. 不新增线程、同步网络日志或 loader 流程；沿用设备锁与既有 flush/delta 通路。
+5. 协议更改保留固定二进制执行反例。离线分段验证不替代实机 action/指针输出，
+   也不推断历史输入失效根因或 hbmenu 生命周期安全。

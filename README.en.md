@@ -20,6 +20,7 @@ Pick up your Joy-Con, choose a PC, and return to your last game.
 - **Launch recent games** — browse game artwork and select a card to request game launch and streaming.
 - **Handheld navigation** — use sticks, the D-pad or touch, with smooth horizontal card scrolling.
 - **Full-screen play** — Joy-Con rumble and an on-demand menu that stays out of the way.
+- **Gyro input** — send Switch motion sensors to Steam Input. Configure gyro as a mouse in Steam's desktop controller layout to move the pointer by rotating the Switch.
 - **End games remotely** — disconnect while leaving the game running, or ask the PC to quit it.
 - **Make it yours** — English and Chinese, picture preferences and UI sounds.
 - **Launch from HOME** — add a shortcut from the app's options.
@@ -55,6 +56,10 @@ Use **Y to open Steam** on your first visit. Games played during streaming appea
 
 The home screen and menus also support touch. **Disconnect** leaves the PC game running.
 **End game and disconnect** asks the host to quit the game, then disconnects. The streaming menu only offers Resume, End game and disconnect, and Disconnect; settings are available from the home screen.
+
+Gyro actions follow the Steam Input layout on your PC. Desktop mouse control has been
+verified on hardware. Games need their own controller layouts; in-game behavior and
+compatibility have not yet been verified.
 
 Open **Settings → Video & audio → Resolution** to choose Auto, 720p or 1080p.
 Auto selects 720p in handheld mode and 1080p when docked at each connection, targeting up to 60 fps.

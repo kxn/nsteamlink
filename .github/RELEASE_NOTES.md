@@ -1,71 +1,75 @@
-# NSteamLink v0.5.1
+# NSteamLink v0.6.0
 
 ## 简体中文
 
-## [0.5.1] - 2026-10-20
+## [0.6.0] - 2026-10-23
 
-上一正式版：**v0.5.0**。本版：**v0.5.1**。目标分支：`main`；对应源码：[`v0.5.1`](https://github.com/kxn/nsteamlink/tree/v0.5.1)。
+上一正式版：**v0.5.1**。本版：**v0.6.0**。目标分支：`main`；对应源码：[`v0.6.0`](https://github.com/kxn/nsteamlink/tree/v0.6.0)。
 
 ### 主要变化
 
-- **串流恢复与退出**：改进视频丢失反馈、关键帧恢复、解码队列和帧所有权处理；停止串流时保留应处理的最后一批数据，正常关闭不再误报为提交失败。
-- **发现与重试**：发现广播全部发送失败时执行有界 socket 重建；修正接收批次、发现发送和开流重试的先后顺序，保留当前主机身份和请求。发现完整轮与快速重试沿用已核验的官方期限和序号规则。
-- **授权续接与凭据**：改进同一开流请求的自动授权续接、确认前的凭据保存，以及按所选 Steam 身份保存密钥；连接安全码与配对授权码仍分别处理。
-- **正式包精简**：明确关闭应用与 SDK 诊断。正式 NRO 排除调试 UDP 入口、nxlink/文件日志、HID 历史采样、高级诊断浮屏、故障注入和测试探针。发布流程校验实际对象、ELF/NRO 对应关系和附件允许列表；标签流程保留诊断排除测试，但不上传诊断包。
+- **Switch 陀螺仪输入**：将 libnx 六轴采样传给 Steam Input。在 Steam 的手柄桌面布局中将陀螺仪配置为鼠标，即可通过转动 Switch 控制指针；此用法已由用户实机确认。
+- **补齐 Host 传感器协议**：声明 motion capability，按 Generic RAW V3 发送普通传感器的新样本标志及时间戳。相同角速度在不同采样时刻仍会上报；仅按键、摇杆或加速度变化时不会重放已提交的 gyro，尚未发送的样本则保留。
+- **减少试错**：加入固定 Steam Host DLL 的原始机器码离线审计，以及使用生产打包器的 full/delta 对照；删除混淆普通/左传感器的实验开关，修正逆向文档中的错误推论。
 
 ### 按类型分组的提交
 
-- **恢复与生命周期修复**：`3be848b`，UDP 接收边界；`07ed493`，正常停止时取消提交；`a94d163`、`c5a7cfb`，解码停止批次与最后一帧组装。
-- **发现修复**：`8fad3ca`、`9f193c8`，接收恢复和启动失败清理；`6c7a02d`、`e1274b5`，广播重建及发现轮次；`fe5bc32`、`e46cf75`、`9de506c`，操作、回调和联合重试顺序（[PR #87](https://github.com/kxn/nsteamlink/pull/87)）。
-- **授权与发布检查**：`a3000a4`、`eeeb684`、`b51680d`、`03bf16e`，授权和凭据生命周期；`55fcf98`，SDK 诊断排除与产物门禁。
-- **验证与参考**：补充官方原指令对照、音频断序/停止、跨组和跨通道 FEC、容量边界及独立 Switch 探针。研究和测试素材不进入正式 NRO。
+- **功能**：`d13ff0c`，Switch 六轴采样、单位转换及 HID 注入。
+- **修复**：`b6421a2`，完整 RAW V3 传感器契约、事件合并、能力声明和 Host 验证；IHSlib 固定至 `0bc7087`。
+- **测试**：`0dd07e5`，独立六轴探针与方向查看工具；`b6421a2`，生产 C 报告与 Host 原始指令交叉验证。测试工具不进入正式 NRO。
+- **文档**：记录用户实机桌面鼠标输出，更新中英文使用说明，明确撤回“remote Generic 拒绝 0x400”的早期结论。
 
 ### 验证与证据范围
 
-已验证的 `9de506c` / IHSlib `bfb7100` 通过桌面普通构建 239 项、诊断构建 245 项、相关 ASan/UBSan/leak 9 项，以及两轮完整 CI。Switch 正式构建的 45 个产品翻译单元、SDK 对象和最终 NRO 已检查诊断排除，15 类污染及 9 类探针产物/调用错误均被门禁拒绝。标签工作流会对正式发版提交重新构建并运行这些检查。
+相关桌面回归 8 项通过，Switch 修复构建成功；原始 DLL 离线审计覆盖 full/delta、CRC 错误拒绝、普通传感器 slot、开关/能力门控，以及分段的四元数积分和 gyro source 取值。
 
-真实 Steam→Switch 会话已验证单个丢失分片的 FEC 重建，以及超过修复能力的整组丢失恢复：客户端实际发送恢复请求，随后接受并提交关键帧，继续播放 30 秒。本次受控局域网测试从丢失到关键帧提交约 40 毫秒，提交错误为 0（[实机记录](https://github.com/kxn/nsteamlink/issues/69#issuecomment-6281073775)）。这不是所有网络环境的延迟保证，也不代表原有偶发卡顿或 Steam 大屏闪烁的根因已经确定。网络切换、会话完全断开和公网连接保留为独立课题。
+用户已确认：修改 Steam 手柄桌面布局后，陀螺仪可以操控鼠标。**游戏内效果和兼容性尚未验证**，需要按各游戏的 Steam Input 布局配置；此次结果也不代表所有手柄形态或校准精度均已验证。旧实验按键失效的根因仍未确定。
+
+标签工作流对正式提交重新执行桌面诊断 ON/OFF 测试、Switch 正式和诊断构建、诊断排除反例及产物身份检查；所有检查通过后才公开正式包。
 
 ### 下载与更新
 
-从[本版 Release](https://github.com/kxn/nsteamlink/releases/tag/v0.5.1) 下载正式 `.nro`，或使用应用内更新。已有 HOME 入口继续使用 `sdmc:/switch/nsteamlink/nsteamlink.nro`。附件仅包含正式 NRO、源码身份、诊断排除报告、SDK 包清单、许可证及 `SHA256SUMS`。
+从[本版 Release](https://github.com/kxn/nsteamlink/releases/tag/v0.6.0) 下载正式 `.nro`，或使用应用内更新。已有 HOME 入口继续使用 `sdmc:/switch/nsteamlink/nsteamlink.nro`，无需重复添加。
+附件包含正式 NRO、源码身份、诊断排除报告、SDK 包清单、许可证及 `SHA256SUMS`；不发布诊断/六轴探针包。
 
-感谢提供试玩与实机测试反馈的用户、提供初代 Switch 的 **Sven**，以及 **Simone Caronni（[@scaronni](https://github.com/scaronni)）**、IHSlib、FFmpeg、Opus、SDL、libnx、devkitPro、deko3d 和 nx-hbloader 的作者与维护者。
+感谢提供试玩与陀螺仪实机反馈的用户、提供初代 Switch 的 **Sven**，以及 **Simone Caronni（[@scaronni](https://github.com/scaronni)）**、IHSlib、FFmpeg、Opus、SDL、libnx、devkitPro、deko3d 和 nx-hbloader 的作者与维护者。
 
-[完整变更：v0.5.0 → v0.5.1](https://github.com/kxn/nsteamlink/compare/v0.5.0...v0.5.1)
+[完整变更：v0.5.1 → v0.6.0](https://github.com/kxn/nsteamlink/compare/v0.5.1...v0.6.0)
 
 ---
 
 ## English
 
-## [0.5.1] - 2026-10-20
+## [0.6.0] - 2026-10-23
 
-Previous stable release: **v0.5.0**. This release: **v0.5.1**. Target branch: `main`; tagged source: [`v0.5.1`](https://github.com/kxn/nsteamlink/tree/v0.5.1).
+Previous stable release: **v0.5.1**. This release: **v0.6.0**. Target branch: `main`; tagged source: [`v0.6.0`](https://github.com/kxn/nsteamlink/tree/v0.6.0).
 
 ### Highlights
 
-- **Streaming recovery and shutdown**: improve video-loss feedback, keyframe recovery, decoder queues, and frame ownership. Preserve the final eligible receive batch during shutdown and treat normal close-time cancellation separately from submission failures.
-- **Discovery and retries**: use bounded socket recreation when every discovery broadcast destination fails. Correct the order of receive batches, discovery sends, and launch retries while preserving host identity and the current request. Full discovery rounds and fast retries follow the verified official deadlines and sequence rules.
-- **Authorization and credentials**: improve automatic authorization within the original launch request, credential-save attempts before confirmation, and key storage under the selected Steam identity. Pairing authorization codes and connection security codes remain separate.
-- **Ordinary release build**: explicitly disable application and SDK diagnostics. The published NRO excludes the debug UDP endpoint, nxlink/file logging, HID history capture, advanced diagnostic overlays, fault injection, and test probes. Publication gates inspect actual objects, ELF/NRO consistency, and the attachment allowlist. Tag workflows retain diagnostic exclusion tests without uploading diagnostic packages.
+- **Switch gyro input**: forward libnx motion samples to Steam Input. Configure gyro as a mouse in Steam's desktop controller layout to move the pointer by rotating the Switch. A user has verified this on hardware.
+- **Complete the host sensor protocol**: advertise motion capability and include normal-sensor freshness and timestamps in Generic RAW V3 reports. Identical angular velocities at different sample times are still reported. Button, stick, or acceleration-only changes do not replay an already submitted gyro sample, while pending samples are preserved.
+- **Reduce device trial and error**: add offline execution of a pinned Steam Host DLL and full/delta fixtures from the production C packer. Remove experimental switches that confused normal and left sensor slots, and correct the earlier reverse-engineering conclusions.
 
 ### Commits by type
 
-- **Recovery and lifecycle fixes**: `3be848b`, UDP receive boundaries; `07ed493`, close-time submission cancellation; `a94d163` and `c5a7cfb`, decoder stop batches and final frame assembly.
-- **Discovery fixes**: `8fad3ca` and `9f193c8`, receive recovery and failed-startup cleanup; `6c7a02d` and `e1274b5`, broadcast recreation and discovery rounds; `fe5bc32`, `e46cf75`, and `9de506c`, operation, callback, and joint retry ordering ([PR #87](https://github.com/kxn/nsteamlink/pull/87)).
-- **Authorization and release checks**: `a3000a4`, `eeeb684`, `b51680d`, and `03bf16e`, authorization and credential lifetimes; `55fcf98`, SDK diagnostic exclusion and artifact gates.
-- **Validation and references**: original-instruction comparisons, audio gap/stop cases, cross-group and cross-channel FEC, capacity boundaries, and isolated Switch probes. Research and test fixtures are excluded from the ordinary NRO.
+- **Feature**: `d13ff0c`, Switch motion sampling, unit conversion, and HID injection.
+- **Fix**: `b6421a2`, the complete RAW V3 sensor contract, event merging, capability declaration, and host verification; IHSlib pinned to `0bc7087`.
+- **Tests**: `0dd07e5`, isolated motion probes and an axis viewer; `b6421a2`, production C reports checked against original host instructions. Test tools are excluded from the ordinary NRO.
+- **Documentation**: record the user's desktop mouse result, update Chinese and English usage instructions, and explicitly retract the earlier claim that remote Generic rejects 0x400.
 
 ### Validation and evidence scope
 
-The verified `9de506c` / IHSlib `bfb7100` passed 239 ordinary desktop tests, 245 diagnostic tests, nine related ASan/UBSan/leak checks, and two full CI runs. Switch checks covered diagnostic exclusion in 45 product translation units, SDK objects, and the final NRO, with 15 contamination cases and nine probe artifact/call-path faults rejected. The tag workflow rebuilds the final release commit and repeats these checks.
+Eight related desktop regression tests passed, and the fixed Switch build succeeded. Offline original-DLL checks cover full/delta decoding, invalid CRC rejection, normal sensor slot selection, enable/capability gates, and isolated quaternion integration and gyro-source consumption.
 
-Real Steam→Switch sessions verified FEC reconstruction after one missing data shard and recovery after an entire group was erased beyond its repair capacity: an actual recovery request was sent, a later keyframe was received and submitted, and playback continued for 30 seconds. Loss-to-keyframe-submission was about 40 milliseconds in this controlled LAN run, with zero submission errors ([device evidence](https://github.com/kxn/nsteamlink/issues/69#issuecomment-6281073775)). This is not a latency guarantee for other networks or proof of the original intermittent-stall/Steam Big Picture flicker cause. Network switching, complete session disconnection, and Internet connectivity remain separate work.
+The user confirmed that gyro controls the mouse after changing Steam's desktop controller layout. **In-game behavior and compatibility have not yet been verified** and depend on each game's Steam Input layout. This result does not establish support for every controller configuration or calibration accuracy. The cause of input loss in earlier experimental builds remains undetermined.
+
+The tag workflow rebuilds the release commit, runs desktop diagnostics ON/OFF tests, builds ordinary and diagnostic Switch configurations, and checks diagnostic exclusion counterexamples and artifact identity. Publication follows successful checks.
 
 ### Download and update
 
-Download the ordinary `.nro` from [this release](https://github.com/kxn/nsteamlink/releases/tag/v0.5.1), or use the in-app updater. Existing HOME shortcuts continue to target `sdmc:/switch/nsteamlink/nsteamlink.nro`. Attachments contain only the ordinary NRO, source identity, diagnostic exclusion report, SDK package list, license text, and `SHA256SUMS`.
+Download the ordinary `.nro` from [this release](https://github.com/kxn/nsteamlink/releases/tag/v0.6.0), or use the in-app updater. Existing HOME shortcuts continue to use `sdmc:/switch/nsteamlink/nsteamlink.nro` and do not need reinstalling.
+Attachments contain the ordinary NRO, source identity, diagnostic exclusion report, SDK package list, license text, and `SHA256SUMS`; diagnostic builds and motion probes are not published.
 
-Thanks to users providing playtesting and device-test feedback, **Sven** for the original-model Switch, **Simone Caronni ([@scaronni](https://github.com/scaronni))**, and the authors and maintainers of IHSlib, FFmpeg, Opus, SDL, libnx, devkitPro, deko3d, and nx-hbloader.
+Thanks to users providing playtesting and gyro feedback, **Sven** for the original-model Switch, **Simone Caronni ([@scaronni](https://github.com/scaronni))**, and the authors and maintainers of IHSlib, FFmpeg, Opus, SDL, libnx, devkitPro, deko3d, and nx-hbloader.
 
-[Full changelog: v0.5.0 → v0.5.1](https://github.com/kxn/nsteamlink/compare/v0.5.0...v0.5.1)
+[Full changelog: v0.5.1 → v0.6.0](https://github.com/kxn/nsteamlink/compare/v0.5.1...v0.6.0)

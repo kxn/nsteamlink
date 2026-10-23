@@ -542,10 +542,17 @@ Parse 失败的原始报告整条丢弃。
 [16..19] buttons u32，EGamepadButton 位
 [20..26] 0
 [27]     版本字节 = 3（RAW 选择器）
-[28..71] IMU/touch 区（V2 尾部布局未确认，发 0）
+[28..71] IMU/touch 区；gyro s16[3] @28、accel s16[3] @34、touch @40
 ```
 ENCODED 28B 格式只存在于本地 SDL 层与生成器之间，不上 wire。
 host 两种模式都能解析（同一函数），但 RAW+版本 3 是官方实际发送形态。
+
+> **2026-10-22 更正**：上表 [28..71] 不再视为“布局未确认、发 0”。
+> 官方 Linux 1.3.9.258 客户端（SHA-256 `191cc079…c149e4`）的
+> `CHIDDeviceSDLGamepad::OnSensorEvent @0x269740` 明确写入 gyro `+0x1c`
+> 与 accel `+0x22`，并置 flags bit1/bit2；`BInjectGamepadStateGenericGamepad
+> @0x2dac70` 在 byte[27]!=0 时最多拷贝 56B。旧的“发 0”实现会丢弃全部
+> IMU。单位与 Switch 接入见 §19。
 
 ### 17.4 EGamepadButton 枚举值（名表 0x3dabc4 反解，27 项）【已验证】
 
@@ -703,3 +710,471 @@ display 7xx-10xx (network)(decode)(display)` 中 network/decode/display 三列
 真实有效。已修的 16.16 定点秒（packet.c）覆盖了帧事件时间戳，
 但 FrameEvents 的事件差分编码本身不匹配官方（协议参考 §14.4），
 不能继续只按单位解释；统计反馈对输入卡死的影响尚未建立因果证据。
+
+## 19. Switch 六轴（陀螺仪 + 加速度计）接入（2026-10-22）
+
+### 19.1 为什么此前“协议支持但没有打开”【已验证】
+
+1. **SDL 的 Switch 驱动不提供传感器事件。** devkitPro SDL 2.28.5-4 的
+   `SWITCH_JoystickSetSensorsEnabled` 只有 `mov w0,#4; b SDL_Error`
+   （反汇编 `/opt/devkitpro/portlibs/switch/lib/libSDL2.a` 的 `SDL_sysjoystick.o`），
+   即 `SDL_GameControllerSetSensorEnabled()` 在 Switch 上恒失败；`SDL_PollEvent`
+   不会产生 `SDL_CONTROLLERSENSORUPDATE`。所以只修 ihslib 的打包逻辑仍不会
+   在 Switch 上得到任何样本。
+2. **ihslib 的 Generic RAW V2 打包器把 IMU 区清零。** 旧
+   `IHS_HIDReportSDLPackWire` 只写 axes/buttons/version，[28..71] 全 0；
+   即使桌面 SDL 产生传感器事件，`SetGyro/SetAccel` 写入的内部状态也不会
+   进入 wire。历史提交 929767a 曾尝试透传，但 39fcb1d 以“ENCODED 格式
+   不含 IMU”为由撤回；该前提只适用于 byte[27]==0 的 ENCODED 分支，
+   不适用于本项目实际发送的 RAW+version 3。
+3. **host 端协议本来就带 IMU。** 官方 Linux 1.3.9.258 客户端
+   （`steamlink`，SHA-256 `191cc079f795cfdff69a8b51041360a2164b3ec64647e9419af2e2d00fc149e4`）
+   `CHIDDeviceSDLGamepad::OnSensorEvent @0x269740`：
+   - `sensor==2`（GYRO）：把 `event.data[0..2]` 按
+     `(v + 34.90659)/69.81317 * 65535 - 32768` 转成三个 s16，写入 state
+     `+0x1c/+0x1e/+0x20`，并 `flags |= 0x2`；
+   - `sensor==1`（ACCEL）：同样的映射（半量程 19.6133，满量程 39.2266）
+     写入 `+0x22/+0x24/+0x26`，并 `flags |= 0x4`。
+   常量位于 0x9b72e8–0x9b72fc：65535、32768、34.90659、69.81317、
+   19.6133、39.2266。`CHIDDeviceSDLGamepad::Write @0x268e30` 的
+   `COMMAND_SET_SENSOR_ENABLED` 分支在 value!=0 时启用 SDL 的
+   ACCEL/GYRO 并 `flags |= 0x6`，value==0 时清除 0x6。
+   `GetGyroDPSRatingForControllerType @0x161870` 返回 2000，
+   `GetAccelerometerGravityConstant @0x161880` 返回 16383（≈1g），
+   与“gyro ±2000 dps、accel ±2g 的 s16 定点”一致。
+4. **libnx 的底层状态可用。** libnx `HidSixAxisSensorState` 提供
+   `angular_velocity`、`acceleration`、`delta_time`、`sampling_number`，
+   且可用 `hidGetSixAxisSensorHandles` / `hidStartSixAxisSensor` /
+   `hidGetSixAxisSensorStates` 按 `HidNpadStyleTag` 获取。
+
+### 19.2 wire 契约（RAW V2，byte[27]!=0）【已验证】
+
+```
+[0..11]  axes 6×s16
+[12..15] flags u32：bit1 = gyro present，bit2 = accel present
+[16..19] buttons u32（SDL_GamepadButton 位）
+[20..26] 0
+[27]     version（本项目发 3，非零即 RAW）
+[28..33] gyro s16[3]：rad/s × 65535/69.81317，即 ±2000 dps
+[34..39] accel s16[3]：m/s² × 65535/39.2266，即 ±2 g
+[40..43] touch（本项目仍为 0）
+[44..55] 其余 V2 尾部（本项目 0）
+```
+
+`BInjectGamepadStateGenericGamepad @0x2dac70` 在 byte[27]!=0 时最多拷贝
+56B；Android 1.3.32 的旧记录写 72B，本项目保留 `min(host length, 72)`
+的现有上限，但 56B 之后始终为 0。Delta mask 仍按 host 通告长度生成。
+
+### 19.3 单位与轴向对齐【已验证/推断分列】
+
+- **单位（已验证）**：Nintendo 的 `imu_sensor_notes.md` 明确
+  “Internally Switch uses revolutions per second instead of degrees”，
+  加速度以 g 表示；libnx 直接暴露该状态。SDL 的
+  `SDL_SENSOR_GYRO` 是 rad/s、`SDL_SENSOR_ACCEL` 是 m/s²。因此
+  `gyro_rad_s = angular_velocity_rev_s * 2π`，
+  `accel_m_s2 = acceleration_g * 9.80665`。
+- **Switch 共享内存 -> SDL 标准帧（已验证于两个独立模拟器）**：
+  yuzu `src/input_common/drivers/sdl_driver.cpp` 把 SDL 样本写成
+  `switch_gyro=(x, -z, y)/2π`、`switch_accel=(-x, z, -y)/g`；
+  Ryujinx `NpadController.Update` 使用同一轴置换
+  `(x, -z, y)`。取逆得到本项目使用的：
+  ```
+  sdl_gyro  = ( av.x,  av.z, -av.y) * 2π
+  sdl_accel = (-acc.x, -acc.z, acc.y) * g
+  ```
+- **不按 Joy-Con 左右再翻转（推断，待真机确认）**：Switch 的 `hid`
+  服务对 Pro/Joy-Con/handheld 输出同一控制器帧；SDL HIDAPI 的
+  `(-Y, Z, -X)` 和右手柄 `data[0]/data[1]` 翻转针对的是**绕过服务的
+  原始 HID 报告**，不适用于 libnx 已归一化的状态。若真机上左右
+  Joy-Con 方向相反，只需在 `sensor_math.c` 增加按 device type 的
+  后处理，不改协议层。
+
+### 19.4 实现落点【已验证】
+
+- `third_party/ihslib/src/hid/sdl/src/sdl_hid_report.c`：
+  `SetGyro` 置 flags bit1、`SetAccel` 置 bit2；新增
+  `IHS_HIDReportSDLClearSensors`。
+- `third_party/ihslib/src/hid/sdl/src/sdl_hid_common.h`：
+  `IHS_HIDReportSDLPackWire` 复制 flags、gyro、accel、touch 到
+  [12..47]；[48..] 保持 0。
+- `third_party/ihslib/include/ihslib/hid/sdl.h` + `sdl_hid_event.c`：
+  新增 `IHS_HIDSDLInjectSensor(session, joystickId, gyro, accel)`，
+  在设备锁内合并到 canonical state；发送仍由既有 8ms flush 线程完成。
+- `app/platforms/switch/sensors.c`：
+  按 `HidNpadStyleTag` 取 handheld/FullKey/JoyDual/JoyLeft/JoyRight 句柄；
+  JoyDual 优先右手柄；每 4ms 取最新 `sampling_number`，转换后注入；
+  只从 `pump_sdl_events`（SDL/libnx HID 所属媒体线程）调用，
+  会话停止/退出时 `hidStopSixAxisSensor`。
+- `app/platforms/common/sensor_math.c`：单位/轴向纯函数，桌面测试覆盖。
+- `app/platforms/common/media.c`：会话有效且 input gate 打开时
+  `sl_sensors_poll`，否则 `sl_sensors_stop`；shutdown 再 stop 一次。
+- 测试：`ihstest_hid_sdl_report` 校验 flags/gyro/accel 的 wire offsets；
+  `nsl-sensor-math` 校验单位与轴向；desktop 246/246 通过，Switch
+  release NRO 构建通过。
+
+### 19.5 真机六轴采集与轴向结果（2026-10-22，Handheld）
+
+设备地址 `10.10.10.66`，hbmenu netloader + nxlink 推送，未开 Steam 会话。
+工具：`nsl-sixaxis-probe`（机器可读采样）和 `nsl-sixaxis-view`（屏幕可视化）。
+
+- **采样路径成立**：`handheld_style=0x2`、`no1_style=0`、`handheld_type=12`；
+  `hidGetSixAxisSensorHandles`/`hidStartSixAxisSensor` 均返回 0；只有
+  handheld 句柄有数据，fullkey/joydual/joyleft/joyright 句柄返回 0（当前
+  没有对应控制器连接）。
+- **采样率**：状态 `delta_time=5,000,000 ns`；19.914 秒内 `sampling_number`
+  增加 3871，约 **194 Hz**（标称 200 Hz 附近）。
+- **静止姿态**：accel 约 `(0.02, -0.29, -1.06) g`，主要沿 **-Z**；转换后
+  SDL accel 约 `(-0.2, 10.4, -2.8) m/s²`，主要沿 **+Y**。这符合
+  “屏幕朝上/近似平放时重力在 SDL Y 轴”的预期。
+- **引导动作（3 轮 REST/YAW/PITCH/ROLL）**：
+  - YAW（绕竖直轴左右转）：raw **Z** 范围约 `-0.95..+0.81 rev/s`，
+    X/Y 较小；对应 SDL **Y**。
+  - PITCH（前后倾）：raw **X** 范围约 `-1.10..+1.19 rev/s`；对应 SDL **X**。
+  - ROLL（左右滚）：raw **Y** 范围约 `-0.90..+0.84 rev/s`；对应 SDL **Z**。
+  这三组结果支持 `sensor_math.c` 的 `(x, z, -y)` 映射和“libnx X=pitch、
+  Y=roll、Z=yaw”的轴向假设。第一轮用户未完全按提示动作，第二轮/第三轮
+  的 Z/X/Y 主导关系很清楚。
+- **仍未验证**：Pro Controller、单 Joy-Con、左右 Joy-Con 分离时的
+  方向/符号；Steam host 是否接受“未先发 `SetSensorEnabled` 即出现 IMU”
+  的数据；Steam Input 的 Gyro 正负方向（真机若相反，只需在
+  `sensor_math.c` 取反对应分量，wire 格式不变）。
+
+## 20. Steam Windows host 对 Switch Generic IMU 的消费路径（2026-10-23 逆向）
+
+> **历史研究记录，相关推论已撤回。** §20.8 的 parser 拒绝结论、仅供本地使用的
+> flags 解释和 slot 推断被 §21 的原始机器码执行证据取代；实机观察本身保留。
+
+本节只记录可复核的证据、结论和假设，不把“host 显示了 Gyro UI”当成“host 消费了
+IMU”。这是 2026-10-22/23 多轮真机对照后的收敛结果。
+
+### 20.1 材料
+
+- Windows Steam host：`steamclient64.dll`，FileVersion `11.12.30.07`，编译时间
+  `2026-10-14`，SHA-256
+  `e9045710ec7ee47d7b7488d1c5dda2d933dec7e251e965967a5c48f4df68eb4e`。
+- 该 DLL 内嵌的源码路径（`__FILE__` 字符串）：
+  `src/common/hiddevicesdl.cpp`、`src/common/hiddeviceremote.cpp`、
+  `src/clientdll/controllerabstraction.cpp`、
+  `src/clientdll/controller_sources/controller_source_gyro.cpp`、
+  `src/clientdll/controller_gyroprocessing.cpp`。
+- host 侧 VDF：`controller_switch_pro.vdf` 的 group 8 为
+  `gyro_to_mouse`，preset 中 `"8" "gyro active"`，
+  `controller_caps = 0x8B4BFF`（含 `0x800`）。这证明 Gyro 行为是启用状态，
+  不是“没保存”。
+- 真机日志（NX 侧注入点）：
+  `sensor inject motion=0.117 flags=0x6 wire_gyro=50,0,-60`。
+  同一会话 host 反复发 `host sensor enable=1/0`，说明 host 主动请求了
+  sensor，且客户端把非零 gyro 写进了 wire。
+
+### 20.2 host 侧 `CHIDDeviceSDLGamepad` 的状态布局
+
+通过 RTTI/vtable 定位（镜像基址 `0x138000000`）：
+
+- RTTI type descriptor `.?AVCHIDDeviceSDLGamepad@@` @ `0x17ce878`；
+  vtable @ `0x1392fa7a8`。
+- `OnSensorEvent` @ `0x1386d30e0`。它从 `SDL_GamepadSensorEvent`
+  取 `[event+0x14]` 的 sensor type 和 `[event+0x18/+0x1c/+0x20]` 的三个
+  float，写入 state：
+  - 正常分支：gyro s16 @ `state+0x1c`，`flags |= 0x402`；accel s16 @
+    `state+0x22`，`flags |= 0x4`；
+  - 左/备用分支（SDL sensor type 3/4，即 ACCEL_L/GYRO_L）：gyro 写
+    `state+0x38`、accel 写 `state+0x3e`，并置 `0xa00`/`0x4`。
+  - 两个分支的选择来自 `[event+0x14]` 的 SDL sensor type，不是来自
+    wire flags；`0x400` 是 host 内部 state 的标记，不应直接当成
+    “remote gyro valid”位。
+- 因此 host 本地 SDL 路径的 gyro 布局与 ihslib 的 `+0x1c` 一致；差异是
+  host 本地 flags 带 `0x400`，且存在第二套 `+0x38/+0x3e` 布局。
+- 真机试过把客户端 flags 从 `0x6` 改成 `0x406`：**整个手柄输入失效**
+  （按键/摇杆都无输入），不是“gyro 开始工作”。这说明 `0x400` 是 host
+  内部 state 的语义位，不能安全地直接补到 remote Generic wire flags；
+  它会让 host 进入另一套解释，和 Generic V2 的 `+0x16`/`+0x1c` 布局
+  不兼容。
+
+### 20.3 host 侧 Generic 抽象
+
+- `CGenericGamepadControllerAbstraction` RTTI
+  `.?AVCGenericGamepadControllerAbstraction@@` @ `0x17cb5d8`；
+  vtable @ `0x1392ea3d0`。
+- 候选 `ProcessState` @ `0x1386793e0`（vtable slot 13）把 HID state 视为位于对象 `+0x18`：
+  axes 在 `+0x18..+0x22`，version 在 `+0x33`（即 HID state `+0x1b`），
+  RAW 分支从 `+0x18` 起拷贝 `0x48` 字节到局部
+  `HIDDeviceSDLGamepadStateV2_t`，因此 gyro `+0x34`（HID `+0x1c`）和
+  accel `+0x3a`（HID `+0x22`）在拷贝范围内。
+- 候选 state-changed 比较 @ `0x138678ea0` 只读
+  `+0x18..+0x22`（axes）和 `+0xc..+0x12`（flags/其他），**没有比较
+  `+0x34/+0x3a` 的 gyro/accel**；它把 state 缓存到 `+0x108`，长度
+  `0xa0`。
+- 远程 HID report 相关函数 @ `0x1386cf580`（同文件断言在 `0x1386d0031` 引用下方字符串）走的是
+  `hiddeviceremote.cpp` 的 report-type 分发；字符串
+  `CHIDDeviceRemote::ProcessInputReport(): Received unknown report type`
+  @ `0x1392f9b30`。这条路径按 report byte/type 构造
+  `CHIDDeviceInputReport`，不是直接把 Generic V2 的 tail 当作连续 IMU 流。
+
+### 20.4 真机对照结果
+
+| 配置 | host 布局 | Gyro UI | 震动 | 实际 gyro 输出 |
+|---|---|---|---|---|
+| Generic `0000:0000`，caps `0x8043ff` | 4 项 | 无 | 正常 | 无 |
+| Generic + `0x800`，Steam Input 开 | Gyro 出现 | 有 | 正常 | **无** |
+| Switch Pro `057e:2009` + `0x800` | 6 项 | 有，校准成功 | 正常 | **无** |
+| Switch Pro + `0x800` + flags `0x400` | 输入全失效 | — | — | — |
+| DS4 `054c:09cc` + `0x800` | 6 项（含触控板） | 有 | 正常 | **无** |
+
+`controller_switch_pro.vdf` 里 `gyro_to_mouse` active、`gyro_natural_sensitivity=483`，
+但桌面指针、右摇杆、游戏内动作都不响应。校准能成功只说明 host 能拿到
+一部分运动样本（校准可用 accel/初始样本完成），不等于连续 gyro 被送进
+Gyro action group。
+
+### 20.5 结论与假设
+
+**Evidence：**
+
+1. NX 侧 gyro 已进入 canonical state 和 wire：`flags=0x6`，
+   `wire_gyro` 非零；host 主动发 `SetSensorEnabled`。
+2. host 的 VDF Gyro group active，caps 含 `0x800`；host 本地
+   `CHIDDeviceSDLGamepad::OnSensorEvent` 的 gyro 布局也是 `+0x1c`。
+3. host 的 `CGenericGamepadControllerAbstraction` 的 state-change 比较
+   不含 `+0x34/+0x3a`（gyro/accel）字段；`CHIDDeviceRemote::ProcessInputReport`
+   按 report type 分发，不是连续 IMU 流。
+4. 官方 Linux 1.3.9.258 的 `BParseGamepadStateSwitch @0x2da140` 只解析
+   Switch 原生报告的按键/摇杆，不读 IMU；官方唯一 IMU 路径是
+   `CHIDDeviceSDLGamepad::OnSensorEvent`。
+
+**Retraction（2026-10-23）：** 本节初稿把“host 不消费 IMU”写成了结论，这是
+下早了。逐位比对 host VDF 的 `controller_caps = 0x8B4BFF` 与
+`InfoFromHID` 的基线 caps 后，发现基线是 `0x8343FF`（ABXY/DPAD/双摇杆/
+肩键/扳机/Back/Start/Guide/Misc1/XInput/UNK_3/UNK_4），和 host VDF 只差
+**`0x800` + `0x80000`**。真机只补过 `0x800`（Gyro UI 出现、无数据），
+**`0x80000` 从未测过**。因此下面的“host 不支持”不能作为结论，降级为待验证。
+
+**Conclusion（当前可下的部分）：**
+
+- 客户端没有丢 IMU；host 的 VDF Gyro group active，UI 能出现。
+- 只补 `0x800` 时没有数据输出；`0x400` 直接让输入失效，不能补。
+- host 的 Switch 原生 parser 不读 IMU（官方 Linux 客户端
+  `BParseGamepadStateSwitch @0x2da140`），所以“改成Switch 原生报告”
+  不是显然更优的方向。
+- `0x80000` 是否是 host 的 motion/数据通路位，仍为 `待验证`；在它验证
+  之前，不能判定 host 不支持 Switch Generic gyro。
+
+**Hypothesis（待验证）：**
+
+- host 的 `CGenericGamepadControllerAbstraction` 只在 axes/flags 变化时
+  推进 state；纯 IMU 变化（不动摇杆/按键）不会触发 Gyro source 更新。
+  这可以解释“校准成功、但转动完全无输出”。
+- 若该假设成立，客户端侧较可行的兼容层是发送 host 已有 gyro 支持的
+  **DS4/DualSense 原生报告**（host 的 PS4/PS5 gyro 路径是既有的），
+  而不是继续改 Generic caps；这需要实现 DS4 的 input report/feature
+  report，成本和风险都高于当前 Generic 路径。
+- 另一条待验证路径是让 host 在收到 IMU 时也标记 state changed；这属于
+  host 内部行为，客户端无法直接控制。
+
+### 20.6 精确消费点：`CGyroSource::Update` 与 flags `0x800/0x400` 门控（2026-10-23 继续逆向）
+
+继续沿 `controller_source_gyro.cpp` 追到实际消费函数，已定位到一条完整、可解释
+“校准成功但 gyro 无输出”的路径：
+
+- **消费函数**：`CGyroSource::Update` @ `0x1386702d0`（`CGyroSource` vtable
+  slot 9；vtable @ `0x1392e5218`，RTTI `.?AVCGyroSource@@` @ `0x17cb270`）。
+- **输入结构**：`rdx` 指向的 controller/raw state 里，
+  accel s16 在 `+0x24/+0x26/+0x28`，gyro s16 在 `+0x2a/+0x2c/+0x2e`。
+  `Update` 先检查这 6 个 word；若全为 0，直接跳到 `0x138670788` 返回，
+  不产生四元数、不更新 prediction，也不通知 Gyro mode。
+- **填充函数**：`CGenericGamepadControllerAbstraction` 内
+  `0x1386796f0` 起的循环负责把这 6 个字段写进上述输入：
+  - slot 0（`edi=0`）要求 **`flags & 0x800`**；
+  - slot 1（`edi=1`）要求 **`flags & 0x400`**；
+  - accel 另要求 **`flags & 0x4`**；
+  - 通过后把 gyro 写到输入 `+0x2a/+0x2e/+0x2c`，accel 写到
+    `+0x24/+0x26/+0x28`（并做一次 y/z 交换和 y 取反）。
+- **我们的 wire flags 是 `0x6`**：accel 的 `0x4` 有，所以校准能用 accel 完成；
+  gyro 需要的 `0x800`（slot 0）和 `0x400`（slot 1）都没有，填充循环直接跳过，
+  输入 6 个 word 保持 0，`CGyroSource::Update` 提前返回 → Gyro mode 永远收不到
+  样本。
+- **slot 与 wire offset 的对应**（由同一段 `0x1386796f0` 的读写位置直接得出）：
+  - slot 0（`flags & 0x800`）读 gyro `+0x38`、accel `+0x3e`；
+  - slot 1（`flags & 0x400`）读 gyro `+0x1c`、accel `+0x22`。
+  ihslib 目前只写 `+0x1c/+0x22`，所以它天然对应 **slot 1（0x400）**；
+  要用 slot 0，必须把同样的 gyro/accel 再写到 `+0x38/+0x3e` 并置 `0x800`。
+  之前 `0x400` 导致整只手柄失效的那次是 **Switch Pro 身份**构建，不能
+  用来否定 Generic + `0x400`；两者混淆了。
+
+这与真机现象完全一致：Gyro UI、校准、震动都正常（accel/flags 0x4 路径通），
+但转动无输出（gyro slot 位未被填充）。因此 **caps `0x80000` 不是当前首要
+问题；wire gyro flags 缺 `0x400`/`0x800` 才是**。当前包文写的是 `+0x1c/+0x22`，
+所以优先补 **slot 1 的 `0x400`**；只有 `CGyroSource` 索引为 0 时才需要
+slot 0 的 `+0x38/+0x3e`。之前 20.5 的 “host 不消费” 假设在此被替换。
+
+**待验证的两个对照构建（均为 Generic 身份，不改 caps/VID/PID）：**
+
+1. `build/switch-gyro400/app/nsteamlink.nro`：flags 改为 `0x402`，wire 仍写
+   `+0x1c/+0x22`，对应 slot 1。这是与当前包文最匹配的组合，应优先测。
+2. `build/switch-alt/app/nsteamlink.nro`：保留 `+0x1c/+0x22`，另把 gyro/accel
+   复制到 `+0x38/+0x3e` 并置 `0x800`（slot 0），用于 `CGyroSource` 索引为 0
+   的情况。`build/switch-gyro800/app/nsteamlink.nro` 只置了 `0x800` 但没有写
+   `+0x38`，不能作为 slot 0 的有效测试，已废弃。
+
+`CGyroSource::Update` 用 `[this+0xc0]` 选输入 slot；该索引由哪个控制器源
+初始化仍是 `待验证`，所以先用 slot 1 的 `0x400` 对照，失败再测 slot 0 的
+`+0x38` 布局。
+
+**还有一个未验证前提**：`0x1386796f0` 读的 `edx` 是 host 内部 state 的
+flags，不是已经证明与 wire flags 一一对应。官方 Linux 客户端
+`OnSensorEvent` 只置 `0x2/0x4`，所以 host 的 remote parser 可能自己把
+wire flags 翻译成内部 `0x400/0x800`；如果是这样，直接改 wire flags 不会
+生效。两个构建（`0x400` 与 `+0x38/0x800`）就是用来区分这两种情况的；
+在真机结果出来前，不能把“wire flags 直接等于内部 flags”当成结论。
+
+### 20.7 官方 Windows packer 交叉验证：wire flags 就是内部 flags
+
+为了确认 `0x1386796f0` 读到的 flags 是否就是 wire flags，检查了本机
+`steamclient64.dll` 的官方 packer：
+
+- `CHIDDeviceSDLGamepad` 的 pack 函数 @ `0x1386d35e0`。
+- version（state `+0x1b`）非 0 时走 RAW 分支 `0x1386d37a6`：
+  - `eax = 0x48`（72）；
+  - `rbp = min(requested_len, 72)`；
+  - `memcpy(dest, source_state, rbp)`。
+- 也就是说 **RAW V2 是把内部 state 的 0..0x47 原样拷到 wire**，没有字段
+  重排、没有 flags 翻译。内部 state 的 flags（`+0xc`）就是 wire `+0xc`。
+- 同一 DLL 的 `OnSensorEvent @0x1386d30e0` 正常 gyro 分支写
+  `state+0x1c`、`flags |= 0x402`；accel 写 `state+0x22`、`flags |= 0x4`。
+  因此官方 Windows 客户端在本机带 gyro 的 SDL 手柄上，wire 就是：
+  - `flags = 0x402`（加 accel 后 `0x406`）
+  - gyro @ `+0x1c`
+  - accel @ `+0x22`
+- 这和 `CGenericGamepadControllerAbstraction` slot 1（`0x400`）读取
+  `+0x1c/+0x22` 完全一致，也证明 **wire flags 与内部 flags 一一对应**，
+  20.6 末尾的 `待验证` 前提成立。
+
+**结论：我们应该发送的格式与官方 Windows 客户端完全一致：**
+
+```text
+flags = 0x2 | 0x4 | 0x400 = 0x406
+gyro  = s16[3] @ +0x1c (28)
+accel = s16[3] @ +0x22 (34)
+version = 3 @ +0x1b (27)
+```
+
+`build/switch-gyro400/app/nsteamlink.nro` 就是这一格式：Generic 身份，
+`SetGyro` flags `0x402`，`SetAccel` 保持 `0x4`，wire 偏移不变。
+
+slot 0（`0x800` + `+0x38/+0x3e`）是另一条 sensor 布局（host 的
+ACCEL_L/GYRO_L 分支），不是本机单 Pro/handheld 的主路径；
+`build/switch-alt` 只作为兜底，不应优先使用。
+
+### 20.8 真机反证：`0x400` 不能放进 remote Generic wire flags
+
+2026-10-23 早上在 `10.10.10.66` 推送 `build/switch-gyro400`（Generic 身份，
+`SetGyro` flags `0x402`，线上 flags `0x406`）实测：
+
+- **Gyro 选项直接消失**；
+- **按键/摇杆全部失效**。
+
+这不是“只加一个 slot 位”的问题。它说明 host 的 remote Generic parser 把
+wire flags 的 `0x400` 当成另一种报告模式/布局，直接拒绝或切换了解析；
+`0x400` 是 host **内部 state** 的 sensor 位，不是 remote Generic 可安全
+写入的 wire 位。
+
+因此 20.7 的“发送 `0x406`”结论**撤回**：
+
+- 官方 Windows packer 的 `0x402` 是**本地 SDL state** 的内部 flags；
+- 它不能证明 remote Generic wire 也接受 `0x400`；
+- 真机结果证明 remote Generic 不接受。
+
+稳定可用的 wire flags 仍是 `0x6`（gyro presence `0x2` + accel `0x4`）；
+不要再把 `0x400`/`0x800` 加进 wire flags。要设置 host 内部 sensor 位，
+必须找到 remote parser/`DeviceInputReports` 一侧的机制，而不是直接改 flags。
+
+## 21. Generic RAW V3 的接收契约复核（固定 Windows 样本）
+
+**Retraction（2026-10-23）：** 撤回 §20.8、D-064 和旧交接文档中“remote
+Generic 不接受 `0x400`”“该位只属于本地 state”的协议结论。此前用户观察到的
+Gyro UI 消失、按键/摇杆失效仍然成立，但不能从该现象推出 parser 的分支行为。
+`CHIDDeviceRemote::ProcessInputReport` 实际入口是 `0x1386cfd80`，不是
+`0x1386cf580`；其 unknown-report-type 检查的是 protobuf 的 full/delta presence
+字段，不是 RAW flags。这里的离线结果不替代那次实机失败，也没有确定其根因。
+
+**Evidence：** 同 SHA-256 `e9045710…68eb4e` 的原始 x86-64 指令离线执行：
+
+- full 分支 `0x1386cfe70..0x1386cfed0` 按长度复制 payload 后入队；delta 分支
+  调用 `0x1386cef00` 按 73 字节订阅长度形成的 10 字节掩码重建数据，再调用
+  `0x138cfa3e0` 对 `min(delta_report_size, subscribed_length)` 字节验 CRC。
+  `0x6/0x406/0x806/0xa06` 均能还原并通过校验，没有 RAW flags 拒绝分支。
+- Generic read `0x13867b060` 从 HID Read 直接读取对象 `+0x18`；builder
+  `0x1386793e0` 的 RAW 分支复制 72 字节。version < 3 时自动 `flags |= 0xc00`
+  （`0x1386795ae..0x1386795b8`），version 3 则要求发送端自己提供 freshness。
+- `version=3, flags=0x6` 的两个 IMU slot 均为零；`0x406` 把正常 IMU 写入
+  slot 1，同时保留完全相同的按钮/摇杆输出。左 slot 的完整 gyro 条件是
+  `0x200 | 0x800`，不是只加 `0x800`。
+- Gyro constructor 真正入口为 `0x13866fac0`。factory `0x13866ebe0` 中 source
+  type 10 分支 `0x13866ede4` 传 slot=1；type 16 分支传 slot=0。不能因为
+  “slot 0”这个编号就推断普通单手柄用 slot 0。
+- `CGyroSource::Update` 的 6-word 零检查还带 `slot * 0x34`，不是无条件读
+  base+0x24。普通 slot 1 收到 `0x406` 后通过该门槛。
+- `OnSensorEvent @0x1386d30e0` 还写 `state+0x34`（sensor timestamp / 100，
+  单位 100ns）；`0x1386d2a80` 写 `state+0x30`（event timestamp / 1000，
+  单位 µs），新建报告时清 `0xc00` 和两个 sensor timestamp。
+  此前 ihslib 把 `+0x30` 以后清零，漏掉时序信息；只按六轴数值比较还会
+  合并不同时间但相同量化值的样本。零时间戳会使 `0x13863bc00` 直接返回，
+  **不等于已经证明它单独导致全部 gyro 输出失效**。
+- `build/switch-gyro400/CMakeCache.txt` 的 `NSL_SWITCH_HOST_CAPS=OFF`；当前
+  `InfoFromHID` 基线不含 motion capability `0x800`。历史 Gyro UI 消失不能
+  当作只改变 wire flag 的独立实验。
+
+**Conclusion：** Generic 路径存在正常 gyro 输入通路。RAW V3 的数值、presence、
+每报告 freshness、时间戳、设备 motion capability 是不同契约，必须一起处理。
+无需从上述证据引入 Switch/DS4 身份伪装或额外 sensor 握手。
+
+**Boundary：** 离线执行使用合成对象及显式容器/引用计数/时钟桩；网络解密、真实
+线程调度、Steam Input action 配置、最终指针/游戏输出和 Switch 生命周期不在
+此证明内。旧输入失效原因仍待验证；§20 中的 state-change 比较未证明是 gyro
+更新门禁，不能因未比较 IMU 就宣称它阻止 gyro。
+
+### 21.1 姿态处理与 source 的第二道门槛
+
+**Evidence：** Generic vtable slot 14 的 `0x13867d830` 检查对象 `+0xb8`、
+capability `+0x80` 的 `0x800`、sensor enabled `+0x1f4`。随后循环两个 slot：
+每个 slot 先积累 15 次 warmup，再检查新 packet index、fresh mask、非零 IMU。
+左 slot 另需 capability bit 39；普通 slot 1 不需要该位。
+实际 C 报告在合成启用对象上第 31 次进入 `0x13863d430` 校准；缺 `0x800`、
+sensor disabled、清 fresh mask 的负例均不进入。capability 不是“仅控制 UI”。
+
+`0x13867c110` 对 Generic 的 setting `57 00 aa` 写 `+0x1f4=1`，
+`0x13867c1d0` 将其转成设备 Write `08 01`（21 字节，余字节为零）；
+`57 00 bb` 写 `+0x1f4=0` 并转成 `08 00`。这是既有 SetSensorEnabled 流，
+不是从远端输入报告中自动推导该状态。离线审计执行了两条原始设置分支。
+
+校准之后调用 filter `0x13863c5d0`、integrator `0x13863d990`、filter
+`0x13863d750`。单独运行 integrator，使用已初始化单位姿态、Generic type=30、
+无校准偏移的合成 context，保留原始三角函数/四元数运算：
+生产 C packer 的 `(1,-2,3) rad/s` 在 dt=4ms 下得到 wxyz 约
+`(0.9999720, 0.00197446, -0.00600552, -0.00398705)`；零角速度或 dt=0
+的对照保留 `(1,0,0,0)`。不是用 Python 重写积分器来证明自己的实现。
+
+`CGyroSource::Update` 通过六轴非零检查之后，还要求 enable/fresh 和非零
+四元数；四元数全零时在 `0x138670780` 返回。将上述原始积分结果送入原始
+source Update，可通过该门槛，并在 `0x138670570..0x138670582` 把普通 slot
+角速度复制到 source `+8/+0xa/+0xc`。此处测试停在 `0x13867058c`，没有
+把 source 更新后的 action dispatch 当成已验证。
+
+**Boundary：** 校准门控和积分/source 是分段试验，不是完整 postprocessor
+连续执行。未运行校准收敛、姿态初始定向、实际 Steam Input 配置及最终动作。
+复现命令、精确 SHA、桩边界见 [SWITCH_GYRO_HOST_HANDOFF.md](SWITCH_GYRO_HOST_HANDOFF.md)。
+
+### 21.2 实机桌面鼠标输出证据（2026-10-23）
+
+**Evidence：** 用户明确指定 `10.10.10.66` 后，通过 nxlink 部署修复构建。
+测试 NRO SHA-256 为 `db3234bafeac32344e951eea2f910d5c502d94ce2029bedff9afc34a2ebe78f4`，
+源码为 `8668163` 加本节对应的 RAW V3 工作区修复。运行日志包含
+`StartInputReports(id=1, length=73)` 和
+`sensor inject motion=0.148 flags=0x406 wire_gyro=0,138,0`。
+随后用户反馈：“游戏不清楚是不是实际能用，但是通过修改手柄桌面布局测试是有效的。
+可以用来操控鼠标。”
+
+**Conclusion：** 此次真实 Switch→Steam Host→桌面布局链路已产生可观察的鼠标
+输出，证据强于离线解析和 source 字段检查。撤回把“最终桌面鼠标输出未验证”
+用于描述这个修复构建的说法；§21.1 的离线工具边界仍然有效。
+
+**Boundary：** 游戏内映射、不同游戏兼容性、各手柄形态和校准精度没有由此次
+反馈得到验证；也未据此认定旧实验按键失效的根因或 hbmenu 返回状态。
