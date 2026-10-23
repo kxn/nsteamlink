@@ -3,9 +3,9 @@
 
 Original recomputation, loss/overflow and ping-window handlers, callback gates/latch, actual RTTI
 bitrate getter and encoding-stage min/store execute original instructions. Time
-and logging are providers. Loss/overflow fixtures omit sample/history buffers; ping-window fixtures provide
-an explicit 500-sample input and critical-section terminals.
-original absent-buffer branches skip them, not mocked return values. The optional independent
+and logging are providers. Fixtures distinguish absent buffers from explicit
+30-slot rate, 190-bin event and 500-slot ping storage. Original lookup, update
+and pooling branches execute, with declared critical-section/memset terminals. The optional independent
 rate callback and downstream frame delivery are explicit endpoints. No Steam
 process, packets, decoder/encoder hardware or real thread scheduling is touched.
 Negative controls intentionally change decoder margin or encoder-state store
@@ -19,6 +19,8 @@ from unicorn.x86_const import (
     UC_X86_REG_RSP,
     UC_X86_REG_RCX,
     UC_X86_REG_XMM0,
+    UC_X86_REG_XMM2,
+    UC_X86_REG_RAX,
     UC_X86_REG_EAX,
     UC_X86_REG_RDX,
     UC_X86_REG_R8,
@@ -28,7 +30,13 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--binary", type=Path, required=True)
 parser.add_argument(
     "--mutation",
-    choices=["none", "decoder-margin", "encoder-store", "ping-recovery"],
+    choices=[
+        "none",
+        "decoder-margin",
+        "encoder-store",
+        "ping-recovery",
+        "history-pool",
+    ],
     default="none",
     help="Negative controls: each mutation must fail the original-output oracle",
 )
@@ -59,6 +67,9 @@ class M:
             u.mem_write(0x13AC8B6C0, struct.pack("<f", 1.0))
         if args.mutation == "ping-recovery":
             u.mem_write(0x13AC8B6A4, struct.pack("<f", 0.0))
+        if args.mutation == "history-pool":
+            assert bytes(u.mem_read(0x13A171096, 5)) == bytes.fromhex("e8350f0000")
+            u.mem_write(0x13A171096, b"\x90" * 5)
         if args.mutation == "encoder-store":
             assert bytes(u.mem_read(0x13A1A3038, 6)) == bytes.fromhex("87be68010000")
             u.mem_write(0x13A1A3038, b"\x90" * 6)
@@ -92,10 +103,31 @@ class M:
     def readd(self, off):
         return struct.unpack("<d", self.u.mem_read(self.obj + off, 8))[0]
 
+    def critical_sections(self):
+        for iat, provider in [(0x13AC4A818, 0x110300), (0x13AC4A810, 0x110310)]:
+            self.q(iat, provider)
+            self.u.mem_write(provider, b"\xc3")
+
+    def histogram_storage(self):
+        self.critical_sections()
+        self.q(self.obj + 0xF8, 0x3A0000)
+        self.u.mem_write(0x3A0000, struct.pack("<190f", *([1] * 190)))
+        # Original pooling calls this memset primitive; no pooling replacement.
+        self.u.mem_write(0x13AC31740, b"\xc3")
+        self.provide_memset = True
+
     def hook(self, u, pc, size, data):
+        if pc == 0x13AC31740 and getattr(self, "provide_memset", False):
+            address = u.reg_read(UC_X86_REG_RCX)
+            value = u.reg_read(UC_X86_REG_RDX) & 255
+            count = u.reg_read(UC_X86_REG_R8)
+            assert count <= 100000
+            u.mem_write(address, bytes([value]) * count)
+            u.reg_write(UC_X86_REG_RAX, address)
         if pc == 0x110000:
             u.reg_write(
-                UC_X86_REG_XMM0, int.from_bytes(struct.pack("<d", self.now), "little")
+                UC_X86_REG_XMM0,
+                int.from_bytes(struct.pack("<d", self.now), "little"),
             )
         if pc in [0x13A170E80, 0x13A172500, 0x13A1A0560]:
             self.calls.append(hex(pc))
@@ -276,6 +308,87 @@ for (
         )
     )
 
+# Nonempty event histograms: the original event handler updates a raw bin and
+# original monotone pooling runs over all 190 bins. Initial exposure=1/event=0
+# for every bin is explicit input, not a real network history or fitted model.
+for entry in [0x13A170FC0, 0x13A171A10]:
+    for initial_target, expected_bin in [(10, 0), (100, 10), (2000, 189)]:
+        m = M(6)
+        m.histogram_storage()
+        m.f(m.obj + 0xA8, initial_target)
+        m.call(entry)
+        event_counts = struct.unpack("<190f", m.u.mem_read(0x3A02F8, 190 * 4))
+        exposure = struct.unpack("<190f", m.u.mem_read(0x3A05F0, 190 * 4))
+        pooled = struct.unpack("<190f", m.u.mem_read(0x3A08E8, 190 * 4))
+        assert event_counts == tuple(
+            1.0 if i == expected_bin else 0.0 for i in range(190)
+        )
+        assert exposure == tuple(
+            1.0 if i < expected_bin else float(190 - expected_bin) for i in range(190)
+        ), ("history pooling", entry, initial_target, exposure)
+        assert pooled == tuple(0.0 if i < expected_bin else 1.0 for i in range(190))
+        cases.append(
+            dict(
+                name="original-event-histogram",
+                entry=hex(entry),
+                initial_target=initial_target,
+                raw_event_bin=expected_bin,
+                pooled_exposure=list(exposure),
+                pooled_events=list(pooled),
+                target=m.readf(0xA8),
+            )
+        )
+
+# Complete original rate-sample update (including real nonempty rate lookup).
+# The 30-slot ring, its cursor/times, link estimate and pressure state are inputs.
+for name, last_event, pressure, coefficient, hint, expected_link, expected_target in [
+    ("stable-rate-growth", 0, 0, 1, 0, 10.012001037597656, 10.012001037597656),
+    ("recent-loss-recompute", 9.99, 0, 1, 0, 10, 1),
+    ("pressure-rate-reduction", 0, 1, 0.5, 0, 9.925, 4.9625),
+    ("rate-hint-path", 0, 0, 1, 5000, 10.01200008392334, 10.01200008392334),
+]:
+    m = M(10)
+    m.critical_sections()
+    m.q(m.obj + 0x18, 0x380000)
+    m.q(m.obj + 0x20, 0x390000)
+    m.u.mem_write(0x380000, struct.pack("<30f", *([1.0] * 30)))
+    m.u.mem_write(
+        0x390000, struct.pack("<30d", *[10 - (29 - i) * 0.1 for i in range(30)])
+    )
+    m.u.mem_write(m.obj + 0x28, struct.pack("<I", 29))
+    m.f(m.obj + 0x54, 1000 / 60)
+    m.f(m.obj + 0x9C, 10)
+    m.f(m.obj + 0xA0, coefficient)
+    m.f(m.obj + 0xA4, 1)
+    m.u.mem_write(m.obj + 0x8C, bytes([pressure]))
+    m.d(m.obj + 0x90, last_event)
+    m.u.reg_write(UC_X86_REG_XMM2, int.from_bytes(struct.pack("<f", hint), "little"))
+    m.call(0x13A1710F0, frame=125000)
+    assert math.isclose(m.readf(0x98), expected_link, rel_tol=1e-6), (
+        name,
+        m.readf(0x98),
+    )
+    assert math.isclose(m.readf(0xA8), expected_target, rel_tol=1e-6), (
+        name,
+        m.readf(0xA8),
+    )
+    assert struct.unpack("<I", m.u.mem_read(m.obj + 0x28, 4))[0] == 0
+    assert struct.unpack("<f", m.u.mem_read(0x380000 + 29 * 4, 4))[0] == 1.0
+    assert struct.unpack("<d", m.u.mem_read(0x390000 + 29 * 8, 8))[0] == 10.0
+    cases.append(
+        dict(
+            name=name,
+            last_event=last_event,
+            pressure=bool(pressure),
+            coefficient=coefficient,
+            hint=hint,
+            ring_cursor=0,
+            inserted_sample_mbits=1.0,
+            link=m.readf(0x98),
+            target=m.readf(0xA8),
+        )
+    )
+
 print(
     json.dumps(
         {
@@ -285,14 +398,18 @@ print(
                 "logging",
                 "optional second bitrate callback",
                 "downstream frame delivery",
-                "Enter/LeaveCriticalSection for explicit single-thread ping-window cases",
+                "Enter/LeaveCriticalSection for explicit single-thread fixtures",
+                "memset for event-histogram storage",
             ],
-            "input_boundary": "Loss/overflow estimators with absent sample buffers/histogram; ping-response cases have an explicit 500-slot sample window and active-thread word. Source gate/latch, ping conversion/window/coefficient, recomputation, actual session RTTI bitrate getter and real stage min/store execute original instructions. No actual host packets/encoder device/runtime evidence.",
+            "input_boundary": "Fixtures separately cover empty buffers, nonempty 190-bin event histograms, an explicit 30-slot rate ring and 500-slot ping windows. Storage, clocks, pressure/enable/thread fields are explicit inputs; no full constructor/worker/history lifecycle is claimed. Source gate/latch, ping conversion/window/coefficient, recomputation, actual session RTTI bitrate getter and real stage min/store execute original instructions. No actual host packets/encoder device/runtime evidence.",
             "cases": cases,
             "source_ranges": {
                 hex(a): hashlib.sha256(image[a - base : z - base]).hexdigest()
                 for a, z in [
                     (0x13A172500, 0x13A1725B9),
+                    (0x13A1710F0, 0x13A171811),
+                    (0x13A170E80, 0x13A170FA2),
+                    (0x13A171FD0, 0x13A172500),
                     (0x13A18E8F0, 0x13A18E93A),
                     (0x13A171820, 0x13A171A04),
                     (0x13A1907F0, 0x13A190806),

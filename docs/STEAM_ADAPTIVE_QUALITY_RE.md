@@ -164,9 +164,9 @@ x86 `CGameStreamSession` RTTI vtable `0x3aa19f14` 的 +0x24 指向
 
 ### 时间与限额必须按版本核对
 
-独立执行 `tools/steam-adaptive-host64-audit.py` 的30个受控输入（其中8个为下述Ping窗口）：
+独立执行 `tools/steam-adaptive-host64-audit.py` 的40个受控输入（其中8个为Ping窗口、10个为非空统计缓冲）：
 原重算、两类反馈处理、source callback门控、重复loss的latch、真实session虚表getter，
-以及编码stage的回调循环和写入均执行原指令。仅提供时钟、日志、可选第二码率回调、Ping单线程临界区与
+以及编码stage的回调循环和写入均执行原指令。仅提供时钟、日志、可选第二码率回调、单线程临界区、直方图清零原语与
 下游帧交付终点；没有改写这些算法入口。输入对象不含速率采样/历史缓冲时，原函数
 自行走空缓冲分支。这不覆盖有历史缓冲的估计更新，也不是真实Steam进程执行。
 
@@ -261,6 +261,37 @@ host `CGameStreamSession` offset=0x4528 的RTTI虚表为 `0x13ac8f8b0`：
 IHS当前已有会话Ping应答，见 `ch_discovery.c::OnPingRequest` 与协议§43；它按官方
 观察复制request正文并按请求尺寸填充，不因response字段标签而擅改应答内容。
 
+### 非空速率环与事件历史：区分立即反馈和后续更新
+
+另10个用例不再仅依赖缺省空缓冲分支：
+
+- 6个loss/overflow输入给原对象提供190个分箱的显式历史。原事件入口按
+  `max(采样值,当前目标)` 计算分箱，基准50、步长5，向零转换后限制到0..189，
+  给raw event计数加1，再执行 `0x13a171fd0` 的完整相邻分箱合并。
+  目标10、100分别进入bin0、bin10；合成高值2000只检验上界钳制到189，
+  不作为当前主机允许该目标值的证据。
+- 每箱初始weight=1、event=0时，bin0增加一个事件后，原合并把190箱的
+  pooled weight/event均写成190/1；bin10的后180箱为180/1，前10箱保持1/0。
+  bin189只影响末箱。这是对原指令写入的逐箱核验，非将本地拟合器当期望结果。
+  原始weight/event、pooled结果分别读取，不能把它们混为同一概率数组。
+- 4个输入执行完整速率更新 `0x13a1710f0` 及真实 `0x13a170e80` 查询：
+  显式30槽、cursor29、相邻时间0.1秒，入口数量125000按原计算写成1，时间写为10，
+  cursor回到0。数量转换为×8/1000000；上游实际会话的采样来源/节奏仍需另证，
+  不把此环当真实捕获的帧流或公网吞吐。
+- 该受控环中，无recent-event/pressure时link约10→10.012001；recent-event时
+  重算受事件后ramp限制；pressure=1、coefficient=0.5时link约10→9.925，
+  目标约4.9625。另执行非零hint分支。数值依赖这份显式历史和状态，不能变成
+  产品自创的固定降幅、固定恢复周期或网络阈值。
+
+原history pooling、采样查询和rate update均执行；仅临界区与memset等平台/存储
+原语为终点。删除loss入口的原pool调用后，raw event仍更新，但pooled结果不匹配，
+反例在正常返回后被拒绝。这与只看最后target是否变化的检查不同。
+
+上述事件发生后并未直接对link一律乘某个固定百分比：即时路径写last-event及历史，
+随后recompute；非空速率更新与pressure状态再参与后续link选择。因此旧x86的乘0.9
+不能代替新样本的整条策略。这里仍未执行历史的时间衰减/置信估计全部条件、真实工作线程
+周期及物理编码输出，不能把10个合成输入扩展为整套稳态/恢复已对齐。
+
 ### Switch接线比较需要保留平台边界
 
 IHS `ch_data_video.c::CheckPartialOverflow` 已发送message148，是压缩帧pending
@@ -316,6 +347,7 @@ python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/Stea
 python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation decoder-margin
 python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation encoder-store
 python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation ping-recovery
+python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation history-pool
 python3 tools/steam-adaptive-client-feedback-audit.py \
   --binary /path/to/pinned/linux/package/bin/steamlink --output /tmp/linux-feedback.json
 # 此反例同样应因反馈缺失而非零退出：
