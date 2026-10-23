@@ -21,6 +21,9 @@ void sl_system_log(const char *message);
 /* Obtain on the resolving worker; cancellation may be requested by its owner. */
 uint32_t sl_system_dns_begin(void);
 void sl_system_dns_cancel(uint32_t handle);
+void sl_system_dns_end(uint32_t handle);
+void sl_system_dns_cancel_all(void);
+bool sl_system_dns_finish(void); /* After resolving workers joined, before logs close. */
 
 const char *sl_system_locale(void);
 /* CPU input for the official AVCodec thread-selection gates. Linux preserves

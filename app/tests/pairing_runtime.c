@@ -1,3 +1,4 @@
+#include "fixture_cleanup.h"
 /* Product pairing actor, actual RX/timer UDP, real profile writes/readback.
  * Peer/entropy and a storage failure are controlled inputs, not Steam/SDL pixels. */
 #include "crypto.h"
@@ -9,6 +10,7 @@
 #include "network_test_discovery_peer.h"
 #include "platform/runtime.h"
 #include "platform/system.h"
+#include "remote_connection.h"
 #include "services/host_key_store.h"
 #include "ui/ui_events.h"
 #include <arpa/inet.h>
@@ -23,6 +25,8 @@
 #include <unistd.h>
 static uint16_t peer_port;
 static atomic_uint random_calls, save_calls, confirmations;
+static atomic_uint save_completed;
+static atomic_bool allow_queued_save;
 static atomic_bool peer_secret_ready;
 static bool fail_save, stale_snapshot, proof_mode, proof_file_fail;
 static atomic_bool proof_stage;
@@ -35,6 +39,22 @@ static sl_runtime *runtime;
 static sl_auth_store initial;
 static sl_host host;
 static uint8_t peer_secret[32];
+void __real_IHS_ClientSetDiscoveryCallbacks(IHS_Client *, const IHS_ClientDiscoveryCallbacks *, void *);
+void __wrap_IHS_ClientSetDiscoveryCallbacks(IHS_Client *c,
+    const IHS_ClientDiscoveryCallbacks *callbacks, void *context) {
+    __real_IHS_ClientSetDiscoveryCallbacks(c, callbacks, context);
+    /* LAN authorization fixtures supply prior discovery explicitly.
+     * The Beta-universe case still waits for its actual UDP status below. */
+    if (!discover_universe)
+        test_discovery_observed(c, callbacks, context, peer_port);
+}
+/* This fixture verifies LAN authorization entropy and actual UDP ownership.
+ * Keep the real cloud object/cleanup, but do not contact production directory
+ * services: a background WebSocket mask must not consume scripted PIN entropy. */
+void __wrap_sl_remote_connection_update(sl_remote_connection *connection, uint64_t now) {
+    (void)connection;
+    (void)now;
+}
 bool __wrap_sl_system_random(void *data, size_t size) {
     assert(size == 4);
     unsigned n = atomic_fetch_add(&random_calls, 1);
@@ -82,6 +102,15 @@ bool __wrap_IHS_ClientAuthorizationRequest(IHS_Client *c, const IHS_HostInfo *h,
 }
 bool __real_sl_auth_save(const sl_auth_store *, const char *);
 bool __wrap_sl_auth_save(const sl_auth_store *s, const char *dir) {
+    if (automatic && stale_snapshot && atomic_load(&save_calls) == 1) {
+        /* A queued UI snapshot can be saved after Resume. Hold this second
+         * actor operation until the peer/UI observes resumption, then wait for
+         * the completed real write instead of treating the event as its ACK. */
+        unsigned n;
+        for (n = 0; n < 5000 && !atomic_load(&allow_queued_save); ++n)
+            poll(NULL, 0, 1);
+        assert(n < 5000);
+    }
     unsigned n = atomic_fetch_add(&save_calls, 1) + 1;
     save_thread = pthread_self();
     bool ok = !fail_save && !(atomic_load(&proof_stage) && proof_file_fail) &&
@@ -90,6 +119,7 @@ bool __wrap_sl_auth_save(const sl_auth_store *s, const char *dir) {
         sl_command cmd = {.type = SL_CMD_SAVE, .generation = 1};
         assert(sl_runtime_submit(runtime, &cmd, &initial));
     }
+    atomic_store_explicit(&save_completed, n, memory_order_release);
     return ok;
 }
 bool __real_sl_host_key_save(const char *, uint64_t, uint64_t, const uint8_t[32]);
@@ -115,12 +145,8 @@ bool __wrap_IHS_ClientBroadcast(IHS_Client *c, ERemoteClientBroadcastMsg type,
     }
     return __real_IHS_ClientBroadcast(c, type, m);
 }
-bool __wrap_IHS_ClientSend(IHS_Client *c, IHS_SocketAddress a, ERemoteClientBroadcastMsg type,
-                           ProtobufCMessage *m) {
-    if (discover_universe && type == k_ERemoteClientBroadcastMsgDiscovery) {
-        a.port = peer_port;
-        assert(IHS_IPAddressFromString(&a.ip, "127.0.0.1"));
-    }
+static void observe_control_send(IHS_Client *c, ERemoteClientBroadcastMsg type,
+                                 ProtobufCMessage *m) {
     if (type == k_ERemoteDeviceAuthorizationConfirmed &&
         ((CMsgRemoteDeviceAuthorizationConfirmed *)m)->result == 0) {
         assert(atomic_load_explicit(&peer_secret_ready, memory_order_acquire));
@@ -158,7 +184,23 @@ bool __wrap_IHS_ClientSend(IHS_Client *c, IHS_SocketAddress a, ERemoteClientBroa
         assert(!memcmp(saved->secret, mirror && !proof_file_fail ? rotated : peer_secret, 32));
         atomic_fetch_add(&proof_sent, 1);
     }
+}
+bool __wrap_IHS_ClientSend(IHS_Client *c, IHS_SocketAddress a, ERemoteClientBroadcastMsg type,
+                           ProtobufCMessage *m) {
+    if (discover_universe && type == k_ERemoteClientBroadcastMsgDiscovery) {
+        a.port = peer_port;
+        assert(IHS_IPAddressFromString(&a.ip, "127.0.0.1"));
+    }
+    observe_control_send(c, type, m);
     return __real_IHS_ClientSend(c, a, type, m);
+}
+bool __real_IHS_ClientSendControl(IHS_Client *, const IHS_HostInfo *, const IHS_SocketAddress *,
+                                  ERemoteClientBroadcastMsg, ProtobufCMessage *);
+bool __wrap_IHS_ClientSendControl(IHS_Client *c, const IHS_HostInfo *host,
+                                  const IHS_SocketAddress *source, ERemoteClientBroadcastMsg type,
+                                  ProtobufCMessage *m) {
+    observe_control_send(c, type, m);
+    return __real_IHS_ClientSendControl(c, host, source, type, m);
 }
 static void response(int fd, const struct sockaddr_in *to, const uint8_t *masked, const char *pin) {
     uint8_t hash[32], public[32], private[32], ours[32], auth[32], id[8], token[64];
@@ -258,6 +300,8 @@ static void one(unsigned mode) {
     atomic_store(&proof_sent, 0);
     stream_calls = 0;
     atomic_store(&save_calls, 0);
+    atomic_store(&save_completed, 0);
+    atomic_store(&allow_queued_save, false);
     atomic_store(&confirmations, 0);
     atomic_store(&random_calls, 0);
     atomic_store(&peer_secret_ready, false);
@@ -410,6 +454,12 @@ static void one(unsigned mode) {
             replied = true;
         }
     }
+    atomic_store(&allow_queued_save, true);
+    unsigned expected_saves = compatibility ? 0u : stale_snapshot ? 2u : 1u;
+    while (atomic_load_explicit(&save_completed, memory_order_acquire) < expected_saves) {
+        assert(sl_system_now() < deadline);
+        poll(NULL, 0, 1);
+    }
     assert(atomic_load(&random_calls) == 3 && atomic_load(&save_calls) == (compatibility    ? 0u
                                                                            : stale_snapshot ? 2u
                                                                                             : 1u));
@@ -505,18 +555,7 @@ static void one(unsigned mode) {
     sl_runtime_destroy(runtime);
     runtime = NULL;
     close(fd);
-    DIR *dir = opendir(directory);
-    assert(dir);
-    struct dirent *entry;
-    while ((entry = readdir(dir))) {
-        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
-            continue;
-        char path[512];
-        snprintf(path, sizeof(path), "%s/%s", directory, entry->d_name);
-        assert(!unlink(path));
-    }
-    closedir(dir);
-    assert(!rmdir(directory));
+    sl_fixture_remove_tree(directory);
     printf("Pair runtime mode=%u: nonzero PIN, actor persistence before ACK, file "
            "readback/failure, stale-snapshot handling and joined teardown passed\n",
            mode);

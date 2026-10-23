@@ -1,5 +1,7 @@
 #include "platform/system.h"
 #include "build_identity.h"
+#include "diagnostic_log.h"
+#include "dns_policy.h"
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <libavutil/cpu.h>
@@ -32,6 +34,12 @@ bool sl_system_init(void) {
         sockets = false;
         return false;
     }
+    if (!sl_dns_policy_init(sl_log)) {
+        plExit();
+        socketExit();
+        fonts = sockets = false;
+        return false;
+    }
     mkdir("sdmc:/switch/nsteamlink", 0777);
 #if NSL_DIAGNOSTICS
     if (__nxlink_host.s_addr) {
@@ -51,6 +59,8 @@ bool sl_system_docked(void) {
     return atomic_load(&docked);
 }
 void sl_system_shutdown(void) {
+    bool dns_clean = sl_system_dns_finish();
+    sl_system_log(dns_clean ? "dns cleanup: scopes=0 sockets=0" : "dns cleanup: scopes remain");
     if (log_fd >= 0) {
         close(log_fd);
         log_fd = -1;
@@ -106,11 +116,24 @@ void sl_system_log(const char *message) {
 }
 
 uint32_t sl_system_dns_begin(void) {
-    return resolverGetCancelHandle();
+    uint32_t handle = resolverGetCancelHandle();
+    sl_dns_policy_begin(handle);
+    return handle;
 }
 void sl_system_dns_cancel(uint32_t handle) {
-    if (handle)
+    if (handle) {
+        sl_dns_policy_cancel(handle);
         resolverCancel(handle);
+    }
+}
+void sl_system_dns_end(uint32_t handle) {
+    sl_dns_policy_end(handle);
+}
+void sl_system_dns_cancel_all(void) {
+    sl_dns_policy_stop_all();
+}
+bool sl_system_dns_finish(void) {
+    return sl_dns_policy_shutdown();
 }
 
 const char *sl_system_locale(void) {

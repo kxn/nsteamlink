@@ -1423,6 +1423,11 @@ Evidence：§22.2 的 `menu_stop_game` 调用控制 129，且发送函数具有 
 该等待期间不触发普通画面超时。没有强杀进程，也不复用启动取消或 QuitRequest。
 
 
+2026-10-23 接线修订（D-A100）：上述IP限制仅适用于UDP回包。已准入的云端同一
+status protobuf以client/instance识别当前主机，进入相同timestamp/两次无游戏判断；
+此前cloud callback只更新presence，不能作为已完成该接线的证据。未增加新的报文或
+把ACK当作游戏退出证明。云端状态周期会影响确认延迟，仍不能保证即时确认。
+
 ### 22.7 结束确认延迟与错误页隔离（2026-09-10，#27）
 
 Evidence：用户在 #27 新评论观察到游戏先退出，Steam 大屏模式稍后关闭，客户端确认接近后者；
@@ -10713,6 +10718,9 @@ attempts及field8继续存活。Success新key、无key兼容success、最近key�
 
 `IHS_ClientStreamingEstablished`不再销毁握手owner：成功凭据只停止重发，保留
 显式取消和迟到授权/普通Proof的归属，新Start或Cancel/Destroy才释放private。
+这里描述选机manager的局部state6；普通launcher随后经Shell Quit销毁该manager，
+所以不能外推为媒体期间仍保留握手。普通交接与NetworkTest的完整外层差异、
+最近key/result缓存的销毁及端口映射见STEAM_REMOTE_PLAY_NETWORKING §11.3。
 返回main前仍由既有stop/join RX→销毁owned消息/定时器路径清理，没有新后台线程
 或detach。此改动没有完成Proof update_secret轮换：其false回显、来源过滤顺序及
 保存接线仍是与§133不同的独立契约，不能据owner存活就认定轮换已对齐。
@@ -13167,7 +13175,7 @@ Hypothesis／待验证：Switch真实网络变化是否会产生这些错误，�
 不可见/停顿。该发现worker不同于已有receiveCycle的媒体session owner，不能把
 差异直接当作串流中断根因。完整修正还需要有证据的调度、连续失败时的CPU边界、
 初始socket失败的owner反馈与退出顺序；不从此证据直接实现无限重试、定时重新
-配对、DNS刷新或全会话重建。Switch当前DNS适配另见PR54分支D-075，不是本节
+配对、DNS刷新或全会话重建。Switch当前DNS适配另见PR54分支D-A075，不是本节
 所还原的Valve策略。
 
 ```sh

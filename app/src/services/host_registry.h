@@ -31,6 +31,6 @@ sl_host *sl_host_observe(sl_host_registry *r, const sl_host *observation, uint64
 bool sl_host_online(const sl_host *h, uint64_t now);
 void sl_host_forget(sl_host_registry *r, uint64_t id);
 void sl_host_activity(sl_host *h, uint64_t account, const sl_game *game);
-/* Keeps negotiated keys that a newer copy of the registry lacks, so a UI
- * snapshot taken before a pairing finished cannot drop them. */
+/* Retains the runtime's authoritative negotiated/rotated keys. A UI snapshot
+ * taken before the key event must not restore an older, already-present key. */
 void sl_host_registry_keep_secrets(sl_host_registry *dst, const sl_host_registry *src);

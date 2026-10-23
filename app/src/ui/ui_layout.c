@@ -24,6 +24,8 @@ static sl_control_kind control_kind(sl_action action) {
     case SL_OPEN_NETWORK_SETTINGS:
     case SL_OPEN_HOST_SETTINGS:
     case SL_OPEN_APP_SETTINGS:
+    case SL_OPEN_ADD:
+    case SL_OPEN_REMOTE_PAIR:
     case SL_OPEN_MANUAL:
     case SL_OPEN_QUALITY:
     case SL_OPEN_RESOLUTION:
@@ -74,7 +76,9 @@ void sl_ui_layout(sl_ui_model *m) {
     sl_layout *l = &m->layout;
     memset(l, 0, sizeof(*l));
     sl_host_registry *r = &m->store.registry;
-    sl_host *h = r->selected >= 0 && r->selected < r->count ? &r->hosts[r->selected] : NULL;
+    bool adding = sl_ui_adding_host(m);
+    sl_host *h =
+        !adding && r->selected >= 0 && r->selected < r->count ? &r->hosts[r->selected] : NULL;
     l->fullscreen = m->streaming;
     bool connecting = m->page == SL_CONNECTING || m->page == SL_NETWORK_TEST ||
                       m->page == SL_SAVING ||
@@ -82,55 +86,96 @@ void sl_ui_layout(sl_ui_model *m) {
     l->dialog = m->page != SL_HOME && m->page != SL_STREAM && !connecting;
     if (m->page == SL_HOME) {
         snprintf(l->title, sizeof(l->title), sl_tr(SL_T_APP_TITLE), UI_APP_VERSION);
-        if (h) {
-            int begin = r->selected / 3 * 3, end = begin + 3;
-            if (end > r->count)
-                end = r->count;
-            if (r->count > 1)
+        {
+            int selected = adding ? r->count : r->selected;
+            int total = r->count + 1;
+            int begin = selected / 3 * 3, end = begin + 3;
+            if (end > total)
+                end = total;
+            if (total > 1)
                 button(l, 1, 40, 86, 64, 72, "LB", SL_PREV_HOST, 0, false);
-            int origin = (1280 - (end - begin) * 342 + 16) / 2;
+            int width = 326;
+            int step = width + 16;
+            int origin = (1280 - (end - begin) * step + 16) / 2;
             for (int i = begin; i < end; ++i)
-                button(l, 10 + i, origin + (i - begin) * 342, 86, 326, 72,
-                       r->hosts[i].name[0] ? r->hosts[i].name : r->hosts[i].address, SL_SELECT_HOST,
-                       i, i == r->selected);
-            if (r->count > 1)
+                button(l, 10 + i, origin + (i - begin) * step, 86, width, 72,
+                       i == r->count         ? sl_tr(SL_T_ADD_PC)
+                       : r->hosts[i].name[0] ? r->hosts[i].name
+                                             : r->hosts[i].address,
+                       SL_SELECT_HOST, i, i == selected);
+            if (total > 1)
                 button(l, 2, 1176, 86, 64, 72, "RB", SL_NEXT_HOST, 0, false);
-            char address[160];
-            snprintf(address, sizeof(address), "%s%s · %s",
-                     sl_host_online(h, m->now) ? "" : sl_tr(SL_T_LAST_ADDRESS), h->address,
-                     h->paired ? sl_tr(SL_T_PAIRED) : sl_tr(SL_T_UNPAIRED));
-            center(l, 170, 26, address);
-            if (!sl_host_online(h, m->now)) {
-                center(l, 300, 44, sl_tr(SL_T_HOST_OFFLINE));
-                center(l, 372, 30, sl_tr(SL_T_SEARCHING_AUTO));
-            } else if (h->paired && h->games[0].id) {
+            if (h) {
+                char status[192];
+                bool online = sl_host_online(h, m->now);
+                if (online && h->paired && sl_ui_host_source(m, h) == SL_DISCOVERY_INTERNET)
+                    snprintf(status, sizeof(status), "%s · %s", sl_tr(SL_T_INTERNET_CONNECTION),
+                             sl_tr(SL_T_PAIRED));
+                else
+                    snprintf(status, sizeof(status), "%s%s · %s",
+                             online ? "" : sl_tr(SL_T_LAST_ADDRESS), h->address,
+                             sl_tr(h->paired ? SL_T_PAIRED : SL_T_UNPAIRED));
+                center(l, 170, 24, status);
+                sl_label *label = &l->labels[l->label_count - 1];
+                label->center_x = origin + (selected - begin) * step + width / 2;
+                label->muted = !online;
+                label->pairing = online && !h->paired;
+            }
+        }
+        bool online = sl_host_online(h, m->now);
+        bool ready = h && h->paired && online;
+        int games = sl_ui_game_count(m);
+        if (adding) {
+            if (!r->count)
+                center(l, 248, 30, sl_tr(SL_T_SEARCHING));
+            button(l, 31, 320, 320, 640, 72, sl_tr(SL_T_ENTER_IP), SL_OPEN_MANUAL, 0, false);
+            button(l, 30, 320, 408, 640, 72, sl_tr(SL_T_SHOW_PAIR_CODE), SL_OPEN_REMOTE_PAIR, 0,
+                   false);
+        } else if (h) {
+            if (games) {
                 text(l, 52, 236, 36, sl_tr(SL_T_RECENT));
-                button(l, 30, 956, 220, 272, 72, sl_tr(SL_T_OPEN_STEAM), SL_START, 0, false);
-                for (int i = 0; i < sl_ui_game_count(m); ++i)
+                if (!ready) {
+                    text(l, 52, 248, 24,
+                         sl_tr(!m->network_ok ? SL_T_NO_NETWORK : SL_T_HOST_UNAVAILABLE_SEARCHING));
+                    l->labels[l->label_count - 1].after_previous = true;
+                    l->labels[l->label_count - 1].muted = true;
+                }
+                if (online)
+                    button(l, 30, 956, 220, 272, 72,
+                           h->paired ? sl_tr(SL_T_OPEN_STEAM) : sl_tr(SL_T_PAIR_CONNECT), SL_START,
+                           0, !h->paired);
+                for (int i = 0; i < sl_ui_game_count(m); ++i) {
                     button(l, 40 + i, SL_GAMES_LEFT + i * SL_CARD_STEP - (int)m->games_scroll,
                            SL_CARD_Y, SL_CARD_WIDTH, SL_CARD_HEIGHT, h->games[i].name, SL_RECENT, i,
                            false);
+                    l->controls[l->count - 1].disabled = !ready;
+                }
             } else {
-                center(l, 284, 44, h->paired ? sl_tr(SL_T_READY) : sl_tr(SL_T_CONNECT_PC));
-                if (h->games_running)
-                    center(l, 404, 28, sl_tr(SL_T_GAME_RUNNING));
-                button(l, 30, 448, 472, 384, 80,
-                       h->paired ? sl_tr(SL_T_OPEN_STEAM) : sl_tr(SL_T_PAIR_CONNECT), SL_START, 0,
-                       true);
+                center(l, 360, 44,
+                       sl_tr(!m->network_ok ? SL_T_NO_NETWORK
+                             : !online      ? SL_T_HOST_OFFLINE
+                             : h->paired    ? SL_T_READY
+                                            : SL_T_CONNECT_PC));
+                l->labels[l->label_count - 1].pairing = online && !h->paired;
+                l->labels[l->label_count - 1].muted = !online;
+                if (!online && m->network_ok)
+                    center(l, 432, 24, sl_tr(SL_T_SEARCHING_AUTO));
+                if (online)
+                    button(l, 30, 448, 472, 384, 80,
+                           h->paired ? sl_tr(SL_T_OPEN_STEAM) : sl_tr(SL_T_PAIR_CONNECT), SL_START,
+                           0, true);
             }
-        } else {
-            center(l, 292, 44,
-                   !m->network_ok                  ? sl_tr(SL_T_NO_NETWORK)
-                   : m->now - m->entered_at < 8000 ? sl_tr(SL_T_SEARCHING)
-                                                   : sl_tr(SL_T_NO_HOSTS));
-            center(l, 368, 30,
-                   m->network_ok ? sl_tr(SL_T_OPEN_SAME_NETWORK) : sl_tr(SL_T_SEARCH_WHEN_ONLINE));
         }
         button(l, 3, 1060, 632, 180, 64, sl_tr(SL_T_SETTINGS_KEY), SL_OPEN_SETTINGS, 0, false);
-        button(l, 5, 40, 632, 180, 64, sl_tr(SL_T_EXIT_KEY), SL_BACK, 0, false);
-        if (h && sl_host_online(h, m->now))
+        button(l, 5, 40, 632, 180, 64, sl_tr(adding && r->count ? SL_T_BACK_KEY : SL_T_EXIT_KEY),
+               SL_BACK, 0, false);
+        if (adding)
+            text(l, 260, 648, 24, sl_tr(SL_T_CONFIRM_KEY));
+        else if (online)
             text(l, 260, 648, 24,
-                 sl_ui_game_count(m) ? sl_tr(SL_T_PLAY_KEY) : sl_tr(SL_T_CONNECT_KEY));
+                 !h->paired ? sl_tr(SL_T_PAIR_CONNECT_KEY)
+                 : games    ? sl_tr(SL_T_PLAY_KEY)
+                            : sl_tr(SL_T_OPEN_STEAM_KEY));
     } else if (m->page == SL_STREAM) {
         /* Full video, no persistent local touch target. */
     } else if (connecting) {
@@ -249,7 +294,7 @@ void sl_ui_layout(sl_ui_model *m) {
         }
         case SL_HOST_SETTINGS:
             strcpy(l->title, sl_tr(SL_T_HOST_SETTINGS));
-            row(l, 0, sl_tr(SL_T_MANUAL), SL_OPEN_MANUAL, 0);
+            row(l, 0, sl_tr(SL_T_MANUAL), SL_OPEN_ADD, 0);
             row(l, 1, sl_tr(SL_T_REMOVE_PC), SL_OPEN_FORGET, 0);
             l->controls[l->count - 1].disabled = !h;
             if (h)
@@ -363,14 +408,15 @@ void sl_ui_layout(sl_ui_model *m) {
             row(l, 1, sl_tr(SL_T_EXIT), SL_CONFIRM_EXIT, 0);
             break;
         case SL_ERROR:
-            strcpy(l->title, m->cancel_only_error ? sl_tr(SL_T_TEST_FAILED)
-                             : m->ending_game     ? sl_tr(SL_T_END_GAME_CONFIRM)
-                             : m->had_stream      ? sl_tr(SL_T_STREAM_INTERRUPTED)
-                                                  : sl_tr(SL_T_CONNECT_FAILED));
+            strcpy(l->title, m->cancel_only_error && !m->network_test.control_error
+                                 ? sl_tr(SL_T_TEST_FAILED)
+                             : m->ending_game ? sl_tr(SL_T_END_GAME_CONFIRM)
+                             : m->had_stream  ? sl_tr(SL_T_STREAM_INTERRUPTED)
+                                              : sl_tr(SL_T_CONNECT_FAILED));
             text(l, 320, 232, 30, m->error);
             if (m->cancel_only_error)
                 row(l, 1, sl_tr(SL_T_TEST_CLOSE), SL_BACK, 0);
-            else if (m->intent.host.id && !m->ending_game)
+            else if ((m->intent.host.id || m->intent.type == SL_CMD_REMOTE_PAIR) && !m->ending_game)
                 row(l, 2, sl_tr(SL_T_RETRY), SL_RETRY, 0);
             break;
         default:
@@ -522,7 +568,11 @@ void sl_ui_layout(sl_ui_model *m) {
         l->opacity = 1.f;
     if (m->page == SL_HOME) {
         int count = sl_ui_game_count(m);
-        if (m->focus < 40 || m->focus >= 40 + count)
+        if (adding) {
+            if (m->focus != 30 && m->focus != 31)
+                m->focus = m->add_focus == 30 ? 30 : 31;
+            m->add_focus = m->focus;
+        } else if (m->focus < 40 || m->focus >= 40 + count)
             m->focus = count ? (h->focus >= 40 && h->focus < 40 + count ? h->focus : 40) : 0;
         if (h)
             h->focus = m->focus;

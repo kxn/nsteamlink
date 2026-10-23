@@ -1,6 +1,7 @@
 #include "platform/application.h"
 #include "app_lifecycle.h"
 #include "artwork.h"
+#include "http_route.h"
 #include "media.h"
 #include "platform/events.h"
 #include "platform/runtime.h"
@@ -36,6 +37,7 @@ typedef struct application {
     sl_runtime *runtime;
     sl_artwork *artwork;
     sl_updater *updater;
+    bool http_global;
     sl_debug_snapshot debug;
     sl_app_lifecycle lifecycle;
     sl_command replacement;
@@ -135,6 +137,11 @@ static void update_events(application *a) {
     if (!sl_updater_poll(a->updater, &s))
         return;
     if (s.state == SL_UPDATE_AVAILABLE) {
+#if NSL_DIAGNOSTICS
+        char line[96];
+        snprintf(line, sizeof(line), "update_notice available=%s page=%d", s.version, a->ui.page);
+        sl_log(line);
+#endif
         sl_runtime_event e = {.type = SL_EVENT_UPDATE, .generation = a->ui.generation};
         snprintf(e.text, sizeof(e.text), "%s", s.version);
         sl_ui_runtime_event(&a->ui, &e);
@@ -246,6 +253,12 @@ int sl_application_run(int argc, char **argv) {
         sl_system_shutdown();
         return 1;
     }
+    /* curl 7.69/libnx TLS global setup runs on main before any app worker.
+     * Per-owner references also support standalone probes and unit fixtures. */
+    if (!offline)
+        a->http_global = sl_http_global_acquire();
+    /* HTTPS is optional for the local client. A root-init failure must not
+     * prevent UI/IHS startup; each HTTP owner reports its own acquisition error. */
     sl_app_lifecycle_init(&a->lifecycle);
     sl_i18n_load(sl_system_data_dir(), sl_system_locale());
     sl_auth_store store;
@@ -267,6 +280,8 @@ int sl_application_run(int argc, char **argv) {
 #endif
         sl_updater_destroy(a->updater);
         sl_artwork_destroy(a->artwork);
+        if (a->http_global)
+            sl_http_global_release();
         free(a);
         sl_log_finish();
         sl_system_shutdown();
@@ -280,6 +295,8 @@ int sl_application_run(int argc, char **argv) {
         sl_updater_destroy(a->updater);
         sl_artwork_destroy(a->artwork);
         stream_media_shutdown();
+        if (a->http_global)
+            sl_http_global_release();
         free(a);
         sl_log_finish();
         sl_system_shutdown();
@@ -312,7 +329,14 @@ int sl_application_run(int argc, char **argv) {
 #if NSL_DIAGNOSTICS
         uint64_t loop_start = loop_us();
 #endif
+#if NSL_DIAGNOSTICS
+        int previous_page = a->ui.page;
+#endif
         sl_ui_tick(&a->ui, sl_system_now());
+#if NSL_DIAGNOSTICS
+        if (previous_page != a->ui.page && a->ui.page == SL_UPDATE)
+            sl_log("update_notice modal_open");
+#endif
         update_events(a);
         if (a->runtime) {
             runtime_events(a);
@@ -356,6 +380,13 @@ int sl_application_run(int argc, char **argv) {
         sl_audio_feedback(a->ui.cue_serial != last_cue ? a->ui.cue : SL_CUE_NONE,
                           a->ui.store.sound);
         last_cue = a->ui.cue_serial;
+#if NSL_DIAGNOSTICS
+        if (previous_page == SL_UPDATE && a->ui.page != SL_UPDATE) {
+            char line[80];
+            snprintf(line, sizeof(line), "update_notice modal_closed page=%d", a->ui.page);
+            sl_log(line);
+        }
+#endif
         if (stream_media_exit_requested() || sl_events_exit_requested() ||
             !sl_gfx_healthy(sl_media_gfx()))
             done = true;
@@ -416,9 +447,13 @@ int sl_application_run(int argc, char **argv) {
     sl_artwork_destroy(a->artwork);
     sl_updater_destroy(a->updater);
     sl_runtime_destroy(a->runtime);
+    sl_log(sl_system_dns_finish() ? "cleanup: DNS scopes=0 sockets=0"
+                                 : "cleanup: DNS unmatched scopes released");
     sl_media_hooks(NULL, NULL, NULL);
     sl_ui_renderer_destroy(a->renderer);
     stream_media_shutdown();
+    if (a->http_global)
+        sl_http_global_release();
     free(a);
     sl_log_finish();
     sl_system_shutdown();

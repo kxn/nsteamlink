@@ -1,1 +1,1 @@
-third_party/patches/ihslib/*.patch -whitespace
+third_party/patches/*/*.patch -whitespace

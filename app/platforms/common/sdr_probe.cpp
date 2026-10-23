@@ -1,0 +1,2099 @@
+#include "steamnetworkingsockets/clientlib/csteamnetworkingsockets.h"
+#include "steamdatagram_messages_sdr.pb.h"
+#include "crypto.h"
+#ifdef NSL_GNS_SDR
+#include "steamnetworkingsockets/clientlib/steamnetworkingsockets_p2p.h"
+#include "sdr_client.h"
+#endif
+extern "C" {
+#include "sdr_probe.h"
+#include "sdr_wire.h"
+#include "sdr_config.h"
+#include "sdr_policy.h"
+}
+#include <memory>
+#include <cstdio>
+#include <string>
+#include <vector>
+#include <algorithm>
+#include <deque>
+#include <unordered_map>
+#include <list>
+#include <map>
+
+using namespace SteamNetworkingSocketsLib;
+struct ProbeRelay;
+struct ProbeAlternate {
+    netadr_t address;
+    std::string id;
+    int protocol = 0, penalty = 8191, measured_ping = -1;
+    SteamNetworkingMicroseconds last_failure = 0;
+    ProbeRelay *child = nullptr;
+};
+struct ProbeCluster {
+    uint32_t pop_id;
+    PingTrackerForRouteSelection front;
+    sl_sdr_failure_cache failures{};
+    sl_sdr_latencies interior{};
+    int ping_ms = -1, penalty = 0;
+    unsigned requests_sent = 0;
+    netadr_t last_good;
+    explicit ProbeCluster(uint32_t id) : pop_id(id) { front.Reset(); }
+};
+struct ProbeRelay {
+    ProbeCluster &cluster;
+    ProbeRelay *root = this;
+    ProbeAlternate *alternate = nullptr;
+    std::list<ProbeAlternate> alternates;
+    bool removed = false;
+    netadr_t migration_address;
+    PingTrackerForRouteSelection own_ping;
+    netadr_t address;
+    uint32_t cookie = 0, server_time = 0;
+    uint64_t challenge = 0;
+    SteamNetworkingMicroseconds challenge_at = 0, ping_sent = 0, request_until = 0, ping_deadline = 0;
+    unsigned ping_failures = 0, request_failures = 0, probes_sent = 0;
+    bool force_ping = false;
+    PingTrackerForRouteSelection &front;
+    sl_sdr_failure_cache &failures;
+    sl_sdr_downtime downtime{};
+    int &ping_ms;
+    bool established = false, closed_by_relay = false;
+    uint32_t pop_id = 0;
+    std::string routing_token;
+    sl_sdr_target forward{};
+    sl_sdr_acks acks{};
+    LinkStatsTracker<LinkStatsTrackerEndToEnd> stats;
+    std::deque<std::pair<uint16_t, SteamNetworkingMicroseconds>> sent_acks;
+    SteamNetworkingMicroseconds last_received = 0;
+    sl_sdr_latencies &interior;
+    int &penalty;
+#if NSL_SNS_PROBES
+    SteamNetworkingMicroseconds last_valid_e2e = 0;
+    unsigned post_fault_e2e_count = 0;
+#endif
+    explicit ProbeRelay(ProbeCluster &c) : cluster(c), front(c.front), failures(c.failures),
+        ping_ms(c.ping_ms), pop_id(c.pop_id), interior(c.interior), penalty(c.penalty) {
+        own_ping.Reset();
+        stats.Init(SteamNetworkingSockets_GetLocalTimestamp(), ELinkActivityLevel::Idle);
+    }
+    uint64_t address_key() const { return uint64_t(address.GetIPv4()) << 16 | address.GetPort(); }
+    // Fixed ELF 817304/84f98c: a session ACK request also probes its
+    // RelayServer. Keep this deadline independent of the session's LinkStats.
+    void track_ping_request(SteamNetworkingMicroseconds now, SteamNetworkingMicroseconds timeout) {
+        ping_sent = failures.last_probe = front.m_usecTimeLastSentPingRequest = now;
+        if (!ping_deadline) ping_deadline = now + timeout;
+        ++probes_sent;
+        ++cluster.requests_sent;
+    }
+    void received(SteamNetworkingMicroseconds now) {
+        last_received = now;
+        ping_failures = 0;
+        sl_sdr_address_received(&failures, address_key());
+        cluster.last_good = root->address;
+    }
+    void receive_ping(int ping, SteamNetworkingMicroseconds now) {
+        // 812a28-812c90: every address has its own tracker; only a root
+        // contributes front measurements to the shared POP tracker.
+        own_ping.ReceivedPing(ping, now);
+        if (root == this) {
+            front.ReceivedPing(ping, now);
+            ping_ms = front.m_nSmoothedPing;
+        } else if (alternate) {
+            if (alternate->measured_ping >= 0 || own_ping.m_nTotalPingsReceived >= 8)
+                alternate->measured_ping = own_ping.m_nSmoothedPing;
+            alternate->last_failure = 0;
+        }
+        ping_deadline = 0;
+    }
+    void forget_session(SteamNetworkingMicroseconds now) {
+        // The native session object is destroyed. Root challenge/front state
+        // survives NoSession, while session sequence/ACK/stats do not.
+        established = false; routing_token.clear(); forward = {}; acks = {};
+        stats.Init(now, ELinkActivityLevel::Idle); sent_acks.clear();
+#if NSL_SNS_PROBES
+        last_valid_e2e = 0; post_fault_e2e_count = 0;
+#endif
+    }
+};
+struct sl_sdr_probe {
+    HSteamNetConnection connection;
+    sl_sdr_config config;
+    IRawUDPSocket *socket = nullptr;
+    std::list<ProbeCluster> clusters;
+    std::list<ProbeRelay> relays;
+    std::map<uint64_t, sl_sdr_downtime> downtimes;
+    sl_sdr_probe_stats counters{};
+    SteamNetworkingMicroseconds last_round = 0, initialized_at = 0;
+    bool good_enough = false, have_primary = false, have_backup = false;
+    ProbeRelay *active_primary = nullptr, *active_backup = nullptr, *migration_target = nullptr;
+    int migration_state = 0;
+    int32_t nearest[SL_SDR_POP_MAX*3];
+    void *owner = nullptr;
+    void (*owner_receive)(const RecvPktInfo_t &, ProbeRelay &, void *) = nullptr;
+    void (*owner_session_removed)(ProbeRelay &, const char *, SteamNetworkingMicroseconds, void *) = nullptr;
+    std::vector<ProbeRelay *> pursue, pursue_token;
+#if NSL_SNS_PROBES
+    bool drop_enabled = false;
+    netadr_t drop_address;
+    uint32_t drop_pop = 0;
+    SteamNetworkingMicroseconds drop_started = 0;
+    unsigned dropped_tx = 0, dropped_rx = 0;
+    netadr_t migration_origin, migration_destination;
+    uint32_t migration_pop = 0;
+    SteamNetworkingMicroseconds migration_started = 0;
+#endif
+};
+static bool send_packet(sl_sdr_probe *p, const void *data, int size, const netadr_t &address) {
+#if NSL_SNS_PROBES
+    if (p->drop_enabled && address == p->drop_address) { ++p->dropped_tx; return true; }
+#endif
+    return p->socket->BSendRawPacket(data, size, address);
+}
+static uint32_t random_below(uint32_t bound) {
+    uint32_t n, threshold = uint32_t(-bound) % bound;
+    do { CCrypto::GenerateRandomBlock(&n, sizeof(n)); } while (n < threshold);
+    return n % bound;
+}
+static ProbeRelay *create_relay(sl_sdr_probe *p, ProbeCluster &cluster, const netadr_t &address,
+    ProbeRelay *root = nullptr, ProbeAlternate *alternate = nullptr) {
+    if (!address.GetIPv4() || !address.GetPort()) return nullptr;
+    for (auto &r : p->relays)
+        if (!r.removed && r.address == address) return &r.cluster == &cluster ? &r : nullptr;
+    // Local memory policy, not a Valve topology constant. Never evict a live
+    // address or overwrite another session when this bound is reached.
+    if (p->relays.size() >= SL_SDR_RELAY_MAX) return nullptr;
+    p->relays.emplace_back(cluster);
+    auto &r = p->relays.back();
+    r.address = address;
+    if (root) { r.root = root; r.alternate = alternate; }
+    auto down = p->downtimes.find(r.root->address_key());
+    if (down != p->downtimes.end()) r.downtime = down->second;
+    CCrypto::GenerateRandomBlock(&r.cookie, sizeof(r.cookie));
+    if (alternate) alternate->child = &r;
+    return &r;
+}
+static void remove_relay(sl_sdr_probe *p, ProbeRelay &r, const char *reason, SteamNetworkingMicroseconds now,
+    bool failed = false) {
+    if (r.removed) return;
+    if (p->owner_session_removed) p->owner_session_removed(r, reason, now, p->owner);
+    r.forget_session(now);
+    r.removed = true;
+    if (p->active_primary==&r) { p->active_primary=p->active_backup=nullptr; p->have_primary=p->have_backup=false; }
+    else if (p->active_backup==&r) { p->active_backup=nullptr; p->have_backup=false; }
+    if (r.alternate) {
+        r.alternate->child = nullptr;
+        if (failed) { r.alternate->measured_ping = -1; r.alternate->last_failure = now; }
+    }
+    if (p->migration_target == &r) { p->migration_target = nullptr; p->migration_state=0; }
+    for (auto &a : r.alternates) if (a.child) remove_relay(p,*a.child,reason,now);
+}
+static void collect_relays(sl_sdr_probe *p) {
+    auto dead=[](ProbeRelay *r) { return r->removed; };
+    p->pursue.erase(std::remove_if(p->pursue.begin(),p->pursue.end(),dead),p->pursue.end());
+    p->pursue_token.erase(std::remove_if(p->pursue_token.begin(),p->pursue_token.end(),dead),p->pursue_token.end());
+    p->relays.remove_if([](const ProbeRelay &r) { return r.removed; });
+}
+/* Fixed APK 81b554/81b6a4 and 83e9a4: a terminal reply to a late
+ * session establishment is ConnectionClosed (20), not NoConnection (21). */
+static void send_closed(sl_sdr_probe *p, CSteamNetworkConnectionBase &connection,
+    ProbeRelay &r, bool end_to_end, bool primary_session, bool primary_transport, bool session) {
+    CMsgSteamDatagramConnectionClosed m;
+    m.set_from_connection_id(connection.m_unConnectionIDLocal);
+    if (connection.m_unConnectionIDRemote) m.set_to_connection_id(connection.m_unConnectionIDRemote);
+    m.set_reason_code(connection.GetConnectionEndReason());
+    m.set_debug(connection.GetConnectionEndDebugString());
+    if (connection.GetWireState() == k_ESteamNetworkingConnectionState_ClosedByPeer)
+        m.set_relay_mode(CMsgSteamDatagramConnectionClosed::ClosedByPeer);
+    else if (end_to_end) m.set_relay_mode(CMsgSteamDatagramConnectionClosed::EndToEnd);
+    m.set_not_primary_session(!primary_session);
+    m.set_not_primary_transport(!primary_transport);
+    m.set_relay_override_active(false);
+    if (session) {
+        if (sl_sdr_target_populate(&r.forward)) {
+            m.set_forward_target_relay_routing_token(r.forward.sent, r.forward.sent_size);
+            m.set_forward_target_revision(r.forward.revision);
+        }
+        r.stats.PopulateLifetimeMessage(*m.mutable_quality_relay()->mutable_lifetime());
+    }
+    if (end_to_end)
+        connection.m_statsEndToEnd.PopulateLifetimeMessage(*m.mutable_quality_e2e()->mutable_lifetime());
+    uint8_t packet[1300];
+    size_t size = m.ByteSizeLong();
+    if (size >= sizeof(packet)) return;
+    packet[0] = 20;
+    m.SerializeToArray(packet+1, int(size));
+    send_packet(p, packet, int(size+1), r.address);
+}
+static void warn_downtime(sl_sdr_probe *p, ProbeRelay &r, uint32_t wire_seconds, SteamNetworkingMicroseconds now) {
+    ProbeRelay &root = *r.root;
+    int32_t seconds = int32_t(wire_seconds);
+    if (root.downtime.known && now + int64(seconds) * 1000000 >= root.downtime.shutdown - 3000000) return;
+    uint32_t random;
+    CCrypto::GenerateRandomBlock(&random, sizeof(random));
+    float seconds_before = 45.0f + float(double(random) / 4294967296.0 * 15.0);
+    sl_sdr_warn_downtime(&root.downtime, seconds, seconds_before, now);
+    p->downtimes[root.address_key()] = root.downtime;
+    for (auto &child : p->relays) if (child.root == &root) child.downtime = root.downtime;
+}
+static bool build_request(CSteamNetworkConnectionBase &connection, const ProbeRelay &r,
+    const sl_sdr_config &config, CMsgSteamDatagramP2PSessionRequest &message) {
+    if (!connection.m_unConnectionIDRemote || !r.challenge)
+        return false;
+    auto &interface = *connection.m_pSteamNetworkingSocketsInterface;
+    CMsgSteamDatagramP2PSessionRequestBody body;
+    body.set_challenge_time(r.server_time);
+    body.set_challenge(r.challenge);
+    body.set_client_connection_id(connection.m_unConnectionIDLocal);
+    body.set_peer_connection_id(connection.m_unConnectionIDRemote);
+    body.set_protocol_version(13);
+    body.set_network_config_version(config.revision);
+    body.set_platform(interface.m_pSteamNetworkingUtils->GetPlatformString());
+    body.set_build("nsteamlink");
+    SteamNetworkingIdentityRender peer(connection.m_identityRemote);
+    body.set_peer_identity_string(peer.c_str());
+    const uint8_t *request_key=sl_sdr_config_relay_key(&config,r.pop_id);
+    if (request_key) {
+        CECKeyExchangePrivateKey private_key;
+        CECKeyExchangePublicKey public_key, relay_key;
+        CCrypto::GenerateKeyExchangeKeyPair(&public_key, &private_key);
+        if (!relay_key.SetRawDataWithoutWipingInput(request_key, 32))
+            return false;
+        SHA256Digest_t shared, aes_key;
+        if (!CCrypto::PerformKeyExchange(private_key, relay_key, &shared))
+            return false;
+        std::string hash_input(reinterpret_cast<const char *>(shared), 32);
+        hash_input += interface.m_msgCert.identity_string();
+        CCrypto::GenerateSHA256Digest(hash_input.data(), hash_input.size(), &aes_key);
+        SecureZeroMemory(&hash_input[0], hash_input.size());
+        SecureZeroMemory(shared, sizeof(shared));
+        AES_GCM_EncryptContext cipher;
+        bool initialized = cipher.Init(aes_key, sizeof(aes_key), 12, 16);
+        SecureZeroMemory(aes_key, sizeof(aes_key));
+        if (!initialized)
+            return false;
+        uint8_t nonce[12] = {};
+        for (unsigned i = 0; i < 8; ++i)
+            nonce[i] = uint8_t(r.challenge >> (i * 8));
+        CMsgSteamDatagramP2PSessionRequestBody_EncryptedData encrypted;
+        encrypted.set_peer_identity_string(peer.c_str());
+        std::string plaintext = encrypted.SerializeAsString();
+        uint8_t ciphertext[512];
+        uint32_t size = sizeof(ciphertext);
+        bool ok = cipher.Encrypt(plaintext.data(), plaintext.size(), nonce, ciphertext, &size, nullptr, 0);
+        SecureZeroMemory(&plaintext[0], plaintext.size());
+        if (!ok)
+            return false;
+        body.set_encrypted_data(ciphertext, size);
+        body.set_encryption_your_public_key_lead_byte(request_key[0]);
+        uint8_t raw_public[32];
+        if (public_key.GetRawData(raw_public) != 32)
+            return false;
+        body.set_encryption_my_ephemeral_public_key(raw_public, sizeof(raw_public));
+        body.clear_peer_identity_string();
+    }
+    *message.mutable_cert() = interface.m_msgSignedCert;
+    message.set_body(body.SerializeAsString());
+    CryptoSignature_t signature;
+    interface.m_keyPrivateKey.GenerateSignature(message.body().data(), message.body().size(), &signature);
+    message.set_signature(signature, sizeof(signature));
+    return true;
+}
+static void receive_alternates(sl_sdr_probe *p, ProbeRelay &root,
+    const CMsgSteamDatagramRouterPingReply &reply, SteamNetworkingMicroseconds now) {
+    if (root.root!=&root) return;
+    std::vector<ProbeAlternate *> retained;
+    if (reply.flags() & 2) for (auto &a:root.alternates) retained.push_back(&a);
+    for (const auto &item:reply.alt_addresses()) {
+        netadr_t address;
+        address.SetIPAndPort(item.has_ipv4() ? item.ipv4() : root.address.GetIPv4(),uint16_t(item.port()));
+        auto it=std::find_if(root.alternates.begin(),root.alternates.end(),[&](const ProbeAlternate &a) {
+            return a.address==address;
+        });
+        if (it==root.alternates.end()) {
+            if (root.alternates.size()>=128) continue; // local memory bound
+            root.alternates.emplace_back(); it=std::prev(root.alternates.end()); it->address=address;
+        }
+        if (it->protocol!=int(item.protocol()) && it->child)
+            remove_relay(p,*it->child,"alternate_protocol_changed",now);
+        it->protocol=int(item.protocol()); it->penalty=8191; it->id=item.id();
+        retained.push_back(&*it);
+    }
+    for (auto it=root.alternates.begin();it!=root.alternates.end();) {
+        if (it->protocol!=0 || std::find(retained.begin(),retained.end(),&*it)==retained.end()) {
+            if (it->child) remove_relay(p,*it->child,"alternate_address_removed",now);
+            it=root.alternates.erase(it);
+        } else ++it;
+    }
+}
+static void receive_packet(const RecvPktInfo_t &packet, sl_sdr_probe *probe) {
+    if (packet.m_cbPkt < 5 || packet.m_cbPkt > 1300)
+        return;
+#if NSL_SNS_PROBES
+    if (probe->drop_enabled && packet.m_adrFrom == probe->drop_address) { ++probe->dropped_rx; return; }
+#endif
+    ProbeRelay *r = nullptr;
+    for (auto &candidate : probe->relays)
+        if (!candidate.removed && candidate.address == packet.m_adrFrom) {
+            r = &candidate;
+            break;
+        }
+    if (!r)
+        return;
+    const uint8_t *data = static_cast<const uint8_t *>(packet.m_pPkt);
+    if (data[0] == 2) {
+        CMsgSteamDatagramRouterPingReply reply;
+        if (!reply.ParseFromArray(data + 1, packet.m_cbPkt - 1) ||
+            reply.latency_datacenter_ids_size() != reply.latency_ping_ms_size() ||
+            reply.latency_datacenter_ids_p2p_size() != reply.latency_ping_ms_p2p_size())
+            return;
+        uint32_t session_id=0;
+        bool have_session=false;
+        if (reply.client_cookie() != r->cookie && r->established) {
+            ConnectionScopeLock connection_lock;
+            auto *connection=GetConnectionByHandle(probe->connection,connection_lock);
+            if (connection) { session_id=connection->m_unConnectionIDLocal; have_session=true; }
+        }
+        if (!sl_sdr_router_cookie(reply.client_cookie(),r->cookie,session_id,have_session)) return;
+        int32_t ping;
+        if (!sl_sdr_router_ping_ms(reply.client_timestamp(),packet.m_usecNow,&ping)) return;
+        /* No pending/latest-timestamp gate: one request can receive multiple
+         * valid latency fragments. NETWORKING 18.2 / 21.26. */
+        if (reply.has_seconds_until_shutdown()) warn_downtime(probe, *r, reply.seconds_until_shutdown(), packet.m_usecNow);
+        r->receive_ping(ping, packet.m_usecNow);
+        r->received(packet.m_usecNow);
+        r->penalty = sl_sdr_cluster_penalty(int32_t(reply.scoring_penalty_relay_cluster()));
+        sl_sdr_latencies_begin(&r->interior, reply.flags(), packet.m_usecNow);
+        for (int i = 0; i < reply.latency_datacenter_ids_size(); ++i)
+            sl_sdr_latency_measure(&r->interior, sl_sdr_config_canonical(&probe->config, reply.latency_datacenter_ids(i)),
+                int32_t(reply.latency_ping_ms(i)), false, packet.m_usecNow);
+        for (int i = 0; i < reply.latency_datacenter_ids_p2p_size(); ++i)
+            sl_sdr_latency_measure(&r->interior, sl_sdr_config_canonical(&probe->config, reply.latency_datacenter_ids_p2p(i)),
+                int32_t(reply.latency_ping_ms_p2p(i)), true, packet.m_usecNow);
+        if (reply.latency_datacenter_ids_size() || reply.latency_datacenter_ids_p2p_size()) {
+            /* The original propagates all cached edges, before exceptions,
+             * without replacing a reverse edge measured directly. */
+            for (size_t i=0; i<r->interior.count; ++i)
+                for (auto &other : probe->relays)
+                    if (other.pop_id == r->interior.entries[i].pop)
+                        sl_sdr_latency_estimate(&other.interior, r->pop_id, r->interior.entries[i].ping);
+            for (const auto &exception : reply.route_exceptions())
+                sl_sdr_latency_exception(&r->interior, sl_sdr_config_canonical(&probe->config, exception.data_center_id()), exception.flags(),
+                    int32_t(exception.penalty()));
+        }
+        if (reply.has_challenge()) {
+            r->challenge = reply.challenge();
+            r->server_time = reply.server_time();
+            r->challenge_at = packet.m_usecNow;
+        }
+        receive_alternates(probe,*r,reply,packet.m_usecNow);
+        ++probe->counters.valid_ping_replies;
+    } else if (data[0] == 25) {
+        CMsgSteamDatagramP2PSessionEstablished reply;
+        ConnectionScopeLock connection_lock;
+        CSteamNetworkConnectionBase *connection = GetConnectionByHandle(probe->connection, connection_lock);
+        if (!connection || !reply.ParseFromArray(data + 1, packet.m_cbPkt - 1) ||
+            reply.connection_id() != connection->m_unConnectionIDLocal || reply.relay_routing_token().empty())
+            return;
+        r->request_until = 0;
+        if (reply.has_seconds_until_shutdown()) warn_downtime(probe, *r, reply.seconds_until_shutdown(), packet.m_usecNow);
+        r->received(packet.m_usecNow);
+        int action = sl_sdr_established_action(int(connection->GetState()));
+        if (action != SL_SDR_STATE_THINK) {
+            if (action == SL_SDR_STATE_CLOSE)
+                send_closed(probe, *connection, *r, false, r->stats.IsActive(),
+                    static_cast<void *>(connection->m_pTransport) == probe->owner, false);
+            return;
+        }
+        r->closed_by_relay = false;
+        if (!r->established)
+            ++probe->counters.established;
+        r->established = true;
+        r->routing_token = reply.relay_routing_token();
+        // 83dc14-83dc44 updates the session LinkStats receive clock/counters,
+        // independently of RelayServer::ReceivedPacket and sequence tracking.
+        r->stats.TrackRecvPacket(packet.m_cbPkt, packet.m_usecNow);
+        if (reply.seq_num_r2c()) {
+            r->stats.InitMaxRecvPktNum(reply.seq_num_r2c() - 1);
+            int64 sequence = r->stats.ExpandWirePacketNumberAndCheck(uint16_t(reply.seq_num_r2c()), 0);
+            if (sequence > 0)
+                r->stats.TrackProcessSequencedPacket(sequence, packet.m_usecNow, 0, 0);
+        }
+        r->received(packet.m_usecNow);
+        r->request_until = 0;
+        r->request_failures = 0;
+        /* The token is deliberately not exposed or logged by this driver. */
+    } else if (data[0] == 7) {
+        CMsgSteamDatagramNoSessionRelayToClient reply;
+        ConnectionScopeLock connection_lock;
+        CSteamNetworkConnectionBase *connection = GetConnectionByHandle(probe->connection, connection_lock);
+        if (!connection || !reply.ParseFromArray(data + 1, packet.m_cbPkt - 1) ||
+            reply.connection_id() != connection->m_unConnectionIDLocal)
+            return;
+        if (reply.has_challenge()) {
+            r->challenge = reply.challenge();
+            r->server_time = reply.server_time();
+            r->challenge_at = packet.m_usecNow;
+        }
+        if (reply.has_seconds_until_shutdown()) warn_downtime(probe, *r, reply.seconds_until_shutdown(), packet.m_usecNow);
+        ++probe->counters.rejected;
+        r->received(packet.m_usecNow);
+        r->request_until = 0;
+        if (probe->owner_session_removed)
+            probe->owner_session_removed(*r, "received_nosession", packet.m_usecNow, probe->owner);
+        r->forget_session(packet.m_usecNow);
+    }
+    if (probe->owner_receive)
+        probe->owner_receive(packet, *r, probe->owner);
+}
+static sl_sdr_probe *make_network(uint32_t handle, const sl_sdr_config &config, char *socket_error = nullptr) {
+    std::unique_ptr<sl_sdr_probe> p(new sl_sdr_probe);
+    p->connection = handle;
+    p->config = config;
+    p->initialized_at = SteamNetworkingSockets_GetLocalTimestamp();
+    std::fill_n(p->nearest,SL_SDR_POP_MAX*3,-1);
+    for (size_t i = 0; i < p->config.pop_count; ++i) {
+        const sl_sdr_pop &pop = p->config.pops[i];
+        p->clusters.emplace_back(pop.id);
+        uint32_t slots = 0;
+        for (size_t k = 0; k < pop.endpoint_count; ++k) {
+            const sl_sdr_endpoint &ep = p->config.endpoints[pop.first_endpoint + k];
+            slots += uint32_t(ep.port_max) - ep.port_min + 1;
+        }
+        if (!slots)
+            continue;
+        uint32_t slot = random_below(slots);
+        for (size_t k = 0; k < pop.endpoint_count; ++k) {
+            const sl_sdr_endpoint &ep = p->config.endpoints[pop.first_endpoint + k];
+            uint32_t count = uint32_t(ep.port_max) - ep.port_min + 1;
+            if (slot >= count) {
+                slot -= count;
+                continue;
+            }
+            netadr_t address;
+            address.SetIPAndPort(ep.ipv4, uint16_t(ep.port_min + slot));
+            create_relay(p.get(),p->clusters.back(),address);
+            break;
+        }
+    }
+    SteamNetworkingIPAddr local;
+    local.Clear();
+    int family = k_nAddressFamily_IPv4;
+    SteamNetworkingErrMsg error;
+    p->socket = OpenRawUDPSocket(CRecvPacketCallback(receive_packet, p.get()), error, &local, &family);
+    if (!p->socket && socket_error)
+        snprintf(socket_error, sizeof(SteamNetworkingErrMsg), "SDR socket: %.990s", error);
+    if (!p->socket)
+        return nullptr;
+    return p.release();
+}
+static const sl_sdr_pop *find_pop(const sl_sdr_config &config, uint32_t id) {
+    return sl_sdr_config_pop(&config,id);
+}
+static bool front_eligible(const sl_sdr_probe *p, const ProbeRelay &r) {
+    const auto *pop=find_pop(p->config,r.pop_id);
+    return !r.removed && pop && sl_sdr_front_eligible(pop->type,r.ping_ms,r.failures.reachability,0);
+}
+static unsigned address_count(const sl_sdr_probe *p, const ProbeRelay &r) {
+    const auto *pop = find_pop(p->config, r.pop_id);
+    unsigned count = 0;
+    if (pop)
+        for (size_t k = 0; k < pop->endpoint_count; ++k) {
+            const auto &ep = p->config.endpoints[pop->first_endpoint + k];
+            count += unsigned(ep.port_max) - ep.port_min + 1;
+        }
+    return count;
+}
+static int shutdown_seconds(const ProbeRelay &r, SteamNetworkingMicroseconds now) {
+    if (!r.root->downtime.known) return INT_MAX;
+    int64_t remaining=r.root->downtime.shutdown-now;
+    return int(remaining>=0 ? remaining/1000000 : -((-remaining+999999)/1000000));
+}
+static bool address_in_pop(const sl_sdr_probe *p, const ProbeCluster &c, const netadr_t &address) {
+    const auto *pop=find_pop(p->config,c.pop_id);
+    if (!pop || !address.GetIPv4() || !address.GetPort()) return false;
+    for (size_t k=0; k<pop->endpoint_count; ++k) {
+        const auto &e=p->config.endpoints[pop->first_endpoint+k];
+        if (e.ipv4==address.GetIPv4() && address.GetPort()>=e.port_min && address.GetPort()<=e.port_max) return true;
+    }
+    return false;
+}
+static bool address_allowed(const sl_sdr_probe *p, const ProbeCluster &c,
+    const netadr_t &address, SteamNetworkingMicroseconds now) {
+    if (!address_in_pop(p,c,address) || sl_sdr_address_failed(&c.failures,
+        uint64_t(address.GetIPv4())<<16|address.GetPort())) return false;
+    auto down=p->downtimes.find(uint64_t(address.GetIPv4())<<16|address.GetPort());
+    return down==p->downtimes.end() || down->second.avoid>=now;
+}
+static ProbeRelay *choose_relay(sl_sdr_probe *p, ProbeCluster &cluster, SteamNetworkingMicroseconds now) {
+    std::vector<ProbeRelay *> nodes;
+    std::vector<sl_sdr_relay_choice> choices;
+    int target=-1;
+    for (auto &r:p->relays) {
+        if (r.removed || &r.cluster!=&cluster) continue;
+        if (&r==p->migration_target) target=int(nodes.size());
+        int shutdown=shutdown_seconds(r,now);
+        choices.push_back({&r==p->active_primary ? 0 : &r==p->active_backup ? 1 : INT_MAX,shutdown,
+            !(r.root->downtime.known && r.root->downtime.avoid<=now) &&
+            (!r.alternate || r.alternate->penalty<=8190)});
+        nodes.push_back(&r);
+    }
+    int picked=sl_sdr_choose_relay(choices.data(),choices.size(),target);
+    if (picked>=0) return nodes[size_t(picked)];
+    if (address_allowed(p,cluster,cluster.last_good,now)) return create_relay(p,cluster,cluster.last_good);
+    const auto *pop=find_pop(p->config,cluster.pop_id);
+    if (!pop) return nullptr;
+    unsigned total=0;
+    for (size_t k=0;k<pop->endpoint_count;++k) {
+        const auto &e=p->config.endpoints[pop->first_endpoint+k]; total+=unsigned(e.port_max)-e.port_min+1;
+    }
+    if (!total) return nullptr;
+    sl_sdr_expire_addresses(&cluster.failures,total,now);
+    for (unsigned attempt=0;attempt<99;++attempt) {
+        unsigned slot=random_below(total);
+        for (size_t k=0;k<pop->endpoint_count;++k) {
+            const auto &e=p->config.endpoints[pop->first_endpoint+k];
+            unsigned n=unsigned(e.port_max)-e.port_min+1;
+            if (slot>=n) { slot-=n; continue; }
+            netadr_t address; address.SetIPAndPort(e.ipv4,uint16_t(e.port_min+slot));
+            if (address_allowed(p,cluster,address,now)) return create_relay(p,cluster,address);
+            break;
+        }
+    }
+    return nullptr;
+}
+static bool receive_migration(sl_sdr_probe *network, ProbeRelay &r, uint32_t ip, uint32_t port) {
+    if (&r!=network->active_primary || !ip || !port) return false;
+    netadr_t requested; requested.SetIPAndPort(ip,uint16_t(port));
+    if (requested==r.migration_address) return false;
+    r.migration_address=requested;
+    network->migration_state=1; network->migration_target=nullptr;
+    return true;
+}
+static void update_migration(sl_sdr_probe *network, SteamNetworkingMicroseconds now) {
+    auto *primary=network->active_primary;
+    auto cancel=[&] { network->migration_state=0; network->migration_target=nullptr; };
+    if (!network->migration_state) { network->migration_target=nullptr; return; }
+    if (!primary || !primary->migration_address.GetIPv4() || !primary->migration_address.GetPort()) {
+        cancel(); return;
+    }
+    if (network->migration_state==1) {
+        network->migration_target=nullptr;
+        if (!address_allowed(network,primary->cluster,primary->migration_address,now)) { cancel(); return; }
+        network->migration_target=create_relay(network,primary->cluster,primary->migration_address);
+        if (!network->migration_target) { cancel(); return; }
+        network->migration_state=2;
+        return; // cancellation precedes application in the native thinker
+    }
+    auto *target=network->migration_target;
+    if (!target || target->removed || target->root->address!=primary->migration_address ||
+        (target->root->downtime.known && target->root->downtime.avoid<=now) ||
+        (target->alternate && target->alternate->penalty>=8191)) cancel();
+}
+
+static void update_nearest(sl_sdr_probe *p) {
+    int32_t front[SL_SDR_POP_MAX],penalty[SL_SDR_POP_MAX];
+    std::fill_n(front,p->config.pop_count,-1); std::fill_n(penalty,p->config.pop_count,0);
+    std::vector<sl_sdr_measured_edge> edges;
+    for (const auto &c:p->clusters) {
+        const auto *pop=find_pop(p->config,c.pop_id);
+        if (!pop) continue;
+        unsigned source=unsigned(pop-p->config.pops);
+        if (c.failures.reachability>=1) front[source]=c.ping_ms;
+        penalty[source]=c.penalty;
+        for (size_t i=0;i<c.interior.count;++i) {
+            const auto &e=c.interior.entries[i];
+            const auto *target=find_pop(p->config,e.pop);
+            if (target) edges.push_back({source,unsigned(target-p->config.pops),e.ping,e.penalty,e.measured!=0});
+        }
+    }
+    if (!sl_sdr_nearest_routes(front,penalty,p->config.pop_count,edges.data(),edges.size(),p->nearest))
+        std::fill_n(p->nearest,p->config.pop_count*3,-1);
+}
+static bool route_candidate(const sl_sdr_probe *p, uint32_t local, uint32_t remote, bool token,
+    const CMsgSteamDatagramP2PRoutes &peer) {
+    if (token) return true;
+    const auto *a=find_pop(p->config,local),*b=find_pop(p->config,remote);
+    if (!a || !b) return false;
+    unsigned index=unsigned(b-p->config.pops);
+    for (unsigned k=0;k<3;++k) if (p->nearest[index*3+k]==a-p->config.pops) return true;
+    for (const auto &r:peer.routes())
+        if (sl_sdr_config_canonical(&p->config,r.my_pop_id())==remote &&
+            sl_sdr_config_canonical(&p->config,r.your_pop_id())==local) return true;
+    return false;
+}
+static bool send_ping(sl_sdr_probe *p, ProbeRelay &r, SteamNetworkingMicroseconds now) {
+    if (r.removed || r.ping_deadline || (r.downtime.known && r.downtime.avoid < now)) return false;
+    uint8_t ping[1300];
+    size_t size=sl_sdr_ping_request_size(r.interior.last_full,now);
+    sl_sdr_ping(ping, sizeof(ping), size==100, now, r.cookie, uint32_t(p->config.revision),
+        r.address.GetIPv4(), r.address.GetPort());
+    r.track_ping_request(now, r.own_ping.CalcConservativeTimeout());
+    if (!send_packet(p, ping, size, r.address)) return false;
+    ++p->counters.sent_pings;
+    return true;
+}
+static void update_alternates(sl_sdr_probe *p, SteamNetworkingMicroseconds now) {
+    std::vector<ProbeRelay *> roots;
+    for (auto &r:p->relays)
+        if (!r.removed && r.root==&r && !r.alternates.empty() && r.ping_ms>=0 &&
+            !(r.downtime.known && r.downtime.avoid<=now)) roots.push_back(&r);
+    std::stable_sort(roots.begin(),roots.end(),[](const ProbeRelay *a,const ProbeRelay *b) { return a->ping_ms<b->ping_ms; });
+    for (size_t i=0;i<std::min<size_t>(roots.size(),5);++i) {
+        auto &r=*roots[i];
+        for (auto &a:r.alternates) {
+            if (a.protocol!=0 || !sl_sdr_alternate_can_create(a.child!=nullptr,a.last_failure,now)) continue;
+            auto *child=create_relay(p,r.cluster,a.address,&r,&a);
+            if (!child || child->root!=&r || child->alternate!=&a) a.last_failure=now;
+        }
+    }
+    std::vector<ProbeRelay *> children;
+    std::vector<sl_sdr_alternate_probe> probes;
+    for (auto &r:p->relays) if (!r.removed && r.root!=&r && r.alternate) {
+        children.push_back(&r);
+        probes.push_back({r.ping_failures,unsigned(r.own_ping.m_nTotalPingsReceived),r.alternate->measured_ping,
+            r.ping_sent,r.root->ping_sent,r.ping_deadline!=0,r.root->ping_deadline!=0,r.root->ping_failures>0});
+    }
+    sl_sdr_alternate_plan plan;
+    if (!sl_sdr_plan_alternates(probes.data(),probes.size(),now,&plan)) return;
+    for (size_t i=0;i<children.size();++i)
+        if (plan.remove[i]) remove_relay(p,*children[i],"alternate_probe_completed",now);
+    if (plan.probe>=0) {
+        auto *r=children[size_t(plan.probe)];
+        if (plan.root) r=r->root;
+        send_ping(p,*r,now);
+    }
+}
+static bool pursue_sessions(sl_sdr_probe *p, CSteamNetworkConnectionBase *connection,
+    const std::vector<ProbeRelay *> &candidates, unsigned quota, SteamNetworkingMicroseconds now) {
+    bool started = false;
+    unsigned consumed = 0;
+    std::vector<uint32_t> seen;
+    for (ProbeRelay *candidate : candidates) {
+        if (!quota) break;
+        if (candidate->removed || std::find(seen.begin(),seen.end(),candidate->pop_id)!=seen.end()) continue;
+        seen.push_back(candidate->pop_id);
+        ProbeRelay *r=nullptr;
+        if (!consumed && p->migration_target && &p->migration_target->cluster==&candidate->cluster)
+            r=p->migration_target;
+        else for (auto &old:p->relays)
+            if (!old.removed && &old.cluster==&candidate->cluster && old.established &&
+                !(old.root->downtime.known && old.root->downtime.avoid<=now) &&
+                (!old.alternate || old.alternate->penalty<=8190)) { r=&old; break; }
+        if (!r) r=choose_relay(p,candidate->cluster,now);
+        if (!r) continue;
+        if (!front_eligible(p,*r)) continue;
+        if (r->established && !(r->downtime.known && r->downtime.avoid <= now)) { --quota; ++consumed; continue; }
+        if (r->downtime.known && r->downtime.avoid < now) continue;
+        if (r->challenge && r->challenge_at + 10000000 < now) r->challenge = 0;
+        bool ready = r->challenge && r->server_time && r->last_received &&
+            r->last_received + 20000000 >= now && r->front.m_nValidPings >= 3 &&
+            r->front.TimeRecvMostRecentPing() + 20000000 >= now && !r->ping_failures;
+        if (!ready) {
+            send_ping(p, *r, now);
+            if (r->ping_failures < 2) { --quota; ++consumed; started = true; }
+            continue;
+        }
+        --quota;
+        ++consumed;
+        if (r->request_until || started) { started = true; continue; }
+        CMsgSteamDatagramP2PSessionRequest request;
+        if (!build_request(*connection, *r, p->config, request)) continue;
+        size_t bytes = request.ByteSizeLong();
+        if (bytes >= 1300) continue;
+        uint8_t packet[1300];
+        packet[0] = 24;
+        request.SerializeToArray(packet + 1, int(bytes));
+        r->request_until = now + 750000;
+        if (send_packet(p, packet, int(bytes + 1), r->address)) ++p->counters.requests;
+        SecureZeroMemory(packet, sizeof(packet));
+        started = true;
+    }
+    return started;
+}
+static void update_network(sl_sdr_probe *p, CSteamNetworkConnectionBase *connection,
+                            SteamNetworkingMicroseconds now) {
+    if (now < p->last_round + 100000) return;
+    p->last_round = now;
+    for (auto it=p->downtimes.begin(); it!=p->downtimes.end();) {
+        if (it->second.shutdown+180000000 < now) it=p->downtimes.erase(it); else ++it;
+    }
+    for (auto &c:p->clusters) {
+        const auto *pop=find_pop(p->config,c.pop_id);
+        unsigned total=0;
+        if (pop) for (size_t i=0;i<pop->endpoint_count;++i) {
+            const auto &e=p->config.endpoints[pop->first_endpoint+i]; total+=unsigned(e.port_max)-e.port_min+1;
+        }
+        sl_sdr_expire_addresses(&c.failures,total,now);
+    }
+    for (auto &r:p->relays) {
+        if (r.removed) continue;
+        sl_sdr_timeouts timeouts{r.ping_deadline,r.request_until,r.last_received,
+            r.ping_failures,r.request_failures,r.established};
+        unsigned events=sl_sdr_expire(&timeouts,now);
+        r.ping_deadline=timeouts.ping_deadline; r.request_until=timeouts.request_deadline;
+        r.ping_failures=timeouts.ping_failures; r.request_failures=timeouts.request_failures;
+        if ((events & SL_SDR_TIMEOUT_PING) && r.root==&r) ++r.failures.failures;
+        bool shutting_down=r.downtime.known && r.downtime.shutdown<=now;
+        if ((events & SL_SDR_TIMEOUT_REMOVE) || shutting_down) {
+            const char *reason=shutting_down ? "downtime_warning_reached" :
+                (events & SL_SDR_TIMEOUT_REQUEST) ? "session_request_timeout" :
+                (!r.last_received && !r.established) ? "initial_ping_timeout" : "consecutive_ping_timeout";
+            if (r.root==&r && !shutting_down)
+                sl_sdr_fail_address(&r.failures,r.address_key(),address_count(p,r),now);
+            remove_relay(p,r,reason,now,!shutting_down);
+            continue;
+        }
+        if (r.established && sl_sdr_session_expired(r.stats.m_usecTimeLastRecv,now)) {
+            if (p->owner_session_removed) p->owner_session_removed(r,"session_inactivity_timeout",now,p->owner);
+            r.forget_session(now);
+        }
+        if (events & SL_SDR_TIMEOUT_REPROBE) r.force_ping=true;
+        if (r.force_ping && !r.ping_deadline) { send_ping(p,r,now); r.force_ping=false; }
+    }
+    collect_relays(p);
+    std::vector<std::pair<float,ProbeRelay *>> priorities;
+    std::vector<std::pair<sl_sdr_probe_input,ProbeRelay *>> ordered;
+    int32_t front[SL_SDR_POP_MAX],estimates[SL_SDR_POP_MAX];
+    std::fill_n(front,p->config.pop_count,-1);
+    std::vector<sl_sdr_edge> edges;
+    for (const auto &c:p->clusters) {
+        const auto *pop=find_pop(p->config,c.pop_id);
+        if (!pop) continue;
+        unsigned index=unsigned(pop-p->config.pops);
+        if (c.failures.reachability>=1) front[index]=c.ping_ms;
+        for (size_t i=0;i<c.interior.count;++i) {
+            const auto *target=find_pop(p->config,c.interior.entries[i].pop);
+            if (target) edges.push_back({index,unsigned(target-p->config.pops),c.interior.entries[i].ping});
+        }
+    }
+    bool have_estimates=sl_sdr_route_estimates(front,p->config.pop_count,edges.data(),edges.size(),estimates);
+    int ordinary=0,measured=0,fast=0,medium=0,broad=0;
+    for (auto &c:p->clusters) {
+        const auto *pop=find_pop(p->config,c.pop_id);
+        int estimate=have_estimates && pop ? estimates[pop-p->config.pops] : SL_SDR_UNKNOWN;
+        float ordering=estimate>=5001 ? 5000.0f+random_below(101) : float(estimate);
+        bool relay_pop=pop && pop->type==1;
+        ordinary+=relay_pop;
+        if (relay_pop && c.failures.reachability>=1 && c.ping_ms>=0 && c.front.m_nTotalPingsReceived>=2) ++measured;
+        if (relay_pop && c.front.m_nTotalPingsReceived>2 && c.front.m_nValidPings>=2 &&
+            c.failures.reachability>=1 && c.ping_ms>=0) {
+            int conservative=c.front.WorstPingInRecentSample();
+            fast+=conservative<30; medium+=conservative<75; broad+=conservative<150;
+        }
+        auto *r=choose_relay(p,c,now);
+        if (!r) continue;
+        sl_sdr_probe_input input{c.ping_ms,int(c.requests_sent),c.front.m_nTotalPingsReceived,
+            c.front.m_nValidPings,int(c.failures.failures),c.failures.reachability,pop ? pop->type : 0,
+            pop ? pop->tier : 1,0,int(c.failures.count),ordering,
+            now-c.failures.last_probe,now-c.front.TimeRecvMostRecentPing()};
+        ordered.emplace_back(input,r);
+    }
+    // 823b78/823e70: activity is a live connection, not the absence of a
+    // primary. Accuracy/120-second retry gates use this independent flag.
+    auto state=connection->GetWireState();
+    bool active=state >= k_ESteamNetworkingConnectionState_Connecting &&
+        state <= k_ESteamNetworkingConnectionState_Connected;
+    std::stable_sort(ordered.begin(),ordered.end(),[](const auto &a,const auto &b) {
+        return a.first.estimate < b.first.estimate;
+    });
+    sl_sdr_probe_input inputs[SL_SDR_CANDIDATES];
+    for (size_t i=0; i<ordered.size(); ++i) inputs[i]=ordered[i].first;
+    sl_sdr_probe_plan plan;
+    if (!sl_sdr_plan_probes(inputs,ordered.size(),20,active,!p->have_backup,&plan)) return;
+    for (size_t i=0; i<plan.count; ++i) {
+        const auto &candidate=plan.candidates[i];
+        priorities.emplace_back(candidate.priority,ordered[candidate.index].second);
+    }
+    std::stable_sort(priorities.begin(), priorities.end(), [](const auto &a, const auto &b) { return a.first < b.first; });
+    unsigned budget=plan.budget;
+    for (const auto &entry : priorities) {
+        if (!budget || entry.first >= plan.cutoff) break;
+        if (send_ping(p, *entry.second, now)) --budget;
+    }
+    p->good_enough |= sl_sdr_routing_ready(ordinary, measured, fast, medium, broad, now-p->initialized_at);
+    if (!p->good_enough) return;
+    update_alternates(p,now);
+    if (!p->owner) {
+        std::vector<ProbeRelay *> candidates;
+        for (auto &r : p->relays) if (r.ping_ms >= 0) candidates.push_back(&r);
+        std::stable_sort(candidates.begin(), candidates.end(), [](ProbeRelay *a, ProbeRelay *b) { return a->ping_ms < b->ping_ms; });
+        pursue_sessions(p, connection, candidates, 2, now);
+    }
+}
+#if NSL_SNS_PROBES
+extern "C" int sl_gns_sdr_topology_fixture() {
+    SteamNetworkingGlobalLock lock("nsl topology fixture");
+    sl_sdr_config config{};
+    config.pop_count=config.endpoint_count=1;
+    config.pops[0].id=1; config.pops[0].type=1; config.pops[0].endpoint_count=1;
+    config.endpoints[0]={0x7f000001,20000,20008,0};
+    auto cleanup=[](sl_sdr_probe *p) { if (p) { p->socket->Close(); delete p; } };
+    std::unique_ptr<sl_sdr_probe,decltype(cleanup)> p(make_network(0,config),cleanup);
+    if (!p) return 1;
+    auto now=SteamNetworkingSockets_GetLocalTimestamp();
+    auto &cluster=p->clusters.front();
+    auto *first=&p->relays.front();
+    netadr_t second_address;
+    second_address.SetIPAndPort(0x7f000001,first->address.GetPort()==20000 ? 20001 : 20000);
+    auto *second=create_relay(p.get(),cluster,second_address);
+    if (!second || first==second || &first->front!=&second->front || &first->stats==&second->stats) return 2;
+    first->receive_ping(20,now); second->receive_ping(40,now);
+    if (cluster.front.m_nTotalPingsReceived!=2 || first->own_ping.m_nTotalPingsReceived!=1) return 3;
+    p->active_primary=first; p->active_backup=second;
+    if (choose_relay(p.get(),cluster,now)!=first) return 4;
+    p->migration_target=second;
+    if (choose_relay(p.get(),cluster,now)!=second) return 5;
+    p->migration_target=nullptr;
+    if (receive_migration(p.get(),*second,second_address.GetIPv4(),second_address.GetPort())) return 15;
+    if (!receive_migration(p.get(),*first,second_address.GetIPv4(),second_address.GetPort())) return 16;
+    update_migration(p.get(),now);
+    if (p->migration_state!=2 || p->migration_target!=second) return 17;
+    if (receive_migration(p.get(),*first,second_address.GetIPv4(),second_address.GetPort()) || p->migration_state!=2) return 18;
+    second->downtime={now+10000000,now,true};
+    update_migration(p.get(),now);
+    if (p->migration_state || p->migration_target) return 19;
+    second->downtime={};
+    if (!receive_migration(p.get(),*first,0x7f000002,20000)) return 20;
+    update_migration(p.get(),now);
+    if (p->migration_state || p->migration_target) return 21;
+    if (!receive_migration(p.get(),*first,second_address.GetIPv4(),65536)) return 22;
+    update_migration(p.get(),now);
+    if (p->migration_state || p->migration_target) return 23;
+    receive_migration(p.get(),*first,second_address.GetIPv4(),second_address.GetPort());
+    sl_sdr_fail_address(&cluster.failures,second->address_key(),9,now);
+    update_migration(p.get(),now);
+    if (p->migration_state || p->migration_target) return 24;
+    sl_sdr_address_received(&cluster.failures,second->address_key());
+    CMsgSteamDatagramRouterPingReply full;
+    full.add_alt_addresses()->set_port(30000);
+    full.add_alt_addresses()->set_port(30001);
+    receive_alternates(p.get(),*first,full,now);
+    if (first->alternates.size()!=2) return 6;
+    auto &old=first->alternates.front();
+    auto &kept=first->alternates.back();
+    auto *old_child=create_relay(p.get(),cluster,old.address,first,&old);
+    auto *kept_child=create_relay(p.get(),cluster,kept.address,first,&kept);
+    if (!old_child || !kept_child) return 7;
+    for (int i=0;i<8;++i) kept_child->receive_ping(2,now+i);
+    kept_child->received(now);
+    if (cluster.front.m_nTotalPingsReceived!=2 || kept.measured_ping<0 || cluster.last_good!=first->address) return 8;
+    CMsgSteamDatagramRouterPingReply partial;
+    partial.set_flags(2);
+    receive_alternates(p.get(),*first,partial,now);
+    if (first->alternates.size()!=2) return 9;
+    old_child->ping_sent=now-500000; old_child->ping_deadline=now+1;
+    update_alternates(p.get(),now);
+    if (!kept_child->removed || old_child->removed || p->counters.sent_pings) return 28;
+    CMsgSteamDatagramRouterPingReply replace;
+    replace.add_alt_addresses()->set_port(30001);
+    receive_alternates(p.get(),*first,replace,now);
+    if (!old_child->removed || first->alternates.size()!=1 || kept_child->alternate!=&first->alternates.front()) return 10;
+    int measured=kept_child->alternate->measured_ping;
+    remove_relay(p.get(),*kept_child,"alternate_probe_completed",now);
+    if (first->alternates.front().child || first->alternates.front().measured_ping!=measured ||
+        first->alternates.front().last_failure) return 11;
+    collect_relays(p.get());
+    p->migration_target=first;
+    remove_relay(p.get(),*first,"fixture_remove",now);
+    collect_relays(p.get());
+    if (p->active_primary || p->active_backup || p->migration_target || p->relays.size()!=1 ||
+        second->address!=second_address || cluster.front.m_nTotalPingsReceived!=2) return 12;
+    second->routing_token="synthetic"; second->established=true; second->received(now);
+    remove_relay(p.get(),*second,"fixture_remove",now);
+    collect_relays(p.get());
+    auto *recreated=choose_relay(p.get(),cluster,now);
+    if (!recreated || recreated->address!=second_address || recreated->established || !recreated->routing_token.empty() ||
+        recreated->own_ping.m_nTotalPingsReceived || cluster.front.m_nTotalPingsReceived!=2) return 13;
+    cluster.interior.count=1;
+    cluster.interior.entries[0]={1,0,0,0,now};
+    update_nearest(p.get());
+    CMsgSteamDatagramP2PRoutes peer;
+    if (!route_candidate(p.get(),1,1,false,peer)) return 25;
+    cluster.interior.entries[0].measured=0;
+    update_nearest(p.get());
+    if (route_candidate(p.get(),1,1,false,peer) || !route_candidate(p.get(),1,1,true,peer)) return 26;
+    auto *route=peer.add_routes(); route->set_my_pop_id(1); route->set_your_pop_id(1);
+    if (!route_candidate(p.get(),1,1,false,peer)) return 27;
+    p->config.endpoints[0].port_min=p->config.endpoints[0].port_max=second_address.GetPort();
+    p->downtimes[recreated->address_key()]={now+10000000,now-1,true};
+    remove_relay(p.get(),*recreated,"fixture_remove",now);
+    collect_relays(p.get());
+    if (choose_relay(p.get(),cluster,now)) return 14;
+    return 0;
+}
+extern "C" sl_sdr_probe *sl_gns_sdr_probe_create(uint32_t handle, const char *json, size_t size) {
+    SteamNetworkingGlobalLock global_lock("nsl relay session probe");
+    ConnectionScopeLock connection_lock;
+    CSteamNetworkConnectionBase *connection = GetConnectionByHandle(handle, connection_lock);
+    if (!connection || !connection->m_unConnectionIDRemote)
+        return nullptr;
+    std::unique_ptr<sl_sdr_config> config(new sl_sdr_config);
+    if (!sl_sdr_config_parse(json, size, config.get()))
+        return nullptr;
+    return make_network(handle, *config);
+}
+extern "C" void sl_gns_sdr_probe_update(sl_sdr_probe *p) {
+    if (!p)
+        return;
+    SteamNetworkingGlobalLock global_lock("nsl relay probe update");
+    ConnectionScopeLock connection_lock;
+    CSteamNetworkConnectionBase *connection = GetConnectionByHandle(p->connection, connection_lock);
+    if (connection)
+        update_network(p, connection, SteamNetworkingSockets_GetLocalTimestamp());
+}
+extern "C" void sl_gns_sdr_probe_stats(const sl_sdr_probe *p, sl_sdr_probe_stats *out) {
+    if (out)
+        *out = p ? p->counters : sl_sdr_probe_stats{};
+}
+extern "C" void sl_gns_sdr_probe_destroy(sl_sdr_probe *p) {
+    if (!p)
+        return;
+    SteamNetworkingGlobalLock lock("nsl relay probe destroy");
+    p->socket->Close();
+    delete p;
+}
+
+#endif
+
+#ifdef NSL_GNS_SDR
+namespace SteamNetworkingSocketsLib {
+template<> inline uint32 StatsMsgImpliedFlags<CMsgSteamDatagramConnectionStatsP2PClientToRouter>(
+    const CMsgSteamDatagramConnectionStatsP2PClientToRouter &m) {
+    return (m.has_quality_relay() ? 1u : 0u) | (m.has_quality_e2e() ? 2u : 0u);
+}
+namespace {
+sl_sdr_config network_config;
+bool network_config_ready = false;
+class SDRTransport;
+std::unordered_map<CSteamNetworkConnectionP2P *, SDRTransport *> transports;
+struct SDRSendContext : SendPacketContext<CMsgSteamDatagramConnectionStatsP2PClientToRouter> {
+    ProbeRelay *relay = nullptr;
+    sl_sdr_routing_fields routing{};
+    explicit SDRSendContext(SteamNetworkingMicroseconds now, const char *reason)
+        : SendPacketContext(now, reason) {}
+};
+class SDRTransport final : public CConnectionTransport, public CConnectionTransportP2PBase {
+public:
+    sl_sdr_probe *network = nullptr;
+    ProbeRelay *primary = nullptr, *backup = nullptr;
+    sl_sdr_revisions revisions{};
+    CMsgSteamDatagramP2PRoutes peer_routes, local_routes;
+    std::string last_snapshot;
+    struct PrimaryQuality {
+        netadr_t address;
+        uint32_t pop;
+        int score, front, back, shutdown, migration;
+    };
+    std::vector<PrimaryQuality> primary_snapshot;
+    netadr_t previous_primary_address;
+    uint32_t previous_primary_pop = 0, primary_packets_received = 0;
+    SteamNetworkingMicroseconds primary_since = 0;
+    sl_sdr_primary_loss primary_loss{};
+    int route_ping = 0, route_score = 0;
+#if NSL_SNS_PROBES
+    unsigned debug[16] = {}, route_generation = 0;
+    unsigned cm_routes_out=0,cm_routes_in=0,stats_routes_out=0,stats_routes_in=0;
+    unsigned relay_closed=0,relay_no_connection=0,cm_closed=0,close_reason=0,close_relay_mode=0,close_pop=0;
+    void count(unsigned index) { ++debug[index]; }
+#else
+    void count(unsigned) {}
+#endif
+    explicit SDRTransport(CSteamNetworkConnectionP2P &c)
+        : CConnectionTransport(c), CConnectionTransportP2PBase("SDR", this) {}
+    ~SDRTransport() override { transports.erase(&conn()); }
+    CSteamNetworkConnectionP2P &conn() const {
+        return *static_cast<CSteamNetworkConnectionP2P *>(&m_connection);
+    }
+    void TransportFreeResources() override {
+        if (network) {
+            network->owner = nullptr;
+            network->owner_receive = nullptr;
+            network->owner_session_removed = nullptr;
+            network->socket->Close();
+            delete network;
+            network = nullptr;
+        }
+        primary = backup = nullptr;
+    }
+    void TransportConnectionStateChanged(ESteamNetworkingConnectionState old) override {
+        CConnectionTransport::TransportConnectionStateChanged(old);
+        int action = sl_sdr_state_action(int(ConnectionState()));
+        if (action == SL_SDR_STATE_THINK) EnsureP2PTransportThink(k_nThinkTime_ASAP);
+        if (action != SL_SDR_STATE_CLOSE || !network) return;
+        for (auto &r : network->relays)
+            if (r.established && !r.closed_by_relay) {
+                bool e2e = (!m_connection.m_pTransport || m_connection.m_pTransport == this) &&
+                    (!primary || &r == primary);
+                send_closed(network, m_connection, r, e2e, &r == primary,
+                    m_connection.m_pTransport == this, true);
+            }
+    }
+    bool BCanSendEndToEndData() const override {
+        return primary && primary->established && primary->forward.desired_size;
+    }
+    void TransportPopulateConnectionInfo(SteamNetConnectionInfo_t &info) const override {
+        info.m_nFlags |= k_nSteamNetworkConnectionInfoFlags_Relayed;
+        if (primary)
+            info.m_idPOPRelay = primary->pop_id;
+    }
+    static void fill_quality(CMsgSteamDatagramClientSwitchedPrimary_RouterQuality &out, const PrimaryQuality &q) {
+        out.set_score(q.score); out.set_front_ping(q.front); out.set_back_ping(q.back);
+        if (q.shutdown != INT_MAX) out.set_seconds_until_down(q.shutdown);
+    }
+    static void session_removed(ProbeRelay &r, const char *reason, SteamNetworkingMicroseconds now, void *owner) {
+        auto &t = *static_cast<SDRTransport *>(owner);
+        // 818af0-818bac: destroying the primary clears all active roles but
+        // retains its report history. Removing a backup preserves the primary.
+        sl_sdr_primary_removed(&t.primary_loss, &r == t.primary, reason, now);
+        if (&r == t.primary) t.primary = t.backup = nullptr;
+        else if (&r == t.backup) t.backup = nullptr;
+        t.network->have_primary = t.primary != nullptr;
+        t.network->have_backup = t.backup != nullptr;
+        t.network->active_primary = t.primary;
+        t.network->active_backup = t.backup;
+        t.EnsureP2PTransportThink(k_nThinkTime_ASAP);
+    }
+    void changed_primary(ProbeRelay &next, const std::vector<PrimaryQuality> &current,
+        int64_t gap, int ping, SteamNetworkingMicroseconds now) {
+        // 81cddc-81d694: the report is sent to the new relay, only after
+        // >=101 data packets on an identifiable previous primary.
+        if (primary_since && primary_packets_received >= 101 && previous_primary_address.GetIPv4() &&
+            previous_primary_address.GetPort() && previous_primary_pop) {
+            CMsgSteamDatagramClientSwitchedPrimary m;
+            m.set_connection_id(ConnectionIDLocal());
+            m.set_from_ip(previous_primary_address.GetIPv4());
+            m.set_from_port(previous_primary_address.GetPort());
+            m.set_from_router_cluster(previous_primary_pop);
+            m.set_from_active_time(uint32_t((now-primary_since)/1000000));
+            m.set_from_active_packets_recv(primary_packets_received);
+            uint32_t gap_ms;
+            if (sl_sdr_primary_gap(&primary_loss, gap, now, &gap_ms)) m.set_gap_ms(gap_ms);
+            if (primary_loss.reason[0]) m.set_from_dropped_reason(primary_loss.reason);
+            for (const auto &q : current) {
+                if (q.address == previous_primary_address) fill_quality(*m.mutable_from_quality_now(), q);
+                if (q.address == next.address) fill_quality(*m.mutable_to_quality_now(), q);
+            }
+            const PrimaryQuality *to_then=nullptr;
+            std::vector<const PrimaryQuality *> prior;
+            std::vector<sl_sdr_snapshot_choice> choices;
+            for (const auto &q : primary_snapshot) {
+                if (q.address == previous_primary_address) fill_quality(*m.mutable_from_quality_then(), q);
+                if (q.pop != next.pop_id) continue;
+                prior.push_back(&q); choices.push_back({INT_MAX,q.score,q.migration,q.shutdown});
+                if (q.address == next.address) to_then=&q;
+            }
+            if (!to_then) { int picked=sl_sdr_choose_snapshot(choices.data(),choices.size());
+                if (picked>=0) to_then=prior[size_t(picked)]; }
+            if (to_then) fill_quality(*m.mutable_to_quality_then(),*to_then);
+            uint8_t packet[1300]; size_t size = m.ByteSizeLong();
+            if (size < sizeof(packet)) {
+                packet[0] = 16; m.SerializeToArray(packet+1,int(size));
+                send_packet(network,packet,int(size+1),next.address);
+            }
+        }
+        if (previous_primary_pop != next.pop_id) {
+            // 81d724-81d74c resets the connection RTT's recent sample count,
+            // then seeds it from local front + remote front + interior.
+            m_connection.m_statsEndToEnd.m_ping.m_nValidPings = 0;
+            m_connection.m_statsEndToEnd.m_ping.ReceivedPing(ping, now);
+        }
+        primary_snapshot = current;
+        primary_loss = {};
+        primary_since = now; primary_packets_received = 0;
+        previous_primary_address = next.address; previous_primary_pop = next.pop_id;
+        EnsureP2PTransportThink(k_nThinkTime_ASAP);
+    }
+    void select_routes(SteamNetworkingMicroseconds now) {
+        update_nearest(network);
+        // Keep local-front candidates available for the first pursue round,
+        // but defer importing peer routes until global measurements are usable.
+        std::vector<std::pair<int, ProbeRelay *>> any, token_routes;
+        sl_sdr_candidate metrics[SL_SDR_CANDIDATES] = {};
+        ProbeRelay *relays[SL_SDR_CANDIDATES] = {};
+        int pings[SL_SDR_CANDIDATES] = {};
+        bool desired[SL_SDR_CANDIDATES] = {};
+        int current = -1, old_backup = -1;
+        std::vector<PrimaryQuality> quality;
+        size_t count = 0;
+        for (auto &r : network->relays) {
+            if (r.removed) continue;
+            int score = SL_SDR_UNKNOWN, comparison = INT_MAX, any_comparison = INT_MAX, ping = 0;
+            const CMsgSteamDatagramP2PRoutes_RelayCluster *target = nullptr;
+            int interior_score = 0;
+            for (const auto &peer : peer_routes.relay_clusters()) {
+                if (!network->good_enough) break;
+                uint32_t peer_pop=sl_sdr_config_canonical(&network->config,peer.pop_id());
+                if (!front_eligible(network,r) || !find_pop(network->config, peer.pop_id()) || peer.ping_ms() > 10000 ||
+                    peer.session_relay_routing_token().size() > SL_SDR_TOKEN_MAX) continue;
+                if (!route_candidate(network,r.pop_id,peer_pop,!peer.session_relay_routing_token().empty(),peer_routes)) continue;
+                int interior = 0;
+                if (peer_pop != r.pop_id) {
+                    const auto *edge = sl_sdr_latency_find(&r.interior, peer_pop);
+                    if (!edge || edge->ping < 0 || edge->ping > 10000) continue;
+                    interior = edge->ping;
+                }
+                const auto *edge = sl_sdr_latency_find(&r.interior, peer_pop);
+                int edge_penalty = peer_pop != r.pop_id && edge ? edge->penalty : 0;
+                int front = r.ping_ms + int(peer.ping_ms());
+                int64 forward = int64(front) + front / 10 + interior + edge_penalty + r.penalty + peer.score_penalty();
+                if (forward >= SL_SDR_UNKNOWN) continue;
+                int reverse = SL_SDR_UNKNOWN;
+                for (const auto &route : peer_routes.routes()) {
+                    if (sl_sdr_config_canonical(&network->config,route.my_pop_id()) != peer_pop ||
+                        sl_sdr_config_canonical(&network->config,route.your_pop_id()) != r.pop_id) continue;
+                    int64 value = route.has_interior_score()
+                        ? int64(front) + front / 10 + r.penalty + peer.score_penalty() + route.interior_score()
+                        : route.has_legacy_score() ? int64(route.legacy_score()) : INT_MAX;
+                    reverse = value < INT_MAX ? int(value) : INT_MAX;
+                }
+                int combined = sl_sdr_comparison_score(int(forward), reverse);
+                any_comparison = std::min(any_comparison, combined);
+                if (!peer.session_relay_routing_token().empty() && combined < comparison) {
+                    comparison = combined; score = int(forward); ping = front + interior;
+                    interior_score = interior + edge_penalty;
+                    target = &peer;
+                }
+            }
+            if (target) {
+                const auto &token = target->session_relay_routing_token();
+                sl_sdr_target_desire(&r.forward, reinterpret_cast<const uint8_t *>(token.data()), token.size(),
+                    sl_sdr_config_canonical(&network->config,target->pop_id()));
+                token_routes.emplace_back(comparison, &r);
+            } else sl_sdr_target_desire(&r.forward, nullptr, 0, 0);
+            if (any_comparison < INT_MAX) any.emplace_back(any_comparison, &r);
+            else if ((!network->good_enough || !peer_routes.relay_clusters_size()) && front_eligible(network,r))
+                any.emplace_back(r.ping_ms, &r);
+            if (!r.established || count == SL_SDR_CANDIDATES) continue;
+            auto &m = metrics[count];
+            relays[count] = &r; pings[count] = ping;
+            desired[count] = r.established && r.forward.desired_size;
+            if (&r == primary) current = int(count);
+            if (&r == backup && r.established && target) old_backup = int(count);
+            int low, high;
+            m.buckets = r.front.GetPingRangeFromRecentBuckets(low, high, now);
+            int64 other = 0;
+            m.shutdown_seconds = INT_MAX;
+            if (r.downtime.known) {
+                int64 remaining = r.downtime.shutdown - now;
+                m.shutdown_seconds = int(remaining >= 0 ? remaining / 1000000 : -((-remaining + 999999) / 1000000));
+                if (m.shutdown_seconds <= 0) other += 1000;
+                else if (m.shutdown_seconds < 30) other += (30 - m.shutdown_seconds) * 1000 / 30;
+                m.draining = r.downtime.avoid <= now;
+            }
+            // 81c49c reads RelayServer+256, not RelaySession LinkStats+4136.
+            if (r.ping_failures && r.last_received + 500000 < now) {
+                m.gap = now-r.last_received;
+                if (m.gap > 1750000) other += 100;
+            }
+            if (r.alternate) { m.alternate_penalty=r.alternate->penalty; other+=m.alternate_penalty; }
+            int remote = target ? int(target->ping_ms()) : 0;
+            int penalties = r.penalty + (target ? int(target->score_penalty()) : 0) + int(other);
+            auto value = [&](int local) { int internet = local + remote; return internet + internet/10 + interior_score + penalties; };
+            m.score = score + int(other); m.minimum = value(low); m.maximum = value(high);
+            m.other_penalty = int(other);
+            if (network->migration_target) {
+                if (&r==network->migration_target) m.migration=-1;
+                else if (r.root->migration_address==network->migration_target->root->address) m.migration=1;
+            }
+            m.front_samples = r.front.m_nValidPings;
+            m.cluster = int(r.pop_id); m.eligible = r.established && target && m.score < SL_SDR_UNKNOWN &&
+                (!r.alternate || r.alternate->penalty<=8190);
+            m.last_received = r.last_received;
+            m.front_oldest = r.front.m_arPing[2].m_usecTimeRecv;
+            m.last_ping_sent = r.failures.last_probe;
+            m.bucket_end = r.front.m_arTimeBuckets[r.front.m_idxCurrentBucket].m_usecEnd;
+            m.ping_pending = r.ping_deadline != 0;
+            if (target && m.score < SL_SDR_UNKNOWN)
+                quality.push_back({r.address,r.pop_id,m.score,r.ping_ms,ping-r.ping_ms-remote,m.shutdown_seconds,m.migration});
+            ++count;
+        }
+        auto order = [](const auto &a, const auto &b) { return a.first < b.first; };
+        std::stable_sort(any.begin(), any.end(), order);
+        std::stable_sort(token_routes.begin(), token_routes.end(), order);
+        network->pursue.clear(); network->pursue_token.clear();
+        for (const auto &candidate : any) network->pursue.push_back(candidate.second);
+        for (const auto &candidate : token_routes) network->pursue_token.push_back(candidate.second);
+        sl_sdr_selection selected;
+        sl_sdr_clean_active(desired, count, &current, &old_backup);
+        if (!sl_sdr_select(metrics, count, current, old_backup, network->migration_state!=0, now, &selected)) return;
+        ProbeRelay *next = selected.primary >= 0 ? relays[selected.primary] : nullptr;
+        backup = selected.backup >= 0 ? relays[selected.backup] : nullptr;
+        for (size_t i = 0; i < count; ++i) if (selected.probe[i]) relays[i]->force_ping = true;
+        if (primary != next || (next && next->address != previous_primary_address)) {
+            int64_t gap = current >= 0 ? metrics[current].gap : 0;
+            if (next) changed_primary(*next,quality,gap,pings[selected.primary],now);
+#if NSL_SNS_PROBES
+            ++route_generation;
+#endif
+            primary = next;
+            conn().m_usecNextEvaluateTransport = k_nThinkTime_ASAP;
+            conn().SetNextThinkTimeASAP();
+        }
+        network->have_primary = primary != nullptr; network->have_backup = backup != nullptr;
+        network->active_primary = primary; network->active_backup = backup;
+        route_ping = primary ? pings[selected.primary] : 0;
+        route_score = primary ? metrics[selected.primary].score : SL_SDR_UNKNOWN;
+        for (auto &r : network->relays)
+            r.stats.SetActivityLevel(&r == primary ? ELinkActivityLevel::Active : ELinkActivityLevel::Idle, now);
+    }
+    void rebuild_routes() {
+        // 836d7c-836de8 does not build a peer snapshot before global routing is
+        // ready. A few front replies alone are not sufficient evidence.
+        if (!network->good_enough) return;
+        const auto now=SteamNetworkingSockets_GetLocalTimestamp();
+        const size_t count=network->config.pop_count;
+        std::vector<sl_sdr_advert_cluster> clusters(count);
+        std::vector<ProbeRelay *> locals(count,nullptr);
+        std::vector<ProbeCluster *> shared(count,nullptr);
+        for (auto &c : clusters) c={-1,0x10000000,0,false,false};
+        for (auto &c:network->clusters) {
+            const auto *pop=find_pop(network->config,c.pop_id);
+            if (!pop) continue;
+            size_t i=size_t(pop-network->config.pops);
+            shared[i]=&c;
+            if (sl_sdr_front_eligible(pop->type,c.ping_ms,c.failures.reachability,0))
+                clusters[i]={c.ping_ms,c.penalty,0,false,false};
+            std::vector<ProbeRelay *> nodes;
+            std::vector<sl_sdr_snapshot_choice> choices;
+            for (auto &r:network->relays) {
+                if (r.removed || &r.cluster!=&c || !r.established || (r.alternate && r.alternate->penalty>8190)) continue;
+                int seconds=shutdown_seconds(r,now);
+                int penalty=seconds<=0 ? 1000 : seconds<30 ? (30-seconds)*1000/30 : 0;
+                if (r.ping_failures && r.last_received+1750000<now) penalty+=100;
+                if (r.alternate) penalty+=r.alternate->penalty;
+                int migration=&r==network->migration_target ? -1 : network->migration_target &&
+                    r.root->migration_address==network->migration_target->root->address ? 1 : 0;
+                choices.push_back({&r==primary ? 0 : &r==backup ? 1 : INT_MAX,c.ping_ms+c.penalty+penalty,migration,seconds});
+                nodes.push_back(&r);
+            }
+            int selected=sl_sdr_choose_snapshot(choices.data(),choices.size());
+            if (selected>=0) locals[i]=nodes[size_t(selected)];
+        }
+        std::vector<sl_sdr_advert_route> routes;
+        std::vector<int32_t> interior_scores;
+        std::vector<int> route_indices(count*count,-1);
+        for (size_t i=0; i<count; ++i) {
+            if (clusters[i].ping < 0) continue;
+            auto &r=*shared[i];
+            for (const auto &peer : peer_routes.relay_clusters()) {
+                const auto *remote=find_pop(network->config,peer.pop_id());
+                if (!remote || peer.ping_ms()>10000) continue;
+                if (!route_candidate(network,r.pop_id,remote->id,!peer.session_relay_routing_token().empty(),peer_routes)) continue;
+                unsigned j=unsigned(remote-network->config.pops);
+                const auto *edge=sl_sdr_latency_find(&r.interior,remote->id);
+                if (i!=j && (!edge || edge->ping < 0)) continue;
+                int64 interior=i==j ? 0 : int64(edge->ping)+edge->penalty;
+                int64 front=int64(r.ping_ms)+peer.ping_ms();
+                int64 base=front+front/10+r.penalty+peer.score_penalty();
+                int64 forward=base+interior;
+                if (interior < 0 || interior > INT_MAX || forward < 0 || forward > INT_MAX) continue;
+                int reverse=SL_SDR_UNKNOWN;
+                for (const auto &incoming : peer_routes.routes()) {
+                    if (sl_sdr_config_canonical(&network->config,incoming.my_pop_id()) != remote->id ||
+                        sl_sdr_config_canonical(&network->config,incoming.your_pop_id()) != r.pop_id) continue;
+                    int64 score=incoming.has_interior_score() ? base+incoming.interior_score() :
+                        incoming.has_legacy_score() ? incoming.legacy_score() : INT_MAX;
+                    if (score < 0 || score >= INT_MAX) continue;
+                    reverse=int(score);
+                    clusters[i].remote_used=true;
+                }
+                bool forced=conn().IsControllingAgent() && primary && &r==&primary->cluster && primary->forward.desired_size &&
+                    primary->forward.desired_pop==remote->id;
+                sl_sdr_advert_route route{unsigned(i),j,int(forward),reverse,false,forced,false};
+                int &index=route_indices[i*count+j];
+                if (index < 0) {
+                    index=int(routes.size()); routes.push_back(route); interior_scores.push_back(int(interior));
+                } else { routes[size_t(index)]=route; interior_scores[size_t(index)]=int(interior); }
+            }
+        }
+        bool reuse=revisions.local!=0;
+        if (conn().IsControllingAgent() && primary && primary->forward.desired_size &&
+            (!local_routes.routes_size() || local_routes.routes(0).my_pop_id()!=primary->pop_id ||
+             local_routes.routes(0).your_pop_id()!=primary->forward.desired_pop)) reuse=false;
+        for (const auto &old : local_routes.relay_clusters()) {
+            const auto *pop=find_pop(network->config,old.pop_id());
+            if (!pop) { reuse=false; continue; }
+            size_t i=size_t(pop-network->config.pops);
+            clusters[i].old_member=true;
+            const auto *r=locals[i];
+            std::string token=r && r->established ? r->routing_token : std::string();
+            if (clusters[i].ping < 0 || old.session_relay_routing_token()!=token ||
+                !sl_sdr_old_metric_valid(clusters[i].penalty,int32_t(old.score_penalty()),-1,-1)) {
+                reuse=false; continue;
+            }
+            int low=-1,high=-1;
+            shared[i]->front.GetPingRangeFromRecentBuckets(low,high,now);
+            if (!sl_sdr_old_metric_valid(clusters[i].ping,int32_t(old.ping_ms()),low,high)) reuse=false;
+        }
+        for (const auto &old : local_routes.routes()) {
+            const auto *local=find_pop(network->config,old.my_pop_id());
+            const auto *remote=find_pop(network->config,old.your_pop_id());
+            int index=local && remote ? route_indices[size_t(local-network->config.pops)*count+
+                size_t(remote-network->config.pops)] : -1;
+            if (index < 0) { reuse=false; continue; }
+            routes[size_t(index)].old_member=true;
+            if (!old.has_interior_score() || !sl_sdr_old_metric_valid(interior_scores[size_t(index)],
+                int32_t(old.interior_score()),-1,-1)) reuse=false;
+        }
+        std::vector<uint8_t> cluster_ranks(count), route_ranks(routes.size());
+        if (reuse && sl_sdr_mark_advertisement(clusters.data(),count,routes.data(),routes.size(),true,
+            cluster_ranks.data(),route_ranks.data())) return;
+        if (!sl_sdr_mark_advertisement(clusters.data(),count,routes.data(),routes.size(),false,
+            cluster_ranks.data(),route_ranks.data())) return;
+        std::vector<unsigned> cluster_order(count),route_order(routes.size());
+        if (!sl_sdr_order_advertisement(clusters.data(),count,routes.data(),routes.size(),false,
+            cluster_ranks.data(),route_ranks.data(),cluster_order.data(),route_order.data())) return;
+        CMsgSteamDatagramP2PRoutes snapshot;
+        for (size_t i : cluster_order) {
+            if (!cluster_ranks[i]) break;
+            auto *cluster=snapshot.add_relay_clusters();
+            cluster->set_pop_id(network->config.pops[i].id);
+            cluster->set_ping_ms(clusters[i].ping);
+            cluster->set_score_penalty(clusters[i].penalty);
+            if (locals[i] && locals[i]->established && !locals[i]->routing_token.empty())
+                cluster->set_session_relay_routing_token(locals[i]->routing_token);
+        }
+        for (size_t i : route_order) {
+            if (!route_ranks[i]) break;
+            auto *route=snapshot.add_routes();
+            route->set_my_pop_id(network->config.pops[routes[i].local].id);
+            route->set_your_pop_id(network->config.pops[routes[i].remote].id);
+            route->set_interior_score(interior_scores[i]);
+            // 8376d0-8376f0 sets both fields, including the full forward score
+            // for readers using the legacy representation.
+            route->set_legacy_score(routes[i].forward);
+        }
+        std::string bytes=snapshot.SerializeAsString();
+        if (bytes != last_snapshot) {
+            last_snapshot=std::move(bytes);
+            ++revisions.local;
+            snapshot.set_revision(revisions.local);
+            local_routes=std::move(snapshot);
+            revisions.retry_us=0;
+            conn().ScheduleSendSignal("SDR routing snapshot");
+        }
+    }
+    void recv_routes(const std::string &bytes) {
+        CMsgSteamDatagramP2PRoutes message;
+        bool parsed = message.ParseFromString(bytes);
+        if (sl_sdr_routes_received(&revisions, parsed, message.revision())) {
+            peer_routes = std::move(message);
+            select_routes(SteamNetworkingSockets_GetLocalTimestamp());
+            rebuild_routes();
+        }
+        EnsureP2PTransportThink(k_nThinkTime_ASAP);
+    }
+    void populate(SDRSendContext &ctx, ProbeRelay &r, EStatsReplyRequest request, bool force) {
+        ctx.relay = &r;
+        bool target = sl_sdr_target_populate(&r.forward);
+        ctx.routing = sl_sdr_routes_populate_stats(&revisions, target, r.forward.acknowledged,
+            &r == primary, m_connection.m_pTransport == this, force,
+            m_bNeedToConfirmEndToEndConnectivity, uint64_t(ctx.m_usecNow));
+        auto &m = ctx.msg;
+        if (ctx.routing.forward) {
+            m.set_forward_target_relay_routing_token(r.forward.sent, r.forward.sent_size);
+            m.set_forward_target_revision(r.forward.revision);
+        }
+        if (ctx.routing.peer_ack)
+            m.set_ack_peer_routes_revision(revisions.peer);
+        if (ctx.routing.routes)
+            m.set_routes(local_routes.SerializeAsString());
+        uint32_t acks[5];
+        size_t count = sl_sdr_ack_pack(&r.acks, uint64_t(ctx.m_usecNow), acks);
+        for (size_t i = 0; i < count; ++i)
+            m.add_ack_relay(acks[i]);
+        int need = r.stats.GetStatsSendNeed(ctx.m_usecNow);
+        if (need)
+            r.stats.PopulateMessage(need, *m.mutable_quality_relay(), ctx.m_usecNow);
+        int e2e_need = ctx.routing.e2e_mode ? m_connection.m_statsEndToEnd.GetStatsSendNeed(ctx.m_usecNow) : 0;
+        if (e2e_need)
+            m_connection.m_statsEndToEnd.PopulateMessage(e2e_need, *m.mutable_quality_e2e(), ctx.m_usecNow);
+        auto probe = [](const auto &stats) {
+            return sl_sdr_stats_probe{int(stats.GetActivityLevel()), stats.m_nReplyTimeoutsSinceLastRecv,
+                stats.m_usecTimeLastRecv, stats.m_usecLastSendPacketExpectingImmediateReply,
+                std::max(stats.m_ping.TimeRecvMostRecentPing(), stats.m_ping.m_usecTimeLastSentPingRequest),
+                stats.m_usecInFlightReplyTimeout != 0};
+        };
+        auto relay_probe = probe(r.stats), e2e_probe = probe(m_connection.m_statsEndToEnd);
+        ctx.m_nFlags = sl_sdr_stats_request_flags(&relay_probe, &e2e_probe, request, ctx.routing.e2e_mode,
+            ctx.routing.flags, m.ack_relay_size() || need || e2e_need, ctx.m_usecNow);
+        ctx.SlamFlagsAndCalcSize();
+        ctx.CalcMaxEncryptedPayloadSize(9, &m_connection);
+    }
+    void track(SDRSendContext &ctx) {
+        ProbeRelay &r = *ctx.relay;
+        const auto &m = ctx.msg;
+        uint32_t flags = m.flags() | StatsMsgImpliedFlags(m);
+        bool delayed = !(flags & 4);
+        if (m.ack_relay_size())
+            sl_sdr_ack_commit(&r.acks);
+        if (m.has_quality_relay())
+            r.stats.TrackSentStats(m.quality_relay(), ctx.m_usecNow, delayed);
+        else if (flags & 1)
+            r.stats.TrackSentMessageExpectingSeqNumAck(ctx.m_usecNow, delayed);
+        if ((flags & 1) || m.has_quality_relay()) {
+            auto timeout = r.stats.m_ping.CalcConservativeTimeout();
+            if (delayed) timeout += k_usecSteamDatagramRouterPendClientPing;
+            r.track_ping_request(ctx.m_usecNow, timeout);
+            /* RTT samples older than the accepted 3s window cannot contribute.
+             * The count cap is a local memory bound, not a wire constant. */
+            while (!r.sent_acks.empty() && (r.sent_acks.size() >= 256 ||
+                r.sent_acks.front().second + 3000000 < ctx.m_usecNow))
+                r.sent_acks.pop_front();
+            r.sent_acks.emplace_back(uint16_t(r.stats.m_nNextSendSequenceNumber - 1), ctx.m_usecNow);
+        }
+        if (m.has_quality_e2e())
+            m_connection.m_statsEndToEnd.TrackSentStats(m.quality_e2e(), ctx.m_usecNow, delayed);
+        else if (flags & 2)
+            m_connection.m_statsEndToEnd.TrackSentMessageExpectingSeqNumAck(ctx.m_usecNow, delayed);
+        if ((flags & 2) || m.has_quality_e2e())
+            P2PTransportTrackSentEndToEndPingRequest(ctx.m_usecNow, delayed);
+#if NSL_SNS_PROBES
+        if (m.has_routes()) ++stats_routes_out;
+#endif
+        sl_sdr_routes_track_stats(&revisions, ctx.routing, uint64_t(ctx.m_usecNow));
+    }
+    bool SendDataPacket(SteamNetworkingMicroseconds now) override {
+        if (!BCanSendEndToEndData())
+            return false;
+        SDRSendContext ctx(now, "data");
+        populate(ctx, *primary, k_EStatsReplyRequest_NothingToSend, false);
+        return m_connection.SNP_SendPacket(this, ctx);
+    }
+    int SendEncryptedDataChunk(const void *chunk, int size, SendPacketContext_t &base) override {
+        auto &ctx = static_cast<SDRSendContext &>(base);
+        if (!ctx.relay || size < 0 || size > 1289)
+            return 0;
+        ProbeRelay &r = *ctx.relay;
+        auto previous = m_connection.m_statsEndToEnd.m_usecTimeLastSentSeq;
+        sl_sdr_data data{};
+        data.connection_id = ConnectionIDLocal();
+        data.e2e_sequence = m_connection.m_statsEndToEnd.ConsumeSendPacketNumberAndGetWireFmt(ctx.m_usecNow);
+        data.relay_sequence = r.stats.ConsumeSendPacketNumberAndGetWireFmt(ctx.m_usecNow);
+        data.sender_spacing_us = previous && ctx.m_usecNow - previous <= 250000
+            ? int(ctx.m_usecNow - previous) : -1;
+        uint8_t stats[1300], packet[1300];
+        size_t remaining = sizeof(packet) - 9 - size - (data.sender_spacing_us >= 0 ? 2 : 0);
+        while (ctx.m_cbTotalSize > 0 && size_t(ctx.m_cbTotalSize) >= remaining) {
+            auto &m = ctx.msg;
+            auto trim = [](CMsgSteamDatagramConnectionQuality *quality) {
+                if (quality->has_instantaneous() && quality->has_lifetime()) {
+                    quality->clear_instantaneous();
+                    return false;
+                }
+                return true;
+            };
+            if (m.has_quality_relay()) {
+                if (trim(m.mutable_quality_relay())) m.clear_quality_relay();
+            } else if (m.has_quality_e2e()) {
+                if (trim(m.mutable_quality_e2e())) m.clear_quality_e2e();
+            } else {
+                ctx.m_cbTotalSize = 0;
+                break;
+            }
+            ctx.SlamFlagsAndCalcSize();
+        }
+        if (ctx.m_cbTotalSize > 0) {
+            if (!ctx.msg.SerializeToArray(stats, sizeof(stats)))
+                return 0;
+            data.stats = stats;
+            data.stats_size = ctx.m_cbMsgSize;
+            track(ctx); /* Inline commit precedes the UDP send, including failure. */
+        }
+        data.chunk = static_cast<const uint8_t *>(chunk);
+        data.chunk_size = size;
+        size_t sent = sl_sdr_write_data(packet, sizeof(packet), &data);
+        if (!sent || !send_packet(network, packet, int(sent), r.address))
+            return 0;
+        count(8);
+        r.stats.TrackSentPacket(int(sent));
+        return int(sent);
+    }
+    bool send_stats(ProbeRelay &r, EStatsReplyRequest request, SteamNetworkingMicroseconds now, bool force) {
+        SDRSendContext ctx(now, "relay stats");
+        populate(ctx, r, request, force);
+        if (ConnectionState() == k_ESteamNetworkingConnectionState_Connected &&
+            ((ctx.msg.flags() & 2) || ctx.msg.has_quality_e2e() || force ||
+             (&r == primary && m_connection.m_pTransport == this && m_connection.SNP_WantsToSendPacket()))) {
+            if (m_connection.SNP_SendPacket(this, ctx))
+                return true;
+        }
+        ctx.msg.set_connection_id(ConnectionIDLocal());
+        ctx.msg.set_seq_num_c2r(r.stats.ConsumeSendPacketNumberAndGetWireFmt(now));
+        bool e2e = ctx.routing.e2e_mode && ((ctx.msg.flags() & 2) || ctx.msg.has_quality_e2e() || force);
+        if (e2e)
+            ctx.msg.set_seq_num_e2e(m_connection.m_statsEndToEnd.ConsumeSendPacketNumberAndGetWireFmt(now));
+        uint8_t packet[1300];
+        size_t size = ctx.msg.ByteSizeLong();
+        if (size >= sizeof(packet))
+            return false;
+        packet[0] = 26;
+        ctx.msg.SerializeToArray(packet + 1, int(size));
+        if (send_packet(network, packet, int(size + 1), r.address)) {
+            count(6);
+            r.stats.TrackSentPacket(int(size + 1));
+            track(ctx);
+            if (e2e)
+                m_connection.SNP_SentNonDataPacket(this, int(size + 1), now);
+            return true;
+        }
+        return false;
+    }
+    void SendEndToEndStatsMsg(EStatsReplyRequest request, SteamNetworkingMicroseconds now, const char *) override {
+        if (primary)
+            send_stats(*primary, request, now, true);
+    }
+    void valid_e2e(ProbeRelay &r, SteamNetworkingMicroseconds now, uint32_t flags) {
+#if NSL_SNS_PROBES
+        // Inline data and its stats can visit this helper at the same receive
+        // time. The fixture needs fresh observations, not callback counts.
+        if (network->drop_enabled && now != r.last_valid_e2e)
+            ++r.post_fault_e2e_count;
+        r.last_valid_e2e = now;
+#else
+        (void)r;
+#endif
+        if (!(flags & 16))
+            conn().SetPeerSelectedTransport(this);
+        P2PTransportTrackRecvEndToEndPacket(now);
+        if (BCanSendEndToEndData()) {
+            if (m_pingEndToEnd.m_nSmoothedPing < 0)
+                m_pingEndToEnd.ReceivedPing(route_ping, now);
+            if (m_bNeedToConfirmEndToEndConnectivity)
+                P2PTransportEndToEndConnectivityConfirmed(now);
+        }
+    }
+    void recv_stats(ProbeRelay &r, const CMsgSteamDatagramConnectionStatsP2PRouterToClient &m,
+                    uint16_t relay_sequence, SteamNetworkingMicroseconds now) {
+        if (receive_migration(network,r,m.migrate_request_ip(),m.migrate_request_port()))
+            EnsureP2PTransportThink(k_nThinkTime_ASAP);
+        if (m.has_seconds_until_shutdown()) warn_downtime(network, r, m.seconds_until_shutdown(), now);
+        if (m.has_scoring_penalty_relay_cluster())
+            r.penalty = sl_sdr_cluster_penalty(int32_t(m.scoring_penalty_relay_cluster()));
+        if (m.has_ack_forward_target_revision())
+            sl_sdr_target_ack(&r.forward, m.ack_forward_target_revision());
+        if (m.has_routes()) {
+#if NSL_SNS_PROBES
+            ++stats_routes_in;
+#endif
+            recv_routes(m.routes());
+        }
+        if (m.has_ack_peer_routes_revision())
+            sl_sdr_routes_ack(&revisions, m.ack_peer_routes_revision());
+        if (m.has_quality_relay())
+            r.stats.ProcessMessage(m.quality_relay(), now);
+        if (m.has_quality_e2e())
+            m_connection.m_statsEndToEnd.ProcessMessage(m.quality_e2e(), now);
+        uint32_t flags = m.flags() | (m.has_quality_relay() ? 1u : 0u) | (m.has_quality_e2e() ? 2u : 0u);
+        for (uint32_t packed : m.ack_relay()) {
+            uint16_t sequence = uint16_t(packed >> 16);
+            if (uint16_t(r.stats.m_pktNumInFlight) == sequence)
+                r.stats.InFlightPktAck(now);
+            for (auto it = r.sent_acks.begin(); it != r.sent_acks.end(); ++it) {
+                int16_t gap = int16_t(it->first - sequence);
+                if (gap < -16384 || gap > 16384 || gap > 0)
+                    break;
+                if (!gap) {
+                    auto elapsed = now - it->second - (packed & 65535) * 64;
+                    r.sent_acks.erase(it);
+                    int ms = int(elapsed / 1000);
+                    if (ms >= -1 && ms <= 3000) {
+                        ms = std::max(0, ms);
+                        // 84f1f0 -> RelayServer::RecvPingReply (812a28):
+                        // valid relay ACK RTTs also refresh the POP front
+                        // tracker and retire the independent root request.
+                        r.receive_ping(ms, now);
+                        r.stats.ReceivedPing(ms, now);
+                    }
+                    break;
+                }
+            }
+        }
+        if (flags & 1) {
+            sl_sdr_ack_queue(&r.acks, relay_sequence, uint64_t(now), flags & 4);
+            uint64_t deadline = sl_sdr_ack_deadline(&r.acks);
+            EnsureP2PTransportThink(deadline ? SteamNetworkingMicroseconds(deadline) : k_nThinkTime_ASAP);
+        }
+        if (m.has_seq_num_e2e()) {
+            valid_e2e(r, now, flags);
+            if (flags & 2) {
+                m_connection.QueueEndToEndAck(flags & 4, now);
+                if ((flags & 4) || m_connection.m_pTransport != this)
+                    send_stats(r, k_EStatsReplyRequest_NoReply, now, true);
+            }
+        }
+    }
+    void receive(const RecvPktInfo_t &packet, ProbeRelay &r) {
+        const uint8_t *data = static_cast<const uint8_t *>(packet.m_pPkt);
+        auto now = packet.m_usecNow;
+        if (data[0] == 25 || data[0] == 7 || data[0] == 2) {
+            if (data[0]==7) update_migration(network,now);
+            select_routes(now);
+            rebuild_routes();
+            EnsureP2PTransportThink(k_nThinkTime_ASAP);
+            return;
+        }
+        if (data[0] == 28) {
+            count(15);
+            CMsgSteamDatagramP2PBadRouteRouterToClient m;
+            if (!m.ParseFromArray(data + 1, packet.m_cbPkt - 1) || m.connection_id() != ConnectionIDLocal())
+                return;
+            for (auto &peer : *peer_routes.mutable_relay_clusters())
+                if (peer.session_relay_routing_token() == m.failed_relay_routing_token()) {
+                    peer.clear_session_relay_routing_token();
+                    select_routes(now);
+                    break;
+                }
+            return;
+        }
+        if (!r.established)
+            return;
+        if (data[0] == 20) {
+            CMsgSteamDatagramConnectionClosed m;
+            if (!m.ParseFromArray(data+1, packet.m_cbPkt-1) || m.to_connection_id() != ConnectionIDLocal() ||
+                (m.from_connection_id() && m.from_connection_id() != ConnectionIDRemote())) return;
+#if NSL_SNS_PROBES
+            ++relay_closed; close_reason=m.reason_code(); close_relay_mode=m.relay_mode(); close_pop=r.pop_id;
+#endif
+            r.closed_by_relay = true;
+            r.received(now);
+            if (m.has_quality_relay()) r.stats.ProcessMessage(m.quality_relay(), now);
+            if (m.has_quality_e2e()) m_connection.m_statsEndToEnd.ProcessMessage(m.quality_e2e(), now);
+            if (m.relay_mode() == CMsgSteamDatagramConnectionClosed::EndToEnd)
+                m_connection.m_statsEndToEnd.TrackRecvPacket(packet.m_cbPkt, now);
+            m_connection.ConnectionState_ClosedByPeer(m.reason_code(), m.debug().c_str());
+            CMsgSteamDatagramNoConnection ack;
+            ack.set_from_connection_id(m.to_connection_id());
+            if (m.from_connection_id()) ack.set_to_connection_id(m.from_connection_id());
+            if (m.relay_mode() == CMsgSteamDatagramConnectionClosed::EndToEnd) ack.set_end_to_end(true);
+            ack.set_not_primary_session(&r != primary);
+            ack.set_not_primary_transport(m_connection.m_pTransport != this);
+            ack.set_relay_override_active(false);
+            r.stats.PopulateLifetimeMessage(*ack.mutable_quality_relay()->mutable_lifetime());
+            m_connection.m_statsEndToEnd.PopulateLifetimeMessage(*ack.mutable_quality_e2e()->mutable_lifetime());
+            uint8_t reply[1300]; size_t size = ack.ByteSizeLong();
+            if (size < sizeof(reply)) {
+                reply[0] = 21; ack.SerializeToArray(reply+1, int(size));
+                send_packet(network, reply, int(size+1), r.address);
+            }
+        } else if (data[0] == 21) {
+            CMsgSteamDatagramNoConnection m;
+            if (!m.ParseFromArray(data+1, packet.m_cbPkt-1) || m.to_connection_id() != ConnectionIDLocal() ||
+                (m.from_connection_id() && m.from_connection_id() != ConnectionIDRemote())) return;
+#if NSL_SNS_PROBES
+            ++relay_no_connection; close_reason=5010; close_relay_mode=m.end_to_end(); close_pop=r.pop_id;
+#endif
+            r.closed_by_relay = true;
+            r.received(now);
+            if (m.has_quality_relay()) r.stats.ProcessMessage(m.quality_relay(), now);
+            if (m.has_quality_e2e()) m_connection.m_statsEndToEnd.ProcessMessage(m.quality_e2e(), now);
+            m_connection.ConnectionState_ClosedByPeer(5010, "Peer has no connection");
+        } else if (data[0] == 26) {
+            count(7);
+            CMsgSteamDatagramConnectionStatsP2PRouterToClient m;
+            if (!m.ParseFromArray(data + 1, packet.m_cbPkt - 1) ||
+                m.connection_id() != ConnectionIDLocal() || !m.has_seq_num_r2c())
+                return;
+            int64 relay = r.stats.ExpandWirePacketNumberAndCheck(uint16_t(m.seq_num_r2c()), 0);
+            int64 e2e = m.has_seq_num_e2e() ? m_connection.m_statsEndToEnd.ExpandWirePacketNumberAndCheckMaybeInitialize(
+                uint16_t(m.seq_num_e2e()), 0) : 1;
+            if (relay <= 0 || e2e <= 0)
+                return;
+            if (m.has_seq_num_e2e())
+                m_connection.RecvNonDataSequencedPacket(e2e, now);
+            r.stats.TrackRecvPacket(packet.m_cbPkt, now);
+            r.stats.TrackProcessSequencedPacket(relay, now, 0, 0);
+            r.received(now);
+            recv_stats(r, m, uint16_t(m.seq_num_r2c()), now);
+        } else if ((data[0] & 0xe0) == 0x40) {
+            count(9);
+            // 819854-819874 counts primary data before parsing inline stats
+            // or checking crypto/SNP; standalone stats are not in this count.
+            sl_sdr_data d;
+            if (!sl_sdr_parse_data(data, packet.m_cbPkt, &d) || d.connection_id != ConnectionIDLocal())
+                return;
+            if (&r == primary) ++primary_packets_received;
+            CMsgSteamDatagramConnectionStatsP2PRouterToClient m;
+            if (d.stats && !m.ParseFromArray(d.stats, int(d.stats_size)))
+                return;
+            int64 relay = r.stats.ExpandWirePacketNumberAndCheck(d.relay_sequence, 0);
+            if (relay <= 0)
+                return;
+            RecvPacketContext_t ctx;
+            ctx.m_usecNow = now;
+            ctx.m_pTransport = this;
+            if (!m_connection.DecryptDataChunk(d.e2e_sequence, packet.m_cbPkt, d.chunk, int(d.chunk_size), ctx)) {
+                count(10);
+                return;
+            }
+            r.stats.TrackRecvPacket(packet.m_cbPkt, now);
+            r.stats.TrackProcessSequencedPacket(relay, now, d.relay_spacing_us, 0);
+            r.received(now);
+            valid_e2e(r, now, m.flags());
+            if (!m_connection.ProcessPlainTextDataChunk(d.sender_spacing_us, ctx))
+                return;
+            if (d.stats) {
+                m.set_seq_num_e2e(d.e2e_sequence);
+                recv_stats(r, m, d.relay_sequence, now);
+            }
+        }
+    }
+    static void received(const RecvPktInfo_t &packet, ProbeRelay &relay, void *ctx) {
+        auto *self = static_cast<SDRTransport *>(ctx);
+        ConnectionScopeLock lock;
+        auto *connection = GetConnectionByHandle(self->network->connection, lock);
+        if (connection == &self->m_connection)
+            self->receive(packet, relay);
+    }
+    void P2PTransportUpdateRouteMetrics(SteamNetworkingMicroseconds now) override {
+        if (!BCanSendEndToEndData() || m_pingEndToEnd.m_nSmoothedPing < 0) {
+            m_routeMetrics.SetInvalid();
+            return;
+        }
+        int low, high;
+        m_routeMetrics.m_nBucketsValid = m_pingEndToEnd.GetPingRangeFromRecentBuckets(low, high, now);
+        m_routeMetrics.m_nScoreCurrent = m_pingEndToEnd.m_nSmoothedPing;
+        m_routeMetrics.m_nScoreMin = low;
+        m_routeMetrics.m_nScoreMax = high;
+        m_routeMetrics.m_nTotalPenalty = 10;
+    }
+    void deliver_routes(SteamNetworkingMicroseconds now) {
+        // Fixed ELF 837b28-837f2c: preparing the primary target is observable
+        // even when this round has neither routes nor an ACK to send.
+        bool usable = primary && sl_sdr_target_populate(&primary->forward);
+        auto &stats=m_connection.m_statsEndToEnd;
+        sl_sdr_stats_probe e{};
+        e.pending=stats.m_usecInFlightReplyTimeout!=0;
+        e.last_immediate_request=stats.m_usecLastSendPacketExpectingImmediateReply;
+        bool probe=sl_sdr_outer_probe(usable,m_bNeedToConfirmEndToEndConnectivity,&e,now);
+        bool due=sl_sdr_routes_due(&revisions,uint64_t(now));
+        if (!due && !revisions.ack_pending) {
+            if (probe) send_stats(*primary,k_EStatsReplyRequest_Immediate,now,true);
+            return;
+        }
+        revisions.ack_pending=true;
+        bool sent=usable && ConnectionWireState()==k_ESteamNetworkingConnectionState_Connected &&
+            send_stats(*primary,probe ? k_EStatsReplyRequest_Immediate : due ?
+                k_EStatsReplyRequest_DelayedOK : k_EStatsReplyRequest_NoReply,now,true);
+        sl_sdr_stats_probe r{};
+        if (usable) { r.failures=primary->ping_failures; r.last_received=primary->last_received; }
+        e.failures=stats.m_nReplyTimeoutsSinceLastRecv; e.last_received=stats.m_usecTimeLastRecv;
+        if (sl_sdr_outer_relay_sufficient(sent,m_bNeedToConfirmEndToEndConnectivity,
+                revisions.ack_pending,sl_sdr_routes_due(&revisions,uint64_t(now)),&r,&e,now)) return;
+        if (due) revisions.retry_us=0;
+        revisions.ack_pending=true;
+        CMsgSteamNetworkingP2PRendezvous message;
+        conn().SetRendezvousCommonFieldsAndSendSignal(message,now,"SDR routes retry");
+        if (probe && !sent) send_stats(*primary,k_EStatsReplyRequest_Immediate,now,true);
+    }
+    void P2PTransportThink(SteamNetworkingMicroseconds now) override {
+        if (!network || ConnectionWireState() < k_ESteamNetworkingConnectionState_Connecting ||
+            ConnectionWireState() > k_ESteamNetworkingConnectionState_Connected)
+            return;
+        update_network(network, &m_connection, now);
+        update_migration(network,now);
+        select_routes(now);
+        if (network->good_enough) {
+            pursue_sessions(network,&m_connection,network->pursue,2,now);
+            pursue_sessions(network,&m_connection,network->pursue_token,1,now);
+        }
+        rebuild_routes();
+        deliver_routes(now);
+        for (auto &r : network->relays) {
+            r.stats.Think(now);
+            if (!r.established) continue;
+            SteamNetworkingMicroseconds next = now + 2000000;
+            EStatsReplyRequest request;
+            bool send = r.stats.GetSendReasonOrUpdateNextThinkTime(now, request, next) != nullptr;
+            if (&r == backup && !r.stats.m_usecInFlightReplyTimeout) {
+                SteamNetworkingMicroseconds keepalive = r.last_received + 45000000;
+                if (keepalive <= now) { send = true; request = k_EStatsReplyRequest_DelayedOK; }
+                else next = std::min(next, keepalive);
+            }
+            uint64_t ack_deadline = sl_sdr_ack_deadline(&r.acks);
+            if (ack_deadline <= uint64_t(now)) {
+                if (!send) request = k_EStatsReplyRequest_NoReply;
+                send = true;
+            } else if (ack_deadline < uint64_t(next)) next = SteamNetworkingMicroseconds(ack_deadline);
+            if (send) send_stats(r, request, now, false);
+            EnsureP2PTransportThink(next);
+        }
+        CConnectionTransportP2PBase::P2PTransportThink(now);
+        EnsureP2PTransportThink(now + 100000);
+    }
+};
+}
+bool NSL_SDR_Configure(const char *json, size_t size) {
+    network_config_ready = sl_sdr_config_parse(json, size, &network_config);
+    return network_config_ready;
+}
+bool NSL_SDR_Init(CSteamNetworkConnectionP2P &connection, char *error) {
+    if (!network_config_ready) {
+        strcpy(error, "SDR network configuration unavailable");
+        return false;
+    }
+    auto *t = new SDRTransport(connection);
+    t->network = make_network(connection.m_hConnectionSelf, network_config, error);
+    if (!t->network) {
+        delete t;
+        return false;
+    }
+    t->network->owner = t;
+    t->network->owner_receive = SDRTransport::received;
+    t->network->owner_session_removed = SDRTransport::session_removed;
+    connection.m_vecAvailableTransports.push_back(t);
+    transports[&connection] = t;
+    t->EnsureP2PTransportThink(k_nThinkTime_ASAP);
+    return true;
+}
+void NSL_SDR_Populate(CSteamNetworkConnectionP2P &connection, CMsgSteamNetworkingP2PRendezvous &m, long long now) {
+    auto it = transports.find(&connection);
+    if (it == transports.end())
+        return;
+    auto &t = *it->second;
+    t.rebuild_routes();
+    auto fields = sl_sdr_routes_rendezvous(&t.revisions, m.has_connection_closed(), uint64_t(now));
+    m.set_ack_peer_routes_revision(t.revisions.peer);
+    if (fields.routes) {
+        m.set_sdr_routes(t.local_routes.SerializeAsString());
+#if NSL_SNS_PROBES
+        ++t.cm_routes_out;
+#endif
+    }
+}
+void NSL_SDR_Process(CSteamNetworkConnectionP2P &connection, const CMsgSteamNetworkingP2PRendezvous &m, long long) {
+    auto it = transports.find(&connection);
+    if (it == transports.end())
+        return;
+    auto &t = *it->second;
+#if NSL_SNS_PROBES
+    if (m.has_sdr_routes()) ++t.cm_routes_in;
+    if (m.has_connection_closed()) { ++t.cm_closed; t.close_reason=m.connection_closed().reason_code(); }
+#endif
+    if (m.has_sdr_routes())
+        t.recv_routes(m.sdr_routes());
+    if (m.has_ack_peer_routes_revision())
+        sl_sdr_routes_ack(&t.revisions, m.ack_peer_routes_revision());
+}
+long long NSL_SDR_Wait(CSteamNetworkConnectionP2P &connection, long long now) {
+    auto it = transports.find(&connection);
+    if (it == transports.end())
+        return now;
+    auto &t = *it->second;
+    auto until = connection.GetTimeEnteredConnectionState() + 7000001;
+    if (!t.network->good_enough && now < until)
+        return std::min<long long>(now + 20000, until);
+    if (connection.GetState() == k_ESteamNetworkingConnectionState_FindingRoute &&
+        t.network->counters.established == 0 && t.peer_routes.relay_clusters_size()) {
+        until = connection.GetTimeEnteredConnectionState() + 100000;
+        if (now < until)
+            return std::min<long long>(now + 20000, until);
+    }
+    return now;
+}
+#if NSL_SNS_PROBES
+extern "C" bool sl_gns_sdr_test_terminal(uint32_t handle, int which) {
+    if (which < 1 || which > 5) return false;
+    SteamNetworkingGlobalLock global("nsl SDR terminal fixture");
+    sl_sdr_probe *network = nullptr;
+    netadr_t source;
+    uint32_t local = 0, remote = 0;
+    {
+        ConnectionScopeLock lock;
+        auto *base = GetConnectionByHandle(handle, lock);
+        auto *connection = base ? base->AsSteamNetworkConnectionP2P() : nullptr;
+        auto it = transports.find(connection);
+        if (it == transports.end() || !it->second->primary) return false;
+        network = it->second->network; source = it->second->primary->address;
+        local = connection->m_unConnectionIDLocal; remote = connection->m_unConnectionIDRemote;
+    }
+    uint8_t packet[1300]; size_t size;
+    if (which == 2) {
+        CMsgSteamDatagramNoConnection m;
+        m.set_to_connection_id(local); m.set_from_connection_id(remote); m.set_end_to_end(true);
+        size = m.ByteSizeLong(); packet[0] = 21; m.SerializeToArray(packet+1, int(size));
+    } else {
+        CMsgSteamDatagramConnectionClosed m;
+        m.set_to_connection_id(which == 3 ? local^1 : local);
+        m.set_from_connection_id(which == 4 ? remote^1 : remote);
+        m.set_relay_mode(CMsgSteamDatagramConnectionClosed::EndToEnd);
+        m.set_reason_code(1042); m.set_debug("synthetic terminal fixture");
+        size = m.ByteSizeLong(); packet[0] = 20; m.SerializeToArray(packet+1, int(size));
+        if (which == 5) source.SetIPAndPort(0x7f000001, 1);
+    }
+    RecvPktInfo_t received{};
+    received.m_pPkt = packet; received.m_cbPkt = int(size+1); received.m_adrFrom = source;
+    received.m_usecNow = SteamNetworkingSockets_GetLocalTimestamp(); received.m_pSock = network->socket;
+    receive_packet(received, network);
+    ConnectionScopeLock lock;
+    auto *connection = GetConnectionByHandle(handle, lock);
+    return connection && (which >= 3 ? connection->GetState() == k_ESteamNetworkingConnectionState_Connected
+        : connection->GetState() == k_ESteamNetworkingConnectionState_ClosedByPeer);
+}
+extern "C" bool sl_gns_sdr_test_loss(uint32_t handle, int mode, unsigned out[5]) {
+    if (mode < -1 || mode > 1 || !out) return false;
+    SteamNetworkingGlobalLock global("nsl SDR loss fixture");
+    ConnectionScopeLock lock;
+    auto *base = GetConnectionByHandle(handle, lock);
+    auto *connection = base ? base->AsSteamNetworkConnectionP2P() : nullptr;
+    auto it = transports.find(connection);
+    if (it == transports.end()) return false;
+    auto &t = *it->second;
+    auto &n = *t.network;
+    if (mode == 1) {
+        if (!t.primary || !t.backup || !t.BCanSendEndToEndData() || n.drop_enabled) return false;
+        n.drop_address = t.primary->address;
+        n.drop_pop = t.primary->pop_id;
+        n.drop_started = SteamNetworkingSockets_GetLocalTimestamp();
+        for (auto &r : n.relays) r.post_fault_e2e_count = 0;
+        n.drop_enabled = true;
+    } else if (mode == 0) n.drop_enabled = false;
+    out[0] = t.route_generation; out[1] = n.dropped_tx; out[2] = n.dropped_rx;
+    bool usable = t.BCanSendEndToEndData() && (!n.drop_enabled ||
+        (t.primary->address != n.drop_address && t.primary->last_valid_e2e > n.drop_started));
+    out[3] = usable ? (n.drop_enabled ? t.primary->post_fault_e2e_count : 1u) : 0u;
+    out[4] = t.primary && t.primary->pop_id != n.drop_pop;
+    return true;
+}
+extern "C" bool sl_gns_sdr_test_migration(uint32_t handle, bool start, unsigned out[6]) {
+    if (!out) return false;
+    SteamNetworkingGlobalLock global("nsl SDR migration fixture");
+    ConnectionScopeLock lock;
+    auto *base=GetConnectionByHandle(handle,lock);
+    auto *connection=base ? base->AsSteamNetworkConnectionP2P() : nullptr;
+    auto it=transports.find(connection);
+    if (it==transports.end()) return false;
+    auto &t=*it->second;
+    auto &n=*t.network;
+    auto now=SteamNetworkingSockets_GetLocalTimestamp();
+    if (start) {
+        if (!t.primary || n.migration_started) return false;
+        const auto *pop=find_pop(n.config,t.primary->pop_id);
+        bool requested=false;
+        for (size_t i=0;pop && i<pop->endpoint_count && !requested;++i) {
+            const auto &e=n.config.endpoints[pop->first_endpoint+i];
+            uint16_t port=e.port_min;
+            if (e.ipv4==t.primary->address.GetIPv4() && port==t.primary->address.GetPort()) {
+                if (port==e.port_max) continue;
+                ++port;
+            }
+            netadr_t address; address.SetIPAndPort(e.ipv4,port);
+            if (!address_allowed(&n,t.primary->cluster,address,now)) continue;
+            n.migration_origin=t.primary->address; n.migration_destination=address; n.migration_pop=t.primary->pop_id;
+            requested=receive_migration(&n,*t.primary,e.ipv4,port);
+        }
+        if (!requested) return false;
+        n.migration_started=now;
+        t.EnsureP2PTransportThink(k_nThinkTime_ASAP);
+    }
+    bool target=t.primary && t.primary->pop_id==n.migration_pop && t.primary->address==n.migration_destination;
+    if (target && t.primary->last_valid_e2e>n.migration_started && !n.drop_enabled) {
+        // Make-before-break fixture: retire the original endpoint only after
+        // the requested replacement has actually delivered authenticated E2E.
+        n.drop_address=n.migration_origin; n.drop_pop=n.migration_pop;
+        n.drop_started=now; n.drop_enabled=true;
+        for (auto &r:n.relays) r.post_fault_e2e_count=0;
+    }
+    out[0]=t.route_generation;
+    out[1]=target;
+    out[2]=!t.primary || !t.primary->last_valid_e2e ? UINT32_MAX :
+        unsigned(std::min<int64_t>(UINT32_MAX-1,(now-t.primary->last_valid_e2e)/1000));
+    out[3]=target && n.drop_enabled && t.primary->last_valid_e2e>n.drop_started;
+    out[4]=unsigned(n.migration_state);
+    out[5]=n.drop_enabled;
+    return true;
+}
+extern "C" bool sl_gns_sdr_loss_snapshot(uint32_t handle, sl_sdr_loss_snapshot *out) {
+    if (!out) return false;
+    SteamNetworkingGlobalLock global("nsl SDR loss snapshot");
+    ConnectionScopeLock lock;
+    auto *base = GetConnectionByHandle(handle, lock);
+    auto *connection = base ? base->AsSteamNetworkConnectionP2P() : nullptr;
+    auto it = transports.find(connection);
+    if (it == transports.end()) return false;
+    auto &t = *it->second;
+    auto &n = *t.network;
+    auto now = SteamNetworkingSockets_GetLocalTimestamp();
+    auto age = [now](SteamNetworkingMicroseconds at) -> unsigned {
+        return !at ? UINT32_MAX : unsigned(std::min<int64_t>(UINT32_MAX-1, std::max<int64_t>(0,now-at)/1000));
+    };
+    *out = {};
+    out->generation=t.route_generation; out->elapsed=age(n.drop_started);
+    out->dropped_tx=n.dropped_tx; out->dropped_rx=n.dropped_rx;
+    if (t.primary) {
+        auto &r=*t.primary;
+        out->primary_pop=r.pop_id; out->root_failures=r.ping_failures;
+        out->session_failures=r.stats.m_nReplyTimeoutsSinceLastRecv;
+        out->root_received_age=age(r.last_received); out->session_received_age=age(r.stats.m_usecTimeLastRecv);
+        out->root_request_age=age(r.ping_sent); out->root_pending=r.ping_deadline!=0;
+        out->front_samples=r.front.m_nValidPings; out->front_oldest_age=age(r.front.m_arPing[2].m_usecTimeRecv);
+        out->e2e_count=r.post_fault_e2e_count; out->e2e_received_age=age(r.last_valid_e2e);
+        out->forward_ack=r.forward.acknowledged;
+        out->target_pop=r.forward.desired_pop; out->target_revision=r.forward.revision;
+    }
+    if (t.backup) {
+        auto &r=*t.backup;
+        out->backup_pop=r.pop_id; out->backup_root_failures=r.ping_failures;
+        out->backup_session_failures=r.stats.m_nReplyTimeoutsSinceLastRecv;
+        out->backup_received_age=age(r.last_received);
+    }
+    for (const auto &r:n.relays) if (r.address==n.drop_address) {
+        out->previous_root_failures=r.ping_failures; out->previous_received_age=age(r.last_received);
+        break;
+    }
+    out->controlling=t.conn().IsControllingAgent(); out->local_acked=t.revisions.local_acked;
+    if (t.local_routes.routes_size()) {
+        out->local_first_local=t.local_routes.routes(0).my_pop_id();
+        out->local_first_remote=t.local_routes.routes(0).your_pop_id();
+    }
+    if (t.primary) {
+        for (const auto &c:t.local_routes.relay_clusters())
+            if (c.pop_id()==t.primary->pop_id && !c.session_relay_routing_token().empty()) out->local_primary_token=1;
+        for (const auto &r:t.local_routes.routes())
+            if (r.my_pop_id()==t.primary->pop_id) ++out->local_primary_route;
+        for (const auto &r:t.peer_routes.routes())
+            if (r.your_pop_id()==t.primary->pop_id) ++out->peer_primary_route;
+    }
+    out->cm_routes_out=t.cm_routes_out; out->cm_routes_in=t.cm_routes_in;
+    out->stats_routes_out=t.stats_routes_out; out->stats_routes_in=t.stats_routes_in;
+    out->relay_closed=t.relay_closed; out->relay_no_connection=t.relay_no_connection;
+    out->cm_closed=t.cm_closed; out->close_reason=t.close_reason;
+    out->close_relay_mode=t.close_relay_mode; out->close_pop=t.close_pop;
+    out->local_revision=t.revisions.local; out->peer_revision=t.revisions.peer;
+    out->pending_revision_ack=t.revisions.ack_pending;
+    if (t.peer_routes.routes_size()) {
+        out->peer_first_local=t.peer_routes.routes(0).my_pop_id();
+        out->peer_first_remote=t.peer_routes.routes(0).your_pop_id();
+    }
+    const auto &stats=connection->m_statsEndToEnd;
+    out->e2e_request_age=age(stats.m_ping.m_usecTimeLastSentPingRequest);
+    out->e2e_pending=stats.m_usecInFlightReplyTimeout!=0;
+    out->e2e_failures=stats.m_nReplyTimeoutsSinceLastRecv;
+    return true;
+}
+extern "C" bool sl_gns_sdr_transport_stats(uint32_t handle, unsigned out[16]) {
+    SteamNetworkingGlobalLock global("nsl SDR diagnostics");
+    ConnectionScopeLock lock;
+    auto *base = GetConnectionByHandle(handle, lock);
+    auto *connection = base ? base->AsSteamNetworkConnectionP2P() : nullptr;
+    auto it = transports.find(connection);
+    if (it == transports.end())
+        return false;
+    auto &t = *it->second;
+    memcpy(out, t.debug, sizeof(t.debug));
+    out[0] = t.network->counters.valid_ping_replies;
+    out[1] = t.network->counters.requests;
+    out[2] = t.network->counters.established;
+    out[3] = unsigned(t.peer_routes.relay_clusters_size());
+    out[4] = t.revisions.local;
+    out[5] = t.revisions.peer;
+    out[11] = t.primary != nullptr;
+    out[12] = t.primary && t.primary->forward.acknowledged;
+    out[13] = t.primary ? unsigned(t.primary->stats.m_nMaxRecvPktNum) : 0;
+    out[14] = t.revisions.ack_pending;
+    return true;
+}
+#endif
+}
+#endif

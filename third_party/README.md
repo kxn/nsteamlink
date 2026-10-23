@@ -9,8 +9,31 @@ Git submodule与vendored源码放在这里；Opus的未修改归档由CMake核�
 
 | 库 | 版本 | 说明 |
 |---|---|---|
-| IHSlib | `kxn/ihslib` `master` 分支，基线 `8c5a17c`（fork 自 `beudbeud/ihslib` plume） | 协议层依赖；改动进入 fork 主分支（D-037/D-055） |
+| IHSlib | `kxn/ihslib`，版本由 Git submodule 固定（fork 自 `beudbeud/ihslib` plume） | 协议层依赖；公网承载适配在 `codex/anywhere-mainline-integration` 与主线合并，见 D-037/D-A062 |
 | Opus | 1.5.2，SHA256 `65c1d2f78b9f2fb20082c38cbe47c951ad5839345876e46941612ee87f9a7ce1` | CMake核验官方归档，定点构建、保留float API；桌面/Switch共用，见协议参考§72 |
+| GameNetworkingSockets | `ValveSoftware/GameNetworkingSockets` 固定 `d534c19aa760df3fb75fd20db13ba1932b8a5463` | BSD-3；SNS 的 SNP、ICE、证书/P2P；不包含 Valve 生产 SDR 的私有实现 |
+
+## SNS 构建边界
+
+`NSL_BUILD_SNS` 在桌面和 Switch 默认开启。已知主机的控制事务共用 IHS owner，
+每次发送按当前已验证地址选择 UDP 或云端；同时公布 UDP/SDR 媒体能力，按主机回复
+创建原生 UDP 或 SNS 传输。SNS 后端再选择 ICE/SDR。发现来源、控制承载和媒体承载
+分别处理，不能从“局域网发现”推断最终媒体路径。用户界面不增加路径选择，见 D-A081。
+`NSL_ENABLE_SDR` 控制本项目重建的 Valve relay extension；它不属于公开 GNS 上游。
+互操作工具由 `NSL_BUILD_TOOLS` 单独控制。
+
+GNS 需要 C++17、protobuf C++ 和 crypto provider；桌面默认使用系统 protobuf/OpenSSL。
+Switch 使用本项目 mbedTLS provider、SDK 原有 Donna Ed25519/X25519，以及固定 protobuf
+v21.12（`f0dc78d7e6e331b8c6bb2d5283e06aa26883ca7c`，BSD-3）。
+`scripts/setup-sns-deps.sh` 在忽略的 `build/deps` 下载/交叉编译，安装到工作区内的
+`sns-switch` prefix，同时选择或构建版本一致的 host protoc，不修改系统 portlibs。
+它不替代原有 C protobuf/IHS 会话。
+
+官方 SDK submodule 保持原样；`cmake/prepare-gns.py` 检查固定 pin 和源码清洁状态，
+在每个构建目录复制源码并按顺序应用 `patches/GameNetworkingSockets/*.patch`，禁止 fuzz。
+补丁只提供私有 transport hooks、mbedTLS 构建接入和 libnx POSIX 适配；relay 实现在
+`app/platforms/common`。protobuf 的 libnx endian include 补丁单独保存在
+`patches/protobuf`。设计依据见 D-A062/D-A063。
 
 ## IHSlib fork（kxn/ihslib，分支 master）
 
@@ -99,3 +122,9 @@ IHSlib 的 `src/session/outgoing_sort.c` 参考
 实现至多32个通道的排序，单文件使用 Apache-2.0 WITH LLVM-exception；完整许可位于
 `third_party/ihslib/src/session/LLVM-LICENSE.txt`。排序策略与同优先级结果以固定官方
 Steam Link 客户端原指令对照为准，开源实现只用于算法实现参考。
+
+应用的 `app/platforms/common/steam_address_sort.h` 同样采用 LLVM libc++19（19.1.7）
+的非 bitset introsort 及插入、分区、ninther、堆排序辅助函数，使用 Apache-2.0 WITH
+LLVM-exception，许可位于 `app/platforms/common/LLVM-LICENSE.txt`。此处没有32元素上限；
+用途是保留官方主机地址比较器存在三秒时间容差时的实际排列，而不是依赖平台 std::sort。
+`host_addresses.cpp` 的生产策略与固定官方原始指令向量逐项比较，参见公网协议参考 §10.1。

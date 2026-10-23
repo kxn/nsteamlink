@@ -52,14 +52,27 @@ static void back(sl_ui_model *m) {
 }
 static sl_host *selected(sl_ui_model *m) {
     int i = m->store.registry.selected;
-    return i >= 0 && i < m->store.registry.count ? &m->store.registry.hosts[i] : NULL;
+    return !sl_ui_adding_host(m) && i >= 0 && i < m->store.registry.count
+               ? &m->store.registry.hosts[i]
+               : NULL;
+}
+bool sl_ui_adding_host(const sl_ui_model *m) {
+    return m->adding_host || !m->store.registry.count;
+}
+sl_discovery_source sl_ui_host_source(const sl_ui_model *m, const sl_host *h) {
+    if (!sl_host_online(h, m->now))
+        return SL_DISCOVERY_NONE;
+    for (unsigned i = 0; i < SL_HOST_LIMIT; ++i)
+        if (m->discoveries[i].host_id == h->id)
+            return m->discoveries[i].source;
+    return SL_DISCOVERY_UNKNOWN;
 }
 int sl_ui_game_count(const sl_ui_model *m) {
     int selected = m->store.registry.selected;
-    if (selected < 0 || selected >= m->store.registry.count)
+    if (sl_ui_adding_host(m) || selected < 0 || selected >= m->store.registry.count)
         return 0;
     const sl_host *h = &m->store.registry.hosts[selected];
-    if (!h->paired || !sl_host_online(h, m->now))
+    if (!h->paired)
         return 0;
     int n = 0;
     while (n < SL_RECENT_LIMIT && h->games[n].id)
@@ -139,6 +152,7 @@ void sl_ui_connected(sl_ui_model *m) {
     sl_ui_layout(m);
 }
 void sl_ui_stopped(sl_ui_model *m, bool unexpected) {
+    bool failed = m->page == SL_ERROR;
     if (m->ending_game && !unexpected)
         ++m->generation; /* retire late errors from the completed end-game operation */
     m->streaming = false;
@@ -146,7 +160,10 @@ void sl_ui_stopped(sl_ui_model *m, bool unexpected) {
     m->depth = 0;
     if (m->closing)
         page(m, SL_CLOSING);
-    else if (unexpected)
+    else if (failed) {
+        /* The lifecycle owner also stops a failed request. Its cleanup ACK
+         * must not dismiss the error before the user can read or retry it. */
+    } else if (unexpected)
         sl_ui_error(m, sl_tr(SL_T_DISCONNECTED));
     else if (m->intent.test_only) {
         page(m, SL_NETWORK_SETTINGS);
@@ -256,7 +273,7 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
             m->page == SL_UPDATE_RESULT || m->page == SL_CONNECTING || m->page == SL_SAVING ||
             m->page == SL_PAIRING || m->page == SL_NETWORK_TEST)
             return;
-        if (m->page == SL_HOME) {
+        if (m->page == SL_HOME && !sl_ui_adding_host(m)) {
             int count = sl_ui_game_count(m);
             if (count && !m->games_dragging && (a == SL_LEFT || a == SL_RIGHT)) {
                 int index = m->focus >= 40 && m->focus < 40 + count ? m->focus - 40 : 0;
@@ -278,7 +295,9 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
         if (m->page == SL_CONNECTING || m->page == SL_SAVING || m->page == SL_PAIRING ||
             m->page == SL_NETWORK_TEST)
             return;
-        if (m->page == SL_HOME && !sl_ui_game_count(m)) {
+        sl_host *home_host = selected(m);
+        if (m->page == SL_HOME && !sl_ui_adding_host(m) &&
+            (!sl_ui_game_count(m) || (home_host && !home_host->paired))) {
             sl_ui_action(m, SL_START, 0);
             return;
         }
@@ -300,26 +319,32 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
     case SL_PREV_HOST:
     case SL_NEXT_HOST:
     case SL_SELECT_HOST:
-        if (m->page != SL_HOME || !m->store.registry.count)
+        if (m->page != SL_HOME)
             break;
         if (h)
             h->focus = m->focus;
+        else
+            m->add_focus = m->focus;
+        int target = sl_ui_adding_host(m) ? m->store.registry.count : m->store.registry.selected;
         if (a == SL_SELECT_HOST) {
-            if (arg < 0 || arg >= m->store.registry.count)
+            if (arg < 0 || arg > m->store.registry.count)
                 break;
-            m->store.registry.selected = arg;
+            target = arg;
         } else
-            m->store.registry.selected = (m->store.registry.selected +
-                                          (a == SL_PREV_HOST ? -1 : 1) + m->store.registry.count) %
-                                         m->store.registry.count;
-        m->focus = selected(m)->focus;
+            target = (target + (a == SL_PREV_HOST ? -1 : 1) + m->store.registry.count + 1) %
+                     (m->store.registry.count + 1);
+        m->adding_host = target == m->store.registry.count;
+        if (!m->adding_host)
+            m->store.registry.selected = target;
+        m->focus = m->adding_host ? m->add_focus : selected(m)->focus;
         break;
     case SL_START:
         if (m->page == SL_HOME)
             start(m, -1, false);
         break;
     case SL_RECENT:
-        if (m->page == SL_HOME && arg >= 0 && arg < sl_ui_game_count(m))
+        if (m->page == SL_HOME && h && h->paired && sl_host_online(h, m->now) && arg >= 0 &&
+            arg < sl_ui_game_count(m))
             start(m, arg, false);
         break;
     case SL_RUN_NETWORK_TEST:
@@ -358,8 +383,28 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
                     : a == SL_OPEN_HOST_SETTINGS    ? SL_HOST_SETTINGS
                                                     : SL_APP_SETTINGS);
         break;
+    case SL_OPEN_ADD:
+        if (!m->streaming &&
+            (m->page == SL_SETTINGS || m->page == SL_HOST_SETTINGS || m->page == SL_HOME)) {
+            m->adding_host = true;
+            m->depth = 0;
+            page(m, SL_HOME);
+            m->focus = m->add_focus;
+        }
+        break;
+    case SL_OPEN_REMOTE_PAIR:
+        if (!m->streaming && m->page == SL_HOME && sl_ui_adding_host(m)) {
+            ++m->generation;
+            m->intent = (sl_command){.type = SL_CMD_REMOTE_PAIR, .generation = m->generation};
+            m->depth = 0;
+            m->pairing_code[0] = 0;
+            m->had_stream = false;
+            page(m, SL_PAIRING);
+            emit(m, SL_CMD_REMOTE_PAIR);
+        }
+        break;
     case SL_OPEN_MANUAL:
-        if (!m->streaming && m->page == SL_HOST_SETTINGS) {
+        if (!m->streaming && m->page == SL_HOME && sl_ui_adding_host(m)) {
             m->input[0] = 0;
             push(m, SL_MANUAL);
         }
@@ -482,11 +527,15 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
             emit(m, SL_CMD_TEST_CONFIRM);
             m->command.accept_recommendation = false;
             page(m, m->intent.test_only ? SL_STOPPING : SL_CONNECTING);
-        } else if (m->page == SL_HOME)
-            push(m, SL_EXIT);
-        else if (m->page == SL_PAIRING || m->page == SL_SAVING || m->page == SL_CONNECTING ||
-                 m->page == SL_PIN || m->page == SL_ERROR || m->page == SL_NETWORK_TEST ||
-                 (m->page == SL_STOPPING && m->ending_game)) {
+        } else if (m->page == SL_HOME) {
+            if (sl_ui_adding_host(m) && m->store.registry.count) {
+                m->adding_host = false;
+                m->focus = selected(m)->focus;
+            } else
+                push(m, SL_EXIT);
+        } else if (m->page == SL_PAIRING || m->page == SL_SAVING || m->page == SL_CONNECTING ||
+                   m->page == SL_PIN || m->page == SL_ERROR || m->page == SL_NETWORK_TEST ||
+                   (m->page == SL_STOPPING && m->ending_game)) {
             ++m->generation;
             emit(m, SL_CMD_CANCEL);
             m->depth = 0;
@@ -561,8 +610,9 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
         if (m->page == SL_ERROR && !m->ending_game && !m->cancel_only_error) {
             m->pairing_code[0] = 0;
             ++m->generation;
-            page(m, SL_CONNECTING);
-            emit(m, m->intent.host.id ? SL_CMD_STREAM : SL_CMD_CANCEL);
+            page(m, m->intent.type == SL_CMD_REMOTE_PAIR ? SL_PAIRING : SL_CONNECTING);
+            emit(m, m->intent.type == SL_CMD_REMOTE_PAIR ? SL_CMD_REMOTE_PAIR
+                    : m->intent.host.id ? SL_CMD_STREAM : SL_CMD_CANCEL);
         }
         break;
     default:

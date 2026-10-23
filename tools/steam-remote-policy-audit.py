@@ -1155,6 +1155,38 @@ def gcm_output_layout(elf, aad):
     assert bytes(m.uc.mem_read(out, len(encrypted))) == encrypted
 
 
+def stream_inactivity(elf, paused, state, age, wrap=False, resume=False):
+    m=Machine(elf)
+    obj=m.alloc(2048)
+    # Run the original initialization of the normal/paused globals.
+    m.reg(10,0xf47000)
+    m.stops[0x7fe2d8]='initialized'
+    m.run(0x7fe2a0,0x7fe2d8)
+    assert (m.read(0xf47990),m.read(0xf47994))==(15*65536,180*65536)
+    m.write(obj+16,state)
+    now=0x10000 if wrap else 0x40000000
+    m.write(obj+48,now)
+    m.write(obj+52,(now-age)&0xffffffff)
+    m.write(obj+56,123)
+    m.uc.reg_write(arm.UC_ARM64_REG_LR,RETURN)
+    m.run(0x7fb990,0x7fb99c,obj)
+    assert m.read(obj+8,1)==1
+    if not paused or resume:
+        m.uc.reg_write(arm.UC_ARM64_REG_LR,RETURN)
+        m.run(0x7fb99c,0x7fb9ac,obj)
+        assert m.read(obj+8,1)==0
+        assert (m.read(obj+52),m.read(obj+56))==(now,now)
+        if not resume:m.write(obj+52,(now-age)&0xffffffff)
+    m.reg(19,obj);m.reg(20,now)
+    m.events.clear()
+    m.stubs[0xc0e030]=lambda machine:machine.events.append('disconnect')
+    m.stops[0x7fc4c4]='complete'
+    m.run(0x7fc43c,0x7fc4c4)
+    threshold=(180 if paused and not resume else 15)*65536
+    expected=not resume and state in (0,1) and age>=threshold
+    assert ('disconnect' in m.events)==expected,(paused,state,age,wrap,resume,m.events)
+
+
 def audit(elf):
     counts = {}
 
@@ -1383,6 +1415,15 @@ def audit(elf):
         case('relay_key_derivation', relay_cipher_context, context, challenge)
     for aad in (b'', b'additional-data'):
         case('gcm_output_layout', gcm_output_layout, aad)
+    for paused in (False,True):
+        threshold=(180 if paused else 15)*65536
+        for state in (0,1,2,3):
+            for age in (threshold-1,threshold,threshold+1):
+                case('stream_inactivity',stream_inactivity,paused,state,age)
+        for age in (threshold-1,threshold,threshold+1):
+            case('stream_inactivity',stream_inactivity,paused,1,age,wrap=True)
+    for age in (15*65536,180*65536,0xffffffff):
+        case('stream_inactivity',stream_inactivity,True,1,age,resume=True)
     return counts
 
 

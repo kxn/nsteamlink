@@ -93,6 +93,13 @@ static void request(sl_resolution mode, bool docked, unsigned expected) {
         .deviceId = 1, .secretKey = r.store.secret, .deviceName = "resolution test"};
     r.client = IHS_ClientCreate(&r.config);
     assert(r.client);
+    /* This known-host request uses a real observed endpoint; a saved profile
+     * string alone no longer grants direct-route eligibility. */
+    IHS_HostInfo observed = {.clientId = 123, .instanceId = 1,
+                             .universe = IHS_SteamUniversePublic};
+    assert(IHS_IPAddressFromString(&observed.address.ip, "127.0.0.1"));
+    observed.address.port = peer_port;
+    discovered(NULL, &observed, &r);
     docked_input = docked;
     assert(request_stream(&r, false));
     struct pollfd wait = {.fd = fd, .events = POLLIN};
@@ -122,6 +129,7 @@ static void request(sl_resolution mode, bool docked, unsigned expected) {
     IHS_ClientStop(r.client);
     IHS_ClientThreadedJoin(r.client);
     IHS_ClientDestroy(r.client);
+    sl_directory_destroy(&r.directory);
     sl_stream_settings_destroy(&r.settings);
     pthread_mutex_destroy(&r.lock);
     close(fd);

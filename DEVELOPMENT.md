@@ -46,6 +46,20 @@ UI 替换的目标模块边界见 `docs/UI_UX_DESIGN.md` §5：`app/src/ui/` 负
 `scripts/generate-vcl-fixtures.py` 定义样本，`prepare-vcl-probe.py` 生成独立诊断副本，
 `tools/switch-vcl-probe.py` 封装单次部署和机器日志校验，作用域见协议参考 §156。
 
+`app/platforms/common/remote_{wire,protocol,connection}.*` 分别负责有界 wire/RFC6455 编码、
+免登录 Remote Client 状态机与 curl TLS provider。协议状态由 runtime worker 单线程持有；
+UI 只接收主机、配对和连接事件，不包含 WebSocket、证书或 transport 类型。
+云端控制与媒体的边界、设备身份持久化见 D-A061 和 `STEAM_REMOTE_PLAY_NETWORKING.md` §16。
+`stream_bridge.*` 持有单次流的信令 HMAC key、跨云端重连 FIFO 和独立 Remote Client
+连接；`sns_backend.*` 管理 SDK manual poll、证书/信任链、custom signaling 和跨 IHS
+线程的数据报队列。`gns_hooks.cpp` 在固定 SDK 的构建配置内编译，访问 AppID、证书库
+和私有 relay hooks；`sdr_wire.*`/`sdr_config.*` 负责有界线格式与网络配置解析，`sdr_policy.*` 提供
+可脱离网络执行的主备选择、探测优先级、readiness、超时和地址失败缓存，
+`sdr_probe.cpp` 实现 relay session、routes、stats 和 SNP datagram 适配。
+`gns_mbedtls.cpp` 与 `platforms/switch/gns_libnx.cpp` 分别提供 crypto 和 libnx socket 接入。
+IHS 的 `IHS_SessionSetDatagramTransport` 在 Connect 前选择消息传输；上层认证、媒体和
+ACK/NACK 继续归 IHS。生命周期和依赖边界见 D-A062/D-A063。
+
 Switch 图形后端迁移的目标边界见 [VIDEO_RENDERING_DESIGN](docs/VIDEO_RENDERING_DESIGN.md) 与 D-051：
 `platform/gfx.h` / `platform/events.h` 定义图形与事件 HAL；`platforms/common/video_pipeline.*`
 和 `frame_lifetime.*` 管理 decoder domain、FrameLease 与 GpuBatch 的引用契约；
@@ -118,15 +132,17 @@ runtime 执行协议 stop/join 并在外部使用归零后回收关闭的 decode
 | FFmpeg(Switch) | Moonlight-Switch 预编译（averne NVDEC fork） | LGPL/GPL | H264 硬解 | M3 |
 | SDL2 | 系统 2.32.4 / `switch-sdl2` | zlib | 桌面渲染 / 音频 / 输入（Switch 图形使用 deko） | M3 起 |
 | SDL2_ttf | 系统 2.24.0 / devkitPro `switch-sdl2_ttf` | zlib | 中文与平台共享字体、字形缓存 | M5 |
-| mbedTLS | 系统 2.28 / `switch-mbedtls` | Apache-2.0 | IHSlib 加密后端 | M2 |
+| mbedTLS | 系统 2.28 / `switch-mbedtls` | Apache-2.0 | IHSlib 与 Switch SNS 加密后端 | M2 |
 | libopus | 官方1.5.2归档，SHA256固定，fixed-point构建 | BSD-3 | multistream float解码及按帧ID恢复，见协议参考§72 | M4 |
 | libcurl | 系统 / devkitPro switch-curl 7.69.1-5（libnx SSL） | curl | 封面 HTTPS | M5 |
 | libjpeg-turbo | 系统 / devkitPro 2.1.2-2 | BSD/IJG | 后台 JPEG 解码 | M5 |
 | jsmn | vendored 25647e6 | MIT | 有界商店 JSON 解析 | M5 |
 | nx-hbloader | vendored 82b9512 | ISC | HOME NRO 加载器 | M5 |
-| cryptography | 构建机 Python 包 | Apache-2.0/BSD | 解开 synthetic header，非运行时依赖 | M5 |
-| OpenSSL | 桌面测试系统库 | Apache-2.0（3.x） | 封装校验测试，Switch 不链接 | M5 |
+| cryptography | 构建机 Python 包 | Apache-2.0/BSD | 解开 synthetic header、Switch 私有网络 fixture 的 AES-GCM 回读，非运行时依赖 | M5 |
+| OpenSSL | 桌面系统库 | Apache-2.0（3.x） | 桌面 SNS crypto 与封装校验测试，Switch 不链接 | M5 |
 | protobuf-c | 系统 1.5.1 / M2 自行交叉编译 | BSD-2 | IHSlib 依赖 | M2 |
+| GameNetworkingSockets | ValveSoftware 固定 d534c19 | BSD-3（附带第三方许可证见其目录） | SNS 的 SNP、ICE、证书与 P2P 状态机 | Anywhere |
+| protobuf C++ | 桌面系统 3.21.12 / Switch 固定 v21.12 f0dc78d | BSD-3 | SNS wire；protoc 与目标 runtime 版本必须一致 | Anywhere |
 
 - 项目整体以 **GPLv3** 发布（复用 Moonlight-Switch 材料所致，kickoff §7.1 / decisions D-004）。
 - 复用第三方代码必须保留原版权与许可声明，并在上表登记。
@@ -240,6 +256,9 @@ D-051 硬件帧直显的资源依赖补充：session stop 不等待主线程 GPU
 
 ### 12.5 已踩坑反模式
 
+网络初始化依赖、准备/媒体准入和 HTTP/DNS 资源归属见
+[NETWORK_INITIALIZATION](docs/NETWORK_INITIALIZATION.md)（D-A104/D-A105）。
+
 - 不能把 PC 侧 `nxlink` 退出、debug command 超时、端口状态当成 Switch 屏幕状态的替代证据。
 - 不能因为第二次启动失败就先怀疑 netloader、NRO 大小或 SD 文件，除非有对应错误码、日志或对照
   实验。先检查本程序返回 hbmenu 前是否留下线程、handle、socket、SDL/Mesa 或 IHS 状态。
@@ -252,6 +271,14 @@ D-051 硬件帧直显的资源依赖补充：session stop 不等待主线程 GPU
 - 不能混淆 Steam pairing authorization code 和 connect/security PIN。认证流程结论以
   `docs/STEAM_REMOTE_PLAY_AUTH.md` 为准。
 - 不能把 `gamesRunning=0` 写成广播失败。那只表示 Steam 被发现，但当时没有游戏在跑。
+- Switch 的 BSD socket 使用有界 transfer-memory 池；长期存活的调试 UDP、SDK 唤醒通道
+  也会继承 `socketInitialize` 的媒体缓冲默认。DNS 并发数有界不代表全进程缓冲预算足够。
+  `socket()` 的 `ENOBUFS (105)` 发生在后续 `setsockopt` 之前；辅助 socket 必须创建后立即
+  设置小缓冲，再创建下一个，失败则关闭。不要盲目扩大所有 UDP 默认或据 Linux fd 测试
+  宣称真机资源充足。SDK 启动错误需区分 socket 创建、缓冲设置、证书与远端协议；见 D-A103。
+- 多 DNS 的收集期限不能成为首个可用地址的连接门槛。HTTP owner 应先连接已验证的快
+  结果、继续接收迟到候选；耗尽已知地址而查询未结束时保持 pending。排队、wire 查询和
+  HTTPS 总预算分开记录，取消须移除排队节点并 join，不能简单扩大统一超时；见 D-A102。
 
 ---
 

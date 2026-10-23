@@ -15,6 +15,16 @@ import struct
 import subprocess
 
 MARKERS = (
+    b"sns_init phase=", b"signal_bridge ", b"diagnostic_service port=",
+    b"ERR supported: ping state stats perf cloud audio hid hidlog diag",
+    b"GET required", b"storage_errno", b"session-%020",
+    b"cloud_watch saved=", b"cloud_update stall_ms", b"media_rx ch=", b"udp_rx observer=",
+    b"cloud_net event=", b"cloud_time total_ms=", b"cloud_subscription", b"cloud_addr local=",
+    b"cloud_try stage=", b"cloud_dns event=", b"dns_query event=", b"https_route event=", b"end_game_status source=", b"update_notice ",
+    b"control_tx phase=", b"control_rx phase=", b"control_identity account_present=",
+    b"hid_transport phase=", b"hid_capture phase=",
+    b"sns_config event=", b"sns_start failed_stage=",
+    b"RUNTIME_FIXTURE_", b"CLOUD_FIXTURE_",
     b"render-rate-test",
     b"--adaptive-pacing",
     b"--no-adaptive-pacing",
@@ -36,6 +46,11 @@ MARKERS = (
     b"Font initialization failed:",
 )
 FORBIDDEN_SYMBOLS = {
+    "sl_sns_start_relay_probe", "sl_sns_test_relay_loss", "sl_sns_test_migration",
+    "sl_sns_test_terminal",
+    "sl_gns_sdr_test_loss", "sl_gns_sdr_test_terminal", "sl_gns_sdr_test_migration",
+    "sl_gns_sdr_topology_fixture", "sl_gns_sdr_transport_stats", "sl_gns_sdr_probe_create",
+    "sl_packet_diagnostics_begin", "sl_packet_diagnostics_read", "sl_packet_diagnostics_received",
     "udp_poll",
     "log_main",
     "log_queue",
@@ -195,6 +210,8 @@ def check(build):
             source.name in {"base.c", "ch_control.c", "ihs_udp_posix.c"}
             and "third_party" in source.parts
         )
+        if source.name in {"sns_backend.cpp", "sdr_probe.cpp"}:
+            macro_off(argv, "NSL_SNS_PROBES", source)
         if not is_product and not is_sdk:
             continue
         data = obj.read_bytes()

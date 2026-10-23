@@ -2,3 +2,6 @@
 	path = third_party/ihslib
 	url = https://github.com/kxn/ihslib.git
 	branch = master
+[submodule "third_party/GameNetworkingSockets"]
+	path = third_party/GameNetworkingSockets
+	url = https://github.com/ValveSoftware/GameNetworkingSockets.git

@@ -636,6 +636,43 @@ request_id 相同，相邻采集时刻差 0.299 秒、1.000 秒；body 的变化
 
 ### 9.4 控制消息承载与传输信令队列
 
+**完整发送函数的补充 Evidence**：固定 core 样本
+`50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e` 的
+`SendMessage 0x79ad64–0x79b260` 不只是末尾的 UDP/cloud 二选一。
+`0x79adf0–0x79ae9c` 在非零目标 client ID、显式 IP/端口不完整时加载持久目录，
+只读取首个且已验证的地址，不在此函数中搜索后面的已验证项，也不检查 cloud-online 集合。
+`0x79aea0–0x79afe0` 在选出的 IP/端口仍不完整时，重新生成外层 header 的
+`device_token`（字段 5）；失败调用 `StopStreaming(error=1)`，不发送报文。
+已有完整地址但本地发送关闭时，走云端的 header 仍不带这个字段；不能简单用
+“云端报文都加 token”取代地址资格判断。`BGetDeviceToken 0x79c348–0x79c3fc`
+读取当前 manager secret（+536/+556），加密本机小端 device ID，独立于 body 中的 token。
+云端发送读取该 client 的第一个持久 Steam ID，不按“最后在线账号”另选。
+
+`BStart 0x798840` 先调用 `Stop`，后者 `0x797bf8–0x797c18` 销毁并清空旧 cloud session。
+因此 socket 缺失时，不能仅根据 SendMessage 尾部分支推断“BStart 失败后仍可通过旧 session
+立即转发”。受控输入中，完整地址、无 socket、既有 Connected session、socket 创建失败，
+实际原始调用链没有发送 UDP 或 cloud；成功创建 socket 则发送 UDP。
+
+传输桥接器是独立 producer：`SendTransportSignal 0x7d46a4–0x7d46c4` 的外层 header
+只设 `msg_type=12`，没有 client ID 或 manager device token；身份绑定仍由会话目的账号、
+内层信令及用**解密后的流密钥**计算的 HMAC 提供。`0x7d47c0–0x7d493c`
+序列化内层 `CTransportSignalMsg`、生成 HMAC、封装 body 后调用 cloud SendMessage。
+不能复用 manager header 并擅自添加 client ID，也不能把长期配对密钥当作该 HMAC 密钥。
+收发头不对称：`BProcessReplyPacket 0x7d4c7c–0x7d4c8c` 要求收到的 header 有非零
+client ID，再检查 type12；此后没有将该 ID 与所选电脑比较。
+`0x7d4cbc–0x7d4d80` 先验证当前流密钥的 32 字节 HMAC，再解析内层并交给 backend。
+原始输入明确覆盖无 ID、零 ID、相同/不同非零 ID、错误 type、坏 HMAC、坏外层 body、
+无/空 payload、缺失/短 token、HMAC 正确但内层损坏及重复 SDR 元素。
+token 长度仍须为 32；未提供 payload 时取 protobuf 的空串默认值，有效空串 HMAC 和可解析
+的空内层可以接受，不额外要求 payload presence bit。
+因此不能将客户端自己发出的无 ID 信令包直接当作 Steam host 的回复做回环验收。
+
+`audit-steam-control-route.py` 执行上述完整发送/序列化和桥接器指令。
+持久查找、token 字节、会话状态/析构、系统调用及最终 cloud send 是显式提供者；
+Stop 的可见/cloud 容器为空，桥接 HMAC 使用独立 Python 标准库提供者。
+接收的最终 backend 是记录解析后消息的提供者；不是 SDK 内层信令状态机验证。
+该对照不证明持久文件读写、真实密钥选取、服务端接受、所有 caller 的选路或线程时序。
+
 **Evidence：** manager SendMessage 在 `0x79b118–0x79b154` 按 HasIP、port、
 本地发送开关和 discovery socket 是否可创建选择 UDP；否则走 `0x79b15c–0x79b19c` 的云端分支。
 `BSend` 返回后直接结束该分支（`0x79b158`），此处没有按发送返回值追加一次云端转发。
@@ -656,6 +693,69 @@ request_id 相同，相邻采集时刻差 0.299 秒、1.000 秒；body 的变化
 **证据修订**：不能将本节的云端需求条件理解成“所有调用者遵守 §9.1 的失败退避”。
 桥接器在状态 0/4 且仍有需求时会直接 BConnect，覆盖 session 自己等待 deadline 的机会；
 完整调度规则、队列及销毁路径见 §13。新增本地资源上限必须标明本项目策略。
+
+#### 控制 owner 的地址与承载边界
+
+**Evidence（同一固定 core）**：开流 `0x799798`、重新授权 `0x79a588`、授权取消
+`0x799a70` 和开流取消 `0x799b84` 都以空 CIPAndPort、当前目标 client ID 调用
+SendMessage。取消函数先检查可见记录或显式主机 hint，不能仅凭一个持久 ID 无条件发送。
+相对地，授权确认 `0x79dff0`、Proof 回复 `0x79e34c/0x79e574` 复制本次收包来源地址。
+开流响应的成功分支 `0x79eaa0–0x79eacc` 同样保存本次来源，仅在来源 IP/端口完整时
+将端口替换为响应中的流端口；不读取启动时的地址快照。
+
+**Evidence（响应身份与迟到取消）**：`BProcess` 只拒绝零 header client ID，随后直接分派
+开流响应；`0x79e884–0x79e88c` 匹配非零 request_id，不比较目标 client ID、instance 或
+来源地址。成功时使用回复身份的持久 SteamID，并保存本次来源。迟到/零 request_id 的
+InProgress 分支内联构造取消，以收到的 client ID 和来源直接调用 SendMessage；它不是
+上面的隐式 `SendCancelStreamingRequest`，因此不受可见记录/hint 的前置门控。
+这不改变 Proof 必须匹配当前目标身份的单独规则，也不能推广到授权响应的处理顺序。
+
+**接线约束**：已知主机的 LAN 与 cloud 控制消息应进入同一事务、同一当前 secret 和
+同一接收/重试 owner。每次隐式发送查询目录；完整显式回复地址绕过目录。流传输能力与
+控制报文采用 UDP/CM 是不同选择，具备 SNS 后端时可同时公布 UDP/SDR，最终按响应材料
+创建传输。认证 PIN、connect PIN 密文快照和 Proof 更新规则保持 §11 的独立语义。
+传输信令仍由独立桥接连接处理，不将 type12 混入 manager 的设备 token 规则。
+
+发现发送也读取该时刻的地址目录，关注 ID 的操作顺序仍由发现 owner 管理。
+不能在当次 Update 已发送后才发布刚接收的 status 地址，也不能绕过旧的待处理关注操作，
+用一个新快照反向覆盖它们。跨线程的云端发送必须交给连接 owner；断开后清除旧会话
+队列，不能把旧帧重新封装进新 session。停止/join 所有生产者后才能释放队列和目录。
+
+`control_frame_oracle.c` 将实际 IHS sender 的地址空缺、完整显式来源、首个已验证缓存、
+不完整显式来源与上述原指令输出比较；保留 UDP send 返回失败而不追加 cloud 的观察。
+`control_route_runtime.c` 串起生产 runtime、IHS 接收/定时器/授权队列和 CM framing，
+核对同编号跨承载重试、实时发现地址、Proof 轮换与 PIN 快照、CM 会话替换、回复身份及
+来源、显式迟到取消和最终 SDR 材料；独立授权计时器另验证跨线程发送交付。
+UDP 系统调用、CM 连接工厂/服务边界、墙钟和最终 SDK 构造器均为显式 provider；
+清空地址目录是受控输入，不是新增的 NAT/TTL 失效策略。该测试没有真实 Steam、TLS、
+NAT、SDK 网络或 Switch，不覆盖 BStart/socket 创建失败、全部授权入站身份规则和持久文件。
+
+#### 真实 WebSocket 工厂与共享控制 owner 的回调边界
+
+**Evidence / 证据修订**：`remote_connection.c`的生产工厂在创建`sl_remote`时重建
+一份adapter回调表；不能将直接创建`sl_remote`或替换连接工厂的测试，推广为这份表
+已经正确转发所有回调。此前真实工厂漏接control_packet、disconnecting、begin_pairing、
+prepare_pairing、abort_pairing。前者使CM控制帧落入独立legacy处理器，共享IHS请求
+owner收不到它；控制回调计数为零不证明服务端没有发送控制回复。
+
+用户111e785热点日志显示请求连续入队/交付、共享owner停在5，控制回调为零。独立
+开发机对照使用同一已配对测试身份、同一条CM连接：共享IHS请求12次无准入，随后
+legacy请求获得SDR票据；头部和正文token均能解密为正确device ID。测试未创建媒体
+或请求游戏/桌面，CM确实运行。改变空PIN、form_factor等字段的初步受控实验没有
+恢复共享owner的票据，不把这些未成立的候选当作协议修复。
+
+**接线契约**：生产工厂必须把这些可选回调的参数、返回值和应用context完整转发。
+尤其prepare_pairing是否为空本身选择shared/legacy策略，应用未提供时必须保留NULL，
+不能安装一个总返回false的占位adapter。control_packet返回true才消费，false保留
+legacy后备；disconnecting须保留协议层定义的会话清理顺序。没有改变线上报文格式、
+PIN含义、选路、重试或服务端策略。受控工厂测试的WebSocket-ready/入站CM为provider，
+与实际CM对照分开，均不能替代Switch热点媒体验收。
+
+补齐adapter后，以相同已配对身份执行未改报文的当前IHS sender，实际CM回调3次，
+接受transport=4、16字节流key，owner进入6；没有创建媒体。受控真实工厂测试在旧
+adapter下正常结束并报告11项行为不符，修正后通过，覆盖shared回调、NULL策略、
+control返回false的legacy后备、准备失败和断开前后顺序。初期测试目标遗漏jsmn include
+属于编译驱动问题，不计产品反例。
 
 ### 9.5 SDR 初始化参数与网络库职责
 
@@ -697,19 +797,26 @@ request_id 相同，相邻采集时刻差 0.299 秒、1.000 秒；body 的变化
 本节的 `client_id` 是 discovery header 的主机设备标识，`steamid` 是云端路由使用的 Steam
 身份；同一个主机记录可以有多个 steamid。二者不能共用一个键。`CServerManager` 使用
 client_id 索引状态/持久信息，保存 steamid 列表，并以列表首项发送云端 RemotePacket。
-`BAddSteamID @0x79bd74` 把新身份插到首位；已存在的非首项与首项交换。
+`BAddSteamID @0x79bd74` 忽略零值、把新身份插到首位；已存在的非首项与首项交换，
+但返回 false。status 的 `users` 在 `BProcess @0x799ee8–0x799f10` 中从后向前遍历；
+不能把该方法的返回值解释为“列表没有发生变化”。授权回复采用另一种操作，见 §11.2。
 
 ### 10.1 地址记录不是“所有公布 IP 均可直连”
 
 **Evidence：** `BProcess @0x799e48–0x79a178`、`BAddNetworkAddress @0x79c040`、
 `GetAddress @0x79c25c`、比较器 `AddressInfo_t::operator< @0x7a3140–0x7a3258`。
-每条地址记录含：是否实际收到该地址回复、是否为 status 中的 remote_ip、最后实际回复时间、
+每条地址记录含：是否实际收到该地址回复、是否为 status 中的 public_ip_address、地址时间字段、
 IP/类型/端口。这里给字段取的中文名来自写入调用点，不是恢复出的原始 C++ 成员名。
+
+`BProcess` 在加入公布地址和实际源地址前还检查 `CIPAddress::HasIP @0x8e5e7c`：
+IPv4 的数值0、IPv6 的16字节全0均为 false。能被数字解析器接受并不意味着可加入候选；
+`0.0.0.0`/`::` 不应产生探测目标。下面实验执行该原始 helper 的7组输入；不据此声称覆盖了
+StringView 构造器对 IPv4-mapped、scope、非数字名字等文本的全部规范化行为。
 
 | 地址来源 | 实际回复标志 | remote_ip 标志 | 用途 |
 |---|---|---|---|
 | 收到 UDP status 的源地址 | true，并更新 `time()` 和端口 | 不新增此标志 | 可以被选作控制消息直连地址 |
-| status.remote_ip | false | true | 加入候选，供后续 discovery 单播探测 |
+| status.public_ip_address（本文原称 remote_ip） | false | true | 加入候选，供后续 discovery 单播探测 |
 | status.ip_addresses | false | false | 同上 |
 | 持久化地址文件重新加载 | false，时间 0 | false | 重新探测，不直接继承上次运行的可达性 |
 
@@ -718,11 +825,40 @@ IP/类型/端口。这里给字段取的中文名来自写入调用点，不是�
 更新时间差不超过 3 秒时不会单靠时间决定排序。匹配已有 IP 时不重复插入；实际回复会更新
 可达标志、时间、端口；已有 remote_ip 标志只置位不清零。排序是地址管理规则，不是 ICE 候选排序。
 
+**时间字段更正**：撤回“最后实际回复时间”作为全部记录的定义。新增地址不论可达标志
+是否为 true，均调用 `time(NULL)` 写入时间（`0x79c0f4–0x79c124`）；已有地址仅在本次
+verified=true 时更新时间和端口（`0x79c21c–0x79c23c`）。因此重复的未验证公布地址既不刷新
+时间，也不替换已有端口；新增未验证地址的时间并非 0。持久文件重载的 0 是另一个来源的规则。
+`BAddNetworkAddress` 返回值仅表示新增了条目；更新可达标志、时间、端口或 remote 标志仍可返回 false。
+
 **比较器的适用边界**：上述时间容差按每一对地址比较，不是能直接展开成全局 tuple 的排序键。
 合成输入 A=(time=104, IPv4=3)、B=(102,2)、C=(100,1)，其余标志相同时，原始比较器返回
 `A<C`、`C<B`、`B<A` 均为 true：前一对由时间决定，后两对由 IP 决定。这里存在不传递的
-两两比较，不能声称所有地址集合都有唯一的规范顺序；测试只证明比较器结果，不证明某种
-标准库 sort 对这组输入的最终排列。实现若改用确定的全局顺序，须注明本项目差异。
+两两比较，不能声称所有地址集合都有唯一的规范顺序。早期两两测试只证明比较器结果，
+不能证明任意标准库 sort 的最终排列；完整原函数输出见下方向量。实现若改用确定的全局顺序，须注明本项目差异。
+
+完整排序函数为 `std::__ndk1::__introsort<...AddressInfo_t...,false> @0x7a24d8`，
+元素为40字节；不是调用系统 qsort。可复现实验执行该函数及其插入、分区、ninther、堆排序
+辅助函数（`0x7a24d8–0x7a38c4`），覆盖0–256条地址、非传递三元组全部排列、IPv4/IPv6、
+混合标志和显式 depth=0 的堆退路。depth=0 为直接调用排序器的合成输入，不证明常规地址添加
+一定能触发这条退路。IP 比较、GetIPv4 和 IPv6 文本格式化也执行样本原始函数，避免用桩的
+字节序或系统 inet_ntop 偷换排序键。
+
+复现命令（固定 Android 1.3.32 arm64，SHA256
+`50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e`）：
+
+```sh
+uv run --with unicorn --with pyelftools python scripts/audit-steam-address-cache.py \
+  --binary /path/to/libmain-arm64.so \
+  --reference scripts/fixtures/steam-address-cache-reference.json.gz \
+  --output /tmp/steam-address-cache-replay.json.gz
+```
+
+记录查找、预分配容器存储、时钟、strcmp、限长文本复制/printf 为显式 provider；地址添加、
+去重更新、清理、排序、GetAddress 由原指令运行。该实验不执行持久文件读写、status protobuf
+解析、完整可见表 Update、真实网络或本项目的完整地址目录，不能替代其实现与互操作验证。
+`ClearInactiveAddresses` 还处理持久记录 `+56` 的字符串向量；此处将它设为空，没有验证
+非空字符串析构/存储，也不把地址列表比较扩展成整个持久记录对象的完整行为证明。
 
 `GetAddress` 和 `SendMessage` 的隐式选址只取排序后第一条且要求实际回复标志为 true。
 `SendMessage @0x79ae04–0x79ae9c` 仅在调用方没有提供完整 IP+port 且 client_id 非零时查缓存。
@@ -730,7 +866,12 @@ IP/类型/端口。这里给字段取的中文名来自写入调用点，不是�
 **Conclusion**：云端发现成功后，可以在后台探测公布地址；公布地址本身不等于验证了直连。
 
 `ClearInactiveAddresses @0x79be58–0x79c03c` 删除标志为 false 的地址，而非按固定秒数删除。
-首次处理主机 status 会先执行该清理，再加入本次公布地址。可见主机表的 30 秒过期与地址记录
+首次处理主机 status 会先执行该清理，再加入本次公布地址。清理从后向前扫描，以尾部元素
+覆盖被删位置后缩短数组，不保序、不在该函数里重排；例如 verified 标志为 T,F,T,F,T 的
+IP列表1,2,3,4,5清理后为1,5,3。这是合成的交错标志输入，不声称正常排序后的调用者会产生
+这种排列；但该清理函数对任意输入并不等价于稳定过滤。随后每次 BAddNetworkAddress 才排序。
+status 的加入顺序为 public_ip_address → ip_addresses 的原始顺序 → 实际 UDP 源地址，
+这些插入中间都会排序（`0x799f14–0x799fcc`、`0x79a0f8–0x79a11c`）。可见主机表的 30 秒过期与地址记录
 的可达标志是两件事；在上述地址函数中没有“UDP 发送 N 次无回应后清除标志”的计数器。
 不得将主机表过期自动解释成按秒失效的地址缓存或已实现的 UDP→云端故障回退。
 
@@ -767,8 +908,48 @@ else if sends_in_round <= 2 and now >= next_extra_send:
 通知删除；不会删除长期配对密钥或触发重新配对（`0x79a03c–0x79a0a4`、`0x79f240–0x79f2f0`）。
 云端断开清空云端在线集合，随后普通过期规则重新生效（`0x79eef0–0x79ef54`）。
 
+上面的复现实验还单独执行解析后的 type2 分支 `0x79a03c–0x79a0a4`：可见表存在时先删除、
+调用 removed delegate，再删除云端集合；不存在时不发 removed，仍尝试删除云端集合。
+四组可见/云端集合存在组合均不改配对/地址记录。该分支没有“用此前局域网 status 立即恢复
+在线”的路径；新的 status 可以重新建立可见记录。实验的 map/delegate 是受控 provider，
+不声称验证了报文准入、无记录时 UI 的幂等通知实现或云端/UDP 多线程事件调度。
+
 `HandleNetworkChanged @0x79a614` 只在 manager Idle 时清零可见记录时间并立即触发发现；
 它不是任何流状态下都重启 ICE 的通用网络变化处理器。
+
+### 10.3 应用接线与可复现边界
+
+`host_addresses.cpp` 管理进程内地址值，按上述三秒容差比较器及独立的 libc++19 非 bitset
+排序器执行添加/更新、清理和 GetAddress。不能用平台 std::sort、稳定过滤或全局时间 tuple
+替换这些步骤。`address_cache_oracle.c` 直接调用该生产模块，
+`check-steam-address-cache.py` 与固定原指令输出比较136组程序/217步，包含逐次添加和
+多地址更新、跨 IPv4 字节顺序、三元组排列、显式 depth=0 等输入。八份能正常运行的错误
+实现分别被原输出拒绝；编译失败、崩溃、执行器断言不作为策略反例通过。
+
+`host_directory.c` 分开管理实际 status 墙钟时间、可见记录、cloud-online 与地址缓存。
+runtime 在一个 mutex 临界区内更新目录并发布 UI 事件；IHS 与云端消费者停止/join 后才释放
+目录。公布地址在 borrowed 回调结束前解析成拥有的 IP/port/标志；不保留 protobuf 指针。
+前端心跳不更新实际 status 时间，因此即使 UI 有自己的短期快照失效保护，协议可见性仍由
+目录的30秒边界、云端豁免和 Offline 决定。进程重启的保存地址只作为时间0/未验证 seed。
+账号列表由同一目录独立持有、按 §11.2 保存；地址与 MAC 的完整持久文件不能由该账号文件替代。
+
+发现地址列表与关注 client_id 列表不是同一种变化。原 `BAddNetworkAddress`/
+`ClearInactiveAddresses` 没有写入下一发现轮次；`AddClientDiscovery` 才清零轮次时间
+（§10.2）。IHS 的 `SetDiscoveryDirectory` 以原操作队列更新地址快照，关注 ID 列表相同
+时保留 full/fast 截止时间和轮次；列表改变才触发新轮次。原 `SetDiscoveryTargets` 仍保留
+显式刷新契约。新接口单独携带唯一非零关注 ID 列表，不从有地址的候选反推关注身份；
+无已知地址的主机也可出现在禁用广域广播订阅后的 directed-client 广播中。runtime 关注
+列表来自保存的 UI 主机，地址目录本身不隐式增加关注。不能让收到每个新地址或排序变化
+都等价于重新关注主机，从而额外加发发现。
+
+`host_directory_runtime.c` 经过真实 IHS 线程/报文解析/回调/应用目录和最终请求序列化，
+验证22条公布文本中的20个非零候选未截断、零 IP 被拒绝、public/private 重复标志、仅源地址可达、首次 seed 清理、30秒等号、
+云端豁免/断开、UDP Offline、源端口更新及已验证地址覆盖过时 UI 地址。用固定墙钟额外检查
+同关注 ID 的地址更新保留轮次/截止时间，新 ID 触发轮次，以及无地址 ID 实际进入最终
+directed-client 广播。网络收发、墙钟和云端 status
+入口是受控 provider，不是实际 Steam、路由器、DNS、互联网可达性、Qt 或 Switch 实机证据。
+这些组件用例也不代替原 manager 的 status→地址发布→当次 Update 发包的联合调用链对照，
+或控制消息重试时调用者如何提供显式/隐式地址的对照。
 
 ## 11. 配对、开流与 Proof 的完整事务规则
 
@@ -794,8 +975,12 @@ else if sends_in_round <= 2 and now >= next_extra_send:
 `StartPairing @0x79c514` 只在云端 session 已 Connected 时发 StartPairing；否则失败，
 不会自动保留一笔“联网后再执行”的配对。`OnPairingStarted @0x79efb0` 仅接受 manager 状态 2；
 若用户已取消/切换状态，则发送 CancelPairing 清理迟到的配对槽位。
-有效 PIN 以 `%4.4u` 格式化，创建新的 X25519 密钥对和临时 32 字节 secret，再调用
-BCreateAuthorizationRequest；SetPairingInfo 成功仅表示发布完成，授权成功仍等待主机的
+有效 PIN 以 `%4.4u` 格式化，创建新的 X25519 密钥对、清零本事务的交换次数，再生成临时
+32 字节 secret。`0x79f054–0x79f068` 重取整个随机块，直到 secret 的首字节非零；这不是
+只排除全零块。随后调用 BCreateAuthorizationRequest，沿用 manager 当前的 request_id，
+没有调用新的随机 request ID：初始值 0 仍以 present 的 field 5 发布，替换事务留下的非零
+ID 也可保留。public auth_key/result 缓存不会随新 PIN、临时 secret 或新私钥重置。
+SetPairingInfo 成功仅表示发布完成，授权成功仍等待主机的
 AuthorizationResponse。session 的 SetPairingInfo/CancelPairing 成功 callback 自身无附加动作
 （`0x791ac4`、`0x791b00`）。
 
@@ -842,8 +1027,49 @@ arm64 的结果比较分支位于 `0x79d92c`、`0x79d998` 起的指令中，并�
 过期回复分支对带 auth_key 的消息发送 AuthorizationConfirmed(result=8, Canceled)，无 auth_key
 则忽略（`0x79d9c0–0x79da44`）。**函数级观察**：在外部密钥交换桩返回成功的离线输入中，
 状态 4 收到非目标来源的 Success+auth_key，会先交换并确认 Success，再因来源不匹配确认 Canceled。
-这证明检查顺序，不能据此宣称真实网络可绕过授权；上游分派能否到达该输入、真实密码校验是否
-接受，均未作该实测。
+**补充证据修订**：撤回“上游分派能否到达、真实密码校验是否接受均未作该实测”的过宽
+表述。固定 shell 的 `steam-authorization-lifetime-reference` 中 `routing/foreign` 输入
+执行完整 BProcess、原 header/body 解析和原密码交换，非目标 ID=456 的有效密钥材料得到
+返回 1、derived=1、对 456 的保存调用、Success 后 Canceled 两次确认，manager 仍为 4。
+原指令重放与该固定向量一致。网络入站、身份/熵及最终文件/发送端点是显式 provider；
+它证明该受控有效材料可经原分派到达，不等于真实网络可绕过授权。
+**原生边界**：路由模式的已知主机授权先交换/保存/确认，再检查当前目标；明确区分选中
+事务目标、回复来源身份和密钥保存命名空间。未启用路由回调的旧 IHS API 保留原有入口
+过滤契约。账号首项、文件及订阅的独立证据和实现边界见下文。
+**实现修订**：撤回旧的“未知主机服务配对槽的缓存/状态仍与已知主机分开”边界。
+正式 runtime 的 SetPairingInfo 现在委托同一 IHS manager 准备授权正文；云端和 UDP 的
+回复共用同一授权 owner、current secret 和 manager 生命周期的 key/result 缓存。
+正式 runtime 由同一 actor 轮询 UDP，并同步完成 CM 当前帧；不再让后台 RX 排队改变
+两条入站路径的顺序。独立 threaded/deferred API 保留其拥有消息的队列契约。
+服务 RPC 的分派、状态 2 和断线行为另由下文的完整接收队列审计约束；不能用
+单条授权成功轨迹推导它们。下文完整 manager 混合输入审计限定了联合顺序的证据范围。
+
+**Evidence（入站身份的细分）**：同一 core `0x79d6c8–0x79d6cc` 的非 Success 分支
+直接到 `0x79d8f4`；状态 4 的零/非目标来源在 `0x79d954–0x79d968` 转入过期分支，
+该分支 `0x79d9f0–0x79da38` 只按 auth_key presence 决定是否向本次来源确认 Canceled。
+因此不能将“非 Success 不交换”理解成“非目标的所有失败回复均静默丢弃”。新 key 验证
+失败、缓存命中都在第一次确认后因交换 bool=false 返回；只有新的有效 key 才继续到
+目标身份检查。额度耗尽由交换函数停止当前事务，取消针对当前目标，确认仍针对回复来源。
+`0x79d708–0x79d7f0` 还会在 Success 且 steamid present 时先调整回复主机的身份首项并
+保存 client info，早于密码交换；这项身份列表更新与成功保存 secret 是不同副作用。
+
+`audit-steam-authorization-admission.py` 在固定 shell 执行完整 BProcess、原 protobuf
+parser、原 token/PIN/交换密码运算和调用者；72 组普通/网络测试输入固定为
+`steam-authorization-admission-reference.json.gz`。`check-steam-authorization-admission.py`
+把同一完整入站帧交给真实 IHS UDP/RX/延迟 owner，比较 160 步状态、编号、当前 secret、
+最近 key/result、派生次数、保存身份、确认/取消及请求中的密码字段；另比较保存回调和
+每次发送发生时的 manager 状态、编号、缓存及已通知错误数，而非仅比较最终结果。
+成功保存使用本次回复的 client ID/steamid；额度耗尽先通知当前目标错误、发取消并清除
+事务，再更新公共 key/result 缓存和确认回复。普通取消同样先发取消再清除编号；原生
+取消持有同一个 timer owner，任务在 visitor 返回后回收，避免中途插入重试/回复。
+
+原版的 Qt、身份/熵、请求 RSA、时间、持久 metadata、文件系统调用及最终发送仍有显式
+provider；原生端点/metadata 查找、身份/熵及保存回调也由 fixture 提供。runtime 联合
+场景另以真实 X25519/AES 产生三份有效非目标材料，验证确认前的实际密钥落盘、当前目标
+不变、不同账号的 profile mirror 不被覆盖，以及 key 临时文件写入失败后仍确认并更新
+当前 secret。原生 profile 仅镜像其当前账号，其他身份的 key 文件与全身份列表是不同
+数据；其旧版场景未覆盖冷启动。下述账号链补入真实文件重载，仍不证明真实 Steam/网络、
+SDK 或 Switch。
 
 密钥交换算法仍按认证参考：
 
@@ -865,11 +1091,256 @@ decrypt(response.device_token, paired_secret) 必须为 8 字节且等于本机 
 才按主机 client_id 和 steamid 保存新 secret。不能按收到数据包总数限制三包，也不能重复派生新 secret。
 云端配对成功后注册 status，通知授权成功 delegate，再结束当前事务；状态 4 的授权成功则回到
 状态 5，保持当前开流事务并再次发送 StreamingRequest（`0x79db80–0x79db90`）。
+这次重发仍经过 `SendStartStreamingRequest` 的当前记录／命名 hint 门槛；两者都不可用时，
+`0x7993ac–0x7993b4` 调用 StopStreaming(error=18)，先通知，再按停止规则清除 ID 和目标。
+不能把查询失败等同于发送成功，也不能只清请求编号却保留旧目标或省略终止通知。
+重新授权的定时发送也有同一门槛：`SendAuthorizeDeviceRequest @0x79a490` 在
+`0x79a508–0x79a510` 因记录/hint 不可用而 Stop(error=18)，正文构造失败则在
+`0x79a5a0–0x79a5a8` Stop(error=1)。这些是本地 manager 错误，均不能作为
+AuthorizationResponse.result 或 StreamingResponse.result 发到网络。
+**证据修订**：生产流请求在发送失败后并非完全没有错误通知。它曾在清除 request ID 后，
+由 timer cleanup 报告通用 StreamingFailed=3，并保留旧目标；撤回根据发送函数内没有
+Notify 就推导“没有任何失败回调”的结论。实际差异是错误分类、通知时的阶段/ID 和
+目标清理。正式路由的本地发送失败应通过独立错误回调先通知，再按当前阶段取消、清目标；
+同一次失败不得又从 timer cleanup 通知一次。旧独立 IHS API 的兼容回调不是该正式路径的证明。
+云端正文发布也不能提前清理：`OnPairingStarted @0x79f084–0x79f088` 先构造正文，
+成功才在 `0x79f090–0x79f094` 从状态 2 进入 3 并发布 SetPairingInfo。构造失败的 Stop(1)
+因此通知的是状态 2。PrepareService 返回失败时应保留该阶段、ID/目标供调用者报告并停止；
+若先自行 Clear，后续错误会被 Idle 的 Stop 屏蔽。临时 secret 的更新不因此回滚。
+私有 task 已退休并不等于 manager 已 Idle：该失败路径的状态 2 Stop 仍必须取消/清理，
+不能因 task slot 为空而直接返回，也不应借此再次发送远端 CancelPairing RPC。
+RPC 正文 helper 也不能在返回 false 前自行 abort；其调用者必须先报告失败，再统一停止。
+正文构造失败与最终发送失败另须分开。上述两个 producer 调用 SendMessage 后直接设置
+重试期限（`0x799798` 后、`0x79a588–0x79a598`），不按发送返回值 Stop。SendMessage
+是 void 边界；最终 UDP/CM/外层 header 未能发送不等于正文构造失败，不能将 IHS 本地
+SendControl 的 false 反向解释成原版 producer 的 error=1，更不能立即追加另一个承载发送。
 
 **持久化界面**：安装 device_id、主机 client_id、steamid 列表、每主机/身份的 secret 和已配对
 steamid 列表是不同记录。`SavePairedSteamID @0x79b5e8` 去重后保存列表；
 `OnConnected` 据此重建订阅。只保存 secret 而不保存用于重订阅的主机身份，会丢失冷启动云端发现。
 不要持久化 pairing PIN、临时 cloud session_id 或正在等待的 request_id 为长期授权材料。
+
+**Evidence（账号顺序与订阅的完整调用者）**：固定 core 的
+`HandleDeviceAuthorizationResponse @0x79d708–0x79d7f0` 在 Success 且 steamid present 时，
+先读取回复主机的持久记录。如果首项不是收到的 ID，找出第一个匹配项，用末项覆盖其槽位并
+缩短列表（fast-remove），然后把收到的 ID 插到首位并调用 `SavePersistentClientInfo`。
+这里包括显式零值；省略 steamid 则没有此列表操作。比如 `[A,B,C,D]` 提升 B 的结果是
+`[B,A,D,C]`，既不同于 status 的首项交换，也不同于稳定的 move-to-front。
+该动作早于 auth_key 的缓存比较、密码校验、额度检查和当前目标检查；无效 key 或缓存命中
+仍可能改变后续云端发送使用的账号，但不因此保存密钥或完成配对。
+
+新的有效 key 依次设置当前 secret、尝试按回复 client_id/steamid 保存 key、调用
+`SavePairedSteamID`、确认 Success；key 文件写入失败不会跳过保存 paired ID。
+全局 paired 列表只去重追加，不随 per-client 列表首项变化重排，也不能从 UI 卡片反推。
+随后 `0x79d8d0–0x79d8f0` 调用 Register，最后才检查当前事务的目标身份。
+无 auth_key 的 Success 同样走 Register；缓存命中、无效新 key、额度耗尽都在其之前返回。
+
+`OnConnected @0x79ee30` 在 session 存在且状态为 5 时，按保存的全局列表顺序逐个调用
+`RegisterForStatusUpdates @0x79206c`。后者再次要求状态 5，并要求 SteamID 高 8 位 universe
+等于当前 session universe；不在方法内去重。显式零值因此可以存在于文件和路由列表，却
+不会在 retail universe 的 session 上产生 Register。不要把这个 universe 门槛误加到
+`CRemoteClientSession::SendMessage @0x79229c–0x792414`：后者只检查 session 状态，
+原指令既不拒绝账号零值，也不检查其 universe。空账号列表和首项为零是不同状态。
+
+持久文件名由同一 core 的字符串和写入指令确认：
+`<client_id 的 8 字节小端十六进制>/steamid.txt`，以及根目录 `paired_steamid.txt`。
+每项写为 8 字节小端十六进制、随后换行，保留列表顺序。全局文件不是多个 UI 主机账号的
+即时去重视图；重新连接时恢复其所有项，更新该内存快照本身不在在线 session 上发起订阅。
+
+`audit-steam-account-metadata.py` 对固定 core/shell 运行 10 组列表程序（70 步）、48 组
+session 状态/universe/Register/OnConnected 输入和 26 组完整授权帧。授权部分执行原
+BProcess、protobuf、密码校验、metadata/key 保存调用者、client-info 文本构造和确认；
+低层文件操作、Qt、身份/熵、请求 RSA、最终发送及持久记录查找为显式 provider。
+独立的 `check-steam-account-metadata.py` 将同一完整帧送入实际 IHS UDP/RX/延迟 owner，
+比较 identity、key-save、Confirm/Cancel、Register 和重发的事件顺序；生产列表/实际文件
+读写另逐项比较原列表结果及有效文本字节，session 的原生成 protobuf 与生产 envelope
+逐字节比较。固定样本和所有审计 helper 的 hash 都必须匹配。
+云端 Offline 另按 `CRemoteClientSession::OnServerOffline @0x791bc8–0x791bd8` 直接转发
+notification 的 client_id（包括缺失字段的零默认值），不按 SteamID 查找并批量移除 UI 主机。
+
+**实现边界**：runtime 的目录持有 per-client 列表，独立文件持有全局 paired 列表；
+UI profile 只作为单账号镜像，旧资料仅在对应新文件缺失时迁移，不能覆盖已保存的首项。
+IHS 的 identity 回调在密码校验之前同步更新并尝试保存 metadata，subscribe 回调位于
+确认之后、目标检查之前；当前发送、请求 key 的查找及成功响应的账号采用目录首项。
+status 回调只在锁内更新拥有的列表，actor 在锁外保存快照；正式轮询模式的回调也在 actor
+上执行，独立 threaded 模式仍可能由 RX 调用。磁盘错误不变更协议授权结果。
+key 写入失败后的 paired-ID 保存、非目标的有效 key、零首项、旧 UI 镜像、实际重启文件
+加载和紧随其后的发送由 `control_route_runtime.c` 联合覆盖。
+这些是受控组件/actor 证据，不证明真实 Steam、网络/SDK 或 Switch。
+
+本地文件发布使用 tmp/bak 恢复；畸形文本整体拒绝并保留旧内存值，未宣称复刻官方
+GetLine/V_hextobinary 的全部宽松解析。该账号链也不替代完整地址/MAC 持久化、显式
+forget/退订操作，或 UDP status 与延迟授权的完整跨生产者
+入站顺序对齐；这些边界不能从上述列表或密码向量推断。
+
+#### 未知主机配对与共同授权 owner
+
+`audit-steam-service-pairing.py` 以同一固定 shell 执行完整 OnPairingStarted、请求/ticket
+序列化、BProcess/header/body parser、真实 X25519/SHA256/AES、key/result 缓存、持久化
+调用者、StopStreaming 及 delegate 调用。48 条轨迹分别提供可用或不可用的目标 hint，
+覆盖无 auth_key、缺失/零账号、零 client_id、失败后成功、重复 key、更换 PIN、四次新 key
+额度耗尽、取消后迟到回复、残留 request ID、已知主机与云端配对互相替换及 result 1..8。
+身份、时间、熵、持久记录查找、低层文件调用、Qt/delegate 端点、请求 RSA 和最终
+SendMessage/SetPairingInfo 发送端点为显式 provider；原版 RSA 输出是边界标记。
+因此它证明原始调用者和原密码校验的行为，不是原版最终路由、CM 网络或 Steam 互通证明。
+
+生产 `IHS_ClientAuthorizationPrepareService` 返回需由调用者释放的 authorization BODY，
+本身不发 discovery envelope，不生成新 request ID，也不发已知主机的周期授权请求。
+RPC 层把这个 BODY 放到 SetPairingInfo.request 字段；PIN 提示在 manager 已进入状态 3
+后产生。ticket 与原版逐字节核对 password、identifier、payload、timestamp、usage、
+device_name/model/serial 和 device_provisioning_id 的值及 presence，后者默认 0 仍存在。
+正式设备的 model 由平台提供；该字符串不是媒体能力或授权证明。
+**证据修正**：共用请求构造器不能先生成正文设备 token 再做 RSA。原 core 的
+`BCreateAuthorizationRequest @0x79c848` 先调用 RSA，`0x79c860` 才调用 BGetDeviceToken；
+因此后者失败时仍已执行一次票据 RSA 调用。撤回把两者颠倒视为等价重构的实现假定。
+既有 `device_token_official_vectors` 的失败用例保留了该原版副作用，并用于约束共用构造器。
+
+无 auth_key 的 Success 在状态 3 保存当前临时 secret、保存 paired ID、注册状态订阅，
+随后通知配对完成；状态 4 的同类回复不保存 secret。新有效 key 的顺序为身份 metadata、
+交换并替换 current secret、尝试保存 key 和 paired ID、Confirm Success、注册订阅、
+配对完成通知、Stop。文件失败不把有效密码校验改为 Denied。相同 auth_key 的缓存命中
+只重发缓存结果，不再次派生、保存或推进事务；即使新 PIN 不同，也会继续等在状态 3。
+
+状态 3 的 Stop 并非一概不发主机消息：GetServerInfo 或命名 hint 可用时，仍尝试发送
+StreamingCancelRequest(type 10)，使用停止前的目标与 request ID，ID=0 也不例外；没有
+可用记录则不调用发送。通知发生在状态/ID 清除之前，额度耗尽后的 ConfirmDenied 发生
+在清除之后。显式用户取消的服务 CancelPairing RPC 先于本地 Stop；成功完成配对不会
+凭空增加一次 CancelPairing RPC。
+
+`check-steam-service-pairing.py` 对实际 IHS UDP/RX/延迟 owner 投入相同完整帧，比较逐步
+状态/ID、current secret、key/result 缓存、私钥/派生调用次数、保存身份/密钥、metadata
+副作用、所有通知及发送/保存调用时的状态。RSA 明文 ticket 完全比较；实际 RSA 密文只
+验证生产加密调用，不能与原版桩字节相等。调用者 provider 省掉的外层 IV 消耗不能被
+当成差异，设备 token 和安全 PIN 另用对应 secret 验证 AES 明文。账号列表/文件使用生产
+account receiver 比较原版副作用结果。固定 ELF 与全部审计 helper 的 hash 必须匹配。
+
+`control_route_runtime.c` 另覆盖正式 runtime + RPC publication + 真实 IHS parser/crypto +
+实际文件的联动：先产生已知主机缓存，再发未知主机配对正文，故意使真实 key 临时文件
+写入失败，核对 Confirm 前的身份/paired 文件、完成事件、重复 key 经 CM 确认后仍等待、
+服务取消先于本地清理，以及冷启动账号加载。UDP syscalls、CM 连接/服务及最终 SNS
+constructor 为显式 provider，不联系 Steam、不创建真实 SDK 媒体连接。
+`service_pairing_runtime.c` 使用实际产品 worker、UI 事件处理和文件保存，另在第一次 profile
+保存过程中插入尚无新主机的旧 UI 快照，验证完成前排队的保存不会删掉新授权记录，随后
+显式删除仍生效；正常文件与故意阻塞 key 临时文件两种输入均执行。确认调用早于第二次
+快照保存，实际 CM FIFO 则允许在该保存后再刷出，不能混淆这两个观察边界。
+
+#### 服务响应、取消和断线顺序
+
+**证据修订**：撤回正式客户端用本地 pending 标记屏蔽迟到配对响应，以及“配对 RPC
+20 秒没有回复便使云端 session 失败并重连”的策略。core
+`HandleWebSocketPackets @0x7916a0–0x791990` 从接收 FIFO 取完整 protobuf，直接按
+ServerMessage 的 oneof 类型分派，没有查找 pending Start/Set/Cancel 或 RPC job ID。
+`UpdateWebSocket @0x791bdc–0x791d20` 的 Connected 分支只检查 WebRequest 状态并处理
+接收队列，没有配对 RPC deadline；失败退避中的 `10 + 20*WeakRandomFloat` 是连接恢复
+间隔，不是某个 RPC 的等待上限。正文中的 authorization_result 与 RPC 的 EResult、
+内部 EServerError 是不同枚举域。
+
+- StartPairing 成功回复总会调用 manager OnPairingStarted。manager 状态 2 且 session
+  Connected 时生成并发布授权正文；其他 manager 状态收到迟到／重复 PIN，只发送
+  CancelPairing 清理远端槽位，不清除当前事务。缺失 PIN 使用 protobuf 默认值 0，格式化
+  为 `0000`；不能把字段缺失当成一个新的失败结果。
+- Start/Set/Cancel 的非 Success 回复均调用 OnPairingFailed→StopStreaming(error=1)，
+  不以 pending 或“当前是否在配对”过滤。Stop 在 Idle=1 时直接返回；在状态 2..6 时先
+  通知错误，再按停止前阶段选择 type9/type10 并清除 ID/目标。因此取消后若已开始另一笔
+  已知主机授权或开流，迟到的 CancelPairing 失败仍会停止该活动事务，不能只检查旧槽位。
+  Set/Cancel 的成功回复没有附加动作；这些规则由完整接收分派证明，不只依赖 bool callback 桩。
+- StartPairing 先写 manager 状态 2，再检查 session；未 Connected 时以 error=18 停止。
+  在活动事务上再次调用时保留当前目标/ID/current secret/cache，不预先发送主机取消。
+  等待新 PIN 的状态 2 不接受 AuthorizationResponse；有 auth_key 的旧回复确认 Canceled，
+  无 auth_key 则忽略，不能因旧私钥仍有效而推进授权。
+- Connected session 发现 WebRequest 已断开时，先调用 manager OnDisconnected，再销毁
+  WebRequest、清空队列/session ID，并进入恢复入口。manager 仅显式中止状态 3，以
+  error=18 通知后停止，随后通知 disconnected；状态 2 保留。取消在未 Connected 时为
+  no-op，不发 RPC、不主动清理状态 2。重连只恢复账号订阅，不重发 Start/Set；后续若实际
+  收到 PIN，仍按当时的 manager 状态处理。
+
+**批量响应 Evidence**：相同的 `HandleWebSocketPackets` FIFO 可以在一次调用中依次包含
+有效 AuthorizationResponse 和失败的 SetPairingInfo 回复。原指令在处理第一帧时同步完成
+真实密钥交换、key/paired-ID 保存调用、Success 确认和 Stop；处理第二帧时已为 Idle，
+OnPairingFailed 的 Stop 不再报告错误。生产代码若只把第一帧加入另一个延迟队列，而立刻
+处理第二帧，就会先停止授权，之后把第一帧确认为 Canceled，且不保存 paired ID。
+此差异由相同完整帧在原 FIFO 与生产 runtime/IHS 中复现，不是历史热点故障根因的证明。
+因此 CM 已在应用 actor 上交付的控制帧必须在回调返回前完成处理；不能通过逐帧调用整个
+Pump 来修补，因为 Pump 还可能执行发现/授权重试，改变同批入站与到期发送的顺序。
+此前“UDP RX 仍排队交给 actor”的正式产品方案已撤回：只让 CM 同步并不能保证跨承载
+顺序。保留 threaded API 的独立调用者不能临时关闭全局 deferred 标记，以免同时改变
+另一接收线程的行为；正式产品改用下文的同一 actor 轮询方案。
+跨承载排序另有静态调用者证据：core `CServerManager::Update @0x79890c` 先在
+`0x79898c` 调用 session Update，再在 `0x7989c0–0x7989d8` 循环接收并处理 UDP，
+随后才做发现发送（`0x798ab0`）、可见记录到期删除（`0x798c18`）和开流／授权重试
+（`0x798c74/0x798c90`）。这不支持在处理 CM 前独立推进一次 UDP 重试，也不支持在
+任意当前目录查询中提前执行本轮末尾的到期删除。完整联合重放仍需核对这些调用边界。
+正式 control_host 因此只读取已提交的 visible 标记；refresh_presence 是可见记录到期的
+显式步骤。host_directory_runtime 使用实际接收/目录及 cloud disconnect 回调，将墙钟
+推进到记录的 300 秒之后：断开云端后、到期清理前查询仍成功，清理后查询失败，地址缓存
+仍独立保留。它约束读取与删除的阶段差异，不证明整个 CM/UDP/发现/重试循环已经联合对齐。
+
+**混合输入 Evidence / 证据修订**：同一固定 shell 的完整 manager Update→session Update→
+WebSocket FIFO→UDP BProcess 收到“CM SetPairingInfo 失败，UDP 有效授权”时，先通知
+失败并 Stop，再将 UDP 授权确认为 Canceled，paired 列表不增加。生产旧循环先 Pump UDP，
+随后才处理 CM，结果为先完成配对、paired 增加、再忽略 Idle 的失败。UDP 原 BProcess
+返回 1，原 parser/crypto/Stop 执行；BReceive 字节、初始对象/队列、持久查找和最终发送
+是 provider，发现期限在未来且 visible map 为空，不据此声称非空目录到期的完整联合证明。
+因此仅统一授权队列或交换两次 Pump 不能证明全序一致。正式 manager 应由同一工作线程
+轮询控制 socket：CM→完整 UDP 批次→发现→到期→重试；媒体的接收线程属于另一套 owner。
+旧 threaded/deferred IHS API 可保留给独立调用者，但不能作为正式产品排序的证明。
+
+`audit-steam-control-update.py` 固定相同 shell，实际执行完整 manager Update、session
+Update、WebSocket FIFO 和 UDP BProcess。五个初始阶段（2/3/4/5/6）、当前记录/hint
+可用或不可用，各投入失败/PIN/有效 key/Denied/重复 key 的六类组合，共 60 组。
+`check-steam-control-update.py` 从正式 runtime 的 update_control 进入 IHS_ClientUpdate，
+只在 CM 传输交付、recvfrom 和继承的最终发送等 provider 边界替换数据，比较每步
+阶段/ID/目标、secret、保存/paired 结果、RPC/控制帧和通知时的状态。原 UDP BProcess
+逐帧返回 1；该证据不覆盖非空 visible map 的到期或实际网络互通。
+正式控制 socket 由工作线程非阻塞读取，无独立 RX thread；100ms 轮询周期沿用原
+watcher 构造器（`audit-steam-discovery-cycles.py` 验证 timer interval=100）。发现和请求
+timer 对轮询客户端不自行发送，初次 StartStreaming 仍立即发请求；所有后续阶段在同一
+Update 里完成。到期回调重新读取墙钟，发现/重试使用 UDP 批次结束后的共同墙钟快照。
+
+**额外差异的撤回与修正**：状态 4 在 CM 收到本目标 Denied 后，同一轮又收到 UDP 有效
+key；原 Stop 无可用记录/hint 时不发 type9，并清除目标，迟到 key 在 Idle 确认 Canceled。
+旧原生 StopAuthorization 无条件发 type9、仅清 ID 而保留目标。撤回该分支已等价的假定；
+路由模式改走统一 StreamingCancel，仍先通知旧状态，再查询取消目标并清除 ID/目标。
+独立非路由 API 保留原有取消契约。此差异不证明历史热点或卡帧的根因。
+
+正式 runtime 通过 begin/prepare/abort 回调接入这些规则：IHS 同时持有状态 2/3，公开
+HandshakePhase 与 HandshakeFail 供服务回调使用；错误先经原来的 UI 事件入口通知，
+再停止真实 IHS owner，Idle 不重复通知。普通串流取消也在停止前查询当前可用记录，
+没有记录便不调用取消发送；取消后的目标清空，迟到处理所需的旧目标单独保留在 canceled
+记录中。RPC Offline 的本地分类表示服务连接不可用，对照内部 error=18，不应解释为
+收到 authorization_result=3。旧独立工具的 legacy RPC/private-crypto 兼容 API 不作为
+这条正式 manager 路径的证据。内存/有界队列失败是本地保护，不伪装为服务回复。
+
+`audit-steam-pairing-rpc.py` 在固定 shell 上执行完整响应 FIFO、原 protobuf parser、
+session 分派/Update/Disconnect/Cleanup、manager Start/Cancel/OnPairingStarted/Failed/
+Disconnected、原授权请求 producer、密码材料及 Stop。202 组程序覆盖 Idle、等待 PIN、
+云端授权、已知授权、开流等待、已取得 ticket 六个阶段，成功／失败、重复／迟到、取消
+后新事务、缺省 PIN、百万秒 session 时钟跃迁、断线/恢复和旧授权回复；其中 72 组在
+同一原 FIFO 中预置两至三条帧，仅调用一次 HandleWebSocketPackets，没有帧间 Update。
+这些批次包括 48 组服务配对与 24 组已知主机重授权/迟到 RPC；另有 4 组单帧重授权，
+分别保留或移除当前记录/hint，约束重授权恢复时的 error=18 和清理顺序。
+对象/队列初值、WebRequest 状态与释放、恢复入口、时钟、熵、身份、请求 RSA、最终发送、
+低层文件及持久查找是显式 provider；固定 ELF 和 18 个审计 helper 的 hash 必须匹配。
+
+`pairing_rpc_oracle.c` 调用生产 RPC、runtime 回调和真实 IHS owners，比较每步阶段、
+ID/目标、current secret、生成密钥对次数、ticket 明文、服务 envelope、控制消息/收件人，
+以及通知和每次发送发生时的状态。服务正文的 RSA 密文与原版桩不同，设备 token 以 AES
+明文验证。批量输入对应生产 remote_connection 连续交付完整帧的行为：只调用真实 RPC
+及 runtime/IHS 回调，帧之间不排空 IHS，不推进计时器。它证明这些受控逐事件和 CM 批次
+程序，不证明 WebSocket/TLS、真实服务、NAT、最新 Switch 生命周期或 CM/UDP 入站在
+不同生产者之间的完整排序。GetServerInfo/hint 可用性为 provider；真实目录在
+到期、断线和批量输入之间的更新时机，不能从该布尔输入推导。畸形 protobuf 的全部宽松
+解析也不在这组输入范围。
+
+`audit-steam-request-failure.py` 另执行 18 组本地发送边界程序。显式让一次
+BGetDeviceToken bool 为 false，以区分记录不可用时的 error=18 和正文构造失败的
+error=1；这不是自然 RNG/crypto 失败的动态观察。已知主机的授权/开流定时 producer
+是直接调用，不冒充完整 manager Update。云端发布覆盖状态 2 的正文失败；原最终
+SendMessage provider 在 void 边界返回零，生产 sender 的 false 输入不能让 caller
+新增 Stop。固定 ELF 和 19 个 helper hash 受校验，原通知/取消/清理调用者均执行。
+实际 runtime/IHS oracle 比较通知发生时的阶段/ID/目标、控制消息、当前 secret 和
+失败实际触发次数，并在 stop/join 后检查没有从 cleanup 再报告一次。
+产品的 requestFailed 传递独立的本地 manager 错误，不转换成主机回复的 wire result。
 
 ### 11.3 开流响应的分支表
 
@@ -906,6 +1377,321 @@ StopStreaming 在非 Idle 状态通知非零错误；状态 4 发 AuthorizationC
 仍有目标主机的事务发 StreamingCancel(type 10，携当前 ID)，然后清空目标和 request_id 并回 Idle
 （`0x79987c–0x79998c`）。服务 CancelPairing、type 9、type 10 和 SNS CloseConnection 不能合并。
 
+#### 票据消费与同批迟到失败
+
+**Evidence / 证据修订**：撤回“已取得 ticket 后可以忽略所有匹配 ID 的开流响应”和
+“收到成功响应即可立即创建 SDK 后端”的实现假定。固定 arm64 shell 的
+HandleStartStreamingResponse `0xcb5444` 只按非零 request_id 过滤，没有状态 6 的早退；
+同一轮先收到 Success、再收到匹配 ID 的 Failed，仍以内部 error=16 停止状态 6。
+OnServerError `0xc6f864` 经真实 delegate 调用，在显示错误后于 `0xc6fcb4` 把连接页置为 1；
+OnUpdate `0xc727bc–0xc727d0` 对该状态直接返回，不再根据旧票据启动串流。仅仍在连接页
+且 manager 为 6 时，`0xc72934–0xc72980` 才选择网络测试入口或普通 StartStreaming。
+这里是启动交付边界；不能把较晚的 SDK Connected 当成首次消费票据的时刻。
+
+`audit-steam-ticket-consumer.py` 执行完整 manager/session/WS FIFO/UDP BProcess、原回应
+解析/AES/Stop、真实 OnServerError 和 Panel OnUpdate。20 组覆盖普通/网络测试、UDP/SDR、
+成功、重复成功、Busy、CM 失败先/后于票据、UDP 失败后于票据。UDP 使用真实可解析的
+IPv4/端口，HasIP 执行原函数；普通 launcher 为观察终点，网络测试执行到 token 交付，
+Qt 展示/对象存储和测试线程启动是 provider。未使用未知传输值代替 UDP（proto UDP=1）。
+manager 的 observer 指向提供的 Panel+192 对象；错误通过原次级 vtable 的 +0x30 项及
+`_ZThn192_...OnServerError` 调整 this 后进入原函数，不用伪造错误回调的状态写入。
+旧原生实际 worker 在 SDR 成功→CM 失败时仍创建后端及 IHS Session；成功→UDP Failed
+还会因 ticket 提前返回而保持 6。原版的相同输入均进入错误状态且不交付启动。
+
+正式 runtime 只在响应回调中保存已接受材料，完整入站 Update 结束后才消费。借用的
+cert/relay 字符串复制到 actor 拥有的票据；同轮重复成功替换未消费材料，不多开后端。
+终止错误撤销未消费票据，并清理尚未交给媒体 Session 的后端；stop/退出释放拥有的
+字符串与 key 副本。已存在媒体/后端 owner 时，不从重复成功再创建第二份 owner。
+路由模式的开流失败先通知旧阶段/ID/目标，再复用条件取消和统一清理。响应中的 wire
+result 与内部 manager error 仍是不同枚举域，不把名称相似当成数值等价。
+
+`ticket_consumer_runtime.c` 运行真实产品 worker、RPC/IHS parser 和解密；仅替换 CM/UDP
+传输交付、最终发送、既有统计文件可读性与构造终点。与原版比较 manager 阶段和启动
+交付次数；错误票据不得调用 SDK 或 IHS Session constructor，所有临时 owner 必须清理。
+构造返回值是受控 provider，该用例不验证 SDK/媒体启动成功、Qt 事件循环调度或实际网络。
+
+#### 普通播放器交接与测网页面的不同 owner
+
+**Evidence**：固定 arm64 shell 的普通 StartStreaming(QStringList) 在 `0xc9980c`
+请求 Qt quit。main 的 Run 返回后于 `0xc65814` 调 Shell Quit、`0xc6581c` 析构，
+后续才走 Android JNI 的 Activity 参数交付。BInit 在 `0xc98240` 构造 manager，
+`0xc9824c` 存入 app+24；Quit `0xc97f94–0xc97fa8` 经 manager 虚表+56调用 deleting
+destructor 后清空该指针。实际析构 `0xcaecac` 于 `0xcaeccc` 调 Stop `0xcaeea4`。
+Stop 释放 discovery socket、CM session 并进入未初始化的 state0，**不调用 StopStreaming，
+不发送 StreamingCancel**。旧 request_id/target 的存储在 Stop 末尾尚未清空，但随后对象被
+销毁；不能把这些残留存储当作媒体期间仍然存活的握手事务。
+
+**证据修订**：此前“成功票据的 state6 owner 一直保留到 Cancel/替换/销毁”描述的是
+manager 局部契约，不能推导成普通播放器运行期间仍保留它。完整入站 Update 之前的失败仍
+可撤销票据，专用 NetworkTest 仍在 Qt 内使用原 manager；只有普通播放器越过 launcher
+交付后才结束选机 manager 的生命周期。不得据此在测网启动时退休事务，或在普通交接时
+发送用户取消。
+
+本端口复用同一进程/发现 owner；保留目录查询以支持直启游戏结束的产品策略，与原 Qt
+退出不同。因此普通交接应无取消地退休握手 owner，并在媒体期间停止旧握手入站，而不是
+让旧 Success/Failed/Proof/服务失败继续修改播放器 UI。新的显式授权/串流操作重新开启
+握手；发现与媒体自己的信令桥保持各自生命周期。这是对原交接的端口映射，不宣称整个
+Qt/JNI 调度或存储对象相同。实现入口只适用于完整 Update 之外的 polled owner，不能从
+该边界外推 threaded/deferred 调用者。
+
+**缓存边界补充**：manager 析构对 `this+0x2d8` 的最近 authorization key buffer 执行
+free（`0xcaed5c–0xcaed74`）。原构造函数在污染存储上的执行已给出空 key/默认 result=7
+（`audit-steam-authorization-exchange.py` 的 constructor_defaults），这个 manager-lifetime
+缓存也不能跨普通交接继续使用。种入16-byte缓存的 Quit 组合执行观察到实际 free 调用；
+缓存内容是受控初始状态，不冒称自然授权交换。端口交接同样清空最近 key/result，
+不删除持久配对身份、长期 secret 或已复制给媒体的 session key。
+
+`audit-steam-shell-handoff.py` 复用20组完整 manager/Panel 输入，逐组确认 launcher
+准入结果与既有 consumer fixture 相同；5组普通成功继续执行真实 Quit、deleting/base
+destructor 和 Stop。主线调用点、manager字段/虚表绑定、函数字节及递归helper均冻结。
+Qt Run/JNI没有执行；设置、声音、socket/session最终析构与hash-map销毁为显式provider，
+缓存free端点为记录的分配边界。种入缓存仅验证析构所有权，不能冒充自然授权交换。
+冻结 gzip SHA256 为 `40c9cb69c01858c0c7273d6044aaa2cce6efb651c075e43523161d74d104f890`。
+
+生产 `IHS_ClientStreamingHandoff` 只在完整polled Update之外、普通成功票据的owner上
+执行；拒绝回调内、尚未成功、NetworkTest等入口。退休private与最近缓存，不发9/10；
+后续握手帧不进入授权/开流/Proof分派，发现帧仍处理。新的显式串流或授权/服务配对动作
+重新开启输入。`check-steam-shell-handoff.py` 用实际产品worker和IHS parser/线程验证
+17次普通启动，在交接后注入CM服务失败、UDP失败和InProgress，不误报UI失败、不多开owner
+或发取消；旧consumer20组继续单独比较launcher准入，不能把准入时state6与交接后的state1
+混作同一个观察点。原销毁后的state0映射为端口“发现仍可用、无活跃握手”的state1，
+不声称两个存储对象逐字相等。
+
+独立native owner连续完成3次请求/真实解密/交接，验证重开串流、显式授权、服务配对
+入口，以及45个非Success结果、重复Success、Proof与服务失败在交接后的隔离；缓存种入
+与parser输入为受控，真实private/cache释放、secret保持和3条发现通知实际执行。
+这些测试不请求真实Steam/SDK/媒体，不是Switch loader或真实互联网验收。
+另以五份生产 C 编译反例核对比较器：遗漏交接、交接发送取消、遗留活跃编号、继续分派旧
+握手、错误地退休 NetworkTest；每份均正常执行37个程序后被正式比较器拒绝，未将编译
+失败或断言崩溃计为检出。source fixture重复生成逐字节一致，错误ELF与优化掉assert的运行被拒绝。
+
+#### 测试页运行后的控制错误与授权通知
+
+**Evidence**：固定 arm64 shell 的 `OnServerError @0xc6f864` 在运行中的测试页收到
+StreamingFailed 或 CM 服务错误后，创建 style=0 错误框，将 `finished(int)` 接到
+`OnActionCancel()`，并在 `0xc6fcb4` 将 panel 置为1。manager 先执行 StopStreaming，
+清 request_id/target；此时不析构嵌入的 NetworkTest，也不 Join。后续 PanelOnUpdate 在
+panel1 不采样测试。用户确认后 OnActionCancel 执行 Stop/Pop，panel 析构的
+`0xc6e56c–0xc6e570` 才清理 PANEL+280 的 NetworkTest（析构 `0xca99f4`）。
+
+PINRequired 走独立的 `SetPanelStateEnteringPIN @0xc6fdb0`，进入 panel6 的连接安全码
+输入；不是配对授权码，也不是普通错误框。迟到 Unauthorized 令 manager 进入4并发出
+授权通知，但 panel 仍为5，继续采样原测试，不跳到配对码页；Busy/重复 Success 也保留
+panel5，且不创建第二个 Test。取消 Unauthorized 发送9，取消 Busy/Success 发送10。
+普通错误/PIN 已清当前编号，确认/取消时不再次发送同一编号的10。
+
+**证据修订**：撤回把所有控制错误统一映射成自动 STOP/可重试错误页，及把运行中 Test 的
+所有授权通知直接映射到配对页的实现假设。控制错误与测试自身失败的清理时点不同：前者
+保留原 Test owner 到用户确认；后者按测试完成/失败路径关闭媒体，仍等待用户确认。
+
+`audit-steam-network-test-late-control.py` 执行24组完整 manager 入站和 Panel 调用：
+UDP/SDR ticket、worker session phase0/4、UDP Failed/PIN/Unauthorized/Busy/Success
+及 CM service error。phase0/4 是受控输入，非真实媒体；Qt 控件、最终发包、thread IsAlive/
+Join 为 provider。Pop 后的析构由 driver 显式执行，不宣称自然 Qt 调度或自然线程终止。
+冻结 gzip SHA256：`cac45896775795badde1a18eb8e09768fd8b65268798780ff65a6b3c0a03bd11`。
+
+`check-steam-network-test-late-control.py` 将其与24次实际应用/runtime/IHS UDP/Test
+生命周期对照，覆盖手动测试与连接前测试、A/B 关闭、错误等待时不重采样/重试、PIN 时
+不采样、Unauthorized/Busy/Success 时继续采样、取消9/10的先后及 Join/Destroy 各一次。
+CM 错误在 native 的 owner callback 边界注入；原始侧执行完整 CM parser，不能据此把
+native callback 测试称为真实 CM/SDR 联通。生产 SDK 在错误框期间仍轮询现有 backend，
+但不据其状态自动关闭测试或创建新 Session；确认后按 IHS Join→backend destroy 清理。
+
+
+#### 测网的 SDR 初始化失败与媒体失败
+
+**Evidence**：`audit-steam-network-test-sdk-failure.py` 从真实 SDR ticket/Panel 开始，
+继续执行原 `CNetworkTest::RunNetworkTest→BConnect`。action2/3 的虚拟 BInit=false
+均立即 Release backend、清 transport/connection，Run 返回 Failed4；PanelOnUpdate
+显示 style0 的 finished→OnActionCancel 错误框，manager6/id17 保留到确认才发送10。
+这次执行没有创建 bridge/Connection，BInit bool 与 backend 存储/Release 是 provider；
+不宣称执行过真实 SDK 初始化失败或证明配置 HTTP 的前置重试策略。
+原 lifecycle fixture 的 X_phase2/3/4 另确认 OnStreamDisconnected→Run Failed4/phase0。
+
+**证据修订**：撤回测网可以复用普通媒体的 SDK Failed/Closed→stop_session→generic
+failure 分支的假设。测网媒体失败先停止/Join 媒体并释放 backend，再保留测试失败快照
+及等待确认；不能清掉 test_failure_pending、静默离开测试或变成直接重试。错误的
+backend 在 IHS Session 创建前就可能存在，清理不能只放在 test_session 非空分支里。
+这不改变上一节控制错误保留 Test owner 到确认的不同路径，也不改变普通播放器清理。
+
+原始 fixture gzip SHA256：`5bd445fff735c3a5fd93cc55d2419564499f1b8ce9d4b81a0c4e08c0e3c9b0fe`。
+native 使用真实产品 actor、CM/IHS parser 与 Test worker，SDK/config/route 结果是
+显式输入；核对同步创建失败、异步初始化失败、Session 创建后的 Failed/Closed，不能
+把这些 owner-policy 测试称为真实 SDR 故障恢复或 Switch 验收。
+
+`check-steam-network-test-sdk-failure.py` 比较12次native生命周期，区分手动/连接前测网、
+创建失败、IHS之前的异步失败、IHS之后的Failed/Closed，以及明确先交付控制错误/PIN、
+再注入SDK Closed。后两组用上一节原始Panel分支约束页面/owner，SDK终态为provider；
+不能声称执行了官方真实SDK的同一自然组合。反向顺序和多次错误对话交替未由此覆盖。
+旧产品逻辑配同一基础driver的8组程序全部正常结束，比较器逐组检出失败快照/确认语义
+差异；未将编译错误、进程崩溃或不支持的新组合模式计为反例。
+
+
+#### 测网失败框之后的有效控制错误
+
+**Evidence**：`audit-steam-network-test-error-overlap.py` 接上同一实际 SDR ticket、Test
+Run/BConnect=false，分别在首次失败框显示前/后交付 CM service error 或 UDP 的
+Failed/PINRequired/Unauthorized/Busy/Success；action2/3共24组。22组无原诊断；另两组
+“Unauthorized先于首次失败框”会在原 servermanager.h:208 触发 BIsStreaming() 诊断，
+因为manager已由6转4，失败框格式化仍读取串流资料。这两组保留为诊断分支，不纳入正常
+等价数量，不要求端口复制该断言；在assert provider继续后观察的状态也不是自然Qt运行。
+
+原 `CPanelBase::ShowDialog @0xc67f14` 读取 panel+0xb8 的旧框；非空则于
+`0xc67f44` 调 QWidget::hide，清指针后存入新框并调用show。初始“Network Test Failed”
+之后收到有效控制错误时，真实ShowDialog执行 hide(old)→show(new)，仍接
+finished(int)→OnActionCancel；PINRequired同样替换成独立输入框。Unauthorized、Busy、
+Success没有替换已显示的失败框；前者令manager4，最终取消9，其余保留6、最终取消10。
+控制错误/PIN已在确认前取消10，最终确认不重复。Test不重新创建，最终显式析构Join一次。
+
+**证据修订**：撤回“待确认时始终保留第一个错误内容”的泛化。来自同一owner、有效事务的
+后续控制错误应更新待确认内容，不能被一般queued-error保护吞掉；保留只能关闭的控件。
+测试自身失败与控制错误仍有不同错误来源；不把后者标题继续分类成测网统计失败。
+同一generation的新失败快照可更新错误页，陈旧revision、不同generation、普通队列错误或
+Running/Result快照不得把待确认页改成重试或重新启动。
+
+冻结gzip SHA256：`801cff15cc1cec12f5ea10f18555742a905fd470a902fc54521175d7084a327f`。
+Qt文字格式化（部分记录为display-only）、控件构造、hide/show端点、SDK/线程及最终IO
+仍是provider；执行的是框的所有权/调用顺序，不证明自然Qt动画、信号投递或真实SDR。
+
+native应用用真实IHS认证拒绝产生共用的测网媒体失败框，再在owner callback交付服务错误，
+共4次手动/连接前、A/B确认；核对内容/错误来源更新、关闭控件不变、采样不恢复、单次
+取消及Join/Destroy。初始失败原因与source的BInit=false不同，分别由既有失败路径测试
+约束，不宣称发生了真实SDK/CM同一事件。UI单测还拒绝陈旧/异generation/Running快照
+及普通队列错误；只有同owner的新Failed快照替换错误。旧UI断言复现用于定位，不计作
+正常执行的生产反例。
+
+
+#### 测网安全码重试保留旧 worker
+
+**Evidence**：`audit-steam-network-test-pin-retry.py` 执行固定 arm64 shell 的
+`OnPINEntered @0xc722b0`、SetPanelStateConnecting、StartStreaming、新请求序列化、
+完整 manager 入站、Panel consumer 和 `CNetworkTest::Start @0xca9d28`。UDP/SDR、
+旧 worker phase0/4、等待取消/Success/Failed/PINRequired/Unauthorized/Busy/重复
+Success/同批Success后Failed共32组。安全码9876被独立解密确认为新请求field8；
+它不进入pairing ticket.password。旧编号17被取消10，新请求编号19使用不同会话key。
+
+PIN输入及等待新回复时旧Test仍存在，没有Join。只有新票据被Panel消费时，原Start
+先IsAlive，再于`0xca9d74`执行Join(-1)，然后启动新worker；没有调用Test::Cancel。
+仅Busy保持manager5/panel4；Unauthorized进入manager4/panel3授权页，不能因旧Test
+仍存在就吞掉配对提示。Failed、再次PIN及同批Success后Failed都不启动新Test。
+最终取消对Unauthorized使用9，其余使用10；已经取消的事务不重复取消。
+
+**证据修订**：撤回D-A089末句把安全码重试与错误确认一律视为先清理旧owner的泛化。
+安全码重试保留测试意图和旧媒体；等待新票据时不能Disconnect/Join/Destroy旧worker。
+有效新票据到来后等待旧worker自然结束，再Join、释放旧媒体并创建新测试。旧结果
+不能被当成新请求的测网结果保存或推荐。普通取消/退出仍需明确stop→join→destroy。
+
+异步端口将原同步Join映射为actor等待：仅在已获新票据、等待旧worker时暂停后续
+manager Update；SDK bridge继续推进旧媒体，本地取消/退出继续受理。旧SDK启动所用
+SessionInfo必须独立保存，不能被新票据覆盖；旧启动也不能把新请求标记Established。
+这不增加协议重试期限，不把新密钥写进仍运行的旧Session。
+
+冻结gzip SHA256：`d8a9faa268472af4e1c19e2098d07c1c96b0aeb14c57e1b812d92f961ddb25f1`。
+Qt输入/显示、身份/随机/RSA、线程IsAlive/Join/Start及初始worker phase均为provider。
+Join provider没有执行旧worker收尾或新Run，故Start后的残留phase不能投射成自然线程
+状态；也不据此证明phase0时旧线程读取新token的竞态、真实SDK时序或Switch验收。
+
+`check-steam-network-test-pin-retry.py` 比较16次真实application/IHS UDP/Test线程
+生命周期；另16次提供尚未完成的旧SDK BInit，再交付新UDP票据后才完成旧初始化，
+核对旧Session仍使用旧key、旧启动不确认新请求。SDK/bridge为provider，实际IHS
+指向受控loopback peer，不把这16组称为真实SDR数据传输。另4次分别提供旧SDK
+初始化失败、旧IHS setup失败，核对新票据仍只启动一次；这两个组合的失败时序为
+显式输入，不声称原审计执行了相同的自然SDK组合。2次本地取消测试确认actor等待
+旧worker时仍可退出；这是平台响应性约束，不伪称原Qt阻塞Join可处理相同UI事件。
+native替换分支核对旧Running worker未提前Disconnect、等待期间后续manager
+Update暂缓，以及最终Join/Destroy/backend释放次序。
+
+#### 已完成测试的安全码重试与结果框
+
+**Evidence**：`audit-steam-network-test-finished-pin.py` 继续使用同一固定shell与完整
+manager/Panel/Test调用。完成status2、phase0、统计和IsAlive=false是显式输入；
+结果框显示前/后、UDP/SDR和上述8种结果共32组。显示后原Panel进入state1，框连接
+finished(int)→OnNetworkTestComplete(int)；PINRequired调用实际ShowDialog，先hide
+旧结果框再show安全码框，旧Test仍保留status2。OnPINEntered进入state4重新申请。
+
+原Start在IsAlive=false时不Join旧线程，直接启动新worker；仅Success/重复Success
+将status改回1并使用新key。其余回复保留旧完成状态，最终取消9/10仍按新事务类别。
+所以“保留旧Test”不等于“旧线程始终存活”，也不能要求每次PIN替换都重新Join一次。
+端口的已完成IHS worker在展示结果前已Join，重试继续保留其对象，新票据替换时只
+释放旧对象，不重复Join，不保存用户未确认的旧统计，也不自动提交旧推荐。
+
+gzip SHA256：`59ec6bfdf35e608fefe5f4f72bd8383037a4128252bc3722480e53c76241cd13`。
+结果框的格式/存储和widget hide/show端点仍为provider；没有执行自然Qt信号投递，
+不能由“隐藏旧结果框”推断此前已经排队的finished信号会被撤销。原完成状态/线程
+终态在这32组中是输入，不把它称为实际Run线程收尾；实际Complete另由§118–119约束。
+native的独立16次生命周期则等待真实IHS测试自然完成、Join并进入结果页后，才由
+受控loopback主机交付PIN及新票据；核对结果页→安全码→重试、取消/替换与单次Join/Destroy，
+并核对未生成旧统计文件。它不证明真实Steam、SDR媒体或Switch界面已验收。
+
+#### 自定义结果框的 finished、hidden 与端口异步命令
+
+**Evidence**：`audit-steam-network-test-dialog.py` 的32组固定shell程序执行原
+CPanelDialog::accept/reject/done、hideEvent、生成的signal wrapper，以及Panel的
+ShowDialog/HideDialog/OnDialogHidden和实际OnNetworkTestComplete。它是自定义
+CPanelDialog，不能用QDialog的行为代替本地代码。两种action、UDP/SDR分别核对。
+
+accept/reject分别于`0xc7ec28/0xc7ec60`写结果，再发accepted/rejected、finished，
+最后hide；done@`0xc7ebd0`同样在hide前发finished。hideEvent@`0xc7ed3c`只发hidden
+并请求deleteLater，不发finished。PIN/Failed/CM错误替换旧结果框时只产生hidden，
+没有保存旧统计或进入完成slot。Unauthorized保留旧结果框和确认能力。接线记录的
+ConnectionType是0；测试按同GUI线程AutoConnection的同步语义提供activate分派，
+不是Qt事件循环的机器级实现或自然信号排队证明。该语义另参见
+[Qt 5.15 Threads and QObjects](https://doc.qt.io/archives/qt-5.15/threads-qobject.html)。
+
+**证据边界**：原OnNetworkTestComplete本身不检查当前panel；手动在隐藏后直接调用
+这个slot会保存统计，但不能据此声称原GUI自然投递了旧框的finished。旧框的隐藏、
+用户确认开始后的内部隐藏，以及异步端口尚未消费的命令，是不同的调用来源。
+Qt显示/对象存储、焦点缺失、deleteLater、同线程activate、无推荐配置、完成状态和
+SaveNetworkStats文件端点均是provider。没有回放跨线程/queued信号或Qt鼠标事件。
+
+冻结gzip SHA256：`c76104e1d3f0fd2e43de1ff1dbe48aa004c7c4f9f4f297775e0f3298573a8c25`。
+native受控peer的四次正常程序证明：实际结果页产生确认命令，随后由actor接受PIN或
+Failed，再消费旧命令时，旧实现会保存旧结果；连接前测网还会发普通开流请求。这里
+延后UI命令交付是显式平台调度输入，不称为官方Qt的同一自然竞争。早期driver等待已
+离开结果页的UI错误而超时的程序不计反例。
+
+端口必须在开始消费确认时校验结果owner：安全码输入等待或控制错误已退休旧结果框
+时，忽略旧确认，不保存/应用推荐/请求新串流，也不提前销毁Test。没有退休结果框的
+Unauthorized仍允许确认，不能一律把控制消息当成失效。有效确认已经开始后正常
+保存/清理/续接的路径不受此门禁影响。手动测网的UI可能已因确认命令进入STOPPING；
+同generation的更新Failed快照应将其恢复到待确认错误页。真实取消会更新generation，
+旧失败快照仍不能劫持取消。它是异步端口的owner映射，不是额外Steam取消或重试规则。
+
+#### 成功票据之后的重新授权与旧媒体初始化
+
+**Evidence / 证据修订**：撤回将“首次Unauthorized的同编号授权已对齐”推广到
+“已取得票据后再次Unauthorized也能完整续接”的结论。原manager在有效Success后的
+Unauthorized仍从6进入4。`audit-steam-post-ticket-authorization.py`执行固定arm64
+shell的40组普通/测网、UDP/CM、同批/分批/已有Test程序；授权按原deadline重发，
+无key和有key成功都回5，继续使用原request_id；处理中保持4，拒绝停止。连接安全码
+密文在同一事务内不重新加密，即使授权更新了长期secret。不同实现的随机IV无需相等。
+
+未消费票据的程序明确延后Panel消费，不代表自然Qt时序；已有Test由原token交付创建，
+但Start/Join线程端点、Qt、身份/RSA/随机数、时钟和发送均有provider。40组冻结gzip
+SHA256：`b9f3ede81f32df194efd0dcaabd2091448df99f895e793eb1938de6b1814d986`。
+新票据的key为128..159；已有Test保留其旧key和owner，不因控制授权再建一个Test。
+
+`audit-steam-post-ticket-admission.py`另执行8组普通/测网、UDP/CM、key/no-key：
+同批Success→Unauthorized后原Panel不消费旧票据；同批授权成功→新票据后只消费一次
+新key。独立X25519计算有key回复后的加密输入，原解析/密码计算/Panel实际执行，
+launcher/线程端点仍为provider。冻结gzip SHA256：
+`ca8cba8ef670f30f11255670be8e5958803b4277bb490721ccd04d452f492949`。
+
+native旧版本的40个控制程序和8个actor程序均正常退出，比较器分别检出续接和旧票据
+准入差异；不能把测试程序未运行或abort当作这些反例。后者在Session构造端点返回NULL，
+只观察准入/key/backend及清理，不声称实际媒体连接。协议状态和应用待消费材料必须同时
+撤销：进入授权清除ticket及待消费session material，保留事务ID/host/已加密安全码。
+已交给Test的SDK和IHS worker仍由原owner持有，不能把撤销准入变成停止旧媒体。
+
+**端口异步映射**：旧SDK可能直到manager进入4，甚至授权成功回5后才完成初始化。
+`check-steam-post-ticket-sdk-ready.py`从上述已有Test向量取原4/5状态，刻意延迟端口
+SDK-ready，再启动并Join真实IHS测网线程；pending datagram和SDK结果为provider。
+只修协议ticket的中间版本在这3组中均先正确进入4/5，但旧SDK-ready又改成6，
+程序正常退出且完整Join；因此仅修改状态显示或仅清协议ticket不足以修复此差异。
+这3组约束媒体初始化不能替代新的控制票据、不能将4/5改为6。原同步BInit、自然Qt/SDK
+线程时序及真实Steam/SDR/Switch没有在此执行。应用不再通过旧媒体启动调用
+IHS_ClientStreamingEstablished；有效票据的解析本身负责进入6，公共兼容API仍保留。
+
 ### 11.4 ProofRequest 可更新长期 secret
 
 **Evidence：** `HandleStreamingProofRequest @0x79e1c0–0x79e594`，proto 的 challenge=1:bytes、
@@ -924,6 +1710,17 @@ request_id=2:uint32、update_secret=3:bool。处理规则：
 每次必派生。证据地址：身份/ID 检查 `0x79e1fc–0x79e240`，派生和持久化
 `0x79e454–0x79e530`，加密 `0x79e244–0x79e2b0`。密钥持久化先于发送 proof，不能等媒体连接成功
 才落盘，否则重启后的授权材料可能落后于主机。故障中断时主机是否回滚属于主机端规则，不能臆造。
+
+### 11.5 连接 security PIN 的加密与重发
+
+**Evidence**：`StartStreaming @0x798eb4–0x798ec0` 先加载目标主机的长期 secret，再调
+`BSetStreamingPIN @0x7991a0`。后者对非空 PIN 调 SymmetricEncrypt，key 来自 manager+536、
+长度来自 +556，密文存入 +856 的 buffer（`0x7991fc–0x799228`）；空 PIN 清空该 buffer。
+`SendStartStreamingRequest @0x799638–0x799700` 将该已保存密文复制到请求的 pin 字段。
+
+**Conclusion**：security PIN 使用开流开始时的长期 secret 加密一次，应用级重试复用该密文；
+每轮重建的 device_token 则使用当时的 secret。Proof 更新长期 secret 后，不能因此重新加密已保存
+的 PIN，或将 PIN 明文放入云端请求。此规则不改变首次 pairing authorization PIN 的用途。
 
 ## 12. 从 StreamingSuccess 到可用传输的适配契约
 
@@ -950,6 +1747,18 @@ CStreamTransportClient；该 buffer 也用于 StartAuthentication 的 HMAC（`0x
 （`054/071.bin`）带签名证书但无该字段。样本证明这个 blob 不能按普通公开证书随意输出到日志。
 私有证据仅保存字段存在性、长度和时间差，不发布 key/身份。
 
+该份 `042.bin` 还直接给出 `transport=4, port=0`，证书 app_ids 包含 353380。
+**Conclusion**：不能把“有非零 UDP port”作为 SDR 材料的成功条件。AppID 必须与证书及
+网络配置一致；本项目 Steam Link SDK 实例使用 353380，不能沿用开源库的默认 0。
+
+**证据修订**：撤回此前把“CA 未知时继续导入”称为 APK 与开源 SDK 差异的结论。
+官方 `CertStore_CheckCert @0x8ade88` 在 `0x8adec4–0x8adec8` 同样先检查 CA 签名；
+返回空时直接返回，不执行 `0x8aded8` 的正文解析。开源固定 `d534c19` 的顺序与此一致。
+调用者虽继续执行后续检查，但此时正文仍为空，不能把诊断中的“Continuing anyway”
+解释为最终安装成功。若 CA 检查成功后因有效期或公钥撤销等原因返回空，正文才可能已填充；
+这些分支必须分别核对。本项目先获取 353380 的 SDR 网络配置并导入 certs/revoked_keys；
+库级重发门槛已由 §15 的组合执行对照约束，完整的应用启动缓存/预取及平台期限仍是另一层。
+
 `InternalSetCertificate @0x804958` 解析 signed cert，检查身份、公钥类型/长度、私钥一致性、
 公私钥匹配和 AppID 范围（`0x804b14–0x804d4c`），然后安装身份/证书。
 证书没有 private_key_data 时必须已有对应私钥；自行生成一个无关私钥再导入这个证书会失败。
@@ -958,10 +1767,37 @@ CStreamTransportClient；该 buffer 也用于 StartAuthentication 的 HMAC（`0x
 
 **本机导入与远端验签的区别**：本样本在 CertStore_CheckCert 返回空 scope 时输出
 “not currently able to verify our own cert / Continuing anyway”，随后仍执行身份、公钥、私钥和
-AppID 等检查（`0x8049dc–0x804a10`、`0x804d38–0x804d4c`）。因此“本机暂不能验证自己的 CA”
-不是这里无条件失败的充分条件，也不能据此删除 peer handshake 验证。移植方应保留这两层职责。
+AppID 等检查（`0x8049dc–0x804a10`、`0x804d38–0x804d4c`）。空 scope 自身不是直接 return false
+的条件，但不同失败时点会改变 outMsgCert 是否有内容，仍可能在后续检查失败；
+不能据此取消 CA 前置检查、声称未知 CA 可成功安装，或删除 peer handshake 验证。
+
+**组合执行证据**：`audit-steam-local-certificate.py` 连续执行原
+InternalSetCertificate→CertStore_CheckCert→CheckCertAppID，冻结 14 组程序。
+CA 结果、protobuf 构造/解析/存储、密钥派生及撤销查找、时钟/配置、最终安装与调度为
+明确 provider；不是原签名算法、protobuf parser 或网络的互操作验证。
+CA provider 返回空时，实际 `0x8adec8` 跳过正文解析，caller 后续拒绝，安装次数为 0。
+CA 通过后若正文已解析，有效期/撤销失败也返回空 scope，但 caller 仍可能通过本机身份、
+公私钥和 AppID 检查；过期组还经过一个明确的 expiry 断言 sink，不能称无断言成功。
+这不表示 peer 会接受过期或撤销凭据，也不是删除 peer 检查的依据。
+仅把 `0x8adec8` 的 CA 失败跳转改为 NOP 的独立反例实际命中一次，使相同输入转为
+“已解析并通过本机安装”；两段均到达返回边界，说明此前忽略该跳转的推断会改变结果。
+固定 core SHA、两个 helper SHA 及 gzip fixture SHA256
+`1bf72bc20d906c8829293e9faa091cbf15f7dd25c7c5721c5fcce8272f048948` 一并校验。
+
+`local_certificate_oracle.cpp` 用合成 Ed25519 测试密钥构造结构完整的证书，实际调用固定
+SDK 的 protobuf parser、CertStore_CheckCert 和 SetCertificate；未知 CA、缺少 CA ID、
+缺少签名三组都不解析 outMsgCert、不安装身份，与原 CA 失败路径的投影一致。
+该本地测试不打补丁、不替代 SDK 验签函数，不请求网络或使用真实主机凭据；只比较这三组
+失败路径，不声称另外 13 个原程序已与真实 SDK 或远端握手逐一比较。
 
 ### 12.2 初始化的调用顺序
+
+**应用准入修订（D-A104）**：下文原始指令的 BInit、bridge 与十秒等待证据保持成立。
+端口的应用策略改为先完成独立信令 service 准备，再创建 IHS；显式 start_session 后
+才允许下一轮 SDK 建连。`sl_sns_initialized` 单独表示 BInit 边界，不能与包含 CM 就绪的
+`sl_sns_session_ready` 混用。此前“BInit 后立即启动 IHS”为旧端口策略；新的区别及理由见
+[网络初始化设计](NETWORK_INITIALIZATION.md)，不宣称与官方等待边界完全等价。
+
 
 **Evidence：** `CStreamTransportSteamNetworkingSocketsBase::BInit @0x7ffd30–0x8000bc`：
 
@@ -970,8 +1806,10 @@ AppID 等检查（`0x8049dc–0x804a10`、`0x804d38–0x804d4c`）。因此“�
 3. 参数 relay_server 非空时，设置全局 **P2P_STUN_ServerList(103)**。这是 STUN 配置，
    不可将该字符串直接当作 SDR 媒体 UDP 服务器。
 4. 尝试加载 `libsteamwebrtc.so/CreateWebRTCICESession` 并注册 ICE factory。
-5. 有预置网络配置 JSON 时交给 ClientSetNetworkConfig；解析失败使 BInit 失败。
-6. Base64Decode cert，调用 SetCertificate；有 cert 却无法解码/安装使初始化失败。
+5. 有预置网络配置 JSON 时交给 ClientSetNetworkConfig；失败使 BInit 失败。
+   成功在 `0x7ffee4–0x7ffef0` 清空待消费字符串；后续 Base64/证书失败不会撤销这次消费。
+6. 只有 cert 指针和首字节均非零时才 Base64Decode 并调用 SetCertificate；有内容但
+   无法解码/安装使初始化失败。缺少或空 cert 跳过该步骤，继续申请认证；不代表已经认证。
 7. 调 Sockets::InitAuthentication；再调用 Utils::CheckPingDataUpToDate(10000000000.0f)，
    设置 LogLevel_P2PRendezvous(17)=5。这个很大的浮点实参是 ping 数据允许年龄，不是丢包率。
 
@@ -986,6 +1824,63 @@ ClientSetNetworkConfig `0x75dc84`。+56 的重定位 `0xc408c0` 指向 CheckPing
 remote identity 参数为空、virtual port=0，初始参数和连接配置见 §9.5。
 “声明 supported_transport=[1,4]”与“返回 4 后立即连接某个固定 relay_server”不是同一算法。
 
+**初始化与播放器等待的边界**：`CStreamClient::BConnect @0x7a7808` 在
+`0x7a7920–0x7a792c` 调用 backend 的 BInit。失败时在 `0x7a7a00–0x7a7a10` Release
+并返回 false，不创建 bridge 或 Connection；成功后先创建 bridge、Connection，Release
+调用者的 backend 引用，再在 `0x7a79f4` 调用 Connection::Connect 并返回 true。
+Release 是引用计数操作，不能把这次 Release 解释为销毁仍由 bridge/Connection 持有的 backend。
+SDR 的实际虚表将 BInit 指向 `0x7ffd30`，UpdateState 指向 `0x8011f0`；BInit 的成功尾部
+`0x800030–0x8000b8` 完成 authentication/ping/config 后返回，尚未创建 SDK 连接句柄。
+后续 UpdateState 才在 `0x801380–0x801398` 调用 Sockets +288 并进入 Connecting。
+
+因此不能等待 SDK Connected 才创建上层 IHS 连接并启动初始等待。SDL 初始 Connecting
+期限（`STEAMLINK_PROTOCOL_RE.md` §126 的初始连接等待执行对照：16.16 tick 判断，
+恰好 10 秒时到期）包含后续 SDK 创建/寻路阶段，
+与 SDK 自己配置的 TimeoutInitial=20000ms 是不同层的期限。
+**证据修订**：撤回本端口此前“SDK Connected 后才创建 IHS”的调用策略；该策略把整个寻路
+阶段排除在播放器初始等待之外。端口保留异步配置获取，但仅在证书安装与 authentication
+初始化完成后开放 BInit-ready（sl_sns_initialized）；应用另经 D-A104 的信令准备门槛才
+开放 session-ready。调用者先创建 IHS，再显式允许下一次 owner update 发起 SDK 连接。
+配置获取本身仍位于该 IHS 等待之前，不据此宣称异步 HTTP 的耗时与原同步 BInit 完全相同。
+
+`audit-steam-sns-client-call.py` 执行固定 arm64 core 的 BConnect、SetAuthToken 调用者与
+选定 SDL 等待路径，冻结 4 组程序：BInit 成功后的 9999/10000/11000ms，及 BInit 失败。
+13 个递归 helper、core SHA 与既有 ticket fixture SHA 一并校验；新 gzip fixture SHA256 为
+`ba7d0f4c76a119142a0728c1488bacdf0384f4b1291a2d2d59112488a25d6792`。
+backend 构造/BInit/Release、auth buffer 存储、bridge/Connection 存储及 Connect 是显式
+provider，不能把这 4 组执行表述为真实 SDK 初始化或网络成功；上面的 BInit/UpdateState
+内部边界另由原函数及实际虚表静态复核支撑；审计工具同时解析原 ELF relocation，
+冻结 SDR 的 Release/BInit/UpdateState 三个槽位目标及对应函数字节 SHA。
+`check-steam-sns-client-call.py` 将原始结果与生产 runtime worker 比较：采用冻结源程序的
+SDR 成功响应，经真实控制解析创建真实 IHS worker；仅 SDK/config/datagram IO 与时钟为
+provider，检查期限前仍等待、到期开始清理，以及 IHS join 在 backend 销毁之前完成。
+本地真实 SDK owner 用例另验证配置完成但尚无句柄时 IHS 能等待、无效句柄失败能唤醒 worker，
+两者均不验证真实 Steam、NAT/SDR 网络或 Switch loader 生命周期。
+
+**异步初始化期间的信令桥门槛**：上述 BConnect 的失败分支不创建 bridge，成功分支才在
+`0x7a7950` 创建。撤回本端口此前“配置尚未完成时先创建并更新 bridge”的顺序：
+仅凭外层 `SL_SNS_CONNECTING` 不能推断 BInit 已成功；该状态还包含异步配置获取。
+端口将 bridge 输入单独复制持有，证书安装和 authentication 初始化完成后才创建
+实际 bridge；这是 BInit-ready，D-A104 的 session-ready 还要求首次信令准备。所有配置/证书失败、取消和 bridge 创建失败
+都释放临时身份/密钥；bridge 复制完成后也立即清理这份临时材料，不借用响应字符串。
+bridge 创建失败是本地初始化错误，诊断来源单列为 BRIDGE，不伪装成 SDK P2P 拒绝。
+
+`check-steam-sns-initialization.py` 将同一原 BConnect fixture 的 BInit→bridge 门槛与
+生产 SNS owner 比较，覆盖配置等待后销毁、HTTP 失败、信任导入失败、真实本地 SDK 拒绝
+无效证书、显式成功边界后的 bridge 创建和 bridge 创建资源失败；每组连续创建/销毁两次。
+HTTP 完成/信任导入和 bridge 的网络推进是 provider；成功组直接提供“配置/证书/authentication
+阶段已通过”的边界，再执行生产 complete_initialization 和真实 bridge factory。
+因此不把该组称为实际有效证书安装或完整 SDK 初始化成功。
+调用方在 create 返回后即覆写/释放原身份、名称、描述和证书存储，后续 bridge factory
+检查复制材料及自己的清理；原 SDK 的无效证书拒绝、HTTP handle 释放和 owner 销毁实际执行。
+旧生产 owner 的配置等待、HTTP 失败、信任失败、证书失败均正常执行并创建一次 bridge；
+比较器以明确差异拒绝，不以编译失败或崩溃计作反例检出。
+这些证据只覆盖初始化与 bridge 准入，不验证真实 CM/TLS、成功证书、SDK 选路或 Switch；
+只对照 BInit→bridge 的后置门槛，不证明把配置 HTTP/信任导入失败映射为 BInit=false
+与官方的前置策略相同。§12.1 已撤回“未知 CA 的本机导入是 SDK 差异”的推断；
+不能用本项门槛测试替代完整证书校验组合。库级配置重试与刷新见 §15；
+不能从 BConnect 的门槛推导官方应用启动预取/缓存或平台 HTTP 期限。
+
 ### 12.3 transport 状态、收发与 MTU
 
 transport 的 `this+20`：0=初始化后尚未开始连接，1=Connecting/FindingRoute，2=Connected，
@@ -993,11 +1888,54 @@ transport 的 `this+20`：0=初始化后尚未开始连接，1=Connecting/Findin
 SNS 3 映射为 2；SNS 4（ClosedByPeer）关闭本地句柄并进入 Closed；SNS 5（ProblemDetectedLocally）
 先设 Failed 再关闭，保留 Failed。**证据修订**：撤回“句柄失效/查询失败都进入 Failed”。
 没有句柄时保留既有 Failed，其余状态变 Closed，返回 false（`0x800374–0x800378`、
-`0x80044c–0x80045c`）；GetConnectionInfo 失败或 Connected 后 GetQuickConnectionStatus 失败
+`0x80044c–0x80045c`）；GetConnectionInfo 失败或 Connected 后 GetConnectionRealTimeStatus 返回0
 才清空句柄并置 Failed（`0x800460–0x8004b8`、`0x800724–0x800780`），这两条分支不调用
 CloseConnection。SNS 未识别状态则以 reason=2001 调 CloseConnection；其规则是保留既有 Failed，
 其余变 Closed，不能自行改成所有未知状态都设 Failed。已 Connected 时仅在
 `now >= last_check+1000000μs` 查询 SDK，否则直接返回 true（`0x80039c–0x8003b4`）。
+
+**原始状态函数执行对照**：`scripts/audit-steam-sns-state.py` 直接执行以上 CheckConnection
+和 SDR CloseConnection，SDK 的时钟、info、real-time status、Close 方法与诊断字符串/断言端点为
+受控 provider。729 组连续程序、743 次调用记录实际返回值、transport 状态、handle、查询时钟、
+SDK 调用次序及信令对象双向归属；含不一致的合成状态，不以此声称都能由线上输入产生。
+生产 `sns_connection_policy.h` 共用函数由 `check-steam-sns-state.py` 与冻结原始输出逐项比较。
+
+本地真实 SDK 无效句柄测试还执行生产 owner 的异步初始化守卫、info 失败后的队列释放/唤醒及
+显式销毁：查询失败保留信令归属到销毁，无待连接时的配置获取不被误关。该测试不创建连接、
+不向 Steam 请求授权或媒体。8 份独立编译反例覆盖关闭 reason、一秒等号、单位错误、Failed
+保留、跳过节流、遗留无效 handle 和 Connecting 返回值及错误地只允许 OK 的分支；要求反例正常执行，再由原始输出
+比较器拒绝，编译错误或 receiver 崩溃不计检出。冻结输出的 gzip SHA256 为
+`d3ad810cead593063b131ba74c06b3eec525a80d1374361729044a8165267a93`。
+
+SDK 1/2（Connecting/FindingRoute）时本函数返回 true，调用者仍须另查 transport 是否为 2；
+返回 true 本身不能证明可发送媒体。SDK 4/5 的原 SDR Close 实参为 `reason=0, text=null,
+linger=false`；未知状态才用 2001。0 是 SDK 方法实参，不宣称它等于最终线上 end reason。
+原 SDR Close 会在 SDK Close 前解除信令对象的两个归属指针；无 handle 或查询失败分支不走
+该 Close，因此不在这里解除归属。拥有者销毁时仍必须解除归属并释放其余本地资源。
+
+时间读取来自 SDK GetLocalTimestamp，单位微秒。只有既有 Connected 才可跳过未到期的查询；
+恰好 1000000 微秒须查询。原函数把 last-check 加 1000000 的64位结果按有符号数比较；测试
+还覆盖倒退时刻和加法回绕，不把毫秒级近似比较当作原始边界已对齐。
+**证据修订**：撤回把+128槽位称为 GetQuickConnectionStatus／bool，以及“只把 EResultOK
+映射为true”的适配。该槽位 `0xc46b70` 的重定位目标实际为 GetConnectionRealTimeStatus
+`0x806884`，它返回 EResult；原调用者 `0x800514–0x80051c` 却只以零为失败。SDK原函数对
+不存在的handle返回3（NoConnection），原APIGetRealTimeStatus `0x8582ac` 对错误lanes返回8
+（InvalidParam），有效/null-output在统计端点后返回1。源函数执行额外验证了3/8/1返回值，
+handle查找/锁与SNP统计端点仍是明确provider；不是只按函数名称猜测返回类型。
+相邻 GetConnectionInfo `0x8067c0` 则在 `0x806834` 用 cset 产生0/1，其bool输入域另有指令依据。
+
+因此这里保留原调用者的原始非零判断：不能把3、8等非零结果改成 transport Failed。0分支
+作为原调用者中存在的合成输入保留，不宣称固定SDK的正常API路径会返回0。新增用例和反例
+显式覆盖原来的“只认OK”错误，避免0/1桩掩盖真实SDK边界。这仅核对状态分支，不把失败SDK
+调用后的统计内容或诊断字符串解释为有效；生产端口将临时统计输出初始化为零。
+
+端口的配置/证书 HTTP 是异步的，和官方先完成同步 BInit 再 BConnect 的调用边界不同。
+在尚未发起 SDK 连接时不执行 CheckConnection，避免把“正在取得配置、尚无句柄”误当作
+“连接句柄已失效”。配置初始化成功后，即使尚无 SDK handle 或仍在寻路，datagram wait/receive
+也只返回空队列；发送未被接受时沿用 IHS 的既有重试，不积压旧 Connect 包。
+只有 Failed/Closed 才向接收 worker 返回终止，清理时先中断/join IHS，再销毁 backend。
+状态失败后队列的本地释放/唤醒发生在 policy 之后；项目资源错误的关闭
+理由和完整传输 Send/Recv 结果处理不属于本项 CheckConnection 比较范围。
 
 **证据修订**：撤回此前 BWait 固定 Poll(0)、不按等待参数阻塞的表述。
 `BWait(wait_ms) @0x80010c` 把传入的 `wait_ms` 保留在 w1，直接交给 Utils::Poll(int)，
@@ -1016,6 +1954,20 @@ timeout=0；未来 thinker 的剩余时间先四舍五入到毫秒、至少 1 ms
 
 Poll 后以最多 128 条为一批取 ReceiveMessagesOnConnection，
 每条 SNS message 对应一个 CStreamPacket；满批继续取，进入接收 FIFO。
+`0x80016c–0x800170` 对任何 **count<1** 都只结束本批次，包括负值；不改 transport 状态、
+不关闭 SDK、不清除已排队消息。Socket Wait `0x7feb90` 保存 BWait 的可读标志，随后
+Socket Update `0x7fecd4` 从真实 Recv/队列逐包消费；任何非零 Recv 只结束收包循环，
+接着仍执行 Connection Update（`0x7fed60–0x7fedac`）。不能把负接收计数单独变成 Failed。
+`audit-steam-sns-receive.py` 执行原 Socket Wait → BWait → 原队列 ctor/AddToTail/Free →
+Recv → Socket Update，52 组/60 轮覆盖负计数、128 条边界、4096 条后负计数、连续失败后恢复及
+0..524288 字节。`check-steam-sns-receive.py` 与生产 `receive_messages`、真实队列/回调及实际
+IHS receiveCycle 比较包长度/完整字节哈希、FIFO、状态与最终 update 的顺序。
+SDK Poll/Receive、时钟、分配和最终包处理/Connection Update 是明确 provider；原 packet
+构造/消息附着/队列和调用方条件真实执行。native 的最终 parser/update 也是观察者，不据此
+声明包内容有效、完整连接生命周期或并发调度等价。原 SDK message 由 packet 持有，native
+复制后立即释放，所有权机制不同；后者另断言每个 SDK message 释放一次，包括本地容量失败。
+原 BWait 没有固定 32 批次上限；端口保留 RX 的显式资源界限，满批继续读取，直到不足 128 或
+计数非正才结束。SDK 负计数与本地容量耗尽分别处理，不能统一为同一失败。
 BWait 返回值只看本地队列非空；无句柄仍会 Poll，且可能因旧队列非空返回 true，但 Recv
 会先因无句柄返回 2。不能把 BWait=true 当作连接有效或下一次 Recv 必定成功。
 Send **先检查句柄**：无句柄直接返回发送失败(3)，即使状态为
@@ -1027,9 +1979,65 @@ packet 的已存长度加 4，否则不加；这不是 SNS 自动添加的字节
 （`0x8002c0–0x800324`），传空输出指针也会消费一条包。SDK 25/41 的名称以对应结果枚举为准，
 不把两者写成“对端已断开”。
 
-`SetMaximumMTU @0x801084` 设置连接级 MTU_PacketSize(32)，再查询 MTU_DataSize(33)，
-返回后者，查询失败返回 -1。应按此结果确定交给 SNS 的应用包预算，不能把普通 UDP 的 MTU
-不经扣除地用于 SNS。消息边界、上层包序号/加密/ACK/NACK 保留，见 §8.9。
+**调用者复核**：`CStreamSocket::Send @0x7ff1dc` 在 `0x7ff300` 直接调用上述 Send；
+`0x7ff304` 对任何非零结果立即返回。只有成功才记录实际发送字节并推进相应限速期限
+（`0x7ff308–0x7ff3c8`）。SNS Send 本身不因 SDK 返回 25/41 或其他错误关闭连接，也不更改
+transport 状态。因此，先把报文放入适配器 TX 队列就报告成功、稍后再因 SDK 发送错误关闭的
+方式不等价：它会让上层提前记账、增加重传计数。此处撤回把该 TX 队列视为透明搬运的假设。
+该源码差异不单独证明历史热点失败或卡顿的根因。
+
+`scripts/audit-steam-sns-io.py` 串接原 Socket Send 与 SNS Send，SDK 返回值为 provider，
+覆盖状态、句柄、CRC 和连续 busy/success/failure；实际 collector 和 shaper 指令执行。
+同脚本执行 `Release @0x7ffcd4` → SDR Close，引用计数减到零时以 **1001 / "Destroyed"**
+关闭，再进入 deleting destructor；非最后一个引用不关闭。引用初值、原子递减及最终析构为
+provider，不据此声称自然引用生命周期已完整验证。显式 owner 销毁对应最后释放；本地资源错误
+及 CheckConnection 的其他关闭原因属于独立入口，不能一起改成 1001。
+
+`check-steam-sns-io.py` 固定样本、fixture 和 helper hash，以实际 IHS 的 packet serialize、
+BaseSend、errno、发送 collector 与 shaper 调用生产 `sns_io_policy.h`，比较 160 个发送步骤、
+160 组 MTU 与最后释放的 10 组关闭结果。它不以 C++ 重新实现 Socket 调度；SDK 返回值和时间
+是 provider，最终析构仅为观察者。`test_sns_owner_state.cpp` 另执行真实 SDK 无效句柄发送，
+确认它不提前改变状态，再由 CheckConnection 失效；两次进程内 SDK pipe 验证实际回调的完整
+字节、发送计数、并发发送/查询/关闭和对端 1001 / "Destroyed"。pipe 不经过 CM、UDP、ICE 或
+Valve relay，不能替代 Switch/互联网持续收流、丢包恢复和 loader 生命周期的验收。
+
+**SNS 消息长度和所有权（原始指令复核）**：`CStreamPacket::SetSteamNetworkingMessage
+@0x7f6f30` 先释放旧 SDK message（或旧的非内嵌堆缓冲区），随后把 message+0 的数据指针
+存入 packet+40/+56，把 message+8 的 32 位长度同时存入 packet+48/+52，并在 packet+2336
+保存 owner。这里没有 2048 或普通 UDP 的 2272 字节截断。`ResetData @0x7f6dd0` 释放 owner
+一次，恢复内嵌缓冲区、容量 2272 和初始长度 13；构造函数 `0x7f6d90` 同样初始化长度为 13。
+`scripts/audit-steam-sns-message.py` 对固定 Android arm64 样本执行上述三个原始函数，覆盖
+inline/heap/SDK owner 以及长度 0、1、2048、2049、2272、2273、3000、65536、524288 的组合。
+只替代 heap delete 和 SDK Release 两个外部调用，不替代被验证的指针/长度/所有权分支。
+
+**结论与边界**：SNS 的消息边界由 SDK 提供，不能把 UDP 缓冲容量当作 SNS 的协议上限；
+零字节 SDK 消息也应消费并交给上层长度校验，不能因此关闭连接。上述执行没有覆盖 SDK 的
+线上消息准入或发送方 MTU 选择，不证明这些长度都能由真实远端发送。固定公开 GNS 的默认
+`RecvMaxMessageSize` 为 512 KiB（`csteamnetworkingsockets.cpp`），这是当前替代 SDK 的限制，
+不是从官方 packet 函数推出的协议常量。项目跨线程接收 FIFO 限制为 4096 条、8 MiB，
+这些是本地资源策略；发送同步交给 SDK，不再另设报告提前成功的 TX 队列。
+IHS 适配器以不消费消息的长度查询按需分配，避免为
+每个常见小包预留 512 KiB；空消息与空队列分别表达，再走公共批量接收/更新循环。
+
+`SetMaximumMTU @0x801084` 设置连接级 MTU_PacketSize(32)，**不检查设置返回值**，始终再查询
+MTU_DataSize(33)。查询仅在结果 **1** 时返回数据，否则返回 -1；不检查回填长度。原函数不在
+入口过滤零句柄、零/负 MTU。上述脚本覆盖 160 组受控 Utils 结果，证明此局部分支，
+不证明这些参数在实际 SDK 中有效。
+
+**证据修订**：撤回“应按该返回值限制 SNS 内层 IHS 包预算”的要求。固定 core 与 shell 的
+`.text` B/BL、相关 PLT、`.rela.dyn` 和 SDR 虚表均未发现此函数的调用/引用；它不是 transport
+虚表方法。`audit-steam-sns-receive.py` 冻结两模块的哈希和该静态清单；这不排除外部 dlsym 或
+另行构造间接地址的调用。仅因函数导出就给生产会话新增调用，不是与已观察客户端对齐。
+公开固定 GNS 头文件将 MTU_DataSize 定义为**不会分片的**消息大小，不是 SDK 整条消息上限；
+SNP 的发送/重组另有消息分片。IHS ServerHandshake 的原 clamp `0x7a64cc–0x7a64f0` 则直接
+把主机给出的值限制到 512..1472，未由该 setter 返回值替换。两层不能混为一个预算。
+本端保留上述 IHS clamp 和消息边界、序号/加密/ACK/NACK，不因缺少 setter 调用臆造协议缺口；
+是否存在尚未观察的其他调用者仍需新证据。见 §8.9 与既有 protocol inventory 的握手执行对照。
+`test_sns_owner_state.cpp` 的真实 SDK UDP loopback 将两端 packet MTU 设为 576，查询到的
+无分片消息预算小于 1472，而 1472 字节以 flags0x15 双向完整交付；返回方向运行生产 SDK
+drain/receive 回调。这是本机 UDP/SNP 与消息边界证据，不含 ICE、SDR、Steam 主机或 Switch。
+同一测试以真实无效 SDK handle 在仍受节流的状态检查之后得到负接收计数，确认 owner update
+不提前变为 Failed、不清旧队列；到下一次明确的 CheckConnection 才执行原有失效分支。
 
 ## 13. 信令桥接：生命周期、队列与失联
 
@@ -1082,6 +2090,36 @@ backend 收到有效 HMAC 的 sdr 后，逐条调用 ReceivedP2PCustomSignal；�
 则终止当前连接并设 transport Failed（`0x8017b0–0x801864`）。外层没有独立的消息序号/重放窗口，
 重复/乱序及对端连接 ID 校验由内层网络协议承担。不得自行按 payload 哈希丢掉所有重复信令。
 
+**信令后的状态推进复核**：固定 core 的 `BHandleTransportSignal @0x801754` 检查
+`this+56` 的 SDK 接口指针，而非 `this+48` 的连接句柄；接口存在时，即使句柄为零，
+仍把有效内层 sdr 交给 SDK。某条 SDK 调用失败时，先调用 CloseConnection
+（reason=2001、text=`ReceivedP2PCustomSignal failed`），再把 transport 设为 Failed；
+不是先设 Failed 再关闭。成功、空 sdr 列表和这条失败分支都继续经 transport 虚表+24
+调用 UpdateState（`0x801868–0x801878`），继而执行 CheckConnection。
+因此 Connecting 阶段的同条信令可以立即使状态变为 Connected/Closed；已有 Connected
+状态仍服从 CheckConnection 的一秒节流，不能在信令回调里绕过该门槛。
+撤回将“下一轮 owner update 会推进”视为与这个同轮调用等价的假设。
+
+`audit-steam-sns-signal-state.py` 直接组合执行上述 signal consumer、真实 UpdateState
+与 CheckConnection/SDR Close：57组/58轮包含空列表、多条成功、中途失败后不调用后续条目、
+无句柄、SDK info/status失败、Connected节流及初次创建分支。SDK返回/状态变化、分配、时钟和
+诊断为provider；不声称执行了rendezvous解析或真实选路。合成的SDK失败未自然释放signaling时，
+原断言也由诊断provider继续，不能将这类不一致输入宣称为正常网络可达状态。
+
+`check-steam-sns-signal-state.py` 对照初始化后的52组/53轮：生产 HMAC/protobuf
+通道调用实际 backend 的 SDK 转交、关闭和状态检查共用函数，比较完整信令 bytes、SDK
+调用/关闭顺序、状态、句柄、归属及精确检查时刻。初始 state=0 创建的4组与 SDK-null 的1组
+仅保留为原始证据，不冒称端口异步初始化的等价路径；该端口的 bridge 仅在 BInit 完成后
+存在；D-A104 的准备阶段会先推进其云端连接，显式允许 SDK 建连后每轮才先 SDK 再 bridge。
+这些原始局部分支不证明新增准备调度等价，初始化准入另见 §12.2。冻结 gzip SHA256 为
+`a97074942180da94d5d88b4ca886264a80379b56b8231203260fd0c5e27c423d`。
+五个生产 C/C++ 反例均正常执行53轮后由比较器拒绝，涵盖恢复句柄守卫、Failed 提前、
+省略更新、空列表不更新和逐条更新。无效 framing/HMAC 不触发更新；真实 SDK 无效句柄
+经一条有效空内层消息的正式 completion 回调失效，另由 owner 用例执行。
+这里不比较自然 SDK signaling Release、原消息引用生命周期或同轮 UDP/媒体的完整调度；
+端口的 terminal 队列释放/唤醒与有界资源管理仍是本地纪律。信令后的状态重新读取也用于
+owner 的 SDK 收包准入，不再使用处理信令前缓存的 Connected 布尔值。
+
 ### 13.3 关闭与所有权
 
 **Evidence**：`CStreamClient::ResetConnection @0x7a5294–0x7a52c4` 先关闭 CStreamConnection，
@@ -1095,6 +2133,35 @@ CleanupWebSocket 释放 WebSocket 和待收帧。其析构先 Disconnect，再 S
 WebRequest manager 引用计数降为零后，从非 worker 线程执行 Join(-1)
 （`0x7f18dc–0x7f1938`、`0x7f26c4–0x7f272c`）。SNS 在 BInit 开启 manual polling，最后一个
 transport 析构才关闭该模式（`0x7ffadc–0x7ffb10`）。
+
+**外层退出边界的证据修订**：不能从 Base transport 析构没有调用 Kill，推导出普通
+播放器跨次串流保留 SDK。`CStreamClient::Quit @0x7a5990` 断开/重置 Connection 并释放
+bridge；SDL 退出路径先在 `0x75cfc0` 调 StreamShutdownNetworkProcessing，紧接
+`0x75cfc4` 调 `SteamDatagramClient_Kill @0x80ea14`。Kill 的 `0x80ea34–0x80ea40`
+销毁并清空独立 SDK socket singleton；实际 LibV13 getter `0x80e750–0x80e75c` 直接读取
+同一全局指针。所以仅在 transport 析构边界观察到的“仍有 SDK”是局部状态，不能据以
+设计应用级常驻 SDK。普通播放器的完整退出包含显式 SDK 清理。
+
+`audit-steam-sns-lifetime.py` 冻结 18 组、每组三次的初始化/析构/播放器退出组合，
+执行完整 BInit、Base 析构、Init/Kill/LibV13 getter 与选定 SDL 清理调用窗口。SDK 对象
+构造/销毁、Utils、JSON/CA/证书结果、base64/buffer/string、锁/模块 IO、网络线程停止
+和 transport 存储/序列是 provider；未运行完整 SDL/JNI 或自然引用计数/网络调度。
+fixture gzip SHA256 为 `b132bf362915a1cb800dd42b267606af709e09d66ababaa3e3ca13231d1b473d`，
+同时固定 core 和两个 helper hash。删掉 `0x75cfc4` 调用的原指令反例三次均正常返回，
+但 singleton 不再清空，下一次 BInit 不再初始化；其与原始轨迹的差异由比较器显式核验。
+
+`check-steam-sns-lifetime.py` 将其中 9 组显式配置输入与生产 SNS + 实际 SDK/bridge
+组合比较结果、初始化/销毁次数、配置消费和证书调用边界。连续三次采用不同的合成
+私钥/身份，验证每次 SDK 清理后下一次能建立新本机材料。JSON/import、初次 SDK
+失败及 CertStore 的 parsed-body/null-scope 是明确 provider；原生 SetCertificate 的
+protobuf、私钥/公钥、身份/AppID 检查及 SDK 销毁实际运行，但不计作真实 CA/签名或
+远端验收。此 null-scope provider 不能被解释为真实未知 CA 可在解析前失败后继续；
+§12.1 的实际未知 CA 拒绝证据仍适用。
+
+编译后的“不 Kill SDK”“先解码再消费配置”“缺少证书直接拒绝”三个生产 C++ 反例，
+分别在比较器拒绝前正常跑完所有显式输入；不以编译失败/崩溃作为检出。
+这些退出证据限于 core 的普通播放器，不能外推成 shell 网络测试或其他调用者的
+SDK 驻留策略已经逐项对齐。
 
 **本项目实现规则**：单独管理 SDK 全局实例/轮询、云端 worker、流会话 worker 和回调 owner。
 应用退出须 stop→join→destroy，且在回调失去 owner 前禁止删除依赖对象；不能直接复制 Android
@@ -1212,6 +2279,91 @@ TURN 的服务器、用户名、密码使用各自列表。列表为空时清除
 `OnNetworkConfigFetchCompleted @0x821b14` 增加 attempt，交 SetNetworkConfig 解析配置，
 首轮成功后还会请求刷新。失败在前三次完成以内继续尝试；第三次以后已有可用配置则保留，
 无配置则置 Failed（`0x821938–0x821b10`）。这是库级配置获取，不是主机配对 RPC 重试。
+
+**组合门槛修订**：不能将“完成数小于 3 时调用 BeginFetch”直接解释为都会发起重试。
+BeginFetch 在已有可用配置、且 force-refresh=false 时直接返回；所以首轮成功触发一次
+强制刷新后，该刷新失败会保留配置并停止请求，不会像无配置时那样继续自动重试三次。
+第一次成功若发生在第二/第三次请求，也不触发“首轮缓存成功后的刷新”。同一时刻已有请求
+时重复 BeginFetch 不创建第二个；耗尽后的显式 BeginFetch 仍可重试，不清零完成计数。
+计数按 32 位回绕，原比较使用 signed CMP/B.GT，不能替换成无符号 <=2。
+
+`audit-steam-config-fetch.py` 保留同一对象/全局状态，执行 BeginFetch、Completed、Failed、
+GetNetworkConfigURL 及实际 `CURLHelper::GetWebAPIURLForUniverse @0x75a8ac`，冻结 19 组
+程序。JSON/import、HTTP factory/提交/抽象 header、callback 存储、格式化与日志/通知是
+provider；不是网络、JSON parser、缓存文件或自然线程的互操作验证。fixture gzip SHA256 为
+`cca79911fed13baf62b69405932c2a9054e663149b596580b0dc56e3e3dc7160`，core 及两个 helper
+SHA 同时固定。Public/Global 且 probably-in-China=false 的输入中，完成数 2、4…的请求
+使用 `https://api.steamchina.com` 并附 `realm=steamglobal`，其余使用
+`https://api.steampowered.com`；这里是在另一 WebAPI 基址取得同一 Global 配置，
+不是只在原域名后追加参数。其他 universe/realm/China-hint 的组合不由本组输入覆盖。
+
+本端口的 `sns_config_fetch_policy.h` 与这些原始状态逐步比较，实际 curl callback 还检查
+三次冷启动失败时设置的完整 URL。下载中和刷新失败时保留上一份已导入配置；新下载通过
+导入后才替换它。首轮成功后的刷新不再次安装已清空的证书、不创建第二个 bridge，刷新
+失败也不结束既有媒体状态。实际 callback 测试从“已有配置/已初始化”的明确输入开始，
+HTTP 完成及 trust/import 是 provider，没有创建媒体连接或证明冷启动成功证书已安装。
+退出时尚有自动刷新请求的情况另验证实际 HTTP handle 清理。移除首轮刷新、允许已有
+配置的失败刷新自动重试、改用无符号计数的三个独立 C++ 反例均正常执行全部 19 组输入，
+再被正式比较器以正常 exit1 拒绝；不把编译失败或进程崩溃计作检出。
+不补发抽象层但 StreamingClient 适配层未转交的 Cache-Control header。Shell 的原始
+HTTP 适配映射见下文，不能用抽象 Completed 的 2xx 分支代替真实 curl 完成分类。
+
+**Shell 的另一条预取/缓存链（静态证据）**：`CShellApplication::BInit` 在
+`0xc98a44` 调 BLoadCacheFile 读取 storage 下的 `sdr_config.txt`，成功后在
+`0xc98a88–0xc98a94` 写入 s_sNetworkConfigData；随后仍创建 WebRequest 发起下载。
+回调 `0xc9eaa4` 只在 IWebRequest 状态为 4 时保存响应（`0xc9ebe8`），追加 NUL、更新
+该字符串并置 s_bSDRConfigDownloadComplete=true；失败分支不替换旧内容。
+这些指令与上述 SDK 内部 Fetch 是不同层，不能将 SDK 的前三次重试套到 Shell。
+BDownloadingSDRConfig 只在 request 存在且状态为 1 时为 true。
+
+**原始文件及 HTTP 适配复核**：固定 shell SHA256
+`15b2d79881eef0c47ed2f96c17d1d60a5f42d3285abcf9f512cfffdac5b238a2` 的
+`BLoadCacheFile @0xca75f4–0xca76b8` 用 `rb` 打开、获取文件长度、直接读入 CUtlBuffer，
+另加 NUL；没有封装头、mtime/TTL 或 JSON 解析。`BSaveCacheFile @0xca7998–0xca7a24`
+创建目录、以 `wb` 打开、写 buffer 的 put-length 字节。Shell 回调先保存这些原始字节，
+然后才追加 NUL/设置字符串；保存失败不会阻止内存配置更新。文件 helper 对非零短读/
+短写仍可报告成功，零字节读写失败时还可能跳过 close；这些不是需要复制的资源安全行为。
+
+`CWebRequest::BStart @0xcc2078` 在 `0xcc2198–0xcc21b4` 设置
+`CURLOPT_FOLLOWLOCATION=1`、`CURLOPT_FAILONERROR=1`。`OnRequestComplete
+@0xcc1a78–0xcc1b50` 先 cleanup，再将 `CURLE_OK` 映射为状态 4，其余为 5；它不另检查
+传入的 HTTP status。streaming/websocket 标志置位时另接受 CURL code 56，普通 HTTPS
+配置请求不命中此例外。未释放的 callback 在成功/失败时均会调用，已释放则跳过。
+因此配置请求的 HTTP >=400 由 curl 的 fail-on-error 分类，正常 201/204 也可以到达状态 4；
+是否能用仍由之后的 JSON/trust 解析决定。撤回端口将 HTTP 完成限定为 200、不跟随重定向的
+接法；这两项不是原版策略。
+
+`audit-steam-config-cache.py` 执行原始文件 helper、BStart 和 OnRequestComplete，
+冻结 47 组输入。SDL 文件/IO、CUtlBuffer 分配/终止/seek、curl、mutex、字符串/function
+存储、日志及最终 callback 是显式 provider；不是原始文件系统、curl 网络、Qt 事件循环、
+Shell BInit 整体或 SDK 互通。fixture gzip SHA256 为
+`f296851f2db129dcd863bda0b63a8c4521d0456043233c10f9400e8071881253`；比较器同时核验固定 shell
+和两个 helper hash。`check-steam-config-cache.py` 将原始 option/状态观察与实际缓存 owner
+的 loopback curl/磁盘读写组合核对：两轮 owner、无 TTL、即使有旧缓存也刷新、503 保留、
+302→201、204 空响应、保存失败仍更新内存、NUL 字符串边界、原始非 JSON 响应、待完成取消。
+三个独立编译的 C 反例（有缓存便跳过刷新、下载失败清旧数据、只接受 HTTP 200）
+都由接收器正常退出后被正式比较器拒绝；不以编译失败或崩溃计作检出。
+原始异常短读/短写和释放回调的全部分支没有被外推为生产网络已逐项等价。
+
+**端口接线及本地边界**：worker 启动发现/CM 后创建独立 `sns_config_cache`，读取
+`<data_dir>/sdr_config.txt` 并发起一次后台预取；每次 tick 推进，停止单次串流不销毁它。
+worker 退出时，先停止/join IHS/session，再销毁 SNS/缓存 HTTP owner，最后 IHS_Quit；
+缓存独立持有 curl global 引用，保证其他 curl owner 销毁时其请求仍有依赖存活。
+没有额外线程，也没有渲染/输入路径上的文件操作。缓存限制 1 MiB、完整读写、关闭所有
+文件、tmp+rename 发布、TLS 校验及 10 秒连接/25 秒总期限是本地资源纪律，不宣称原版规则。
+
+创建 SNS 时同步复制/导入非空快照，成功后才解码可选证书、装本机证书、申请认证并建立 bridge；不再为这种
+显式配置另发 SDK Fetch 或首轮成功刷新。非空配置导入失败和证书拒绝都终止 BInit，不悄悄
+降级为另一条下载策略；无配置时才用上面的 SDK-style fetch policy。Shell 缓存下载完成只
+更新该缓存，不从后台任务直接变更活跃 SDK/连接。同步 BInit 与异步下载完成的两种情况都受 D-A104 的应用准备门槛约束；
+准入后先启动 IHS，再显式允许后续 owner pass 调 SDK 寻路。
+
+生产配置 owner 的真实文件/loopback curl 测试不包含信任解析；cached BInit 组件另以明确
+trust provider 和实际 SDK 的坏证书拒绝，验证顺序、无 HTTP fallback、空缓存及重复 SDK
+owner 清理。成功证书分支仍不由这些坏证书测试证明。真实 actor/ticket 组合在启动时读取
+预置文件（HTTP pump 是明确 pending provider），核对快照交给 SNS、IHS 创建/Connect 先于显式 SDK 建连准入、
+session join 在 backend/cache 销毁之前；不能把它等同真实 Steam 或 Switch。
+两份 ELF 同名静态量的加载绑定与完整 Qt/UI 等待门槛仍未由这些指令/本地接线证明。
 
 **调用链限制**：样本的 CSDRHTTPRequest_StreamingClient::SubmitRequest `0x75ddc0`
 只把 URL 交给 IWebRequest::BStart；本函数未遍历抽象请求的 header map。
@@ -1484,8 +2636,12 @@ base metrics `SetSessionSelectQualityMetrics 0x81c3f0` 还执行：
 - shutdown 剩余秒数大于 29 无额外惩罚；<=0 加 1000；1..29 时加
   `floor((30-seconds)*1000/30)`，另叠加 alternate transport penalty
   （整数实现 `0x81c43c–0x81c4a8`）。
-- relay 已记录连续接收失败且距最后接收至少 500001 微秒，记录 connection gap；达到
+- RelayServer 已记录连续接收失败且距最后接收至少 500001 微秒，记录 connection gap；达到
   1750001 微秒再加 100 分（`0x81c4ac–0x81c4e4`）。单纯媒体没新帧不是该条件的替代。
+  **Evidence correction**：失败数来自参数 RelayServer+256（`0x81c49c`），不是该连接的
+  RelaySession LinkStats+4136。此前适配器读取 session 的计数，会由另一层超时提前影响
+  active 选择。原始函数使用 root/session 失败数相反的输入覆盖这两者和严格时间边界。
+  换成正确所有者本身不证明故障恢复成功。
 - migration flag 用于区分迁移目标与发出迁移请求的节点，不是新的设备配对状态。
 
 active session 候选会计算 min-score/current-score/max-score 并排序，然后才考虑保留当前 primary、
@@ -1665,7 +2821,12 @@ key-exchange 缓存测试在进入新密码计算前停止，不证明整个授�
 active 列表最多两项（primary、backup），但全部 session 可以更多；退出 active 列表不立即销毁。
 backup 尽量来自与 primary **不同 SharedClusterData 对象**的 POP。
 基础 selector 找不到这种候选时不主动清除已有 backup，可能保留本轮 P2P metrics 不合格的旧
-backup（`0x81d810–0x81d93c`）。**撤回将此推广为完整 P2P 行为的解释**：P2P 外层先运行
+backup（选择扫描 `0x81d93c–0x81daf0`）。**收紧这一结论**：它要求 primary 未改变。
+primary 切换路径 `0x81dc8c–0x81dc98` 先把 active count 写成 1，再保存新 primary，
+然后重新运行不同 POP 的 backup 选择；旧 backup 不会仅因“本轮没有替代项”而跨此重置保留。
+原先将保留规则无条件用于 primary 切换的概括应撤回；生产 C 实现与原始指令的组合差分
+（`tools/steam-sdr-implementation-audit.py`）覆盖该重置边界。
+**撤回将基础函数规则推广为完整 P2P 行为的解释**：P2P 外层先运行
 CleanRoutesForServerSelection，已失去目标 token 的 active 项会先被移出；随后才执行基础 selector
 （§21.13）。离线用例分别覆盖这两个阶段，不能把基础函数单测当成外层的最终结果。
 
@@ -1723,7 +2884,8 @@ ClientSwitchedPrimary（type 16）遥测还要求旧主路时间非零、旧主�
 - 每项路线记录本轮序号；配额计算的是可继续使用或正在取得的候选，不是扫描过的项数。
   已有本连接、同 POP 的合格 session 可直接占一份配额，不重复申请。
   root 避让、alternate penalty>=8191 或不满足地址限制的旧 session 不走该复用路径。
-- 配额尚为 0 且迁移目标属于本轮 POP 时，优先追求迁移目标；否则由 §21.4 的共享 chooser 选 relay。
+- 本轮已消费的配额为 0 且迁移目标属于本轮 POP 时，优先追求迁移目标；否则先复用合格
+  session，再由 §21.4 的共享 chooser 选 relay。这是 consumed=0，不是 remaining=0。
 - 申请前要求 challenge 非零、server_time 非零；challenge 接收年龄 <=10秒；
   relay lastReceived 非零且年龄 <=20秒；cluster 至少 3 个 front 样本、最新样本年龄 <=20秒；
   relay 连续 ping 失败数为 0。challenge 超过 10 秒会先清零。
@@ -1777,6 +2939,10 @@ POP 的 tier（默认 1）与 ping-only 类型由网络配置 JSON 解析（`0x8
 调度先按 cluster 的 routing score 排序，未知/过大值（>=5001）用随机 5000..5100 排序值打散。
 对合格 POP 构造探测优先级，较小者优先（`0x823d24–0x82445c`）：
 
+- nearest-N 使用**排序前缀中的非失败 cluster 数**，而非已发探测数或列表下标：每项先按
+  下述失败分类决定是否增加计数（`0x823f20–0x823f64`），再进行数量门槛判断。
+  普通 tier=0 或 special>0 候选绕过数量门槛；其余 tier>=1 且前缀计数>N 的候选跳过
+  （`0x824008–0x82409c`）。因此失败项本身不增加计数，但在计数已经>N 后仍可被跳过。
 - 受本地 override 影响的 cluster 初始探测不足 8 次时使用约 -1e30 的紧急优先级。
 - 无 ping 的初始候选采用上述排序值；普通 tier>=1 候选再加 10000，先为其他层的初始测量让路。
   已多次失败的候选走较低优先级的重测分支。
@@ -1790,6 +2956,22 @@ POP 的 tier（默认 1）与 ping-only 类型由网络配置 JSON 解析（`0x8
   否则约 1e30；priority>=cutoff 不发。每轮最多发 10 次（缺少 primary/backup 或无活动连接），
   主备齐全且有活动连接时最多 1 次。找不到 relay 或已有 pending ping 的项不消耗发送预算。
   本路径 EProbeTOSCase=4；不能擅自对全部探测使用不同 TOS。
+
+cutoff 的具体比较为 `initialOther > measuredTierZero`（`0x82445c–0x8244ac`）：
+initialOther 统计进入无 ping 初始候选分支且未加 10000 的项；紧急 override 分支不计入。
+measuredTierZero 统计普通 tier=0 且 ping>=0 的项，不额外要求该项仍可达。
+二者并不是同一列表的“待测项减已测项”。本地实现须先完成整轮计数再发送，不能遇到
+一个 tier=0 未测项就立即截断普通 POP，也不能在收到一个回复后无条件解除 cutoff。
+
+**活动连接标志的语义**：`0x823b78–0x823ca8` 检查连接 wire state 1..3，保存到本轮
+sp+48；它独立于 primary 是否存在。sp+40 则记录仍需补充活动 session/路线的条件。
+本地曾把前者误接成 `!have_primary`；撤回该接法，准确样本的 120 秒重测条件须使用
+活动连接标志。上述每轮预算为 `needRoutes || !activeConnection ? 10 : 1`。
+
+本轮探测的失败分类另读取失败地址缓存：cluster 累计失败 >=4，或累计失败 >=2 且
+失败地址缓存非空，或 reachability<0，任一满足即使用失败重测分支
+（`0x823f20–0x823f68`，缓存数量为 SharedClusterData+660）。这不等于 §21.6 的
+持久 reachability 置 -1 条件；不能仅因字段仍为可达就忽略已有地址失败历史。
 
 **路由数据可用**与“已经连上某个 relay”分开保存（`0x824bbc–0x824cc8`）：
 初始化已开始且已测普通 POP 数 >= `min(15, trunc(totalOrdinaryPOPs*80/100))` 时，
@@ -1896,7 +3078,9 @@ interior、目标 token 与迟滞；该组仍直接构造已整理的 per-POP �
 
 1. 每条路线维护 forward/reverse 的用于公布比较的分数。原值>9999 按 `0x0fffffff` 处理；
    验证旧快照时，新出现且旧快照没有的项额外增加 `trunc(score/15)+5`，给旧内容迟滞优势。
-2. 当前使用的路线被标为强制公布，临时 rank=4，比较分数设为 `-0x0fffffff`。
+2. 仅 controlling 一方当前 primary（active index=0）的路线被标为强制公布，临时 rank=4，
+   比较分数设为 `-0x0fffffff`；backup 和非 controlling 一方不因此强制。
+   角色/控制方门槛来自 `0x837190–0x8371a4`，置位来自 `0x837384`。
    其余路线执行四次排序：优先内部标志/forward/reverse、优先内部标志/reverse/forward、
    reverse/forward/内部标志、forward/reverse/内部标志；数字分数升序，内部标志 true 在前，
    最后按 local/remote POP 索引升序打破平局。该 builder 在初始化时将内部标志清零；
@@ -1908,12 +3092,21 @@ interior、目标 token 与迟滞；该组仍直接构造已整理的 per-POP �
    已选路线将其**本地端** cluster 的 rank 提高到路线 rank，确保必需的 token/POP 信息同批公布。
 5. cluster 按比较分数、POP 索引选择，前四个提高到至少 rank=3，接下来两个在尚无 rank 时设为 1；
    不可用 front 或负 override 状态使这段选择停止。它与路线带来的必需 cluster 也是取并集。
-6. TruncateLists 按 rank 优先排序，在第一个 rank=0 处缩短列表。
+6. TruncateLists 首先按 rank 降序，再按比较分数升序，最后用 POP 索引打破平局；
+   Route 使用 forward 比较分数及 local/remote 索引，RelayCluster 使用 front+penalty 及本地索引。
+   强制路线的负比较分数保证其在同 rank 中领先。最终在第一个 rank=0 处缩短列表。
    它没有再施加一个固定“最多 4 routes / 6 clusters”的总数上限。
-7. RelayCluster 序列化携带所选 session 的 token、POP、ping 和 penalty；Route 公布
-   `interior_score=interiorPing+interiorPenalty`，不是把包含两端 front 的总分填进去。
+7. RelayCluster 序列化携带所选 session 的 token、POP、ping 和 penalty；Route **同时**公布
+   `interior_score=interiorPing+interiorPenalty` 与 `legacy_score=forwardScore`。
+   前者不含两端 front，后者为 §21.9 的完整 forward 总分。
    真正重建后才 revision+1，清除旧的重发期限，并要求对端获知新快照
    （`0x837468–0x8378c4`）。
+
+**Evidence correction**：此前本地构造只写 interior_score，遗漏了仍被官方同时写出的
+legacy_score。`0x837688–0x8376f0` 设置四个字段的 presence bits，并将 raw route+24 的
+forward 分数写入 protobuf f3、raw route+8 和 +16 的和写入 f4。不能把“支持新字段”理解为
+发送方可以省掉旧字段。独立原始序列化字段投影片段验证两端 POP、两种分数与 presence，
+没有把 RepeatedPtrField 分配或完整 protobuf 编码算作被执行。
 
 **旧快照复用**：`CheckOldMessageValid 0x83aa9c–0x83b1d8` 先逐项校验旧内容，再检查它是否
 覆盖仍必须公布的内容。penalty 差值达到 `5+trunc(min(old,new)/15)` 就重建（等号重建）。
@@ -1921,7 +3114,16 @@ ping 差值到达同一阈值时不立即重建：若旧 ping 仍在当前近期
 超出区间才重建。token 必须逐字节相同；旧快照有 token 而当前没有匹配 session 也不能复用。
 Route 的旧 interior_score 与当前 interiorPing+interiorPenalty 按同一阈值校验。
 最后以“验证旧快照”模式重新执行 MarkItemsToSend；旧快照漏掉任何 rank>=3 的必要项就失效。
-这些迟滞只控制 routes 快照更新，不改变 §21.2 的 active 切路阈值。
+在逐项迟滞前另有 primary 契约：controlling 一方有当前 primary/目标时，旧 routes 必须
+非空，且首项 my/your POP 对等于该 primary 的本地/目标 POP，否则立即重建
+（`0x837390–0x837400`）。不能仅比较成员集合，也不能用 rank 后按配置索引排序替代完整
+TruncateLists 顺序。这些迟滞只控制 routes 快照更新，不改变 §21.2 的 active 切路阈值。
+
+**快照前置门槛**：`CheckRebuildRoutingMessage 0x836d7c–0x836de8` 在全局 routing
+good-enough 为真时才进入 InitMessageToPeer；未就绪分支不构造候选快照。它与 §21.13 中
+selector 只在同一门槛后导入 peer routes 的规则一致。仅收到几个 front ping 并不能开始公布
+完整路由图。原有本地“只公布已有 session”的路径间接满足了这个门槛；改为公布可测 front
+时必须保留显式门槛，不能从函数级排序通过推断调用时机也正确。
 
 连接层的调用顺序由 `CConnectionTransportSDRBase::ThinkSelectServer 0x81bf60–0x81c0e4`
 约束：只有 wire state 1..3 执行；先取消无效迁移，再评估已有 active sessions，
@@ -1970,6 +3172,9 @@ route estimate，供 §21.5 排序使用，同时维护各 POP 最近的实际 r
 “3 轮”不是完整最短路算法，也不是严格最多 3 跳：原位更新允许本轮后面的 source 继续传播。
 离线输入中，正序的五节点链可一次传到末端；逆序链在第三轮后仍有一个节点未知。
 因此不能换成任意 Dijkstra/无限循环收敛并宣称与原客户端相同。
+source 的 2000 边界包含等号，2001 不扩展；负 interior ping 不参与。该估计也供全局
+探测排序使用（`0x823d4c–0x823d88`）：估计 >=5001 才换成 5000..5100 的随机排序值，
+不能对所有尚无直接 front ping 的 POP 一律使用随机高分。
 
 ### 21.11 alternate 地址的公布、探测与淘汰
 
@@ -2014,7 +3219,12 @@ DefaultProtocol alternate 探测（`0x8247d0–0x824b34`、`0x824f94–0x825104`
 甚至不清 pending session request。非空 token 先清 relay.pendingRequest，处理存在的停机预警。
 内部连接状态 -2/1/2/3 可复用本连接已有 session，或创建一个新 session，再保存 token、刷新
 session 的最后接收/计数并清 relay 的申请失败次数；随后立即重新选路。
-内部状态 -1/4/5 则发 NoConnection，不把迟到成立消息变成新的活动 session。
+内部状态 -1/4/5 调用 `SendConnectionClosedToServer`，不把迟到成立消息变成新的活动 session。
+**撤回此前把该分支写成 wire NoConnection 的说法**：原审计事件 `no_connection` 只是桩名称，
+继续执行真实 sender `0x81b554–0x81b6a4` 后确认发送 type **20 / ConnectionClosed**，
+不是 type 21。Sender 设置本地 from_connection_id、存在时设置远端 to_connection_id，
+再调用派生 population，最后发给 relay；新增 `connection_closed_sender` 原始指令用例直接
+检查其消息类型和 ID。不得根据桩的文字标签推断实际 wire 类型。
 这些是内部状态域，不可直接当成应用/CM 状态值使用。
 `next_r2c_packet_number !=0` 才将该 relay 序号窗口初始化到 next-1，扩展 next 并登记此次接收；
 0 跳过这段，不是无条件重置。connection_id 的匹配还依赖上层分派的定位与前置条件。
@@ -2367,6 +3577,8 @@ front+interior+remote 作为初值，应用本地 override（-1 禁止、>=0 替
 - `probeWanted` 要求 primary/目标可用、need-confirm=1，且 connection E2E 没有 pending reply，
   或 `lastImmediateRequest+200000<=now`。
 
+原始 `0x837b38–0x837b44` 在这些判断前调用 BSetSessionForwardTargetToken，
+因此本轮不发送时仍可登记 sent token/POP/revision，不只是无副作用地读取旧值。
 三者都为 false 就返回。只有 probeWanted、没有 routesDue/ackPending 时直接对 primary 发
 request=3、force E2E 的 stats；这条专用分支不先发 CM。发送后期望 connection E2E pending
 已建立；发送失败且没有 pending 时走诊断，不能凭空假设转为 CM。
@@ -2452,3 +3664,441 @@ reply/期待 ACK；即使随后 gather 返回 false，这些状态也保留，�
 `inline_stats_budget` 另执行原始裁减与 varint 前缀指令，覆盖恰好放满、两类 quality 的优先级和
 127/128 字节边界；ByteSize、quality 容器清理和 body 序列化由明确提供者返回，不能据此宣称
 原始 protobuf 编码器或 SNP 加密已验证。数据发送测试的输入为已加密 chunk，不重做端到端握手。
+
+### 21.24 关闭通知、确认与迟到成立消息
+
+**Evidence**：`TransportConnectionStateChanged 0x81ba8c–0x81bbdc` 的分派使用真实
+connection state：-2/1/2/3 提前唤醒 thinker；-1/4/5 遍历本连接全部 relay sessions，
+跳过已由对端关闭的项，并发送 `ConnectionClosed`；-3/0 不发。仅在 SDR 是当前 transport
+或当前 transport 为空、同时该 session 是 primary 或尚无 primary 时，给此发送设置
+end-to-end 参数。backup 同样收到关闭通知，但不能一律带 end-to-end 参数。
+这个状态域与 `ThinkSelectServer` 仅维护 wire state 1..3 的条件应分别保留。
+
+`SendConnectionClosedToServer 0x81b554–0x81b6a4` 发送 type 20，设置本地
+from_connection_id、非零时设置对端 to_connection_id，然后执行派生 population。
+base population `0x81b6a4–0x81b878` 写入 connection reason/debug：wire state=4 时
+relay_mode=ClosedByPeer(2)，否则只在 end-to-end 参数为真时设置 EndToEnd(1)。携带
+session 时写 relay lifetime；end-to-end 参数为真时写 E2E lifetime。
+P2P population `0x83e9a4–0x83ebe8` 继续处理 desired/sent token 与 revision，填写
+not_primary_transport 及 routing summary。routing summary 是另一个明确的统计生产器，
+不能把“已有 routes 消息”当成它已经生成。
+
+**关闭确认与上面的 type 20 发送不同**：
+`ProcessMessage_ConnectionClosed 0x819f9c–0x81a160` 导入 quality，标记该 session 已由
+对端关闭，调用 `ConnectionState_ClosedByPeer(reason, debug)`，随后执行
+`RelayServer::SendNoConnection 0x817bb4–0x817db0`。后者发送 type **21**，交换刚收到
+消息的 to/from IDs；收到的 relay_mode=EndToEnd 时设置 end_to_end=true。存在 session
+时，base/P2P population 与 relay lifetime 也被写入；base 的 E2E lifetime 并不要求
+end_to_end=true（`0x81b9ec–0x81ba8c`）。
+`ProcessMessage_NoConnection 0x81a160–0x81a290` 则导入 quality、标记 session 已关闭，
+以固定 reason **5010** 结束连接，不再次发送关闭确认。
+
+本节的 sender 和 state-change 原始指令用例在 `tools/steam-sdr-policy-audit.py`；
+消息构造/派生 population 的显式桩范围由用例标明。对端统计/summary 的完整生成不能
+仅由这些 stub 通过推断。迟到 `P2PSessionEstablished` 的状态分支见 §21.12；空 token
+不得清 pending，非空 token 即使在关闭状态也先清 pending，再处理关闭通知。
+
+### 21.25 POP 别名的方向与 canonical 查询
+
+**Evidence**：`SetupFromJSON 0x898754–0x89a508` 以 `pops` 对象的 key 构造 POP 的
+主 ID（`0x898cbc–0x898cfc`），从该对象的 `aliases` 数组读取额外 ID
+（`0x8992d4–0x8994d4`）；仅接纳 3 或 4 字节别名，长度无效时忽略该别名。
+`BuildLookupTables 0x8981e4–0x898754` 把主 ID 与别名共同映射到这个 POP 的索引；
+已有 key 冲突进入错误路径（主 ID `0x898708`、别名 `0x898644`），不能以最后写入覆盖。
+
+`MapToCanonicalPOPID 0x897e70–0x897ed0` 先把返回值初始化为输入 ID，再查表；命中后
+取 POP record 的主 ID。未知 ID 原样返回，**不返回 0，也不选择相似 POP**。
+原始指令用例包含空表、主 ID、多个别名、别名映射到另一主 ID、低/中/高未知 ID 与
+UINT32_MAX，容器节点是显式构造的输入，不把 JSON parser 也算成已被离线执行。
+
+**Conclusion**：若配置为 `"eat":{"aliases":["mwh"]}`，映射方向是 **mwh → eat**。
+别名不会创建新的 POP、relay 地址或独立 session。延迟数组和 route exception 的 ID
+须在写入缓存前 canonical 化；同包多个名字映射到一个 POP 时，仍按 §21.10 的数组
+顺序后写覆盖。未知 ID 可以作为缓存 key 保留，但不能因此成为已知 POP 或获得建路资格。
+对端路线的 POP 按同一 lookup 映射到配置索引，目标 token 与对应 POP 必须保持绑定。
+
+### 21.26 RouterPingReply 的接收门槛与后续回复
+
+**Evidence**：外层 `ProcessMessage_RouterPingReply 0x812178–0x812794` 先核对 root
+cookie，失败时还遍历该 relay 的 sessions，接受本地 connection_id；随后核对普通延迟
+数组数量并计算低 32 位时间差。它**没有**将 client_timestamp 与最近发送时间逐字比较，
+也**没有**要求 ping deadline 非零。其 RTT 分支为：
+
+- 有符号低 32 位差值 0..10000000µs：整除 1000 得毫秒；10000001 拒绝。
+- 负差值：只有 timestamp 偶数且差值 >=-2000µs 才按 0ms 接纳；其他拒绝。
+- 通过后依次 ReceivedPacket、RecvPingReply、可选 downtime、cluster penalty、
+  SaveChallenge、latency 更新、alternate 更新；cluster penalty 在此入口无 presence 条件。
+
+**Evidence correction**：撤回实现中“测量必须匹配最新在途 ping，且只处理一次”的注释
+和门槛。这会漏掉时间范围内、cookie 正确的后续回复，也可能丢掉 §21.10 允许的增量信息；
+不能因为首包已清 deadline 就跳过后续 metadata。是否在某次真实测试中实际分包，仍需抓包证明。
+实现额外检查 P2P 延迟数组的等长边界是本地解析防御，不能据此声称原版外层也有同一检查。
+
+原始入口审计显式替代 ReceivedPacket、PingTracker、challenge/latency/alternate 处理器，
+验证上述分派次序与 cookie/RTT/普通数组门槛。分别在有/无 pending 的输入执行同一组时间边界，
+另测 session cookie、错误 cookie、普通数组不等长、downtime presence 与低 32 位回绕。
+下游处理器自己的策略由其他用例验证，不能由这些调用桩推断。
+完整延迟回复时刻还控制 §18.2 的短 ping：`lastFull+5000000 > now` 发 100 字节，等号
+发 1300 字节；不能虽然正确记了 full/incremental 状态，发送时仍无条件用长包。
+独立的原始 `0x8178ec–0x81793c` 片段用例核对了送入 BSendPacketGather 的长度与 0x82 标志，
+没有把其他 sender 分支或 socket 发送结果算作已验证。
+
+### 21.27 POP 用途、front 资格与 session 加密公钥
+
+**Evidence**：`SetupFromJSON 0x898da0–0x898e0c` 分别读取 `ping_only` 与
+`relay_ping_only`，任一解释为 true 时将 POP type 设为 2，否则为 1。
+它调用 `vjson::Value::TryInterpret(bool&) 0x8dc880–0x8dca4c`，不是直接检查 JSON
+类型：布尔值、非零数字、大小写不敏感的字符串 `true` 和字符串 `1` 可得到 true。
+null、无法解释的字符串、object/array 保留调用方初始化的 false。C 字符串消费在嵌入 NUL
+处停止。离线配置分支用例执行原始 TryInterpret，vjson key 查询使用显式输入桩；并未把
+整个官方 JSON parser 也计作被执行。
+
+`0x89924c–0x8992d0` 在 POP 无 relay 地址或其显式 `relay_public_key` 解析失败时将
+type 置 0；后者还清空该 POP 的 relay 地址向量。主 ID 和 aliases 仍可查询，不能把禁用
+POP 的别名指向其他 POP。全局公钥在 `0x899940–0x899988` 单独解析，失败走整个配置错误
+路径。本地配置接受至少一个可用 endpoint；拒绝更新时保留原配置，属于本地可用性边界。
+
+**Evidence correction**：撤回实现曾将空/缺失全局公钥视为有效配置的接法。全局字段缺失或
+类型不符时传入空串，`SetFromHexEncodedString 0x757208–0x7572f8` 解码后仍经
+`CEC25519KeyBase::SetRawData 0x746508–0x74651c` 的严格 32 字节门槛；空串失败。
+POP 未给该字段则跳过本地公钥解析、使用全局；显式空串则使该 POP 禁用。
+`HexDecode 0x74c78c–0x74c990` 会跳过非十六进制字符并丢弃末尾孤立半字节，故不能用
+“字符串必须恰好 64 个 hex 字符”替代解码后的 32 字节检查。该解码与 32 字节门槛也执行
+原始指令对照；raw buffer 的实际存储为显式桩，不宣称重测了密码 provider。
+
+**P2P front 资格**：`CP2PRouteSelector::Init 0x839750–0x839790` 要求 ping>=0，且
+满足 `(reachability>=1 && type==1) || special>=1`。因此 type=2 仍可参与全局探测和延迟
+估计，不能因为回复了 ping 就作为普通本地 P2P 入口。正 override 是单独例外，不能覆盖
+负 front ping。该规则有包含 type=0/1/2、负/零/正 ping、未知/可达/不可达与 override 的
+原始分支输入；项目未提供 override UI 时应传 0。
+
+资格失败时 `0x8396ec` 从常量 `0x3d2c68` 同时写入 `front=-1`、
+`penalty=0x10000000`，不是只把 front 设成 -1 并留下普通 penalty。
+后续 builder 比较 `front+penalty` 时，此组合映射到 unknown score 并排在有效项之后，
+防止负 front 以低分排到 cluster 选择前缀并提前截断有效候选。
+
+**session 申请用钥**：`0x8384a4–0x8384dc` 先检查 canonical POP 的公钥是否有效，
+仅在无效时检查全局公钥；两者均不可用才进入 §18.3 的明文 peer identity 分支。选定的
+同一公钥须用于 X25519 和 `encryption_your_public_key_lead_byte`，不能一个用 POP key、
+另一个仍用 global key。离线 key 选择用例显式提供 IsValid 结果，验证指针选择/分支，不
+借此宣称验证了密码 provider。实际 crypto 答案与认证失败用例另行验证。
+
+### 21.28 官方运行时的主路中断对照与观测边界
+
+**Evidence**：同版 x86_64 `libshell_x86_64.so` 的 SHA-256 为
+`195025601c2b17194a4d8b3debd674aca3377290fe3851986656c49bc973f907`。
+`tools/steam-sdr-runtime-audit.py` 在已 root 的指定模拟器上先核对该文件及进程架构，再挂钩
+主备选择和 RecvValidEndToEndPacket。播放器库另核对 §0 的 x86_64 `libmain.so` 哈希，
+通过 module observer 在实际加载后、调用前安装对应挂钩；不能仅观察启动器库就宣称覆盖实际媒体。
+两份库的独立 stats 原因常量分别为 `0x4b2ed5` / `0x3b11eb`。它只采集地址、POP、角色、计数和时间元数据；不采集
+凭据、protobuf 业务缓冲或编码帧。主路/备用字段和两组 failure count 使用该固定库的布局，
+不能拿这些偏移直接挂到其他版本。
+
+只阻断已知 IPv4 直连地址仍可能走 IPv6 ICE，SDR 初始化或 primary session 存在并不能证明
+业务选中了 SDR。运行时对照在 ConnectP2PCustomSignaling 真正收到的配置数组中，将 Int32
+配置 104（ICE Enable）改为 0，同时记录原值与实际值；还要核对 SDK 的实际 Connected SDR
+日志。此前只挂小型 getter 的尝试没有命中该调用，不能据挂钩安装成功宣称已禁用 ICE。
+导出函数可能在内部调用点被内联，其他入口的回调缺席同样不是“原版没做这个动作”的证据。
+
+**应用层窗口**：§8.6 的 HandleNetworkTest `0xcff6b6–0xcff6c9` 比较 `this+0x150`
+与 GetStreamTimestamp，使用 `0x30000` 的帧等待窗口。实际纯 SDR 网络测试在主路中断后
+约 3 秒就进入 NetworkTestDone 并销毁 transport；这早于后续 SDK 主备切换，不能把应用
+提前结束解释为 SDK 已尝试并耗尽所有路线。
+
+为了单独观测 SDK，可显式使用 `--hold-test-timeout 45`：只在注入后暂时更新上述
+CNetworkTest 的帧时钟，本例 45 秒（工具上限 60 秒）；不改 SDR 的评分、角色、失败数或
+探测 deadline。
+这是**测试外壳覆盖**，不是官方产品原本的等待策略，相关网络测试质量数字不用于性能结论。
+默认不覆盖此时钟。`--force-sdr` 是另一项明确的连接配置覆盖，也不隐瞒为原厂默认配置。
+
+**一次受控样例**：`build/anywhere-research/official-recovery-20261017-022617/`
+的 events 与 app 日志记录了以下事实：
+
+- 实际 ICE 配置由 `0x7fffffff` 改成 0；SDK 选择 SDR，香港 primary 与东京 backup 均存在，
+  首先有经香港的有效 E2E 收包。该客户端的 controlling 字节为 0。
+- 仅在模拟器内部双向丢弃该香港 UDP endpoint。OUTPUT 另以 Steam Link UID 限定；INPUT
+  以来源 IP/port 限定。计数记录确认两向 DROP 都命中；开发机防火墙没有改动。
+- 注入后约 6.4 秒，官方 selector 将东京提升为 primary。此前 RelayServer failure 已为 1，
+  RelaySession failure 仍为 0；这直接支持 §18.5 的所有者区分。
+- 在保持测试外壳存活的这次窗口中，没有观察到经新 primary 的有效 E2E 恢复；SDK/IHS
+  日志随后出现 peer Destroyed 和约 15 秒 inactivity。不能把 primary 指针改变当作恢复。
+
+**Evidence correction**：整理后的工具在 `build/anywhere-research/official-runtime-fault/`
+再次运行同一覆盖，捕捉到东京成为 primary 后的一个有效 E2E 样本；随后仍因 IHS inactivity
+结束。撤回将前一份“没有采到新 E2E”推广为“官方 SDK 完全不会恢复 E2E”的判断。不同
+样例或采样缺席都不能证明零包。后续 `official-runtime-packet-category-v2/` 用 §21.29 的同线程入口分类，
+记录换路后的一个 `data` 样本；这仍可能只是 SNP ACK/控制，不能据此证明编码帧或持续收流恢复。
+新的本地 fixture 被动跟踪 E2E 计数，要求五秒角色保持的末尾一秒内仍有新计数增长，不
+用单包把整个保持窗口判为成功。SDK/relay/业务帧的失败与超时仍按各自所有者解释。
+
+**关闭元数据的布局证据**：播放器 x86_64 `ProcessMessage_ConnectionClosed 0x85bfd0`
+在 `0x85bfe7/0x85c12a` 分别读 protobuf+0x5c 的 relay_mode 和 +0x60 的 reason；
+启动器 `0xd55a20` 使用相同字段偏移。`ConnectionState_ClosedByPeer 0x89f5a0`
+读 connection+0x1ac0 的 SDK state、在 `0x89f613` 写 +0x1458 的 end reason；
+启动器对应 `0xd99550` 的 state 位于 +0x1ad8，end reason 仍为 +0x1458。
+两份 `ConnectionState_FinWait` 的读点分别为 `0x89eabe` / `0xd98ace`，再次支持该
+state 差异，不能沿用一个偏移观察两库。运行时工具在这些固定哈希的入口记录 type20
+reason/mode、type21、API close 及 peer/local_problem/FinWait 的 state 前后值，关闭类
+最多每库 32 项；另在 SetState 入口记录最多 64 项 before/next/reason。
+播放器 `APICloseConnection 0x89e710` 在 `0x89e843–0x89e84b` 直接令 SetState(-1)，
+没有经过具名 FinWait 入口；因此后者的挂钩缺席不能解释为应用没有请求关闭。
+不读取 SDK debug 字符串、peer identity 或 protobuf 业务缓冲；FinWait 的 reason 读已保存
+字段，其余两种终态另记录调用参数。以上仍只适用于 §0 的固定 x86_64 样本。
+session 的目标也只采数值 POP/revision/ACK：两份 x86_64 的
+`BSetSessionForwardTargetToken` 在 player `0x87798f–0x877998` / shell
+`0xd7294f–0xd72958` 将 +0x40 的 desired POP 复制到 +0x60 的 sent POP，再更新
++0x64 revision、清 +0x68 ACK；与 §21.13 的 ARM 输入对象一致。不读取 token 字节。
+
+**Conclusion**：这份证据说明“只换 POP 并保持 Connected”不足以验收恢复；也不能仅因本地
+适配器的同类样例失败就把根因归给新增快照代码。它没有证明正常游戏串流也有同样结果，
+没有证明服务器内部的回程选择规则，更不能由两个失败样例推定客户端实现已经全等。
+Frida 与应用帧时钟覆盖的影响须保留在结论范围内。
+
+复现时先用 `android-network-sandbox.py` 在模拟器内阻断新鲜的 peer 地址，再冷启动应用，
+自动定位 Computer Settings 的 Network Test 按钮；避免沿用已缓存的内网直连。下列坐标仅
+适用于本次已核对的 2340×1080 界面，工具本身不猜测当前页面：
+
+```sh
+python3 tools/steam-sdr-runtime-audit.py \
+  --serial emulator-5554 --remote 127.0.0.1:27043 \
+  --output build/official-sdr-runtime \
+  --peer-file /private/current-peer-addresses.json \
+  --force-sdr --fault --hold-test-timeout 45 \
+  --tap 480 945 --seconds 60 --stop-app
+```
+
+前置条件是已运行的 frida-server 和 adb forward。工具核验实际配置覆盖成功后，才在首次有效
+E2E 后至少 3 秒、有 primary/backup 时注入丢包；有布局读取错误则停止。有效 E2E 最多每
+250ms 采样一次，并保留每个 session/包类别的首个样本，注入时重新登记首样本。结果只记录是否
+注入、是否见到新 primary 的 E2E 样本与清理错误，不自行输出恢复 PASS。采样不能替代逐包
+统计；`--stop-app` 是实验清理，也不是 SDK 析构/loader 生命周期通过的证据。
+
+实际媒体是另一项显式实验：应用必须在 Home，使用 `--media --tap 480 450 --stop-app`。
+该模式禁止 `--hold-test-timeout`，启动 Start Playing 并在限定窗口结束时停止应用；未观察到
+真正 ICE 配置覆盖或未完成故障注入均记失败。只挂 shell 的首次媒体尝试没有命中播放器入口，
+日志实际选择 ICE，工具报告 `force_sdr_not_observed` / `fault_not_reached`；这份样例不参与
+SDR 故障比较。播放器挂钩还按每秒上限记录 `CStreamDecoderVideo::DecodeFrame` 的调用累计数，
+不读取帧缓冲。它证明视频进入该函数的次数，不能直接等同成功解码帧数或已显示帧数。
+
+**实际媒体 Evidence**：`build/anywhere-research/official-actual-media-fault-v2/` 核验两份
+ELF 并命中 `libmain.so` 的实际 ICE 配置，应用日志为 `Streaming`、业务选择 SDR。
+未覆盖帧时钟；故障在 elapsed=9.611s 注入，6.662s 后主路由香港换到东京。新主路在故障后
+6.789s 与 14.525s 分别采到 `data` E2E；切换后没有新的解码器输入采样，IHS 因 15 秒无活动
+从 Streaming 退出。注入前有持续的 decoder input，最后一个每秒采样累计值为 62；这个值
+不是完整帧计数。两向 DROP 命中、工具与规则清理无错误。
+
+**Conclusion**：在该主机/模拟器/强制 SDR/单 endpoint 中断的具体条件下，官方媒体同样没有
+完成持续恢复。它将“官方网络测试外壳提前结束”的边界扩展到一次未改时钟的实际串流观察，
+但仍不证明其他拓扑必然失败，也不证明适配器和官方 SDK 的所有请求、时序或断流原因相同。
+E2E 数据包可在 IHS inactivity 之前或附近到达，故仍不能用少量 E2E 代替视频帧验收。
+
+### 21.29 Session ACK 对 RelayServer 探测时钟和 front 测量的副作用
+
+**Evidence**：`TrackSentStatsToSessionCommon 0x83e624` 在 relay ACK 请求或隐式 relay quality
+需求下调用 `TrackSentMessageExpectingSeqNumAckInternal 0x84f8b4–0x84fb9c`。该函数不只更新
+session LinkStats：`0x84f98c–0x84f998` 还调用 `RelayServer::TrackSentPingRequest
+0x817304–0x817330`，更新 root 最后请求时刻、cluster 最后请求时刻及累计请求数；root
+没有 pending 时才建立期限，已有 pending 不被后续包延后。
+
+- session 原来没有 pending 时，root 使用刚建立的 session deadline 与 now 之差。
+- session 原来已有 pending 时，重新计算该 session tracker 的 conservative timeout，允许
+  delayed reply 再加 200000µs，再交给 root 的“不延长已有 pending”规则。
+- root 与 session 的失败计数、pending 和超时 thinker 始终独立；这里登记请求不直接增加失败。
+- 控制消息成功后登记；数据的 inline stats 在 gather 之前登记，gather 失败仍保留这些副作用。
+  没有附带 inline stats 时不凭数据头登记这一请求，见 §21.23。
+
+**接收 Evidence**：有效 packed relay ACK 的 RTT 经 `RecvPackedAckInternal 0x84f1f0`
+调用 `RelayServer::RecvPingReply 0x812a28–0x812cb4`，更新 relay 与 SharedCluster/front 的
+测量，并在 `0x812c90` 清 root pending；随后再交给 session tracker。缺少对应发送记录或
+RTT 不在允许范围内时，不产生这些测量/清 pending 的副作用。单纯 ReceivedPacket 清 root
+连续失败、记录 lastReceived，与 RTT 成功后清 pending 是两个动作，不能合并。
+
+**Conclusion / evidence correction**：§18.5 的 root/session 失败状态归属修正还必须与上述
+生产者/消费者相连。适配器此前只在显式 RouterPing 时建立 root pending，session ACK 请求
+没有登记；有效 ACK RTT 也只更新 session tracker，未反馈 front 或清 root pending。
+这会使已完成初始测量的 relay 在中断后缺少 root 失联输入，旧前台测量也得不到正常流量刷新。
+原始发送链核对现在同时断言 root 时钟/累计探测数；独立 root/session pending、延迟回复及
+ACK→root/front 回调使用完整原始指令组合覆盖。函数级 selector 对照不替代这些接线证据。
+
+**观测边界**：官方 `RecvValidEndToEndPacket` 的原因字符串 `Stats` 也可能来自数据包内联
+stats。运行时工具用同线程内 `RecvValidDataPacket` 的调用范围区分 `data` 与独立 `stats`，
+不读取 payload；固定 x86_64 的独立 stats 原因常量位于 `0x4b2ed5`。`data` 只说明加密数据
+承载被接收，仍可能只含 SNP ACK/控制，不证明交付了 IHS 视频帧。媒体故障 fixture 因此独立
+使用 `--sdr-fault-desktop`：首次至少收到 30 帧再注入；新角色的恢复观察窗口内再收到至少
+30 个编码帧，且窗口末尾一秒仍有新帧，同时满足五秒 E2E 验收。网络专用 NRO 不接受该模式。
+
+§21.18 的生产接线同样不能省略：`populate` 将两组 tracker 的活动级别、连续失败、最近收包、
+lastImmediateRequest、最近 RTT/请求时刻和 pending 状态分别交给
+`sl_sdr_stats_request_flags`，保留 5/7 秒严格边界、200ms 的包含等号、10/60 秒及 mode=0/1/2。
+此前只处理调用者显式 request 和 quality，不能实现这些自动探测分支。该 C 函数与原始通用
+生产器在相同输入下比较，包含非对称 relay/E2E 活动及 pending；并不因此扩大到 protobuf
+实际长度、MTU 裁剪及完整 SDK 策略全等的声明。
+
+后端诊断分别保存 SDK state/end reason 和首个本地 terminal source/detail；销毁 SDK handle
+前还要读取并锁存原始 SDK state/end reason。SDK 接收负计数本身不改变状态或关闭，见 §12.3；
+历史适配器的 receive/Failed 属于原有额外策略，不能据它反推官方会立即关闭。
+**证据修订**：旧版 SDK Send 返回 NoConnection 就由适配器记录 send/Failed 并关闭，是本地
+额外策略，不是官方 Send 行为。§12.3 的调用者复核后，发送失败只返回对应结果给 IHS，
+不在该回调更改连接状态；后续 CheckConnection/接收/显式销毁各自保留其关闭入口。
+历史日志的 send/Failed 仍只说明旧适配器先处理了发送错误，不证明 SDK ProblemDetectedLocally。
+数值来源枚举兼容历史记录，分别为
+signal、certificate/start/config、connection info/status/state、signal queue、send/receive、
+datagram bounds/queue、allocation；不把来源枚举当作线上协议错误码，不打印 SDK 调试文本。
+
+### 21.30 primary 历史、切换报告与连接 RTT 初值
+
+**Evidence**：`ThinkSelectServer_SelectActiveSessions 0x81cddc–0x81ce18` 检查旧 primary 的
+开始时刻非零、数据接收数 >=101、地址有 IP/非零 port/非零 POP，才构造 type 16
+`CMsgSteamDatagramClientSwitchedPrimary`。`0x819854–0x819874` 的计数属于 active primary
+的数据包入口，不是所有 E2E 事件、独立 stats 或 IHS 视频帧数；数据内联 stats 不重复计数。
+
+消息由**新 primary relay** 发出（`0x81d678–0x81d688`），带 connection_id、旧地址/POP、
+旧 primary 活动秒数与数据接收数。gap 优先用已记录的失联起点，否则使用旧 current metrics
+的非零 gap。`from_quality_now` 使用旧地址本轮测量，`to_quality_now` 使用新 session 测量；
+`*_quality_then` 来自上次 primary 生效时保存的候选快照。RouterQuality 的 back_ping 是
+interior ping（session+4584），不是 remote front 与 interior 的和；score 包含两端 front、
+10% internet 项和各 penalty，seconds_until_down 为 INT_MAX 时省略。
+
+新节点的旧快照先在相同 POP 中找精确地址；找不到时按 score 升序、迁移标记升序、shutdown
+剩余时间降序选备用记录。**Evidence correction**：旧文将 `0x81d524` 的记录+96 误标为
+alternate penalty；它对应保存的 SessionSelectQualityMetrics+72 迁移标记。
+原单地址模型不再适用；多地址快照和所选 session 的接线见 §21.33。报告的 dropped_reason 取旧 primary 被
+移除时缓存的原因。原适配器没有保存这条字符串；该缺口由 §21.32 的移除事件接线补齐，
+不能用普通换路时当前候选的失败原因临时替代。
+
+`0x81d694–0x81d718` 在新 primary 生效时重置该历史计数并保存地址/POP/时刻/候选快照。
+跨 POP 时，`0x81d724–0x81d74c` 将**连接** RTT tracker 的最近样本数清零，再以
+local front+remote front+interior 生成样本；不是重置 P2P transport 独立确认状态或全部 session
+ACK 窗口。随后提前调度 connection 与 session thinker。
+
+**Conclusion**：这条客户端报告应按条件产生；把它称为遥测并不能据此断言服务端忽略它。
+它的服务端影响仍须单独验证，报告已发出也不代表媒体已恢复。原始发送组合覆盖 100/101 边界、
+缺少地址字段和首次 primary，并检查消息发送到新 relay 及 current quality 字段。
+
+媒体故障 fixture 另提供 `--sdr-warm-fault-desktop`：在 SNS 连接至少 15 秒且已有 30 帧后才
+注入。15 秒只是用于比较建立初期和持续收流的实验条件，不是选路阈值；它与普通故障模式
+使用相同的切换后新帧、五秒保持及末尾收包新鲜度要求，不能用其中一组替代另一组。
+
+故障 fixture 的 `SDR_LOSS_SAMPLE/FEEDBACK/ROUTING` 是每秒最多一组的只读诊断：在 SDK
+锁内复制主备 POP、root/session 失败与时钟年龄、目标/peer 首路 POP、revision/ACK 和 E2E
+探测状态；时间单位毫秒，UINT32_MAX 表示没有对应时刻。它不读身份/地址/载荷，不产生新
+网络请求，也不改变选路。stdout 仅从 fixture owner 在一秒采样点输出；Switch 使用已有的
+非阻塞 64KiB transcript，生产 release 不编译此诊断 API。单纯 root ACK 持续正常与 E2E
+保持为零必须分开解释，不能把前者记作后者恢复。
+
+`SDR_ROUTE_EVIDENCE` 同时复制控制方、local revision 的 ACK、本地首路、当前 primary POP
+是否已有本地 token/双向 Route，以及 routes/关闭消息的计数。`cm_populated` 只计信令填充，
+`stats_committed` 只计 stats 的提交，不等于成功发送或对端接收；inline stats 在 UDP send
+之前提交（§21.22）。开始故障观测后，首个 terminal 在 CloseConnection 前保存最后一份
+快照，供句柄失效后的 final 读取；不继续访问已销毁 SDK 对象。关闭来源分别计已通过解析和
+connection ID 校验的 relay type 20、type 21 与 CM connection_closed；type 20 另保存原始
+relay_mode 和来源 POP。4001 是 SDK 的 Remote_Timeout 分类，不能仅据该数字断言是 Steam
+主机主动超时；relay_mode=0 也不能写成已经观测到 EndToEnd(1) 关闭。诊断不输出 debug 文本。
+
+### 21.31 外层 routes 交付的实现接线
+
+**Evidence**：§21.21 的 `ThinkSelectServer 0x837a90–0x837f2c` 与 20 项原始指令用例覆盖
+单独探测、ACK-only request=1、200ms/10 秒等号、健康门槛及 stats→signal→stats 次序。
+适配器原来只在 routesDue/ackPending 时发送 stats，再按这两个标志是否剩余决定 CM，遗漏
+单独 probeWanted 和发送成功后的 E2E/root 健康判断；ACK-only 也错误地统一请求 delayed。
+
+**Conclusion**：`deliver_routes` 在基础选路及快照维护后准备 primary target，再按该独立
+交付契约执行。`send_stats` 返回实际承载发送结果；成功不代表健康、ACK/revision 已满足。
+需要 CM 且本轮 routesDue 时先清共享重试期限，随后由信令填充沿用一秒规则。生产 C helper
+分别判断 probeWanted 和 relay 是否足够，使用同一输入与原始函数的网络动作序列核对；
+原始诊断回调不当作网络动作。此处修正依据既有静态证据，不预先认定它是某次断流的根因。
+
+### 21.32 已移除 primary 的原因与断流时刻
+
+**Evidence**：`DestroySessionLocked 0x8188f4–0x818c78` 从所有 session 列表及对应 relay
+列表移除对象。若它是 active 列表首项，`0x818b98–0x818bac` 将原因以 64 字节有界字符串
+保存在 transport+124，并把移除时刻保存在 +112，active 数量置零。移除 backup 只截去该
+角色；移除非 active session 不改这段历史。P2P 的 token 清理 `0x8367b4–0x8368a0` 仅剪掉
+角色，不销毁 session，也不登记该原因/时刻，不能将两种事件合并。
+
+下一个 primary 的报告在 `0x81d2ec–0x81d334` 附上非空原因；存在移除时刻时优先用
+`(now-removedAt)/1000` 作为 gap_ms，即使结果为 0 仍设置字段。没有移除时刻才考虑旧
+current metrics 的正 gap；小于一毫秒的正值也保留一个存在的零字段。`0x81d694–0x81d6cc`
+在新 primary 生效时清空原因/断流时刻，即使 101 包报告门槛没有满足也会清空。
+
+原因生产者：NoSession `0x81a2f8` 的 `0x374190` 为 `received_nosession`；全局 thinker
+`0x8233f4` / `0x8233c4` / `0x8234bc` 分别使用 `consecutive_ping_timeout` /
+`session_request_timeout` / `initial_ping_timeout`；停机期限 `0x823594` 使用
+`downtime_warning_reached`；session 60 秒无活动 `0x823574` 使用 `0x383ea7` 的
+`session_inactivity_timeout`。这些是固定样本字符串，不从远端 debug 文本推测。
+
+**Conclusion / evidence correction**：撤回“只保存旧地址、开始时刻和包计数即可覆盖 primary
+历史”的概括。适配器在 NoSession、root 超时/停机和 session 无活动移除前通知 transport，
+先保存主路历史并清 active 角色，再清 session 状态或轮换地址；下次正常选择消费历史。
+这避免同一模型对象换了地址后失去旧路径原因。普通选路淘汰和 token 剪枝不伪造移除事件。
+
+原始指令新增 24 个 primary/backup/非 active 删除输入及 30 个报告输入（含空原因、63 字节
+截断、既有历史、0/999/1000 微秒及 metrics 回退）。C 状态函数对照使用相同原始对象输入；
+容器内存与有界字符串复制仍是显式提供者，不把它们计为 SDK 析构/网络验证。该修正不覆盖
+单 POP 多地址/alternate 的完整对象模型，也不证明持续媒体恢复。
+
+同一生产链还区分 session 和 root 的接收活动：`0x823540` 读取 session+2512，按严格
+`lastReceived+60秒 < now` 销毁 session；它没有读取 root+248。SessionEstablished
+`0x83dc14–0x83dc44` 即使没有非零初始序号，也会刷新 session 接收时刻/包数/字节数、清
+pending 与连续失败。原始现有建连用例已经断言这些副作用。原适配器用 root lastReceived
+判定 session 过期，并漏掉 SessionEstablished 的 LinkStats 收包登记；现改为分别接线。
+RouterPingReply 因而不能独自保持一个已无 session 流量的旧 session。
+
+NoSession 的 session 销毁、60 秒 session 销毁及 root 移除都清 session 的 forward/ACK/
+序号和 LinkStats；NoSession 保留 root challenge/front，后续新 session 重新登记。这对应
+`0x818bb0–0x818c20` 的销毁及 `0x83dbe4–0x83dbfc` 的重新创建，不将 transport 或 root
+整体重置。另加 12 个原始 thinker 输入覆盖 session 时钟的 60 秒两侧/等号、root 新鲜而
+session 过期、root 过期而 session 新鲜及倒序多项移除；显式锁/销毁回调不证明真实线程时序。
+
+### 21.33 多 relay 对象、迁移与 alternate 的生产接线
+
+**Evidence**：§21.3/21.4/21.7/21.11 的原始入口以及 `RecvPingReply 0x812a28–0x812c90`
+分别使用 RelayServer 的 own ping 和 SharedCluster 的 front ping。只有 root 的 RTT 更新
+POP front；alternate probe 的 RTT 更新它自己的测量槽位。有效收包把 root 地址保存为 POP
+last-good，但从失败缓存移除的是实际收包地址。§21.9 的 nearest 输入由
+`EnsureDataCenterRoutesValidLocked 0x810e70–0x8113c4` 的 SharedCluster+806/+812/+818
+生成；仅直接测量的 interior edge、有效 direct front<=2000 参与，按
+`front+front/10+clusterPenalty+interiorPing+interiorPenalty` 维护三个严格更小的 score。
+32767 是未填充的 short score；平局保留原遍历项。估计 edge 不填这些槽位。
+
+`MarkRemoteRelaysAndRoutes 0x839dc8–0x839e78` 先加入 nearest 三项；远端 token 非空时
+枚举全部本地 POP，另加入显式 POP 限制。对端明确公布的 Route 也尝试建立对应组合。
+这不是“本地必须已有 session 才能公布 Route”；session token 仍只从实际 session 取得。
+`CheckRebuildRoutingMessage 0x836f90–0x83718c` 对已有 session 按 active index、base score、
+迁移标记、shutdown 剩余时间排序，在每个 POP 取首个 session 的 token。排序的原始 helper
+`0x84c848` 和 `0x84e430` 与旧历史 fallback 的迁移标记字段交叉核对。
+
+**Conclusion / evidence correction**：撤回单 POP 单 relay 和原地覆盖地址的实现假设。
+`ProbeCluster` 保存共享 front、失败地址、interior、penalty、last-good；`ProbeRelay` 保存
+独立 IP/port、cookie/challenge、own ping、请求/pending、session ACK/序号/token。多个 relay
+可共用 POP，迁移目标与旧 primary 可以同时存活。移除前通知 transport 并剪除角色，随后
+清 session；回收前剪除 pursue 引用，root 移除同时移除 children，POP 缓存和按地址保存的
+停机记录继续存活。备用仍按不同 POP 选，不因同 POP 多对象就改为同 POP backup。
+
+迁移通知只由当前 primary 的非零 IP/port 触发，重复地址不重新启动事务；uint32 port
+仍截断到 uint16，截断为零由随后请求资格校验拒绝。state=1 经过同 POP、失败缓存及严格
+avoidTime 校验后创建/查找目标，state=2 在目标消失、root 避让、alternate penalty>=8191、
+主路/请求消失或不再匹配时取消。目标优先进入 chooser/pursue，并以 -1/1 迁移标记参与
+active 选择。全局维护后再处理迁移、active 和本轮 pursue，2/1 配额不消费重复 POP。
+
+alternate 地址按完整 IP/port 保留稳定槽位，遵守 bit 1 增量/完整回复、protocol 变化和撤销；
+公布的 wire penalty 不取代 8191 未测内部状态。仅合格 root 的前五个按 front 排序者创建
+DefaultProtocol 探测；失败冷却严格 120 秒，own RTT 达 8 次后保存测量。临时 probe 完成时
+只释放 child，保留测量和槽位；失败时才清测量、记录冷却。每轮 90ms/500ms/最多一次及
+失败 root 优先规则由独立 C planner 执行，不并入普通 POP 探测预算。
+
+本实现每个 SNS owner 只有一条活动媒体连接，图在该 owner 内维护；最多 512 个地址对象、
+每 root 128 个 alternate 是本地内存上限，耗尽返回创建失败，不覆盖活动对象。没有启用
+官方调试地址/POP override UI。函数级对照保留容器/provider/调度边界，不声称完整 SDK、
+所有容器平局顺序或多 owner 共享实例行为全等。
+
+`nsl-sdr-topology` 以合成 localhost 地址测试实际 C++ 对象图：共享/独立时钟、迁移重复与
+无效目标、增量/完整公布、probe 回收与稳定 child 引用、last-good 重建、停机缓存存活和
+nearest/token/显式 Route 门槛。它仅绑定一个 ephemeral UDP socket，不发送网络包；SDK
+使用 manual poll 并显式 Kill。此 fixture 及其 API 均不进入 release。
+
+独立 `--sdr-migrate-desktop` fixture 在收至少 30 编码帧后，将同 POP 的另一个配置地址
+作为合成迁移通知交给生产 consumer；跳过了通知的接收 parser，不伪称真实服务端发过该
+通知。后续 challenge、签名 session、routing 和媒体收发来自真实服务。只有指定目标主路
+已收到有效 E2E 才在进程内屏蔽旧 endpoint；屏蔽后要求目标的新 E2E、至少 30 个新编码帧、
+五秒保持及末尾一秒内的新 E2E/视频。它验证先建后拆，与直接断主路的 fault fixture 分开。

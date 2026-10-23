@@ -16,6 +16,7 @@ typedef struct sl_network_test_view {
     uint64_t generation, revision;
     sl_network_test_phase phase;
     bool test_only, bandwidth_test;
+    bool control_error; /* Same owner, different dialog from media/test failure. */
     uint32_t target_kbps, previous_target_kbps;
     float progress, loss_percent, mean_ms, deviation_ms;
     unsigned rating, recommendation;

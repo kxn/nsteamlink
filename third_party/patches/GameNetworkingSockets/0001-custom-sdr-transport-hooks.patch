@@ -1,0 +1,56 @@
+--- a/src/steamnetworkingsockets/clientlib/steamnetworkingsockets_p2p.cpp
++++ b/src/steamnetworkingsockets/clientlib/steamnetworkingsockets_p2p.cpp
+@@ -4,6 +4,9 @@
+ #include "csteamnetworkingsockets.h"
+ #include "../steamnetworkingsockets_certstore.h"
+ #include "crypto.h"
++#ifdef NSL_GNS_SDR
++#include "sdr_client.h"
++#endif
+ 
+ #ifdef STEAMNETWORKINGSOCKETS_ENABLE_SDR
+ 	#include "sdr/steamnetworkingsockets_sdr_p2p.h"
+@@ -604,6 +607,10 @@
+ 
+ bool CSteamNetworkConnectionP2P::BInitSDRTransport( SteamNetworkingErrMsg &errMsg )
+ {
++	#ifdef NSL_GNS_SDR
++		if ( !NSL_SDR_Init( *this, errMsg ) )
++			return false;
++	#endif
+ 	// Create SDR transport, if SDR is enabled
+ 	#ifdef STEAMNETWORKINGSOCKETS_ENABLE_SDR
+ 
+@@ -1469,6 +1476,12 @@
+ 	if ( !m_bWaitForInitialRoutingReady )
+ 		return k_nThinkTime_ASAP;
+ 
++	#ifdef NSL_GNS_SDR
++		SteamNetworkingMicroseconds nslWait = NSL_SDR_Wait( *this, usecNow );
++		if ( nslWait > usecNow )
++			return nslWait;
++	#endif
++
+ 	// If we are using SDR, then we want to wait until we have finished the initial ping probes.
+ 	// This makes sure out initial connect message doesn't contain potentially inaccurate
+ 	// routing information.  This delay should only happen very soon after initializing the
+@@ -1829,6 +1842,9 @@
+ 
+ void CSteamNetworkConnectionP2P::PopulateRendezvousMsgWithTransportInfo( CMsgSteamNetworkingP2PRendezvous &msg, SteamNetworkingMicroseconds usecNow )
+ {
++	#ifdef NSL_GNS_SDR
++		NSL_SDR_Populate( *this, msg, usecNow );
++	#endif
+ 
+ 	#ifdef STEAMNETWORKINGSOCKETS_ENABLE_SDR
+ 		if ( m_pTransportP2PSDR )
+@@ -1842,6 +1858,9 @@
+ 
+ bool CSteamNetworkConnectionP2P::ProcessSignal( const CMsgSteamNetworkingP2PRendezvous &msg, SteamNetworkingMicroseconds usecNow )
+ {
++	#ifdef NSL_GNS_SDR
++		NSL_SDR_Process( *this, msg, usecNow );
++	#endif
+ 	AssertLocksHeldByCurrentThread( "P2P::ProcessSignal" );
+ 
+ 	// SDR routing?

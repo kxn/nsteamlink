@@ -1,4 +1,6 @@
 #include "updater.h"
+#include "file_replace.h"
+#include "http_route.h"
 #include "platform/system.h"
 #include <curl/curl.h>
 #include <errno.h>
@@ -125,8 +127,8 @@ static bool perform(sl_updater *u, const char *url, transfer *t, bool large) {
     curl_easy_setopt(c, CURLOPT_XFERINFOFUNCTION, progress);
     curl_easy_setopt(c, CURLOPT_XFERINFODATA, u);
     atomic_store(&u->dns_handle, sl_system_dns_begin());
-    CURLcode result = stopping(u) ? CURLE_ABORTED_BY_CALLBACK : curl_easy_perform(c);
-    atomic_store(&u->dns_handle, 0);
+    CURLcode result = stopping(u) ? CURLE_ABORTED_BY_CALLBACK : sl_http_route_perform(c, url, large ? 0 : 15000);
+    sl_system_dns_end(atomic_exchange(&u->dns_handle, 0));
     long code = 0;
     curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
     curl_easy_cleanup(c);
@@ -186,28 +188,6 @@ static bool file_digest(const char *path, uint64_t *size, uint8_t digest[32]) {
     free(buffer);
     fclose(f);
     return ok;
-}
-/* Horizon's rename() never replaces an existing file: move the old one aside
- * and restore it if publishing the new one fails. */
-static bool replace_file(const char *temporary, const char *path) {
-    if (rename(temporary, path) == 0)
-        return true;
-    if (errno != EEXIST && errno != ENOTEMPTY)
-        return false;
-    char old[560];
-    snprintf(old, sizeof(old), "%s.old", path);
-    if (remove(old) && errno != ENOENT)
-        return false;
-    if (rename(path, old))
-        return false;
-    if (rename(temporary, path) == 0) {
-        remove(old);
-        return true;
-    }
-    int error = errno;
-    rename(old, path);
-    errno = error;
-    return false;
 }
 static bool copy_file(const char *from, const char *to) {
     FILE *in = fopen(from, "rb"), *out = in ? fopen(to, "wb") : NULL;
@@ -281,13 +261,13 @@ static sl_update_error install(sl_updater *u) {
     for (int i = 1; i < u->target_count; ++i) {
         char copy[560];
         snprintf(copy, sizeof(copy), "%s.download", u->targets[i]);
-        if (!copy_file(temporary, copy) || !replace_file(copy, u->targets[i])) {
+        if (!copy_file(temporary, copy) || !sl_file_replace(copy, u->targets[i])) {
             remove(copy);
             remove(temporary);
             return SL_UPDATE_ERROR_WRITE;
         }
     }
-    if (!replace_file(temporary, u->targets[0])) {
+    if (!sl_file_replace(temporary, u->targets[0])) {
         remove(temporary);
         return SL_UPDATE_ERROR_WRITE;
     }
@@ -346,7 +326,7 @@ sl_updater *sl_updater_create(const char *current, const char *const *targets, i
         return NULL;
     }
     if (!fetch || !download) {
-        if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
+        if (!sl_http_global_acquire()) {
             pthread_cond_destroy(&u->wake);
             pthread_mutex_destroy(&u->lock);
             free(u);
@@ -359,7 +339,7 @@ sl_updater *sl_updater_create(const char *current, const char *const *targets, i
     u->context = fetch || download ? context : u;
     if (pthread_create(&u->worker, NULL, worker, u)) {
         if (u->curl_ready)
-            curl_global_cleanup();
+            sl_http_global_release();
         pthread_cond_destroy(&u->wake);
         pthread_mutex_destroy(&u->lock);
         free(u);
@@ -410,7 +390,7 @@ void sl_updater_destroy(sl_updater *u) {
     sl_system_log("update: stop requested; joining worker");
     pthread_join(u->worker, NULL);
     if (u->curl_ready)
-        curl_global_cleanup();
+        sl_http_global_release();
     pthread_cond_destroy(&u->wake);
     pthread_mutex_destroy(&u->lock);
     free(u);

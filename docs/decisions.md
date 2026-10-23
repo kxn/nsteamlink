@@ -2244,6 +2244,1213 @@ Evidence：`app/platforms/common/runtime.c` 的 `SL_CMD_END_GAME` 分支发送 S
 执行 `stop_session()` 与 `SL_EVENT_STOPPED`；“结束游戏并断开”沿用该流程，仅明确现有动作含义。
 `SL_CMD_STOP` 继续只断开本地串流，不改变主机游戏。菜单重组不修改认证、网络测试或会话协议。
 
+## D-A061：免登录云端配对入口与控制通道的所有权（2026-10-16）
+
+Evidence：官方云端 CreateSession/StartPairing/SetPairingInfo 不要求 Steam 登录；
+授权使用主机端输入的四位配对码和设备 X25519 密钥交换。固定样本的调用链、独立服务探针、
+持久化和 Proof 更新规则见 `STEAM_REMOTE_PLAY_NETWORKING.md` §8–§13。
+现有 profile v4 已保存 device_id、主机 client_id、account 和每主机 secret；
+runtime 已用单独 worker 接收 UI command，现有设置包含手动添加电脑入口。
+用户要求将不常使用的配对码入口放在设置中，日常连接自动选择传输方式。
+
+Conclusion：可复用既有身份、配对弹窗和主机列表；云端控制通道、临时 session 和媒体传输
+不能合成一个状态域，也不能以“已连到云端”代替媒体后端能力。
+
+Decision：
+
+1. 「设置 → 配对新电脑」主动申请云端配对码；退出取消，成功后返回主机列表。
+   不新增 Steam 账号登录或直连/中继选择开关。已发现的局域网电脑保留首次连接配对流程。
+2. runtime worker 是云端状态、TLS 连接和发送队列的唯一 owner；用非阻塞 curl multi
+   和 CONNECT_ONLY TLS 后的 RFC6455，不引入额外驻留线程。退出先停止 pump，再释放连接，
+   随原有 worker join 完成清理。协议层依赖可替换的发送/事件/持久化 callback。
+3. 复用 profile v4，不保存 PIN、临时 cloud session_id 或开流事务。密钥更新先原子保存再回
+   Proof；UI 的旧快照不得覆盖 runtime 已保存的轮换密钥。云端在线集合驻留内存，
+   断线清空、重连用新 session 重建订阅；忘记电脑发送退订。
+4. 公布 IP 只用于单播探测，实际 UDP 回复才能登记本次直连地址。云端 status 缺少
+   instance_id 时保留已知 launch ID；两个非零且不同的 instance ID 仍分别处理。
+   主机卡片复用既有 UI 在线策略，不将广播失败当作授权失效。
+5. 以下是本项目资源/并发策略，不是反汇编得出的 Valve 常量：64 KiB 帧上限、32 项发送
+   FIFO、20 秒初始化预算、30 秒 RFC6455 ping/15 秒 pong 等待；无线上事务 ID 的配对 RPC
+   取消后先收齐旧响应再允许新配对。配对服务 RPC 超过 20 秒无回复则重建云端会话，
+   不将未知状态的旧配对槽位用于新事务。异常 protobuf 不影响健康云端会话。
+6. supported_transport 只能包含可实际使用的媒体 backend。信令经过本次 streaming
+   session key 验证；新增后端保留 IHS 会话的消息边界和认证、音视频、输入语义，不能把
+   WebSocket 控制转发当作媒体中继。
+
+---
+
+## D-A062 IHS 数据报适配与 SNS 的实例、信令和信任边界
+
+日期：2026-10-16
+
+Evidence：`STEAM_REMOTE_PLAY_NETWORKING.md` §8.8–8.9、§9.5、§12–§15；IHS
+`src/base.c`/`src/session/session.c` 的 UDP 耦合；固定 Valve GNS `d534c19` 的 custom
+signaling、manual poll、SNP/ICE 和 CertStore 接口。官方响应 `042.bin` 的 SDR port=0、
+证书 AppID=353380；开源 CertStore 在未知 CA 时于证书解析前返回。
+
+Decision：
+
+1. IHS 提供 Connect 前选择的 copied `IHS_DatagramTransport` vtable；完整 datagram
+   交给外部 backend，保留 IHS CRC、认证和 ACK/NACK，不增加可靠字节流。Context 由
+   应用持有到 IHS stop/join 完成，不允许 provider 回调重入 session API。Receive 等待
+   最多 10ms；终止错误关闭发送入口并唤醒/汇合发送线程，再销毁依赖。
+2. GNS 以固定官方 submodule 引入，保留源码和全部许可证。仅使用已有 SNP、ICE、
+   P2P 状态机和证书机制；Valve 生产 SDR extension 不由开源库提供，不能把此依赖视作
+   已实现所有中继。SDK 的内置 ICE provider 是相对于 APK WebRTC factory 的明确差异。
+3. 每条 SNS 流拥有独立 Remote Client 连接。SDK signaling 回调只在 mutex 内复制消息，
+   owner worker 排空后用实际长度的 stream key 做 HMAC-SHA256。内部消息跨云端重连
+   保留 FIFO/重复项；每次发送用新的 cloud ID 包装。坏 HMAC/坏 protobuf 丢弃，合法
+   HMAC 内的信令被 SDK 拒绝才使媒体 backend Failed。
+4. SDK 全局实例仅允许一位 owner；初始化前开启 manual poll，IHS 回调只访问有界
+   datagram 队列。销毁前先停/汇合 IHS，再解除 signaling owner、关闭 SDK 连接、销毁
+   独立云端连接和配置请求、Kill SDK，最后关闭 manual mode。禁止遗留服务线程。
+5. AppID=353380。网络配置 HTTPS 保持 TLS 校验，先导入 CA 与十进制 revoked key ID，
+   再安装包含私钥的主机返回证书。不得记录证书、身份、密钥，或关闭 peer 证书检查。
+   SDR 不要求 UDP port 非零；连接和 security PIN 仍遵守 D-A061/认证参考。
+6. 64 项/256KiB 外层信令队列、60000 字节单信令、4096 项 datagram 队列及 1MiB
+   配置 JSON/32768 tokens 是本地资源限制，不是 Valve 协议常量。耗尽显式拒绝/失败，
+   不按候选或哈希静默覆盖。异步配置请求的 10s connect/25s 总预算也属于本地策略。
+7. `NSL_BUILD_SNS` 隔离 SDK 构建与互操作工具，正常 runtime 不因选项开启就声明新
+   媒体能力。依赖移植、真正的 relay extension 和应用接入分别以实际可运行能力验收。
+
+---
+
+## D-A063 私有 SDR transport、Switch crypto 与 SDK 构建副本
+
+日期：2026-10-16
+
+Evidence：`STEAM_REMOTE_PLAY_NETWORKING.md` §17–§21；固定 GNS 的
+`CConnectionTransport`、`CConnectionTransportP2PBase` 和 SNP 接口；
+`sdr_wire.c`/`sdr_config.c` 的独立 wire/config 用例。真实服务在关闭 ICE 的独立客户端
+上返回 authenticated+relayed，IHS 完成鉴权并收到 30 个编码视频帧；同一实现使用
+mbedTLS provider 的桌面构建也获得该结果。它只证明被执行路径互操作，不证明所有
+选路、丢包、迁移行为均与官方相同。
+
+Decision：
+
+1. Relay 控制/数据线格式、签名 session request、routing token/revision、stats 与
+   SNP datagram 适配由项目实现；继续使用 SDK 的证书校验、端到端加密、SNP 和
+   P2P transport 选择。关闭 ICE 的诊断必须以 SDK relayed 标志及 IHS 鉴权/媒体结果
+   验收，不能把拿到 relay token 或看到公网 UDP 包当成中继串流成功。
+2. SDK submodule 保持固定 pin 且清洁。`cmake/prepare-gns.py` 在独立构建目录应用
+   哈希追踪的有序 patch，拒绝 fuzz；私有 headers、生成 protobuf 和项目扩展一起在
+   此构建配置内编译，避免把未打补丁的头文件与已打补丁的实现混用。
+3. Switch 使用 mbedTLS SHA/HMAC/AES-GCM/RNG provider，Ed25519/X25519 使用 SDK
+   原有 Donna/reference 实现。libnx 使用 POSIX poll、连接的 UDP loopback wake pair
+   和 nifm 地址查询，不引入专有 Nintendo SDK。固定 protobuf C++ v21.12 在工作区
+   prefix 交叉编译；host protoc 必须版本匹配且可在构建机执行。
+4. 取代 D-A062 第 7 项的阶段性能力声明：SNS 构建时，只有云端可达的主机可请求
+   transport=4；正常 runtime 通过同一 backend 透明选择 ICE/SDR。已验证的 LAN
+   保留 IHS 原生 UDP。没有实际 UDP 目标的 SNS session 使用稳定的逻辑 endpoint，
+   不能将它误作物理发包地址，也不能将未验证的公布地址升格为 LAN 直连。
+5. Runtime owner 持续 manual poll；IHS worker 只用有界队列。停止时先关闭输入、
+   请求 IHS disconnect，在有界期限内继续 poll 以发送 goodbye/ACK，再 interrupt/join
+   IHS，最后销毁 SDK。SDK 文本可能含身份，正常运行不直接输出；独立探针及内部
+   counters 由 `NSL_BUILD_TOOLS` 编译开关控制。
+6. Switch 探针遵守 D-015，禁止 `nxlinkStdio()` 重定向；日志使用独立的非阻塞 socket。
+   保存退出阶段并在下一次启动自动读回，崩溃报告也自动读取，不要求人工复制 SD 文件。
+   NRO 使用 CMake 的 `*_nro` 打包目标，不能将只更新 ELF 当成已更新部署产物。
+
+Evidence correction：首版 SNS 探针虽输出两轮收发/SDK 销毁成功，用户随后两次明确
+报告“发生错误，软件已关闭”。撤回以这些输出证明 NRO 退出安全的判断；第二次部署
+误用了未重打包的同一旧 NRO，不能计为新修正的验证。自动取回的旧版 crash report
+`01792161920_010082f015576000.log` 给出 `exit → _fwalk_sglue → _fclose_r → _close_r`，
+PC=`0x1e5930`；按首版源码重建的 ELF 在此处为从空设备函数表加载 close 函数。
+第 2 版取消重定向后，下一次成功启动读回 `sdk_atexit_returned`，并再次完成两轮
+收发；最近 crash report 未改变。这支持修正后的前一轮 loader 返回/再次启动路径，
+不能替代正式客户端串流生命周期验收，也不能仅凭最后一次 nxlink 退出推断屏幕状态。
+
+---
+
+## D-A064 Switch SNS 私有身份 fixture 的交付和加密回读
+
+日期：2026-10-16
+
+Evidence：AGENTS.md 的自包含真机测试/自动交付约束，D-015 的独立日志 socket，
+AUTH/NETWORKING 的 Proof 前密钥持久化契约；`auth_store.c` 的 v4 布局与 checksum。
+[hbmenu netloader](https://github.com/switchbrew/nx-hbmenu/blob/master/common/netloader.c)
+将上传名拼到根目录并将实际路径放入 argv[0]，
+[menuStartupPath](https://github.com/switchbrew/nx-hbmenu/blob/master/common/menu.c) 的
+Switch 根目录是 `sdmc:/switch`。这只指导已知路径的交付/清理；设备实际 argv[0]
+仍须通过精确文件名、目录和无 traversal 的检查，不能盲删猜测路径。
+
+Decision：
+
+1. 专用 `nsl-sns-network-private` 只在显式设置 `NSL_PRIVATE_SNS_ROMFS` 且开启工具时
+   构建。RomFS 仅包含本项目已授权的独立测试 profile 和本次构建随机 key，全部输入/
+   产物留在忽略的私有 build。不得发布此 NRO；release collector 只收正常客户端。
+   NRO 打包显式依赖 profile/key 文件，避免只更新 ELF 或 RomFS 目录时间而误部署旧包。
+2. Probe 自动使用独立 SD 测试目录，按 embedded device identity 的摘要区分目录；
+   不读写正常客户端 profile。允许的模式仅为网络测试、relay loss 与 terminal fixtures，
+   不允许通过此入口请求桌面/游戏/媒体。身份在目标侧先由正式 auth_store 校验，再使用
+   同一匿名控制、证书和 SNS 代码；密钥更新照常先持久化，不因测试跳过 Proof 的契约。
+3. 私有结果从独立 TCP channel 用 AES-256-GCM 回传：每构建随机 32-byte key、每次
+   启动新随机 12-byte nonce；`NSP1` 和长度 header 作为 AAD。明文包含有界 profile 与
+   有界私有 error，不进入 nxlink transcript。接收端限制设备 IP，验证 tag、长度、
+   profile checksum、device identity 和布局，并检查本地 profile 未在测试中被别人修改。
+4. PC 原子保存 profile 并 fsync 后，才返回绑定完整密文 transcript 的 HMAC-SHA256
+   ACK。Switch 收到正确 ACK 才删除临时 profile/error；缺失/错误 ACK 保留可能已轮换的
+   密钥并报告失败，下一次使用同一设备 fixture 可自动恢复，不能静默丢弃密钥更新。
+5. 日志仍使用有界非阻塞独立 socket，不重定向 stdio。先退出 IHS/SNS/云端 provider，
+   完成并关闭回读 TCP，再卸载 RomFS、只删除已核对的私有上传文件，最后关闭日志与
+   socket 服务。保存退出阶段、下次启动自动读回；退出日志不能单独证明 loader 返回。
+6. `NSL_PRIVATE_SNS_MEDIA=ON` 可另建 `nsl-sns-media-private`，只接纳已有的两种
+   encoded-frame 测试模式；网络 NRO 的编译期白名单保持仅 network_test。媒体 fixture
+   使用独立 NRO 文件名、SD 目录及退出 stage，复用加密回读与清理。它请求主机桌面并
+   接收至少 30 个编码帧，不解码/渲染/保存帧；不能据此证明画面、音频、输入或正式 UI。
+   媒体测试时机遵守用户的主机使用安排；网络测试入口不隐式请求媒体。
+
+Evidence correction：首个完整网络 fixture 在 `embedded_profile` 阶段退出，未进入云端
+测试。其 `sl_auth_load("romfs:/")` 与 auth_store 自动追加的 `/profile.bin` 合成双斜线；
+[libnx navigateToDir](https://github.com/switchbrew/libnx/blob/master/nx/source/runtime/devices/romfs_dev.c)
+在跳过首个根斜线后拒绝空目录段（EILSEQ）。目录参数改为 `romfs:`，并在部署前从实际
+NRO 的 RomFS 文件表核对完整 profile/key 字节，而非仅核对输入目录或文件时间。
+这个错误属于测试交付路径，不能当作 TLS、证书或 SDR 失败证据。
+
+## D-A065：SDR 路由快照与故障恢复的证据边界（2026-10-17）
+
+问题：原适配器公布已建立 session 的全部路线，每次 ping 变化都可能重发快照。
+固定客户端的四轮排序、rank 并集、最终发送顺序与旧消息迟滞可以独立验证；候选图来源、
+初始化时机和 session 绑定也属于协议行为，不能用排序函数通过代替完整链路证明。
+
+Evidence：NETWORKING §21.9 的 MarkItemsToSend / CheckOldMessageValid 与原始排序器给出
+rank、旧项优势、必要项覆盖及完整 TruncateLists 顺序。`0x837688–0x8376f0` 同时写
+interior_score 和 legacy_score；`0x836d7c–0x836de8` 限定 global-ready 门槛。
+`0x837190–0x8371a4` 只对 controlling primary 强制公布，不包括 backup；
+`0x837390–0x837400` 要求这一路线为旧快照首项。仅按 rank 与配置索引排序遗漏分数比较，
+仅比较必要项集合也遗漏首项契约。原始指令执行覆盖这些条件与序列化字段投影。
+
+本项目 ProbeRelay 把一个 POP 的 root 和单个 session 合并，尚不具备官方 SharedCluster /
+多个 RelayServer / session 的全部独立状态。真实网络对照中，新候选与旧快照构造均曾出现
+主中继丢包后无 E2E 恢复；新候选无丢包连接的 25 秒对照通过。独立控制 stats、不复用旧
+快照、补 legacy_score 或强制 primary 首项均没有单独证明修复。具体日志索引记 issue #51。
+
+**Evidence correction**：撤回将旧 fault fixture 的 PASS 解读为端到端恢复的判断。旧条件只
+核对本地主中继更换到另一 POP、Connected 状态与 5 秒保持，没有要求切换后的 E2E 收包。
+新旧快照版本在补充此要求后均有失败，因此不能用旧 PASS 确立某个广告门槛是根因或修复。
+Switch 同类旧记录保留其角色/状态证据范围，不自动升级为 E2E 恢复证据。
+
+决定：
+
+1. global good-enough 后才导入 peer routes 到 selector 并构造公布快照；原始 peer 消息仍缓存。
+   本地 front 候选保留用于初始 pursue，不把此门槛变成停止维护已有路径。
+2. front 测量可作为 RelayCluster 提示。原适配器仅从已有本地 session 生成 Route；此受限
+   模型由 D-A070 撤回，改接 nearest、对端 token 和显式 Route 的实际候选生产链。
+3. 候选执行四轮 rank 并集、cluster 必要项提升、完整 rank/分数/索引排序与旧消息迟滞。
+   仅 controlling primary 强制公布，并检查旧首项。token、penalty、近期 ping 区间与
+   interior score 校验和必要项覆盖共同决定复用；迟滞不改变 active 切路阈值。
+4. 同时写 interior_score（interior ping + penalty）和 legacy_score（完整 forward 总分）；
+   POP/token 使用 canonical 绑定，相同 local/remote 组合先合并。
+5. 故障恢复 fixture 必须在注入后从当前新 primary POP 收到有效 E2E 包，再连续保持
+   可发送、不同 POP 和角色条件至少 5 秒，且验收末尾 1 秒内仍须有新的有效 E2E 收包；
+   任一角色条件丢失就重新计时。它被动观察 SDK，不额外强发探测。30 秒是 fixture 总恢复
+   上限，不是官方协议常量。本地 promotion、relay-only
+   ACK 或 socket 成功均不能替代该要求。诊断字段只在 probe 构建存在，不在热路径打印。
+
+本决定不声称候选图和官方全等，也不宣称通过媒体或 NAT 变化下的恢复。nearest-three
+实际入口、同 POP 多 relay 及迁移的完整行为契约见 NETWORKING §21.19；验收状态只记 Issues。
+
+D-A065 的所有者校正：SetSessionSelectQualityMetrics 的 `0x81c49c` 从 RelayServer+256 取
+失败计数；RelaySession LinkStats+4136 是另一组状态。撤回此前用 session timeout 推动
+base gap/100 分惩罚的适配。使用 root ping failure 及 root lastReceived，不能因两者通常
+同涨同落就合并。原始完整 base 函数用相反计数和 500000/1750000 微秒边界执行核对；
+这项修正不是端到端恢复完成的声明。
+
+D-A065 的单包校正：官方受控样例的第二次复核捕捉到经新 primary 的一个有效 E2E 包，
+随后 IHS 业务仍因 inactivity 结束。因此撤回将“一包有效 E2E + Connected 保持”当作
+持续恢复证明的判断。fixture 改为暴露有效 E2E 观察计数，并在五秒保持的末尾检查新计数
+是否仍在一秒内增长；第一次见包只报告 OBSERVED，达到全部条件才报告 RECOVERED。
+这仍是控制通路的证据，不替代故障中的编码帧/业务流验收。
+
+## D-A066：将 session ACK 请求接回 RelayServer 探测与 front RTT
+
+依据 NETWORKING §21.29 的原始调用链，relay ACK 请求同时登记 session 与 root 的回复
+期限；已有 root pending 不延长。有效 packed ACK RTT 同时刷新 front、session 测量并清 root
+pending。两个失败计数仍独立，不能恢复为“用 session 失败直接作为 root 失败”的旧适配。
+控制消息与 inline 数据沿用各自发送登记时机，不因 socket 失败一律回滚。
+
+证据来自固定 ARM ELF `0x84f8b4 → 0x817304` 和 `0x84f1f0 → 0x812a28` 的原始指令执行，
+以及本地有界实验记录 `build/anywhere-research/recovery-packet-trace/selection-loss.private.log`
+中故障时 root failure 持续为 0 的输入。该记录只解释实际输入缺失，不能把其他旧失败全部归于
+同一个原因。传输恢复与媒体恢复分别验收；媒体模式显式请求桌面且单独打包，不能由纯网络
+模式意外触发。验收结果和剩余任务只记对应 GitHub Issues。
+
+D-A066 的发送端接线还包括 §21.18 通用生产器：每次正常构造数据/stats 时，独立读取两组
+tracker 时钟来生成机会探测、到期探测和 aggressive 回复请求。只实现外层 thinker 的显式
+request 不等价。原始生产器与 C 函数对照覆盖该边界，SDK 活动级别通过公开 accessor 读取。
+
+## D-A067：保留 primary 历史并按原始门槛发送切换报告
+
+NETWORKING §21.30 定义 type 16 的旧 primary 数据包计数、101 门槛、新 relay 发送目标和
+current/previous quality。主路生效时保存快照；同一 relay 对象改地址也属于新的 primary。
+跨 POP 只重置并补连接 RTT 的最近样本，不借此清空 transport 确认状态或会话 ACK。
+报告的服务端效果不由客户端代码推断；多地址排序接线见 D-A070，不能以消息的 telemetry
+名称豁免实现或夸大恢复证据。原先遗漏的被移除主路原因与断流时刻按
+NETWORKING §21.32 在移除事件发生时保存，下一条主路生效时消费；token 剪枝不伪造销毁。
+
+## D-A068：按原始外层契约交付 routes/ACK 并决定 CM 回退
+
+依据 NETWORKING §21.21、§21.31，primary 的 forward target 准备、probeWanted、ACK-only、
+stats 成功后的 root/E2E 健康门槛与 CM 回退属于独立交付策略。不能仅以 routes/ACK 在发送
+后是否清空决定回退，也不能将纯探测等同新的 routes revision。保留 routesDue 时先清期限、
+必要时 stats→signal→stats 的调用顺序。发送函数返回承载结果，网络恢复另由真实输入验收；
+该静态修正不构成断流根因或恢复成功的声明。
+
+## D-A069：IHS 连接活动与客户端 Pause/Resume 使用独立所有者
+
+证据修订：以下保留旧实现决策的历史。主线原始指令复核（协议参考 §60、§65、§66、§157）
+已替代逐包 update、SetPaused 和旧断开重试 timer：当前外部承载共用 SessionReceiveCycle 的
+批末更新、SetForeground 事件顺序及单次 goodbye，再 stop/join；不沿用旧函数描述作为现行契约。
+
+STEAMLINK_PROTOCOL_RE 的“连接收包的无活动期限”由原始初始化、Update 和 Pause/Resume
+指令及 33 个输入确认。IHS 接收 worker 在现有循环的可选 update callback 检查连接级
+15/180 秒期限，不创建新线程或 timer owner；无包轮询也会检查。有效连接包通过来源/ID/头部
+检查后、进入 channel 处理前刷新活动，Unconnected 发现包和 SDK stats 不刷新该时钟。
+
+公开 SetPaused 仅原子提交请求，由接收 owner 顺序执行 Pause/Resume 及数据通道刷新请求，
+避免应用线程遍历正在创建/销毁的数据 channel。Resume 以本轮 tick 重设接收活动；每个真实
+发送包本来就使用新的本地 timestamp，无需另造未参与协议的 lastSent 副本。已请求 disconnect
+时不再应用 pause 或重复超时。超时沿用既有 owned disconnect timer 和 stop/join 退出路径，
+不把它伪装成主机正常停止游戏。
+
+Runtime 仅将应用 foreground 变化接入 whole-client pause，显式 StopVideoData 仍保持独立，
+保留原有视频生命周期规则。这是对两种数据报承载共用的 IHS 策略补全；LAN 也会在真实连接
+无活动时有界退出，不能仍概括为完全不改变旧 LAN 超时行为。既有 UI 使用原来的断开/错误
+事件，不增加网络模式选项。测试 fixture 的 pause 模式属于单独 media NRO，先收 30 帧、
+请求暂停两秒、恢复后要求再收到 30 个新编码帧；请求日志不冒充 owner 或主机已执行的确认。
+
+## D-A070：分开 POP、relay 地址与 session，按官方事件维护迁移和 alternate
+
+依据 NETWORKING §21.33，保留共享 POP front/interior/failure/last-good 和每地址独立的
+own RTT、challenge、pending、ACK/序号/token；地址切换创建另一对象，不覆盖旧地址。
+停机记录按 IP/port 独立保存，移除节点前清活动角色及子节点引用，回收前剪除 pursue 指针。
+每个 SNS owner 的单媒体连接持有自己的图，不新建后台线程或 socket owner。
+
+chooser、pursue、active 的迁移优先级分别接入，不将“知道服务器请求目标”当作迁移完成。
+alternate 临时探测与正式 session 分开：完成只释放 probe，失败才登记冷却；共享 front
+不接受 child 的 RTT。候选按直接测量的 nearest 三项、对端 token 和显式 Route 生成，
+不再要求本地先有 session；快照按 active 角色/base score/迁移标记/shutdown 选择 token。
+旧历史 fallback 字段误标的撤回见 NETWORKING，不扩展为所有容器/provider 的全等声明。
+
+512 地址/每 root 128 alternate 是本地资源上限；耗尽不覆盖活对象。离线实际对象图 fixture
+绑定 ephemeral socket、零发包，manual poll 与 SDK Kill 明确配对。诊断版迁移媒体 fixture
+先建立指定目标，再在进程中退役旧 endpoint，验收新 E2E 和新编码帧的持续窗口；故障注入
+与这些 API 不进入 release，也不据此升级直接断主路的恢复结论。正式 UI 不增加网络模式。
+
+## D-A071 以独立 fixture 验证正式 runtime 的云端媒体和 UI 生命周期
+
+背景：独立 SNS/IHS 工具接收编码帧，只证明承载、鉴权和收流；它绕过正式应用的
+UI、解码器、呈现、音频队列和输入门控，不能替代这些集成行为的证据。
+
+决策：
+
+1. `nsl-runtime-probe`（desktop）和显式启用 `NSL_PRIVATE_SNS_RUNTIME` 的
+   `nsl-sns-runtime-private`（Switch）复用 `nsl_platform` 的正式应用对象。
+   `app/tests/runtime_fixture.c` 通过仅作用于这些独立可执行文件的 linker wrappers
+   驱动已有 SDL/UI 事件并读取观测，不在产品添加控制端点、自动操作或网络模式。
+   Switch fixture 使用正式全应用 preflight；不进入交互式 applet 安装流程。
+2. fixture 在进程内过滤明确指定的 Steam 主机 IPv4 以及对应 `/24` 广播地址、
+   全网广播地址的 UDP 收发。被过滤的接收包已消费，每次调用最多丢弃一个并返回
+   EAGAIN；不修改主机或全局防火墙。该环境只隔离本地发现和指定地址的直连，
+   公网 ICE 仍可能成功，不等于构造了新的 NAT 出口。`auto` 保留产品原有选择；
+   显式 `sdr` 仅在 fixture 的 SNS 创建参数关闭 ICE，并要求观测到 authenticated
+   和 relayed。普通客户端继续自动选路。
+3. 驱动在现有主线程执行：云端主机在线后通过 Y 启动，等待实际显示至少 60 帧；
+   等待 HID 已提交且 pending/inFlight 归零，再注入 SDL 手柄方向键按下。
+   要求 owner 采到新 `lastSubmitted.seq` 且 buttons 含方向键、提交/ACK 进展与
+   pending/inFlight 归零，才注入释放；释放再要求新的 seq、清除该位并等待 ACK，
+   以及至少 30 个后续显示帧。同时要求音频解码计数有效且没有解码错误。
+   单纯提交/ACK 计数也会被主机全量报告请求推动，不能替代按下/释放内容核对。
+   随后长按 -/+ 打开菜单，命中当前布局的断开项并确认；要求回到首页且 runtime
+   的 requests_closed/protocol_closed/video_clean 均成立，再从退出确认结束应用。
+   操作阶段设 90 秒期限，超时转入原有清理路径，不绕过 join/drain。
+4. SNS 与 IHS 计数由原 owner 线程在现有更新/采样点复制，使用原子发布；主线程
+   不访问 SDK/session 所有权。`stream_media_get_snapshot()` 的原始 reliability
+   成员并未填充，不能直接把它的零值当成没有 ACK；应使用 runtime owner 调用
+   `IHS_SessionGetReliabilityStats()` 得到的采样。视频/音频仍读取正式媒体快照。
+5. Switch 复用 D-A064 的私有 RomFS、独立 profile、AES-GCM 回读和 ACK 后清理。
+   正式应用完整销毁 runtime、媒体、SDL 后，fixture 暂留同一次 platform/socket
+   生命周期，完成身份和至多 8 KiB 私有诊断回读，再释放 platform 服务和 sockets。
+   不重复初始化 socket，不借用普通客户端的 profile。清理仅遍历生成目录内的
+   一层 artwork 缓存并删除已知文件，核对目录删除；私有上传在卸载 RomFS 后删除。
+6. 此 fixture 不新增线程；生产 release 构建检查拒绝 runtime fixture 标记进入
+   `nsl_platform` 或产品链接。模拟的 SDL 事件只证明输入路径和协议 ACK，不证明
+   物理 Joy-Con 按键或主机应用的响应；音频解码/入队不证明扬声器声音。呈现计数
+   不替代用户直接观察的 LCD/loader 状态，亦不将 nxlink 退出当作返回 hbmenu。
+
+运行结果和剩余验收仅记录于 #46、#49；本文描述 fixture 契约，不维护任务状态。
+
+
+D-A071 补充：桌面 runner 的 `--cloud-reconnect` 保持首页，不请求媒体。在已建立的
+CM WebSocket `curl_easy_recv` 调用点仅注入一次 CURLE_RECV_ERROR，交由正式 provider
+关闭旧 session；随后 fixture 暂停该 provider 的 update 20 秒，主线程和 runtime
+仍继续工作。要求 UI 的旧主机在线状态实际失效，再恢复更新，经真实服务新建匿名
+session/重订阅，直到同一已配对主机在 UI 恢复在线，最后从正常退出确认结束。
+20 秒是故障环境的保持时长，不是恢复策略或官方重试常数；测试不修改 host/路由。
+这覆盖连接读错误和真实重建，不把本地 TTL 到期称为收到服务端 Offline 消息，
+亦不将重建自动等同于取消 PIN 或退订验收。
+
+D-A071 补充：桌面 `--cloud-initial-failure` 让正式 discovery provider 请求真实 CM
+目录，并将首轮各候选的 libcurl TLS 完成结果统一替换为 CURLE_COULDNT_CONNECT。
+轮换、耗尽、清理和随机退避仍由正式 provider 执行；第二轮恢复真实结果，直到匿名
+连接和 UI 主机在线，再正常退出。验收要求至少两个不同候选、首轮无重复、至少一次
+原本成功的 TLS 被替换，以及耗尽后的约 10–30 秒等待。180 秒是 fixture 总期限，
+不是协议重试常数；不向首轮候选发送 WebSocket Upgrade，也不启动媒体。
+`--cloud-initial-bridge` 在同一独立 fixture 中显式设置正式 provider 的 bridge_mode，
+要求耗尽后下一轮更新即开始重新取目录（观测容许一秒），用以核对 §13.1 的退避差异。
+这项测试验证 provider 配置分支，不冒充完整媒体 bridge 重连或真实服务端故障。
+新增包装仅链接桌面 runner，不进入 Switch fixture 或正式产品；共享观测经原子发布。
+
+D-A071 补充：`--sdr-loss-soak` 是独立桌面压力条件。强制 SDR 并完成上述输入内容/ACK
+验收后，开启固定种子的伪随机双向 IPv4 UDP 丢包，概率阈值为 100/10000；仅作用于
+测试进程的非内网地址，主机 IPv4/广播隔离仍独立计数。发送丢弃返回成功，接收丢弃先
+消费一个 datagram 再返回 EAGAIN；不新增线程、延迟队列、socket 或全局防火墙规则。
+要求连续 180 秒、至少 3000 个新显示帧、窗口末一秒仍有新帧、两方向均实际丢过包，
+且没有五秒呈现停顿或新增 reliable giveup；然后恢复正常网络，经菜单断开、首页和
+正常退出。每五秒最多输出一组数值，240 秒是总验收期限。这些是本地测试条件，
+不作为官方重试/帧率策略或数小时稳定性、声音质量的证明。
+
+独立驱动的按下阶段可在尚无新 wire sequence 时每秒重投同一按下状态，最多三次，
+仍必须取得新的按钮位/seq、提交/发送/ACK 和空队列后才释放；十五秒仍无新 seq 则
+报输入不可用并走正常清理。device 创建/关闭、StartInputReports 和合成事件的数字 ID
+仅作有界诊断。重投不改变正式输入策略，不将报告计数或重投次数用作成功证据。
+
+D-A071 补充：桌面 `--sdr-abrupt` 在同一正式 UI/解码/音频/HID 路径验收后，由主线程
+原子请求 SNS owner 调用既有单 endpoint 故障 API；SDK 与诊断仍只由 owner 访问。
+恢复要求不同 POP、新 E2E、至少 30 个新显示帧、五秒保持和窗口末新鲜度，不能用角色
+变化或一次统计包通过。owner 在终态保存/输出 SDK 原因与缓存的关闭快照，主线程只读
+原子计数；35 秒无恢复或正式 UI 报错时沿原有清理路径结束，不自动改变正式重试策略。
+
+
+## D-A072 调试日志按运行分卷，由应用直接提供只读下载
+
+依据：用户反复遇到切换 Wi-Fi 后发现/串流失败，要求玩完直接从调试版获取历史日志。
+旧 `runtime.c` 日志实现启动时覆盖三份轮转文件，且累计写入 4 MiB 后停止记录；
+3500 字节内存尾部和另一次 Netloader 回收无法覆盖多轮复现。
+
+决策：
+
+1. `diagnostic_log.c` 在调试构建中按启动创建唯一文件，使用 O_EXCL 避免覆盖。
+   每卷 4 MiB，写满续卷，不自动删除历史；原有三份日志保留为只读兼容入口。
+   任何存储写入失败通过索引 `storage_errno` 暴露，不将缺失记录解释成未发生错误。
+2. 复用原 joinable 日志线程，同时拥有文件、HTTP listener 和至多一个非阻塞下载连接。
+   文件 I/O、索引扫描和下载不进入渲染、输入或 IHS/runtime 网络线程；日志生产者仍用
+   有界 trylock 队列，拒收数单独公开，不能称为网络丢包。服务缓冲放堆上，避免耗尽 libnx
+   pthread 栈；停止时先关闭下载文件/socket/listener，再关闭日志并 join，之后才 socketExit。
+3. TCP 28773 只提供 GET 日志索引和严格白名单文件名的下载，不提供任意路径、身份文件、
+   远程控制、删除或上传。索引分页，文件支持显式闭区间 Range；读取活跃文件时长度固定，
+   后续追加保持原前缀。新启动不截断历史，断点续传可以跨应用重启。
+4. `pull-switch-logs.py` 按 32 KiB 拉取，校验长度/范围、重试不完整响应、保留部分文件并
+   续传；本地保存 SHA-256 和构建元数据。抓取既不删除远端文件，也不依赖 Netloader。
+5. 服务仅在 NSL_DIAGNOSTICS=ON 存在，默认 release 的对象检查须排除 HTTP/存储服务字符串。
+   持久日志不会自行修复网络发现或媒体故障，相关原因仍须以实际失败记录核对。
+
+平台约束：libnx v4.12.0 的 `nx/source/runtime/devices/socket.c:accept` 经 `bsdAccept`
+调用 `nx/source/services/bsd.c:_bsdCmdInSockfdOutSockaddr`，后者无条件解引用 `*addrlen`。
+因此 listener 即使尚无连接，也须传入有效的 `sockaddr_storage` 和初始化后的长度；
+不能沿用 Linux 允许的 `accept(fd, NULL, NULL)`。桌面回归测试包装 accept，强制核对
+这一 SDK 前置条件，再调用真实 socket；仅在 Linux 通过 HTTP 测试不足以证明此处可移植。
+
+活跃文件约束：同版本 `nx/source/runtime/devices/fs_dev.c:fsdev_stat` 会额外用 Read
+打开文件，`fsdev_fstat` 则直接使用已有句柄查询长度。Horizon 不允许已有 writer 时再开
+独立 reader，因此活跃日志以单一读写 FILE 拥有：索引使用 fstat，HTTP 每次最多读取
+4 KiB，保存并恢复写入位置；读写都在原日志线程串行执行。HTTP 只保存快照名称和偏移，
+若期间分卷，旧卷已经关闭 writer，才切换为独立只读句柄；不借用跨分卷失效的 FILE。
+桌面测试以文件锁模拟拒绝重开 writer，核对活跃文件的索引、正文、范围读取和后续追加。
+
+## D-A073 云端失败分阶段留证与调试主应用收包观察
+
+依据：`remote_connection.c` 原先将目录请求、TLS、Upgrade、创建会话等失败统一记录为
+initialization failed。该日志能定位到开流/打洞之前，不能区分 DNS、连接、证书或服务响应。
+`runtime.c:diagnostic_state` 原先只有已组帧/解码计数，不能据此判断 native UDP 是否收到报文。
+网络恢复策略仍依据 NETWORKING §9.1；此次诊断不改变候选、超时、订阅和媒体协议行为。
+
+决策：在 NSL_DIAGNOSTICS 中记录 curl 完成/失败阶段、result、HTTP/OS/证书结果及阶段完成
+时间；记录候选位置、重试等待和实际连接的本地/远端 IP，区分可订阅主机、订阅已入队与
+收到主机状态。owner 云端更新超过 250 ms 至多每秒记录一次，用于检验同步 DNS 等阻塞假设。
+只读 UDP `cloud` 查询同一 owner 的状态，不从渲染线程读取 curl 或额外发起网络请求。
+
+调试主应用在已有 IHS 调用边界加入只读观察器，委托参数和返回值保持一致：按当前会话
+IPv4 对端统计 native UDP、按 channel 统计原始媒体报文头/校验后的媒体准入/恢复请求。
+计数每次 SessionConnect 前重置，前一会话 worker 必须已经 join；不创建线程或 socket。
+网络路径只做固定大小头解析与原子计数，不复制 payload、不重新算 CRC、不逐包格式化或 I/O；
+快照由既有 owner 每秒输出。原始计数不是有效包，差值不是无线丢包率，恢复入队不是发送或 ACK。
+私有 fixture 保留其独立观察器；不将它与产品观察器重复包装。release 不编译这些观察器，
+对象/静态库检查排除新增诊断字符串及符号。
+
+### D-A073 连接尚未建立时的地址证据
+
+热点冷启动日志 `session-00000000001792247845-083927948-00000.log` 的五次目录请求
+均为 curl=28，DNS 完成时间 0–5ms、TCP/TLS 完成时间为0，且没有 cloud_addr。
+这是已回收设备日志的直接证据；用户确认每次切 Wi-Fi 都杀掉重开，热点 DNS 自动、手机无
+代理/VPN。这些证据收窄到目录连接阶段，但不证明系统 DNS 缓存或某个目的地址有误。
+
+`CURLINFO_PRIMARY_IP` 没有覆盖这个失败路径。依据固定 curl 7.69.1 的
+[connect.c](https://github.com/curl/curl/blob/curl-7_69_1/lib/connect.c#L1082)，
+在 connect 前会通过 infof 产生数字目的地址。诊断构建使用
+[DEBUGFUNCTION](https://curl.se/libcurl/c/CURLOPT_DEBUGFUNCTION.html) 只提取该行中经
+inet_pton 校验的 IP 和数字端口，每个 easy 请求最多16条；不转发原始 trace，忽略其他
+TEXT、headers、payload 和 TLS 数据。连接方法、DNS、超时与重试策略保持不变。
+
+## D-A074 Switch 目录连接失败时向当前 DNS 重新解析
+
+**范围修订：仅目录的补丁已由D-A075统一策略替代。** 4e810d5真机热点日志证实目录DNS恢复、
+HTTP200、CM和主机在线通知成功，但随后的3次开流保持SDK state=0。源码另有独立
+GetSDRConfig easy/multi访问同一api域名；目录multi的RESOLVE规则不能覆盖该请求。
+撤回将D-A074视为完整跨网络DNS恢复方案的定位；它只验证了直接查询当前DNS的机制。
+
+证据：`session-00000000001792248673-084334796-00000.log` 在用户切热点、杀应用后
+冷启动的运行中，6次目录连接目标均为11.171.50.44:443，全部约10秒后curl=28。
+这是此前已在局域网确认的Fake-IP；回局域网的新冷启动运行
+`session-00000000001792248889-085839052-00000.log` 访问相同地址成功并收到主机在线通知。
+用户确认热点DNS自动获取、手机无代理/VPN。错误目标跨应用进程重启存在；系统缓存、
+CFW/DNS中间层或配置残留的具体持有者尚未区分，不能归因于应用的上一进程。
+
+固定SDK libnx4.12.0的
+[resolver.c](https://github.com/switchbrew/libnx/blob/v4.12.0/nx/source/runtime/resolver.c)
+未将DisableDnsCache变量传入getaddrinfo IPC，RemoveHostnameFromCache直接返回
+NotInitialized。不能以调用这些占位API作为修复。
+[nifm.h](https://github.com/switchbrew/libnx/blob/v4.12.0/nx/include/switch/services/nifm.h)
+的GetCurrentIpConfigInfo提供当前IPv4/DNS配置。
+
+决策：保留正常目录连接；仅在解析/连接失败或连接尚未完成即超时时，Switch读取当前
+DNS配置，使用非阻塞connected UDP查询原目录域名的A记录。至多两个配置服务器、各两次，
+每次1.5秒、总期限最多6秒；每个owner tick至多读取4份应答，无新线程、阻塞等待或全局
+缓存操作。查询ID、来源端点、问题、IN/A类型、RCODE/TC和完整长度均校验；DNS压缩跳转
+有界，只取原名或已验证CNAME链的A记录，至多4个。查询格式遵循
+[RFC1035](https://www.rfc-editor.org/rfc/rfc1035#section-4)。
+
+用[curl RESOLVE](https://curl.se/libcurl/c/CURLOPT_RESOLVE.html)将新地址用于同一目录
+URL重试，原Host/SNI、CA链及域名校验不变。不硬编码公共DNS、Valve IP或Fake-IP网段，
+不更改Steam消息、配对、订阅或媒体协议。curl7.69.1的手动映射不会自动过期，故下一次
+普通目录请求前显式移除此映射，避免引入新的永久地址缓存。
+
+每轮目录请求最多恢复一次；查询/新地址仍失败则走原有失败与随机退避。TLS、证书或HTTP
+错误不触发DNS恢复。该路径为本地网络恢复策略，不冒充逆向得到的Valve规则。
+桌面平台保留原解析器；测试通过配置接口提供本机DNS夹具，不提供外部运行时覆盖入口。
+
+DNS socket由既有remote owner拥有；完成、失败、取消、挂起或destroy都会关闭，
+先于socketExit。诊断仅记录当前网络的数字地址、查询结果和尝试数；不记录DNS原始报文。
+
+## D-A075 Switch 所有实际解析入口使用当前网络 DNS
+
+**解析器选择修订**：D-A095按用户要求将Switch统一解析入口的目标改为8.8.8.8；
+下文当前网络DNS选择是历史决策，其余统一入口、取消、期限与清理约束继续适用。
+
+依据：D-A074的限定范围；`sns_backend.cpp:begin_config` 的独立GetSDRConfig请求；固定
+Switch libcurl.a的未定义符号仅使用getaddrinfo/freeaddrinfo；GNS ResolveHostname在
+字面IP预解析后调用getaddrinfo。SDR POP记录本身使用数字IP，不另外猜测中继域名。
+
+决策：Switch正式应用及使用完整平台初始化的runtime夹具，在最终链接层将getaddrinfo和
+curl_easy_init接到统一适配器。目录、CM/独立信令桥、SDR配置、SDK STUN主机名、封面和
+更新器全部遵循同一策略；删除按目录URL注入RESOLVE的单点补丁。每次域名查询从nifm读取
+当前DNS，复用经过验证的有界A查询，不保留跨查询地址缓存；每个curl easy默认DNS缓存期限0。
+不硬编码公共DNS、Valve IP或Fake-IP范围；当前DNS不可用时明确返回解析失败，不能悄悄
+回退旧系统域名缓存。数字地址、NULL/localhost及NUMERICHOST请求保持原SDK转换行为。
+
+原固定Switch curl/libnx解析接口是同步；此适配并不将它变成异步。查询发生在已有解析
+worker上，最多3秒，每次轮询最多4个报文、每1ms检查取消，无新增线程。图片/更新器的
+请求scope以原取消token登记和结束，取消能立即打断当前查询；应用退出前先取消全部解析，
+join既有调用worker后释放全部scope、mutex，记录清理，再关闭日志与socket服务。SDL绘制、
+输入路径不执行解析。独立底层探针保留其自有平台初始化；不拿它当正式应用适配器覆盖证据。
+UDP截断应答在验证问题/来源后改用同一配置DNS的非阻塞TCP查询，保留原总期限，
+处理分段长度前缀/消息，最大4KiB；不将截断数据当作完整答案，也不因TCP重试无限延长等待。
+
+固定libnx `freeaddrinfo` 每节点仅调用__libnx_free，因此适配器用匹配的__libnx_alloc分配
+节点，将sockaddr和canonical文本放同一块。先让原SDK对数字IP解释service/hints，再复制
+结果，保留socktype/protocol/port、最多4个A地址以及请求时的canonical名。主机名仍由原URL
+交给TLS做SNI/Host/证书校验，不用数字IP替换HTTPS authority。适配保持此SDK现有IPv4
+解析能力，不宣称新增IPv6 DNS支持。主机测试使用glibc相匹配的canonical分配方式。
+
+诊断dns_query记录主机名、当前本机/DNS数字地址、结果、耗时；sns_config记录独立配置
+HTTP结果、信任导入、证书安装与P2P创建阶段，不输出身份/证书正文/信令payload。
+除夹具测试外，check-switch-dns-policy.py检查最终ELF反汇编：curl与GNS实际调用都必须
+进入统一适配器，原getaddrinfo和curl工厂只允许从适配器调用；出现其他未审计入口则失败。
+
+## D-A076 失败连接的清理确认不关闭错误页；SDK创建失败保留数字原因
+
+依据：10a9ca9热点运行 `session-00000000001792253094-085069920-00000.log` 的四次请求均为
+开流信令成功、SDR配置HTTP200、信任/证书安装成功、随后P2P创建失败且无IHS会话。
+固定SDK `InternalConnectP2P` 返回invalid handle前把拒绝原因送到错误回调；
+应用原先禁用所有SDK回调，因此terminal source=START仍无法区分拒绝分支。
+这不支持把该轮失败解释为SDR配置DNS/HTTP卡住，或直接断言某一socket/证书原因。
+
+应用的`lifecycle_facts`在runtime facts.failed后仍提交STOP以完成依赖清理，
+runtime返回同generation的正常STOPPED。`sl_ui_stopped`若无条件回HOME，会覆盖先前
+FAILURE显示的SL_ERROR，与用户观察的连接状态直接消失一致。
+
+决策：保留既有错误页和具体消息，清理确认仍更新streaming/debug/depth；用户主动返回时
+进入STOPPING并增加generation，正常取消确认仍回HOME。错误页不等同仍有存活串流。
+
+仅在同步`ConnectP2PCustomSignaling`调用期间安装SDK Error回调，最多接纳8条，
+从固定版本已核对的失败格式提取固定分类和数字；不存储或输出SDK原文、身份或证书数据。
+回调内不做I/O，调用后恢复None，再由现有有界日志记录结果。保留证书剩余秒数和认证状态。
+SDR socket创建失败向该路径传递原OpenRawUDPSocket错误，避免被泛化消息覆盖。
+这不改变Steam认证、传输选择、SDK配置项、重试或超时；未知格式保留unknown，不猜原因。
+
+## D-A077：SNS 状态查询、信令归属与关闭采用独立的源码契约
+
+Evidence：固定 Android 1.3.32 arm64 的 CheckConnection `0x800348`、SDR CloseConnection
+`0x800f94`（样本 SHA 与复现命令见公网协议参考 §12.3）。查询失败清句柄并置 Failed，
+不调用 SDK Close；SDK ClosedByPeer/ProblemDetectedLocally 的 close reason 为0，未知状态为2001。
+SDR Close 在调用 SDK 前解除信令双向归属，保留已有 Failed；已连接查询使用 SDK 微秒时钟及
+1000000 微秒边界。固定原函数输出与生产策略共用函数的核对、SDK ABI 适配及桩范围见该节。
+
+Conclusion：将该状态/关闭分支放在 `sns_connection_policy.h`，生产 owner 与离线执行器共用。
+SDK 查询错误、SDK 状态终止、本地资源失败和主动 teardown 是不同原因；其中实时状态方法
+按原调用者检查返回值是否为零，不把SDK的非OK结果统一改成失败（§12.3的虚表/原SDK复核更正）。
+诊断不能通过再查询
+或统一 Close 改写源码分支。查询失败仍保持信令归属，显式销毁时解除；任意退出均先停/join
+IHS 使用者，再销毁 SDK。共享队列的本地清理和等待者唤醒不代替 SDK 状态迁移。
+
+异步配置与证书获取先于 `connection_attempted`；该阶段无 SDK handle 是正常的。只有发起
+SDK 连接之后才进入查询契约，保留官方同步 BInit→BConnect 的阶段边界。查询使用 SDK 时钟，
+不拿 UI/bridge 的毫秒时钟近似。连接中的 true 返回不授予媒体发送资格，owner 仍检查 Connected。
+
+本地资源/信令错误和主动销毁仍由独立入口处理；它们的 caller reason、完整 Send/Recv、MTU、
+地址选择及服务器策略不包含在本项状态分支对照中。原始状态和原函数调用范围对齐不作为
+整个 SNS SDK、真实网络互操作或 Switch loader 生命周期的替代证明。
+
+## D-A078：Offline 清除可见状态，不用旧的局域网回复抵消通知
+
+Evidence：固定 Android 1.3.32 arm64 的 `BProcess(type2) @0x79a03c–0x79a0a4`
+先删除可见主机、通知 removed，再移除云端在线集合；该分支不读取、删除或重放持久地址。
+`scripts/audit-steam-address-cache.py` 在受控 map/delegate 边界上执行四组原始分支，
+以合成持久区哨兵和地址字节验证这些记录保持；哨兵不是恢复出的真实密钥字段。
+该分支不经过持久记录查找，实验不验证 wire parser、实际远端通知或 Qt/线程调度。
+
+Conclusion：runtime 云端 Offline 必须发布不可用事件并清除云端在线记录；不能用此前
+local_host 的回复立刻发一个 HOST/LAN 事件抵消它。保留配对、游戏历史和地址记录；后续
+真实 discovery status 可以重新上线。无可见记录时，上层不可用事件为幂等操作；不据此宣称
+上层事件个数、回调时序和官方 delegate 完全相同。
+
+UI 队列可以合并同一主机的连续 status，但不能跨过该主机的 Offline 去覆盖旧 status；
+否则 status→Offline→新 status 会被重排成新 status→Offline，最终错误离线。以 Offline
+为合并边界，保持同一电脑的可见状态迁移顺序；其他电脑不受该边界影响。
+
+同一份地址实验更正了协议参考 §10.1 中“时间仅为最后回复时间”的定义，保留新增未验证
+地址也写当前时间、已有未验证地址不刷新时间/端口、逆序 FastRemove 和非传递比较器的
+完整排序结果。可见记录寿命、地址可达标志和配对存储是独立状态，不能再用一个超时统一表示。
+
+## D-A079：同一主机目录接收 UDP 与云端状态，地址资格独立于可见性
+
+Evidence：公网协议参考 §10.1/§10.2 的 BProcess、BAddNetworkAddress、ClearInactiveAddresses、
+GetAddress、Update 及 Offline 原始指令。`audit-steam-address-cache.py` 的完整排序/更新
+输出用于比较生产实现；不是只比较两两 comparator，也不让系统 sort 自行决定非传递输入结果。
+
+Conclusion：`host_addresses.cpp` 保存按 IP 去重的端口、已验证/remote 标志和墙钟时间，使用
+独立的 libc++19 非 bitset 排序实现。`host_directory.c` 分别保存首次 status、实际 status
+时间、可见与 cloud-online 标志。首次 status 清理未验证 seed，依次加入 public、普通公布
+地址和实际源地址；公布地址可携带端口，但只有实际来源授予已验证资格。同 IP 的 remote
+标志不会被普通公告清除，公告不会更新已有端口或时间。
+
+重载的保存地址为未验证、时间0；模块不把上一进程的可达标志写回配对资料。地址目录是
+进程内状态，其存储契约不等同于设备身份/长期密钥。可见记录在非云端在线且墙钟差>=30秒
+时删除，地址保留；云端断开仅清在线集合。两个来源的 Offline 共用可见删除路径，新 status
+可重新上线。UI 心跳只重发目录的可见快照，不刷新实际 status 时间，前端不再决定协议寿命。
+
+IHS 新 status 回调保留 borrowed 公布地址、public 标志与输入顺序，优先于旧 discovered
+回调；type2 新增独立 offline 回调。云端回调也借用原 protobuf 字符串，不截断成8个，不在
+进入目录前去掉 public/private 重复。目录在回调返回前只保存解析后的值，不持有 protobuf 指针。
+
+runtime 两个输入源在同一 mutex 下更新目录并入队事件，Offline 是合并边界。调用 IHS
+操作队列时不持有该 mutex；发现目标使用动态拥有的完整快照，仍由 IHS 唯一调度器按原
+操作顺序发送。更新同一关注主机列表的地址/排序不重置轮次或截止时间；只有关注 ID 列表
+改变才相当于 AddClientDiscovery 触发新轮次。原有 SetDiscoveryTargets API 保留显式刷新
+契约，runtime 使用 SetDiscoveryDirectory 区分这两种操作。关注 ID 独立于地址列表；即使
+某个已关注主机没有地址，禁用广域广播订阅后的 directed-client 广播仍须包含其 ID。
+已忘记/尚未纳入 UI 保存主机的地址缓存不会自行增加关注列表。开流从目录选择已验证的 IP和端口，保存的 UI 地址仅为发现 seed。清理为
+停止/join IHS 和云端使用者，再释放目录与目标快照；不新增后台线程或 detached owner。
+发送地址快照按关注 ID 的顺序展开各自已排序的地址，而不是按目录记录的创建/接收顺序。
+
+原始指令比较的 provider 范围、运行时受控报文/端点范围须分别记录；它们不证明持久文件
+与完整 manager/Qt 网络变化调用链、实际 DNS/Steam/ICE/SDR/媒体或 Switch loader 行为。
+
+## D-A080：区分 manager 控制头与传输信令头，保留收发方向差异
+
+Evidence：公网协议参考 §9.4、`audit-steam-control-route.py` 执行固定 core 样本的
+完整 `SendMessage`、`BStart`、空可见/cloud 容器的 `Stop`、`SendTransportSignal` 和
+`BProcessReplyPacket`；不是只执行最后的 UDP/cloud 分支。token 字节、会话状态/析构、
+持久查找、系统调用、最终 cloud/SDK backend 及桥接 HMAC 是显式提供者。
+
+Conclusion：云端 manager 当前无完整目标地址的发送入口必须生成独立的外层 device token，
+使用该 owner 当前选中的 secret，不从 body 复制 token，也不总是使用安装 secret。
+新主机授权临时 secret、选中主机的持久 secret、成功交换/Proof 派生的新 secret 分别更新
+当前值；事务取消和云端 session 替换不擦除该当前值，owner 销毁时统一擦除。
+外层头的 token 与 body token 分别调用加密器，已保存的 connect PIN 密文仍保持事务快照。
+
+撤回此前生产传输发送器和回环 fixture 所用的“信令必须带本机 client ID”假设。
+客户端传输桥接器发送头只有 type12，不附 manager ID/token；接收 Steam host 报文却要求
+非零 client ID，随后以当前流密钥验证 HMAC，不比较该 ID 是否等于所选电脑。
+`stream_bridge` 保留非零门槛、HMAC 先于内层解析及重复/FIFO 语义。fixture 明确构造
+host 回复方向的头，不再把客户端发包当作相同方向的 host 回复。
+撤回接收器额外要求 payload presence bit 的假设；默认空串仍必须通过完整的 32 字节
+HMAC 和内层 protobuf 解析，不能用“没有 SDR 元素”代替认证失败。
+
+固定输出与生产 cloud framing/信令队列逐字节比较，接收比较交给 backend 的解析后消息；
+实际授权、重试和 Proof fixture 另解密外层 token，验证当前主机/轮换后的密钥。
+这些是发送入口及信令接收分支的证据，不是所有 caller 的完整 UDP/cloud 事务切换、
+token 失败后的 manager 错误回调或真实服务端接受证明。完整地址但走云端的原版头不带 token，
+因此不能把本云端无地址入口的规则泛化为未来共用选路函数的全部行为。
+
+## D-A081：已知主机控制事务共用 owner，发送时读取当前地址
+
+日期：2026-10-21
+
+Evidence：公网协议参考 §9.4 的完整 SendMessage 与显式/隐式 caller，§11 的独立
+授权、开流和 Proof 规则；`control_frame_oracle.c` 与 `control_route_runtime.c` 的范围
+及外部 provider 在同节列出。
+
+取代 D-A063 第 4 项“只有云端可达时声明 SDR”的限制。SNS 可用时已知主机请求同时公布
+UDP/SDR；控制消息走 UDP/CM 与最终媒体 transport 分开。响应选择原生 UDP 时采用本次
+回复来源，来源完整才替换流端口；选择 SDR 时将本次密钥、证书及 relay 材料交给 SNS。
+不从 UI 地址快照推导物理端点，也不从发现来源推断媒体实际路径。
+
+已知主机使用同一 IHS 事务、当前 secret、接收队列及重试 owner；CM 控制报文进入与 UDP
+相同的 parser/延迟队列。每次隐式请求/取消查询当前目录；完整的显式回复来源绕过目录。
+迟到 InProgress 的内联取消是显式回复，不套用隐式取消的可见主机前置条件。开流响应
+按 request_id 归属，Proof 则单独校验当前目标身份，不将两个规则合并。
+
+补充 D-A079 的地址快照边界：关注 ID 的提交/操作顺序仍归发现 owner，实际地址值在
+RequestStatus 时读取当前目录。不通过额外的 before-Update 回调反向覆盖较早的关注操作。
+目录锁与 IHS 操作队列保持分离，不在持有应用锁时等待 IHS owner。
+
+授权计时器可在独立线程产生报文；真实 CM 操作只在 runtime owner 执行。报文先深拷贝进
+有界 FIFO，64 项/256KiB、单帧 64KiB 是本项目资源预算，不是线上协议常量。断开/替换
+连接时清除旧 epoch 队列，不把旧帧重封装进新 session。清理先停止/join IHS 生产者，
+再处理剩余复制帧并销毁 CM，最后释放目录；不新增 detached 线程。
+
+未知主机的服务配对仍由 cloud pairing slot 处理。该改动不证明两个 owner 的授权缓存、
+所有入站身份顺序、持久文件或 socket 启动失败策略已完全统一；源指令/受控输入测试也
+不代替真实 Steam、NAT、SDK 网络和 Switch loader 验证。
+
+## D-A082：授权回复身份与当前连接目标分离，保留副作用顺序
+
+日期：2026-10-21
+
+Evidence：公网协议参考 §11.2；固定 shell 的完整 BProcess、原密码与调用者执行，
+72 组/160 步普通及网络测试输入；core `HandleDeviceAuthorizationResponse` 与
+`StopStreaming 0x79987c` 分支交叉核对。保存及发送边界额外观察状态、编号、缓存和
+已通知错误数，不能只从最终状态判断副作用顺序。
+
+已知主机路由模式不在授权入口提前过滤非目标来源。只有 Success 进入密钥交换；
+缓存命中或新 key 校验失败在第一次确认后返回，不推进事务。新的有效 key 先成为当前
+secret，按实际回复 client ID/steamid 保存，再更新公共 key/result 缓存并确认；此后才
+校验当前目标。非目标的新成功 key 会确认 Success 后再确认 Canceled，原事务继续等待。
+非 Success 的非目标回复按 auth_key presence 决定是否确认 Canceled，不做交换。
+
+额度耗尽停止当前选中的事务，错误通知先于取消，清除目标/编号后才替换公共缓存并向
+回复来源确认 Denied。交换函数通过同步 stop 回调让当前 owner 执行该段动作，保留当前
+secret；回调不得销毁正在访问的 task/client。普通取消也在清除编号前发送，整个操作
+由同一个 timer owner 串行化，任务延迟到 visitor 返回后回收，不在 visitor 内释放它。
+
+长期 key 保存接口采用回复身份。应用的 host profile 只是其当前账号的密钥镜像；非目标
+材料不能覆盖 active.host，也不能给不同账号写入错误镜像。已保存的同身份镜像可更新，
+其他身份仍有独立 key 文件。保存失败不转为密码校验失败或阻止原有确认/当前密钥更新。
+key 保存本身不伪造一次发现事件。完整身份首项更新、持久 metadata 与订阅是独立契约，
+不能由 key 文件存在推断冷启动发现已覆盖；未知主机服务配对槽也不由此变成同一状态域。
+
+
+## D-A083：普通播放器的 SDK 生命周期以外层退出调用为准
+
+Evidence：固定 arm64 core 的 Base transport 析构 `0x7ffa8c` 只在实例数归零时关闭
+manual polling；外层普通 SDL 播放器却在 `0x75cfc0` 停止网络处理，紧接 `0x75cfc4`
+调用 SteamDatagramClient_Kill。后者 `0x80ea34–0x80ea40` 销毁并清空 socket singleton，
+LibV13 getter `0x80e750` 读取同一指针。BInit 在 SDK 不存在时才重新初始化。
+协议参考 §12.2、§13 的原始组合/指令反例及 native owner 比较给出复现范围与 provider。
+
+Evidence correction：仅凭“transport 析构不 Kill”推导 SDK 应跨普通串流常驻不成立；
+它漏掉了播放器退出调用者。不能把只覆盖该局部函数的绿色测试当作完整生命周期证明。
+
+Decision：
+
+- 保留普通串流 owner 的独立 SDK 清理，关闭/join IHS 使用者后再关 SDK 连接并 Kill。
+  应用级 SDR 配置缓存只保存公开 JSON，不携带上次 SDK 的身份、私钥或连接对象。
+- Switch 仍在创建 SDK 前开启 manual mode，在 Kill 完成后才关闭该模式，防止退出阶段
+  启动一个可能越过 loader 返回边界的 SDK 后台线程；不直接复制 Android 的短暂调度顺序。
+- 显式配置导入先于证书解码；成功消费不因后面的 Base64/证书错误而倒退。缺少/空证书
+  时按原版继续申请认证，不等于认证已成功，也不放宽实际 CA、签名和 peer 校验。
+- 网络测试共享端口资源纪律，但其 shell SDK 的驻留时长是独立核对范围；普通播放器的
+  Kill 调用不能被扩大成所有调用者的退出策略。完整 SDL/JNI、自然引用计数和实机 loader
+  安全也不由函数/组件审计替代。
+
+## D-A084：SNS 同步发送结果交回 IHS，不以排队代替 SDK 接受
+
+Evidence：固定 Android Socket Send `0x7ff300–0x7ff31c` 仅在 transport 返回 0 时记录
+发送并推进 shaper；SNS Send `0x800224–0x8002bc` 将 SDK 25/41 返回为重试，其余非 1
+返回失败，不修改连接状态。最后 Release `0x7ffcd4` 调用实际 SDR Close，理由为
+1001 / "Destroyed"。MTU setter `0x801084` 忽略 Set 返回，随后仅接受 Get 结果 1。
+协议参考 §12.3 的组合原指令及 native IHS caller 给出复现范围与 provider。
+
+Decision：
+
+- IHS 已序列化的整包直接交给 SDK，保留 flags 0x15 和 CRC；成功才报告接受。
+  不保留适配器 TX 副本、不因 SDK Send 的单次错误自动关闭连接。重试仍由既有 IHS
+  调度器持有报文并决定，不能提前增加重传计数或记录网络发送。
+- 现有 bool transport 接口通过明确 errno 保留 Socket 结果：重试为 EAGAIN，发送失败
+  为 EBADF，终止为 EIO。每次失败均覆盖 errno，不能读取别的系统调用留下的值。
+- SDK 句柄创建、检查、关闭与并发 IHS 发送共用短作用域 mutex；不持有接收/信令队列锁
+  调 SDK，不把 HTTP 或 bridge 更新放进该锁。成功发送计数使用原子变量供 owner 快照。
+  仍先停止/join IHS 使用者，再销毁 backend/SDK，不创建额外线程。
+- 显式 owner 销毁以 1001 / "Destroyed" 关闭，保持原状态直到 Close helper 执行；
+  本地资源错误保留 2001，CheckConnection 已有的 0/2001 分支不合并。
+- MTU setter 按原 Set/Get 分支实现。正式 IHS 的 MTU 选择调用链属于另外的协议契约，
+  不能把 setter 局部对齐视为发送预算已完整对齐，亦不能把这些差异推为历史卡顿根因。
+
+## D-A085：SDK 接收负计数结束批次，内外层 MTU 分别解释
+
+Evidence：固定 core BWait `0x80016c–0x800170` 对 count<1 结束读取，不改状态/关闭；
+Socket Wait `0x7feb90` 与 Update `0x7fecd4` 在收包循环结束后仍推进连接。原队列构造、
+append/free、Recv 及调用者的组合执行见公网协议参考 §12.3。core/shell 对 SetMaximumMTU
+的 .text B/BL、PLT、动态重定位及 SDR vtable 清单没有发现调用/引用；不排除外部 dlsym 等。
+公开固定 SDK 的 MTU_DataSize 是无分片消息预算；原 IHS 握手直接 clamp 到 512..1472。
+
+Evidence correction：撤回从 MTU setter 的存在推导生产会话必须调用它，并用其返回值限制
+内层 IHS 消息的要求。把 SDK 单次负接收计数视为立即断线并清空 FIFO 也不属于原版策略。
+
+Decision：
+
+- SDK 非正接收计数只结束批次，保留旧 FIFO/当前状态，后续检查和显式销毁分别负责其策略。
+  满 128 条继续读取，不额外截为 32 批。RX 本地 4096 条/8MiB 资源界限单独保留；容量失败
+  释放整批 SDK message 后报告资源错误，不把资源限制当成官方协议常量。
+- 不因本端未调用 SetMaximumMTU 而添加推测性接线，保留已对照的 IHS 握手与分片规则。
+  SDK 的 SNP 分片与 IHS 消息/加密/可靠重传是不同层，不能相互替代预算。
+- 无效句柄的真实 SDK update 和 576-byte packet MTU 下的 1472-byte UDP loopback 消息
+  用于核对本机 owner/消息边界，不扩大为官方完整上层、ICE/SDR、热点或 Switch 的验收。
+
+## D-A086：有效信令整批处理后立即重查传输状态
+
+Evidence：固定 core `BHandleTransportSignal @0x801754` 以 SDK 接口而非连接句柄准入；
+SDK 拒绝一条时停止后续条目，以 2001 / `ReceivedP2PCustomSignal failed` 关闭，再设
+Failed。成功、空列表和拒绝分支均在 `0x801868–0x801878` 调 UpdateState，再进入
+CheckConnection，保留 Connected 的一秒节流。组合执行和 provider 边界见公网协议参考 §13.2。
+
+Evidence correction：撤回“等下一轮 owner update 自然会推进”可视为与原同轮调用等价
+的假设。信令入站的 SDK 接口有效不等于当前连接 handle 非零；不能用 handle 守卫提前拒绝。
+
+Decision：
+
+- 有效 HMAC/内层 protobuf 的整条信令结束时回调一次状态检查，包括空列表和 SDK 拒绝；
+  不逐条检查，不让未通过 framing/HMAC 的输入触发状态推进。
+- SDK 拒绝的专门关闭入口按原关闭后再 Failed 的顺序执行；不借用先 Failed 的本地资源错误
+  helper，不额外查询 SDK info 改变这条路径的调用顺序。
+- 接收完成与初次 owner 检查共用状态策略和短作用域连接锁；不加线程，不在 bridge 更新期间
+  持有此锁。IHS 停止/join、terminal 队列释放/唤醒及最后 SDK 清理仍遵守既有所有权纪律。
+- 原 state=0/SDK-null 的合成入口和真实初始化后的端口通道分开列出；不据有限局部等价宣称
+  Qt/SDL 全调度、自然 signaling 引用生命周期、热点或 Switch 验收已经完成。
+
+## D-A087：普通播放器交接结束旧握手，不用取消模拟析构
+
+Evidence：固定shell普通StartStreaming请求Qt quit；main在Android Activity参数交付之前
+Quit并析构Shell。app+24的manager经实际虚表+56 deleting dtor进入Stop，释放发现socket、
+CM session和最近authorization key buffer，不调用StopStreaming或发送取消。构造函数
+给出新manager的空最近key、result=7。原20组consumer中5组普通成功的组合执行、其余
+失败/NetworkTest的排除及provider范围见公网协议参考§11.3。
+
+Evidence correction：成功票据保留state6是manager存活期间的规则，不能跨普通播放器
+的外层交接推导为继续接收旧Failed、Unauthorized、InProgress、Proof或服务失败。专用
+NetworkTest不退出Qt，仍保留state6，不能因此顺带退休或自动取消。
+
+Decision：
+
+- 普通票据在完整入站Update后、SDK/媒体构造前，无取消地退休private握手和最近key/result
+  缓存；同批失败仍优先撤销未消费票据。不在响应回调、尚未成功或NetworkTest执行该操作。
+- 本产品为直启结束查询保留发现owner，这是既有产品策略。用独立的握手交接门槛映射原
+  manager的销毁，停止旧握手输入；不关闭媒体自己的信令桥，不把发现或持久配对资料删掉。
+  新显式串流/授权/服务配对重新开启握手。
+- API只支持polled owner完整Update之外的边界，验证无正在分派/遗留握手队列，使用现有
+  timer/Base所有权锁，无新线程。普通IHS worker仍先停止/join，再销毁SNS与SDK。
+- 对照分别标记launcher准入、原对象销毁和端口保留发现后的无握手状态；不得用state值
+  相同/不同代替生命周期语义，也不得将有限provider范围扩大为完整Qt/JNI或真机验收。
+
+## D-A088：测网控制错误等待确认，授权通知不夺取测试页
+
+Evidence：固定官方 arm64 shell 的完整 manager/Panel 调用及24组可重复输入见
+公网协议参考§11.3“测试页运行后的控制错误与授权通知”。普通控制错误先停止manager
+请求并显示style0错误框，嵌入Test没有提前析构/Join；确认后OnActionCancel→Pop才清理。
+PINRequired进入独立安全码输入，Unauthorized/Busy/重复Success保持原测试页。
+
+Decision：
+
+- 控制错误发布持久失败快照与test_failure_pending，应用不自动STOP、不直接重试；错误
+  等待期间不采样测试结果，保留已有Test与backend至用户确认，再按Join→Destroy清理。
+- PINRequired仅暂停页面采样并进入连接安全码输入，不混入配对授权码。取消仍清理原
+  Test；明确重新提交沿原安全码重试入口发起新的串流请求。
+- Test已取得票据/owner后，授权回调继续更新协议/账号资料，但不再把测试页切到配对页
+  或重置进度；票据前的授权交互保持原入口。Busy和重复Success不创建第二个owner。
+- 现有SDK仍轮询，待确认错误不因backend终态被自动清掉。测试自身的失败继续使用其
+  独立媒体关闭路径，不将两种失败的清理时点合并。不得据此修改普通播放器交接。
+
+原始worker阶段/Qt/线程端点与native的peer/service callback均有显式provider，实际UDP/
+Test线程验证不能代替真实Steam/SDR或Switch loader验收。没有新增线程或计时重试策略。
+
+## D-A089：测网 SDK 媒体失败独立于普通播放器自动停止
+
+Evidence：公网协议参考§11.3的原始SDR Test BConnect/Run/Panel action2/3及§124
+测试失败确认；原lifecycle的断开分支进入Failed4并关闭媒体。BInit=false时backend
+先释放，manager6/编号仍保留到错误框确认。
+
+Decision：
+
+- 测网SDK创建失败或Failed/Closed进入测网失败路径，保留失败快照/待确认标记，确认前
+  不发开流取消或自动转成普通重试。普通播放器的SDK失败处理保持原有生命周期。
+- stop_network_test按Test归属清理backend；异步初始化失败时即使没有IHS Session也释放。
+  有IHS时先Disconnect/Join/Destroy，再发送最后已排队的goodbye并释放backend。
+  不在取消尚无IHS的初始化时额外轮询backend；不提前销毁普通播放器的backend。
+- 已在等待控制错误确认或安全码输入时，SDK终态不夺取页面、不启动新票据的Session或
+  自动销毁仍由Test持有的对象。安全码期间旧BInit可按D-A091完成自己的IHS启动，不能
+  确认新请求。错误确认按原owner清理顺序退出；安全码重试的旧worker保留与
+  新票据替换见D-A091，撤回其与错误确认一律先清理的泛化。
+
+这是产品异步SDK初始化与原同步BInit/独立Test线程之间的生命周期映射；不证明HTTP错误
+起因、自然SDK故障/线程时序或真实SDR媒体恢复。多个错误的交替顺序仍需单独对照。
+
+## D-A090：同一测网 owner 的有效后续错误替换待确认内容
+
+Evidence：公网协议参考§11.3“测网失败框之后的有效控制错误”，固定shell执行完整
+Test失败/manager入站、OnServerError和CPanelBase::ShowDialog。22组正常、2组明确
+原诊断分支；已有框被hide，panel+0xb8改为新框，再show，确认仍走OnActionCancel。
+
+Decision：
+
+- 撤回待确认时一律冻结第一个错误内容的假设。有效控制callback继续发布同generation的
+  Failed快照，标明control_error；即使Test媒体已关闭，仍更新待确认错误，不重新开Test。
+- 错误页仅接受同generation、更高revision的Failed快照替换内容；保持关闭控件，不出现
+  Retry。陈旧、异generation、Running/Result快照及普通队列错误继续不能劫持确认流程。
+- 控制错误与测网媒体/统计失败分开分类；沿用现有错误页和连接失败标题，不新增首页
+  版式、资源或配对流程。PINRequired继续切到独立安全码输入。
+
+两组Unauthorized先于首次失败框的原BIsStreaming诊断单独保留，不当作正常等价输入，
+也不要求端口复制诊断。Qt文字格式化/显示、SDK失败/线程端点与native服务callback等
+provider边界不变；本决定不证明自然Qt或真实网络的全部错误竞态。
+
+## D-A091：测网安全码重试先保留旧 worker，再按新票据替换
+
+Evidence：公网协议参考§11.3“测网安全码重试保留旧worker”的32组原始manager/Panel/
+Test调用。OnPINEntered重新请求但不清理Test；有效票据消费时Start执行Join(-1)，
+没有Cancel。Busy、Unauthorized、错误及再次PIN的页面和最终取消分别保留。
+
+Decision：同generation/主机的有效security PIN重试保留测试意图与旧媒体。新票据
+在旧worker仍存活时等待其自然结束后才Join并替换，不保存旧结果；本地取消仍可主动
+结束旧worker。若旧worker已结束，原Start的IsAlive=false分支不Join；端口此前已Join
+的完成IHS只释放对象，不重复Join。结果框可被新的安全码框替换，不能因此提交旧结果。
+异步actor等待期间继续旧SDK bridge及本地退出，暂缓后续manager Update以保持原同步
+Join前后的消费顺序。旧SDK的会话材料与新票据分开，旧启动不确认新请求Established。
+持有旧worker不等于旧测试页仍在显示；重试等待时Unauthorized可进入授权页。
+
+Qt/线程端点及初始worker阶段均有provider；不从未执行的线程收尾推断自然phase或
+密钥竞争，不将受控native验证称为真实Steam/SDR或Switch验收。
+
+## D-A092：已退休结果框不能继续消费旧确认命令
+
+Evidence：公网协议参考§11.3“自定义结果框的finished、hidden与端口异步命令”。
+原CPanelDialog的hideEvent只发hidden/deleteLater；PIN或控制错误替换结果框不会触发
+OnNetworkTestComplete。原slot无panel guard不代表隐藏会产生finished。四次正常native
+程序中，结果页命令被延后至控制回调之后交付，旧实现保存旧统计，连接前测试另发开流。
+
+Decision：消费TEST_CONFIRM前，要求旧完成结果的owner仍有效；test_waiting_pin或
+test_failure_pending已退休它时忽略该命令，保留当前输入/待确认错误与Test清理归属。
+Unauthorized保留结果框时仍可确认。手动结果确认已切到STOPPING时，同generation、
+更高revision的Failed快照恢复错误页；真正取消的generation fence保持生效。
+
+这是独立UI/协议actor之间的所有权映射；原Qt同GUI线程activate为显式provider，未证明
+自然Qt排队竞争。没有改变线上取消、重试期限、配对码或安全码协议，也不修改首页版式。
+
+## D-A093：重新授权撤销旧票据准入，旧媒体不能确认新请求
+
+Evidence：公网协议参考§11.3“成功票据之后的重新授权与旧媒体初始化”。固定官方shell
+40组控制程序与8组Panel准入程序证明：成功之后的Unauthorized仍进入4并以原编号
+授权/续接；同批旧票据被撤销，已有Test保持旧owner。native旧程序均正常退出并检出差异。
+
+Decision：进入授权同时清除协议ticket/lastLaunchHasTicket和应用待消费材料，保持
+request_id、目标、已加密security PIN、自动授权上下文和已有Test/SDK。新授权成功回5，
+只有新有效票据进入6。应用移除媒体初始化时的StreamingEstablished调用；旧异步BInit
+即使在授权成功之后才完成，也不能代替新票据。保留公共API以兼容外部调用者。
+
+原Qt/线程/发送等provider边界、native的构造观察端点和3组旧SDK-ready的端口异步映射
+分别说明，不能推广为自然竞争、真实SDR或Switch验收。没有改变配对码来源、安全码
+用途、重试期限、取消规则或首页UI。
+
+## D-A094：真实连接工厂保留共享控制回调及可选语义
+
+Evidence：公网参考§9.4“真实WebSocket工厂与共享控制owner的回调边界”。真实
+remote_connection工厂重建的adapter表遗漏五个新回调；直接sl_remote/替换工厂测试
+未覆盖此层。同身份、同CM连接的共享请求等待与legacy成功，将问题缩小到生产接线；
+原control_rx=0只能说明该回调没被调用，撤回将其推广为云端无控制回包的解释。
+
+Decision：补齐control_packet、disconnecting、begin_pairing、prepare_pairing和
+abort_pairing的工厂adapter，转发原应用context/参数/返回值。所有新增可选回调仅在
+应用实际提供时安装；prepare_pairing的NULL策略分支必须保持。保留旧独立probe/bridge
+的legacy路径，不为修复回调接线改变线上报文、选路或超时。真实工厂的受控回放与
+实际CM控制验收分别记录，不将任何一项当作完整热点媒体/loader验证。
+
+## D-A095：按用户要求统一使用8.8.8.8解析Switch域名
+
+Evidence：用户要求“先改成用8.8.8.8做dns”。D-A075的统一getaddrinfo入口已覆盖
+目录、CM、独立信令桥、SDR配置、SDK主机名、封面及更新器。此前热点日志的普通A
+记录与TLS超时、开发机不同时段的成败及MSS对照，尚不证明DNS或MTU是根因。
+
+Decision：Switch每次查询仍读取当前nifm接口及错误状态，但统一把DNS配置选为
+单一8.8.8.8:53，不追加DHCP DNS或回退系统域名缓存。复用原有UDP/TCP截断恢复、
+3秒上限、取消和socket清理；数字地址保持原转换路径。日志记录实际查询DNS、解析
+结果及后续HTTPS连接地址。该选择是用户指定的解析器对照，不是逆向出的Valve策略，
+不改变HTTP authority/SNI/证书校验、认证、MSS或媒体选路。
+
+## D-A096：把手柄注册和输入门控证据写入有界持久日志
+
+Evidence：435017e真机热点记录确认sns_relay、鉴权及779帧显示；用户观察热点所有
+按键无效，并现场验证同版本LAN输入正常。已有持久stats只含HID队列占用，ihs_log
+过滤了枚举/打开/StartInputReports，无法据这些记录断言主机完成或未完成注册。
+共享输入代码不证明不同承载/时延条件下的握手与报告交付也成功。
+
+Decision：在原owner的连接采样点保存HID提交/发送/ACK和门控/本地采集/最近报告值，
+保留每秒最多8条指定HID生命周期记录。只做内存读取和既有非阻塞日志入队，不新增
+线程或socket，不开放逐报告/feature正文/序列号日志，不改变注册或报告协议。
+attached只说明session接入，ACK包括设备生命周期包/分片，seq/buttons是本地提交值，
+均不能独自充当主机执行输入的证明。普通构建继续排除这些记录。
+
+
+## D-A097：多公共 DNS 与跨网段 HTTPS 候选兼容策略
+
+Evidence：822c746真机热点日志`session-00000000001792735374-089247912-00000.log`
+及`session-00000000001792735408-088484084-00000.log`记录8.8.8.8有A应答，但目录
+请求对88.221.83.200、88.221.83.187及2.17.107.128未完成TCP，最终curl=28/http=0。
+435017e先前热点经104.110.240.106取得目录并完成sns_relay媒体。用户另观察同段地址
+成败相关，要求多公共DNS、IP去重及跨段优先尝试。这些证据不证明DNS、MTU或同段
+路由是根因；撤回将单一8.8.8.8实验当成稳定恢复方案的任何推广，D-A095只保留实验史。
+提供器地址依据Google、Cloudflare、Quad9、AliDNS及DNSPod官方文档（链接见
+`dns_config.c`）。相关现象与兼容决策不能作为固定官方shell的逆向结果。
+
+Decision：Switch既有解析worker上并行发往五家提供器，每家最多4个A，整个查询
+共用3秒deadline，关闭所有UDP/TCP句柄再返回。堆上保存有界查询状态，不新增线程。
+合并最多20个唯一IPv4，以/24分组轮询；同段其他IP仍保留，不建立网段黑名单。
+所有getaddrinfo域名使用同一策略，不跨接口缓存，不回退DHCP或Horizon缓存。
+
+实际HTTPS owner使用共享http_route：保留URL/Host/SNI/CA校验，通过CURLOPT_RESOLVE
+固定单个候选，失败后在移出multi的同一easy上替换地址、强制新连接再加入。每候选
+connect（含TLS）最多4秒，轮换共用90秒预算，不按候选刷新；下载/正文仍受owner
+原期限或低速规则约束。只轮换未收到HTTP状态/正文的连接、TLS、收发或超时失败，
+不重放HTTP错误、半截正文或已有重定向链；证书失败仍只可换候选，绝不关闭校验。
+成功的CM CONNECT_ONLY句柄保持multi归属，继续原WebSocket升级与控制协议。
+
+目录、共享/独立CM、启动SDR缓存、SDK SDR配置、封面和更新器接入同一helper；SDK
+UDP/STUN仅接入统一DNS，不将HTTPS规则施加给UDP。SNS准备阶段DNS失败仍交付
+Completed(false)，不能变成cannot_start而跳过原计数、重试及realm切换。候选轮换是
+一次HTTP请求内部的本地兼容策略，不改变配对授权码、安全码、控制报文、媒体选路、
+MSS、官方配置重试或SDK收包策略。桌面默认不启用；受控测试显式启用相同helper。
+
+验证边界：本地真实DNS/TLS故障可证明排序、换地址、证书检查和资源清理；不能据此
+宣称热点恢复、真实Valve链路稳定、HID有效或Switch loader生命周期通过。
+
+
+## D-A098：跨 owner 限制 DNS 并发及本机资源失败重试
+
+修订：下文“排队共用3秒期限”被D-A101撤回；资源上限和本机错误重试保留。
+
+Evidence：6e427e9真机启动`session-00000000001792738058-092389388-00000.log`
+显示更新器先启动5个DNS查询，随后Steam缓存/目录各5个查询在3–4ms内全部返回-1，
+不符合3秒网络查询到期。23秒后原目录重试成功并完成CM/订阅。旧日志未记录begin的
+errno，不能断言ENOBUFS或系统根因。`platforms/switch/system.c`明确设置媒体UDP默认
+接收缓冲1MiB；SDK socket.h说明该值用于socket初始化。每个owner各自开5个会放大
+进程socket/缓冲需求，本机资源竞争是待验证解释；已确认缺少跨owner并发约束。
+
+Decision：进程同时最多5个DNS wire query，现有worker在原3秒总期限内排队，查询
+完成或取消先关闭socket再归还slot。使用原子计数，不新增线程或锁等待；stop/join之后
+shutdown同时检查scope及slot归零。DNS UDP单独best-effort请求8KiB SO_RCVBUF/SO_SNDBUF，
+不修改媒体服务默认值；不将请求大小当作系统已接受的证明。ENOBUFS/ENOMEM/EMFILE/
+ENFILE/EAGAIN启动失败每50ms重试，仍不能延长总期限。记录实际begin的started/os、
+最终启动次数/errno与排队状态，避免把本机启动失败当成DNS服务器否定应答。
+
+受控双owner测试检查进程最多5个额外fd、共享期限和取消后归零；ENOBUFS注入检查
+短暂资源不足恢复后仍发出查询。此类注入与本机fd检查不是Switch服务根因证明；实际
+Switch启动结果独立记录在Issue #58，不宣称已验证热点或HID恢复。
+
+
+## D-A099：polled 云端 owner 的 DNS 使用可取消、可 join 的请求 worker
+
+修订：下文“每查询3秒预算”在D-A101明确为准入后wire预算；排队不再消耗它。
+
+Evidence：7a30734真机热点`session-00000000001792738705-089598912-00000.log`与
+返回LAN的`session-00000000001792739061-089105172-00000.log`各记录两次cloud_update
+约3004ms。IHS_ClientUpdate先执行session回调，再收UDP；http_route_begin同步等待
+DNS整个3秒。LAN首次discovery response在启动6.158秒，而updater独立线程的请求
+并没有阻止renderer每帧继续drain runtime events。撤回将curl multi一概称作“DNS也
+不阻塞owner”的推论；D-A097/D-A098只限制资源/时间，未消除该等待。无法仅凭更新
+弹窗先后断言GitHub请求阻塞了LAN。
+
+Decision：目录/CM（含独立bridge）、启动SDR缓存及SDK配置的polled HTTP owner用
+begin_async/poll启动归属于单个request的DNS worker；worker仅解析，不接触CURL。
+完成以release/acquire发布，owner在done之后join，再在owner线程安装RESOLVE并加到
+multi。每个request同时最多一个job，整个进程仍共用5个wire slot和每查询3秒预算。
+封面/更新器原有worker仍同步解析，不为它们再开线程。停止请求先设置job取消标志，
+解析循环响应取消，close sockets/remove scope后结束；owner必须join/free，再销毁
+DNS全局资源、IHS或socket服务。没有detach或返回hbmenu后存活的后台任务。
+
+保留原90秒HTTPS候选预算、证书检查、正式配置完成计数/realm和官方10秒Connecting
+期限。较早两次公网请求在该10秒边界停止、SDK仍Connecting/FindingRoute且IHS无包；
+尚不证明DNS暂停是失败的唯一原因，不盲延长协议期限。新增有界update_notice可记录
+版本通知/弹窗打开关闭；不改变弹窗或首页布局。桌面真实DNS/TLS fixture分别验证
+异步推进、成功join、DNS无响应期间owner可继续工作、取消后join及socket/scope归零；
+真实Switch响应/loader清理仍须单独取证。
+
+## D-A100：已准入的云端主机状态参与同一结束游戏确认
+
+Evidence：同一7a30734热点日志显示187.799秒发可靠StopRequest，247.808秒才进入
+清理，247.903秒完成，之后显示“未能确认游戏已结束”。等待60秒与清理约0.1秒不同。
+成功会话route=sns_relay，期间cloud status每约20秒到达，但cloud_observed只发布
+presence；只有discovered_status的私有IP/client/instance条件调用launch/end-game watch。
+remote_protocol.c::status已从同一CMsgRemoteClientBroadcastStatus解析games_running的
+present位、值以及timestamp的present位、值。旧持久日志没记这些字段，不能据在线
+通知断言主机实际上已报告无游戏，亦不将可靠ACK当作游戏进程结束证据。
+
+Decision：将准入后的cloud status与UDP status交给同一helper。都匹配活动stream的
+client_id/instance_id；UDP继续要求已选IP及27036，云端不要求私有IP是可达源地址。
+沿用原timestamp基线、重复/陈旧过滤、两条明确无游戏状态、明确host-stop与60秒上限；
+不因ACK/Desktop/视频变化提前确认。记录结束请求期间消费的状态字段/empty计数，
+补齐cloud_host的present/running/timestamp。真实callback测试覆盖不同instance、重复
+时间戳、缺失字段及两条新状态；这是准入/确认逻辑验证，不是真实主机结束验收。
+
+## D-A101：DNS 批次公平准入，排队不消耗 wire 期限
+
+修订：D-A102撤回整批FIFO及收齐后才开始TLS的实现；保留排队不消耗wire期限的原则。
+
+Evidence：5d28638热点冷启动日志
+`session-00000000001792740555-090190516-00000.log`及
+`session-00000000001792740633-089276148-00000.log`明确记录部分AliDNS/DNSPod查询
+`status=2 starts=0 start_os=0`；其他晚启动查询也在同一lookup的约3000ms边界被收回。
+`dns_policy.c`将总期限起点放在争取全局5个slot之前。D-A099增加同时解析的owner后，
+无响应的早期提供器可占满slot，后续提供器尚未发送就耗尽期限。撤回D-A098“共用原3秒
+总期限仍能完整尝试各提供器”的隐含假设；LAN快速应答的启动通过不能排除这个热点回归。
+三次热点目录的已取得候选也都在HTTP之前超时，`tcp_ms=0 tls_ms=0`，没有进入CM连接。
+不能据漏查证明其他网段可用，更不能将全部超时断言为DNS、MTU或本次异步改动导致。
+
+Decision：按lookup批次FIFO准入；一个批次内部仍并行查询五家，进程仍最多5个wire
+socket。准入后共用3秒wire/本机资源重试预算；等待准入单独有48秒上限（最多16个scope
+各3秒），后到请求不插队。若无其他解析，行为与原3秒查询一致；同时三个慢lookup
+可以依次耗时约3/6/9秒。仅worker等待，每毫秒检查请求取消/全局停止；不在renderer、
+runtime poll或输入路径等待，不新增线程，不回退系统缓存。取消时移除自己的排队节点，
+活跃批次先close所有socket再交还准入权；join之后shutdown检查scope、slot、队列和
+active均为空。begin诊断补queue_ms；原90秒HTTPS候选预算包括排队，不因换候选刷新。
+
+验证：真实UDP夹具先以五个无响应查询占满slot，再排入五个延迟应答查询，同时取消
+第三个排队owner；确认后一批五家都实际发包、得到地址、fd上限5及取消/清理成立。
+同一新夹具链接5d28638原DNS对象会断言失败，修订对象通过。该对照仅证明排队缺陷
+及修复，不证明Valve热点路径、真实主机结束确认或Switch loader生命周期通过。
+
+## D-A102：逐提供器限速查询，首个地址立即连接，迟到地址继续补充
+
+Evidence：16cd183热点`session-00000000001792741661-088940696-00000.log`显示启动
+三个lookup整批等待约0/2941/5941ms，目录约9秒才首次连接。代码仍在全部提供器结束
+后才发布DNS结果；一个无响应提供器就能推迟已有快结果。撤回D-A101将整批FIFO作为
+最终修复的决策：它修了未发出即到期，却引入不必要的批次等待。本轮目录多地址超时、
+重试后约90秒才收到在线通知；这不证明等待全部DNS是全部延迟的原因。
+
+Decision：每个提供器独立排队，进程最多5个wire查询；初始启动按25ms间隔限速，
+完成即归还slot，FIFO避免新请求抢占既有等待者。每提供器从首次尝试起最多3秒，
+本机资源不足仍50ms重试且不刷新该预算；排队/收集另有51秒防失控上限。3秒是本地
+兼容策略的收集上限，不是逆向出的Valve常量，不代表普适最优阈值，更不是TLS准入门槛。
+
+每个验证成功的提供器立即发布当前合并列表。HTTP请求自有可取消/join DNS worker；
+首个有效IPv4即可由CURL owner开始真实TLS，其他提供器并行补地址。阻塞的封面/更新器
+worker也临时持有该DNS job，避免其TLS阻止后续DNS收包；完成/失败/取消均stop/join，
+无detach或后台孤儿。DNS线程只复制结果到mutex保护的快照，绝不访问CURL。owner在
+首次连接或失败移出multi后选择地址；不在活动传输中修改RESOLVE，不重新编号已尝试
+的前缀。选择新候选时优先尝试次数少的/24，所有同段后备仍保留。已知地址耗尽但DNS
+仍在进行时保持pending，由原owner下一tick继续poll，不复用失败地址或提前宣告失败。
+TLS/HTTP成功后取消剩余收集；CM成功句柄保留multi归属及RESOLVE生命周期。90秒总
+候选预算、HTTP错误/半截正文不重放、证书验证及Steam协议计数/超时保持原语义。
+
+受控真实DNS/TLS夹具包括：快提供器+迟到提供器+静默提供器，快地址成功必须先于
+静默提供器3秒结束；第一地址TCP拒绝而第二地址迟到时继续请求并成功；既有错误
+证书、CONNECT_ONLY、HTTP错误/半截正文及取消/join验证继续适用。该证据不能替代
+真实热点连通性或Switch生命周期结果。
+
+## D-A103：辅助 UDP socket 单独使用小缓冲，避免吞占媒体资源
+
+Evidence：同一16cd183热点日志五次主机成功回包之后，certificate_installed及
+startup_imported均成功，随后立即`sns_start failed_stage=udp_socket detail=105`。
+固定SDK的socketthread.cpp在socket()失败处产生该分类；工具链errno.h的105为ENOBUFS。
+失败先于SDK设置relay socket的256KiB收发缓冲，不能靠后置setsockopt修复创建失败。
+`system.c`沿用D-043的UDP RX默认1MiB；runtime调试UDP和gns_libnx原wake pair未覆盖
+该默认。DNS虽限制5个查询，并没有限制这些长期存活的辅助socket缓冲。
+
+libnx v4.12.0官方源码
+[socketInitialize](https://github.com/switchbrew/libnx/blob/v4.12.0/nx/source/runtime/devices/socket.c)
+将配置交给BSD，
+[_bsdGetTransferMemSizeForConfig](https://github.com/switchbrew/libnx/blob/v4.12.0/nx/source/services/bsd.c)
+按缓冲配置与sb_efficiency建立有界transfer-memory池。这是平台资源约束，Linux上的
+socket数/内存检查不能证明Switch有同样余量。本轮没有逐fd实际buf或内核池统计，故
+不将哪一个socket占满资源、是否有内核延迟回收或DNS为唯一诱因写成已证结论。
+
+Decision：debug UDP、SDK双向wake pair及DNS都显式请求8KiB RX/TX；创建每一个辅助
+socket后、再创建下一个之前配置完成。配置失败关闭该fd并保留errno，不留下媒体大小
+的辅助socket。媒体默认、IHS收流缓冲及SDK relay的256KiB设置保持原行为；不盲目
+扩大所有socket默认或缓冲池。wake pair移入同一可在主机编译的生产源文件，测试真实
+双向唤醒、两次创建/关闭、实际buf读回及每个socket/缓冲配置失败后的fd归零。
+debug启动日志读回实际RX/TX，不以setsockopt返回0推断实际大小；真实Switch SDK
+socket创建/串流结果仍单独记录，不据本地主机测试宣称ENOBUFS已彻底消除。
+
+## D-A104：网络依赖准备、媒体准入与显式启动
+
+Evidence：`4eb9804` 热点 `session-00000000001792745188-089033100-00000.log` 的证书、
+配置和 SDK 创建成功；IHS 开始十秒等待时，本次流的独立信令连接才开始重新取得目录。
+约第9.5秒才尝试 CM TLS，第十秒播放器结束。§12.2 的官方证据确实将 bridge/SDK 寻路包含
+在十秒内，不能篡改该证据来解释移植行为。项目 HTTP 兼容策略却允许九十秒候选尝试，
+这两个本地策略的组合不合理。撤回将现有初始化调度作为完整可用性保证的推断；上一轮
+ENOBUFS 与这次信令未就绪是不同的已观察失败阶段。
+
+Decision：显式分开 BInit、应用准备完成、媒体启动。配置/证书完成才创建独立 bridge；
+应用再等待该流 CM service 首次就绪，才创建 IHS 并 Connect，随后显式 start_session 允许
+下一轮 SDK 创建连接。准备阶段共享九十秒上限，不在各层重置；IHS 开始后的十秒及 SDK
+20000ms各自保留。runtime 始终 pump，不靠跳过一轮 Update 维护跨模块时序。已准入状态
+锁存，后续 CM 失联不再重复创建/计时；不合并发现与流 session，不改密钥或线上协议。
+这是明确的项目行为差异，取代旧端口紧随 BInit 开始 IHS 的应用准入规则，而非新的官方
+逆向结论。依赖图、资源归属和测试边界见 NETWORK_INITIALIZATION.md。
+
+## D-A105：统一 HTTPS 生命周期、在途 DNS 共享及引导候选调度
+
+Evidence：启动目录、配置和封面/更新各自持有 HTTP/DNS；同域名会创建多份五提供器查询。
+多个模块分别调用 curl global init/cleanup，SNS 自己的配置下载还依赖别的 owner 先初始化。
+固定 Switch curl 7.69 的全局生命周期没有跨模块串行边界。上述是源码中的所有权缺陷/风险，
+不宣称其已在热点上产生可归因的全局初始化竞态。热点目录九次各四秒 TLS 失败的串行累加
+则由同一日志直接观察到；首答提早发布不能消除这种累加。
+
+Decision：应用在任何 worker 前取得根 curl 引用；所有生产 HTTP owner 使用同一加锁引用
+管理，最后释放才 cleanup；SNS 下载独立取得引用。在进行的同域名 DNS 共享查询对象，
+请求只持订阅并保留自己的候选/超时/取消；最后订阅 stop/join，不缓存历史 IP/CM。
+目录 GET、WebSocket 前 TLS 由一个 bootstrap owner 管理一个 DNS 计划和最多三个独立
+候选，每250ms有界增开；首个地址立即开始，不等全部 DNS。候选有私有正文及 RESOLVE，
+首个完成的响应胜出，所有其他资源回收；先观察到 HTTP 头而正文未完成时也立即锁定该响应、
+关闭其他候选并停止增开，错误响应/部分正文不重放。TLS 胜者保持原 multi
+归属。配对/开流/信令/HID 不并行。桌面普通连接仍为单候选；不是用扩大超时替代调度。
+
+验证边界：真实本地 DNS/TLS 夹具覆盖停滞 TLS、错误证书、后续地址成功、迟到 DNS、
+独立正文、HTTP/半截正文不重放、CONNECT_ONLY 胜者读写及取消。全局引用夹具覆盖失败
+初始化、八线程8000次持有/释放、最后 owner 清理及再次初始化。SDK 准备夹具覆盖慢于
+十秒仍不创建 SDK 句柄、九十秒准备上限、准入锁存及取消销毁；成功证书/云端就绪是明确
+provider，不冒充真实公网或 Switch 互操作证据。原官方 BInit/Connection 等比较只验证其
+声明的局部边界；新的应用准入区别单独测试和记录。
+
+D-A105 的失败准入补充：root curl 初始化失败只使 HTTP owner 不可用，不退出应用或阻止
+本地 IHS。实际整应用故障注入强制所有 acquire 返回 false，连续两次启动真实 renderer、
+runtime 和本地 IHS client 后正常退出；此前 root 失败直接返回的版本被同一夹具拒绝。
+该证据限于桌面失败准入与清理，不外推 Switch loader 生命周期。
+
+
+## D-A106：网络缓存使用统一的可恢复文件替换
+
+Evidence：Switch `4eb9804` 保存记录连续出现 `sns_config_cache event=save_failed`。
+缓存 owner 直接 `rename(tmp, existing)`，而更新器的既有 `replace_file` 和 D-043 配对事务修正已记录
+Horizon 不覆盖已有目标；认证/语言/设置文件也已有对应可回滚方案。本次未记录该 syscall
+errno，故只将“此路径不兼容目标存在时的平台语义”作为源码结论，不能断言它是全部保存
+失败或本轮媒体失败的原因。内存配置在保存失败时仍更新，这一行为保留。
+
+Decision：抽取网络文件 owner 共用的 `file_replace`，更新器、封面和 SDR 配置使用相同
+替换语义。先尝试普通 rename；只有 EEXIST/ENOTEMPTY 才把完整旧文件移为 `.old`，
+发布失败回滚并保留原始错误，无法回滚的完整备份保留供恢复；缓存加载在主文件缺失时
+恢复备份。不通过删除有效配置换取成功，不声称两次 rename 整体原子；缓存仍无新增TTL。
+夹具模拟目标存在即 EEXIST、第二次发布失败以及中断后从备份恢复，连续两个 owner 核对
+内存/磁盘与临时文件清理；Linux 普通 rename 成功不能覆盖这项平台验证。
 ## D-063：Switch 六轴传感器由 libnx 采样、经 SDL HID 通道上报（2026-10-22）
 
 本条的 libnx 采样和轴向决定保留；wire flags、复制长度及 Host 消费条件由

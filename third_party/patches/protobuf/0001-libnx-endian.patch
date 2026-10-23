@@ -1,0 +1,13 @@
+--- a/src/google/protobuf/stubs/port.h
++++ b/src/google/protobuf/stubs/port.h
+@@ -57,7 +57,9 @@
+ #pragma runtime_checks("c", off)
+ #endif
+ #else
+-#ifdef __APPLE__
++#if defined(__SWITCH__)
++#include <sys/endian.h>
++#elif defined(__APPLE__)
+ #include <machine/endian.h>  // __BYTE_ORDER
+ #elif defined(__FreeBSD__)
+ #include <sys/endian.h>  // __BYTE_ORDER

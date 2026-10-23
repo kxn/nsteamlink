@@ -1,3 +1,4 @@
+#include "fixture_cleanup.h"
 /* Production application admission/facts/event consumer + runtime + actual
  * client/session UDP. Endpoint, authorized identity and peer responses are
  * controlled fixtures; no real Steam, Qt or Switch is exercised. */
@@ -14,6 +15,56 @@
 #include <poll.h>
 #include <unistd.h>
 static uint16_t peer_port;
+static atomic_bool service_error_pending, service_error_delivered;
+static atomic_uint session_joins, session_destroys, result_polls;
+void __real_IHS_SessionThreadedJoin(IHS_Session *);
+void __wrap_IHS_SessionThreadedJoin(IHS_Session *s) {
+    __real_IHS_SessionThreadedJoin(s);
+    atomic_fetch_add(&session_joins, 1);
+}
+void __real_IHS_SessionDestroy(IHS_Session *);
+void __wrap_IHS_SessionDestroy(IHS_Session *s) {
+    __real_IHS_SessionDestroy(s);
+    atomic_fetch_add(&session_destroys, 1);
+}
+void __real_IHS_SessionGetNetworkTestResult(IHS_Session *, IHS_NetworkTestResult *);
+void __wrap_IHS_SessionGetNetworkTestResult(IHS_Session *s, IHS_NetworkTestResult *out) {
+    atomic_fetch_add(&result_polls, 1);
+    __real_IHS_SessionGetNetworkTestResult(s, out);
+}
+typedef struct control_update_provider {
+    IHS_Client *client;
+    void (*session)(void *), (*expire)(void *);
+    void *ctx;
+} control_update_provider;
+static void control_session(void *ctx) {
+    control_update_provider *p = ctx;
+    if (p->session)
+        p->session(p->ctx);
+    if (atomic_exchange(&service_error_pending, false)) {
+        assert(IHS_ClientHandshakeFail(p->client, IHS_AuthorizationFailed));
+        atomic_store(&service_error_delivered, true);
+    }
+}
+static void control_expiry(void *ctx) {
+    control_update_provider *p = ctx;
+    if (p->expire)
+        p->expire(p->ctx);
+}
+bool __real_IHS_ClientUpdate(IHS_Client *, void (*)(void *), void (*)(void *), void *);
+bool __wrap_IHS_ClientUpdate(IHS_Client *c, void (*session)(void *), void (*expire)(void *),
+                             void *ctx) {
+    control_update_provider p = {c, session, expire, ctx};
+    return __real_IHS_ClientUpdate(c, control_session, control_expiry, &p);
+}
+void __real_IHS_ClientSetDiscoveryCallbacks(IHS_Client *, const IHS_ClientDiscoveryCallbacks *,
+                                            void *);
+void __wrap_IHS_ClientSetDiscoveryCallbacks(IHS_Client *c,
+                                            const IHS_ClientDiscoveryCallbacks *callbacks,
+                                            void *context) {
+    __real_IHS_ClientSetDiscoveryCallbacks(c, callbacks, context);
+    test_discovery_observed(c, callbacks, context, peer_port);
+}
 /* Main/test thread only: make the documented try-lock miss deterministic. */
 static bool inject_facts_busy;
 static unsigned facts_busy_calls;
@@ -45,7 +96,15 @@ static void control(int fd, const struct sockaddr_in *to, unsigned local, unsign
     memcpy(wire + 13, body, size);
     assert(sendto(fd, wire, size + 13, 0, (const void *)to, sizeof(*to)) == (ssize_t)(size + 13));
 }
-static void one(bool manual, bool press_a) {
+static void one(bool manual, bool press_a, unsigned mode) {
+    /* 0 auth refusal; 1 late UDP failure; 2 owner-delivered service failure;
+     * 3 connect PIN; 4 Unauthorized; 5 Busy; 6 duplicate Success;
+     * 7 media failure prompt then owner-delivered service error. */
+    atomic_store(&session_joins, 0);
+    atomic_store(&session_destroys, 0);
+    atomic_store(&result_polls, 0);
+    atomic_store(&service_error_pending, false);
+    atomic_store(&service_error_delivered, false);
     char directory[] = "/tmp/nsl-test-failure-XXXXXX";
     assert(mkdtemp(directory));
     assert(!setenv("NSL_DATA_DIR", directory, 1));
@@ -82,10 +141,16 @@ static void one(bool manual, bool press_a) {
     assert(sl_ui_take_command(&a.ui, &cmd) && cmd.type == SL_CMD_STREAM && cmd.test_only == manual);
     assert(command(&a, &cmd));
     bool requested = false, handshake = false, refused = false, prompt = false, ack = false,
-         progress = false, done = false;
+         progress = false, done = false, test_started = false, late_sent = false;
     bool busy_injected = false;
     facts_busy_calls = 0;
     unsigned id = 0, cancels = 0;
+    unsigned auth_cancels = 0, prompt_polls = 0, cancels_before_ack = 0;
+    uint64_t late_sent_at = 0;
+    bool fatal = mode <= 2 || mode == 7;
+    char initial_error[192] = {0};
+    uint8_t good_reply[256];
+    size_t good_reply_size = 0;
     uint64_t prompt_at = 0, deadline = sl_system_now() + 8000;
     struct sockaddr_in client_address = {0};
     while (!done && sl_system_now() < deadline) {
@@ -100,18 +165,34 @@ static void one(bool manual, bool press_a) {
             busy_injected = true;
         }
         sl_runtime_facts facts;
-        if (failed_view && sl_runtime_read_facts(a.runtime, &facts)) {
-            assert(facts.failed && facts.test_failure_pending &&
-                   a.lifecycle.phase == SL_APP_STARTING);
-            assert(a.ui.page == SL_ERROR && a.ui.cancel_only_error);
-            char expected[16];
-            snprintf(expected, sizeof(expected), "%u", peer_port);
-            assert(strstr(a.ui.error, expected));
+        bool ready_prompt =
+            fatal ? failed_view
+                  : test_started && late_sent && !ack && sl_system_now() - late_sent_at >= 200;
+        if ((mode == 1 || mode == 2) && late_sent && !ack &&
+            sl_runtime_read_facts(a.runtime, &facts) && facts.failed)
+            assert(facts.test_failure_pending); /* Old generic failure auto-stopped here. */
+        if (ready_prompt && sl_runtime_read_facts(a.runtime, &facts)) {
+            if (!fatal) {
+                assert(!facts.failed && !facts.test_failure_pending &&
+                       a.lifecycle.phase == SL_APP_STARTING);
+                assert(a.ui.page == (mode == 3 ? SL_PIN : SL_NETWORK_TEST));
+            } else {
+                assert(facts.failed && facts.test_failure_pending &&
+                       a.lifecycle.phase == SL_APP_STARTING);
+                assert(a.ui.page == SL_ERROR && a.ui.cancel_only_error);
+                if (!mode || (mode == 7 && !late_sent)) {
+                    char expected[16];
+                    snprintf(expected, sizeof(expected), "%u", peer_port);
+                    assert(strstr(a.ui.error, expected));
+                }
+            }
             if (!prompt) {
                 prompt = true;
                 prompt_at = sl_system_now();
+                prompt_polls = atomic_load(&result_polls);
+                snprintf(initial_error, sizeof(initial_error), "%s", a.ui.error);
             }
-            if (!progress && sl_system_now() - prompt_at >= 30) {
+            if (!mode && !progress && sl_system_now() - prompt_at >= 30) {
                 CMsgRemoteDeviceStreamingResponse p = CMSG_REMOTE_DEVICE_STREAMING_RESPONSE__INIT;
                 p.request_id = id;
                 p.result = k_ERemoteDeviceStreamingInProgress;
@@ -120,17 +201,36 @@ static void one(bool manual, bool press_a) {
                 test_discovery_send(fd, &client_address, body, size);
                 progress = true;
             }
-            if (sl_system_now() - prompt_at >= 120) {
-                assert(!cancels && progress);
-                sl_ui_action(&a.ui, SL_RETRY, 0);
-                assert(!sl_ui_take_command(&a.ui, &cmd));
-                sl_ui_action(&a.ui, press_a ? SL_ACCEPT : SL_BACK, 0);
+            if (mode == 7 && !late_sent && sl_system_now() - prompt_at >= 30) {
+                late_sent = true;
+                atomic_store(&service_error_pending, true);
+            }
+            bool replacement_ready =
+                mode != 7 ||
+                (atomic_load(&service_error_delivered) && cancels == 1 && view.control_error &&
+                 strcmp(view.error, initial_error) && !strcmp(a.ui.error, view.error));
+            if (sl_system_now() - prompt_at >= 120 && replacement_ready) {
+                assert(cancels == ((mode >= 1 && mode <= 3) || mode == 7 ? 1u : 0u));
+                if (mode == 7)
+                    assert(!strcmp(a.ui.layout.title, sl_tr(SL_T_CONNECT_FAILED)));
+                assert(mode || progress);
+                if (fatal || mode == 3)
+                    assert(atomic_load(&result_polls) == prompt_polls);
+                else
+                    assert(atomic_load(&result_polls) > prompt_polls);
+                if (fatal) {
+                    sl_ui_action(&a.ui, SL_RETRY, 0);
+                    assert(!sl_ui_take_command(&a.ui, &cmd));
+                }
+                assert(atomic_load(&session_destroys) == (!mode || mode == 7 ? 1u : 0u));
+                cancels_before_ack = cancels;
+                sl_ui_action(&a.ui, fatal && press_a ? SL_ACCEPT : SL_BACK, 0);
                 assert(sl_ui_take_command(&a.ui, &cmd) && cmd.type == SL_CMD_CANCEL);
                 ack = true;
                 assert(command(&a, &cmd));
             }
         }
-        if (ack && cancels == 1 && a.lifecycle.phase == SL_APP_IDLE &&
+        if (ack && cancels + auth_cancels == 1 && a.lifecycle.phase == SL_APP_IDLE &&
             a.ui.page == (manual ? SL_NETWORK_SETTINGS : SL_HOME))
             done = true;
         struct pollfd p = {.fd = fd, .events = POLLIN};
@@ -172,15 +272,20 @@ static void one(bool manual, bool press_a) {
                 assert(!IHS_CryptoSymmetricEncrypt(key, 32, store.secret, 32, cipher, &capacity));
                 reply.encrypted_session_key = (ProtobufCBinaryData){capacity, cipher};
                 size = cmsg_remote_device_streaming_response__pack(&reply, body);
+                memcpy(good_reply, body, size);
+                good_reply_size = size;
                 test_discovery_send(fd, &from, body, size);
             } else if (tag == k_ERemoteDeviceStreamingCancelRequest) {
-                assert(ack);
+                assert(ack || (late_sent && ((mode >= 1 && mode <= 3) || mode == 7)));
                 CMsgRemoteDeviceStreamingCancelRequest *r =
                     cmsg_remote_device_streaming_cancel_request__unpack(NULL, size, wire + 16 + hs);
                 assert(r && r->request_id == id);
                 cmsg_remote_device_streaming_cancel_request__free_unpacked(r, NULL);
                 ++cancels;
                 assert(cancels == 1);
+            } else if (tag == k_ERemoteDeviceAuthorizationCancelRequest) {
+                assert(mode == 4 && ack && !auth_cancels);
+                ++auth_cancels;
             }
             continue;
         }
@@ -193,45 +298,67 @@ static void one(bool manual, bool press_a) {
                 control(fd, &from, wire[2], 5, 0, reply, sizeof(reply));
                 handshake = true;
             } else if (wire[13] == 1 && !refused) {
-                const uint8_t denied[] = {2, 8, 1, 16, 1};
-                control(fd, &from, wire[2], 5, 1, denied, sizeof(denied));
+                if (!mode || mode == 7) {
+                    const uint8_t denied[] = {2, 8, 1, 16, 1};
+                    control(fd, &from, wire[2], 5, 1, denied, sizeof(denied));
+                } else {
+                    const uint8_t accepted[] = {2, 16, 1};
+                    control(fd, &from, wire[2], 5, 1, accepted, sizeof(accepted));
+                }
                 refused = true;
-            } else
+            } else if (mode && mode < 7 && wire[13] == 8 && !test_started) {
+                test_started = true;
+                late_sent = true;
+                late_sent_at = sl_system_now();
+                if (mode == 2)
+                    atomic_store(&service_error_pending, true);
+                else if (mode == 6)
+                    test_discovery_send(fd, &client_address, good_reply, good_reply_size);
+                else {
+                    CMsgRemoteDeviceStreamingResponse p =
+                        CMSG_REMOTE_DEVICE_STREAMING_RESPONSE__INIT;
+                    p.request_id = id;
+                    p.result = mode == 1   ? k_ERemoteDeviceStreamingFailed
+                               : mode == 3 ? k_ERemoteDeviceStreamingPINRequired
+                               : mode == 4 ? k_ERemoteDeviceStreamingUnauthorized
+                                           : k_ERemoteDeviceStreamingBusy;
+                    uint8_t body[64];
+                    size_t n = cmsg_remote_device_streaming_response__pack(&p, body);
+                    test_discovery_send(fd, &client_address, body, n);
+                }
+            } else if (!mode || mode == 7)
                 assert(wire[13] != 8); /* Auth refusal must not reach the test producer. */
         }
     }
-    assert(done && requested && refused && prompt && ack && cancels == 1 && busy_injected &&
-           facts_busy_calls == 1 && !inject_facts_busy);
+    assert(done && requested && refused && prompt && ack && cancels + auth_cancels == 1 &&
+           (!fatal || (busy_injected && facts_busy_calls == 1 && !inject_facts_busy)));
     char stats[512];
     snprintf(stats, sizeof(stats), "%s/streaming_stats.bin", directory);
     assert(access(stats, F_OK) != 0);
     sl_runtime_destroy(a.runtime);
+    assert(atomic_load(&session_joins) == 1 && atomic_load(&session_destroys) == 1);
     close(fd);
-    DIR *dir = opendir(directory);
-    assert(dir);
-    struct dirent *entry;
-    while ((entry = readdir(dir))) {
-        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
-            continue;
-        char path[512];
-        snprintf(path, sizeof(path), "%s/%s", directory, entry->d_name);
-        assert(!unlink(path));
-    }
-    closedir(dir);
-    assert(!rmdir(directory));
-    printf("failure manual=%d acknowledge=%s: real application held ID through prompt/matching "
-           "InProgress, one matching cancel10 after ack, no save/retry/ordinary ticket, joined "
-           "cleanup and one injected facts-busy retry passed\n",
-           manual, press_a ? "A" : "B");
+    sl_fixture_remove_tree(directory);
+    if (mode)
+        printf("{\"mode\":%u,\"manual\":%s,\"before_ack\":%u,\"cancel10\":%u,\"cancel9\":%u,"
+               "\"clean\":true}\n",
+               mode, manual ? "true" : "false", cancels_before_ack, cancels, auth_cancels);
+    else
+        printf("failure manual=%d acknowledge=%s: real application held ID through prompt/matching "
+               "InProgress, one matching cancel10 after ack, no save/retry/ordinary ticket, joined "
+               "cleanup and one injected facts-busy retry passed\n",
+               manual, press_a ? "A" : "B");
 }
-int main(void) {
+int main(int argc, char **argv) {
     assert(!setenv("SDL_VIDEODRIVER", "dummy", 1));
     assert(!setenv("SDL_AUDIODRIVER", "dummy", 1));
     assert(!setenv("SDL_RENDER_DRIVER", "software", 1));
     assert(stream_media_init(NULL));
+    unsigned mode = argc == 2 ? (unsigned)atoi(argv[1]) : 0;
+    assert(argc <= 2 && mode <= 7);
     for (unsigned manual = 0; manual < 2; ++manual)
         for (unsigned a = 0; a < 2; ++a)
-            one(manual, a);
+            one(manual, a, mode);
     stream_media_shutdown();
     return 0;
 }

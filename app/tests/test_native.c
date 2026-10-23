@@ -4,6 +4,7 @@
 #include "platform/system.h"
 #include "platform/ui_renderer.h"
 #include "sdl_input.h"
+#include "ui/ui_events.h"
 #include "stream_settings.h"
 #include <SDL.h>
 #include <assert.h>
@@ -58,6 +59,21 @@ static uint64_t region_hash(SDL_Rect box) {
         }
     SDL_FreeSurface(s);
     return hash;
+}
+static unsigned chromatic_pixels(SDL_Rect box) {
+    SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(0, box.w, box.h, 32, SDL_PIXELFORMAT_RGBA32);
+    assert(s);
+    sl_gfx_rect region = {box.x, box.y, box.w, box.h};
+    assert(sl_gfx_readback(sl_media_gfx(), &region, s->pixels, (size_t)s->pitch * s->h, s->pitch));
+    unsigned count = 0;
+    for (int y = 0; y < s->h; ++y)
+        for (int x = 0; x < s->w; ++x) {
+            const unsigned char *p = (const unsigned char *)s->pixels + y * s->pitch + x * 4;
+            if (abs(p[0] - p[1]) > 2 || abs(p[1] - p[2]) > 2)
+                ++count;
+        }
+    SDL_FreeSurface(s);
+    return count;
 }
 static void tap(int x, int y) {
     SDL_Event e = {.type = SDL_MOUSEBUTTONDOWN};
@@ -230,6 +246,156 @@ int main(int argc, char **argv) {
     sl_ui_layout(&ui);
     stream_media_present();
     save_image("paired");
+    {
+        sl_ui_model saved = ui;
+        sl_runtime_event source = {.type = SL_EVENT_HOST,
+                                   .host = ui.store.registry.hosts[0],
+                                   .discovery_source = SL_DISCOVERY_LAN};
+        sl_ui_runtime_event(&ui, &source);
+        sl_ui_layout(&ui);
+        stream_media_present();
+        save_image("discovery-lan");
+        SDL_Rect icon = {0};
+        for (int i = 0; i < ui.layout.count; ++i)
+            if (ui.layout.controls[i].action == SL_SELECT_HOST && !ui.layout.controls[i].arg) {
+                const sl_control *tab = &ui.layout.controls[i];
+                icon = (SDL_Rect){tab->x - 40, 166, tab->w + 80, 48};
+                break;
+            }
+        assert(icon.w);
+        uint64_t lan = region_hash(icon);
+        source.discovery_source = SL_DISCOVERY_INTERNET;
+        sl_ui_runtime_event(&ui, &source);
+        sl_ui_layout(&ui);
+        stream_media_present();
+        save_image("discovery-internet");
+        uint64_t internet = region_hash(icon);
+        assert(lan != internet);
+        sl_runtime_event offline = {.type = SL_EVENT_HOST_OFFLINE, .host = source.host};
+        sl_ui_runtime_event(&ui, &offline);
+        sl_ui_layout(&ui);
+        stream_media_present();
+        save_image("discovery-offline");
+        uint64_t absent = region_hash(icon);
+        assert(absent != lan && absent != internet);
+        for (int paired = 0; paired <= 1; ++paired) {
+            for (int route = SL_DISCOVERY_NONE; route <= SL_DISCOVERY_INTERNET; ++route) {
+                ui = saved;
+                sl_runtime_event state = {.type = SL_EVENT_HOST,
+                                          .host = saved.store.registry.hosts[0],
+                                          .discovery_source = route};
+                sl_ui_runtime_event(&ui, &state);
+                ui.store.registry.hosts[0].paired = paired;
+                if (route == SL_DISCOVERY_NONE) {
+                    state.type = SL_EVENT_HOST_OFFLINE;
+                    sl_ui_runtime_event(&ui, &state);
+                }
+                if (route == SL_DISCOVERY_INTERNET && !paired)
+                    continue; /* Cloud discovery requires an already-authorized identity. */
+                sl_ui_layout(&ui);
+                stream_media_present();
+                char name[64];
+                snprintf(name, sizeof(name), "status-%s-%s",
+                         route == SL_DISCOVERY_LAN        ? "lan"
+                         : route == SL_DISCOVERY_INTERNET ? "internet"
+                                                          : "offline",
+                         paired ? "paired" : "unpaired");
+                save_image(name);
+            }
+        }
+        ui = saved;
+        sl_ui_runtime_event(&ui, &source);
+        ui.store.registry.hosts[0].paired = false;
+        sl_ui_layout(&ui);
+        stream_media_present();
+        save_image("discovery-unpaired");
+        ui = saved;
+        source.discovery_source = SL_DISCOVERY_LAN;
+        sl_ui_runtime_event(&ui, &source);
+        for (int i = 1; i <= 2; ++i) {
+            sl_runtime_event other = source;
+            other.host.id = 0;
+            other.host.client_id += i;
+            snprintf(other.host.address, sizeof(other.host.address), "10.10.10.%d", 40 + i);
+            snprintf(other.host.name, sizeof(other.host.name), "%s",
+                     i == 1 ? "客厅电脑" : "Gaming PC");
+            other.discovery_source = i == 1 ? SL_DISCOVERY_LAN : SL_DISCOVERY_INTERNET;
+            sl_ui_runtime_event(&ui, &other);
+            ui.store.registry.hosts[i].paired = i == 2;
+            if (i == 2) {
+                other.type = SL_EVENT_HOST_OFFLINE;
+                sl_ui_runtime_event(&ui, &other);
+            }
+        }
+        ui.focus = 10;
+        sl_ui_layout(&ui);
+        stream_media_present();
+        save_image("discovery-multiple");
+        sl_runtime_event cloud = source;
+        cloud.host.id = 0;
+        cloud.host.client_id += 3;
+        strcpy(cloud.host.name, "远程电脑");
+        cloud.discovery_source = SL_DISCOVERY_INTERNET;
+        sl_ui_runtime_event(&ui, &cloud);
+        ui.store.registry.hosts[3].paired = true;
+        ui.store.registry.selected = 3;
+        sl_ui_layout(&ui);
+        stream_media_present();
+        save_image("internet-paired");
+        sl_ui_action(&ui, SL_OPEN_SETTINGS, 0);
+        sl_ui_action(&ui, SL_OPEN_SETTINGS, 0);
+        sl_ui_action(&ui, SL_OPEN_HOST_SETTINGS, 0);
+        sl_ui_activate(&ui, 100);
+        assert(ui.page == SL_HOME && sl_ui_adding_host(&ui));
+        stream_media_present();
+        save_image("add-computer");
+        sl_language language = sl_i18n_language();
+        sl_i18n_set(SL_LANG_EN);
+        sl_ui_layout(&ui);
+        stream_media_present();
+        save_image("add-computer-en");
+        sl_i18n_set(language);
+        sl_ui_model adding = ui;
+        sl_ui_activate(&ui, 31);
+        sl_ui_tick(&ui, ui.now + 220);
+        stream_media_present();
+        save_image("add-computer-manual");
+        ui = adding;
+        sl_ui_activate(&ui, 30);
+        assert(ui.command.type == SL_CMD_REMOTE_PAIR && !ui.command.host.id);
+        sl_runtime_event pair_code = {.type = SL_EVENT_CODE, .generation = ui.generation};
+        strcpy(pair_code.text, "1234"); /* UI fixture only; never a live authorization. */
+        sl_ui_runtime_event(&ui, &pair_code);
+        sl_ui_tick(&ui, ui.now + 2000);
+        stream_media_present();
+        save_image("add-computer-code");
+        ui = adding;
+        ui.adding_host = false;
+        ui.store.registry.selected = 1;
+        sl_ui_layout(&ui);
+        stream_media_present();
+        save_image("known-computer-unpaired");
+        sl_ui_action(&ui, SL_START, 0);
+        assert(ui.command.type == SL_CMD_STREAM &&
+               ui.command.host.client_id == source.host.client_id + 1);
+        pair_code.type = SL_EVENT_STREAM_AUTHORIZATION;
+        pair_code.generation = ui.generation;
+        sl_ui_runtime_event(&ui, &pair_code);
+        sl_ui_tick(&ui, ui.now + 2000);
+        stream_media_present();
+        save_image("known-computer-pair-code");
+        ui = adding;
+        ui.adding_host = false;
+        ui.store.registry.selected = 2;
+        ui.store.registry.hosts[2].games[0].id = 367520;
+        strcpy(ui.store.registry.hosts[2].games[0].name, "空洞骑士");
+        sl_ui_layout(&ui);
+        stream_media_present();
+        save_image("cached-games-offline");
+        ui = saved;
+        sl_ui_layout(&ui);
+        stream_media_present();
+    }
     if (artwork) {
         /* Offline fixture rendering exercises queue -> decode -> texture upload -> fade. */
         for (int i = 0; i < 100; ++i) {
@@ -243,6 +409,26 @@ int main(int argc, char **argv) {
         sl_ui_tick(&ui, ui.now + 200);
         stream_media_present();
         save_image("paired-artwork-focused");
+        sl_ui_model available = ui;
+        SDL_Rect recent_title_box = {52, 224, 160, 60};
+        uint64_t recent_title = region_hash(recent_title_box);
+        SDL_Rect artwork_box = {82, SL_CARD_Y + 40, 360, 130};
+        uint64_t color = region_hash(artwork_box);
+        unsigned chromatic = chromatic_pixels(artwork_box);
+        sl_runtime_event unavailable = {.type = SL_EVENT_HOST_OFFLINE,
+                                        .host = ui.store.registry.hosts[0]};
+        sl_ui_runtime_event(&ui, &unavailable);
+        sl_ui_layout(&ui);
+        stream_media_present();
+        save_image("paired-artwork-offline");
+        assert(region_hash(recent_title_box) == recent_title);
+        assert(!chromatic_pixels(artwork_box));
+        if (chromatic)
+            assert(region_hash(artwork_box) != color);
+        ui = available;
+        sl_ui_layout(&ui);
+        stream_media_present();
+        assert(region_hash(artwork_box) == color);
     }
     /* Fixture duplicates artwork only to exercise a four-card viewport. */
     for (int i = 1; i < 4; ++i)
@@ -541,6 +727,8 @@ int main(int argc, char **argv) {
         snprintf(blocked_temp, sizeof(blocked_temp), "%s/%s", dir, settings_files[i]);
         assert(!unlink(blocked_temp));
     }
+    snprintf(blocked_temp, sizeof(blocked_temp), "%s/sdr_config.txt", dir);
+    if (access(blocked_temp, F_OK) == 0) assert(!unlink(blocked_temp));
     assert(rmdir(dir) == 0);
     /* Reinitialize SDL/fonts in this process to catch stale static ownership. */
     assert(stream_media_init(sl_log));
