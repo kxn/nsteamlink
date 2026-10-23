@@ -1753,6 +1753,8 @@ void stream_media_get_snapshot(stream_media_snapshot *out) {
     snapshot.audio_channels = audio_snap_channels;
     snapshot.audio_frequency = audio_snap_frequency;
 #if NSL_DIAGNOSTICS
+    snapshot.hid_session_enabled = hid_session_enabled;
+    snapshot.hid_input_gate = atomic_load(&input_gate);
     snapshot.hid_events = hid_events_total;
     snapshot.hid_send_ok = hid_send_ok_total;
     snapshot.hid_send_fail = hid_send_fail_total;

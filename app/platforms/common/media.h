@@ -114,6 +114,8 @@ typedef struct stream_media_snapshot {
     int hid_last_event_code;
     int hid_last_event_value;
     int hid_provider_devices;
+    bool hid_session_enabled;
+    bool hid_input_gate;
     char hid_style_state[12];
     char hid_sdl_guid[40];
     char hid_sdl_name[64];

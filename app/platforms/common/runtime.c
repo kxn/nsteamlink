@@ -13,6 +13,7 @@
 #if NSL_DIAGNOSTICS
 #include "endianness.h"
 #include "remote_wire.h"
+#include "session/session_pri.h"
 #endif
 #include "host_directory.h"
 #if NSL_HAVE_SNS
@@ -145,9 +146,40 @@ struct sl_runtime {
 };
 
 #if NSL_DIAGNOSTICS
+static bool hid_lifecycle_log(const char *tag, const char *message) {
+    if (strcmp(tag, "HID"))
+        return false;
+    bool selected = !strncmp(message, "Start enumerate device.", 23) ||
+                    !strncmp(message, "Device found:", 13);
+    if (!selected && !strncmp(message, "Message ", 8)) {
+        const char *operation = message + 8;
+        const char *digits = operation;
+        while (*operation >= '0' && *operation <= '9') ++operation;
+        selected = operation != digits &&
+                   (!strncmp(operation, ": Open(", 7) || !strncmp(operation, ": Close(", 8) ||
+                    !strncmp(operation, ": StartInputReports(", 20) ||
+                    !strncmp(operation, ": RequestFullReport(", 20));
+    }
+    if (!selected)
+        return false;
+    /* Shared receive/runtime callback: no I/O, locks, payloads or report dumps.
+     * Bound even repeated lifecycle requests to eight records per second. */
+    static atomic_uint_fast64_t budget;
+    uint_fast64_t second = sl_system_now() / 1000;
+    uint_fast64_t old = atomic_load(&budget);
+    for (;;) {
+        unsigned used = old >> 8 == second ? old & 255u : 0;
+        if (used >= 8)
+            return false;
+        uint_fast64_t next = (second << 8) | (used + 1);
+        if (atomic_compare_exchange_weak(&budget, &old, next))
+            return true;
+    }
+}
 static void ihs_log(IHS_LogLevel level, const char *tag, const char *message) {
     if (level > IHS_LogLevelWarn && strcmp(tag, "Activity") && strcmp(tag, "StreamState") &&
-        !(level == IHS_LogLevelInfo && !strcmp(tag, "Session")))
+        !(level == IHS_LogLevelInfo && !strcmp(tag, "Session")) &&
+        !hid_lifecycle_log(tag, message))
         return;
     char s[224];
     snprintf(s, sizeof(s), "%.24s: %.190s", tag, message);
@@ -244,6 +276,22 @@ static void diagnostic_state(sl_runtime *r, const char *phase) {
              (unsigned long long)rel.reliableOldestOutstandingMs, rel.reliableOldestChannelId,
              rel.reliableOldestPacketId);
     sl_log(line);
+    if (r->session) {
+        IHS_HIDSDLLastSubmitted last = {0};
+        bool submitted = IHS_HIDSDLGetLastSubmittedReport(r->session, &last);
+        snprintf(line, sizeof(line),
+                 "hid_transport phase=%s submitted=%llu sent=%llu ack=%llu pending=%u flight=%u",
+                 phase, (unsigned long long)rel.hidSubmitted, (unsigned long long)rel.hidSent,
+                 (unsigned long long)rel.hidAcknowledged, rel.hidPending, rel.hidInFlight);
+        sl_log(line);
+        snprintf(line, sizeof(line),
+                 "hid_capture phase=%s provider=%d attached=%d gate=%d input=%d events=%u "
+                 "raw_btn=%u valid=%d seq=%llu buttons=%u",
+                 phase, s.hid_provider_devices, s.hid_session_enabled, s.hid_input_gate,
+                 IHS_SessionInputEnabled(r->session), s.hid_events, s.hid_raw_btn_total, submitted,
+                 (unsigned long long)last.seq, last.buttons);
+        sl_log(line);
+    }
 }
 static void diagnostic_phase(const char *phase, int value) {
     char line[128];

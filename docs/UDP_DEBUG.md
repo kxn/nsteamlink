@@ -173,6 +173,15 @@ HTTPS成功。旧4e810d5的cloud_dns仅覆盖目录，不能据此判断SDR配�
 该单点补丁已被D-A075统一策略替代。`sns_config`另外记录GetSDRConfig HTTP/curl结果、
 信任导入、证书安装与P2P创建。须继续对应后续SDK状态、IHS和媒体进度，不把发现成功当作
 传输成功。清理时DNS scope/socket结果在日志关闭前保存。
+
+持久日志的`hid_transport`按连接采样周期（通常每秒）记录输入报告submitted/sent、
+RemoteHID传输包ACK及pending/flight。ACK包含设备生命周期报文或其分片，不能把它与
+报告提交数一一对应，也不能据此证明主机应用执行了按键。
+`hid_capture`记录本地提供器数量、session接入状态attached（不是线程创建成功证明）、
+UI输入门控gate、协议输入开关input、采集/尝试提交计数及最近本地报告seq/buttons。
+这些值由不同已有owner采样，不构成一个跨线程原子事务；seq/buttons不是主机反馈。
+另保留HID枚举、打开/关闭、StartInputReports和RequestFullReport的低频记录，
+每秒最多8条；不开放逐报告、feature正文或设备序列号日志。
 `sns_start failed_stage=... detail=...` 在SDK尚未返回有效连接句柄时记录拒绝类别：
 `option` 的detail是配置项ID；`udp_socket/nonblock/send_buffer/recv_buffer/bind/local_address`
 的detail是底层socket错误码；`crypto` 的detail=1表示尚无可用签名证书。

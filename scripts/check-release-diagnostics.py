@@ -21,6 +21,7 @@ MARKERS = (
     b"cloud_net event=", b"cloud_time total_ms=", b"cloud_subscription", b"cloud_addr local=",
     b"cloud_try stage=", b"cloud_dns event=", b"dns_query event=",
     b"control_tx phase=", b"control_rx phase=", b"control_identity account_present=",
+    b"hid_transport phase=", b"hid_capture phase=",
     b"sns_config event=", b"sns_start failed_stage=",
     b"RUNTIME_FIXTURE_", b"CLOUD_FIXTURE_",
     b"render-rate-test",
