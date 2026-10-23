@@ -10,6 +10,10 @@
 #include "platform/shortcut.h"
 #include "platform/system.h"
 #include "remote_connection.h"
+#if NSL_DIAGNOSTICS
+#include "endianness.h"
+#include "remote_wire.h"
+#endif
 #include "host_directory.h"
 #if NSL_HAVE_SNS
 #include "sns_backend.h"
@@ -52,6 +56,13 @@ static void accepted_connection(IHS_Client *, const IHS_HostInfo *, const IHS_St
 static bool cloud_save_key(const sl_remote_peer *, void *);
 static void cloud_paired(const sl_remote_peer *, void *);
 static void free_session_material(sl_remote_material *);
+#if NSL_DIAGNOSTICS
+typedef struct {
+    uint64_t direct_lookup, remote_lookup, queued, rejected, forwarded, failed, stale, received;
+    unsigned reject_reason, received_tag, received_id;
+    int received_result;
+} sl_control_diagnostics;
+#endif
 struct sl_runtime {
     pthread_t worker;
     atomic_bool exit_requested, worker_finished;
@@ -125,6 +136,7 @@ struct sl_runtime {
     uint32_t connect_wait_tick;
 #if NSL_DIAGNOSTICS
     uint64_t cloud_stall_at, frame_at;
+    sl_control_diagnostics control_diag; /* Counters under lock; no packet/identity storage. */
 #endif
     uint8_t auth_secret[32];
     sl_debug_snapshot debug;
@@ -172,6 +184,23 @@ static void diagnostic_state(sl_runtime *r, const char *phase) {
     }
 #endif
     char line[224];
+    pthread_mutex_lock(&r->lock);
+    sl_control_diagnostics control = r->control_diag;
+    size_t queued = r->control_count;
+    pthread_mutex_unlock(&r->lock);
+    snprintf(line, sizeof(line),
+             "control_tx phase=%s state=%u direct_lookup=%llu remote_lookup=%llu queued=%llu "
+             "rejected=%llu reason=%u forwarded=%llu failed=%llu stale=%llu pending=%zu",
+             phase, r->client ? IHS_ClientHandshakePhase(r->client) : 0,
+             (unsigned long long)control.direct_lookup, (unsigned long long)control.remote_lookup,
+             (unsigned long long)control.queued, (unsigned long long)control.rejected,
+             control.reject_reason, (unsigned long long)control.forwarded,
+             (unsigned long long)control.failed, (unsigned long long)control.stale, queued);
+    sl_log(line);
+    snprintf(line, sizeof(line), "control_rx phase=%s received=%llu tag=%u id=%u result=%d",
+             phase, (unsigned long long)control.received, control.received_tag,
+             control.received_id, control.received_result);
+    sl_log(line);
     snprintf(line, sizeof(line),
              "connection phase=%s req=%llu session=%llu route=%s sdk=%d relay=%d end=%d "
              "origin=%d/%d tx=%llu rx=%llu",
@@ -1131,6 +1160,13 @@ static void control_resolve(IHS_Client *client, uint64_t id, IHS_SocketAddress *
     *out = (IHS_SocketAddress){0};
     if (local_host(ctx, id, &host))
         *out = host.address;
+#if NSL_DIAGNOSTICS
+    sl_runtime *r = ctx;
+    pthread_mutex_lock(&r->lock);
+    if (IHS_ClientAddressHasIP(&out->ip) && out->port) ++r->control_diag.direct_lookup;
+    else ++r->control_diag.remote_lookup;
+    pthread_mutex_unlock(&r->lock);
+#endif
 }
 static size_t control_addresses(IHS_Client *client, uint64_t id, IHS_IPAddress **out, void *ctx) {
     (void)client;
@@ -1151,6 +1187,9 @@ static void clear_control_locked(sl_runtime *r) {
     while (r->control_head) {
         sl_control_frame *frame = r->control_head;
         r->control_head = frame->next;
+#if NSL_DIAGNOSTICS
+        ++r->control_diag.stale;
+#endif
         memset(frame->wire, 0, frame->size);
         free(frame);
     }
@@ -1163,8 +1202,15 @@ static bool control_remote_send(IHS_Client *client, uint64_t id, const uint8_t *
     sl_runtime *r = ctx;
     /* Local copied-frame budget, not a Steam message/retry limit. Producers
      * retain the transaction and can retry; existing frames are never replaced. */
-    if (size > 65536)
+    if (size > 65536) {
+#if NSL_DIAGNOSTICS
+        pthread_mutex_lock(&r->lock);
+        ++r->control_diag.rejected;
+        r->control_diag.reject_reason = 3;
+        pthread_mutex_unlock(&r->lock);
+#endif
         return false;
+    }
     pthread_mutex_lock(&r->lock);
     uint64_t account = 0;
     const sl_directory_host *peer = sl_directory_find(r->directory, id);
@@ -1187,6 +1233,14 @@ static bool control_remote_send(IHS_Client *client, uint64_t id, const uint8_t *
         pthread_cond_signal(&r->wake);
     }
     bool accepted = frame != NULL;
+#if NSL_DIAGNOSTICS
+    if (accepted) ++r->control_diag.queued;
+    else {
+        ++r->control_diag.rejected;
+        r->control_diag.reject_reason = !r->control_cloud_ready ? 1 : !have_account ? 2
+            : r->control_count >= 64 || size > 256 * 1024 - r->control_bytes ? 3 : 4;
+    }
+#endif
     pthread_mutex_unlock(&r->lock);
     return accepted;
 }
@@ -1205,9 +1259,18 @@ static void flush_control(sl_runtime *r) {
         pthread_mutex_unlock(&r->lock);
         if (!frame)
             return;
-        if (send && r->remote)
+        bool forwarded = send && r->remote &&
             sl_remote_packet(sl_remote_connection_protocol(r->remote), frame->account, frame->wire,
                              frame->size);
+#if NSL_DIAGNOSTICS
+        pthread_mutex_lock(&r->lock);
+        if (forwarded) ++r->control_diag.forwarded;
+        else if (send && r->remote) ++r->control_diag.failed;
+        else ++r->control_diag.stale;
+        pthread_mutex_unlock(&r->lock);
+#else
+        (void)forwarded;
+#endif
         memset(frame->wire, 0, frame->size);
         free(frame);
     }
@@ -1510,6 +1573,37 @@ static bool cloud_control_packet(const uint8_t *wire, size_t size, void *ctx) {
      * the control frame before the next RPC response can observe its state. */
     if (!r->client)
         return false;
+#if NSL_DIAGNOSTICS
+    /* Observe only numeric control metadata. The real IHS parser still decides
+     * admission; these counters do not claim that a reply matched its owner. */
+    uint32_t hs = 0, ms = 0;
+    unsigned tag = 0, id = 0;
+    int result = -1;
+    if (size >= 16) IHS_ReadUInt32LE(wire + 8, &hs);
+    if (size >= 16 && hs <= size - 16) {
+        IHS_ReadUInt32LE(wire + 12 + hs, &ms);
+        sl_proto_reader header = {wire + 12, hs, 0, false};
+        sl_proto_field f;
+        while (sl_proto_next(&header, &f))
+            if (f.number == 2 && f.wire == 0 && f.value <= UINT32_MAX) tag = (unsigned)f.value;
+        if (ms == size - 16 - hs) {
+            sl_proto_reader body = {wire + 16 + hs, ms, 0, false};
+            while (sl_proto_next(&body, &f)) {
+                if (tag == k_ERemoteDeviceStreamingResponse && f.wire == 0) {
+                    if (f.number == 1 && f.value <= UINT32_MAX) id = (unsigned)f.value;
+                    if (f.number == 2 && f.value <= INT32_MAX) result = (int)f.value;
+                } else if (tag == k_ERemoteDeviceAuthorizationResponse && f.number == 1 &&
+                           f.wire == 0 && f.value <= INT32_MAX) result = (int)f.value;
+            }
+        }
+    }
+    pthread_mutex_lock(&r->lock);
+    ++r->control_diag.received;
+    r->control_diag.received_tag = tag;
+    r->control_diag.received_id = id;
+    r->control_diag.received_result = result;
+    pthread_mutex_unlock(&r->lock);
+#endif
     IHS_ClientReceiveRemotePacket(r->client, wire, size);
     return true;
 }
@@ -1713,8 +1807,16 @@ static bool request_stream(sl_runtime *r, bool network_test) {
     const sl_host *paired = sl_host_find(&r->store.registry, r->active.host.id);
     uint8_t selected[32];
     uint64_t key_account = 0;
-    current_account(r, host.clientId, &key_account);
+    bool selected_account = current_account(r, host.clientId, &key_account);
+    (void)selected_account;
     int loaded = sl_host_key_load(sl_system_data_dir(), host.clientId, key_account, selected);
+#if NSL_DIAGNOSTICS
+    char identity_line[160];
+    snprintf(identity_line, sizeof(identity_line),
+             "control_identity account_present=%d selected_zero=%d paired_match=%d key_file=%d",
+             selected_account, key_account == 0, paired && paired->account == key_account, loaded);
+    sl_log(identity_line);
+#endif
     if (loaded < 0)
         return false;
     if (loaded > 0)

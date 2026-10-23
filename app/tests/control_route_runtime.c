@@ -453,6 +453,11 @@ int main(void) {
     a.result = k_ERemoteDeviceStreamingUnauthorized;
     cloud(6, &a.base);
     recorded auth = wait_send(&r, 3, 0);
+#if NSL_DIAGNOSTICS
+    assert(r.control_diag.received_tag == k_ERemoteDeviceStreamingResponse &&
+           r.control_diag.received_id == id &&
+           r.control_diag.received_result == k_ERemoteDeviceStreamingUnauthorized);
+#endif
     b = body(&auth, &h);
     assert(auth.cloud && field(b.bytes, b.size, 5).value == id);
     decrypt_id(field(h.bytes, h.size, 5), secret);
@@ -463,6 +468,10 @@ int main(void) {
     authorized.steamid = 789;
     cloud(4, &authorized.base);
     pump(&r);
+#if NSL_DIAGNOSTICS
+    assert(r.control_diag.received_tag == k_ERemoteDeviceAuthorizationResponse &&
+           r.control_diag.received_result == k_ERemoteDeviceAuthorizationInProgress);
+#endif
     atomic_store(&wall, 1004);
     auth = wait_send(&r, 3, 1);
     b = body(&auth, &h);
@@ -690,6 +699,12 @@ int main(void) {
     flush_control(&r); /* Present zero account differs from an empty list. */
     assert(sl_directory_ensure(&r.directory, 888));
     assert(!control_remote_send(r.client, 888, auth.wire, auth.size, &r));
+#if NSL_DIAGNOSTICS
+    assert(r.control_diag.rejected && r.control_diag.reject_reason == 2);
+    assert(r.control_diag.queued && r.control_diag.forwarded);
+    assert(r.control_diag.direct_lookup && r.control_diag.remote_lookup);
+    assert(r.control_diag.received);
+#endif
     /* A fresh selected-host request loads the canonical first account's key,
      * rather than the still-789 profile mirror or the last foreign secret. */
     uint8_t account_key[32];

@@ -141,6 +141,15 @@ python3 tools/pull-switch-logs.py --address 10.10.10.17 --output build/device-lo
 `connection_event` 记录实际选用 LAN UDP 或云端 SNS、请求响应及 IHS 配置/连接/断开阶段；
 每秒 `connection` 的 `route` 区分 `lan_udp`、`sns_direct`、`sns_relay` 和未就绪/已关闭，
 同时记录 SDK state、relay 标志、终态来源和 SNS datagram 累计数。它不把云端发现等同中继。
+`control_tx` 每秒记录握手state、完整地址查找/空地址查找、CM本机入队、被拒、交给WebSocket
+发送队列、交付失败、队列清理/旧会话丢弃及当前待发送数量。reason为最近入队拒绝原因：1云端未就绪、
+2没有目的账号记录、3本地队列/大小上限、4分配失败。forwarded仅证明CM发送队列接收，
+不证明Steam服务器或主机收到；direct_lookup也只证明有完整缓存地址，不证明UDP送达。
+`control_rx`记录云端控制回调累计数、最后的消息type、开流request_id和结果码；它位于
+IHS准入之前，收到不等于请求编号匹配或票据被接受。结果不可读取时为-1，received=0时
+最后字段无含义。计数从进程启动累计，包含发现产生的控制发送，按请求阶段比较增量。
+`control_identity`只记录目的账号是否存在/为零、是否匹配已配对卡片、key文件加载结果
+（0读到、1不存在、负值错误），不记录账号ID、密钥或token；不得仅凭这些布尔值判定授权成功。
 `pipeline` 即使尚未显示第一帧也输出提交、解码、显示、音频及帧停滞时间；`reliable` 输出
 ACK/NACK/重试/失败、待确认数量与最老项年龄。退出前及 IHS join 后再保存一次阶段快照。
 `log_drop` 是有界队列或 trylock 丢弃的诊断记录数，不能把它当作网络丢包数。
