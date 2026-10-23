@@ -13592,7 +13592,7 @@ ID17由原metadata确定为`_q_onlineStateChanged`，进入private方法`0x11ed9
 字段为保存的access(+0xcc)、online(+0xd4)、允许网络访问(+0xd7)；对象和初值是
 显式fixture，不声称执行了QNetworkAccessManager完整构造器或证明其默认配置。
 
-原控制流按以下条件设置保存值并决定是否发signal ID7：
+原控制流的**外层末尾**按以下条件设置保存值并决定是否发signal ID7：
 
 | 当前条件 | access更新和通知 |
 |---|---|
@@ -13606,6 +13606,9 @@ ID17由原metadata确定为`_q_onlineStateChanged`，进入private方法`0x11ed9
 Qt内部配置/session协调、configuration对象和activate实际排队为终点；保存online变化
 时确实可进入协调终点，但不能据此声称完整HTTP连接、缓存或DNS已经清理。
 这些helper的另一组受控执行及独立配置消费者见§180；不改变本工具的终点范围。
+**更正**：上表不是完整调用的通知序列表，不能据此声称整个Qt调用去掉了重复通知。
+§183展开本工具省略的selector后，原断网路径实际发出`[0,0]`；同版本官方Android
+模拟器运行也观察到该序列。此前若把本表理解成完整调用最多通知一次，应撤回。
 另外6组给private+0xc8=1及配置state值0/1/2/4/8/14，此分支采用
 `state & 0x0e != 0`选择online；故入参bool也不是所有分支最终可达性的唯一来源。
 这些配置值是显式边界输入，不把每个值命名为真实OS网络状态。
@@ -14148,4 +14151,111 @@ PYTHONPATH=/path/to/audit-deps python3 tools/steam-android-session-audit.py \
   --bearer /path/to/bundled/libplugins_bearer_qandroidbearer_arm64-v8a.so \
   --output /tmp/android-session.json
 # 相同参数增加 --mutation error-map，必须因原错误消费者的结果变化而失败。
+```
+
+## 183. 完整在线slot的嵌套通知与官方Android自然网络交付
+
+### 撤回隔离slot的过宽推论
+
+§177将release/selector作为终点，其表只描述`0x11ed94`末尾自己的去重判断。
+不能将之写成“整个调用仅在access变化时发一次通知”。`tools/steam-network-transition-audit.py`
+继承§182的同机执行，实际展开release `0x11e8c4`、selector `0x11b110`、会话工厂及
+公开/Android后端构造，原public meta dispatch仍在调用链中。QObject/manager服务、
+配置枚举、锁与signal delivery的provider边界不变；这不是Android自然网络实验。
+
+Evidence：从已在线/access1的输入转offline，默认配置被给为无效时：
+
+1. 原online slot先写`+0xd4=0`，再release并选择配置。
+2. selector取得空结果，`0x11b458`分支依据offline选择0，在`0x11b4b0`发signal7。
+   此时保存的access仍为1；该分支没有写`+0xcc`。
+3. 返回online slot，外层看保存的access仍为1，写0，再在`0x11ee80`发signal7。
+
+所以实际序列为`[0,0]`，两处激活时的保存值分别1/0；不是同一包重传，也不是工具
+把一份通知交付两次。已有活动会话的多步程序先执行真实工厂/后端构造，随后离线
+释放该owner并投递deleteLater，也产生相同序列。重复offline没有新增通知；恢复到
+有效活动配置发`[1]`，重复online没有新增。随后显式交付原排队的session state3，
+只发networkSessionConnected，不新增accessible通知。deleteLater是投递记录，不声称
+真实QObject析构已执行；排队交付是adapter，不伪称Qt自然时序。
+
+另12组边界输入区分selector有无有效配置，并否定“最终保存access总等于最后一次
+signal值”的泛化。例如保存access1/online0、incoming1、无效默认配置时，
+selector发−1，外层因保存值本来为1而不再发1，最终保存access仍1。这是受控边界
+输入，不把它命名为已观察到的真实OS状态。
+
+| 保存access / online；incoming | 无效默认配置的完整通知 | 有效活动配置的完整通知 |
+|---|---|---|
+| 1 / 1；0 | `[0,0]` | `[0]` |
+| 0 / 1；0 | `[0]` | `[]` |
+| 0 / 0；0 | `[]` | `[]` |
+| 0 / 0；1 | `[0,1]` | `[1]` |
+| −1 / 0；1 | `[−1,1]` | `[1]` |
+| 1 / 0；1 | `[−1]` | `[]` |
+
+原Shell meta dispatch另消费这些实际序列，共七种模式、35组交付。manager非零时
+不启动；state0且第一次BStart成功后转1，第二个0不再启动。给本地socket创建失败
+的state0输入时，失败保留0，第二个0可再次BStart：不能笼统说重复通知永远无作用。
+这些无Steam资源fixture没有调用HandleNetworkChanged，也不证明真实云端重连成功。
+五个原指令反例分别省略selector、内部激活、外层激活、online写入及access写入，均因
+具体序列/状态不符被拒绝；签名、初始化或模拟器异常不算行为反例。
+
+### 同一XAPK的官方x86_64客户端运行观察
+
+`tools/steam-android-network-observe.py`与旁边JS在Android14只读AVD运行官方1.3.32
+（versionCode5000315），观察真实JNI、Qt signal/slot及Shell函数调用。安装的DEX与
+§177固定DEX逐字节相同；下列四个安装库也逐字节等于同一固定XAPK中
+`config.x86_64.apk!lib/x86_64/`的成员。它们与ARM64库的代码身份不同，不能把两个ABI
+当作同一机器码或将ARM64偏移直接用于Frida。
+
+| x86_64安装库 | SHA256 |
+|---|---|
+| libQt5Core_x86_64.so | `cd59df801f6ad5586e38bc720454f51d73df0c03dbed0db73bd9b592b25d4041` |
+| libQt5Network_x86_64.so | `1dc3801a783b585393935216bdd17a8313d24b831f7814b4177dd5ffc6214a74` |
+| libplugins_bearer_qandroidbearer_x86_64.so | `6e70b91e29b80eed18f025c3cc2395c89b860e204c2208ba489a91cf5f95ae50` |
+| libshell_x86_64.so | `195025601c2b17194a4d8b3debd674aca3377290fe3851986656c49bc973f907` |
+
+工具先核对只读qemu参数、与adb匹配的端口、实际userdata基盘只读fd及上述库SHA。
+guest必须为预先准备的未配对overlay，只允许临时开关guest数据/Wi-Fi；不发配对、
+串流请求，不改宿主机防火墙。真实base userdata保持只读，写盘位于临时qcow2层。
+工具不用NativeFunction额外调用JNI，不替换返回值，也不读协议正文、凭据或PIN。
+观察app自己的JNI_OnLoad→JavaVM.GetEnv→JNIEnv.RegisterNatives表入口，捕获
+activeNetworkInfoChanged`()V`的真实fnPtr；从原Qt metadata解析本地方法名/编号。
+很短的JNI转换函数不能被此Frida拦截，早期含该错误的记录仅为部分证据，不计完整链。
+
+运行序列为：首页10秒→关闭guest mobile data等5秒→关闭Wi-Fi等8秒→打开Wi-Fi等15秒
+→恢复mobile data等8秒。附近设备权限已在一次性overlay获准，未操作任何主机卡片。
+从完整零错误、零丢弃记录观察到：
+
+- startup、offline、Wi-Fi恢复各进入一次注册的JNI native，共三次。
+- offline：manager private online(0)在其线程发出，公开manager在线信号及NAM slot在
+  另一线程消费；同一NAM在该slot返回前发两次accessible(0)，同一Shell watcher在
+  该线程分别收到0、0。
+- Wi-Fi恢复：private/公开manager online(1)→NAM online slot→accessible(1)→同一watcher。
+  其后还观察到NAM session-state slot及networkSessionConnected。
+- 首页初始BStart返回bool1；所hook的BStart入口在断网/恢复阶段没有额外调用，
+  HandleNetworkChanged入口全程没有调用。只证明本轮这些入口的记录，不排除其他
+  状态、平台、未hook方法或间接路径具有恢复动作。
+
+一次记录中关Wi-Fi到JNI约114ms，开Wi-Fi到JNI约3951ms，而后private online至
+accessible约1–2ms。这是含Frida插桩的单次观察，不是官方超时、重试周期、性能保证
+或可写进Switch策略的常数。模拟器guest radios变化也不等于真实热点/NAT拓扑变化。
+
+Conclusion：原ARM64联合执行与官方x86_64运行共同支持“嵌套selector可额外通知”这一
+具体行为；运行记录补入了自然线程之间的信号交付证据。它们不证明DNS缓存失效、
+HTTP重连、票据恢复、媒体/SDR重建或Switch生命周期。不得据两次0补造通用双重重连。
+全部记录用有界事件数，任何Frida异常/丢弃/缺少关键阶段均拒绝作为完整实验；结束
+卸载hook、detach、停止app并恢复guest radios，真实private JSONL不入库。脱敏的
+逐阶段调用/信号序列、线程别名、库身份、工具与原记录SHA保存在
+`tools/fixtures/steam-android-network-1.3.32.json`；它是该次运行证据，不是固定预期
+或用于替代当前实际运行的“通过”标记。
+
+```sh
+PYTHONPATH=/path/to/audit-deps python3 tools/steam-network-transition-audit.py \
+  --qt /path/to/bundled/libQt5Network_arm64-v8a.so \
+  --qt-core /path/to/bundled/libQt5Core_arm64-v8a.so \
+  --bearer /path/to/bundled/libplugins_bearer_qandroidbearer_arm64-v8a.so \
+  --shell /path/to/pinned/libshell-arm64.so --output /tmp/transitions.json
+# 相同参数增加 --mutation nested-notification，必须因[0,0]变为[0]而失败。
+# 仅对准备好的只读AVD；Frida server和adb forward由调用者预先建立：
+python3 tools/steam-android-network-observe.py --serial emulator-5580 \
+  --readonly-qemu-pid ACTUAL_QEMU_PID --output /private/new-trace.jsonl
 ```

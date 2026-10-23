@@ -916,15 +916,19 @@ else if sends_in_round <= 2 and now >= next_extra_send:
 
 `HandleNetworkChanged @0x79a614` 只在 manager Idle 时清零可见记录时间并立即触发发现；
 它不是任何流状态下都重启 ICE 的通用网络变化处理器。
-固定Android包的广播/JNI与Qt可达性通知还存在独立的状态去重：原online slot只在有效
-access变化时通知，显式禁止网络访问也会抑制恢复通知。原watcher的网络slot仅在manager
+固定Android包的广播/JNI与Qt可达性通知存在多层门禁：原online slot**外层末尾**按access
+变化通知，显式禁止网络访问会抑制该处恢复通知。更正：这不是完整调用的去重保证；
+其内部会话选择器还可发通知，断网时完整序列可为`[0,0]`，见协议参考§183。
+原watcher的网络slot仅在manager
 尚未启动时尝试BStart，不调用上述API。bearer原initialize订阅activeNetworkChanged，
 原slot thunk到达配置扫描入口；给定配置变化时，Qt按活动集合空性是否改变发online
 边沿。先激活新配置再停用旧配置可没有边沿；相反顺序可产生离线、在线两次。
 原扫描正文的受控执行还显示：本轮先处理看到的配置，最后退休旧配置；新活动ID
 替换旧活动ID可不发online边沿。接口相同且地址列表保持非空，也不因列表项数变化
-发配置变化。Android自然枚举、完整Qt交付和其他配置路径仍未覆盖，因此不能把
-每次Wi-Fi变化直接当作HandleNetworkChanged或DNS失效，详见协议参考§177–179。
+发配置变化。这些ARM64夹具没有证明Android自然枚举或完整Qt交付；§183另以同版本
+官方x86_64客户端在Android模拟器中观察JNI、Qt及Shell网络slot的自然交付，未观察到
+断网/恢复后额外调用BStart或HandleNetworkChanged。它仍不是全部平台/状态的证明，
+不能把每次Wi-Fi变化直接当作HandleNetworkChanged或DNS失效，详见协议参考§177–179、183。
 原Qt网络访问管理器还独立订阅configurationChanged：有可用会话且online保存值为1
 等条件满足时，可按当前/默认配置比较释放引用并重新选择Qt网络会话；它不是Steam
 串流Session重建。选择后的状态还可排队交付，不能当作同步建连完成。该受控路径

@@ -1,0 +1,264 @@
+{
+  "scope": "One instrumented official Android x86_64 homepage experiment; no Steam pairing or streaming. Observations are not timing guarantees or Switch recovery proof.",
+  "package": "com.valvesoftware.steamlink",
+  "version_name": "1.3.32",
+  "version_code": 5000315,
+  "android_fingerprint": "google/sdk_gphone64_x86_64/emu64xa:14/UE1A.230829.050/12077443:userdebug/dev-keys",
+  "readonly_avd": true,
+  "xapk_sha256": "7967bcb832d95890b840da7e65f4617aee40a9ce39233965c28da18119ac4839",
+  "classes_dex_sha256": "a5c315d683eac7c7f8f73ec096bd414406d80f9ef68180a1ef469f052cd39e44",
+  "installed_dex_equals_pinned_dex": true,
+  "installed_native_equals_xapk_members": [
+    {
+      "member": "lib/x86_64/libQt5Core_x86_64.so",
+      "sha256": "cd59df801f6ad5586e38bc720454f51d73df0c03dbed0db73bd9b592b25d4041",
+      "installed_equal": true
+    },
+    {
+      "member": "lib/x86_64/libQt5Network_x86_64.so",
+      "sha256": "1dc3801a783b585393935216bdd17a8313d24b831f7814b4177dd5ffc6214a74",
+      "installed_equal": true
+    },
+    {
+      "member": "lib/x86_64/libplugins_bearer_qandroidbearer_x86_64.so",
+      "sha256": "6e70b91e29b80eed18f025c3cc2395c89b860e204c2208ba489a91cf5f95ae50",
+      "installed_equal": true
+    },
+    {
+      "member": "lib/x86_64/libshell_x86_64.so",
+      "sha256": "195025601c2b17194a4d8b3debd674aca3377290fe3851986656c49bc973f907",
+      "installed_equal": true
+    }
+  ],
+  "observer_sha256": "0e5bf8a738a2543aba580aecf11e93f5ade71531aaef59667cf7cb59b3de91d2",
+  "runner_sha256": "36e27599683a2762f56fb430714dc78082da684d2944b1b22e47efea65d51038",
+  "private_raw_trace_sha256": "4d772aca669d80e64041e4e58ab70551cc72e5f1509e6fa2c5430ab2edb136a4",
+  "snapshot": {
+    "counts": {
+      "art_ready": 1,
+      "ready": 1,
+      "hook": 11,
+      "qt_module_ready": 3,
+      "steam_module_ready": 1,
+      "jni_registration": 1,
+      "native_network_notification": 3,
+      "qt_signal": 22,
+      "configuration_state": 1,
+      "server_manager_call": 4,
+      "server_manager_return": 4,
+      "nam_slot": 3,
+      "nam_slot_return": 3
+    },
+    "dropped": 0,
+    "hooks": 11,
+    "arch": "x64"
+  },
+  "cleanup": {
+    "kind": "experiment_end",
+    "errors": 0,
+    "radios_restored": true
+  },
+  "observations": [
+    {
+      "phase": "startup",
+      "elapsed_from_phase_ms": 224,
+      "kind": "native_network_notification",
+      "thread": "thread1"
+    },
+    {
+      "phase": "startup",
+      "elapsed_from_phase_ms": 227,
+      "kind": "qt_signal",
+      "class": "QNetworkConfigurationManagerPrivate",
+      "method": "onlineStateChanged",
+      "value": 1,
+      "thread": "thread2"
+    },
+    {
+      "phase": "startup",
+      "elapsed_from_phase_ms": 231,
+      "kind": "server_manager_call",
+      "value": null,
+      "symbol": "_ZN14CServerManager6BStartEv",
+      "thread": "thread3"
+    },
+    {
+      "phase": "startup",
+      "elapsed_from_phase_ms": 233,
+      "kind": "server_manager_return",
+      "result": 1,
+      "symbol": "_ZN14CServerManager6BStartEv"
+    },
+    {
+      "phase": "offline",
+      "elapsed_from_phase_ms": 114,
+      "kind": "native_network_notification",
+      "thread": "thread1"
+    },
+    {
+      "phase": "offline",
+      "elapsed_from_phase_ms": 119,
+      "kind": "qt_signal",
+      "class": "QNetworkConfigurationManagerPrivate",
+      "method": "onlineStateChanged",
+      "value": 0,
+      "thread": "thread2"
+    },
+    {
+      "phase": "offline",
+      "elapsed_from_phase_ms": 121,
+      "kind": "qt_signal",
+      "class": "QNetworkConfigurationManager",
+      "method": "onlineStateChanged",
+      "value": 0,
+      "thread": "thread3"
+    },
+    {
+      "phase": "offline",
+      "elapsed_from_phase_ms": 121,
+      "kind": "nam_slot",
+      "method": "_q_onlineStateChanged",
+      "value": 0,
+      "thread": "thread3"
+    },
+    {
+      "phase": "offline",
+      "elapsed_from_phase_ms": 121,
+      "kind": "qt_signal",
+      "class": "QNetworkAccessManager",
+      "method": "networkAccessibleChanged",
+      "value": 0,
+      "thread": "thread3"
+    },
+    {
+      "phase": "offline",
+      "elapsed_from_phase_ms": 121,
+      "kind": "server_manager_call",
+      "value": 0,
+      "symbol": "_ZN28CServerManagerNetworkWatcher21OnNetworkStateChangedEN21QNetworkAccessManager20NetworkAccessibilityE",
+      "thread": "thread3"
+    },
+    {
+      "phase": "offline",
+      "elapsed_from_phase_ms": 121,
+      "kind": "server_manager_return",
+      "result": null,
+      "symbol": "_ZN28CServerManagerNetworkWatcher21OnNetworkStateChangedEN21QNetworkAccessManager20NetworkAccessibilityE"
+    },
+    {
+      "phase": "offline",
+      "elapsed_from_phase_ms": 121,
+      "kind": "qt_signal",
+      "class": "QNetworkAccessManager",
+      "method": "networkAccessibleChanged",
+      "value": 0,
+      "thread": "thread3"
+    },
+    {
+      "phase": "offline",
+      "elapsed_from_phase_ms": 121,
+      "kind": "server_manager_call",
+      "value": 0,
+      "symbol": "_ZN28CServerManagerNetworkWatcher21OnNetworkStateChangedEN21QNetworkAccessManager20NetworkAccessibilityE",
+      "thread": "thread3"
+    },
+    {
+      "phase": "offline",
+      "elapsed_from_phase_ms": 121,
+      "kind": "server_manager_return",
+      "result": null,
+      "symbol": "_ZN28CServerManagerNetworkWatcher21OnNetworkStateChangedEN21QNetworkAccessManager20NetworkAccessibilityE"
+    },
+    {
+      "phase": "offline",
+      "elapsed_from_phase_ms": 121,
+      "kind": "nam_slot_return",
+      "method": "_q_onlineStateChanged"
+    },
+    {
+      "phase": "wifi-on",
+      "elapsed_from_phase_ms": 3951,
+      "kind": "native_network_notification",
+      "thread": "thread1"
+    },
+    {
+      "phase": "wifi-on",
+      "elapsed_from_phase_ms": 3958,
+      "kind": "qt_signal",
+      "class": "QNetworkConfigurationManagerPrivate",
+      "method": "onlineStateChanged",
+      "value": 1,
+      "thread": "thread2"
+    },
+    {
+      "phase": "wifi-on",
+      "elapsed_from_phase_ms": 3959,
+      "kind": "qt_signal",
+      "class": "QNetworkConfigurationManager",
+      "method": "onlineStateChanged",
+      "value": 1,
+      "thread": "thread3"
+    },
+    {
+      "phase": "wifi-on",
+      "elapsed_from_phase_ms": 3959,
+      "kind": "nam_slot",
+      "method": "_q_onlineStateChanged",
+      "value": 1,
+      "thread": "thread3"
+    },
+    {
+      "phase": "wifi-on",
+      "elapsed_from_phase_ms": 3959,
+      "kind": "qt_signal",
+      "class": "QNetworkAccessManager",
+      "method": "networkAccessibleChanged",
+      "value": 1,
+      "thread": "thread3"
+    },
+    {
+      "phase": "wifi-on",
+      "elapsed_from_phase_ms": 3959,
+      "kind": "server_manager_call",
+      "value": 1,
+      "symbol": "_ZN28CServerManagerNetworkWatcher21OnNetworkStateChangedEN21QNetworkAccessManager20NetworkAccessibilityE",
+      "thread": "thread3"
+    },
+    {
+      "phase": "wifi-on",
+      "elapsed_from_phase_ms": 3959,
+      "kind": "server_manager_return",
+      "result": null,
+      "symbol": "_ZN28CServerManagerNetworkWatcher21OnNetworkStateChangedEN21QNetworkAccessManager20NetworkAccessibilityE"
+    },
+    {
+      "phase": "wifi-on",
+      "elapsed_from_phase_ms": 3959,
+      "kind": "nam_slot_return",
+      "method": "_q_onlineStateChanged"
+    },
+    {
+      "phase": "wifi-on",
+      "elapsed_from_phase_ms": 3959,
+      "kind": "nam_slot",
+      "method": "_q_networkSessionStateChanged",
+      "value": null,
+      "thread": "thread3"
+    },
+    {
+      "phase": "wifi-on",
+      "elapsed_from_phase_ms": 3959,
+      "kind": "qt_signal",
+      "class": "QNetworkAccessManager",
+      "method": "networkSessionConnected",
+      "value": null,
+      "thread": "thread3"
+    },
+    {
+      "phase": "wifi-on",
+      "elapsed_from_phase_ms": 3960,
+      "kind": "nam_slot_return",
+      "method": "_q_networkSessionStateChanged"
+    }
+  ]
+}
