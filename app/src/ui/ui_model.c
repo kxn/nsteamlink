@@ -126,6 +126,7 @@ void sl_ui_init(sl_ui_model *m, const sl_auth_store *s) {
     m->page = SL_HOME;
     m->network_ok = true;
     m->update_check = true;
+    m->capture_guide = true;
     sl_ui_layout(m);
 }
 void sl_ui_error(sl_ui_model *m, const char *message) {
@@ -214,6 +215,7 @@ static void emit(sl_ui_model *m, sl_command_type type) {
     m->command.resolution = m->resolution;
     m->command.language = sl_i18n_language();
     m->command.update_check = m->update_check;
+    m->command.capture_guide = m->capture_guide;
 }
 static void start(sl_ui_model *m, int game, bool test_only) {
     sl_host *h = selected(m);
@@ -377,10 +379,12 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
     case SL_OPEN_NETWORK_SETTINGS:
     case SL_OPEN_HOST_SETTINGS:
     case SL_OPEN_APP_SETTINGS:
+    case SL_OPEN_SPECIAL_SETTINGS:
         if (m->page == SL_SETTINGS && !m->streaming)
             push(m, a == SL_OPEN_AV_SETTINGS        ? SL_AV_SETTINGS
                     : a == SL_OPEN_NETWORK_SETTINGS ? SL_NETWORK_SETTINGS
                     : a == SL_OPEN_HOST_SETTINGS    ? SL_HOST_SETTINGS
+                    : a == SL_OPEN_SPECIAL_SETTINGS ? SL_SPECIAL_SETTINGS
                                                     : SL_APP_SETTINGS);
         break;
     case SL_OPEN_ADD:
@@ -497,6 +501,12 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
             ++m->generation;
             page(m, SL_STOPPING);
             emit(m, SL_CMD_STOP);
+        }
+        break;
+    case SL_CAPTURE_GUIDE:
+        if (m->page == SL_SPECIAL_SETTINGS && !m->streaming) {
+            m->capture_guide = !m->capture_guide;
+            emit(m, SL_CMD_SAVE);
         }
         break;
     case SL_UPDATE_CHECK:
@@ -630,6 +640,7 @@ void sl_ui_action(sl_ui_model *m, sl_action a, int arg) {
     uint32_t quality = m->store.quality;
     bool sound = m->store.sound, leaving = m->leaving;
     bool fec = m->store.unreliable_fec, update_check = m->update_check;
+    bool capture_guide = m->capture_guide;
     sl_language language = sl_i18n_language();
     char input[64];
     memcpy(input, m->input, sizeof(input));
@@ -639,7 +650,8 @@ void sl_ui_action(sl_ui_model *m, sl_action a, int arg) {
         cue = a == SL_BACK || a == SL_CONFIRM_STOP || a == SL_CONFIRM_EXIT ? SL_CUE_BACK
                                                                            : SL_CUE_CONFIRM;
     else if (sound != m->store.sound || fec != m->store.unreliable_fec ||
-             update_check != m->update_check || quality != m->store.quality ||
+             update_check != m->update_check || capture_guide != m->capture_guide ||
+             quality != m->store.quality ||
              language != sl_i18n_language())
         cue = SL_CUE_TOGGLE;
     else if (strcmp(input, m->input))

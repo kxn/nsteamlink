@@ -183,6 +183,8 @@ void stream_media_format_hid_history(char *out, size_t out_len, uint32_t max_ent
 void sl_media_hooks(void (*draw)(void *, void *), void (*event)(const void *, void *),
                     void *context);
 void sl_media_gate(bool enabled);
+/* Main input owner: update interception and drive an admitted Guide pulse. */
+void sl_media_capture_guide(bool enabled);
 void sl_media_input(const sl_input_event *event, void *context);
 void sl_media_neutral(void *context);
 void sl_media_mute(bool mute);

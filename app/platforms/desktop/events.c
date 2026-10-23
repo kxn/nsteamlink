@@ -5,6 +5,15 @@ void sl_events_init(void) {
     foreground = true;
     quit = false;
 }
+void sl_events_shutdown(void) {
+}
+bool sl_events_capture_guide(bool allowed) {
+    (void)allowed;
+    return true;
+}
+bool sl_events_take_capture_guide(void) {
+    return false;
+}
 bool sl_events_foreground(void) {
     return foreground;
 }

@@ -174,7 +174,8 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
                                       .generation = m->generation,
                                       .language = sl_i18n_language(),
                                       .resolution = m->resolution,
-                                      .update_check = m->update_check};
+                                      .update_check = m->update_check,
+                                      .capture_guide = m->capture_guide};
         break;
     }
     case SL_EVENT_CLOSED:

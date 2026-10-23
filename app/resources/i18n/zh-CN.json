@@ -181,5 +181,7 @@
   "HOST_SETTINGS": "主机管理",
   "APP_SETTINGS": "应用",
   "UPDATE_CHECK": "自动检查更新",
-  "END_GAME_CONFIRM": "结束并断开"
+  "END_GAME_CONFIRM": "结束并断开",
+  "SPECIAL_SETTINGS": "特殊功能",
+  "CAPTURE_GUIDE": "截图键作为 Steam Guide"
 }

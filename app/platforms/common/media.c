@@ -2,6 +2,7 @@
 #include "audio_jitter.h"
 #include "audio_recovery.h"
 #include "player_owner.h"
+#include "input/guide_pulse.h"
 #include "video_scheduler.h"
 static sl_video_scheduler video_scheduler;
 #if NSL_DIAGNOSTICS
@@ -100,6 +101,54 @@ static pthread_mutex_t hid_lifecycle_lock;
 static SDL_GameController *hid_controller;
 static SDL_JoystickID hid_controller_id = -1;
 static int hid_controller_index = -1;
+static atomic_bool input_gate;
+static sl_guide_pulse capture_pulse; /* state_lock; belongs to the current HID session */
+static bool capture_configured;     /* main input owner only */
+static atomic_bool capture_blocked = true;
+static void neutral_locked(void);
+
+/* Explicit full refresh admits a separate report even when the preceding
+ * failed flush already advanced the diagnostic/local baseline. state_lock
+ * serializes this with the regular 8ms flush and session replacement. */
+static bool capture_submit_locked(void *context, bool pressed) {
+    (void)context;
+    if (!hid_session || hid_controller_id < 0)
+        return false;
+    bool ready = IHS_HIDSDLInputReady(hid_session, hid_controller_id);
+    if (pressed && !ready)
+        return false;
+    SDL_Event event = {.type = pressed ? SDL_CONTROLLERBUTTONDOWN : SDL_CONTROLLERBUTTONUP};
+    event.cbutton.which = hid_controller_id;
+    event.cbutton.button = SDL_CONTROLLER_BUTTON_GUIDE;
+    event.cbutton.state = pressed ? SDL_PRESSED : SDL_RELEASED;
+    IHS_HIDHandleSDLEvent(hid_session, &event); /* Always clear canonical Guide on release. */
+    return ready && IHS_HIDRefreshSDLGameControllers(hid_session);
+}
+static bool capture_ready_locked(void) {
+    return !atomic_load(&capture_blocked) && atomic_load(&input_gate) &&
+           hid_session_enabled && hid_session && hid_controller_id >= 0 &&
+           IHS_HIDSDLInputReady(hid_session, hid_controller_id);
+}
+void sl_media_capture_guide(bool enabled) {
+    capture_configured = enabled;
+    if (!locks_ready)
+        return;
+    pthread_mutex_lock(&state_lock);
+    bool allowed = enabled && capture_ready_locked() && sl_events_foreground();
+    pthread_mutex_unlock(&state_lock);
+    /* All applet IPC stays on the existing main owner, outside state_lock. */
+    if (!sl_events_capture_guide(allowed)) {
+        allowed = false;
+        if (!sl_events_capture_guide(false))
+            sdl_exit_requested = true; /* Teardown retries restoration before loader return. */
+    }
+    bool request = sl_events_take_capture_guide();
+    pthread_mutex_lock(&state_lock);
+    allowed = allowed && capture_ready_locked() && sl_events_foreground();
+    sl_guide_pulse_tick(&capture_pulse, allowed, request, SDL_GetTicks64(),
+                         capture_submit_locked, NULL);
+    pthread_mutex_unlock(&state_lock);
+}
 #if NSL_DIAGNOSTICS
 static uint32_t hid_events_since_log;
 static uint32_t hid_send_ok_since_log;
@@ -164,7 +213,7 @@ static stream_media_snapshot snapshot;
 static void (*draw_hook)(void *, void *);
 static void (*event_hook)(const void *, void *);
 static void *hook_context;
-static atomic_bool input_gate;
+
 static atomic_bool muted;
 #if NSL_DIAGNOSTICS
 static IHS_HIDSDLLastSubmitted submitted_cache;
@@ -619,6 +668,10 @@ static bool open_hid_controller(void) {
 }
 
 static void close_hid_controller(void) {
+    pthread_mutex_lock(&state_lock);
+    neutral_locked();
+    sl_guide_pulse_reset(&capture_pulse); /* Host device removal ends this target's lifetime. */
+    pthread_mutex_unlock(&state_lock);
     if (hid_controller != NULL) {
         media_logf("hid controller close: index=%d instance=%d", hid_controller_index,
                    (int)hid_controller_id);
@@ -819,6 +872,7 @@ static void pump_sdl_events(void) {
     }
     sl_rumble_tick(hid_session != NULL);
     pthread_mutex_unlock(&state_lock);
+    sl_media_capture_guide(capture_configured);
 }
 
 bool stream_media_init(stream_media_log_fn log_fn) {
@@ -833,6 +887,9 @@ bool stream_media_init(stream_media_log_fn log_fn) {
         locks_ready = true;
     }
     atomic_store(&input_gate, false);
+    atomic_store(&capture_blocked, true);
+    capture_configured = false;
+    sl_guide_pulse_reset(&capture_pulse);
     log_cb = NSL_DIAGNOSTICS ? log_fn : NULL;
     memset(&snapshot, 0, sizeof(snapshot));
     sdl_exit_requested = false;
@@ -884,6 +941,8 @@ void stream_media_shutdown(void) {
     if (!locks_ready)
         return;
     media_logf("media shutdown: begin");
+    sl_media_capture_guide(false);
+    sl_events_shutdown();
     stream_media_set_hid_session(NULL, false);
     sl_sensors_stop();
     stream_media_video_stop(NULL);
@@ -997,8 +1056,12 @@ void stream_media_set_hid_session(IHS_Session *session, bool enabled) {
     pthread_mutex_lock(&hid_lifecycle_lock);
     hid_flush_thread_stop();
     pthread_mutex_lock(&state_lock);
-    if (hid_session != session)
+    if (hid_session != session || !enabled)
+        neutral_locked();
+    if (hid_session != session) {
+        sl_guide_pulse_reset(&capture_pulse); /* Never replay against a replacement session. */
         rumble_reset_pending = true;
+    }
     hid_session = session;
     memset(remote_touches, 0, sizeof(remote_touches));
     hid_session_enabled = enabled;
@@ -1933,6 +1996,9 @@ void sl_media_mute(bool mute) {
     atomic_store(&muted, mute);
 }
 static void neutral_locked(void) {
+    atomic_store(&capture_blocked, true);
+    sl_guide_pulse_tick(&capture_pulse, false, false, SDL_GetTicks64(),
+                         capture_submit_locked, NULL);
     if (hid_session) {
         IHS_HIDResetSDLGameControllers(hid_session);
         for (unsigned i = 0; i < 8; ++i)
@@ -1942,12 +2008,14 @@ static void neutral_locked(void) {
     memset(remote_touches, 0, sizeof(remote_touches));
 }
 void sl_media_gate(bool enabled) {
-    if (atomic_load(&input_gate) == enabled)
+    if (atomic_load(&input_gate) == enabled &&
+        (!enabled || !atomic_load(&capture_blocked)))
         return;
     pthread_mutex_lock(&state_lock);
     if (input_gate && !enabled)
         neutral_locked();
     input_gate = enabled;
+    atomic_store(&capture_blocked, !enabled);
     pthread_mutex_unlock(&state_lock);
 }
 void sl_media_neutral(void *context) {

@@ -1030,6 +1030,7 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
             if (c->kind == SL_CONTROL_TOGGLE) {
                 bool enabled = c->action == SL_FEC            ? m->store.unreliable_fec
                                : c->action == SL_UPDATE_CHECK ? m->update_check
+                               : c->action == SL_CAPTURE_GUIDE ? m->capture_guide
                                                               : m->store.sound;
                 sl_gfx_color track = enabled ? green : muted;
                 int tx = box.x + box.w - 74, ty = box.y + (box.h - 28) / 2;
