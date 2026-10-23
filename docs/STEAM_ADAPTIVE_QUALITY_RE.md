@@ -229,6 +229,64 @@ host `CGameStreamSession` offset=0x4528 的RTTI虚表为 `0x13ac8f8b0`：
 仍未执行GPU/NVENC/AMF/x264编码器设备调用或比较真实编码比特流；“写入编码器状态”
 不能扩大为“任意真实会话必然以该码率输出”。
 
+### NVENC参数准备与原重配置调用边界
+
+以下补充上节编码stage之后的消费者。固定Win64样本SHA不变；工具
+`tools/steam-adaptive-nvenc64-audit.py` 执行5组、22次stage交付，捕获16次驱动接口调用。
+这里的驱动接口是记录参数并返回指定状态的**显式终点**，没有真实GPU/驱动接受证明。
+
+**Evidence：** 原构造器 `0x13a1a0b50` 写入vtable `0x13ac91fa0`，其COL/RTTI
+名称为`CGameStreamVideoEncoder`，+0x10绑定 `0x13a1a2a10`，直接读取encoder+0x168。
+NVENC vtable `0x13ac95920` 的+0x38为共享frame wrapper `0x13a1b1610`，
++0x50绑定 `0x13a1b5490`。工具没有从stage写入后手工调用getter并拼造驱动参数：
+UpdateBitRate原xchg → 原next-stage dispatcher `0x13a1a4510` → 上述wrapper的格式/
+失败门禁 → NVENC prepare → 原owner虚表getter → 参数更新 → 原驱动调用连续执行。
+构造阶段的stage-next指针、owner/NVENC存储和初始化参数由fixture提供。
+
+Native生产consumer的148正文先与Linux原客户端`equal_range_repeats`两次输出比对，
+再进入原host dispatcher/parser/callback/estimator；事件后显式时钟重算仍使用前节基线。
+固定1280×720、60/1帧率，NVENC原prepare比较新目标kbps×1000与backend+0x86c。
+相同值跳过重配置；变化时进入 `0x13a1b3be0`，调用原 `0x13a1b6670` 写参数，复制
+0x710字节初始化块到栈上的reconfigure对象，置其version为0xf101000c，随后调用
+API表 `0x13b17d8a8` 指向的表+0x108；不是仅修改一个打印或统计字段。
+
+API名称和布局用NVIDIA署名的
+[12.1 header（FFmpeg发布的固定tag）](https://raw.githubusercontent.com/FFmpeg/nv-codec-headers/n12.1.14.0/include/ffnvcodec/nvEncodeAPI.h)
+独立核对：文件SHA `dbdaa8bcbc2b9325bd24bc68b36170a8432411518040e8d4c8421608cf217425`。
+工具编译`sizeof/offsetof`，确认x64函数表+0x108为`nvEncReconfigureEncoder`，
+`NV_ENC_RECONFIGURE_PARAMS`大小0x720、reInit块偏移8/大小0x710、encodeConfig指针
+偏移0x58、config.rcParams偏移0x28。`averageBitRate`单位为bits/sec；不是把kbps
+不经转换送给驱动。该header仅用于类型/布局，不作为Valve策略来源，不随工具再分发。
+
+- 普通受控配置的原stage依次写15000→2500→3750→7500→15000kbps，驱动边界
+  对应收到15,000,000→2,500,000→3,750,000→7,500,000→15,000,000的平均目标。
+  每条成功准备链后都到达frame-encode终点；重复目标不再调用驱动重配置。
+- 在fixture owner+0x178=0、60/1帧率时，原helper设置max=average×1.2，
+  VBV和初始延迟=该max/60（bits）。2500kbps对应max3,000,000、VBV/initial各50,000。
+  owner+0x178=1分支也执行：max/VBV均为average×2，initial为0。两条分支的flags分别
+  为0x400和8。该控制字段由fixture显式提供，不把它与客户端请求码率0或任意UI档位混为一谈。
+- 独立callback上限8000时，stage和驱动都受同一个限制。固定请求6000且backend原目标
+  也是6000时不做重配置；没有据此声称固定模式在初始化时不设置码率。
+- 合成驱动状态8使原重配置函数返回false，原wrapper调用 `0x13a1a4520` 将stage+0x18
+  标为失败，不到达frame-encode终点；下一次stage交付仍失败，也不再次进入prepare/驱动。
+  这验证失败门禁，不证明实际驱动会返回8、真实会话会如何上报或自动恢复。
+
+五种反例修改owner getter偏移、kbps×1000常数、相等比较跳转、驱动返回码门禁和stage
+xchg，均在正常返回后由调用数/参数/失败状态/目标oracle检出，不以模拟器错误作为成功。
+本地证据 `build/adaptive-quality-research/host64-nvenc-reconfigure-{chain,counterexamples}.json`
+记录原代码范围hash、Native/工具/参考向量hash、SDK布局和每次接口参数。
+
+静态RTTI另定位到MFX `0x13ac95490` / prepare `0x13a1b24c0`、
+x264 `0x13aca4100` / prepare `0x13a1ba870`：前者有目标/FPS变化时更新参数并调用后端
+接口的分支，后者进入 `0x13a1baaa0` 后按变化调用其重配置函数指针。它们不属于上述
+NVENC执行用例；AMF及其他后端也没有由这5组输入获得等价证明。
+
+**Conclusion / 边界：** 对受测NVENC普通路径，动态估计值确实进入正式驱动重配置参数。
+已跨过“只写encoder状态”的证据边界，但没有执行真实驱动、实际码流、完整stage构造/
+选择、surface变化重建或设备失败恢复。profile关闭、分配/锁/日志/线程/时钟、memcpy及
+成功prepare后的frame编码是明确终点；opaque handle和parameter block不是驱动验证过的
+真实会话。未改变产品带宽默认值/运行策略，不能把此处参数设置等同公网画面质量实测。
+
 ### 控制明文、解析门禁与编码阶段的串接
 
 `tools/steam-adaptive-feedback64-audit.py` 复用配置接线工具和其host64 harness，
@@ -666,6 +724,14 @@ python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/Stea
 python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation mode-cap
 python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation mode-reset
 python3 tools/steam-adaptive-config64-audit.py --binary /path/to/pinned/win64/SteamUI.dll
+# 原stage/owner getter/NVENC prepare到驱动重配置参数（需cc与固定header）：
+python3 tools/steam-adaptive-nvenc64-audit.py \
+  --binary /path/to/pinned/win64/SteamUI.dll \
+  --nvenc-header /path/to/pinned/nvEncodeAPI-12.1.h \
+  --client-receiver build/desktop/third_party/ihslib/tests/session/ihs-video-overflow-oracle \
+  --output /tmp/host-nvenc-chain.json
+# 同样带上必需参数，以下--mutation应因结果不匹配失败：
+# owner-getter / kilobits-conversion / change-gate / driver-result / encoder-store
 # Native Ping回包对照原ARM64向量，再进入Win64原接收/估计/编码stage：
 python3 tools/steam-adaptive-ping64-audit.py \
   --binary /path/to/pinned/win64/SteamUI.dll \
@@ -712,5 +778,6 @@ python3 tools/steam-adaptive-client-feedback-audit.py \
 通知、host内部估计到实际编码器设置/输出，以及恢复/稳态分支；只恢复消息99或者
 移植旧x86的乘0.9都不构成完整复刻。已将本地consumer的148明文交给x64原解析器并写入
 编码stage状态，亦已核对Native Ping应答明文packet到原估计器/编码stage；
+NVENC路径还已执行原next-stage/wrapper/owner getter到驱动重配置参数的交付边界。
 仍未完成认证/加密wire到设备编码输出的全部producer/consumer闭环，
 也未证明当前用户Steam版本与该快照完全一致。因此不把“机制已经找到”写成“实现已完整”。
