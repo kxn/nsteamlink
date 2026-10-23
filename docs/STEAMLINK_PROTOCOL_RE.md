@@ -15152,3 +15152,86 @@ ctest --test-dir build/desktop -R '^cloud_recovery_runtime$' -V
 仍由provider给定。它没有执行DNS/TLS、实际CM服务、证书校验、ICE/SNP、真实SDR
 POP或NAT打洞，更未证明公网丢包恢复和官方服务选择策略。软件SDL和虚拟控制器
 不证明Switch物理输出/输入ACK、GPU/libnx、切Wi-Fi或hbmenu，不能据此结项真机验收。
+
+## 196. 真实匿名CM会话与实际SDK network-loopback媒体
+
+本节是两组**互相独立**的执行证据：一组访问真实服务但不请求主机；另一组组合
+实际SDK数据通路与本机媒体peer，但仍由provider给定CM服务/证书准备。不把它们
+拼成“真实Steam公网串流已完成”的证据。
+
+### 开发机的只读匿名服务探针
+
+Evidence：以无参数默认模式构建/运行`nsl-remote-live`，没有profile、--pair、
+--status或媒体参数。实际目录请求HTTP200、CURL/verify=0，随后选中
+`cmp2-lax1.steamserver.net:443`，连接地址为`162.254.195.75`，TLS阶段CURL/verify=0。
+真实连接/协议回调产生`CLOUD_CONNECTED=1`，最后进程正常退出0并输出匿名测试通过。
+该回调依赖真实WebSocket/RPC收到非零CreateSession结果，不只代表TCP端口能打开。
+
+本次目录总耗时220ms、DNS10ms、TCP20ms、TLS138ms；CM TLS阶段总耗时550ms、
+DNS10ms、TCP276ms。它们是2026-10-23 23:39:08 UTC起（新加坡10月24日07:39）的
+这一次开发机采样，不是服务时延预算、最优节点结论或Switch/热点网络可达性证明。
+
+公开投影为`tools/fixtures/steam-cloud-anonymous-runtime-20261024.json`，保存
+receiver/source/raw日志SHA、观察时间、服务端点、结果和输入边界；不提交本机IP、
+原始连接日志或任何用户profile。没有配对、状态订阅、主机开流或SDK连接。复现：
+
+```sh
+cmake --build build/desktop --target nsl-remote-live
+build/desktop/app/nsl-remote-live
+```
+
+Conclusion：当前开发机经其现有网络配置能完成实际匿名CM会话；它不证明配对主机
+通知、认证/开流、Switch DNS、SDR或NAT行为，不撤回之前实机网络不稳定的观察。
+
+### SDK入口的源码约束
+
+固定本仓GNS依赖commit `d534c19` 的`ISteamNetworkingSockets::CreateSocketPair`
+公开接口区分默认memory pipe和`bUseNetworkLoopback=true`。后者的实际
+`CSteamNetworkConnectionlocalhostLoopback::APICreateSocketPair`创建两个UDP transport，
+建立本机连接、交换本地crypto握手材料后进入Connected。它花费真实加解密和SNP
+处理成本；两个连接由API直接建立，不经过ConnectP2PCustomSignaling/ICE/SDR。
+两个handle都必须关闭，不能只关应用使用的一端。
+
+`app/tests/sdk_cloud_recovery_runtime.c`保留§195实际应用、云RPC parser、manager、
+owned材料和IHS worker，只把裸UDP provider换成`loopback_sdk_provider.cpp`：
+
+- 构造时初始化实际SDK，使用合成localhost身份，不加载测试字符串为真实证书。
+- 等实际IHS Connect已创建Session后，start_session才调用实际
+  CreateSocketPair(true)，检查两个SDK连接确实Connected、远端为localhost且端口非零。
+  非零端口排除默认内存pipe路径。准备ready仍是明确给定输入。
+- IHS send调用真实SendMessageToConnection(UnreliableNoNagle)。runtime owner
+  手动poll实际SDK，从另一端ReceiveMessages取出并Release消息，转交本机媒体peer；
+  对端返回的数据反向经过SDK，再进入实际SnsMessageQueue及IHS receive。
+- 两侧接收消息都检查没有SDK reliable标志，保留IHS自身的可靠包/ACK职责。
+  SDK收发状态读取实际GetConnectionInfo，不直接把started当Connected。
+- wait在队列条件变量上有界等待，不持SDK锁等待producer。provider回调不访问Session；
+  socket许可只在测试SDK调用的thread-local scope内开启，实际数据仅走loopback。
+- SessionDestroy完成、IHS callback计数归零后，两个handle都实际CloseConnection，
+  再poll/Kill SDK、恢复manual-poll模式并关闭媒体bridge FD。SDK消息不跨Kill保存。
+
+它没有新增provider工作线程，SDK由原runtime owner推进；已有本机peer和IHS worker
+仍按原路径join。真实SNP只使用本机网络，不把localhost身份当Steam账户认证，stats
+也不宣称authenticated/relayed。应用使用的SNS准备/连接适配器仍为测试实现，不能
+据此声称生产sl_sns的全部配置、证书和连接策略已在这组执行。
+
+### 组合观察与边界
+
+两种诊断开关的Release桌面构建中，三个实际network-loopback pair均创建/双端关闭，
+SDK两方向都实际收到了unreliable消息；不是只统计API接受。实际应用三笔都有本笔
+ID的画面和音频，正常type9停止、真实15秒静默超时、错误页B返回后再次开流成立。
+旧像素引用推迟清理、新请求replacement以及菜单/gate检查继续通过；provider无
+进行中的callback，音频设备3/3关闭、video clean、应用/对端join和gfx关闭均成立。
+
+```sh
+cmake --build build/desktop --target nsl-sdk-cloud-recovery-runtime
+ctest --test-dir build/desktop -R '^sdk_cloud_recovery_runtime$' -V
+```
+
+新增检查及§192–195的runtime/native manager/应用/云provider、旧generation可运行
+反例在诊断ON/OFF各6项通过；补充非零端口检查后，SDK组合在两种配置各再次通过。
+本轮没有发现新的生产差异，未据夹具结果新增协议策略。
+
+SDK pair被API直接置Connected，证书准备与CM服务由provider给定；本例不验证实际
+P2P信令、Valve证书、STUN/ICE候选、SNP丢包压力、SDR POP或NAT。软件SDL和虚拟
+控制器不证明Switch物理输入输出、GPU/libnx、Wi-Fi切换或hbmenu。真实匿名服务
+探针也没有提供这些缺失条件，不能代替它们的独立验收。

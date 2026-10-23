@@ -98,14 +98,15 @@ void __wrap_sl_remote_connection_destroy(sl_remote_connection *c) {
     cm_destroyed = true;
 }
 
+static unsigned sdk_creates, sdk_starts, sdk_destroys, sdk_sent, sdk_received;
+static bool sdk_joins_clean = true;
+#ifndef NSL_RECOVERY_REAL_SDK
 typedef struct local_sdk {
     int fd;
     struct sockaddr_in peer;
     atomic_bool started;
     atomic_uint calls, sent, received;
 } local_sdk;
-static unsigned sdk_creates, sdk_starts, sdk_destroys, sdk_sent, sdk_received;
-static bool sdk_joins_clean = true;
 sl_sns *__wrap_sl_sns_create_configured(const IHS_ClientConfig *c, const sl_remote_material *m,
     bool share, char *error, size_t error_size, const char *config, size_t config_size) {
     (void)error; (void)error_size; (void)config; (void)config_size;
@@ -175,7 +176,18 @@ void __wrap_sl_sns_destroy(sl_sns *opaque) {
     sdk_sent += atomic_load(&s->sent); sdk_received += atomic_load(&s->received);
     close(s->fd); free(s); ++sdk_destroys;
 }
+#else
+bool loopback_sdk_session_live(void) { return atomic_load(&launched) != NULL; }
+void loopback_sdk_counts(unsigned out[10]);
+#endif
 void cloud_fixture_projection(void) {
+#ifdef NSL_RECOVERY_REAL_SDK
+    unsigned counts[10]; loopback_sdk_counts(counts);
+    sdk_creates=counts[0]; sdk_starts=counts[1]; sdk_destroys=counts[2];
+    sdk_sent=counts[3]; sdk_received=counts[4]; sdk_joins_clean=counts[5] != 0;
+    printf(",\"network_loopback_pairs\":%u,\"network_loopback_closed\":%u,\"network_peer_forwarded\":%u,\"network_client_delivered\":%u",
+           counts[6], counts[7], counts[8], counts[9]);
+#endif
     printf(",\"cm_creates\":%u,\"cm_subscriptions\":%u,\"cm_packets\":%u,\"cm_notifications\":%u,"
            "\"cm_outer_tokens\":%u,\"cm_destroyed\":%s,\"sdk_creates\":%u,\"sdk_starts\":%u,"
            "\"sdk_destroys\":%u,\"sdk_sent\":%u,\"sdk_received\":%u,\"sdk_joins_clean\":%s,"

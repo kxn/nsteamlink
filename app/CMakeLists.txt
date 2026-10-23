@@ -1359,18 +1359,27 @@ if(NSL_PLATFORM STREQUAL "desktop")
     set(recovery_targets nsl-application-recovery-runtime nsl-manager-recovery-runtime)
     if(NSL_BUILD_SNS)
         add_executable(nsl-cloud-recovery-runtime tests/cloud_recovery_runtime.c)
-        target_compile_definitions(nsl-cloud-recovery-runtime PRIVATE NSL_HAVE_SNS=1)
-        list(APPEND recovery_targets nsl-cloud-recovery-runtime)
-        foreach(symbol sl_remote_connection_protocol sl_remote_connection_describe sl_remote_connection_destroy
-                sl_sns_create_configured sl_sns_start_session sl_sns_session_ready sl_sns_get_state
-                sl_sns_update sl_sns_end_reason sl_sns_get_stats sl_sns_datagram_transport sl_sns_destroy)
-            target_link_options(nsl-cloud-recovery-runtime PRIVATE "-Wl,--wrap=${symbol}")
+        add_executable(nsl-sdk-cloud-recovery-runtime tests/sdk_cloud_recovery_runtime.c tests/loopback_sdk_provider.cpp)
+        target_compile_features(nsl-sdk-cloud-recovery-runtime PRIVATE cxx_std_17)
+        foreach(cloud_target nsl-cloud-recovery-runtime nsl-sdk-cloud-recovery-runtime)
+            target_compile_definitions(${cloud_target} PRIVATE NSL_HAVE_SNS=1)
+            list(APPEND recovery_targets ${cloud_target})
+            foreach(symbol sl_remote_connection_protocol sl_remote_connection_describe sl_remote_connection_destroy
+                    sl_sns_create_configured sl_sns_start_session sl_sns_session_ready sl_sns_get_state
+                    sl_sns_update sl_sns_end_reason sl_sns_get_stats sl_sns_datagram_transport sl_sns_destroy)
+                target_link_options(${cloud_target} PRIVATE "-Wl,--wrap=${symbol}")
+            endforeach()
         endforeach()
         add_test(NAME cloud_recovery_runtime COMMAND "${Python3_EXECUTABLE}" -O
             "${CMAKE_SOURCE_DIR}/scripts/check-session-recovery-runtime.py" --application --manager --cloud
             --receiver $<TARGET_FILE:nsl-cloud-recovery-runtime>
             --video "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video/sequential.h264")
         set_tests_properties(cloud_recovery_runtime PROPERTIES TIMEOUT 90)
+        add_test(NAME sdk_cloud_recovery_runtime COMMAND "${Python3_EXECUTABLE}" -O
+            "${CMAKE_SOURCE_DIR}/scripts/check-session-recovery-runtime.py" --application --manager --cloud --sdk-loopback
+            --receiver $<TARGET_FILE:nsl-sdk-cloud-recovery-runtime>
+            --video "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video/sequential.h264")
+        set_tests_properties(sdk_cloud_recovery_runtime PROPERTIES TIMEOUT 90)
     endif()
     foreach(recovery_target ${recovery_targets})
         target_include_directories(${recovery_target} PRIVATE platforms/common

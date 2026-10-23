@@ -43,6 +43,9 @@ static sl_remote_connection *cloud_fixture_create(const IHS_ClientConfig *, cons
 static void cloud_fixture_update(sl_remote_connection *, uint64_t);
 static void cloud_fixture_notify(const uint8_t *, size_t);
 #endif
+#ifdef NSL_RECOVERY_REAL_SDK
+bool loopback_sdk_allow_socket(void);
+#endif
 #if defined(NSL_RECOVERY_APPLICATION) && !defined(NSL_RECOVERY_MANAGER)
 /* Published by the main-thread application submit adapter, before requested. */
 static sl_command admitted_command;
@@ -111,13 +114,25 @@ IHS_UDPSocket *__wrap_IHS_UDPSocketOpen(bool broadcast) {
 }
 int __real_socket(int, int, int);
 int __wrap_socket(int family, int type, int protocol) {
-    if (!opening_ihs) { errno = EACCES; return -1; } /* Debug listener only. */
+    bool owned = opening_ihs;
+#ifdef NSL_RECOVERY_REAL_SDK
+    owned |= loopback_sdk_allow_socket();
+#endif
+    if (!owned) { errno = EACCES; return -1; } /* Debug listener only. */
     return __real_socket(family, type, protocol);
 }
 ssize_t __real_sendto(int, const void *, size_t, int, const struct sockaddr *, socklen_t);
 ssize_t __wrap_sendto(int fd, const void *data, size_t size, int flags,
                       const struct sockaddr *to, socklen_t length) {
     const struct sockaddr_in *v4 = (const void *)to;
+#ifdef NSL_RECOVERY_REAL_SDK
+    if (loopback_sdk_allow_socket() && to && to->sa_family == AF_INET6) {
+        const struct sockaddr_in6 *v6 = (const void *)to;
+        if (IN6_IS_ADDR_LOOPBACK(&v6->sin6_addr) ||
+            (IN6_IS_ADDR_V4MAPPED(&v6->sin6_addr) && !memcmp(&v6->sin6_addr.s6_addr[12], "\x7f\0\0\x01", 4)))
+            return __real_sendto(fd, data, size, flags, to, length);
+    }
+#endif
 #ifdef NSL_RECOVERY_CLOUD
     if (size >= 16 && !memcmp(data, "\xff\xff\xff\xff\x21\x4c\x5f\xa0", 8)) {
         const uint8_t *wire = data; uint32_t hs; IHS_ReadUInt32LE(wire+8, &hs);

@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "probe": "nsl-remote-live with no arguments",
+  "observed_utc": "2026-10-23T23:39:08+00:00",
+  "source_files": {
+    "app/tests/remote_live.c": "b3a71d86108382ce7360368367e43597b2b2ba700998b262100db6ce4df8be25",
+    "app/platforms/common/remote_connection.c": "6ceec268933b739c2550a7563a7a9c2a24855060f138fad32cdc4a51fe3d1fda",
+    "app/platforms/common/remote_protocol.c": "4aa17eb56e606c5cd2124bc30dedccd5cdf6336c700a25aaf046d73466554b1c",
+    "app/platforms/common/http_route.c": "fda3df39b0e1e35cb82bec09945dc2c50aae34b95d4e98c4b60e4877e11c68f1"
+  },
+  "receiver_sha256": "054173a064438fc41916008725af60c50fb930ab93a79c010a1511bbfacebcce",
+  "private_raw_sha256": {
+    "stdout": "b0a307a3c70952144a445ee85063390b32d6425fc3b4bb240818712d5d6a19c6",
+    "stderr": "23bfe607ea6e12e61ce50d6a1417b9f3dfe4d33371e2b7bdcbdf5b8572b90e74"
+  },
+  "receiver_exit": 0,
+  "stdout": [
+    "CLOUD_CONNECTED=1",
+    "PASS anonymous cloud test"
+  ],
+  "directory": {
+    "host": "api.steampowered.com",
+    "curl": 0,
+    "http": 200,
+    "verify": 0,
+    "total_ms": 220,
+    "dns_ms": 10,
+    "tcp_ms": 20,
+    "tls_ms": 138
+  },
+  "cm": {
+    "endpoint": "cmp2-lax1.steamserver.net:443",
+    "connected_ip": "162.254.195.75",
+    "curl": 0,
+    "verify": 0,
+    "total_ms": 550,
+    "dns_ms": 10,
+    "tcp_ms": 276,
+    "tls_ms": 550,
+    "anonymous_ready": true
+  },
+  "inputs": {
+    "profile": false,
+    "pairing": false,
+    "host_status_subscription": false,
+    "host_stream_request": false,
+    "sdk_connection": false
+  },
+  "scope": "One developer-network anonymous session. Does not establish Switch/hotspot access, paired-host discovery, media, SDR or NAT."
+}

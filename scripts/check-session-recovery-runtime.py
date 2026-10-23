@@ -18,7 +18,12 @@ def observe(receiver, video):
     return json.loads(result.stdout)
 
 
-def verify(observed, application=False, manager=False, cloud=False):
+def verify(observed, application=False, manager=False, cloud=False, sdk_loopback=False):
+    if sdk_loopback:
+        require(observed["network_loopback_pairs"] == observed["network_loopback_closed"] == 3,
+                "three real SDK network loopback pairs must open and close")
+        require(observed["network_peer_forwarded"] > 0 and observed["network_client_delivered"] > 0,
+                "actual unreliable SDK messages must cross both loopback directions")
     if cloud:
         require(observed["cm_creates"] == 1 and observed["cm_subscriptions"] > 0, "real CM session/subscription producer")
         require(observed["cm_packets"] == observed["cm_outer_tokens"] == observed["control_requests"],
@@ -73,10 +78,11 @@ def main():
     parser.add_argument("--application", action="store_true")
     parser.add_argument("--manager", action="store_true")
     parser.add_argument("--cloud", action="store_true")
+    parser.add_argument("--sdk-loopback", action="store_true")
     args = parser.parse_args()
     observed = observe(args.receiver, args.video)
     print(json.dumps(observed, sort_keys=True))
-    verify(observed, args.application, args.manager, args.cloud)
+    verify(observed, args.application, args.manager, args.cloud, args.sdk_loopback)
     print("Local runtime recovery: real UDP stop/silence/stop, three decoded streams and joined teardown")
 
 
