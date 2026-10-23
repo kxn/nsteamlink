@@ -234,10 +234,45 @@ IHS `ch_data_video.c::CheckPartialOverflow` 已发送message148，是压缩帧pe
 有latch抑制重复且追近后解除。当前Switch应用未见对应的解码输出端148producer；
 它的队列替换/帧ticket完成已有DroppedLate等统计。
 
-这是**候选平台差异**，还不能直接判为bug：官方main的SendVideoOverflow直接caller
-只有压缩帧overflow与Android输出两类；Switch使用FFmpeg路径，不能把任意丢弃旧帧、
-解码错误或一次长RTT都改成Android decoder overflow。需要对照同类型输出积压状态与
-官方FFmpeg consumer，才能决定是否增加独立上报及其latch/恢复边缘。
+**撤回此前的缺口暗示**：仅凭Android有这个producer，不能把Switch没有它列为应补齐的
+AVCodec缺口。追加的同类Linux客户端证据如下：固定1.3.32.316的AVCodec路径有压缩帧
+积压发送者，但没有在这份直接调用清单中出现Android输出落后的额外发送者。
+这不证明所有间接/内联发送者不存在，也不证明NVTEGRA的实际处理能力；它已经足以否定
+“任意DroppedLate/解码错误/高RTT都应补发Android式148”的移植依据。
+
+### 同类Linux客户端的反馈producer
+
+Linux固定ELF来源及SHA沿用协议§91：
+`95482ca6120f90bb90798b27206b7946ab732e079f008d7fc90ea58a8b0074e1`。
+`tools/steam-adaptive-client-feedback-audit.py`扫描其全部可执行section的原指令：
+SendVideoOverflow `0x31f740` 只有一个直接call/jmp引用，来自压缩decoder检查
+`0x326c60` 的 `0x326d2d`。ELF RELA中无该目标addend引用；不将这份有界清单
+扩展为不存在间接/内联生成消息的全程序证明。该检查在OnThink中由 `0x327241` 调用，
+不是由player输出落后直接调用。
+
+11组15状态执行完整原CheckOverflow、SendVideoOverflow、protobuf构造/序列化、
+Frame Put/Send与Connection交付终点。SDK、时钟、锁、日志和存储继承既有AVCodec
+审计终点；**Frame加密另有显式成功终点，保持明文不变**，因此下列字节是观测的明文，
+不是完成认证/加密的线上ciphertext或主机已接收证明。两个partial端点及调度是显式输入，
+没有运行完整接收端生产这些对象，也没有模拟真实解码吞吐。
+
+- waiting-key、syncing或partial计数<=1时，检查不发反馈。
+- head=100/tail=102时，control channel1正文为 `9408641066`：首字节148，随后
+  first=100、last=102。相同跨度再检查仍可发送；跨度缩小只更新比较值，再增长可再发。
+  这里没有Android输出端那种一次发送后latch抑制到恢复的语义。
+- timestamp差=9830时只发148；=9831时先发video channel3正文 `02`（空DataLost），
+  再发148，并记录syncing与最后恢复时刻。这是原检查的两个独立判断，不是同一触发条件。
+- frame ID回绕采用原有有符号差：65535→0的inclusive span为−65534。初始比较值0时
+  抑制148但保存负值，下一次相同范围则允许发送。不能私自改为模65536的正数跨度。
+- client phase非6时，原SendVideoOverflow不发，但调用者仍更新跨度比较值。
+
+当前IHS的压缩pending检查在范围比较、恢复阈值和发送顺序上相符；这里的源码比较
+不替代完整Socket/crypto/并发和设备证明。IHS通用control send本身没有同样的phase6
+判断，非streaming时能否到达该producer取决于外层会话/worker生命周期，尚不能凭
+活动会话分支宣布这一门禁等价。官方AVCodec的receive错误另使用DataLost及首次完成结果，
+已有独立原指令与Native比较，见协议§91–93；不能把它换成Android输出端的148。
+移除原 `0x326d2d` 发送调用的反例正常执行到结果比较后，必须因缺少明文反馈被oracle拒绝。
+脚本只用于研究，不改变产品配置或协议行为。
 
 复查命令（无需连接设备）：
 
@@ -246,6 +281,11 @@ python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/Stea
 # 下列反例应非零退出，并明确因输出不匹配失败：
 python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation decoder-margin
 python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation encoder-store
+python3 tools/steam-adaptive-client-feedback-audit.py \
+  --binary /path/to/pinned/linux/package/bin/steamlink --output /tmp/linux-feedback.json
+# 此反例同样应因反馈缺失而非零退出：
+python3 tools/steam-adaptive-client-feedback-audit.py \
+  --binary /path/to/pinned/linux/package/bin/steamlink --output /tmp/linux-mutant.json --mutation
 ```
 
 ## 复刻能力的实际边界
