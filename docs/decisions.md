@@ -2246,6 +2246,9 @@ Evidence：`app/platforms/common/runtime.c` 的 `SL_CMD_END_GAME` 分支发送 S
 
 ## D-063：Switch 六轴传感器由 libnx 采样、经 SDL HID 通道上报（2026-10-22）
 
+本条的 libnx 采样和轴向决定保留；wire flags、复制长度及 Host 消费条件由
+D-065 的 RAW V3 契约补全，不能把早期 presence-only 实现当作完整协议。
+
 Evidence：devkitPro SDL 2.28.5-4 的 `SWITCH_JoystickSetSensorsEnabled` 是返回
 `SDL_Error` 的桩（`libSDL2.a::SDL_sysjoystick.o` 反汇编），所以
 `SDL_GameControllerSetSensorEnabled` 在 Switch 上不能产生
@@ -2284,47 +2287,37 @@ Decision：
    循环下的平滑度仍为 `待验证`；真机只改 `sensor_math.c` 的轴向后处理，
    不改 wire offsets 或 flags。
 
-## D-064：不为 Switch 陀螺仪发布 caps/身份伪装；Generic 流式路径的 IMU 消费属于 host 侧缺口（2026-10-23）
+## D-064：Generic gyro 的早期推论（2026-10-23，已撤回，由 D-065 取代）
 
-Evidence：`docs/OFFICIAL_INPUT_RE.md` §20 记录了 Windows `steamclient64.dll`
-11.12.30.07（SHA-256 `e9045710…68eb4e`）的 RTTI/vtable 与反汇编证据。NX 侧日志
-`flags=0x6 wire_gyro=50,0,-60` 证明客户端确实发送了非零 IMU；host 的 VDF
-`controller_switch_pro.vdf` 中 `gyro_to_mouse` group 8 为 active，`controller_caps`
-含 `0x800`，但桌面/游戏均无 gyro 输出。host 本地
-`CHIDDeviceSDLGamepad::OnSensorEvent @0x1386d30e0` 写 gyro 到 `+0x1c`、置
-`0x402`；`CGenericGamepadControllerAbstraction` 的 state-change 比较
-`@0x138678ea0` 只比较 axes/flags（`+0x18..+0x22`、`+0xc..+0x12`），不比较
-`+0x34/+0x3a` 的 gyro/accel；官方 Linux 客户端的
-`BParseGamepadStateSwitch @0x2da140` 也只解析按键/摇杆，不读 IMU。
+历史 Evidence：用户观察到实验构建无 gyro 输出；某些加 `0x400` 的构建还出现
+Gyro UI 消失、按键/摇杆失效。这些观察保留。
 
-Conclusion：给 Generic 加 `0x800` 只会让 Gyro UI 出现；改 Switch Pro/DS4 VID/PID
-会让 host 走原生/另一套布局，但 Generic RAW V2 报告里的 IMU 仍没有被应用。把
-客户端 flags 改成 `0x406` 会让整只手柄输入失效，说明 `0x400` 是 host 内部
-state 语义位，不是可单独补的 valid 位。客户端采样和 wire 打包本身没有丢数据。
+Retraction：撤回据此推导的“remote parser 拒绝 `0x400`”“motion cap 只影响
+UI”“Generic 无法消费 gyro”以及“因此应优先改 DS4 原生模拟”的结论和禁止
+默认使用正常 motion capability/freshness 的决定。固定 DLL 的实际接收函数
+并不检查 RAW flags；姿态处理函数反而明确检查 motion capability。
+旧地址 `0x1386cf580` 不是 `ProcessInputReport` 入口；普通 gyro 用 slot 1，
+不是 slot 0。早期对 `0x80000` capability 的猜测也没有成为实现依据。
 
-2026-10-23 补记并撤回：初稿把“host 不消费 IMU”写成结论，下早了。host VDF
-`controller_caps=0x8B4BFF` 与 `InfoFromHID` 基线 `0x8343FF` 的差异是
-`0x800 + 0x80000`；真机只测过 `0x800`，**`0x80000` 尚未验证**，因此
-“host 不支持”不能成立，降级为待验证。
+该次实机输入失效的根因尚未确定。构建缓存显示 motion cap 开关关闭，不能
+把 UI 消失归因于单独的 wire flag 改动。详见 `OFFICIAL_INPUT_RE.md` §21。
+
+## D-065：按 RAW V3 普通传感器契约传输 Switch 六轴（2026-10-23）
+
+Evidence：固定 `steamclient64.dll` SHA-256 `e9045710…68eb4e` 的原始指令，
+经 `tools/steam-gyro-host-audit.py` 离线执行，接受实际 C packer/report holder
+生成的 full/delta `0x406` 报告，保留按钮/摇杆，填入普通 slot 1。
+version<3 自动补 `0xc00`，V3 则要求发送方提供 freshness。
+姿态处理入口 `0x13867d830` 同时要求 caps `0x800`、sensor enabled、新报告
+和 fresh mask；原始积分器及 source 的角速度复制也有分段执行对照。
 
 Decision：
 
-1. 不发布 `0x800` motion cap、`0x400` flag、Switch Pro/DS4 身份伪装中的任何
-   一项作为默认行为；这些只保留为一次性诊断记录，不进入 release。
-2. 默认仍是 Generic `0000:0000`、caps `0x8043ff`，保留 libnx 六轴采样和
-   wire IMU 字段；不因为 host UI 出现 Gyro 就宣称支持完成。
-3. 若未来要继续争取 Steam 内陀螺仪，较有 host 既有证据的兼容方向是
-   DS4/DualSense 原生报告（input report + feature report），而不是继续调
-   Generic caps；该方案尚未实现，属于 `待验证` 的设计方向。
-4. 真机结论以用户观察到的输入/指针/游戏内动作为准；校准成功、UI 出现、
-   `SetSensorEnabled` 都不能单独作为“gyro 已被 host 消费”的证据。
-5. 2026-10-23 继续逆向补充：host 的实际消费函数是 `CGyroSource::Update
-   @0x1386702d0`，输入 gyro 在 `+0x2a/+0x2c/+0x2e`；填充循环
-   `0x1386796f0` 对 slot 0 要求内部 `flags & 0x800`（读 `+0x38/+0x3e`），
-   对 slot 1 要求内部 `flags & 0x400`（读 `+0x1c/+0x22`）。
-6. 2026-10-23 真机反证：Generic 身份、wire flags `0x406` 会让 Gyro 选项
-   消失、按键/摇杆全部失效。**`0x400` 不能直接写进 remote Generic wire
-   flags**；官方 Windows packer 的 `0x402` 是本地 SDL 内部 state，不是
-   remote Generic 可用的 wire 位。20.7 的“发送 0x406”结论撤回。稳定
-   可用仍是 flags `0x6`；要继续必须从 `DeviceInputReports`/remote parser
-   找 host 设置内部 sensor 位的机制，而不是改 wire flags。
+1. 保持 Generic 身份及 72 字节 RAW V3，普通 gyro presence/freshness 为
+   `0x402`，加 accel 后 `0x406`。删除互相混淆的实验标志和备用布局开关。
+2. Switch 声明真实 libnx motion 能力 `0x800`，不照抄身份相关的 `0x80000`。
+3. 发送 `+0x30` 微秒 event time、`+0x34` 100ns sensor time；时间变化独立于
+   六轴量化数值变化。普通输入不重放已提交的 gyro，同时不清除未提交样本。
+4. 不新增线程、同步网络日志或 loader 流程；沿用设备锁与既有 flush/delta 通路。
+5. 协议更改保留固定二进制执行反例。离线分段验证不替代实机 action/指针输出，
+   也不推断历史输入失效根因或 hbmenu 生命周期安全。

@@ -841,6 +841,9 @@ display 7xx-10xx (network)(decode)(display)` 中 network/decode/display 三列
 
 ## 20. Steam Windows host 对 Switch Generic IMU 的消费路径（2026-10-23 逆向）
 
+> **历史研究记录，相关推论已撤回。** §20.8 的 parser 拒绝结论、仅供本地使用的
+> flags 解释和 slot 推断被 §21 的原始机器码执行证据取代；实机观察本身保留。
+
 本节只记录可复核的证据、结论和假设，不把“host 显示了 Gyro UI”当成“host 消费了
 IMU”。这是 2026-10-22/23 多轮真机对照后的收敛结果。
 
@@ -1082,3 +1085,96 @@ wire flags 的 `0x400` 当成另一种报告模式/布局，直接拒绝或切�
 稳定可用的 wire flags 仍是 `0x6`（gyro presence `0x2` + accel `0x4`）；
 不要再把 `0x400`/`0x800` 加进 wire flags。要设置 host 内部 sensor 位，
 必须找到 remote parser/`DeviceInputReports` 一侧的机制，而不是直接改 flags。
+
+## 21. Generic RAW V3 的接收契约复核（固定 Windows 样本）
+
+**Retraction（2026-10-23）：** 撤回 §20.8、D-064 和旧交接文档中“remote
+Generic 不接受 `0x400`”“该位只属于本地 state”的协议结论。此前用户观察到的
+Gyro UI 消失、按键/摇杆失效仍然成立，但不能从该现象推出 parser 的分支行为。
+`CHIDDeviceRemote::ProcessInputReport` 实际入口是 `0x1386cfd80`，不是
+`0x1386cf580`；其 unknown-report-type 检查的是 protobuf 的 full/delta presence
+字段，不是 RAW flags。这里的离线结果不替代那次实机失败，也没有确定其根因。
+
+**Evidence：** 同 SHA-256 `e9045710…68eb4e` 的原始 x86-64 指令离线执行：
+
+- full 分支 `0x1386cfe70..0x1386cfed0` 按长度复制 payload 后入队；delta 分支
+  调用 `0x1386cef00` 按 73 字节订阅长度形成的 10 字节掩码重建数据，再调用
+  `0x138cfa3e0` 对 `min(delta_report_size, subscribed_length)` 字节验 CRC。
+  `0x6/0x406/0x806/0xa06` 均能还原并通过校验，没有 RAW flags 拒绝分支。
+- Generic read `0x13867b060` 从 HID Read 直接读取对象 `+0x18`；builder
+  `0x1386793e0` 的 RAW 分支复制 72 字节。version < 3 时自动 `flags |= 0xc00`
+  （`0x1386795ae..0x1386795b8`），version 3 则要求发送端自己提供 freshness。
+- `version=3, flags=0x6` 的两个 IMU slot 均为零；`0x406` 把正常 IMU 写入
+  slot 1，同时保留完全相同的按钮/摇杆输出。左 slot 的完整 gyro 条件是
+  `0x200 | 0x800`，不是只加 `0x800`。
+- Gyro constructor 真正入口为 `0x13866fac0`。factory `0x13866ebe0` 中 source
+  type 10 分支 `0x13866ede4` 传 slot=1；type 16 分支传 slot=0。不能因为
+  “slot 0”这个编号就推断普通单手柄用 slot 0。
+- `CGyroSource::Update` 的 6-word 零检查还带 `slot * 0x34`，不是无条件读
+  base+0x24。普通 slot 1 收到 `0x406` 后通过该门槛。
+- `OnSensorEvent @0x1386d30e0` 还写 `state+0x34`（sensor timestamp / 100，
+  单位 100ns）；`0x1386d2a80` 写 `state+0x30`（event timestamp / 1000，
+  单位 µs），新建报告时清 `0xc00` 和两个 sensor timestamp。
+  此前 ihslib 把 `+0x30` 以后清零，漏掉时序信息；只按六轴数值比较还会
+  合并不同时间但相同量化值的样本。零时间戳会使 `0x13863bc00` 直接返回，
+  **不等于已经证明它单独导致全部 gyro 输出失效**。
+- `build/switch-gyro400/CMakeCache.txt` 的 `NSL_SWITCH_HOST_CAPS=OFF`；当前
+  `InfoFromHID` 基线不含 motion capability `0x800`。历史 Gyro UI 消失不能
+  当作只改变 wire flag 的独立实验。
+
+**Conclusion：** Generic 路径存在正常 gyro 输入通路。RAW V3 的数值、presence、
+每报告 freshness、时间戳、设备 motion capability 是不同契约，必须一起处理。
+无需从上述证据引入 Switch/DS4 身份伪装或额外 sensor 握手。
+
+**Boundary：** 离线执行使用合成对象及显式容器/引用计数/时钟桩；网络解密、真实
+线程调度、Steam Input action 配置、最终指针/游戏输出和 Switch 生命周期不在
+此证明内。旧输入失效原因仍待验证；§20 中的 state-change 比较未证明是 gyro
+更新门禁，不能因未比较 IMU 就宣称它阻止 gyro。
+
+### 21.1 姿态处理与 source 的第二道门槛
+
+**Evidence：** Generic vtable slot 14 的 `0x13867d830` 检查对象 `+0xb8`、
+capability `+0x80` 的 `0x800`、sensor enabled `+0x1f4`。随后循环两个 slot：
+每个 slot 先积累 15 次 warmup，再检查新 packet index、fresh mask、非零 IMU。
+左 slot 另需 capability bit 39；普通 slot 1 不需要该位。
+实际 C 报告在合成启用对象上第 31 次进入 `0x13863d430` 校准；缺 `0x800`、
+sensor disabled、清 fresh mask 的负例均不进入。capability 不是“仅控制 UI”。
+
+`0x13867c110` 对 Generic 的 setting `57 00 aa` 写 `+0x1f4=1`，
+`0x13867c1d0` 将其转成设备 Write `08 01`（21 字节，余字节为零）；
+`57 00 bb` 写 `+0x1f4=0` 并转成 `08 00`。这是既有 SetSensorEnabled 流，
+不是从远端输入报告中自动推导该状态。离线审计执行了两条原始设置分支。
+
+校准之后调用 filter `0x13863c5d0`、integrator `0x13863d990`、filter
+`0x13863d750`。单独运行 integrator，使用已初始化单位姿态、Generic type=30、
+无校准偏移的合成 context，保留原始三角函数/四元数运算：
+生产 C packer 的 `(1,-2,3) rad/s` 在 dt=4ms 下得到 wxyz 约
+`(0.9999720, 0.00197446, -0.00600552, -0.00398705)`；零角速度或 dt=0
+的对照保留 `(1,0,0,0)`。不是用 Python 重写积分器来证明自己的实现。
+
+`CGyroSource::Update` 通过六轴非零检查之后，还要求 enable/fresh 和非零
+四元数；四元数全零时在 `0x138670780` 返回。将上述原始积分结果送入原始
+source Update，可通过该门槛，并在 `0x138670570..0x138670582` 把普通 slot
+角速度复制到 source `+8/+0xa/+0xc`。此处测试停在 `0x13867058c`，没有
+把 source 更新后的 action dispatch 当成已验证。
+
+**Boundary：** 校准门控和积分/source 是分段试验，不是完整 postprocessor
+连续执行。未运行校准收敛、姿态初始定向、实际 Steam Input 配置及最终动作。
+复现命令、精确 SHA、桩边界见 [SWITCH_GYRO_HOST_HANDOFF.md](SWITCH_GYRO_HOST_HANDOFF.md)。
+
+### 21.2 实机桌面鼠标输出证据（2026-10-23）
+
+**Evidence：** 用户明确指定 `10.10.10.66` 后，通过 nxlink 部署修复构建。
+测试 NRO SHA-256 为 `db3234bafeac32344e951eea2f910d5c502d94ce2029bedff9afc34a2ebe78f4`，
+源码为 `8668163` 加本节对应的 RAW V3 工作区修复。运行日志包含
+`StartInputReports(id=1, length=73)` 和
+`sensor inject motion=0.148 flags=0x406 wire_gyro=0,138,0`。
+随后用户反馈：“游戏不清楚是不是实际能用，但是通过修改手柄桌面布局测试是有效的。
+可以用来操控鼠标。”
+
+**Conclusion：** 此次真实 Switch→Steam Host→桌面布局链路已产生可观察的鼠标
+输出，证据强于离线解析和 source 字段检查。撤回把“最终桌面鼠标输出未验证”
+用于描述这个修复构建的说法；§21.1 的离线工具边界仍然有效。
+
+**Boundary：** 游戏内映射、不同游戏兼容性、各手柄形态和校准精度没有由此次
+反馈得到验证；也未据此认定旧实验按键失效的根因或 hbmenu 返回状态。
