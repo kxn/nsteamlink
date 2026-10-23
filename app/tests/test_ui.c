@@ -1141,6 +1141,34 @@ static void network_test_flow(void) {
     sl_ui_network_test(&m, &view);
     assert(m.page == SL_STOPPING);
 
+    for (unsigned accept = 0; accept < 2; ++accept) {
+        m = model();
+        add(&m, 1, "HOST");
+        sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
+        sl_ui_action(&m, SL_OPEN_NETWORK_SETTINGS, 0);
+        sl_ui_action(&m, SL_RUN_NETWORK_TEST, 0);
+        assert(sl_ui_take_command(&m, &cmd) && cmd.test_only);
+        view = (sl_network_test_view){.generation = cmd.generation, .revision = 1,
+                                      .phase = SL_TEST_RESULT, .test_only = true};
+        sl_ui_network_test(&m, &view);
+        sl_ui_action(&m, accept ? SL_ACCEPT : SL_BACK, 0);
+        assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_TEST_CONFIRM);
+        assert(m.page == SL_STOPPING);
+        view.phase = SL_TEST_FAILED;
+        strcpy(view.error, "Later control failure");
+        sl_ui_network_test(&m, &view);
+        assert(m.page == SL_STOPPING); /* An old revision cannot restore a dialog. */
+        ++view.revision;
+        sl_ui_network_test(&m, &view);
+        assert(m.page == SL_ERROR && m.cancel_only_error);
+        sl_ui_action(&m, SL_ACCEPT, 0);
+        assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_CANCEL &&
+               cmd.generation > view.generation);
+        ++view.revision;
+        sl_ui_network_test(&m, &view);
+        assert(m.page == SL_STOPPING); /* Genuine cancel keeps its generation fence. */
+    }
+
     m = model();
     add(&m, 1, "HOST");
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);

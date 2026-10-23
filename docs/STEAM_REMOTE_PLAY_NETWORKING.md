@@ -1596,6 +1596,40 @@ native的独立16次生命周期则等待真实IHS测试自然完成、Join并�
 受控loopback主机交付PIN及新票据；核对结果页→安全码→重试、取消/替换与单次Join/Destroy，
 并核对未生成旧统计文件。它不证明真实Steam、SDR媒体或Switch界面已验收。
 
+#### 自定义结果框的 finished、hidden 与端口异步命令
+
+**Evidence**：`audit-steam-network-test-dialog.py` 的32组固定shell程序执行原
+CPanelDialog::accept/reject/done、hideEvent、生成的signal wrapper，以及Panel的
+ShowDialog/HideDialog/OnDialogHidden和实际OnNetworkTestComplete。它是自定义
+CPanelDialog，不能用QDialog的行为代替本地代码。两种action、UDP/SDR分别核对。
+
+accept/reject分别于`0xc7ec28/0xc7ec60`写结果，再发accepted/rejected、finished，
+最后hide；done@`0xc7ebd0`同样在hide前发finished。hideEvent@`0xc7ed3c`只发hidden
+并请求deleteLater，不发finished。PIN/Failed/CM错误替换旧结果框时只产生hidden，
+没有保存旧统计或进入完成slot。Unauthorized保留旧结果框和确认能力。接线记录的
+ConnectionType是0；测试按同GUI线程AutoConnection的同步语义提供activate分派，
+不是Qt事件循环的机器级实现或自然信号排队证明。该语义另参见
+[Qt 5.15 Threads and QObjects](https://doc.qt.io/archives/qt-5.15/threads-qobject.html)。
+
+**证据边界**：原OnNetworkTestComplete本身不检查当前panel；手动在隐藏后直接调用
+这个slot会保存统计，但不能据此声称原GUI自然投递了旧框的finished。旧框的隐藏、
+用户确认开始后的内部隐藏，以及异步端口尚未消费的命令，是不同的调用来源。
+Qt显示/对象存储、焦点缺失、deleteLater、同线程activate、无推荐配置、完成状态和
+SaveNetworkStats文件端点均是provider。没有回放跨线程/queued信号或Qt鼠标事件。
+
+冻结gzip SHA256：`c76104e1d3f0fd2e43de1ff1dbe48aa004c7c4f9f4f297775e0f3298573a8c25`。
+native受控peer的四次正常程序证明：实际结果页产生确认命令，随后由actor接受PIN或
+Failed，再消费旧命令时，旧实现会保存旧结果；连接前测网还会发普通开流请求。这里
+延后UI命令交付是显式平台调度输入，不称为官方Qt的同一自然竞争。早期driver等待已
+离开结果页的UI错误而超时的程序不计反例。
+
+端口必须在开始消费确认时校验结果owner：安全码输入等待或控制错误已退休旧结果框
+时，忽略旧确认，不保存/应用推荐/请求新串流，也不提前销毁Test。没有退休结果框的
+Unauthorized仍允许确认，不能一律把控制消息当成失效。有效确认已经开始后正常
+保存/清理/续接的路径不受此门禁影响。手动测网的UI可能已因确认命令进入STOPPING；
+同generation的更新Failed快照应将其恢复到待确认错误页。真实取消会更新generation，
+旧失败快照仍不能劫持取消。它是异步端口的owner映射，不是额外Steam取消或重试规则。
+
 ### 11.4 ProofRequest 可更新长期 secret
 
 **Evidence：** `HandleStreamingProofRequest @0x79e1c0–0x79e594`，proto 的 challenge=1:bytes、

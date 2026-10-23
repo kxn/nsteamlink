@@ -3137,3 +3137,18 @@ Join前后的消费顺序。旧SDK的会话材料与新票据分开，旧启动�
 
 Qt/线程端点及初始worker阶段均有provider；不从未执行的线程收尾推断自然phase或
 密钥竞争，不将受控native验证称为真实Steam/SDR或Switch验收。
+
+## D-A092：已退休结果框不能继续消费旧确认命令
+
+Evidence：公网协议参考§11.3“自定义结果框的finished、hidden与端口异步命令”。
+原CPanelDialog的hideEvent只发hidden/deleteLater；PIN或控制错误替换结果框不会触发
+OnNetworkTestComplete。原slot无panel guard不代表隐藏会产生finished。四次正常native
+程序中，结果页命令被延后至控制回调之后交付，旧实现保存旧统计，连接前测试另发开流。
+
+Decision：消费TEST_CONFIRM前，要求旧完成结果的owner仍有效；test_waiting_pin或
+test_failure_pending已退休它时忽略该命令，保留当前输入/待确认错误与Test清理归属。
+Unauthorized保留结果框时仍可确认。手动结果确认已切到STOPPING时，同generation、
+更高revision的Failed快照恢复错误页；真正取消的generation fence保持生效。
+
+这是独立UI/协议actor之间的所有权映射；原Qt同GUI线程activate为显式provider，未证明
+自然Qt排队竞争。没有改变线上取消、重试期限、配对码或安全码协议，也不修改首页版式。

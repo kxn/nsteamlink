@@ -1834,8 +1834,10 @@ static void sample_network_test(sl_runtime *r, uint64_t now) {
                             sl_stream_settings_network_test_recommendation(&r->settings, &result)});
 }
 static void confirm_network_test(sl_runtime *r, const sl_command *cmd) {
+    /* A control callback can replace the result after the UI produced this
+     * action. Hiding the original dialog does not emit finished (D-A092). */
     if (!r->test_active || !r->test_session || !r->test_joined ||
-        cmd->generation != r->active.generation)
+        cmd->generation != r->active.generation || r->test_waiting_pin || test_error_pending(r))
         return;
     IHS_NetworkTestResult result;
     IHS_SessionGetNetworkTestResult(r->test_session, &result);

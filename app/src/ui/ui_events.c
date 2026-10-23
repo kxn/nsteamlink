@@ -190,11 +190,16 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
 void sl_ui_network_test(sl_ui_model *m, const sl_network_test_view *view) {
     bool replace_error = view->phase == SL_TEST_FAILED && m->page == SL_ERROR &&
                          m->cancel_only_error;
+    /* A manual result action keeps its generation while the actor decides it.
+     * A control error can retire that result first. Restore its owned error;
+     * actual cancel/exit use another generation and remain fenced below. */
+    bool retired_result = view->phase == SL_TEST_FAILED && m->page == SL_STOPPING &&
+                          m->intent.test_only && m->network_test.phase == SL_TEST_RESULT;
     if (view->generation != m->generation ||
         (m->network_test.generation == view->generation &&
          view->revision <= m->network_test.revision) ||
-        (!replace_error && m->page != SL_CONNECTING && m->page != SL_NETWORK_TEST &&
-         m->page != SL_NETWORK_RESULT))
+        (!replace_error && !retired_result && m->page != SL_CONNECTING &&
+         m->page != SL_NETWORK_TEST && m->page != SL_NETWORK_RESULT))
         return;
     m->network_test = *view;
     sl_page before = m->page;

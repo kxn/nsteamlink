@@ -16,6 +16,8 @@
 
 static uint16_t peer_port;
 static bool preinit, cancel_join, completed;
+static bool stale_confirm, stale_error, kept_auth;
+static atomic_bool kept_auth_seen;
 static unsigned startup_failure; /* 1 old SDK BInit fails; 2 old IHS setup fails. */
 static atomic_uint creates, joins, destroys, samples, disconnects, backends, backend_destroys;
 static atomic_bool allow_old_init;
@@ -221,6 +223,7 @@ static void one(enum scenario which, bool manual) {
     atomic_store(&new_request_seen, false);
     atomic_store(&ticket_seen, false);
     atomic_store(&manager_updates, 0);
+    atomic_store(&kept_auth_seen, false);
     char directory[] = "/tmp/nsl-pin-retry-XXXXXX";
     assert(mkdtemp(directory) && !setenv("NSL_DATA_DIR", directory, 1));
     sl_auth_store store = {.device_id = 1, .sound = true, .bitrate_kbps = 6000};
@@ -265,6 +268,10 @@ static void one(enum scenario which, bool manual) {
     bool control_held = false;
     uint64_t ticket_seen_at = 0;
     unsigned updates_at_ticket = 0;
+    sl_command queued_confirm = {0};
+    uint64_t stale_at = 0;
+    unsigned stale_updates = 0;
+    bool stale_held = false, stale_page = false, stale_saved = false;
     bool replacement = which == SUCCESS || which == DUPLICATE_SUCCESS;
     uint64_t second_request_at = 0, prompt_at = 0, deadline = sl_system_now() + 10000;
     struct sockaddr_in client = {0};
@@ -280,10 +287,33 @@ static void one(enum scenario which, bool manual) {
         if (completed && !initial_pin && a.ui.page == SL_NETWORK_RESULT) {
             assert(initial_started && atomic_load(&creates) == 1 && atomic_load(&joins) == 1 &&
                    !atomic_load(&destroys));
-            ticket(fd, &client, initial_id, k_ERemoteDeviceStreamingPINRequired, &store, false);
+            if (stale_confirm) {
+                /* A valid result action was produced before the page changed,
+                 * but reaches the actor only after the control callback. */
+                sl_ui_action(&a.ui, SL_BACK, 0);
+                assert(sl_ui_take_command(&a.ui, &queued_confirm) &&
+                       queued_confirm.type == SL_CMD_TEST_CONFIRM);
+            }
+            ticket(fd, &client, initial_id,
+                   kept_auth     ? k_ERemoteDeviceStreamingUnauthorized
+                   : stale_error ? k_ERemoteDeviceStreamingFailed
+                                 : k_ERemoteDeviceStreamingPINRequired,
+                   &store, false);
             initial_pin = true;
         }
-        if (a.ui.page == SL_PIN && initial_pin && !retry_submitted) {
+        if (stale_confirm && initial_pin && !stale_at) {
+            sl_network_test_view pending = {0};
+            sl_runtime_network_test(a.runtime, &pending);
+            bool control_seen = kept_auth     ? atomic_load(&kept_auth_seen)
+                                : stale_error ? pending.phase == SL_TEST_FAILED
+                                              : a.ui.page == SL_PIN;
+            if (control_seen) {
+                stale_updates = atomic_load(&manager_updates);
+                assert(command(&a, &queued_confirm));
+                stale_at = sl_system_now();
+            }
+        }
+        if (!stale_confirm && a.ui.page == SL_PIN && initial_pin && !retry_submitted) {
             assert(atomic_load(&creates) == (preinit ? 0 : 1) &&
                    atomic_load(&joins) == (unsigned)completed && !atomic_load(&destroys));
             strcpy(a.ui.input, "9876");
@@ -294,6 +324,19 @@ static void one(enum scenario which, bool manual) {
             retry_submitted = true;
         }
         uint64_t now = sl_system_now();
+        if (stale_at && now - stale_at >= 100 &&
+            atomic_load(&manager_updates) >= stale_updates + 2) {
+            stale_held =
+                atomic_load(&creates) == 1 && atomic_load(&joins) == 1 && !atomic_load(&destroys);
+            stale_page = a.ui.page == (kept_auth     ? manual ? SL_NETWORK_SETTINGS : SL_CONNECTING
+                                       : stale_error ? SL_ERROR
+                                                     : SL_PIN);
+            char path[128];
+            snprintf(path, sizeof(path), "%s/streaming_stats.bin", directory);
+            stale_saved = !access(path, F_OK);
+            done = true;
+            break;
+        }
         if (atomic_load(&ticket_seen) && !ticket_seen_at) {
             ticket_seen_at = now;
             updates_at_ticket = atomic_load(&manager_updates);
@@ -383,6 +426,16 @@ static void one(enum scenario which, bool manual) {
             if (tag == k_ERemoteDeviceStreamingRequest) {
                 CMsgRemoteDeviceStreamingRequest *r =
                     cmsg_remote_device_streaming_request__unpack(NULL, size, body);
+                assert(r);
+                if (stale_confirm && requests && r->request_id != initial_id) {
+                    if (r->request_id != retry_id) {
+                        assert(!r->network_test);
+                        retry_id = r->request_id;
+                        ++requests;
+                    }
+                    cmsg_remote_device_streaming_request__free_unpacked(r, NULL);
+                    continue;
+                }
                 assert(r && r->has_network_test && r->network_test);
                 if (r->request_id == initial_id || r->request_id == retry_id) {
                     cmsg_remote_device_streaming_request__free_unpacked(r, NULL);
@@ -408,6 +461,8 @@ static void one(enum scenario which, bool manual) {
                     atomic_store(&new_request_seen, true);
                 }
                 cmsg_remote_device_streaming_request__free_unpacked(r, NULL);
+            } else if (tag == k_ERemoteDeviceAuthorizationRequest && kept_auth) {
+                atomic_store(&kept_auth_seen, true); /* Actual producer output, not UI timing. */
             } else if (tag == k_ERemoteDeviceStreamingCancelRequest) {
                 CMsgRemoteDeviceStreamingCancelRequest *r =
                     cmsg_remote_device_streaming_cancel_request__unpack(NULL, size, body);
@@ -445,10 +500,12 @@ static void one(enum scenario which, bool manual) {
             }
         }
     }
-    assert(done && requests == 2 && retry_submitted && initial_started);
+    assert(done && initial_started);
+    assert(stale_confirm ? stale_at && requests >= 1 && requests <= 2
+                         : requests == 2 && retry_submitted);
     sl_runtime_destroy(a.runtime);
     close(fd);
-    if (completed) {
+    if (completed && !stale_confirm) {
         char path[128];
         snprintf(path, sizeof(path), "%s/streaming_stats.bin", directory);
         assert(access(path, F_OK) && errno == ENOENT); /* Unaccepted old result is not saved. */
@@ -457,6 +514,18 @@ static void one(enum scenario which, bool manual) {
     assert(atomic_load(&creates) == atomic_load(&joins) &&
            atomic_load(&joins) == atomic_load(&destroys));
     assert(atomic_load(&backends) == atomic_load(&backend_destroys));
+    if (stale_confirm) {
+        printf(
+            "{\"scenario\":\"stale_%s\",\"manual\":%s,\"held\":%s,\"page_preserved\":%s,"
+            "\"saved_old_stats\":%s,\"requests\":%u,\"sessions\":%u,\"joins\":%u,\"clean\":true}\n",
+            kept_auth     ? "kept_auth"
+            : stale_error ? "error"
+                          : "pin",
+            manual ? "true" : "false", stale_held ? "true" : "false", stale_page ? "true" : "false",
+            stale_saved ? "true" : "false", requests, atomic_load(&creates), atomic_load(&joins));
+        fflush(stdout);
+        return;
+    }
     printf("{\"scenario\":\"%s\",\"manual\":%s,\"retained\":%s,\"sample_held\":%s,"
            "\"held_at_response\":%s,\"unexpected_stop\":%s,\"requests\":%u,\"sessions\":%u,"
            "\"joins\":%u,\"before_ack\":%u,\"cancel10\":%u,\"cancel9\":%u,"
@@ -484,16 +553,22 @@ int main(int argc, char **argv) {
                       : argc == 2 && !strcmp(argv[1], "--sdk-session-fail") ? 2
                                                                             : 0;
     cancel_join = argc == 2 && !strcmp(argv[1], "--cancel-join");
-    completed = argc == 2 && !strcmp(argv[1], "--completed");
+    kept_auth = argc == 2 && !strcmp(argv[1], "--kept-auth");
+    stale_confirm = kept_auth || (argc == 2 && !strncmp(argv[1], "--stale-", 8));
+    stale_error = argc == 2 && !strcmp(argv[1], "--stale-error");
+    completed = stale_confirm || (argc == 2 && !strcmp(argv[1], "--completed"));
 #if !NSL_HAVE_SNS
     assert(!preinit);
 #endif
-    unsigned begin = cancel_join || startup_failure        ? SUCCESS
+    unsigned begin = stale_confirm                         ? CANCEL_WAIT
+                     : cancel_join || startup_failure      ? SUCCESS
                      : argc == 2 && !preinit && !completed ? (unsigned)atoi(argv[1])
                                                            : 0;
     assert(begin < 8);
     for (unsigned mode = begin;
-         mode < (argc == 2 && ((!preinit && !completed) || startup_failure) ? begin + 1 : 8);
+         mode < (stale_confirm || (argc == 2 && ((!preinit && !completed) || startup_failure))
+                     ? begin + 1
+                     : 8);
          ++mode)
         for (unsigned manual = 0; manual < 2; ++manual)
             one((enum scenario)mode, manual);
