@@ -2,6 +2,32 @@
 
 [简体中文](CHANGELOG.md)
 
+## [0.7.0] - 2026-10-23
+
+Previous stable release: **v0.6.0**. Target: `main`; source: [`v0.7.0`](https://github.com/kxn/nsteamlink/tree/v0.7.0).
+
+### Highlights
+
+- Add account-free cloud pairing, host discovery and Internet streaming, with automatic direct/Valve SDR routing. The Add host page offers manual address and pairing-code flows; host status distinguishes LAN, Internet, offline and unpaired devices.
+- Query multiple public DNS providers and rotate HTTPS candidates across subnets. Start on the first answer and allow at most three concurrent directory/CM TLS candidates while retaining certificate verification. This compatibility policy addresses observed reachable-IP/unreachable-HTTPS paths; it cannot guarantee reachability on every network.
+- Separate signaling preparation from the media connection deadline, explicitly hand off IHS/SDK ownership, and fix discovery responsiveness, reply forwarding, auxiliary Switch UDP buffers and end-game completion. Preparation has a bounded 90-second budget; media retains its own connection deadlines.
+- Share in-flight DNS work with independent cancellation, manage HTTP lifetime and joined workers, and recover Switch cache replacement. Retain v0.6.0 gyro support.
+- Exclude diagnostic HTTP/UDP endpoints, nxlink/persistent logging, fault injection and probes from ordinary packages, with object and ELF/NRO publication gates.
+
+### Validation and limits
+
+The user confirmed hotspot discovery, streaming, controller input and timely shutdown. Saved `d6dcce4` logs identify **Valve SDR relay** routing, about 2.9 seconds of signaling preparation before IHS admission, acknowledged controller reports and about 2.9 seconds to complete end-game/disconnect. This validates that hotspot SDR session, not every NAT type or network. Retransmission and video recovery remain visible; experience still depends on network quality. Tag CI reruns diagnostic ON/OFF desktop tests, Switch builds and diagnostic-exclusion counterexamples.
+
+### Commits by type
+
+- Internet functionality and UI: pairing, discovery, SNS/SDR, status and integration commits in [PR #54](https://github.com/kxn/nsteamlink/pull/54).
+- Connection/recovery: `d294b91` reply forwarding; `6e427e9`/`7a30734` DNS fanout; `5d28638`/`16cd183`/`4eb9804` discovery and auxiliary sockets; `ebe0cde` initialization ownership; `d6dcce4` LAN startup when HTTPS initialization fails.
+- Mainline integration: `8bddbd0` retains both gyro and Internet support.
+
+Download the ordinary NRO from [this release](https://github.com/kxn/nsteamlink/releases/tag/v0.7.0), or use the in-app updater. Pairing data is retained. Diagnostic packages are not published.
+
+[Full changelog: v0.6.0 → v0.7.0](https://github.com/kxn/nsteamlink/compare/v0.6.0...v0.7.0)
+
 ## [0.6.0] - 2026-10-23
 
 Previous stable release: **v0.5.1**. This release: **v0.6.0**. Target branch: `main`; tagged source: [`v0.6.0`](https://github.com/kxn/nsteamlink/tree/v0.6.0).

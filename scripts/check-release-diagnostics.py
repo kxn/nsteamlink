@@ -15,6 +15,7 @@ import struct
 import subprocess
 
 MARKERS = (
+    b"sns_init phase=", b"signal_bridge ", b"diagnostic_service port=",
     b"ERR supported: ping state stats perf cloud audio hid hidlog diag",
     b"GET required", b"storage_errno", b"session-%020",
     b"cloud_watch saved=", b"cloud_update stall_ms", b"media_rx ch=", b"udp_rx observer=",
@@ -45,6 +46,9 @@ MARKERS = (
     b"Font initialization failed:",
 )
 FORBIDDEN_SYMBOLS = {
+    "sl_log_start", "sl_log_finish", "sl_log_http_port", "sl_log_copy_tail",
+    "sl_sns_start_relay_probe", "sl_sns_test_relay_loss", "sl_sns_test_migration",
+    "sl_sns_test_terminal",
     "sl_gns_sdr_test_loss", "sl_gns_sdr_test_terminal", "sl_gns_sdr_test_migration",
     "sl_gns_sdr_topology_fixture", "sl_gns_sdr_transport_stats", "sl_gns_sdr_probe_create",
     "sl_packet_diagnostics_begin", "sl_packet_diagnostics_read", "sl_packet_diagnostics_received",
