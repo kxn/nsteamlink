@@ -420,7 +420,9 @@ Frame::Put仅记录原对象字段与length-prefix参数，**没有执行请求�
 - 从最新请求向旧请求查找sequence；多个相同sequence时命中新项。
 - 请求size非0时要求应答size相同；请求size=0则不因应答该字段为1472而拒绝。
   未知sequence、非零size不匹配及解析失败不进入callback。
-- 接收时刻早于发送时刻时，原入口将其钳为发送时刻，RTT为0。
+- 未回绕的受测输入中，接收时刻早于发送时刻时，原入口将其钳为发送时刻，RTT为0。
+  **限定旧结论：** 不能将此概括为无符号 `received < sent` 比较；下节完整packet输入
+  验证实际条件是32位模差的符号位，允许正常tick回绕。
 - 正常应答后原记录仍保留；同一应答再次到来可再次进入callback并调整系数。
   显式系数0.5的低差样本两次约为0.54、0.58，不能自行加去重改变官方行为。
 - estimator disabled时接收记录仍更新，但callback门禁不改估计目标。
@@ -431,6 +433,56 @@ worker producer和真实请求/应答入口对该callback的使用；socket、�
 不能由两次有界迭代推定。四个新增反例分别删除slot失效写入、删除自动sequence自增、
 跳过size拒绝、改变精确过期比较，均在原函数正常执行后的输出比较中失败，
 不是依靠模拟器崩溃、缺少指令支持或patch签名错误制造失败。
+
+### Ping应答明文字节到编码stage：消除已解码字段终点
+
+工具 `tools/steam-adaptive-ping64-audit.py` 使用同一固定Win64主机SHA
+`1b9457943205dc3af0bd53463ba331cbd2a381388699705c02271aac7a2b1252`。
+它复用上文配置/估计器/编码stage环境，但不替换应答的Frame复制或protobuf解析。
+先将Native生产 `ch_discovery.c::OnPingRequest` 生成的完整明文packet中，除13字节header
+及消息类型外的正文，与官方ARM64 C++ parser/serializer/Frame的5组独立向量逐字节对照；
+长度前缀、字段presence及全部0xfe padding均匹配。原ARM64工具重新执行5例也通过，
+不是只比较Native与自身序列化结果。
+
+随后将Native完整packet交给 `0x13a1f04d0`：原Frame复制 `0x13a1e26d0`、
+长度前缀Get `0x13a1e1420`、C++ protobuf parser、请求账本反向匹配、真实RTTI
+callback `0x13a18e8f0`、500槽窗口/重算及编码stage getter/min/xchg在同一仿真器执行。
+这补充并替代上节对该输入边界的“提供已解码字段”限制；上节worker请求序列化、
+过期淘汰等其他输入仍各自保留原有范围。
+
+31组输入、32次packet交付通过，其中5组直接使用上述原向量对应的Native输出。
+配置先经过原parser/apply/mode，再由fixture绑定实际delegate；请求账本、平台接收时间、
+500个10ms窗口样本与系数0.5是明确输入，未运行完整连接构造/真实调度。普通0模式
+原reset的link15Mbps、下限2.5Mbps决定该受控基线的7500kbps，不代表实测网络速率。
+
+- presence为0/1/2/3均原解析，原字段2在response schema中名为`packet_size_received`。
+  客户端按先前证据回送request字段，不把schema标签当作改写该值的依据。缺省sequence0
+  不命中fixture的sequence7；未知sequence、size不匹配不进callback。请求size0不检查应答size。
+- 去掉padding但保留完整protobuf，或增加padding仍可接受；原主机在此入口比较的是字段2，
+  而不是实际datagram长度。合成空protobuf/显式0/重复size（后值覆盖）/未知字段/uint32序号
+  也进入原parser；截断varint、未知长度字段不完整及长度前缀越界不进callback。
+  这些异常packet明确标记为synthetic，不能称为客户端实际会发送的内容。
+- **时间处理更正：** 原指令 `sub eax,r9d; shr eax,31` 检查
+  `(received-sent) & 0xffffffff` 的符号位；置位才把接收记录钳回sent、反馈0。
+  `sent=0xffff0000, received=1638` 正常回绕，得到67174tick，保存1638，
+  不能写成 `max(received,sent)`。差值0x80000000反馈0；0x7fffffff保留正值。
+  packet平台接收时间由Frame复制，改wire的发送时间为0或0xffffffff不改变上述RTT。
+- 在10ms窗口基线、普通0模式下，1638tick的应答使系数约0.5→0.54，编码stage
+  写8100kbps；同应答再次到达仍可触发0.58/8700。高延迟边界触及0.08后被原下限
+  限为2500，而非直接15Mbps×0.08=1200。另一个callback上限8000时编码stage取8000。
+- 非0模式6000仍解析并保存匹配记录，但估计器不调整；无delegate也保留接收记录。
+  channel/type错误不解析；其packet诊断字符串formatter是显式终点，不替换接受分支。
+
+六种反例分别绕过parse失败、绕过size检查、移除接收时间复制、移除delegate、改0.04
+恢复常数为0、移除编码xchg，均在正常原指令返回后因字段/回调/系数/编码结果不匹配被拒绝。
+没有将UcError、未映射地址、patch签名错误或测试工具崩溃算成反例通过。
+
+结果文件为本地 `build/adaptive-quality-research/host64-plaintext-ping-chain.json`、
+`host64-plaintext-ping-counterexamples.json` 与 `official-ping-cpp-body-recheck.json`。
+输出记录原入口范围hash、复用harness/Native可执行文件/原客户端参考向量hash和每次状态。
+这仍是**已接纳明文packet边界**：不执行CRC校验、认证、socket接收、真实worker调度、
+实际编码设备或当前用户Steam会话。编码stage写入不能当作物理码流测量；不据合成时间
+或padding异常更改产品协议，也不把本轮称为完整互联网自适应验收。
 
 ### 配置模式和初始化：执行新版原入口，不沿用旧版表格
 
@@ -614,6 +666,13 @@ python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/Stea
 python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation mode-cap
 python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation mode-reset
 python3 tools/steam-adaptive-config64-audit.py --binary /path/to/pinned/win64/SteamUI.dll
+# Native Ping回包对照原ARM64向量，再进入Win64原接收/估计/编码stage：
+python3 tools/steam-adaptive-ping64-audit.py \
+  --binary /path/to/pinned/win64/SteamUI.dll \
+  --client-oracle build/desktop/third_party/ihslib/tests/session/ihs-control-wire-oracle \
+  --output /tmp/host-ping-chain.json
+# 同样带上两个必需参数，六种--mutation均应因输出不匹配非零退出：
+# parse-gate / size-gate / receive-clock / delegate / recovery / encoder-store
 # 本地生产consumer的反馈正文进入host原parser/估计器/编码stage：
 python3 tools/steam-adaptive-feedback64-audit.py \
   --binary /path/to/pinned/win64/SteamUI.dll \
@@ -652,5 +711,6 @@ python3 tools/steam-adaptive-client-feedback-audit.py \
 完整复刻的验收必须覆盖配置到host模式门槛、实际feedback到各host入口、decoder溢出
 通知、host内部估计到实际编码器设置/输出，以及恢复/稳态分支；只恢复消息99或者
 移植旧x86的乘0.9都不构成完整复刻。已将本地consumer的148明文交给x64原解析器并写入
-编码stage状态，仍未完成认证/加密wire到设备编码输出的全部producer/consumer闭环，
+编码stage状态，亦已核对Native Ping应答明文packet到原估计器/编码stage；
+仍未完成认证/加密wire到设备编码输出的全部producer/consumer闭环，
 也未证明当前用户Steam版本与该快照完全一致。因此不把“机制已经找到”写成“实现已完整”。
