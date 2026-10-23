@@ -3,7 +3,8 @@
 #include <stdint.h>
 /* Official SDL_main teardown gates. Hard/background are the original Android
  * process modes, kept separate from input focus and Remote Play pause. The
- * Switch runtime uses normal mode; final app shutdown always releases its ABI. */
+ * Switch runtime uses normal mode. This is the pre-JNI prefix; full stream
+ * completion must also retire resources kept by an escaping Android player. */
 typedef struct sl_player_teardown {
     bool request_quit, destroy_player, background;
 } sl_player_teardown;

@@ -1,0 +1,513 @@
+{
+  "scope": "Execute core's common JNI completion and the pinned Java callback bytecode.\n\nOriginal ARM64 flag selection, JNIActivity ctor and two JNI varargs wrappers\nrun. JNI class/object/method services are explicit providers.\nThe tiny DEX interpreter executes the original callback instructions; audio and\nWi-Fi helper bodies are terminals. System.exit records an exit request and\nterminates this fixture, NOT a real Android process. OS task restoration, Qt\nevent-loop return, a new manager, streaming recovery and Switch are unproved.\n",
+  "core_sha256": "50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e",
+  "dex_sha256": "a5c315d683eac7c7f8f73ec096bd414406d80f9ef68180a1ef469f052cd39e44",
+  "apk_sha256": "7114b75e6fdd55e7bdcbad643cd1e7baf8cf5060da820120435adaefc6004dfc",
+  "manifest_sha256": "465ec4a5b27a56858426cee9e96688509b71f86fa06d91f0b6ea26119206266f",
+  "manifest_process_attributes": [],
+  "native_entry": "0x75cfd4",
+  "native_continuation": "0x75d064",
+  "original_ranges": {
+    "0x75cfd4": {
+      "size": 144,
+      "sha256": "612c0400d511e1bc39d4ab4127d7581fa64c5c0af69ac960bf5856b788b3e1f7"
+    },
+    "0x75d768": {
+      "size": 168,
+      "sha256": "92eeb5099458cf7a8c5d99b50cef287267eb1fa6fad967781d1835a2d16c0d6c"
+    },
+    "0x75d838": {
+      "size": 156,
+      "sha256": "decd6c9c2581bc9ac825fd343a6ffac970ea87a8a2a70dcd896ddaebde565356"
+    },
+    "0x75da28": {
+      "size": 156,
+      "sha256": "fab7f555b81de424e2c6cee57698a65d1a4c0faaefb40ca2960e6dbfd994f656"
+    }
+  },
+  "tool_sha256": "0c8e8983c0d1c3dbd19356e27af4d34ad40cd8bba9584a1e50972230e42308d3",
+  "provider_sha256": "c54fb9487517fd4145712827065e3cae9298d8f5f7235c8694ae9c3025765d4e",
+  "activity_super": "Lorg/libsdl/app/SDLActivity;",
+  "methods": [
+    {
+      "identity": [
+        "Lcom/valvesoftware/steamlink/SteamLink;",
+        "streamingComplete",
+        "(I)V"
+      ],
+      "offset": 77888,
+      "registers": 3,
+      "ins": 2,
+      "flags": 1,
+      "bytes": "12007020a103010070108c0301007110cc0302000e00"
+    },
+    {
+      "identity": [
+        "Lcom/valvesoftware/steamlink/SteamShellActivity;",
+        "onShellComplete",
+        "()V"
+      ],
+      "offset": 79212,
+      "registers": 1,
+      "ins": 0,
+      "flags": 9,
+      "bytes": "12007110840400000e00"
+    },
+    {
+      "identity": [
+        "Lcom/valvesoftware/steamlink/SteamShellActivity;",
+        "onStreamingResult",
+        "(I)V"
+      ],
+      "offset": 79240,
+      "registers": 1,
+      "ins": 1,
+      "flags": 9,
+      "bytes": "12007110840400000e00"
+    },
+    {
+      "identity": [
+        "Lcom/valvesoftware/steamlink/SteamShellActivity;",
+        "startStreaming",
+        "([Ljava/lang/String;I)V"
+      ],
+      "offset": 79368,
+      "registers": 6,
+      "ins": 3,
+      "flags": 1,
+      "bytes": "220017017020ba0330001d006e20ce0303006e10580400001e00280b0d011e0027011a0022051a010f057120e101100012105c30d100220029007010d70000001a0161071a0262076e30ea0010021a010c076e30e90010041a043a0a6e30e50040056e20d00303005434d0001d045435d0006e10580405001e0428040d051e04270512045c34d100220418017020bc0334001d046e20ce0343006e10580404001e04280b0d051e0427051a0422051a050f057120e10154000e00"
+    }
+  ],
+  "cases": [
+    {
+      "background": 0,
+      "hard": 0,
+      "native": [
+        {
+          "operation": "SDL_Quit"
+        },
+        {
+          "operation": "FindClass",
+          "name": "org/libsdl/app/SDL"
+        },
+        {
+          "operation": "GetStaticMethodID",
+          "name": "getContext",
+          "signature": "()Landroid/app/Activity;"
+        },
+        {
+          "operation": "CallStaticObjectMethodV"
+        },
+        {
+          "operation": "GetObjectClass"
+        },
+        {
+          "operation": "DeleteLocalRef"
+        },
+        {
+          "operation": "GetMethodID",
+          "name": "streamingComplete",
+          "signature": "(I)V"
+        },
+        {
+          "operation": "CallVoidMethodV",
+          "argument": -1
+        }
+      ],
+      "java": [
+        {
+          "method": [
+            "Lcom/valvesoftware/steamlink/SteamLink;",
+            "setLowLatencyAudio",
+            "(Z)V"
+          ],
+          "args": [
+            "SteamLink-instance",
+            0
+          ]
+        },
+        {
+          "method": [
+            "Lcom/valvesoftware/steamlink/SteamLink;",
+            "disableWiFiLock",
+            "()V"
+          ],
+          "args": [
+            "SteamLink-instance"
+          ]
+        },
+        {
+          "method": [
+            "Lcom/valvesoftware/steamlink/SteamShellActivity;",
+            "onStreamingResult",
+            "(I)V"
+          ],
+          "args": [
+            -1
+          ]
+        },
+        {
+          "method": [
+            "Ljava/lang/System;",
+            "exit",
+            "(I)V"
+          ],
+          "args": [
+            0
+          ]
+        }
+      ],
+      "exit_request": 0,
+      "returned_to_native": false
+    },
+    {
+      "background": 0,
+      "hard": 1,
+      "native": [
+        {
+          "operation": "SDL_Quit"
+        },
+        {
+          "operation": "FindClass",
+          "name": "org/libsdl/app/SDL"
+        },
+        {
+          "operation": "GetStaticMethodID",
+          "name": "getContext",
+          "signature": "()Landroid/app/Activity;"
+        },
+        {
+          "operation": "CallStaticObjectMethodV"
+        },
+        {
+          "operation": "GetObjectClass"
+        },
+        {
+          "operation": "DeleteLocalRef"
+        },
+        {
+          "operation": "GetMethodID",
+          "name": "streamingComplete",
+          "signature": "(I)V"
+        },
+        {
+          "operation": "CallVoidMethodV",
+          "argument": 0
+        }
+      ],
+      "java": [
+        {
+          "method": [
+            "Lcom/valvesoftware/steamlink/SteamLink;",
+            "setLowLatencyAudio",
+            "(Z)V"
+          ],
+          "args": [
+            "SteamLink-instance",
+            0
+          ]
+        },
+        {
+          "method": [
+            "Lcom/valvesoftware/steamlink/SteamLink;",
+            "disableWiFiLock",
+            "()V"
+          ],
+          "args": [
+            "SteamLink-instance"
+          ]
+        },
+        {
+          "method": [
+            "Lcom/valvesoftware/steamlink/SteamShellActivity;",
+            "onStreamingResult",
+            "(I)V"
+          ],
+          "args": [
+            0
+          ]
+        },
+        {
+          "method": [
+            "Ljava/lang/System;",
+            "exit",
+            "(I)V"
+          ],
+          "args": [
+            0
+          ]
+        }
+      ],
+      "exit_request": 0,
+      "returned_to_native": false
+    },
+    {
+      "background": 1,
+      "hard": 0,
+      "native": [
+        {
+          "operation": "FindClass",
+          "name": "org/libsdl/app/SDL"
+        },
+        {
+          "operation": "GetStaticMethodID",
+          "name": "getContext",
+          "signature": "()Landroid/app/Activity;"
+        },
+        {
+          "operation": "CallStaticObjectMethodV"
+        },
+        {
+          "operation": "GetObjectClass"
+        },
+        {
+          "operation": "DeleteLocalRef"
+        },
+        {
+          "operation": "GetMethodID",
+          "name": "streamingComplete",
+          "signature": "(I)V"
+        },
+        {
+          "operation": "CallVoidMethodV",
+          "argument": 0
+        }
+      ],
+      "java": [
+        {
+          "method": [
+            "Lcom/valvesoftware/steamlink/SteamLink;",
+            "setLowLatencyAudio",
+            "(Z)V"
+          ],
+          "args": [
+            "SteamLink-instance",
+            0
+          ]
+        },
+        {
+          "method": [
+            "Lcom/valvesoftware/steamlink/SteamLink;",
+            "disableWiFiLock",
+            "()V"
+          ],
+          "args": [
+            "SteamLink-instance"
+          ]
+        },
+        {
+          "method": [
+            "Lcom/valvesoftware/steamlink/SteamShellActivity;",
+            "onStreamingResult",
+            "(I)V"
+          ],
+          "args": [
+            0
+          ]
+        },
+        {
+          "method": [
+            "Ljava/lang/System;",
+            "exit",
+            "(I)V"
+          ],
+          "args": [
+            0
+          ]
+        }
+      ],
+      "exit_request": 0,
+      "returned_to_native": false
+    },
+    {
+      "background": 1,
+      "hard": 1,
+      "native": [
+        {
+          "operation": "FindClass",
+          "name": "org/libsdl/app/SDL"
+        },
+        {
+          "operation": "GetStaticMethodID",
+          "name": "getContext",
+          "signature": "()Landroid/app/Activity;"
+        },
+        {
+          "operation": "CallStaticObjectMethodV"
+        },
+        {
+          "operation": "GetObjectClass"
+        },
+        {
+          "operation": "DeleteLocalRef"
+        },
+        {
+          "operation": "GetMethodID",
+          "name": "streamingComplete",
+          "signature": "(I)V"
+        },
+        {
+          "operation": "CallVoidMethodV",
+          "argument": 0
+        }
+      ],
+      "java": [
+        {
+          "method": [
+            "Lcom/valvesoftware/steamlink/SteamLink;",
+            "setLowLatencyAudio",
+            "(Z)V"
+          ],
+          "args": [
+            "SteamLink-instance",
+            0
+          ]
+        },
+        {
+          "method": [
+            "Lcom/valvesoftware/steamlink/SteamLink;",
+            "disableWiFiLock",
+            "()V"
+          ],
+          "args": [
+            "SteamLink-instance"
+          ]
+        },
+        {
+          "method": [
+            "Lcom/valvesoftware/steamlink/SteamShellActivity;",
+            "onStreamingResult",
+            "(I)V"
+          ],
+          "args": [
+            0
+          ]
+        },
+        {
+          "method": [
+            "Ljava/lang/System;",
+            "exit",
+            "(I)V"
+          ],
+          "args": [
+            0
+          ]
+        }
+      ],
+      "exit_request": 0,
+      "returned_to_native": false
+    },
+    {
+      "result": -2147483648,
+      "java": [
+        {
+          "method": [
+            "Ljava/lang/System;",
+            "exit",
+            "(I)V"
+          ],
+          "args": [
+            0
+          ]
+        }
+      ],
+      "exit_request": 0
+    },
+    {
+      "result": -1,
+      "java": [
+        {
+          "method": [
+            "Ljava/lang/System;",
+            "exit",
+            "(I)V"
+          ],
+          "args": [
+            0
+          ]
+        }
+      ],
+      "exit_request": 0
+    },
+    {
+      "result": 0,
+      "java": [
+        {
+          "method": [
+            "Ljava/lang/System;",
+            "exit",
+            "(I)V"
+          ],
+          "args": [
+            0
+          ]
+        }
+      ],
+      "exit_request": 0
+    },
+    {
+      "result": 1,
+      "java": [
+        {
+          "method": [
+            "Ljava/lang/System;",
+            "exit",
+            "(I)V"
+          ],
+          "args": [
+            0
+          ]
+        }
+      ],
+      "exit_request": 0
+    },
+    {
+      "result": 255,
+      "java": [
+        {
+          "method": [
+            "Ljava/lang/System;",
+            "exit",
+            "(I)V"
+          ],
+          "args": [
+            0
+          ]
+        }
+      ],
+      "exit_request": 0
+    },
+    {
+      "result": 2147483647,
+      "java": [
+        {
+          "method": [
+            "Ljava/lang/System;",
+            "exit",
+            "(I)V"
+          ],
+          "args": [
+            0
+          ]
+        }
+      ],
+      "exit_request": 0
+    },
+    {
+      "method": "onShellComplete",
+      "java": [
+        {
+          "method": [
+            "Ljava/lang/System;",
+            "exit",
+            "(I)V"
+          ],
+          "args": [
+            0
+          ]
+        }
+      ],
+      "exit_request": 0
+    }
+  ]
+}

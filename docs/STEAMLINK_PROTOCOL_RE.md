@@ -6215,8 +6215,9 @@ UI/renderer/所有线程清理当作已执行。一次与重复关闭的最终�
 deko无SDL window，明确以libnx application input focus作平台adapter，发布真实
 APP lifecycle边沿时同步owner focus。minimized/restored与其他字段不替代owner
 焦点。runtime停止session时先disconnect/join、释放session，再按owner动作收尾
-音频player；正常有焦点退出不再只停decoder而遗留stream/jitter。无焦点则保留
-尾部，下一prepare或最终media shutdown释放。
+音频player。**修订**：以上映射只覆盖JNI之前的显式释放前缀，不能把无焦点时保留尾部
+作为完整返回前端的契约。§186补入Java退出请求后，§187的完整完成边界还会退休会话
+音频；旧“无焦点跨菜单保留到下次prepare/shutdown”的Native映射撤回，局部原表不改。
 
 本地Switch session使用normal mode（hard/background process mode输入为0）；
 Android的全部hard/background产品调用入口、对象移交Java/完整SDL_main返回与后续复用
@@ -14393,4 +14394,130 @@ python3 -O scripts/check-steam-discovery-worker.py \
   --receiver build/desktop/app/nsl-discovery-worker-runtime --output /tmp/worker.json
 python3 -O scripts/check-discovery-worker-native-mutations.py \
   --build build/desktop --output /tmp/worker-mutations
+```
+
+## 186. 普通SDL完成经JNI进入Java的退出请求
+
+Evidence：固定core `50e1d314…8ea38e`的公共完成段`0x75cfd4–0x75d064`在§77所述
+player/network退休之后调用Android Java，不是SDL_main直接返回。本节执行这段原指令、
+JNIActivity构造`0x75d768`及CallStaticObjectMethod/CallVoidMethod两个原varargs wrapper；
+JNI服务与有效Activity上下文为provider，不声称Android VM已经运行。
+
+原JNIActivity构造先FindClass `org/libsdl/app/SDL`，取得静态`getContext`的签名
+`()Landroid/app/Activity;`并调用，随后GetObjectClass取得动态Activity类。不是从
+SDLActivity.mSingleton字段直接读取；本fixture提供有效SteamLink Activity对象。
+公共完成段GetMethodID读取的原字符串为`streamingComplete`、`(I)V`；真实ARM64
+varargs存储再经CallVoidMethodV provider读出int并进入下述DEX执行。
+
+| background / hard输入 | 本段调用SDL_Quit | 传给streamingComplete的int |
+|---|---|---|
+| 0 / 0 | 是 | −1 |
+| 0 / 1 | 是 | 0 |
+| 1 / 0 | 否 | 0 |
+| 1 / 1 | 否 | 0 |
+
+保存位的读取、CSEL及SBFX均运行原码。这是公共完成段的给定全局输入，不是完整
+hard/background producer或每个早期错误入口的证明。JNI服务正常返回、上下文有效
+是前置条件；缺失类/方法、Java异常及安全管理器拦截等路径不在此fixture中。
+
+DEX固定SHA `a5c315d6…cd39e44`；它与固定XAPK base APK成员、模拟器安装的base
+APK逐字节匹配。base完整SHA为
+`7114b75e6fdd55e7bdcbad643cd1e7baf8cf5060da820120435adaefc6004dfc`。
+apksigner verify通过，输出证书DN为`O=Valve Corporation, L=Bellevue, ST=WA, C=01`，
+证书SHA256为`5dff6b05761447a5bdf919ea88fc6fdf20d301e30b2315415c4d368ec0fbda45`；
+这里只保存该样本的签名观察，不从证书DN单独建立厂商信任。
+
+`tools/steam-android-return-audit.py`直接解析DEX ID/class/code表，从原code item
+执行完成回调的const/invoke/return指令；不是根据方法名写一个替身。实际顺序为：
+
+1. SteamLink.streamingComplete(int)调用setLowLatencyAudio(false)。
+2. 调用disableWiFiLock()。
+3. 把int交给SteamShellActivity.onStreamingResult(int)。
+4. 后者只有一个寄存器，const0直接覆盖输入，再调用System.exit(0)。不按−1/0选择
+   不同行为，没有在这个方法重发StreamingRequest或通知mStreamingComplete。
+
+audio/Wi-Fi helper正文是显式terminal，只证明调用及实参/顺序，不证明系统锁已经
+释放。System.exit是记录请求并终止fixture的OS边界，没有实际杀死研究进程。四组
+native输入都到退出请求，不从JNI调用正常返回到`0x75d064`；六组直接Java结果输入
+含INT_MIN/−1/0/1/255/INT_MAX也都请求status0。onShellComplete()另请求System.exit(0)，
+共11组程序。四个原code/DEX变异省略JNI回调、让回调返回、保留输入作为exit参数、
+省略Wi-Fi调用，均因实际结果或序列不符被拒绝；签名/模拟器/非法寄存器等异常不计。
+
+### 与shell后续循环及进程边界的区别
+
+原shell main在`0xc65cb8`调用Java startStreaming(String[],int)；只有该调用返回且
+后续门禁允许，`0xc65cf0`才可能回到`0xc657e4`新建Qt application。DEX中的对应方法
+启动SteamLink Activity后等待mStreamingComplete，然后才恢复SDL监听。不能省略上述
+System.exit请求，直接把这段后续native循环当作已观察到的自动重连producer。
+
+固定base manifest中两个Activity及application均没有android:process属性。因此撤回
+以“清单把播放器与shell分成两个进程”解释该行为的假设。静态清单不能证明全部native
+进程操作或Android任务恢复；本节没有执行进程退出后的任务栈重建、Activity再创建、
+shell BInit/Panel默认选机或新的StreamingRequest。不能据这个局部完成回调断言整个
+产品在任何情形都不会重新连接，也不能凭native后续循环发明重试时间/次数。
+
+§77的focus/background矩阵只描述**到JNI之前**的显式player释放。若跳过player Quit/
+析构，仍会在本节请求进程退出；不能据那张局部表证明完整存活进程会无限保留player。
+Switch持续运行前端的资源映射需同时考虑这个外层边界，不能把Android进程终止当作
+返回hbmenu的泄漏许可。普通无焦点退出的Native资源是否跨会话残留必须单独观察。
+
+原范围/工具/provider SHA、原DEX code item及11组native/Java交付观察冻结在
+`tools/fixtures/steam-android-return-1.3.32.json`。该记录是受控执行证据，不是Android
+真实进程退出或UI返回的验收标记。ABI/provider、静态清单与OS真实行为保持分开。
+
+```sh
+PYTHONPATH=/path/to/audit-deps python3 tools/steam-android-return-audit.py \
+  --core /path/to/pinned/libmain-arm64.so --dex /path/to/pinned/classes.dex \
+  --apk /path/to/pinned/base.apk --aapt /path/to/android-build-tools/aapt \
+  --output /tmp/android-return.json
+# 同样参数加 --mutation exit-uses-result，必须因正常−1被当成exit状态而失败。
+```
+
+## 187. 持续前端在完整串流完成后退休音频owner
+
+Evidence：§186的四组native hard/background输入最终都到Java System.exit(0)请求。
+§77只执行此前的显式player释放，不能把该prefix的背景逃逸当作Native完整完成后的
+资源保留规则。修改前实际`player_owner_runtime 0`正常退出且输出retained=true：
+session已经join/destroy，但串流SDL设备/jitter及480个PCM样本仍等到下次prepare或根
+shutdown。该观察不是自然网络故障，也不据此解释用户先前的音画卡顿。
+
+这里撤回跨菜单保留该尾部的旧端口映射。Native持续运行前端，不照搬Android进程退出；
+其完整会话结束必须显式退休会话音频。`sl_media_end_stream_player`保留原前缀，供原
+focus/hard/background门禁对照；新的`sl_media_complete_stream_player`先执行该前缀，
+再幂等close串流音频设备和jitter。runtime在IHS join、decoder stop、session destroy
+之后进入完整边界，保留focus与Pause/应用lifecycle的独立输入。不会伪装成focus=true
+来改写原表，也不把Control StopAudioData（只停decoder）改成提前丢弃尾部。
+
+这是把进程结束的资源边界投射到持续前端的明确平台映射，不称作原JNI执行了SDL音频
+close；§186的System.exit仍是仿真terminal。UI mixer/render根继续由前端拥有，完整
+Android任务恢复、视频收尾、实际断网/Steam和Switch loader不由本组音频验证证明。
+
+`player_owner_runtime.c`运行真实Opus/control/data分派与应用音频路径，SDL dummy设备
+真实创建、关闭。设备unpause被测试adapter抑制以稳定观察480个解码样本；不能把这
+写成真实播放负载或无声回调竞态的证明。IHS join/destroy是实际函数调用，测试Session
+并没有完整网络RX worker，不能凭调用顺序称为已测真实网络线程终止。
+
+媒体根/IHS初始化后，连续构造两笔Session，焦点顺序为false→true或true→false。
+第二笔prepare直接复用活着的媒体根，夹具不在两笔之间补一次人工close；每笔都必须
+在stop_session返回前观察设备/jitter不再保留、完整边界已调用，且关闭发生在owner
+入口之后。两种交叉的focus/app lifecycle仍分别检查，focus变化不能偷偷变成Pause。
+最终根shutdown独立检查无设备/jitter。不能用最终干净掩盖第一笔结束后的资源残留。
+
+`check-steam-player-completion.py`先核对冻结的原core/DEX、工具/provider SHA、四组
+JNI/Java完成观察，再比较上述实际两笔资源结果；Python -O仍有效。§77原policy与
+audio slice的所有参考保持原样，仍通过独立前缀比较器。把runtime改回prefix调用、
+或保留新API但删掉最终retirement两种实际模块反例都正常退出，第一笔无焦点时均
+retained=true；下一笔prepare/最后shutdown正常完成，仍被完整完成比较器拒绝。
+编译、signal、fixture断言、初始化失败及无关异常不算策略反例通过。
+
+本节只修正已退休Session的音频归属，不改配对、开流、DNS/NAT/SDR、媒体超时或重连
+策略；没有新增线程或同步热路径日志。Switch Release构建不代替真机无焦点退出/
+再次开流，不能把桌面dummy设备的清理推导成hbmenu已返回。
+
+```sh
+cmake --build build/desktop --target nsl-player-owner-runtime
+python3 -O scripts/check-steam-player-completion.py \
+  --receiver build/desktop/app/nsl-player-owner-runtime --focus 0
+python3 -O scripts/check-player-completion-native-mutations.py \
+  --build build/desktop --output /tmp/player-completion-mutants
 ```

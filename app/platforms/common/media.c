@@ -1577,6 +1577,16 @@ void sl_media_end_stream_player(bool input_focus, bool hard, bool background) {
         stream_media_audio_close(NULL);
 }
 
+void sl_media_complete_stream_player(bool input_focus, bool hard, bool background) {
+    sl_media_end_stream_player(input_focus, hard, background);
+    /* The focus/background gates describe SDL_main's explicit player teardown
+     * only. Its later streamingComplete(int) callback requests System.exit(0)
+     * even when that prefix retained the player (protocol RE §§186–187).
+     * This frontend survives a stream, so retire its audio owner explicitly.
+     * Idempotent close also covers the already-closed focused prefix. */
+    stream_media_audio_close(NULL);
+}
+
 static int media_audio_prepare(IHS_Session *s, const IHS_StreamAudioConfig *c, void *context) {
     (void)context;
     return stream_media_audio_prepare(s, c);

@@ -1769,9 +1769,9 @@ static bool stop_session(sl_runtime *r) {
         IHS_SessionDestroy(r->session);
         r->session = NULL;
         sl_log("cleanup: session destroyed");
-        /* SDL_main quits the client before the focused player's teardown.
-         * This port has no Android hard/background process modes. */
-        sl_media_end_stream_player(atomic_load(&r->player_input_focus), false, false);
+        /* Preserve the pre-JNI owner decision, then account for Android's
+         * completion/exit boundary while keeping this frontend alive. */
+        sl_media_complete_stream_player(atomic_load(&r->player_input_focus), false, false);
     }
 #if NSL_HAVE_SNS
     /* Worker producers have joined. Flush their final queued goodbye before

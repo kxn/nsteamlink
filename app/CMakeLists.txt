@@ -1344,12 +1344,20 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_compile_options(nsl-player-owner-runtime PRIVATE -UNDEBUG -Wall -Wextra -Wno-unknown-pragmas)
     target_link_libraries(nsl-player-owner-runtime PRIVATE nsl_platform ihs-test-session)
     target_link_options(nsl-player-owner-runtime PRIVATE -Wl,--wrap=IHS_SessionThreadedJoin
-        -Wl,--wrap=IHS_SessionDestroy -Wl,--wrap=sl_media_end_stream_player
+        -Wl,--wrap=IHS_SessionDestroy -Wl,--wrap=sl_media_end_stream_player -Wl,--wrap=sl_media_complete_stream_player
         -Wl,--wrap=SDL_OpenAudioDevice -Wl,--wrap=SDL_CloseAudioDevice -Wl,--wrap=SDL_PauseAudioDevice
         -Wl,--wrap=sl_audio_jitter_init -Wl,--wrap=IHS_BaseSend -Wl,--wrap=IHS_SessionPacketTimestamp)
-    add_test(NAME player_owner_runtime COMMAND nsl-player-owner-runtime 1)
-    add_test(NAME player_owner_runtime_unfocused COMMAND nsl-player-owner-runtime 0)
+    add_test(NAME player_owner_runtime COMMAND "${Python3_EXECUTABLE}" -O
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-player-completion.py"
+        --receiver $<TARGET_FILE:nsl-player-owner-runtime> --focus 1)
+    add_test(NAME player_owner_runtime_unfocused COMMAND "${Python3_EXECUTABLE}" -O
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-player-completion.py"
+        --receiver $<TARGET_FILE:nsl-player-owner-runtime> --focus 0)
     set_tests_properties(player_owner_runtime player_owner_runtime_unfocused PROPERTIES TIMEOUT 15)
+    add_test(NAME player_completion_native_mutations COMMAND "${Python3_EXECUTABLE}" -O
+        "${CMAKE_SOURCE_DIR}/scripts/check-player-completion-native-mutations.py"
+        --build "${CMAKE_BINARY_DIR}" --output "${CMAKE_BINARY_DIR}/player-completion-mutations")
+    set_tests_properties(player_completion_native_mutations PROPERTIES TIMEOUT 120)
     add_executable(nsl-player-owner-oracle tests/player_owner_oracle.c platforms/common/player_owner.c)
     target_include_directories(nsl-player-owner-oracle PRIVATE platforms/common)
     target_compile_options(nsl-player-owner-oracle PRIVATE -UNDEBUG -Wall -Wextra)

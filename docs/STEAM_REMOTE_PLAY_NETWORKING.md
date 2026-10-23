@@ -1483,6 +1483,13 @@ Qt Run/JNI没有执行；设置、声音、socket/session最终析构与hash-map
 缓存free端点为记录的分配边界。种入缓存仅验证析构所有权，不能冒充自然授权交换。
 冻结 gzip SHA256 为 `40c9cb69c01858c0c7273d6044aaa2cce6efb651c075e43523161d74d104f890`。
 
+普通core结束还有§186的JNI/DEX边界：streamingComplete(int)最终请求System.exit(0)，
+忽略由hard/background生成的−1/0结果。该请求没有实际交给Android OS执行；任务栈
+重建、shell重新初始化及新的串流请求仍不能由此推导。后续shell native循环以Java
+调用返回为前提，不可直接当自动重连证据。前端持续存活的Switch端在Session退休后
+显式完成音频资源收尾（§187），保留原释放前缀的独立对照，不把Android退出逃逸当作
+跨菜单遗留串流设备/jitter的理由，也不因此增加任意重试计时器。
+
 生产 `IHS_ClientStreamingHandoff` 只在完整polled Update之外、普通成功票据的owner上
 执行；拒绝回调内、尚未成功、NetworkTest等入口。退休private与最近缓存，不发9/10；
 后续握手帧不进入授权/开流/Proof分派，发现帧仍处理。新的显式串流或授权/服务配对动作

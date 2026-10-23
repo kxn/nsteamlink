@@ -12,7 +12,7 @@
 
 static SDL_AudioDeviceID stream_device;
 static sl_audio_jitter *ring;
-static bool joined, destroyed, owner_called, expected_focus;
+static bool joined, destroyed, owner_called, expected_focus, completion_boundary;
 static unsigned order;
 static unsigned join_at, destroy_at, owner_at, close_at;
 SDL_AudioDeviceID __real_SDL_OpenAudioDevice(const char *, int, const SDL_AudioSpec *,
@@ -59,9 +59,16 @@ void __wrap_IHS_SessionDestroy(IHS_Session *s) {
 void __real_sl_media_end_stream_player(bool, bool, bool);
 void __wrap_sl_media_end_stream_player(bool focus, bool hard, bool background) {
     assert(joined && destroyed && !hard && !background && focus == expected_focus);
+    if (!owner_called) { owner_called = true; owner_at = ++order; }
+    __real_sl_media_end_stream_player(focus, hard, background);
+}
+void __real_sl_media_complete_stream_player(bool, bool, bool);
+void __wrap_sl_media_complete_stream_player(bool focus, bool hard, bool background) {
+    assert(joined && destroyed && !hard && !background && focus == expected_focus);
+    completion_boundary = true;
     owner_called = true;
     owner_at = ++order;
-    __real_sl_media_end_stream_player(focus, hard, background);
+    __real_sl_media_complete_stream_player(focus, hard, background);
 }
 bool __wrap_IHS_BaseSend(IHS_Base *base, IHS_SocketAddress address, const IHS_Buffer *wire) {
     (void)base;
@@ -72,14 +79,13 @@ bool __wrap_IHS_BaseSend(IHS_Base *base, IHS_SocketAddress address, const IHS_Bu
 uint32_t __wrap_IHS_SessionPacketTimestamp(void) {
     return 1000000;
 }
-int main(int argc, char **argv) {
-    assert(argc == 2);
-    expected_focus = atoi(argv[1]) != 0;
-    assert(!setenv("SDL_AUDIODRIVER", "dummy", 1));
-    assert(!setenv("SDL_VIDEODRIVER", "dummy", 1));
-    assert(!setenv("SDL_RENDER_DRIVER", "software", 1));
-    assert(stream_media_init(NULL));
-    IHS_Init();
+typedef struct {
+    bool focus, retained, completion, closed;
+} observation;
+static observation one(bool focus) {
+    expected_focus = focus;
+    joined = destroyed = owner_called = completion_boundary = false;
+    order = join_at = destroy_at = owner_at = close_at = 0;
     sl_runtime r = {0};
     pthread_mutex_init(&r.lock, NULL);
     atomic_init(&r.player_input_focus, !expected_focus);
@@ -91,8 +97,8 @@ int main(int argc, char **argv) {
     unsigned lifecycle = atomic_load(&r.foreground_generation);
     sl_runtime_player_focus(&r, expected_focus);
     assert(atomic_load(&r.foreground_generation) == lifecycle);
-    /* Both crossed combinations exercise cleanup independently of lifecycle:
-     * focused+app-background closes; unfocused+app-foreground retains. */
+    /* Focus and app lifecycle remain independent. Both complete paths must
+     * retire session-owned audio; the pre-JNI prefix is tested separately. */
     r.session = IHS_TestSessionCreate();
     assert(r.session);
     IHS_TimerTaskStopImmediate(r.session->retransmission.timer);
@@ -139,15 +145,34 @@ int main(int argc, char **argv) {
     assert(!stop_session(&r));
     assert(!r.session && joined && destroyed && owner_called);
     assert(join_at < destroy_at && destroy_at < owner_at);
-    if (expected_focus)
-        assert(!stream_device && !ring->ring && close_at > owner_at);
-    else
-        assert(stream_device && ring->ring && sl_audio_jitter_queued(ring) == 480 && !close_at);
-    printf("{\"focus\":%s,\"retained\":%s,\"join_before_destroy_before_owner\":true}\n",
-           expected_focus ? "true" : "false", stream_device ? "true" : "false");
+    /* Observe rather than assert the policy result. Runnable old-prefix
+     * variants must return JSON and be rejected by the external comparator. */
+    observation result = {expected_focus, stream_device || ring->ring,
+                           completion_boundary, close_at > owner_at};
+    pthread_mutex_destroy(&r.lock);
+    return result;
+}
+int main(int argc, char **argv) {
+    assert(argc == 2);
+    bool focus = atoi(argv[1]) != 0;
+    assert(!setenv("SDL_AUDIODRIVER", "dummy", 1));
+    assert(!setenv("SDL_VIDEODRIVER", "dummy", 1));
+    assert(!setenv("SDL_RENDER_DRIVER", "software", 1));
+    assert(stream_media_init(NULL));
+    IHS_Init();
+    observation rounds[2];
+    rounds[0] = one(focus);
+    rounds[1] = one(!focus);
     IHS_Quit();
     stream_media_shutdown();
-    pthread_mutex_destroy(&r.lock);
     assert(!stream_device && !ring->ring);
+    printf("{\"rounds\":[");
+    for (unsigned i = 0; i < 2; ++i) {
+        observation r = rounds[i];
+        printf("%s{\"focus\":%s,\"retained\":%s,\"completion_boundary\":%s,\"closed_after_owner\":%s,"
+               "\"join_before_destroy_before_owner\":true}", i ? "," : "", r.focus ? "true" : "false",
+               r.retained ? "true" : "false", r.completion ? "true" : "false", r.closed ? "true" : "false");
+    }
+    printf("],\"final_clean\":true}\n");
     return 0;
 }

@@ -3515,6 +3515,24 @@ Decision：首次worker启动和显式命令共用ensure_control。已有client�
 CM或漏掉重试创建被原边界拒绝。Diagnostics ON/OFF桌面对照及Switch Release编译
 不等于Switch运行、自然切网、DNS/TLS/Steam成功或hbmenu生命周期，详见协议参考§185。
 
+## D-A108：区分播放器释放前缀与完整Android完成边界
+
+Evidence：固定core的公共完成段、原JNIActivity及两个varargs wrapper与固定DEX联合
+执行后，四种hard/background输入都经streamingComplete(int)请求System.exit(0)；
+接收方法忽略传入结果。该OS API在fixture中为terminal，不称作已实测Android任务
+恢复或自动重连。原§77的focus/背景逃逸只描述此前的显式player释放。修改前实际
+无焦点stop_session已join/destroy Session，却保留串流设备/jitter及480个PCM样本。
+
+Decision：撤回把该prefix直接当完整返回前端的资源策略。保留sl_media_end_stream_player
+和原门禁矩阵；runtime使用sl_media_complete_stream_player，在原前缀后幂等退休会话
+音频。端口持续保留UI根，不靠进程退出释放；不改Control StopAudioData的decoder-only
+契约，不伪造输入focus，不合并Pause/lifecycle，不增加重连或新的时限。
+
+验证边界：原11组JNI/DEX程序及四个原指令/bytecode反例，Native两种起始focus各连续
+两笔真实音频Session，以及两个正常退出的runtime/media反例。原prefix参考不改。
+真实网络worker、未暂停的设备回调负载、Android OS进程/Activity恢复、Switch无焦点
+退出/再次开流及hbmenu仍不由这些夹具证明，详见协议参考§186–187。
+
 ## D-064：Generic gyro 的早期推论（2026-10-23，已撤回，由 D-065 取代）
 
 历史 Evidence：用户观察到实验构建无 gyro 输出；某些加 `0x400` 的构建还出现
