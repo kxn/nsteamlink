@@ -197,8 +197,9 @@ host `CGameStreamSession` offset=0x4528 的RTTI虚表为 `0x13ac8f8b0`：
   RTTI为 `CStreamVideoOverflowMsg`（vtable `0x13ad5ce50`），解析成功且delegate
   存在才调用delegate+0x48；没有把first/last当码率值传入。
 - +0xe8 → `0x13a190740`：先检查pending loss(+0xca4)，尚无pending且enabled
-  才调用loss入口，随后设置pending。连续调用不等于连续削减；清pending的producer
-  和完整收发循环另行核对，不能自行发明固定去抖期限。
+  才调用loss入口，随后设置pending。连续调用不等于连续削减；下文“DataLost明文、
+  编码器查询与输出恢复”补入解析和清pending的输出producer证据。它不是固定去抖期限，
+  也不代表完整收发循环已执行。
 
 4个source callback输入分别覆盖enabled 0/1及两种事件；loss再调用一次验证latch。
 上述4个用例从已解码的callback入口进入，仍不包含消息148解析。原先此处只有
@@ -822,6 +823,106 @@ python3 tools/steam-client-loss-phase-audit.py \
 ctest --test-dir build/desktop -R '^video_feedback_phase$' --output-on-failure
 ```
 
+## DataLost明文、编码器查询与输出恢复
+
+**Evidence：** `tools/steam-adaptive-loss64-audit.py` 固定使用同一Win64快照，
+执行41组输入。先重新运行上述Linux客户端phase工具及Native生产consumer观察器，
+确认Streaming交付channel3、正文`02`。输入host的是这次原客户端实际构造的正文；
+Native queue检查的内容和门禁相同，但不称为捕获了Native完整网络packet。
+13字节header和已准入packet由fixture提供，不执行CRC、认证、解密或实际socket。
+
+### 接收和按通道角色分发
+
+原packet入口 `0x13a1ef890` 先执行Frame copy。对于channel>=3且message byte=2，
+`0x13a1f03b6–03c6` 直接进入 `0x13a1ef490`。它不经过消息148使用的
+control queue dispatcher。该分支自身不使用普通媒体/控制分支的state7/8门禁；
+显式state0/6/7/8/9且packet已准入的输入均到达相同loss handler。**这不证明**
+真实已停止连接仍会向该入口交付packet，不能将fixture状态测试反推为上游准入策略。
+
+handler构造 `CStreamDataLostMsg`（vtable `0x13ad5d030`），经原Frame::Get
+`0x13a1e1420` 和字段解析器 `0x13a11d110`（vtable+0x50）读取非长度前缀protobuf。
+相邻的 `0x13a11d0a0`（+0x40）计算序列化大小，不能误标成解析器。
+空字段列表合法，因此单字节`02`足以触发回调，不要求列出丢失packet ID。
+非空repeated uint32 `packets=1` 经原标量/SSE循环转换为uint16列表；1/2/16/17/33
+个值及65535、65536、UINT32_MAX输入验证低16位结果。另覆盖packed编码、未知字段、
+截断varint和截断packed字段。解析失败或delegate不存在都不调用媒体回调；不能按handler
+最终AL=1判断消息已被媒体接受。
+
+解析成功后按Frame channel与host保存的**角色**比较：audio=server+0x2fd，
+video=server+0x2fe。audio调用delegate+0xe0，本session绑定的是无操作方法；video
+调用+0xe8，即 `0x13a190740`。另一个合法channel不会落入视频回调。工具通过实际创建
+video/audio通道验证分流，未将所有channel>=3都当成video。
+
+### 丢失恢复与降码率是独立动作
+
+video callback的pending位相对delegate为+0xca4，相对video interface为+0xc94，
+都指向根对象+0x51cc。pending已置位时直接返回，未置位才按enabled决定是否调用
+loss estimator，随后**无论enabled或早期时间门槛是否允许重算**都置pending=1。
+
+在原模式选择与reset之后，受控时钟t=8的动态模式0输入将编码stage由15000写为2500
+kbps；固定6000模式保持6000，但pending同样变为1。t=6.999的早期反馈保留15000，
+pending仍为1。两者后续都将时钟推进到30并再次交付原packet，依旧不再进入estimator。
+时间流逝不是清pending的producer，不能移植一个自造的重请求/降档去抖超时。
+
+原encoder查询 `0x13a1a1580` 遍历真实callback数组并调用+8，绑定video interface的
+`0x13a18b2c0`。返回pending是否非零，**查询本身不消费它**。静态shared encoder
+`0x13a1b18a3–18b9` 对owner+0x50的查询结果形成后续编码调用的布尔参数，
+`0x13a1b191e–192e` 将它交给 `0x13a1b1230`。本工具动态执行的是原owner查询及输出
+dispatch，未执行这段shared encode loop到物理force-IDR的完整链；不能将“可见请求位”
+扩大为已经测到实际GPU关键帧。
+
+### 输出producer清除pending的条件
+
+工具从原encoder的帧开始dispatcher `0x13a1a2930` 经callback+0xa8进入
+`0x13a18bf50`，原函数设置首块标记root+0x51c4=1并清累计字节root+0x51c8。
+这里使用显式预配置的codec/尺寸/描述，原比较仍执行，没有覆盖配置变更分支。
+
+两种输出路径必须分别处理：
+
+- **分块输出：** 原dispatcher `0x13a1a2860` 先询问callback+0x10是否支持，再调用
+  +0xb8 → `0x13a18bd00`。原cmpxchg消费首块标记；仅消费到1且 `(type & 31)`
+  为5、7、8时，清pending并为这次输出加0x10标记。类型6不清；前一个普通块已消费标记后，
+  同帧后续的5/7/8也不清。pending保留时，本函数直接跳过该块的构造/发送。测试观察
+  首块5/7/8/0x25交付flags=0x1c，非首块或1/6/9保持pending且无交付；类型低位规则
+  不被泛化为所有codec的关键帧定义。清除后再次交付loss packet能重新进入estimator。
+- **整块buffer输出：** 原dispatcher `0x13a1a2810` → callback+0xc0 →
+  `0x13a18b7a0`。受测压缩格式下，要求累计字节为0、原长度getter结果非零、buffer指针
+  非空，才进入此buffer输出分支；且descriptor+0xbe的bit0置位才清pending。
+  普通buffer即使成功交付也不清。已累计字节、零长度或空指针都不触发清除。
+  使用format+0x44=0x100时，受测输出flags分别为0x4c/0x5c；并非仅凭descriptor
+  一个key位就能忽略前置条件。另一format=0x1000000的独立路径未纳入此组。
+
+无loss输入另检查两组首块1/5与同帧后续块：正常块仍交付0x0c，首块5交付0x1c，
+后续普通块仍交付0x0c。这样可以区分“所有普通块都抑制”和“仅pending期间抑制”。
+
+**边界：** 编码器descriptor/chunk是显式输入，没有模拟GPU生成关键帧。额外终点为
+Windows TLS时间换算、profiling、统计、CRT内存/字符串/stack probe、byte-preserving
+chunk converter，以及 `0x13a192b90` 的最终Frame交付记录。原begin、角色/类型/首块门禁、
+清pending、Frame构造与buffer复制均执行，但converter本身和交付后的估计器发送统计、
+FEC/加密/网络发送未执行。stop/reset路径 `0x13a190060` 亦静态可见清pending，未据此
+声称完整Stop/join生命周期已在本工具中跑通。
+
+八个原指令反例分别绕过parse gate、移除video delegate调用、绕过重复loss latch、
+移除buffer清除、绕过chunk首块/类型6门禁、移除chunk清除、绕过pending抑制；均应在
+原调用正常执行后被行为断言拒绝，模拟器异常不算通过反例。报告包含原二进制、相关
+指令区间、继承工具、当前工具和Native观察器哈希。
+
+复查（Python环境需pefile/unicorn/protobuf及原客户端工具的capstone/pyelftools）：
+
+```sh
+python3 tools/steam-adaptive-loss64-audit.py \
+  --binary /path/to/pinned/SteamUI.dll \
+  --client-binary /path/to/pinned/linux/package/bin/steamlink \
+  --client-oracle build/desktop/third_party/ihslib/tests/session/ihs-video-feedback-phase-oracle \
+  --python python3 --output /tmp/loss64-chain.json
+# 例：原函数执行完后应因首块约束差异而断言失败，不能是模拟器错误：
+python3 tools/steam-adaptive-loss64-audit.py \
+  --binary /path/to/pinned/SteamUI.dll \
+  --client-binary /path/to/pinned/linux/package/bin/steamlink \
+  --client-oracle build/desktop/third_party/ihslib/tests/session/ihs-video-feedback-phase-oracle \
+  --python python3 --mutation chunk-first
+```
+
 ## 复刻能力的实际边界
 
 客户端可以忠实实现配置、实时帧/网络反馈、丢失及decoder压力通知、下行配置/目标处理，
@@ -833,5 +934,7 @@ ctest --test-dir build/desktop -R '^video_feedback_phase$' --output-on-failure
 移植旧x86的乘0.9都不构成完整复刻。已将本地consumer的148明文交给x64原解析器并写入
 编码stage状态，亦已核对Native Ping应答明文packet到原估计器/编码stage；
 NVENC路径还已执行原next-stage/wrapper/owner getter到驱动重配置参数的交付边界。
+DataLost亦已执行原客户端正文到host解析/角色分发、估计器、编码stage及独立pending查询，
+并以显式编码输出验证原清pending producer；不需要在Switch复制主机的请求合并器。
 仍未完成认证/加密wire到设备编码输出的全部producer/consumer闭环，
 也未证明当前用户Steam版本与该快照完全一致。因此不把“机制已经找到”写成“实现已完整”。
