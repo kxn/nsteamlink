@@ -489,7 +489,7 @@ SendVideoOverflow `0x31f740` 只有一个直接call/jmp引用，来自压缩deco
 扩展为不存在间接/内联生成消息的全程序证明。该检查在OnThink中由 `0x327241` 调用，
 不是由player输出落后直接调用。
 
-11组15状态执行完整原CheckOverflow、SendVideoOverflow、protobuf构造/序列化、
+原有11组15状态执行完整原CheckOverflow、SendVideoOverflow、protobuf构造/序列化、
 Frame Put/Send与Connection交付终点。SDK、时钟、锁、日志和存储继承既有AVCodec
 审计终点；**Frame加密另有显式成功终点，保持明文不变**，因此下列字节是观测的明文，
 不是完成认证/加密的线上ciphertext或主机已接收证明。两个partial端点及调度是显式输入，
@@ -506,12 +506,42 @@ Frame Put/Send与Connection交付终点。SDK、时钟、锁、日志和存储�
 - client phase非6时，原SendVideoOverflow不发，但调用者仍更新跨度比较值。
 
 当前IHS的压缩pending检查在范围比较、恢复阈值和发送顺序上相符；这里的源码比较
-不替代完整Socket/crypto/并发和设备证明。IHS通用control send本身没有同样的phase6
-判断，非streaming时能否到达该producer取决于外层会话/worker生命周期，尚不能凭
-活动会话分支宣布这一门禁等价。官方AVCodec的receive错误另使用DataLost及首次完成结果，
+不替代完整Socket/crypto/并发和设备证明。下节另核对并修正该consumer的非streaming
+发送门禁，不能将其扩大为所有反馈发送者和生命周期均已等价。官方AVCodec的receive错误另使用DataLost及首次完成结果，
 已有独立原指令与Native比较，见协议§91–93；不能把它换成Android输出端的148。
 移除原 `0x326d2d` 发送调用的反例正常执行到结果比较后，必须因缺少明文反馈被oracle拒绝。
-脚本只用于研究，不改变产品配置或协议行为。
+该原指令脚本不参与产品运行时。
+
+### 积压consumer的阶段门禁与停止后的批次
+
+**Evidence：** 同一Linux原指令 `SendVideoOverflow @0x31f740` 在
+`0x31f755–0x31f75e` 要求client+0x100==6；CheckOverflow调用的原
+`SendDataLost @0x31f7f0` 在 `0x31f812–0x31f81b` 有独立的同类门禁。
+这两个发送函数之外，原CheckOverflow仍会保存跨度比较值，并在超阈值时设置
+syncing和恢复时间。不能把phase检查移到整个CheckOverflow入口并提前返回。
+
+原指令检查扩展为30组36状态，包括phase0..7的普通/超时跨度、Starting→Streaming、
+保持syncing后的Streaming，以及在DataLost交付终点显式退到phase7再尝试148。
+阶段变化是声明的受控交付输入，不冒充真实线程调度或断线复现。
+`third_party/ihslib/tests/session/video_overflow_oracle.c` 在相同端点/phase输入下执行真实
+Native consumer和protobuf，观察控制交付/原DataLost packet队列终点，没有真实session线程。
+
+**修正前反证：** IHS `c003483` 的phase5案例仍尝试交付 `[1,"9408641066"]`，
+原指令无反馈，二者都把比较跨度保存为3。差异记录在
+`build/adaptive-quality-research/linux-overflow-prefx.stderr`。
+IHS `ch_data.c::DataThreadWorker` 已进入的FIFO批次会在Stop后继续到一次DataThink，
+`client_shutdown.c` 先转Stopping再停止/加入视频worker；因此不能只凭“通常先停线程”
+宣布该门禁永远无用。这个静态链不证明用户某次公网故障由此造成。
+
+**接线约束：** 仅在该consumer实际发送DataLost和148前各自检查Streaming，仍保留
+跨度、syncing与时间更新。两次分别取phase，避免DataLost后退到Stopping却沿用旧快照
+继续发148；不把门禁扩展到通用控制发送或所有DataLost调用者。原decoder-loss测试曾在
+Handshaking模拟正常反馈，现以Connected运行该正常分支，非streaming由上述对照覆盖。
+这些修改不新增动态画质控制器、降幅或恢复时间。
+修正后的30组36状态逐项相符；删除148调用、绕过148门禁、绕过DataLost门禁这三种
+原指令反例分别因缺少反馈或多出反馈被拒绝，不依靠模拟器错误。保存的原指令向量由
+`scripts/check-steam-video-overflow.py` 在CI直接驱动Native consumer复查，无需分发官方ELF。
+这条证据限定本consumer的交付/队列终点，不等于完整会话所有DataLost producer都已对齐。
 
 复查命令（无需连接设备）：
 
@@ -536,6 +566,15 @@ python3 tools/steam-adaptive-config64-audit.py --binary /path/to/pinned/win64/St
 python3 tools/steam-adaptive-config64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation
 python3 tools/steam-adaptive-client-feedback-audit.py \
   --binary /path/to/pinned/linux/package/bin/steamlink --output /tmp/linux-feedback.json
+# Native consumer逐状态对照（先构建ihs-video-overflow-oracle）：
+python3 tools/steam-adaptive-client-feedback-audit.py \
+  --binary /path/to/pinned/linux/package/bin/steamlink --output /tmp/linux-native-feedback.json \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-video-overflow-oracle
+# 下列两种反例绕过原发送函数的Streaming门禁，均应因反馈不匹配失败：
+python3 tools/steam-adaptive-client-feedback-audit.py \
+  --binary /path/to/pinned/linux/package/bin/steamlink --output /tmp/linux-overflow-gate-mutant.json --phase-mutation overflow
+python3 tools/steam-adaptive-client-feedback-audit.py \
+  --binary /path/to/pinned/linux/package/bin/steamlink --output /tmp/linux-lost-gate-mutant.json --phase-mutation lost
 # 此反例同样应因反馈缺失而非零退出：
 python3 tools/steam-adaptive-client-feedback-audit.py \
   --binary /path/to/pinned/linux/package/bin/steamlink --output /tmp/linux-mutant.json --mutation

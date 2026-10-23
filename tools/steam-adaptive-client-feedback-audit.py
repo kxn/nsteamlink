@@ -10,6 +10,10 @@ inputs, not a full receiver lifecycle or measured decoder capacity. Scan origina
 executable sections for direct call/jump references, without treating an absent
 direct caller as proof that indirect/inlined producers cannot exist. No Steam,
 Switch, physical codec, host rate controller or live network is started.
+Optional Native comparison enters the production consumer with the same explicit
+endpoints/phases; protobuf control delivery and DataLost packet queueing are
+observation boundaries. A phase change at feedback delivery is a controlled
+input, not actual concurrent execution or a witnessed disconnect.
 """
 
 import argparse
@@ -18,6 +22,7 @@ import importlib.util
 import io
 import json
 import struct
+import subprocess
 from pathlib import Path
 
 from capstone import Cs, CS_ARCH_X86, CS_MODE_64
@@ -43,7 +48,7 @@ codec.FUNCTIONS.update(
 
 
 class Feedback(player.Player):
-    def __init__(self, binary, *, mutation=False):
+    def __init__(self, binary, *, mutation=False, phase_mutation=None):
         super().__init__(binary)
         self.hooks[0x194B60] = lambda: self.ret(1)
         self.wi(self.dec + 0x190, 0)  # Explicit initial recovery-time input.
@@ -55,6 +60,20 @@ class Feedback(player.Player):
             assert bytes(self.u.mem_read(0x326D2D, 5)) == bytes.fromhex("e80e8affff")
             self.u.mem_write(0x326D2D, b"\x90" * 5)
             self.u.ctl_remove_cache(0x326D2D, 0x326D32)
+        if phase_mutation:
+            address, signature = (
+                (0x31F75E, b"\x74\x20")
+                if phase_mutation == "overflow"
+                else (0x31F81B, b"\x74\x33")
+            )
+            assert bytes(self.u.mem_read(address, 2)) == signature
+            self.u.mem_write(address, b"\xeb" + signature[1:])
+            self.u.ctl_remove_cache(address, address + 2)
+
+    def connection_send(self):
+        super().connection_send()
+        if getattr(self, "phase_after_feedback", None) is not None:
+            self.wi(self.client + 0x100, self.phase_after_feedback)
 
     def step_overflow(self, **values):
         # Two valid CUtlLinkedList endpoints are provided at the consumer boundary.
@@ -73,6 +92,7 @@ class Feedback(player.Player):
             self.u.mem_write(self.partial + offset + 2, struct.pack("<H", fid))
             self.wi(self.partial + offset + 4, stamp)
         self.wi(self.client + 0x100, values.get("phase", 6))
+        self.phase_after_feedback = values.get("phase_after_feedback")
         self.events = []
         self.call(CHECK, self.dec)
         return dict(
@@ -80,6 +100,7 @@ class Feedback(player.Player):
             span=self.i(self.dec + 0x194),
             syncing=self.u.mem_read(self.dec + 0x18D, 1)[0],
             last_recovery=self.i(self.dec + 0x190),
+            phase=self.i(self.client + 0x100),
             assertions=list(self.assertions),
         )
 
@@ -117,17 +138,48 @@ def inventory(binary):
     )
 
 
-def audit(binary, mutation):
+def audit(binary, mutation, receiver=None, phase_mutation=None):
     assert hashlib.sha256(binary).hexdigest() == codec.SHA
     cases = []
 
     def run(name, actions, expected):
-        replay = Feedback(binary, mutation=mutation)
+        replay = Feedback(binary, mutation=mutation, phase_mutation=phase_mutation)
         states = [replay.step_overflow(**action) for action in actions]
         assert not any(state["assertions"] for state in states), (name, states)
         for state, oracle in zip(states, expected, strict=True):
             for field, value in oracle.items():
                 assert state[field] == value, (name, field, state[field], value)
+        native = None
+        if receiver:
+            lines = []
+            for action in actions:
+                values = [
+                    action.get("phase", 6),
+                    action.get("waiting_key", 0),
+                    action.get("syncing", 0),
+                    action.get("count", 2),
+                    action.get("first", 100),
+                    action.get("last", 102),
+                    action.get("ticks", 5000),
+                    action.get("previous_span", 0),
+                    int("previous_span" in action),
+                    action.get("phase_after_feedback", 0xFFFFFFFF),
+                ]
+                lines.append(" ".join(str(value) for value in values))
+            result = subprocess.run(
+                [str(receiver.resolve())],
+                input="\n".join(lines) + "\n",
+                text=True,
+                capture_output=True,
+                timeout=10,
+            )
+            assert result.returncode == 0, (name, result.stderr)
+            native = [json.loads(line) for line in result.stdout.splitlines()]
+            assert len(native) == len(states), (name, native)
+            for actual, original in zip(native, states, strict=True):
+                assert actual == {
+                    key: value for key, value in original.items() if key != "assertions"
+                }, ("native/source difference", name, actual, original)
         cases.append(
             dict(
                 name=name,
@@ -137,6 +189,7 @@ def audit(binary, mutation):
                     codec.FUNCTIONS[pc]: count
                     for pc, count in sorted(replay.entered.items())
                 },
+                **({"native": native} if receiver else {}),
             )
         )
 
@@ -189,6 +242,42 @@ def audit(binary, mutation):
         [dict(previous_span=5)],
         [dict(feedback=[], span=3)],
     )
+    for phase in range(8):
+        run(
+            f"phase_{phase}_range",
+            [dict(phase=phase)],
+            [dict(feedback=[[1, "9408641066"]] if phase == 6 else [], span=3)],
+        )
+        run(
+            f"phase_{phase}_backlog",
+            [dict(phase=phase, ticks=9831)],
+            [
+                dict(
+                    feedback=[[3, "02"], [1, "9408641066"]] if phase == 6 else [],
+                    span=3,
+                    syncing=1,
+                    last_recovery=1000000,
+                )
+            ],
+        )
+    run(
+        "starting_to_streaming_same_range",
+        [dict(phase=5), dict(phase=6)],
+        [dict(feedback=[], span=3), dict(feedback=[[1, "9408641066"]], span=3)],
+    )
+    run(
+        "starting_backlog_then_streaming",
+        [dict(phase=5, ticks=9831), dict(phase=6, syncing=1)],
+        [
+            dict(feedback=[], span=3, syncing=1, last_recovery=1000000),
+            dict(feedback=[], span=3, syncing=1, last_recovery=1000000),
+        ],
+    )
+    run(
+        "retire_after_data_lost",
+        [dict(ticks=9831, phase_after_feedback=7)],
+        [dict(feedback=[[3, "02"]], span=3, syncing=1, last_recovery=1000000, phase=7)],
+    )
     return dict(
         binary_sha256=codec.SHA,
         cases=cases,
@@ -207,12 +296,24 @@ def main():
     parser.add_argument("--binary", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument(
+        "--receiver",
+        type=Path,
+        help="Compare production Native consumer at the same explicit boundary",
+    )
+    parser.add_argument(
         "--mutation",
         action="store_true",
         help="Omit original overflow send; must fail oracle",
     )
+    parser.add_argument(
+        "--phase-mutation",
+        choices=("overflow", "lost"),
+        help="Negative: bypass original Streaming gate; must fail oracle",
+    )
     args = parser.parse_args()
-    report = audit(args.binary.read_bytes(), args.mutation)
+    report = audit(
+        args.binary.read_bytes(), args.mutation, args.receiver, args.phase_mutation
+    )
     args.output.write_text(json.dumps(report, indent=2) + "\n")
     print(
         f"{len(report['cases'])} cases / {sum(len(c['states']) for c in report['cases'])} states passed"

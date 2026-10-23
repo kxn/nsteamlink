@@ -1,0 +1,1244 @@
+{
+  "binary_sha256": "95482ca6120f90bb90798b27206b7946ab732e079f008d7fc90ea58a8b0074e1",
+  "cases": [
+    {
+      "name": "waiting_key",
+      "input": [
+        {
+          "waiting_key": 1
+        }
+      ],
+      "states": [
+        {
+          "feedback": [],
+          "span": 0,
+          "syncing": 0,
+          "last_recovery": 0,
+          "phase": 6,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 1,
+        "video_constructor": 1
+      }
+    },
+    {
+      "name": "syncing",
+      "input": [
+        {
+          "syncing": 1
+        }
+      ],
+      "states": [
+        {
+          "feedback": [],
+          "span": 0,
+          "syncing": 1,
+          "last_recovery": 0,
+          "phase": 6,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 1,
+        "video_constructor": 1
+      }
+    },
+    {
+      "name": "count_0",
+      "input": [
+        {
+          "count": 0
+        }
+      ],
+      "states": [
+        {
+          "feedback": [],
+          "span": 0,
+          "syncing": 0,
+          "last_recovery": 0,
+          "phase": 6,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 1,
+        "video_constructor": 1
+      }
+    },
+    {
+      "name": "count_1",
+      "input": [
+        {
+          "count": 1
+        }
+      ],
+      "states": [
+        {
+          "feedback": [],
+          "span": 0,
+          "syncing": 0,
+          "last_recovery": 0,
+          "phase": 6,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 1,
+        "video_constructor": 1
+      }
+    },
+    {
+      "name": "equal_range_repeats",
+      "input": [
+        {},
+        {}
+      ],
+      "states": [
+        {
+          "feedback": [
+            [
+              1,
+              "9408641066"
+            ]
+          ],
+          "span": 3,
+          "syncing": 0,
+          "last_recovery": 0,
+          "phase": 6,
+          "assertions": []
+        },
+        {
+          "feedback": [
+            [
+              1,
+              "9408641066"
+            ]
+          ],
+          "span": 3,
+          "syncing": 0,
+          "last_recovery": 0,
+          "phase": 6,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "frame_constructor": 2,
+        "frame_send": 2,
+        "frame_put": 2,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "send_control": 2,
+        "send_video_overflow": 2,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 2,
+        "video_constructor": 1,
+        "overflow_destructor": 2,
+        "overflow_constructor": 2
+      }
+    },
+    {
+      "name": "shrink_then_grow",
+      "input": [
+        {},
+        {
+          "last": 101
+        },
+        {}
+      ],
+      "states": [
+        {
+          "feedback": [
+            [
+              1,
+              "9408641066"
+            ]
+          ],
+          "span": 3,
+          "syncing": 0,
+          "last_recovery": 0,
+          "phase": 6,
+          "assertions": []
+        },
+        {
+          "feedback": [],
+          "span": 2,
+          "syncing": 0,
+          "last_recovery": 0,
+          "phase": 6,
+          "assertions": []
+        },
+        {
+          "feedback": [
+            [
+              1,
+              "9408641066"
+            ]
+          ],
+          "span": 3,
+          "syncing": 0,
+          "last_recovery": 0,
+          "phase": 6,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "frame_constructor": 2,
+        "frame_send": 2,
+        "frame_put": 2,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "send_control": 2,
+        "send_video_overflow": 2,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 3,
+        "video_constructor": 1,
+        "overflow_destructor": 2,
+        "overflow_constructor": 2
+      }
+    },
+    {
+      "name": "recovery_threshold_equal",
+      "input": [
+        {
+          "ticks": 9830
+        }
+      ],
+      "states": [
+        {
+          "feedback": [
+            [
+              1,
+              "9408641066"
+            ]
+          ],
+          "span": 3,
+          "syncing": 0,
+          "last_recovery": 0,
+          "phase": 6,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "frame_constructor": 1,
+        "frame_send": 1,
+        "frame_put": 1,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "send_control": 1,
+        "send_video_overflow": 1,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 1,
+        "video_constructor": 1,
+        "overflow_destructor": 1,
+        "overflow_constructor": 1
+      }
+    },
+    {
+      "name": "recovery_threshold_above",
+      "input": [
+        {
+          "ticks": 9831
+        }
+      ],
+      "states": [
+        {
+          "feedback": [
+            [
+              3,
+              "02"
+            ],
+            [
+              1,
+              "9408641066"
+            ]
+          ],
+          "span": 3,
+          "syncing": 1,
+          "last_recovery": 1000000,
+          "phase": 6,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "frame_constructor": 2,
+        "frame_send": 2,
+        "frame_put": 2,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "send_control": 1,
+        "send_video_overflow": 1,
+        "send_data_lost": 1,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 1,
+        "video_constructor": 1,
+        "overflow_destructor": 1,
+        "overflow_constructor": 1,
+        "data_lost_message_constructor": 1
+      }
+    },
+    {
+      "name": "frame_id_wrap_signed_range",
+      "input": [
+        {
+          "first": 65535,
+          "last": 0
+        },
+        {
+          "first": 65535,
+          "last": 0
+        }
+      ],
+      "states": [
+        {
+          "feedback": [],
+          "span": 4294901762,
+          "syncing": 0,
+          "last_recovery": 0,
+          "phase": 6,
+          "assertions": []
+        },
+        {
+          "feedback": [
+            [
+              1,
+              "9408ffff031000"
+            ]
+          ],
+          "span": 4294901762,
+          "syncing": 0,
+          "last_recovery": 0,
+          "phase": 6,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "frame_constructor": 1,
+        "frame_send": 1,
+        "frame_put": 1,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "send_control": 1,
+        "send_video_overflow": 1,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 2,
+        "video_constructor": 1,
+        "overflow_destructor": 1,
+        "overflow_constructor": 1
+      }
+    },
+    {
+      "name": "not_streaming",
+      "input": [
+        {
+          "phase": 5
+        }
+      ],
+      "states": [
+        {
+          "feedback": [],
+          "span": 3,
+          "syncing": 0,
+          "last_recovery": 0,
+          "phase": 5,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "send_video_overflow": 1,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 1,
+        "video_constructor": 1
+      }
+    },
+    {
+      "name": "already_positive_previous_range",
+      "input": [
+        {
+          "previous_span": 5
+        }
+      ],
+      "states": [
+        {
+          "feedback": [],
+          "span": 3,
+          "syncing": 0,
+          "last_recovery": 0,
+          "phase": 6,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 1,
+        "video_constructor": 1
+      }
+    },
+    {
+      "name": "phase_0_range",
+      "input": [
+        {
+          "phase": 0
+        }
+      ],
+      "states": [
+        {
+          "feedback": [],
+          "span": 3,
+          "syncing": 0,
+          "last_recovery": 0,
+          "phase": 0,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "send_video_overflow": 1,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 1,
+        "video_constructor": 1
+      }
+    },
+    {
+      "name": "phase_0_backlog",
+      "input": [
+        {
+          "phase": 0,
+          "ticks": 9831
+        }
+      ],
+      "states": [
+        {
+          "feedback": [],
+          "span": 3,
+          "syncing": 1,
+          "last_recovery": 1000000,
+          "phase": 0,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "send_video_overflow": 1,
+        "send_data_lost": 1,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 1,
+        "video_constructor": 1
+      }
+    },
+    {
+      "name": "phase_1_range",
+      "input": [
+        {
+          "phase": 1
+        }
+      ],
+      "states": [
+        {
+          "feedback": [],
+          "span": 3,
+          "syncing": 0,
+          "last_recovery": 0,
+          "phase": 1,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "send_video_overflow": 1,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 1,
+        "video_constructor": 1
+      }
+    },
+    {
+      "name": "phase_1_backlog",
+      "input": [
+        {
+          "phase": 1,
+          "ticks": 9831
+        }
+      ],
+      "states": [
+        {
+          "feedback": [],
+          "span": 3,
+          "syncing": 1,
+          "last_recovery": 1000000,
+          "phase": 1,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "send_video_overflow": 1,
+        "send_data_lost": 1,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 1,
+        "video_constructor": 1
+      }
+    },
+    {
+      "name": "phase_2_range",
+      "input": [
+        {
+          "phase": 2
+        }
+      ],
+      "states": [
+        {
+          "feedback": [],
+          "span": 3,
+          "syncing": 0,
+          "last_recovery": 0,
+          "phase": 2,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "send_video_overflow": 1,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 1,
+        "video_constructor": 1
+      }
+    },
+    {
+      "name": "phase_2_backlog",
+      "input": [
+        {
+          "phase": 2,
+          "ticks": 9831
+        }
+      ],
+      "states": [
+        {
+          "feedback": [],
+          "span": 3,
+          "syncing": 1,
+          "last_recovery": 1000000,
+          "phase": 2,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "send_video_overflow": 1,
+        "send_data_lost": 1,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 1,
+        "video_constructor": 1
+      }
+    },
+    {
+      "name": "phase_3_range",
+      "input": [
+        {
+          "phase": 3
+        }
+      ],
+      "states": [
+        {
+          "feedback": [],
+          "span": 3,
+          "syncing": 0,
+          "last_recovery": 0,
+          "phase": 3,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "send_video_overflow": 1,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 1,
+        "video_constructor": 1
+      }
+    },
+    {
+      "name": "phase_3_backlog",
+      "input": [
+        {
+          "phase": 3,
+          "ticks": 9831
+        }
+      ],
+      "states": [
+        {
+          "feedback": [],
+          "span": 3,
+          "syncing": 1,
+          "last_recovery": 1000000,
+          "phase": 3,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "send_video_overflow": 1,
+        "send_data_lost": 1,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 1,
+        "video_constructor": 1
+      }
+    },
+    {
+      "name": "phase_4_range",
+      "input": [
+        {
+          "phase": 4
+        }
+      ],
+      "states": [
+        {
+          "feedback": [],
+          "span": 3,
+          "syncing": 0,
+          "last_recovery": 0,
+          "phase": 4,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "send_video_overflow": 1,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 1,
+        "video_constructor": 1
+      }
+    },
+    {
+      "name": "phase_4_backlog",
+      "input": [
+        {
+          "phase": 4,
+          "ticks": 9831
+        }
+      ],
+      "states": [
+        {
+          "feedback": [],
+          "span": 3,
+          "syncing": 1,
+          "last_recovery": 1000000,
+          "phase": 4,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "send_video_overflow": 1,
+        "send_data_lost": 1,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 1,
+        "video_constructor": 1
+      }
+    },
+    {
+      "name": "phase_5_range",
+      "input": [
+        {
+          "phase": 5
+        }
+      ],
+      "states": [
+        {
+          "feedback": [],
+          "span": 3,
+          "syncing": 0,
+          "last_recovery": 0,
+          "phase": 5,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "send_video_overflow": 1,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 1,
+        "video_constructor": 1
+      }
+    },
+    {
+      "name": "phase_5_backlog",
+      "input": [
+        {
+          "phase": 5,
+          "ticks": 9831
+        }
+      ],
+      "states": [
+        {
+          "feedback": [],
+          "span": 3,
+          "syncing": 1,
+          "last_recovery": 1000000,
+          "phase": 5,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "send_video_overflow": 1,
+        "send_data_lost": 1,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 1,
+        "video_constructor": 1
+      }
+    },
+    {
+      "name": "phase_6_range",
+      "input": [
+        {
+          "phase": 6
+        }
+      ],
+      "states": [
+        {
+          "feedback": [
+            [
+              1,
+              "9408641066"
+            ]
+          ],
+          "span": 3,
+          "syncing": 0,
+          "last_recovery": 0,
+          "phase": 6,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "frame_constructor": 1,
+        "frame_send": 1,
+        "frame_put": 1,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "send_control": 1,
+        "send_video_overflow": 1,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 1,
+        "video_constructor": 1,
+        "overflow_destructor": 1,
+        "overflow_constructor": 1
+      }
+    },
+    {
+      "name": "phase_6_backlog",
+      "input": [
+        {
+          "phase": 6,
+          "ticks": 9831
+        }
+      ],
+      "states": [
+        {
+          "feedback": [
+            [
+              3,
+              "02"
+            ],
+            [
+              1,
+              "9408641066"
+            ]
+          ],
+          "span": 3,
+          "syncing": 1,
+          "last_recovery": 1000000,
+          "phase": 6,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "frame_constructor": 2,
+        "frame_send": 2,
+        "frame_put": 2,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "send_control": 1,
+        "send_video_overflow": 1,
+        "send_data_lost": 1,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 1,
+        "video_constructor": 1,
+        "overflow_destructor": 1,
+        "overflow_constructor": 1,
+        "data_lost_message_constructor": 1
+      }
+    },
+    {
+      "name": "phase_7_range",
+      "input": [
+        {
+          "phase": 7
+        }
+      ],
+      "states": [
+        {
+          "feedback": [],
+          "span": 3,
+          "syncing": 0,
+          "last_recovery": 0,
+          "phase": 7,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "send_video_overflow": 1,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 1,
+        "video_constructor": 1
+      }
+    },
+    {
+      "name": "phase_7_backlog",
+      "input": [
+        {
+          "phase": 7,
+          "ticks": 9831
+        }
+      ],
+      "states": [
+        {
+          "feedback": [],
+          "span": 3,
+          "syncing": 1,
+          "last_recovery": 1000000,
+          "phase": 7,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "send_video_overflow": 1,
+        "send_data_lost": 1,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 1,
+        "video_constructor": 1
+      }
+    },
+    {
+      "name": "starting_to_streaming_same_range",
+      "input": [
+        {
+          "phase": 5
+        },
+        {
+          "phase": 6
+        }
+      ],
+      "states": [
+        {
+          "feedback": [],
+          "span": 3,
+          "syncing": 0,
+          "last_recovery": 0,
+          "phase": 5,
+          "assertions": []
+        },
+        {
+          "feedback": [
+            [
+              1,
+              "9408641066"
+            ]
+          ],
+          "span": 3,
+          "syncing": 0,
+          "last_recovery": 0,
+          "phase": 6,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "frame_constructor": 1,
+        "frame_send": 1,
+        "frame_put": 1,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "send_control": 1,
+        "send_video_overflow": 2,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 2,
+        "video_constructor": 1,
+        "overflow_destructor": 1,
+        "overflow_constructor": 1
+      }
+    },
+    {
+      "name": "starting_backlog_then_streaming",
+      "input": [
+        {
+          "phase": 5,
+          "ticks": 9831
+        },
+        {
+          "phase": 6,
+          "syncing": 1
+        }
+      ],
+      "states": [
+        {
+          "feedback": [],
+          "span": 3,
+          "syncing": 1,
+          "last_recovery": 1000000,
+          "phase": 5,
+          "assertions": []
+        },
+        {
+          "feedback": [],
+          "span": 3,
+          "syncing": 1,
+          "last_recovery": 1000000,
+          "phase": 6,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "send_video_overflow": 1,
+        "send_data_lost": 1,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 2,
+        "video_constructor": 1
+      }
+    },
+    {
+      "name": "retire_after_data_lost",
+      "input": [
+        {
+          "ticks": 9831,
+          "phase_after_feedback": 7
+        }
+      ],
+      "states": [
+        {
+          "feedback": [
+            [
+              3,
+              "02"
+            ]
+          ],
+          "span": 3,
+          "syncing": 1,
+          "last_recovery": 1000000,
+          "phase": 7,
+          "assertions": []
+        }
+      ],
+      "entries": {
+        "avcodec_function_table_init": 2,
+        "codec_selection": 1,
+        "frame_constructor": 1,
+        "frame_send": 1,
+        "frame_put": 1,
+        "jitter_constructor": 1,
+        "player_base_constructor": 1,
+        "register_player": 1,
+        "send_video_overflow": 1,
+        "send_data_lost": 1,
+        "h264_constructor": 1,
+        "decoder_constructor": 1,
+        "start_decoding": 1,
+        "compressed_overflow_check": 1,
+        "video_constructor": 1,
+        "data_lost_message_constructor": 1
+      }
+    }
+  ],
+  "function_ranges": {
+    "avcodec_function_table_init": {
+      "address": 1522448,
+      "size": 303,
+      "sha256": "038ddd020d2b04cdb1b700c734a9cce79178d69d1219e7cdc36d22419f30a51a"
+    },
+    "decoder_constructor": {
+      "address": 3294736,
+      "size": 187,
+      "sha256": "680c45384f7e8fadc09cf9b330feb09da10dcf953e6ebe966f1ce7211061aff9"
+    },
+    "h264_constructor": {
+      "address": 3292176,
+      "size": 94,
+      "sha256": "13cdf108e018a52556807dc8ea1db333f8e4af0a7a560b1bfee374c17cb1a423"
+    },
+    "video_constructor": {
+      "address": 3306464,
+      "size": 292,
+      "sha256": "c9ac405883211f94276e74abe165419f080e7a8f4a72733741d8eadda45bc3c8"
+    },
+    "start_decoding": {
+      "address": 3294928,
+      "size": 368,
+      "sha256": "0b7200fae26e2649fe5b938f6fcc2365ff339fb53ff57d983a9dd515398884b1"
+    },
+    "codec_selection": {
+      "address": 1540288,
+      "size": 361,
+      "sha256": "9a6587bbefef618ad152958c7e0c9f98113e8c4c17a05f1895a6a30caf09a857"
+    },
+    "send_data_lost": {
+      "address": 3274736,
+      "size": 477,
+      "sha256": "2ef816c21aff5ae5361260b19f845692edc3f06619f3a08a25ab82c953e62fc1"
+    },
+    "frame_constructor": {
+      "address": 1656288,
+      "size": 57,
+      "sha256": "58f12689ccac17cc79cad6db50516a77394f13fca254fe5a9f27ea007fff34c3"
+    },
+    "frame_put": {
+      "address": 1657232,
+      "size": 237,
+      "sha256": "82b0c9086078d18c91284fdef1cf98a94dc6e03b11f10ea52bb46972ae6676ff"
+    },
+    "frame_send": {
+      "address": 1656736,
+      "size": 250,
+      "sha256": "33ed12ae75971d21163067eb6c90f467efe6a6a88c0a1770d7ba4add4d8a5327"
+    },
+    "data_lost_message_constructor": {
+      "address": 4529344,
+      "size": 50,
+      "sha256": "3faca9f537a27c641e32cb6940bb64c3e4a153290674ef3cfa81c89df24eb6a6"
+    },
+    "player_base_constructor": {
+      "address": 3072240,
+      "size": 271,
+      "sha256": "06ee6c22af463cdb5553b48552a6b5f7c1957bcb7895fa28203d5f63ecad6235"
+    },
+    "register_player": {
+      "address": 3242672,
+      "size": 109,
+      "sha256": "447762ca0958c17629f9c065d35163fac57968b516b65880414a2c9713d5e55b"
+    },
+    "jitter_constructor": {
+      "address": 3067920,
+      "size": 98,
+      "sha256": "961d6a6e474aa70e6bca53509307121ca45965412f0482e959afe002482577d2"
+    },
+    "compressed_overflow_check": {
+      "address": 3304544,
+      "size": 625,
+      "sha256": "a4121b5fcac02c325c57c07e5cc723845ebd42f9e5d1162d64dae6b216886db5"
+    },
+    "send_video_overflow": {
+      "address": 3274560,
+      "size": 167,
+      "sha256": "12f341f7ef511022eafa09b1d846325f4906367501aa90cf0d36305bcbe7b409"
+    },
+    "send_control": {
+      "address": 3256160,
+      "size": 247,
+      "sha256": "24615bcaa388bed831a77c4ab007f68cbafae31949e3a17a1eed14f69ba9ab68"
+    },
+    "overflow_constructor": {
+      "address": 4529152,
+      "size": 42,
+      "sha256": "ba95fa68550965f393964e817626e8283a2cc8b990462e89ea0078c629576980"
+    },
+    "overflow_destructor": {
+      "address": 4423568,
+      "size": 129,
+      "sha256": "eb9000e6a7883518bee53be63e8ef5c1de1e288c86793b65948c265f10feb1cf"
+    }
+  },
+  "callers": {
+    "executable_sections": [
+      ".init",
+      ".plt",
+      ".plt.got",
+      ".text",
+      ".fini"
+    ],
+    "direct_references": [
+      {
+        "address": 3304749,
+        "instruction": "call 0x31f740"
+      }
+    ],
+    "rela_addend_references": [],
+    "limitation": "Does not exclude indirect/inlined producers or other versions/platforms"
+  },
+  "terminals": "Audit pinned Linux AVCodec client's compressed-video overflow producer.\n\nExecute original CheckOverflow, SendVideoOverflow, protobuf and Frame Put/Send;\nuse existing player/codec audit terminals for SDK, clock, locks, logging, storage\nand final Connection delivery. Frame encryption is an explicit success terminal\nthat leaves plaintext unchanged; recorded feedback is NOT a ciphertext/wire or\npeer-acceptance claim. Partial-list metadata and scheduling are explicit\ninputs, not a full receiver lifecycle or measured decoder capacity. Scan original\nexecutable sections for direct call/jump references, without treating an absent\ndirect caller as proof that indirect/inlined producers cannot exist. No Steam,\nSwitch, physical codec, host rate controller or live network is started.\nOptional Native comparison enters the production consumer with the same explicit\nendpoints/phases; protobuf control delivery and DataLost packet queueing are\nobservation boundaries. A phase change at feedback delivery is a controlled\ninput, not actual concurrent execution or a witnessed disconnect.\n"
+}
