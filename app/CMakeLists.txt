@@ -165,7 +165,8 @@ target_compile_options(nsl_updater PRIVATE -Wall -Wextra)
 target_link_libraries(nsl_updater PUBLIC nsl_ui nsl_remote PkgConfig::CURL ${MBEDCRYPTO_LIBRARY} Threads::Threads)
 add_library(nsl_ui STATIC src/ui/ui_model.c src/ui/ui_layout.c src/ui/ui_events.c src/input/input_router.c
     src/services/host_registry.c src/services/auth_store.c src/services/host_key_store.c src/services/i18n.c
-    src/services/update_config.c src/services/video_settings.c)
+    src/services/update_config.c src/services/video_settings.c src/services/special_settings.c
+    src/input/guide_pulse.c)
 target_include_directories(nsl_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(nsl_ui PRIVATE -Wall -Wextra)
 target_link_libraries(nsl_ui PUBLIC m)
@@ -653,6 +654,30 @@ if(NSL_PLATFORM STREQUAL "desktop")
     set_tests_properties(fec_channel_isolation_official_vectors PROPERTIES TIMEOUT 30)
     add_test(NAME live_media_probe_log_contract COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/scripts/test-live-media-probe.py")
+    add_executable(nsl-capture-guide-tests tests/test_capture_guide.c)
+    target_link_libraries(nsl-capture-guide-tests PRIVATE nsl_ui)
+    target_compile_options(nsl-capture-guide-tests PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+    target_link_options(nsl-capture-guide-tests PRIVATE -Wl,--wrap=rename)
+    add_test(NAME nsl-capture-guide COMMAND nsl-capture-guide-tests)
+    add_executable(nsl-switch-capture-events-tests tests/test_switch_capture_events.c
+        platforms/switch/events.c)
+    target_include_directories(nsl-switch-capture-events-tests PRIVATE tests/capture_fakes
+        platforms/common src)
+    target_compile_definitions(nsl-switch-capture-events-tests PRIVATE NSL_GFX_DEKO=0 NSL_DIAGNOSTICS=1)
+    target_link_libraries(nsl-switch-capture-events-tests PRIVATE PkgConfig::SDL2)
+    target_compile_options(nsl-switch-capture-events-tests PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+    add_test(NAME nsl-switch-capture-events COMMAND nsl-switch-capture-events-tests)
+    add_executable(nsl-capture-guide-hid-tests tests/test_capture_guide_hid.c)
+    target_include_directories(nsl-capture-guide-hid-tests PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/tests/common)
+    target_link_libraries(nsl-capture-guide-hid-tests PRIVATE nsl_platform ihs-test-session)
+    target_compile_options(nsl-capture-guide-hid-tests PRIVATE -Wall -Wextra -Wno-unknown-pragmas -UNDEBUG)
+    foreach(symbol sl_events_foreground sl_events_capture_guide sl_events_take_capture_guide
+            SDL_GetTicks64 SDL_GameControllerGetJoystick SDL_JoystickInstanceID IHS_SessionQueuePacketResult)
+        target_link_options(nsl-capture-guide-hid-tests PRIVATE "-Wl,--wrap=${symbol}")
+    endforeach()
+    add_test(NAME nsl-capture-guide-hid COMMAND nsl-capture-guide-hid-tests)
+    set_tests_properties(nsl-capture-guide-hid PROPERTIES TIMEOUT 15)
     add_executable(nsl-video-settings-tests tests/test_video_settings.c)
     target_link_libraries(nsl-video-settings-tests PRIVATE nsl_ui)
     target_compile_options(nsl-video-settings-tests PRIVATE -Wall -Wextra -UNDEBUG)

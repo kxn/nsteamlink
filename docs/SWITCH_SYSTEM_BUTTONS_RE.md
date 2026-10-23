@@ -3,8 +3,9 @@
 本参考核对 HOME/Capture 的平台边界、NSteamLink 现有控制器身份与特殊按键报告格式。
 核对日期：2026-10-23。平台依据为本机 devkitPro headers、联网取得的 libnx、
 devkitPro SDL、nx-hbloader、Atmosphère 上游源码，以及 Valve 的 Steam Input 文档。
-本研究没有运行 Switch 程序、修改运行时、连接设备或启动 Steam 游戏。
-源码核对点为研究分支 `10ebff5f61799f949ead37d1a0dda855c179ce68`。
+初始研究没有运行 Switch 程序、连接设备或启动 Steam 游戏。
+初始源码核对点为研究分支 `10ebff5f61799f949ead37d1a0dda855c179ce68`；
+应用级实现的契约与自动验证范围另见 §7，不把 PC 侧测试当作 Switch 实机结论。
 
 ## 1. 用户可理解的结论
 
@@ -217,7 +218,7 @@ libnx `applet.c:3119–3124` 的 `appletMainLoop()` 取一个消息，调用
 `appletMainLoop()` 看不到退出请求或不能刷新 focus 缓存。这与 Capture 功能无关的
 生命周期风险不应引入。
 
-**建议方案（设计候选，未实现/未真机验证）：**
+**接线约束（§7 实现采用此结构；实机与 host 行为另行区分）：**
 
 1. 在 Switch 平台初始化/事件适配层注册一个持久 `AppletHookCookie`，再调用
    `appletSetRequiresCaptureButtonShortPressedMessage(true)` 并检查 Result。
@@ -239,3 +240,64 @@ libnx `applet.c:3119–3124` 的 `appletMainLoop()` 取一个消息，调用
 普通键组合是同协议的另一入口。两条路线都不依赖读取物理 HOME。
 HOME 仍需另行证明其系统 HID 读取、权限和动作屏蔽，不能用 Capture 消息的可用性代替。
 hook 通知、Guide 报告形成和 host 浮层打开是三个独立验证事实。
+
+## 7. Capture→Guide 的应用契约
+
+更正初始研究中“只有平台候选、尚无 Capture 接线”的实现范围：应用现有
+`switch/events.c` 使用 `appletHook`，由原有 `appletMainLoop` 分派短按消息；
+没有增加原始消息消费者、线程或 HOME 屏蔽。
+
+`设置→特殊功能→截图键作为 Steam Guide` 独立于声音、网络及应用常规分类。
+`services/special_settings.c` 使用应用级 `special.conf` v1：
+
+```text
+version=1
+capture_guide=1
+```
+
+缺文件表示从未具有该设置的旧安装，默认开启；明确的 `0` 保留关闭偏好。
+未知版本、损坏或读取失败不启用拦截；存盘沿用 temp/backup/rename 的恢复方式，
+保存失败进入现有设置保存错误反馈，不修改身份/配对 `profile.bin` 格式。
+
+**通知所有权。** 通知仅在设置开启、本地输入 gate 开放、前台、实际 session 连接并允许
+input、且选中 joystick 已被 host 打开并开始 RAW 输入报告后启用。目标 readiness
+通过 `IHS_HIDSDLInputReady(session, joystickId)` 在既有 lookup/设备锁下检查，不读首设备
+诊断缓存来推测。菜单、失焦、连接/断开及关闭开关恢复通知为 false；本功能不设置
+`appletSetScreenShotPermission`，也没有增加全局禁止截图。系统 3.0.0 以下不尝试注册，
+可选 enable 失败保留系统行为；只有成功 enable 才产生恢复义务。
+
+**Guide 报告。** hook 只写容量一的 intent；输入 owner 经 `input/guide_pulse.c` 合成为
+一次 Guide pulse。每次按下/释放分别调用现有 SDL event→显式 full refresh→IHS 可靠队列
+路径，按下只有在 `IHS_HIDRefreshSDLGameControllers` 返回 true 后才标记为 admitted。
+50ms 是已 admission 后的脉冲时长，不是提交证据；250ms 未 admission 则取消。
+释放即使 canonical/baseline 已经为 0 仍可强制 full refresh，失败保留 release 重试，
+不重放旧 intent、不累计连续短按。Guide 只改 bit5，普通 A/轴由现有 canonical state 保留。
+会话或目标设备替换前中性化旧设备，再清掉该目标的 pulse，不能跨会话补发。
+这里的 admission 仅证明本地加密队列接纳，不能表示传输 ACK 或主机已打开浮层。
+
+**退出顺序。** 主循环先关 input gate 并中性释放，再撤 Capture 通知；正常 teardown
+撤通知/Hook 后，按既有顺序停止并 join HID flush worker、移除 session、释放音视频/SDL。
+初始化失败也通过相同的 event shutdown 配对撤 Hook。成功开启后的 off IPC 若失败，
+保留恢复义务，退出阶段有界重试三次；仍失败就终止而不是把已知未恢复的 applet 状态
+当正常 hbmenu 返回。从未成功开启的“不支持/enable 失败”不会触发这条异常路径。
+
+**自动测试证据范围。** `test_capture_guide.c` 覆盖默认迁移、OFF 保留、版本/损坏、
+发布失败、独立页面和有界 pulse；`test_switch_capture_events.c` 执行真实平台适配器，
+以 libnx service terminal 替身检查消息 coalescing、unsupported、enable/off 失败与成对清理。
+`test_capture_guide_hid.c` 执行真实输入 owner、SDL provider、RemoteHID/full72 序列化、
+加密和队列，检查目标不是首设备时的 bit5 down/up、普通 A/轴保留、report 尚未开始、
+InputEnabled/连接状态、admission 拒绝、释放重试、gate/设置/失焦/会话清理。
+这些测试不调用设备服务、不启动 Steam 游戏，也不证明 Switch 截图或 Steam 浮层可用。
+
+**诊断主应用的 API 自测。** 仅 `NSL_DIAGNOSTICS=1` 的 Switch 构建接受
+`--capture-guide-selftest`，自动强制 offline，沿用正常主循环，结束后清理退出；Release
+不包含该入口。它在前台使用系统 6.0.0 起的
+`appletPerformSystemButtonPressingIfInFocus(CaptureButtonShortPressing=6)`：先 enable 并请求
+一次系统 Capture-short，等待真实 hook；off 成功后再请求一次，检查 1500ms 窗口内本应用
+不再收到 Capture hook。来源为 libnx `applet.h:583–587`、
+[applet.c:1043](https://github.com/switchbrew/libnx/blob/b156b4774fb2df7b93402169509266da7547fc4c/nx/source/services/applet.c#L1043)
+的 ICommonStateGetter cmd80、固件门槛 6.0.0。
+各阶段、Result 和错误以 `{"test":"capture_guide",...}` 写现有持久诊断日志；hook
+本身不打印、不发网络。触发 API 不可达、通知未送达或失焦会记录错误并恢复通知，
+不能当作“通过”。完成记录显式保留 `physical_key_verified=false`、`album_verified=false`、
+`host_overlay_verified=false`，因为系统模拟请求不是物理按键，且未读取 Album 或连接 Steam。

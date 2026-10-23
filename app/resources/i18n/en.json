@@ -181,5 +181,7 @@
   "HOST_SETTINGS": "Host management",
   "APP_SETTINGS": "Application",
   "UPDATE_CHECK": "Check for updates",
-  "END_GAME_CONFIRM": "End game"
+  "END_GAME_CONFIRM": "End game",
+  "SPECIAL_SETTINGS": "Special features",
+  "CAPTURE_GUIDE": "Capture button as Steam Guide"
 }

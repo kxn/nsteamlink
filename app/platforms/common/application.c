@@ -12,6 +12,7 @@
 #include "services/i18n.h"
 #include "services/update_config.h"
 #include "stream_settings.h"
+#include "services/special_settings.h"
 #include "ui/ui_events.h"
 #include "ui_audio.h"
 #include "updater.h"
@@ -227,7 +228,16 @@ int sl_application_run(int argc, char **argv) {
     const char *screenshot = NULL;
 #if NSL_DIAGNOSTICS
     bool no_adaptive_pacing = false;
+#if defined(__SWITCH__)
+    bool capture_selftest = false;
+#endif
     for (int i = 1; i < argc; ++i) {
+#if defined(__SWITCH__)
+        if (!strcmp(argv[i], "--capture-guide-selftest")) {
+            capture_selftest = true;
+            continue;
+        }
+#endif
         if (!strcmp(argv[i], "--no-adaptive-pacing"))
             no_adaptive_pacing = true;
         else if (!strcmp(argv[i], "--offline"))
@@ -237,6 +247,12 @@ int sl_application_run(int argc, char **argv) {
         else if (!strcmp(argv[i], "--screenshot") && i + 1 < argc)
             screenshot = argv[++i];
     }
+#if defined(__SWITCH__)
+    if (capture_selftest) {
+        offline = true; /* No discovery/authentication/session/Steam host work. */
+        frames = 0;
+    }
+#endif
 #else
     (void)argc;
     (void)argv;
@@ -268,6 +284,7 @@ int sl_application_run(int argc, char **argv) {
     sl_ui_init(&a->ui, &store);
     a->ui.resolution = sl_video_settings_load(sl_system_data_dir());
     a->ui.update_check = sl_update_config_load(sl_system_data_dir());
+    a->ui.capture_guide = sl_special_settings_load(sl_system_data_dir());
     sl_log_start();
     if (!offline)
         a->artwork = sl_artwork_create(sl_system_data_dir(), NULL, NULL);
@@ -325,7 +342,14 @@ int sl_application_run(int argc, char **argv) {
     sl_loop_metrics loop_metrics = {0};
     uint64_t loop_reported = 0;
 #endif
-    while (!done && sl_system_running()) {
+    while (!done) {
+        sl_media_capture_guide(a->ui.capture_guide && sl_ui_remote(&a->ui));
+        if (!sl_system_running())
+            break;
+#if NSL_DIAGNOSTICS && defined(__SWITCH__)
+        if (capture_selftest && sl_events_capture_selftest_tick(SDL_GetTicks64()))
+            done = true;
+#endif
 #if NSL_DIAGNOSTICS
         uint64_t loop_start = loop_us();
 #endif
@@ -351,6 +375,7 @@ int sl_application_run(int argc, char **argv) {
         sl_input_tick(&a->input, a->ui.now);
         sl_media_gate(sl_app_allow_remote(&a->lifecycle, sl_ui_remote(&a->ui)) &&
                       sl_gfx_healthy(sl_media_gfx()));
+        sl_media_capture_guide(a->ui.capture_guide && sl_ui_remote(&a->ui));
         sl_media_mute(!a->ui.store.sound);
         sl_command cmd;
         if (sl_ui_take_command(&a->ui, &cmd)) {
@@ -360,7 +385,8 @@ int sl_application_run(int argc, char **argv) {
             } else if (cmd.type == SL_CMD_SAVE) {
                 if (!sl_i18n_save(sl_system_data_dir(), cmd.language) ||
                     !sl_update_config_save(sl_system_data_dir(), cmd.update_check) ||
-                    !sl_video_settings_save(sl_system_data_dir(), cmd.resolution))
+                    !sl_video_settings_save(sl_system_data_dir(), cmd.resolution) ||
+                    !sl_special_settings_save(sl_system_data_dir(), cmd.capture_guide))
                     sl_ui_error(&a->ui, sl_tr(SL_T_SAVE_SETTINGS_FAILED));
             } else if (cmd.type == SL_CMD_CANCEL || cmd.type == SL_CMD_STOP ||
                        cmd.type == SL_CMD_END_GAME)
@@ -431,6 +457,7 @@ int sl_application_run(int argc, char **argv) {
     }
     sl_app_request_exit(&a->lifecycle);
     sl_media_gate(false);
+    sl_media_capture_guide(false);
     sl_media_close_video();
     sl_runtime_request_exit(a->runtime);
     sl_artwork_request_stop(a->artwork);
