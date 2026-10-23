@@ -564,6 +564,34 @@ static void publish_host_locked(sl_runtime *r, const sl_directory_host *host) {
                             : host->cloud ? SL_DISCOVERY_INTERNET : SL_DISCOVERY_UNKNOWN});
 }
 static void discovery_offline(IHS_Client *, uint64_t, void *);
+/* Same status protobuf over UDP or the authenticated CM connection. A private
+ * IP is not the identity of an internet stream; preserve client/instance and
+ * timestamp freshness checks for both (D-A100). Caller holds runtime.lock. */
+static void observe_launch_status_locked(sl_runtime *r, const IHS_HostInfo *h, bool cloud) {
+    if (r->active.type != SL_CMD_STREAM || h->clientId != r->active.host.client_id ||
+        h->instanceId != r->active.host.instance_id) return;
+    if (!cloud) {
+        char *ip = IHS_IPAddressToString(&h->address.ip);
+        bool match = h->address.port == 27036 && ip && !strcmp(ip, r->active.host.address);
+        free(ip);
+        if (!match) return;
+    }
+    sl_launch_status(&r->launch, h->hasGamesRunning, h->gamesRunning, h->hasTimestamp, h->timestamp);
+    unsigned before = r->end_game.empty;
+    uint32_t stamp = r->end_game.stamp;
+    sl_end_game_status(&r->end_game, h->hasGamesRunning, h->gamesRunning, h->hasTimestamp, h->timestamp);
+#if NSL_DIAGNOSTICS
+    if (r->end_game.at && (before != r->end_game.empty || stamp != r->end_game.stamp)) {
+        char line[192];
+        snprintf(line, sizeof(line), "end_game_status source=%s present=%d running=%d timestamp=%d stamp=%u empty=%u",
+                 cloud ? "cloud" : "lan", h->hasGamesRunning, h->gamesRunning,
+                 h->hasTimestamp, h->timestamp, r->end_game.empty);
+        sl_log(line);
+    }
+#else
+    (void)before; (void)stamp;
+#endif
+}
 static void discovered_status(IHS_Client *client, const IHS_HostInfo *h,
                               const IHS_DiscoveryAddressHints *hints, void *ctx) {
     (void)client;
@@ -587,17 +615,7 @@ static void discovered_status(IHS_Client *client, const IHS_HostInfo *h,
         }
     }
     r->discovered_hosts[index] = *h;
-    if (r->active.type == SL_CMD_STREAM && h->clientId == r->active.host.client_id &&
-        h->instanceId == r->active.host.instance_id && h->address.port == 27036) {
-        char *ip = IHS_IPAddressToString(&h->address.ip);
-        if (ip && !strcmp(ip, r->active.host.address)) {
-            sl_launch_status(&r->launch, h->hasGamesRunning, h->gamesRunning, h->hasTimestamp,
-                             h->timestamp);
-            sl_end_game_status(&r->end_game, h->hasGamesRunning, h->gamesRunning, h->hasTimestamp,
-                               h->timestamp);
-        }
-        free(ip);
-    }
+    observe_launch_status_locked(r, h, false);
     publish_host_locked(r, sl_directory_find(r->directory, h->clientId));
     pthread_mutex_unlock(&r->lock);
     sl_host observed = host_from(h);
@@ -1443,12 +1461,16 @@ static void cloud_observed(const sl_remote_host *host, void *ctx) {
     pthread_mutex_lock(&r->lock);
     bool accepted = sl_directory_status(&r->directory, &host->info, &hints, true, NULL,
                                          (int64_t)time(NULL));
-    if (accepted) publish_host_locked(r, sl_directory_find(r->directory, host->info.clientId));
+    if (accepted) {
+        observe_launch_status_locked(r, &host->info, true);
+        publish_host_locked(r, sl_directory_find(r->directory, host->info.clientId));
+    }
     pthread_mutex_unlock(&r->lock);
 #if NSL_DIAGNOSTICS
-    char line[128];
-    snprintf(line, sizeof(line), "cloud_host event=online addresses=%zu accepted=%d",
-             host->address_count, accepted);
+    char line[224];
+    snprintf(line, sizeof(line), "cloud_host event=online addresses=%zu accepted=%d games_present=%d running=%d timestamp=%d stamp=%u",
+             host->address_count, accepted, host->info.hasGamesRunning, host->info.gamesRunning,
+             host->info.hasTimestamp, host->info.timestamp);
     sl_log(line);
 #endif
 }

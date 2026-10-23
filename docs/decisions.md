@@ -3262,3 +3262,46 @@ ENFILE/EAGAIN启动失败每50ms重试，仍不能延长总期限。记录实际
 受控双owner测试检查进程最多5个额外fd、共享期限和取消后归零；ENOBUFS注入检查
 短暂资源不足恢复后仍发出查询。此类注入与本机fd检查不是Switch服务根因证明；实际
 Switch启动结果独立记录在Issue #58，不宣称已验证热点或HID恢复。
+
+
+## D-A099：polled 云端 owner 的 DNS 使用可取消、可 join 的请求 worker
+
+Evidence：7a30734真机热点`session-00000000001792738705-089598912-00000.log`与
+返回LAN的`session-00000000001792739061-089105172-00000.log`各记录两次cloud_update
+约3004ms。IHS_ClientUpdate先执行session回调，再收UDP；http_route_begin同步等待
+DNS整个3秒。LAN首次discovery response在启动6.158秒，而updater独立线程的请求
+并没有阻止renderer每帧继续drain runtime events。撤回将curl multi一概称作“DNS也
+不阻塞owner”的推论；D-A097/D-A098只限制资源/时间，未消除该等待。无法仅凭更新
+弹窗先后断言GitHub请求阻塞了LAN。
+
+Decision：目录/CM（含独立bridge）、启动SDR缓存及SDK配置的polled HTTP owner用
+begin_async/poll启动归属于单个request的DNS worker；worker仅解析，不接触CURL。
+完成以release/acquire发布，owner在done之后join，再在owner线程安装RESOLVE并加到
+multi。每个request同时最多一个job，整个进程仍共用5个wire slot和每查询3秒预算。
+封面/更新器原有worker仍同步解析，不为它们再开线程。停止请求先设置job取消标志，
+解析循环响应取消，close sockets/remove scope后结束；owner必须join/free，再销毁
+DNS全局资源、IHS或socket服务。没有detach或返回hbmenu后存活的后台任务。
+
+保留原90秒HTTPS候选预算、证书检查、正式配置完成计数/realm和官方10秒Connecting
+期限。较早两次公网请求在该10秒边界停止、SDK仍Connecting/FindingRoute且IHS无包；
+尚不证明DNS暂停是失败的唯一原因，不盲延长协议期限。新增有界update_notice可记录
+版本通知/弹窗打开关闭；不改变弹窗或首页布局。桌面真实DNS/TLS fixture分别验证
+异步推进、成功join、DNS无响应期间owner可继续工作、取消后join及socket/scope归零；
+真实Switch响应/loader清理仍须单独取证。
+
+## D-A100：已准入的云端主机状态参与同一结束游戏确认
+
+Evidence：同一7a30734热点日志显示187.799秒发可靠StopRequest，247.808秒才进入
+清理，247.903秒完成，之后显示“未能确认游戏已结束”。等待60秒与清理约0.1秒不同。
+成功会话route=sns_relay，期间cloud status每约20秒到达，但cloud_observed只发布
+presence；只有discovered_status的私有IP/client/instance条件调用launch/end-game watch。
+remote_protocol.c::status已从同一CMsgRemoteClientBroadcastStatus解析games_running的
+present位、值以及timestamp的present位、值。旧持久日志没记这些字段，不能据在线
+通知断言主机实际上已报告无游戏，亦不将可靠ACK当作游戏进程结束证据。
+
+Decision：将准入后的cloud status与UDP status交给同一helper。都匹配活动stream的
+client_id/instance_id；UDP继续要求已选IP及27036，云端不要求私有IP是可达源地址。
+沿用原timestamp基线、重复/陈旧过滤、两条明确无游戏状态、明确host-stop与60秒上限；
+不因ACK/Desktop/视频变化提前确认。记录结束请求期间消费的状态字段/empty计数，
+补齐cloud_host的present/running/timestamp。真实callback测试覆盖不同instance、重复
+时间戳、缺失字段及两条新状态；这是准入/确认逻辑验证，不是真实主机结束验收。

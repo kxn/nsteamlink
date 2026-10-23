@@ -31,11 +31,13 @@ with tempfile.TemporaryDirectory(prefix='nsl-http-route-') as directory:
     stop = threading.Event()
     counts = Counter()
     answers = []
+    drop_dns = False
     threads, listeners = [], []
     def resolve():
         while not stop.is_set():
             try: packet, peer = dns.recvfrom(512)
             except socket.timeout: continue
+            if drop_dns: continue
             header = packet[:2] + b'\x81\x80' + struct.pack('!HHHH', 1, len(answers), 0, 0)
             response = header + packet[12:]
             for ip in answers:
@@ -78,8 +80,8 @@ with tempfile.TemporaryDirectory(prefix='nsl-http-route-') as directory:
         assert result.returncode == 0, result.stdout + result.stderr
         return counts - before, result.stdout
     try:
-        for mode in ['blocking', 'multi', 'connect-only']:
-            delta, output = run(mode, 'connected' if mode == 'connect-only' else 'success', ['127.0.0.2', '127.0.1.1', '127.0.2.1', '127.0.3.1'])
+        for mode in ['blocking', 'multi', 'connect-only', 'async', 'async-connect-only']:
+            delta, output = run(mode, 'connected' if 'connect-only' in mode else 'success', ['127.0.0.2', '127.0.1.1', '127.0.2.1', '127.0.3.1'])
             assert delta == Counter(stall=1, bad=1, good=1), (delta, output)
         delta, output = run('multi', 'failure', ['127.0.2.1'])
         assert delta == Counter(bad=1) and 'curl=60' in output, (delta, output)
@@ -87,6 +89,11 @@ with tempfile.TemporaryDirectory(prefix='nsl-http-route-') as directory:
             for mode in ['blocking', 'multi']:
                 delta, output = run(mode, kind, [ip, '127.0.3.1'])
                 assert delta == Counter({kind: 1}), (delta, output)
+        drop_dns = True
+        for mode in ['dns-cancel', 'dns-fail']:
+            delta, output = run(mode, 'failure', ['127.0.3.1'])
+            assert not delta, (delta, output)
+        drop_dns = False
         for mode in ['cancel', 'deadline']:
             delta, output = run(mode, 'failure', ['127.0.0.2', '127.0.3.1'])
             assert not delta, (delta, output)

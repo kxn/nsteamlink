@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 static unsigned dns_port;
 bool __wrap_sl_dns_current_config(sl_dns_config *out) {
@@ -28,6 +29,11 @@ static size_t receive(char *p, size_t size, size_t count, void *ctx) {
 static void report(const char *line) {
     puts(line);
 }
+static uint64_t now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
 int main(int argc, char **argv) {
     assert(argc == 6);
     dns_port = (unsigned)atoi(argv[1]);
@@ -45,16 +51,46 @@ int main(int argc, char **argv) {
     curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(easy, CURLOPT_TIMEOUT_MS, 1000L);
     curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, receive);
-    bool connect_only = !strcmp(mode, "connect-only");
+    bool connect_only = !strcmp(mode, "connect-only") || !strcmp(mode, "async-connect-only");
     if (connect_only)
         curl_easy_setopt(easy, CURLOPT_CONNECT_ONLY, 1L);
     CURLcode code;
-    if (!strcmp(mode, "blocking"))
+    if (!strcmp(mode, "dns-cancel") || !strcmp(mode, "dns-fail")) {
+        sl_http_route route;
+        uint64_t began = now_ms();
+        assert(sl_http_route_begin_async(&route, easy, url, 1000));
+        assert(now_ms() - began < 200); /* Deliberately unresponsive DNS. */
+        if (!strcmp(mode, "dns-fail")) {
+            int ready;
+            unsigned ticks = 0;
+            while (!(ready = sl_http_route_poll(&route, easy))) {
+                ++ticks;
+                usleep(1000);
+            }
+            assert(ready == -1 && route.error == CURLE_COULDNT_RESOLVE_HOST && ticks > 100);
+            assert(now_ms() - began < 3500);
+        } else
+            for (unsigned i = 0; i < 20; ++i) {
+                assert(sl_http_route_poll(&route, easy) == 0);
+                usleep(1000); /* Simulate other owner/discovery work. */
+            }
+        began = now_ms();
+        sl_http_route_clear(&route); /* stop -> join -> free, with DNS pending */
+        assert(now_ms() - began < 500);
+        code = CURLE_ABORTED_BY_CALLBACK;
+    } else if (!strcmp(mode, "blocking"))
         code = sl_http_route_perform(easy, url, 1000);
     else {
         CURLM *multi = curl_multi_init();
         sl_http_route route;
-        assert(sl_http_route_begin(&route, easy, url, 1000));
+        if (!strcmp(mode, "async") || !strcmp(mode, "async-connect-only")) {
+            assert(sl_http_route_begin_async(&route, easy, url, 1000));
+            int ready;
+            while (!(ready = sl_http_route_poll(&route, easy)))
+                usleep(1000);
+            assert(ready == 1);
+        } else
+            assert(sl_http_route_begin(&route, easy, url, 1000));
         if (!strcmp(mode, "cancel"))
             sl_dns_policy_cancel(44);
         if (!strcmp(mode, "deadline"))

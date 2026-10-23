@@ -349,9 +349,11 @@ static bool setup_easy(sl_remote_connection *c, const char *url, bool tls_only) 
         SET(CURLOPT_WRITEDATA, c);
     }
 #undef SET
-    if (!sl_http_route_begin(&c->route, c->easy, url, 20000)) return false;
-    if (c->route.count) c->deadline += SL_HTTP_ROUTE_BUDGET_MS - 20000;
-    if (curl_multi_add_handle(c->multi, c->easy) != CURLM_OK)
+    if (!sl_http_route_begin_async(&c->route, c->easy, url, 20000)) return false;
+    if (c->route.deadline) c->deadline += SL_HTTP_ROUTE_BUDGET_MS - 20000;
+    int ready = sl_http_route_poll(&c->route, c->easy);
+    if (!ready) return true;
+    if (ready < 0 || curl_multi_add_handle(c->multi, c->easy) != CURLM_OK)
         return false;
     c->easy_added = true;
     return true;
@@ -579,6 +581,16 @@ void sl_remote_connection_update(sl_remote_connection *c, uint64_t now) {
         }
     }
     if (c->state == NET_DIRECTORY || c->state == NET_TLS) {
+        if (!c->easy_added) {
+            int ready = sl_http_route_poll(&c->route, c->easy);
+            if (!ready) return;
+            if (ready < 0 || curl_multi_add_handle(c->multi, c->easy) != CURLM_OK) {
+                network_event(c, "setup_failed", ready < 0 ? c->route.error : CURLE_FAILED_INIT);
+                fail_connection(c, now);
+                return;
+            }
+            c->easy_added = true;
+        }
         int running = 0;
         if (curl_multi_perform(c->multi, &running) != CURLM_OK) {
             network_event(c, "multi_failed", CURLE_FAILED_INIT);

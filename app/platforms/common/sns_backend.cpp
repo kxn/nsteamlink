@@ -290,7 +290,9 @@ static bool begin_config(sl_sns *b, bool force = false) {
     /* DNS/route preparation failure belongs to Completed(false), just like a
      * curl resolver failure. Do not turn it into factory cannot_start(), which
      * would skip the original completion count and realm/retry decisions. */
-    if (!sl_http_route_begin(&b->route, b->request, url, 25000)) return true;
+    if (!sl_http_route_begin_async(&b->route, b->request, url, 25000)) return true;
+    int ready = sl_http_route_poll(&b->route, b->request);
+    if (ready <= 0) return true; /* Pending DNS or an HTTP-completion error. */
     if (curl_multi_add_handle(b->http, b->request) == CURLM_OK) {
         b->request_added = true;
         return true;
@@ -370,6 +372,24 @@ static bool install_certificate(sl_sns *b) {
 static void pump_config(sl_sns *b) {
     if (!b->request)
         return;
+    if (!b->request_added && b->route.error == CURLE_OK) {
+        int ready = sl_http_route_poll(&b->route, b->request);
+        if (!ready) return;
+        if (ready > 0 && curl_multi_add_handle(b->http, b->request) == CURLM_OK)
+            b->request_added = true;
+        else if (b->route.error == CURLE_OK) {
+            /* A delayed HTTP factory/add failure has the same cannot_start
+             * semantics as an immediate add failure in begin_config. */
+            curl_easy_cleanup(b->request); b->request = nullptr;
+            sl_http_route_clear(&b->route);
+            b->config_fetch.cannot_start();
+            if (!b->config_fetch.available) {
+                b->end_reason = -1;
+                close_backend(b, SL_SNS_FAILED, SL_SNS_TERMINAL_CONFIG);
+            }
+            return;
+        }
+    }
     int running = 0;
     bool prepared = b->route.error == CURLE_OK;
     CURLMcode ret = prepared ? curl_multi_perform(b->http, &running) : CURLM_OK;

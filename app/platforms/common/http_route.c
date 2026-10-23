@@ -1,12 +1,41 @@
 #include "http_route.h"
 #include "dns_policy.h"
 #include <arpa/inet.h>
+#include <pthread.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
 #if defined(__SWITCH__) || defined(NSL_HTTP_ROUTE_TEST)
+struct sl_http_dns {
+    pthread_t thread;
+    atomic_bool done, cancel;
+    bool success;
+    char host[254];
+    sl_dns_refresh answer;
+};
+static bool dns_cancelled(void *context) {
+    return atomic_load(&((struct sl_http_dns *)context)->cancel);
+}
+static void *dns_worker(void *context) {
+    struct sl_http_dns *job = context;
+    job->success = sl_dns_policy_lookup_interruptible(job->host, &job->answer, dns_cancelled, job);
+    atomic_store_explicit(&job->done, true, memory_order_release);
+    return NULL;
+}
+/* Only the request owner joins/frees. Completion is published after the DNS
+ * scope/sockets have been closed. A cancelled job must also be joined before
+ * the runtime calls DNS shutdown/IHS_Quit/socketExit or returns to hbmenu. */
+static void clear_dns(sl_http_route *r) {
+    if (!r->dns)
+        return;
+    atomic_store(&r->dns->cancel, true);
+    pthread_join(r->dns->thread, NULL);
+    free(r->dns);
+    r->dns = NULL;
+}
 static uint64_t now_ms(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -60,8 +89,20 @@ static bool select_address(sl_http_route *r, CURL *easy) {
     event(r, "try", ip, 0);
     return true;
 }
+static bool accept_answer(sl_http_route *r, CURL *easy, const sl_dns_refresh *answer) {
+    strcpy(r->addresses, answer->addresses);
+    r->count = 1;
+    for (const char *p = r->addresses; *p; ++p)
+        if (*p == ',')
+            ++r->count;
+    if (select_address(r, easy))
+        return true;
+    r->error = sl_dns_policy_cancelled() ? CURLE_ABORTED_BY_CALLBACK : CURLE_FAILED_INIT;
+    return false;
+}
+
 #endif
-bool sl_http_route_begin(sl_http_route *r, CURL *easy, const char *url, long timeout_ms) {
+static bool begin(sl_http_route *r, CURL *easy, const char *url, long timeout_ms, bool async) {
     memset(r, 0, sizeof(*r));
 #if defined(__SWITCH__) || defined(NSL_HTTP_ROUTE_TEST)
     /* Hack rationale (D-A097): real-device logs show valid DNS answers but
@@ -69,7 +110,8 @@ bool sl_http_route_begin(sl_http_route *r, CURL *easy, const char *url, long tim
      * is not proof HTTPS works; libcurl's automatic TCP fallback also does not
      * cover TLS failure. Query multiple providers once, interleave subnets and
      * try the REAL request on one candidate at a time, within 90s. No permanent
-     * CDN blacklist, guessed Valve IPs, preflight requests or extra workers. */
+     * CDN blacklist, guessed Valve IPs or preflight requests. D-A099 moves DNS
+     * off polled owners; the existing asset/update workers stay synchronous. */
     CURLU *parsed = curl_url();
     char *host = NULL, *scheme = NULL, *port = NULL;
     bool valid = parsed && curl_url_set(parsed, CURLUPART_URL, url, 0) == CURLUE_OK &&
@@ -96,26 +138,64 @@ bool sl_http_route_begin(sl_http_route *r, CURL *easy, const char *url, long tim
         return true;
     r->deadline = now_ms() + SL_HTTP_ROUTE_BUDGET_MS;
     r->timeout_ms = timeout_ms;
+    if (async) {
+        r->dns = calloc(1, sizeof(*r->dns));
+        if (!r->dns) {
+            r->error = CURLE_OUT_OF_MEMORY;
+            return false;
+        }
+        strcpy(r->dns->host, r->host);
+        atomic_init(&r->dns->done, false);
+        atomic_init(&r->dns->cancel, false);
+        if (pthread_create(&r->dns->thread, NULL, dns_worker, r->dns)) {
+            free(r->dns);
+            r->dns = NULL;
+            r->error = CURLE_FAILED_INIT;
+            return false;
+        }
+        return true;
+    }
     sl_dns_refresh answer;
     if (!sl_dns_policy_lookup(r->host, &answer)) {
         r->error =
             sl_dns_policy_cancelled() ? CURLE_ABORTED_BY_CALLBACK : CURLE_COULDNT_RESOLVE_HOST;
         return false;
     }
-    strcpy(r->addresses, answer.addresses);
-    r->count = 1;
-    for (const char *p = r->addresses; *p; ++p)
-        if (*p == ',')
-            ++r->count;
-    if (select_address(r, easy))
-        return true;
-    r->error = sl_dns_policy_cancelled() ? CURLE_ABORTED_BY_CALLBACK : CURLE_FAILED_INIT;
-    return false;
+    return accept_answer(r, easy, &answer);
 #else
     (void)easy;
     (void)url;
     (void)timeout_ms;
+    (void)async;
     return true; /* Desktop keeps its native resolver/connection policy. */
+#endif
+}
+bool sl_http_route_begin(sl_http_route *r, CURL *easy, const char *url, long timeout_ms) {
+    return begin(r, easy, url, timeout_ms, false);
+}
+bool sl_http_route_begin_async(sl_http_route *r, CURL *easy, const char *url, long timeout_ms) {
+    return begin(r, easy, url, timeout_ms, true);
+}
+int sl_http_route_poll(sl_http_route *r, CURL *easy) {
+    if (r->error != CURLE_OK)
+        return -1;
+#if defined(__SWITCH__) || defined(NSL_HTTP_ROUTE_TEST)
+    if (!r->dns)
+        return 1;
+    if (!atomic_load_explicit(&r->dns->done, memory_order_acquire))
+        return 0;
+    /* The DNS worker never reads/writes the easy handle. Apply the verified
+     * result and RESOLVE list only on the curl owner thread. */
+    pthread_join(r->dns->thread, NULL);
+    bool ready = r->dns->success && accept_answer(r, easy, &r->dns->answer);
+    free(r->dns);
+    r->dns = NULL;
+    if (!ready && r->error == CURLE_OK)
+        r->error = CURLE_COULDNT_RESOLVE_HOST;
+    return ready ? 1 : -1;
+#else
+    (void)easy;
+    return 1;
 #endif
 }
 bool sl_http_route_retry(sl_http_route *r, CURL *easy, CURLcode code) {
@@ -149,6 +229,9 @@ bool sl_http_route_retry(sl_http_route *r, CURL *easy, CURLcode code) {
 #endif
 }
 void sl_http_route_clear(sl_http_route *r) {
+#if defined(__SWITCH__) || defined(NSL_HTTP_ROUTE_TEST)
+    clear_dns(r);
+#endif
     curl_slist_free_all(r->resolve);
     memset(r, 0, sizeof(*r));
 }

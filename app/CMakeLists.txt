@@ -544,7 +544,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
         target_link_libraries(nsl-sns-config-refresh-tests PRIVATE nsl_remote
             GameNetworkingSockets::GameNetworkingSockets_s Threads::Threads)
         foreach(symbol curl_easy_init curl_easy_setopt curl_easy_getinfo curl_multi_perform
-            curl_multi_info_read sl_gns_import_trust sl_http_route_begin)
+            curl_multi_info_read sl_gns_import_trust sl_http_route_begin_async)
             target_link_options(nsl-sns-config-refresh-tests PRIVATE "-Wl,--wrap=${symbol}")
         endforeach()
         add_executable(nsl-config-cache-owner tests/config_cache_owner.c)

@@ -103,10 +103,9 @@ sl_sns_config_cache *sl_sns_config_cache_create(const char *directory) {
         curl_easy_setopt(c->request, CURLOPT_WRITEFUNCTION, receive);
         curl_easy_setopt(c->request, CURLOPT_WRITEDATA, c);
         sl_sns_config_http_options(c->request);
-        bool ready = sl_http_route_begin(&c->route, c->request,
+        bool ready = sl_http_route_begin_async(&c->route, c->request,
             "https://api.steampowered.com/ISteamApps/GetSDRConfig/v1?appid=353380", 25000);
-        if (ready && curl_multi_add_handle(c->http, c->request) == CURLM_OK) {
-            c->request_added = true;
+        if (ready) {
             event("begin");
         } else {
             curl_easy_cleanup(c->request);
@@ -118,9 +117,16 @@ sl_sns_config_cache *sl_sns_config_cache_create(const char *directory) {
 }
 void sl_sns_config_cache_update(sl_sns_config_cache *c) {
     if (!c || !c->request) return;
+    if (!c->request_added && c->route.error == CURLE_OK) {
+        int ready = sl_http_route_poll(&c->route, c->request);
+        if (!ready) return;
+        if (ready > 0 && curl_multi_add_handle(c->http, c->request) == CURLM_OK)
+            c->request_added = true;
+        else if (c->route.error == CURLE_OK) c->route.error = CURLE_FAILED_INIT;
+    }
     int running = 0, remaining = 0;
-    CURLMcode result = curl_multi_perform(c->http, &running);
-    bool done = result != CURLM_OK, success = false;
+    CURLMcode result = c->request_added ? curl_multi_perform(c->http, &running) : CURLM_OK;
+    bool done = c->route.error != CURLE_OK || result != CURLM_OK, success = false;
     CURLMsg *message;
     while ((message = curl_multi_info_read(c->http, &remaining))) {
         if (message->msg != CURLMSG_DONE || message->easy_handle != c->request) continue;

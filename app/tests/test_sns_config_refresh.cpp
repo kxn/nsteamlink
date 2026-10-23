@@ -10,9 +10,9 @@ static CURLMsg message;
 static bool pending, parsed;
 static unsigned status;
 static bool dns_failure;
-extern "C" bool __real_sl_http_route_begin(sl_http_route *, CURL *, const char *, long);
-extern "C" bool __wrap_sl_http_route_begin(sl_http_route *route, CURL *request, const char *url, long timeout) {
-    if (!dns_failure) return __real_sl_http_route_begin(route, request, url, timeout);
+extern "C" bool __real_sl_http_route_begin_async(sl_http_route *, CURL *, const char *, long);
+extern "C" bool __wrap_sl_http_route_begin_async(sl_http_route *route, CURL *request, const char *url, long timeout) {
+    if (!dns_failure) return __real_sl_http_route_begin_async(route, request, url, timeout);
     *route = sl_http_route{};
     route->error = CURLE_COULDNT_RESOLVE_HOST;
     return false;

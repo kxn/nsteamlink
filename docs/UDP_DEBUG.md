@@ -170,7 +170,8 @@ D-A097替代D-A095的单DNS实验：向Google `8.8.8.8`、Cloudflare `1.1.1.1`�
 Quad9 `9.9.9.9`、AliDNS `223.5.5.5`、DNSPod `119.29.29.29` 并行查询，所有
 提供器共用3秒期限；每家最多4个A地址，合并最多20个。D-A098把整个进程的活跃
 DNS查询限制为5个，其他owner在同一期限内排队；DNS UDP单独请求8KiB收发缓冲，
-不改媒体socket配置。`begin`的started/os记录本机启动结果；`answer`的starts/start_os
+不改媒体socket配置。D-A099令polled HTTP owner使用可取消/join的DNS job，
+避免其3秒收集暂停同线程LAN发现和SDK更新；封面/更新器已有线程不再创建嵌套job。`begin`的started/os记录本机启动结果；`answer`的starts/start_os
 记录实际启动次数及最后启动错误。status=2表示到期时仍在排队，0表示仍在等待响应，
 1表示取得地址，-1表示失败。临时本机资源错误以50ms间隔在原3秒预算内重试。IP去重后按`/24`分组交错，
 先尝试每组首个地址，再尝试各组第二个。`/24`仅用于排序，不说明真实路由相同，也不
@@ -380,3 +381,9 @@ primary 的一个 UDP endpoint，保留其他地址；不追随新 primary 改�
 POP 的有效 E2E 与至少 30 个新显示帧，保持五秒且末尾一秒仍有 E2E/新帧，再正常菜单
 断开；等待恢复最多 35 秒。记录 SDK 终态及 type20/type21/CM 关闭元数据，失败走正式
 清理路径。这是媒体故障实验，会启动桌面串流；与独立 CLI 的编码帧 fixture 分开记录。
+
+`end_game_status`记录本地结束请求期间LAN/cloud状态的present/running/timestamp和
+累计empty；同client/instance且两条递增无游戏状态才完成，ACK不等于游戏已退出。
+`update_notice available/modal_open/modal_closed`用于区分版本请求完成与弹窗遮挡，
+不表示它暂停了runtime。三类记录均只在诊断构建，成功会话仍以connection route和
+pipeline进度确认；新版连接/结束路径是否改善需真实复测，不以fixture作验收。

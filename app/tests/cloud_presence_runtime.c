@@ -98,6 +98,33 @@ int main(void) {
     cloud_offline(123, &r);
     drain(&r, &ui);
     assert(!sl_host_online(h, ui.now));
+    /* Actual cloud callback must feed the same end-game watch as UDP, even
+     * though its address is private/unreachable and differs from the source.
+     * This checks status/identity admission, not real Steam game completion. */
+    r.active.type = SL_CMD_STREAM;
+    r.active.host = saved;
+    r.launch = (sl_launch_watch){.have_stamp = true, .stamp = 100};
+    r.end_game = (sl_end_game_watch){.at = 1000, .have_stamp = true, .stamp = 100};
+    cloud.info.hasGamesRunning = cloud.info.hasTimestamp = true;
+    cloud.info.timestamp = 101; cloud.info.gamesRunning = false;
+    cloud.info.instanceId = 999;
+    cloud_observed(&cloud, &r);
+    assert(!r.end_game.empty); /* Other instance cannot close this stream. */
+    cloud.info.instanceId = saved.instance_id;
+    cloud_observed(&cloud, &r);
+    assert(r.end_game.empty == 1);
+    cloud_observed(&cloud, &r);
+    assert(r.end_game.empty == 1); /* Duplicate timestamp is not confirmation. */
+    cloud.info.timestamp = 102;
+    cloud_observed(&cloud, &r);
+    assert(r.end_game.empty == 2);
+    assert(sl_end_game_poll(&r.end_game, 1100, false) == SL_END_GAME_DONE);
+    cloud.info.timestamp = 103; cloud.info.gamesRunning = true;
+    cloud_observed(&cloud, &r);
+    assert(!r.end_game.empty);
+    cloud.info.timestamp = 104; cloud.info.hasGamesRunning = false;
+    cloud_observed(&cloud, &r);
+    assert(!r.end_game.empty);
     /* All fixtures are synchronous: no socket/worker/stream was created. */
     sl_directory_destroy(&r.directory);
     pthread_mutex_destroy(&r.lock);

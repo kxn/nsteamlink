@@ -19,7 +19,7 @@ MARKERS = (
     b"GET required", b"storage_errno", b"session-%020",
     b"cloud_watch saved=", b"cloud_update stall_ms", b"media_rx ch=", b"udp_rx observer=",
     b"cloud_net event=", b"cloud_time total_ms=", b"cloud_subscription", b"cloud_addr local=",
-    b"cloud_try stage=", b"cloud_dns event=", b"dns_query event=", b"https_route event=",
+    b"cloud_try stage=", b"cloud_dns event=", b"dns_query event=", b"https_route event=", b"end_game_status source=", b"update_notice ",
     b"control_tx phase=", b"control_rx phase=", b"control_identity account_present=",
     b"hid_transport phase=", b"hid_capture phase=",
     b"sns_config event=", b"sns_start failed_stage=",

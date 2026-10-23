@@ -135,6 +135,11 @@ static void update_events(application *a) {
     if (!sl_updater_poll(a->updater, &s))
         return;
     if (s.state == SL_UPDATE_AVAILABLE) {
+#if NSL_DIAGNOSTICS
+        char line[96];
+        snprintf(line, sizeof(line), "update_notice available=%s page=%d", s.version, a->ui.page);
+        sl_log(line);
+#endif
         sl_runtime_event e = {.type = SL_EVENT_UPDATE, .generation = a->ui.generation};
         snprintf(e.text, sizeof(e.text), "%s", s.version);
         sl_ui_runtime_event(&a->ui, &e);
@@ -312,7 +317,14 @@ int sl_application_run(int argc, char **argv) {
 #if NSL_DIAGNOSTICS
         uint64_t loop_start = loop_us();
 #endif
+#if NSL_DIAGNOSTICS
+        int previous_page = a->ui.page;
+#endif
         sl_ui_tick(&a->ui, sl_system_now());
+#if NSL_DIAGNOSTICS
+        if (previous_page != a->ui.page && a->ui.page == SL_UPDATE)
+            sl_log("update_notice modal_open");
+#endif
         update_events(a);
         if (a->runtime) {
             runtime_events(a);
@@ -356,6 +368,13 @@ int sl_application_run(int argc, char **argv) {
         sl_audio_feedback(a->ui.cue_serial != last_cue ? a->ui.cue : SL_CUE_NONE,
                           a->ui.store.sound);
         last_cue = a->ui.cue_serial;
+#if NSL_DIAGNOSTICS
+        if (previous_page == SL_UPDATE && a->ui.page != SL_UPDATE) {
+            char line[80];
+            snprintf(line, sizeof(line), "update_notice modal_closed page=%d", a->ui.page);
+            sl_log(line);
+        }
+#endif
         if (stream_media_exit_requested() || sl_events_exit_requested() ||
             !sl_gfx_healthy(sl_media_gfx()))
             done = true;

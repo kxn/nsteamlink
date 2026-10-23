@@ -198,7 +198,8 @@ void sl_dns_policy_merge(sl_dns_refresh *out, const sl_dns_refresh *answers, uns
             }
         }
 }
-bool sl_dns_policy_lookup(const char *host, sl_dns_refresh *result) {
+bool sl_dns_policy_lookup_interruptible(const char *host, sl_dns_refresh *result,
+                                        bool (*cancel)(void *), void *context) {
     memset(result, 0, sizeof(*result));
     result->fd = -1;
     if (!host || !host[0] || strlen(host) > 253)
@@ -219,8 +220,8 @@ bool sl_dns_policy_lookup(const char *host, sl_dns_refresh *result) {
     bool temporary = s != current;
     sl_dns_config config = {0};
     uint64_t start = now_ms();
-    bool configured =
-        !atomic_load(&s->cancelled) && !atomic_load(&stopped) && sl_dns_current_config(&config);
+    bool configured = !atomic_load(&s->cancelled) && !atomic_load(&stopped) &&
+                      (!cancel || !cancel(context)) && sl_dns_current_config(&config);
     /* Fan out on this existing worker, no threads or cross-network cache.
      * Wait for all providers (or the shared 3s deadline), so a fast first
      * answer does not suppress address diversity. Allocate wire buffers on
@@ -239,7 +240,8 @@ bool sl_dns_policy_lookup(const char *host, sl_dns_refresh *result) {
         queries[i].fd = -1;
         states[i] = 2; /* queued; 0=active, 1=success, -1=terminal failure */
     }
-    while (count && !atomic_load(&s->cancelled) && !atomic_load(&stopped)) {
+    while (count && !atomic_load(&s->cancelled) && !atomic_load(&stopped) &&
+           (!cancel || !cancel(context))) {
         uint64_t now = now_ms();
         if (now - start >= 3000)
             break;
@@ -291,7 +293,8 @@ bool sl_dns_policy_lookup(const char *host, sl_dns_refresh *result) {
         struct timespec pause = {.tv_nsec = 1000000};
         nanosleep(&pause, NULL);
     }
-    bool cancelled = atomic_load(&s->cancelled) || atomic_load(&stopped);
+    bool cancelled =
+        atomic_load(&s->cancelled) || atomic_load(&stopped) || (cancel && cancel(context));
     for (unsigned i = 0; i < count; ++i) {
         sl_dns_refresh_cancel(&queries[i]);
         if (held[i])
@@ -325,4 +328,8 @@ bool sl_dns_policy_lookup(const char *host, sl_dns_refresh *result) {
     if (temporary)
         remove_scope(s);
     return success;
+}
+
+bool sl_dns_policy_lookup(const char *host, sl_dns_refresh *result) {
+    return sl_dns_policy_lookup_interruptible(host, result, NULL, NULL);
 }

@@ -4,7 +4,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* Local compatibility policy, not Steam retry policy. No threads/cache. Owners
+/* Local compatibility policy, not Steam retry policy. No cross-network cache. Owners
  * call begin on their network worker, retry only after CURLMSG_DONE/removal,
  * and clear AFTER easy_cleanup (curl borrows the RESOLVE list). */
 typedef struct {
@@ -14,10 +14,14 @@ typedef struct {
     CURLcode error; /* Preparation failure is still an HTTP completion to SNS. */
     uint64_t deadline;
     struct curl_slist *resolve;
+    struct sl_http_dns *dns; /* Owned joinable DNS job; never accesses CURL. */
 } sl_http_route;
 /* Allow all 20 candidates a 4s TCP/TLS attempt plus the DNS collection. */
 #define SL_HTTP_ROUTE_BUDGET_MS 90000
 bool sl_http_route_begin(sl_http_route *, CURL *, const char *url, long timeout_ms);
+/* Polled owners must use the async form: begin/poll never wait for DNS. */
+bool sl_http_route_begin_async(sl_http_route *, CURL *, const char *url, long timeout_ms);
+int sl_http_route_poll(sl_http_route *, CURL *); /* 0=pending, 1=ready, -1=error */
 bool sl_http_route_retry(sl_http_route *, CURL *, CURLcode);
 void sl_http_route_clear(sl_http_route *);
 /* Same retry policy for existing blocking asset/update workers. */
