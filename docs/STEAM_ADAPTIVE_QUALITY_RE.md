@@ -923,6 +923,88 @@ python3 tools/steam-adaptive-loss64-audit.py \
   --python python3 --mutation chunk-first
 ```
 
+## DataLost到NVENC逐帧请求与返回类型的连续链
+
+`tools/steam-adaptive-keyframe64-audit.py` 延伸上述两类工具：同一emulator内从真实
+Linux客户端正文进入host packet接收，经过estimator/码率stage、原next-stage/wrapper、
+shared encode loop、owner pending查询、NVENC逐帧参数构造，再由显式driver返回结果
+经过原bitstream读取、buffer复制、descriptor标记、owner输出dispatcher到session callback。
+这补入前节只独立执行query/output、未动态串接shared encode loop的边界；仍不执行物理GPU。
+
+**Evidence：** 固定Win64二进制SHA不变，12组输入、33次逐帧请求、21次bitstream lock。
+实际NVENC vtable `0x13ac95920` +0x60绑定 `0x13a1b46c0`；encoder owner
+`0x13ac91fa0` +0x50/+0x68/+0x78分别绑定原pending查询、begin和buffer输出dispatcher。
+没有把这些虚函数换成手工返回pending或手工调用清除函数。
+
+原shared loop `0x13a1b16d0` 在 `0x13a1b18ac` 调owner+0x50：已有非零时间跨度、
+无独立force位时，按pending结果形成传给 `0x13a1b1230` 的布尔输入；首帧时间原点、
+shared backend+0x60的force位另有独立路径。`0x13a1b1230` 原样转交NVENC+0x60。
+原 `0x13a1b4b00–4b67` 对传入force或NVENC+0x1690的独立force位，给
+`NV_ENC_PIC_PARAMS.encodePicFlags` OR 0x2，并消费NVENC局部force位。
+原call `0x13a1b4d8b` 通过driver表+0x88交付参数，工具记录完整参数块SHA。
+
+此前固定的NVIDIA SDK 12.1 header SHA `dbdaa8bc…17425` 本轮另行编译offsetof/常量
+验证器，确认+0x88为`nvEncEncodePicture`、+0xa0/+0xa8为输入lock/unlock、
++0x90/+0x98为bitstream lock/unlock；`encodePicFlags`在参数+0x10，
+`NV_ENC_PIC_FLAG_FORCEIDR=2`。因此这里不是按寄存器值猜测“可能请求关键帧”。
+这条证据是API参数交付，不代表实际driver接受或确实产出IDR。
+
+### 请求、驱动结果与恢复完成分开判断
+
+driver bitstream结果按其output handle关联到显式输入的提交项，结果类型不由请求flags
+自动生成。特意让FORCEIDR请求得到P/I/零字节结果，以排除观察器替主机完成恢复的假象。
+fixture配置两个input/output ring项，实际原dequeue和回收执行：第一轮提交成功也可能
+尚无buffer输出，不能把“无输出”直接等同网络丢包。
+
+| 受控输入/结果 | 三次逐帧请求flags | pending变化 | 原输出结果 |
+|---|---|---|---|
+| 无loss、返回普通P | 0,0,0 | 0,0,0 | 普通buffer，flags 0x4c |
+| loss、返回P或I | 2,2,2 | 1,1,1 | 普通buffer交付，但不完成恢复 |
+| loss、返回非空IDR | 2,2,0 | 1,0,0 | IDR进入callback后清除，flags 0x5c |
+| 固定6000、loss、非空IDR | 2,2,0 | 1,0,0 | 同样恢复；码率保持6000 |
+| loss、返回零字节IDR | 2,2,2 | 1,1,1 | 无Frame交付，保留恢复请求 |
+| loss、encode API返回8 | 仅一次2 | 1,1,1 | backend标为failed，后续不再调用driver |
+| loss、bitstream lock返回8 | 两次2 | 1,1,1 | 第二轮failed，后续不再调用driver |
+
+原 `0x13a1b5980` 读取driver输出。`0x13a1b5ad0–5ae1` 只对SDK
+`pictureType=3`（IDR）置返回结构的key位；`pictureType=2`（I）不置。
+原 `0x13a1b1300–1316` 搬到descriptor+0xbe的bit0，然后原buffer callback按前节条件
+清pending。这里的“提交成功”“图像内编码I”“非空IDR已输出”不是同一状态。
+错误后保留pending也不等于该backend会自动重试：原failure byte阻止后续wrapper执行。
+后端选择/切换与真实驱动错误恢复不在这组fixture中。
+
+三个无loss输入分别给首帧原点0、shared局部force位、NVENC局部force位，均为请求
+2,0,0且session pending一直为0。不能看到一次FORCEIDR就反推一定收到DataLost。
+另在首次IDR清除后、另一个已请求的IDR仍在ring中时再交付loss：新一轮确实再次请求
+FORCEIDR，但较早排队的IDR返回也能清新pending。该output callback没有按新loss的
+请求ID或时间戳另做匹配；不能在客户端自行补造一个对应的主机策略。
+
+**执行边界：** driver table、返回类型/字节、opaque handles、两个ring存储、原始NV12
+像素及已初始化codec配置都是fixture。原输出CUtlBuffer构造/增长/复制执行；像素复制、
+CRT空描述、platform counter/elapsed和timer初始化为显式终点，未核对计时算法。
+Win64 `__chkstk` terminal保留RAX中的分配大小，未用修改原stack分配绕开ABI。
+只覆盖CPU NV12、H264与无B帧重排的配置；CUDA/D3D、NEED_MORE_INPUT、真实码流
+语法、GPU时序、socket/FEC/加密仍未由此证明。最终Frame交付沿用loss工具的记录终点。
+
+六个原指令反例分别反转pending getter、绕过pending触发、移除FORCEIDR参数位、
+反转IDR结果判定、移除pending清除和移除backend failure latch；必须由行为断言拒绝，
+原指令执行异常不算验证成功。
+
+```sh
+python3 tools/steam-adaptive-keyframe64-audit.py \
+  --binary /path/to/pinned/SteamUI.dll \
+  --client-binary /path/to/pinned/linux/package/bin/steamlink \
+  --client-oracle build/desktop/third_party/ihslib/tests/session/ihs-video-feedback-phase-oracle \
+  --nvenc-header /path/to/pinned/nvEncodeAPI-12.1.h \
+  --python python3 --output /tmp/keyframe64-chain.json
+# 原FORCEIDR参数写入被删除后，应因API flags差异断言失败：
+python3 tools/steam-adaptive-keyframe64-audit.py \
+  --binary /path/to/pinned/SteamUI.dll \
+  --client-binary /path/to/pinned/linux/package/bin/steamlink \
+  --client-oracle build/desktop/third_party/ihslib/tests/session/ihs-video-feedback-phase-oracle \
+  --nvenc-header /path/to/pinned/nvEncodeAPI-12.1.h --python python3 --mutation force-idr
+```
+
 ## 复刻能力的实际边界
 
 客户端可以忠实实现配置、实时帧/网络反馈、丢失及decoder压力通知、下行配置/目标处理，
@@ -936,5 +1018,7 @@ python3 tools/steam-adaptive-loss64-audit.py \
 NVENC路径还已执行原next-stage/wrapper/owner getter到驱动重配置参数的交付边界。
 DataLost亦已执行原客户端正文到host解析/角色分发、估计器、编码stage及独立pending查询，
 并以显式编码输出验证原清pending producer；不需要在Switch复制主机的请求合并器。
+NVENC路径另已串接shared encode loop到逐帧FORCEIDR参数、显式driver结果到session
+恢复状态；结果仍由fixture提供，不能将它写成GPU/实际网络的自然闭环证明。
 仍未完成认证/加密wire到设备编码输出的全部producer/consumer闭环，
 也未证明当前用户Steam版本与该快照完全一致。因此不把“机制已经找到”写成“实现已完整”。
