@@ -51,6 +51,7 @@ static void accepted_connection(IHS_Client *, const IHS_HostInfo *, const IHS_St
                                 void *);
 static bool cloud_save_key(const sl_remote_peer *, void *);
 static void cloud_paired(const sl_remote_peer *, void *);
+static void free_session_material(sl_remote_material *);
 struct sl_runtime {
     pthread_t worker;
     atomic_bool exit_requested, worker_finished;
@@ -631,6 +632,14 @@ static void stream_authorization(IHS_Client *client, const IHS_HostInfo *host, c
     if (r->active.type != SL_CMD_STREAM)
         return;
     if (pin) {
+        /* Matching Unauthorized retracts an unconsumed ticket, even when the
+         * existing Test owns the display. Its old SDK/session remains owned by
+         * that Test; only pending admission material belongs to this request. */
+        pthread_mutex_lock(&r->lock);
+        r->session_ready = r->test_retry_ticket = false;
+        free_session_material(r->session_material);
+        r->session_material = NULL;
+        pthread_mutex_unlock(&r->lock);
         if (test_owns_display(r))
             return;
         sl_runtime_event e = {.type = SL_EVENT_STREAM_AUTHORIZATION};
@@ -1772,7 +1781,8 @@ static bool launch_network_test(sl_runtime *r, IHS_SessionInfo info) {
     if (!IHS_SessionConnect(r->test_session))
         return false;
     if (!r->test_waiting_pin && !r->test_retry_pending) {
-        IHS_ClientStreamingEstablished(r->client);
+        /* A delayed old SDK may start during authorization or while awaiting
+         * the replacement ticket. Only the control parser can accept it. */
         r->request_at = 0;
         publish_test(r, (sl_network_test_view){.phase = SL_TEST_RUNNING,
                                            .target_kbps = target,

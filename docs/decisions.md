@@ -3152,3 +3152,18 @@ Unauthorized保留结果框时仍可确认。手动结果确认已切到STOPPING
 
 这是独立UI/协议actor之间的所有权映射；原Qt同GUI线程activate为显式provider，未证明
 自然Qt排队竞争。没有改变线上取消、重试期限、配对码或安全码协议，也不修改首页版式。
+
+## D-A093：重新授权撤销旧票据准入，旧媒体不能确认新请求
+
+Evidence：公网协议参考§11.3“成功票据之后的重新授权与旧媒体初始化”。固定官方shell
+40组控制程序与8组Panel准入程序证明：成功之后的Unauthorized仍进入4并以原编号
+授权/续接；同批旧票据被撤销，已有Test保持旧owner。native旧程序均正常退出并检出差异。
+
+Decision：进入授权同时清除协议ticket/lastLaunchHasTicket和应用待消费材料，保持
+request_id、目标、已加密security PIN、自动授权上下文和已有Test/SDK。新授权成功回5，
+只有新有效票据进入6。应用移除媒体初始化时的StreamingEstablished调用；旧异步BInit
+即使在授权成功之后才完成，也不能代替新票据。保留公共API以兼容外部调用者。
+
+原Qt/线程/发送等provider边界、native的构造观察端点和3组旧SDK-ready的端口异步映射
+分别说明，不能推广为自然竞争、真实SDR或Switch验收。没有改变配对码来源、安全码
+用途、重试期限、取消规则或首页UI。

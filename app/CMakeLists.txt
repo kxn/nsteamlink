@@ -723,6 +723,10 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-control-update.py"
         --receiver $<TARGET_FILE:nsl-pairing-rpc-oracle>)
     set_tests_properties(control_update_official_vectors PROPERTIES TIMEOUT 45)
+    add_test(NAME post_ticket_authorization_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-post-ticket-authorization.py"
+        --receiver $<TARGET_FILE:nsl-pairing-rpc-oracle>)
+    set_tests_properties(post_ticket_authorization_official_vectors PROPERTIES TIMEOUT 90)
     add_executable(nsl-ticket-consumer-runtime tests/ticket_consumer_runtime.c)
     target_include_directories(nsl-ticket-consumer-runtime PRIVATE platforms/common
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
@@ -737,7 +741,7 @@ if(NSL_PLATFORM STREQUAL "desktop")
         -Wl,--wrap=IHS_ClientSendControl -Wl,--wrap=IHS_SessionCreate
         -Wl,--wrap=IHS_ClientStreamingHandoff
         -Wl,--wrap=IHS_SessionThreadedJoin -Wl,--wrap=sl_system_now
-        -Wl,--wrap=IHS_CryptoRandomUInt32 -Wl,--wrap=sl_network_stats_load
+        -Wl,--wrap=IHS_CryptoRandomUInt32 -Wl,--wrap=IHS_CryptoRandomBytes -Wl,--wrap=sl_network_stats_load
         -Wl,--wrap=sl_sns_create_configured -Wl,--wrap=sl_sns_update -Wl,--wrap=sl_sns_get_state
         -Wl,--wrap=sl_sns_session_ready -Wl,--wrap=sl_sns_datagram_transport
         -Wl,--wrap=sl_sns_get_stats -Wl,--wrap=sl_sns_end_reason -Wl,--wrap=sl_sns_destroy
@@ -751,6 +755,16 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-ticket-consumer.py"
         --receiver $<TARGET_FILE:nsl-ticket-consumer-runtime> ${NSL_TICKET_CONSUMER_ARGS})
     set_tests_properties(ticket_consumer_official_vectors PROPERTIES TIMEOUT 90)
+    add_test(NAME post_ticket_admission_official_vectors COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-post-ticket-admission.py"
+        --receiver $<TARGET_FILE:nsl-ticket-consumer-runtime> ${NSL_TICKET_CONSUMER_ARGS})
+    set_tests_properties(post_ticket_admission_official_vectors PROPERTIES TIMEOUT 90)
+    if(NSL_BUILD_SNS)
+        add_test(NAME post_ticket_sdk_ready_runtime COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check-steam-post-ticket-sdk-ready.py"
+            --receiver $<TARGET_FILE:nsl-ticket-consumer-runtime>)
+        set_tests_properties(post_ticket_sdk_ready_runtime PROPERTIES TIMEOUT 30)
+    endif()
     add_test(NAME shell_handoff_official_vectors COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-shell-handoff.py"
         --receiver $<TARGET_FILE:nsl-ticket-consumer-runtime> ${NSL_TICKET_CONSUMER_ARGS})

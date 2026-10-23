@@ -1630,6 +1630,41 @@ Unauthorized仍允许确认，不能一律把控制消息当成失效。有效�
 同generation的更新Failed快照应将其恢复到待确认错误页。真实取消会更新generation，
 旧失败快照仍不能劫持取消。它是异步端口的owner映射，不是额外Steam取消或重试规则。
 
+#### 成功票据之后的重新授权与旧媒体初始化
+
+**Evidence / 证据修订**：撤回将“首次Unauthorized的同编号授权已对齐”推广到
+“已取得票据后再次Unauthorized也能完整续接”的结论。原manager在有效Success后的
+Unauthorized仍从6进入4。`audit-steam-post-ticket-authorization.py`执行固定arm64
+shell的40组普通/测网、UDP/CM、同批/分批/已有Test程序；授权按原deadline重发，
+无key和有key成功都回5，继续使用原request_id；处理中保持4，拒绝停止。连接安全码
+密文在同一事务内不重新加密，即使授权更新了长期secret。不同实现的随机IV无需相等。
+
+未消费票据的程序明确延后Panel消费，不代表自然Qt时序；已有Test由原token交付创建，
+但Start/Join线程端点、Qt、身份/RSA/随机数、时钟和发送均有provider。40组冻结gzip
+SHA256：`b9f3ede81f32df194efd0dcaabd2091448df99f895e793eb1938de6b1814d986`。
+新票据的key为128..159；已有Test保留其旧key和owner，不因控制授权再建一个Test。
+
+`audit-steam-post-ticket-admission.py`另执行8组普通/测网、UDP/CM、key/no-key：
+同批Success→Unauthorized后原Panel不消费旧票据；同批授权成功→新票据后只消费一次
+新key。独立X25519计算有key回复后的加密输入，原解析/密码计算/Panel实际执行，
+launcher/线程端点仍为provider。冻结gzip SHA256：
+`ca8cba8ef670f30f11255670be8e5958803b4277bb490721ccd04d452f492949`。
+
+native旧版本的40个控制程序和8个actor程序均正常退出，比较器分别检出续接和旧票据
+准入差异；不能把测试程序未运行或abort当作这些反例。后者在Session构造端点返回NULL，
+只观察准入/key/backend及清理，不声称实际媒体连接。协议状态和应用待消费材料必须同时
+撤销：进入授权清除ticket及待消费session material，保留事务ID/host/已加密安全码。
+已交给Test的SDK和IHS worker仍由原owner持有，不能把撤销准入变成停止旧媒体。
+
+**端口异步映射**：旧SDK可能直到manager进入4，甚至授权成功回5后才完成初始化。
+`check-steam-post-ticket-sdk-ready.py`从上述已有Test向量取原4/5状态，刻意延迟端口
+SDK-ready，再启动并Join真实IHS测网线程；pending datagram和SDK结果为provider。
+只修协议ticket的中间版本在这3组中均先正确进入4/5，但旧SDK-ready又改成6，
+程序正常退出且完整Join；因此仅修改状态显示或仅清协议ticket不足以修复此差异。
+这3组约束媒体初始化不能替代新的控制票据、不能将4/5改为6。原同步BInit、自然Qt/SDK
+线程时序及真实Steam/SDR/Switch没有在此执行。应用不再通过旧媒体启动调用
+IHS_ClientStreamingEstablished；有效票据的解析本身负责进入6，公共兼容API仍保留。
+
 ### 11.4 ProofRequest 可更新长期 secret
 
 **Evidence：** `HandleStreamingProofRequest @0x79e1c0–0x79e594`，proto 的 challenge=1:bytes、

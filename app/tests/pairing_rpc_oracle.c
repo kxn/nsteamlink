@@ -313,6 +313,9 @@ static void known(const char *phase) {
     usable_hint = true;
     runtime.active.type = SL_CMD_STREAM;
     IHS_StreamingRequest request = {0};
+    /* Additional protocol-only modes; no media/Test worker is created here. */
+    request.networkTest = !strcmp(phase, "reauth-test");
+    request.allowSDR = !strncmp(phase, "reauth-", 7);
     strcpy(request.pin, "9876");
     unsigned before = control_count;
     assert(IHS_ClientStreamingRequest(runtime.client, &target, &request));
