@@ -393,3 +393,30 @@ events shutdown 保留其恢复义务。`hidsysActivateHomeButton` 没有在这�
 本机 fake libnx 测试仅证明状态机门禁、独立计数及资源清理；它不等于 Switch 权限、
 HDLS 注入或物理 HOME 的实测通过。所有完成记录独立标明
 `physical_key_verified=false`、`album_verified=false`、`host_overlay_verified=false`。
+
+## 10. HOME 能力与 HDLS Capture 的本机观测（2026-10-23）
+
+**Evidence：** 已上传并运行 clean 构建 `da48718c7e387cbacb0e636f216a6c8da4d395e9`，
+NRO SHA256 `1b9d5fc2261c1135265bbd13ad32ae3563ce610c6c96bbd84dd299ec244313f1`。
+本地材料位于 `/data/dl/nsteamlink-anywhere/build/guide-key-da48718/`
+`device-10.10.10.66-20261023T144905Z/{command.json,nxlink.log,result.json}`。
+入口为主应用的 `--system-buttons-selftest`，没有建立 Steam 会话或启动游戏。
+
+- `applet_type=0` 对应 Application，`hos_version=1442048` 为 22.1.0。
+  `hid:sys` 初始化、HOME 激活、HOME event 获取均返回0；Begin/End 短按屏蔽均返回0。
+- 屏蔽前、后、恢复后的 getter 均返回4441（libnx module345 / NotInitialized=8），
+  与普通 Application 缺少该查询接口的源码限制相符。不能据此否定 Begin/End 调用。
+- 本轮 `home_raw_samples_available=false`，sample/buttons 为0，未观察到 HOME event。
+  没有注入 HOME，`home_virtual_read=false`；只有服务/屏蔽调用成功的证据，
+  没有可用按键读取或实际系统动作被拦截的证据。不能推广为所有固件/进程均不可能。
+- HDLS 工作缓冲、临时 FullKey 设备和中性状态设置均返回0。Capture 通知启用返回0；
+  第一次虚拟 down/up 后 hook 计数0→1，第二次1→2，分别记录 received=true。
+  此结果说明这一次明确完成通知注册后的 HDLS 首按路径可达，**不撤回 §8 的实体首按反证**。
+- 清理日志记录临时按钮中性化、detach、release、关闭event/服务、End屏蔽均成功，
+  Capture通知恢复成功；完成记录 `cleanup_ok=true`、focus_preserved=true。
+  其后有 DNS scopes/sockets=0、SDL_Quit及退出日志。它们是进程清理日志证据，
+  不是屏幕已返回hbmenu、所有系统内部状态已重置或下一次启动已通过的证明。
+
+**Conclusion：** 当前设备本轮证据不足以提供 HOME 产品选项；生产逻辑不启用 HOME 接管。
+HDLS两次通知成功与实体串流首按截图并存，仍应核对生产接管时序，不能据合成输入通过
+宣布实体首按问题已解决。此试验没有读取 Album，也没有验证主机 Guide 浮层。
