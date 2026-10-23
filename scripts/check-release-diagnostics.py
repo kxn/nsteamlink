@@ -23,6 +23,8 @@ MARKERS = (
     b"cloud_try stage=", b"cloud_dns event=", b"dns_query event=", b"https_route event=", b"end_game_status source=", b"update_notice ",
     b"control_tx phase=", b"control_rx phase=", b"control_identity account_present=",
     b"hid_transport phase=", b"hid_capture phase=",
+    b"--capture-guide-selftest", b"--system-buttons-selftest",
+    b'"capture_route":', b'"test":"capture_guide"', b'"test":"system_buttons"',
     b"sns_config event=", b"sns_start failed_stage=",
     b"RUNTIME_FIXTURE_", b"CLOUD_FIXTURE_",
     b"render-rate-test",
@@ -46,6 +48,12 @@ MARKERS = (
     b"Font initialization failed:",
 )
 FORBIDDEN_SYMBOLS = {
+    "sl_system_buttons_probe_tick", "sl_system_buttons_probe_cleanup",
+    "sl_events_capture_selftest_tick", "sl_events_capture_probe_begin",
+    "sl_events_capture_probe_messages", "sl_events_capture_probe_end",
+    "appletPerformSystemButtonPressingIfInFocus",
+    "appletBeginBlockingHomeButton", "appletEndBlockingHomeButton",
+    "hiddbgAttachHdlsVirtualDevice", "hiddbgSetHdlsState",
     "sl_sns_start_relay_probe", "sl_sns_test_relay_loss", "sl_sns_test_migration",
     "sl_sns_test_terminal",
     "sl_gns_sdr_test_loss", "sl_gns_sdr_test_terminal", "sl_gns_sdr_test_migration",

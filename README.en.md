@@ -53,6 +53,7 @@ Use **Y to open Steam** on your first visit. Games played during streaming appea
 | Settings | X |
 | Back / exit | B |
 | Open the streaming menu | Hold **− and + together for 0.8 seconds** |
+| Send Steam Guide during streaming | Short-press Capture; disable under Settings → Application → Steam Guide key |
 
 The home screen and menus also support touch. **Disconnect** leaves the PC game running.
 **End game and disconnect** asks the host to quit the game, then disconnects. The streaming menu only offers Resume, End game and disconnect, and Disconnect; settings are available from the home screen.

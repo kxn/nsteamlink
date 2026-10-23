@@ -2,6 +2,30 @@
 
 [简体中文](CHANGELOG.md)
 
+## [0.7.1] - 2026-10-23
+
+Previous stable release: **v0.7.0**. Target: `main`; source: [`v0.7.1`](https://github.com/kxn/nsteamlink/tree/v0.7.1).
+
+### Highlights
+
+- Short-press Capture during streaming to send **Steam Guide**. Enabled by default; choose Capture or Off under **Settings → Application → Steam Guide key**. Off preserves system screenshots; screenshots also remain available outside streaming.
+- Preserve the previous toggle when loading settings. Gate Guide on input readiness, focus and session lifetime, and send its press/release through the existing controller path without changing ordinary button or gyro mappings.
+- Exclude Capture self-tests, HOME capability probes, virtual-controller injection and their diagnostic entry points from the ordinary package. HOME remains a Switch system button.
+
+### Validation and known limits
+
+Regression coverage includes settings persistence, input-readiness gates, Guide press/release and cleanup. Offline Switch tests verified Capture notification ownership, two virtual Capture notifications and resource cleanup; these do not establish physical-button or host-overlay behavior. A user previously observed a physical first press taking a screenshot before subsequent presses worked. Its cause remains unconfirmed; this release does not claim to fix that first-press behavior.
+
+### Commits by type
+
+- Input/settings: `5c0d283` Capture mapping and opt-out; `27a4b3b` Application settings placement and bounded diagnostics.
+- Tests/documentation: `11f00d6` system-button and Guide protocol references; `23cf2c3` observe HOME without clearing the shared event; `a29a7ac` record hardware evidence and validation limits.
+- Release: version, bilingual notes and button-diagnostic exclusion checks. Adaptive-quality research remains on the research branch.
+
+Download the ordinary NRO from [this release](https://github.com/kxn/nsteamlink/releases/tag/v0.7.1), or use the in-app updater. Existing pairing data is retained.
+
+[Full changelog: v0.7.0 → v0.7.1](https://github.com/kxn/nsteamlink/compare/v0.7.0...v0.7.1)
+
 ## [0.7.0] - 2026-10-23
 
 Previous stable release: **v0.6.0**. Target: `main`; source: [`v0.7.0`](https://github.com/kxn/nsteamlink/tree/v0.7.0).
