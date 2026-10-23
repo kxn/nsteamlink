@@ -1336,6 +1336,24 @@ if(NSL_PLATFORM STREQUAL "desktop")
         -Wl,--wrap=stream_media_get_snapshot)
     add_test(NAME network_test_runtime COMMAND nsl-network-test-runtime)
     set_tests_properties(network_test_runtime PROPERTIES TIMEOUT 120)
+    add_executable(nsl-session-recovery-runtime tests/session_recovery_runtime.c)
+    target_include_directories(nsl-session-recovery-runtime PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf ${CMAKE_SOURCE_DIR}/third_party/ihslib/tests/common)
+    target_compile_definitions(nsl-session-recovery-runtime PRIVATE NSL_DIAGNOSTICS=$<BOOL:${NSL_DIAGNOSTICS}>)
+    target_compile_options(nsl-session-recovery-runtime PRIVATE -UNDEBUG -Wall -Wextra -Wno-unknown-pragmas)
+    target_link_libraries(nsl-session-recovery-runtime PRIVATE nsl_platform)
+    foreach(symbol sl_log sl_remote_connection_create sl_remote_connection_update sl_sns_config_cache_update
+            IHS_ClientStreamingHandoff IHS_UDPSocketOpen socket sendto IHS_SessionCreate
+            IHS_SessionDestroy IHS_SessionSetSessionCallbacks IHS_SessionChannelAdd
+            SDL_OpenAudioDevice SDL_CloseAudioDevice)
+        target_link_options(nsl-session-recovery-runtime PRIVATE "-Wl,--wrap=${symbol}")
+    endforeach()
+    add_test(NAME session_recovery_runtime COMMAND "${Python3_EXECUTABLE}" -O
+        "${CMAKE_SOURCE_DIR}/scripts/check-session-recovery-runtime.py"
+        --receiver $<TARGET_FILE:nsl-session-recovery-runtime>
+        --video "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video/sequential.h264")
+    set_tests_properties(session_recovery_runtime PROPERTIES TIMEOUT 90)
     add_executable(nsl-sensor-lifetime-runtime tests/test_sensor_lifetime.c tests/sensor_lifetime_runtime.c)
     target_include_directories(nsl-sensor-lifetime-runtime PRIVATE platforms/common
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client

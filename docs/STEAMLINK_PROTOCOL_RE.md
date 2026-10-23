@@ -14864,3 +14864,64 @@ ctest --test-dir build/desktop \
 诊断开/关的Release桌面构建各通过该正例、可运行旧行为反例、两种起始focus的
 player-owner连续会话及Capture Guide HID定向检查。Switch Release交叉编译通过，
 但编译不证明设备上的原生采样时延、退出/再次启动或loader清理行为。
+
+## 192. 实际runtime worker的断线→退休→下一笔媒体会话
+
+### 输入边界与实际执行部分
+
+Evidence：`app/tests/session_recovery_runtime.c`包含生产`runtime.c`，通过公开
+create/poll/submit/request_exit/destroy运行真实actor pthread。使用本机loopback UDP
+对端；session的Connect、ConnectACK、握手、认证、加密协商、StartVideo/Audio及
+编码媒体均经过真实socket、收发worker、control parser、密码实现和媒体worker。
+H264使用既有sequential.h264，音频为既有合法Opus静音样本；实际FFmpeg、Opus和SDL
+软件渲染/音频设备运行，不替换解码成功或首帧结果。
+
+本例**给定已接受的开流材料及成功handoff**，不执行控制manager的授权/票据生产。
+fixture在actor的manager更新边界调用真实accept_session，并给出request_stream
+在请求前已打开的视频admission；真实launch_session仍负责创建/配置/连接SDK session。
+云连接为离线provider，SDR配置更新不访问网络；debug listener不打开，发现广播在
+sendto边界丢弃，只有127.0.0.1报文真正发出。不能称为真实Steam、公网、SDR或NAT验收。
+
+对端仅在两个真实媒体channel已发布后发编码媒体，该producer边界用只观察、继续
+执行原函数的ChannelAdd wrapper确认。提前到达尚无channel的媒体另有SDK夹具，
+不把本例人为的发送时序当作官方主机策略。控制packet会收到真实序列对应的ACK。
+时间来自实际monotonic/SDK时钟，不修改15秒、180秒或上层连接等待常量。
+
+### 三笔连续会话的观察
+
+同一runtime、SDL/media根和虚拟控制器依次运行下列输入。首帧/音频必须属于本笔
+facts中的非零session_id，三笔ID互异，不能沿用上一笔snapshot的首帧作为成功证据。
+
+| 对端输入 | SDK退休前事实 | runtime事件及UI model | 媒体/资源 |
+|---|---|---|---|
+| 解码/显示并收到音频后发type 9 | host stop=true，timedOut=false | 单次STOPPED，非异常，回首页 | video clean、音频设备关闭、provider解绑 |
+| 解码/显示并收到音频后完全静默 | host stop=false，timedOut=true | 单次STOPPED，异常，保留中断错误页 | 同样完成退休；UI的B动作经实际submit(CANCEL)及ACK回首页 |
+| 静默退出后再次给定接受材料并发送媒体，再发type 9 | 新session正常显示/收音，host stop=true | 非异常STOPPED，回首页 | 同样完成退休，未重启runtime/前端 |
+
+每笔实际disconnected callback及SessionDestroy都恰好一次；Destroy前base/send
+worker已join。三个真实stream音频设备的Open/Close计数分别为3/3；每笔STOPPED
+后stream device均已关闭。video clean等待由主线程collect释放呈现引用，最后再
+请求runtime退出、主线程继续collect、确认worker finished并join，然后关闭media。
+最终gfx根为空、stream device为空。它补充了§187直接stop及§191传感器交错之外的
+真实worker→actor终态证据，不是仅在测试里手工调用stop_session。
+
+诊断ON/OFF的Release桌面构建均通过同一外部检查器，每组三笔约17.6秒。复现为：
+
+```sh
+cmake --build build/desktop --target nsl-session-recovery-runtime
+ctest --test-dir build/desktop -R '^session_recovery_runtime$' -V
+```
+
+检查器在Python -O下仍明确验证结果及三个身份，输出实际JSON；断言、进程异常、
+超时或缺少画面/音频不会被当作通过。调试草稿中曾缺少视频头的prior-frame字段，
+以及给定新请求时漏掉原request_stream的admission前置输入，均作为夹具问题修正；
+这些失败不构成生产协议或正式客户端回归的证据，未据此修改生产报文。
+
+### 不由本例覆盖的边界
+
+UI部分执行真实model事件和错误页B动作，但未运行application.c的完整admission/
+lifecycle/overlay循环；新请求在已接受材料边界给定。虚拟HID只覆盖provider和绑定
+退休，不包含远端打开手柄、真实按键/ACK或原生IMU。SDL为dummy audio/video及软件
+renderer，不证明物理输出、Switch GPU/libnx、Wi-Fi抖动、hbmenu清理或连续启动。
+本机对端的静默不等同真实Steam故障恢复；自动重发StreamingRequest也未由本例
+产生。不能以这组通过代替§186–190的官方producer和完整真机验收。
