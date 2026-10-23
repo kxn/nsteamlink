@@ -13945,7 +13945,8 @@ Evidence：`tools/steam-session-pool-audit.py` 在§180相同固定Qt5Network/Co
 原factory `0x1916a8`，原registry `0x191a58`、容器清理`0x191b7c`及原libc++
 查找/插入/rehash/erase `0x191d3c`、`0x192034`、`0x191c08`。这里没有用Python
 字典代替容器的键选择或清理策略。分配/释放、next-prime数学原语、TLS存储和
-QNetworkSession构造是provider；原会话对象构造内部仍未执行。不能继续把“factory
+QNetworkSession构造在本工具中是provider；§182另执行公开构造器及Android实现。
+不能继续把“factory
 正文没有执行”作为全局边界；§180独立工具保留该终点，本工具补入另一个执行层。
 
 ### 缓存归属和实际键
@@ -14040,4 +14041,111 @@ PYTHONPATH=/path/to/audit-deps python3 tools/steam-session-pool-audit.py \
   --qt /path/to/bundled/libQt5Network_arm64-v8a.so \
   --qt-core /path/to/bundled/libQt5Core_arm64-v8a.so --output /tmp/session-pool.json
 # 相同参数增加 --mutation threshold，必须在16/17边界的行为断言失败。
+```
+
+## 182. 原公开会话构造与Android后端的同机执行
+
+Evidence：`tools/steam-android-session-audit.py` 保持§177–181相同完整SHA的
+Qt5Network、Qt5Core及qandroidbearer输入，将Qt5Network放在fixture基址0，将bearer
+放在`0x1000000`，在同一ARM64模拟器中执行。后者只是fixture地址，不是协议常量。
+按ELF RELATIVE及定义符号/QtNetwork导入重定位数据，保留原PC相对代码；PLT交付、
+QtCore值操作、QObject基础设施、manager服务等终点仍明确声明。未声称运行Android
+动态加载器或完整Qt。报告保留原二进制/范围SHA、基址、原metadata和依赖身份。
+
+本工具绕过§181的QNetworkSession构造替身，执行原public ctor `0x18b5ec`、
+Android engine createSessionBackend `0xbe80`、原实现sync `0xe868`、状态同步
+`0xf964`、open `0xed68`、close `0xef0c`及connectionError `0xfc4c`。本节bearer
+代码地址均为未重定位偏移；实际执行加上述基址。不能继续将这些构造正文写成全局
+未执行；也不能把执行构造等同于真实OS网络已连通。
+
+### 选择引擎、构造实现及信号次序
+
+原public ctor先取配置identifier；空字符串不分配实现。manager不存在或引擎列表
+为空、没有引擎声明包含该identifier，也保留空实现。列表由provider给出，contains
+判断执行原engine `0xbbe0`的QString有序表查找；多引擎输入按顺序取第一个匹配项。
+
+匹配后按原vtable调用createSessionBackend，原构造器初始化三份配置值、状态与标记，
+再由public ctor写入请求配置并调用实现的sync。type0路径复制当前配置，原sync另
+从manager枚举可cast且含该ID的引擎，调用原engine sessionStateForId `0xbc8c`。
+引擎配置表、available backend指针和cast结果为输入；状态规则运行原码。
+因此“实现对象已分配”和“网络状态有效”不是同一个条件。
+
+| type0配置state输入（有效记录、引擎可用） | 原会话state | 构造后isOpen | error |
+|---|---|---|---|
+| 0、8 | 0 | false | 0 |
+| 1、2 | 1 | false | 0 |
+| 6 | 5 | false | 0 |
+| 14、15 | 3 | false | 0 |
+
+这来自原完整位判断、fallback位判断及请求打开位，不是工具把所有非零state都映射
+为在线。available backend为空、或cast provider明确拒绝的输入中，实现仍存在，
+但state=0。后者仅为给定cast结果的路径，未把这种结果称作正常Android类识别。
+
+sync在接上**实现→公开会话**的七条转发连接之前执行。活动输入在构造过程中发出
+private stateChanged(3)，当时没有这些转发绑定；随后才提交opened/error/state/
+closed及配置、usage通知的type0连接。工具在signal激活时复制实参和当时的绑定，
+不将稍后建立的连接追溯到先前信号。这样补充了§180额外排队state交付所处的顺序，
+但未把任何猜测的排队原因当作原代码中的注释或设计意图。
+
+### state=3与打开标记分开
+
+公开open `0x18bae4`按实现vtable进入原Android open。state14程序观察到：
+
+1. 构造返回state3/isOpen=false，请求打开位也为false。
+2. 显式open后设置请求打开和isOpen，原private发quitPendingWaitsForOpened。
+3. 按构造时提交的转发参数，显式交付到原public signal，得到opened。
+4. 再次open没有新增通知；close转发一次closed，isOpen=false，但state仍3。
+
+这些活动输入未进入所监测的原engine connect/disconnect入口`0xbc7c`/`0xbc84`。
+它证明所测路径的调用选择，不等于完整QObject/平台服务没有其他系统动作，更不能
+将其当作Steam媒体通道或SDR握手已经完成。
+
+type0但state=0/1/2/8时，open走原不足条件分支：保存state0/error4，并经原public
+signal转发stateChanged(0)、error(4)。空实现时公开open直接发error4；这与已分配
+实现但失败的路径分开记录。type1只给**空children**的输入，原构造state1，open
+报error3；type2/3构造state0，open报error4。未执行非空service-network子树选择。
+
+### 引擎拒绝与错误消费的时序
+
+type0/state6程序在open时先写state2，发private stateChanged(2)，随后调用原engine
+connectToId。固定Android实现`0xbc7c`→`0x12160`发connectionError(`wifi`,2)。
+原sync给它的消费者连接为type2，目标为实现的connectionError slot；不是把引擎
+error2直接冒充会话error2。
+
+在显式交付这条通知前，原会话仍为state2/error0/isOpen=false。交付到原metadata
+`0x17388`本地slot ID3后，原`0xfc4c`校验ID并刷新引擎状态，得到state5；再将
+engine error2映射为会话error3，并清请求打开位。继续按已捕获绑定转发原public
+signal，序列为stateChanged(2)、stateChanged(5)、error(3)。这些数字为固定二进制
+及给定配置结果，不把它们泛化为Steam传输层错误码或真实网络成功率。
+
+所有delivery adapter都在producer返回后运行，type0也采取这种受控方式。因此不能
+把fixture里的“交付前没有public signal”写成真实Qt强制延迟；自然type0同步/排队、
+真实线程次序并未验证。engine type2及构造前后绑定参数来自原调用，消费者正文也
+运行原指令；尚未声称自然系统事件已完整贯通。
+
+### 与原工厂的连接及边界
+
+同一模拟器内，原§181工厂通过原PLT调用上述真实公开/Android构造器；相同配置
+连续取得两次只构造一个实现对象并复用，实际会话state3、isOpen=false。工厂不再
+由fixture预先指定state3。会话构造、缓存复用与打开标记因此得到共同执行证据，
+不等于真实Qt事件循环或HTTP/DNS已运行。
+
+24组程序覆盖状态矩阵、空ID/manager/引擎列表/不匹配、首个匹配引擎、backend或
+cast条件、活动open/reopen/close、原引擎拒绝与错误消费者、type1空children、
+type2/3及原工厂串接。九个原指令反例分别破坏空ID门禁、引擎匹配、sync调用、
+引擎available门禁、状态位判断、isOpen写入、重复open门禁、引擎错误值和错误映射，
+均须因具体状态/调用/时序断言失败。signature、fixture初始化或模拟器异常不计。
+
+QObject基础构造/cast/绑定、锁、manager枚举、引擎表、warm元类型及强制关闭代理
+初始化为明确provider；QString比较/hash与配置值API运行固定原库。stop、非空
+service子树、自然配置通知、真实QObject析构、Android/JNI网络枚举、HTTP/DNS、
+Steam/Switch仍未由这组执行证明。没有据此改变Switch网络/开流策略。
+
+```sh
+PYTHONPATH=/path/to/audit-deps python3 tools/steam-android-session-audit.py \
+  --qt /path/to/bundled/libQt5Network_arm64-v8a.so \
+  --qt-core /path/to/bundled/libQt5Core_arm64-v8a.so \
+  --bearer /path/to/bundled/libplugins_bearer_qandroidbearer_arm64-v8a.so \
+  --output /tmp/android-session.json
+# 相同参数增加 --mutation error-map，必须因原错误消费者的结果变化而失败。
 ```
