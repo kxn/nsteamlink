@@ -13927,13 +13927,117 @@ Qt/HTTP调用或DNS缓存从不失效，更不能据此给Switch补一条无来�
 模拟器失败不算反例成功。报告保存构造绑定、实际参数/通知、引用计数、原范围及
 工具依赖SHA。
 
-本节补入的是原NAM构造连接及配置消费者的受控执行。Android/Qt自然调度、完整
-配置管理器连接图、session factory正文、真实session析构/HTTP/DNS仍未覆盖；
-没有更改Steam开流、Switch DNS或应用恢复策略。
+本节补入的是原NAM构造连接及配置消费者的受控执行。本工具仍将session factory
+视作终点，§181另执行其缓存/引用正文。Android/Qt自然调度、完整配置管理器连接图、
+真实session构造后端/析构、HTTP/DNS仍未覆盖；没有更改Steam开流、Switch DNS或
+应用恢复策略。
 
 ```sh
 PYTHONPATH=/path/to/audit-deps python3 tools/steam-access-config-audit.py \
   --qt /path/to/bundled/libQt5Network_arm64-v8a.so \
   --qt-core /path/to/bundled/libQt5Core_arm64-v8a.so --output /tmp/access-config.json
 # 相同参数增加 --mutation queued-type，必须因排队参数变化而断言失败。
+```
+
+## 181. Qt会话工厂的线程本地弱缓存、对象键与失效清理
+
+Evidence：`tools/steam-session-pool-audit.py` 在§180相同固定Qt5Network/Core上执行
+原factory `0x1916a8`，原registry `0x191a58`、容器清理`0x191b7c`及原libc++
+查找/插入/rehash/erase `0x191d3c`、`0x192034`、`0x191c08`。这里没有用Python
+字典代替容器的键选择或清理策略。分配/释放、next-prime数学原语、TLS存储和
+QNetworkSession构造是provider；原会话对象构造内部仍未执行。不能继续把“factory
+正文没有执行”作为全局边界；§180独立工具保留该终点，本工具补入另一个执行层。
+
+### 缓存归属和实际键
+
+原注册函数`0x192198`向QThreadStorageData构造器提交描述符`0x3e9a7c`和清理
+函数`0x191b7c`，并向atexit提交`0x191b78`。工具捕获这些参数；TLS provider按
+显式thread输入保存slot，get/set及缺slot、空slot、首次分配的决策仍运行原码。
+同配置在thread0/1两个输入中得到不同会话，再回thread0复用原对象。两个输入并不
+等于真实并发线程；未运行Qt线程退出或全局atexit调度。
+
+缓存键是QNetworkConfiguration值。原哈希helper调用配置的type、bearerType、
+purpose getter，将各32位返回值零扩展，再按原64位OR/移位组合为
+`type | (bearerType << 8) | (purpose << 16)`，不额外截断为32位。
+原operator== `0x18d78c`直接比较值内的私有对象指针，不比较identifier字符串。
+实际执行分别证明：
+
+- 不同值容器共享同一私有对象时命中同一项；两个独立私有对象即使ID字符串相同，
+  仍为不同键。两个键的哈希相同也不因此合并。
+- 同一私有对象只改state或ID字符串，在所测哈希属性不变时仍命中旧对象。
+- 原地把type、bearerType、purpose由0分别改成1、2、3，原存储哈希分别为1、512、
+  196608，均在原hash查找中产生另一条记录。旧节点不会因为共享私有对象被修改就
+  自动重新计算已保存的hash；不能擅自用ID映射或字段变化后的全表rehash替代原行为。
+
+这些是受控可变记录程序；不证明真实Android必然在有缓存时发生每一种字段变化，
+也不把该Qt键选择移植成Switch的主机标识规则。
+
+### 活对象复用与失效后替换
+
+节点保存会话的weak control和对象指针。原factory通过strong计数CAS尝试提升，
+随后检查对象指针；能取得非空强结果便返回已有会话。创建新对象只在没有得到
+有效强结果时发生：原码分配对象、调用QNetworkSession构造器、构造control，
+并更新缓存的弱值。构造器及setQObjectShared为声明的终点，不由此声称已创建
+真实网络连接或完成Steam串流握手。
+
+| 程序阶段 | 原control计数（strong / weak）及动作 |
+|---|---|
+| 首次取得，调用者和缓存各持相应owner | 1 / 2 |
+| 再次取得同键且首个结果仍存活 | 2 / 3，返回相同对象 |
+| 两个调用者都释放后 | 0 / 1，缓存只剩弱值 |
+| 再次取得同键 | 新对象；原失效cached control释放 |
+
+调用者释放测试执行原factory内部`0x191780–0x1917c0`的strong/weak递减及destroyer
+分支；寄存器入口和结果容器消费为适配边界，不把该片段当作完整C++对象生命周期。
+原destroyer `0x192190`调用QObject::deleteLater；工具仅记录该投递，**不把它当成
+实际QObject已析构**。正常strong=0的检查另执行原QtCore
+`ExternalRefCountData::checkQObjectShared`，未覆盖负strong QObject sentinel。
+
+### 17是清理触发门槛，不是容量或时间期限
+
+原调用入口在缓存size **至少17** 且非空时先遍历节点，再查请求键。遍历尝试临时
+提升weak，去掉取不到非空强结果的节点；仍有效的节点保留。这里没有按本轮网络
+是否切换或配置state来选择退休项。测试把边界与目标查找分开：
+
+| 原缓存输入及下一次调用 | 原观察 |
+|---|---|
+| 16个失效项，取得一个新配置 | 不遍历；结果为17项 |
+| 上述17项再取得另一个新配置 | 遍历17项、删16个失效项；结果2项 |
+| 17个有效项，取得新配置 | 遍历但保留有效项；结果18项 |
+| 17项中9个失效、8个有效，取得已存活键 | 先删失效项，保留8项并复用目标；不新建会话 |
+
+因而不能把17写成LRU容量、固定失效时间或每次切网强制清空的规则。原遍历/节点
+销毁/引用释放运行原码，next-prime仅提供数学结果，未选择条目或通知。工具保留
+实际bucket变化和遍历数，不用最终对象数量单独替代边界证据。
+
+### registry、容器销毁及与选择器的串接
+
+原`0x191a58`可将传入shared结果的weak值登记到配置键。受控程序将同一结果登记
+到另一配置键，随后命中同一会话；登记全空值会替换缓存弱值，但不销毁仍由调用者
+持有的旧strong结果。该入口是显式调用，尚未将其自然caller归因为网络切换。
+
+显式交付原TLS清理函数时，容器释放节点、键引用和缓存weak owner；外部strong
+结果仍有效，其control由1/2降为1/1，最后一个结果释放后才投递deleteLater并释放
+剩余control。分配/释放及Qt QObject共享接线是provider，这些数字不证明完整Qt
+对象析构、OS线程清理或Switch loader ABI。
+
+另将§180的原配置消费者/选择器与本factory放在**同一模拟器**中执行，移除父工具
+在`0x1916a8`的工厂替身：原选择器取得结果后，control为strong1/weak3（缓存weak、
+NAM strong、NAM weak）。直接再取default配置可复用该对象。原NAM释放helper
+清掉自己的owner后，缓存留下0/1并投递deleteLater；再由原选择器取得时，factory
+替换失效结果。没有把两个组件分别通过当作共同运行顺序的证明。
+
+12组程序／78次工厂调用覆盖复用/失效/替换、对象身份、state/ID及三个哈希属性变化、两组TLS输入、
+16/17边界、全有效与混合清理、registry及原NAM串接。九个原指令反例破坏复用、
+门槛、遍历、失效提升门禁、指针相等、purpose哈希、缓存weak引用、TLS读取及
+deleteLater调用，均须因具体行为不符被拒绝；签名、初始化和模拟器异常不计。
+报告保存原范围/工具依赖SHA、当前输入记录（不是构造时的旧元数据）、TLS注册、
+容器/引用与延迟删除投递；原对象构造后端、自然线程/事件调度、真正析构、HTTP/DNS
+仍未覆盖。这里没有改变Switch运行策略，也不能据此认定玩家此前热点故障的根因。
+
+```sh
+PYTHONPATH=/path/to/audit-deps python3 tools/steam-session-pool-audit.py \
+  --qt /path/to/bundled/libQt5Network_arm64-v8a.so \
+  --qt-core /path/to/bundled/libQt5Core_arm64-v8a.so --output /tmp/session-pool.json
+# 相同参数增加 --mutation threshold，必须在16/17边界的行为断言失败。
 ```
