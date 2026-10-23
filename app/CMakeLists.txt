@@ -1371,6 +1371,17 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-decoder-stop-queue.py"
         --receiver $<TARGET_FILE:nsl-decoder-stop-queue-oracle>)
     set_tests_properties(decoder_stop_queue_official_vectors PROPERTIES TIMEOUT 90)
+    if(NSL_DIAGNOSTICS)
+        add_executable(nsl-application-http-failure-tests tests/test_application_http_failure.c)
+        target_compile_options(nsl-application-http-failure-tests PRIVATE -Wall -Wextra -UNDEBUG)
+        target_link_libraries(nsl-application-http-failure-tests PRIVATE nsl_platform)
+        target_link_options(nsl-application-http-failure-tests PRIVATE -Wl,--wrap=sl_http_global_acquire
+            -Wl,--wrap=IHS_ClientCreatePolled)
+        add_test(NAME application_http_failure COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/test-application-http-failure.py"
+            --receiver $<TARGET_FILE:nsl-application-http-failure-tests>)
+        set_tests_properties(application_http_failure PROPERTIES TIMEOUT 30)
+    endif()
     add_executable(nsl-native-tests tests/test_native.c)
     target_include_directories(nsl-native-tests PRIVATE platforms/common)
     target_compile_options(nsl-native-tests PRIVATE -UNDEBUG)

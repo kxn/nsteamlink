@@ -3431,6 +3431,12 @@ Decision：应用在任何 worker 前取得根 curl 引用；所有生产 HTTP o
 provider，不冒充真实公网或 Switch 互操作证据。原官方 BInit/Connection 等比较只验证其
 声明的局部边界；新的应用准入区别单独测试和记录。
 
+D-A105 的失败准入补充：root curl 初始化失败只使 HTTP owner 不可用，不退出应用或阻止
+本地 IHS。实际整应用故障注入强制所有 acquire 返回 false，连续两次启动真实 renderer、
+runtime 和本地 IHS client 后正常退出；此前 root 失败直接返回的版本被同一夹具拒绝。
+该证据限于桌面失败准入与清理，不外推 Switch loader 生命周期。
+
+
 ## D-A106：网络缓存使用统一的可恢复文件替换
 
 Evidence：Switch `4eb9804` 保存记录连续出现 `sns_config_cache event=save_failed`。

@@ -255,14 +255,10 @@ int sl_application_run(int argc, char **argv) {
     }
     /* curl 7.69/libnx TLS global setup runs on main before any app worker.
      * Per-owner references also support standalone probes and unit fixtures. */
-    if (!offline) {
+    if (!offline)
         a->http_global = sl_http_global_acquire();
-        if (!a->http_global) {
-            free(a);
-            sl_system_shutdown();
-            return 1;
-        }
-    }
+    /* HTTPS is optional for the local client. A root-init failure must not
+     * prevent UI/IHS startup; each HTTP owner reports its own acquisition error. */
     sl_app_lifecycle_init(&a->lifecycle);
     sl_i18n_load(sl_system_data_dir(), sl_system_locale());
     sl_auth_store store;

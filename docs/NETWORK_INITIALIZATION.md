@@ -79,7 +79,8 @@ DNS 固定公共提供器、每提供器 wire 预算、全局并发和限速见 
 | SDK / bridge / 临时材料 | 单次流 SNS owner | 配置、证书、bridge 各自成功 | IHS 中断/join 后，关闭 SDK、清理 HTTP/bridge、Kill SDK |
 | IHS session | runtime actor | 准备完成 | Disconnect → join → destroy，先于 backend 释放 |
 
-应用在启动任何 worker 前取得 curl 根引用；封面、更新、发现、配置和 SNS 还持自己的引用，
+应用在启动任何 worker 前尝试取得 curl 根引用；失败时保留 UI/局域网 runtime，
+由各 HTTP owner 单独报告不可用，不能把 HTTPS 变成本地发现的启动前提。封面、更新、发现、配置和 SNS 还持自己的引用，
 使独立探针和部分创建失败也有完整依赖。SDK-style 配置下载不再假设发现模块已经初始化 curl。
 网络文件的发布复用 `file_replace`；Horizon 目标已存在时采用可恢复 `.old` 替换，
 配置加载恢复缺失的主文件，避免每次重新启动仍读取未更新的旧快照，见 D-A106。
