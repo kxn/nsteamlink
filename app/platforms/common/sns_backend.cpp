@@ -403,10 +403,13 @@ static void pump_config(sl_sns *b) {
         CURLcode code = message->data.result; /* CURLMsg expires on removal. */
         if (b->request_added) curl_multi_remove_handle(b->http, b->request);
         b->request_added = false;
-        if (sl_http_route_retry(&b->route, b->request, code) &&
-            curl_multi_add_handle(b->http, b->request) == CURLM_OK) {
-            b->request_added = true;
-            return;
+        if (sl_http_route_retry(&b->route, b->request, code)) {
+            int ready = sl_http_route_poll(&b->route, b->request);
+            if (!ready) return;
+            if (ready > 0 && curl_multi_add_handle(b->http, b->request) == CURLM_OK) {
+                b->request_added = true;
+                return;
+            }
         }
         done = true;
         config_event(b, "complete", int(code));

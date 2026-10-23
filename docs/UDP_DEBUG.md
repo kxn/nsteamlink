@@ -168,11 +168,13 @@ ACK/NACK/重试/失败、待确认数量与最老项年龄。退出前及 IHS jo
 Switch统一解析策略用`dns_query event=begin`记录主机名和当前本机/实际查询DNS数字地址。
 D-A097替代D-A095的单DNS实验：向Google `8.8.8.8`、Cloudflare `1.1.1.1`、
 Quad9 `9.9.9.9`、AliDNS `223.5.5.5`、DNSPod `119.29.29.29` 并行查询，所有
-提供器在批次准入后共用3秒wire期限；每家最多4个A地址，合并最多20个。D-A098把整个进程的活跃
-DNS查询限制为5个；D-A101修复排队消耗wire期限的问题，批次FIFO等待准入（最多48秒），
-之后才开始3秒查询。`begin`的queue_ms是这次等待，不是DNS网络耗时。DNS UDP单独请求8KiB收发缓冲，
-不改媒体socket配置。D-A099令polled HTTP owner使用可取消/join的DNS job，
-避免其3秒收集暂停同线程LAN发现和SDK更新；封面/更新器已有线程不再创建嵌套job。`begin`的started/os记录本机启动结果；`answer`的starts/start_os
+提供器每家最多4个A地址，合并最多20个。D-A102替代D-A101整批FIFO：进程最多5个
+wire查询，逐提供器FIFO、初始启动相隔25ms；每家3秒wire预算不含排队，排队/收集另有
+51秒上限。`begin`的queue_ms是首次开始前的等待，不是DNS网络耗时。
+`available`记录每个有效提供器的实际到达时间，HTTP首个地址即可连接，后续结果补入候选。
+3秒不是开始TLS前必须等待的时间。DNS UDP单独请求8KiB收发缓冲，
+不改媒体socket配置。HTTP owner持有可取消/join的DNS job，防止收集暂停同线程LAN发现
+和SDK更新；封面/更新器阻塞worker也以临时DNS job继续收集迟到结果。`begin`的started/os记录本机启动结果；`answer`的starts/start_os
 记录实际启动次数及最后启动错误。status=2表示到期时仍在排队，0表示仍在等待响应，
 1表示取得地址，-1表示失败。临时本机资源错误以50ms间隔在原3秒预算内重试。IP去重后按`/24`分组交错，
 先尝试每组首个地址，再尝试各组第二个。`/24`仅用于排序，不说明真实路由相同，也不

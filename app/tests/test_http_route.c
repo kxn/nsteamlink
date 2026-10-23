@@ -7,13 +7,15 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
-static unsigned dns_port;
+static unsigned dns_ports[3], dns_count;
 bool __wrap_sl_dns_current_config(sl_dns_config *out) {
     memset(out, 0, sizeof(*out));
-    out->count = 1;
-    out->servers[0].sin_family = AF_INET;
-    out->servers[0].sin_port = htons(dns_port);
-    out->servers[0].sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    out->count = dns_count;
+    for (unsigned i = 0; i < dns_count; ++i) {
+        out->servers[i].sin_family = AF_INET;
+        out->servers[i].sin_port = htons(dns_ports[i]);
+        out->servers[i].sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    }
     return true;
 }
 static char body[128];
@@ -36,7 +38,8 @@ static uint64_t now_ms(void) {
 }
 int main(int argc, char **argv) {
     assert(argc == 6);
-    dns_port = (unsigned)atoi(argv[1]);
+    dns_count = (unsigned)sscanf(argv[1], "%u,%u,%u", &dns_ports[0], &dns_ports[1], &dns_ports[2]);
+    assert(dns_count == 1 || dns_count == 3);
     const char *url = argv[2], *ca = argv[3], *mode = argv[4], *expected = argv[5];
     assert(curl_global_init(CURL_GLOBAL_DEFAULT) == CURLE_OK);
     assert(sl_dns_policy_init(report));
@@ -51,7 +54,7 @@ int main(int argc, char **argv) {
     curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(easy, CURLOPT_TIMEOUT_MS, 1000L);
     curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, receive);
-    bool connect_only = !strcmp(mode, "connect-only") || !strcmp(mode, "async-connect-only");
+    bool connect_only = strstr(mode, "connect-only") != NULL;
     if (connect_only)
         curl_easy_setopt(easy, CURLOPT_CONNECT_ONLY, 1L);
     CURLcode code;
@@ -78,12 +81,12 @@ int main(int argc, char **argv) {
         sl_http_route_clear(&route); /* stop -> join -> free, with DNS pending */
         assert(now_ms() - began < 500);
         code = CURLE_ABORTED_BY_CALLBACK;
-    } else if (!strcmp(mode, "blocking"))
+    } else if (strstr(mode, "blocking"))
         code = sl_http_route_perform(easy, url, 1000);
     else {
         CURLM *multi = curl_multi_init();
         sl_http_route route;
-        if (!strcmp(mode, "async") || !strcmp(mode, "async-connect-only")) {
+        if (strstr(mode, "async")) {
             assert(sl_http_route_begin_async(&route, easy, url, 1000));
             int ready;
             while (!(ready = sl_http_route_poll(&route, easy)))
@@ -112,7 +115,11 @@ int main(int argc, char **argv) {
                 }
                 curl_multi_remove_handle(multi, easy);
                 if (sl_http_route_retry(&route, easy, code)) {
-                    assert(curl_multi_add_handle(multi, easy) == CURLM_OK);
+                    int ready;
+                    while (!(ready = sl_http_route_poll(&route, easy))) usleep(1000);
+                    if (ready > 0)
+                        assert(curl_multi_add_handle(multi, easy) == CURLM_OK);
+                    else { code = route.error; done = true; }
                 } else
                     done = true;
                 break;

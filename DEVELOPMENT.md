@@ -268,6 +268,14 @@ D-051 硬件帧直显的资源依赖补充：session stop 不等待主线程 GPU
 - 不能混淆 Steam pairing authorization code 和 connect/security PIN。认证流程结论以
   `docs/STEAM_REMOTE_PLAY_AUTH.md` 为准。
 - 不能把 `gamesRunning=0` 写成广播失败。那只表示 Steam 被发现，但当时没有游戏在跑。
+- Switch 的 BSD socket 使用有界 transfer-memory 池；长期存活的调试 UDP、SDK 唤醒通道
+  也会继承 `socketInitialize` 的媒体缓冲默认。DNS 并发数有界不代表全进程缓冲预算足够。
+  `socket()` 的 `ENOBUFS (105)` 发生在后续 `setsockopt` 之前；辅助 socket 必须创建后立即
+  设置小缓冲，再创建下一个，失败则关闭。不要盲目扩大所有 UDP 默认或据 Linux fd 测试
+  宣称真机资源充足。SDK 启动错误需区分 socket 创建、缓冲设置、证书与远端协议；见 D-A103。
+- 多 DNS 的收集期限不能成为首个可用地址的连接门槛。HTTP owner 应先连接已验证的快
+  结果、继续接收迟到候选；耗尽已知地址而查询未结束时保持 pending。排队、wire 查询和
+  HTTPS 总预算分开记录，取消须移除排队节点并 join，不能简单扩大统一超时；见 D-A102。
 
 ---
 

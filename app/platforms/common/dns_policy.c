@@ -21,66 +21,61 @@ static _Thread_local scope *current;
 static atomic_bool stopped = true;
 #define MAX_SCOPES 16
 #define QUERY_BUDGET_MS 3000
-/* Each admitted lookup fans out to five providers. Queue whole batches FIFO
- * rather than racing for individual sockets: on the hotspot, unanswered early
- * providers held all slots until later providers' original 3s had expired
- * without sending (5d28638 logs: status=2, starts=0). The queue wait must not
- * consume the wire budget or silently remove the only different CDN subnet.
- * At most MAX_SCOPES owners exist; cancellation is checked while waiting. */
-typedef struct batch_waiter {
-    struct batch_waiter *next;
-} batch_waiter;
-static batch_waiter *batch_head, *batch_tail;
-static bool batch_active;
-static void enqueue_batch(batch_waiter *waiter) {
+/* A slow provider must not hold an entire lookup batch (D-A102). Queue each
+ * wire query FIFO, cap live queries at five, and pace initial starts 25ms apart.
+ * Queue time is separate from each provider's 3s wire/resource allowance. The
+ * latter is a bounded local collection policy, not a mandatory wait before TLS.
+ * A successful provider is published immediately while other legs continue. */
+typedef struct query_waiter {
+    struct query_waiter *next;
+    bool queued;
+} query_waiter;
+static query_waiter *query_head, *query_tail;
+static uint64_t next_query_start;
+static atomic_uint wire_queries;
+static void enqueue_query(query_waiter *waiter) {
     pthread_mutex_lock(&lock);
-    if (batch_tail)
-        batch_tail->next = waiter;
+    waiter->next = NULL;
+    waiter->queued = true;
+    if (query_tail)
+        query_tail->next = waiter;
     else
-        batch_head = waiter;
-    batch_tail = waiter;
+        query_head = waiter;
+    query_tail = waiter;
     pthread_mutex_unlock(&lock);
 }
-static bool admit_batch(batch_waiter *waiter) {
+static bool admit_query(query_waiter *waiter, uint64_t now) {
     pthread_mutex_lock(&lock);
-    bool admitted = batch_head == waiter && !batch_active;
+    bool admitted = query_head == waiter && now >= next_query_start &&
+                    atomic_load(&wire_queries) < SL_DNS_SERVERS;
     if (admitted) {
-        batch_head = waiter->next;
-        if (!batch_head)
-            batch_tail = NULL;
-        batch_active = true;
+        query_head = waiter->next;
+        if (!query_head)
+            query_tail = NULL;
+        waiter->queued = false;
+        next_query_start = now + 25;
+        atomic_fetch_add(&wire_queries, 1);
     }
     pthread_mutex_unlock(&lock);
     return admitted;
 }
-static void leave_batch(batch_waiter *waiter, bool admitted) {
+static void dequeue_query(query_waiter *waiter) {
     pthread_mutex_lock(&lock);
-    if (admitted) {
-        batch_active = false;
-    } else {
-        batch_waiter *previous = NULL;
-        for (batch_waiter *p = batch_head; p; previous = p, p = p->next)
+    if (waiter->queued) {
+        query_waiter *previous = NULL;
+        for (query_waiter *p = query_head; p; previous = p, p = p->next)
             if (p == waiter) {
                 if (previous)
                     previous->next = p->next;
                 else
-                    batch_head = p->next;
-                if (batch_tail == p)
-                    batch_tail = previous;
+                    query_head = p->next;
+                if (query_tail == p)
+                    query_tail = previous;
                 break;
             }
+        waiter->queued = false;
     }
     pthread_mutex_unlock(&lock);
-}
-/* Process-wide, not per lookup: updater, artwork, SDK and runtime may resolve
- * concurrently. Five providers must not become 5 * workers live sockets. */
-static atomic_uint wire_queries;
-static bool reserve_query(void) {
-    unsigned active = atomic_load(&wire_queries);
-    while (active < SL_DNS_SERVERS)
-        if (atomic_compare_exchange_weak(&wire_queries, &active, active + 1))
-            return true;
-    return false;
 }
 static bool initialized;
 #if NSL_DIAGNOSTICS
@@ -106,8 +101,8 @@ bool sl_dns_policy_init(void (*report)(const char *)) {
     scopes = NULL;
     scope_count = 0;
     current = NULL;
-    batch_head = batch_tail = NULL;
-    batch_active = false;
+    query_head = query_tail = NULL;
+    next_query_start = 0;
     atomic_store(&wire_queries, 0);
     atomic_store(&stopped, false);
 #if NSL_DIAGNOSTICS
@@ -185,12 +180,12 @@ bool sl_dns_policy_shutdown(void) {
         return true;
     pthread_mutex_lock(&lock);
     bool empty = scopes == NULL && scope_count == 0 && atomic_load(&wire_queries) == 0 &&
-                 !batch_head && !batch_tail && !batch_active;
+                 !query_head && !query_tail;
     scope *remaining = scopes;
     scopes = NULL;
     scope_count = 0;
-    batch_head = batch_tail = NULL;
-    batch_active = false;
+    query_head = query_tail = NULL;
+    next_query_start = 0;
     pthread_mutex_unlock(&lock);
     /* Contract: all resolving workers have joined. Clean any unmatched scope
      * too, while reporting the imbalance; no mutex/heap state crosses hbmenu. */
@@ -210,11 +205,14 @@ bool sl_dns_policy_shutdown(void) {
 bool sl_dns_policy_cancelled(void) {
     return atomic_load(&stopped) || (current && atomic_load(&current->cancelled));
 }
-void sl_dns_policy_merge(sl_dns_refresh *out, const sl_dns_refresh *answers, unsigned count) {
+static void merge_answers(sl_dns_refresh *out, const sl_dns_refresh *answers, unsigned count,
+                          const int *states) {
     uint32_t ips[SL_DNS_CANDIDATES], groups[SL_DNS_CANDIDATES];
     unsigned used = 0, group_count = 0;
     out->addresses[0] = out->canonical[0] = 0;
     for (unsigned i = 0; i < count; ++i) {
+        if (states && states[i] != 1)
+            continue;
         char copy[SL_DNS_ADDRESSES_SIZE];
         snprintf(copy, sizeof(copy), "%s", answers[i].addresses);
         char *state = NULL;
@@ -256,8 +254,12 @@ void sl_dns_policy_merge(sl_dns_refresh *out, const sl_dns_refresh *answers, uns
             }
         }
 }
-bool sl_dns_policy_lookup_interruptible(const char *host, sl_dns_refresh *result,
-                                        bool (*cancel)(void *), void *context) {
+void sl_dns_policy_merge(sl_dns_refresh *out, const sl_dns_refresh *answers, unsigned count) {
+    merge_answers(out, answers, count, NULL);
+}
+bool sl_dns_policy_lookup_progressive(const char *host, sl_dns_refresh *result,
+                                      bool (*cancel)(void *), void *context,
+                                      void (*publish)(const sl_dns_refresh *, void *)) {
     memset(result, 0, sizeof(*result));
     result->fd = -1;
     if (!host || !host[0] || strlen(host) > 253)
@@ -281,65 +283,60 @@ bool sl_dns_policy_lookup_interruptible(const char *host, sl_dns_refresh *result
     bool configured = !atomic_load(&s->cancelled) && !atomic_load(&stopped) &&
                       (!cancel || !cancel(context)) && sl_dns_current_config(&config);
     /* Fan out on this existing worker, no threads or cross-network cache.
-     * Wait for all providers (or the admitted batch's 3s deadline), so a fast first
-     * answer does not suppress address diversity. Allocate wire buffers on
+     * Continue collecting after publishing the first answer so a fast provider
+     * does not suppress address diversity. Allocate wire buffers on
      * heap: five DNS/TCP states would be excessive on a Switch worker stack. */
     unsigned count = configured ? config.count : 0;
     if (count > SL_DNS_SERVERS)
         count = 0;
     sl_dns_refresh *queries = count ? calloc(count, sizeof(*queries)) : NULL;
-    int states[SL_DNS_SERVERS] = {0}, start_errors[SL_DNS_SERVERS] = {0};
+    int states[SL_DNS_SERVERS] = {0};
+#if NSL_DIAGNOSTICS
+    int start_errors[SL_DNS_SERVERS] = {0};
+#endif
     unsigned starts[SL_DNS_SERVERS] = {0};
-    uint64_t next_start[SL_DNS_SERVERS] = {0};
+    uint64_t first_start[SL_DNS_SERVERS] = {0}, next_start[SL_DNS_SERVERS] = {0};
     bool held[SL_DNS_SERVERS] = {0};
+    query_waiter waiters[SL_DNS_SERVERS] = {0};
     if (!queries)
         count = 0;
     for (unsigned i = 0; i < count; ++i) {
         queries[i].fd = -1;
         states[i] = 2; /* queued; 0=active, 1=success, -1=terminal failure */
+        enqueue_query(&waiters[i]);
     }
-    batch_waiter waiter = {0};
-    bool admitted = false;
-    uint64_t wire_start = 0;
-    if (count)
-        enqueue_batch(&waiter);
     while (count && !atomic_load(&s->cancelled) && !atomic_load(&stopped) &&
            (!cancel || !cancel(context))) {
         uint64_t now = now_ms();
-        if (!admitted) {
-            /* FIFO prevents new requests overtaking queued owners. Bound even
-             * queue waiting explicitly, separately from the active 3s batch. */
-            if (now - start >= MAX_SCOPES * QUERY_BUDGET_MS)
-                break;
-            admitted = admit_batch(&waiter);
-            if (!admitted) {
-                struct timespec pause = {.tv_nsec = 1000000};
-                nanosleep(&pause, NULL);
-                continue;
-            }
-            wire_start = now;
-        }
-        if (now - wire_start >= QUERY_BUDGET_MS)
+        if (now - start >= (MAX_SCOPES + 1) * QUERY_BUDGET_MS)
             break;
         bool pending = false;
         for (unsigned i = 0; i < count; ++i) {
-            if (states[i] == 2 && now >= next_start[i] && reserve_query()) {
+            if (states[i] == 2 && first_start[i] && now - first_start[i] >= QUERY_BUDGET_MS) {
+                dequeue_query(&waiters[i]);
+                states[i] = -1;
+            }
+            if (states[i] == 2 && now >= next_start[i] && admit_query(&waiters[i], now)) {
                 held[i] = true;
+                if (!first_start[i]) first_start[i] = now;
                 sl_dns_config single = config;
                 single.count = 1;
                 single.servers[0] = config.servers[i];
                 errno = 0;
                 bool begun = sl_dns_refresh_begin(&queries[i], &single, normalized, now);
+#if NSL_DIAGNOSTICS
                 start_errors[i] = begun ? 0 : errno;
+#endif
                 ++starts[i];
                 states[i] = begun ? 0 : -1;
                 /* A local resource shortage is not a negative DNS answer.
-                 * Retry inside the SAME admitted 3s budget; never spin/retry
+                 * Retry inside the SAME provider's 3s budget; never spin/retry
                  * on the UI thread or extend the budget for resource errors. */
                 if (!begun && (errno == ENOBUFS || errno == ENOMEM || errno == EMFILE ||
                                errno == ENFILE || errno == EAGAIN)) {
                     states[i] = 2;
                     next_start[i] = now + 50;
+                    enqueue_query(&waiters[i]);
                 }
 #if NSL_DIAGNOSTICS
                 if (starts[i] == 1) {
@@ -350,13 +347,29 @@ bool sl_dns_policy_lookup_interruptible(const char *host, sl_dns_refresh *result
                              "dns_query event=begin host=%s local=%s server=%s platform=%u "
                              "started=%d os=%d queue_ms=%llu",
                              normalized, local, server, config.platform_error, begun,
-                             start_errors[i], (unsigned long long)(wire_start - start));
+                             start_errors[i], (unsigned long long)(first_start[i] - start));
                     sl_dns_policy_report(line);
                 }
 #endif
             }
-            if (!states[i])
+            if (!states[i]) {
                 states[i] = sl_dns_refresh_poll(&queries[i], now);
+                if (!states[i] && now - first_start[i] >= QUERY_BUDGET_MS)
+                    states[i] = -1;
+                if (states[i] == 1) {
+                    merge_answers(result, queries, count, states);
+                    if (publish) publish(result, context);
+#if NSL_DIAGNOSTICS
+                    char line[640], server[INET_ADDRSTRLEN] = "";
+                    inet_ntop(AF_INET, &config.servers[i].sin_addr, server, sizeof(server));
+                    snprintf(line, sizeof(line),
+                        "dns_query event=available host=%s server=%s addresses=%s elapsed_ms=%llu",
+                        normalized, server, queries[i].addresses,
+                        (unsigned long long)(now - start));
+                    sl_dns_policy_report(line);
+#endif
+                }
+            }
             if (held[i] && states[i]) {
                 sl_dns_refresh_cancel(&queries[i]);
                 atomic_fetch_sub(&wire_queries, 1);
@@ -372,6 +385,7 @@ bool sl_dns_policy_lookup_interruptible(const char *host, sl_dns_refresh *result
     bool cancelled =
         atomic_load(&s->cancelled) || atomic_load(&stopped) || (cancel && cancel(context));
     for (unsigned i = 0; i < count; ++i) {
+        dequeue_query(&waiters[i]);
         sl_dns_refresh_cancel(&queries[i]);
         if (held[i])
             atomic_fetch_sub(&wire_queries, 1);
@@ -387,8 +401,6 @@ bool sl_dns_policy_lookup_interruptible(const char *host, sl_dns_refresh *result
         sl_dns_policy_report(line);
 #endif
     }
-    if (count)
-        leave_batch(&waiter, admitted);
     sl_dns_policy_merge(result, queries, count);
     free(queries);
     bool success = result->addresses[0] && !cancelled;
@@ -406,6 +418,11 @@ bool sl_dns_policy_lookup_interruptible(const char *host, sl_dns_refresh *result
     if (temporary)
         remove_scope(s);
     return success;
+}
+
+bool sl_dns_policy_lookup_interruptible(const char *host, sl_dns_refresh *result,
+                                        bool (*cancel)(void *), void *context) {
+    return sl_dns_policy_lookup_progressive(host, result, cancel, context, NULL);
 }
 
 bool sl_dns_policy_lookup(const char *host, sl_dns_refresh *result) {

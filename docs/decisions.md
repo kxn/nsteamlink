@@ -3312,6 +3312,8 @@ client_id/instance_id；UDP继续要求已选IP及27036，云端不要求私有I
 
 ## D-A101：DNS 批次公平准入，排队不消耗 wire 期限
 
+修订：D-A102撤回整批FIFO及收齐后才开始TLS的实现；保留排队不消耗wire期限的原则。
+
 Evidence：5d28638热点冷启动日志
 `session-00000000001792740555-090190516-00000.log`及
 `session-00000000001792740633-089276148-00000.log`明确记录部分AliDNS/DNSPod查询
@@ -3334,3 +3336,56 @@ active均为空。begin诊断补queue_ms；原90秒HTTPS候选预算包括排队
 第三个排队owner；确认后一批五家都实际发包、得到地址、fd上限5及取消/清理成立。
 同一新夹具链接5d28638原DNS对象会断言失败，修订对象通过。该对照仅证明排队缺陷
 及修复，不证明Valve热点路径、真实主机结束确认或Switch loader生命周期通过。
+
+## D-A102：逐提供器限速查询，首个地址立即连接，迟到地址继续补充
+
+Evidence：16cd183热点`session-00000000001792741661-088940696-00000.log`显示启动
+三个lookup整批等待约0/2941/5941ms，目录约9秒才首次连接。代码仍在全部提供器结束
+后才发布DNS结果；一个无响应提供器就能推迟已有快结果。撤回D-A101将整批FIFO作为
+最终修复的决策：它修了未发出即到期，却引入不必要的批次等待。本轮目录多地址超时、
+重试后约90秒才收到在线通知；这不证明等待全部DNS是全部延迟的原因。
+
+Decision：每个提供器独立排队，进程最多5个wire查询；初始启动按25ms间隔限速，
+完成即归还slot，FIFO避免新请求抢占既有等待者。每提供器从首次尝试起最多3秒，
+本机资源不足仍50ms重试且不刷新该预算；排队/收集另有51秒防失控上限。3秒是本地
+兼容策略的收集上限，不是逆向出的Valve常量，不代表普适最优阈值，更不是TLS准入门槛。
+
+每个验证成功的提供器立即发布当前合并列表。HTTP请求自有可取消/join DNS worker；
+首个有效IPv4即可由CURL owner开始真实TLS，其他提供器并行补地址。阻塞的封面/更新器
+worker也临时持有该DNS job，避免其TLS阻止后续DNS收包；完成/失败/取消均stop/join，
+无detach或后台孤儿。DNS线程只复制结果到mutex保护的快照，绝不访问CURL。owner在
+首次连接或失败移出multi后选择地址；不在活动传输中修改RESOLVE，不重新编号已尝试
+的前缀。选择新候选时优先尝试次数少的/24，所有同段后备仍保留。已知地址耗尽但DNS
+仍在进行时保持pending，由原owner下一tick继续poll，不复用失败地址或提前宣告失败。
+TLS/HTTP成功后取消剩余收集；CM成功句柄保留multi归属及RESOLVE生命周期。90秒总
+候选预算、HTTP错误/半截正文不重放、证书验证及Steam协议计数/超时保持原语义。
+
+受控真实DNS/TLS夹具包括：快提供器+迟到提供器+静默提供器，快地址成功必须先于
+静默提供器3秒结束；第一地址TCP拒绝而第二地址迟到时继续请求并成功；既有错误
+证书、CONNECT_ONLY、HTTP错误/半截正文及取消/join验证继续适用。该证据不能替代
+真实热点连通性或Switch生命周期结果。
+
+## D-A103：辅助 UDP socket 单独使用小缓冲，避免吞占媒体资源
+
+Evidence：同一16cd183热点日志五次主机成功回包之后，certificate_installed及
+startup_imported均成功，随后立即`sns_start failed_stage=udp_socket detail=105`。
+固定SDK的socketthread.cpp在socket()失败处产生该分类；工具链errno.h的105为ENOBUFS。
+失败先于SDK设置relay socket的256KiB收发缓冲，不能靠后置setsockopt修复创建失败。
+`system.c`沿用D-043的UDP RX默认1MiB；runtime调试UDP和gns_libnx原wake pair未覆盖
+该默认。DNS虽限制5个查询，并没有限制这些长期存活的辅助socket缓冲。
+
+libnx v4.12.0官方源码
+[socketInitialize](https://github.com/switchbrew/libnx/blob/v4.12.0/nx/source/runtime/devices/socket.c)
+将配置交给BSD，
+[_bsdGetTransferMemSizeForConfig](https://github.com/switchbrew/libnx/blob/v4.12.0/nx/source/services/bsd.c)
+按缓冲配置与sb_efficiency建立有界transfer-memory池。这是平台资源约束，Linux上的
+socket数/内存检查不能证明Switch有同样余量。本轮没有逐fd实际buf或内核池统计，故
+不将哪一个socket占满资源、是否有内核延迟回收或DNS为唯一诱因写成已证结论。
+
+Decision：debug UDP、SDK双向wake pair及DNS都显式请求8KiB RX/TX；创建每一个辅助
+socket后、再创建下一个之前配置完成。配置失败关闭该fd并保留errno，不留下媒体大小
+的辅助socket。媒体默认、IHS收流缓冲及SDK relay的256KiB设置保持原行为；不盲目
+扩大所有socket默认或缓冲池。wake pair移入同一可在主机编译的生产源文件，测试真实
+双向唤醒、两次创建/关闭、实际buf读回及每个socket/缓冲配置失败后的fd归零。
+debug启动日志读回实际RX/TX，不以setsockopt返回0推断实际大小；真实Switch SDK
+socket创建/串流结果仍单独记录，不据本地主机测试宣称ENOBUFS已彻底消除。

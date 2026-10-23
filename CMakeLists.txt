@@ -76,7 +76,8 @@ if(NSL_BUILD_SNS)
     if(NSL_PLATFORM STREQUAL "switch")
         target_compile_definitions(GameNetworkingSockets_s PRIVATE VALVE_POSIX=1 PLATFORM_ARM=1
             STEAMNETWORKINGSOCKETS_DISABLE_STEAMNETWORKINGMESSAGES)
-        target_sources(GameNetworkingSockets_s PRIVATE app/platforms/switch/gns_libnx.cpp)
+        target_sources(GameNetworkingSockets_s PRIVATE app/platforms/switch/gns_libnx.cpp
+            app/platforms/common/gns_wake_pair.cpp)
     endif()
     if(NSL_ENABLE_SDR)
         target_compile_definitions(GameNetworkingSockets_s PRIVATE NSL_GNS_SDR=1)

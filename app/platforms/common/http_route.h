@@ -11,18 +11,23 @@ typedef struct {
     char host[254], addresses[SL_DNS_ADDRESSES_SIZE];
     unsigned port, index, count;
     long timeout_ms;
-    CURLcode error; /* Preparation failure is still an HTTP completion to SNS. */
+    CURLcode error, failure; /* Preparation failure is still an HTTP completion to SNS. */
+    bool select_pending;
     uint64_t deadline;
     struct curl_slist *resolve;
     struct sl_http_dns *dns; /* Owned joinable DNS job; never accesses CURL. */
 } sl_http_route;
-/* Allow all 20 candidates a 4s TCP/TLS attempt plus the DNS collection. */
+/* DNS waiting and all candidate attempts share one request-wide deadline. */
 #define SL_HTTP_ROUTE_BUDGET_MS 90000
 bool sl_http_route_begin(sl_http_route *, CURL *, const char *url, long timeout_ms);
 /* Polled owners must use the async form: begin/poll never wait for DNS. */
 bool sl_http_route_begin_async(sl_http_route *, CURL *, const char *url, long timeout_ms);
 int sl_http_route_poll(sl_http_route *, CURL *); /* 0=pending, 1=ready, -1=error */
+/* true means the failed request may continue; poll MUST return ready before
+ * re-adding to multi. It may be waiting for an as-yet-unanswered provider. */
 bool sl_http_route_retry(sl_http_route *, CURL *, CURLcode);
+/* Once connected, cancel/join remaining DNS without invalidating RESOLVE/TLS. */
+void sl_http_route_stop_resolving(sl_http_route *);
 void sl_http_route_clear(sl_http_route *);
 /* Same retry policy for existing blocking asset/update workers. */
 CURLcode sl_http_route_perform(CURL *, const char *url, long timeout_ms);

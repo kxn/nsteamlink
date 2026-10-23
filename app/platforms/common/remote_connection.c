@@ -611,13 +611,17 @@ void sl_remote_connection_update(sl_remote_connection *c, uint64_t now) {
                 c->easy_added = false;
             }
             if (sl_http_route_retry(&c->route, c->easy, result)) {
-                if (curl_multi_add_handle(c->multi, c->easy) == CURLM_OK) {
+                int ready = sl_http_route_poll(&c->route, c->easy);
+                if (!ready) break; /* DNS continues; next update polls again. */
+                if (ready > 0 && curl_multi_add_handle(c->multi, c->easy) == CURLM_OK) {
                     c->easy_added = true;
                     break;
                 }
                 fail_connection(c, now);
                 break;
             }
+            if (result == CURLE_OK)
+                sl_http_route_stop_resolving(&c->route);
             if (c->state == NET_DIRECTORY) {
                 long status_code = 0;
                 curl_easy_getinfo(c->easy, CURLINFO_RESPONSE_CODE, &status_code);

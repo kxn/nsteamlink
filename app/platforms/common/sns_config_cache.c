@@ -133,10 +133,13 @@ void sl_sns_config_cache_update(sl_sns_config_cache *c) {
         CURLcode code = message->data.result; /* CURLMsg expires on removal. */
         if (c->request_added) curl_multi_remove_handle(c->http, c->request);
         c->request_added = false;
-        if (sl_http_route_retry(&c->route, c->request, code) &&
-            curl_multi_add_handle(c->http, c->request) == CURLM_OK) {
-            c->request_added = true;
-            return;
+        if (sl_http_route_retry(&c->route, c->request, code)) {
+            int ready = sl_http_route_poll(&c->route, c->request);
+            if (!ready) return;
+            if (ready > 0 && curl_multi_add_handle(c->http, c->request) == CURLM_OK) {
+                c->request_added = true;
+                return;
+            }
         }
         done = true;
         success = code == CURLE_OK;

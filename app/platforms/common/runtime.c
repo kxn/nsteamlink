@@ -21,6 +21,7 @@
 #include "sns_config_cache.h"
 #endif
 #include "connection_wait.h"
+#include "control_udp.h"
 #include "network_stats_file.h"
 #include "protobuf/remoteplay.pb-c.h"
 #include "services/i18n.h"
@@ -2823,6 +2824,14 @@ sl_runtime *sl_runtime_create(const sl_auth_store *store) {
     r->provider = stream_media_create_hid_provider();
 #if NSL_DIAGNOSTICS
     r->udp = socket(AF_INET, SOCK_DGRAM, 0);
+#ifdef __SWITCH__
+    if (r->udp >= 0 && !sl_control_udp_buffers(r->udp)) {
+        int saved = errno;
+        close(r->udp);
+        r->udp = -1;
+        errno = saved;
+    }
+#endif
     if (r->udp >= 0) {
         fcntl(r->udp, F_SETFL, O_NONBLOCK);
         struct sockaddr_in a = {.sin_family = AF_INET,
@@ -2836,6 +2845,18 @@ sl_runtime *sl_runtime_create(const sl_auth_store *store) {
     char udp_status[96];
     snprintf(udp_status, sizeof(udp_status), "runtime: debug UDP fd=%d errno=%d", r->udp, errno);
     sl_log(udp_status);
+#ifdef __SWITCH__
+    if (r->udp >= 0) {
+        int rx = 0, tx = 0;
+        socklen_t size = sizeof(rx);
+        bool rx_ok = getsockopt(r->udp, SOL_SOCKET, SO_RCVBUF, &rx, &size) == 0;
+        size = sizeof(tx);
+        bool tx_ok = getsockopt(r->udp, SOL_SOCKET, SO_SNDBUF, &tx, &size) == 0;
+        snprintf(udp_status, sizeof(udp_status), "control_udp role=debug rx=%d tx=%d queried=%d",
+                 rx, tx, rx_ok && tx_ok);
+        sl_log(udp_status);
+    }
+#endif
 #endif
     r->started = pthread_create(&r->worker, NULL, worker_main, r) == 0;
     if (!r->started) {

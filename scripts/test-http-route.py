@@ -44,6 +44,28 @@ with tempfile.TemporaryDirectory(prefix='nsl-http-route-') as directory:
                 response += b'\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x3c\x00\x04' + socket.inet_aton(ip)
             dns.sendto(response, peer)
     thread = threading.Thread(target=resolve); thread.start(); threads.append(thread)
+    # Independent late/silent providers. A delayed reply is scheduled without
+    # serialising subsequent DNS datagrams on a fixture thread.
+    extra_dns = []
+    def extra_resolve(sock, silent):
+        pending = []
+        while not stop.is_set():
+            try:
+                packet, peer = sock.recvfrom(512)
+                if not silent:
+                    response = packet[:2] + b'\x81\x80' + struct.pack('!HHHH', 1, 1, 0, 0) + packet[12:]
+                    response += b'\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x3c\x00\x04' + socket.inet_aton('127.0.3.1')
+                    pending.append((time.monotonic() + .6, response, peer))
+            except socket.timeout: pass
+            now = time.monotonic()
+            for deadline, response, peer in pending[:]:
+                if now >= deadline:
+                    sock.sendto(response, peer)
+                    pending.remove((deadline, response, peer))
+    for silent in [False, True]:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(('127.0.0.1', 0)); sock.settimeout(.01); extra_dns.append(sock)
+        thread = threading.Thread(target=extra_resolve, args=(sock, silent)); thread.start(); threads.append(thread)
     # Different /24s retain the intended failure order after policy interleaving.
     port = None
     def server(ip, kind):
@@ -73,13 +95,26 @@ with tempfile.TemporaryDirectory(prefix='nsl-http-route-') as directory:
     port = server('127.0.1.1', 'stall')
     server('127.0.2.1', 'bad'); server('127.0.3.1', 'good')
     server('127.0.4.1', 'http'); server('127.0.5.1', 'partial')
-    def run(mode, expected, ips):
+    def run(mode, expected, ips, progressive=False):
         answers[:] = ips
         before = counts.copy()
-        result = subprocess.run([a.receiver, str(dns.getsockname()[1]), f'https://route.test:{port}/directory', str(root/'ca.pem'), mode, expected], text=True, capture_output=True, timeout=12)
+        dns_arg = ','.join(str(s.getsockname()[1]) for s in [dns, *extra_dns]) if progressive else str(dns.getsockname()[1])
+        result = subprocess.run([a.receiver, dns_arg, f'https://route.test:{port}/directory', str(root/'ca.pem'), mode, expected], text=True, capture_output=True, timeout=12)
         assert result.returncode == 0, result.stdout + result.stderr
         return counts - before, result.stdout
     try:
+        for mode in ['early-blocking', 'early-multi', 'early-async', 'early-async-connect-only']:
+            began = time.monotonic()
+            delta, output = run(mode, 'connected' if 'connect-only' in mode else 'success', ['127.0.3.1'], True)
+            assert delta == Counter(good=1) and time.monotonic() - began < 2, (delta, output)
+        # The first provider's only IP fails before another provider answers.
+        # Keep the request pending, learn the late address, and never replay the
+        # refused IP or wait for the deliberately silent third provider.
+        for mode in ['late-blocking', 'late-async']:
+            began = time.monotonic()
+            delta, output = run(mode, 'success', ['127.0.0.2'], True)
+            elapsed = time.monotonic() - began
+            assert delta == Counter(good=1) and .5 < elapsed < 2, (delta, elapsed, output)
         for mode in ['blocking', 'multi', 'connect-only', 'async', 'async-connect-only']:
             delta, output = run(mode, 'connected' if 'connect-only' in mode else 'success', ['127.0.0.2', '127.0.1.1', '127.0.2.1', '127.0.3.1'])
             assert delta == Counter(stall=1, bad=1, good=1), (delta, output)
@@ -97,9 +132,10 @@ with tempfile.TemporaryDirectory(prefix='nsl-http-route-') as directory:
         for mode in ['cancel', 'deadline']:
             delta, output = run(mode, 'failure', ['127.0.0.2', '127.0.3.1'])
             assert not delta, (delta, output)
-        print('PASS: blocking/multi TCP refusal -> TLS timeout -> wrong certificate -> verified HTTPS; HTTP/partial-body never replayed; cancellation/deadline stop retries')
+        print('PASS: first DNS answer starts TLS before a silent provider finishes; late DNS fallback; blocking/multi TCP refusal -> TLS timeout -> wrong certificate -> verified HTTPS; HTTP/partial-body never replayed; cancellation/deadline stop retries')
     finally:
         stop.set()
         for t in threads: t.join()
         for listener in listeners: listener.close()
         dns.close()
+        for sock in extra_dns: sock.close()

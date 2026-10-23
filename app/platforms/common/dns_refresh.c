@@ -1,4 +1,5 @@
 #include "dns_refresh.h"
+#include "control_udp.h"
 #include "crypto.h"
 #include <arpa/inet.h>
 #include <errno.h>
@@ -147,13 +148,14 @@ static bool send_query(sl_dns_refresh *d, uint64_t now) {
         d->fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
         if (d->fd < 0)
             return false;
-        /* DNS receives <=512-byte UDP answers, not media. The Switch socket
-         * service defaults to 1 MiB receive buffers for streaming; fanout must
-         * not inherit that cost for every DNS socket (D-A098). Best effort:
-         * the process-wide gate still bounds sockets if resizing is refused. */
-        int buffer = 8192;
-        (void)setsockopt(d->fd, SOL_SOCKET, SO_RCVBUF, &buffer, sizeof(buffer));
-        (void)setsockopt(d->fd, SOL_SOCKET, SO_SNDBUF, &buffer, sizeof(buffer));
+        /* Do not retain a media-sized auxiliary socket if sizing fails. The
+         * policy owner retries local ENOBUFS without leaking this descriptor. */
+        if (!sl_control_udp_buffers(d->fd)) {
+            int saved = errno;
+            sl_dns_refresh_cancel(d);
+            errno = saved;
+            return false;
+        }
         int flags = fcntl(d->fd, F_GETFL, 0);
         if (flags >= 0 && fcntl(d->fd, F_SETFL, flags | O_NONBLOCK) == 0 &&
             connect(d->fd, (const struct sockaddr *)server, sizeof(*server)) == 0 &&

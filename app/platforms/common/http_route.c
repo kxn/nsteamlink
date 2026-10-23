@@ -11,17 +11,24 @@
 #if defined(__SWITCH__) || defined(NSL_HTTP_ROUTE_TEST)
 struct sl_http_dns {
     pthread_t thread;
+    pthread_mutex_t lock;
     atomic_bool done, cancel;
-    bool success;
     char host[254];
-    sl_dns_refresh answer;
+    char addresses[SL_DNS_ADDRESSES_SIZE];
 };
 static bool dns_cancelled(void *context) {
     return atomic_load(&((struct sl_http_dns *)context)->cancel);
 }
+static void dns_available(const sl_dns_refresh *answer, void *context) {
+    struct sl_http_dns *job = context;
+    pthread_mutex_lock(&job->lock);
+    strcpy(job->addresses, answer->addresses);
+    pthread_mutex_unlock(&job->lock);
+}
 static void *dns_worker(void *context) {
     struct sl_http_dns *job = context;
-    job->success = sl_dns_policy_lookup_interruptible(job->host, &job->answer, dns_cancelled, job);
+    sl_dns_refresh answer;
+    sl_dns_policy_lookup_progressive(job->host, &answer, dns_cancelled, job, dns_available);
     atomic_store_explicit(&job->done, true, memory_order_release);
     return NULL;
 }
@@ -33,8 +40,72 @@ static void clear_dns(sl_http_route *r) {
         return;
     atomic_store(&r->dns->cancel, true);
     pthread_join(r->dns->thread, NULL);
+    pthread_mutex_destroy(&r->dns->lock);
     free(r->dns);
     r->dns = NULL;
+}
+/* Append/dedupe published addresses, retaining the attempted prefix. Never
+ * change RESOLVE while CURL owns an active transfer. Newly learned subnets are
+ * preferred at the NEXT attempt, not allowed to renumber the current one. */
+static void append_addresses(sl_http_route *r, const char *addresses) {
+    char copy[SL_DNS_ADDRESSES_SIZE];
+    strcpy(copy, addresses);
+    char *state = NULL;
+    for (char *ip = strtok_r(copy, ",", &state); ip; ip = strtok_r(NULL, ",", &state)) {
+        struct in_addr address;
+        if (inet_pton(AF_INET, ip, &address) != 1 || r->count == SL_DNS_CANDIDATES)
+            continue;
+        char existing[SL_DNS_ADDRESSES_SIZE];
+        strcpy(existing, r->addresses);
+        char *cursor = NULL;
+        bool duplicate = false;
+        for (char *p = strtok_r(existing, ",", &cursor); p; p = strtok_r(NULL, ",", &cursor))
+            duplicate |= !strcmp(p, ip);
+        if (duplicate) continue;
+        size_t used = strlen(r->addresses);
+        snprintf(r->addresses + used, sizeof(r->addresses) - used, "%s%s", used ? "," : "", ip);
+        ++r->count;
+    }
+}
+static void collect_dns(sl_http_route *r) {
+    if (!r->dns) return;
+    char addresses[SL_DNS_ADDRESSES_SIZE];
+    pthread_mutex_lock(&r->dns->lock);
+    strcpy(addresses, r->dns->addresses);
+    pthread_mutex_unlock(&r->dns->lock);
+    append_addresses(r, addresses);
+    if (atomic_load_explicit(&r->dns->done, memory_order_acquire)) {
+        /* Re-read after acquiring completion: the last publication might have
+         * happened between the first snapshot and observing done. */
+        pthread_mutex_lock(&r->dns->lock);
+        strcpy(addresses, r->dns->addresses);
+        pthread_mutex_unlock(&r->dns->lock);
+        append_addresses(r, addresses);
+        clear_dns(r);
+    }
+}
+static void prioritize_next(sl_http_route *r) {
+    char copy[SL_DNS_ADDRESSES_SIZE], *ips[SL_DNS_CANDIDATES], *state = NULL;
+    uint32_t groups[SL_DNS_CANDIDATES];
+    strcpy(copy, r->addresses);
+    unsigned count = 0;
+    for (char *ip = strtok_r(copy, ",", &state); ip && count < SL_DNS_CANDIDATES;
+         ip = strtok_r(NULL, ",", &state)) {
+        struct in_addr address;
+        inet_pton(AF_INET, ip, &address);
+        ips[count] = ip;
+        groups[count++] = ntohl(address.s_addr) & 0xffffff00u;
+    }
+    unsigned best = r->index, score = SL_DNS_CANDIDATES + 1;
+    for (unsigned i = r->index; i < count; ++i) {
+        unsigned tried = 0;
+        for (unsigned j = 0; j < r->index; ++j) tried += groups[j] == groups[i];
+        if (tried < score) { best = i; score = tried; }
+    }
+    char *ip = ips[r->index]; ips[r->index] = ips[best]; ips[best] = ip;
+    size_t used = 0;
+    for (unsigned i = 0; i < count; ++i)
+        used += snprintf(r->addresses + used, sizeof(r->addresses) - used, "%s%s", i ? "," : "", ips[i]);
 }
 static uint64_t now_ms(void) {
     struct timespec ts;
@@ -87,18 +158,8 @@ static bool select_address(sl_http_route *r, CURL *easy) {
                           r->timeout_ms < remaining ? r->timeout_ms : remaining) != CURLE_OK))
         return false;
     event(r, "try", ip, 0);
+    r->select_pending = false;
     return true;
-}
-static bool accept_answer(sl_http_route *r, CURL *easy, const sl_dns_refresh *answer) {
-    strcpy(r->addresses, answer->addresses);
-    r->count = 1;
-    for (const char *p = r->addresses; *p; ++p)
-        if (*p == ',')
-            ++r->count;
-    if (select_address(r, easy))
-        return true;
-    r->error = sl_dns_policy_cancelled() ? CURLE_ABORTED_BY_CALLBACK : CURLE_FAILED_INIT;
-    return false;
 }
 
 #endif
@@ -111,7 +172,10 @@ static bool begin(sl_http_route *r, CURL *easy, const char *url, long timeout_ms
      * cover TLS failure. Query multiple providers once, interleave subnets and
      * try the REAL request on one candidate at a time, within 90s. No permanent
      * CDN blacklist, guessed Valve IPs or preflight requests. D-A099 moves DNS
-     * off polled owners; the existing asset/update workers stay synchronous. */
+     * off polled owners. D-A102 publishes a first answer immediately instead
+     * of waiting for all DNS providers; later answers extend the fallback list.
+     * Blocking asset/update owners also own/join one temporary DNS job, so
+     * their TLS attempt cannot stop collection of the remaining providers. */
     CURLU *parsed = curl_url();
     char *host = NULL, *scheme = NULL, *port = NULL;
     bool valid = parsed && curl_url_set(parsed, CURLUPART_URL, url, 0) == CURLUE_OK &&
@@ -138,7 +202,8 @@ static bool begin(sl_http_route *r, CURL *easy, const char *url, long timeout_ms
         return true;
     r->deadline = now_ms() + SL_HTTP_ROUTE_BUDGET_MS;
     r->timeout_ms = timeout_ms;
-    if (async) {
+    r->select_pending = true;
+    {
         r->dns = calloc(1, sizeof(*r->dns));
         if (!r->dns) {
             r->error = CURLE_OUT_OF_MEMORY;
@@ -147,21 +212,26 @@ static bool begin(sl_http_route *r, CURL *easy, const char *url, long timeout_ms
         strcpy(r->dns->host, r->host);
         atomic_init(&r->dns->done, false);
         atomic_init(&r->dns->cancel, false);
+        if (pthread_mutex_init(&r->dns->lock, NULL)) {
+            free(r->dns); r->dns = NULL;
+            r->error = CURLE_FAILED_INIT;
+            return false;
+        }
         if (pthread_create(&r->dns->thread, NULL, dns_worker, r->dns)) {
+            pthread_mutex_destroy(&r->dns->lock);
             free(r->dns);
             r->dns = NULL;
             r->error = CURLE_FAILED_INIT;
             return false;
         }
-        return true;
     }
-    sl_dns_refresh answer;
-    if (!sl_dns_policy_lookup(r->host, &answer)) {
-        r->error =
-            sl_dns_policy_cancelled() ? CURLE_ABORTED_BY_CALLBACK : CURLE_COULDNT_RESOLVE_HOST;
-        return false;
+    if (async) return true;
+    int ready;
+    while (!(ready = sl_http_route_poll(r, easy))) {
+        struct timespec pause = {.tv_nsec = 1000000};
+        nanosleep(&pause, NULL);
     }
-    return accept_answer(r, easy, &answer);
+    return ready > 0;
 #else
     (void)easy;
     (void)url;
@@ -180,19 +250,18 @@ int sl_http_route_poll(sl_http_route *r, CURL *easy) {
     if (r->error != CURLE_OK)
         return -1;
 #if defined(__SWITCH__) || defined(NSL_HTTP_ROUTE_TEST)
-    if (!r->dns)
+    collect_dns(r);
+    if (!r->select_pending)
         return 1;
-    if (!atomic_load_explicit(&r->dns->done, memory_order_acquire))
-        return 0;
-    /* The DNS worker never reads/writes the easy handle. Apply the verified
-     * result and RESOLVE list only on the curl owner thread. */
-    pthread_join(r->dns->thread, NULL);
-    bool ready = r->dns->success && accept_answer(r, easy, &r->dns->answer);
-    free(r->dns);
-    r->dns = NULL;
-    if (!ready && r->error == CURLE_OK)
-        r->error = CURLE_COULDNT_RESOLVE_HOST;
-    return ready ? 1 : -1;
+    if (sl_dns_policy_cancelled()) r->error = CURLE_ABORTED_BY_CALLBACK;
+    else if (now_ms() >= r->deadline) r->error = CURLE_OPERATION_TIMEDOUT;
+    else if (r->index < r->count) {
+        prioritize_next(r);
+        if (select_address(r, easy)) return 1;
+        r->error = CURLE_FAILED_INIT;
+    } else if (r->dns) return 0; /* More providers may still supply a new IP. */
+    else r->error = r->failure ? r->failure : CURLE_COULDNT_RESOLVE_HOST;
+    return -1;
 #else
     (void)easy;
     return 1;
@@ -217,15 +286,22 @@ bool sl_http_route_retry(sl_http_route *r, CURL *easy, CURLcode code) {
     if (!network || response || bytes)
         return false;
     event(r, "failed", "", (int)code);
-    if (r->index + 1 >= r->count)
-        return false;
     ++r->index;
-    return select_address(r, easy);
+    r->failure = code;
+    r->select_pending = true;
+    return sl_http_route_poll(r, easy) >= 0;
 #else
     (void)r;
     (void)easy;
     (void)code;
     return false;
+#endif
+}
+void sl_http_route_stop_resolving(sl_http_route *r) {
+#if defined(__SWITCH__) || defined(NSL_HTTP_ROUTE_TEST)
+    clear_dns(r);
+#else
+    (void)r;
 #endif
 }
 void sl_http_route_clear(sl_http_route *r) {
@@ -240,6 +316,12 @@ CURLcode sl_http_route_perform(CURL *easy, const char *url, long timeout_ms) {
     CURLcode code;
     if (sl_http_route_begin(&route, easy, url, timeout_ms))
         do {
+            int ready;
+            while (!(ready = sl_http_route_poll(&route, easy))) {
+                struct timespec pause = {.tv_nsec = 1000000};
+                nanosleep(&pause, NULL);
+            }
+            if (ready < 0) { code = route.error; break; }
             code = curl_easy_perform(easy);
         } while (sl_http_route_retry(&route, easy, code));
     else
