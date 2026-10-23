@@ -8,8 +8,8 @@
 ```mermaid
 flowchart TD
     A[主线程：BSD socket / DNS policy / curl global] --> B[启动日志、封面、更新和 runtime worker]
-    B --> C[本地发现 / IHS control]
-    B --> D[云端发现：目录 → CM TLS → WS → CreateSession → 订阅]
+    B --> C[本地 IHS control：socket / 发现订阅初始化]
+    C --> D[云端发现：目录 → CM TLS → WS → CreateSession → 订阅]
     B --> E[SDR 配置：磁盘快照 + 后台刷新]
     C --> F[开流请求 / 成功材料]
     D --> F
@@ -24,6 +24,13 @@ flowchart TD
 封面、更新、云端订阅和配置刷新没有相互等待的业务依赖。本地发现不能等待其中任何一个
 请求完成。runtime 每次循环都推进控制、准备和已启动的传输；不靠跳过一次 update 保证顺序。
 DNS 工作线程只发布拥有的结果，不操作 CURL、IHS 或 UI。
+
+runtime的`ensure_control`统一首次启动与显式命令重试：本地client/socket及发现订阅
+成功后，才构造发现CM owner；本地失败保留空client，不继续构造CM，不增加自动重试
+计时器。上述依赖只是本地资源初始化，不等待任何局域网发现回复、DNS或云端请求。
+已有client时复用owner，不因普通命令重复创建CM。来源为原BStart的本地失败分支及
+完整runtime worker对照，见D-A107、协议参考§185。root curl失败时仍允许本地client运行，
+保持下文D-A105的独立HTTP失败语义。
 
 ## 准备与连接是两个边界
 
@@ -73,6 +80,8 @@ DNS 固定公共提供器、每提供器 wire 预算、全局并发和限速见 
 | BSD / DNS policy | 平台主线程 | socket 初始化完成 | 所有网络 owner/worker 停止后 |
 | curl 全局状态 | 加锁引用管理；应用主线程持根引用 | 第一个引用成功初始化 | 最后一个引用释放；所有借用 handle/线程已清理 |
 | DNS 工作 | 在途查询对象；HTTP owner 各持订阅 | 验证后的累积地址快照 | 最后订阅取消并 join |
+| 发现client / UDP | runtime actor | socket及发现订阅初始化成功 | 停任务、停止client、join其拥有的线程并销毁，先于CM销毁 |
+| 发现CM owner | runtime actor | 本地client初始化成功；对象构造不等于网络可用 | control生产者停止后，先关闭HTTP/WS，再释放连接 |
 | 目录/CM 候选 | bootstrap owner | 候选先配置、再加入 multi | 败者先 remove/cleanup，后释放 RESOLVE |
 | TLS 胜者 | remote connection | 从 bootstrap 移交 handle/route/body | WebSocket 清理后销毁 easy，再释放 route |
 | 启动配置快照 | runtime 配置缓存 | 完整下载成功或磁盘读取成功 | runtime 退出；单次流只消费副本 |

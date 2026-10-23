@@ -960,8 +960,10 @@ runtime 在一个 mutex 临界区内更新目录并发布 UI 事件；IHS 与云
 旧线程版`discovery_error_runtime`不能代替该入口的验证。`discovery_polled_runtime`经过
 实际start/update/stop函数、非阻塞socket、SDK解析及主机目录/UI发布，以22组原批次/
 errno输入核对保留owner、后续恢复、100ms输入门禁和迟到不追赶；两个正常退出的实际
-SDK模块反例因重复/遗漏callback被拒绝。外层worker调度、实际Qt/网络时序与Switch仍是
-独立边界，详见协议参考§184，不将测试驱动的时间戳当作实测周期。
+SDK模块反例因重复/遗漏callback被拒绝。外层worker调度、实际Qt/网络时序与Switch不是
+这组夹具的证明范围，详见协议参考§184，不将测试驱动的时间戳当作实测周期。§185另运行
+真实外层worker，核对本地失败后不创建CM、显式重试和失败直接退出，以及真实桌面接收
+间隔/清理；不将其扩大成Switch实测。
 
 发现地址列表与关注 client_id 列表不是同一种变化。原 `BAddNetworkAddress`/
 `ClearInactiveAddresses` 没有写入下一发现轮次；`AddClientDiscovery` 才清零轮次时间
@@ -1000,7 +1002,10 @@ directed-client 广播。网络收发、墙钟和云端 status
 
 `BStart @0x798840` 先 Stop，按开关创建 discovery socket、云端 session，再进入 Idle。
 若启用本地发现但 discovery socket 初始化失败，本函数直接失败，不继续云端初始化。
-流式应用可选择自己的初始化失败降级方式，但要标为本项目策略。
+本地资源失败与已创建远端owner的BConnect失败是不同分支，不能合并成一次联网失败。
+runtime首次启动与后续显式命令共用`ensure_control`：本地client/socket和发现订阅失败
+不构造CM，成功后才构造。原先worker失败后仍构造CM的差异由§185完整worker复现并移除；
+不将对象构造混同于DNS/TLS已经推进，也不因此增加计时重试。
 
 `StartPairing @0x79c514` 只在云端 session 已 Connected 时发 StartPairing；否则失败，
 不会自动保留一笔“联网后再执行”的配对。`OnPairingStarted @0x79efb0` 仅接受 manager 状态 2；

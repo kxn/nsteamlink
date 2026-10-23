@@ -1732,6 +1732,20 @@ static bool start_client(sl_runtime *r) {
     r->control_next_update = 0;
     return started;
 }
+static bool ensure_control(sl_runtime *r) {
+    if (r->client)
+        return true;
+    /* Original BStart returns before constructing its remote owner when the
+     * enabled local discovery socket fails (protocol RE §§168/171/185).
+     * Use this same dependency boundary for initial startup and a later
+     * explicit command; creating cloud on the failed path leaves a partially
+     * initialized manager even though update_control cannot pump it. */
+    if (!start_client(r))
+        return false;
+    if (!r->remote)
+        start_cloud(r);
+    return true;
+}
 /* Return completion observed before/during join, before destroying its owner. */
 static bool stop_session(sl_runtime *r) {
     if (r->session || r->request_at)
@@ -2160,7 +2174,7 @@ static void execute(sl_runtime *r, sl_command cmd) {
         r->quit = true;
         return;
     }
-    if (!r->client && !start_client(r)) {
+    if (!ensure_control(r)) {
         fail(r, sl_tr(SL_T_NETWORK_UNAVAILABLE));
         return;
     }
@@ -2454,9 +2468,8 @@ static void *worker_main(void *ctx) {
     if (sl_stream_settings_load(&r->settings, sl_system_data_dir()) < 0)
         sl_log("settings: load failed, retaining the previous complete value");
     sync_stream_settings(r, true);
-    if (!start_client(r))
+    if (!ensure_control(r))
         fail(r, sl_tr(SL_T_NETWORK_UNAVAILABLE));
-    start_cloud(r);
 #if NSL_HAVE_SNS
     r->sns_config = sl_sns_config_cache_create(sl_system_data_dir());
 #endif

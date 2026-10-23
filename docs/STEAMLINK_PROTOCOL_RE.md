@@ -14317,3 +14317,80 @@ python3 -O scripts/check-steam-discovery-polled.py \
 python3 -O scripts/check-discovery-polled-native-mutations.py \
   --build build/desktop --output /tmp/polled-mutations
 ```
+
+## 185. 完整外层worker与本地失败后的云端对象创建边界
+
+Evidence：§168固定shell的原BStart在local=1/remote=1、socket创建返回失败时，
+state/socket/remote均为0，trace没有remote_ctor；local成功后的remote BConnect=false
+仍保留remote并进入state1。`audit-steam-network-discovery.py`的55组原码输出再次匹配
+原参考，未改期望值。§171另证明空失败manager的三个timer tick不重新BStart，后续
+显式触发才重试；Qt timer dispatch仍是provider，不冒充真实Qt调度。
+
+`0a28a6b`的应用worker_main在start_client失败后仍无条件start_cloud。§184直接驱动
+start/update/stop入口，没执行这段外层初始化，不能由其通过推出整个worker已对齐。
+`app/tests/discovery_worker_runtime.c`改用真正的sl_runtime_create、public submit/
+poll/destroy与外层pthread，复现本地socket/订阅失败后各构造一次remote的差异。故障
+保持350ms时没有本地接收，cloud_creates=1、early_cloud_creates=1；未称为已联网。
+
+生产ensure_control将初始启动及execute的缺失client路径统一：先完成本地client、
+socket及发现订阅，再构造缺失remote；已有client复用。失败时不创建CM、不增加周期
+重试；原worker仍可处理退出或后续显式命令。显式命令重试必须同时补建CM，不能仅
+给worker启动加一个if而漏掉另一入口。remote工厂自身返回NULL与BConnect=false并非
+同一种Source输入；本节没有以此声称所有OOM/HTTP初始化失败都等价。
+
+### 实际执行与provider边界
+
+Native执行媒体根初始化、public runtime启动、实际worker_main/命令队列/真实等待、
+polled SDK、POSIX socket、protobuf解析、生产discovered_status/目录及UI HOST事件。
+实际remote factory、curl引用/对象及protocol构造和析构也执行。只有remote network
+update被拦下，防止DNS/TLS/Steam请求；把工厂调用次数与网络请求次数分开。debug
+UDP listener在fixture中不可创建，sendto只返回接纳，不发送LAN报文。SDK socket
+失败及发现订阅失败是明确资源返回provider，不声称自然出现过EMFILE或Switch错误。
+
+recvfrom按Source四组程序交付非正读与有效Status；正读9/7仍投影为Native Status
+timestamp标签，不宣称Source opaque BProcess已经解析同一wire。观察callback后仍
+调用生产status handler，必须在真实public poll得到LAN HOST事件，不手工注入UI。
+所有变量跨主/worker发布用atomic或runtime锁；退出后再读取完整数组与清理计数。
+
+26组包括四程序×ENETDOWN/EAGAIN的8组、NONE及13个errno的14组，以及两种初始
+失败各自重试/直接退出的4组。失败阶段至少观察350ms，必须只有一次本地创建尝试、
+无read、无CM构造。重试经public SL_CMD_MANUAL提交loopback地址，真实worker完成
+依赖构造并接收后续状态；不模拟用户重新配对或请求桌面/游戏。直接退出程序不要求
+也不伪造Status，必须保持零cloud owner并完成同一worker的清理。
+
+| 程序 | 创建尝试 | 成功open/close | timer join / condition create/destroy | runtime join | CM create/destroy |
+|---|---|---|---|---|---|
+| 正常接收 | 1 | 1/1 | 1 / 1/1 | 1 | 1/1 |
+| socket失败后显式重试 | 2 | 1/1 | 2 / 2/2 | 1 | 1/1 |
+| 订阅失败后显式重试 | 2 | 2/2 | 2 / 2/2 | 1 | 1/1 |
+| socket失败后直接退出 | 1 | 0/0 | 1 / 1/1 | 1 | 0/0 |
+| 订阅失败后直接退出 | 1 | 1/1 | 1 / 1/1 | 1 | 0/0 |
+
+这些程序没有独立IHSClient RX worker，但有实际外层worker及IHS.Timer；join记录来自
+真实pthread_join/IHS_ThreadJoin返回，不仅是进程exit0。真实monotonic接收间隔在非正
+读后要求至少90ms，public destroy至join少于1秒；它们是桌面测试余量，不是Qt精准
+周期、Switch性能保证或所有库句柄无泄漏的全称证明。直接退出覆盖无remote的新清理
+路径；未从本地进程结果推断Switch返回hbmenu。
+
+`check-steam-discovery-worker.py`先验证三个固定原参考及生成helper SHA，核对原失败
+分支和空manager再触发，再比较真实worker的完整读/标签、初始失败快照、显式重试与
+上述计数。报告保留接收器ELF、runtime/oracle/比较器SHA；Python -O不撤销检查。
+Diagnostics ON/OFF都执行相同26组。Switch Release ELF编译只证明目标构建，不是
+该资源失败分支已经在Switch运行。
+
+两个实际runtime.c复制件分别恢复“初始失败仍创建CM”、仅在初始成功时创建而漏掉
+显式重试。均正常退出、保留`[[5,9],[6,7]]`回调、关闭实际fd并join外层worker，
+但分别得到failure_cloud=1或最终cloud_creates=0，被原边界拒绝。编译/链接失败、
+signal、fixture断言和其他不相关异常不算反例；产品源文件与原构建对象不被变异。
+
+该修正不改变线上包、两类PIN、DNS候选、NAT/SDR或媒体等待策略。自然网络通知后的
+恢复、真正远端连接及Switch loader与本地资源失败仍是不同契约，不能据此认定用户
+此前热点问题的根因或完成全部异常恢复。
+
+```sh
+cmake --build build/desktop --target nsl-discovery-worker-runtime
+python3 -O scripts/check-steam-discovery-worker.py \
+  --receiver build/desktop/app/nsl-discovery-worker-runtime --output /tmp/worker.json
+python3 -O scripts/check-discovery-worker-native-mutations.py \
+  --build build/desktop --output /tmp/worker-mutations
+```

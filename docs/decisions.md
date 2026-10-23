@@ -3494,6 +3494,27 @@ Decision：
    循环下的平滑度仍为 `待验证`；真机只改 `sensor_math.c` 的轴向后处理，
    不改 wire offsets 或 flags。
 
+## D-A107：控制manager的本地失败边界与两处统一初始化
+
+Evidence：固定官方shell `15b2d798…b238a2` 的BStart在local/remote均启用、本地socket
+创建失败时保留state0、空socket/remote，未调用remote constructor。已创建remote后的
+BConnect=false则是另一分支，保留owner并进入state1；原55组再次执行匹配固定参考。
+`0a28a6b`的worker_main却在start_client=false后继续start_cloud。真实外层worker故障
+注入中，本地socket/发现订阅失败后350ms，均观察到一个过早构造的真实remote对象；
+没有client时update_control提前返回，不能将此证据称为已发DNS/TLS或用户故障根因。
+
+Decision：首次worker启动和显式命令共用ensure_control。已有client直接复用；没有时先
+完成本地client/socket/发现订阅，再构造缺失的CM owner。本地失败不创建CM，也不增加
+自动计时重试；后续显式命令可重新尝试。已有HTTP失败不阻止LAN的D-A105语义保留，
+不等待LAN发现回复、DNS或TLS才创建CM，不改线上报文、配对、寻路或媒体期限。
+
+验证边界：实际public runtime生命周期、外层pthread、polled接收/protobuf/目录/UI与
+真实remote对象构造/析构执行；云端网络推进、UDP结果及debug listener为provider。
+26组覆盖四个原批次×两类errno、14个单错误/正常输入，以及两种初始失败的显式重试/
+直接退出。两个独立重链接的真实runtime反例都正常退出并保留收包/清理，因提前创建
+CM或漏掉重试创建被原边界拒绝。Diagnostics ON/OFF桌面对照及Switch Release编译
+不等于Switch运行、自然切网、DNS/TLS/Steam成功或hbmenu生命周期，详见协议参考§185。
+
 ## D-064：Generic gyro 的早期推论（2026-10-23，已撤回，由 D-065 取代）
 
 历史 Evidence：用户观察到实验构建无 gyro 输出；某些加 `0x400` 的构建还出现

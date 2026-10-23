@@ -1188,6 +1188,28 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-discovery-polled-native-mutations.py"
         --build "${CMAKE_BINARY_DIR}" --output "${CMAKE_BINARY_DIR}/discovery-polled-mutations")
     set_tests_properties(discovery_polled_native_mutations PROPERTIES TIMEOUT 90)
+    add_executable(nsl-discovery-worker-runtime tests/discovery_worker_runtime.c)
+    target_include_directories(nsl-discovery-worker-runtime PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf)
+    target_compile_definitions(nsl-discovery-worker-runtime PRIVATE NSL_HAVE_SNS=$<BOOL:${NSL_BUILD_SNS}>)
+    target_compile_options(nsl-discovery-worker-runtime PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas)
+    target_link_libraries(nsl-discovery-worker-runtime PRIVATE nsl_platform)
+    target_link_options(nsl-discovery-worker-runtime PRIVATE -Wl,--wrap=IHS_UDPSocketOpen
+        -Wl,--wrap=IHS_ClientEnableDiscovery -Wl,--wrap=socket -Wl,--wrap=close
+        -Wl,--wrap=recvfrom -Wl,--wrap=sendto -Wl,--wrap=IHS_ThreadCreate -Wl,--wrap=IHS_ThreadJoin
+        -Wl,--wrap=pthread_join -Wl,--wrap=IHS_CondCreate -Wl,--wrap=IHS_CondDestroy
+        -Wl,--wrap=IHS_ClientSetDiscoveryCallbacks -Wl,--wrap=sl_remote_connection_create
+        -Wl,--wrap=sl_remote_connection_update -Wl,--wrap=sl_remote_connection_destroy)
+    add_test(NAME discovery_worker_official_vectors COMMAND "${Python3_EXECUTABLE}" -O
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-discovery-worker.py"
+        --receiver $<TARGET_FILE:nsl-discovery-worker-runtime>
+        --output "${CMAKE_BINARY_DIR}/discovery-worker-report.json")
+    set_tests_properties(discovery_worker_official_vectors PROPERTIES TIMEOUT 45)
+    add_test(NAME discovery_worker_native_mutations COMMAND "${Python3_EXECUTABLE}" -O
+        "${CMAKE_SOURCE_DIR}/scripts/check-discovery-worker-native-mutations.py"
+        --build "${CMAKE_BINARY_DIR}" --output "${CMAKE_BINARY_DIR}/discovery-worker-mutations")
+    set_tests_properties(discovery_worker_native_mutations PROPERTIES TIMEOUT 120)
     add_executable(nsl-video-stop-queue-runtime tests/video_stop_queue_runtime.c)
     target_include_directories(nsl-video-stop-queue-runtime PRIVATE platforms/common
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
