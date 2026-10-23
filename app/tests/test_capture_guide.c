@@ -21,29 +21,56 @@ int __wrap_rename(const char *from, const char *to) {
     }
     return __real_rename(from, to);
 }
+static void write_setting(const char *path, const char *text) {
+    FILE *f = fopen(path, "wb");
+    assert(f && fputs(text, f) >= 0 && !fclose(f));
+}
+static void check_v2(const char *path, sl_guide_key key) {
+    char text[64] = {0};
+    FILE *f = fopen(path, "rb");
+    assert(f && fread(text, 1, sizeof(text) - 1, f) > 0 && !ferror(f) && !fclose(f));
+    assert(!strcmp(text, key == SL_GUIDE_KEY_CAPTURE ? "version=2\nguide_key=capture\n"
+                                                    : "version=2\nguide_key=off\n"));
+}
 static void storage(void) {
     char dir[] = "/tmp/nsl-capture-XXXXXX", path[512], backup[512];
     assert(mkdtemp(dir));
     snprintf(path, sizeof(path), "%s/special.conf", dir);
     snprintf(backup, sizeof(backup), "%s/special.bak", dir);
-    assert(sl_special_settings_load(dir)); /* Migration from profiles before this feature. */
+    assert(sl_special_settings_load(dir) == SL_GUIDE_KEY_CAPTURE); /* Pre-feature install. */
+    const sl_guide_key choices[] = {SL_GUIDE_KEY_OFF, SL_GUIDE_KEY_CAPTURE};
+    for (unsigned i = 0; i < 2; ++i) {
+        write_setting(path, i ? "version=1\ncapture_guide=1\n" : "version=1\ncapture_guide=0\n");
+        assert(sl_special_settings_load(dir) == choices[i]);
+        assert(sl_special_settings_save(dir, sl_special_settings_load(dir)));
+        check_v2(path, choices[i]); /* Migration preserves either preference and writes v2. */
+    }
     for (unsigned pass = 0; pass < 2; ++pass) {
         no_replace = pass != 0;
-        assert(sl_special_settings_save(dir, false) && !sl_special_settings_load(dir));
-        assert(sl_special_settings_save(dir, true) && sl_special_settings_load(dir));
-        assert(sl_special_settings_save(dir, false) && !sl_special_settings_load(dir));
+        for (unsigned i = 0; i < 2; ++i) {
+            assert(sl_special_settings_save(dir, choices[i]));
+            assert(sl_special_settings_load(dir) == choices[i]);
+            check_v2(path, choices[i]);
+        }
+        assert(sl_special_settings_save(dir, SL_GUIDE_KEY_OFF));
     }
+    assert(!sl_special_settings_save(dir, (sl_guide_key)2));
+    assert(!sl_special_settings_save(dir, (sl_guide_key)-1));
+    assert(sl_special_settings_load(dir) == SL_GUIDE_KEY_OFF);
     fail_publish = true;
-    assert(!sl_special_settings_save(dir, true) && !sl_special_settings_load(dir));
+    assert(!sl_special_settings_save(dir, SL_GUIDE_KEY_CAPTURE));
+    assert(sl_special_settings_load(dir) == SL_GUIDE_KEY_OFF);
     fail_publish = no_replace = false;
-    assert(!rename(path, backup) && !sl_special_settings_load(dir));
-    assert(sl_special_settings_save(dir, true) && sl_special_settings_load(dir));
-    const char *invalid[] = {"", "version=2\ncapture_guide=1\n", "capture_guide=1\n",
-                             "version=1\ncapture_guide=1\ntrailing"};
+    assert(!rename(path, backup) && sl_special_settings_load(dir) == SL_GUIDE_KEY_OFF);
+    assert(sl_special_settings_save(dir, SL_GUIDE_KEY_CAPTURE));
+    assert(sl_special_settings_load(dir) == SL_GUIDE_KEY_CAPTURE);
+    const char *invalid[] = {"", "version=3\nguide_key=capture\n", "version=2\ncapture_guide=1\n",
+                             "capture_guide=1\n", "version=1\ncapture_guide=1\ntrailing",
+                             "version=1\ncapture_guide=2\n", "version=2\nguide_key=home\n",
+                             "version=2\nguide_key=capture\ntrailing"};
     for (unsigned i = 0; i < sizeof(invalid) / sizeof(*invalid); ++i) {
-        FILE *f = fopen(path, "wb");
-        assert(f && fputs(invalid[i], f) >= 0 && !fclose(f));
-        assert(!sl_special_settings_load(dir)); /* Unknown/corrupt config preserves screenshots. */
+        write_setting(path, invalid[i]);
+        assert(sl_special_settings_load(dir) == SL_GUIDE_KEY_OFF);
     }
     assert(!unlink(path) && !rmdir(dir));
 }
@@ -52,29 +79,49 @@ static void settings(void) {
         sl_i18n_set(language);
         sl_ui_model m;
         sl_ui_init(&m, &(sl_auth_store){0});
-        sl_ui_action(&m, SL_CAPTURE_GUIDE, 0);
-        assert(m.capture_guide && !m.command.type);
+        sl_ui_action(&m, SL_SET_GUIDE_KEY, SL_GUIDE_KEY_OFF);
+        assert(m.guide_key == SL_GUIDE_KEY_CAPTURE && !m.command.type);
         sl_ui_action(&m, SL_OPEN_SETTINGS, 0);
-        assert(m.layout.count == 6 && m.layout.controls[4].action == SL_OPEN_SPECIAL_SETTINGS);
-        assert(m.layout.controls[4].kind == SL_CONTROL_SUBMENU);
-        assert(m.layout.controls[4].y + m.layout.controls[4].h <= m.layout.controls[5].y);
-        sl_ui_activate(&m, m.layout.controls[4].id);
-        assert(m.page == SL_SPECIAL_SETTINGS && m.layout.drawer && m.layout.count == 2);
-        assert(m.layout.controls[0].action == SL_CAPTURE_GUIDE &&
-               m.layout.controls[0].kind == SL_CONTROL_TOGGLE);
-        assert(!strcmp(m.layout.title, sl_tr(SL_T_SPECIAL_SETTINGS)));
+        assert(m.layout.count == 5); /* Only the original four categories plus Back. */
+        sl_ui_action(&m, SL_OPEN_GUIDE_KEY, 0);
+        assert(m.page == SL_SETTINGS); /* Guide source is under Application, not a category. */
+        sl_ui_action(&m, SL_OPEN_APP_SETTINGS, 0);
+        assert(m.layout.count == 5 && m.layout.controls[3].action == SL_OPEN_GUIDE_KEY);
+        assert(m.layout.controls[3].kind == SL_CONTROL_SUBMENU);
+        assert(!strcmp(m.layout.controls[3].label, sl_tr(SL_T_GUIDE_KEY)));
+        assert(!strcmp(m.layout.controls[3].value, sl_tr(SL_T_GUIDE_KEY_CAPTURE)));
+        assert(m.layout.controls[3].y + m.layout.controls[3].h <= m.layout.controls[4].y);
+        sl_ui_activate(&m, m.layout.controls[3].id);
+        assert(m.page == SL_GUIDE_KEY && m.layout.drawer && m.layout.count == 3 && m.focus == 101);
+        assert(!strcmp(m.layout.title, sl_tr(SL_T_GUIDE_KEY)));
+        for (unsigned i = 0; i < 2; ++i) {
+            assert(m.layout.controls[i].action == SL_SET_GUIDE_KEY &&
+                   m.layout.controls[i].kind == SL_CONTROL_RADIO &&
+                   m.layout.controls[i].arg == (int)i);
+        }
+        assert(!strcmp(m.layout.controls[0].label, sl_tr(SL_T_GUIDE_KEY_OFF)));
+        assert(!strcmp(m.layout.controls[1].label, sl_tr(SL_T_GUIDE_KEY_CAPTURE)));
+        sl_ui_action(&m, SL_SET_GUIDE_KEY, 2); /* HOME is neither valid nor displayed. */
+        assert(m.guide_key == SL_GUIDE_KEY_CAPTURE && !m.command.type);
         sl_ui_activate(&m, m.layout.controls[0].id);
         sl_command c;
-        assert(!m.capture_guide && sl_ui_take_command(&m, &c) && c.type == SL_CMD_SAVE &&
-               !c.capture_guide && m.cue == SL_CUE_TOGGLE);
+        assert(m.guide_key == SL_GUIDE_KEY_OFF && sl_ui_take_command(&m, &c) &&
+               c.type == SL_CMD_SAVE && c.guide_key == SL_GUIDE_KEY_OFF);
+        sl_ui_tick(&m, m.now + 300);
+        assert(m.page == SL_APP_SETTINGS && m.focus == 103);
+        assert(!strcmp(m.layout.controls[3].value, sl_tr(SL_T_GUIDE_KEY_OFF)));
         sl_runtime_event activity = {.type = SL_EVENT_ACTIVITY, .generation = m.generation};
         sl_ui_runtime_event(&m, &activity);
-        assert(sl_ui_take_command(&m, &c) && !c.capture_guide); /* Unrelated saves retain OFF. */
-        sl_ui_action(&m, SL_CAPTURE_GUIDE, 0);
-        assert(m.capture_guide && sl_ui_take_command(&m, &c) && c.capture_guide);
+        assert(sl_ui_take_command(&m, &c) && c.guide_key == SL_GUIDE_KEY_OFF);
+        sl_ui_action(&m, SL_OPEN_GUIDE_KEY, 0);
+        assert(m.focus == 100);
+        sl_ui_action(&m, SL_SET_GUIDE_KEY, SL_GUIDE_KEY_CAPTURE);
+        assert(m.guide_key == SL_GUIDE_KEY_CAPTURE && sl_ui_take_command(&m, &c) &&
+               c.guide_key == SL_GUIDE_KEY_CAPTURE);
+        sl_ui_tick(&m, m.now + 300);
         sl_ui_connected(&m);
-        sl_ui_action(&m, SL_CAPTURE_GUIDE, 0);
-        assert(m.capture_guide && !m.command.type); /* Settings never mutate mid-stream. */
+        sl_ui_action(&m, SL_SET_GUIDE_KEY, SL_GUIDE_KEY_OFF);
+        assert(m.guide_key == SL_GUIDE_KEY_CAPTURE && !m.command.type);
     }
 }
 typedef struct { unsigned calls, downs, ups; bool accept; } sink;
@@ -113,5 +160,5 @@ int main(void) {
     storage();
     settings();
     pulses();
-    puts("PASS Capture settings migration, OFF persistence, separate drawer, and admitted pulses");
+    puts("PASS Guide source v1/v2 migration, OFF persistence, Application radio selection, and admitted pulses");
 }

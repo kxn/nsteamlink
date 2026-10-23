@@ -190,9 +190,10 @@ host 的 Guide chord 配置。不要将该 A 擅自换成物理南侧 B，也不
 Homebrew ABI 的线程/句柄清理要求。Capture 通知注册也应在退出/回 loader 前显式恢复并
 撤销 hook；普通输入组合则可完全避开对 HOME 系统行为的依赖。
 
-**待验证边界：** 当前证据尚未覆盖本机 Capture 通知实际送达及截图抑制、Capture 长按、
-HOME 激活/状态有效性与屏蔽交互、各固件/进程 NPDM 差异、合成 Guide 后 host 浮层实际打开，
-以及多控制器来源区分。这些均不能由 nxlink 退出或 PC 侧 ACK 推定。
+**初始研究的待验证边界更正：** 本机系统模拟 Capture 的通知接收与关闭后无通知，现已有
+§8 的实机日志证据，撤回“没有任何本机通知送达证据”的旧范围描述。Capture 物理首按、长按、
+HOME 激活/状态有效性与屏蔽交互、各固件/进程 NPDM 差异，以及多控制器来源区分仍须
+分别判断；它们不能由 API 模拟请求、nxlink 退出或 PC 侧 ACK 推定。
 
 ## 6. 应用级接线：复用 applet 分派，不另建消息接收循环
 
@@ -247,17 +248,22 @@ hook 通知、Guide 报告形成和 host 浮层打开是三个独立验证事实
 `switch/events.c` 使用 `appletHook`，由原有 `appletMainLoop` 分派短按消息；
 没有增加原始消息消费者、线程或 HOME 屏蔽。
 
-`设置→特殊功能→截图键作为 Steam Guide` 独立于声音、网络及应用常规分类。
-`services/special_settings.c` 使用应用级 `special.conf` v1：
+`设置→应用→Steam Guide 键` 是应用设置中的值行，右侧显示当前的“关闭”或“截图键”；
+进入后沿用既有单选页。原“特殊功能”分类已移除。当前设置模型使用
+`sl_guide_key` 枚举 `SL_GUIDE_KEY_OFF=0` / `SL_GUIDE_KEY_CAPTURE=1`，不提供未验证的 HOME
+选项；应用在枚举等于 CAPTURE 时才向现有媒体 bool 接口请求 Capture→Guide。
+`services/special_settings.c` 使用独立应用级 `special.conf` v2：
 
 ```text
-version=1
-capture_guide=1
+version=2
+guide_key=capture
 ```
 
-缺文件表示从未具有该设置的旧安装，默认开启；明确的 `0` 保留关闭偏好。
-未知版本、损坏或读取失败不启用拦截；存盘沿用 temp/backup/rename 的恢复方式，
-保存失败进入现有设置保存错误反馈，不修改身份/配对 `profile.bin` 格式。
+关闭写为 `guide_key=off`。缺文件表示从未具有该设置的旧安装，默认 CAPTURE；读取 v1 的
+`capture_guide=0/1` 分别迁移为 OFF/CAPTURE，每次保存均写 v2，保留原来明确关闭的偏好。
+未知版本、来源值（含未支持的 `home`）、损坏或读取失败均回落 OFF；非法枚举拒绝保存。
+存盘沿用 temp/backup/rename 的恢复方式，保存失败进入现有设置保存错误反馈，
+不修改身份/配对 `profile.bin` 格式。
 
 **通知所有权。** 通知仅在设置开启、本地输入 gate 开放、前台、实际 session 连接并允许
 input、且选中 joystick 已被 host 打开并开始 RAW 输入报告后启用。目标 readiness
@@ -301,3 +307,88 @@ InputEnabled/连接状态、admission 拒绝、释放重试、gate/设置/失焦
 本身不打印、不发网络。触发 API 不可达、通知未送达或失焦会记录错误并恢复通知，
 不能当作“通过”。完成记录显式保留 `physical_key_verified=false`、`album_verified=false`、
 `host_overlay_verified=false`，因为系统模拟请求不是物理按键，且未读取 Album 或连接 Steam。
+
+
+## 8. 系统模拟请求与物理首按的实机证据边界（2026-10-23）
+
+**Evidence：** 已部署构建 `b336a3ee177b60635fbc7f930824508ad7cd4bd2` 的留存日志
+`/data/dl/nsteamlink-anywhere/build/capture-guide-b336a3e/latest-first-capture/session-00000000001792764162-091678080-00000.log:15–17`
+依次记录 `trigger_on rc=0`、`hook_on_restore_trigger_off rc=0`，以及
+`complete api_hook=true, off_hook_absent=true`。这些是 Switch 实际执行 API 自测的日志，
+不是 PC 上的替身用例。完成行同时明确标记 physical_key、Album、host_overlay 均未验证。
+
+**Evidence：** 用户对同一已部署构建直接报告：实体 Capture 第一次按下仍触发系统截图，
+之后才作为 Guide。用户的屏幕观察是该物理首按问题的主证据；不能用上一段的模拟 API
+自测通过否定它。用户询问 HOME 是否实际拦截试过时，已有证据范围仍是未进行 HOME 实机
+读取/屏蔽试验，不能提供一个声称已验证可用的 HOME 设置项。
+
+**Conclusion：** 模拟 Capture 的通知开关/API 路径已具备本机正证据；物理 Capture 首按仍
+存在与预期不符的直接反证。两者不是同一测试终点。后续任何首次按键修正必须保留这条
+反证并单独证明物理行为；不能把新增设置来源枚举或 UI 改名当作首按问题已经解决。
+
+定位时序的诊断输出中，`capture_route=ipc` 记录通知开启/关闭及对应 Result；
+`capture_route=notification` 记录实际通知计数、`allowed` 与 `pending`。
+媒体侧 `gate_bits` 分别为：bit0/值1 配置选择 Capture，bit1/值2 本轮允许路由，
+bit2/值4 输入 gate 开启，bit3/值8 session 允许输入，bit4/值16 session 存在；
+`pulse_bits` 的 bit0/值1 为 held，bit1/值2 为 admitted，bit2/值4 为 releasing。
+`down_queued` / `up_queued` 仅表示本地 IHS 队列接纳，不等于对端 ACK、最终发送成功或浮层
+已经出现。这些日志仅在状态变化/按键时有界输出，hook 内不打印。
+“第一次实体按键发生在 readiness 建立前”仍为待验证假说；已有旧日志未捕获该实体首按
+相对于通知接管的准确时序，因此本轮只增加取证，不改变生产门控，也不声称修复首按。
+
+## 9. 离线 HOME / HDLS 能力诊断契约
+
+诊断构建的主应用支持 `--system-buttons-selftest`。解析该参数后强制 offline，禁止
+建立发现、鉴权、串流会话；该诊断与原 `--capture-guide-selftest` 互斥，由前者优先。
+Release 不编译 `switch/system_buttons_probe.c`，不包含该 CLI 或 HDLS 虚拟输入代码。
+所有阶段由既有主循环逐 tick 推进，继续使用原 applet 消息分派；没有独立消息接收循环、
+额外线程、物理按键操作要求或 Album 图片读取。
+
+**Evidence：上游权限分界。** libnx
+[applet.c:197–202](https://github.com/switchbrew/libnx/blob/b156b4774fb2df7b93402169509266da7547fc4c/nx/source/services/applet.c#L197)
+只为 SystemApplet / LibraryApplet / OverlayApplet 获取 IAppletCommonFunctions；
+`:613–619` 的命令包装在服务未初始化时返回 `LibnxError_NotInitialized`。
+[`:2842`](https://github.com/switchbrew/libnx/blob/b156b4774fb2df7b93402169509266da7547fc4c/nx/source/services/applet.c#L2842)
+的 `appletIsHomeButtonShortPressedBlocked` 经该接口 cmd52 查询，固件要求 10.0.0。
+相反，短按屏蔽 Begin/End 是 Application 的 IFunctions cmd32/33
+（[`:2096–2097`](https://github.com/switchbrew/libnx/blob/b156b4774fb2df7b93402169509266da7547fc4c/nx/source/services/applet.c#L2096)）。
+因此完整 Application 模式中“可调用 Begin，但无法通过 getter 复查”是可能出现的能力组合；
+getter 拒绝不能单独推导 HOME 一定无法读取，也不能当作屏蔽已确认。
+按当前 libnx 的上述初始化规则，普通 Application 的 getter 接口不会初始化，调用预期返回
+NotInitialized；本诊断在该模式只记录能力阶段并跳过虚拟 HOME 注入，不能提供“实际截获
+HOME 已通过”的结论。真实 HOME 读取/屏蔽效果仍须独立证据。
+
+诊断依次记录 `hid:sys` 初始化、HOME 共享内存激活、事件获取、短按屏蔽基线查询、
+`BeginBlockingHomeButton(0)` 与屏蔽后查询的真实 Result。只有基线可读且未屏蔽、自己 Begin
+成功、复查为 true、共享内存有有效采样且当前按钮中性，才可注入一次虚拟 HOME down/up。
+只用短按屏蔽；长按 HOME 保留。HOME 的通过标准是新采样中非零→零，且全程未失焦；
+API 成功但无新状态仍是未通过。getter/服务权限不足时跳过 HOME 注入，保留 Result 证据。
+注入门禁判断前另记 `home_raw_samples_available` 及一条 `home_raw_baseline` 的采样号/原始
+按钮值，让激活后的有效共享内存状态与单纯 IPC 成功可以分别判断；基线不冒充物理按键。
+
+HDLS 使用专用 FullKey/Bluetooth 虚拟设备，独占页对齐的 `0x1000` 工作缓冲，取自
+[switchbrew 官方 HDLS 示例](https://github.com/switchbrew/switch-examples/blob/master/hid/hdls/source/main.c)。
+按钮值以 libnx
+[hiddbg.h:13–15](https://github.com/switchbrew/libnx/blob/b156b4774fb2df7b93402169509266da7547fc4c/nx/include/switch/services/hiddbg.h#L13)
+为据：HOME 为 bit18、Capture 为 bit19；它们属于调试注入值，不能当作正常 Npad 读键位。
+若 HDLS 可达，随后独占原 Capture 通知路由，分别发两次 Capture down/up；每次以实际 hook
+计数增量记录首按/第二按是否收到。计时窗口仅用于有界等待，不能把等待时间结束当成通知
+已经到达。第二次收到通知不会补写第一次通过。该虚拟设备路径仍不证明实体按键、相册
+新增截图、系统画面状态或 host Guide 浮层行为。
+
+清理顺序为：虚拟按钮归零 → detach 临时设备 → release 工作缓冲 → 恢复 Capture 路由
+→ 关闭 HOME event → 关闭 `hid:sys` / `hid:dbg` → End 自己成功启用的短按屏蔽 → getter
+复查恢复。只清理自己成功取得的资源；原本已经屏蔽时不会接管/解除别人的屏蔽。
+正常完成、失焦、外部退出和阶段失败共用该清理路径；probe 在媒体初始化完成后才开始，
+因此此前的初始化失败没有 probe 资源。libnx
+[hiddbg.c:494–512](https://github.com/switchbrew/libnx/blob/b156b4774fb2df7b93402169509266da7547fc4c/nx/source/services/hiddbg.c#L494)
+要求 release 在 hiddbgExit 前调用，并在 release IPC 失败时仍关闭本地 transfer-memory 句柄。
+对自己成功建立的设备/工作缓冲/短按屏蔽若有清理失败，诊断记录错误并完成其他资源清理；
+detach/End 各最多尝试三次，持续失败不会带着未恢复的系统状态返回 loader。可选 API
+从未成功取得资源时的拒绝不会触发该保护。Capture 已成功启用后的持续恢复失败仍由现有
+events shutdown 保留其恢复义务。`hidsysActivateHomeButton` 没有在这里调用全局
+`hiddbgDeactivateHomeButton` 作为反操作，避免干扰 AM 使用的 HOME 共享内存。
+
+本机 fake libnx 测试仅证明状态机门禁、独立计数及资源清理；它不等于 Switch 权限、
+HDLS 注入或物理 HOME 的实测通过。所有完成记录独立标明
+`physical_key_verified=false`、`album_verified=false`、`host_overlay_verified=false`。

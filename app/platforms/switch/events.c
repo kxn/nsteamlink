@@ -6,6 +6,7 @@
 #include <stdio.h>
 static bool capture_test_active;
 static unsigned capture_test_messages;
+static unsigned capture_notifications, capture_notifications_reported;
 #endif
 static bool foreground = true, quit;
 static AppletHookCookie capture_hook;
@@ -20,8 +21,10 @@ static void capture_message(AppletHookType hook, void *context) {
     if (hook == AppletHookType_OnCaptureButtonShortPressed && capture_allowed)
         capture_pending = true; /* Coalesce; never build a backlog of presses. */
 #if NSL_DIAGNOSTICS
+    if (hook == AppletHookType_OnCaptureButtonShortPressed && capture_notifications != UINT32_MAX)
+        ++capture_notifications;
     if (hook == AppletHookType_OnCaptureButtonShortPressed && capture_test_active &&
-        capture_test_messages < 2)
+        capture_test_messages != UINT32_MAX)
         ++capture_test_messages;
 #endif
     if (hook == AppletHookType_OnFocusState || hook == AppletHookType_OnExitRequest)
@@ -38,6 +41,12 @@ static bool capture_policy(bool allowed) {
     if (capture_redirected == allowed && !(!allowed && capture_restore))
         return !requested || allowed;
     Result rc = appletSetRequiresCaptureButtonShortPressedMessage(allowed);
+#if NSL_DIAGNOSTICS
+    char line[160];
+    snprintf(line, sizeof(line), "{\"capture_route\":\"ipc\",\"enable\":%s,\"rc\":%u}",
+             allowed ? "true" : "false", (unsigned)rc);
+    sl_log(line); /* State transitions only; never emitted from the applet hook. */
+#endif
     if (R_SUCCEEDED(rc)) {
         capture_redirected = allowed;
         capture_restore = allowed;
@@ -63,12 +72,40 @@ bool sl_events_take_capture_guide(void) {
 #if NSL_DIAGNOSTICS
     if (capture_test_active)
         return false; /* Platform selftest must never create a host Guide event. */
+    if (capture_notifications != capture_notifications_reported) {
+        char line[192];
+        snprintf(line, sizeof(line), "{\"capture_route\":\"notification\",\"count\":%u,\"allowed\":%s,\"pending\":%s}",
+                 capture_notifications, capture_allowed ? "true" : "false",
+                 capture_pending ? "true" : "false");
+        sl_log(line); /* Coalesced by the existing main owner. */
+        capture_notifications_reported = capture_notifications;
+    }
 #endif
     bool pending = capture_pending && capture_allowed && sl_events_foreground() && !quit;
     capture_pending = false;
     return pending;
 }
 #if NSL_DIAGNOSTICS
+bool sl_events_capture_probe_begin(void) {
+    if (capture_test_active)
+        return false;
+    capture_test_active = true;
+    capture_test_messages = 0;
+    if (capture_policy(true))
+        return true;
+    capture_policy(false);
+    capture_test_active = false;
+    return false;
+}
+unsigned sl_events_capture_probe_messages(void) {
+    return capture_test_messages;
+}
+bool sl_events_capture_probe_end(void) {
+    bool restored = capture_policy(false);
+    capture_test_active = false;
+    capture_pending = false;
+    return restored;
+}
 /* The API generates a SYSTEM Capture-short action, not a physical button.
  * Keep its result distinct from real-device screenshot/host-overlay evidence. */
 bool sl_events_capture_selftest_tick(uint64_t now) {
@@ -182,6 +219,11 @@ void sl_events_init(void) {
     capture_pending = capture_allowed = capture_redirected = capture_restore = false;
     capture_failed = false;
     capture_error = 0;
+#if NSL_DIAGNOSTICS
+    capture_test_active = false;
+    capture_test_messages = 0;
+    capture_notifications = capture_notifications_reported = 0;
+#endif
     if (hosversionAtLeast(3, 0, 0)) {
         appletHook(&capture_hook, capture_message, NULL);
         capture_hooked = true;

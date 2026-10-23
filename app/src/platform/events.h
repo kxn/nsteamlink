@@ -13,6 +13,10 @@ bool sl_events_capture_guide(bool allowed);
 /* At most one pending short-press intent; no physical down/up/hold semantics. */
 bool sl_events_take_capture_guide(void);
 #if NSL_DIAGNOSTICS && defined(__SWITCH__)
+/* Offline virtual-controller probe owns notification routing temporarily. */
+bool sl_events_capture_probe_begin(void);
+unsigned sl_events_capture_probe_messages(void);
+bool sl_events_capture_probe_end(void);
 /* Explicit offline diagnostic only; driven by the existing application loop. */
 bool sl_events_capture_selftest_tick(uint64_t now_ms);
 #endif

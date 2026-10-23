@@ -667,7 +667,7 @@ int main(int argc, char **argv) {
     }
     assert(rmdir(blocked_temp) == 0);
     /* Save a real UI edit through the worker, then read its complete file back. */
-    assert(sl_special_settings_save(dir, false));
+    assert(sl_special_settings_save(dir, SL_GUIDE_KEY_OFF));
     sl_runtime *settings_runtime = sl_runtime_create(&auth);
     assert(settings_runtime);
     sl_stream_preferences prefs = {0};
@@ -688,7 +688,7 @@ int main(int argc, char **argv) {
     sl_command edit = {.type = SL_CMD_SAVE,
                        .language = SL_LANG_SYSTEM,
                        .update_check = true,
-                       .capture_guide = true,
+                       .guide_key = SL_GUIDE_KEY_CAPTURE,
                        .resolution = SL_RESOLUTION_1080};
     assert(sl_runtime_submit(settings_runtime, &edit, &edited));
     uint64_t submitted = sl_runtime_settings_revision(settings_runtime);
@@ -703,7 +703,7 @@ int main(int argc, char **argv) {
     assert(ready && !prefs.unreliable_fec && prefs.quality == 1 && prefs.bitrate_kbps == 20000);
     sl_runtime_destroy(settings_runtime);
     assert(sl_video_settings_load(dir) == SL_RESOLUTION_1080);
-    assert(sl_special_settings_load(dir)); /* The worker replaces the prior OFF preference. */
+    assert(sl_special_settings_load(dir) == SL_GUIDE_KEY_CAPTURE); /* The worker replaces the prior OFF preference. */
     sl_auth_store reloaded = auth;
     sl_stream_settings_preview(&reloaded, dir);
     assert(!reloaded.unreliable_fec && reloaded.quality == 1 && reloaded.bitrate_kbps == 20000);

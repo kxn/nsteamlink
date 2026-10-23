@@ -24,7 +24,7 @@ static sl_control_kind control_kind(sl_action action) {
     case SL_OPEN_NETWORK_SETTINGS:
     case SL_OPEN_HOST_SETTINGS:
     case SL_OPEN_APP_SETTINGS:
-    case SL_OPEN_SPECIAL_SETTINGS:
+    case SL_OPEN_GUIDE_KEY:
     case SL_OPEN_ADD:
     case SL_OPEN_REMOTE_PAIR:
     case SL_OPEN_MANUAL:
@@ -36,12 +36,12 @@ static sl_control_kind control_kind(sl_action action) {
     case SL_SOUND:
     case SL_FEC:
     case SL_UPDATE_CHECK:
-    case SL_CAPTURE_GUIDE:
         return SL_CONTROL_TOGGLE;
     case SL_SET_QUALITY:
     case SL_SET_RESOLUTION:
     case SL_SET_BANDWIDTH:
     case SL_SET_LANGUAGE:
+    case SL_SET_GUIDE_KEY:
         return SL_CONTROL_RADIO;
     default:
         return SL_CONTROL_ACTION;
@@ -266,7 +266,6 @@ void sl_ui_layout(sl_ui_model *m) {
             row(l, 1, sl_tr(SL_T_NETWORK_SETTINGS), SL_OPEN_NETWORK_SETTINGS, 0);
             row(l, 2, sl_tr(SL_T_HOST_SETTINGS), SL_OPEN_HOST_SETTINGS, 0);
             row(l, 3, sl_tr(SL_T_APP_SETTINGS), SL_OPEN_APP_SETTINGS, 0);
-            row(l, 4, sl_tr(SL_T_SPECIAL_SETTINGS), SL_OPEN_SPECIAL_SETTINGS, 0);
             break;
         case SL_AV_SETTINGS: {
             strcpy(l->title, sl_tr(SL_T_AV_SETTINGS));
@@ -311,10 +310,14 @@ void sl_ui_layout(sl_ui_model *m) {
                                                                 : SL_T_SYSTEM_LANGUAGE));
             row(l, 1, sl_tr(SL_T_UPDATE_CHECK), SL_UPDATE_CHECK, 0);
             row(l, 2, sl_tr(SL_T_SHORTCUT), SL_OPEN_SHORTCUT, 0);
+            value_row(l, 3, sl_tr(SL_T_GUIDE_KEY), SL_OPEN_GUIDE_KEY,
+                      sl_tr(m->guide_key == SL_GUIDE_KEY_CAPTURE ? SL_T_GUIDE_KEY_CAPTURE
+                                                               : SL_T_GUIDE_KEY_OFF));
             break;
-        case SL_SPECIAL_SETTINGS:
-            strcpy(l->title, sl_tr(SL_T_SPECIAL_SETTINGS));
-            row(l, 0, sl_tr(SL_T_CAPTURE_GUIDE), SL_CAPTURE_GUIDE, 0);
+        case SL_GUIDE_KEY:
+            strcpy(l->title, sl_tr(SL_T_GUIDE_KEY));
+            row(l, 0, sl_tr(SL_T_GUIDE_KEY_OFF), SL_SET_GUIDE_KEY, SL_GUIDE_KEY_OFF);
+            row(l, 1, sl_tr(SL_T_GUIDE_KEY_CAPTURE), SL_SET_GUIDE_KEY, SL_GUIDE_KEY_CAPTURE);
             break;
         case SL_LANGUAGE:
             strcpy(l->title, sl_tr(SL_T_LANGUAGE));
@@ -441,7 +444,7 @@ void sl_ui_layout(sl_ui_model *m) {
     if (l->dialog) {
         l->drawer = m->page == SL_MENU || m->page == SL_SETTINGS || m->page == SL_AV_SETTINGS ||
                     m->page == SL_NETWORK_SETTINGS || m->page == SL_HOST_SETTINGS ||
-                    m->page == SL_APP_SETTINGS || m->page == SL_SPECIAL_SETTINGS ||
+                    m->page == SL_APP_SETTINGS || m->page == SL_GUIDE_KEY ||
                     m->page == SL_QUALITY ||
                     m->page == SL_RESOLUTION || m->page == SL_BANDWIDTH || m->page == SL_LANGUAGE;
         l->compact = m->page == SL_END_GAME || m->page == SL_DISCONNECT || m->page == SL_FORGET ||

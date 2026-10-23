@@ -4,6 +4,7 @@
 #include "services/i18n.h"
 #include "services/network_test.h"
 #include "services/video_settings.h"
+#include "services/special_settings.h"
 
 typedef enum sl_page {
     SL_HOME,
@@ -26,7 +27,7 @@ typedef enum sl_page {
     SL_NETWORK_SETTINGS,
     SL_HOST_SETTINGS,
     SL_APP_SETTINGS,
-    SL_SPECIAL_SETTINGS,
+    SL_GUIDE_KEY,
     SL_MANUAL,
     SL_QUALITY,
     SL_RESOLUTION,
@@ -60,7 +61,7 @@ typedef enum sl_action {
     SL_OPEN_NETWORK_SETTINGS,
     SL_OPEN_HOST_SETTINGS,
     SL_OPEN_APP_SETTINGS,
-    SL_OPEN_SPECIAL_SETTINGS,
+    SL_OPEN_GUIDE_KEY,
     SL_OPEN_ADD,
     SL_OPEN_REMOTE_PAIR,
     SL_OPEN_SHORTCUT,
@@ -88,7 +89,7 @@ typedef enum sl_action {
     SL_FEC,
     SL_RETRY,
     SL_UPDATE_CHECK,
-    SL_CAPTURE_GUIDE,
+    SL_SET_GUIDE_KEY,
     SL_CONFIRM_UPDATE,
     SL_FINISH_UPDATE,
     SL_RUN_NETWORK_TEST,
@@ -120,7 +121,8 @@ typedef struct sl_command {
     sl_resolution resolution;
     bool test_only, accept_recommendation, security_pin_retry;
     sl_language language;
-    bool update_check, capture_guide;
+    bool update_check;
+    sl_guide_key guide_key;
     char text[64];
 } sl_command;
 typedef enum sl_control_kind {
@@ -208,7 +210,8 @@ typedef struct sl_ui_model {
     sl_command intent, command;
     char input[64], pairing_code[5], error[192];
     /* Startup update check (D-060): offered once on HOME per launch. */
-    bool update_check, capture_guide, update_offered, update_succeeded;
+    bool update_check, update_offered, update_succeeded;
+    sl_guide_key guide_key;
     char update_version[16];
     sl_layout layout;
 } sl_ui_model;

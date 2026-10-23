@@ -80,7 +80,8 @@ struct sl_runtime {
     bool started, quit, request_pending, save_pending, snapshot_pending;
     bool service_unavailable; /* Owner-only callback context, not an auth wire result. */
     sl_language save_language;
-    bool save_update_check, save_capture_guide;
+    bool save_update_check;
+    sl_guide_key save_guide_key;
     sl_resolution resolution, save_resolution;
     sl_stream_request_limits stream_limits; /* Frozen from ticket through negotiation. */
     sl_command pending, active;
@@ -2483,7 +2484,8 @@ static void *worker_main(void *ctx) {
         bool save_pending, snapshot_pending;
         uint64_t snapshot_credentials = 0;
         sl_language save_language;
-        bool save_update_check, save_capture_guide;
+        bool save_update_check;
+        sl_guide_key save_guide_key;
         sl_resolution save_resolution;
         pthread_mutex_lock(&r->lock);
         if (r->request_pending) {
@@ -2493,7 +2495,7 @@ static void *worker_main(void *ctx) {
         save_pending = r->save_pending;
         save_language = r->save_language;
         save_update_check = r->save_update_check;
-        save_capture_guide = r->save_capture_guide;
+        save_guide_key = r->save_guide_key;
         save_resolution = r->save_resolution;
         snapshot_pending = r->snapshot_pending;
         if (snapshot_pending) {
@@ -2563,7 +2565,7 @@ static void *worker_main(void *ctx) {
             bool language_saved = sl_i18n_save(sl_system_data_dir(), save_language);
             bool update_saved = sl_update_config_save(sl_system_data_dir(), save_update_check);
             bool video_saved = sl_video_settings_save(sl_system_data_dir(), save_resolution);
-            bool special_saved = sl_special_settings_save(sl_system_data_dir(), save_capture_guide);
+            bool special_saved = sl_special_settings_save(sl_system_data_dir(), save_guide_key);
             if (!profile_saved || !language_saved || !update_saved || !video_saved || !special_saved)
                 fail(r, sl_tr(SL_T_SAVE_SETTINGS_FAILED));
         }
@@ -2875,7 +2877,7 @@ sl_runtime *sl_runtime_create(const sl_auth_store *store) {
     return r;
 }
 bool sl_runtime_submit(sl_runtime *r, const sl_command *cmd, const sl_auth_store *store) {
-    if (!sl_resolution_valid(cmd->resolution))
+    if (!sl_resolution_valid(cmd->resolution) || !sl_guide_key_valid(cmd->guide_key))
         return false;
     pthread_mutex_lock(&r->lock);
     if (cmd->type == SL_CMD_STOP || cmd->type == SL_CMD_CANCEL || cmd->type == SL_CMD_EXIT)
@@ -2887,7 +2889,7 @@ bool sl_runtime_submit(sl_runtime *r, const sl_command *cmd, const sl_auth_store
         r->save_pending = true;
         r->save_language = cmd->language;
         r->save_update_check = cmd->update_check;
-        r->save_capture_guide = cmd->capture_guide;
+        r->save_guide_key = cmd->guide_key;
         r->save_resolution = cmd->resolution;
     } else {
         if (r->request_pending && cmd->type != SL_CMD_EXIT && cmd->type != SL_CMD_CANCEL &&

@@ -105,7 +105,13 @@ static atomic_bool input_gate;
 static sl_guide_pulse capture_pulse; /* state_lock; belongs to the current HID session */
 static bool capture_configured;     /* main input owner only */
 static atomic_bool capture_blocked = true;
+#if NSL_DIAGNOSTICS
+static uint64_t capture_down_submitted, capture_up_submitted;
+static unsigned capture_last_gate = UINT32_MAX, capture_last_pulse;
+static uint64_t capture_gate_logged;
+#endif
 static void neutral_locked(void);
+static void media_logf(const char *fmt, ...);
 
 /* Explicit full refresh admits a separate report even when the preceding
  * failed flush already advanced the diagnostic/local baseline. state_lock
@@ -122,7 +128,16 @@ static bool capture_submit_locked(void *context, bool pressed) {
     event.cbutton.button = SDL_CONTROLLER_BUTTON_GUIDE;
     event.cbutton.state = pressed ? SDL_PRESSED : SDL_RELEASED;
     IHS_HIDHandleSDLEvent(hid_session, &event); /* Always clear canonical Guide on release. */
-    return ready && IHS_HIDRefreshSDLGameControllers(hid_session);
+    bool submitted = ready && IHS_HIDRefreshSDLGameControllers(hid_session);
+#if NSL_DIAGNOSTICS
+    if (submitted) {
+        if (pressed)
+            ++capture_down_submitted;
+        else
+            ++capture_up_submitted;
+    }
+#endif
+    return submitted;
 }
 static bool capture_ready_locked(void) {
     return !atomic_load(&capture_blocked) && atomic_load(&input_gate) &&
@@ -147,6 +162,24 @@ void sl_media_capture_guide(bool enabled) {
     allowed = allowed && capture_ready_locked() && sl_events_foreground();
     sl_guide_pulse_tick(&capture_pulse, allowed, request, SDL_GetTicks64(),
                          capture_submit_locked, NULL);
+#if NSL_DIAGNOSTICS
+    unsigned gate = (enabled ? 1u : 0u) | (allowed ? 2u : 0u) |
+                    (atomic_load(&input_gate) ? 4u : 0u) |
+                    (hid_session_enabled ? 8u : 0u) | (hid_session ? 16u : 0u);
+    unsigned pulse = (capture_pulse.held ? 1u : 0u) | (capture_pulse.admitted ? 2u : 0u) |
+                     (capture_pulse.releasing ? 4u : 0u);
+    uint64_t now = SDL_GetTicks64();
+    if (request || pulse != capture_last_pulse ||
+        (gate != capture_last_gate && now - capture_gate_logged >= 1000)) {
+        media_logf("capture route: gate_bits=%u pulse_bits=%u request=%u down_queued=%llu up_queued=%llu target=%d",
+                   gate, pulse, request ? 1 : 0,
+                   (unsigned long long)capture_down_submitted,
+                   (unsigned long long)capture_up_submitted, (int)hid_controller_id);
+        capture_last_gate = gate;
+        capture_last_pulse = pulse;
+        capture_gate_logged = now;
+    }
+#endif
     pthread_mutex_unlock(&state_lock);
 }
 #if NSL_DIAGNOSTICS
@@ -223,7 +256,6 @@ static struct {
     bool active;
     int64_t id;
 } remote_touches[8];
-static void media_logf(const char *fmt, ...);
 static void audio_stop_locked(void);
 static void audio_decoder_stop_locked(void);
 static void update_audio_snapshot(void);
@@ -890,6 +922,11 @@ bool stream_media_init(stream_media_log_fn log_fn) {
     atomic_store(&capture_blocked, true);
     capture_configured = false;
     sl_guide_pulse_reset(&capture_pulse);
+#if NSL_DIAGNOSTICS
+    capture_down_submitted = capture_up_submitted = capture_gate_logged = 0;
+    capture_last_gate = UINT32_MAX;
+    capture_last_pulse = 0;
+#endif
     log_cb = NSL_DIAGNOSTICS ? log_fn : NULL;
     memset(&snapshot, 0, sizeof(snapshot));
     sdl_exit_requested = false;
