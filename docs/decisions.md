@@ -2734,6 +2734,9 @@ DNS socket由既有remote owner拥有；完成、失败、取消、挂起或dest
 
 ## D-A075 Switch 所有实际解析入口使用当前网络 DNS
 
+**解析器选择修订**：D-A095按用户要求将Switch统一解析入口的目标改为8.8.8.8；
+下文当前网络DNS选择是历史决策，其余统一入口、取消、期限与清理约束继续适用。
+
 依据：D-A074的限定范围；`sns_backend.cpp:begin_config` 的独立GetSDRConfig请求；固定
 Switch libcurl.a的未定义符号仅使用getaddrinfo/freeaddrinfo；GNS ResolveHostname在
 字面IP预解析后调用getaddrinfo。SDR POP记录本身使用数字IP，不另外猜测中继域名。
@@ -3170,7 +3173,7 @@ request_id、目标、已加密security PIN、自动授权上下文和已有Test
 
 ## D-A094：真实连接工厂保留共享控制回调及可选语义
 
-Evidence：公网参考§9.5“真实WebSocket工厂与共享控制owner的回调边界”。真实
+Evidence：公网参考§9.4“真实WebSocket工厂与共享控制owner的回调边界”。真实
 remote_connection工厂重建的adapter表遗漏五个新回调；直接sl_remote/替换工厂测试
 未覆盖此层。同身份、同CM连接的共享请求等待与legacy成功，将问题缩小到生产接线；
 原control_rx=0只能说明该回调没被调用，撤回将其推广为云端无控制回包的解释。
@@ -3180,3 +3183,15 @@ abort_pairing的工厂adapter，转发原应用context/参数/返回值。所有
 应用实际提供时安装；prepare_pairing的NULL策略分支必须保持。保留旧独立probe/bridge
 的legacy路径，不为修复回调接线改变线上报文、选路或超时。真实工厂的受控回放与
 实际CM控制验收分别记录，不将任何一项当作完整热点媒体/loader验证。
+
+## D-A095：按用户要求统一使用8.8.8.8解析Switch域名
+
+Evidence：用户要求“先改成用8.8.8.8做dns”。D-A075的统一getaddrinfo入口已覆盖
+目录、CM、独立信令桥、SDR配置、SDK主机名、封面及更新器。此前热点日志的普通A
+记录与TLS超时、开发机不同时段的成败及MSS对照，尚不证明DNS或MTU是根因。
+
+Decision：Switch每次查询仍读取当前nifm接口及错误状态，但统一把DNS配置选为
+单一8.8.8.8:53，不追加DHCP DNS或回退系统域名缓存。复用原有UDP/TCP截断恢复、
+3秒上限、取消和socket清理；数字地址保持原转换路径。日志记录实际查询DNS、解析
+结果及后续HTTPS连接地址。该选择是用户指定的解析器对照，不是逆向出的Valve策略，
+不改变HTTP authority/SNI/证书校验、认证、MSS或媒体选路。

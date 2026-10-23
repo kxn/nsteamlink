@@ -165,7 +165,9 @@ ACK/NACK/重试/失败、待确认数量与最老项年龄。退出前及 IHS jo
 `cloud_try` 从 curl 的连接前事件记录每个尝试的数字 IP/端口，即使 TCP 超时、
 `cloud_addr` 尚无值也能留证。每个请求最多 16 条；该地址不是 DNS 响应全集，也不代表连接成功。
 只接受 `Trying` 文本中经数字地址校验的 IP/端口；其他文本、头部及数据全部忽略。
-当前Switch统一解析策略用`dns_query event=begin`记录主机名和当前本机/DNS数字地址，
+Switch统一解析策略用`dns_query event=begin`记录主机名和当前本机/实际查询DNS数字地址。
+D-A095按用户要求将所有域名查询统一指定为`8.8.8.8:53`，仍读取当前接口地址，
+不回退DHCP或系统域名缓存；此选择用于对照解析结果，不代表已证明DNS或MTU根因。
 `event=ready|failed|cancelled`记录有界查询结果与耗时。ready只代表取得DNS地址，不代表
 HTTPS成功。旧4e810d5的cloud_dns仅覆盖目录，不能据此判断SDR配置或SDK解析已恢复；
 该单点补丁已被D-A075统一策略替代。`sns_config`另外记录GetSDRConfig HTTP/curl结果、

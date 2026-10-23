@@ -17,16 +17,16 @@ bool sl_dns_current_config(sl_dns_config *out) {
     out->platform_error = result;
     if (R_FAILED(result))
         return false;
-    const uint32_t servers[] = {primary, secondary};
-    for (unsigned i = 0; i < 2; ++i) {
-        if (!servers[i] || (i && servers[i] == servers[0]))
-            continue;
-        struct sockaddr_in *address = &out->servers[out->count++];
-        address->sin_family = AF_INET;
-        address->sin_port = htons(53);
-        address->sin_addr.s_addr = servers[i];
-    }
-    return out->count != 0;
+    /* User-requested resolver experiment (D-A095). Keep reading the current
+     * interface above, but use one resolver for every wrapped hostname lookup.
+     * A failed query must not silently fall back to DHCP/system DNS. */
+    struct sockaddr_in *address = &out->servers[0];
+    address->sin_family = AF_INET;
+    address->sin_port = htons(53);
+    if (inet_pton(AF_INET, "8.8.8.8", &address->sin_addr) != 1)
+        return false;
+    out->count = 1;
+    return true;
 #else
     /* Other platforms keep their normal resolver. Tests supply explicit local
      * fixtures through the config seam, not an environment override. */

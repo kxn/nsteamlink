@@ -4,8 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Small, bounded A-query recovery for the cloud directory. No worker or cache.
- * Config comes from the current interface, never a hard-coded public resolver. */
+/* Bounded A-query resolver shared by Switch hostname lookups. No worker/cache.
+ * dns_config.c selects the resolver and reads the current interface. */
 typedef struct {
     uint32_t local, platform_error;
     struct sockaddr_in servers[2];
