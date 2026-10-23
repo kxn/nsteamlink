@@ -6,6 +6,9 @@
 #include "platform/application.h"
 #include "artwork.h"
 #include "app_lifecycle.h"
+#ifdef NSL_RECOVERY_MANAGER
+#include "crypto.h"
+#endif
 
 static atomic_uint peer_ready, peer_stop, peer_done, peer_media;
 static atomic_bool gate;
@@ -49,10 +52,16 @@ bool __wrap_sl_runtime_submit(sl_runtime *r, const sl_command *c, const sl_auth_
         assert(c->generation > atomic_load(&requested) && !c->test_only && !atomic_load(&launched));
         if (ui_round == 1) first_generation = c->generation;
         if (ui_round == 2) results[0].video_clean = sl_media_video_clean();
+#ifndef NSL_RECOVERY_MANAGER
         admitted_command = *c;
+#endif
         assert(stream_generation == c->generation);
         atomic_store(&requested, (unsigned)c->generation);
+#ifdef NSL_RECOVERY_MANAGER
+        return __real_sl_runtime_submit(r, c, s);
+#else
         return true; /* Given accepted launch, beyond control ticket production. */
+#endif
     }
     bool ok = __real_sl_runtime_submit(r, c, s);
     if (c->type == SL_CMD_STOP && held_frame && ui_round == 2) {
@@ -114,11 +123,17 @@ void __wrap_sl_ui_tick(sl_ui_model *ui, uint64_t now) {
     sl_runtime *r = atomic_load(&actor);
     if (!r) return;
     root_retained &= first_root == sl_media_gfx();
-    if (!ui_stage && atomic_load(&peer_ready) == ui_round+1 && ui->page == SL_HOME) {
+    if (!ui_stage && atomic_load(&peer_ready) == ui_round+1 && ui->page == SL_HOME
+#ifdef NSL_RECOVERY_MANAGER
+        && ui->store.registry.count && sl_host_online(&ui->store.registry.hosts[0], ui->now)
+#endif
+        ) {
         ++ui_round;
+#ifndef NSL_RECOVERY_MANAGER
         sl_runtime_event found = {.type = SL_EVENT_HOST, .host = ui->store.registry.hosts[0],
                                  .discovery_source = SL_DISCOVERY_LAN};
         sl_ui_runtime_event(ui, &found); /* Given visible-host fixture input. */
+#endif
         callbacks_before = atomic_load(&disconnects); destroys_before = atomic_load(&destroyed);
         sl_ui_action(ui, SL_START, 0);
         assert(ui->page == SL_CONNECTING);
@@ -197,6 +212,68 @@ void __wrap_sl_ui_tick(sl_ui_model *ui, uint64_t now) {
     }
 }
 
+#ifdef NSL_RECOVERY_MANAGER
+static unsigned control_discoveries, control_requests, control_cancels, control_tokens;
+static uint32_t launch_ids[3];
+static void control_reply(const struct sockaddr_in *to, ERemoteClientBroadcastMsg tag,
+                           const ProtobufCMessage *body) {
+    uint8_t wire[2048] = {255, 255, 255, 255, 33, 76, 95, 160};
+    CMsgRemoteClientBroadcastHeader h = CMSG_REMOTE_CLIENT_BROADCAST_HEADER__INIT;
+    h.has_client_id = h.has_instance_id = h.has_msg_type = true;
+    h.client_id = 7; h.instance_id = 1; h.msg_type = tag;
+    size_t hs = protobuf_c_message_get_packed_size(&h.base), ms = protobuf_c_message_get_packed_size(body);
+    assert(hs+ms+16 <= sizeof(wire));
+    IHS_WriteUInt32LE(wire+8, (uint32_t)hs); protobuf_c_message_pack(&h.base, wire+12);
+    IHS_WriteUInt32LE(wire+12+hs, (uint32_t)ms); protobuf_c_message_pack(body, wire+16+hs);
+    size_t size = hs+ms+16;
+    assert(sendto(fixture_control_fd, wire, size, 0, (const void *)to, sizeof(*to)) == (ssize_t)size);
+}
+static void control_receive(void) {
+    uint8_t raw[4096]; struct sockaddr_in from; socklen_t len = sizeof(from);
+    ssize_t size = recvfrom(fixture_control_fd, raw, sizeof(raw), 0, (void *)&from, &len);
+    assert(size >= 16 && !memcmp(raw, "\xff\xff\xff\xff\x21\x4c\x5f\xa0", 8));
+    uint32_t hs, ms;
+    IHS_ReadUInt32LE(raw+8, &hs); assert(hs <= (size_t)size-16);
+    IHS_ReadUInt32LE(raw+12+hs, &ms); assert(ms == (size_t)size-hs-16);
+    CMsgRemoteClientBroadcastHeader *h = cmsg_remote_client_broadcast_header__unpack(NULL, hs, raw+12);
+    assert(h && h->client_id == 1);
+    if (h->msg_type == k_ERemoteClientBroadcastMsgDiscovery) {
+        CMsgRemoteClientBroadcastStatus status = CMSG_REMOTE_CLIENT_BROADCAST_STATUS__INIT;
+        status.hostname = "Loopback host"; status.has_euniverse = true; status.euniverse = IHS_SteamUniversePublic;
+        status.has_games_running = status.has_timestamp = true;
+        status.timestamp = (uint32_t)time(NULL);
+        CMsgRemoteClientBroadcastStatus__User user = CMSG_REMOTE_CLIENT_BROADCAST_STATUS__USER__INIT;
+        user.has_steamid = true; user.steamid = UINT64_C(76561198000000001);
+        CMsgRemoteClientBroadcastStatus__User *users[] = {&user};
+        status.n_users = 1; status.users = users;
+        control_reply(&from, k_ERemoteClientBroadcastMsgStatus, &status.base);
+        ++control_discoveries;
+    } else if (h->msg_type == k_ERemoteDeviceStreamingRequest) {
+        CMsgRemoteDeviceStreamingRequest *m = cmsg_remote_device_streaming_request__unpack(NULL, ms, raw+16+hs);
+        assert(m && m->request_id && m->client_id == 7 && m->n_supported_transport &&
+               m->supported_transport[0] == k_EStreamTransportUDP && !m->network_test);
+        unsigned slot = atomic_load(&peer_ready)-1;
+        assert(slot < 3 && (!launch_ids[slot] || launch_ids[slot] == m->request_id));
+        launch_ids[slot] = m->request_id; ++control_requests;
+        uint8_t key[32], secret[32] = {0}, encrypted_key[80]; size_t encrypted_size = sizeof(encrypted_key);
+        uint8_t token[64]; size_t token_size = sizeof(token); uint64_t token_id;
+        assert(m->has_device_token && m->device_token.len == 32 &&
+               !IHS_CryptoSymmetricDecrypt(m->device_token.data, m->device_token.len, secret,
+                    sizeof(secret), token, &token_size) && token_size == 8);
+        IHS_ReadUInt64LE(token, &token_id); assert(token_id == 1); ++control_tokens;
+        for (unsigned i = 0; i < 32; ++i) key[i] = (uint8_t)i;
+        assert(!IHS_CryptoSymmetricEncrypt(key, sizeof(key), secret, sizeof(secret), encrypted_key, &encrypted_size));
+        CMsgRemoteDeviceStreamingResponse response = CMSG_REMOTE_DEVICE_STREAMING_RESPONSE__INIT;
+        response.request_id = m->request_id; response.result = k_ERemoteDeviceStreamingSuccess;
+        response.has_port = response.has_transport = response.has_encrypted_session_key = true;
+        response.port = endpoint.port; response.transport = k_EStreamTransportUDP;
+        response.encrypted_session_key = (ProtobufCBinaryData){encrypted_size, encrypted_key};
+        control_reply(&from, k_ERemoteDeviceStreamingResponse, &response.base);
+        cmsg_remote_device_streaming_request__free_unpacked(m, NULL);
+    } else if (h->msg_type == k_ERemoteDeviceStreamingCancelRequest) ++control_cancels;
+    cmsg_remote_client_broadcast_header__free_unpacked(h, NULL);
+}
+#endif
 static void *peer_thread(void *unused) {
     (void)unused;
     for (unsigned round = 1; round <= 3; ++round) {
@@ -232,9 +309,17 @@ static void *peer_thread(void *unused) {
                 if (round != 2) wire(fd, &client, 9, local, 0, 0, 0, NULL, 0);
                 silence = true;
             }
-            struct pollfd p = {.fd = fd, .events = POLLIN};
-            int ready = poll(&p, 1, 1); assert(ready >= 0);
+            struct pollfd p[2] = {{.fd = fd, .events = POLLIN}};
+            unsigned count = 1;
+#ifdef NSL_RECOVERY_MANAGER
+            p[1] = (struct pollfd){.fd = fixture_control_fd, .events = POLLIN}; count = 2;
+#endif
+            int ready = poll(p, count, 1); assert(ready >= 0);
             if (!ready) continue;
+#ifdef NSL_RECOVERY_MANAGER
+            if (p[1].revents & POLLIN) control_receive();
+#endif
+            if (!(p[0].revents & POLLIN)) continue;
             uint8_t raw[4096]; len = sizeof(client);
             ssize_t size = recvfrom(fd, raw, sizeof(raw), 0, (void *)&client, &len);
             assert(size >= 13);
@@ -291,12 +376,29 @@ int main(int argc, char **argv) {
     strcpy(store.device_name, "application recovery fixture"); sl_host_registry_init(&store.registry);
     sl_host host = {.client_id = 7, .instance_id = 1}; strcpy(host.name, "Loopback host"); strcpy(host.address, "127.0.0.1");
     sl_host *saved = sl_host_observe(&store.registry, &host, 0); assert(saved); saved->paired = true;
+#ifdef NSL_RECOVERY_MANAGER
+    saved->account = UINT64_C(76561198000000001);
+#endif
     assert(sl_auth_save(&store, directory));
+#ifdef NSL_RECOVERY_MANAGER
+    /* Model a previously completed network test; this case exercises ordinary
+     * request/handoff, not the separate automatic first-connect test owner. */
+    sl_network_stats_average average = {0};
+    assert(sl_network_stats_save(directory, &average, NULL, 0));
+    fixture_control_fd = __real_socket(AF_INET, SOCK_DGRAM, 0); assert(fixture_control_fd >= 0);
+    fixture_control_address = (struct sockaddr_in){.sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
+    assert(!bind(fixture_control_fd, (void *)&fixture_control_address, sizeof(fixture_control_address)));
+    socklen_t length = sizeof(fixture_control_address);
+    assert(!getsockname(fixture_control_fd, (void *)&fixture_control_address, &length));
+#endif
     app_deadline = now_ms()+75000;
     pthread_t peer; assert(!pthread_create(&peer, NULL, peer_thread, NULL));
     char *args[] = {"nsteamlink", NULL};
     int result = sl_application_run(1, args);
     assert(!pthread_join(peer, NULL));
+#ifdef NSL_RECOVERY_MANAGER
+    close(fixture_control_fd);
+#endif
     atomic_store(&actor, NULL);
     free(video); sl_fixture_remove_tree(directory);
     printf("{\"application_exit\":%d,\"rounds\":[", result);
@@ -315,11 +417,18 @@ int main(int argc, char **argv) {
     printf("],\"root_retained\":%s,\"joins_clean\":%s,\"final_clean\":%s,\"audio_opens\":%u,\"audio_closes\":%u,"
            "\"overlay_closed_gate\":%s,\"overlay_restored_gate\":%s,\"peer_joined\":true,"
            "\"deferred_replacement\":%s,\"wrong_cleanup_owner\":%s,\"first_generation\":%llu,"
-           "\"cleanup_generation\":%llu,\"replacement_generation\":%llu}\n",
+           "\"cleanup_generation\":%llu,\"replacement_generation\":%llu",
            root_retained?"true":"false",joins_clean?"true":"false",app_closed?"true":"false",
            atomic_load(&audio_opens),atomic_load(&audio_closes),overlay_closed_gate?"true":"false",
            overlay_restored_gate?"true":"false",deferred_replacement?"true":"false",
            wrong_cleanup_owner?"true":"false",(unsigned long long)first_generation,
            (unsigned long long)cleanup_generation,(unsigned long long)replacement_generation);
+#ifdef NSL_RECOVERY_MANAGER
+    printf(",\"control_discoveries\":%u,\"control_requests\":%u,\"control_cancels\":%u,\"control_tokens\":%u,"
+           "\"manager_handoffs\":%u,\"manager_ticket_phases\":%u,\"launch_ids\":[%u,%u,%u]",
+           control_discoveries, control_requests, control_cancels, control_tokens, atomic_load(&manager_handoffs),
+           atomic_load(&manager_ticket_phases),launch_ids[0],launch_ids[1],launch_ids[2]);
+#endif
+    printf("}\n");
     return 0;
 }

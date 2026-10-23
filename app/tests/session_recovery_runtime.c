@@ -24,18 +24,33 @@ static atomic_uint channels_ready;
 static atomic_bool last_timed_out, last_host_stop;
 static atomic_uint audio_opens, audio_closes;
 static atomic_uint stream_audio_device;
+#ifndef NSL_RECOVERY_MANAGER
 static unsigned admitted;
+#endif
 static IHS_SocketAddress endpoint;
 static bool joins_clean = true;
 static _Thread_local bool opening_ihs;
-#ifdef NSL_RECOVERY_APPLICATION
+#ifdef NSL_RECOVERY_MANAGER
+static struct sockaddr_in fixture_control_address;
+static int fixture_control_fd;
+static atomic_uint manager_handoffs, manager_ticket_phases;
+#endif
+#if defined(NSL_RECOVERY_APPLICATION) && !defined(NSL_RECOVERY_MANAGER)
 /* Published by the main-thread application submit adapter, before requested. */
 static sl_command admitted_command;
 #endif
 void __wrap_sl_log(const char *line) { fprintf(stderr, "%s\n", line); }
 bool __wrap_IHS_ClientStreamingHandoff(IHS_Client *c) {
+#ifdef NSL_RECOVERY_MANAGER
+    bool __real_IHS_ClientStreamingHandoff(IHS_Client *);
+    if (IHS_ClientHandshakePhase(c) == 6) atomic_fetch_add(&manager_ticket_phases, 1);
+    bool ok = __real_IHS_ClientStreamingHandoff(c);
+    if (ok) atomic_fetch_add(&manager_handoffs, 1);
+    return ok;
+#else
     assert(c && admitted == atomic_load(&requested));
     return true; /* Ticket/authorization handoff is outside this fixture. */
+#endif
 }
 
 sl_remote_connection *__wrap_sl_remote_connection_create(const IHS_ClientConfig *c,
@@ -45,6 +60,9 @@ sl_remote_connection *__wrap_sl_remote_connection_create(const IHS_ClientConfig 
 }
 void __wrap_sl_remote_connection_update(sl_remote_connection *c, uint64_t now) {
     (void)c; (void)now;
+#ifdef NSL_RECOVERY_MANAGER
+    return; /* Real local manager produces the launch; no CM network. */
+#else
     sl_runtime *r = atomic_load(&actor);
     unsigned next = atomic_load(&requested);
     if (!r || next == admitted) return;
@@ -65,6 +83,7 @@ void __wrap_sl_remote_connection_update(sl_remote_connection *c, uint64_t now) {
     uint8_t key[32];
     for (unsigned i = 0; i < 32; ++i) key[i] = (uint8_t)i;
     accept_session(r, &endpoint, key, sizeof(key), 0);
+#endif
 }
 #if NSL_HAVE_SNS
 void __wrap_sl_sns_config_cache_update(sl_sns_config_cache *c) { (void)c; }
@@ -85,6 +104,12 @@ ssize_t __real_sendto(int, const void *, size_t, int, const struct sockaddr *, s
 ssize_t __wrap_sendto(int fd, const void *data, size_t size, int flags,
                       const struct sockaddr *to, socklen_t length) {
     const struct sockaddr_in *v4 = (const void *)to;
+#ifdef NSL_RECOVERY_MANAGER
+    /* Only the initial saved-address discovery port is remapped to the local
+     * peer's ephemeral listener. Status then publishes its real source port. */
+    if (to && to->sa_family == AF_INET && ntohl(v4->sin_addr.s_addr) == INADDR_LOOPBACK && ntohs(v4->sin_port) == 27036)
+        return __real_sendto(fd, data, size, flags, (const void *)&fixture_control_address, sizeof(fixture_control_address));
+#endif
     if (to && to->sa_family == AF_INET && ntohl(v4->sin_addr.s_addr) == INADDR_LOOPBACK)
         return __real_sendto(fd, data, size, flags, to, length);
     return (ssize_t)size; /* Discard discovery broadcasts; nothing leaves loopback. */

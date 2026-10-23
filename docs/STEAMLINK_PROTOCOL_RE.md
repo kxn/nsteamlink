@@ -15006,3 +15006,72 @@ ctest --test-dir build/desktop \
 云配置为离线provider，debug listener不打开；不证明真实公网、SDR/NAT路径、物理
 输出/输入ACK、Switch GPU/libnx或hbmenu。首次发现、授权、开流材料的真实producer
 及官方断线恢复触发，仍必须由对应独立证据支持，不能由本例替代。
+
+## 194. 实际控制manager产生材料后的连续应用会话
+
+本节去掉§192–193给定可见主机、成功材料和handoff的三个边界，执行本地UDP
+控制manager与实际application循环的组合。对端仍为受控的预配对本机peer，
+不把它称作Valve服务或真实Steam主机验收。
+
+### 真实入口与本机对端
+
+`app/tests/manager_recovery_runtime.c`选用共享驱动的manager模式：
+
+- 不直接调用accept_session，不写active/facts/session_ready，不直接向UI注入HOST。
+- UI START产生真实命令，submit观察器继续调用原sl_runtime_submit；真实execute和
+  request_stream负责配置、暂停发现、选账号/密钥、打开视频admission和请求串流。
+- `IHS_ClientStreamingHandoff`的wrapper只观察原phase和结果，实际调用原函数；
+  不再直接返回成功。成功前观察phase6，真正停止旧streaming task后才创建媒体会话。
+
+fixture资料是新建私有目录内的公开合成身份/长效secret和一台预配对127.0.0.1主机，
+不是用户凭据。预先用生产save写入可读的network stats，代表以前已完成测速；这样
+选择普通开流，不覆盖另一个自动首次NetworkTest owner。初次配对并不在本例范围内。
+
+本机控制peer绑定127.0.0.1临时端口。只有最初发往保存地址127.0.0.1:27036的
+定向发现包，在sendto边界改送这个临时端口；后续Status携带的实际UDP源端口经
+原parser/directory成为控制路由。没有recvfrom替换、parser回调注入或远程网络包。
+非loopback发现广播丢弃；真实CM/HTTPS/artwork/云配置仍为离线provider。
+
+对端用标准protobuf-c封装控制header/body与magic：发现Status声明公开合成账号，
+真实polled client处理后发布目录与UI在线事实。收到StreamingRequest后检查非零ID、
+目标clientId、UDP支持及普通network_test=false；用合成配对secret解密device_token，
+要求32字节token中的明文为8字节client ID1。随后按**实际收到的request_id**回复
+Success、媒体端口及对称加密的32字节session key。原客户端执行匹配、解密、
+connection回调和handoff，媒体peer再经真实UDP进行session握手/协商及发送编码数据。
+
+device token是长效secret保护的设备身份，不是配对授权码，也不是connect/security
+PIN；本例没有合并或改动三者的语义。它检查本地实际产生的token可由给定配对secret
+读取，不替代其他章节对官方密码算法/报文字段的独立原码执行证据。
+
+### 连续会话证据
+
+三笔依次为type9正常停止、真实收包租约静默超时、错误页B返回后的再次开流。
+三笔都从UI命令经过实际manager的新请求，实际phase6 ticket和成功handoff各3次，
+生成互异的非零原生request ID。对端验证每一个收到请求的device token；允许同一
+事务按原策略重发，不把请求发送次数严格等于3作为协议不变量。
+
+两种诊断开关的Release桌面运行实际都观察到3次请求、3次token校验、3次handoff、
+0次StreamingCancel。Status回复次数随实际扫描调度变化，不设固定次数或扫描时延。
+三笔媒体都有属于本笔session ID的画面和音频，保留§193真实像素引用推迟清理的
+replacement交错及菜单动画/gate检查。断线事件、video clean、provider解绑、
+音频设备3/3关闭、application退出0、对端join及gfx根关闭也继续成立。
+
+本例没有发现新的生产差异，只增加真实manager与已有应用恢复检查之间的组合证据。
+共享驱动的accepted-material模式及其可运行旧generation反例保持通过，不改写它们
+原先明确的输入边界。复现为：
+
+```sh
+cmake --build build/desktop --target nsl-manager-recovery-runtime
+ctest --test-dir build/desktop -R '^manager_recovery_runtime$' -V
+```
+
+外部检查器在Python -O下检查实际发现次数非零、每个token校验、三个ticket/handoff、
+原生ID、无误取消，以及三笔应用/媒体完整观察。仅检查可达或仅构造出Session不算通过。
+
+### 验证范围
+
+这是真实客户端控制/媒体worker与实际应用循环对受控本机peer的执行；host Success
+策略、预配对身份及已有network stats是fixture输入。未执行主机的配对授权、Proof
+轮转或Steam账户/服务策略，也未执行外部DNS/TLS、云发现/RPC服务、SDK/SDR或NAT。
+dummy SDL/软件renderer/虚拟手柄不证明Switch物理输入输出、GPU/libnx、Wi-Fi或
+hbmenu。不能据此声称“公网完整恢复已验收”或补出官方自动重连producer。

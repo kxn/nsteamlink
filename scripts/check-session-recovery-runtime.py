@@ -18,7 +18,15 @@ def observe(receiver, video):
     return json.loads(result.stdout)
 
 
-def verify(observed, application=False):
+def verify(observed, application=False, manager=False):
+    if manager:
+        require(observed["control_discoveries"] > 0, "actual manager discovery must run")
+        require(observed["control_requests"] >= 3 and observed["control_tokens"] == observed["control_requests"] and
+                observed["manager_handoffs"] == observed["manager_ticket_phases"] == 3,
+                "three actual manager requests, tickets and handoffs")
+        require(observed["control_cancels"] == 0, "normal handoff must not send StreamingCancel")
+        ids = observed["launch_ids"]
+        require(len(ids) == 3 and all(ids) and len(set(ids)) == 3, "three fresh native launch IDs")
     if application:
         require(observed["application_exit"] == 0, "actual application run failed")
         require(observed["wrong_cleanup_owner"] is False, "replacement cleanup dismissed new connection")
@@ -52,10 +60,11 @@ def main():
     parser.add_argument("--receiver", required=True, type=Path)
     parser.add_argument("--video", required=True, type=Path)
     parser.add_argument("--application", action="store_true")
+    parser.add_argument("--manager", action="store_true")
     args = parser.parse_args()
     observed = observe(args.receiver, args.video)
     print(json.dumps(observed, sort_keys=True))
-    verify(observed, args.application)
+    verify(observed, args.application, args.manager)
     print("Local runtime recovery: real UDP stop/silence/stop, three decoded streams and joined teardown")
 
 

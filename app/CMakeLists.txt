@@ -1355,25 +1355,33 @@ if(NSL_PLATFORM STREQUAL "desktop")
         --video "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video/sequential.h264")
     set_tests_properties(session_recovery_runtime PROPERTIES TIMEOUT 90)
     add_executable(nsl-application-recovery-runtime tests/application_recovery_runtime.c)
-    target_include_directories(nsl-application-recovery-runtime PRIVATE platforms/common
-        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
-        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf ${CMAKE_SOURCE_DIR}/third_party/ihslib/tests/common)
-    target_compile_definitions(nsl-application-recovery-runtime PRIVATE NSL_DIAGNOSTICS=$<BOOL:${NSL_DIAGNOSTICS}>)
-    target_compile_options(nsl-application-recovery-runtime PRIVATE -UNDEBUG -Wall -Wextra -Wno-unknown-pragmas)
-    target_link_libraries(nsl-application-recovery-runtime PRIVATE nsl_platform)
-    foreach(symbol sl_log sl_remote_connection_create sl_remote_connection_update sl_sns_config_cache_update
-            IHS_ClientStreamingHandoff IHS_UDPSocketOpen socket sendto IHS_SessionCreate
-            IHS_SessionDestroy IHS_SessionSetSessionCallbacks IHS_SessionChannelAdd
-            SDL_OpenAudioDevice SDL_CloseAudioDevice sl_http_global_acquire sl_artwork_create
-            sl_runtime_create sl_runtime_submit stream_media_init stream_media_shutdown
-            sl_media_gate sl_ui_runtime_event sl_ui_tick sl_app_allow_remote sl_video_select)
-        target_link_options(nsl-application-recovery-runtime PRIVATE "-Wl,--wrap=${symbol}")
+    add_executable(nsl-manager-recovery-runtime tests/manager_recovery_runtime.c)
+    foreach(recovery_target nsl-application-recovery-runtime nsl-manager-recovery-runtime)
+        target_include_directories(${recovery_target} PRIVATE platforms/common
+            ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
+            ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf ${CMAKE_SOURCE_DIR}/third_party/ihslib/tests/common)
+        target_compile_definitions(${recovery_target} PRIVATE NSL_DIAGNOSTICS=$<BOOL:${NSL_DIAGNOSTICS}>)
+        target_compile_options(${recovery_target} PRIVATE -UNDEBUG -Wall -Wextra -Wno-unknown-pragmas)
+        target_link_libraries(${recovery_target} PRIVATE nsl_platform)
+        foreach(symbol sl_log sl_remote_connection_create sl_remote_connection_update sl_sns_config_cache_update
+                IHS_ClientStreamingHandoff IHS_UDPSocketOpen socket sendto IHS_SessionCreate
+                IHS_SessionDestroy IHS_SessionSetSessionCallbacks IHS_SessionChannelAdd
+                SDL_OpenAudioDevice SDL_CloseAudioDevice sl_http_global_acquire sl_artwork_create
+                sl_runtime_create sl_runtime_submit stream_media_init stream_media_shutdown
+                sl_media_gate sl_ui_runtime_event sl_ui_tick sl_app_allow_remote sl_video_select)
+            target_link_options(${recovery_target} PRIVATE "-Wl,--wrap=${symbol}")
+        endforeach()
     endforeach()
     add_test(NAME application_recovery_runtime COMMAND "${Python3_EXECUTABLE}" -O
         "${CMAKE_SOURCE_DIR}/scripts/check-session-recovery-runtime.py" --application
         --receiver $<TARGET_FILE:nsl-application-recovery-runtime>
         --video "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video/sequential.h264")
     set_tests_properties(application_recovery_runtime PROPERTIES TIMEOUT 90)
+    add_test(NAME manager_recovery_runtime COMMAND "${Python3_EXECUTABLE}" -O
+        "${CMAKE_SOURCE_DIR}/scripts/check-session-recovery-runtime.py" --application --manager
+        --receiver $<TARGET_FILE:nsl-manager-recovery-runtime>
+        --video "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video/sequential.h264")
+    set_tests_properties(manager_recovery_runtime PROPERTIES TIMEOUT 90)
     add_test(NAME application_recovery_counterexample COMMAND "${Python3_EXECUTABLE}" -O
         "${CMAKE_SOURCE_DIR}/scripts/check-application-recovery-counterexample.py"
         --build "${CMAKE_BINARY_DIR}" --output "${CMAKE_BINARY_DIR}/application-recovery-counterexample")
