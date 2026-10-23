@@ -768,6 +768,60 @@ python3 tools/steam-adaptive-client-feedback-audit.py \
   --binary /path/to/pinned/linux/package/bin/steamlink --output /tmp/linux-mutant.json --mutation
 ```
 
+## 视频DataLost的客户端阶段与底层通道边界
+
+**Evidence：** `tools/steam-client-loss-phase-audit.py` 对固定Linux客户端
+SHA `95482ca6120f90bb90798b27206b7946ab732e079f008d7fc90ea58a8b0074e1`
+实际执行 `Client::SendDataLost @0x31f7f0`、protobuf构造/序列化、Frame Put/Send。
+phase0–7各一例，只有phase6交付video channel3、正文`02`；其他状态仍可进入该方法，
+但不构造/交付此反馈。`0x31f812–81b` 明确比较client+0x100与6。
+`EStreamChannelVideo=1`经client+0x271的通道表取channel3，不能将媒体类别1与wire channel3混同。
+
+另4例从原AVCodec OnThink/FinalDecode开始，在SDK receive返回边界显式把client phase
+设为6或7，并分别使用send=0/−5、receive=−11。四例均实际进入原SendDataLost，只有
+phase6交付报文；send−5时两种phase仍保留reset请求，send0时均无reset请求。
+这一受控输入证明发送阶段检查独立于错误处理，不证明自然并发、完整Stop/join或物理解码。
+
+**Native差异：** 此前 `CheckPartialOverflow` 已单独检查Streaming，但
+`DataReceived`的序列缺口/恢复请求、`ApplyDecodeFeedback`及reset后的反馈仍直接调用
+底层 `IHS_SessionChannelDataLost`。生产consumer+真实protobuf/packet构造在phase0–7
+均向queue终点交付一次；与原客户端发送门禁存在7项差异。旧video TU从子库git提交
+`7b044f2`独立编译、保留相同观察器和通道依赖，复现该差异，不通过重写模拟函数制造失败。
+
+视频侧将上述client反馈统一交给 `SendVideoDataLost`，在发送边界检查Streaming，
+不从整个解码/反馈consumer提前返回。序列/strict/syncing、恢复时间、溢出跨度等原有
+更新继续执行，显式Reset位在非Streaming状态仍保留。partial存储保护的反馈也遵守
+视频client阶段；该本地资源上限仍是项目保护，不变成新造的官方OOM策略。
+
+底层 `ch_data.c::IHS_SessionChannelDataLost` 保留原契约；普通接收窗口的本地溢出
+恢复仍可直接使用它。不能把Client阶段条件加到该通用函数，误伤其他传输调用者。
+Native观察器分别调用实际视频feedback consumer与通用通道sender，8种phase中前者
+与原客户端一致，后者的原8次packet构造都保留。另检查ReportLost+Reset不会因发送
+被抑制而丢掉Reset；这不是仅比较一个gate函数返回值。
+
+原指令反例把 `0x31f81b` 的JE改为无条件JMP，正常执行后因phase0多出真实Frame正文
+`02`而被oracle拒绝。Native旧TU反例和新TU对照也正常返回，逐项核对client与transport
+计数。证据为本地 `build/adaptive-quality-research/client-loss-phase-{before.stderr,after.json}`、
+`client-loss-phase-mutant.stderr`、`client-loss-independent-before/comparison.json`。
+
+这修正的是发送门禁覆盖范围，未调整反馈内容、重请求间隔、带宽默认值、编码策略或
+传输窗口算法。Connection/queue是交付终点；未验证peer收到、Switch线程调度、自然
+退出竞争，亦不能据此解释用户之前的公网超时或断开等待。
+
+复查（需已有原客户端仿真依赖，并先构建Native观察器）：
+
+```sh
+cmake --build build/desktop --target ihs-video-feedback-phase-oracle
+python3 tools/steam-client-loss-phase-audit.py \
+  --binary /path/to/pinned/linux/package/bin/steamlink \
+  --receiver build/desktop/third_party/ihslib/tests/session/ihs-video-feedback-phase-oracle \
+  --output /tmp/client-loss-phase.json
+# 反例应因phase0多交付反馈而非零退出，不是模拟器错误：
+python3 tools/steam-client-loss-phase-audit.py \
+  --binary /path/to/pinned/linux/package/bin/steamlink --mutation
+ctest --test-dir build/desktop -R '^video_feedback_phase$' --output-on-failure
+```
+
 ## 复刻能力的实际边界
 
 客户端可以忠实实现配置、实时帧/网络反馈、丢失及decoder压力通知、下行配置/目标处理，
