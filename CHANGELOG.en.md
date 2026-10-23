@@ -2,6 +2,40 @@
 
 [简体中文](CHANGELOG.md)
 
+## [0.6.0] - 2026-10-23
+
+Previous stable release: **v0.5.1**. This release: **v0.6.0**. Target branch: `main`; tagged source: [`v0.6.0`](https://github.com/kxn/nsteamlink/tree/v0.6.0).
+
+### Highlights
+
+- **Switch gyro input**: forward libnx motion samples to Steam Input. Configure gyro as a mouse in Steam's desktop controller layout to move the pointer by rotating the Switch. A user has verified this on hardware.
+- **Complete the host sensor protocol**: advertise motion capability and include normal-sensor freshness and timestamps in Generic RAW V3 reports. Identical angular velocities at different sample times are still reported. Button, stick, or acceleration-only changes do not replay an already submitted gyro sample, while pending samples are preserved.
+- **Reduce device trial and error**: add offline execution of a pinned Steam Host DLL and full/delta fixtures from the production C packer. Remove experimental switches that confused normal and left sensor slots, and correct the earlier reverse-engineering conclusions.
+
+### Commits by type
+
+- **Feature**: `d13ff0c`, Switch motion sampling, unit conversion, and HID injection.
+- **Fix**: `b6421a2`, the complete RAW V3 sensor contract, event merging, capability declaration, and host verification; IHSlib pinned to `0bc7087`.
+- **Tests**: `0dd07e5`, isolated motion probes and an axis viewer; `b6421a2`, production C reports checked against original host instructions. Test tools are excluded from the ordinary NRO.
+- **Documentation**: record the user's desktop mouse result, update Chinese and English usage instructions, and explicitly retract the earlier claim that remote Generic rejects 0x400.
+
+### Validation and evidence scope
+
+Eight related desktop regression tests passed, and the fixed Switch build succeeded. Offline original-DLL checks cover full/delta decoding, invalid CRC rejection, normal sensor slot selection, enable/capability gates, and isolated quaternion integration and gyro-source consumption.
+
+The user confirmed that gyro controls the mouse after changing Steam's desktop controller layout. **In-game behavior and compatibility have not yet been verified** and depend on each game's Steam Input layout. This result does not establish support for every controller configuration or calibration accuracy. The cause of input loss in earlier experimental builds remains undetermined.
+
+The tag workflow rebuilds the release commit, runs desktop diagnostics ON/OFF tests, builds ordinary and diagnostic Switch configurations, and checks diagnostic exclusion counterexamples and artifact identity. Publication follows successful checks.
+
+### Download and update
+
+Download the ordinary `.nro` from [this release](https://github.com/kxn/nsteamlink/releases/tag/v0.6.0), or use the in-app updater. Existing HOME shortcuts continue to use `sdmc:/switch/nsteamlink/nsteamlink.nro` and do not need reinstalling.
+Attachments contain the ordinary NRO, source identity, diagnostic exclusion report, SDK package list, license text, and `SHA256SUMS`; diagnostic builds and motion probes are not published.
+
+Thanks to users providing playtesting and gyro feedback, **Sven** for the original-model Switch, **Simone Caronni ([@scaronni](https://github.com/scaronni))**, and the authors and maintainers of IHSlib, FFmpeg, Opus, SDL, libnx, devkitPro, deko3d, and nx-hbloader.
+
+[Full changelog: v0.5.1 → v0.6.0](https://github.com/kxn/nsteamlink/compare/v0.5.1...v0.6.0)
+
 ## [0.5.1] - 2026-10-20
 
 Previous stable release: **v0.5.0**. This release: **v0.5.1**. Target branch: `main`; tagged source: [`v0.5.1`](https://github.com/kxn/nsteamlink/tree/v0.5.1).
