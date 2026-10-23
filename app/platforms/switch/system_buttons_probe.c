@@ -202,7 +202,9 @@ bool sl_system_buttons_probe_tick(uint64_t now) {
         probe.phase = HID_EVENT;
         break;
     case HID_EVENT:
-        rc = hidsysAcquireHomeButtonEventHandle(&probe.event, true);
+        /* AM also uses the system HOME event. Observe without clearing its
+         * signal; this diagnostic must not consume a system notification. */
+        rc = hidsysAcquireHomeButtonEventHandle(&probe.event, false);
         result("hidsys_home_event", rc);
         probe.event_open = R_SUCCEEDED(rc);
         probe.phase = HOME_BASELINE;

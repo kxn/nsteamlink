@@ -365,6 +365,7 @@ HOME 已通过”的结论。真实 HOME 读取/屏蔽效果仍须独立证据�
 API 成功但无新状态仍是未通过。getter/服务权限不足时跳过 HOME 注入，保留 Result 证据。
 注入门禁判断前另记 `home_raw_samples_available` 及一条 `home_raw_baseline` 的采样号/原始
 按钮值，让激活后的有效共享内存状态与单纯 IPC 成功可以分别判断；基线不冒充物理按键。
+HOME event 以 `autoclear=false` 获取，只做零超时观察，避免清除 AM 也在使用的事件信号。
 
 HDLS 使用专用 FullKey/Bluetooth 虚拟设备，独占页对齐的 `0x1000` 工作缓冲，取自
 [switchbrew 官方 HDLS 示例](https://github.com/switchbrew/switch-examples/blob/master/hid/hdls/source/main.c)。
