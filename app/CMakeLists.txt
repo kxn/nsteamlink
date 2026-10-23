@@ -20,7 +20,7 @@ target_include_directories(nsl_sdr_core PUBLIC platforms/common PRIVATE ${CMAKE_
 target_compile_options(nsl_sdr_core PRIVATE -Wall -Wextra)
 add_library(nsl_remote STATIC platforms/common/host_addresses.cpp platforms/common/host_accounts.c platforms/common/host_directory.c platforms/common/remote_wire.c platforms/common/remote_protocol.c
     platforms/common/remote_connection.c platforms/common/stream_bridge.c
-    platforms/common/dns_refresh.c platforms/common/dns_config.c platforms/common/dns_policy.c)
+    platforms/common/http_route.c platforms/common/dns_refresh.c platforms/common/dns_config.c platforms/common/dns_policy.c)
 target_compile_features(nsl_remote PRIVATE cxx_std_17)
 target_include_directories(nsl_remote PUBLIC platforms/common PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/jsmn ${CMAKE_SOURCE_DIR}/third_party/ihslib/src
@@ -156,13 +156,13 @@ target_compile_options(nsl_gfx PRIVATE -Wall -Wextra -Wno-unknown-pragmas)
 add_library(nsl_artwork STATIC platforms/common/artwork.c platforms/common/artwork_format.c)
 target_include_directories(nsl_artwork PRIVATE ${CMAKE_SOURCE_DIR}/third_party/jsmn)
 target_compile_options(nsl_artwork PRIVATE -Wall -Wextra)
-target_link_libraries(nsl_artwork PUBLIC nsl_ui PkgConfig::CURL PkgConfig::JPEG Threads::Threads m)
+target_link_libraries(nsl_artwork PUBLIC nsl_ui nsl_remote PkgConfig::CURL PkgConfig::JPEG Threads::Threads m)
 # Self-update (D-055). mbedTLS comes from IHSlib's cached find results.
 add_library(nsl_updater STATIC platforms/common/updater.c platforms/common/update_format.c)
 target_include_directories(nsl_updater PUBLIC platforms/common
     PRIVATE ${CMAKE_SOURCE_DIR}/third_party/jsmn SYSTEM ${MBEDTLS_INCLUDE_DIRS})
 target_compile_options(nsl_updater PRIVATE -Wall -Wextra)
-target_link_libraries(nsl_updater PUBLIC nsl_ui PkgConfig::CURL ${MBEDCRYPTO_LIBRARY} Threads::Threads)
+target_link_libraries(nsl_updater PUBLIC nsl_ui nsl_remote PkgConfig::CURL ${MBEDCRYPTO_LIBRARY} Threads::Threads)
 add_library(nsl_ui STATIC src/ui/ui_model.c src/ui/ui_layout.c src/ui/ui_events.c src/input/input_router.c
     src/services/host_registry.c src/services/auth_store.c src/services/host_key_store.c src/services/i18n.c
     src/services/update_config.c src/services/video_settings.c)
@@ -371,6 +371,14 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_compile_options(nsl-dns-refresh-tests PRIVATE -Wall -Wextra -UNDEBUG)
     target_link_libraries(nsl-dns-refresh-tests PRIVATE nsl_remote)
     add_test(NAME nsl-dns-refresh COMMAND nsl-dns-refresh-tests)
+    add_executable(nsl-http-route-tests tests/test_http_route.c platforms/common/http_route.c)
+    target_compile_definitions(nsl-http-route-tests PRIVATE NSL_HTTP_ROUTE_TEST=1 NSL_DIAGNOSTICS=1)
+    target_compile_options(nsl-http-route-tests PRIVATE -Wall -Wextra -UNDEBUG)
+    target_link_libraries(nsl-http-route-tests PRIVATE nsl_remote)
+    target_link_options(nsl-http-route-tests PRIVATE -Wl,--wrap=sl_dns_current_config)
+    add_test(NAME nsl-http-route COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/test-http-route.py" --receiver $<TARGET_FILE:nsl-http-route-tests>)
+    set_tests_properties(nsl-http-route PROPERTIES TIMEOUT 30)
     add_executable(nsl-dns-policy-tests tests/test_dns_policy.c platforms/common/dns_policy_wrap.c)
     target_compile_options(nsl-dns-policy-tests PRIVATE -Wall -Wextra -UNDEBUG)
     target_link_libraries(nsl-dns-policy-tests PRIVATE nsl_remote)
@@ -536,13 +544,13 @@ if(NSL_PLATFORM STREQUAL "desktop")
         target_link_libraries(nsl-sns-config-refresh-tests PRIVATE nsl_remote
             GameNetworkingSockets::GameNetworkingSockets_s Threads::Threads)
         foreach(symbol curl_easy_init curl_easy_setopt curl_easy_getinfo curl_multi_perform
-            curl_multi_info_read sl_gns_import_trust)
+            curl_multi_info_read sl_gns_import_trust sl_http_route_begin)
             target_link_options(nsl-sns-config-refresh-tests PRIVATE "-Wl,--wrap=${symbol}")
         endforeach()
         add_executable(nsl-config-cache-owner tests/config_cache_owner.c)
         target_compile_definitions(nsl-config-cache-owner PRIVATE NSL_DIAGNOSTICS=0)
         target_compile_options(nsl-config-cache-owner PRIVATE -Wall -Wextra -UNDEBUG)
-        target_link_libraries(nsl-config-cache-owner PRIVATE PkgConfig::CURL)
+        target_link_libraries(nsl-config-cache-owner PRIVATE nsl_remote)
         target_link_options(nsl-config-cache-owner PRIVATE -Wl,--wrap=curl_easy_setopt
             -Wl,--wrap=fwrite -Wl,--wrap=rename)
         add_test(NAME config_cache_official_vectors COMMAND "${Python3_EXECUTABLE}"

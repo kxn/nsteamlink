@@ -6,9 +6,12 @@
 
 /* Bounded A-query resolver shared by Switch hostname lookups. No worker/cache.
  * dns_config.c selects the resolver and reads the current interface. */
+#define SL_DNS_SERVERS 5
+#define SL_DNS_CANDIDATES (SL_DNS_SERVERS * 4)
+#define SL_DNS_ADDRESSES_SIZE (SL_DNS_CANDIDATES * 16)
 typedef struct {
     uint32_t local, platform_error;
-    struct sockaddr_in servers[2];
+    struct sockaddr_in servers[SL_DNS_SERVERS];
     unsigned count;
 } sl_dns_config;
 typedef struct {
@@ -20,7 +23,7 @@ typedef struct {
     char host[254];
     uint8_t query[272];
     size_t query_size;
-    char addresses[64]; /* Up to four IPv4 addresses. */
+    char addresses[SL_DNS_ADDRESSES_SIZE]; /* Four per wire answer; merged by policy. */
     char canonical[254];
     bool tcp;
     uint8_t response[4098], stream_query[274];

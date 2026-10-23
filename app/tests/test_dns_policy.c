@@ -2,6 +2,7 @@
 #include <arpa/inet.h>
 #include <assert.h>
 #include <curl/curl.h>
+#include <fcntl.h>
 #include <netdb.h>
 #include <pthread.h>
 #include <stdarg.h>
@@ -122,6 +123,11 @@ static void use_fixture(fixture *f) {
     config.servers[0] = f->address;
     pthread_mutex_unlock(&config_lock);
 }
+static unsigned open_fds(void) {
+    unsigned count = 0;
+    for (int fd = 0; fd < 1024; ++fd) count += fcntl(fd, F_GETFD) != -1;
+    return count;
+}
 static uint64_t now_ms(void) {
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
@@ -192,6 +198,37 @@ int main(void) {
     config.count = 0;
     pthread_mutex_unlock(&config_lock);
     assert(__wrap_getaddrinfo("must-not-query.invalid", "443", NULL, &result) == EAI_AGAIN);
+    /* Fanout really sends to both providers, retains their unique answers,
+     * dedupes repeated servers, and bounds a nonresponsive provider separately. */
+    pthread_mutex_lock(&config_lock);
+    config.count = 3;
+    config.servers[0] = first.address;
+    config.servers[1] = second.address;
+    config.servers[2] = first.address;
+    pthread_mutex_unlock(&config_lock);
+    sl_dns_refresh merged;
+    unsigned fd_baseline = open_fds();
+    assert(sl_dns_policy_lookup("fanout.example", &merged));
+    assert(open_fds() == fd_baseline);
+    assert(!strcmp(merged.addresses, "198.51.100.7,198.51.100.8,198.51.100.27,198.51.100.28"));
+    sl_dns_refresh samples[3] = {0};
+    strcpy(samples[0].addresses, "88.221.83.200,88.221.83.187");
+    strcpy(samples[1].addresses, "88.221.83.187,2.17.107.128");
+    strcpy(samples[2].addresses, "104.110.240.106,2.17.107.129");
+    sl_dns_policy_merge(&merged, samples, 3);
+    assert(!strcmp(merged.addresses, "88.221.83.200,2.17.107.128,104.110.240.106,88.221.83.187,2.17.107.129"));
+    /* A dead provider neither suppresses the live result nor leaks its UDP
+     * retries; the shared deadline bounds the batch, not each server in turn. */
+    atomic_store(&first.drop, true);
+    pthread_mutex_lock(&config_lock);
+    config.count = 2;
+    config.servers[0] = first.address;
+    config.servers[1] = second.address;
+    pthread_mutex_unlock(&config_lock);
+    uint64_t fanout_start = now_ms();
+    assert(sl_dns_policy_lookup("one-dead.example", &merged));
+    assert(now_ms() - fanout_start < 3500 && open_fds() == fd_baseline);
+    assert(!strcmp(merged.addresses, "198.51.100.27,198.51.100.28"));
     use_fixture(&second);
     atomic_store(&second.drop, true);
     for (unsigned mode = 0; mode < 2; ++mode) {
@@ -211,6 +248,7 @@ int main(void) {
         assert(pthread_join(thread, NULL) == 0 && now_ms() - start < 500);
     }
     assert(sl_dns_policy_shutdown());
+    assert(open_fds() == fd_baseline);
     /* Scope/mutex state is reinitializable; timeout remains bounded. */
     assert(sl_dns_policy_init(NULL));
     uint64_t start = now_ms();

@@ -1,6 +1,7 @@
 #include "artwork.h"
 #include "build_identity.h"
 #include "platform/system.h"
+#include "http_route.h"
 #include "services/i18n.h"
 #include <curl/curl.h>
 #include <dirent.h>
@@ -100,7 +101,7 @@ static bool fetch_https(const char *url, size_t limit, unsigned char **data, siz
     curl_easy_setopt(c, CURLOPT_XFERINFOFUNCTION, progress);
     curl_easy_setopt(c, CURLOPT_XFERINFODATA, a);
     atomic_store(&a->dns_handle, sl_system_dns_begin());
-    CURLcode result = cancelled(a) ? CURLE_ABORTED_BY_CALLBACK : curl_easy_perform(c);
+    CURLcode result = cancelled(a) ? CURLE_ABORTED_BY_CALLBACK : sl_http_route_perform(c, url, 8000);
     sl_system_dns_end(atomic_exchange(&a->dns_handle, 0));
     long code = 0;
     curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);

@@ -17,15 +17,25 @@ bool sl_dns_current_config(sl_dns_config *out) {
     out->platform_error = result;
     if (R_FAILED(result))
         return false;
-    /* User-requested resolver experiment (D-A095). Keep reading the current
-     * interface above, but use one resolver for every wrapped hostname lookup.
-     * A failed query must not silently fall back to DHCP/system DNS. */
-    struct sockaddr_in *address = &out->servers[0];
-    address->sin_family = AF_INET;
-    address->sin_port = htons(53);
-    if (inet_pton(AF_INET, "8.8.8.8", &address->sin_addr) != 1)
-        return false;
-    out->count = 1;
+    /* Compatibility workaround, NOT recovered Valve policy (D-A097): observed
+     * Steam CDN answers can ping yet fail TCP/TLS, and changing public DNS can
+     * select a usable address. Query independent providers, not just mirrors
+     * of one provider. No DHCP/system-cache fallback across Wi-Fi changes.
+     * Provider-published addresses:
+     * developers.google.com/speed/public-dns/docs/using
+     * developers.cloudflare.com/1.1.1.1/ip-addresses/
+     * docs.quad9.net/services/ ; www.alidns.com/
+     * docs.dnspod.com/public-dns/public-dns-guide/
+     * This does not prove DNS/MTU is the underlying fault. */
+    static const char *const servers[SL_DNS_SERVERS] = {
+        "8.8.8.8", "1.1.1.1", "9.9.9.9", "223.5.5.5", "119.29.29.29"};
+    for (unsigned i = 0; i < SL_DNS_SERVERS; ++i) {
+        out->servers[i].sin_family = AF_INET;
+        out->servers[i].sin_port = htons(53);
+        if (inet_pton(AF_INET, servers[i], &out->servers[i].sin_addr) != 1)
+            return false;
+    }
+    out->count = SL_DNS_SERVERS;
     return true;
 #else
     /* Other platforms keep their normal resolver. Tests supply explicit local

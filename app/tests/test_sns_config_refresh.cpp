@@ -9,6 +9,14 @@ static CURL *easy;
 static CURLMsg message;
 static bool pending, parsed;
 static unsigned status;
+static bool dns_failure;
+extern "C" bool __real_sl_http_route_begin(sl_http_route *, CURL *, const char *, long);
+extern "C" bool __wrap_sl_http_route_begin(sl_http_route *route, CURL *request, const char *url, long timeout) {
+    if (!dns_failure) return __real_sl_http_route_begin(route, request, url, timeout);
+    *route = sl_http_route{};
+    route->error = CURLE_COULDNT_RESOLVE_HOST;
+    return false;
+}
 static std::vector<std::string> urls;
 extern "C" CURL *__real_curl_easy_init(void);
 extern "C" CURL *__wrap_curl_easy_init(void) { return easy = __real_curl_easy_init(); }
@@ -41,7 +49,8 @@ extern "C" bool __wrap_sl_gns_import_trust(const char *p, size_t n) {
 }
 int main(int argc, char **argv) {
     assert(argc == 2); bool first_success = !strcmp(argv[1], "success-then-failure");
-    bool cold = !strcmp(argv[1], "cold-failover");
+    dns_failure = !strcmp(argv[1], "cold-dns");
+    bool cold = dns_failure || !strcmp(argv[1], "cold-failover");
     auto snapshot = [] {
         printf("{\"available\":%d,\"completed\":%u,\"active\":%s,\"urls\":[",
             fixture->config_fetch.state, fixture->config_fetch.completed, fixture->request ? "true" : "false");

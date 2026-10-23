@@ -1,5 +1,6 @@
 #include "updater.h"
 #include "platform/system.h"
+#include "http_route.h"
 #include <curl/curl.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -125,7 +126,7 @@ static bool perform(sl_updater *u, const char *url, transfer *t, bool large) {
     curl_easy_setopt(c, CURLOPT_XFERINFOFUNCTION, progress);
     curl_easy_setopt(c, CURLOPT_XFERINFODATA, u);
     atomic_store(&u->dns_handle, sl_system_dns_begin());
-    CURLcode result = stopping(u) ? CURLE_ABORTED_BY_CALLBACK : curl_easy_perform(c);
+    CURLcode result = stopping(u) ? CURLE_ABORTED_BY_CALLBACK : sl_http_route_perform(c, url, large ? 0 : 15000);
     sl_system_dns_end(atomic_exchange(&u->dns_handle, 0));
     long code = 0;
     curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);

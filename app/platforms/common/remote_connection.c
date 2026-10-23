@@ -1,6 +1,7 @@
 #include "remote_connection.h"
 #include "crypto.h"
 #include "remote_wire.h"
+#include "http_route.h"
 #define JSMN_STRICT
 #include "jsmn.h"
 #include <curl/curl.h>
@@ -26,6 +27,7 @@ struct sl_remote_connection {
     void *ctx;
     CURLM *multi;
     CURL *easy;
+    sl_http_route route;
     bool easy_added, global;
     bool bridge_mode, suspended;
     int state;
@@ -264,6 +266,7 @@ static void clear_easy(sl_remote_connection *c) {
             curl_multi_remove_handle(c->multi, c->easy);
         curl_easy_cleanup(c->easy);
         c->easy = NULL;
+        sl_http_route_clear(&c->route);
     }
     c->easy_added = false;
     for (size_t i = 0; i < c->count; ++i) {
@@ -346,6 +349,8 @@ static bool setup_easy(sl_remote_connection *c, const char *url, bool tls_only) 
         SET(CURLOPT_WRITEDATA, c);
     }
 #undef SET
+    if (!sl_http_route_begin(&c->route, c->easy, url, 20000)) return false;
+    if (c->route.count) c->deadline += SL_HTTP_ROUTE_BUDGET_MS - 20000;
     if (curl_multi_add_handle(c->multi, c->easy) != CURLM_OK)
         return false;
     c->easy_added = true;
@@ -587,6 +592,20 @@ void sl_remote_connection_update(sl_remote_connection *c, uint64_t now) {
                 continue;
             CURLcode result = msg->data.result;
             network_event(c, "transfer_done", result);
+            /* DONE handles must leave the multi before changing RESOLVE and
+             * re-adding. Do not reset the outer deadline on each candidate. */
+            if (result != CURLE_OK) {
+                curl_multi_remove_handle(c->multi, c->easy);
+                c->easy_added = false;
+            }
+            if (sl_http_route_retry(&c->route, c->easy, result)) {
+                if (curl_multi_add_handle(c->multi, c->easy) == CURLM_OK) {
+                    c->easy_added = true;
+                    break;
+                }
+                fail_connection(c, now);
+                break;
+            }
             if (c->state == NET_DIRECTORY) {
                 long status_code = 0;
                 curl_easy_getinfo(c->easy, CURLINFO_RESPONSE_CODE, &status_code);

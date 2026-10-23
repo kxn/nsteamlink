@@ -137,6 +137,55 @@ bool sl_dns_policy_shutdown(void) {
 #endif
     return empty;
 }
+bool sl_dns_policy_cancelled(void) {
+    return atomic_load(&stopped) || (current && atomic_load(&current->cancelled));
+}
+void sl_dns_policy_merge(sl_dns_refresh *out, const sl_dns_refresh *answers, unsigned count) {
+    uint32_t ips[SL_DNS_CANDIDATES], groups[SL_DNS_CANDIDATES];
+    unsigned used = 0, group_count = 0;
+    out->addresses[0] = out->canonical[0] = 0;
+    for (unsigned i = 0; i < count; ++i) {
+        char copy[SL_DNS_ADDRESSES_SIZE];
+        snprintf(copy, sizeof(copy), "%s", answers[i].addresses);
+        char *state = NULL;
+        for (char *ip = strtok_r(copy, ",", &state); ip; ip = strtok_r(NULL, ",", &state)) {
+            struct in_addr address;
+            if (inet_pton(AF_INET, ip, &address) != 1)
+                continue;
+            uint32_t value = ntohl(address.s_addr);
+            unsigned j = 0;
+            for (; j < used && ips[j] != value; ++j) {
+            }
+            if (j != used || used == SL_DNS_CANDIDATES)
+                continue;
+            ips[used++] = value;
+            uint32_t group = value & 0xffffff00u;
+            for (j = 0; j < group_count && groups[j] != group; ++j) {
+            }
+            if (j == group_count)
+                groups[group_count++] = group;
+            if (!out->canonical[0])
+                snprintf(out->canonical, sizeof(out->canonical), "%s", answers[i].canonical);
+        }
+    }
+    /* User observed correlated failures within a subnet. /24 is only an
+     * ordering heuristic, not a route/ASN fact or a subnet ban: try the first
+     * address of each group, then its second, etc. Never discard siblings. */
+    size_t length = 0;
+    for (unsigned round = 0; round < used; ++round)
+        for (unsigned g = 0; g < group_count; ++g) {
+            unsigned rank = 0;
+            for (unsigned i = 0; i < used; ++i) {
+                if ((ips[i] & 0xffffff00u) != groups[g] || rank++ != round)
+                    continue;
+                struct in_addr address = {.s_addr = htonl(ips[i])};
+                char ip[INET_ADDRSTRLEN];
+                inet_ntop(AF_INET, &address, ip, sizeof(ip));
+                length += snprintf(out->addresses + length, sizeof(out->addresses) - length, "%s%s",
+                                   length ? "," : "", ip);
+            }
+        }
+}
 bool sl_dns_policy_lookup(const char *host, sl_dns_refresh *result) {
     memset(result, 0, sizeof(*result));
     result->fd = -1;
@@ -160,37 +209,74 @@ bool sl_dns_policy_lookup(const char *host, sl_dns_refresh *result) {
     uint64_t start = now_ms();
     bool configured =
         !atomic_load(&s->cancelled) && !atomic_load(&stopped) && sl_dns_current_config(&config);
-    bool begun = configured && sl_dns_refresh_begin(result, &config, normalized, start);
+    /* Fan out on this existing worker, no threads or cross-network cache.
+     * Wait for all providers (or the shared 3s deadline), so a fast first
+     * answer does not suppress address diversity. Allocate wire buffers on
+     * heap: five DNS/TCP states would be excessive on a Switch worker stack. */
+    unsigned count = configured ? config.count : 0;
+    if (count > SL_DNS_SERVERS)
+        count = 0;
+    sl_dns_refresh *queries = count ? calloc(count, sizeof(*queries)) : NULL;
+    int states[SL_DNS_SERVERS] = {0};
+    if (!queries)
+        count = 0;
+    for (unsigned i = 0; i < count; ++i)
+        queries[i].fd = -1;
+    for (unsigned i = 0; i < count; ++i) {
+        sl_dns_config single = config;
+        single.count = 1;
+        single.servers[0] = config.servers[i];
+        states[i] = sl_dns_refresh_begin(&queries[i], &single, normalized, start) ? 0 : -1;
 #if NSL_DIAGNOSTICS
-    char line[224], local[INET_ADDRSTRLEN] = "", server[INET_ADDRSTRLEN] = "";
-    if (configured) {
+        char line[384], local[INET_ADDRSTRLEN] = "", server[INET_ADDRSTRLEN] = "";
         inet_ntop(AF_INET, &config.local, local, sizeof(local));
-        inet_ntop(AF_INET, &config.servers[0].sin_addr, server, sizeof(server));
-    }
-    snprintf(line, sizeof(line), "dns_query event=begin host=%s local=%s server=%s platform=%u",
-             normalized, local, server, config.platform_error);
-    sl_dns_policy_report(line);
+        inet_ntop(AF_INET, &single.servers[0].sin_addr, server, sizeof(server));
+        snprintf(line, sizeof(line), "dns_query event=begin host=%s local=%s server=%s platform=%u",
+                 normalized, local, server, config.platform_error);
+        sl_dns_policy_report(line);
 #endif
-    int status = -1;
-    while (begun && !atomic_load(&s->cancelled) && !atomic_load(&stopped)) {
+    }
+    while (count && !atomic_load(&s->cancelled) && !atomic_load(&stopped)) {
         uint64_t now = now_ms();
         if (now - start >= 3000)
             break;
-        status = sl_dns_refresh_poll(result, now);
-        if (status)
+        bool pending = false;
+        for (unsigned i = 0; i < count; ++i) {
+            if (!states[i])
+                states[i] = sl_dns_refresh_poll(&queries[i], now);
+            pending |= states[i] == 0;
+        }
+        if (!pending)
             break;
         struct timespec pause = {.tv_nsec = 1000000};
         nanosleep(&pause, NULL);
     }
     bool cancelled = atomic_load(&s->cancelled) || atomic_load(&stopped);
-    bool success = status > 0 && !cancelled;
-    sl_dns_refresh_cancel(result);
+    for (unsigned i = 0; i < count; ++i) {
+        sl_dns_refresh_cancel(&queries[i]);
+        if (states[i] != 1 || cancelled)
+            queries[i].addresses[0] = 0;
 #if NSL_DIAGNOSTICS
-    snprintf(line, sizeof(line), "dns_query event=%s host=%s addresses=%s elapsed_ms=%llu",
+        char line[640], server[INET_ADDRSTRLEN] = "";
+        inet_ntop(AF_INET, &config.servers[i].sin_addr, server, sizeof(server));
+        snprintf(line, sizeof(line),
+                 "dns_query event=answer host=%s server=%s status=%d addresses=%s", normalized,
+                 server, states[i], queries[i].addresses);
+        sl_dns_policy_report(line);
+#endif
+    }
+    sl_dns_policy_merge(result, queries, count);
+    free(queries);
+    bool success = result->addresses[0] && !cancelled;
+#if NSL_DIAGNOSTICS
+    char line[640];
+    snprintf(line, sizeof(line),
+             "dns_query event=%s host=%s addresses=%s elapsed_ms=%llu platform=%u",
              success     ? "ready"
              : cancelled ? "cancelled"
                          : "failed",
-             normalized, success ? result->addresses : "", (unsigned long long)(now_ms() - start));
+             normalized, success ? result->addresses : "", (unsigned long long)(now_ms() - start),
+             config.platform_error);
     sl_dns_policy_report(line);
 #endif
     if (temporary)

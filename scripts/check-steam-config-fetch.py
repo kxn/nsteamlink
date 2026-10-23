@@ -25,12 +25,13 @@ def main():
    assert all(got[k]==want[k] for k in ['available','completed','active']),(i,got,want)
    assert got['realms']==['&realm=' in req['url'] for req in want['requests']],(i,got,want)
  reference=next(c for c in r['cases'] if c['input']['name']=='failure-or-parse-500')['observed']
- run=subprocess.run([str(a.owner.resolve()),'cold-failover'],capture_output=True,text=True,timeout=10)
- assert run.returncode==0,(run.returncode,run.stderr)
- rows=[json.loads(line) for line in run.stdout.splitlines()];assert len(rows)==8
- for index,got in enumerate(rows):
-  want=reference[index%4]
-  assert all(got[k]==want[k] for k in ['available','completed','active']),(got,want)
-  assert got['urls']==[req['url'] for req in want['requests']],(got,want)
+ for mode in ['cold-failover','cold-dns']:
+  run=subprocess.run([str(a.owner.resolve()),mode],capture_output=True,text=True,timeout=10)
+  assert run.returncode==0,(run.returncode,run.stderr)
+  rows=[json.loads(line) for line in run.stdout.splitlines()];assert len(rows)==8
+  for index,got in enumerate(rows):
+   want=reference[index%4]
+   assert all(got[k]==want[k] for k in ['available','completed','active']),(got,want)
+   assert got['urls']==[req['url'] for req in want['requests']],(got,want)
  print('PASS 19 original config programs: one active request, signed/wrapping completion counts, cache-success refresh, no retry on failed refresh with usable config, cold exhaustion and realm alternation')
 if __name__=='__main__':main()

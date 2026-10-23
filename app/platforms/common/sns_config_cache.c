@@ -1,6 +1,7 @@
 #include "sns_config_cache.h"
 #include "sns_config_http.h"
 #include "dns_policy.h"
+#include "http_route.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -11,6 +12,8 @@ enum { CONFIG_LIMIT = 1024 * 1024 };
 struct sl_sns_config_cache {
     CURLM *http;
     CURL *request;
+    bool request_added;
+    sl_http_route route;
     char *data, *download;
     size_t size, downloaded;
     bool global;
@@ -77,9 +80,11 @@ static size_t receive(char *p, size_t size, size_t count, void *context) {
 }
 static void stop_request(sl_sns_config_cache *c) {
     if (!c->request) return;
-    curl_multi_remove_handle(c->http, c->request);
+    if (c->request_added) curl_multi_remove_handle(c->http, c->request);
+    c->request_added = false;
     curl_easy_cleanup(c->request);
     c->request = NULL;
+    sl_http_route_clear(&c->route);
 }
 sl_sns_config_cache *sl_sns_config_cache_create(const char *directory) {
     sl_sns_config_cache *c = calloc(1, sizeof(*c));
@@ -98,8 +103,16 @@ sl_sns_config_cache *sl_sns_config_cache_create(const char *directory) {
         curl_easy_setopt(c->request, CURLOPT_WRITEFUNCTION, receive);
         curl_easy_setopt(c->request, CURLOPT_WRITEDATA, c);
         sl_sns_config_http_options(c->request);
-        if (curl_multi_add_handle(c->http, c->request) == CURLM_OK) event("begin");
-        else { curl_easy_cleanup(c->request); c->request = NULL; }
+        bool ready = sl_http_route_begin(&c->route, c->request,
+            "https://api.steampowered.com/ISteamApps/GetSDRConfig/v1?appid=353380", 25000);
+        if (ready && curl_multi_add_handle(c->http, c->request) == CURLM_OK) {
+            c->request_added = true;
+            event("begin");
+        } else {
+            curl_easy_cleanup(c->request);
+            c->request = NULL;
+            sl_http_route_clear(&c->route);
+        }
     }
     return c;
 }
@@ -111,8 +124,16 @@ void sl_sns_config_cache_update(sl_sns_config_cache *c) {
     CURLMsg *message;
     while ((message = curl_multi_info_read(c->http, &remaining))) {
         if (message->msg != CURLMSG_DONE || message->easy_handle != c->request) continue;
+        CURLcode code = message->data.result; /* CURLMsg expires on removal. */
+        if (c->request_added) curl_multi_remove_handle(c->http, c->request);
+        c->request_added = false;
+        if (sl_http_route_retry(&c->route, c->request, code) &&
+            curl_multi_add_handle(c->http, c->request) == CURLM_OK) {
+            c->request_added = true;
+            return;
+        }
         done = true;
-        success = message->data.result == CURLE_OK;
+        success = code == CURLE_OK;
 #if NSL_DIAGNOSTICS
         long status = 0, verified = 0;
         char *remote = NULL, line[224];
@@ -120,7 +141,7 @@ void sl_sns_config_cache_update(sl_sns_config_cache *c) {
         curl_easy_getinfo(c->request, CURLINFO_SSL_VERIFYRESULT, &verified);
         curl_easy_getinfo(c->request, CURLINFO_PRIMARY_IP, &remote);
         snprintf(line, sizeof(line), "sns_config_cache curl=%d http=%ld verify=%ld ip=%.64s",
-            (int)message->data.result, status, verified, remote ? remote : "");
+            (int)code, status, verified, remote ? remote : "");
         sl_dns_policy_report(line);
 #endif
     }

@@ -12,4 +12,7 @@ void sl_dns_policy_end(uint32_t token);
 void sl_dns_policy_cancel(uint32_t token);
 /* Owned result; sockets always closed before returning. At most 3 seconds. */
 bool sl_dns_policy_lookup(const char *host, sl_dns_refresh *result);
+bool sl_dns_policy_cancelled(void);
+/* Dedupe and round-robin /24 groups; retain same-subnet fallback addresses. */
+void sl_dns_policy_merge(sl_dns_refresh *out, const sl_dns_refresh *answers, unsigned count);
 void sl_dns_policy_report(const char *);

@@ -3,6 +3,7 @@ extern "C" {
 #include "stream_bridge.h"
 #include "sdr_probe.h"
 #include "dns_policy.h"
+#include "http_route.h"
 }
 #include <steam/steamnetworkingsockets.h>
 #include <steam/steamnetworkingcustomsignaling.h>
@@ -146,6 +147,8 @@ struct sl_sns {
     bool share_ip = true, config_ready = false;
     CURLM *http = nullptr;
     CURL *request = nullptr;
+    bool request_added = false;
+    sl_http_route route{};
     unsigned config_attempt = 0;
     nsl::SnsConfigFetchPolicy config_fetch;
     std::vector<char> config, config_download;
@@ -284,8 +287,16 @@ static bool begin_config(sl_sns *b, bool force = false) {
     curl_easy_setopt(b->request, CURLOPT_WRITEDATA, b);
     sl_sns_config_http_options(b->request);
     config_event(b, "begin", -1);
-    if (curl_multi_add_handle(b->http, b->request) == CURLM_OK) return true;
+    /* DNS/route preparation failure belongs to Completed(false), just like a
+     * curl resolver failure. Do not turn it into factory cannot_start(), which
+     * would skip the original completion count and realm/retry decisions. */
+    if (!sl_http_route_begin(&b->route, b->request, url, 25000)) return true;
+    if (curl_multi_add_handle(b->http, b->request) == CURLM_OK) {
+        b->request_added = true;
+        return true;
+    }
     curl_easy_cleanup(b->request); b->request = nullptr;
+    sl_http_route_clear(&b->route);
     b->config_fetch.cannot_start();
     return false;
 }
@@ -360,24 +371,36 @@ static void pump_config(sl_sns *b) {
     if (!b->request)
         return;
     int running = 0;
-    CURLMcode ret = curl_multi_perform(b->http, &running);
+    bool prepared = b->route.error == CURLE_OK;
+    CURLMcode ret = prepared ? curl_multi_perform(b->http, &running) : CURLM_OK;
     CURLMsg *message;
     int remaining;
-    bool done = ret != CURLM_OK, success = false;
-    while ((message = curl_multi_info_read(b->http, &remaining))) {
+    bool done = !prepared || ret != CURLM_OK, success = false;
+    if (!prepared) config_event(b, "complete", int(b->route.error));
+    while (prepared && (message = curl_multi_info_read(b->http, &remaining))) {
         if (message->msg != CURLMSG_DONE || message->easy_handle != b->request)
             continue;
+        CURLcode code = message->data.result; /* CURLMsg expires on removal. */
+        if (b->request_added) curl_multi_remove_handle(b->http, b->request);
+        b->request_added = false;
+        if (sl_http_route_retry(&b->route, b->request, code) &&
+            curl_multi_add_handle(b->http, b->request) == CURLM_OK) {
+            b->request_added = true;
+            return;
+        }
         done = true;
-        config_event(b, "complete", int(message->data.result));
-        success = message->data.result == CURLE_OK &&
+        config_event(b, "complete", int(code));
+        success = code == CURLE_OK &&
             sl_gns_import_trust(b->config_download.data(), b->config_download.size());
-        if (message->data.result == CURLE_OK)
+        if (code == CURLE_OK)
             config_event(b, success ? "trust_imported" : "trust_failed", -1);
     }
     if (!done)
         return;
-    curl_multi_remove_handle(b->http, b->request);
+    if (b->request_added) curl_multi_remove_handle(b->http, b->request);
+    b->request_added = false;
     curl_easy_cleanup(b->request);
+    sl_http_route_clear(&b->route);
     b->request = nullptr;
     auto action = b->config_fetch.complete(success);
     if (success) {
@@ -738,8 +761,10 @@ extern "C" void sl_sns_destroy(sl_sns *b) {
     if (!b->certificate.empty())
         wipe(b->certificate.data(), b->certificate.size());
     if (b->request) {
-        curl_multi_remove_handle(b->http, b->request);
+        if (b->request_added) curl_multi_remove_handle(b->http, b->request);
+        b->request_added = false;
         curl_easy_cleanup(b->request);
+        sl_http_route_clear(&b->route);
     }
     if (b->http)
         curl_multi_cleanup(b->http);

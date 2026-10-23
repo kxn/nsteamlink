@@ -3208,3 +3208,36 @@ Decision：在原owner的连接采样点保存HID提交/发送/ACK和门控/本�
 线程或socket，不开放逐报告/feature正文/序列号日志，不改变注册或报告协议。
 attached只说明session接入，ACK包括设备生命周期包/分片，seq/buttons是本地提交值，
 均不能独自充当主机执行输入的证明。普通构建继续排除这些记录。
+
+
+## D-A097：多公共 DNS 与跨网段 HTTPS 候选兼容策略
+
+Evidence：822c746真机热点日志`session-00000000001792735374-089247912-00000.log`
+及`session-00000000001792735408-088484084-00000.log`记录8.8.8.8有A应答，但目录
+请求对88.221.83.200、88.221.83.187及2.17.107.128未完成TCP，最终curl=28/http=0。
+435017e先前热点经104.110.240.106取得目录并完成sns_relay媒体。用户另观察同段地址
+成败相关，要求多公共DNS、IP去重及跨段优先尝试。这些证据不证明DNS、MTU或同段
+路由是根因；撤回将单一8.8.8.8实验当成稳定恢复方案的任何推广，D-A095只保留实验史。
+提供器地址依据Google、Cloudflare、Quad9、AliDNS及DNSPod官方文档（链接见
+`dns_config.c`）。相关现象与兼容决策不能作为固定官方shell的逆向结果。
+
+Decision：Switch既有解析worker上并行发往五家提供器，每家最多4个A，整个查询
+共用3秒deadline，关闭所有UDP/TCP句柄再返回。堆上保存有界查询状态，不新增线程。
+合并最多20个唯一IPv4，以/24分组轮询；同段其他IP仍保留，不建立网段黑名单。
+所有getaddrinfo域名使用同一策略，不跨接口缓存，不回退DHCP或Horizon缓存。
+
+实际HTTPS owner使用共享http_route：保留URL/Host/SNI/CA校验，通过CURLOPT_RESOLVE
+固定单个候选，失败后在移出multi的同一easy上替换地址、强制新连接再加入。每候选
+connect（含TLS）最多4秒，轮换共用90秒预算，不按候选刷新；下载/正文仍受owner
+原期限或低速规则约束。只轮换未收到HTTP状态/正文的连接、TLS、收发或超时失败，
+不重放HTTP错误、半截正文或已有重定向链；证书失败仍只可换候选，绝不关闭校验。
+成功的CM CONNECT_ONLY句柄保持multi归属，继续原WebSocket升级与控制协议。
+
+目录、共享/独立CM、启动SDR缓存、SDK SDR配置、封面和更新器接入同一helper；SDK
+UDP/STUN仅接入统一DNS，不将HTTPS规则施加给UDP。SNS准备阶段DNS失败仍交付
+Completed(false)，不能变成cannot_start而跳过原计数、重试及realm切换。候选轮换是
+一次HTTP请求内部的本地兼容策略，不改变配对授权码、安全码、控制报文、媒体选路、
+MSS、官方配置重试或SDK收包策略。桌面默认不启用；受控测试显式启用相同helper。
+
+验证边界：本地真实DNS/TLS故障可证明排序、换地址、证书检查和资源清理；不能据此
+宣称热点恢复、真实Valve链路稳定、HID有效或Switch loader生命周期通过。
