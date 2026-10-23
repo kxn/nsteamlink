@@ -730,6 +730,33 @@ UDP 系统调用、CM 连接工厂/服务边界、墙钟和最终 SDK 构造器�
 清空地址目录是受控输入，不是新增的 NAT/TTL 失效策略。该测试没有真实 Steam、TLS、
 NAT、SDK 网络或 Switch，不覆盖 BStart/socket 创建失败、全部授权入站身份规则和持久文件。
 
+#### 真实 WebSocket 工厂与共享控制 owner 的回调边界
+
+**Evidence / 证据修订**：`remote_connection.c`的生产工厂在创建`sl_remote`时重建
+一份adapter回调表；不能将直接创建`sl_remote`或替换连接工厂的测试，推广为这份表
+已经正确转发所有回调。此前真实工厂漏接control_packet、disconnecting、begin_pairing、
+prepare_pairing、abort_pairing。前者使CM控制帧落入独立legacy处理器，共享IHS请求
+owner收不到它；控制回调计数为零不证明服务端没有发送控制回复。
+
+用户111e785热点日志显示请求连续入队/交付、共享owner停在5，控制回调为零。独立
+开发机对照使用同一已配对测试身份、同一条CM连接：共享IHS请求12次无准入，随后
+legacy请求获得SDR票据；头部和正文token均能解密为正确device ID。测试未创建媒体
+或请求游戏/桌面，CM确实运行。改变空PIN、form_factor等字段的初步受控实验没有
+恢复共享owner的票据，不把这些未成立的候选当作协议修复。
+
+**接线契约**：生产工厂必须把这些可选回调的参数、返回值和应用context完整转发。
+尤其prepare_pairing是否为空本身选择shared/legacy策略，应用未提供时必须保留NULL，
+不能安装一个总返回false的占位adapter。control_packet返回true才消费，false保留
+legacy后备；disconnecting须保留协议层定义的会话清理顺序。没有改变线上报文格式、
+PIN含义、选路、重试或服务端策略。受控工厂测试的WebSocket-ready/入站CM为provider，
+与实际CM对照分开，均不能替代Switch热点媒体验收。
+
+补齐adapter后，以相同已配对身份执行未改报文的当前IHS sender，实际CM回调3次，
+接受transport=4、16字节流key，owner进入6；没有创建媒体。受控真实工厂测试在旧
+adapter下正常结束并报告11项行为不符，修正后通过，覆盖shared回调、NULL策略、
+control返回false的legacy后备、准备失败和断开前后顺序。初期测试目标遗漏jsmn include
+属于编译驱动问题，不计产品反例。
+
 ### 9.5 SDR 初始化参数与网络库职责
 
 **Evidence：arm64 `UpdateState 0x801330–0x801448`，x86_64 shell `0xd28829–0xd28945` 交叉对应。**

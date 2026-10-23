@@ -198,6 +198,27 @@ static void connected(bool state, void *ctx) {
     if (c->callbacks.connected)
         c->callbacks.connected(state, c->ctx);
 }
+static void disconnecting(void *ctx) {
+    sl_remote_connection *c = ctx;
+    c->callbacks.disconnecting(c->ctx);
+}
+static bool begin_pairing(void *ctx) {
+    sl_remote_connection *c = ctx;
+    return c->callbacks.begin_pairing(c->ctx);
+}
+static bool prepare_pairing(IHS_SteamUniverse universe, const char *pin, uint8_t **body,
+                            size_t *size, void *ctx) {
+    sl_remote_connection *c = ctx;
+    return c->callbacks.prepare_pairing(universe, pin, body, size, c->ctx);
+}
+static void abort_pairing(void *ctx) {
+    sl_remote_connection *c = ctx;
+    c->callbacks.abort_pairing(c->ctx);
+}
+static bool control_packet(const uint8_t *wire, size_t size, void *ctx) {
+    sl_remote_connection *c = ctx;
+    return c->callbacks.control_packet(wire, size, c->ctx);
+}
 static void host(const sl_remote_host *h, void *ctx) {
     sl_remote_connection *c = ctx;
     if (c->callbacks.host)
@@ -520,6 +541,13 @@ sl_remote_connection *sl_remote_connection_create(const IHS_ClientConfig *config
                                     .pair_failed = pair_failed,
                                     .stream_result = stream_result,
                                     .transport_signal = transport_signal};
+    /* Pointer presence selects the shared manager strategy. Standalone probes
+     * and transport bridges must retain their NULL/legacy behavior. */
+    adapters.disconnecting = cb->disconnecting ? disconnecting : NULL;
+    adapters.begin_pairing = cb->begin_pairing ? begin_pairing : NULL;
+    adapters.prepare_pairing = cb->prepare_pairing ? prepare_pairing : NULL;
+    adapters.abort_pairing = cb->abort_pairing ? abort_pairing : NULL;
+    adapters.control_packet = cb->control_packet ? control_packet : NULL;
     c->protocol = sl_remote_create(config, &adapters, c);
     if (!c->receive || !c->message || !c->multi || !c->protocol) {
         sl_remote_connection_destroy(c);

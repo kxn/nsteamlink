@@ -3167,3 +3167,16 @@ request_id、目标、已加密security PIN、自动授权上下文和已有Test
 原Qt/线程/发送等provider边界、native的构造观察端点和3组旧SDK-ready的端口异步映射
 分别说明，不能推广为自然竞争、真实SDR或Switch验收。没有改变配对码来源、安全码
 用途、重试期限、取消规则或首页UI。
+
+## D-A094：真实连接工厂保留共享控制回调及可选语义
+
+Evidence：公网参考§9.5“真实WebSocket工厂与共享控制owner的回调边界”。真实
+remote_connection工厂重建的adapter表遗漏五个新回调；直接sl_remote/替换工厂测试
+未覆盖此层。同身份、同CM连接的共享请求等待与legacy成功，将问题缩小到生产接线；
+原control_rx=0只能说明该回调没被调用，撤回将其推广为云端无控制回包的解释。
+
+Decision：补齐control_packet、disconnecting、begin_pairing、prepare_pairing和
+abort_pairing的工厂adapter，转发原应用context/参数/返回值。所有新增可选回调仅在
+应用实际提供时安装；prepare_pairing的NULL策略分支必须保持。保留旧独立probe/bridge
+的legacy路径，不为修复回调接线改变线上报文、选路或超时。真实工厂的受控回放与
+实际CM控制验收分别记录，不将任何一项当作完整热点媒体/loader验证。

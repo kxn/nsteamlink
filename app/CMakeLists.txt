@@ -358,6 +358,15 @@ if(NSL_PLATFORM STREQUAL "desktop")
     target_compile_options(nsl-remote-tests PRIVATE -Wall -Wextra -UNDEBUG)
     target_link_libraries(nsl-remote-tests PRIVATE nsl_remote nsl_ui)
     add_test(NAME nsl-remote COMMAND nsl-remote-tests)
+    add_executable(nsl-remote-connection-callback-tests tests/test_remote_connection_callbacks.c)
+    target_include_directories(nsl-remote-connection-callback-tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/third_party/jsmn
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf)
+    target_compile_definitions(nsl-remote-connection-callback-tests PRIVATE NSL_DIAGNOSTICS=$<BOOL:${NSL_DIAGNOSTICS}>)
+    target_compile_options(nsl-remote-connection-callback-tests PRIVATE -Wall -Wextra -UNDEBUG)
+    target_link_libraries(nsl-remote-connection-callback-tests PRIVATE nsl_remote)
+    add_test(NAME nsl-remote-connection-callbacks COMMAND nsl-remote-connection-callback-tests)
     add_executable(nsl-dns-refresh-tests tests/test_dns_refresh.c)
     target_compile_options(nsl-dns-refresh-tests PRIVATE -Wall -Wextra -UNDEBUG)
     target_link_libraries(nsl-dns-refresh-tests PRIVATE nsl_remote)
