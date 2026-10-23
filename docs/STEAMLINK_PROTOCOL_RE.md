@@ -14259,3 +14259,61 @@ PYTHONPATH=/path/to/audit-deps python3 tools/steam-network-transition-audit.py \
 python3 tools/steam-android-network-observe.py --serial emulator-5580 \
   --readonly-qemu-pid ACTUAL_QEMU_PID --output /private/new-trace.jsonl
 ```
+
+## 184. 生产轮询发现入口的错误、批次与清理对照
+
+Evidence：runtime的`start_client`调用`IHS_ClientCreatePolled`，不是§168–169错误oracle
+的`IHS_ClientCreate`。`update_control`对调用者提供的monotonic now执行门禁，获准后
+写`control_next_update=now+100`，再调用`IHS_ClientUpdate`。SDK该方法先运行同owner的
+云端session callback，再排空本地UDP：任一非正结果结束批次，不按errno销毁client；
+之后依序做发现、过期及到期请求更新。不能用旧RX线程的测试通过证明这一生产入口。
+
+`app/tests/discovery_polled_runtime.c`编入真实runtime.c，运行实际start_client、
+update_control、stop_client及SDK polled方法。socket创建、O_NONBLOCK、protobuf
+解析、应用discovered_status→directory→UI event、timer线程join和client销毁均执行。
+仅recvfrom结果/来源、sendto接纳、协议墙钟及传给actor入口的时间戳是provider；不运行
+外层worker_main线程、实际Steam或Qt，不证明物理网络错误、DNS、串流或Switch退出。
+
+四个§169原程序各配ENETDOWN/EAGAIN，比较每次读取及每批callback标签顺序；另对
+NONE及13种Linux errno分别做单错误后恢复，合计22组。Source正读9/7仍是opaque
+BProcess标签；Native用有效Status的timestamp9/7观察顺序，不称作同一wire解析。
+EBADF等只是系统调用返回的注入标记，实际fd保持有效；不宣称实际关闭fd后也已恢复。
+
+每个获准批次之后额外调用10次now+1/now+99，必须没有新read；延迟500ms后只允许
+一个新批次，同时间/now+99不追赶，now+100才允许下一批。该断言核对实际门禁函数对
+输入的行为，不证明外层worker真实每100ms被调度、帧渲染不阻塞或Switch性能。协议
+wall固定1000，真实IHS.Timer与条件变量的monotonic钟保持一致，不混用fake OS clock。
+
+测试观察同一client/socket保留、每轮一次receiveGeneration推进，且没有IHSClient RX
+worker；实际IHS.Timer线程仍存在，不能将polled写成完全无线程。恢复后的Status必须
+进入生产主机目录，形成visible且非cloud的主机，并产生HOST事件；gamesRunning=0
+仍是有效发现。UI事件可以按生产规则合并，不以callback次数要求同样数量的UI事件。
+Stop后的直接Update必须false且不再读取；真实stop_client关闭一次原fd、join一次
+timer线程，再销毁对应receive condition。未从进程exit0推断Switch回到hbmenu。
+
+`scripts/check-steam-discovery-polled.py`核对原记录二进制/生成helper身份、原真实
+recvfrom/opaque handoff轨迹，再比较Native输入、完整callback标签、门禁调用数、
+目录发布和资源计数。使用显式异常，Python -O不取消验证。报告还保存当前runtime、
+SDK client、oracle、比较器及实际接收器ELF的SHA。已有threaded错误/连续失败/CPU/
+提前唤醒测试仍约束其SDK入口，polled启动故障另由§171的资源夹具覆盖，不混为一个
+平台执行结果。
+
+`check-discovery-polled-native-mutations.py`复制实际SDK client.c并独立编译/重链接，
+不编辑产品文件、SDK指针或原测试对象：重复处理保留的包视图、跳过奇数批次两种反例
+都正常退出并完成清理，分别得到`[[5,9],[5,9],[6,7],[6,7]]`和`[[6,7]]`，被原
+`[[5,9],[6,7]]`拒绝。直接再解析已经消费过的buffer游标并不会重复交付，不能把这种
+行为等价变异算作有效反例；反例必须实际改变观察。编译/链接失败、signal、fixture
+断言或初始化失败同样不算策略反例通过。
+
+这组证据补齐已运行轮询入口的非正读与调用次序映射；不把手动驱动actor入口等同于
+完整外层worker、自然网络通知后的重新初始化或远端服务恢复。runtime初始client
+失败后与云端owner的构造次序也不由本fixture覆盖；相关对象创建与真正发DNS/TLS
+请求必须分开核对，不据函数名把创建对象称为已经联网。
+
+```sh
+cmake --build build/desktop --target nsl-discovery-polled-runtime
+python3 -O scripts/check-steam-discovery-polled.py \
+  --receiver build/desktop/app/nsl-discovery-polled-runtime --output /tmp/polled-discovery.json
+python3 -O scripts/check-discovery-polled-native-mutations.py \
+  --build build/desktop --output /tmp/polled-mutations
+```

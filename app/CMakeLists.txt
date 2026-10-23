@@ -1171,6 +1171,23 @@ if(NSL_PLATFORM STREQUAL "desktop")
         "${CMAKE_SOURCE_DIR}/scripts/check-steam-discovery-cycles.py"
         --receiver $<TARGET_FILE:nsl-discovery-error-runtime>)
     set_tests_properties(discovery_receive_official_vectors discovery_cycles_official_vectors PROPERTIES TIMEOUT 30)
+    add_executable(nsl-discovery-polled-runtime tests/discovery_polled_runtime.c)
+    target_include_directories(nsl-discovery-polled-runtime PRIVATE platforms/common
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client
+        ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/protobuf)
+    target_compile_options(nsl-discovery-polled-runtime PRIVATE -Wall -Wextra -Werror -Wno-unknown-pragmas)
+    target_link_libraries(nsl-discovery-polled-runtime PRIVATE nsl_platform)
+    target_link_options(nsl-discovery-polled-runtime PRIVATE -Wl,--wrap=recvfrom -Wl,--wrap=sendto
+        -Wl,--wrap=socket -Wl,--wrap=close -Wl,--wrap=time -Wl,--wrap=IHS_ThreadCreate
+        -Wl,--wrap=IHS_ThreadJoin -Wl,--wrap=IHS_CondDestroy)
+    add_test(NAME discovery_polled_official_vectors COMMAND "${Python3_EXECUTABLE}" -O
+        "${CMAKE_SOURCE_DIR}/scripts/check-steam-discovery-polled.py"
+        --receiver $<TARGET_FILE:nsl-discovery-polled-runtime>)
+    set_tests_properties(discovery_polled_official_vectors PROPERTIES TIMEOUT 30)
+    add_test(NAME discovery_polled_native_mutations COMMAND "${Python3_EXECUTABLE}" -O
+        "${CMAKE_SOURCE_DIR}/scripts/check-discovery-polled-native-mutations.py"
+        --build "${CMAKE_BINARY_DIR}" --output "${CMAKE_BINARY_DIR}/discovery-polled-mutations")
+    set_tests_properties(discovery_polled_native_mutations PROPERTIES TIMEOUT 90)
     add_executable(nsl-video-stop-queue-runtime tests/video_stop_queue_runtime.c)
     target_include_directories(nsl-video-stop-queue-runtime PRIVATE platforms/common
         ${CMAKE_SOURCE_DIR}/third_party/ihslib/src ${CMAKE_SOURCE_DIR}/third_party/ihslib/src/client

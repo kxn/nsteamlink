@@ -956,6 +956,13 @@ runtime 在一个 mutex 临界区内更新目录并发布 UI 事件；IHS 与云
 目录的30秒边界、云端豁免和 Offline 决定。进程重启的保存地址只作为时间0/未验证 seed。
 账号列表由同一目录独立持有、按 §11.2 保存；地址与 MAC 的完整持久文件不能由该账号文件替代。
 
+应用发现入口使用`IHS_ClientCreatePolled`，由runtime的`update_control`驱动完整Update；
+旧线程版`discovery_error_runtime`不能代替该入口的验证。`discovery_polled_runtime`经过
+实际start/update/stop函数、非阻塞socket、SDK解析及主机目录/UI发布，以22组原批次/
+errno输入核对保留owner、后续恢复、100ms输入门禁和迟到不追赶；两个正常退出的实际
+SDK模块反例因重复/遗漏callback被拒绝。外层worker调度、实际Qt/网络时序与Switch仍是
+独立边界，详见协议参考§184，不将测试驱动的时间戳当作实测周期。
+
 发现地址列表与关注 client_id 列表不是同一种变化。原 `BAddNetworkAddress`/
 `ClearInactiveAddresses` 没有写入下一发现轮次；`AddClientDiscovery` 才清零轮次时间
 （§10.2）。IHS 的 `SetDiscoveryDirectory` 以原操作队列更新地址快照，关注 ID 列表相同
