@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Execute pinned x64 Steam host adaptive-bitrate boundaries offline.
 
-Original recomputation, loss/overflow handlers, callback gates/latch, actual RTTI
+Original recomputation, loss/overflow and ping-window handlers, callback gates/latch, actual RTTI
 bitrate getter and encoding-stage min/store execute original instructions. Time
-and logging are providers. Synthetic source objects omit sample/history buffers;
-original branches skip them, not mocked return values. The optional independent
+and logging are providers. Loss/overflow fixtures omit sample/history buffers; ping-window fixtures provide
+an explicit 500-sample input and critical-section terminals.
+original absent-buffer branches skip them, not mocked return values. The optional independent
 rate callback and downstream frame delivery are explicit endpoints. No Steam
 process, packets, decoder/encoder hardware or real thread scheduling is touched.
 Negative controls intentionally change decoder margin or encoder-state store
@@ -20,13 +21,14 @@ from unicorn.x86_const import (
     UC_X86_REG_XMM0,
     UC_X86_REG_EAX,
     UC_X86_REG_RDX,
+    UC_X86_REG_R8,
 )
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--binary", type=Path, required=True)
 parser.add_argument(
     "--mutation",
-    choices=["none", "decoder-margin", "encoder-store"],
+    choices=["none", "decoder-margin", "encoder-store", "ping-recovery"],
     default="none",
     help="Negative controls: each mutation must fail the original-output oracle",
 )
@@ -55,6 +57,8 @@ class M:
         self.calls = []
         if args.mutation == "decoder-margin":
             u.mem_write(0x13AC8B6C0, struct.pack("<f", 1.0))
+        if args.mutation == "ping-recovery":
+            u.mem_write(0x13AC8B6A4, struct.pack("<f", 0.0))
         if args.mutation == "encoder-store":
             assert bytes(u.mem_read(0x13A1A3038, 6)) == bytes.fromhex("87be68010000")
             u.mem_write(0x13A1A3038, b"\x90" * 6)
@@ -213,6 +217,65 @@ for enabled, target, other, expected in [
             chosen_encoder_state_kbps=chosen,
         )
     )
+# The original ping-response callback converts 16.16-second ticks to float ms,
+# then updates the original 500-slot window and recomputes the coefficient.
+# Array contents and active-thread word are explicit inputs; lock effects are
+# terminals, not a claim about real host scheduling or actual network history.
+for (
+    baseline,
+    sample_ms,
+    coefficient,
+    enabled,
+    index,
+    active,
+    expected_coefficient,
+    expected_target,
+) in [
+    (10, 25, 1, 1, 0, 1, 0.5036091804504395, 5.0360918045043945),
+    (10, 40, 1, 1, 0, 1, 0.08, 1),
+    (200, 210, 1, 1, 0, 1, 1, 10),
+    (10, 10, 0.5, 1, 0, 1, 0.54, 5.4),
+    (10, 10, 0.99, 1, 0, 1, 1, 10),
+    (10, 25, 1, 0, 0, 1, 1, 10),
+    (10, 25, 1, 1, 500, 1, 1, 10),
+    (10, 25, 1, 1, 0, 0, 1, 10),
+]:
+    parent = 0x200000
+    m = M(2, obj=parent + 0x400)
+    for iat, provider in [(0x13AC4A818, 0x110300), (0x13AC4A810, 0x110310)]:
+        m.q(iat, provider)  # Enter/LeaveCriticalSection, single-thread boundary.
+        m.u.mem_write(provider, b"\xc3")
+    m.q(m.obj + 0x58, 0x380000)
+    m.u.mem_write(0x380000, struct.pack("<500f", *([baseline] * 500)))
+    m.f(m.obj + 0x54, 10)  # Explicit threshold input, not the host default.
+    m.f(m.obj + 0xA0, coefficient)
+    m.u.mem_write(m.obj + 0x0C, struct.pack("<I", active))
+    m.u.mem_write(parent + 0x408, bytes([enabled]))
+    ticks = round(sample_ms * 65536 / 1000)
+    m.u.reg_write(UC_X86_REG_R8, ticks)
+    m.call(0x13A18E8F0, ctx=parent, frame=index)
+    actual = m.readf(0xA0)
+    assert math.isclose(actual, expected_coefficient, rel_tol=1e-6), (
+        "ping coefficient",
+        actual,
+        expected_coefficient,
+    )
+    assert math.isclose(m.readf(0xA8), expected_target, rel_tol=1e-6)
+    cases.append(
+        dict(
+            name="original-ping-window",
+            baseline_ms=baseline,
+            new_sample_ticks=ticks,
+            initial_coefficient=coefficient,
+            enabled=bool(enabled),
+            slot=index,
+            active_thread_word=active,
+            coefficient=actual,
+            target=m.readf(0xA8),
+            window_mean=m.readf(0xC8),
+        )
+    )
+
 print(
     json.dumps(
         {
@@ -222,13 +285,16 @@ print(
                 "logging",
                 "optional second bitrate callback",
                 "downstream frame delivery",
+                "Enter/LeaveCriticalSection for explicit single-thread ping-window cases",
             ],
-            "input_boundary": "Synthetic estimators with absent sample buffers/histogram. Source gate/latch, recomputation, actual session RTTI bitrate getter and real stage min/store execute original instructions. No actual host packets/encoder device/runtime evidence.",
+            "input_boundary": "Loss/overflow estimators with absent sample buffers/histogram; ping-response cases have an explicit 500-slot sample window and active-thread word. Source gate/latch, ping conversion/window/coefficient, recomputation, actual session RTTI bitrate getter and real stage min/store execute original instructions. No actual host packets/encoder device/runtime evidence.",
             "cases": cases,
             "source_ranges": {
                 hex(a): hashlib.sha256(image[a - base : z - base]).hexdigest()
                 for a, z in [
                     (0x13A172500, 0x13A1725B9),
+                    (0x13A18E8F0, 0x13A18E93A),
+                    (0x13A171820, 0x13A171A04),
                     (0x13A1907F0, 0x13A190806),
                     (0x13A18C4C0, 0x13A18C4E6),
                     (0x13A1A2FE0, 0x13A1A3058),

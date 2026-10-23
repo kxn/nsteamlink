@@ -164,9 +164,9 @@ x86 `CGameStreamSession` RTTI vtable `0x3aa19f14` 的 +0x24 指向
 
 ### 时间与限额必须按版本核对
 
-独立执行 `tools/steam-adaptive-host64-audit.py` 的22个受控输入：
+独立执行 `tools/steam-adaptive-host64-audit.py` 的30个受控输入（其中8个为下述Ping窗口）：
 原重算、两类反馈处理、source callback门控、重复loss的latch、真实session虚表getter，
-以及编码stage的回调循环和写入均执行原指令。仅提供时钟、日志、可选第二码率回调与
+以及编码stage的回调循环和写入均执行原指令。仅提供时钟、日志、可选第二码率回调、Ping单线程临界区与
 下游帧交付终点；没有改写这些算法入口。输入对象不含速率采样/历史缓冲时，原函数
 自行走空缓冲分支。这不覆盖有历史缓冲的估计更新，也不是真实Steam进程执行。
 
@@ -227,6 +227,40 @@ host `CGameStreamSession` offset=0x4528 的RTTI虚表为 `0x13ac8f8b0`：
 仍未执行GPU/NVENC/AMF/x264编码器设备调用或比较真实编码比特流；“写入编码器状态”
 不能扩大为“任意真实会话必然以该码率输出”。
 
+### 会话Ping样本参与系数调整
+
+另8个原指令用例从 `CGameStreamSession` offset0x4528的真实callback
+`0x13a18e8f0` 进入：其RTTI虚表 `0x13ac8f8b0` 的+0x50指向该地址，
+先检查enabled，再把16.16秒差转换为float毫秒，尾调用 `0x13a171820`。
+
+静态接收链 `0x13a1f04d0` 构造RTTI为 `CDiscoveryPingResponse`
+（vtable `0x13ad5cc70`）的对象，解析成功后按sequence找到保存的请求项，
+检查packet-size条件，再以本机保存的发送/接收时间差调用delegate+0x50。
+这是会话通道0的Ping，不是首页主机广播发现、DNS耗时或客户端自行编造的网络状态。
+原控制接收/解析在此为静态绑定证据；8个用例从已验证的callback入口执行，
+不冒充完整加密Socket/认证/主机进程实验。
+
+`0x13a171820` 仅在active-thread成员非0且slot<500时处理：写入500槽数组，
+用非负样本计算mean；将新样本与mean的差和阈值(+0x54)比较。在正常有效浮点输入下：
+
+- 差超过阈值时，按超出量/阈值缩小系数(+0xa0)，有0.08下限，且不高于已有系数。
+- 未超过时，正常范围内每次处理可将系数加0.04，最高1，然后执行原recompute。
+- 0.04是每次处理量，不是每秒恢复量；500槽是原数组长度，不代表本次执行了真实
+  工作线程、周期唤醒和完整窗口淘汰。
+
+显式阈值10ms、500槽初始10ms，新样本约25ms（16.16量化后）使系数约0.503609、
+目标约5.036092 Mbps；约40ms触及0.08系数并受1 Mbps下限约束。
+初始窗口200ms、新样本约210ms不触发这一分支的下降；因此这里比较的是相对窗口的
+增量，不能改写成“RTT超过某个固定值立即降画质”。系数0.5的低差样本恢复到约0.54，
+0.99恢复到1。另覆盖enabled关闭、slot=500及active-thread=0门禁。
+这些窗口、阈值、link和thread成员都是显式输入，不是当前设备实测值或默认参数推测。
+
+原浮点min/max helper仍执行；仅Enter/LeaveCriticalSection为明确的单线程终点。
+把0.04改为0的反例在实际恢复结果比较中被拒绝。此链补充了延迟反馈能参与生产目标的
+证据，但没有覆盖原速率样本/事件直方图的全部分支，也没有让合成窗口替代真实公网验证。
+IHS当前已有会话Ping应答，见 `ch_discovery.c::OnPingRequest` 与协议§43；它按官方
+观察复制request正文并按请求尺寸填充，不因response字段标签而擅改应答内容。
+
 ### Switch接线比较需要保留平台边界
 
 IHS `ch_data_video.c::CheckPartialOverflow` 已发送message148，是压缩帧pending
@@ -281,6 +315,7 @@ python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/Stea
 # 下列反例应非零退出，并明确因输出不匹配失败：
 python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation decoder-margin
 python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation encoder-store
+python3 tools/steam-adaptive-host64-audit.py --binary /path/to/pinned/win64/SteamUI.dll --mutation ping-recovery
 python3 tools/steam-adaptive-client-feedback-audit.py \
   --binary /path/to/pinned/linux/package/bin/steamlink --output /tmp/linux-feedback.json
 # 此反例同样应因反馈缺失而非零退出：
