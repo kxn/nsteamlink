@@ -3579,6 +3579,21 @@ Decision：仅将pending replacement分支的STOP generation设为旧lifecycle.r
 application副本重现并拒绝旧行为。接受材料/可见主机给定；软件SDL不代替Switch或
 真实Steam/SDR/NAT验收，也不把历史用户网络故障归因于这个本地竞争。
 
+## D-A111：区分初始信令等待与全局 SDR 测量就绪
+
+Evidence：固定官方样本 `CheckWaitForInitialRoutingReady @0x875c08` 原始指令在
+状态起 1999999us 返回再等1us，在2000000us放行；本地 `NSL_SDR_Wait` 原在此处
+使用7000001us。实际SDK对象的受控边界记录重现差异，见协议参考§197。
+
+Decision：初始信令门槛改为2000000us，保留20ms复查、FindingRoute的100ms条件、
+SDK的ICE候选等待及一次性标志。全局测量的`age > 7s`仍只参与原有路由就绪判定，
+不能移作单笔信令窗口。不增加重试、绕过认证或修改20秒连接总超时。
+
+验证边界：两个实际SDK端点经custom signaling/内置ICE收发通过，身份、信令传递及
+静默本机relay为受控输入；不冒称Valve证书、真实NAT、SDR服务或Switch已验证。
+私有SDK夹具须保持SDK的NDEBUG/构建定义，不能用-UNDEBUG改变私有对象布局；
+使用始终开启的显式检查。该测试构建约束不推断为Switch平台缺陷。
+
 ## D-064：Generic gyro 的早期推论（2026-10-23，已撤回，由 D-065 取代）
 
 历史 Evidence：用户观察到实验构建无 gyro 输出；某些加 `0x400` 的构建还出现

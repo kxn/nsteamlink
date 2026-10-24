@@ -1,0 +1,8 @@
+{
+  "sample_sha256": "50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e",
+  "entry": "0x875c08",
+  "end": "0x875d5c",
+  "inputs": "pending=true, SDR present, global ready=false, no peer clusters, no ICE. Ages and returned future delay are microseconds; original return=1 means proceed and is normalized to zero delay.",
+  "cold_sdr_waits": [[0, 20000], [1980000, 20000], [1999999, 1], [2000000, 0], [6999999, 0], [7000000, 0]],
+  "source_audit": "tools/steam-remote-policy-audit.py::initial_routing executes original pinned AArch64 instructions with explicit constructed objects"
+}

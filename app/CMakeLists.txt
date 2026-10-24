@@ -561,6 +561,21 @@ if(NSL_PLATFORM STREQUAL "desktop")
             "${CMAKE_SOURCE_DIR}/scripts/check-steam-local-certificate.py"
             --receiver $<TARGET_FILE:nsl-local-certificate-oracle>)
         set_tests_properties(local_certificate_official_vectors PROPERTIES TIMEOUT 20)
+        if(NSL_ENABLE_SDR)
+            add_executable(nsl-p2p-local-runtime tests/p2p_local_runtime.cpp)
+            target_compile_features(nsl-p2p-local-runtime PRIVATE cxx_std_17)
+            target_compile_definitions(nsl-p2p-local-runtime PRIVATE
+                $<TARGET_PROPERTY:GameNetworkingSockets_s,COMPILE_DEFINITIONS>)
+            target_include_directories(nsl-p2p-local-runtime PRIVATE platforms/common
+                $<TARGET_PROPERTY:GameNetworkingSockets_s,INCLUDE_DIRECTORIES>)
+            target_compile_options(nsl-p2p-local-runtime PRIVATE -Wall -Wextra
+                -Wno-unknown-pragmas -Wno-unused-parameter -Wno-sign-compare -fno-rtti)
+            target_link_libraries(nsl-p2p-local-runtime PRIVATE GameNetworkingSockets::GameNetworkingSockets_s)
+            add_test(NAME p2p_local_runtime COMMAND "${Python3_EXECUTABLE}" -O
+                "${CMAKE_SOURCE_DIR}/scripts/check-p2p-local-runtime.py"
+                --receiver $<TARGET_FILE:nsl-p2p-local-runtime>)
+            set_tests_properties(p2p_local_runtime PROPERTIES TIMEOUT 45)
+        endif()
         add_executable(nsl-config-fetch-oracle tests/config_fetch_oracle.cpp)
         target_include_directories(nsl-config-fetch-oracle PRIVATE platforms/common)
         target_compile_options(nsl-config-fetch-oracle PRIVATE -Wall -Wextra -UNDEBUG)

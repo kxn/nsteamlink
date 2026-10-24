@@ -15235,3 +15235,71 @@ SDK pair被API直接置Connected，证书准备与CM服务由provider给定；�
 P2P信令、Valve证书、STUN/ICE候选、SNP丢包压力、SDR POP或NAT。软件SDL和虚拟
 控制器不证明Switch物理输入输出、GPU/libnx、Wi-Fi切换或hbmenu。真实匿名服务
 探针也没有提供这些缺失条件，不能代替它们的独立验收。
+
+## 197. 实际 P2P/ICE 建连与初始信令等待修正
+
+Evidence：固定Android ARM64样本SHA256仍为
+`50e1d3147d5d47b71ef1970e1867a2fe4f3e1ecf2ea6153f927fac88b88ea38e`。
+公网参考§14.4所述`CheckWaitForInitialRoutingReady @0x875c08–0x875d58`先检查
+一次性标志、SDR对象与全局就绪位；未就绪时最多等到状态起2000000us，返回值为
+`min(now+20000, entered+2000000)`。恰好2秒已放行，清一次性标志并返回ASAP=1。
+另一个FindingRoute分支保留100000us窗口，ICE候选保留100000/10000us窗口。
+
+`tools/audit-steam-p2p-initial-wait.py`复用原指令执行器，在人工对象、全局未就绪、
+无peer clusters/ICE的输入下重新执行六个边界。返回ASAP规范化为延迟0：
+
+| 状态年龄(us) | 原始指令等待(us) | 旧本地NSL_SDR_Wait等待(us) |
+|---:|---:|---:|
+| 0 | 20000 | 20000 |
+| 1980000 | 20000 | 20000 |
+| 1999999 | 1 | 20000 |
+| 2000000 | 0 | 20000 |
+| 6999999 | 0 | 2 |
+| 7000000 | 0 | 1 |
+
+旧本地列来自修改前实际SDK创建的连接对象和transport映射，调用生产
+`NSL_SDR_Wait`读取，不是复制公式。接收器正常清理并退出；外部Python检查器在
+`-O`下也明确拒绝该记录，原因为`initial signaling wait differs from original 2s boundary`。
+
+Conclusion：撤回本地实现把7000001us用于初始信令门槛的接法。公网参考§21.5的
+“测量超过7秒”属于全局路由数据good-enough条件，并且仍有测量数量前提；它不是
+单笔连接的初始信令窗口。`sdr_probe.cpp`改为2000000us并解释两个时钟的区别，
+未修改全局测量条件、SDK候选等待、重发规则或生产20秒连接超时。不能据此认定
+用户此前任何一次连接失败都由这一差异引起。
+
+### 实际 SDK 连接观察与控制边界
+
+`app/tests/p2p_local_runtime.cpp`使用构建中实际prepared SDK，包含已应用本仓补丁的
+P2P/SDR代码；不是原始vendor副本。两个接口的创建/销毁沿用SDK Init/Destroy实现，
+第二个接口用私有原生factory建立，编译宏和私有include继承SDK目标。它保留同一
+Release/Debug布局，检查使用显式CHECK，避免-UNDEBUG改变私有SDK对象ABI。
+
+- 两端为明确合成的generic身份，不导入假证书、关闭信任验证或宣称Steam认证。
+- listener接真正的`ConnectP2PCustomSignaling`。SDK产生的opaque信令经有界队列
+  转交`ReceivedP2PCustomSignal`，接入端实际`AcceptConnection`；队列锁外才调用SDK。
+  SDK由单owner手动poll，已有ICE内部工作由SDK负责清理；未新增test-owned后台线程。
+- 使用生产begin_connection的六项配置，包括20秒总超时和内置ICE=1；STUN为空，
+  TURN未配置。SDR配置只含本例自己绑定、保持静默的127.0.0.1 UDP端点，避免访问
+  真实中继。该控制配置通过实际SDR parser，不提供真实relay握手。
+- 实际两个端点进入Connected，私有类型确为P2P且选中的transport确为ICE；公开状态
+  为Unauthenticated，且没有LoopbackBuffers/Relayed标志。不是CreateSocketPair或内存pipe。
+- 两端各发送一份不同正文的UnreliableNoNagle数据，实际ReceiveMessages后逐字节
+  核对对方正文及非reliable标志，并Release消息。
+- CloseConnection双端、CloseListenSocket、Destroy第二接口、Kill SDK、恢复manual
+  poll模式、关闭本例relay FD；两份signaling对象均实际Release，最后清空自有信令队列。
+
+诊断ON/OFF的Release桌面构建均通过：六个本地边界与原指令一致，两个真实连接
+各收到对方正文，单次全例约4.3秒。该耗时是本机受控输入观察，不是公网性能承诺。
+相关SDR线格式/策略、SNS初始化/状态/缓存与本例在诊断ON共8项、OFF共6项通过；
+Switch Release的实际SDK及应用ELF交叉编译通过，未部署真机或据此宣称运行通过。
+
+```sh
+python3 tools/audit-steam-p2p-initial-wait.py --elf /absolute/path/to/libmain.so
+cmake --build build/desktop --target nsl-p2p-local-runtime
+ctest --test-dir build/desktop -R '^p2p_local_runtime$' -V
+```
+
+这里证明的是实际P2P信令/候选/建连入口及修正后的门槛；它没有把§196的应用恢复
+测试自动升级为P2P恢复验收。无CM服务、配对主机/Valve证书、外部STUN/NAT、真实
+SDR服务、丢包/映射变化或Switch GPU/libnx的独立证据，不能将本机ICE通路等同于
+公网功能整体对齐。

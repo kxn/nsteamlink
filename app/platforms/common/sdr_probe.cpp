@@ -1881,7 +1881,12 @@ long long NSL_SDR_Wait(CSteamNetworkConnectionP2P &connection, long long now) {
     if (it == transports.end())
         return now;
     auto &t = *it->second;
-    auto until = connection.GetTimeEnteredConnectionState() + 7000001;
+    /* NETWORKING §14.4, original CheckWaitForInitialRoutingReady @0x875c08:
+     * this per-connection signaling gate is capped at 2s (equality proceeds).
+     * The separate global routing-readiness criterion may use age >7s after
+     * enough POPs were measured (§21.5); it must not extend this gate. A cold
+     * or unreachable relay network must not postpone usable ICE signals 7s. */
+    auto until = connection.GetTimeEnteredConnectionState() + 2000000;
     if (!t.network->good_enough && now < until)
         return std::min<long long>(now + 20000, until);
     if (connection.GetState() == k_ESteamNetworkingConnectionState_FindingRoute &&
