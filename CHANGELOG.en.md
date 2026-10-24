@@ -2,6 +2,30 @@
 
 [简体中文](CHANGELOG.md)
 
+## [0.7.2] - 2026-10-24
+
+Previous stable release: **v0.7.1**. Target: `main`; source: [`v0.7.2`](https://github.com/kxn/nsteamlink/tree/v0.7.2).
+
+### Highlights
+
+- Fix doubled settings values such as quality, resolution and language selections.
+- Rename the pairing entry to “Show pairing code”. Disable it with “Cloud unavailable” until the cloud session is ready; hide its arrow and dim its surface and text. Restore it on connection. Manual address entry stays available.
+- Add “Skip this version” to the update dialog. Toggle it with X or touch, then confirm with A; B cancels without saving. The selected version stays hidden across restarts, while later versions can still prompt.
+
+### Validation and scope
+
+Checked actual Chinese and English renders. Regression coverage includes cloud availability, disabled activation, ignored-version persistence across restart, later-version prompts and failed file-replacement recovery. No new hardware testing was performed for this release. The unresolved Internet connectivity report in #93 is not claimed fixed.
+
+### Commits by type
+
+- UI fixes: `1a94f48` remove doubled settings text; `e36771f` gate pairing-code entry on cloud availability; `054cf01` hide disabled arrows and strengthen disabled styling.
+- Updater: `ad40898` allow opting out of a specific release notification.
+- Release: version and bilingual release notes.
+
+Thanks to [@jiaruisme](https://github.com/jiaruisme) for reporting [#93](https://github.com/kxn/nsteamlink/issues/93).
+
+[Full changelog: v0.7.1 → v0.7.2](https://github.com/kxn/nsteamlink/compare/v0.7.1...v0.7.2)
+
 ## [0.7.1] - 2026-10-23
 
 Previous stable release: **v0.7.0**. Target: `main`; source: [`v0.7.1`](https://github.com/kxn/nsteamlink/tree/v0.7.1).

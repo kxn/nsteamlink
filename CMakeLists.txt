@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 project(nsteamlink
-    VERSION 0.7.1
+    VERSION 0.7.2
     DESCRIPTION "Steam Remote Play client for Nintendo Switch"
     LANGUAGES C CXX)
 
