@@ -549,8 +549,11 @@ void sl_ui_layout(sl_ui_model *m) {
             l->panel_h = m->page == SL_UPDATE ? 440 : 392;
             for (int i = 0; i < l->count; ++i) {
                 sl_control *c = &l->controls[i];
-                if (c->kind == SL_CONTROL_CHECKBOX)
+                if (c->kind == SL_CONTROL_CHECKBOX) {
+                    c->x = l->panel_x + 40;
+                    c->w = l->panel_w - 80;
                     continue;
+                }
                 c->x = l->count == 1 ? l->panel_x + (l->panel_w - 308) / 2 : c->id == 9 ? 320 : 652;
                 c->y = m->page == SL_UPDATE ? 492 : 444;
                 c->w = 308;

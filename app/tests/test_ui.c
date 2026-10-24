@@ -629,7 +629,12 @@ static void update_flow(void) {
     sl_ui_runtime_event(&m, &found);
     sl_ui_tick(&m, m.now + 16);
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0); /* Physical X in this modal. */
-    assert(m.page == SL_UPDATE && m.skip_update && !sl_ui_take_command(&m, &cmd));
+    assert(m.page == SL_UPDATE && !m.skip_update && !sl_ui_take_command(&m, &cmd));
+    sl_ui_activate(&m, 104); /* Checkbox is touch-only. */
+    assert(m.skip_update);
+    for (int i = 0; i < m.layout.count; ++i)
+        if (m.layout.controls[i].action == SL_SKIP_UPDATE)
+            assert(m.layout.controls[i].x == m.layout.panel_x + 40);
     sl_ui_action(&m, SL_BACK, 0);
     sl_ui_tick(&m, m.now + 200);
     assert(!m.ignored_update_version[0] && !sl_ui_take_command(&m, &cmd));

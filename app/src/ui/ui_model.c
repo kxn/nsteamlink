@@ -650,8 +650,6 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
     sl_ui_layout(m);
 }
 void sl_ui_action(sl_ui_model *m, sl_action a, int arg) {
-    if (a == SL_OPEN_SETTINGS && m->page == SL_UPDATE)
-        a = SL_SKIP_UPDATE; /* X toggles the checkbox; A/B retain their modal actions. */
     if (a == SL_ACCEPT) {
         action(m, a, arg);
         return;

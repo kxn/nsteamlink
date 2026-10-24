@@ -565,7 +565,10 @@ int main(int argc, char **argv) {
                                                      .recommendation = 1};
             ui.entered_at = ui.now > 500 ? ui.now - 500 : 0;
             if (p == SL_UPDATE) {
-                strcpy(ui.update_version, "0.7.2");
+                unsigned major, minor, patch;
+                assert(sscanf(NSL_SEMANTIC_VERSION, "%u.%u.%u", &major, &minor, &patch) == 3);
+                snprintf(ui.update_version, sizeof(ui.update_version), "%u.%u.%u", major, minor,
+                         patch + 1); /* Future release fixture, never the current version. */
                 ui.skip_update = false;
             }
             strcpy(ui.error,

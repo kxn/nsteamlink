@@ -10,7 +10,7 @@ Previous stable release: **v0.7.1**. Target: `main`; source: [`v0.7.2`](https://
 
 - Fix doubled settings values such as quality, resolution and language selections.
 - Rename the pairing entry to “Show pairing code”. Disable it with “Cloud unavailable” until the cloud session is ready; hide its arrow and dim its surface and text. Restore it on connection. Manual address entry stays available.
-- Add “Skip this version” to the update dialog. Toggle it with X or touch, then confirm with A; B cancels without saving. The selected version stays hidden across restarts, while later versions can still prompt.
+- Add “Skip this version” to the update dialog. Select it using the touchscreen, then confirm with A; B cancels without saving. The selected version stays hidden across restarts, while later versions can still prompt.
 
 ### Validation and scope
 
