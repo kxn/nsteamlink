@@ -5,6 +5,37 @@
 #ifdef __SWITCH__
 #include <switch.h>
 #endif
+static void add_server(sl_dns_config *out, uint32_t address) {
+    if (!address || address == INADDR_BROADCAST || out->count == SL_DNS_SERVERS)
+        return;
+    for (unsigned i = 0; i < out->count; ++i)
+        if (out->servers[i].sin_addr.s_addr == address)
+            return;
+    out->servers[out->count++] = (struct sockaddr_in){
+        .sin_family = AF_INET, .sin_port = htons(53), .sin_addr = {.s_addr = address}};
+}
+void sl_dns_config_servers(sl_dns_config *out, uint32_t primary, uint32_t secondary) {
+    out->count = 0;
+    memset(out->servers, 0, sizeof(out->servers));
+    /* Prefer the current network's DNS, including user/router proxy DNS. Read
+     * it afresh per lookup rather than reusing Horizon's hostname cache after
+     * Wi-Fi changes. Public providers remain additional candidates (D-A097). */
+    add_server(out, primary);
+    add_server(out, secondary);
+    /* Compatibility workaround, not recovered Valve policy: observed Steam
+     * CDN answers can ping yet fail TCP/TLS; other providers may offer usable
+     * addresses. This does not establish DNS/MTU as the underlying fault.
+     * Provider addresses: developers.google.com/speed/public-dns/docs/using ;
+     * developers.cloudflare.com/1.1.1.1/ip-addresses/ ; docs.quad9.net/services/ ;
+     * www.alidns.com/ ; docs.dnspod.com/public-dns/public-dns-guide/ */
+    static const char *const servers[] = {
+        "8.8.8.8", "1.1.1.1", "9.9.9.9", "223.5.5.5", "119.29.29.29"};
+    for (unsigned i = 0; i < sizeof(servers) / sizeof(servers[0]); ++i) {
+        struct in_addr address;
+        if (inet_pton(AF_INET, servers[i], &address) == 1)
+            add_server(out, address.s_addr);
+    }
+}
 bool sl_dns_current_config(sl_dns_config *out) {
     memset(out, 0, sizeof(*out));
 #ifdef __SWITCH__
@@ -17,25 +48,7 @@ bool sl_dns_current_config(sl_dns_config *out) {
     out->platform_error = result;
     if (R_FAILED(result))
         return false;
-    /* Compatibility workaround, NOT recovered Valve policy (D-A097): observed
-     * Steam CDN answers can ping yet fail TCP/TLS, and changing public DNS can
-     * select a usable address. Query independent providers, not just mirrors
-     * of one provider. No DHCP/system-cache fallback across Wi-Fi changes.
-     * Provider-published addresses:
-     * developers.google.com/speed/public-dns/docs/using
-     * developers.cloudflare.com/1.1.1.1/ip-addresses/
-     * docs.quad9.net/services/ ; www.alidns.com/
-     * docs.dnspod.com/public-dns/public-dns-guide/
-     * This does not prove DNS/MTU is the underlying fault. */
-    static const char *const servers[SL_DNS_SERVERS] = {
-        "8.8.8.8", "1.1.1.1", "9.9.9.9", "223.5.5.5", "119.29.29.29"};
-    for (unsigned i = 0; i < SL_DNS_SERVERS; ++i) {
-        out->servers[i].sin_family = AF_INET;
-        out->servers[i].sin_port = htons(53);
-        if (inet_pton(AF_INET, servers[i], &out->servers[i].sin_addr) != 1)
-            return false;
-    }
-    out->count = SL_DNS_SERVERS;
+    sl_dns_config_servers(out, primary, secondary);
     return true;
 #else
     /* Other platforms keep their normal resolver. Tests supply explicit local

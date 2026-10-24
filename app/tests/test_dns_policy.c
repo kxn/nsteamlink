@@ -206,7 +206,47 @@ static void *lookup_batch(void *context) {
     atomic_store(&job->done, true);
     return NULL;
 }
+static uint32_t address(const char *text) {
+    struct in_addr ip;
+    assert(inet_pton(AF_INET, text, &ip) == 1);
+    return ip.s_addr;
+}
+static void expect_server(const sl_dns_config *cfg, unsigned index, const char *ip) {
+    assert(index < cfg->count && cfg->servers[index].sin_family == AF_INET &&
+           cfg->servers[index].sin_port == htons(53) &&
+           cfg->servers[index].sin_addr.s_addr == address(ip));
+}
+static void network_dns_order(void) {
+    const char *public[] = {"8.8.8.8", "1.1.1.1", "9.9.9.9", "223.5.5.5", "119.29.29.29"};
+    sl_dns_config cfg = {.local = address("10.10.10.66")};
+    sl_dns_config_servers(&cfg, address("10.10.10.10"), address("192.168.1.1"));
+    assert(cfg.count == 7 && cfg.local == address("10.10.10.66"));
+    expect_server(&cfg, 0, "10.10.10.10");
+    expect_server(&cfg, 1, "192.168.1.1");
+    for (unsigned i = 0; i < 5; ++i) expect_server(&cfg, i + 2, public[i]);
+    sl_dns_config_servers(&cfg, address("10.10.10.10"), address("10.10.10.10"));
+    assert(cfg.count == 6);
+    expect_server(&cfg, 0, "10.10.10.10");
+    for (unsigned i = 0; i < 5; ++i) expect_server(&cfg, i + 1, public[i]);
+    sl_dns_config_servers(&cfg, address("1.1.1.1"), address("8.8.8.8"));
+    assert(cfg.count == 5);
+    expect_server(&cfg, 0, "1.1.1.1");
+    expect_server(&cfg, 1, "8.8.8.8");
+    for (unsigned i = 2; i < 5; ++i) expect_server(&cfg, i, public[i]);
+    sl_dns_config_servers(&cfg, 0, 0);
+    assert(cfg.count == 5);
+    for (unsigned i = 0; i < 5; ++i) expect_server(&cfg, i, public[i]);
+    /* A new interface replaces the previous DNS list rather than appending. */
+    sl_dns_config_servers(&cfg, address("172.20.10.1"), 0);
+    assert(cfg.count == 6);
+    expect_server(&cfg, 0, "172.20.10.1");
+    for (unsigned i = 0; i < 5; ++i) expect_server(&cfg, i + 1, public[i]);
+    sl_dns_config_servers(&cfg, INADDR_BROADCAST, address("9.9.9.9"));
+    assert(cfg.count == 5);
+    expect_server(&cfg, 0, "9.9.9.9");
+}
 int main(void) {
+    network_dns_order();
     fixture first, second;
     start_fixture(&first, 7);
     start_fixture(&second, 27);
@@ -284,8 +324,8 @@ int main(void) {
      * the first 3s elapse. A queued cancellation must not remove its neighbour
      * or retain a stack waiter. These are real UDP queries, not mocked polls. */
     pthread_mutex_lock(&config_lock);
-    config.count = SL_DNS_SERVERS;
-    for (unsigned i = 0; i < SL_DNS_SERVERS; ++i) config.servers[i] = first.address;
+    config.count = SL_DNS_WIRE_LIMIT;
+    for (unsigned i = 0; i < SL_DNS_WIRE_LIMIT; ++i) config.servers[i] = first.address;
     pthread_mutex_unlock(&config_lock);
     unsigned silent_before = atomic_load(&first.queries);
     batch_lookup blocked = {.host = "blocked.example", .success = false};
@@ -294,10 +334,11 @@ int main(void) {
     pthread_t batches[3];
     assert(!pthread_create(&batches[0], NULL, lookup_batch, &blocked));
     uint64_t until_full = now_ms() + 1000;
-    while (atomic_load(&first.queries) < silent_before + SL_DNS_SERVERS && now_ms() < until_full)
+    while (atomic_load(&first.queries) < silent_before + SL_DNS_WIRE_LIMIT && now_ms() < until_full)
         usleep(1000);
-    assert(atomic_load(&first.queries) >= silent_before + SL_DNS_SERVERS);
+    assert(atomic_load(&first.queries) >= silent_before + SL_DNS_WIRE_LIMIT);
     pthread_mutex_lock(&config_lock);
+    config.count = SL_DNS_SERVERS; /* Seven candidates must all run behind five occupied slots. */
     for (unsigned i = 0; i < SL_DNS_SERVERS; ++i) config.servers[i] = second.address;
     pthread_mutex_unlock(&config_lock);
     atomic_store(&second.delay_ms, 100);
@@ -314,7 +355,7 @@ int main(void) {
     assert(!pthread_join(batches[2], NULL) && now_ms() - cancel_start < 500);
     uint64_t queued_until = now_ms() + 6500;
     while ((!atomic_load(&blocked.done) || !atomic_load(&queued.done)) && now_ms() < queued_until) {
-        assert(open_fds() <= fd_baseline + SL_DNS_SERVERS);
+        assert(open_fds() <= fd_baseline + SL_DNS_WIRE_LIMIT);
         usleep(1000);
     }
     assert(atomic_load(&blocked.done) && atomic_load(&queued.done));
@@ -322,7 +363,7 @@ int main(void) {
     assert(atomic_load(&second.queries) == live_before + SL_DNS_SERVERS);
     assert(open_fds() == fd_baseline);
     atomic_store(&second.delay_ms, 0);
-    /* Two actual owners, each requesting five providers, share at most five
+    /* Two actual owners, each requesting seven providers, share at most five
      * live DNS sockets. Slow providers must not suppress the other owner. */
     pthread_mutex_lock(&config_lock);
     config.count = SL_DNS_SERVERS;
@@ -333,7 +374,7 @@ int main(void) {
     for (unsigned i = 0; i < 2; ++i) assert(!pthread_create(&parallel[i], NULL, parallel_lookup, NULL));
     uint64_t parallel_until = now_ms() + 6100;
     while (now_ms() < parallel_until) {
-        assert(open_fds() <= fd_baseline + SL_DNS_SERVERS);
+        assert(open_fds() <= fd_baseline + SL_DNS_WIRE_LIMIT);
         usleep(1000);
     }
     for (unsigned i = 0; i < 2; ++i) assert(!pthread_join(parallel[i], NULL));
