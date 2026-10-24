@@ -12,7 +12,8 @@ void sl_dns_policy_end(uint32_t token);
 void sl_dns_policy_cancel(uint32_t token);
 /* Owned result; sockets always closed before returning. Per-provider FIFO
  * admission, five live queries globally, paced starts 25ms apart. Each provider
- * has 3s wire/resource time; queue + collection has a separate 51s safety bound.
+ * has 3s wire/resource time; queue + collection has a separate safety bound
+ * sized for all candidate providers across the bounded owner set.
  * This blocking API belongs on a worker, never the runtime/render loop. */
 bool sl_dns_policy_lookup(const char *host, sl_dns_refresh *result);
 /* The caller owns context until return. Queue/wire bounds and global stop apply;

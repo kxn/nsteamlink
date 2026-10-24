@@ -40,7 +40,7 @@ struct sl_http_dns {
 };
 /* Only in-flight work is shared. No IP/CM cache, TTL or cross-launch state.
  * Startup directory/config/artwork requests for the same host subscribe to one
- * paced lookup rather than each creating five competing wire queries. CURL
+ * paced lookup rather than each creating competing wire queries. CURL
  * handles, candidate cursors, request deadlines and cancellation stay private. */
 static pthread_mutex_t dns_jobs_lock = PTHREAD_MUTEX_INITIALIZER;
 static struct sl_http_dns *dns_jobs;

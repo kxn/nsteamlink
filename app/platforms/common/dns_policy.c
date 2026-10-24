@@ -21,6 +21,10 @@ static _Thread_local scope *current;
 static atomic_bool stopped = true;
 #define MAX_SCOPES 16
 #define QUERY_BUDGET_MS 3000
+/* Allow every queued provider its existing wire budget without increasing the
+ * five-socket limit when the ordered server list grows. */
+#define COLLECTION_BUDGET_MS \
+    (((MAX_SCOPES * SL_DNS_SERVERS + SL_DNS_WIRE_LIMIT - 1) / SL_DNS_WIRE_LIMIT + 1) * QUERY_BUDGET_MS)
 /* A slow provider must not hold an entire lookup batch (D-A102). Queue each
  * wire query FIFO, cap live queries at five, and pace initial starts 25ms apart.
  * Queue time is separate from each provider's 3s wire/resource allowance. The
@@ -47,7 +51,7 @@ static void enqueue_query(query_waiter *waiter) {
 static bool admit_query(query_waiter *waiter, uint64_t now) {
     pthread_mutex_lock(&lock);
     bool admitted = query_head == waiter && now >= next_query_start &&
-                    atomic_load(&wire_queries) < SL_DNS_SERVERS;
+                    atomic_load(&wire_queries) < SL_DNS_WIRE_LIMIT;
     if (admitted) {
         query_head = waiter->next;
         if (!query_head)
@@ -285,7 +289,7 @@ bool sl_dns_policy_lookup_progressive(const char *host, sl_dns_refresh *result,
     /* Fan out on this existing worker, no threads or cross-network cache.
      * Continue collecting after publishing the first answer so a fast provider
      * does not suppress address diversity. Allocate wire buffers on
-     * heap: five DNS/TCP states would be excessive on a Switch worker stack. */
+     * heap: all DNS/TCP states would be excessive on a Switch worker stack. */
     unsigned count = configured ? config.count : 0;
     if (count > SL_DNS_SERVERS)
         count = 0;
@@ -308,7 +312,7 @@ bool sl_dns_policy_lookup_progressive(const char *host, sl_dns_refresh *result,
     while (count && !atomic_load(&s->cancelled) && !atomic_load(&stopped) &&
            (!cancel || !cancel(context))) {
         uint64_t now = now_ms();
-        if (now - start >= (MAX_SCOPES + 1) * QUERY_BUDGET_MS)
+        if (now - start >= COLLECTION_BUDGET_MS)
             break;
         bool pending = false;
         for (unsigned i = 0; i < count; ++i) {
