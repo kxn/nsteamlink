@@ -562,15 +562,21 @@ if(NSL_PLATFORM STREQUAL "desktop")
             --receiver $<TARGET_FILE:nsl-local-certificate-oracle>)
         set_tests_properties(local_certificate_official_vectors PROPERTIES TIMEOUT 20)
         if(NSL_ENABLE_SDR)
+            add_library(nsl-local-p2p-pair STATIC tests/local_p2p_pair.cpp)
+            target_compile_features(nsl-local-p2p-pair PRIVATE cxx_std_17)
+            # Private object ABI must match the prepared SDK, including NDEBUG.
+            # Keep this TU separate from receivers compiled with -UNDEBUG.
+            target_compile_definitions(nsl-local-p2p-pair PRIVATE
+                $<TARGET_PROPERTY:GameNetworkingSockets_s,COMPILE_DEFINITIONS>)
+            target_include_directories(nsl-local-p2p-pair PRIVATE platforms/common
+                $<TARGET_PROPERTY:GameNetworkingSockets_s,INCLUDE_DIRECTORIES>)
+            target_compile_options(nsl-local-p2p-pair PRIVATE -Wall -Wextra
+                -Wno-unknown-pragmas -Wno-unused-parameter -Wno-sign-compare -fno-rtti)
+            target_link_libraries(nsl-local-p2p-pair PUBLIC GameNetworkingSockets::GameNetworkingSockets_s)
             add_executable(nsl-p2p-local-runtime tests/p2p_local_runtime.cpp)
             target_compile_features(nsl-p2p-local-runtime PRIVATE cxx_std_17)
-            target_compile_definitions(nsl-p2p-local-runtime PRIVATE
-                $<TARGET_PROPERTY:GameNetworkingSockets_s,COMPILE_DEFINITIONS>)
-            target_include_directories(nsl-p2p-local-runtime PRIVATE platforms/common
-                $<TARGET_PROPERTY:GameNetworkingSockets_s,INCLUDE_DIRECTORIES>)
-            target_compile_options(nsl-p2p-local-runtime PRIVATE -Wall -Wextra
-                -Wno-unknown-pragmas -Wno-unused-parameter -Wno-sign-compare -fno-rtti)
-            target_link_libraries(nsl-p2p-local-runtime PRIVATE GameNetworkingSockets::GameNetworkingSockets_s)
+            target_compile_options(nsl-p2p-local-runtime PRIVATE -Wall -Wextra)
+            target_link_libraries(nsl-p2p-local-runtime PRIVATE nsl-local-p2p-pair)
             add_test(NAME p2p_local_runtime COMMAND "${Python3_EXECUTABLE}" -O
                 "${CMAKE_SOURCE_DIR}/scripts/check-p2p-local-runtime.py"
                 --receiver $<TARGET_FILE:nsl-p2p-local-runtime>)
@@ -1376,7 +1382,20 @@ if(NSL_PLATFORM STREQUAL "desktop")
         add_executable(nsl-cloud-recovery-runtime tests/cloud_recovery_runtime.c)
         add_executable(nsl-sdk-cloud-recovery-runtime tests/sdk_cloud_recovery_runtime.c tests/loopback_sdk_provider.cpp)
         target_compile_features(nsl-sdk-cloud-recovery-runtime PRIVATE cxx_std_17)
-        foreach(cloud_target nsl-cloud-recovery-runtime nsl-sdk-cloud-recovery-runtime)
+        set(cloud_recovery_targets nsl-cloud-recovery-runtime nsl-sdk-cloud-recovery-runtime)
+        if(NSL_ENABLE_SDR)
+            add_executable(nsl-p2p-cloud-recovery-runtime tests/p2p_cloud_recovery_runtime.c tests/loopback_sdk_provider.cpp)
+            target_compile_features(nsl-p2p-cloud-recovery-runtime PRIVATE cxx_std_17)
+            target_compile_definitions(nsl-p2p-cloud-recovery-runtime PRIVATE NSL_RECOVERY_P2P=1)
+            target_link_libraries(nsl-p2p-cloud-recovery-runtime PRIVATE nsl-local-p2p-pair)
+            list(APPEND cloud_recovery_targets nsl-p2p-cloud-recovery-runtime)
+            add_test(NAME p2p_cloud_recovery_runtime COMMAND "${Python3_EXECUTABLE}" -O
+                "${CMAKE_SOURCE_DIR}/scripts/check-session-recovery-runtime.py" --application --manager --cloud --sdk-p2p
+                --receiver $<TARGET_FILE:nsl-p2p-cloud-recovery-runtime>
+                --video "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video/sequential.h264")
+            set_tests_properties(p2p_cloud_recovery_runtime PROPERTIES TIMEOUT 90)
+        endif()
+        foreach(cloud_target ${cloud_recovery_targets})
             target_compile_definitions(${cloud_target} PRIVATE NSL_HAVE_SNS=1)
             list(APPEND recovery_targets ${cloud_target})
             foreach(symbol sl_remote_connection_protocol sl_remote_connection_describe sl_remote_connection_destroy

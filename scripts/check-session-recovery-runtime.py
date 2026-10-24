@@ -18,7 +18,16 @@ def observe(receiver, video):
     return json.loads(result.stdout)
 
 
-def verify(observed, application=False, manager=False, cloud=False, sdk_loopback=False):
+def verify(observed, application=False, manager=False, cloud=False, sdk_loopback=False, sdk_p2p=False):
+    if sdk_p2p:
+        require(observed["p2p_pairs"] == observed["p2p_closed"] == observed["p2p_connected"] == 3,
+                "three actual P2P/ICE pairs must connect and close")
+        require(observed["p2p_objects"] == observed["p2p_released"] == 6 and observed["p2p_accepted"] == 3,
+                "all incoming P2P peers must accept and all signaling objects retire")
+        require(observed["p2p_signals"] >= 6 and observed["p2p_delivered"] >= 6,
+                "actual P2P rendezvous bytes must cross in all three sessions")
+        require(observed["p2p_peer_forwarded"] > 0 and observed["p2p_client_delivered"] > 0,
+                "actual SDK datagrams must cross both native ICE directions")
     if sdk_loopback:
         require(observed["network_loopback_pairs"] == observed["network_loopback_closed"] == 3,
                 "three real SDK network loopback pairs must open and close")
@@ -79,10 +88,11 @@ def main():
     parser.add_argument("--manager", action="store_true")
     parser.add_argument("--cloud", action="store_true")
     parser.add_argument("--sdk-loopback", action="store_true")
+    parser.add_argument("--sdk-p2p", action="store_true")
     args = parser.parse_args()
     observed = observe(args.receiver, args.video)
     print(json.dumps(observed, sort_keys=True))
-    verify(observed, args.application, args.manager, args.cloud, args.sdk_loopback)
+    verify(observed, args.application, args.manager, args.cloud, args.sdk_loopback, args.sdk_p2p)
     print("Local runtime recovery: real UDP stop/silence/stop, three decoded streams and joined teardown")
 
 

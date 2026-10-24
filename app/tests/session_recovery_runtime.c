@@ -45,6 +45,9 @@ static void cloud_fixture_notify(const uint8_t *, size_t);
 #endif
 #ifdef NSL_RECOVERY_REAL_SDK
 bool loopback_sdk_allow_socket(void);
+#ifdef NSL_RECOVERY_P2P
+bool p2p_recovery_allow_target(const struct sockaddr *);
+#endif
 #endif
 #if defined(NSL_RECOVERY_APPLICATION) && !defined(NSL_RECOVERY_MANAGER)
 /* Published by the main-thread application submit adapter, before requested. */
@@ -126,6 +129,10 @@ ssize_t __wrap_sendto(int fd, const void *data, size_t size, int flags,
                       const struct sockaddr *to, socklen_t length) {
     const struct sockaddr_in *v4 = (const void *)to;
 #ifdef NSL_RECOVERY_REAL_SDK
+#ifdef NSL_RECOVERY_P2P
+    if (p2p_recovery_allow_target(to))
+        return __real_sendto(fd, data, size, flags, to, length);
+#endif
     if (loopback_sdk_allow_socket() && to && to->sa_family == AF_INET6) {
         const struct sockaddr_in6 *v6 = (const void *)to;
         if (IN6_IS_ADDR_LOOPBACK(&v6->sin6_addr) ||

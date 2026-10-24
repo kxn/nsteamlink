@@ -15269,7 +15269,7 @@ Conclusion：撤回本地实现把7000001us用于初始信令门槛的接法。�
 
 ### 实际 SDK 连接观察与控制边界
 
-`app/tests/p2p_local_runtime.cpp`使用构建中实际prepared SDK，包含已应用本仓补丁的
+`app/tests/p2p_local_runtime.cpp`通过共用`local_p2p_pair.cpp`使用构建中实际prepared SDK，包含已应用本仓补丁的
 P2P/SDR代码；不是原始vendor副本。两个接口的创建/销毁沿用SDK Init/Destroy实现，
 第二个接口用私有原生factory建立，编译宏和私有include继承SDK目标。它保留同一
 Release/Debug布局，检查使用显式CHECK，避免-UNDEBUG改变私有SDK对象ABI。
@@ -15303,3 +15303,75 @@ ctest --test-dir build/desktop -R '^p2p_local_runtime$' -V
 测试自动升级为P2P恢复验收。无CM服务、配对主机/Valve证书、外部STUN/NAT、真实
 SDR服务、丢包/映射变化或Switch GPU/libnx的独立证据，不能将本机ICE通路等同于
 公网功能整体对齐。
+
+## 198. 实际 P2P/ICE 接入应用会话恢复链
+
+§197只执行两个SDK端点的独立建连和正文收发。`p2p_cloud_recovery_runtime.c`
+组合§193–195的真实application主循环、manager/云RPC parser、IHS session与媒体
+worker，并把§196直接置Connected的network-loopback入口换成实际P2P入口。
+这是桌面上明确给定服务/材料边界的应用恢复实验，不是生产Steam互操作记录。
+
+### SDK同伴与应用入口
+
+`local_p2p_pair.cpp`从§197接收器抽出相同的SDK初始化、第二原生接口factory、
+listener、custom signaling、内置ICE、路由边界读取和清理代码。独立接收器与应用
+组合共用它，避免维护两份P2P状态机。该私有SDK TU独立编译，继承实际prepared
+SDK的定义/include及相同NDEBUG布局；使用显式CHECK，不把应用接收器的-UNDEBUG
+带入私有对象ABI。应用适配器只包含SDK公开接口和opaque Pair声明。
+
+- create初始化两端实际SDK与本例拥有的静默127.0.0.1 relay端点，仍使用合成generic
+  身份。STUN与TURN列表明确清空；不导入合成证书为Valve信任材料。
+- `session_ready`仍是给定准备边界。实际IHS Connect创建Session后，start才调用
+  `ConnectP2PCustomSignaling`，检查实际初态Connecting；不会同步等待到Connected，
+  也不延长IHS的等待期限。配置仍使用生产六项选项及20秒SDK初始超时。
+- runtime owner的update推进SDK及有界opaque信令队列，对端经实际
+  `ReceivedP2PCustomSignal` / `AcceptConnection`建立连接。get_state始终读取真实
+  SDK状态；不是把started投影成Connected。
+- 两端实际Connected后，私有检查确认P2P类型与当前transport=ICE，公开检查确认
+  Unauthenticated且无LoopbackBuffers/Relayed标志。媒体bridge才开始从另一端取SDK
+  datagram并转给本地IHS peer；IHS worker在此之前沿既有发送/重试/等待路径运行。
+- IHS收发仍经过真实SDK的UnreliableNoNagle及实际ReceiveMessages/Release，然后进入
+  原SnsMessageQueue。ACK/可靠重传仍属于IHS，未新增SDK reliable通道。
+- 既有UDP出口guard只额外允许SDK scope访问create时枚举的本机interface地址，
+  用于两个本机ICE同伴；不放开任意LAN/Internet目标。原发现广播仍丢弃，裸媒体
+  bridge的目标是本例绑定的127.0.0.1端口。未改变系统网络或防火墙。
+
+### 三笔会话、清理与判据
+
+应用输入驱动仍通过真实SL_START/menu/B等动作：第一笔显示画面并播放音频、菜单
+关闭/恢复输入gate后接主机type9正常停止；第二笔显示/播放后本地媒体peer静默，
+等待实际15秒IHS lease超时，保留错误页，再经B返回首页；第三笔重新发起并再次
+显示/播放、正常停止。不是网络中断后自动重开游戏的策略。
+
+旧像素引用推迟清理、pending replacement STOP旧代次、保留应用root/gfx/provider、
+每笔独立session ID、audio open/close和各worker join继续使用原判据。SessionDestroy
+和回调计数归零后才关闭双端SDK连接/listener、Destroy第二接口、Kill SDK、关闭
+本例relay/bridge FD；六份signaling对象均须真正Release。SDK消息不跨销毁保留。
+
+输出区分`p2p_*`与`network_loopback_*`：三笔必须均创建/接受/选中ICE并关闭，
+六份signaling对象必须释放，两个方向都必须实际交付datagram。原raw provider和
+network-loopback target仍可独立执行，不把它们改名充当P2P证据。复现：
+
+```sh
+cmake --build build/desktop --target nsl-p2p-cloud-recovery-runtime
+ctest --test-dir build/desktop -R '^p2p_cloud_recovery_runtime$' -V
+```
+
+诊断ON/OFF的Release桌面构建各4项通过：独立P2P、应用P2P恢复、原raw云provider
+恢复和原network-loopback恢复。两种配置的P2P组合都创建/连接/接受/关闭3笔，
+收发21份实际SDK信令，释放6/6 signaling对象，三笔均有本笔画面和音频，audio
+设备3/3关闭，joins/final_clean成立。两个方向实际交付数分别为457/197与458/197；
+它们是本轮观察值，不是固定包数契约。整轮P2P组合约31秒，包含真实15秒静默超时。
+当前Switch/桌面正式Release应用均构建通过；检查实际链接命令和ELF符号，均未链接
+`nsl-local-p2p-pair`或包含`local_p2p`/`p2p_recovery_counts`测试符号。没有部署新NRO。
+
+### 证明边界
+
+服务响应、证书/配置准备及合成身份仍是明确的输入。SDK信令经本机有界队列传递，
+没有经过生产sl_stream_bridge和真实CM信令会话；不能把控制请求的真实parser/外层
+设备token核对扩写为SDK信令已跨Steam服务。这里也没有执行生产sl_sns的完整准备
+实现、真实Valve认证、外部STUN/NAT、SDR路由、Wi-Fi切换或Switch平台生命周期。
+
+Conclusion：§196中“应用组合尚未实际执行P2P建连”的测试边界由本例单独补充，
+不是撤回其原有记录。它能检查真实SDK建连等待与IHS/媒体/应用恢复是否组合成立；
+不改变生产协议或官方恢复策略，不据本机合成同伴实验宣布公网目标整体完成。

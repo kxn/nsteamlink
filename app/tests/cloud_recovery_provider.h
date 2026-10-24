@@ -1,5 +1,6 @@
-/* Local CM service and SDK datagram adapters. Only this private receiver links
- * these wrappers. No real certificates, ICE/SNP, SDR POPs or NAT are exercised. */
+/* Local CM service and datagram preparation adapters. Only private receivers
+ * link these wrappers. SDK modes add actual SNP or P2P/ICE in a separate
+ * provider, but certificates/CM service remain given; no SDR POP/NAT proof. */
 #include "remote_wire.h"
 static sl_remote *cm_protocol;
 static char cm_connection;
@@ -179,14 +180,24 @@ void __wrap_sl_sns_destroy(sl_sns *opaque) {
 #else
 bool loopback_sdk_session_live(void) { return atomic_load(&launched) != NULL; }
 void loopback_sdk_counts(unsigned out[10]);
+#ifdef NSL_RECOVERY_P2P
+void p2p_recovery_counts(unsigned out[6]);
+#endif
 #endif
 void cloud_fixture_projection(void) {
 #ifdef NSL_RECOVERY_REAL_SDK
     unsigned counts[10]; loopback_sdk_counts(counts);
     sdk_creates=counts[0]; sdk_starts=counts[1]; sdk_destroys=counts[2];
     sdk_sent=counts[3]; sdk_received=counts[4]; sdk_joins_clean=counts[5] != 0;
+#ifdef NSL_RECOVERY_P2P
+    unsigned p2p[6]; p2p_recovery_counts(p2p);
+    printf(",\"p2p_pairs\":%u,\"p2p_closed\":%u,\"p2p_peer_forwarded\":%u,\"p2p_client_delivered\":%u,"
+           "\"p2p_connected\":%u,\"p2p_signals\":%u,\"p2p_delivered\":%u,\"p2p_objects\":%u,\"p2p_released\":%u,\"p2p_accepted\":%u",
+           counts[6],counts[7],counts[8],counts[9],p2p[0],p2p[1],p2p[2],p2p[3],p2p[4],p2p[5]);
+#else
     printf(",\"network_loopback_pairs\":%u,\"network_loopback_closed\":%u,\"network_peer_forwarded\":%u,\"network_client_delivered\":%u",
            counts[6], counts[7], counts[8], counts[9]);
+#endif
 #endif
     printf(",\"cm_creates\":%u,\"cm_subscriptions\":%u,\"cm_packets\":%u,\"cm_notifications\":%u,"
            "\"cm_outer_tokens\":%u,\"cm_destroyed\":%s,\"sdk_creates\":%u,\"sdk_starts\":%u,"

@@ -1,6 +1,7 @@
-/* Test-only SDK network-loopback bridge. CreateSocketPair(true) uses real UDP,
+/* Test-only SDK bridge. CreateSocketPair(true) uses real UDP,
  * SNP and crypto, but starts connected with localhost identities. It does not
- * execute ConnectP2PCustomSignaling, certificates from Valve, ICE or SDR. */
+ * execute P2P. NSL_RECOVERY_P2P instead uses actual custom signaling and native
+ * ICE with a controlled local peer; neither variant proves Valve auth/NAT/SDR. */
 extern "C" {
 #include "sns_backend.h"
 #include <arpa/inet.h>
@@ -21,6 +22,9 @@ ssize_t __real_sendto(int, const void *, size_t, int, const struct sockaddr *, s
 #include <cstring>
 #include <mutex>
 #include <thread>
+#ifdef NSL_RECOVERY_P2P
+#include "local_p2p_pair.h"
+#endif
 
 extern "C" void SteamNetworkingSockets_SetManualPollMode(bool);
 extern "C" void SteamNetworkingSockets_Poll(int);
@@ -38,10 +42,25 @@ struct Provider {
     std::condition_variable wake;
     nsl::SnsMessageQueue rx;
     int end_reason = 0;
+#ifdef NSL_RECOVERY_P2P
+    local_p2p::Pair *pair = nullptr;
+    bool ice_verified = false;
+#endif
 };
 unsigned creates, starts, destroys, total_sent, total_received, pairs, closed_pairs;
 unsigned peer_forwarded, client_delivered;
 bool joined = true;
+#ifdef NSL_RECOVERY_P2P
+local_p2p::Pair *active_pair;
+unsigned p2p_connected, p2p_signals, p2p_delivered, p2p_objects, p2p_released, p2p_accepted;
+#endif
+ISteamNetworkingSockets *peer_sockets(Provider *p) {
+#ifdef NSL_RECOVERY_P2P
+    return local_p2p::sockets(p->pair,1);
+#else
+    (void)p; return SteamNetworkingSockets();
+#endif
+}
 Provider *provider(sl_sns *s) { return reinterpret_cast<Provider *>(s); }
 const Provider *provider(const sl_sns *s) { return reinterpret_cast<const Provider *>(s); }
 struct Callback {
@@ -81,6 +100,11 @@ size_t next_size(void *ctx) {
 }
 }
 extern "C" bool loopback_sdk_allow_socket(void) { return sdk_scope != 0; }
+#ifdef NSL_RECOVERY_P2P
+extern "C" bool p2p_recovery_allow_target(const sockaddr *to) {
+    return sdk_scope && local_p2p::owns_target(active_pair, to);
+}
+#endif
 extern "C" sl_sns *__wrap_sl_sns_create_configured(const IHS_ClientConfig *c,
     const sl_remote_material *m, bool share, char *error, size_t error_size,
     const char *config, size_t config_size) {
@@ -95,16 +119,27 @@ extern "C" sl_sns *__wrap_sl_sns_create_configured(const IHS_ClientConfig *c,
     assert(!fcntl(p->fd, F_SETFL, O_NONBLOCK));
     p->peer = local; p->peer.sin_port = htons(m->port);
     Scope scope;
+#ifdef NSL_RECOVERY_P2P
+    assert(!active_pair); p->pair = local_p2p::create(); active_pair = p->pair;
+#else
     SteamNetworkingSockets_SetManualPollMode(true);
     SteamNetworkingIdentity identity; identity.SetLocalHost();
     SteamNetworkingErrMsg detail;
     assert(GameNetworkingSockets_Init(&identity, detail));
+#endif
     ++creates; return reinterpret_cast<sl_sns *>(p);
 }
 extern "C" bool __wrap_sl_sns_session_ready(const sl_sns *s) { assert(s); return true; }
 extern "C" bool __wrap_sl_sns_start_session(sl_sns *s) {
     auto *p = provider(s); assert(p->owner == std::this_thread::get_id() && loopback_sdk_session_live());
     Scope scope;
+#ifdef NSL_RECOVERY_P2P
+    assert(!p->started); local_p2p::start(p->pair);
+    p->connections[0] = local_p2p::connection(p->pair,0);
+    SteamNetConnectionInfo_t initial{};
+    assert(SteamNetworkingSockets()->GetConnectionInfo(p->connections[0], &initial) &&
+           initial.m_eState == k_ESteamNetworkingConnectionState_Connecting);
+#else
     assert(!p->started && SteamNetworkingSockets()->CreateSocketPair(&p->connections[0], &p->connections[1], true, nullptr, nullptr));
     for (auto connection : p->connections) {
         SteamNetConnectionInfo_t info;
@@ -112,6 +147,7 @@ extern "C" bool __wrap_sl_sns_start_session(sl_sns *s) {
         assert(info.m_eState == k_ESteamNetworkingConnectionState_Connected &&
                info.m_addrRemote.IsLocalHost() && info.m_addrRemote.m_port != 0);
     }
+#endif
     ++pairs; ++starts; p->started = true; return true;
 }
 extern "C" sl_sns_state __wrap_sl_sns_get_state(const sl_sns *s) {
@@ -141,11 +177,27 @@ extern "C" void __wrap_sl_sns_get_stats(const sl_sns *s, sl_sns_stats *out) {
 extern "C" void __wrap_sl_sns_update(sl_sns *s, uint64_t now) {
     (void)now; auto *p = provider(s); assert(p->owner == std::this_thread::get_id());
     Scope scope;
+#ifdef NSL_RECOVERY_P2P
+    local_p2p::poll(p->pair);
+#else
     SteamNetworkingSockets_Poll(0); SteamNetworkingSockets()->RunCallbacks();
+#endif
     if (!p->started) return;
+#ifdef NSL_RECOVERY_P2P
+    p->connections[1] = local_p2p::connection(p->pair,1);
+    SteamNetConnectionInfo_t client{}, remote{};
+    if (!p->connections[1] ||
+        !SteamNetworkingSockets()->GetConnectionInfo(p->connections[0], &client) ||
+        !peer_sockets(p)->GetConnectionInfo(p->connections[1], &remote) ||
+        client.m_eState != k_ESteamNetworkingConnectionState_Connected ||
+        remote.m_eState != k_ESteamNetworkingConnectionState_Connected) return;
+    if (!p->ice_verified) {
+        local_p2p::verify_selected_ice(p->pair); p->ice_verified = true; ++p2p_connected;
+    }
+#endif
     SteamNetworkingMessage_t *messages[32];
     int count;
-    while ((count = SteamNetworkingSockets()->ReceiveMessagesOnConnection(p->connections[1], messages, 32)) > 0) {
+    while ((count = peer_sockets(p)->ReceiveMessagesOnConnection(p->connections[1], messages, 32)) > 0) {
         for (int i = 0; i < count; ++i) {
             auto *m = messages[i];
             assert(!(m->m_nFlags & k_nSteamNetworkingSend_Reliable));
@@ -159,11 +211,15 @@ extern "C" void __wrap_sl_sns_update(sl_sns *s, uint64_t now) {
     uint8_t bytes[65536]; ssize_t size;
     while ((size = recv(p->fd, bytes, sizeof(bytes), MSG_DONTWAIT | MSG_TRUNC)) >= 0) {
         assert(size <= ssize_t(sizeof(bytes)));
-        assert(SteamNetworkingSockets()->SendMessageToConnection(p->connections[1], bytes,
+        assert(peer_sockets(p)->SendMessageToConnection(p->connections[1], bytes,
             static_cast<uint32>(size), k_nSteamNetworkingSend_UnreliableNoNagle, nullptr) == k_EResultOK);
     }
     assert(errno == EAGAIN || errno == EWOULDBLOCK);
+#ifdef NSL_RECOVERY_P2P
+    local_p2p::poll(p->pair);
+#else
     SteamNetworkingSockets_Poll(0); SteamNetworkingSockets()->RunCallbacks();
+#endif
     while ((count = SteamNetworkingSockets()->ReceiveMessagesOnConnection(p->connections[0], messages, 32)) > 0) {
         std::lock_guard<std::mutex> lock(p->lock);
         for (int i = 0; i < count; ++i) {
@@ -187,13 +243,26 @@ extern "C" void __wrap_sl_sns_destroy(sl_sns *s) {
     auto *p = provider(s); assert(p->owner == std::this_thread::get_id() && !loopback_sdk_session_live());
     joined &= p->calls == 0; total_sent += p->sent; total_received += p->received;
     Scope scope;
+#ifdef NSL_RECOVERY_P2P
+    auto counts = local_p2p::destroy(p->pair); active_pair = nullptr;
+    p2p_signals += counts.signals; p2p_delivered += counts.delivered;
+    p2p_objects += counts.objects; p2p_released += counts.released; p2p_accepted += counts.accepted;
+#else
     for (auto connection : p->connections)
         if (connection) assert(SteamNetworkingSockets()->CloseConnection(connection, 0, nullptr, false));
-    if (p->started) ++closed_pairs;
     SteamNetworkingSockets_Poll(0); GameNetworkingSockets_Kill();
     SteamNetworkingSockets_SetManualPollMode(false);
+#endif
+    // Both variants retire both connections after the actual IHS worker joins.
+    if (p->started) ++closed_pairs;
     assert(!close(p->fd)); delete p; ++destroys;
 }
+#ifdef NSL_RECOVERY_P2P
+extern "C" void p2p_recovery_counts(unsigned out[6]) {
+    unsigned counts[] = {p2p_connected,p2p_signals,p2p_delivered,p2p_objects,p2p_released,p2p_accepted};
+    std::memcpy(out, counts, sizeof(counts));
+}
+#endif
 extern "C" void loopback_sdk_counts(unsigned out[10]) {
     unsigned counts[] = {creates,starts,destroys,total_sent,total_received,unsigned(joined),pairs,closed_pairs,peer_forwarded,client_delivered};
     std::memcpy(out, counts, sizeof(counts));
