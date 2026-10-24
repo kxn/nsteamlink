@@ -895,6 +895,22 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
         bool shoulder = c->action == SL_PREV_HOST || c->action == SL_NEXT_HOST;
         bool focused = focused_scene && c->id == m->focus && !c->disabled;
         bool menu_row = l->drawer && !footer;
+        if (c->kind == SL_CONTROL_CHECKBOX) {
+            int cx = box.x, cy = box.y + (box.h - 26) / 2;
+            rounded(r->renderer, (sl_gfx_rect){cx, cy, 26, 26}, 4,
+                    m->skip_update ? accent : muted);
+            if (m->skip_update) {
+                line(r->renderer, cx + 6, cy + 13, cx + 11, cy + 18, bg);
+                line(r->renderer, cx + 11, cy + 18, cx + 20, cy + 8, bg);
+            } else
+                rounded(r->renderer, (sl_gfx_rect){cx + 2, cy + 2, 22, 22}, 2, panel);
+            draw_text(r, c->label, cx + 42,
+                      centered_y(r, c->label, 24, box.y, box.h, box.w - 42),
+                      box.w - 42, box.h, 24, fg);
+            continue;
+        }
+        bool disabled_submenu = c->disabled && c->kind == SL_CONTROL_SUBMENU;
+        sl_gfx_color disabled_ink = {102, 109, 122, 255};
         sl_gfx_color role = action_color(c->action);
         if (tab) {
             const sl_host *host = c->arg >= 0 && c->arg < m->store.registry.count
@@ -967,12 +983,14 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
                                                      : (sl_gfx_color){43, 47, 57, 255};
             if (c->primary && !tab)
                 fill = focused ? mix(role, fg, .18f) : role;
+            if (disabled_submenu)
+                fill = (sl_gfx_color){26, 28, 34, 255};
             rounded(r->renderer, box, c->action == SL_RECENT ? 14 : 9, fill);
         }
         int size = c->action == SL_RECENT ? 30 : footer ? 26 : 30;
         const char *label = footer ? c->label + 3 : c->label;
         if (c->disabled)
-            ink = muted;
+            ink = disabled_submenu ? disabled_ink : muted;
         int x = c->x + (menu_row ? 78 : 24), width = c->w - (menu_row ? 110 : 48);
         bool centered = l->compact || tab || c->action == SL_START || c->action == SL_DIGIT ||
                         c->action == SL_SUBMIT || c->action == SL_ERASE || shoulder || footer;
@@ -1001,7 +1019,8 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
             width = measured + 2;
         }
         int y = centered_y(r, label, size, c->y, c->h, width);
-        if (value_width)
+        /* Left-aligned rows render their value below, beside the chevron. */
+        if (value_width && centered)
             draw_text(r, c->value, box.x + box.w - 52 - value_width,
                       centered_y(r, c->value, 24, box.y, box.h, value_width + 2), value_width + 2,
                       box.h, 24, focused ? bg : muted);
@@ -1039,13 +1058,13 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
                 rounded(r->renderer, (sl_gfx_rect){tx, ty, 50, 28}, 14, track);
                 rounded(r->renderer, (sl_gfx_rect){tx + (enabled ? 25 : 3), ty + 3, 22, 22}, 11,
                         bg);
-            } else if (c->kind == SL_CONTROL_SUBMENU)
+            } else if (c->kind == SL_CONTROL_SUBMENU && !c->disabled)
                 chevron(r->renderer, box.x + box.w - 35, box.y + box.h / 2, focused ? bg : muted);
             if (value_width) {
                 int value_x = box.x + box.w - 56 - value_width;
                 draw_text(r, c->value, value_x,
                           centered_y(r, c->value, 24, c->y, c->h, value_width + 2), value_width + 2,
-                          c->h, 24, focused ? bg : muted);
+                          c->h, 24, disabled_submenu ? disabled_ink : focused ? bg : muted);
             }
         }
         sl_gfx_clip(r->renderer, card ? &clip : &box);

@@ -356,6 +356,16 @@ int main(int argc, char **argv) {
         stream_media_present();
         save_image("add-computer-en");
         sl_i18n_set(language);
+        sl_runtime_event availability = {.type = SL_EVENT_CLOUD_STATE, .account = 1};
+        sl_ui_runtime_event(&ui, &availability);
+        stream_media_present();
+        save_image("add-computer-cloud-ready");
+        sl_i18n_set(SL_LANG_EN);
+        sl_ui_layout(&ui);
+        stream_media_present();
+        save_image("add-computer-cloud-ready-en");
+        sl_i18n_set(language);
+        sl_ui_layout(&ui);
         sl_ui_model adding = ui;
         sl_ui_activate(&ui, 31);
         sl_ui_tick(&ui, ui.now + 220);
@@ -554,6 +564,13 @@ int main(int argc, char **argv) {
                                                      .deviation_ms = 0.75f,
                                                      .recommendation = 1};
             ui.entered_at = ui.now > 500 ? ui.now - 500 : 0;
+            if (p == SL_UPDATE) {
+                unsigned major, minor, patch;
+                assert(sscanf(NSL_SEMANTIC_VERSION, "%u.%u.%u", &major, &minor, &patch) == 3);
+                snprintf(ui.update_version, sizeof(ui.update_version), "%u.%u.%u", major, minor,
+                         patch + 1); /* Future release fixture, never the current version. */
+                ui.skip_update = false;
+            }
             strcpy(ui.error,
                    sl_tr(p == SL_INSTALL_RESULT ? SL_T_SHORTCUT_ADDED : SL_T_PROFILE_CORRUPT));
             sl_ui_layout(&ui);
@@ -562,6 +579,15 @@ int main(int argc, char **argv) {
             snprintf(image, sizeof(image), "i18n-%s-page-%02d", lang == SL_LANG_EN ? "en" : "zh",
                      p);
             save_image(image);
+            if (p == SL_UPDATE) {
+                ui.skip_update = true;
+                sl_ui_layout(&ui);
+                stream_media_present();
+                snprintf(image, sizeof(image), "update-%s-skip-checked",
+                         lang == SL_LANG_EN ? "en" : "zh");
+                save_image(image);
+                ui.skip_update = false;
+            }
         }
         ui.page = SL_HOME;
         ui.streaming = false;

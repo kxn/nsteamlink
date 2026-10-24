@@ -190,6 +190,17 @@ static void lifecycle_facts(application *a) {
         sl_ui_error(&a->ui, sl_tr(SL_T_BUSY));
 }
 static bool command(application *a, const sl_command *cmd) {
+    if (cmd->type == SL_CMD_IGNORE_UPDATE) {
+        if (!sl_update_ignored_save(sl_system_data_dir(), cmd->text)) {
+            sl_ui_error(&a->ui, sl_tr(SL_T_SAVE_SETTINGS_FAILED));
+        } else {
+            sl_runtime_event e = {.type = SL_EVENT_UPDATE_IGNORED,
+                                  .generation = a->ui.generation};
+            snprintf(e.text, sizeof(e.text), "%.15s", cmd->text);
+            sl_ui_runtime_event(&a->ui, &e);
+        }
+        return true;
+    }
     if (cmd->type == SL_CMD_UPDATE) {
         /* Runs on the updater worker, not the protocol runtime. */
         if (!sl_updater_install(a->updater))
@@ -293,6 +304,7 @@ int sl_application_run(int argc, char **argv) {
     sl_ui_init(&a->ui, &store);
     a->ui.resolution = sl_video_settings_load(sl_system_data_dir());
     a->ui.update_check = sl_update_config_load(sl_system_data_dir());
+    sl_update_ignored_load(sl_system_data_dir(), a->ui.ignored_update_version);
     a->ui.guide_key = sl_special_settings_load(sl_system_data_dir());
     sl_log_start();
     if (!offline)
@@ -390,7 +402,7 @@ int sl_application_run(int argc, char **argv) {
         sl_media_mute(!a->ui.store.sound);
         sl_command cmd;
         if (sl_ui_take_command(&a->ui, &cmd)) {
-            if (a->runtime) {
+            if (a->runtime || cmd.type == SL_CMD_IGNORE_UPDATE) {
                 if (!command(a, &cmd))
                     sl_ui_error(&a->ui, sl_tr(SL_T_BUSY));
             } else if (cmd.type == SL_CMD_SAVE) {

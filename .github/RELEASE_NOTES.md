@@ -1,55 +1,56 @@
-# NSteamLink v0.7.1
+# NSteamLink v0.7.2
 
 ## 简体中文
 
-## [0.7.1] - 2026-10-23
+## [0.7.2] - 2026-10-24
 
-上一正式版：**v0.7.0**。目标分支：`main`；源码：[`v0.7.1`](https://github.com/kxn/nsteamlink/tree/v0.7.1)。
+上一正式版：**v0.7.1**。目标分支：`main`；源码：[`v0.7.2`](https://github.com/kxn/nsteamlink/tree/v0.7.2)。
 
 ### 主要变化
 
-- 串流中可短按截图键发送 **Steam Guide**。默认开启；在 **设置 → 应用 → Steam Guide 键** 中选择“截图键”或“关闭”。关闭后保留系统截图功能，首页和非串流状态也保留截图。
-- 设置保存兼容旧版开关；输入尚未就绪、失焦或会话结束时不会发送 Guide。按下和释放沿用现有手柄输入通路，普通按键与陀螺仪输入保持原有映射。
-- 正式包排除 Capture 自测、HOME 能力探针、虚拟手柄注入与相关诊断入口。HOME 键继续由 Switch 系统处理。
+- 修复设置项右侧文字重复绘制造成的重影，例如“均衡”“自动”“中文”。
+- “配对码”入口改为“显示配对码”。云端会话未就绪时置灰并显示“云端服务不可用”，隐藏箭头、压暗背景和文字；连接成功后自动恢复。手动输入地址仍可使用。
+- 更新提示增加“此版本不再提示”复选项。触屏勾选后主按钮改为“不再提示”；按 A 确认后保存，按 B 取消不保存。后续启动跳过该版本，遇到更高版本仍会提示。
 
-### 验证与已知限制
+### 验证与范围
 
-自动回归覆盖设置保存、输入就绪门控、Guide 按下／释放和清理。Switch 离线实测确认 Capture 通知接管、两次虚拟 Capture 通知与资源清理；这不等于实体按键或 Steam 浮层的端到端验证。用户曾观察到实体截图键首次按下仍截图、之后生效，原因尚未确认，本版不声称已修复该首次按键现象。
+已核对中英文实际渲染；回归覆盖云端状态切换、禁用入口、忽略版本的重启回读、后续版本提示，以及文件替换失败恢复。本版没有新增真机测试，也不声称修复 #93 中尚未定位的公网连接问题。
 
 ### 提交分组
 
-- 输入与设置：`5c0d283` 截图键映射和关闭设置；`27a4b3b` 移至“应用 → Steam Guide 键”，补充有界诊断。
-- 测试与文档：`11f00d6` 系统按键及 Guide 协议依据；`23cf2c3` 避免清除共享 HOME 事件；`a29a7ac` 记录真机证据与未验证范围。
-- 发布：更新版本、双语说明与按键诊断排除检查。画质自适应研究保留在研究分支。
+- 界面修复：`1a94f48` 消除设置文字重影；`e36771f` 按云端会话状态禁用配对码入口；`054cf01` 隐藏禁用箭头并强化灰态。
+- 更新体验：`ad40898` 支持忽略指定版本的更新提示。
+- 发布：更新版本号和中英双语发布说明。
 
-从 [Release](https://github.com/kxn/nsteamlink/releases/tag/v0.7.1) 下载正式 NRO，或使用应用内更新。现有配对资料保留。
+感谢 [@jiaruisme](https://github.com/jiaruisme) 在 [#93](https://github.com/kxn/nsteamlink/issues/93) 提交问题反馈。
 
-[完整变更：v0.7.0 → v0.7.1](https://github.com/kxn/nsteamlink/compare/v0.7.0...v0.7.1)
+[完整变更：v0.7.1 → v0.7.2](https://github.com/kxn/nsteamlink/compare/v0.7.1...v0.7.2)
 
 ---
 
 ## English
 
-## [0.7.1] - 2026-10-23
+## [0.7.2] - 2026-10-24
 
-Previous stable release: **v0.7.0**. Target: `main`; source: [`v0.7.1`](https://github.com/kxn/nsteamlink/tree/v0.7.1).
+Previous stable release: **v0.7.1**. Target: `main`; source: [`v0.7.2`](https://github.com/kxn/nsteamlink/tree/v0.7.2).
 
 ### Highlights
 
-- Short-press Capture during streaming to send **Steam Guide**. Enabled by default; choose Capture or Off under **Settings → Application → Steam Guide key**. Off preserves system screenshots; screenshots also remain available outside streaming.
-- Preserve the previous toggle when loading settings. Gate Guide on input readiness, focus and session lifetime, and send its press/release through the existing controller path without changing ordinary button or gyro mappings.
-- Exclude Capture self-tests, HOME capability probes, virtual-controller injection and their diagnostic entry points from the ordinary package. HOME remains a Switch system button.
+- Fix doubled settings values such as quality, resolution and language selections.
+- Rename the pairing entry to “Show pairing code”. Disable it with “Cloud unavailable” until the cloud session is ready; hide its arrow and dim its surface and text. Restore it on connection. Manual address entry stays available.
+- Add “Skip this version” to the update dialog. Select it using the touchscreen, then confirm with A; B cancels without saving. The selected version stays hidden across restarts, while later versions can still prompt.
 
-### Validation and known limits
+### Validation and scope
 
-Regression coverage includes settings persistence, input-readiness gates, Guide press/release and cleanup. Offline Switch tests verified Capture notification ownership, two virtual Capture notifications and resource cleanup; these do not establish physical-button or host-overlay behavior. A user previously observed a physical first press taking a screenshot before subsequent presses worked. Its cause remains unconfirmed; this release does not claim to fix that first-press behavior.
+Checked actual Chinese and English renders. Regression coverage includes cloud availability, disabled activation, ignored-version persistence across restart, later-version prompts and failed file-replacement recovery. No new hardware testing was performed for this release. The unresolved Internet connectivity report in #93 is not claimed fixed.
 
 ### Commits by type
 
-- Input/settings: `5c0d283` Capture mapping and opt-out; `27a4b3b` Application settings placement and bounded diagnostics.
-- Tests/documentation: `11f00d6` system-button and Guide protocol references; `23cf2c3` observe HOME without clearing the shared event; `a29a7ac` record hardware evidence and validation limits.
-- Release: version, bilingual notes and button-diagnostic exclusion checks. Adaptive-quality research remains on the research branch.
+- UI fixes: `1a94f48` remove doubled settings text; `e36771f` gate pairing-code entry on cloud availability; `054cf01` hide disabled arrows and strengthen disabled styling.
+- Updater: `ad40898` allow opting out of a specific release notification.
+- Release: version and bilingual release notes.
 
-Download the ordinary NRO from [this release](https://github.com/kxn/nsteamlink/releases/tag/v0.7.1), or use the in-app updater. Existing pairing data is retained.
+Thanks to [@jiaruisme](https://github.com/jiaruisme) for reporting [#93](https://github.com/kxn/nsteamlink/issues/93).
 
-[Full changelog: v0.7.0 → v0.7.1](https://github.com/kxn/nsteamlink/compare/v0.7.0...v0.7.1)
+[Full changelog: v0.7.1 → v0.7.2](https://github.com/kxn/nsteamlink/compare/v0.7.1...v0.7.2)
+

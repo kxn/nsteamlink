@@ -161,6 +161,17 @@ int main(void) {
                                  .deviceName = "directory fixture"};
     assert(sl_directory_ensure(&r.directory, 999)); /* Record order is not watch/send order. */
     assert(sl_directory_seed(&r.directory, 123, "203.0.113.99"));
+    /* Production availability callback -> global event -> pairing entry gate. */
+    sl_ui_model availability_ui;
+    sl_ui_init(&availability_ui, &r.store);
+    availability_ui.generation = 17;
+    for (int connected = 1; connected >= 0; --connected) {
+        cloud_connected(connected != 0, &r);
+        sl_runtime_event availability;
+        assert(sl_runtime_poll(&r, &availability) && availability.type == SL_EVENT_CLOUD_STATE);
+        sl_ui_runtime_event(&availability_ui, &availability);
+        assert(availability_ui.cloud_ready == (connected != 0));
+    }
     IHS_HostInfo direct;
     assert(!local_host(&r, 123, &direct)); /* Reloaded saved IP is not verified. */
     assert(start_client(&r));

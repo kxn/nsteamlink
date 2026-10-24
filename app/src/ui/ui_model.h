@@ -91,6 +91,7 @@ typedef enum sl_action {
     SL_UPDATE_CHECK,
     SL_SET_GUIDE_KEY,
     SL_CONFIRM_UPDATE,
+    SL_SKIP_UPDATE,
     SL_FINISH_UPDATE,
     SL_RUN_NETWORK_TEST,
     SL_TEST_DECIDE
@@ -107,6 +108,7 @@ typedef enum sl_command_type {
     SL_CMD_SHORTCUT,
     SL_CMD_MANUAL,
     SL_CMD_UPDATE,
+    SL_CMD_IGNORE_UPDATE,
     SL_CMD_REMOTE_PAIR,
     SL_CMD_TEST_CONFIRM
 } sl_command_type;
@@ -129,7 +131,8 @@ typedef enum sl_control_kind {
     SL_CONTROL_ACTION,
     SL_CONTROL_SUBMENU,
     SL_CONTROL_TOGGLE,
-    SL_CONTROL_RADIO
+    SL_CONTROL_RADIO,
+    SL_CONTROL_CHECKBOX
 } sl_control_kind;
 typedef struct sl_control {
     int id, x, y, w, h;
@@ -195,6 +198,7 @@ typedef struct sl_ui_model {
     int focus_stack[8];
     int depth;
     bool streaming, debug, network_ok, closing, leaving, ending_game;
+    bool cloud_ready; /* Live anonymous CM session, never persisted in the profile. */
     bool adding_host; /* UI-only final tab; never a registry entry or persisted selection. */
     int add_focus;
     uint64_t leave_at;
@@ -211,8 +215,10 @@ typedef struct sl_ui_model {
     char input[64], pairing_code[5], error[192];
     /* Startup update check (D-060): offered once on HOME per launch. */
     bool update_check, update_offered, update_succeeded;
+    bool skip_update; /* Pending checkbox; persisted only by the confirm action. */
     sl_guide_key guide_key;
     char update_version[16];
+    char ignored_update_version[16];
     sl_layout layout;
 } sl_ui_model;
 void sl_ui_init(sl_ui_model *m, const sl_auth_store *store);
