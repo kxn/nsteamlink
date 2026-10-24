@@ -147,6 +147,8 @@
   "UPDATE_DESCRIPTION": "新版本 %s 已发布。\n当前版本 %s。",
   "UPDATE_RESTART": "更新后 NSteamLink 将退出，\n请重新打开。",
   "UPDATE_INSTALL": "更新",
+  "UPDATE_IGNORE_VERSION": "此版本不再提示",
+  "UPDATE_IGNORE": "不再提示",
   "UPDATE_INSTALLING": "正在更新 NSteamLink",
   "UPDATE_RESULT": "更新",
   "UPDATE_DONE": "已更新到 %s。\n请退出并重新打开 NSteamLink。",

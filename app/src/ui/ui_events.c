@@ -54,7 +54,14 @@ void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
         return;
     switch (e.type) {
     case SL_EVENT_UPDATE:
+        if (strcmp(m->update_version, e.text))
+            m->update_offered = false;
         snprintf(m->update_version, sizeof(m->update_version), "%.15s", e.text);
+        break;
+    case SL_EVENT_UPDATE_IGNORED:
+        snprintf(m->ignored_update_version, sizeof(m->ignored_update_version), "%.15s", e.text);
+        if (m->page == SL_UPDATE && !strcmp(m->update_version, e.text))
+            sl_ui_action(m, SL_BACK, 0);
         break;
     case SL_EVENT_UPDATE_RESULT:
         if (m->page != SL_UPDATING)

@@ -564,6 +564,10 @@ int main(int argc, char **argv) {
                                                      .deviation_ms = 0.75f,
                                                      .recommendation = 1};
             ui.entered_at = ui.now > 500 ? ui.now - 500 : 0;
+            if (p == SL_UPDATE) {
+                strcpy(ui.update_version, "0.7.2");
+                ui.skip_update = false;
+            }
             strcpy(ui.error,
                    sl_tr(p == SL_INSTALL_RESULT ? SL_T_SHORTCUT_ADDED : SL_T_PROFILE_CORRUPT));
             sl_ui_layout(&ui);
@@ -572,6 +576,15 @@ int main(int argc, char **argv) {
             snprintf(image, sizeof(image), "i18n-%s-page-%02d", lang == SL_LANG_EN ? "en" : "zh",
                      p);
             save_image(image);
+            if (p == SL_UPDATE) {
+                ui.skip_update = true;
+                sl_ui_layout(&ui);
+                stream_media_present();
+                snprintf(image, sizeof(image), "update-%s-skip-checked",
+                         lang == SL_LANG_EN ? "en" : "zh");
+                save_image(image);
+                ui.skip_update = false;
+            }
         }
         ui.page = SL_HOME;
         ui.streaming = false;

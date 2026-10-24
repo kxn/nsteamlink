@@ -1,5 +1,6 @@
 #include "input/input_router.h"
 #include "services/auth_store_legacy.h"
+#include "services/update_config.h"
 #include "ui/ui_events.h"
 #include "ui/ui_model.h"
 #include <assert.h>
@@ -16,7 +17,8 @@ int __wrap_rename(const char *from, const char *to) {
         errno = EEXIST;
         return -1;
     }
-    if (fail_publish && strstr(from, "profile.tmp") && access(to, F_OK) != 0) {
+    if (fail_publish && (strstr(from, "profile.tmp") || strstr(from, "update_ignored.tmp")) &&
+        access(to, F_OK) != 0) {
         errno = EIO;
         return -1;
     }
@@ -573,7 +575,7 @@ static void update_flow(void) {
     sl_ui_action(&m, SL_BACK, 0);
     sl_ui_tick(&m, m.now + 160);
     sl_ui_tick(&m, m.now + 16);
-    assert(m.page == SL_UPDATE && m.layout.count == 2);
+    assert(m.page == SL_UPDATE && m.layout.count == 3);
 
     /* A installs; B can't abandon a running install. */
     sl_ui_action(&m, SL_ACCEPT, 0);
@@ -620,6 +622,74 @@ static void update_flow(void) {
         .type = SL_EVENT_ACTIVITY, .generation = m.generation, .host = m.store.registry.hosts[0]};
     sl_ui_runtime_event(&m, &activity);
     assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_SAVE && !cmd.update_check);
+
+    /* Checking and cancelling is not an opt-out; confirming emits no installation. */
+    m = model();
+    found = update_event(&m, SL_EVENT_UPDATE, false, "0.7.2");
+    sl_ui_runtime_event(&m, &found);
+    sl_ui_tick(&m, m.now + 16);
+    sl_ui_action(&m, SL_OPEN_SETTINGS, 0); /* Physical X in this modal. */
+    assert(m.page == SL_UPDATE && m.skip_update && !sl_ui_take_command(&m, &cmd));
+    sl_ui_action(&m, SL_BACK, 0);
+    sl_ui_tick(&m, m.now + 200);
+    assert(!m.ignored_update_version[0] && !sl_ui_take_command(&m, &cmd));
+    m.update_offered = false;
+    sl_ui_tick(&m, m.now + 16);
+    assert(m.page == SL_UPDATE && !m.skip_update);
+    sl_ui_activate(&m, 104); /* Touch checkbox. */
+    assert(m.skip_update);
+    bool renamed = false;
+    for (int i = 0; i < m.layout.count; ++i)
+        if (m.layout.controls[i].action == SL_CONFIRM_UPDATE)
+            renamed = strstr(m.layout.controls[i].label, sl_tr(SL_T_UPDATE_IGNORE)) != NULL;
+    assert(renamed);
+    sl_ui_action(&m, SL_ACCEPT, 0);
+    assert(sl_ui_take_command(&m, &cmd) && cmd.type == SL_CMD_IGNORE_UPDATE &&
+           !strcmp(cmd.text, "0.7.2") && !m.ignored_update_version[0]);
+    sl_runtime_event ignored = update_event(&m, SL_EVENT_UPDATE_IGNORED, true, cmd.text);
+    sl_ui_runtime_event(&m, &ignored);
+    sl_ui_tick(&m, m.now + 200);
+    assert(m.page == SL_HOME && !strcmp(m.ignored_update_version, "0.7.2"));
+
+    /* Real file save/readback across UI restart, without altering the global toggle. */
+    char dir[] = "/tmp/nsl-update-ignore-XXXXXX", version[16], path[512];
+    assert(mkdtemp(dir));
+    sl_update_ignored_load(dir, version);
+    assert(!version[0]);
+    assert(sl_update_config_save(dir, false));
+    assert(sl_update_ignored_save(dir, "0.7.2"));
+    assert(!sl_update_config_load(dir));
+    assert(sl_update_config_save(dir, true));
+    sl_update_ignored_load(dir, version);
+    assert(!strcmp(version, "0.7.2"));
+    m = model();
+    sl_update_ignored_load(dir, m.ignored_update_version);
+    found = update_event(&m, SL_EVENT_UPDATE, false, "0.7.2");
+    sl_ui_runtime_event(&m, &found);
+    sl_ui_tick(&m, m.now + 16);
+    assert(m.page == SL_HOME && m.update_check);
+    found = update_event(&m, SL_EVENT_UPDATE, false, "0.7.3");
+    sl_ui_runtime_event(&m, &found);
+    sl_ui_tick(&m, m.now + 16);
+    assert(m.page == SL_UPDATE && !m.skip_update);
+
+    /* Horizon replacement failure restores the previous ignored version. */
+    no_replace = fail_publish = true;
+    assert(!sl_update_ignored_save(dir, "0.7.3"));
+    sl_update_ignored_load(dir, version);
+    assert(!strcmp(version, "0.7.2"));
+    fail_publish = false;
+    assert(sl_update_ignored_save(dir, "0.7.3"));
+    no_replace = false;
+    assert(!sl_update_ignored_save(dir, "0.7.4\ncheck=0") &&
+           !sl_update_ignored_save(dir, "0..7") && !sl_update_ignored_save(dir, ""));
+    sl_update_ignored_load(dir, version);
+    assert(!strcmp(version, "0.7.3") && sl_update_config_load(dir));
+    snprintf(path, sizeof(path), "%s/update_ignored.conf", dir);
+    assert(!unlink(path));
+    snprintf(path, sizeof(path), "%s/update.conf", dir);
+    assert(!unlink(path));
+    assert(!rmdir(dir));
 }
 static void settings_category(sl_ui_model *m, sl_action category) {
     while (m->page != SL_SETTINGS) {

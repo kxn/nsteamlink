@@ -147,6 +147,8 @@
   "UPDATE_DESCRIPTION": "Version %s is available.\nYou have version %s.",
   "UPDATE_RESTART": "NSteamLink exits after updating;\nthen start it again.",
   "UPDATE_INSTALL": "Update",
+  "UPDATE_IGNORE_VERSION": "Skip this version",
+  "UPDATE_IGNORE": "Don't remind me",
   "UPDATE_INSTALLING": "Updating NSteamLink",
   "UPDATE_RESULT": "Update",
   "UPDATE_DONE": "Updated to %s.\nExit and start NSteamLink again.",

@@ -43,6 +43,8 @@ static sl_control_kind control_kind(sl_action action) {
     case SL_SET_LANGUAGE:
     case SL_SET_GUIDE_KEY:
         return SL_CONTROL_RADIO;
+    case SL_SKIP_UPDATE:
+        return SL_CONTROL_CHECKBOX;
     default:
         return SL_CONTROL_ACTION;
     }
@@ -253,8 +255,11 @@ void sl_ui_layout(sl_ui_model *m) {
                      NSL_SEMANTIC_VERSION);
             /* Two lines each; the strings break explicitly (no word wrap). */
             text(l, 320, 264, 28, line);
-            text(l, 320, 352, 24, sl_tr(SL_T_UPDATE_RESTART));
-            row(l, 3, sl_tr(SL_T_UPDATE_INSTALL), SL_CONFIRM_UPDATE, 0);
+            text(l, 320, 336, 24, sl_tr(SL_T_UPDATE_RESTART));
+            row(l, 3, sl_tr(m->skip_update ? SL_T_UPDATE_IGNORE : SL_T_UPDATE_INSTALL),
+                SL_CONFIRM_UPDATE, 0);
+            button(l, 104, 320, 396, 640, 64, sl_tr(SL_T_UPDATE_IGNORE_VERSION), SL_SKIP_UPDATE,
+                   0, false);
             break;
         }
         case SL_UPDATING:
@@ -541,11 +546,13 @@ void sl_ui_layout(sl_ui_model *m) {
             /* Like the shortcut question: B on the left, the A action on the
              * right, or B centred when there is nothing to confirm. */
             l->panel_y = 164;
-            l->panel_h = 392;
+            l->panel_h = m->page == SL_UPDATE ? 440 : 392;
             for (int i = 0; i < l->count; ++i) {
                 sl_control *c = &l->controls[i];
+                if (c->kind == SL_CONTROL_CHECKBOX)
+                    continue;
                 c->x = l->count == 1 ? l->panel_x + (l->panel_w - 308) / 2 : c->id == 9 ? 320 : 652;
-                c->y = 444;
+                c->y = m->page == SL_UPDATE ? 492 : 444;
                 c->w = 308;
                 c->h = 72;
                 c->primary = c->id != 9;

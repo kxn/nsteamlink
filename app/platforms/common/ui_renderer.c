@@ -895,6 +895,21 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
         bool shoulder = c->action == SL_PREV_HOST || c->action == SL_NEXT_HOST;
         bool focused = focused_scene && c->id == m->focus && !c->disabled;
         bool menu_row = l->drawer && !footer;
+        if (c->kind == SL_CONTROL_CHECKBOX) {
+            int cx = box.x + 24, cy = box.y + (box.h - 26) / 2;
+            rounded(r->renderer, (sl_gfx_rect){cx, cy, 26, 26}, 4,
+                    m->skip_update ? accent : muted);
+            if (m->skip_update) {
+                line(r->renderer, cx + 6, cy + 13, cx + 11, cy + 18, bg);
+                line(r->renderer, cx + 11, cy + 18, cx + 20, cy + 8, bg);
+            } else
+                rounded(r->renderer, (sl_gfx_rect){cx + 2, cy + 2, 22, 22}, 2, panel);
+            draw_text(r, c->label, cx + 42,
+                      centered_y(r, c->label, 24, box.y, box.h, box.w - 120),
+                      box.w - 120, box.h, 24, fg);
+            badge(r, "X", box.x + box.w - 48, box.y + (box.h - 34) / 2, muted);
+            continue;
+        }
         bool disabled_submenu = c->disabled && c->kind == SL_CONTROL_SUBMENU;
         sl_gfx_color disabled_ink = {102, 109, 122, 255};
         sl_gfx_color role = action_color(c->action);

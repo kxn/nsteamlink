@@ -190,9 +190,11 @@ void sl_ui_tick(sl_ui_model *m, uint64_t now) {
     if (m->leaving && now >= m->leave_at + 160)
         back_now(m);
     /* Offer a found update once, when nothing else is in progress. */
-    if (m->update_version[0] && !m->update_offered && m->page == SL_HOME && !m->depth &&
+    if (m->update_version[0] && strcmp(m->update_version, m->ignored_update_version) &&
+        !m->update_offered && m->page == SL_HOME && !m->depth &&
         !m->streaming && !m->leaving && !m->closing) {
         m->update_offered = true;
+        m->skip_update = false;
         push(m, SL_UPDATE);
     }
     sl_ui_layout(m);
@@ -524,8 +526,19 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
     case SL_CONFIRM_UPDATE:
         if ((m->page == SL_UPDATE || (m->page == SL_UPDATE_RESULT && !m->update_succeeded)) &&
             !m->streaming) {
+            if (m->page == SL_UPDATE && m->skip_update) {
+                emit(m, SL_CMD_IGNORE_UPDATE);
+                snprintf(m->command.text, sizeof(m->command.text), "%s", m->update_version);
+                break;
+            }
             page(m, SL_UPDATING);
             emit(m, SL_CMD_UPDATE);
+        }
+        break;
+    case SL_SKIP_UPDATE:
+        if (m->page == SL_UPDATE && !m->streaming) {
+            m->skip_update = !m->skip_update;
+            m->focus = 103;
         }
         break;
     case SL_FINISH_UPDATE:
@@ -637,6 +650,8 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
     sl_ui_layout(m);
 }
 void sl_ui_action(sl_ui_model *m, sl_action a, int arg) {
+    if (a == SL_OPEN_SETTINGS && m->page == SL_UPDATE)
+        a = SL_SKIP_UPDATE; /* X toggles the checkbox; A/B retain their modal actions. */
     if (a == SL_ACCEPT) {
         action(m, a, arg);
         return;
@@ -646,6 +661,7 @@ void sl_ui_action(sl_ui_model *m, sl_action a, int arg) {
     uint32_t quality = m->store.quality;
     bool sound = m->store.sound, leaving = m->leaving;
     bool fec = m->store.unreliable_fec, update_check = m->update_check;
+    bool skip_update = m->skip_update;
     sl_guide_key guide_key = m->guide_key;
     sl_language language = sl_i18n_language();
     char input[64];
@@ -656,7 +672,8 @@ void sl_ui_action(sl_ui_model *m, sl_action a, int arg) {
         cue = a == SL_BACK || a == SL_CONFIRM_STOP || a == SL_CONFIRM_EXIT ? SL_CUE_BACK
                                                                            : SL_CUE_CONFIRM;
     else if (sound != m->store.sound || fec != m->store.unreliable_fec ||
-             update_check != m->update_check || guide_key != m->guide_key ||
+             update_check != m->update_check || skip_update != m->skip_update ||
+             guide_key != m->guide_key ||
              quality != m->store.quality ||
              language != sl_i18n_language())
         cue = SL_CUE_TOGGLE;
