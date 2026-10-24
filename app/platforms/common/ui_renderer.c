@@ -1001,7 +1001,8 @@ static void draw_scene(sl_ui_renderer *r, const sl_ui_model *m, const sl_debug_s
             width = measured + 2;
         }
         int y = centered_y(r, label, size, c->y, c->h, width);
-        if (value_width)
+        /* Left-aligned rows render their value below, beside the chevron. */
+        if (value_width && centered)
             draw_text(r, c->value, box.x + box.w - 52 - value_width,
                       centered_y(r, c->value, 24, box.y, box.h, value_width + 2), value_width + 2,
                       box.h, 24, focused ? bg : muted);
