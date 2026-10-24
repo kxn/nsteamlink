@@ -236,17 +236,23 @@ static void one(bool fail_key_file) {
     atomic_store(&confirm_calls, 0);
     runtime = sl_runtime_create(&empty);
     assert(runtime);
-    uint64_t deadline = sl_system_now() + 8000;
-    while (!atomic_load(&ready)) {
-        assert(sl_system_now() < deadline);
-        poll(NULL, 0, 1);
-    }
-    sl_command pair = {.type = SL_CMD_REMOTE_PAIR, .generation = 1};
-    assert(sl_runtime_submit(runtime, &pair, &empty));
     sl_ui_model ui;
     sl_ui_init(&ui, &empty);
+    uint64_t deadline = sl_system_now() + 8000;
+    while (!atomic_load(&ready) || !ui.cloud_ready) {
+        assert(sl_system_now() < deadline);
+        sl_runtime_event event;
+        while (sl_runtime_poll(runtime, &event)) {
+            assert(event.type != SL_EVENT_FAILURE);
+            sl_ui_runtime_event(&ui, &event);
+        }
+        poll(NULL, 0, 1);
+    }
     sl_ui_action(&ui, SL_OPEN_REMOTE_PAIR, 0);
     assert(ui.generation == 1 && ui.page == SL_PAIRING);
+    sl_command pair;
+    assert(sl_ui_take_command(&ui, &pair) && pair.type == SL_CMD_REMOTE_PAIR);
+    assert(sl_runtime_submit(runtime, &pair, &empty));
     bool got_code = false, paired = false;
     while (!paired || atomic_load(&saves_done) < 2 || !atomic_load(&confirmed)) {
         assert(sl_system_now() < deadline);
