@@ -306,7 +306,7 @@ static void diagnostic_phase(const char *phase, int value) {
 #define diagnostic_phase(phase, value) ((void)0)
 #endif
 static void post_locked(sl_runtime *r, sl_runtime_event e) {
-    if (e.type != SL_EVENT_HOST && e.type != SL_EVENT_NETWORK)
+    if (e.type != SL_EVENT_HOST && e.type != SL_EVENT_NETWORK && e.type != SL_EVENT_CLOUD_STATE)
         e.generation = r->active.generation;
     /* Discovery is coalesced and capped below the reserved terminal capacity. */
     if (e.type == SL_EVENT_HOST) {
@@ -1370,6 +1370,7 @@ static void cloud_connected(bool connected, void *ctx) {
     pthread_mutex_lock(&r->lock);
     ++r->control_epoch;
     r->control_cloud_ready = connected;
+    post_locked(r, (sl_runtime_event){.type = SL_EVENT_CLOUD_STATE, .account = connected});
     clear_control_locked(r);
     if (!connected) {
         sl_directory_disconnect(r->directory);

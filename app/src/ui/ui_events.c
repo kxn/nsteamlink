@@ -4,6 +4,12 @@
 #include <string.h>
 void sl_ui_runtime_event(sl_ui_model *m, const sl_runtime_event *event) {
     sl_runtime_event e = *event;
+    if (e.type == SL_EVENT_CLOUD_STATE) {
+        /* Connection availability belongs to the application, not a request generation. */
+        m->cloud_ready = e.account != 0;
+        sl_ui_layout(m);
+        return;
+    }
     if (e.type == SL_EVENT_HOST) {
         sl_host *h = sl_host_observe(&m->store.registry, &e.host, m->now);
         if (h) {

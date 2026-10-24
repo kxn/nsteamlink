@@ -356,6 +356,16 @@ int main(int argc, char **argv) {
         stream_media_present();
         save_image("add-computer-en");
         sl_i18n_set(language);
+        sl_runtime_event availability = {.type = SL_EVENT_CLOUD_STATE, .account = 1};
+        sl_ui_runtime_event(&ui, &availability);
+        stream_media_present();
+        save_image("add-computer-cloud-ready");
+        sl_i18n_set(SL_LANG_EN);
+        sl_ui_layout(&ui);
+        stream_media_present();
+        save_image("add-computer-cloud-ready-en");
+        sl_i18n_set(language);
+        sl_ui_layout(&ui);
         sl_ui_model adding = ui;
         sl_ui_activate(&ui, 31);
         sl_ui_tick(&ui, ui.now + 220);

@@ -133,6 +133,12 @@ void sl_ui_layout(sl_ui_model *m) {
             button(l, 31, 320, 320, 640, 72, sl_tr(SL_T_ENTER_IP), SL_OPEN_MANUAL, 0, false);
             button(l, 30, 320, 408, 640, 72, sl_tr(SL_T_SHOW_PAIR_CODE), SL_OPEN_REMOTE_PAIR, 0,
                    false);
+            if (!m->cloud_ready) {
+                sl_control *pair = &l->controls[l->count - 1];
+                pair->disabled = true;
+                snprintf(pair->value, sizeof(pair->value), "%s",
+                         sl_tr(SL_T_CLOUD_SERVICE_UNAVAILABLE));
+            }
         } else if (h) {
             if (games) {
                 text(l, 52, 236, 36, sl_tr(SL_T_RECENT));
@@ -580,8 +586,10 @@ void sl_ui_layout(sl_ui_model *m) {
     if (m->page == SL_HOME) {
         int count = sl_ui_game_count(m);
         if (adding) {
+            if (!m->cloud_ready && m->focus == 30)
+                m->focus = 31;
             if (m->focus != 30 && m->focus != 31)
-                m->focus = m->add_focus == 30 ? 30 : 31;
+                m->focus = m->cloud_ready && m->add_focus == 30 ? 30 : 31;
             m->add_focus = m->focus;
         } else if (m->focus < 40 || m->focus >= 40 + count)
             m->focus = count ? (h->focus >= 40 && h->focus < 40 + count ? h->focus : 40) : 0;

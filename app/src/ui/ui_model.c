@@ -395,7 +395,7 @@ static void action(sl_ui_model *m, sl_action a, int arg) {
         }
         break;
     case SL_OPEN_REMOTE_PAIR:
-        if (!m->streaming && m->page == SL_HOME && sl_ui_adding_host(m)) {
+        if (m->cloud_ready && !m->streaming && m->page == SL_HOME && sl_ui_adding_host(m)) {
             ++m->generation;
             m->intent = (sl_command){.type = SL_CMD_REMOTE_PAIR, .generation = m->generation};
             m->depth = 0;

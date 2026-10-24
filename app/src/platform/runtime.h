@@ -19,6 +19,7 @@ typedef enum sl_event_type {
     SL_EVENT_STOPPED,
     SL_EVENT_ACTIVITY,
     SL_EVENT_NETWORK,
+    SL_EVENT_CLOUD_STATE, /* Global availability; account: anonymous CM session ready. */
     SL_EVENT_SHORTCUT,
     SL_EVENT_CLOSED,
     SL_EVENT_UPDATE,       /* text: version */

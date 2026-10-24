@@ -156,6 +156,8 @@ static void add_computer_navigation(void) {
            command.host.client_id == 903 && !command.game_id);
 
     m = model();
+    sl_runtime_event ready = {.type = SL_EVENT_CLOUD_STATE, .account = 1};
+    sl_ui_runtime_event(&m, &ready);
     sl_ui_action(&m, SL_DOWN, 0);
     sl_ui_action(&m, SL_ACCEPT, 0); /* Second Add action: cloud code, no target host. */
     assert(m.page == SL_PAIRING && sl_ui_take_command(&m, &command) &&
@@ -724,6 +726,32 @@ static void actionable_settings(void) {
 static void explicit_cloud_pairing(void) {
     sl_ui_model m = model();
     sl_command cmd;
+    /* No session at startup: both activation and a direct action stay inert. */
+    sl_ui_layout(&m);
+    bool disabled = false;
+    for (int i = 0; i < m.layout.count; ++i)
+        if (m.layout.controls[i].action == SL_OPEN_REMOTE_PAIR) {
+            disabled = m.layout.controls[i].disabled;
+            assert(!strcmp(m.layout.controls[i].value, sl_tr(SL_T_CLOUD_SERVICE_UNAVAILABLE)));
+        }
+    assert(disabled);
+    sl_ui_activate(&m, 30);
+    sl_ui_action(&m, SL_OPEN_REMOTE_PAIR, 0);
+    assert(m.page == SL_HOME && !sl_ui_take_command(&m, &cmd));
+    /* Global availability survives unrelated request generations and loss restores the gate. */
+    sl_runtime_event availability = {.type = SL_EVENT_CLOUD_STATE, .account = 1,
+                                     .generation = m.generation + 42};
+    sl_ui_runtime_event(&m, &availability);
+    assert(m.cloud_ready);
+    m.focus = 30;
+    availability.account = 0;
+    sl_ui_runtime_event(&m, &availability);
+    assert(!m.cloud_ready && m.focus == 31);
+    sl_ui_action(&m, SL_OPEN_REMOTE_PAIR, 0);
+    assert(!sl_ui_take_command(&m, &cmd));
+    availability.account = 1;
+    sl_ui_runtime_event(&m, &availability);
+    assert(m.cloud_ready);
     sl_ui_action(&m, SL_START, 0);
     assert(m.page == SL_HOME && !sl_ui_take_command(&m, &cmd));
     sl_ui_action(&m, SL_OPEN_SETTINGS, 0);

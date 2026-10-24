@@ -195,6 +195,7 @@ typedef struct sl_ui_model {
     int focus_stack[8];
     int depth;
     bool streaming, debug, network_ok, closing, leaving, ending_game;
+    bool cloud_ready; /* Live anonymous CM session, never persisted in the profile. */
     bool adding_host; /* UI-only final tab; never a registry entry or persisted selection. */
     int add_focus;
     uint64_t leave_at;
